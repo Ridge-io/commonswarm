@@ -80,12 +80,17 @@ continuously (this file + commits) — assume your session can die at any moment
   private-repo rulesets are impossible (403 "Upgrade to GitHub Pro"). The repo was
   created under `Ridgeio` by mistake and transferred; **never target `Ridgeio`.**
 - **Ruleset (active):** `swarm-1human-main` (id 19616931) on `refs/heads/main` —
-  `deletion`, `non_fast_forward`, `required_linear_history`, `pull_request`
-  (0 required approvals — the §3 1-human profile deliberately omits the
-  distinct-human-approver rule; squash only; stale-review dismissal; thread
-  resolution), `bypass_actors: []`. **Direct pushes to `main` are refused — land via
-  PR.** §3's required pre-landing check is NOT in the ruleset: it is a P2 deliverable
-  and does not exist yet; add it to this ruleset when P2 ships.
+  `deletion`, `non_fast_forward`, `required_linear_history`. `bypass_actors: []`.
+- **LANDING POLICY — operator directive, 2026-07-23 (overrides the spec's stricter
+  reading):** **the Lead MAY merge PRs and MAY push directly to `main`.** A
+  `pull_request` rule was briefly applied and has been **removed**: requiring a PR to
+  land your own reviewed work is friction on a *reversible* act (a squash merge is
+  `git revert`-able), and §0 says user-facing friction on a reversible act is a bug.
+  Do **not** re-impose human-only landing, PR-required, or similar ceremony on the
+  Lead. What stays hard is what is genuinely irreversible: **force-push, branch
+  deletion, and non-linear history remain blocked** — that is the §0 line, correctly
+  drawn. Treat this as standing policy, not a one-off exception.
+  (§3's required pre-landing check is a P2 deliverable and does not exist yet.)
 - **GitHub App (P0-github, done):** `Swarm Coordination` / slug `swarm-coordination`,
   owned by `Ridge-io`. App ID **4375227**, Client ID `Iv23liD2OXYNeF59mab1`,
   Installation ID **148509807**. Permissions are **read-only** on exactly five scopes
@@ -94,11 +99,19 @@ continuously (this file + commits) — assume your session can die at any moment
   repo. **No private key has been generated yet** — generate it at P1 when the webhook
   needs to authenticate, and have Anvil store it in 1Password (never on disk).
 - **Supabase (P1 provisioning):** project `cloud-swarm-dev`, ref
-  `pgbblnyljguyfckhdnid`, region `us-east-1`, org **`ChartingAlpha`** (the paid org —
+  **`ukezjcnxjvkpkeezxaew`**, region `us-east-1`, org **`ChartingAlpha`** (the paid org —
   the `*-Free*` orgs are junk parking orgs, per operator; do not use them). Costs
   ~$10/mo per-project compute (Micro rate), operator-approved. Secrets live in the
   1Password item **`Supabase — cloud-swarm-dev`** — never in the repo, never in a
-  model-visible file.
+  model-visible file. (An earlier ref `pgbblnyljguyfckhdnid` was created in the junk
+  `ChartingAlpha-Free2` org and has been **deleted**; it was empty. Ignore it if you
+  see it referenced anywhere.)
+- **VERIFY EVERY PROVISIONING AGENT'S SELF-REPORT — it is unreliable in BOTH
+  directions.** Observed 2026-07-23: Forge reported a bare "PASS" for work that needed
+  checking, and Anvil reported an unrelated garbled result for a task it had actually
+  completed correctly (I nearly recorded a real success as a failure). Confirm with an
+  independent read — `gh api`, `curl` the project URL, `git remote -v`, `npm test` —
+  before believing either a success or a failure claim.
 - **Why a separate repo:** the in-use local `swarm` CLI (coordinating the live
   PromptEden program) builds and runs from **its own working tree**
   (`~/Developer/Ridge.io/swarm`, `dist/index.js`); a broken build there (`rm -rf dist
