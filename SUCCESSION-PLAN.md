@@ -63,6 +63,48 @@ Rotate at a **phase boundary** whenever possible — it's the cleanest resume po
   workdir (`--skip-git-repo-check` if not). Strip ANSI from opencode logs
   (`sed 's/\x1b\[[0-9;]*m//g'`).
 
+## 0b. CURRENT TARGET (operator, 2026-07-23): drive to the FIRST REAL DOGFOOD
+
+**The near-term goal is not "finish P1" — it is the first moment the operator can
+drive a fleet through the cloud-authoritative command path end to end.** Build to that,
+stop, let it be used, then plan P2+ from what it teaches. The operator has authorized
+**rotating to a fresh Lead whenever context gets tight** — do it at a clean green
+boundary, update this file first, `swarm spawn -s cloud-swarm --agent claude --name Lead`.
+
+**Dogfood = ALL of these exist and are proven working together:**
+1. schema APPLIES on hosted Supabase (see build-state below — currently FAILING)
+2. `handle_command()` Edge Function wrapping the pure `decide()` — DOES NOT EXIST
+3. PKCE login + a CLI client that sends real commands — DOES NOT EXIST
+4. the §9 launch-gate tests proven GREEN against the real database — NOT RUN
+Until all four, there is nothing to dogfood; do not stage a fake one (hand-poking the
+DB with psql is theater, not a dogfood — it teaches nothing about whether the feel is right).
+
+### P1 BUILD STATE (update this every slice)
+- **Slice 1 — schema.** Migration `supabase/migrations/20260723000001_p1_schema.sql`
+  (751 lines) written + committed (`e3b0ccd`), independently audited (24 tables, 24
+  swarm_command-only policies, append-only triggers, no anon/authenticated grant on
+  authority tables). **FIRST REAL APPLY FAILED** at statement 2:
+  `must be able to SET ROLE "swarm_admin"` — hosted Supabase runs migrations as
+  non-superuser `postgres`, which cannot `SET ROLE`/`OWNER TO`/`AUTHORIZATION` a role
+  it isn't a member of. Fix in flight (Codex): `GRANT <role> TO current_user` after
+  each `CREATE ROLE`, full idempotency, and — importantly — a ONE-PASS enumeration of
+  ALL other hosted-Supabase incompatibilities (pg_cron/`CREATE EXTENSION`, event
+  triggers, `ALTER SYSTEM`, `auth.*` ownership) so we don't burn one apply-cycle per
+  failure. **The design must NOT be weakened to pass** — owner-pinned views (§2.3) need
+  owner-evaluated predicates; do not let everything fall to `postgres` ownership.
+  Apply route: **Anvil** runs `npx supabase link --project-ref ukezjcnxjvkpkeezxaew`
+  (password from 1Password) then `npx supabase db push`; on failure capture the exact
+  error and STOP, do not let the agent self-fix. `supabase/.temp/` holds link state
+  (gitignored, no secret) — verified.
+- **Slice 2 — command API.** `handle_command()` per §3: TS orchestrator in a `command`
+  Edge Function, one Postgres transaction, calls unmodified `decide()`. NOT STARTED.
+- **Slice 3 — login + CLI.** PKCE loopback (`http://127.0.0.1:*/callback`; the
+  allowlist entry must be ADDED to the project — currently empty), keychain refresh,
+  a CLI that sends commands. NOT STARTED.
+- **Gate — §9 tests** green against the real DB. NOT RUN. Needs a container runtime
+  eventually (`supabase start` + Edge Functions) — not available on this machine yet;
+  operator will need OrbStack/Docker or we run the suite against the remote dev project.
+
 ## 1b. Governing steer (operator, 2026-07-23) — READ THIS BEFORE SCOPING ANYTHING
 
 **Swarm is primarily about coordination — keep it that way** (the Workbench.md
