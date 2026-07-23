@@ -74,9 +74,31 @@ continuously (this file + commits) — assume your session can die at any moment
 
 ## 3. Ground facts
 
-- **Repo:** `/Users/yulanbot/Developer/Ridge.io/cloud-swarm` (local git). **No remote yet** —
-  create private (`gh repo create cloud-swarm --private --source=. --remote=origin`,
-  or have OpenClaw/Hermes do it). Latest commit is the P0 checkpoint.
+- **Repo:** `/Users/yulanbot/Developer/Ridge.io/cloud-swarm` → **remote is
+  `Ridge-io/cloud-swarm` (private)**. Note the hyphen: `Ridge-io` is the **org** (team
+  plan, where the PromptEden repos live); `Ridgeio` is a free **user** account where
+  private-repo rulesets are impossible (403 "Upgrade to GitHub Pro"). The repo was
+  created under `Ridgeio` by mistake and transferred; **never target `Ridgeio`.**
+- **Ruleset (active):** `swarm-1human-main` (id 19616931) on `refs/heads/main` —
+  `deletion`, `non_fast_forward`, `required_linear_history`, `pull_request`
+  (0 required approvals — the §3 1-human profile deliberately omits the
+  distinct-human-approver rule; squash only; stale-review dismissal; thread
+  resolution), `bypass_actors: []`. **Direct pushes to `main` are refused — land via
+  PR.** §3's required pre-landing check is NOT in the ruleset: it is a P2 deliverable
+  and does not exist yet; add it to this ruleset when P2 ships.
+- **GitHub App (P0-github, done):** `Swarm Coordination` / slug `swarm-coordination`,
+  owned by `Ridge-io`. App ID **4375227**, Client ID `Iv23liD2OXYNeF59mab1`,
+  Installation ID **148509807**. Permissions are **read-only** on exactly five scopes
+  (checks, statuses, contents, metadata, pull_requests); 0 write. Webhook **disabled**
+  (no endpoint until P1). Installed on **`cloud-swarm` only** — not on any PromptEden
+  repo. **No private key has been generated yet** — generate it at P1 when the webhook
+  needs to authenticate, and have Anvil store it in 1Password (never on disk).
+- **Supabase (P1 provisioning):** project `cloud-swarm-dev`, ref
+  `pgbblnyljguyfckhdnid`, region `us-east-1`, org **`ChartingAlpha`** (the paid org —
+  the `*-Free*` orgs are junk parking orgs, per operator; do not use them). Costs
+  ~$10/mo per-project compute (Micro rate), operator-approved. Secrets live in the
+  1Password item **`Supabase — cloud-swarm-dev`** — never in the repo, never in a
+  model-visible file.
 - **Why a separate repo:** the in-use local `swarm` CLI (coordinating the live
   PromptEden program) builds and runs from **its own working tree**
   (`~/Developer/Ridge.io/swarm`, `dist/index.js`); a broken build there (`rm -rf dist
@@ -103,11 +125,30 @@ continuously (this file + commits) — assume your session can die at any moment
   new), committed `86b9d5c`. The review lives at
   `scratchpad/kimi-p0-review.log`; the integration report at
   `scratchpad/codex-p0-integrate.log`. **Nothing left on P0-local.**
-- **P0-github — NOT STARTED (operator-gated → OpenClaw/Hermes):** GitHub rulesets on
-  the coordinated repos, read-only GitHub App install + verify, doctrine-backstop
-  (`docs/design/repo-backstop.md`) install into repo AGENTS.md/CLAUDE.md via the
-  PromptEden Lead (md-only draft PRs). There is an open swarm task
-  `repo-doctrine-backstop` in the `default` swarm for the backstop install.
+- **P0-github — MOSTLY COMPLETE.** Done + independently verified: private org repo,
+  the `swarm-1human-main` ruleset, and the read-only GitHub App (registered,
+  installed, scoped to `cloud-swarm`) — see §3 for identifiers. **Deliberately not
+  done:** (a) rulesets / doctrine-backstop on the **PromptEden** repos — the operator
+  scoped these OUT; do not touch `Ridge-io/prompteden-aeo` or
+  `Ridge-io/prompteden-marketing` without a fresh explicit instruction. (An open swarm
+  task `repo-doctrine-backstop` still exists in the `default` swarm.) (b) per-epoch
+  branch convention — needs real lease epochs from P1. (c) required pre-landing check
+  — P2.
+- **Recon findings on the PromptEden repos (2026-07-23, read-only, unactioned):**
+  `prompteden-aeo` has ruleset "Require reliability tests on main" (Unit Tests, Real
+  Postgres Tests) but **no** force-push/deletion protection; `prompteden-marketing`
+  has classic protection (Build, Typecheck) with admin enforcement, linear history,
+  force-push/deletion blocks and conversation resolution **all disabled**. AGENTS.md
+  exists on both (126 / 38 lines); CLAUDE.md only on marketing (46 lines).
+- **Provisioning agents (NOT swarm members — invoke directly):** **Forge** =
+  `openclaw agent --agent forge --json --timeout N -m "<prompt>"` (workspace
+  `~/Developer/Ridge.io`; `gh` authed as `Ridgeio` with `repo` scope; its browser is
+  NOT logged into GitHub and its 1Password GitHub account lacks Ridge-io org-admin).
+  **Anvil** = `anvil -z "<prompt>"` (Hermes; 1Password service account works). Extract
+  Forge's reply with `python3 -c "import sys,json;d=json.load(sys.stdin);print(d['result']['payloads'][0]['text'])"`.
+  For GitHub org-admin work neither agent suffices — use `browser-harness` against the
+  operator's Chrome (logged in as `Ridgeio`, which HAS org-admin). **Always instruct
+  provisioning agents to put secrets in 1Password and report only non-secret facts.**
 - **P1 — Secure authority slice (needs provisioning):** PKCE login + keychain;
   tenancy + private-schema command API wrapping `decide()`; repo mapping + named
   landing authority; audit; revocation; rate limits; invite flow. **Provisioning

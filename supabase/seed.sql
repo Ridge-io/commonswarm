@@ -1,0 +1,1 @@
+-- Intentionally empty; seed data will be added with the application schema.

@@ -9,3 +9,10 @@ coverage/
 .DS_Store
 .env
 .env.*
+
+# Supabase local state
+supabase/.branches/
+supabase/.temp/
+
+# Lead scratch (agent dispatch logs, review artifacts) — not part of the build
+scratchpad/

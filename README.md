@@ -43,3 +43,14 @@ The local `swarm` CLI remains supported indefinitely for solo/offline use;
 migration into a cloud workspace is `swarm cloud attach` (spec §6). Shared code
 (transports, board UI) is copied here on demand as the build reaches it and may
 later be extracted into a shared package if divergence warrants.
+
+## Local Supabase development
+
+Requires Docker and the Supabase CLI.
+
+- `npm run db:start` starts local services.
+- `npm run db:stop` stops local services.
+- `npm run db:reset` resets the local database from migrations and seed.
+- `npm run db:status` reports local service status.
+- `npm run db:diff` prints local schema changes.
+- `npm run db:migrate` applies pending migrations locally.
