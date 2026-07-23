@@ -94,13 +94,15 @@ continuously (this file + commits) — assume your session can die at any moment
 
 ## 4. Phase status
 
-- **P0-local — DONE, green, committed.** `src/protocol/` = reducer-complete §2.2
-  authority core (events, reducer, commands=`decide()`, idempotency, upcasters),
-  pure/no-I/O. `tests/protocol-next.test.ts` = 26 property tests pass; `tsc --noEmit`
-  clean. **In flight:** a Kimi K3 correctness review of the core — log at
-  `/private/tmp/claude-501/-Users-yulanbot-Developer-Ridge-io/c915fd5b-957d-437d-83d7-47d3cdd4dc79/scratchpad/kimi-p0-review.log`
-  (task id `bjlv3sxq6`). **Next Lead: collect it, integrate any FIX findings, re-run
-  tests, commit.**
+- **P0-local — COMPLETE (built → reviewed → integrated → green → committed).**
+  `src/protocol/` = reducer-complete §2.2 authority core (events, reducer,
+  commands=`decide()`, idempotency, upcasters), pure/no-I/O. The Kimi K3
+  model-inversion review returned **FIX(5)** (1 blocking §2.2 fidelity break + 4
+  majors + minors); a **Codex CLI** worker integrated all 12 findings and the Lead
+  verified independently — **`tsc --noEmit` clean, `npm test` 38/38 pass** (26 + 12
+  new), committed `86b9d5c`. The review lives at
+  `scratchpad/kimi-p0-review.log`; the integration report at
+  `scratchpad/codex-p0-integrate.log`. **Nothing left on P0-local.**
 - **P0-github — NOT STARTED (operator-gated → OpenClaw/Hermes):** GitHub rulesets on
   the coordinated repos, read-only GitHub App install + verify, doctrine-backstop
   (`docs/design/repo-backstop.md`) install into repo AGENTS.md/CLAUDE.md via the
