@@ -1,0 +1,23 @@
+{
+  "name": "cloud-swarm",
+  "version": "0.0.1",
+  "description": "SWARM-CLOUD — multi-human, multi-agent coordination cloud service (authority core). Forked from swarm (local CLI) to keep the in-use local tool stable.",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "node --import tsx --test tests/**/*.test.ts",
+    "prebuild": "rm -rf dist"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "@types/node": "^25.5.0",
+    "typescript": "^6.0.2"
+  },
+  "devDependencies": {
+    "tsx": "^4.21.0"
+  }
+}
