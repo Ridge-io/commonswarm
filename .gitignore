@@ -16,3 +16,6 @@ supabase/.temp/
 
 # Lead scratch (agent dispatch logs, review artifacts) — not part of the build
 scratchpad/
+
+# Evidence artifacts are durable on purpose (see docs/evidence/README.md)
+!docs/evidence/*.log

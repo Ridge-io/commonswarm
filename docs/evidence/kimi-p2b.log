@@ -1,0 +1,206 @@
+
+> build · moonshotai/kimi-k3
+
+→ Read scratchpad/kimi-p1-spec.log
+✱ Glob "src/protocol/*.ts" 6 matches
+→ Read src/protocol/commands.ts
+→ Read src/protocol/events.ts
+→ Read src/protocol/reducer.ts
+→ Read src/protocol/idempotency.ts
+→ Read src/protocol/upcasters.ts
+→ Read src/protocol/index.ts
+✱ Grep "^#{1,3} |^\*\*\d|^## \d|^### \d|G4|min_client_version|minimum.supported|outbox|read-model|read model" in docs/design/SWARM-CLOUD.md · 100 matches
+→ Read docs/design/SWARM-CLOUD.md [offset=42, limit=120]
+→ Read docs/design/SWARM-CLOUD.md [offset=260, limit=180]
+## 8. LOCAL-FIRST INTEGRATION
+
+### 8.1 The local SQLite is a derived cache plus an intent queue — never an authority
+
+An attached CLI's local database has exactly two write paths: **(a) fold** — apply server event envelopes through the unmodified `upcastEnvelope` → `reduceTask` from the shared `src/protocol` package (npm workspace import, same artifact the Edge Function bundles); **(b) outbox state transitions** (§8.6). There is no third path. `decide()` may be run locally **only as advisory pre-flight UX** (graying out a `close` button); its local result produces no events, authorizes nothing, and is never persisted as authority. Rejected: running `decide()` locally against the cached projection and treating a local accept as a queued lease acquisition — two laptops offline simultaneously would both "hold" epoch N+1, and reconciliation at reconnect has no correct merge because a committed close is irreversible. That is precisely the split-brain the lease fencing (§2.2) exists to prevent; G4 forbids the entire category (§8.7).
+
+Local tables (CLI-owned, device-local):
+
+| Table | Contents | Authority |
+|---|---|---|
+| `local.events` | raw envelopes, PK `(stream_id, seq)` | append-only mirror of `swarm.events` |
+| `local.stream_cursors` | `stream_id, applied_seq, head_seq_hint, halted_json, last_sync_at, snapshot_seq_applied` | client state |
+| `local.tasks`, `local.leases` | folded projections (shape mirrors §2.1 DDL) | derived; rebuildable from `local.events` |
+| `local.outbox` | §8.6 | client intent |
+| `local.attachments` | `workspace_id`, stream bindings (`workspace` + one per repo mapping), attached_at | set once by `cloud attach`; §6 irreversible |
+
+### 8.2 Replay: the delivery-of-record read path
+
+Realtime/Broadcast (P3) is a latency hint only; **cursor replay is the delivery-of-record** (§2.13). Two callers, one code path, one predicate (`swarm.is_member`, §2.3):
+
+| Caller | Transport | Server side |
+|---|---|---|
+| Human (CLI/board, Supabase JWT) | PostgREST RPC | `swarm_read.replay(p_stream_id uuid, p_after_seq bigint, p_limit int) returns jsonb` — SECURITY DEFINER (`swarm_admin`, pinned `search_path`), guarded by `is_member(stream's workspace_id, auth.uid())`; non-member → uniform `403 {error:"forbidden"}`, indistinguishable from unknown stream |
+| Agent (`swm_agt_…`) | Edge read proxy `POST /read/replay` | runs §3.2 steps 3–6 equivalents (token-hash authn → principal derivation → tenancy (`principal.workspace_id = stream.workspace_id`) → fail-closed revocation re-check **on every request**), then executes the same replay SQL as `swarm_command`. Revoked/expired → 403/401 uniform; after membership revocation the proxy serves nothing (§2.3: only labeled stale local cache remains) |
+
+Response envelope: `{stream_id, events: EventEnvelope[], head_seq, min_client_version, protocol_schema_version}`. Rules:
+
+1. **Cursor is keyset, not offset.** `WHERE stream_id=$1 AND seq > $2 ORDER BY seq ASC LIMIT least($3,500)`. `p_limit` is clamped server-side to [1, 500]. Rejected: `OFFSET n` pagination — unstable under concurrent append and O(n) scan; the `(stream_id, seq)` PK makes keyset the index-aligned path.
+2. **Atomic page application.** Each page is folded inside one SQLite transaction: insert raw envelopes (PK dedups), fold in ascending seq, advance `applied_seq` to the page's last seq — commit together. A crash mid-page rolls back to the last page boundary; re-pull is idempotent. `applied_seq` never advances past an unfolded event.
+3. **Gap = halt-and-rebootstrap, never skip.** If a page's first seq ≠ `applied_seq + 1`, the cursor is corrupt (or the snapshot baseline was lost): the client discards the stream's local projections and re-bootstraps per §8.3. Rejected: skip-forward resync — silently dropping history makes the local projection diverge from authority while the CLI keeps issuing commands against the phantom state.
+4. **`head_seq` is a hint, not a fence.** It is read in the same statement as the page (single-statement consistency under READ COMMITTED), but convergence is guaranteed by re-pull, never by comparing to head. "Caught up" means: a pull returned 0 events.
+5. **Upcast before reduce, always.** Every pulled envelope passes the unmodified `upcastEnvelope` first; `UpcastError` (newer schema or missing step) is a halt trigger (§8.5). Server and client share the registry, so an unknown type/version on the wire means exactly one thing: the server is newer than this client.
+6. **Command-response fast path.** The `events` array in a `200 accepted` response (§3.2 step 15) may be folded immediately **iff** its first seq = `applied_seq + 1` (it was allocated under the head lock, so it is contiguous); otherwise it is discarded and replay heals. The response never replaces a replay pull for streams the command didn't touch.
+7. **No cross-stream order.** Workspace stream and repo streams are pulled and folded independently (§2.13); merged UI views sort by `occurred_at_server` for display only, never for authority.
+
+### 8.3 Snapshot bootstrap
+
+`swarm_read.snapshot(p_stream_id uuid) returns jsonb` — same SECURITY DEFINER + `is_member` guard and same uniform 403 as §8.2; agent path via the same read proxy. It executes as **one SQL statement** (`jsonb_build_object` over subqueries), which under READ COMMITTED yields a statement-consistent cut:
+
+`{stream_id, snapshot_seq (= streams.head_seq read in the same statement), protocol_schema_version, min_client_version, projections: {tasks: [...], leases: [...]} }` — plus `{memberships, agent_principals, repositories, landing_authorities}` for the workspace stream.
+
+Attach flow (`swarm cloud attach` / invite accept):
+
+1. snapshot → write projections locally, record `snapshot_seq_applied`;
+2. replay from `snapshot_seq + 1` to head (heals any commit that raced the snapshot statement);
+3. **verification fold**: the client independently runs the unmodified `reduceStream` over the raw pulled events for at least one task touched during catch-up and asserts equality with the snapshot-derived projection row; mismatch → attach aborts loudly (this is the client-side twin of the server nightly rebuild/`drift_detected` tripwire, §3.2 step 12).
+
+Full replay from seq 1 is always a valid fallback (events are reducer-complete, §2.1); the snapshot is an optimization, never a second authority. Rejected: storage-level/export-file snapshots — an inconsistent cut across tables plus a second import format to keep honest; the single-statement jsonb read is consistent by construction and reuses the replay code path for the remainder.
+
+### 8.4 Minimum-supported-client version
+
+- Source of truth: `swarm.config('min_client_version')` (seeded `"0.1.0"`, §2.1). Carried on **every** command response (§3.2 step 15), replay response, and snapshot response.
+- **Server-side**: the client sends its package `client_version` on `POST /commands` (§3.2 preamble). Step 6 validation compares it against the config value read in-tx; below-minimum → `400 {error:"client_unsupported"}` + audit `outcome='validation'`. Uniform body; the minimum is not secret.
+- **Client-side**: on any response whose `min_client_version` is semver-greater than the running version, the CLI halts **before** the next fold: stops advancing cursors (an event stream written by a newer protocol is exactly where unknown types appear), refuses new commands with an upgrade-required message, and keeps serving the already-folded cache labeled stale. Rejected: silent continue ("fold what you know, skip what you don't") — that is skip-on-unknown with extra steps, and forfeits the §2.1 halt guarantee. Rejected: per-client/per-device kill switch — an availability and hostage lever; the version floor is tenant-global and operator-set.
+- Bumping the floor is a human Owner/Admin workspace command, audited (it is a deliberate coordination event: "everyone past protocol change X must upgrade").
+
+### 8.5 The unknown-type halt, concretely
+
+Triggers during fold: `UnknownEventTypeError`, `UpcastError`, `StreamIntegrityError` (all unmodified P0 classes). Behavior, in order:
+
+1. the page transaction **rolls back** — `applied_seq` stays at the last good seq;
+2. `local.stream_cursors.halted_json = {stream_id, seq, type, error}` is recorded;
+3. commands targeting that stream refuse locally with `halted: upgrade required (unknown event "T" at seq N)` — they are not sent, not enqueued;
+4. reads from that stream serve the pre-halt prefix only, labeled `halted at seq N`;
+5. recovery is exactly: upgrade client → re-fold from `snapshot_seq_applied` (or seq 1) → clear halt. Never `--force`, never skip.
+
+Rejected: skip-and-continue on unknown types — the client would fold a partial history, diverge from authority, and keep closing/renewing against a phantom projection; the failure this avoids is not a cosmetic one (a wrong board) but **authoritative closes issued from a state the server never had**. The halt is the client-side enforcement of invariant 3 (§0): the stream is authority, so an unreadable stream means stop, not improvise.
+
+### 8.6 Outbox (§2.7 allowlist, exact)
+
+Allowlist is exactly **{draft task create, message send}** — and at P1 only draft task create is user-reachable (messaging ships P3; the outbox schema ships now). Everything else is online-only with the honest §2 refusal; it is never enqueued.
+
+| Field | Rule |
+|---|---|
+| `command_id` | generated **at enqueue time**, matching the server regex `^[A-Za-z0-9_-]{8,72}$` (§3.2 step 1); immutable thereafter |
+| states | `pending → sending → accepted \| rejected`; no other transitions |
+| dependency ordering | `depends_on` (outbox row id); flush is topological — a message about a task flushes after that task's create is `accepted` |
+| flush | `POST /commands` with the stored body verbatim; crash-safe because the server ledger keys `(principal, command_id)` (§3.2 step 7): a retry after an uncertain outcome replays the stored original (§9 T-11) |
+| `accepted` | stores the server `StoredResponse` (event ids); the events themselves arrive via replay/§8.2 fast path |
+| `rejected` | stores the canonical `reason`/`detail` from the committed `CommandRejected` (or the HTTP error for validation/authz); **the rejected draft is preserved, never auto-requeued, never edited in place** — re-issue = new row, new `command_id` |
+| blocked dependents | a `rejected` dependency leaves dependents `pending` with a surfaced blocked reason; they are never silently dropped or flushed out of order |
+
+### 8.7 G4 at this layer: what "never falls back to local authority" means
+
+| # | Concrete rule | Enforcement point |
+|---|---|---|
+| 1 | No local decide-authority: every authority command for an attached stream goes to `POST /commands`; the CLI never appends to `local.events` from anything but a server response or replay page | single fold/outbox write paths (§8.1) |
+| 2 | Attached marker is one-way: `local.attachments` row exists ⇒ the legacy `semantics=v1-local` lease path refuses every command for those tasks (§2.2 "never conflated"; §6 step 1 freeze). Reversal only via `cloud export` into a **new** local swarm (§6 step 7) | CLI command router checks attachment before dispatch |
+| 3 | Offline: reads = cache labeled with `applied_seq` + `last_sync_at`; writes = §8.6 allowlist only; hard-invariant commands (acquire/renew/handoff/takeover/submit/close/reopen/grants/mint/…) refuse honestly, unqueued | outbox allowlist check before enqueue |
+| 4 | Revocation is sticky downward: after a 403-revocation from the read proxy, only explicitly-labeled **stale local-cache** reads are served; no remote reads, no commands, no `--force` resurrection (§2.3) | CLI credential-health state (`swarm whoami`) |
+| 5 | Halt ≠ fallback: an unknown-type/version halt (§8.5) waits for upgrade + re-fold; it never reverts the stream to local judgment | §8.5 step 3–5 |
+| 6 | Disagreement resolves toward the server, always: seq conflict, verification-fold mismatch, or projection drift ⇒ local projections are rebuilt from the server stream; the reverse direction does not exist | §8.2 rule 3, §8.3 step 3 |
+| 7 | The lease is held by the server, not by possession of the CLI: no local file, lock, or flag extends, renews, or reclaims a lease offline; expiry is server time (§4 honest-liveness) | `occurred_at_server`/`statement_timestamp()` only (§1.2) |
+
+Rejected alternative for the whole section: "optimistic offline acquire with reconcile-on-reconnect" — the reconcile has no correct answer when both sides closed work (closes are irreversible records, §2.2), so the design would need either a merge protocol for authority (a second authority implementation — invariant 2 forbids it) or silent loss of one side's committed record. G4 exists to make that failure impossible by construction.
+
+---
+
+## 9. TEST PLAN
+
+### 9.0 Harness, fixtures, hooks, global invariants
+
+Suite: `tests/p1-server/` — integration tests against `supabase start` (local) with the `command`/`read` Edge Functions served in test mode. The **service_role key is used only for fixture setup and fault injection, never in the command path**. Every test gets fresh workspaces **A** and **B**, users (UA owner of A, UA2 member of A, UB member of B), an agent principal+run+token in A. Commands go over HTTP exactly as a client would send them; concurrency via `Promise.all` over fetches. Two **test-only hooks** in the Edge Function, enabled iff `SWARM_ENV=test` (refused otherwise): `SWARM_CMD_TEST_SLEEP_AFTER_STEP=<n>:<ms>` (sleep between §3.2 steps) and `SWARM_CMD_TEST_ROLLBACK_BEFORE_STEP=<n>` (throw → rollback at a named step).
+
+**Global invariants asserted after every test** (the §10 R1 drift tripwire, run as SQL + the unmodified core):
+
+- **I1 — projection ≡ fold**: for every stream, `reduceStream` over raw `swarm.events` (upcast first) equals `swarm.tasks` rows, canonical-JSON compared.
+- **I2 — contiguous seqs**: per stream, `array_agg(seq order by seq) = array(select generate_series(1, max(seq)))` and `streams.head_seq = max(seq)`.
+- **I3 — tenant discipline**: every `events.workspace_id` equals its stream's `workspace_id`; every row of every tenant-owned table carries the attaching workspace.
+- **I4 — ledger hygiene**: `swarm.idempotency_keys` contains only accepted/domain outcomes (no authz/validation rows); every ledger row's `request_hash` recomputes via the unmodified `requestHash()`.
+- **I5 — attribution (G3)**: every committed event has non-null `actor_user`; agent-originated events additionally carry `actor_agent_principal` + `actor_run` that join back to the presenting token's row.
+
+### 9.1 The launch-blocking dozen
+
+**T-01 — Cross-tenant write rejection** *(§10 core/Kimi #9; §3.2 steps 5, 15; §3.3)*
+Setup: UA holds B's `workspace_id` and repo `stream_id` (deliberately leaked — knowledge of ids is not authority). Control: a random nonexistent workspace id.
+Action: UA's JWT → `POST /commands` `{workspace_id: B, stream: B's repo stream, command: create}`; then the same body against the nonexistent id.
+Expected: both return `403` with **byte-identical** `{error:"forbidden"}` bodies (no existence oracle); zero rows in B's `swarm.events`; zero `idempotency_keys` rows for that `command_id`; B's `streams.head_seq` unchanged; exactly one `audit_log` row per attempt with `outcome='authz'`, `actor_user=UA`, `workspace_id` as supplied; I1–I5 pass for both tenants.
+
+**T-02 — Forged actor field** *(§2.1 actor stamping; §3.2 step 4)*
+Setup: UA (authenticated), UV (another member of A).
+Action: valid `create` whose body additionally carries `actor_user: <UV uuid>`, `actor_agent_principal: <foreign principal>`, `device: "victim-laptop"`. Variant: same fields smuggled *inside* the `command` object.
+Expected: base request → `200 accepted`; the appended envelope's `actor_user = UA`, `actor_agent_principal IS NULL`, `actor_run IS NULL`; UV's id appears nowhere in `swarm.events`; the audit row's `detail` records forged-field presence. A clean retry (identical command, no forged fields) → `replayed` with the original `StoredResponse` — proving the forged fields never entered the idempotency identity (`requestHash` is over the derived principal + command only). The in-`command` variant → `400` validation refusal, zero events.
+
+**T-03 — Stale-epoch close** *(§10 core; §2.2 close fencing; `decide()` close branch)*
+Setup: UA (Owner) creates task, acquires (epoch 1), submits with ttl 200 ms (submission frozen at epoch 1); sleep 300 ms (lease dies; submission survives, §2.2 final row); UA2 acquires (epoch 2) and submits (submission superseded → frozen epoch 2).
+Action: UA closes presenting `epoch: 1`.
+Expected: `200 {status:"rejected", class:"domain", reason:"stale_epoch"}`; exactly one committed `CommandRejected` event (reason `stale_epoch`); `swarm.tasks` row unchanged (`lifecycle='awaiting_review'`, submission epoch 2); the rejection is ledgered; an identical retry → `replayed` and **no second** `CommandRejected`; I1–I5.
+
+**T-04 — Double-spent grant** *(§10 #15; §2.5; §3.2 steps 9, 13; §5.4)*
+Setup: UA2 holds a live lease (epoch 1); UA (Owner) issues takeover grant `g` bound `{task, epoch 1, recipient: UA2's principal}`.
+Action: two concurrent `takeover` commands from UA2, distinct `command_id`s, both presenting `g`.
+Expected: exactly one `200 accepted` with `LeaseTakenOver{epoch: 2, grant_id: g}`; `grant_consumptions` contains exactly one row for `g`; the stream contains exactly one `LeaseTakenOver` carrying `g`; the loser (re-deciding after the head lock, §2.4) receives a domain rejection (`live_lease_needs_grant` — grant no longer epoch-bound/current, and already consumed) with a committed `CommandRejected`; the loser's retry replays its stored rejection without a second event; the `grant_consumptions` PK is the backstop — a forced duplicate insert as service_role errors. I1–I5.
+
+**T-05 — Replayed command_id** *(§2.1 idempotency; §3.2 step 7)*
+Setup: member UA.
+Action: `create` with `command_id: k` → `200 accepted` (response R1). Resend the byte-identical request twice.
+Expected: both retries return R1's `StoredResponse` verbatim (same `event_ids`); `swarm.events` holds exactly one row with `command_id=k`; `streams.head_seq` unmoved by retries; exactly one `idempotency_keys` row for `(user, UA, k)`; audit shows one `accepted` + two `replayed` rows.
+
+**T-06 — Key reuse with a different hash → 409** *(§10 core; §3.2 step 7; §7)*
+Setup: ledger row from T-05.
+Action: UA resends `command_id: k` with a different command body (different slug).
+Expected: `409 {error:"command_id_conflict"}`; zero new events; the ledger row for `k` is unchanged (original hash, original response); `streams.head_seq` unmoved; audit gains one `outcome='conflict'` row; a subsequent retry of the *original* body still replays the original response (the conflict did not poison the key).
+
+**T-07 — Revoked principal mid-flight** *(§2.3 revocation-every-command; §3.2 step 6; §5.3 READ COMMITTED)*
+Setup: principal P (owner UA), run R, token T; test hook `SWARM_CMD_TEST_SLEEP_AFTER_STEP=4:1500`.
+Action: start command C with T; at +500 ms, from a second connection, UA commits `revoke_agent_principal(P)` (+tombstone); let C resume. Then issue further commands on T and on a sibling token of P.
+Expected: C's step-6 revocation read sees the committed tombstone → `403`; C appends zero events; audit row with `credential_id = T.token_id`; all subsequent commands on T and the sibling fail `403` (principal-level cascade, fail-closed); a renewal attempt on P's lineage is refused. I2 proves C burned no seq.
+
+**T-08 — Oversize payload** *(§2.1 Kimi #23; §3.2 steps 1, 6; §2.1 events CHECK)*
+Setup: member UA.
+Action: (a) body of 200 KB; (b) well-formed body ≤ 128 KB whose computed event payload exceeds 64 KB (evidence_set of long strings).
+Expected: (a) `413` from the stateless pre-check with **zero DB writes of any kind** (assert audit/event counts unchanged — step 1 precedes any transaction); (b) in-tx validation refusal (`413`/`400`), one audit row `outcome='validation'`, zero events, head_seq unmoved; separately (schema assertion, once): a direct service-role `INSERT` with an oversized payload fails the `octet_length <= 65536` CHECK — the constraint exists as backstop even if wrapper validation regresses.
+
+**T-09 — Seq gap under concurrent append** *(§2.4 gapless allocation; §3.2 steps 8, 11)*
+Setup: one repo stream; 20 concurrent commands: 10 valid `create`s (distinct tasks), 7 commands engineered for domain rejection (5 principals racing `acquire` on one task, 2 stale-epoch `renew`s), 3 commands with `SWARM_CMD_TEST_ROLLBACK_BEFORE_STEP=15` (post-append rollback).
+Expected: after settlement, I2 holds exactly — `events.seq` is precisely `1..M` with no gaps, `head_seq = M = count(events)`; the 3 rolled-back commands contributed zero events and zero head movement (in-memory seq arithmetic rolls back with the tx, §1.3); each committed transaction's events occupy one contiguous block; every domain rejection present as its committed `CommandRejected` inside the same contiguous numbering.
+
+**T-10 — Lease race, exactly one winner** *(§10 core; §2.2; §5 head-lock serialization)*
+Setup: open task; members UA and UA2, distinct `command_id`s.
+Action: simultaneous `acquire` from both.
+Expected: exactly one `LeaseAcquired` event (epoch 1); winner `200 accepted`; loser `200 {status:"rejected", class:"domain", reason:"not_acquirable"}` with committed `CommandRejected`; projection `epoch=1, owner=<winner>`; each side's retry replays **its own** stored original (winner's accept, loser's rejection — §2.1 replay-before-state); I1–I5. Repeat 50× and assert the winner count is always exactly 1 (never 0, never 2).
+
+**T-11 — Retry-after-commit returns the original result** *(§10 core; Kimi #17; §3.2 steps 7, 14)*
+Setup: extends T-05 to the rejection-ledger semantics.
+Action: (a) accepted path: `create` with k1 → R1; resend ×3. (b) domain path: `acquire` a task whose lease is live-held by someone else, k2 → rejection R2; resend ×3.
+Expected: every retry body equals the original `StoredResponse` exactly (`event_ids` identical, `ok`/`reason`/`detail`/`class` identical); stream holds exactly one event set for k1 and exactly one `CommandRejected` for k2; `head_seq` changes only on the first commit of each; audit shows one `accepted`/`domain` + three `replayed` per key; ≥30-day retention asserted as a schema/config constant (purge job boundary).
+
+**T-12 — Last-Owner removal refused** *(§10 core; §2.6 no-orphan; §3.4)*
+Setup: workspace A with sole Owner UA and member UA2.
+Action: (1) `remove_member{target: UA}` issued by UA; (2) `change_role{target: UA, role: member}` issued by UA.
+Expected: both refused as **committed domain rejections on the workspace stream** (`CommandRejected`, reason `last_owner` — the workspace module's no-orphan code, §3.4); UA's `memberships` row is byte-identical afterward (`role='owner'`, `revoked_at IS NULL`); zero `MemberRemoved`/`MemberRoleChanged` events for UA; UA can still issue commands (not bricked — §7 sole-Owner is first-class); retries replay both rejections; I1–I5.
+
+### 9.2 Remaining P1-gating §10 tests (compact)
+
+| Name | Setup → action | Observable assertion |
+|---|---|---|
+| T-13 unknown event type halts client | service-role injects `events` row `type='FutureEvent', schema_version=1` past head; CLI pulls | fold rolls back; `applied_seq` = seq−1; `halted_json` recorded; commands to that stream refuse locally; after whitelist-"upgrade", re-fold converges to I1 |
+| T-14 dropped/reordered pages converge | client harness drops page 2 and reorders page 3 of a replay | re-pull from cursor heals; final local projection canonical-equals `swarm.tasks`; `applied_seq = head_seq` |
+| T-15 revoked-membership agent token fails auditable | revoke UA2's membership; use UA2-derived agent token | command → 403, zero events, audit row with `credential_id`; read proxy → 403; CLI serves only labeled stale cache |
+| T-16 concurrent invite accepts → one membership | one invite token; two verified users accept concurrently (§7, Kimi #6) | exactly one `InvitationAccepted`+`MemberJoined`; loser matches 0 rows on the atomic consumption `UPDATE` → domain rejection; `invitations.consumed_at` set once |
+| T-17 handoff to non-member | `handoff to_owner = non-member` (and separately, revoked member) (Kimi #9) | domain `recipient_not_member`, committed `CommandRejected`; owner/epoch unchanged |
+| T-18 denylisted scope refused at mint | human mints agent token requesting `issue_grant` scope (§2.3 denylist; §3.4) | refusal per §3.4 precondition rules (committed `CommandRejected` on workspace stream); zero `agent_tokens` rows; audit present |
+| T-19 renewal is a fenced successor | `renew_worker_token` with caller-selected `task_id`/`scopes` divergent from predecessor; and a successor broader than predecessor | validation refusal for caller-selected targets; broader-than-predecessor refused; a legal renewal's successor row derives principal/run/task/epoch/scopes solely from the predecessor, budget decremented, lineage intact |
+| T-20 agent revocation authority confined | agent token presents `revoke_agent_token` against (a) a sibling token, (b) its principal, (c) its own exact presenting token (§2.3/§10) | (a),(b) → 403 authz, audit-only, zero tombstones; (c) → accepted, exactly one tombstone for the presenting token; enforcement on next command fails closed |
+| T-21 per-view two-tenant zero rows | UB's JWT selects every `swarm_read.*` view filtering on A's ids (Kimi #11) | zero rows from every view (incl. `events`, `tasks`, `leases`); predicate text asserted identical across views; replay/snapshot RPCs return uniform 403 |
+| T-22 append-only enforcement | as `swarm_command`: `UPDATE`/`DELETE` on `events`, `audit_log`; as a test role granted UPDATE: retry | permission denied for `swarm_command` (grant absent); trigger raises `SWARM_APPEND_ONLY` for the granted role — backstop proven |
+| T-23 expired-lease mutation rejected | acquire with ttl 200 ms; sleep; `renew` (and `submit`) at same epoch | domain `lease_expired` for each, committed `CommandRejected`; state unchanged |
+| T-24 submission survives expiry; supersession | as T-03 setup through the second submit | after expiry + reacquire, frozen submission row still closeable at its epoch; after the new submit, only the new `{epoch, head_sha}` closes (T-03 covers the stale side; here the *current* close succeeds → `TaskClosed`, disposition recorded) |
+| T-25 read proxy re-verifies every request | revoke token T between two replay calls | first call 200, second 403; no caching window; audit rows for both |
+
+Every row above is executable against the harness in §9.0 with no manual steps; T-01…T-12 plus I1–I5 are the P1 merge gate, and T-13…T-25 bind §8's client rules to the server they consume.

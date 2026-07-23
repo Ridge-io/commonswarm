@@ -1,0 +1,169 @@
+
+> build · moonshotai/kimi-k3
+
+✱ Glob "src/protocol/*.ts" 6 matches
+→ Read scratchpad/kimi-p1-spec.log
+✱ Glob "docs/design/SWARM-CLOUD.md" 1 match
+→ Read src/protocol/commands.ts
+→ Read src/protocol/idempotency.ts
+→ Read src/protocol/events.ts
+→ Read src/protocol/reducer.ts
+✱ Grep "^#{1,3} |^### |G7|fenc|epoch|concurren|revocation|rate.limit|idempoten|30.day|canonical|request hash" in docs/design/SWARM-CLOUD.md · 100 matches
+→ Read docs/design/SWARM-CLOUD.md [offset=56, limit=75]
+→ Read docs/design/SWARM-CLOUD.md [limit=30, offset=340]
+## 4. AUTH + TENANCY (completion)
+
+…`canonicalPrincipal(actor)` (unmodified) keeps ownership comparisons agent-scoped: the `owner` string stamped into `LeaseAcquired` / `TaskSubmitted` and compared by `decide()` (`s.owner !== me`) is the bare agent-principal id for worker credentials and the bare user id for human JWTs. A human's ownership of a principal is a *data row* (`agent_principals.owner_user_id`), never an identity alias, and the two id spaces are disjoint uuid populations, so:
+
+| Consequence | Mechanism — no wrapper code required |
+|---|---|
+| A human does **not** inherit their agent's lease | Human JWT → canonical principal = user id ≠ principal id → `not_owner` / `stale_epoch` domain rejections |
+| Human authority over agent-owned tasks | Flows through `role()` (Owner/Admin close/reopen) or an explicit acquire/handoff at a **new epoch** — which simultaneously fences the agent's epoch-bound token (§6) |
+| Two principals owned by the *same* human are mutually fenced | Owner string is the principal id; principal A's lease refuses principal B |
+| Attribution (G3) and least-authority coexist | Authority compares one string; the envelope still triple-stamps `actor_user` / `actor_agent_principal` / `actor_run` from the token join |
+
+**Tenancy: why a fully forged request body reaches nothing.** Threat model: the attacker holds a *valid* credential in workspace A and knows every identifier in workspace B (ids are not secrets). Every client-supplied identifier is resolved against server-derived tenancy **before any B-row is read** (§3.2 step 5, reject-before-read):
+
+| Forged field | Server-side resolution (WHERE — against WHAT) | Result |
+|---|---|---|
+| `workspace_id = B` | `is_member(B, actor.user)` against `swarm.memberships` (live rows only); for agents, `agent_principals.workspace_id` must equal B — impossible, it is a single immutable column set at principal creation | 403 uniform body, audit-only, **zero B rows read** |
+| `stream.repo_mapping_id` from B | `swarm.repositories WHERE repo_mapping_id=$1 AND workspace_id=$validated AND archived_at IS NULL` | 403 (pairing fails even if the mapping id is real) |
+| `task_id` from B | Format-checked at step 5; existence is decide-time **against the resolved stream** — a B task id under A's stream is `unknown_task` | Committed `CommandRejected` **inside A's own stream** — attacker-visible only, zero cross-tenant effect |
+| `to_owner` / recipient from B | `isEligibleRecipient` oracle: current member/principal **of the resolved workspace** | Domain `recipient_not_member` |
+| `grant_id` from B | Grant oracle `WHERE grant_id=$1 AND workspace_id=$resolved AND binding matches` | Domain rejection; grant never consumed |
+| `actor_*` / `device` in body | Ignored; presence recorded in audit `detail` (self-assertion attempt is itself signal) | No code path consumes them |
+| Invitation token for B (the one capability path) | `accept_invitation` looks up by `token_hash`; workspace and invitee are bound **from the invitation row and `auth.uid()`** — the client chooses neither | Cross-tenant join impossible without a live capability issued by B |
+
+Append-time backstops, in case steps 4–5 ever regress: (1) every event/task/grant row carries `workspace_id` stamped from the *resolved stream row*, pinned by composite FK `(stream_id, workspace_id) REFERENCES swarm.streams (stream_id, workspace_id)` (a trivially-unique index on the PK pair is added to support it) — a transaction that resolved a B stream while claiming A's tenant column violates the FK and rolls back; `leases` reaches tenancy transitively through its stream FK. (2) RLS is enabled on every `swarm.*` table with **no** policy for `anon`/`authenticated` (deny-all stands even after a future grant mistake); `swarm_command` carries `USING (true)` precisely because step 5 + scoped queries + the composite FK are the tenancy control for the command path — RLS's job here is to make the unauthenticated default "zero rows," which the §10 per-view two-tenant tests assert.
+
+**Read path.** Human reads go only through `swarm_read` views whose predicate `is_member(workspace_id, auth.uid())` is ANDed into the plan (`security_barrier`); `auth.uid()` comes from the GoTrue-verified JWT, so a forged `?workspace_id=eq.B` filter can only narrow, never widen. Agent reads go through the Edge read proxy (§8), which resolves stream→workspace server-side and rechecks `principal.workspace_id` before issuing any query; signed artifact URLs are per-workspace-bucket, non-listable, minted only after the same check (Kimi #10). Invitations have **no general read view**: the raw token is a capability disclosed once at issue, stored hashed, and the acceptance page renders inviter identity + tenant age (the §8 invite-phishing control) rather than exposing the table.
+
+**Actor identity: stamped from the credential, never the request.** (a) Single derivation site: step 3–4's credential-row join yields `user / principal / run / device`; the frozen `env()` copies `ctx.actor` into every envelope — no request-body field name appears anywhere in `src/protocol/*`, so there is physically no path from body to `actor_*`. (b) `device` comes from the token's run join (agents) or the login-time `register_device` row (humans), never from a command body. (c) Rejected alternatives: trusting client-stamped actor fields — the §2.1 failure it avoids is one-curl principal forgery; accepting actor *hints* for routing and validating later — late validation leaks an existence oracle (403-vs-404 distinguishes live ids; step 5's uniform 403 exists to kill exactly this); deriving the agent actor from a body `principal_id` + membership check — decouples credential from principal, letting any stolen member session impersonate any principal in the workspace instead of only the minted one.
+
+---
+
+## 5. CONCURRENCY + FENCING
+
+Fencing is produced by the **pure** `decide()` against server-loaded state; the server never catches fencing failures as exceptions — they are *decisions*, committed as `CommandRejected` history per the §3.3 table.
+
+### 5.1 The three fences
+
+| Fence | Stored / advanced | Checked WHERE — against WHAT | Stale input → outcome |
+|---|---|---|---|
+| **Task version** | `tasks.version`; +1 only via `TaskReopened`; reducer asserts strict increase | Close-grant oracle binding `{version, epoch, head_sha}`; reopen also clears `submission` | Close after reopen → `not_submitted` (submission gone) or `close_needs_grant` (binding mismatch) — the grant dies with the version, per §2.5 |
+| **Lease epoch** | `tasks.epoch`; +1 on acquire/handoff/takeover; reducer `assertEpochIncrease` refuses non-increasing | `decide()`: renew/handoff/submit compare `cmd.epoch` to `s.epoch`; **close compares `cmd.epoch` to `s.submission.epoch` (frozen)**; takeover-grant oracle compares `binding.epoch` to `s.epoch` at decision time | Committed `CommandRejected`: `stale_epoch` / `live_lease_needs_grant` |
+| **Stream seq** | `streams.head_seq`; `events` PK `(stream_id, seq)` | Head row `FOR UPDATE` before any state read; seqs allocated `head+1 … head+k` | PK conflict → ROLLBACK + 500 (authority-path defect, not contention — §3.2 step 11); replay side: `reduceStream` halts on gap/dup |
+
+**Stale-epoch close, precisely** (the §10 test). Task T: `submit` at epoch 3 freezes `submission {epoch 3, head_sha H}`. Variants:
+
+- **Superseded:** a new `submit` at live epoch 5 overwrites the frozen submission. Retried `close{epoch:3}` (new command_id): `cmd.epoch(3) ≠ s.submission.epoch(5)` → domain `stale_epoch`, detail naming presented vs current — committed, ledgered, replayable.
+- **Reopened:** `reopen` bumps version and nulls the submission: `close{3}` → `not_submitted`. If the claim was gated and the caller holds a close grant bound to `{v1, e3, H}`: version moved → `validCloseGrant` false → `close_needs_grant`.
+- The comparison target is the **frozen submission epoch, never the live lease epoch** — §2.2's final row (a submission survives reacquisition) is exactly why a stale close stays refused while the live epoch has legitimately moved on.
+
+Worker tokens add a third-party fence on the same numbers: tokens bind `{run, task, epoch}`; renewal checks the presented epoch against the current lease epoch in-tx, so an e3-bound token cannot renew into e5's lease — and its commands fence through the same `decide()` comparisons regardless (§6).
+
+### 5.2 Serialization: one lock, one decision, one commit
+
+Mechanism per command (each command touches exactly one stream): §3.2 step 8 `SELECT head_seq FROM swarm.streams WHERE stream_id=$1 FOR UPDATE`; **all** decide-state and oracle reads (steps 9–10) execute *after* lock acquisition; append + projection + head bump + ledger commit together. Single-row, single-stream lock scope means no lock-ordering discipline and no deadlock surface. Hold time is in-memory decide plus a few inserts; the only network call (Supabase Auth verification) happens in step 1, before `BEGIN`. `SET LOCAL lock_timeout='5s'` bounds the waiter: breach → `503` + `Retry-After` + audit (`outcome='error', reason='lock_timeout'`) instead of an unbounded queue.
+
+**Two concurrent claims → exactly one winner, no negotiation round-trip** (the §10 lease-race test). T1 (A) and T2 (B) both `acquire` task T (epoch 5, open):
+
+1. T2 blocks at `FOR UPDATE`.
+2. T1 reads post-lock state (epoch 5, open) → `decide()` → `LeaseAcquired e6 owner=A` → append, upsert `tasks`, bump head, **COMMIT**.
+3. T2 unblocks: under READ COMMITTED the blocked `FOR UPDATE` re-reads the row (EvalPlanQual) and returns the **new** head; T2's subsequent task read — a new statement with a fresh snapshot — sees epoch 6, owner A, live lease → `decide()`: `active ∧ live` → `not_acquirable` → committed `CommandRejected` in B's name, ledgered.
+
+One winner; the loser's loss is itself durable history; **zero internal retries** — one command = one lock acquisition = one decision = one commit. The loser's remedy is a *new command_id* (a fresh decision), never a silent server retry. Concurrent takeover-vs-handoff at the same epoch (§10 #15) resolves identically: the loser re-decides against the winner's committed state — takeover-loser's grant (bound to the pre-handoff epoch) is now invalid → `live_lease_needs_grant`; handoff-loser sees `owner ≠ me` → `not_owner`.
+
+Rejected alternatives:
+
+- **Optimistic CAS on the head row** (`UPDATE … WHERE head_seq=$old`, rowcount-checked, retry on mismatch). Three failures: (1) decision/commit gap — oracle inputs (memberships, grants, tombstones) are not covered by the head CAS, so a correct CAS must re-run every oracle after winning, reinventing the lock badly; (2) retry storms — a create-race on a hot stream (fleet spawn) turns N commands into O(N²) decide attempts with backoff, where the row lock degrades to fair FIFO queueing; (3) audit/replay semantics blur — one user command becomes K internal attempts. This is why `decide()` needs no `expected_seq` field (§1.3): there is no CAS-mismatch path to surface.
+- **REPEATABLE READ** — see §5.3; rejected outright, it is actively wrong here.
+- **`pg_advisory_xact_lock(stream_id)`** — works, but the row lock also protects the `head_seq` update itself, is self-describing in `pg_locks`, and needs no lock-id derivation convention; zero payoff, one more convention.
+- **Per-task row lock** — does not serialize seq allocation (still need the head lock) and does not cover slug-uniqueness inserts from concurrent creates; two locks reintroduce ordering questions. One lock per stream is the minimum covering both allocation and decision inputs; serializing unrelated tasks in the same stream is harmless at authority-command rates (§0: invisible rigor is free).
+
+### 5.3 Isolation level: READ COMMITTED — load-bearing, not a default
+
+The lock-then-read pattern *requires* per-statement snapshots: the loser's post-lock reads must see the winner's commit.
+
+- **REPEATABLE READ is the specific failure this design rejects.** Under RR the snapshot pins at the transaction's first statement (step 3, pre-lock). A racer reads task state *stale*: both transactions see epoch 5, both emit `LeaseAcquired e6` at consecutive seqs — **two committed winners**, and replay then halts at the second (`assertEpochIncrease`: non-increasing epoch). RR converts a race into permanent stream damage against invariant 3.
+- **SERIALIZABLE (SSI)** is safe but abort-driven: the loser fails with `40001` and must retry end-to-end — reintroducing the §5.2-rejected retry loop — and SSI's predicate-lock tracking false-positives across the wide oracle read set throttle hot workspace streams. The head lock already provides strict per-stream serialization; SSI buys nothing and costs abort semantics.
+- Structural enforcement: step 9's state loader takes the locked head row as its input, so a pre-lock read has nothing to bind to; the §9 integration tests hammer concurrent acquires/closes and assert exactly one epoch-winner and gapless seqs per stream.
+
+### 5.4 Grant double-spend (§10 #15)
+
+Two concurrent closes presenting one grant: **primary** — serialization; the loser re-decides post-lock, sees `lifecycle='done'` → `already_done` committed rejection, never attempts consumption. **Backstop** — `grant_consumptions` PK on `grant_id`: any residual path reaching a duplicate insert gets a unique violation → ROLLBACK → 500 (§3.2 step 13) — a loud defect, never a silent second spend. The §10 test asserts exactly one `TaskClosed` and exactly one consumption row.
+
+---
+
+## 6. REVOCATION + RATE LIMITS
+
+### 6.1 Revocation: effect within one command, not eventually
+
+- **Enforcement point:** §3.2 step 6, inside the command transaction, per-statement snapshot. The check reads committed state as of its own execution, so a revocation committed before the *next* command's step-6 read is enforced for that command. There is no propagation mechanism to lag: no cache, no TTL, no invalidation messages — the Postgres row **is** the revocation state.
+- **Linearization point:** the step-6 statement. A command that passed it before the revoke commits is allowed to finish; it is not preempted mid-transaction. Bounded window: ≤ 1 in-flight command per credential. Preemption is rejected: aborting in-flight commands makes outcomes ambiguous (the client cannot distinguish abort-before-append from abort-after) and forces recovery through idempotent replay anyway. The events an in-flight command commits remain valid history — they were authorized at decision time; revocation withdraws *future* authority, it does not rewrite the past.
+- **Checked set (one indexed query):** token `revoked_at`; tombstones for `(token, principal, run, device, membership, family)` plus `(lineage, token.lineage_id)`; principal `revoked_at`; membership `revoked_at`; device `revoked_at` via the run join. Fail-closed: any hit → audit + 403. Order is load-bearing: revocation precedes idempotency (§3.2), so a revoked principal cannot even replay its own stored responses — a stored response is a remote read, and §2.3 permits only labeled local cache after membership revocation.
+- **Cascades:** a revoke command writes the target tombstone plus — for family/device/principal targets — lineage tombstones enumerated from `agent_tokens_by_lineage` in the same tx; every descendant token carries `lineage_id`, so the per-command check catches descendants without materializing per-token rows. Renewal re-runs the identical set plus predecessor `revoked_at`, renewal-grant liveness, horizon, and `(task, epoch)` currency: an individually revoked worker is never resurrected by renewal (§10).
+- **Agent self-surrender only:** an agent credential may tombstone its own exact presenting `token_id` — compared against the *authenticated row*, not a body field (§4); sibling/principal/run/device/family/membership targets are authz refusals (§10 test).
+- **Rejected:** stateless JWT agent auth with expiry-bounded revocation — revocation window = token TTL (up to 8h), violating §2.3's every-command evaluation; cache + pub/sub invalidation — fail-open on a missed or dropped invalidation; polled CRL — the poll interval is the vulnerability window. Each fails *open* under exactly the conditions revocation exists for.
+
+### 6.2 Rate limits (G7 posture: built as if anonymous public traffic were already arriving, though P1 is invite-only)
+
+| Layer | Key | Breach disposition | Why this shape |
+|---|---|---|---|
+| Edge stateless (body ≤ 128 KB, `command_id` format) | connection | 400/413, no DB touch | Cheap drop before any work |
+| Unauthenticated endpoints (login start/callback, invite accept, token exchange) | `ip:<addr>:<endpoint>` **and** identifier where present (login email, invite token hash) | 429 + jittered `Retry-After`; the identifier dimension writes `security_alerts` instead of hard-locking | Attacker throttled by IP; a victim is not lockable via their own email/URL (Kimi #13) |
+| Authenticated commands | `cred:<token_id>` / `cred:<user_id+device_id>` | 429 + audit + alert | Per-**credential**, never per-principal: a thief burning a token's budget does not lock out the legitimate principal; re-mint restores capacity (§5, §2.9 alignment) |
+| Workspace fairness ceiling | `ws:<workspace_id>` | 429 + operator alert | One tenant — compromised or merely buggy fleet — cannot starve the shared plane |
+| Per-tenant resource creation (members, principals, invites/day, workspaces-per-identity ≤ 3) | count oracles inside `decideWorkspace()` | Domain rejection / 403 | **Hard** caps — these bound cost and must not be soft; §8's taxonomy forbids conflating them with the victim-protecting soft limits |
+| Global spend circuit breaker | `swarm.config` flag (operator + auto-trip) | Degraded mode: signups/invites paused | G7 Sybil backstop (§8) |
+
+Mechanics:
+
+- **Counters:** fixed 60 s windows in `swarm.rate_buckets` via `INSERT … ON CONFLICT (bucket_key, window_start) DO UPDATE SET count = rate_buckets.count + 1 RETURNING count` — atomic and SQL-backed. In-memory edge buckets are rejected: edge instances are ephemeral and multi-instance, so in-memory limits diverge across instances and reset on cold start — unenforced exactly under the bursts they exist for.
+- **Placement:** step 4½ — immediately after principal derivation, before tenancy/validation. Every authenticated attempt is charged, including cross-tenant probes and revoked-credential replays; charging only accepted commands would make enumeration free (rejected).
+- **Breach commits:** on breach the transaction writes only the counter increment + audit row + `security_alerts` row and **commits**, then returns 429 — rolling back would refund the attempt. Disposition stays audit-only (§3.3): no events, no ledger row.
+- **429 vs idempotent replay:** rate limiting precedes the idempotency lookup deliberately — a replay under breach gets 429, not the stored response; the row remains stored and a later retry within retention replays it. Unthrottled replay of ≥ 30 d of keys is itself a vector.
+- **Uniformity:** 429 bodies carry no tenancy/credential detail; `Retry-After` is jittered to de-sync herds.
+- **Seed defaults** (in `swarm.config`, tuned by the §10 abuse/load suite before P5 opens the surface): `auth.ip` 10/min; `command.cred` 120/min; `command.ws` 1200/min; `events.ws` 200 000/day; `invites.ws` 10/day (§8 phishing cap); workspaces per verified identity ≤ 3 (P5 gate).
+
+---
+
+## 7. IDEMPOTENCY RETENTION
+
+**Contract.** Key `(principal_kind, principal_id, command_id)` (PK; kinds `user`/`agent` mirror P0's `idempotencyPrincipal` namespacing). Hash: the **unmodified P0 `requestHash()`** — sha256-hex of `canonicalJson({principal, cmd})`, keys sorted recursively. Stored: `StoredResponse {ok, reason?, detail?, class?, event_ids}` + `created_at`. Retention: **≥ 30 days** — daily `pg_cron` purge as `swarm_admin` (`swarm_command` holds no DELETE, §2.2): `DELETE FROM swarm.idempotency_keys WHERE created_at < now() - interval '30 days'`, horizon configurable in `swarm.config` with 30 d as floor (Kimi #17 sets the floor covering any realistic client retry; per-row cost argues against much more).
+
+**What is hashed — exactly.** `{principal: "user:<uid>" | "agent:<pid>", cmd}` where `cmd` is the complete P0 `Command` member — every field that changes the command's effect:
+
+| kind | hashed fields |
+|---|---|
+| create | `kind, task_id, slug` |
+| acquire | `kind, task_id, ttl_ms` |
+| renew | `kind, task_id, epoch, ttl_ms` |
+| handoff | `kind, task_id, epoch, to_owner, ttl_ms` |
+| takeover | `kind, task_id, grant_id, ttl_ms` |
+| submit | `kind, task_id, epoch, branch, head_sha, evidence_set` |
+| close | `kind, task_id, epoch, disposition, grant_id` |
+| reopen | `kind, task_id, epoch` |
+
+`ttl_ms` staying in the hash is deliberate: a retry with a different TTL must 409 — replaying a response whose committed `lease_expiry` contradicts the caller's assumption would be a silent lie.
+
+**What is EXCLUDED — and why.**
+
+| Excluded | Why | Failure if included |
+|---|---|---|
+| `command_id` | It *is* the lookup key; the hash exists to detect key **reuse** with a different request | Functionless redundancy |
+| `workspace_id` / `stream` routing | P0 `requestHash` is frozen and hashes only `(principal, cmd)` | — (handled by wrapper augmentation below) |
+| `client_version` | Compatibility metadata for the min-version gate, not command semantics | A legitimate retry after a CLI upgrade 409s instead of replaying |
+| `event_id`, `seq`, `occurred_at_server` | Server-assigned **outputs** | Server time makes every request unique — idempotency ceases to exist |
+| Credential material / `token_id` | The ledger is keyed by **principal**, not credential | A worker whose ≤ 1 h token rotated to a successor (same principal) would *re-execute* its pre-rotation `command_id` instead of replaying — duplicate effects across routine renewal |
+| IP / user-agent / HTTP metadata | Transport artifacts | A retry from a different network (laptop → CI runner) must still replay |
+
+**Routing-field augmentation (P0 stays frozen).** The SQL ledger row additionally stores `workspace_id` + `stream_id`, and the step-7 lookup matches them. The case the bare P0 hash cannot see: one principal, two memberships, same `command_id`, same `cmd`, different `workspace_id` — without the guard, the second request replays an accepted response for a command that never ran there; with it, the mismatch is treated as conflict → 409. The pure hash is untouched; the wrapper narrows the replay condition.
+
+**409 semantics.** Row exists and (`request_hash` differs **or** workspace/stream differs) → audit (`outcome='conflict'`) + `409 {error:"command_id_conflict"}`; the existing row is untouched, nothing is appended, and the body carries no detail about the original request — uniformity forbids making the stored outcome readable to whoever controls the key.
+
+**Concurrent-first-attempt race, closed by the PK, not the lookup.** Two racing fresh executions with the same key both miss step 7, serialize at the head lock, and both decide; the loser's step-14 ledger `INSERT` violates the PK → ROLLBACK (its now-divergent decision is discarded) → a fresh one-statement read sees the winner's row → returns the winner's stored response as a replay. First committer defines the response; exactly-once-per-key is enforced by the primary key. Bounded: one re-read, no loop.
+
+**Replay path.** Hash match → `200` with the stored `StoredResponse` **verbatim** — accepted *and* domain-rejected outcomes both replay (Kimi #17: a late retry never re-executes a committed command). `event_ids` are provenance; events are never re-appended — the client observes effects via stream replay. The replay itself is audited (`outcome='replayed'`), so replay abuse is visible. Never ledgered: `authz` rejections (a later membership grant must make a retry eligible — the P0 test pins this) and all transport failures (401/403/400/413/409/429), which never reached `decide()`.
+
+**Post-purge behavior, stated rather than hidden.** A `command_id` replayed after its row's purge re-executes as fresh — and degrades safely, because the state machine's own guards absorb duplicates: repeated create → `slug_not_unique`; repeated acquire → `not_acquirable`; repeated close → `already_done`. The 30 d floor exists so this path is unreachable by any realistic client retry (outbox drains, CI re-runs); clients must treat `command_id`s as single-use beyond the retention window (client contract, §8).

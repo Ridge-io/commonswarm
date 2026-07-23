@@ -1,0 +1,456 @@
+
+> build · moonshotai/kimi-k3
+
+I'll read the canonical spec sections and the full P0 core first — the wrapper design has to be grounded in the actual `decide()` signature, event types, and idempotency contract, not assumptions.
+$ wc -l docs/design/SWARM-CLOUD.md src/protocol/*.ts tests/protocol-next.test.ts
+1068 docs/design/SWARM-CLOUD.md
+     228 src/protocol/commands.ts
+     135 src/protocol/events.ts
+     112 src/protocol/idempotency.ts
+       9 src/protocol/index.ts
+     153 src/protocol/reducer.ts
+      57 src/protocol/upcasters.ts
+     740 tests/protocol-next.test.ts
+    2502 total
+
+→ Read docs/design/SWARM-CLOUD.md
+→ Read src/protocol/commands.ts
+→ Read docs/design/SWARM-CLOUD.md [offset=241]
+→ Read src/protocol/events.ts
+→ Read src/protocol/reducer.ts
+→ Read src/protocol/idempotency.ts
+→ Read src/protocol/upcasters.ts
+→ Read src/protocol/index.ts
+→ Read tests/protocol-next.test.ts
+→ Read docs/design/SWARM-CLOUD.md [offset=404]
+I have the full P0 core and the governing spec sections. One quick scan of the CLI side so section 8 (local-first integration) names real surfaces rather than invented ones:
+
+$ ls src/ && ls supabase 2>/dev/null; ls docs/design/ 2>/dev/null
+protocol
+repo-backstop.md
+SWARM-BOARD-V2.md
+SWARM-CLOUD-UX.md
+SWARM-CLOUD-V1.md
+SWARM-CLOUD.md
+
+Everything is read: the governing spec sections, all six P0 protocol files, and the 740-line test suite. Here is the spec.
+
+---
+
+# SWARM P1 — Secure Authority Slice: Server-Side Design Spec
+
+Wraps the pure P0 `decide()` core (`src/protocol/`) behind the Supabase command API. P0 files are treated as frozen; every adaptation happens in new impure code or new sibling pure modules. Where this document makes a choice, the rejected alternative is named with the failure it avoids.
+
+## 0. Non-negotiable invariants this design must preserve
+
+1. `src/protocol/{events,reducer,commands,idempotency,upcasters,index}.ts` ship **byte-identical**. No imports added, no signatures widened.
+2. Every authority decision for task/lease commands is produced by **the** `decide()` — one implementation, not a port.
+3. A projection row is always `reduceTask`-equivalent to the event stream; the stream is authority, projections are derived.
+4. Revocation, tenancy, and actor identity are evaluated **inside the command transaction, from server-derived state, on every command** (§2.1 Kimi #9, §2.3).
+5. Authn/authz/validation failures never write stream events; domain rejections always do (§2.1; `commands.ts` rejection classes).
+
+---
+
+## 1. BOUNDARY MAP
+
+### 1.1 The three zones
+
+```
+┌─ (c) Postgres/Supabase ────────────────────────────────────────────┐
+│  swarm.* tables, RLS, constraints, grants, pg_cron purge, GoTrue   │
+└──────────────▲─────────────────────────────────────────────────────┘
+               │ parameterized SQL, ONE transaction per command,
+               │ role = swarm_command (minimal DML, no DELETE on
+               │ events/audit, no DDL)
+┌─ (b) impure adapter — supabase/functions/command/index.ts (Deno) ──┐
+│  credential classification+verification, principal derivation,     │
+│  tenancy validation, revocation reads, size/format validation,     │
+│  SQL-backed idempotency ledger + oracles, stream-head locking,     │
+│  seq/event-id/clock injection, event append, projection write,     │
+│  grant consumption, audit writes, rate buckets, HTTP mapping       │
+│  imports and calls the pure core VERBATIM (npm workspace import)   │
+└──────────────▲─────────────────────────────────────────────────────┘
+               │ decide(state, cmd, ctx) / applyCommand(ledger, ...) /
+               │ reduceTask / upcastEnvelope — pure calls only
+┌─ (a) pure core — src/protocol/* (FROZEN) ──────────────────────────┐
+│  decide(), applyCommand(), reduceTask/reduceStream, upcasters,     │
+│  requestHash/canonicalJson, types                                  │
+└────────────────────────────────────────────────────────────────────┘
+```
+
+### 1.2 What MUST NOT leak into the pure core (and where each lives instead)
+
+| Contaminant | Core's existing defense | P1 location |
+|---|---|---|
+| Clock | `ctx.now` injected | `statement_timestamp()` of the command tx, read once, passed as ms epoch |
+| Randomness | `ctx.nextEventId()` injected | Edge `crypto.randomUUID()` |
+| Network | none exists | Edge only (Supabase Auth verification for human JWTs) |
+| SQL | oracles are closures (`isMember`, `validCloseGrant`, …) | Each oracle = one prepared statement in the command tx |
+| Auth | `ctx.actor` injected | Derived in step 2–3 of §3 below, never from request fields |
+| Revocation | oracle-backed membership | In-tx tombstone reads, step 5 |
+| Idempotency storage | `IdemLedger = Map` | `swarm.idempotency_keys`; the Map is **seeded from SQL and passed to the unmodified `applyCommand()`** (§3 step 7) |
+
+### 1.3 Verdict on the `decide()` signature
+
+**Adequate for the task/lease slice. Unchanged.** Every inadequacy candidate was checked and resolved without touching the core:
+
+- **`expected_seq` / optimistic concurrency fields.** `decide()` has none and needs none: §2.1 gives task commands epoch/version fencing (already in the `Command` union), and the stream-head lock (§5) serializes appends, so there is no CAS-mismatch path to surface. The §2.1 phrase "stream-level `expected_seq` only for stream-level commands" has no defined command class to attach to — see SPEC GAPS #4. Adding a field would be a signature change with no consumer; rejected.
+- **Grant single-use consumption.** `decide()` validates grants (`validTakeoverGrant`/`validCloseGrant`) but does not consume them; consumption is an adapter side effect keyed off the **emitted event** (`TaskClosed.grant_id`, `LeaseTakenOver.grant_id` → insert into `grant_consumptions`, unique on `grant_id`). Deterministic event→side-effect mapping; no signature change. §2.5/Kimi #15's "transactional unique constraint on (grant_id)" is satisfied exactly.
+- **`authz` rejections carry `events: []`.** Correct as-is: the adapter writes the audit row and must **not** ledger them (P0 test `does not ledger an authz rejection…` pins this semantics; §3 step 14).
+- **Seq allocation at decide-time.** `decide()` calls `ctx.nextSeq()` while constructing envelopes. Safe because allocation is in-memory arithmetic over the locked head row and the whole transaction commits or rolls back as one (§5.2). A discarded decision burns nothing.
+
+**Scope extension that is NOT a signature change:** the P0 `Command`/`EventType` unions cover only the 8 task/lease verbs. P1 also needs workspace-authority commands (invitations, memberships, principals, tokens, repo mappings, landing authority, grants-issue). These go in **new sibling pure modules** — `src/protocol/workspace-events.ts`, `workspace-commands.ts` (`decideWorkspace()`), `workspace-reducer.ts` — mirroring the P0 pattern exactly (same envelope, same rejection classes, same oracle-closure style). The alternative — implementing workspace authority as plain SQL updates without events — is rejected: §2.1 makes the workspace stream the event-carried authority for membership/invitations/devices/principals/repo mappings, and a parallel non-event authority path is precisely the kind of special case that breeds authz drift bugs at P2/P3 when replay clients fold both streams. Failure avoided: "membership is special" authority fork.
+
+**One input-validation gap closed in the wrapper, not the core:** `decide()` bounds `ttl_ms` only to finite-positive. An unbounded lease TTL lets a compromised ≤1h token pin a task for months (recovery only via takeover grant — friction on every task). P1 enforces `0 < ttl_ms ≤ 4h` at wrapper validation (§3 step 6), no core change needed. SPEC GAPS #8 flags that §2.2 itself does not bound lease TTL.
+
+---
+
+## 2. SCHEMA
+
+Two schemas: **`swarm`** (private; not in PostgREST `db-schema`; deny-by-default) and **`swarm_read`** (exposed; read views/RPCs only). Roles: `swarm_admin` (NOLOGIN, owns everything), `swarm_command` (LOGIN, password in Edge secret; the only role the command Edge Function connects as).
+
+### 2.1 DDL sketch (private schema)
+
+```sql
+CREATE SCHEMA swarm;
+
+-- Global identity (§2.3 declared exceptions: no workspace_id)
+CREATE TABLE swarm.users (
+  user_id uuid PRIMARY KEY REFERENCES auth.users(id),
+  display_name text NOT NULL, created_at timestamptz NOT NULL DEFAULT now());
+CREATE TABLE swarm.devices (
+  device_id uuid PRIMARY KEY, user_id uuid NOT NULL REFERENCES swarm.users,
+  label text NOT NULL, created_at timestamptz NOT NULL DEFAULT now(),
+  revoked_at timestamptz, last_seen_at timestamptz);
+
+-- Tenancy
+CREATE TABLE swarm.workspaces (
+  workspace_id uuid PRIMARY KEY, name text NOT NULL,
+  created_by uuid NOT NULL REFERENCES swarm.users,
+  created_at timestamptz NOT NULL DEFAULT now(), archived_at timestamptz);
+CREATE TABLE swarm.memberships (
+  workspace_id uuid NOT NULL REFERENCES swarm.workspaces,
+  user_id uuid NOT NULL REFERENCES swarm.users,
+  role text NOT NULL CHECK (role IN ('owner','admin','member')),
+  invited_by uuid, joined_at timestamptz NOT NULL DEFAULT now(),
+  revoked_at timestamptz,
+  PRIMARY KEY (workspace_id, user_id));
+CREATE INDEX memberships_by_user ON swarm.memberships (user_id)
+  WHERE revoked_at IS NULL;                          -- tenancy predicate hot path
+CREATE TABLE swarm.invitations (
+  invitation_id uuid PRIMARY KEY, workspace_id uuid NOT NULL REFERENCES swarm.workspaces,
+  email text, role text NOT NULL CHECK (role IN ('owner','admin','member')),
+  token_hash bytea NOT NULL UNIQUE,                  -- sha256; raw token never stored (§7)
+  expires_at timestamptz NOT NULL,                   -- TTL ≤ 7d, enforced at issue
+  created_by uuid NOT NULL, created_at timestamptz NOT NULL DEFAULT now(),
+  consumed_at timestamptz, consumed_by uuid, revoked_at timestamptz);
+CREATE INDEX invitations_live ON swarm.invitations (workspace_id)
+  WHERE consumed_at IS NULL AND revoked_at IS NULL;
+
+-- Agent side
+CREATE TABLE swarm.agent_principals (
+  principal_id uuid PRIMARY KEY, workspace_id uuid NOT NULL REFERENCES swarm.workspaces,
+  owner_user_id uuid NOT NULL REFERENCES swarm.users,  -- the human it belongs to
+  name text NOT NULL, created_at timestamptz NOT NULL DEFAULT now(),
+  revoked_at timestamptz, UNIQUE (workspace_id, name));
+CREATE TABLE swarm.agent_runs (
+  run_id uuid PRIMARY KEY, principal_id uuid NOT NULL REFERENCES swarm.agent_principals,
+  device_id uuid NOT NULL REFERENCES swarm.devices,
+  started_at timestamptz NOT NULL DEFAULT now(), ended_at timestamptz);
+CREATE TABLE swarm.agent_tokens (
+  token_id uuid PRIMARY KEY, principal_id uuid NOT NULL REFERENCES swarm.agent_principals,
+  run_id uuid NOT NULL REFERENCES swarm.agent_runs,
+  task_id uuid, epoch integer,                       -- narrowest default binding (§2.3)
+  scopes jsonb NOT NULL, token_hash bytea NOT NULL UNIQUE,
+  issued_at timestamptz NOT NULL DEFAULT now(),
+  expires_at timestamptz NOT NULL,                   -- ≤1h default, hard max 8h
+  revoked_at timestamptz, surrender_only boolean NOT NULL DEFAULT false,
+  predecessor_token_id uuid REFERENCES swarm.agent_tokens,
+  renewal_grant_id uuid, lineage_id uuid NOT NULL);  -- lineage-wide revocation (§2.3)
+CREATE INDEX agent_tokens_by_principal ON swarm.agent_tokens (principal_id);
+CREATE INDEX agent_tokens_by_lineage ON swarm.agent_tokens (lineage_id);
+CREATE TABLE swarm.revocation_tombstones (           -- token/principal/run/device/
+  kind text NOT NULL, target_id uuid NOT NULL,       -- family/membership/lineage
+  created_at timestamptz NOT NULL DEFAULT now(), created_by uuid,
+  PRIMARY KEY (kind, target_id));
+CREATE TABLE swarm.renewal_grants (                  -- bounded, minted at join/spawn (§2.3)
+  renewal_grant_id uuid PRIMARY KEY, principal_id uuid NOT NULL,
+  run_id uuid NOT NULL, max_successors integer NOT NULL, successors_used integer NOT NULL DEFAULT 0,
+  horizon_expires_at timestamptz NOT NULL,           -- continuous-renewal horizon
+  revoked_at timestamptz);
+
+-- GitHub / repos
+CREATE TABLE swarm.github_installations (
+  installation_row_id uuid PRIMARY KEY, workspace_id uuid NOT NULL REFERENCES swarm.workspaces,
+  github_installation_id bigint NOT NULL UNIQUE, suspended_at timestamptz);
+CREATE TABLE swarm.repositories (
+  repo_mapping_id uuid PRIMARY KEY, workspace_id uuid NOT NULL REFERENCES swarm.workspaces,
+  github_repository_id bigint NOT NULL, installation_row_id uuid NOT NULL,
+  full_name text NOT NULL, default_branch text NOT NULL,
+  landing_authority_user_id uuid NOT NULL,           -- §2.10; never null while active
+  created_at timestamptz NOT NULL DEFAULT now(), archived_at timestamptz,
+  UNIQUE (workspace_id, github_repository_id));
+
+-- Streams + event log
+CREATE TABLE swarm.streams (
+  stream_id uuid PRIMARY KEY, workspace_id uuid NOT NULL REFERENCES swarm.workspaces,
+  kind text NOT NULL CHECK (kind IN ('workspace','repo')),
+  repo_mapping_id uuid REFERENCES swarm.repositories,
+  head_seq bigint NOT NULL DEFAULT 0,
+  created_at timestamptz NOT NULL DEFAULT now());
+CREATE UNIQUE INDEX one_workspace_stream ON swarm.streams (workspace_id)
+  WHERE kind = 'workspace';
+CREATE UNIQUE INDEX one_repo_stream ON swarm.streams (repo_mapping_id)
+  WHERE kind = 'repo';
+CREATE TABLE swarm.events (
+  workspace_id uuid NOT NULL,                        -- denormalized: every row carries tenant
+  stream_id uuid NOT NULL REFERENCES swarm.streams,
+  seq bigint NOT NULL,
+  event_id uuid NOT NULL UNIQUE,
+  command_id text NOT NULL,
+  type text NOT NULL, schema_version integer NOT NULL,
+  actor_user uuid, actor_agent_principal uuid, actor_run uuid,
+  occurred_at_server timestamptz NOT NULL,
+  payload jsonb NOT NULL CHECK (octet_length(payload::text) <= 65536),  -- Kimi #23
+  PRIMARY KEY (stream_id, seq));                     -- replay hot path IS the PK
+CREATE INDEX events_by_workspace ON swarm.events (workspace_id, stream_id, seq);
+
+-- Projections (derived; rebuildable from swarm.events)
+CREATE TABLE swarm.tasks (
+  workspace_id uuid NOT NULL, stream_id uuid NOT NULL,
+  task_id uuid NOT NULL, slug text NOT NULL,
+  lifecycle text NOT NULL, version integer NOT NULL, epoch integer NOT NULL,
+  owner text, lease_expiry timestamptz,
+  submission jsonb, closed_disposition text,
+  updated_at timestamptz NOT NULL,
+  PRIMARY KEY (stream_id, task_id), UNIQUE (stream_id, slug));
+CREATE INDEX tasks_board ON swarm.tasks (workspace_id, lifecycle);
+CREATE TABLE swarm.leases (                          -- per-epoch lease ledger
+  stream_id uuid NOT NULL, task_id uuid NOT NULL, epoch integer NOT NULL,
+  owner text NOT NULL, acquired_at timestamptz NOT NULL, lease_expiry timestamptz NOT NULL,
+  ended_at timestamptz, PRIMARY KEY (stream_id, task_id, epoch));
+CREATE TABLE swarm.grants (
+  grant_id uuid PRIMARY KEY, workspace_id uuid NOT NULL, stream_id uuid NOT NULL,
+  type text NOT NULL CHECK (type IN ('takeover','merge','override-close','admin-op')),
+  task_id uuid, binding jsonb NOT NULL,              -- {version,epoch,head_sha}|{epoch,recipient}|…
+  issued_by uuid NOT NULL, issued_to text NOT NULL,
+  expires_at timestamptz NOT NULL, revoked_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now());
+CREATE TABLE swarm.grant_consumptions (              -- §2.5 single-use, Kimi #15
+  grant_id uuid PRIMARY KEY REFERENCES swarm.grants,
+  consumed_at timestamptz NOT NULL DEFAULT now(),
+  command_id text NOT NULL, event_id uuid NOT NULL);
+
+-- Idempotency (≥30d retention, Kimi #17)
+CREATE TABLE swarm.idempotency_keys (
+  principal_kind text NOT NULL CHECK (principal_kind IN ('user','agent')),
+  principal_id text NOT NULL, command_id text NOT NULL,
+  request_hash text NOT NULL,                        -- P0 requestHash() verbatim
+  response jsonb NOT NULL,                           -- StoredResponse, incl. rejections
+  created_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (principal_kind, principal_id, command_id));
+CREATE INDEX idem_purge ON swarm.idempotency_keys (created_at);
+
+-- Audit + rate limiting (§5)
+CREATE TABLE swarm.audit_log (
+  audit_id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  occurred_at timestamptz NOT NULL DEFAULT now(),
+  actor_user uuid, actor_agent_principal uuid, actor_run uuid,
+  credential_kind text, credential_id uuid, device_id uuid,
+  command_kind text NOT NULL, workspace_id uuid, stream_id uuid,
+  outcome text NOT NULL,                             -- accepted|domain|authz|validation|replayed|conflict|rate_limited|authn
+  reason text, detail text,                          -- control chars stripped before insert (Kimi #16)
+  request_hash text, ip inet);
+CREATE INDEX audit_by_ws ON swarm.audit_log (workspace_id, occurred_at DESC);
+CREATE INDEX audit_by_cred ON swarm.audit_log (credential_id, occurred_at DESC);
+CREATE TABLE swarm.security_alerts (
+  alert_id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  occurred_at timestamptz NOT NULL DEFAULT now(), kind text NOT NULL,
+  subject text NOT NULL, detail jsonb NOT NULL);
+CREATE TABLE swarm.rate_buckets (
+  bucket_key text NOT NULL,                          -- 'cred:<id>' | 'ip:<addr>:<endpoint>' | 'ws:<id>'
+  window_start timestamptz NOT NULL, count integer NOT NULL DEFAULT 0,
+  PRIMARY KEY (bucket_key, window_start));
+
+-- Inbox substrate (§2.13, P1 ships tables only; no user-visible commands until P3)
+CREATE TABLE swarm.inbox_deliveries (
+  message_event_id uuid NOT NULL, workspace_id uuid NOT NULL,
+  recipient_principal text NOT NULL,
+  enqueued_at timestamptz NOT NULL DEFAULT now(),
+  delivered_at timestamptz, acked_at timestamptz,
+  PRIMARY KEY (message_event_id, recipient_principal));
+
+-- Config
+CREATE TABLE swarm.config (key text PRIMARY KEY, value jsonb NOT NULL);
+-- seed: ('min_client_version', '"0.1.0"')
+```
+
+Append-only enforcement on `events` and `audit_log`: no role except `swarm_admin` holds `UPDATE`/`DELETE`/`TRUNCATE`, plus a `BEFORE UPDATE OR DELETE` trigger that raises `SWARM_APPEND_ONLY` as a backstop against a future grant mistake.
+
+### 2.2 Privilege matrix (exact)
+
+```sql
+REVOKE ALL ON SCHEMA swarm FROM anon, authenticated, public;
+REVOKE ALL ON ALL TABLES IN SCHEMA swarm FROM anon, authenticated;
+ALTER DEFAULT PRIVILEGES IN SCHEMA swarm REVOKE ALL ON TABLES FROM anon, authenticated;
+
+-- swarm_command (the Edge command function's login): minimal DML, no DDL, no DELETE on ledgers
+GRANT USAGE ON SCHEMA swarm TO swarm_command;
+GRANT SELECT ON swarm.users, swarm.devices, swarm.workspaces, swarm.memberships,
+  swarm.invitations, swarm.agent_principals, swarm.agent_runs, swarm.agent_tokens,
+  swarm.revocation_tombstones, swarm.renewal_grants, swarm.github_installations,
+  swarm.repositories, swarm.streams, swarm.tasks, swarm.leases, swarm.grants,
+  swarm.grant_consumptions, swarm.idempotency_keys, swarm.config TO swarm_command;
+GRANT INSERT ON swarm.events, swarm.audit_log, swarm.security_alerts,
+  swarm.grant_consumptions, swarm.leases, swarm.inbox_deliveries TO swarm_command;
+GRANT INSERT, UPDATE ON swarm.streams, swarm.tasks, swarm.memberships, swarm.invitations,
+  swarm.agent_principals, swarm.agent_runs, swarm.agent_tokens, swarm.renewal_grants,
+  swarm.repositories, swarm.grants, swarm.idempotency_keys, swarm.rate_buckets,
+  swarm.workspaces, swarm.devices, swarm.users TO swarm_command;
+-- never: DELETE/TRUNCATE on events, audit_log; never: swarm.events UPDATE.
+ALTER ROLE swarm_command SET search_path = swarm, pg_catalog;   -- pinned at the role
+```
+
+Rejected: connecting the Edge Function as Supabase `service_role` (all-powerful, bypasses everything — one leaked env var is total compromise) and using SECURITY DEFINER SQL functions for the command path (impossible without forking `decide()` into PL/pgSQL; §3.1). The compensating control for granting row-level DML is that all invariants are *also* enforced by constraints (PK/UNIQUE/FK/CHECK) and the append-only triggers, so `swarm_command` cannot corrupt history even if the Edge code is wrong — it can only mis-authorize within a single transaction's logic, which is what the §9 integration tests and the projection-rebuild drift check (§10 R1) cover.
+
+RLS is **enabled with zero permissive policies for `anon`/`authenticated`** on every `swarm.*` table — deny-by-default stands even if a future migration accidentally grants something.
+
+### 2.3 Exposed read surface (`swarm_read`)
+
+Human reads (board substrate, CLI with user JWT) via views; agent reads via the Edge read proxy (§8). Both share one predicate helper so they cannot diverge:
+
+```sql
+CREATE FUNCTION swarm.is_member(p_workspace uuid, p_user uuid) RETURNS boolean
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = swarm, pg_catalog AS $$
+  SELECT EXISTS (SELECT 1 FROM swarm.memberships
+    WHERE workspace_id = p_workspace AND user_id = p_user AND revoked_at IS NULL) $$;
+```
+
+Exposed views (owned by `swarm_admin`; each carries its predicate in-view — see SPEC GAPS #2 for why not `security_invoker`):
+
+```sql
+CREATE VIEW swarm_read.tasks WITH (security_barrier = true) AS
+  SELECT * FROM swarm.tasks t
+  WHERE swarm.is_member(t.workspace_id, auth.uid());
+CREATE VIEW swarm_read.events AS
+  SELECT * FROM swarm.events e
+  WHERE swarm.is_member(e.workspace_id, auth.uid());
+CREATE VIEW swarm_read.memberships AS
+  SELECT m.* FROM swarm.memberships m
+  WHERE swarm.is_member(m.workspace_id, auth.uid());
+CREATE VIEW swarm_read.repositories AS
+  SELECT r.* FROM swarm.repositories r
+  WHERE swarm.is_member(r.workspace_id, auth.uid());
+CREATE VIEW swarm_read.leases AS
+  SELECT l.* FROM swarm.leases l JOIN swarm.streams s USING (stream_id)
+  WHERE swarm.is_member(s.workspace_id, auth.uid());
+CREATE VIEW swarm_read.my_devices AS
+  SELECT * FROM swarm.devices WHERE user_id = auth.uid();   -- global row, own-only
+-- agent_principals, agent_runs: same is_member predicate via workspace_id.
+-- invitations: NO general read view (capability disclosure only, §4). 
+-- audit_log: swarm_read.audit_log WHERE is_member AND role IN ('owner','admin') — P1 minimal.
+GRANT SELECT ON swarm_read.* TO authenticated;   -- nothing to anon
+```
+
+Every predicate is `is_member(workspace_id, auth.uid())` (or `user_id = auth.uid()` for global rows) — written identically in each view so the §10 per-view two-tenant tests can assert the predicate text and the zero-row result.
+
+### 2.4 Workspace-stream vs repo-stream sequence allocation
+
+Two independent `streams` rows: exactly one `kind='workspace'` per workspace (partial unique index), one `kind='repo'` per repo mapping (unique index). Each has its own `head_seq`; `events` PK is `(stream_id, seq)`; there is **no global order** (§2.13). Workspace-scoped (non-repo) tasks fold through `decide()` against the *workspace* stream — same code path, different stream row; slug uniqueness holds per stream via `tasks.UNIQUE(stream_id, slug)`.
+
+**Gapless allocation under concurrency:** the command transaction does `SELECT head_seq FROM swarm.streams WHERE stream_id = $1 FOR UPDATE` (step 8, §3), computes event seqs in memory as `head+1 … head+k` via `ctx.nextSeq()`, appends, then `UPDATE streams SET head_seq = head + k`. Because the head `UPDATE` rolls back with the transaction, an aborted command leaves neither events nor a head bump — no gap is possible, and the `(stream_id, seq)` PK is the hard backstop. Rejected: a Postgres `SEQUENCE` per stream — sequence increments are non-transactional, so every rolled-back command burns values and produces exactly the gaps the §9 `seq-gap` test forbids. The lock serializes commits *per stream*; different repos and the workspace stream proceed in parallel.
+
+---
+
+## 3. COMMAND FUNCTION
+
+### 3.1 Where `handle_command()` lives — the fork-avoidance decision
+
+§2.1's "Edge Functions fronting a `handle_command()` transaction" is reconciled with invariant 2 (one `decide()`) as follows: **the transaction orchestrator is TypeScript in the `command` Edge Function (Deno), holding one Postgres transaction** on a pooled connection (transaction-mode pooler) opened as `swarm_command`, calling the unmodified `decide()` / `applyCommand()` / `reduceTask()` in-process, with every oracle and every write executed as parameterized SQL inside that transaction. There is no PL/pgSQL reimplementation. Rejected alternatives: (a) port `decide()` to PL/pgSQL — two authority implementations *will* drift, and the drift surface is the security boundary itself; (b) plv8 in-database — not available on hosted Supabase; (c) decide-at-edge / append-via-RPC without an open transaction — loses atomicity between oracles and append. SPEC GAPS #1 records this reading for the operator.
+
+### 3.2 The transaction, in exact check order
+
+Order is load-bearing: nothing tenant-private is read before tenancy is proven; revocation precedes idempotency (a revoked principal gets nothing back, not even its own stored responses — fail-closed, §2.3); idempotency precedes any state evaluation (§2.1: replay returns the stored original response **before** `expected_version`/epoch evaluation).
+
+```
+POST /commands  (Authorization: Bearer <supabase-JWT | swm_agt_…>)
+body: { command_id, client_version,
+        workspace_id, stream: {kind:'workspace'} | {kind:'repo', repo_mapping_id},
+        command: {<P0 Command union> | <workspace command, §3.4>} }
+```
+
+1. **Edge pre-checks (stateless).** Body ≤ 128 KB. `command_id` matches `^[A-Za-z0-9_-]{8,72}$`. Classify credential by format: JWT → verify via Supabase Auth (`auth.getUser`); `swm_agt_` prefixed opaque → sha256 it (WebCrypto) and keep only the hash. Raw agent token never enters the DB, logs, or any response.
+2. **BEGIN** (single tx; `READ COMMITTED` — §5.3). `SET LOCAL search_path = swarm, pg_catalog` (belt over the role-pinned path).
+3. **Authenticate.** Human: user exists in `swarm.users`. Agent: `SELECT … FROM agent_tokens WHERE token_hash = $1` joined to principal/run/device. Unknown/expired → audit (`outcome='authn'`) + `401 {error:"unauthenticated"}`, uniform body. **No other table is read on this path.**
+4. **Derive principal server-side.** `actor = {user: <owner user for agents, else the user>, agent_principal, run, device}` — stamped entirely from the credential row. Any `actor_*` field present in the request body is ignored (and its presence is recorded in the audit row's `detail`).
+5. **Validate every client-supplied identifier against the derived tenancy (Kimi #9), reject-before-read.**
+   - `workspace_id`: `is_member(workspace_id, actor.user)` — for agents, the principal's `workspace_id` must *equal* the request's (an agent principal is single-workspace by construction).
+   - `stream`: `kind='repo'` → the `repo_mapping_id` must belong to `workspace_id` and be unarchived; resolve to `stream_id`. `kind='workspace'` → the workspace stream.
+   - Command targets: `task_id` format-checked here (existence is decide-time, stream-scoped); `to_owner` (handoff), `issued_to`, recipient principals — deferred to the decide oracles, which read current in-tx rows; `device` claims — derived, never read from the body.
+   - The one carve-out: `accept_invitation` from a *non-member*, authorized by the invite token capability instead of membership (§3.4).
+   - Any mismatch → audit (`authz`) + `403 {error:"forbidden"}` — **uniform body, no existence oracle** (a non-member cannot distinguish "workspace doesn't exist" from "not a member").
+6. **Revocation check (fail-closed, every command).** In-tx existence check against: token row `revoked_at`, `revocation_tombstones` for `(token,token_id) (principal,…) (run,…) (device,…) (membership,…) (family,…) (lineage,lineage_id)`, principal `revoked_at`, membership `revoked_at`, device `revoked_at`. Any hit → audit + `403`. **Validation & bounds.** Command-shape validation (kind known, field types, uuid/slug/SHA formats, `ttl_ms ∈ (0, 4h]`, disposition in `DISPOSITIONS`, message-body reservation ≤ 16 KB constant, evidence-set entries well-formed strings). Compute the would-be event payload size bound now (payload ≤ 64 KB enforced again by the `events` CHECK constraint). Failure → audit (`validation`) + `400/413`. Validation failures disclose format rules only, never existence.
+7. **Idempotency lookup.** `SELECT request_hash, response FROM idempotency_keys WHERE (principal_kind, principal_id, command_id)`. Compute `requestHash(actor, cmd)` with the **unmodified P0 function**. Hash match → audit (`replayed`) + `200` with the stored `StoredResponse` verbatim (covers prior accept *and* prior domain rejection, Kimi #17). Hash mismatch → audit (`conflict`) + `409 {error:"command_id_conflict"}` (§7). Miss → proceed.
+8. **Lock the stream head.** `SELECT head_seq FROM streams WHERE stream_id = $1 FOR UPDATE`. This is the single serialization point per stream (§5).
+9. **Load decide-state + build `DecideCtx`.** Task projection row (or `null`). Oracles as in-tx prepared reads: `isMember`/`role` → `memberships` (for agents: principal's owner membership + principal unrevoked); `isEligibleRecipient` → user is current member OR principal is current unrevoked principal **of this workspace** (§2.2); `slugTaken` → `tasks` (backstopped by the unique index); `claimRequiresGrant` → `false` at P1 (claim kinds are P2 — SPEC GAPS #3); `evidenceComplete` → non-empty + structurally valid references (full §2.4 verification is P2 — RISK R7); `validTakeoverGrant` → live grant of type `takeover` bound to `{task, current epoch, recipient=caller}`, not revoked/expired/not already in `grant_consumptions`; `validCloseGrant` → dormant at P1 (schema-ready). `now` = `statement_timestamp()`; `nextSeq` = locked head arithmetic; `nextEventId` = `crypto.randomUUID`.
+10. **Decide.** Seed a `Map` ledger from step 7 (empty on the miss path) and call the unmodified `applyCommand(ledger, state, cmd, ctx)` — which internally calls `decide()` and applies P0's exact ledger-write semantics (accepted and domain-rejected are ledgered; authz is not).
+11. **Append events.** Insert the returned envelopes with their allocated seqs. On any PK violation → ROLLBACK, audit (`outcome='error'`, severity high) + `500` — under the head lock this indicates a defect in the authority path, not contention.
+12. **Update projections by folding, not patching.** `projection' = decision.events.reduce(reduceTask, projection)` (pure core, in-edge) → upsert `swarm.tasks`; insert `swarm.leases` row per epoch-advancing event, update on `LeaseRenewed`. The projection is correct *by construction* (it is the fold); a nightly rebuild-from-events job + a `drift_detected` security alert is the tripwire.
+13. **Side effects keyed off emitted events.** `grant_id`-bearing `TaskClosed`/`LeaseTakenOver` → `INSERT INTO grant_consumptions` (unique violation → ROLLBACK → this is the double-spend loser's path, §5.4). `TaskReopened` → mark open submissions/grants for that task `revoked_at` (§2.2 reopen semantics). Workspace-command events → their projection writes (§3.4).
+14. **Ledger + audit.** Insert the idempotency row with `StoredResponse` **iff** the outcome was accepted or domain-rejected (never authz — the P0 test `does not ledger an authz rejection…` is load-bearing: a ledgered authz rejection would pin a later-membered principal's legitimate retry to a stale refusal). Insert the audit row (all outcomes, `detail` control-char-stripped — Kimi #16).
+15. **COMMIT.** Map to HTTP: accepted → `200 {status:"accepted", events, min_client_version}`; domain-rejected → `200 {status:"rejected", class:"domain", reason, detail, event}` (the authority *did* act; the rejection is committed history — it is not a transport error). 
+
+### 3.3 Which failure becomes a `CommandRejected` event vs audit-only — and why it matters
+
+| Failure | Disposition |
+|---|---|
+| Domain rejection (member, well-formed, state forbids: `stale_epoch`, `not_owner`, lease-race loss, `close_needs_grant`, …) | **Committed `CommandRejected` event** + idempotency-ledgered |
+| Authn (bad/expired credential) | audit only, 401 |
+| Authz/tenancy (non-member, cross-tenant id, agent-token denylisted command) | audit only, 403 uniform |
+| Revocation (token/principal/device/lineage/membership tombstone) | audit only, 403 |
+| Validation (shape/format/TTL/oversize) | audit only, 400/413 |
+| Idempotency 409 | audit only, 409 |
+| Rate limit | audit + `security_alerts` row, 429 |
+
+The distinction is not bookkeeping pedantry; four concrete failures ride on it. (1) **Cross-tenant oracle:** a committed event confirms the target stream exists and writes attacker-influenced rows into a tenant's ledger — authz failures must leave no tenant-visible trace. (2) **Replay pollution:** committed events are folded by every client forever and consume `seq`; non-members must never inject into that history. (3) **Later-member retry:** a ledgered authz rejection would make a newly-joined member's legitimate retry replay the old refusal (P0-tested semantics). (4) **Attribution:** the audit log is append-only, actor/credential/IP-stamped, and never replayed to clients — the right and only place for hostile-path evidence (G3).
+
+### 3.4 Workspace-authority commands (new pure module, same pattern)
+
+`decideWorkspace(wsState, cmd, ctx)` over a workspace projection `{members, invitations, principals, repos, landing_authorities, owners_count}`. All carry the human-credential-only gate where §2.3/§2.6 demand — enforced at step 6 by credential *kind* and re-checked by role oracle (defense in depth). Preconditions (each violation → committed `CommandRejected` on the workspace stream, except the credential-kind gate which is authz/audit-only):
+
+| Command | Gate | Key preconditions | Events |
+|---|---|---|---|
+| `create_workspace` | human | (P1: operator-allowlisted) | `WorkspaceCreated`, workspace stream row created |
+| `invite_member` | human Owner/Admin | invitee not already member; TTL ≤ 7d; token stored hashed | `MemberInvited` |
+| `revoke_invitation` | human Owner/Admin | live invite | `InvitationRevoked` |
+| `accept_invitation` | verified identity + token capability | token hash matches, unexpired, unrevoked; **atomic consumption**: `UPDATE invitations SET consumed_at, consumed_by WHERE token_hash=$1 AND consumed_at IS NULL AND revoked_at IS NULL AND expires_at>now() RETURNING` under the workspace head lock — concurrent accepts: loser re-evaluates after blocking, matches 0 rows → domain rejection | `InvitationAccepted`, `MemberJoined` |
+| `remove_member` / `change_role` | human Owner/Admin (Admin: not on Owners) | target not last Owner (no-orphan invariant, §2.6); landing-authority successor named if target holds one (§2.10) | `MemberRemoved` / `MemberRoleChanged` |
+| `create_agent_principal` | member (own) | name unique in workspace | `AgentPrincipalCreated` |
+| `revoke_agent_principal` | Owner/Admin any, member own | — | `AgentPrincipalRevoked` + tombstone |
+| `mint_agent_token` | human, own principal | scopes ⊆ human's rights; §2.3 denylist enforced (grants, minting, invitations, membership/role/ownership, repo mapping, workspace create/delete, capability-URL minting, `--force-discard`, revoking anything but self, trusted-content writes); default binding run+task+epoch; TTL ≤ 1h default, ≤ 8h hard | `AgentTokenMinted` (token_id only, never material) |
+| `renew_worker_token` | **fenced successor endpoint, never generic mint** (§2.3) | predecessor token live and presented; successor fields derived **only** from predecessor (principal/run/task/epoch/scopes — no caller-selected targets); successor ⊆ predecessor (attenuation vs *predecessor*); renewal grant live with budget; horizon not exceeded; lineage tombstones clean; current lease epoch matches when task-bound | `AgentTokenMinted` (successor) |
+| `revoke_agent_token` | human: per §2.6; agent: **only its own exact presenting token** (sibling/principal/run/device/family/membership revocation by an agent credential → authz refusal, §10) | — | `AgentTokenRevoked` + tombstone (+ lineage cascade rows) |
+| `map_repository` | human Owner/Admin | installation valid for workspace; **names the landing authority** (current human member); creates repo stream row in same tx | `RepoMapped` |
+| `archive_repo_mapping` | human Owner/Admin | landing-authority successor/remap resolved first (no-orphan) | `RepoMappingArchived` |
+| `assign_landing_authority` / `transfer_landing_authority` | human Owner/Admin | successor is current human member; the role cannot be removed/demoted/remapped without a named successor | `LandingAuthorityAssigned` / `…Transferred` |
+| `issue_grant` (P1: `takeover` type only) | human Owner/Admin | binds op+task+**current epoch**+recipient; TTL ≤ 1h | `GrantIssued` |
+| `revoke_grant` | human Owner/Admin | — | `GrantRevoked` |
+| `register_device` / `revoke_device` | human, own devices | global tables (SPEC GAPS #5) + tombstone on revoke | audit (stream events deferred, gap-noted) |
+
+---
+
+## 4. AUTH + TENANCY
+
+**Human login (v1).** Authorization-code + PKCE via Supabase Auth (GoTrue), GitHub OAuth as the v1 provider (repo access is already GitHub-provisioned), external browser, loopback callback on `127.0.0.1:<random high port, retry on collision>`, copy/paste fallback; CLI-generated `state` verified on callback in both paths (Kimi #5). The redirect allowlist entry is an exact-match loopback URL — SPEC GAPS #6 (Supabase allowlist vs random ports). Tokens: access token cached in memory; **rotating refresh credential in the OS keychain** (macOS Keychain / libsecret; headless fallback = `0600` file in `0700` dir with loud warning, hard refusal below that — never unspecified plaintext). Per-device refresh serialization: keychain-held generation number + lockfile; concurrent refresh loses the CAS and retries. Server-side refresh-reuse detection revokes the token family (Kimi #7 — GoTrue capability, SPEC GAPS #7). `swarm devices` / `swarm logout [--device]` hit `revoke_device`, which tombstones the device and cascades to runs/tokens.
+
+**The four identity shapes and their stamping.**
+
+| Shape | Row(s) | Credential | `actor` stamped as |
+|---|---|---|---|
+| Human user | `auth.users` + `swarm.users` | Supabase JWT (PKCE session) | `{user: uid, agent_principal: null, run: null}` |
+| Agent principal | `agent_principals` (durable, owned by a human, single workspace) | — (never authenticates directly) | — |
+| Device | `devices` (global) | registered at login, keychain-held device id | derived from token's run, never from body |
+| Run | `agent_runs` (one CLI session) | — | — |
+| Worker credential | `agent_tokens` (opaque, hashed, run+task+epoch-bound, ≤1h TTL) | `swm_agt_…` bearer | `{user: principal.owner_user_id, agent_principal, run}` |
+
+G3 attribution falls out of the token lookup: every agent command carries human + principal + run because the token row joins all three. `canonicalPrincipal(actor)` (unmodified) keeps ownership comparisons agent-scoped
