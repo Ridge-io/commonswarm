@@ -80,6 +80,27 @@ Until all four, there is nothing to dogfood; do not stage a fake one (hand-pokin
 DB with psql is theater, not a dogfood — it teaches nothing about whether the feel is right).
 
 ### P1 BUILD STATE (update this every slice)
+- **RUNTIME NOW AVAILABLE:** OrbStack/Docker 29.4.0 installed + running; local Supabase
+  stack works (`supabase start` / `supabase db reset` apply cleanly). The §9 suite is
+  unblocked. Apply migrations via the normal CLI — the earlier "CLI can't apply" theory
+  was WRONG; it was the segfault (below) all along.
+- **SLICE 1 — schema: DONE + VERIFIED ON REAL POSTGRES (commit 30538b9).** Applies
+  from-scratch + idempotent; 24 tables / 9 read views / 24 RLS / 24 swarm_command
+  policies / owner=swarm_admin / 0 anon-auth policies / events+audit_log append-only /
+  2 cron. Evidence: `docs/evidence/p1-schema-apply.md`. **Landmine learned:** NEVER
+  `GRANT <role> TO current_user` — it SIGSEGVs PG16 (crash presents as a dropped
+  connection on every transport; only the local runtime surfaced it). Use
+  `DO $$ BEGIN EXECUTE format('GRANT <role> TO %I', current_user); END $$;`.
+- **SLICE 2 — command API (NEXT):** the `handle_command()` Edge Function per
+  P1-COMMAND-API.md §3 — TS orchestrator in a `command` Deno Edge Function, ONE
+  Postgres transaction, calling the UNMODIFIED `decide()` from src/protocol. §3.2 check
+  order: authenticate → derive principal → validate every client identifier vs tenancy
+  → revocation → payload bounds → idempotency lookup (ON CONFLICT DO NOTHING per gap#10)
+  → decide() → append events → update projections → commit. Honor all OPERATOR
+  DECISIONS. Test against the LOCAL stack (edge_runtime container is up). Auth can start
+  as a minimal verified-JWT stub; real PKCE login is slice 3.
+
+### (historical build state below)
 - **Slice 1 — schema.** Migration `supabase/migrations/20260723000001_p1_schema.sql`
   (751 lines) written + committed (`e3b0ccd`), independently audited (24 tables, 24
   swarm_command-only policies, append-only triggers, no anon/authenticated grant on
