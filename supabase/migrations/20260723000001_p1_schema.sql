@@ -1,53 +1,120 @@
 -- SWARM P1 private authority schema and membership-filtered read surface.
 -- Application command orchestration intentionally lives outside this migration.
 
--- Roles are cluster-scoped and survive a local database reset, so make their
--- creation idempotent without making any schema object idempotent.
+-- Roles are cluster-scoped and survive database resets. Hosted Supabase runs
+-- migrations as the non-superuser postgres role, so it must be a member of
+-- each created role before assigning object ownership to that role.
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'swarm_admin') THEN
     CREATE ROLE swarm_admin
       NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
-  ELSE
-    ALTER ROLE swarm_admin
-      NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
   END IF;
+END
+$$;
 
+GRANT swarm_admin TO current_user;
+
+DO $$
+BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'swarm_command') THEN
     -- The password is provisioned out-of-band. No credential belongs in a migration.
     CREATE ROLE swarm_command
       LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE INHERIT NOREPLICATION NOBYPASSRLS;
-  ELSE
-    ALTER ROLE swarm_command
-      LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE INHERIT NOREPLICATION NOBYPASSRLS;
   END IF;
+END
+$$;
 
+GRANT swarm_command TO current_user;
+
+DO $$
+BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'swarm_read') THEN
     CREATE ROLE swarm_read
       NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE INHERIT NOREPLICATION NOBYPASSRLS;
-  ELSE
-    ALTER ROLE swarm_read
-      NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE INHERIT NOREPLICATION NOBYPASSRLS;
+  END IF;
+END
+$$;
+
+GRANT swarm_read TO current_user;
+
+-- The hosted migration role cannot safely repair every elevated attribute on
+-- a pre-existing role. Refuse to continue rather than silently weaken the
+-- ownership and RLS design if any swarm role has drifted from its contract.
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM pg_catalog.pg_roles
+    WHERE rolname = 'swarm_admin'
+      AND (
+        rolcanlogin
+        OR rolsuper
+        OR rolcreatedb
+        OR rolcreaterole
+        OR rolinherit
+        OR rolreplication
+        OR rolbypassrls
+      )
+  ) THEN
+    RAISE EXCEPTION 'swarm_admin has unsafe role attributes';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1
+    FROM pg_catalog.pg_roles
+    WHERE rolname = 'swarm_command'
+      AND (
+        NOT rolcanlogin
+        OR rolsuper
+        OR rolcreatedb
+        OR rolcreaterole
+        OR NOT rolinherit
+        OR rolreplication
+        OR rolbypassrls
+      )
+  ) THEN
+    RAISE EXCEPTION 'swarm_command has unsafe role attributes';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1
+    FROM pg_catalog.pg_roles
+    WHERE rolname = 'swarm_read'
+      AND (
+        rolcanlogin
+        OR rolsuper
+        OR rolcreatedb
+        OR rolcreaterole
+        OR NOT rolinherit
+        OR rolreplication
+        OR rolbypassrls
+      )
+  ) THEN
+    RAISE EXCEPTION 'swarm_read has unsafe role attributes';
   END IF;
 END
 $$;
 
 ALTER ROLE swarm_command SET search_path = swarm, pg_catalog;
 
-CREATE SCHEMA swarm AUTHORIZATION swarm_admin;
-CREATE SCHEMA swarm_read AUTHORIZATION swarm_admin;
+CREATE SCHEMA IF NOT EXISTS swarm AUTHORIZATION swarm_admin;
+CREATE SCHEMA IF NOT EXISTS swarm_read AUTHORIZATION swarm_admin;
+
+ALTER SCHEMA swarm OWNER TO swarm_admin;
+ALTER SCHEMA swarm_read OWNER TO swarm_admin;
 
 REVOKE ALL ON SCHEMA swarm FROM anon, authenticated, PUBLIC;
 REVOKE ALL ON SCHEMA swarm_read FROM anon, authenticated, PUBLIC;
 
 -- Global identity: these rows intentionally do not carry workspace_id.
-CREATE TABLE swarm.users (
+CREATE TABLE IF NOT EXISTS swarm.users (
   user_id uuid PRIMARY KEY REFERENCES auth.users (id),
   display_name text NOT NULL,
   created_at timestamptz NOT NULL DEFAULT statement_timestamp()
 );
 
-CREATE TABLE swarm.devices (
+CREATE TABLE IF NOT EXISTS swarm.devices (
   device_id uuid PRIMARY KEY,
   user_id uuid NOT NULL REFERENCES swarm.users (user_id),
   label text NOT NULL,
@@ -57,7 +124,7 @@ CREATE TABLE swarm.devices (
 );
 
 -- Tenancy.
-CREATE TABLE swarm.workspaces (
+CREATE TABLE IF NOT EXISTS swarm.workspaces (
   workspace_id uuid PRIMARY KEY,
   name text NOT NULL,
   created_by uuid NOT NULL REFERENCES swarm.users (user_id),
@@ -65,7 +132,7 @@ CREATE TABLE swarm.workspaces (
   archived_at timestamptz
 );
 
-CREATE TABLE swarm.memberships (
+CREATE TABLE IF NOT EXISTS swarm.memberships (
   workspace_id uuid NOT NULL REFERENCES swarm.workspaces (workspace_id),
   user_id uuid NOT NULL REFERENCES swarm.users (user_id),
   role text NOT NULL CHECK (role IN ('owner', 'admin', 'member')),
@@ -75,11 +142,11 @@ CREATE TABLE swarm.memberships (
   PRIMARY KEY (workspace_id, user_id)
 );
 
-CREATE INDEX memberships_by_user
+CREATE INDEX IF NOT EXISTS memberships_by_user
   ON swarm.memberships (user_id)
   WHERE revoked_at IS NULL;
 
-CREATE TABLE swarm.invitations (
+CREATE TABLE IF NOT EXISTS swarm.invitations (
   invitation_id uuid PRIMARY KEY,
   workspace_id uuid NOT NULL REFERENCES swarm.workspaces (workspace_id),
   email text,
@@ -99,12 +166,12 @@ COMMENT ON COLUMN swarm.invitations.email IS
 COMMENT ON COLUMN swarm.invitations.token_hash IS
   'SHA-256 digest of the full presented swm_inv_ credential, including its prefix; plaintext is never stored.';
 
-CREATE INDEX invitations_live
+CREATE INDEX IF NOT EXISTS invitations_live
   ON swarm.invitations (workspace_id)
   WHERE consumed_at IS NULL AND revoked_at IS NULL;
 
 -- Agent identity and credential state.
-CREATE TABLE swarm.agent_principals (
+CREATE TABLE IF NOT EXISTS swarm.agent_principals (
   principal_id uuid PRIMARY KEY,
   workspace_id uuid NOT NULL REFERENCES swarm.workspaces (workspace_id),
   owner_user_id uuid NOT NULL REFERENCES swarm.users (user_id),
@@ -114,7 +181,7 @@ CREATE TABLE swarm.agent_principals (
   UNIQUE (workspace_id, name)
 );
 
-CREATE TABLE swarm.agent_runs (
+CREATE TABLE IF NOT EXISTS swarm.agent_runs (
   run_id uuid PRIMARY KEY,
   principal_id uuid NOT NULL REFERENCES swarm.agent_principals (principal_id),
   device_id uuid NOT NULL REFERENCES swarm.devices (device_id),
@@ -122,7 +189,7 @@ CREATE TABLE swarm.agent_runs (
   ended_at timestamptz
 );
 
-CREATE TABLE swarm.agent_tokens (
+CREATE TABLE IF NOT EXISTS swarm.agent_tokens (
   token_id uuid PRIMARY KEY,
   principal_id uuid NOT NULL REFERENCES swarm.agent_principals (principal_id),
   run_id uuid NOT NULL REFERENCES swarm.agent_runs (run_id),
@@ -143,12 +210,12 @@ CREATE TABLE swarm.agent_tokens (
 COMMENT ON COLUMN swarm.agent_tokens.token_hash IS
   'SHA-256 digest of the full presented swm_agt_ credential, including its prefix; plaintext is never stored.';
 
-CREATE INDEX agent_tokens_by_principal
+CREATE INDEX IF NOT EXISTS agent_tokens_by_principal
   ON swarm.agent_tokens (principal_id);
-CREATE INDEX agent_tokens_by_lineage
+CREATE INDEX IF NOT EXISTS agent_tokens_by_lineage
   ON swarm.agent_tokens (lineage_id);
 
-CREATE TABLE swarm.revocation_tombstones (
+CREATE TABLE IF NOT EXISTS swarm.revocation_tombstones (
   kind text NOT NULL,
   target_id uuid NOT NULL,
   created_at timestamptz NOT NULL DEFAULT statement_timestamp(),
@@ -156,7 +223,7 @@ CREATE TABLE swarm.revocation_tombstones (
   PRIMARY KEY (kind, target_id)
 );
 
-CREATE TABLE swarm.renewal_grants (
+CREATE TABLE IF NOT EXISTS swarm.renewal_grants (
   renewal_grant_id uuid PRIMARY KEY,
   principal_id uuid NOT NULL,
   run_id uuid NOT NULL,
@@ -167,14 +234,14 @@ CREATE TABLE swarm.renewal_grants (
 );
 
 -- GitHub installations and workspace repository mappings.
-CREATE TABLE swarm.github_installations (
+CREATE TABLE IF NOT EXISTS swarm.github_installations (
   installation_row_id uuid PRIMARY KEY,
   workspace_id uuid NOT NULL REFERENCES swarm.workspaces (workspace_id),
   github_installation_id bigint NOT NULL UNIQUE,
   suspended_at timestamptz
 );
 
-CREATE TABLE swarm.repositories (
+CREATE TABLE IF NOT EXISTS swarm.repositories (
   repo_mapping_id uuid PRIMARY KEY,
   workspace_id uuid NOT NULL REFERENCES swarm.workspaces (workspace_id),
   github_repository_id bigint NOT NULL,
@@ -188,7 +255,7 @@ CREATE TABLE swarm.repositories (
 );
 
 -- Independent workspace and repository streams.
-CREATE TABLE swarm.streams (
+CREATE TABLE IF NOT EXISTS swarm.streams (
   stream_id uuid PRIMARY KEY,
   workspace_id uuid NOT NULL REFERENCES swarm.workspaces (workspace_id),
   kind text NOT NULL CHECK (kind IN ('workspace', 'repo')),
@@ -197,21 +264,21 @@ CREATE TABLE swarm.streams (
   created_at timestamptz NOT NULL DEFAULT statement_timestamp()
 );
 
-CREATE UNIQUE INDEX one_workspace_stream
+CREATE UNIQUE INDEX IF NOT EXISTS one_workspace_stream
   ON swarm.streams (workspace_id)
   WHERE kind = 'workspace';
-CREATE UNIQUE INDEX one_repo_stream
+CREATE UNIQUE INDEX IF NOT EXISTS one_repo_stream
   ON swarm.streams (repo_mapping_id)
   WHERE kind = 'repo';
 
 -- Required by the composite tenant-pinning foreign keys below.
-CREATE UNIQUE INDEX streams_stream_workspace
+CREATE UNIQUE INDEX IF NOT EXISTS streams_stream_workspace
   ON swarm.streams (stream_id, workspace_id);
 
 -- Canonical append-only history. Per-stream seq is transactionally allocated
 -- under a FOR UPDATE lock on streams; no PostgreSQL SEQUENCE is used because
 -- sequence increments do not roll back.
-CREATE TABLE swarm.events (
+CREATE TABLE IF NOT EXISTS swarm.events (
   workspace_id uuid NOT NULL,
   stream_id uuid NOT NULL,
   seq bigint NOT NULL,
@@ -235,11 +302,11 @@ CREATE TABLE swarm.events (
 COMMENT ON COLUMN swarm.events.occurred_at_server IS
   'statement_timestamp() floored with date_trunc(''milliseconds'', ...); never rounded or client-supplied.';
 
-CREATE INDEX events_by_workspace
+CREATE INDEX IF NOT EXISTS events_by_workspace
   ON swarm.events (workspace_id, stream_id, seq);
 
 -- Rebuildable projections.
-CREATE TABLE swarm.tasks (
+CREATE TABLE IF NOT EXISTS swarm.tasks (
   workspace_id uuid NOT NULL,
   stream_id uuid NOT NULL,
   task_id uuid NOT NULL,
@@ -258,10 +325,10 @@ CREATE TABLE swarm.tasks (
     REFERENCES swarm.streams (stream_id, workspace_id)
 );
 
-CREATE INDEX tasks_board
+CREATE INDEX IF NOT EXISTS tasks_board
   ON swarm.tasks (workspace_id, lifecycle);
 
-CREATE TABLE swarm.leases (
+CREATE TABLE IF NOT EXISTS swarm.leases (
   stream_id uuid NOT NULL REFERENCES swarm.streams (stream_id),
   task_id uuid NOT NULL,
   epoch integer NOT NULL,
@@ -272,7 +339,7 @@ CREATE TABLE swarm.leases (
   PRIMARY KEY (stream_id, task_id, epoch)
 );
 
-CREATE TABLE swarm.grants (
+CREATE TABLE IF NOT EXISTS swarm.grants (
   grant_id uuid PRIMARY KEY,
   workspace_id uuid NOT NULL,
   stream_id uuid NOT NULL,
@@ -289,7 +356,7 @@ CREATE TABLE swarm.grants (
     REFERENCES swarm.streams (stream_id, workspace_id)
 );
 
-CREATE TABLE swarm.grant_consumptions (
+CREATE TABLE IF NOT EXISTS swarm.grant_consumptions (
   grant_id uuid PRIMARY KEY REFERENCES swarm.grants (grant_id),
   consumed_at timestamptz NOT NULL DEFAULT statement_timestamp(),
   command_id text NOT NULL,
@@ -298,7 +365,7 @@ CREATE TABLE swarm.grant_consumptions (
 
 -- Idempotency is namespaced by principal kind and additionally stream-bound as
 -- required by the routing-field augmentation in the approved spec.
-CREATE TABLE swarm.idempotency_keys (
+CREATE TABLE IF NOT EXISTS swarm.idempotency_keys (
   principal_kind text NOT NULL CHECK (principal_kind IN ('user', 'agent')),
   principal_id text NOT NULL,
   command_id text NOT NULL,
@@ -310,11 +377,11 @@ CREATE TABLE swarm.idempotency_keys (
   PRIMARY KEY (principal_kind, principal_id, command_id)
 );
 
-CREATE INDEX idem_purge
+CREATE INDEX IF NOT EXISTS idem_purge
   ON swarm.idempotency_keys (created_at);
 
 -- Append-only audit and security signals.
-CREATE TABLE swarm.audit_log (
+CREATE TABLE IF NOT EXISTS swarm.audit_log (
   audit_id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   occurred_at timestamptz NOT NULL DEFAULT statement_timestamp(),
   actor_user uuid,
@@ -333,12 +400,12 @@ CREATE TABLE swarm.audit_log (
   ip inet
 );
 
-CREATE INDEX audit_by_ws
+CREATE INDEX IF NOT EXISTS audit_by_ws
   ON swarm.audit_log (workspace_id, occurred_at DESC);
-CREATE INDEX audit_by_cred
+CREATE INDEX IF NOT EXISTS audit_by_cred
   ON swarm.audit_log (credential_id, occurred_at DESC);
 
-CREATE TABLE swarm.security_alerts (
+CREATE TABLE IF NOT EXISTS swarm.security_alerts (
   alert_id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   occurred_at timestamptz NOT NULL DEFAULT statement_timestamp(),
   kind text NOT NULL,
@@ -346,7 +413,7 @@ CREATE TABLE swarm.security_alerts (
   detail jsonb NOT NULL
 );
 
-CREATE TABLE swarm.rate_buckets (
+CREATE TABLE IF NOT EXISTS swarm.rate_buckets (
   bucket_key text NOT NULL,
   window_start timestamptz NOT NULL,
   count integer NOT NULL DEFAULT 0,
@@ -354,7 +421,7 @@ CREATE TABLE swarm.rate_buckets (
 );
 
 -- P1 substrate only; messaging commands remain deferred.
-CREATE TABLE swarm.inbox_deliveries (
+CREATE TABLE IF NOT EXISTS swarm.inbox_deliveries (
   message_event_id uuid NOT NULL,
   workspace_id uuid NOT NULL,
   recipient_principal text NOT NULL,
@@ -364,7 +431,7 @@ CREATE TABLE swarm.inbox_deliveries (
   PRIMARY KEY (message_event_id, recipient_principal)
 );
 
-CREATE TABLE swarm.config (
+CREATE TABLE IF NOT EXISTS swarm.config (
   key text PRIMARY KEY,
   value jsonb NOT NULL
 );
@@ -372,7 +439,8 @@ CREATE TABLE swarm.config (
 INSERT INTO swarm.config (key, value)
 VALUES
   ('min_client_version', '"0.1.0"'::jsonb),
-  ('idempotency_retention_days', '30'::jsonb);
+  ('idempotency_retention_days', '30'::jsonb)
+ON CONFLICT (key) DO NOTHING;
 
 -- Everything in the private and exposed schemas is owned by the non-login
 -- administration role. Indexes follow their parent table ownership.
@@ -429,57 +497,61 @@ ALTER TABLE swarm.rate_buckets ENABLE ROW LEVEL SECURITY;
 ALTER TABLE swarm.inbox_deliveries ENABLE ROW LEVEL SECURITY;
 ALTER TABLE swarm.config ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY swarm_command_all ON swarm.users
-  AS PERMISSIVE FOR ALL TO swarm_command USING (true) WITH CHECK (true);
-CREATE POLICY swarm_command_all ON swarm.devices
-  AS PERMISSIVE FOR ALL TO swarm_command USING (true) WITH CHECK (true);
-CREATE POLICY swarm_command_all ON swarm.workspaces
-  AS PERMISSIVE FOR ALL TO swarm_command USING (true) WITH CHECK (true);
-CREATE POLICY swarm_command_all ON swarm.memberships
-  AS PERMISSIVE FOR ALL TO swarm_command USING (true) WITH CHECK (true);
-CREATE POLICY swarm_command_all ON swarm.invitations
-  AS PERMISSIVE FOR ALL TO swarm_command USING (true) WITH CHECK (true);
-CREATE POLICY swarm_command_all ON swarm.agent_principals
-  AS PERMISSIVE FOR ALL TO swarm_command USING (true) WITH CHECK (true);
-CREATE POLICY swarm_command_all ON swarm.agent_runs
-  AS PERMISSIVE FOR ALL TO swarm_command USING (true) WITH CHECK (true);
-CREATE POLICY swarm_command_all ON swarm.agent_tokens
-  AS PERMISSIVE FOR ALL TO swarm_command USING (true) WITH CHECK (true);
-CREATE POLICY swarm_command_all ON swarm.revocation_tombstones
-  AS PERMISSIVE FOR ALL TO swarm_command USING (true) WITH CHECK (true);
-CREATE POLICY swarm_command_all ON swarm.renewal_grants
-  AS PERMISSIVE FOR ALL TO swarm_command USING (true) WITH CHECK (true);
-CREATE POLICY swarm_command_all ON swarm.github_installations
-  AS PERMISSIVE FOR ALL TO swarm_command USING (true) WITH CHECK (true);
-CREATE POLICY swarm_command_all ON swarm.repositories
-  AS PERMISSIVE FOR ALL TO swarm_command USING (true) WITH CHECK (true);
-CREATE POLICY swarm_command_all ON swarm.streams
-  AS PERMISSIVE FOR ALL TO swarm_command USING (true) WITH CHECK (true);
-CREATE POLICY swarm_command_all ON swarm.events
-  AS PERMISSIVE FOR ALL TO swarm_command USING (true) WITH CHECK (true);
-CREATE POLICY swarm_command_all ON swarm.tasks
-  AS PERMISSIVE FOR ALL TO swarm_command USING (true) WITH CHECK (true);
-CREATE POLICY swarm_command_all ON swarm.leases
-  AS PERMISSIVE FOR ALL TO swarm_command USING (true) WITH CHECK (true);
-CREATE POLICY swarm_command_all ON swarm.grants
-  AS PERMISSIVE FOR ALL TO swarm_command USING (true) WITH CHECK (true);
-CREATE POLICY swarm_command_all ON swarm.grant_consumptions
-  AS PERMISSIVE FOR ALL TO swarm_command USING (true) WITH CHECK (true);
-CREATE POLICY swarm_command_all ON swarm.idempotency_keys
-  AS PERMISSIVE FOR ALL TO swarm_command USING (true) WITH CHECK (true);
-CREATE POLICY swarm_command_all ON swarm.audit_log
-  AS PERMISSIVE FOR ALL TO swarm_command USING (true) WITH CHECK (true);
-CREATE POLICY swarm_command_all ON swarm.security_alerts
-  AS PERMISSIVE FOR ALL TO swarm_command USING (true) WITH CHECK (true);
-CREATE POLICY swarm_command_all ON swarm.rate_buckets
-  AS PERMISSIVE FOR ALL TO swarm_command USING (true) WITH CHECK (true);
-CREATE POLICY swarm_command_all ON swarm.inbox_deliveries
-  AS PERMISSIVE FOR ALL TO swarm_command USING (true) WITH CHECK (true);
-CREATE POLICY swarm_command_all ON swarm.config
-  AS PERMISSIVE FOR ALL TO swarm_command USING (true) WITH CHECK (true);
+-- PostgreSQL has no CREATE POLICY IF NOT EXISTS. Keep the complete set of 24
+-- command policies explicit in the guarded table list.
+DO $$
+DECLARE
+  authority_table text;
+BEGIN
+  FOREACH authority_table IN ARRAY ARRAY[
+    'users',
+    'devices',
+    'workspaces',
+    'memberships',
+    'invitations',
+    'agent_principals',
+    'agent_runs',
+    'agent_tokens',
+    'revocation_tombstones',
+    'renewal_grants',
+    'github_installations',
+    'repositories',
+    'streams',
+    'events',
+    'tasks',
+    'leases',
+    'grants',
+    'grant_consumptions',
+    'idempotency_keys',
+    'audit_log',
+    'security_alerts',
+    'rate_buckets',
+    'inbox_deliveries',
+    'config'
+  ]
+  LOOP
+    IF NOT EXISTS (
+      SELECT 1
+      FROM pg_catalog.pg_policy AS p
+      JOIN pg_catalog.pg_class AS c ON c.oid = p.polrelid
+      JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
+      WHERE p.polname = 'swarm_command_all'
+        AND n.nspname = 'swarm'
+        AND c.relname = authority_table
+    ) THEN
+      EXECUTE format(
+        'CREATE POLICY swarm_command_all ON swarm.%I '
+        'AS PERMISSIVE FOR ALL TO swarm_command '
+        'USING (true) WITH CHECK (true)',
+        authority_table
+      );
+    END IF;
+  END LOOP;
+END
+$$;
 
 -- Backstop append-only behavior even if a future migration grants mutation.
-CREATE FUNCTION swarm.prevent_append_only_mutation()
+CREATE OR REPLACE FUNCTION swarm.prevent_append_only_mutation()
 RETURNS trigger
 LANGUAGE plpgsql
 SET search_path = pg_catalog
@@ -492,16 +564,36 @@ $$;
 ALTER FUNCTION swarm.prevent_append_only_mutation() OWNER TO swarm_admin;
 REVOKE ALL ON FUNCTION swarm.prevent_append_only_mutation() FROM PUBLIC;
 
-CREATE TRIGGER events_append_only
-  BEFORE UPDATE OR DELETE ON swarm.events
-  FOR EACH ROW EXECUTE FUNCTION swarm.prevent_append_only_mutation();
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_catalog.pg_trigger
+    WHERE tgname = 'events_append_only'
+      AND tgrelid = 'swarm.events'::regclass
+      AND NOT tgisinternal
+  ) THEN
+    CREATE TRIGGER events_append_only
+      BEFORE UPDATE OR DELETE ON swarm.events
+      FOR EACH ROW EXECUTE FUNCTION swarm.prevent_append_only_mutation();
+  END IF;
 
-CREATE TRIGGER audit_log_append_only
-  BEFORE UPDATE OR DELETE ON swarm.audit_log
-  FOR EACH ROW EXECUTE FUNCTION swarm.prevent_append_only_mutation();
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_catalog.pg_trigger
+    WHERE tgname = 'audit_log_append_only'
+      AND tgrelid = 'swarm.audit_log'::regclass
+      AND NOT tgisinternal
+  ) THEN
+    CREATE TRIGGER audit_log_append_only
+      BEFORE UPDATE OR DELETE ON swarm.audit_log
+      FOR EACH ROW EXECUTE FUNCTION swarm.prevent_append_only_mutation();
+  END IF;
+END
+$$;
 
 -- Shared membership predicate for every tenant-scoped human read.
-CREATE FUNCTION swarm.is_member(p_workspace uuid, p_user uuid)
+CREATE OR REPLACE FUNCTION swarm.is_member(p_workspace uuid, p_user uuid)
 RETURNS boolean
 LANGUAGE sql
 STABLE
@@ -524,35 +616,35 @@ GRANT EXECUTE ON FUNCTION swarm.is_member(uuid, uuid)
 
 -- Owner-pinned views carry their authorization predicates in-view. Security
 -- barriers keep caller-supplied PostgREST filters outside those predicates.
-CREATE VIEW swarm_read.tasks
+CREATE OR REPLACE VIEW swarm_read.tasks
 WITH (security_barrier = true)
 AS
   SELECT t.*
   FROM swarm.tasks AS t
   WHERE swarm.is_member(t.workspace_id, auth.uid());
 
-CREATE VIEW swarm_read.events
+CREATE OR REPLACE VIEW swarm_read.events
 WITH (security_barrier = true)
 AS
   SELECT e.*
   FROM swarm.events AS e
   WHERE swarm.is_member(e.workspace_id, auth.uid());
 
-CREATE VIEW swarm_read.memberships
+CREATE OR REPLACE VIEW swarm_read.memberships
 WITH (security_barrier = true)
 AS
   SELECT m.*
   FROM swarm.memberships AS m
   WHERE swarm.is_member(m.workspace_id, auth.uid());
 
-CREATE VIEW swarm_read.repositories
+CREATE OR REPLACE VIEW swarm_read.repositories
 WITH (security_barrier = true)
 AS
   SELECT r.*
   FROM swarm.repositories AS r
   WHERE swarm.is_member(r.workspace_id, auth.uid());
 
-CREATE VIEW swarm_read.leases
+CREATE OR REPLACE VIEW swarm_read.leases
 WITH (security_barrier = true)
 AS
   SELECT l.*
@@ -560,21 +652,21 @@ AS
   JOIN swarm.streams AS s USING (stream_id)
   WHERE swarm.is_member(s.workspace_id, auth.uid());
 
-CREATE VIEW swarm_read.my_devices
+CREATE OR REPLACE VIEW swarm_read.my_devices
 WITH (security_barrier = true)
 AS
   SELECT d.*
   FROM swarm.devices AS d
   WHERE d.user_id = auth.uid();
 
-CREATE VIEW swarm_read.agent_principals
+CREATE OR REPLACE VIEW swarm_read.agent_principals
 WITH (security_barrier = true)
 AS
   SELECT p.*
   FROM swarm.agent_principals AS p
   WHERE swarm.is_member(p.workspace_id, auth.uid());
 
-CREATE VIEW swarm_read.agent_runs
+CREATE OR REPLACE VIEW swarm_read.agent_runs
 WITH (security_barrier = true)
 AS
   SELECT r.*
@@ -582,7 +674,7 @@ AS
   JOIN swarm.agent_principals AS p USING (principal_id)
   WHERE swarm.is_member(p.workspace_id, auth.uid());
 
-CREATE VIEW swarm_read.audit_log
+CREATE OR REPLACE VIEW swarm_read.audit_log
 WITH (security_barrier = true)
 AS
   SELECT a.*
@@ -616,6 +708,10 @@ ALTER DEFAULT PRIVILEGES FOR ROLE swarm_admin IN SCHEMA swarm
   REVOKE ALL ON TABLES FROM anon, authenticated;
 
 -- Exact swarm_command table privilege matrix from section 2.2.
+REVOKE ALL ON SCHEMA swarm FROM swarm_command;
+REVOKE ALL ON ALL TABLES IN SCHEMA swarm FROM swarm_command;
+REVOKE ALL ON ALL SEQUENCES IN SCHEMA swarm FROM swarm_command;
+
 GRANT USAGE ON SCHEMA swarm TO swarm_command;
 
 GRANT SELECT ON
@@ -694,7 +790,7 @@ REVOKE ALL ON ALL TABLES IN SCHEMA swarm_read FROM anon;
 
 -- Retention jobs: authority events are never purged; audit rows are never
 -- purged here. Audit archival after at least one year is an external operation.
-CREATE FUNCTION swarm.purge_expired_idempotency_keys()
+CREATE OR REPLACE FUNCTION swarm.purge_expired_idempotency_keys()
 RETURNS void
 LANGUAGE sql
 VOLATILE
@@ -722,7 +818,7 @@ $$;
 ALTER FUNCTION swarm.purge_expired_idempotency_keys() OWNER TO swarm_admin;
 REVOKE ALL ON FUNCTION swarm.purge_expired_idempotency_keys() FROM PUBLIC;
 
-CREATE FUNCTION swarm.purge_expired_rate_buckets()
+CREATE OR REPLACE FUNCTION swarm.purge_expired_rate_buckets()
 RETURNS void
 LANGUAGE sql
 VOLATILE
@@ -736,6 +832,8 @@ $$;
 ALTER FUNCTION swarm.purge_expired_rate_buckets() OWNER TO swarm_admin;
 REVOKE ALL ON FUNCTION swarm.purge_expired_rate_buckets() FROM PUBLIC;
 
+-- pg_cron is in Supabase's hosted extension allowlist. Named schedules are
+-- upserts in pg_cron, so repeating these calls updates rather than duplicates.
 CREATE EXTENSION IF NOT EXISTS pg_cron;
 
 SELECT cron.schedule(
