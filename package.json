@@ -5,8 +5,11 @@
   "type": "module",
   "scripts": {
     "build": "tsc",
+    "build:command-core": "esbuild src/protocol/index.ts --bundle --format=esm --platform=neutral --target=es2022 --external:node:crypto --banner:js='// GENERATED from src/protocol/index.ts; do not hand-edit.' --outfile=supabase/functions/_shared/protocol.js",
     "dev": "tsc --watch",
-    "test": "node --import tsx --test tests/**/*.test.ts",
+    "test": "node --import tsx --test tests/protocol-next.test.ts",
+    "pretest:p1-server": "npm run build:command-core",
+    "test:p1-server": "node --import tsx --test tests/p1-server/**/*.test.ts",
     "prebuild": "rm -rf dist",
     "db:start": "supabase start",
     "db:stop": "supabase stop",
@@ -20,10 +23,13 @@
   },
   "license": "MIT",
   "dependencies": {
+    "@supabase/supabase-js": "^2.110.8",
     "@types/node": "^25.5.0",
+    "postgres": "^3.4.9",
     "typescript": "^6.0.2"
   },
   "devDependencies": {
+    "esbuild": "^0.28.1",
     "tsx": "^4.21.0"
   }
 }
