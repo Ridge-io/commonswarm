@@ -891,8 +891,8 @@ kinds — both are real, neither is coordination.
 | #3 | No claim kinds at P1; `claimRequiresGrant ≡ false`; close-grant path dormant but schema-ready. |
 | #4 | No stream-level command class exists at P1 — strike/define the orphan phrase in §2.1. |
 | #5 | Device register/revoke emits **audit rows only**; `my_devices` is the read surface. |
-| #6 | **Verify on the live Supabase project** whether the redirect allowlist accepts a loopback wildcard; if not, pin one registered high port with a collision queue. *(Verification dispatched.)* |
-| #7 | **Verify and enable** refresh-token rotation with reuse detection in project auth settings. *(Verification dispatched.)* |
+| #6 | **VERIFIED (2026-07-23).** Port wildcards are supported — `*` matches any run of characters except `.` and `/`, and port digits contain neither. Use **`http://127.0.0.1:*/callback`**. Random-high-port PKCE loopback is therefore viable; the pinned-port fallback is **not** needed. **Two caveats, both load-bearing:** (1) this project's `uri_allow_list` is currently **EMPTY** (`site_url` = `http://localhost:3000`) — the entry must be **added** before login works at all; (2) matching semantics were confirmed from Supabase's documentation, **not empirically write-tested on this project** (testing required a write, which was forbidden). **Prove it with a real login during implementation** before declaring the auth path done. **Trap:** `*` does not cross `/`, so bare `http://localhost:*` will NOT match a `/callback` path — the pattern must include the path. |
+| #7 | **VERIFIED (2026-07-23) — already enabled, no work needed.** `refresh_token_rotation_enabled = true`; `security_refresh_token_reuse_interval = 10` (seconds); "Detect and revoke potentially compromised refresh tokens" is checked. Kimi #7's fallback path (for the case where reuse detection is unavailable) is **dead code — do not implement it.** |
 | #8 | Lease TTL ceiling **4 hours** — operator-confirmed. Renewal unlimited, so this caps only a dead agent's worst-case pin. Amend §2.2. |
 | #9 | `timestamptz` from `statement_timestamp()`; envelope times `date_trunc('milliseconds')` — ms-floor, never round. |
 | #11 | Floor in `swarm.config('min_client_version')`; semver-compared every command; below floor → `426 upgrade_required` + audit row. |
@@ -901,7 +901,12 @@ kinds — both are real, neither is coordination.
 | #17 | `swarm.events` forever (it is the authority). `audit_log` **≥1 year then archived to storage**, not deleted. pg_cron purges only `idempotency_keys` (30d) and `rate_buckets`. |
 | #18 | **Replay-only at P1.** Snapshot tables and format deferred to P3 alongside the board. Amend §2.1's phrase to "paginated replay at P1; snapshot bootstrap at P3." |
 
-### Still open (not gaps — verification tasks)
+### Verification tasks — both CLOSED (2026-07-23)
 
-- #6 / #7 depend on actual Supabase project settings. Until verified, **do not implement
-  the PKCE callback or the refresh-rotation path** — a wrong assumption there breaks login.
+#6 and #7 are verified above. **P1 implementation is unblocked.** Two follow-ups ride
+with the auth work rather than gating it:
+
+1. **Add `http://127.0.0.1:*/callback` to the project's redirect allowlist** — it is
+   currently empty, so login fails today for reasons unrelated to our code.
+2. **Empirically prove the wildcard match with a real login.** Its semantics are
+   documented, not tested here. Do not mark the auth path done on documentation alone.
