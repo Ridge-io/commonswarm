@@ -13,6 +13,10 @@ import {
   canonicalPrincipal, leaseLive, SCHEMA_VERSION,
 } from './events.js';
 
+/** Enumerated close dispositions (§2.4). `discard` additionally needs owner/admin + --force-discard upstream. */
+export type Disposition = 'merged' | 'pr' | 'archive' | 'discard';
+export const DISPOSITIONS: readonly Disposition[] = ['merged', 'pr', 'archive', 'discard'] as const;
+
 export type Command =
   | { kind: 'create'; task_id: string; slug: string }
   | { kind: 'acquire'; task_id: string; ttl_ms: number }
@@ -20,8 +24,8 @@ export type Command =
   | { kind: 'handoff'; task_id: string; epoch: number; to_owner: string; ttl_ms: number }
   | { kind: 'takeover'; task_id: string; grant_id: string | null; ttl_ms: number }
   | { kind: 'submit'; task_id: string; epoch: number; branch: string; head_sha: string; evidence_set: string[] }
-  | { kind: 'close'; task_id: string; epoch: number; disposition: string; grant_id: string | null }
-  | { kind: 'reopen'; task_id: string };
+  | { kind: 'close'; task_id: string; epoch: number; disposition: Disposition; grant_id: string | null }
+  | { kind: 'reopen'; task_id: string; epoch: number };
 
 /**
  * Injected authority oracles + envelope factory. In P1 these are backed by the
@@ -44,10 +48,10 @@ export interface DecideCtx {
   claimRequiresGrant(task_id: string): boolean;
   /** Is the presented evidence bundle complete/valid for submission (§2.4)? */
   evidenceComplete(task_id: string, evidence_set: readonly string[]): boolean;
-  /** Is there a live takeover grant bound to this exact epoch (§2.5)? */
-  validTakeoverGrant(task_id: string, grant_id: string | null, epoch: number): boolean;
-  /** Is there a live close grant bound to this exact submission head_sha (§2.4/§2.5)? */
-  validCloseGrant(task_id: string, grant_id: string | null, head_sha: string): boolean;
+  /** Is there a live takeover grant bound to this exact epoch AND issued to `recipient` (§2.5)? */
+  validTakeoverGrant(task_id: string, grant_id: string | null, epoch: number, recipient: string): boolean;
+  /** Is there a live close grant bound to this exact submission {version, epoch, head_sha} (§2.5 — dies on reopen)? */
+  validCloseGrant(task_id: string, grant_id: string | null, submission: { version: number; epoch: number; head_sha: string }): boolean;
   /** Is this slug already taken in the stream? (create uniqueness) */
   slugTaken(slug: string): boolean;
   nextSeq(): number;
@@ -123,6 +127,12 @@ export function decide(state: TaskState | null, cmd: Command, ctx: DecideCtx): D
   const s = state;
   const live = leaseLive(s, ctx.now);
 
+  // Client-field validation (§2.1): a lease ttl must be finite and positive — an
+  // Infinite/NaN/negative ttl would create a permanent or dead-on-arrival lease.
+  if ('ttl_ms' in cmd && (!Number.isFinite(cmd.ttl_ms) || cmd.ttl_ms <= 0)) {
+    return domain(ctx, cmd.task_id, cmd.kind, 'bad_state', 'ttl_ms must be a finite positive number');
+  }
+
   switch (cmd.kind) {
     case 'acquire': {
       // open/reopened always; active/awaiting_review only when the lease is expired.
@@ -138,6 +148,7 @@ export function decide(state: TaskState | null, cmd: Command, ctx: DecideCtx): D
     }
 
     case 'renew': {
+      if (s.lifecycle === 'done') return domain(ctx, cmd.task_id, 'renew', 'already_done', 'task is done; nothing to renew');
       if (s.owner !== me) return domain(ctx, cmd.task_id, 'renew', 'not_owner', 'only the lease owner may renew');
       if (cmd.epoch !== s.epoch) return domain(ctx, cmd.task_id, 'renew', 'stale_epoch', `presented epoch ${cmd.epoch} != current ${s.epoch}`);
       if (!live) return domain(ctx, cmd.task_id, 'renew', 'lease_expired', 'lease already expired; re-acquire');
@@ -148,6 +159,9 @@ export function decide(state: TaskState | null, cmd: Command, ctx: DecideCtx): D
       if (s.owner !== me) return domain(ctx, cmd.task_id, 'handoff', 'not_owner', 'only the lease owner may hand off');
       if (cmd.epoch !== s.epoch) return domain(ctx, cmd.task_id, 'handoff', 'stale_epoch', `presented epoch ${cmd.epoch} != current ${s.epoch}`);
       if (!live) return domain(ctx, cmd.task_id, 'handoff', 'lease_expired', 'lease expired; cannot hand off');
+      // §2.2 submit effect: "mutations other than renew/close/reopen refused" — a
+      // task with a pending frozen submission may not change owner; reopen/close first.
+      if (s.lifecycle === 'awaiting_review') return domain(ctx, cmd.task_id, 'handoff', 'bad_state', 'cannot hand off during awaiting_review; close or reopen first');
       if (!ctx.isEligibleRecipient(cmd.to_owner)) return domain(ctx, cmd.task_id, 'handoff', 'recipient_not_member', 'recipient is not a current member/principal');
       const epoch = s.epoch + 1;
       return accept([env(ctx, 'LeaseHandedOff', { task_id: cmd.task_id, epoch, from_owner: me, to_owner: cmd.to_owner, lease_expiry: ctx.now + cmd.ttl_ms })]);
@@ -156,12 +170,14 @@ export function decide(state: TaskState | null, cmd: Command, ctx: DecideCtx): D
     case 'takeover': {
       if (s.lifecycle === 'done') return domain(ctx, cmd.task_id, 'takeover', 'not_acquirable', 'task is done; reopen first');
       if (live) {
-        // Stealing a LIVE lease requires a takeover grant bound to the current epoch.
-        if (!ctx.validTakeoverGrant(cmd.task_id, cmd.grant_id, s.epoch)) {
-          return domain(ctx, cmd.task_id, 'takeover', 'live_lease_needs_grant', 'live lease; a takeover grant bound to the current epoch is required');
+        // Stealing a LIVE lease requires a takeover grant bound to the current epoch
+        // AND issued to the caller (§2.5 recipient binding). Forbidden during review.
+        if (s.lifecycle === 'awaiting_review') return domain(ctx, cmd.task_id, 'takeover', 'bad_state', 'cannot take over during awaiting_review; close or reopen first');
+        if (!ctx.validTakeoverGrant(cmd.task_id, cmd.grant_id, s.epoch, me)) {
+          return domain(ctx, cmd.task_id, 'takeover', 'live_lease_needs_grant', 'live lease; a takeover grant bound to the current epoch and issued to you is required');
         }
       }
-      // Expired lease → behaves as acquire (no grant needed).
+      // Expired lease → behaves as acquire (reacquisition allowed even from awaiting_review).
       const epoch = s.epoch + 1;
       return accept([env(ctx, 'LeaseTakenOver', { task_id: cmd.task_id, epoch, owner: me, lease_expiry: ctx.now + cmd.ttl_ms, grant_id: live ? cmd.grant_id : null })]);
     }
@@ -178,18 +194,21 @@ export function decide(state: TaskState | null, cmd: Command, ctx: DecideCtx): D
 
     case 'close': {
       if (s.lifecycle === 'done') return domain(ctx, cmd.task_id, 'close', 'already_done', 'task is already done');
-      if (s.lifecycle !== 'awaiting_review' || !s.submission) return domain(ctx, cmd.task_id, 'close', 'not_submitted', 'no frozen submission to close');
-      // Close binds to the FROZEN submission (survives lease expiry), not the live lease.
+      // Close keys off the FROZEN SUBMISSION, not the lifecycle label: a submission
+      // stays closeable after a spec-sanctioned reacquisition (§2.2 final row), even
+      // though the live lease epoch has advanced beyond the frozen submission epoch.
+      if (!s.submission) return domain(ctx, cmd.task_id, 'close', 'not_submitted', 'no frozen submission to close');
       if (cmd.epoch !== s.submission.epoch) return domain(ctx, cmd.task_id, 'close', 'stale_epoch', `presented epoch ${cmd.epoch} != submission epoch ${s.submission.epoch} (superseded?)`);
       const roleOf = ctx.role(me);
       const isAdmin = roleOf === 'owner' || roleOf === 'admin';
       const isOwnerOfTask = s.owner === me;
       if (!isAdmin && !isOwnerOfTask) return domain(ctx, cmd.task_id, 'close', 'not_owner', 'only the task owner or a workspace Owner/Admin may close');
-      // Gated claims: the task owner needs a valid close grant bound to the frozen head_sha.
-      // A human Owner/Admin may close a gated claim directly.
+      // Gated claims: the task owner needs a close grant bound to this exact frozen
+      // submission {version, epoch, head_sha} — so reopen (which bumps version and
+      // clears the submission) invalidates the grant. A human Owner/Admin may close directly.
       if (ctx.claimRequiresGrant(cmd.task_id) && !isAdmin) {
-        if (!ctx.validCloseGrant(cmd.task_id, cmd.grant_id, s.submission.head_sha)) {
-          return domain(ctx, cmd.task_id, 'close', 'close_needs_grant', 'this claim requires a close grant bound to the submitted head SHA');
+        if (!ctx.validCloseGrant(cmd.task_id, cmd.grant_id, { version: s.version, epoch: s.submission.epoch, head_sha: s.submission.head_sha })) {
+          return domain(ctx, cmd.task_id, 'close', 'close_needs_grant', 'this claim requires a close grant bound to the current frozen submission (version+epoch+head SHA)');
         }
       }
       return accept([env(ctx, 'TaskClosed', { task_id: cmd.task_id, epoch: s.submission.epoch, disposition: cmd.disposition, grant_id: cmd.grant_id })]);
@@ -201,6 +220,8 @@ export function decide(state: TaskState | null, cmd: Command, ctx: DecideCtx): D
       const isAdmin = roleOf === 'owner' || roleOf === 'admin';
       const isOwnerOfTask = s.owner === me;
       if (!isAdmin && !isOwnerOfTask) return domain(ctx, cmd.task_id, 'reopen', 'not_owner', 'reopen requires a workspace Owner/Admin or the task owner');
+      // The table requires "task owner WITH epoch" for the non-admin path; an Owner/Admin is epoch-exempt.
+      if (!isAdmin && cmd.epoch !== s.epoch) return domain(ctx, cmd.task_id, 'reopen', 'stale_epoch', `presented epoch ${cmd.epoch} != current ${s.epoch}`);
       return accept([env(ctx, 'TaskReopened', { task_id: cmd.task_id, version: s.version + 1 })]);
     }
   }

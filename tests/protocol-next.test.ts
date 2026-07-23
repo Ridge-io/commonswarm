@@ -15,7 +15,7 @@ import {
   reduceStream, reduceTask, UnknownEventTypeError, StreamIntegrityError,
   Command, DecideCtx, decide,
   IdemLedger, applyCommand, requestHash,
-  upcastEnvelope, UpcastError,
+  upcastEnvelope, registerUpcaster, UpcastError,
 } from '../src/protocol/index.js';
 
 // ---- Test world: models the command function + guarded stream append ---------
@@ -24,8 +24,8 @@ interface Oracles {
   members?: string[];
   roles?: Record<string, 'owner' | 'admin' | 'member'>;
   gatedTasks?: string[];               // tasks whose claim requires a close grant
-  takeoverGrants?: Array<{ task: string; grant: string; epoch: number }>;
-  closeGrants?: Array<{ task: string; grant: string; head_sha: string }>;
+  takeoverGrants?: Array<{ task: string; grant: string; epoch: number; recipient: string }>;
+  closeGrants?: Array<{ task: string; grant: string; version: number; epoch: number; head_sha: string }>;
   evidenceOk?: (evidence: readonly string[]) => boolean;
 }
 
@@ -62,10 +62,14 @@ function makeWorld(o: Oracles = {}) {
       isEligibleRecipient: (p) => members.has(p),
       claimRequiresGrant: (t) => gated.has(t),
       evidenceComplete: (_t, ev) => evidenceOk(ev),
-      validTakeoverGrant: (t, g, epoch) =>
-        !!g && (o.takeoverGrants ?? []).some((x) => x.task === t && x.grant === g && x.epoch === epoch),
-      validCloseGrant: (t, g, sha) =>
-        !!g && (o.closeGrants ?? []).some((x) => x.task === t && x.grant === g && x.head_sha === sha),
+      validTakeoverGrant: (t, g, epoch, recipient) =>
+        !!g && (o.takeoverGrants ?? []).some((x) =>
+          x.task === t && x.grant === g && x.epoch === epoch && x.recipient === recipient),
+      validCloseGrant: (t, g, submission) =>
+        !!g && (o.closeGrants ?? []).some((x) =>
+          x.task === t && x.grant === g &&
+          x.version === submission.version && x.epoch === submission.epoch &&
+          x.head_sha === submission.head_sha),
       slugTaken: (slug) => slugs().has(slug),
       nextSeq: () => ++seq,
       nextEventId: () => `e${++eid}`,
@@ -74,25 +78,36 @@ function makeWorld(o: Oracles = {}) {
     };
   }
 
-  // Decide against the current head, capturing the (epoch,version) it saw.
-  function decideFor(who: string, cmd: Command, at?: { now?: number; command_id?: string }) {
-    const s = state();
-    const ctx = ctxFor(who, at?.command_id ?? `cmd-${who}-${seq}-${eid}-${clock}`, at?.now ?? clock);
-    const decision = decide(s, cmd, ctx);
-    return { decision, decidedEpoch: s?.epoch ?? -1, decidedVersion: s?.version ?? -1, ctx };
+  function taskHeadPosition(task_id: string): number {
+    return events.filter((event) =>
+      !!event.payload && typeof event.payload === 'object' &&
+      (event.payload as { task_id?: unknown }).task_id === task_id,
+    ).length;
   }
 
-  // Optimistic commit (§2.1 task version + lease epoch): append only if the head
-  // still matches what the decision was computed against.
+  // Decide against the current task-stream head, capturing its position.
+  function decideFor(who: string, cmd: Command, at?: { now?: number; command_id?: string }) {
+    const s = state();
+    const decidedHeadPosition = taskHeadPosition(cmd.task_id);
+    const ctx = ctxFor(who, at?.command_id ?? `cmd-${who}-${seq}-${eid}-${clock}`, at?.now ?? clock);
+    const decision = decide(s, cmd, ctx);
+    return { decision, task_id: cmd.task_id, decidedHeadPosition, ctx };
+  }
+
+  // Optimistic commit: append only if no event for this task has appeared since
+  // decide-time. Epoch/version alone miss submit, close, renew, and rejection.
   function commit(d: ReturnType<typeof decideFor>): { committed: boolean; conflict?: boolean } {
-    if (!d.decision.ok) {
-      // Domain rejections ARE committed (visible history); authz are not.
-      if (d.decision.class === 'domain') events.push(...d.decision.events);
-      return { committed: d.decision.class === 'domain' };
+    if (!d.decision.ok && d.decision.class === 'authz') {
+      return { committed: false };
     }
-    const head = state();
-    if ((head?.epoch ?? -1) !== d.decidedEpoch || (head?.version ?? -1) !== d.decidedVersion) {
+    if (taskHeadPosition(d.task_id) !== d.decidedHeadPosition) {
       return { committed: false, conflict: true };
+    }
+    if (!d.decision.ok) {
+      // Domain rejections are committed visible history once their observed
+      // head is confirmed current.
+      events.push(...d.decision.events);
+      return { committed: true };
     }
     events.push(...d.decision.events);
     return { committed: true };
@@ -110,6 +125,7 @@ function makeWorld(o: Oracles = {}) {
 
   return {
     events, ledger, state, ctxFor, decideFor, commit, apply: applyD,
+    addMember: (principal: string) => members.add(principal),
     advance: (ms: number) => { clock += ms; return clock; },
     now: () => clock,
     lastType: () => events[events.length - 1]?.type,
@@ -147,6 +163,29 @@ describe('reducer', () => {
       actor_run: 'r', occurred_at_server: 1, payload: { task_id: 't', slug: 't' },
     });
     assert.throws(() => reduceStream([mk(2), mk(2)]), StreamIntegrityError);
+  });
+
+  it('a non-monotonic lease epoch halts the fold', () => {
+    const envelope = {
+      workspace_id: 'ws1', stream_id: 'r', event_id: 'e', command_id: 'c',
+      schema_version: 1, actor_user: null, actor_agent_principal: 'alice',
+      actor_run: 'r1', occurred_at_server: 1,
+    } as const;
+    const stream: EventEnvelope[] = [
+      {
+        ...envelope, seq: 1, type: 'TaskCreated',
+        payload: { task_id: 't', slug: 't' },
+      },
+      {
+        ...envelope, seq: 2, type: 'LeaseAcquired',
+        payload: { task_id: 't', epoch: 2, owner: 'bob', lease_expiry: 10 },
+      },
+      {
+        ...envelope, seq: 3, type: 'LeaseTakenOver',
+        payload: { task_id: 't', epoch: 1, owner: 'carol', lease_expiry: 20, grant_id: null },
+      },
+    ];
+    assert.throws(() => reduceStream(stream), StreamIntegrityError);
   });
 });
 
@@ -199,7 +238,7 @@ describe('epoch fencing', () => {
 
 describe('takeover', () => {
   it('live lease requires a takeover grant bound to the CURRENT epoch', () => {
-    const w = makeWorld({ takeoverGrants: [{ task: 't', grant: 'g-epoch1', epoch: 1 }] });
+    const w = makeWorld({ takeoverGrants: [{ task: 't', grant: 'g-epoch1', epoch: 1, recipient: 'carol' }] });
     w.apply('alice', { kind: 'create', task_id: 't', slug: 't' });
     w.apply('bob', { kind: 'acquire', task_id: 't', ttl_ms: TTL }); // epoch 1, live
     // no grant → refused
@@ -214,7 +253,7 @@ describe('takeover', () => {
   });
 
   it('a takeover grant does NOT work after the epoch changed (grant dies on epoch change)', () => {
-    const w = makeWorld({ takeoverGrants: [{ task: 't', grant: 'g1', epoch: 1 }] });
+    const w = makeWorld({ takeoverGrants: [{ task: 't', grant: 'g1', epoch: 1, recipient: 'carol' }] });
     w.apply('alice', { kind: 'create', task_id: 't', slug: 't' });
     w.apply('bob', { kind: 'acquire', task_id: 't', ttl_ms: TTL });   // epoch 1
     w.apply('carol', { kind: 'takeover', task_id: 't', grant_id: 'g1', ttl_ms: TTL }); // epoch 2 (grant for epoch 1 consumed)
@@ -232,6 +271,41 @@ describe('takeover', () => {
     const ok = w.apply('carol', { kind: 'takeover', task_id: 't', grant_id: null, ttl_ms: TTL });
     assert.equal(ok.decision.ok, true);
     assert.equal(w.state()!.epoch, 2);
+  });
+
+  it('a takeover grant cannot be spent by a different recipient', () => {
+    const w = makeWorld({
+      members: ['alice', 'bob', 'carol', 'mallory'],
+      takeoverGrants: [{ task: 't', grant: 'for-carol', epoch: 1, recipient: 'carol' }],
+    });
+    w.apply('alice', { kind: 'create', task_id: 't', slug: 't' });
+    w.apply('bob', { kind: 'acquire', task_id: 't', ttl_ms: TTL });
+    const stolen = w.apply('mallory', {
+      kind: 'takeover', task_id: 't', grant_id: 'for-carol', ttl_ms: TTL,
+    });
+    assert.equal(stolen.decision.ok, false);
+    if (!stolen.decision.ok) assert.equal(stolen.decision.reason, 'live_lease_needs_grant');
+    assert.equal(w.state()!.owner, 'bob');
+    assert.equal(w.state()!.epoch, 1);
+  });
+
+  it('a live lease cannot be taken over while its submission awaits review', () => {
+    const w = makeWorld({
+      takeoverGrants: [{ task: 't', grant: 'for-carol', epoch: 1, recipient: 'carol' }],
+    });
+    w.apply('alice', { kind: 'create', task_id: 't', slug: 't' });
+    w.apply('bob', { kind: 'acquire', task_id: 't', ttl_ms: TTL });
+    w.apply('bob', {
+      kind: 'submit', task_id: 't', epoch: 1, branch: 'b',
+      head_sha: 'sha1', evidence_set: ['ev'],
+    });
+    const takeover = w.apply('carol', {
+      kind: 'takeover', task_id: 't', grant_id: 'for-carol', ttl_ms: TTL,
+    });
+    assert.equal(takeover.decision.ok, false);
+    if (!takeover.decision.ok) assert.equal(takeover.decision.reason, 'bad_state');
+    assert.equal(w.state()!.lifecycle, 'awaiting_review');
+    assert.equal(w.state()!.owner, 'bob');
   });
 });
 
@@ -254,6 +328,23 @@ describe('handoff', () => {
     assert.equal(w.state()!.epoch, 2);
     assert.equal(w.state()!.owner, 'carol');
   });
+
+  it('is rejected while a submission awaits review', () => {
+    const w = makeWorld();
+    w.apply('alice', { kind: 'create', task_id: 't', slug: 't' });
+    w.apply('bob', { kind: 'acquire', task_id: 't', ttl_ms: TTL });
+    w.apply('bob', {
+      kind: 'submit', task_id: 't', epoch: 1, branch: 'b',
+      head_sha: 'sha1', evidence_set: ['ev'],
+    });
+    const handoff = w.apply('bob', {
+      kind: 'handoff', task_id: 't', epoch: 1, to_owner: 'carol', ttl_ms: TTL,
+    });
+    assert.equal(handoff.decision.ok, false);
+    if (!handoff.decision.ok) assert.equal(handoff.decision.reason, 'bad_state');
+    assert.equal(w.state()!.lifecycle, 'awaiting_review');
+    assert.equal(w.state()!.owner, 'bob');
+  });
 });
 
 // ---- Submission / close (§2.2 + §2.4 gate) ----------------------------------
@@ -271,6 +362,32 @@ describe('submission survives lease expiry and supersession works', () => {
     const c = w.apply('bob', { kind: 'close', task_id: 't', epoch: 1, disposition: 'merged', grant_id: null });
     assert.equal(c.decision.ok, true);
     assert.equal(w.state()!.lifecycle, 'done');
+  });
+
+  it('expired awaiting-review reacquisition preserves the frozen submission and remains closeable', () => {
+    for (const reacquireWith of ['acquire', 'takeover'] as const) {
+      const w = makeWorld();
+      w.apply('alice', { kind: 'create', task_id: 't', slug: `t-${reacquireWith}` });
+      w.apply('bob', { kind: 'acquire', task_id: 't', ttl_ms: TTL });
+      w.apply('bob', {
+        kind: 'submit', task_id: 't', epoch: 1, branch: 'b',
+        head_sha: 'sha1', evidence_set: ['ev'],
+      });
+      w.advance(TTL + 1);
+      const reacquired = reacquireWith === 'acquire'
+        ? w.apply('carol', { kind: 'acquire', task_id: 't', ttl_ms: TTL })
+        : w.apply('carol', { kind: 'takeover', task_id: 't', grant_id: null, ttl_ms: TTL });
+      assert.equal(reacquired.decision.ok, true);
+      assert.equal(w.state()!.epoch, 2);
+      assert.equal(w.state()!.lifecycle, 'awaiting_review');
+      assert.equal(w.state()!.submission!.head_sha, 'sha1');
+
+      const closed = w.apply('carol', {
+        kind: 'close', task_id: 't', epoch: 1, disposition: 'merged', grant_id: null,
+      });
+      assert.equal(closed.decision.ok, true);
+      assert.equal(w.state()!.lifecycle, 'done');
+    }
   });
 
   it('a new submit supersedes the prior frozen submission', () => {
@@ -306,8 +423,11 @@ describe('close gating (§2.4)', () => {
     if (!noGrant.decision.ok) assert.equal(noGrant.decision.reason, 'close_needs_grant');
   });
 
-  it('a gated claim CAN be closed with a close grant bound to the frozen head_sha', () => {
-    const w = makeWorld({ gatedTasks: ['t'], closeGrants: [{ task: 't', grant: 'cg', head_sha: 'shaX' }] });
+  it('a gated claim CAN be closed with a grant bound to the frozen version, epoch, and SHA', () => {
+    const w = makeWorld({
+      gatedTasks: ['t'],
+      closeGrants: [{ task: 't', grant: 'cg', version: 1, epoch: 1, head_sha: 'shaX' }],
+    });
     w.apply('alice', { kind: 'create', task_id: 't', slug: 't' });
     w.apply('bob', { kind: 'acquire', task_id: 't', ttl_ms: TTL });
     w.apply('bob', { kind: 'submit', task_id: 't', epoch: 1, branch: 'b', head_sha: 'shaX', evidence_set: ['ev'] });
@@ -324,6 +444,80 @@ describe('close gating (§2.4)', () => {
     const ok = w.apply('alice', { kind: 'close', task_id: 't', epoch: 1, disposition: 'merged', grant_id: null });
     assert.equal(ok.decision.ok, true);
   });
+
+  it('a close grant does not survive reopen plus a same-SHA resubmission', () => {
+    const w = makeWorld({
+      gatedTasks: ['t'],
+      closeGrants: [{ task: 't', grant: 'old-grant', version: 1, epoch: 1, head_sha: 'same-sha' }],
+    });
+    w.apply('alice', { kind: 'create', task_id: 't', slug: 't' });
+    w.apply('bob', { kind: 'acquire', task_id: 't', ttl_ms: TTL });
+    w.apply('bob', {
+      kind: 'submit', task_id: 't', epoch: 1, branch: 'b',
+      head_sha: 'same-sha', evidence_set: ['ev1'],
+    });
+    w.apply('alice', { kind: 'reopen', task_id: 't', epoch: 1 });
+    w.apply('bob', { kind: 'acquire', task_id: 't', ttl_ms: TTL });
+    w.apply('bob', {
+      kind: 'submit', task_id: 't', epoch: 2, branch: 'b',
+      head_sha: 'same-sha', evidence_set: ['ev2'],
+    });
+    const close = w.apply('bob', {
+      kind: 'close', task_id: 't', epoch: 2, disposition: 'merged', grant_id: 'old-grant',
+    });
+    assert.equal(close.decision.ok, false);
+    if (!close.decision.ok) assert.equal(close.decision.reason, 'close_needs_grant');
+    assert.equal(w.state()!.lifecycle, 'awaiting_review');
+  });
+});
+
+describe('task-head optimistic commit guard', () => {
+  it('allows exactly one of two same-grant close decisions to commit', () => {
+    const w = makeWorld({
+      gatedTasks: ['t'],
+      closeGrants: [{ task: 't', grant: 'cg', version: 1, epoch: 1, head_sha: 'sha1' }],
+    });
+    w.apply('alice', { kind: 'create', task_id: 't', slug: 't' });
+    w.apply('bob', { kind: 'acquire', task_id: 't', ttl_ms: TTL });
+    w.apply('bob', {
+      kind: 'submit', task_id: 't', epoch: 1, branch: 'b',
+      head_sha: 'sha1', evidence_set: ['ev'],
+    });
+    const first = w.decideFor('bob', {
+      kind: 'close', task_id: 't', epoch: 1, disposition: 'merged', grant_id: 'cg',
+    });
+    const second = w.decideFor('bob', {
+      kind: 'close', task_id: 't', epoch: 1, disposition: 'merged', grant_id: 'cg',
+    });
+    assert.equal(first.decision.ok, true);
+    assert.equal(second.decision.ok, true);
+    assert.deepEqual(w.commit(first), { committed: true });
+    assert.deepEqual(w.commit(second), { committed: false, conflict: true });
+    assert.equal(w.events.filter((event) => event.type === 'TaskClosed').length, 1);
+  });
+
+  it('rejects a submit decision made stale by a concurrently committed close', () => {
+    const w = makeWorld();
+    w.apply('alice', { kind: 'create', task_id: 't', slug: 't' });
+    w.apply('bob', { kind: 'acquire', task_id: 't', ttl_ms: TTL });
+    w.apply('bob', {
+      kind: 'submit', task_id: 't', epoch: 1, branch: 'b',
+      head_sha: 'sha1', evidence_set: ['ev1'],
+    });
+    const close = w.decideFor('alice', {
+      kind: 'close', task_id: 't', epoch: 1, disposition: 'merged', grant_id: null,
+    });
+    const staleSubmit = w.decideFor('bob', {
+      kind: 'submit', task_id: 't', epoch: 1, branch: 'b',
+      head_sha: 'sha2', evidence_set: ['ev2'],
+    });
+    assert.equal(close.decision.ok, true);
+    assert.equal(staleSubmit.decision.ok, true);
+    assert.deepEqual(w.commit(close), { committed: true });
+    assert.deepEqual(w.commit(staleSubmit), { committed: false, conflict: true });
+    assert.equal(w.state()!.lifecycle, 'done');
+    assert.equal(w.state()!.submission!.head_sha, 'sha1');
+  });
 });
 
 describe('reopen invalidates the open submission', () => {
@@ -332,7 +526,7 @@ describe('reopen invalidates the open submission', () => {
     w.apply('alice', { kind: 'create', task_id: 't', slug: 't' });
     w.apply('bob', { kind: 'acquire', task_id: 't', ttl_ms: TTL });
     w.apply('bob', { kind: 'submit', task_id: 't', epoch: 1, branch: 'b', head_sha: 's', evidence_set: ['ev'] });
-    const r = w.apply('alice', { kind: 'reopen', task_id: 't' });
+    const r = w.apply('alice', { kind: 'reopen', task_id: 't', epoch: 1 });
     assert.equal(r.decision.ok, true);
     const s = w.state()!;
     assert.equal(s.lifecycle, 'reopened');
@@ -342,6 +536,17 @@ describe('reopen invalidates the open submission', () => {
     const c = w.apply('bob', { kind: 'close', task_id: 't', epoch: 1, disposition: 'merged', grant_id: null });
     assert.equal(c.decision.ok, false);
     if (!c.decision.ok) assert.equal(c.decision.reason, 'not_submitted');
+  });
+
+  it('a non-admin task owner cannot reopen with a stale epoch', () => {
+    const w = makeWorld();
+    w.apply('alice', { kind: 'create', task_id: 't', slug: 't' });
+    w.apply('bob', { kind: 'acquire', task_id: 't', ttl_ms: TTL });
+    const reopen = w.apply('bob', { kind: 'reopen', task_id: 't', epoch: 0 });
+    assert.equal(reopen.decision.ok, false);
+    if (!reopen.decision.ok) assert.equal(reopen.decision.reason, 'stale_epoch');
+    assert.equal(w.state()!.version, 1);
+    assert.equal(w.state()!.lifecycle, 'active');
   });
 });
 
@@ -389,6 +594,47 @@ describe('idempotency', () => {
     assert.equal(retry.status, 'replayed');
     assert.equal(retry.response.ok, false);
   });
+
+  it('does not ledger an authz rejection, so a later-member retry is evaluated again', () => {
+    const w = makeWorld({ members: ['alice', 'bob'] });
+    w.apply('alice', { kind: 'create', task_id: 't', slug: 't' });
+    const cmd: Command = { kind: 'acquire', task_id: 't', ttl_ms: TTL };
+    const first = applyCommand(
+      w.ledger, w.state(), cmd, w.ctxFor('mallory', 'CMD-AUTHZ', w.now()),
+    );
+    assert.equal(first.status, 'fresh');
+    if (first.status === 'fresh') {
+      assert.equal(first.decision.ok, false);
+      if (!first.decision.ok) assert.equal(first.decision.class, 'authz');
+    }
+    assert.equal(w.ledger.size, 0);
+
+    w.addMember('mallory');
+    const retry = applyCommand(
+      w.ledger, w.state(), cmd, w.ctxFor('mallory', 'CMD-AUTHZ', w.now()),
+    );
+    assert.equal(retry.status, 'fresh');
+    if (retry.status === 'fresh') {
+      assert.equal(retry.decision.ok, true);
+      w.events.push(...retry.events);
+    }
+    assert.equal(w.state()!.owner, 'mallory');
+  });
+
+  it('namespaces user and agent principals that share the same textual id', () => {
+    const w = makeWorld({ members: ['same-name'] });
+    const cmd: Command = { kind: 'create', task_id: 't', slug: 't' };
+    const agentCtx = w.ctxFor('same-name', 'SAME-COMMAND-ID', w.now());
+    const userCtx: DecideCtx = {
+      ...w.ctxFor('same-name', 'SAME-COMMAND-ID', w.now()),
+      actor: { user: 'same-name', agent_principal: null, run: null },
+    };
+    const agentResult = applyCommand(w.ledger, null, cmd, agentCtx);
+    const userResult = applyCommand(w.ledger, null, cmd, userCtx);
+    assert.equal(agentResult.status, 'fresh');
+    assert.equal(userResult.status, 'fresh');
+    assert.equal(w.ledger.size, 2);
+  });
 });
 
 // ---- Authz vs domain rejection ----------------------------------------------
@@ -432,6 +678,39 @@ describe('upcasters + golden full-history replay', () => {
     assert.equal(s.task_id, 'task-legacy');
     assert.equal(s.slug, 'legacy-slug');
     assert.equal(s.lifecycle, 'open');
+  });
+
+  it('upcasts a non-first old-version event within a full stream fold', () => {
+    registerUpcaster('LeaseAcquired', 0, (payload: {
+      task_id: string; epoch: number; holder: string; expires_at: number;
+    }) => ({
+      task_id: payload.task_id,
+      epoch: payload.epoch,
+      owner: payload.holder,
+      lease_expiry: payload.expires_at,
+    }));
+    const raw: EventEnvelope[] = [
+      {
+        workspace_id: 'ws1', stream_id: 'r', seq: 1, event_id: 'e1', command_id: 'c1',
+        type: 'TaskCreated', schema_version: 1, actor_user: null,
+        actor_agent_principal: 'alice', actor_run: 'r1', occurred_at_server: 1,
+        payload: { task_id: 'task-legacy-midstream', slug: 'legacy-midstream' },
+      },
+      {
+        workspace_id: 'ws1', stream_id: 'r', seq: 2, event_id: 'e2', command_id: 'c2',
+        type: 'LeaseAcquired', schema_version: 0, actor_user: null,
+        actor_agent_principal: 'bob', actor_run: 'r2', occurred_at_server: 2,
+        payload: {
+          task_id: 'task-legacy-midstream', epoch: 1,
+          holder: 'bob', expires_at: 123_456,
+        },
+      },
+    ];
+    const folded = reduceStream(raw.map(upcastEnvelope));
+    assert.equal(folded!.lifecycle, 'active');
+    assert.equal(folded!.epoch, 1);
+    assert.equal(folded!.owner, 'bob');
+    assert.equal(folded!.lease_expiry, 123_456);
   });
 
   it('an event NEWER than supported halts on upcast', () => {
