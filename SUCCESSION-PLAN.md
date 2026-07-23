@@ -23,18 +23,37 @@ more, rotate out.** To rotate:
 
 Rotate at a **phase boundary** whenever possible — it's the cleanest resume point.
 
+**New Lead, first actions (do these before picking up the phase):**
+1. **Enable remote connection** — run **`/remote-control`** so the operator can
+   supervise and drive this long-running autonomous build remotely (operator
+   directive). Confirm it's active.
+2. Read this whole file + `docs/design/SWARM-CLOUD.md` §0 (ethos) and the current
+   phase's spec section.
+3. Check for in-flight background workers (see §4 status) and collect their results
+   before starting new work.
+4. Re-read §1 — **you orchestrate, you do not hand-code.**
+
 ---
 
 ## 1. Model & delegation policy (operator directive)
 
+- **THE LEAD DOES NOT HAND-CODE.** Fable credits are **dangerously low** and the Lead
+  session burns them. Your job is orchestration: decompose, delegate, review,
+  commit, coordinate — **never write/verify implementation code yourself.** Assign
+  ALL coding to a **Codex CLI** worker or a **Kimi K3** agent and review their output.
+  (A prior Lead violated this by hand-editing the core; do not repeat it.)
 - **Lead role = Fable-class** (scarce; **reserved for Leads only**). You are the Lead.
-- **Fable-class *subagent* work → Kimi K3**, NOT Fable (we are low on Fable tokens).
-  Spec/design authoring, adversarial correctness/security review, hard reasoning:
+- **Workhorse implementation → Codex CLI** (edits + runs tests):
+  `codex exec -C <git-dir> -s workspace-write --skip-git-repo-check -m gpt-5.6-sol
+  -c model_reasoning_effort=xhigh "<prompt>"`. For review-only use `-s read-only`.
+  Always prepend the "do NOT invoke any skill/SKILL.md" override, or Codex gets
+  hijacked by gstack skills. Give a precise spec + "get to green (tsc + tests)".
+- **Fable-class *reasoning/review* work → Kimi K3** (fable-adjacent), NOT Fable:
+  spec/design authoring, adversarial correctness/security review, hard reasoning —
   `opencode run --pure -m openrouter/moonshotai/kimi-k3 --dir <repo> "<prompt>"`.
-- **Workhorse implementation → Codex / Grok** (`codex exec -C <git-dir> -s read-only
-  --skip-git-repo-check -m gpt-5.6-sol -c model_reasoning_effort=xhigh "<prompt>"`
-  for review; workspace-write to build). Always prepend the "do NOT invoke any
-  skill/SKILL.md" override, or Codex gets hijacked by gstack skills.
+- **Coordinate via the swarm** (stable `~/Developer/Ridge.io/swarm` CLI): track work
+  as swarm tasks, spawn/assign workers, review with evidence. The Lead reviews and
+  integrates; workers implement.
 - **Provisioning / anything you'd ask the operator to do** (create Supabase project,
   GitHub App, OAuth grants, DNS, deploys, entering credentials) → **delegate to the
   OpenClaw and Hermes A2A agents** (they act with the operator's authority; they are
