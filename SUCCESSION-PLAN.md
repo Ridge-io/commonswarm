@@ -63,6 +63,18 @@ Rotate at a **phase boundary** whenever possible — it's the cleanest resume po
   workdir (`--skip-git-repo-check` if not). Strip ANSI from opencode logs
   (`sed 's/\x1b\[[0-9;]*m//g'`).
 
+## 1b. Governing steer (operator, 2026-07-23) — READ THIS BEFORE SCOPING ANYTHING
+
+**Swarm is primarily about coordination — keep it that way** (the Workbench.md
+posture). P1/P2 authority machinery is **scaffolding for** the coordination payoff at
+P3 (advisory reservations, messages, board), **not the product**. Build each phase to
+the *minimum that unblocks coordination*, not the maximum the spec permits. When a
+choice is genuinely ambiguous, prefer the smaller thing that reaches dogfooded
+coordination sooner. Resist the pull toward building a general-purpose authority
+platform — that is how this drifts into infrastructure nobody asked for. (Applied
+already: SPEC GAPS #18 defers snapshot bootstrap to P3, #3 defers claim kinds to P2 —
+both real, neither is coordination.)
+
 ## 2. Method
 
 Build **phase by phase**, each phase: **build → test (green) → model-inversion

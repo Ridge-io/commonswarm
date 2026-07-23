@@ -6,10 +6,16 @@
 > This spec designs the Supabase command API that wraps the **pure, unmodified**
 > `decide()` core in `src/protocol/`. It is the P1 deliverable of `docs/design/SWARM-CLOUD.md` §9.
 >
-> **Unresolved:** the `SPEC GAPS` section at the end lists 18 open decisions. Several
-> (#10, #13, #14, #16) are authorization-boundary questions where a wrong answer is a
-> security defect, not a style choice. **Implementation must not start on those paths
-> until the operator rules.**
+> **Resolved 2026-07-23:** all 18 SPEC GAPS are ruled by the operator — see the
+> **OPERATOR DECISIONS** section at the end of this document, which is the settled
+> base implementation builds on. Two **verification** tasks remain (#6, #7 — live
+> Supabase auth settings): **do not implement the PKCE callback or the
+> refresh-rotation path until those are confirmed**, because a wrong assumption there
+> breaks login.
+>
+> **Governing steer:** Swarm is primarily about *coordination*. P1 authority machinery
+> is scaffolding for the P3 coordination payoff, not the product — build the minimum
+> that unblocks coordination.
 
 ---
 
@@ -849,3 +855,53 @@ Consolidated list. Each is a decision for the operator, stated as a question wit
 **#17 — Audit-log retention.** §5 mandates the append-only audit log; Kimi #17 fixed idempotency retention at ≥30d; audit retention is unstated, and both R1 forensics and incident review consume it. **Recommended:** `swarm.events` retained forever (it is the authority); `audit_log` retained ≥1 year, then exported to storage archive rather than deleted; the pg_cron purge covers `idempotency_keys` (30d) and `rate_buckets` (hours) and never touches audit or events. Operator confirms the 1-year period.
 
 **#18 — Is snapshot bootstrap in P1 scope?** §2.1 lists "paginated replay + snapshot bootstrap" as one machinery line; the P1 read surface (§2.3) defines only paginated replay. If snapshots are implicitly P1, the read proxy and §9 suite are under-built; if not, §2.1 over-promises. **Recommended:** replay-only at P1 (stream lengths are trivial at invited-beta scale); snapshot tables and format deferred to P3 alongside the board; amend §2.1's phrase to "paginated replay at P1; snapshot bootstrap at P3."
+
+---
+
+## OPERATOR DECISIONS (2026-07-23) — all 18 SPEC GAPS resolved
+
+Ruled by the operator. **These are settled; implementation builds on them.** Where a
+decision amends `SWARM-CLOUD.md`, that amendment is pending and noted.
+
+### Governing steer
+
+**Swarm is primarily about coordination — keep it that way** (the Workbench.md
+posture). P1/P2 authority machinery is *scaffolding for* the coordination payoff at
+P3 (advisory reservations, messages, board), not the product itself. Build P1 to the
+**minimum that unblocks coordination**, not the maximum the spec permits. When a P1
+choice is genuinely ambiguous, prefer the smaller thing that gets us to dogfooding
+coordination sooner. This is why #18 defers snapshot bootstrap and #3 defers claim
+kinds — both are real, neither is coordination.
+
+### Security-boundary decisions (the four that mattered)
+
+| # | Decision | Consequence accepted |
+|---|---|---|
+| **#10** | Concurrent first-execution race fixed with `INSERT … ON CONFLICT DO NOTHING RETURNING`; zero rows → re-read, hash-compare, answer `replayed` or `409` exactly as the sequential path. Race added to the §9 suite. | Removes an unmapped 500 that was both a correctness hole and an internals leak. |
+| **#13** | `invitations.email` is **bookkeeping and invite-page rendering only**. Acceptance ignores it. | **A forwarded invite link works for any holder** — a leaked link in a shared channel is a tenant breach. Mitigated by TTL, revocation, and §8 invite-rate caps, **not** by email matching. This is the capability-URL model working as designed; do not "harden" it with an email check, which would silently break link forwarding. |
+| **#14** | Revocation does **not** force-end live leases. Lapse by TTL (≤4h per #8) plus takeover grant for urgency. No system actor at P1. | A revoked member's stale lease can block a task for up to 4h. Their commands already fail closed, so the lease is inert authority — it blocks, it cannot act. Avoided inventing a privileged non-human system principal, which would be new attack surface for a problem the TTL cap already bounds. |
+| **#16** | **Agents inherit their owner's role** for §2.2 role-gated transitions, attenuated by the §2.3 token denylist. | An Owner's worker wields admin **at task scope**, so a stolen worker token is as dangerous as its owner within that scope. Accepted because the alternative — role-less agents — means no agent can ever reopen or admin-close even for an Owner, which breaks owner-driven fleets, i.e. the product. |
+
+### Remaining decisions
+
+| # | Ruled |
+|---|---|
+| #1 | TypeScript orchestrator in the `command` Edge Function, one pooled Postgres transaction. No PL/pgSQL reimplementation. |
+| #2 | `swarm_admin`-owned views carrying `is_member(...)` in-view; `security_barrier` where user input is filtered; RLS enabled with zero policies on authority tables. |
+| #3 | No claim kinds at P1; `claimRequiresGrant ≡ false`; close-grant path dormant but schema-ready. |
+| #4 | No stream-level command class exists at P1 — strike/define the orphan phrase in §2.1. |
+| #5 | Device register/revoke emits **audit rows only**; `my_devices` is the read surface. |
+| #6 | **Verify on the live Supabase project** whether the redirect allowlist accepts a loopback wildcard; if not, pin one registered high port with a collision queue. *(Verification dispatched.)* |
+| #7 | **Verify and enable** refresh-token rotation with reuse detection in project auth settings. *(Verification dispatched.)* |
+| #8 | Lease TTL ceiling **4 hours** — operator-confirmed. Renewal unlimited, so this caps only a dead agent's worst-case pin. Amend §2.2. |
+| #9 | `timestamptz` from `statement_timestamp()`; envelope times `date_trunc('milliseconds')` — ms-floor, never round. |
+| #11 | Floor in `swarm.config('min_client_version')`; semver-compared every command; below floor → `426 upgrade_required` + audit row. |
+| #12 | 32 CSPRNG bytes, base64url; prefixes `swm_agt_` / `swm_inv_`; sha256 over the full presented string **including** prefix. |
+| #15 | No `swarm.credentials` table at P1; separate auth-admin module holds the service key, scoped to GoTrue. |
+| #17 | `swarm.events` forever (it is the authority). `audit_log` **≥1 year then archived to storage**, not deleted. pg_cron purges only `idempotency_keys` (30d) and `rate_buckets`. |
+| #18 | **Replay-only at P1.** Snapshot tables and format deferred to P3 alongside the board. Amend §2.1's phrase to "paginated replay at P1; snapshot bootstrap at P3." |
+
+### Still open (not gaps — verification tasks)
+
+- #6 / #7 depend on actual Supabase project settings. Until verified, **do not implement
+  the PKCE callback or the refresh-rotation path** — a wrong assumption there breaks login.
