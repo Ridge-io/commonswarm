@@ -91,14 +91,21 @@ DB with psql is theater, not a dogfood — it teaches nothing about whether the 
   `GRANT <role> TO current_user` — it SIGSEGVs PG16 (crash presents as a dropped
   connection on every transport; only the local runtime surfaced it). Use
   `DO $$ BEGIN EXECUTE format('GRANT <role> TO %I', current_user); END $$;`.
-- **SLICE 2 — command API (NEXT):** the `handle_command()` Edge Function per
-  P1-COMMAND-API.md §3 — TS orchestrator in a `command` Deno Edge Function, ONE
-  Postgres transaction, calling the UNMODIFIED `decide()` from src/protocol. §3.2 check
-  order: authenticate → derive principal → validate every client identifier vs tenancy
-  → revocation → payload bounds → idempotency lookup (ON CONFLICT DO NOTHING per gap#10)
-  → decide() → append events → update projections → commit. Honor all OPERATOR
-  DECISIONS. Test against the LOCAL stack (edge_runtime container is up). Auth can start
-  as a minimal verified-JWT stub; real PKCE login is slice 3.
+- **SLICE 2 — command API (IN FLIGHT, Lead2 acting Lead → Mason[codex] implementing).**
+  The `handle_command()` Edge Function per P1-COMMAND-API.md §3 — TS orchestrator in a
+  `command` Deno Edge Function, ONE Postgres transaction, calling the UNMODIFIED
+  `decide()`/`applyCommand()`/`reduceTask()` from src/protocol. §3.2 check order:
+  authenticate → derive principal → validate every client identifier vs tenancy →
+  revocation → payload bounds → idempotency lookup (ON CONFLICT DO NOTHING per gap#10)
+  → applyCommand() → append events → fold projections → side effects → audit → commit.
+  Honor all OPERATOR DECISIONS. Test against the LOCAL stack (all 12 containers up,
+  verified 2026-07-23 by Lead2). **Scoped to minimum-that-unblocks-coordination
+  (decision #62):** the 8 P0 task commands only; §3.4 workspace-authority commands
+  DEFERRED to slice 2b (seed workspace+membership+principal+run+token via service_role
+  fixtures for the first dogfood); auth = real-but-minimal (JWT verify + swm_agt_ hash),
+  real PKCE login is slice 3. Merge-gate subset: T-01/02/03/05/06/10/11 + I1–I5 GREEN.
+  **Build-order handed to Mason: `docs/design/P1-SLICE2-BRIEF.md`.** Lead verifies the
+  worker's self-report independently before marking done (landmine §3).
 
 ### (historical build state below)
 - **Slice 1 — schema.** Migration `supabase/migrations/20260723000001_p1_schema.sql`
