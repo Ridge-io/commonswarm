@@ -13,7 +13,7 @@ BEGIN
 END
 $$;
 
-GRANT swarm_admin TO current_user;
+DO $$ BEGIN EXECUTE format('GRANT swarm_admin TO %I', current_user); END $$;
 
 DO $$
 BEGIN
@@ -25,7 +25,7 @@ BEGIN
 END
 $$;
 
-GRANT swarm_command TO current_user;
+DO $$ BEGIN EXECUTE format('GRANT swarm_command TO %I', current_user); END $$;
 
 DO $$
 BEGIN
@@ -36,7 +36,7 @@ BEGIN
 END
 $$;
 
-GRANT swarm_read TO current_user;
+DO $$ BEGIN EXECUTE format('GRANT swarm_read TO %I', current_user); END $$;
 
 -- The hosted migration role cannot safely repair every elevated attribute on
 -- a pre-existing role. Refuse to continue rather than silently weaken the
