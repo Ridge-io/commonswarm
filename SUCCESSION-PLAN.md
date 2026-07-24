@@ -246,8 +246,35 @@ Mason's `ux-connect-polish` checkpoint (#001) and **LANDED it** — commit `87e4
   - **LANDMINE:** headless `opencode run` for Kimi **hung silently ~2h** with zero output and
     zero credit burn (stream stalled, no timeout). The operator caught it, not us. Reviewers
     must be visible tabs so progress is observable.
-- **NEXT: P2-2 — `coswarm status` read surface** (members + agents + tasks + leases, one
-  screen, plain words). This is the other half of the felt feedback ("I flew blind"). Then
+- **★ PRODUCT BUG FOUND BY THE HARNESS BEFORE IT EVER RAN (2026-07-24) — MAJOR, user-facing.**
+  `src/cloud/auth.ts:410` — `discoverSoleWorkspace` persists a default workspace **only when the
+  identity has EXACTLY ONE live membership** (`body.length !== 1 → return null`). Therefore **any
+  human who belongs to two or more workspaces cannot invite anyone after a logout**, because
+  `invite` needs `--workspace-id` and that flag is the one the operator's felt-dogfood already
+  called undiscoverable (**bug #3**). The sole-membership auto-default was a reasonable v1
+  heuristic; with additive invites and real multi-tenancy it is now a **trap**. This is not a
+  test-harness artifact — a second *real* collaboration triggers it identically.
+  - Found by Mason while on read-only stand-down; severity confirmed by Sable.
+  - **It currently BLOCKS the uxtest harness at round 1**, not just R2+: identity A already holds
+    a live membership from the morning dogfood, and the additive per-round reset adds another, so
+    the preflight projected-count gate (current + 1 when unreset) correctly refuses to run.
+  - **Rejected fix (do not resurrect):** injecting `SWARM_CLOUD_WORKSPACE_ID` invisibly for test
+    rounds. It buys passing rounds on a faked premise and makes the harness lie in the flattering
+    direction — secretly supplying the very thing the user could not discover. A visible
+    "colleague pastes the project id" variant is allowed **only** as an explicitly labeled
+    secondary scenario, never R1's main path.
+  - **Report rule:** a round that dies at invite with a null default and count > 1 is classified
+    **product: multi-workspace selection**, NOT connect-link UX.
+- **NEXT: P2-2 — `coswarm status` read surface + WORKSPACE LIST/SELECT** (members + agents +
+  tasks + leases, one screen, plain words). The finding above **expands this slice**: workspace
+  visibility and selection are now **load-bearing, not nice-to-have**, because listing is the only
+  way a multi-workspace human discovers what to pass. Sable's minimal options — **(A)**
+  `coswarm workspaces` / `status --workspaces` plus `coswarm use <id|name>`; **(B)** on invite with
+  a null default and n>1, interactive select on a TTY and a JSON list under `--json` for agents;
+  **(C)** login re-writes the last-used default when it is still live (partial comfort only, does
+  not help a cold multi-member after a credential wipe). **A+B together are what §1c asks for.**
+  Doing P2-2 also unblocks the harness as a side effect, so there is no real sequencing conflict.
+  This is the other half of the felt feedback ("I flew blind"). Then
   P2-3 agent-skill layer (the §1c endgame: the user's own agent drives coswarm), P2-4 invite
   page + `https://` link form. Same loop: brief → Sable adversarial review → Mason implements
   → Lead verifies by own execution → land → redeploy. Mason + Sable both warm.
