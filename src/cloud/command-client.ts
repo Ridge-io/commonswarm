@@ -1,0 +1,186 @@
+import { randomBytes } from "node:crypto";
+import {
+  reduceTask,
+  upcastEnvelope,
+  type Command,
+  type EventEnvelope,
+  type StoredResponse,
+  type TaskState,
+} from "../protocol/index.js";
+import {
+  CLIENT_PROTOCOL_VERSION,
+  commandEndpoint,
+  type CloudTarget,
+} from "./config.js";
+
+const AGENT_TOKEN_RE = /^swm_agt_[A-Za-z0-9_-]{43}$/;
+
+export type StreamRoute =
+  | { kind: "workspace" }
+  | { kind: "repo"; repo_mapping_id: string };
+
+export interface CommandRequest {
+  workspaceId: string;
+  stream: StreamRoute;
+  command: Command;
+  credential: string;
+  commandId?: string;
+}
+
+export interface CommandHttpResponse extends StoredResponse {
+  status: "accepted" | "rejected";
+  events?: EventEnvelope[];
+  min_client_version?: string;
+}
+
+export interface CommandResult {
+  httpStatus: number;
+  response: CommandHttpResponse;
+  projection: TaskState | null;
+}
+
+export function newCommandId(): string {
+  return `cmd_${randomBytes(18).toString("base64url")}`;
+}
+
+export function assertAgentToken(value: string): void {
+  if (!AGENT_TOKEN_RE.test(value)) {
+    throw new Error(
+      "agent credential must be swm_agt_ followed by 32 base64url-encoded random bytes",
+    );
+  }
+}
+
+function semver(value: string): [number, number, number] | null {
+  const match = /^(\d+)\.(\d+)\.(\d+)(?:-[0-9A-Za-z.-]+)?$/.exec(value);
+  return match
+    ? [Number(match[1]), Number(match[2]), Number(match[3])]
+    : null;
+}
+
+function compareVersion(left: string, right: string): number | null {
+  const a = semver(left);
+  const b = semver(right);
+  if (!a || !b) return null;
+  for (let index = 0; index < 3; index += 1) {
+    const difference = a[index]! - b[index]!;
+    if (difference !== 0) return difference;
+  }
+  return 0;
+}
+
+function responseBody(value: unknown): CommandHttpResponse {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("command endpoint returned a non-object response");
+  }
+  const body = value as Record<string, unknown>;
+  if (body.status !== "accepted" && body.status !== "rejected") {
+    throw new Error("command endpoint response is missing a valid status");
+  }
+  if (typeof body.ok !== "boolean" || !Array.isArray(body.event_ids)) {
+    throw new Error("command endpoint response is missing StoredResponse fields");
+  }
+  if (
+    body.status === "accepted" && body.ok !== true ||
+    body.status === "rejected" && body.ok !== false
+  ) {
+    throw new Error("command endpoint response status and ok fields disagree");
+  }
+  return body as unknown as CommandHttpResponse;
+}
+
+async function parsedJson(response: Response): Promise<unknown> {
+  const text = await response.text();
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new Error(`command endpoint returned non-JSON (HTTP ${response.status})`);
+  }
+}
+
+export class ThinCommandClient {
+  private readonly projections = new Map<string, TaskState>();
+
+  constructor(
+    private readonly target: CloudTarget,
+    private readonly fetcher: typeof fetch = fetch,
+  ) {}
+
+  projection(taskId: string): TaskState | null {
+    return this.projections.get(taskId) ?? null;
+  }
+
+  async send(request: CommandRequest): Promise<CommandResult> {
+    const commandId = request.commandId ?? newCommandId();
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 30_000);
+    let response: Response;
+    try {
+      response = await this.fetcher(commandEndpoint(this.target), {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${request.credential}`,
+          apikey: this.target.anonKey,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          command_id: commandId,
+          client_version: CLIENT_PROTOCOL_VERSION,
+          workspace_id: request.workspaceId,
+          stream: request.stream,
+          command: request.command,
+        }),
+        signal: controller.signal,
+      });
+    } catch (error) {
+      if ((error as Error).name === "AbortError") {
+        throw new Error("command request timed out");
+      }
+      throw error;
+    } finally {
+      clearTimeout(timer);
+    }
+
+    const raw = await parsedJson(response);
+    if (!response.ok) {
+      const error = raw && typeof raw === "object" && !Array.isArray(raw)
+        ? (raw as Record<string, unknown>).error
+        : null;
+      throw new Error(
+        `command failed (HTTP ${response.status}): ${
+          typeof error === "string" ? error : "unknown_error"
+        }`,
+      );
+    }
+    const body = responseBody(raw);
+    if (body.min_client_version !== undefined) {
+      const order = compareVersion(CLIENT_PROTOCOL_VERSION, body.min_client_version);
+      if (order === null) {
+        throw new Error("server returned a malformed min_client_version");
+      }
+      if (order < 0) {
+        throw new Error(
+          `client upgrade required (minimum ${body.min_client_version})`,
+        );
+      }
+    }
+
+    let projection = this.projection(request.command.task_id);
+    if (body.status === "accepted" && Array.isArray(body.events)) {
+      for (const rawEvent of body.events) {
+        const event = upcastEnvelope(rawEvent);
+        if (projection === null && event.type !== "TaskCreated") {
+          // A one-shot thin command has no prior stream history. The server
+          // outcome is still printed; in-memory folding becomes available when
+          // commands are driven in one process (the dogfood sequence).
+          continue;
+        }
+        projection = reduceTask(projection, event);
+      }
+      if (projection !== null) {
+        this.projections.set(request.command.task_id, projection);
+      }
+    }
+    return { httpStatus: response.status, response: body, projection };
+  }
+}

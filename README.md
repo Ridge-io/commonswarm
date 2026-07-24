@@ -7,11 +7,10 @@ local tool (the local swarm builds and runs from its own working tree).
 
 ## Status
 
-**P0 — Foundations (local, no provisioning).** Building the reducer-complete
-authority core: the §2.2 task/lease state machine + event reducers + upcasters +
-property tests, as a pure module (`src/protocol/`) with no I/O. P1 wires it behind
-the Supabase command API; nothing is provisioned until the operator reviews the
-plan.
+**P1 — invited dogfood.** The reducer-complete authority core is wired behind
+the transactional Supabase command function. The thin CLI adds GitHub OAuth
+login with PKCE and the eight task commands; persistent local cache, replay, and
+workspace-authority commands remain deliberately deferred.
 
 ## Canonical spec
 
@@ -35,7 +34,77 @@ Planned tracks beyond the coordination core (architected-for now, built later):
 npm install
 npm test      # node --test via tsx
 npm run build # tsc → dist/
+npm run test:p1-server
+npm run test:p1-cli
 ```
+
+## Thin cloud CLI
+
+Build once, then target either local or hosted Supabase with the same flags:
+
+```bash
+npm run build
+node dist/cli.js login --url "$SWARM_CLOUD_URL" --anon-key "$SWARM_CLOUD_ANON_KEY"
+```
+
+Login opens GitHub OAuth in the system browser using a CLI-generated PKCE
+verifier and a random high-port `127.0.0.1` callback. If the browser cannot
+reach the loopback listener, paste the complete callback URL into the waiting
+terminal; the same CLI-generated `state` is verified before either path
+exchanges the code.
+
+Only the rotating refresh credential is persisted. On macOS it lives in the
+Keychain. A host without a supported keychain uses a warned `0600` file inside
+a `0700` directory; insecure permissions are refused. Set
+`SWARM_ALLOW_INSECURE_STORE=0` to refuse the file fallback entirely. Access
+tokens and the PKCE verifier remain process-memory-only.
+
+Send one command with the human login:
+
+```bash
+node dist/cli.js command create \
+  --url "$SWARM_CLOUD_URL" --anon-key "$SWARM_CLOUD_ANON_KEY" \
+  --workspace-id "$WORKSPACE_ID" \
+  --task-id "$TASK_ID" --slug first-dogfood
+```
+
+For the seeded simulated-agent credential, pass it over stdin so it never
+appears in the process list:
+
+```bash
+read -rsp "Agent token: " SWARM_AGENT_TOKEN_INPUT
+printf %s "$SWARM_AGENT_TOKEN_INPUT" | node dist/cli.js command acquire \
+  --url "$SWARM_CLOUD_URL" --anon-key "$SWARM_CLOUD_ANON_KEY" \
+  --workspace-id "$WORKSPACE_ID" \
+  --task-id "$TASK_ID" --ttl-ms 3600000 \
+  --agent-token-stdin
+unset SWARM_AGENT_TOKEN_INPUT
+```
+
+`dogfood` drives `create → acquire → submit → close` in one process and folds
+the fresh response events in memory for display. Run `node dist/cli.js help`
+for its required flags.
+
+`logout` calls GoTrue `signOut()` to revoke the refresh session, then removes
+the local credential. Remote device listing/revocation is deferred with the
+server-side device authority endpoint.
+
+### First-dogfood fixture bridge
+
+Workspace-authority commands are not exposed yet. After logging in once, copy
+the UID printed by `login`, inject a privileged `DATABASE_URL` at runtime from
+the approved secret manager, and run:
+
+```bash
+node dist/cli.js seed-fixture --uid "$AUTH_USER_ID"
+```
+
+The bridge writes directly to the private `swarm` schema; it never exposes that
+schema through PostgREST, prints the database URL, or stores it. It idempotently
+stamps the user, owner workspace membership, workspace stream, device,
+principal, and run. A new one-hour `swm_agt_` token is printed exactly once;
+rerunning while it remains live retains the existing row because plaintext
+tokens are intentionally unrecoverable.
 
 ## Relationship to `swarm`
 

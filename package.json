@@ -3,14 +3,20 @@
   "version": "0.0.1",
   "description": "SWARM-CLOUD — multi-human, multi-agent coordination cloud service (authority core). Forked from swarm (local CLI) to keep the in-use local tool stable.",
   "type": "module",
+  "bin": {
+    "swarm": "dist/cli.js",
+    "swarm-cloud": "dist/cli.js"
+  },
   "scripts": {
     "build": "tsc",
     "build:command-core": "esbuild src/protocol/index.ts --bundle --format=esm --platform=neutral --target=es2022 --external:node:crypto --banner:js='// GENERATED from src/protocol/index.ts; do not hand-edit.' --outfile=supabase/functions/_shared/protocol.js",
     "dev": "tsc --watch",
     "test": "node --import tsx --test tests/protocol-next.test.ts",
+    "test:p1-cli": "node --import tsx --test tests/p1-cli/**/*.test.ts",
     "pretest:p1-server": "npm run build:command-core",
     "test:p1-server": "node --import tsx --test tests/p1-server/**/*.test.ts",
     "prebuild": "rm -rf dist",
+    "postbuild": "chmod 755 dist/cli.js",
     "db:start": "supabase start",
     "db:stop": "supabase stop",
     "db:reset": "supabase db reset --local",
