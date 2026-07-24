@@ -35,6 +35,33 @@ Rotate at a **phase boundary** whenever possible — it's the cleanest resume po
 
 ---
 
+## 0c. WORKER ROTATION HYGIENE (operator directive, 2026-07-24)
+
+The §0 rotation rule applies to **workers too, not just the Lead.** Watch each long-lived
+worker's context window and **compaction-cycle count**, and rotate it out for a fresh agent
+before it degrades.
+
+**Why it matters:** every compaction loses fidelity, and a worker can look perfectly healthy —
+reporting precisely, catching real spec bugs — while its early context is heavily summarized.
+The failure mode is handing the *most detail-dense* work to the *most degraded* context.
+
+**Measure, do not guess.** For a Codex worker the transcript is
+`~/.codex/sessions/<yyyy>/<mm>/<dd>/rollout-*.jsonl` (the swarm task record prints the sessions
+dir). Find the live one by grepping for the current task slug, then check size, line count, and
+`grep -ci compacted`.
+
+**Observed datum:** Mason was rotated at **14 compactions / 11 MB / 5,416 events / ~24 h
+continuous** — while still performing well. Treat roughly **≥10 compactions or ≥12 h
+continuous** as due.
+
+**Rotate at a task boundary, or at the very start of a slice.** Cost is near-zero before
+implementation begins and climbs steeply once the worker is mid-file.
+
+**Capture the outgoing worker's non-obvious knowledge first** — architectural seam analysis,
+traps found while mapping the code — as a durable on-disk handoff note for its successor, then
+stand it down. Do not discard mapping work merely because the agent is rotating. Frame it to the
+worker as hygiene, not judgement, and record what it contributed.
+
 ## 1. Model & delegation policy (operator directive)
 
 - **THE LEAD DOES NOT HAND-CODE.** Fable credits are **dangerously low** and the Lead
