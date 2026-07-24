@@ -134,11 +134,13 @@ async function run(
   executable: string,
   args: string[],
   input?: string,
+  detached = false,
 ): Promise<ProcessResult> {
   return await new Promise((resolve, reject) => {
     const child = spawn(executable, args, {
       stdio: ["pipe", "pipe", "pipe"],
       env: process.env,
+      detached,
     });
     let stdout = "";
     let stderr = "";
@@ -245,6 +247,7 @@ class MacKeychainStore extends LockedCredentialStore {
   }
 
   async write(record: CredentialRecord): Promise<void> {
+    const serialized = JSON.stringify(record);
     const result = await run(
       this.securityPath,
       [
@@ -256,7 +259,11 @@ class MacKeychainStore extends LockedCredentialStore {
         KEYCHAIN_SERVICE,
         "-w",
       ],
-      JSON.stringify(record),
+      // macOS `security -w` prompts twice. A detached child has no controlling
+      // TTY, so both prompts consume this pipe instead of exposing or blocking
+      // on an interactive refresh-token prompt.
+      `${serialized}\n${serialized}`,
+      true,
     );
     if (result.code !== 0) {
       throw new Error("unable to write the refresh credential to macOS Keychain");

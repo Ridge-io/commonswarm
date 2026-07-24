@@ -25,6 +25,7 @@ export interface SeedDogfoodOptions {
 
 export interface SeedDogfoodResult {
   userId: string;
+  membershipRole: "owner";
   deviceId: string;
   workspaceId: string;
   streamId: string;
@@ -210,6 +211,7 @@ export async function seedDogfood(
       if (existing[0]) {
         return {
           userId,
+          membershipRole: "owner",
           deviceId,
           workspaceId,
           streamId,
@@ -246,6 +248,7 @@ export async function seedDogfood(
       if (!expiresAt) throw new Error("agent token seed failed");
       return {
         userId,
+        membershipRole: "owner",
         deviceId,
         workspaceId,
         streamId,

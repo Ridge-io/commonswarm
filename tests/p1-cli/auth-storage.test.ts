@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
-import { chmod, mkdtemp, rm, stat } from "node:fs/promises";
+import { chmod, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -334,6 +334,63 @@ test("headless file fallback warns and enforces 0700/0600", async () => {
       /directory must be mode 0700/,
       "a credential must never be written below a traversable directory",
     );
+  } finally {
+    await rm(parent, { recursive: true, force: true });
+  }
+});
+
+test("keychain writer keeps the credential off argv and answers both secure prompts", async () => {
+  const parent = await mkdtemp(join(tmpdir(), "swarm-fake-keychain-"));
+  const securityPath = join(parent, "security");
+  const stateDirectory = join(parent, "state");
+  const fakeSecurity = `#!/usr/bin/env node
+const fs = require("node:fs");
+const args = process.argv.slice(2);
+const action = args[0];
+const vault = process.argv[1] + ".secret";
+if (args.join("\\0").includes("refresh-token-long-enough")) process.exit(9);
+if (action === "add-generic-password") {
+  const lines = fs.readFileSync(0, "utf8").trimEnd().split("\\n");
+  if (lines.length !== 2 || lines[0] !== lines[1]) process.exit(8);
+  fs.writeFileSync(vault, lines[0], { mode: 0o600 });
+  process.exit(0);
+}
+if (action === "find-generic-password") {
+  if (!fs.existsSync(vault)) process.exit(44);
+  process.stdout.write(fs.readFileSync(vault));
+  process.exit(0);
+}
+if (action === "delete-generic-password") {
+  if (!fs.existsSync(vault)) process.exit(44);
+  fs.unlinkSync(vault);
+  process.exit(0);
+}
+process.exit(2);
+`;
+  try {
+    await writeFile(securityPath, fakeSecurity, { mode: 0o700 });
+    await chmod(securityPath, 0o700);
+    const store = await credentialStore({
+      target: cloudTarget(
+        `https://${randomUUID()}.example.test`,
+        "test-anon-key",
+      ),
+      stateDirectory,
+      platform: "darwin",
+      securityPath,
+    });
+    const record: CredentialRecord = {
+      version: 1,
+      refreshToken: "refresh-token-long-enough",
+      generation: 7,
+      deviceId: randomUUID(),
+      userId: randomUUID(),
+    };
+    assert.equal(store.kind, "keychain");
+    await store.write(record);
+    assert.deepEqual(await store.read(), record);
+    await store.delete();
+    assert.equal(await store.read(), null);
   } finally {
     await rm(parent, { recursive: true, force: true });
   }

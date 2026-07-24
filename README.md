@@ -93,18 +93,24 @@ server-side device authority endpoint.
 
 Workspace-authority commands are not exposed yet. After logging in once, copy
 the UID printed by `login`, inject a privileged `DATABASE_URL` at runtime from
-the approved secret manager, and run:
+the approved secret manager, choose a new absolute path outside the repository
+for the one-time agent credential, and run:
 
 ```bash
+DATABASE_URL="$INJECTED_DATABASE_URL" \
+SEED_TOKEN_OUT="$ONE_TIME_TOKEN_PATH" \
 node dist/cli.js seed-fixture --uid "$AUTH_USER_ID"
 ```
 
 The bridge writes directly to the private `swarm` schema; it never exposes that
 schema through PostgREST, prints the database URL, or stores it. It idempotently
 stamps the user, owner workspace membership, workspace stream, device,
-principal, and run. A new one-hour `swm_agt_` token is printed exactly once;
-rerunning while it remains live retains the existing row because plaintext
-tokens are intentionally unrecoverable.
+principal, and run. A new one-hour `swm_agt_` token is written only to the
+create-new `0600` path named by `SEED_TOKEN_OUT`; stdout contains non-secret
+fixture IDs and never the token or output path. If that path already exists the
+command refuses to run. Read and delete the file promptly. Rerunning while a
+token remains live retains the existing row because plaintext tokens are
+intentionally unrecoverable.
 
 ## Relationship to `swarm`
 

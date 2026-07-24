@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 
 import { randomUUID } from "node:crypto";
+import { open, unlink } from "node:fs/promises";
+import { isAbsolute } from "node:path";
 import type { Command } from "./protocol/index.js";
 import { login, logout, refreshedCredential } from "./cloud/auth.js";
 import {
@@ -116,7 +118,9 @@ Credential selection for command/dogfood:
   --agent-token-stdin     read one seeded swm_agt_ credential from stdin
 
 Target flags may also be set with SWARM_CLOUD_URL and SWARM_CLOUD_ANON_KEY.
-The fixture bridge reads its privileged database connection only from DATABASE_URL.`;
+The fixture bridge reads its privileged database connection only from DATABASE_URL
+and writes a newly minted agent token only to the absolute create-new path in
+SEED_TOKEN_OUT.`;
 }
 
 function target(args: Arguments): CloudTarget {
@@ -368,19 +372,60 @@ async function runSeed(args: Arguments): Promise<void> {
   if (!databaseUrl) {
     throw new Error("DATABASE_URL is required for the fixture bridge");
   }
-  const result = await seedDogfood({
-    databaseUrl,
-    userId: args.required("uid"),
-    deviceId: args.optional("device-id"),
-    displayName: args.optional("display-name"),
-    workspaceName: args.optional("workspace-name"),
-    agentName: args.optional("agent-name"),
+  const tokenOut = process.env.SEED_TOKEN_OUT;
+  if (!tokenOut || !isAbsolute(tokenOut)) {
+    throw new Error("SEED_TOKEN_OUT must be an absolute path");
+  }
+
+  const tokenFile = await open(tokenOut, "wx", 0o600).catch((error) => {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+      throw new Error("SEED_TOKEN_OUT already exists; refusing to overwrite it");
+    }
+    throw error;
   });
-  process.stdout.write(`${JSON.stringify({
-    ...result,
-    agentToken: result.agentToken ??
-      "(existing live token retained; plaintext is intentionally unrecoverable)",
-  }, null, 2)}\n`);
+  let tokenWritten = false;
+  try {
+    await tokenFile.chmod(0o600);
+    const fileInfo = await tokenFile.stat();
+    if (!fileInfo.isFile() || (fileInfo.mode & 0o777) !== 0o600) {
+      throw new Error("SEED_TOKEN_OUT could not be secured to mode 0600");
+    }
+    if (
+      typeof process.getuid === "function" &&
+      fileInfo.uid !== process.getuid()
+    ) {
+      throw new Error("SEED_TOKEN_OUT is not owned by the current user");
+    }
+
+    const result = await seedDogfood({
+      databaseUrl,
+      userId: args.required("uid"),
+      deviceId: args.optional("device-id"),
+      displayName: args.optional("display-name"),
+      workspaceName: args.optional("workspace-name"),
+      agentName: args.optional("agent-name"),
+    });
+    if (result.agentToken) {
+      await tokenFile.writeFile(result.agentToken, "utf8");
+      await tokenFile.sync();
+      tokenWritten = true;
+    }
+    await tokenFile.close();
+    if (!tokenWritten) await unlink(tokenOut);
+
+    process.stdout.write(`${JSON.stringify({
+      userId: result.userId,
+      membershipRole: result.membershipRole,
+      workspaceId: result.workspaceId,
+      streamId: result.streamId,
+      principalId: result.principalId,
+      tokenWritten,
+    }, null, 2)}\n`);
+  } catch (error) {
+    await tokenFile.close().catch(() => undefined);
+    if (!tokenWritten) await unlink(tokenOut).catch(() => undefined);
+    throw error;
+  }
 }
 
 async function main(): Promise<void> {
