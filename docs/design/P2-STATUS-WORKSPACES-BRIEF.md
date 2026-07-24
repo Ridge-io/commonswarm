@@ -1,6 +1,13 @@
 # P2-2 design brief: `coswarm status` + workspace visibility & selection
 
-**Status:** v1 DRAFT for Sable adversarial review, then Mason implementation.
+**Status:** v1.1 — CLEARED FOR IMPLEMENTATION after Sable review (v1 → CONDITIONAL GO; both
+BLOCKING items folded). Mason implements this document.
+
+> **v1→v1.1:** the TTY picker is **CUT** (v1 contradicted itself — step 4 specified a picker while
+> Q4 leaned cut, and the acceptance tests demanded both); the read-authority rule is **refined**
+> from "no new views" to **"no new authorization predicate"**, because the literal version made
+> this slice's own deliverables unbuildable; Q1/Q2/Q3/Q5 resolved into the body; foreign-vs-unknown
+> id error uniformity added.
 **Author:** Lead4, 2026-07-24.
 **Pre-pinned contracts** (agreed *before* this brief existed — see SUCCESSION-PLAN P2-2):
 the **A+B fix pair**, the **non-interactive contract**, and the **`use` selection contract**.
@@ -69,10 +76,19 @@ Writes the selected project to the profile default. **Selection contract (pinned
 Resolution order for `invite` and **every** workspace-scoped command:
 
 1. explicit `--workspace-id`
-2. profile default — *if still a live membership*
+2. profile default — *if still a live membership* (if the membership was **revoked**, warn once,
+   clear the stale default so no zombie project stays selected, then continue resolving)
 3. exactly one live membership → use it (today's behavior, retained)
-4. n > 1 **and** interactive TTY → optional picker
-5. n > 1 **and** non-interactive → **fail closed**, structured
+4. n > 1 → **fail closed** with the list + guidance. **There is no interactive picker in this
+   slice** (decision below); the same path serves humans and agents.
+
+**The TTY picker is CUT.** v1 hedged and contradicted itself. Reasons to cut: the non-interactive
+path is mandatory *and* complete on its own; a picker would be the CLI's only interactive prompt,
+which is a new class of surface to harden right after P2-1 spent a whole slice guaranteeing agent
+mode never hangs; and a human served a good list plus one copy-pasteable `use` command is not
+meaningfully worse off. **The cost of cutting it is paid in copy quality** — the fail-closed
+message must be genuinely excellent, not a bare error. Revisit only if it reads as friction in
+practice.
 
 **The non-interactive contract is absolute** (P2-1 hardened agent mode to never hang; the same
 discipline applies): never block on a TTY prompt when stdin is not a TTY, `--json` is set, or the
@@ -86,14 +102,30 @@ convenience only**.
 
 ## 2. Read authority — no new surface
 
-Everything above must be served by the **existing** `swarm_read.*` views, which are
-`security_barrier` and `is_member`-gated (`migration:633-680`): `memberships`,
-`agent_principals`, `agent_runs`, `tasks`, `leases`. P2-1 already proved the REST read pattern
-(`accept-profile: swarm_read`, the `discoverSoleWorkspace` shape at `auth.ts:385-416`).
+**The rule is NO NEW AUTHORIZATION PREDICATE — not "no new views."** v1 said the latter and it was
+wrong in a way worth recording: today there is **no `swarm_read.workspaces`** and **no user-display
+projection**, so a literal reading forbade project *names* and co-member *display names* — meaning
+§1.2's "name AND full id on every row" and §1.1's "Members: display name" were banned by my own
+principle. That would have shipped id-only lists and **reopened the exact undiscoverable-identifier
+friction this slice exists to remove**. An over-strict rule doesn't produce safety; it produces
+either a crippled screen or someone smuggling names in through `service_role`.
 
-**If a display field cannot be served by an existing view, cut the field — do not add
-authority.** Read surface is where tenancy leaks hide. Specifically: no cross-workspace
-aggregation query, and no read that returns rows for a workspace the caller is not a member of.
+**Allowed:** membership-gated projections that expose only fields of rows the caller can *already*
+reach through `is_member` / co-membership — the same tenancy gate with a join:
+- `swarm_read.workspaces` — `WHERE swarm.is_member(workspace_id, auth.uid())`, exposing
+  `workspace_id`, `name`, `archived_at`.
+- `swarm_read.member_profiles` (only if needed for display names) — `display_name` for `user_id`s
+  that share a **live** membership with the caller in a workspace the caller can already read.
+
+**Still forbidden, and these are the actual risk:** any *looser* predicate — a public user
+directory, a non-member workspace probe, cross-tenant search or aggregation, or any read returning
+rows for a tenant the caller does not belong to. Every new view is `security_barrier`, owner-pinned
+to `swarm_admin`, and its predicate gets explicit review (§4 asserts it).
+
+Existing views to reuse unchanged (`migration:633-680`): `memberships`, `agent_principals`,
+`agent_runs`, `tasks`, `leases`. P2-1 already proved the REST read pattern (`accept-profile:
+swarm_read`, the `discoverSoleWorkspace` shape at `auth.ts:385-416`). **A migration is therefore in
+scope for this slice** — additive views only, no changes to existing tables or policies.
 
 ## 3. Scope boundaries
 
@@ -120,24 +152,35 @@ limiting; revoke wiring; the T-sweep.
 - **Status tests:** empty project renders guidance not a blank table; lease rendered as
   human-readable remaining time; labels sanitized (control/bidi/ANSI — FIX-5 class) since member
   and project names are attacker-influencable; every row that shows a name also shows its id.
-- **Authority test:** no query returns rows for a non-member workspace (the read views enforce
-  it; assert it anyway).
-- Local integration against the live local stack; hosted verified after deploy.
+- **Authority tests:** no query returns rows for a non-member workspace (the views enforce it —
+  assert it anyway); **every new view carries an `is_member`-class predicate** and is
+  `security_barrier` + owner-pinned; **foreign id and unknown id produce identical errors** (the
+  no-enumeration oracle test, §5 Q5).
+- **Revoked-default tests:** `use` a project, have the membership revoked, then run a scoped
+  command → warns once, clears the stale default, and does not act on the dead tenant.
+- **Picker-cut assertions:** `n>1` on a **TTY** fails closed with the list and **does not wait on
+  stdin** — assert no hang, not merely correct text. There must be no code path that prompts.
+- Local integration against the live local stack; hosted verified after deploy (migration applies
+  to hosted, additive views only).
+- README: the multi-member invite path documented end to end — `workspaces` → `use` → `invite`.
 
-## 5. Open questions for review
+## 5. Resolved decisions (were open questions in v1)
 
-- **Q1:** Should `status` show *all* projects you belong to (a "you have 3 projects" line) or
-  strictly the selected one? Showing all aids discovery of the multi-workspace state that caused
-  the bug, but risks a cross-tenant aggregation read. My lean: a **count only** from the
-  already-permitted memberships read, with names behind `coswarm workspaces`.
-- **Q2:** When the profile default names a workspace whose membership was **revoked**, do we
-  silently fall through (step 3) or tell the user their previous project is gone? Silence risks
-  the user believing they are still acting on it. My lean: **tell them once**, plainly.
-- **Q3:** Does `use` need to validate liveness at selection time, or is validating at use-time
-  sufficient? Validating early gives a better error but adds a read on every `use`.
-- **Q4:** Is a TTY picker worth building at all in this slice, given the non-interactive path is
-  mandatory and complete on its own? Cutting it would shrink the slice and remove the only
-  interactive surface in the CLI. My lean: **cut it**, print the list plus `use` guidance for
-  humans too, and revisit only if it reads as friction.
-- **Q5:** Anything in this slice that weakens the §3.4 authority model, the no-enumeration
-  guarantees (#80f), or P2-1's non-interactive hardening?
+- **Q1 — `status` shows a COUNT, not every project name.** One line: *"You're in 3 projects
+  (selected: Launch redesign)."* or *"…(none selected). Run `coswarm workspaces`, then `coswarm
+  use …`."* The count is `distinct workspace_id` over the caller's live memberships — already
+  permitted, no cross-tenant aggregation. Names stay behind `coswarm workspaces` so `status`
+  doesn't become the switcher and doesn't turn into noise.
+- **Q2 — a revoked default is announced once, then cleared.** Silence risks the user believing
+  their invites and tasks still land in a project they've been removed from. Warn plainly, **clear
+  the stale default** (never leave a zombie id selected), then continue resolution. Identical
+  message in human and `--json` output, carrying `code: default_membership_revoked`.
+- **Q3 — `use` validates liveness at SELECTION time.** Failing at the moment of selection produces
+  an error the user can act on immediately; deferring it means the next unrelated command fails
+  confusingly. The extra read is worth it. Use-time still re-checks (step 2), because a membership
+  can be revoked between selection and use.
+- **Q4 — the picker is CUT.** See §1.4.
+- **Q5 — no-enumeration:** a **foreign** workspace id (real, caller not a member) and an
+  **unknown** id (nonexistent) must produce **byte-identical** errors. Otherwise `use` becomes an
+  existence oracle for other tenants' workspaces — exactly the property #80f protects on the accept
+  path. This is a required test, not a nicety.
