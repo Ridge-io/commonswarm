@@ -188,6 +188,20 @@ Start a fresh swarm task per sub-slice; Mason implements, you orchestrate + veri
 impressions when they do and fold into P2/P3 scoping; (d) plan P2+ from what the dogfood
 teaches (§0b).
 
+### ROTATION 2026-07-24 ~10:45 (Lead3 → Lead4). Goal achieved; operator: "move on to next stage."
+Lead3 rotating at the achieved-goal boundary (context deep in the rotation zone). State:
+HEAD is the evidence commit + this baton, tree clean, all pushed. **IN FLIGHT: Mason holds
+`ux-connect-polish`** (bugs #1–#6 + Kimi 2b-2 FIX-1/3/4/5 + decision #81 pending-command_id,
+scope fully pinned in swarm messages + this file) — collect his checkpoint, verify by
+execution (tsc + 66/66 + 14/14 + 10/10), review diff, land, then **redeploy hosted**
+(`npx supabase functions deploy command` from this machine — linked + authed). **YOUR MAIN
+TASK: P2-connect-UX** (previous section) — one-command join, agent-skill layer, read
+surface, narrated output. Read §1c feedback FIRST; it governs everything. Then 2b
+remainder per §1b. Kimi review logs: scratchpad/kimi-2b1-review.log (FIX(7), folded),
+kimi-2b2-review.log (FIX(5) minor: 1/3/4/5 in Mason's task, FIX-2 = rate-limit slice).
+Landmines all in §1/§3 + evidence docs; the new one from today: Anvil free-text readbacks
+misalign columns — demand strict single-JSON output with exact fields.
+
 ### LEAD3 ACTIVE (2026-07-24, baton accepted at HEAD 7bf5f6f). Slice-2b decomposition:
 Lead2 stood down; Lead3 is current Lead. Sub-slices (each: build→green→Kimi K3 review→commit):
 - **2b-1 (IN FLIGHT — Mason holds `p1-slice2b-core`):** pure `decideWorkspace` core. Three new
@@ -294,6 +308,36 @@ infrastructure)** — the infrastructure-surface mapping is genuinely NEW vs the
 or web UI later — collaborators are CLI-native today, so CLI first). **Near-term north
 star: nail HUMAN-DRIVEN swarm-to-swarm project coordination with exceptionally great
 onboarding + CLI UX.** Appendix C (operator UX spec) is elevated accordingly.
+
+**★ FELT-DOGFOOD FEEDBACK (operator, 2026-07-24, immediately after driving the two-human
+connect — THE §1c calibration datum; every P2+ scope decision answers to this):**
+1. "**A lot of steps** — I'd like it much simpler. Driving this process **via an agent**
+   would help a lot, via skills or something — I don't really want the end user to need
+   to do much via terminal."
+2. "I **didn't really know what I was doing or why** — I don't understand why there were
+   multiple steps; it all felt very technical."
+Lead3 reading: (1) = Appendix C §1.c ("connect your agents — the crux") + §2.10
+coordinator-as-driving-interface, now operator-confirmed: the END USER's own agent should
+drive login/accept/principal/mint; the human states intent ("join Tom's swarm"). (2) =
+comprehension-before-commitment (Appendix C invite-page principle) must extend to EVERY
+command's output: say what just happened and why in plain language, or collapse the step
+entirely. Steps that can't explain themselves shouldn't exist as user-facing steps.
+
+**NEXT PHASE (P2-connect-UX, scoped from the feedback — successor Lead executes):**
+1. **`coswarm join <invite-link>` — ONE command** collapsing login→accept→principal
+   (auto-named from hostname/user)→ready; each internal step narrates itself in one
+   plain-language line. Mint stays automatic at first agent work (already server-side).
+2. **Agent-skill layer:** a distributable skill (SKILL.md pattern) so the user's OWN
+   coding agent (Claude Code/Codex/any) drives coswarm — the human says "join <link>" /
+   "what's happening in the workspace" in their agent chat; the agent runs the CLI.
+   This is the §1c "multiple subscriptions" model made real and the endgame for
+   "end user shouldn't need the terminal."
+3. **Read surface:** `coswarm status` (members+agents+tasks+leases, one screen, plain
+   words) — comprehension requires visibility; the operator flew blind today.
+4. Invite link carries the workspace context (no --workspace-id anywhere user-facing);
+   invite PAGE (even a minimal hosted one) tells the invitee what/who/why in 30s.
+DEFER still: rate limiting (before any external collaborator), revoke wiring, T-sweep —
+sequence per successor's judgment against §1b (smallest thing that reaches coordination).
 
 **Sequencing implication (Lead3 reading):** slice 2b stays (invite/accept/principals/
 tokens ARE the swarm-to-swarm onboarding substrate). After 2b, P2 scoping should target
