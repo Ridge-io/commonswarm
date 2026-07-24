@@ -210,6 +210,27 @@ the slash command; surfaced to operator to enable.
   `swarm`/`swarm-cloud` bins killed; keychain `io.ridge.coswarm`, storage key `coswarm-<profile>-auth`,
   headless dir `~/.coswarm/credentials.d` — did NOT touch swarm.* schema, swarm_command/swarm_admin,
   swm_agt_, or spec branding). npm-linked globally. Renamed inside the zero-credential window.
+- **TODAY'S GOAL (operator, 2026-07-24 AM): two humans connect their agents cross-internet
+  via hosted coswarm, ASAP.** 2b-2 re-scoped to the CONNECT LOOP only: Edge-fn wiring +
+  CLI verbs for invite_member / accept_invitation / create_agent_principal /
+  mint_agent_token; deploy hosted; live 2-human E2E. Deferred to after: remove/change_role
+  + revoke wiring, rate limiting, devices, T-04..12, create_workspace wiring.
+- **Decision #78:** invitationMatchesIdentity oracle DELETED (contradicted decision #13 —
+  acceptance ignores email; forwarded capability links valid for any verified holder BY
+  DESIGN). consumed_by binds from ctx actor only. Forwarded-invite is a positive test.
+- **Decision #79:** projection WorkspaceAgentToken.task_id/epoch loosened to nullable
+  (must represent legacy null-bound seed rows); mint command/event stays required (#77).
+  Fixture-era seeded tokens get revoked once connect-loop is proven on hosted.
+- **Decision #80 (connect-loop wiring, a–f):** invites hardwired role=member, TTL default
+  24h cap 7d; normalized email stored on swarm.users at login bootstrap (best-effort
+  invite-time check; real guard = accept-time user_id); agent_runs row created at MINT
+  time server-side (same tx, bound to principal + authenticated device from stored login
+  profile) — principal create returns principal_id only; default mint scopes = the 8 P0
+  task commands, no --scope flag; raw token/invite material is a fresh-response-only
+  adjunct (never StoredResponse/ledger/audit/events; replay omits it; lost delivery →
+  mint anew); accept failures are outwardly UNIFORM (unknown-hash = audit-only 403;
+  valid-hash expired/consumed/revoked commit internal domain rejection but return
+  identical status+body — no-enumeration).
 - **Decision #77 (2b-1 interfaces):** accept_invitation carries `{token_hash}` ONLY (no
   invitation_id — client must not steer row selection); remove/change_role take optional
   `landing_authority_successor_user_id` + injected `landingAuthorityChangeResolved` oracle
