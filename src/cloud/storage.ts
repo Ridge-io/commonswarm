@@ -20,6 +20,9 @@ import type { CloudTarget } from "./config.js";
 const KEYCHAIN_SERVICE = "io.ridge.swarm.cloud";
 const LOCK_STALE_MS = 60_000;
 const LOCK_TIMEOUT_MS = 30_000;
+const MAX_KEYCHAIN_RECORD_BYTES = 126;
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const FALLBACK_WARNING =
   "⚠ no OS keychain found. Storing the rotating refresh credential in a 0600 file under a 0700 directory. This is less protected than a keychain.";
 
@@ -115,19 +118,58 @@ async function secureCredentialFile(path: string): Promise<void> {
 }
 
 function parseRecord(raw: string): CredentialRecord {
-  const value = JSON.parse(raw) as Partial<CredentialRecord>;
+  let value: Partial<CredentialRecord>;
+  try {
+    if (raw.startsWith("{")) {
+      value = JSON.parse(raw) as Partial<CredentialRecord>;
+    } else {
+      const [version, refreshToken, generation, deviceId, userId, ...extra] =
+        raw.split("|");
+      if (extra.length > 0) throw new Error("extra compact credential fields");
+      value = {
+        version: Number(version) as 1,
+        refreshToken,
+        generation: Number(generation),
+        deviceId,
+        userId,
+      };
+    }
+  } catch {
+    throw new Error("stored credential record is malformed");
+  }
   if (
     value.version !== 1 ||
     typeof value.refreshToken !== "string" ||
-    value.refreshToken.length < 16 ||
+    value.refreshToken.length < 8 ||
+    value.refreshToken.length > 2_048 ||
+    /[|\u0000-\u001f\u007f]/.test(value.refreshToken) ||
     !Number.isSafeInteger(value.generation) ||
     (value.generation ?? -1) < 0 ||
     typeof value.deviceId !== "string" ||
-    typeof value.userId !== "string"
+    !UUID_RE.test(value.deviceId) ||
+    typeof value.userId !== "string" ||
+    !UUID_RE.test(value.userId)
   ) {
     throw new Error("stored credential record is malformed");
   }
   return value as CredentialRecord;
+}
+
+function keychainRecord(record: CredentialRecord): string {
+  const validated = parseRecord(JSON.stringify(record));
+  const compact = [
+    validated.version,
+    validated.refreshToken,
+    validated.generation,
+    validated.deviceId,
+    validated.userId,
+  ].join("|");
+  if (Buffer.byteLength(compact, "utf8") > MAX_KEYCHAIN_RECORD_BYTES) {
+    throw new Error(
+      "refresh credential is too large for secure macOS Keychain CLI input",
+    );
+  }
+  return compact;
 }
 
 async function run(
@@ -247,7 +289,7 @@ class MacKeychainStore extends LockedCredentialStore {
   }
 
   async write(record: CredentialRecord): Promise<void> {
-    const serialized = JSON.stringify(record);
+    const serialized = keychainRecord(record);
     const result = await run(
       this.securityPath,
       [

@@ -348,10 +348,12 @@ const fs = require("node:fs");
 const args = process.argv.slice(2);
 const action = args[0];
 const vault = process.argv[1] + ".secret";
-if (args.join("\\0").includes("refresh-token-long-enough")) process.exit(9);
+if (args.join("\\0").includes("rrrrrrrr")) process.exit(9);
 if (action === "add-generic-password") {
   const lines = fs.readFileSync(0, "utf8").trimEnd().split("\\n");
   if (lines.length !== 2 || lines[0] !== lines[1]) process.exit(8);
+  if (Buffer.byteLength(lines[0], "utf8") > 126) process.exit(7);
+  if (lines[0].startsWith("{")) process.exit(6);
   fs.writeFileSync(vault, lines[0], { mode: 0o600 });
   process.exit(0);
 }
@@ -381,7 +383,7 @@ process.exit(2);
     });
     const record: CredentialRecord = {
       version: 1,
-      refreshToken: "refresh-token-long-enough",
+      refreshToken: "r".repeat(43),
       generation: 7,
       deviceId: randomUUID(),
       userId: randomUUID(),
@@ -391,6 +393,41 @@ process.exit(2);
     assert.deepEqual(await store.read(), record);
     await store.delete();
     assert.equal(await store.read(), null);
+  } finally {
+    await rm(parent, { recursive: true, force: true });
+  }
+});
+
+test("malformed credential errors never echo stored secret material", async () => {
+  const parent = await mkdtemp(join(tmpdir(), "swarm-malformed-store-"));
+  const directory = join(parent, "credentials");
+  try {
+    const store = await credentialStore({
+      target: cloudTarget("https://malformed.example.test", "anon"),
+      stateDirectory: directory,
+      forceFile: true,
+      platform: "linux",
+      warn: () => undefined,
+    });
+    await store.write({
+      version: 1,
+      refreshToken: "refresh-token-long-enough",
+      generation: 0,
+      deviceId: randomUUID(),
+      userId: randomUUID(),
+    });
+    await writeFile(
+      store.location,
+      '{"version":1,"refreshToken":"must-never-appear',
+      { mode: 0o600 },
+    );
+    const error = await store.read().then(
+      () => null,
+      (failure: unknown) => failure as Error,
+    );
+    assert.ok(error);
+    assert.equal(error.message, "stored credential record is malformed");
+    assert.equal(error.message.includes("must-never-appear"), false);
   } finally {
     await rm(parent, { recursive: true, force: true });
   }
