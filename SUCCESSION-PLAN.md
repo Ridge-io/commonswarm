@@ -155,6 +155,19 @@ DB with psql is theater, not a dogfood — it teaches nothing about whether the 
   eventually (`supabase start` + Edge Functions) — not available on this machine yet;
   operator will need OrbStack/Docker or we run the suite against the remote dev project.
 
+### ★ 2026-07-23 LATE: THE §0b DOGFOOD IS ACHIEVED + VERIFIED (commit `ca836f6`)
+All four dogfood items are DONE — see `docs/evidence/p1-first-dogfood.md` (read it; it
+also records the fabricated-Anvil-readback catch and the Track B landmines: aws-0 pooler
+host from the Management API, 6543-needs-prepare:false, transient op-session drops, where
+every credential lives in 1Password). Real human GitHub PKCE login (gap#6 wildcard proven
+at port 53493), seeded workspace, agent-token cradle-to-grave vs hosted with replay +
+domain pin, verified at the event_id level via canary re-query. **OPEN ITEMS:** (a) slice-3
+FINAL acceptance held: Mason is fixing a keychain truncation bug (token echoed → treated
+compromised → all sessions revoked, worked) then repeating login/refresh/logout clean;
+(b) slice 2b: §3.4 workspace commands, T-04/07/08/09/12, rate limits; (c) operator to
+actually drive the CLI themself — the felt dogfood; (d) plan next phase from what the
+dogfood teaches (per §0b: stop, let it be used, then plan P2+).
+
 ## 1b. Governing steer (operator, 2026-07-23) — READ THIS BEFORE SCOPING ANYTHING
 
 **Swarm is primarily about coordination — keep it that way** (the Workbench.md
