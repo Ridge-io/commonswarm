@@ -7,3 +7,6 @@ export * from './reducer.js';
 export * from './commands.js';
 export * from './idempotency.js';
 export * from './upcasters.js';
+export * from './workspace-events.js';
+export * from './workspace-reducer.js';
+export * from './workspace-commands.js';

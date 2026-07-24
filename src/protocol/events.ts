@@ -31,7 +31,7 @@ export function canonicalPrincipal(actor: Actor): string {
 }
 
 /** Canonical event envelope (§2.1). `payload` is the per-type body below. */
-export interface EventEnvelope<P = unknown> {
+export interface EventEnvelope<P = unknown, T extends string = EventType> {
   workspace_id: string;
   stream_id: string;
   /** Monotonic per-stream sequence. Events fold in ascending seq. */
@@ -39,7 +39,7 @@ export interface EventEnvelope<P = unknown> {
   event_id: string;
   /** The command that produced this event (idempotency + provenance). */
   command_id: string;
-  type: EventType;
+  type: T;
   schema_version: number;
   actor_user: string | null;
   actor_agent_principal: string | null;
