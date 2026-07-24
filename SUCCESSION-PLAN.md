@@ -108,6 +108,26 @@ DB with psql is theater, not a dogfood — it teaches nothing about whether the 
   limiting (§6). **Slice 3:** real PKCE login + CLI client. **Still open for dogfood:**
   hosted-Supabase apply of the command fn (item #1 — local-stack verified only).
   Build-order that produced this: `docs/design/P1-SLICE2-BRIEF.md`.
+- **SLICE 3 — login + CLI (IN FLIGHT; operator-chosen next, 2026-07-23; Mason[codex]
+  holds `p1-login-cli` lease).** `swarm login` = PKCE + GitHub OAuth via GoTrue, loopback
+  `127.0.0.1:<random port>/callback`, `state` verified both paths; refresh token in OS
+  keychain (headless fallback 0600-in-0700 + loud warning, hard refusal below); a THIN
+  CLI sending the 8 P0 commands to `POST /commands` (slice-2 wire + decision #64 response),
+  accepting a login JWT OR a seeded `swm_agt_` token; logout/devices → `revoke_device`.
+  **DEFERRED:** all §8 local-first cache/outbox/replay (thin client only for first
+  dogfood); §3.4 workspace commands (fixture-seeded — see the "fixture bridge" in the
+  brief). Env-parametrized `--url`/anon-key: develop on LOCAL, dogfood on HOSTED.
+  Build-order: `docs/design/P1-SLICE3-BRIEF.md`.
+- **TRACK B — hosted provisioning (operator-chosen dogfood target = HOSTED
+  `ukezjcnxjvkpkeezxaew`; Lead-driven via Anvil/Forge, NOT Mason).** Needed for the real
+  dogfood, runs parallel to slice 3. Steps, each **independently verified** (landmine §3):
+  (1) apply the P1 schema migration to hosted (Anvil: `supabase link` + `db push`; verify
+  via `gh`/`psql`/REST that 24 tables exist); (2) deploy the `command` Edge Function to
+  hosted (`supabase functions deploy command`); (3) ADD redirect allowlist entry
+  `http://127.0.0.1:*/callback` (currently EMPTY — gap #6; path segment mandatory, `*`
+  won't cross `/`); (4) stand up the **GitHub OAuth provider** in hosted Auth (create a
+  GitHub OAuth app; client id/secret → Supabase Auth; secrets → 1Password only). Then
+  hand Mason the hosted URL + anon key. **NOT STARTED as of this checkpoint.**
 
 ### (historical build state below)
 - **Slice 1 — schema.** Migration `supabase/migrations/20260723000001_p1_schema.sql`
