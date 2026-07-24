@@ -203,3 +203,149 @@ uxtest/scripts/collect-round.sh 1
 Every script is idempotent and prints what it did. A script that cannot verify its own
 postcondition must **fail loudly**, not continue — a silently half-set-up round produces
 feedback about our harness instead of our product.
+
+---
+
+## 7. Validity protocol — AUTHORITATIVE (folds Sable's methodology review)
+
+Where this section conflicts with anything above, **this section wins.** It exists because a
+role-play UX harness fails silently: it returns confident feedback about a user who does not
+exist. Sable's verdict on v1 was **CONDITIONAL GO as a pilot, NO-GO as a repeatable regression
+oracle**, and these are the conditions.
+
+### 7.1 The honest boundary — reproduce this table in every REPORT
+
+| Failure class | Does this harness catch it? |
+|---|---|
+| Missing / confusing CLI output | **Yes** (strong) |
+| Dead ends, non-zero loops, wrong next-action in errors | **Yes** (strong) |
+| Unexplained multi-step flows, missing narration | **Yes** (strong) |
+| Broken happy path / version skew | **Yes** (strong — preflight must fail closed) |
+| Link hygiene (`--link-stdin` vs positional), origin-pin refusal | **Yes** (medium–strong) |
+| Partner-coordination confusion over chat | **Partial** |
+| Real emotional friction, fear/trust around OAuth | **No** — systematic miss |
+| Wall-of-text terminal scanning difficulty | **No** |
+| Genuine giving-up under time pressure | **No / rare** — LLMs grind |
+| Misreading jargon the way humans do | **No** — LLMs parse jargon too well |
+| Install / PATH discovery as a civilian | **Weak** |
+
+**Therefore: findings describe an *engineer-adjacent first-time user with no internal
+knowledge*, NOT a non-technical human.** Human2 keeps a behavioural non-technical *tilt*
+(prefers the obvious thing, asks a colleague, avoids long help text) but no finding may be
+reported as "a non-technical user couldn't do X" without that asterisk. The operator's own
+drive remains the final word (§1c) — this harness catches the obvious friction *before* we
+spend their attention.
+
+### 7.2 Leakage channels — closed (each was a real hole in v1)
+
+1. **The invite link is base64url.** An LLM will decode `coswarm://accept/<payload>` and learn
+   the project URL, anon key, `workspace_id`, `inviter_user_id`, and labels — collapsing
+   "discover by using the product" into "read the credential." **Personas are forbidden to
+   decode, print, or inspect link contents**; they may only paste it into a command the CLI
+   documents. Metric: `link_inspected`. Violation → **round void**.
+2. **`which coswarm` → symlink → the repo.** Personas get a **copied** binary at
+   `~/uxtest/bin/coswarm` on their PATH — never a symlink into the repo. Preflight asserts the
+   persona's PATH resolves to the non-repo copy. Personas may not inspect installation paths or
+   open files behind the command.
+3. **Working tree leakage.** Per-round cwd `~/uxtest/human{1,2}/r<n>/`, **empty except this
+   round's `BRIEF.md`**. Scenario full text and this file never enter a persona cwd. Collect
+   pulls artifacts *out*; the next reset archives the round dir away from the persona.
+4. **Chat history.** Use a per-round swarm `uxtest-r<n>` (clean inbox). Never reuse a message
+   board that still holds a prior round's links, commands, or jargon.
+5. **Web search / public repo.** Forbidden for this product during a round. Violation → void.
+   Pretraining residual cannot be eliminated — label it as bias, don't pretend it's absent.
+6. **The brief itself.** Human1's brief states the **goal** ("get Dana's agent working with you
+   on this project"), never the **mechanism**. If a brief contains the word `invite` as a
+   command, the discovery test is already burned. Same for the driver: it injects goals and
+   constraints, **never step lists**. Any "now run `coswarm accept`" from the driver voids the
+   round.
+7. **Partner as solution bus.** Human1 will otherwise paste the winning command. Realistic, but
+   it masks the gap. Rule: **10 minutes of solo struggle before partner help is allowed**
+   (everything before that is the gold data), and after a stuck signal the partner may share
+   *outcomes and symptoms* ("I've got a link", "mine errored") but **never argv**. Findings are
+   tagged `solo` or `partner-rescued`.
+8. **`--help` is allowed** (it is real product surface) but report a parallel score: completed
+   **without** help vs **with** help. Human2's brief adds soft pressure to try the obvious
+   thing or ask a colleague before reading long help text.
+
+### 7.3 Success pressure — the objective is inverted
+
+Both briefs state it plainly:
+
+> **Your primary job is an honest play-by-play of what confused you.** Completing the task is
+> secondary. **Stopping because you are stuck is a successful outcome for this study** — write
+> down why you stopped.
+
+The driver **must not nag** "try again" after a give-up declaration; a give-up triggers collect.
+Personas also keep a **mid-flight journal** — one line after every `coswarm` command: what I
+expected / what happened / how I feel. End-only feedback gets retroactively rationalised;
+mid-flight notes do not.
+
+### 7.4 Cross-round contamination (B1) — the repeatability blocker
+
+A persistent Human2 tab means round 2 *remembers* round 1. A "forget round 1" instruction is
+theater. Protocol, in preference order:
+
+1. **A fresh persona agent per round.** The auth constraint is "cannot *start* Claude over
+   SSH", not "cannot start another tab inside an already-logged-in GUI session." So the
+   long-lived tab acts as a **launcher**: it runs `swarm spawn --agent claude --name
+   Dana-r<n> -s uxtest-r<n>` to create a virgin-context sibling for the round, then stays out
+   of it. **Probe this once; if it works it is the answer.**
+2. Else a **hard context cut**: new conversation (`/clear`) plus prior transcript physically
+   moved out of the persona's cwd before briefing.
+3. **Always** record `carryover: true|false` in `metrics.json`.
+4. **Never** compare wall-clock across rounds as product improvement unless `carryover=false`.
+
+**R2+ is not a regression oracle until this is real.** R1 is a discovery pilot.
+
+### 7.5 Confounders that fake improvement
+
+- **OAuth consent state.** Round 2's GitHub OAuth is often "already authorized," so connect
+  time drops for reasons unrelated to us. Record `oauth_consent: first|returning`; never tout a
+  faster R2 without that split.
+- **Version skew.** Record `coswarm_sha` for **both** machines; **preflight fails closed if
+  they differ.** (The laptop was stale by an entire slice — §1.1.)
+- **Warm login.** Both machines log out and drop the profile sidecar per round.
+- Leftover test workspaces are *not* a confounder — additive reset stays.
+
+### 7.6 `metrics.json` schema (script-collected, never self-reported)
+
+```
+wall_clock_link_to_connected, command_interval_timeline[],
+coswarm_invocations, nonzero_exits, unique_error_strings[],
+help_invocations, completed_without_help,
+help_requests_to_partner[] (quoted), partner_rescued_steps[],
+time_to_first_coswarm, time_to_first_accept_attempt,
+command_sequence[], golden_path_distance,
+used_link_stdin, used_positional_link, link_inspected,
+task_completed, gave_up, gave_up_reason,
+coswarm_sha_mini, coswarm_sha_laptop, workspace_id, seed_sha,
+oauth_consent, carryover, isolation_void
+```
+
+Two traps, stated so nobody misreads the numbers: **wall-clock alone is confounded** by partner
+latency, OAuth, and model speed — read the interval timeline; and **zero errors is not good UX**
+if the partner pasted the answer.
+
+### 7.7 Mandatory REPORT.md header
+
+```markdown
+## Validity
+- Role-play bias: LLM ≠ non-technical human — classes we cannot claim: [§7.1 "No" rows]
+- Carryover: true/false  (if true: no discovery-UX claims)
+- Isolation: clean / VOID  (if VOID: stop, do not rank findings)
+- Partner-rescued steps: [quotes]
+- Version under test: mini <sha> / laptop <sha>  (must match)
+- OAuth consent: first / returning
+```
+
+Findings are ranked **only** if isolation is clean, and every finding **quotes the exact CLI
+line** the persona saw.
+
+### 7.8 Gate
+
+| Question | Answer |
+|---|---|
+| Run R1 as a pilot? | **Yes** — after §7.2 items 2–3 (copied binary + empty per-round cwd) and the §7.7 header exist |
+| Trust R1 as product truth? | Only for the §7.1 "Yes" rows; the operator's drive still decides |
+| Run R2+ as regression? | **No** until §7.4 is implemented and `carryover` is recorded |
