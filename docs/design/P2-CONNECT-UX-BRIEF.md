@@ -1,7 +1,8 @@
 # P2-connect-UX — sub-slice 1 design brief: `coswarm accept <invite-link>`
 
-**Status:** v2 — REVISED after Sable[grok] model-inversion review (verdict NO-GO on v1;
-BLOCKING 1–3, MAJOR 4–8, NIT 13 all folded). Ready for Sable re-review, then Mason.
+**Status:** v2.1 — CLEARED FOR IMPLEMENTATION. Two adversarial rounds by Sable[grok]:
+v1 → NO-GO (BLOCKING 1–3, MAJOR 4–8, NIT 13); v2 → CONDITIONAL GO pending R1–R4 + O1–O3,
+now folded in place. Mason implements this document.
 **Author:** Lead4, 2026-07-24. **Governs:** the most direct answer to the §1c felt-dogfood
 feedback.
 
@@ -11,6 +12,14 @@ feedback.
 > `swarm_read.agent_principals` (BLOCKING 2); endpoint origin pin (MAJOR 4); one uniform
 > recovery message replacing per-cause copy (MAJOR 5); agent-safe invocation specced
 > (MAJOR 7); default-workspace overwrite narration (MAJOR 8); mint wording corrected (NIT 13).
+>
+> **v2→v2.1 changes:** checkpoint short-circuit is now step 0 and the server's
+> `workspace_id` always beats the hint, with non-claiming copy for membership-at-hint
+> (R1 — closed a false-success path); principal read filters live + escapes a
+> revoked-held name (R2); ordered positional grammar with legacy-token precedence (R3);
+> default-workspace policy split into two non-contradictory cases (R4); confirm requires
+> re-typing the host and target composition is never mixed (O1–O3); profile schema
+> extension, email fallback, and `coswarm status` forward-reference fixed (minors).
 
 ## 0. Governing feedback (from SUCCESSION-PLAN §1c)
 
@@ -114,12 +123,25 @@ Each line is what the user SEES — plain language, no jargon, one per internal 
    of "<workspace_name>"."*
 3. **Principal** (reuse-or-create, auto-named — §2.8): *"Registered this machine's agent
    identity: <name>."* / *"This machine already has an agent identity: <name>."*
-4. **Ready**: *"You're connected to "<workspace_name>". Run `coswarm status` to see what's
-   happening. Your agent gets its credential when it starts work (`coswarm token mint`)."*
+4. **Ready**: *"You're connected to "<workspace_name>". Your agent gets its credential when
+   it starts work (`coswarm token mint`)."* Do **not** point at `coswarm status` — it does
+   not exist until P2-2 (minor); either omit it or mark it explicitly as coming soon. Never
+   send the user to a command that will 404 them.
 
-If the default workspace changed, add one line (MAJOR 8): *"Your default workspace is now
-"<new>" (was "<old>")."* Only auto-switch when the previous default is null or equals the
-recovered id; otherwise narrate the switch explicitly.
+**Email in the login-skip line (minor):** `refreshedCredential` carries no email, so
+*"Already signed in as <email>"* has no source on the skip path. Do not add a `getUser`
+round-trip solely for copy — store the email at login, and fall back to a `userId` prefix
+when it is absent. Never block the flow on a missing label.
+
+**Default-workspace policy — two cases, no contradiction (R4).** v2 said both "only
+auto-switch when the previous default is null or matches" *and* "otherwise narrate the
+switch," which cannot both hold. The rule is:
+- **Fresh membership success** (accept returns 200, or a checkpoint is written for the first
+  time): **always** set the default to the **server's** `workspace_id`. If the previous
+  default was non-null and different, narrate it: *"Your default workspace is now "<new>"
+  (was "<old>")."*
+- **Already-connected re-run** (step 0 short-circuit fires): **never** change the default —
+  the user may have deliberately switched since. Narrate membership/principal status only.
 
 ### 2.3 Secret hygiene + backward compatibility
 
@@ -146,33 +168,64 @@ Also: decision #81's pending-command_id covers **transport-ambiguous** retries o
 *parsed* HTTP response (including 403) clears the pending id (`pending-command.ts:98`). It
 does not cover the multi-step matrix.
 
-**On accept 403 → probe, don't guess:**
+**Membership-at-hint is NOT proof the invitation was consumed (R1).** A wrong, stale, or
+forged `workspace_id` hint can name a workspace W the user *already* belongs to, while the
+real invitation (for workspace A ≠ W) is dead. A naive probe then reports success for an
+invite that never worked. This is not an authz bypass — `is_member` still gates everything —
+but it is a recovery-correctness bug, so the state machine is ordered and the copy never
+over-claims:
+
+**Step 0 — checkpoint short-circuit, BEFORE attempting accept.** If the profile holds
+`{workspaceId, principalId}` for this CloudTarget matching the payload's `workspace_id`, and
+both the membership and a live principal still hold, this is an already-connected no-op:
+narrate the connected state and stop. Never re-burn an invitation on a converged state.
+
+**On accept 200 — trust the server, never the hint.** Take `response.workspace_id` for the
+default, the principal step, and the checkpoint. If it differs from `payload.workspace_id`
+(stale or forged hint), the server value wins silently.
+
+**On accept 403 — probe, don't guess, don't over-claim:**
 1. `GET /rest/v1/memberships?select=…&workspace_id=eq.<hint>&user_id=eq.<uid>&revoked_at=is.null`
    with `accept-profile: swarm_read` — the exact pattern of `discoverSoleWorkspace`
-   (`auth.ts:385-416`). Authority unchanged: the view is `is_member`-gated.
-2. **Live membership found** → treat as success. Narrate *"You're already a member of
-   "<workspace_name>" — nothing to do."* Persist the default, continue to the principal step.
+   (`auth.ts:385-416`). Authority unchanged: the view is `is_member`-gated, so this reveals
+   only what the user could already read (no-enumeration intact — Q6).
+2. **Live membership at the hint** → do **NOT** say the invitation was accepted. Narrate:
+   *"You're already a member of this workspace. If you expected this link to add you
+   somewhere new, it can't be used — ask <inviter_display_name> for a new invite."* Then
+   continue with principal reuse for that workspace (the user IS a member) and do not change
+   the default (R4 case 2).
 3. **No membership** → plain failure with **ONE uniform message for every cause** (MAJOR 5,
    preserving server semantics client-side): *"This invitation can't be used — it may have
    expired, already been used, or been revoked. Ask <inviter_display_name> for a new link."*
    Never branch this copy on a guessed cause.
 
-**Persist a checkpoint** after each committed step — `{workspaceId, principalId}` in the
-0600 sidecar profile — so a re-run converges **without a live invitation** (the invite may
-be consumed or TTL-expired by then). Re-running a fully-successful accept is a no-op that
-narrates the already-connected state.
+**Persist a checkpoint** after each committed step — `{workspaceId, principalId,
+principalName}` in the 0600 sidecar profile — so a re-run converges **without a live
+invitation** (the invite may be consumed or TTL-expired by then).
+
+**Profile schema extension (minor):** `CredentialProfile` today is `{version, userId,
+workspaceId, pendingCommands}` (`storage.ts:47-52`). Add `principalId` and `principalName`
+as optional fields with a **backward-compatible parse** — an existing profile lacking them
+must load, not throw.
 
 Failure matrix, resolved:
 
-| Failure | Resolution |
+| Failure / state | Resolution |
 |---|---|
-| accept committed, response lost | #81 replay → accepted (+`workspace_id`) |
-| accept committed, pending cleared, re-run | membership probe → success path |
-| accept ok, default never written | probe with payload `workspace_id` hint → recover |
-| principal committed, response lost | #81 replay → `principal_id` |
-| principal committed, re-run (fresh id) | principal READ first (§2.8) → reuse, no conflict |
-| re-run after invite TTL expiry | checkpoint + probe → converges if member; else uniform copy |
-| re-run after login identity change | credential is per-CloudTarget + uid; probe is uid-scoped → no cross-identity bleed |
+| Full success re-run | Step 0 checkpoint + live membership & principal → no-op **before** accept |
+| accept committed, response lost (#81 transport) | #81 replay → 200 → use **response** `workspace_id` → checkpoint |
+| accept committed, pending cleared, no checkpoint | 403 → probe hint; if member → non-claiming copy (R1) + principal path + write checkpoint |
+| accept ok, default never written | Use **response** `workspace_id` (not the hint) → write default + checkpoint |
+| hint ≠ server `workspace_id` on 200 | Trust server, persist server id (R1) |
+| forged/stale hint at a workspace user already belongs to + dead token | Non-claiming copy; **must not** report the invite succeeded (R1) |
+| principal committed, response lost | #81 replay → `principal_id` → checkpoint |
+| principal committed, re-run | Read live principal by stable name → reuse |
+| principal name held only by a **revoked** row | Suffix the auto-name until free, then create (R2) |
+| invite TTL expiry / foreign consume / invalid / revoked | 403 + no membership at hint → the **one** uniform failure copy |
+| same uid as inviter | Pre-accept `inviter_user_id` equality → stop with same-person copy (§2.7) |
+| re-run after login identity change | Credential is per-CloudTarget + uid; probe is uid-scoped → no cross-identity bleed |
+| unknown origin, non-interactive | Hard-fail; **no login attempt** (§2.5) |
+| unknown origin, interactive | Re-type-the-host confirm (§2.5 O1); else refuse |
 
 ### 2.5 Endpoint integrity — origin pin (MAJOR 4)
 
@@ -183,13 +236,23 @@ friendly `workspace_name`, and harvest the invitee's GitHub OAuth through a look
 The four-command path forced the human to type `--url` as a separate act of attention; the
 link collapses that away.
 
-**Fix:** ship a **known-origins allowlist** in the CLI (the hosted project origin;
-`localhost`/`127.0.0.1` permitted for development). Parse rules:
+**Fix:** ship a **known-origins allowlist** in the CLI. Parse rules:
 - Origin in the allowlist → proceed silently.
 - Origin NOT in the allowlist → **refuse by default**, with a loud explanation naming the
-  host, and require an explicit interactive confirmation that echoes the host (and is
-  unavailable in non-interactive/agent mode, where it hard-fails). Never a silent proceed.
-- `--url`/`--anon-key` flags still override for development.
+  host. Proceeding requires an interactive confirmation in which the user **re-types the
+  exact origin string** (O1) — a click-through "yes" is phishing-compatible when friendly
+  labels sit directly above it. Compare the typed value constant-time. In
+  non-interactive/agent mode this **hard-fails with no login attempt**.
+- **Allowlist contents (O3):** the hosted production origin plus loopback
+  (`127.0.0.1`/`localhost`) for development, as a **build-time list**. A dev-only env
+  override may add origins but must be documented as dev-only and must NOT be consulted in
+  non-interactive mode — an unbounded env override reopens phishing exactly where the human
+  isn't watching.
+- **Target composition is never mixed (O2):** the CloudTarget comes **entirely** from either
+  (a) the link payload after the pin passes, or (b) explicit `--url` + `--anon-key`. Never a
+  flag `url` combined with a payload `anon_key`/token for a different host. Supplying both a
+  link and target flags is a validation error unless the flags fully replace the target, and
+  the replacement must itself pass the pin/confirm rules.
 
 ### 2.6 Label sourcing + sanitization (MAJOR 6, Q4)
 
@@ -203,6 +266,11 @@ class as the raw token per decision #80e — never ledgered, never in events/aud
 replay). The Edge function already holds the workspace row in-transaction, and this
 disclosure is exactly what `SWARM-CLOUD.md:300` sanctions for an invite capability. No new
 read view needed.
+
+**Replay omits the adjunct (minor).** Being fresh-response-only means a replayed `invite`
+returns neither the raw token nor the labels — the same loss that already applies to the
+token today. The invite narration must say so plainly: if the output was lost, issue a new
+invitation rather than expecting recovery.
 
 **Sanitization is mandatory on BOTH sides** (FIX-5 class, extended): labels are untrusted
 data — inviter-authored and attacker-modifiable in a tampered link. Strip control, C1, bidi
@@ -233,11 +301,24 @@ that does **not** return the existing `principal_id` (`workspace-commands.ts:464
 prepare always mints a fresh id, `command/index.ts:1518-1523`), so accept would claim "ready"
 with no mintable principal.
 
-**Fix — read first, create only if absent:** after membership is known, `GET
-/rest/v1/agent_principals?select=principal_id,name&workspace_id=eq.<ws>&owner_user_id=eq.<uid>`
+**Fix — read live first, create only if absent:** after membership is known,
+`GET /rest/v1/agent_principals?select=principal_id,name&workspace_id=eq.<ws>&owner_user_id=eq.<uid>&name=eq.<stable>&revoked_at=is.null`
 via `accept-profile: swarm_read`. The view exists and is `is_member`-gated (migration
-`:662-667`) — **no new read authority**. If a principal for this machine's stable name
-exists, reuse its id; else create via #81. Persist `principal_id` to the profile either way.
+`:662-667`) — **no new read authority**. Reuse the returned `principal_id`; else create via
+#81. Persist `principal_id` + `principalName` to the profile either way.
+
+**The `revoked_at=is.null` filter and the name predicate are both load-bearing (R2).**
+`create_agent_principal` treats **any** same-named principal as taken — it does not ignore
+revoked rows (`workspace-commands.ts:464-469`) — and the DB `UNIQUE (workspace_id, name)`
+retains revoked rows (`migration:181`). So a revoked principal permanently occupies its name:
+- Reusing a revoked `principal_id` would surface later as `principal_revoked` at mint.
+- Filtering client-side to empty and then creating would hit `principal_name_taken` and
+  strand the user with no id.
+
+**Escape:** if no *live* principal matches but the name is occupied (by a revoked row),
+**suffix the auto-name** (`-2`, `-3`, … or additional `deviceId` characters) until free, then
+create. Never reuse a revoked `principal_id`. Persist the chosen name so later runs match it
+verbatim.
 
 **Auto-name** (MINOR 9): `user@hostname` is fragile — it can exceed `boundedText(…, 80)`,
 collides across cloned images/shared usernames, and admits unusual hostname characters.
@@ -270,11 +351,21 @@ invitee flow to the one-command form.
 `https://` link form (P2-4); auto-mint (does not exist; stays out); rate limiting; revoke
 wiring; T-sweep.
 
-### 3.3 Parse grammar (Q5, MINOR 10) — strict, ordered, no sniffing
+### 3.3 Parse grammar (Q5, MINOR 10, R3) — strict, ordered, no sniffing
 
-1. exact `coswarm://accept/<base64url>` → decode
-2. else a bare base64url payload → decode
-3. else **refuse** — no `https://` sniffing until P2-4
+The single positional on `coswarm accept` must serve BOTH the legacy bare token and the new
+link, so precedence is explicit — a bare `swm_inv_` token must never reach a base64url
+decoder (R3):
+
+1. Matches `INVITATION_TOKEN_RE` (`/^swm_inv_[A-Za-z0-9_-]{43}$/`, `command-client.ts:17`)
+   → **legacy token mode**, unchanged: existing FIX-3 warning, target flags required as today.
+2. Else exact `coswarm://accept/<base64url>` → **link mode**.
+3. Else strict base64url **whose decoded JSON has `v:1` plus all required keys** → link mode.
+4. Else **refuse with teach-by-refusal** naming both accepted forms.
+5. No `https://` sniffing until P2-4.
+
+Mutual exclusion: link mode ⊕ `--invitation-token-stdin` ⊕ bare-token positional — any two
+together is a validation error.
 
 Reject: wrong/missing `v`, oversize payloads (cap bytes), non-strict base64url (padding
 tricks), malformed UUIDs, and any `url` failing `cloudTarget()` or the §2.5 origin pin.
@@ -287,10 +378,19 @@ tricks), malformed UUIDs, and any `url` failing `cloudTarget()` or the §2.5 ori
   oversize, bad base64url, non-allowlisted origin); happy path; `--link-stdin`; positional
   warning; `--json`/`--no-browser` shapes; label sanitization (control/bidi/ANSI in labels
   never reach output); same-identity guard copy; default-workspace switch narration.
-- **New recovery tests (MINOR 12):** accept 403 + live membership → success path; accept 403
-  + no membership → the single uniform message; pre-existing principal → reuse, no create;
-  double-run of a full accept → exactly one membership + one principal; re-run after invite
-  consumed → converges from checkpoint.
+- **New recovery tests (MINOR 12, extended for R1–R4):** accept 403 + live membership at the
+  hint → the **non-claiming** copy (asserted to NOT say the invitation succeeded — R1);
+  **forged/mismatched hint** at a workspace the user already belongs to + dead token → same
+  non-claiming path, no false success; accept 200 with `response.workspace_id` ≠ hint → server
+  value persisted; accept 403 + no membership → the single uniform message; pre-existing live
+  principal → reuse, no create; **name held only by a revoked principal → suffixed name
+  created, revoked id never reused** (R2); step-0 checkpoint short-circuit → no accept
+  attempted at all; double-run of a full accept → exactly one membership + one principal;
+  re-run after invite consumed → converges from checkpoint; positional **token-vs-link
+  precedence matrix** including a bare `swm_inv_` never entering the base64url decoder (R3);
+  default-workspace: fresh success switches + narrates was→now, re-run does not switch (R4);
+  unknown origin non-interactive → hard-fail with **no login attempt**; unknown origin
+  interactive → wrong host typed → refuse.
 - **Server tests:** invite response carries workspace_id/labels as fresh-only (absent on
   replay, absent from ledger/events/audit).
 - **Local integration:** invite → accept E2E on the live local stack, asserting single
