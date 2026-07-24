@@ -534,6 +534,24 @@ continuously (this file + commits) — assume your session can die at any moment
   model-visible file. (An earlier ref `pgbblnyljguyfckhdnid` was created in the junk
   `ChartingAlpha-Free2` org and has been **deleted**; it was empty. Ignore it if you
   see it referenced anywhere.)
+- **★ NEVER run `supabase config push` against hosted (landmine, 2026-07-24).**
+  `supabase/config.toml` carries **scaffold defaults** — `site_url = "http://127.0.0.1:3000"` and
+  `additional_redirect_urls = ["https://127.0.0.1:3000"]` — while hosted holds the hard-won real
+  values: `uri_allow_list = http://127.0.0.1:*/callback` (gap #6, proven at port 53493 in the first
+  dogfood) and an enabled GitHub provider. A blanket config push **overwrites the allowlist with
+  the scaffold default and breaks PKCE login entirely.** Change hosted config **one setting at a
+  time** via the Management API, then re-verify `uri_allow_list` and `external_github_enabled`.
+- **★ Hosted PostgREST must expose `swarm_read`, and it silently didn't (2026-07-24).** Every CLI
+  read through `accept-profile: swarm_read` was returning `406 PGRST106` on hosted, and
+  `discoverSoleWorkspace` swallows it (`if (!response.ok) return null`) — so workspace-default
+  discovery had been **failing invisibly on hosted since slice 3**. This was the *second* root
+  cause of bug #3 alongside the sole-membership heuristic; fixing only the heuristic would have
+  shipped a still-broken hosted experience whose symptom looked identical. Fixed by
+  `PATCH /v1/projects/{ref}/postgrest` → `db_schema: public,graphql_public,swarm_read`. Anon stays
+  denied via the P1 `REVOKE ALL ... FROM anon` (`:789`); `authenticated` holds USAGE+SELECT
+  (`:785-786`). **Lesson: a client that treats every non-ok response as "no data" hides
+  infrastructure faults as empty state — when a hosted read returns nothing, prove the schema is
+  exposed before believing the data is absent.**
 - **VERIFY EVERY PROVISIONING AGENT'S SELF-REPORT — it is unreliable in BOTH
   directions.** Observed 2026-07-23: Forge reported a bare "PASS" for work that needed
   checking, and Anvil reported an unrelated garbled result for a task it had actually
