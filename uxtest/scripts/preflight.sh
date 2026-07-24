@@ -28,6 +28,67 @@ esac
 for command in node npm git rsync ssh curl shasum jq sqlite3; do
   require_command "$command"
 done
+
+setup="$(round_setup_path "$round")"
+membership_count="$(
+  UXTEST_QUERY_REPO="$UXTEST_REPO" \
+    DATABASE_URL="$DATABASE_URL" \
+    node --input-type=module - "$UXTEST_HUMAN1_UID" <<'NODE'
+import { createRequire } from "node:module";
+
+const userId = process.argv[2];
+const require = createRequire(`${process.env.UXTEST_QUERY_REPO}/package.json`);
+const postgres = require("postgres");
+const sql = postgres(process.env.DATABASE_URL, {
+  prepare: false,
+  max: 1,
+  connect_timeout: 10,
+});
+
+try {
+  const rows = await sql.begin("read only", (tx) => tx`
+    SELECT count(*)::integer AS count
+    FROM swarm.memberships
+    WHERE user_id = ${userId}::uuid
+      AND revoked_at IS NULL
+  `);
+  const count = rows[0]?.count;
+  if (!Number.isInteger(count) || count < 0) {
+    throw new Error("membership query returned an invalid count");
+  }
+  process.stdout.write(String(count));
+} catch {
+  process.stderr.write(
+    "[uxtest] ERROR: read-only live-membership query failed; verify DATABASE_URL connectivity\n",
+  );
+  process.exitCode = 1;
+} finally {
+  await sql.end({ timeout: 1 });
+}
+NODE
+)"
+
+reset_complete=false
+if [ -f "$setup" ]; then
+  reset_complete="$(
+    node -e '
+      const fs = require("node:fs");
+      const value = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+      process.stdout.write(value.reset_complete === true ? "true" : "false");
+    ' "$setup"
+  )"
+fi
+
+projected_membership_count="$membership_count"
+if [ "$reset_complete" != "true" ]; then
+  projected_membership_count=$((membership_count + 1))
+fi
+
+if [ "$projected_membership_count" -gt 1 ]; then
+  die "BLOCKED PRODUCT BUG: identity A currently has $membership_count live workspace membership(s); additive reset projects $projected_membership_count for round $round. coswarm login only selects a workspace when exactly one live membership exists (src/cloud/auth.ts:410), so invite would then fail behind an undiscoverable workspace-id flag. The harness refuses R1 and later rounds rather than fake a passing UX with a hidden fallback or reused workspace."
+fi
+say "Read-only membership gate passed: current=$membership_count, projected=$projected_membership_count."
+
 [ -x "$UXTEST_SWARM_BIN" ] || die "mini swarm binary is unavailable"
 
 say "Checking SSH reachability and non-GUI laptop prerequisites."
@@ -123,7 +184,6 @@ printf '%s\n' "$base_members" | grep -Fq "Dana [" || die \
   "the one-time laptop launcher is absent. In a laptop cmux GUI tab run: mkdir -p ~/uxtest/human2/launcher && cd ~/uxtest/human2/launcher && swarm spawn --agent claude --name Dana --cwd ~/uxtest/human2/launcher --swarm uxtest --terminal cmux"
 say "Persistent laptop launcher Dana is present in the base uxtest swarm."
 
-setup="$(round_setup_path "$round")"
 if [ -f "$setup" ]; then
   profile="$(profile_id)"
   [ ! -e "$HOME/.coswarm/credentials.d/$profile.profile.json" ] ||

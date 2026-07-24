@@ -336,6 +336,19 @@ theater. Protocol, in preference order:
   they differ.** (The laptop was stale by an entire slice — §1.1.)
 - **Warm login.** Both machines log out and drop the profile sidecar per round.
 - Leftover test workspaces are *not* a confounder — additive reset stays.
+- **What a blocked round cannot tell us.** A round whose projected live-membership count is
+  greater than one cannot measure invite/connect usability at all: it will die before invite
+  because login leaves the workspace unset. `preflight.sh` therefore performs a read-only
+  count and fails on `projected > 1` (`current + 1` before additive reset, otherwise current).
+  It reports both counts and refuses R1 as well as later rounds when the condition is present;
+  a hidden `SWARM_CLOUD_WORKSPACE_ID` or reuse of an existing workspace would make the study
+  lie in the flattering direction.
+- **Product finding for P2 — multi-workspace selection.** `src/cloud/auth.ts:410` returns no
+  default unless the user has exactly one live membership. A normal multi-workspace user then
+  cannot invite without an undiscoverable `--workspace-id` / environment flag. The existing
+  dogfood membership plus additive fresh-workspace setup blocks this harness from R1, not just
+  R2+. Fix visible workspace discovery/selection in the product before treating this scenario
+  as runnable; do not misclassify the refusal as a connect-flow defect.
 - **Workspace creation is not under test.** Each round uses the privileged, fixture-only
   `seed-fixture` bridge because governed `create_workspace` is not wired yet. No report may
   claim to test real workspace creation. Migrate the harness to the governed command when it

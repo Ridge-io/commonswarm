@@ -167,15 +167,23 @@ async function runDogfoodCli(
 async function runSeedCli(
   userId: string,
   tokenPath: string,
+  options: { workspaceId?: string; workspaceName?: string } = {},
 ): Promise<{ code: number; stdout: string; stderr: string }> {
-  const child = spawn(process.execPath, [
+  const seedArgs = [
     "--import",
     "tsx",
     "src/cli.ts",
     "seed-fixture",
     "--uid",
     userId,
-  ], {
+  ];
+  if (options.workspaceId) {
+    seedArgs.push("--workspace-id", options.workspaceId);
+  }
+  if (options.workspaceName) {
+    seedArgs.push("--workspace-name", options.workspaceName);
+  }
+  const child = spawn(process.execPath, seedArgs, {
     cwd: process.cwd(),
     env: {
       ...process.env,
@@ -246,12 +254,14 @@ test("fixture bridge is idempotent and CLI client drives cradle-to-grave", async
       userId: string;
       membershipRole: string;
       workspaceId: string;
+      workspaceName: string;
       streamId: string;
       principalId: string;
       tokenWritten: boolean;
     };
     assert.equal(publicSeed.userId, userId);
     assert.equal(publicSeed.membershipRole, "owner");
+    assert.equal(publicSeed.workspaceName, "Dogfood Workspace");
     assert.equal(publicSeed.tokenWritten, true);
     assert.equal(seeded.stdout.includes(tokenPath), false);
     const agentToken = await readFile(tokenPath, "utf8");
@@ -279,6 +289,44 @@ test("fixture bridge is idempotent and CLI client drives cradle-to-grave", async
     assert.equal(directReseed.agentToken, null);
     assert.equal(directReseed.membershipRole, "owner");
     assert.equal(directReseed.workspaceId, publicSeed.workspaceId);
+    assert.equal(directReseed.workspaceName, publicSeed.workspaceName);
+
+    const explicitWorkspaceId = randomUUID();
+    const explicitWorkspaceName = `uxtest-r1-${nonce.slice(0, 8)}`;
+    const explicitPath = join(tokenDirectory, "explicit-token");
+    const explicitSeed = await runSeedCli(userId, explicitPath, {
+      workspaceId: explicitWorkspaceId,
+      workspaceName: explicitWorkspaceName,
+    });
+    assert.equal(explicitSeed.code, 0, explicitSeed.stderr);
+    const publicExplicitSeed = JSON.parse(explicitSeed.stdout) as typeof publicSeed;
+    assert.equal(publicExplicitSeed.workspaceId, explicitWorkspaceId);
+    assert.equal(publicExplicitSeed.workspaceName, explicitWorkspaceName);
+    assert.notEqual(publicExplicitSeed.workspaceId, publicSeed.workspaceId);
+    await rm(explicitPath);
+
+    const explicitReseedPath = join(tokenDirectory, "explicit-reseed-token");
+    const explicitReseed = await runSeedCli(userId, explicitReseedPath, {
+      workspaceId: explicitWorkspaceId,
+      workspaceName: "ignored-on-idempotent-retry",
+    });
+    assert.equal(explicitReseed.code, 0, explicitReseed.stderr);
+    const publicExplicitReseed = JSON.parse(
+      explicitReseed.stdout,
+    ) as typeof publicSeed;
+    assert.equal(publicExplicitReseed.workspaceId, explicitWorkspaceId);
+    assert.equal(publicExplicitReseed.workspaceName, explicitWorkspaceName);
+    assert.equal(publicExplicitReseed.tokenWritten, false);
+    await assert.rejects(stat(explicitReseedPath), { code: "ENOENT" });
+
+    await assert.rejects(
+      seedDogfood({
+        databaseUrl: local.DB_URL,
+        userId,
+        workspaceId: "not-a-uuid",
+      }),
+      /workspace id must be a UUID/,
+    );
 
     const existingPath = join(tokenDirectory, "must-not-overwrite");
     await writeFile(existingPath, "sentinel", { mode: 0o600 });

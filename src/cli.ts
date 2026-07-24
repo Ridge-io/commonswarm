@@ -174,7 +174,7 @@ Usage:
   coswarm token mint --url <url> --anon-key <key> [--workspace-id <uuid>] --principal-id <uuid> --run-id <uuid> --task-id <uuid> --epoch <n> [--ttl-ms <ms>]
   coswarm command <kind> --url <url> --anon-key <key> [--workspace-id <uuid>] [command fields]
   coswarm dogfood --url <url> --anon-key <key> [--workspace-id <uuid>] --slug <slug> --branch <branch> --head-sha <sha> --evidence <ref>
-  coswarm seed-fixture --uid <auth-user-uuid> [--device-id <uuid>]
+  coswarm seed-fixture --uid <auth-user-uuid> [--device-id <uuid>] [--workspace-id <uuid>]
 
 Credential selection for command/dogfood:
   default                 refresh the human login from secure storage
@@ -193,9 +193,11 @@ is saved in the local profile and used when --workspace-id is omitted. An invite
 link supplies its whole target and cannot be combined with --url or --anon-key.
 For an unrecognized origin, --link-stdin and --json hard-fail without a prompt;
 use a positional link without --json when an interactive confirmation is needed.
-The fixture bridge reads its privileged database connection only from DATABASE_URL
-and writes a newly minted agent token only to the absolute create-new path in
-SEED_TOKEN_OUT.`;
+The fixture bridge is test-only. It reads its privileged database connection only
+from DATABASE_URL and writes a newly minted agent token only to the absolute
+create-new path in SEED_TOKEN_OUT. --workspace-id selects an explicit fixture
+workspace only for callers who already hold that full-database credential; it
+grants no new authority and is not a governed product workspace-creation path.`;
 }
 
 function target(args: Arguments): CloudTarget {
@@ -888,7 +890,14 @@ async function runDogfood(args: Arguments): Promise<void> {
 
 async function runSeed(args: Arguments): Promise<void> {
   args.assertShape(
-    ["uid", "device-id", "display-name", "workspace-name", "agent-name"],
+    [
+      "uid",
+      "device-id",
+      "workspace-id",
+      "display-name",
+      "workspace-name",
+      "agent-name",
+    ],
     1,
   );
   const databaseUrl = process.env.DATABASE_URL;
@@ -924,6 +933,7 @@ async function runSeed(args: Arguments): Promise<void> {
       databaseUrl,
       userId: args.required("uid"),
       deviceId: args.optional("device-id"),
+      workspaceId: args.optional("workspace-id"),
       displayName: args.optional("display-name"),
       workspaceName: args.optional("workspace-name"),
       agentName: args.optional("agent-name"),
@@ -940,6 +950,7 @@ async function runSeed(args: Arguments): Promise<void> {
       userId: result.userId,
       membershipRole: result.membershipRole,
       workspaceId: result.workspaceId,
+      workspaceName: result.workspaceName,
       streamId: result.streamId,
       principalId: result.principalId,
       tokenWritten,

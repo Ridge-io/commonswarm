@@ -12,6 +12,7 @@
     "dev": "tsc --watch",
     "test": "node --import tsx --test tests/protocol-next.test.ts tests/protocol-workspace.test.ts",
     "test:p1-cli": "node --import tsx --test tests/p1-cli/**/*.test.ts",
+    "test:uxtest": "node --import tsx --test tests/uxtest-harness.test.ts",
     "pretest:p1-server": "npm run build:command-core",
     "test:p1-server": "node --import tsx --test tests/p1-server/**/*.test.ts",
     "prebuild": "rm -rf dist",

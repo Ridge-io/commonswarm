@@ -18,6 +18,7 @@ export interface SeedDogfoodOptions {
   databaseUrl: string;
   userId: string;
   deviceId?: string;
+  workspaceId?: string;
   displayName?: string;
   workspaceName?: string;
   agentName?: string;
@@ -28,6 +29,7 @@ export interface SeedDogfoodResult {
   membershipRole: "owner";
   deviceId: string;
   workspaceId: string;
+  workspaceName: string;
   streamId: string;
   principalId: string;
   runId: string;
@@ -64,7 +66,9 @@ export async function seedDogfood(
   const deviceId = options.deviceId
     ? uuid(options.deviceId, "device id")
     : deterministicUuid(`cloud-swarm:device:${userId}`);
-  const workspaceId = deterministicUuid(`cloud-swarm:workspace:${userId}`);
+  const workspaceId = options.workspaceId
+    ? uuid(options.workspaceId, "workspace id")
+    : deterministicUuid(`cloud-swarm:workspace:${userId}`);
   const requestedStreamId = deterministicUuid(
     `cloud-swarm:workspace-stream:${workspaceId}`,
   );
@@ -72,7 +76,8 @@ export async function seedDogfood(
     `cloud-swarm:principal:${workspaceId}:${options.agentName ?? "dogfood-agent"}`,
   );
   const displayName = (options.displayName ?? "Dogfood Operator").slice(0, 120);
-  const workspaceName = (options.workspaceName ?? "Dogfood Workspace").slice(0, 120);
+  const requestedWorkspaceName =
+    (options.workspaceName ?? "Dogfood Workspace").slice(0, 120);
   const agentName = (options.agentName ?? "dogfood-agent").slice(0, 80);
   const sql = postgres(options.databaseUrl, {
     prepare: false,
@@ -110,17 +115,18 @@ export async function seedDogfood(
 
       await tx`
         INSERT INTO swarm.workspaces (workspace_id, name, created_by)
-        VALUES (${workspaceId}::uuid, ${workspaceName}, ${userId}::uuid)
+        VALUES (${workspaceId}::uuid, ${requestedWorkspaceName}, ${userId}::uuid)
         ON CONFLICT (workspace_id) DO NOTHING
       `;
-      const workspaces = await tx<{ created_by: string }[]>`
-        SELECT created_by
+      const workspaces = await tx<{ created_by: string; name: string }[]>`
+        SELECT created_by, name
         FROM swarm.workspaces
         WHERE workspace_id = ${workspaceId}::uuid
       `;
       if (workspaces[0]?.created_by !== userId) {
         throw new Error("workspace id is already owned by another user");
       }
+      const workspaceName = workspaces[0].name;
       await tx`
         INSERT INTO swarm.memberships (workspace_id, user_id, role, revoked_at)
         VALUES (${workspaceId}::uuid, ${userId}::uuid, 'owner', NULL)
@@ -214,6 +220,7 @@ export async function seedDogfood(
           membershipRole: "owner",
           deviceId,
           workspaceId,
+          workspaceName,
           streamId,
           principalId,
           runId,
@@ -251,6 +258,7 @@ export async function seedDogfood(
         membershipRole: "owner",
         deviceId,
         workspaceId,
+        workspaceName,
         streamId,
         principalId,
         runId,

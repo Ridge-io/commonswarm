@@ -161,6 +161,13 @@ command refuses to run. Read and delete the file promptly. Rerunning while a
 token remains live retains the existing row because plaintext tokens are
 intentionally unrecoverable.
 
+This bridge is fixture/test-only, not a governed product workspace-creation
+path. A harness that already holds the privileged `DATABASE_URL` may request an
+explicit idempotent fixture workspace with `--workspace-id <uuid>` and
+`--workspace-name <name>`; the flag grants no authority beyond that existing
+full-database credential. The command prints the non-secret workspace ID and
+stored workspace name, but never prints or stores `DATABASE_URL`.
+
 ## Relationship to `swarm`
 
 The local `swarm` CLI remains supported indefinitely for solo/offline use;
