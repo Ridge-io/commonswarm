@@ -292,6 +292,20 @@ Mason's `ux-connect-polish` checkpoint (#001) and **LANDED it** — commit `87e4
        and the non-interactive fail+list.
     5. Mirror the origin-pin discipline — an unknown multi-member state must never wait forever in
        agent mode.
+  - **`coswarm use <id|name>` SELECTION CONTRACT (pinned — Sable).** Workspace names are
+    attacker-influencable display strings (we already sanitize them on the accept path, FIX-5
+    class), so name-based selection is only safe under strict rules:
+    - **Never** slug aliases, prefix matching, or "closest name" resolution. Those are
+      confusable-name attacks whose failure mode is **silent wrong-tenant selection** — the worst
+      class of multi-workspace bug.
+    - An **ambiguous name fails** and lists the collisions; the stored default is left unchanged.
+      Selection by **id always works**, including when names collide.
+    - `coswarm workspaces` (and any `status` section) shows **name AND full id on every row** —
+      never name-only — so a user always has an unambiguous copy-paste target.
+    - Required tests: use-by-id; use-by-unique-name; ambiguous name → fail + list, default
+      unchanged; id works when names collide; foreign/unknown id → fail with **no profile write**;
+      confusable names that sanitize to the same string → treated as ambiguous when both are live;
+      `--json` shapes for list and for use-errors (deterministic, no prompt); non-TTY never blocks.
   Then P2-3 agent-skill layer (the §1c endgame: the user's own agent drives coswarm), P2-4 invite
   page + `https://` link form. Same loop: brief → Sable adversarial review → Mason implements
   → Lead verifies by own execution → land → redeploy. Mason + Sable both warm.
