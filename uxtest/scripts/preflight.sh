@@ -30,6 +30,8 @@ for command in node npm git rsync ssh curl shasum jq sqlite3; do
 done
 
 setup="$(round_setup_path "$round")"
+output_dir="$(round_output_dir "$round")"
+preflight_record="$output_dir/preflight.json"
 membership_count="$(
   UXTEST_QUERY_REPO="$UXTEST_REPO" \
     DATABASE_URL="$DATABASE_URL" \
@@ -84,10 +86,14 @@ if [ "$reset_complete" != "true" ]; then
   projected_membership_count=$((membership_count + 1))
 fi
 
+multi_project_path=false
 if [ "$projected_membership_count" -gt 1 ]; then
-  die "BLOCKED PRODUCT BUG: identity A currently has $membership_count live workspace membership(s); additive reset projects $projected_membership_count for round $round. coswarm login only selects a workspace when exactly one live membership exists (src/cloud/auth.ts:410), so invite would then fail behind an undiscoverable workspace-id flag. The harness refuses R1 and later rounds rather than fake a passing UX with a hidden fallback or reused workspace."
+  multi_project_path=true
+  printf '[uxtest] WARNING: identity A currently has %s live workspace membership(s), and round %s projects %s. This round will exercise multi-project resolution (workspaces -> use -> invite), not the sole-membership shortcut.\n' \
+    "$membership_count" "$round" "$projected_membership_count" >&2
+else
+  say "Membership path: sole-membership shortcut (current=$membership_count, projected=$projected_membership_count)."
 fi
-say "Read-only membership gate passed: current=$membership_count, projected=$projected_membership_count."
 
 [ -x "$UXTEST_SWARM_BIN" ] || die "mini swarm binary is unavailable"
 
@@ -200,4 +206,20 @@ if [ -f "$setup" ]; then
   say "Round $round client-state reset is cold on both machines."
 fi
 
+mkdir -p "$output_dir"
+node - "$preflight_record" "$round" "$membership_count" \
+  "$projected_membership_count" "$multi_project_path" <<'NODE'
+const fs = require("node:fs");
+const [path, roundRaw, currentRaw, projectedRaw, multiProjectRaw] =
+  process.argv.slice(2);
+const value = {
+  round: Number(roundRaw),
+  measured_at: new Date().toISOString(),
+  current_live_memberships: Number(currentRaw),
+  projected_live_memberships: Number(projectedRaw),
+  multi_project_path: multiProjectRaw === "true",
+};
+fs.writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
+NODE
+say "Read-only membership snapshot recorded: current=$membership_count, projected=$projected_membership_count, multi_project_path=$multi_project_path."
 say "Preflight passed for round $round."

@@ -91,6 +91,7 @@ test("synthetic round collection is metrics-authoritative and capability-safe", 
     const logDirectory = join(mini, "logs", "r1");
     mkdirSync(human1Cwd, { recursive: true });
     mkdirSync(logDirectory, { recursive: true });
+    mkdirSync(output, { recursive: true });
 
     const start = Date.parse("2026-07-24T18:00:00.000Z");
     const capability = invitation();
@@ -107,6 +108,16 @@ test("synthetic round collection is metrics-authoritative and capability-safe", 
       human1_join_attempts: 1,
       human2_join_attempts: 2,
     }));
+    writeFileSync(
+      join(output, "preflight.json"),
+      JSON.stringify({
+        round: 1,
+        measured_at: "2026-07-24T17:59:00.000Z",
+        current_live_memberships: 1,
+        projected_live_memberships: 2,
+        multi_project_path: true,
+      }),
+    );
     writeFileSync(join(human1Cwd, "FEEDBACK.md"), "The output was clear.");
     writeFileSync(
       join(human1Cwd, "JOURNAL.md"),
@@ -213,6 +224,9 @@ test("synthetic round collection is metrics-authoritative and capability-safe", 
     assert.equal(metrics.link_form, "uri");
     assert.equal(metrics.wall_clock_link_to_connected, 1_500);
     assert.equal(metrics.carryover, false);
+    assert.equal(metrics.multi_project_path, true);
+    assert.equal(metrics.current_live_memberships, 1);
+    assert.equal(metrics.projected_live_memberships, 2);
     assert.deepEqual(metrics.join_latency_ms, {
       human1: 12_000,
       human2: 18_000,
@@ -221,6 +235,10 @@ test("synthetic round collection is metrics-authoritative and capability-safe", 
       human1: 1,
       human2: 2,
     });
+    assert.match(
+      readFileSync(join(output, "REPORT.md"), "utf8"),
+      /Membership path: multi-project resolution .*workspaces -> use -> invite/,
+    );
 
     const artifacts: string[] = [];
     const walk = (path: string) => {

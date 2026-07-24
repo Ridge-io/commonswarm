@@ -19,6 +19,23 @@ let remoteRaw = "";
 for await (const chunk of process.stdin) remoteRaw += chunk.toString();
 const remote = JSON.parse(remoteRaw);
 const setup = JSON.parse(readFileSync(setupPath, "utf8"));
+const preflightPath = join(outputDir, "preflight.json");
+if (!existsSync(preflightPath)) {
+  throw new Error("round is missing its authoritative preflight membership snapshot");
+}
+const preflight = JSON.parse(readFileSync(preflightPath, "utf8"));
+if (
+  preflight.round !== round ||
+  !Number.isInteger(preflight.current_live_memberships) ||
+  preflight.current_live_memberships < 0 ||
+  !Number.isInteger(preflight.projected_live_memberships) ||
+  preflight.projected_live_memberships < preflight.current_live_memberships ||
+  preflight.projected_live_memberships > preflight.current_live_memberships + 1 ||
+  typeof preflight.multi_project_path !== "boolean" ||
+  preflight.multi_project_path !== (preflight.projected_live_memberships > 1)
+) {
+  throw new Error("preflight membership snapshot is invalid or inconsistent");
+}
 const localCwd = join(miniRoot, "human1", "workspace");
 
 const read = (path) => existsSync(path) ? readFileSync(path, "utf8") : null;
@@ -329,6 +346,9 @@ const metrics = {
   seed_sha: setup.seed_sha,
   oauth_consent: setup.oauth_consent,
   carryover: setup.carryover ?? true,
+  multi_project_path: preflight.multi_project_path,
+  current_live_memberships: preflight.current_live_memberships,
+  projected_live_memberships: preflight.projected_live_memberships,
   join_latency_ms: {
     human1: setup.human1_join_latency_ms ?? null,
     human2: setup.human2_join_latency_ms ?? null,
@@ -407,6 +427,9 @@ const report = `# UX test round ${round}
 - Partner-rescued steps: ${partnerRescued.length > 0 ? JSON.stringify(partnerRescued) : "[]"}
 - Version under test: mini ${setup.coswarm_sha_mini} / laptop ${setup.coswarm_sha_laptop}  (must match)
 - OAuth consent: ${setup.oauth_consent}
+- Membership path: ${metrics.multi_project_path
+  ? `multi-project resolution (preflight current=${metrics.current_live_memberships}, projected=${metrics.projected_live_memberships}; measures workspaces -> use -> invite, not the sole-membership shortcut)`
+  : `sole-membership shortcut (preflight current=${metrics.current_live_memberships}, projected=${metrics.projected_live_memberships})`}
 
 | Failure class | Does this harness catch it? |
 |---|---|

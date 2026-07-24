@@ -339,19 +339,18 @@ theater. Protocol, in preference order:
   they differ.** (The laptop was stale by an entire slice — §1.1.)
 - **Warm login.** Both machines log out and drop the profile sidecar per round.
 - Leftover test workspaces are *not* a confounder — additive reset stays.
-- **What a blocked round cannot tell us.** A round whose projected live-membership count is
-  greater than one cannot measure invite/connect usability at all: it will die before invite
-  because login leaves the workspace unset. `preflight.sh` therefore performs a read-only
-  count and fails on `projected > 1` (`current + 1` before additive reset, otherwise current).
-  It reports both counts and refuses R1 as well as later rounds when the condition is present;
-  a hidden `SWARM_CLOUD_WORKSPACE_ID` or reuse of an existing workspace would make the study
-  lie in the flattering direction.
-- **Product finding for P2 — multi-workspace selection.** `src/cloud/auth.ts:410` returns no
-  default unless the user has exactly one live membership. A normal multi-workspace user then
-  cannot invite without an undiscoverable `--workspace-id` / environment flag. The existing
-  dogfood membership plus additive fresh-workspace setup blocks this harness from R1, not just
-  R2+. Fix visible workspace discovery/selection in the product before treating this scenario
-  as runnable; do not misclassify the refusal as a connect-flow defect.
+- **Multi-project resolution is the measured path.** From round 1 onward identity A
+  necessarily holds 2+ live memberships under additive reset, so every round exercises
+  multi-project resolution (`workspaces` → `use` → `invite`). A round is **not** evidence about
+  the sole-membership shortcut path. `preflight.sh` keeps a read-only current/projected count
+  (`current + 1` before additive reset, otherwise current), warns when the multi-project path
+  applies, and records both counts plus `multi_project_path` for attribution. Do not inject a
+  hidden workspace ID, reuse an existing fixture, or pre-select the new workspace: discovering
+  selection is now a legitimate part of the §1c flow.
+- **P2-2 removed the old multi-membership blocker.** Resolution now fails closed with a
+  deterministic workspace list and guidance, while `coswarm workspaces` and
+  `coswarm use <full-id|exact-name>` expose the recovery path. The harness therefore records
+  projected multi-membership instead of refusing the round.
 - **Workspace creation is not under test.** Each round uses the privileged, fixture-only
   `seed-fixture` bridge because governed `create_workspace` is not wired yet. No report may
   claim to test real workspace creation. Migrate the harness to the governed command when it
@@ -369,7 +368,9 @@ command_sequence[], golden_path_distance,
 used_link_stdin, used_positional_link, link_inspected,
 task_completed, gave_up, gave_up_reason,
 coswarm_sha_mini, coswarm_sha_laptop, workspace_id, seed_sha,
-oauth_consent, carryover, join_latency_ms, join_attempts, isolation_void
+oauth_consent, carryover,
+multi_project_path, current_live_memberships, projected_live_memberships,
+join_latency_ms, join_attempts, isolation_void
 ```
 
 Two traps, stated so nobody misreads the numbers: **wall-clock alone is confounded** by partner
