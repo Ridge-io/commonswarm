@@ -189,3 +189,58 @@ limiting; revoke wiring; the T-sweep.
   **unknown** id (nonexistent) must produce **byte-identical** errors. Otherwise `use` becomes an
   existence oracle for other tenants' workspaces — exactly the property #80f protects on the accept
   path. This is a required test, not a nicety.
+
+## 6. Rulings on the seam-note edges (Lead4, before implementation)
+
+`docs/design/P2-2-SEAM-NOTES.md` (written by the outgoing worker while mapping the code) raised
+four edges that the brief left inferable rather than pinned. All four are ruled here; the note is
+otherwise authoritative on *where* to change things.
+
+### 6.1 Status with zero live memberships
+
+Render **identity + a project count of zero + accept-invitation guidance, and no project
+sections at all.** Do not print empty Members/Agents/Tasks headings — §1.1's empty-state rule
+applies to a project with no work, not to a person with no project. Concretely: who you're
+signed in as, *"You're not in any projects yet,"* and one line on how a project reaches you (a
+colleague sends an invite link, which you accept). This path must not error.
+
+### 6.2 `--json` stays off commands that don't already have it
+
+The tension is real: §1.4 wants the multi-project resolution failure to be machine-readable,
+while existing `invite` / `principal` / `token` / `command` / `dogfood` mostly **reject**
+`--json`. The seam note's warning is the deciding one — **never accept a flag whose success
+output is invalid JSON.**
+
+- **New commands** (`status`, `workspaces`, `use`) support `--json`. Required.
+- **Existing commands** do **not** gain `--json` in this slice. Making every success path
+  machine-clean is a separate slice, and half-adding the flag is worse than not having it.
+- The resolution failure is machine-readable **without** `--json`: emit the structured block
+  (stable `code`, plus the deterministic `{workspace_id, name, role}` list) on **stderr**
+  regardless of flags, with a non-zero exit. Agents already branch on exit status; they parse the
+  block. No flag, no inconsistency.
+- Record "unify `--json` across all commands" as a future slice, not a gap in this one.
+
+### 6.3 Agent-token commands: fail as not-logged-in, never infer tenancy
+
+Correct as the note proposes, and it is a **security** ruling rather than a UX one. Flag and env
+overrides keep working with an agent token. But profile default and sole-membership discovery are
+**human-session reads** — so when neither override is supplied and no human credential is stored,
+**fail as not logged in.** Do **not** weaken authority, and do **not** derive tenant state from an
+agent capability to fill the gap. An agent token is scoped to a run, not a directory of the
+human's projects.
+
+### 6.4 Archived projects: list them, mark them, invent nothing
+
+Verified in code: workspace `archived_at` is declared (`migration:132`) and projected
+(`command/index.ts:1346,1441`) but **never enforced** — the only `archived_at IS NULL` predicate
+(`:1105`) is on **repositories**, not workspaces, and no command sets it. Workspace-archive
+semantics therefore **do not exist yet**, and a UX slice must not invent them.
+
+- `workspaces` **lists** an archived project with an explicit `(archived)` marker — hiding it
+  would make a project the user still belongs to simply vanish, which is the opposite of this
+  slice's purpose.
+- Selection works on the same rule as everything else: **"live" means the MEMBERSHIP's
+  `revoked_at IS NULL`.** Do **not** silently reinterpret "live" as an archive predicate.
+- Any authority consequence of archived-ness belongs to the server, wherever it is eventually
+  enforced. **Record the absence of workspace-archive enforcement as a known gap** in this
+  slice's output; do not implement client-side archive policy to cover it.
