@@ -437,6 +437,44 @@ matches:
 **Audit.** Dump every rendered brief to `rounds/<n>/briefs/` — operator-visible, **never** inside
 a persona cwd.
 
+### 7.9b Spawn reality: the trust dialog, and never trusting exit 0
+
+Two field findings from standing the laptop launcher up (2026-07-24), both verified by controlled
+comparison rather than inference:
+
+**1. Claude Code's trust-folder modal silently eats the join prompt.** `swarm spawn` types
+`/join-swarm …` on a **fixed timer** after "Waiting for Claude Code to initialize…", not on a
+readiness signal. A brand-new directory triggers the *"do you trust this folder"* dialog, the
+keystrokes land in the modal, and they are lost. The tab looks perfectly healthy; the agent simply
+never joins. Proven: identical command, identical directory, the only difference being
+`~/.claude.json → projects["<dir>"].hasTrustDialogAccepted: true` — with it, the agent registered.
+
+`hasTrustDialogAccepted` is keyed **per directory**. So a fresh per-round cwd means *a human click
+per round*, and a launcher that needs a human click is not a launcher.
+
+**Ruling — one trusted working directory per persona, with a VERIFIED pre-round sweep.** Virgin
+context comes from the fresh Claude *session*, not a fresh *cwd*. But §7.2's isolation requirement
+is real and survives unchanged: **the persona must never see a prior round's artifacts.** So before
+each round the harness must **assert the directory contains only that round's `BRIEF.md`** — no
+`JOURNAL.md`, `FEEDBACK.md`, `RESULT.md`, or stray files — and **fail loudly** if not. Collect pulls
+artifacts out to `rounds/<n>/` on the mini first. The property is "no prior-round leakage", not the
+directory name.
+
+**Explicitly rejected:** pre-seeding `hasTrustDialogAccepted` into the operator's live
+`~/.claude.json` (which holds ~64 project entries). Writing trust flags into a human's real editor
+config to satisfy a test rig is a side effect the harness has no business taking, and it silently
+pre-trusts directories on their machine. Not worth the on-disk file isolation it would buy.
+
+**2. A spawn's exit 0 is not proof the agent joined.** Trust was one way to lose the prompt race; a
+slow cold start is another, and the failure is **silent** — the tab looks fine. This is §7.10's
+principle again: if the scripts did not observe it, the harness does not assert it.
+
+**Required:** after spawning a round persona, **poll `swarm members` until it appears**, with a
+timeout; on timeout **re-send `/join-swarm`** (idempotent); after a bounded number of attempts,
+**fail the round setup loudly** rather than proceeding. Never treat spawn's exit code as
+registration. Record join latency in `metrics.json` so degradation is visible instead of becoming
+an occasional mystery round.
+
 ### 7.10 Metrics are authoritative over persona self-report
 
 An LLM will not respect wall-clock. It can spam commands and declare "ten minutes of trying" in
