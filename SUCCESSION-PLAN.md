@@ -202,6 +202,25 @@ kimi-2b2-review.log (FIX(5) minor: 1/3/4/5 in Mason's task, FIX-2 = rate-limit s
 Landmines all in §1/§3 + evidence docs; the new one from today: Anvil free-text readbacks
 misalign columns — demand strict single-JSON output with exact fields.
 
+### LEAD4 ACTIVE (2026-07-24 ~10:50, baton accepted at HEAD b7a222c).
+Lead2 + Lead3 both stood down; Lead4 is sole current Lead. **FIRST ACTION DONE:** collected
+Mason's `ux-connect-polish` checkpoint (#001) and **LANDED it** — commit `87e41cf` on main
+(+evidence `c662200`, `docs/evidence/ux-connect-polish.md`), task closed merged.
+- **Independent verify (Lead4's own execution):** tsc clean; core 66/66; CLI 16/16; server
+  11/11 on live local stack; `git diff --check` clean; core-bundle regen = **zero drift**.
+- **Hosted redeployed:** `command` Edge fn now **version 4** (ACTIVE 15:53:04 UTC); endpoint
+  canary returns the function's own structured JSON (register_device path executes). Deploy
+  done BEFORE any new login (register_device moved server-side — Mason's landmine, honored).
+- Shipped: bugs #1–#6 + Kimi FIX-1 (device revoked_at + register_device), FIX-3 (invite
+  stdin), FIX-4/decision #81 (client pending command_id sidecar), FIX-5 (display_name strip).
+- **Residual:** `coswarm --version` standalone flag not wired (version shows in --help header) —
+  minor, folded into P2 CLI UX.
+- **OPEN FIRST-ACTION (operator):** `/remote-control` — I cannot self-invoke the slash
+  command; surfaced to operator to enable remote supervision.
+- **NEXT: P2-connect-UX** per §1c felt-dogfood feedback (one-command `coswarm join <link>`,
+  agent-skill layer, `coswarm status` read surface, invite page). Scoping now; will decompose
+  into sub-slices, Mason implements, Lead4 orchestrates + verifies. Mason warm.
+
 ### LEAD3 ACTIVE (2026-07-24, baton accepted at HEAD 7bf5f6f). Slice-2b decomposition:
 Lead2 stood down; Lead3 is current Lead. Sub-slices (each: build→green→Kimi K3 review→commit):
 - **2b-1 (IN FLIGHT — Mason holds `p1-slice2b-core`):** pure `decideWorkspace` core. Three new
