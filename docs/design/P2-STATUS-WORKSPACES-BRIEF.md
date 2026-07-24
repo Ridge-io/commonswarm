@@ -76,10 +76,15 @@ Writes the selected project to the profile default. **Selection contract (pinned
 Resolution order for `invite` and **every** workspace-scoped command:
 
 1. explicit `--workspace-id`
-2. profile default — *if still a live membership* (if the membership was **revoked**, warn once,
+2. **`SWARM_CLOUD_WORKSPACE_ID`** — the env override the product already honors today (README:
+   `--workspace-id` overrides the env var, which overrides the saved default). v1 omitted it from
+   the order, which would have silently dropped an existing behavior; it stays, documented as
+   **power-user only**. The uxtest harness must **never** set it (that was the rejected hidden
+   crutch — see SUCCESSION-PLAN).
+3. profile default — *if still a live membership* (if the membership was **revoked**, warn once,
    clear the stale default so no zombie project stays selected, then continue resolving)
-3. exactly one live membership → use it (today's behavior, retained)
-4. n > 1 → **fail closed** with the list + guidance. **There is no interactive picker in this
+4. exactly one live membership → use it (today's behavior, retained)
+5. n > 1 → **fail closed** with the list + guidance. **There is no interactive picker in this
    slice** (decision below); the same path serves humans and agents.
 
 **The TTY picker is CUT.** v1 hedged and contradicted itself. Reasons to cut: the non-interactive
@@ -97,8 +102,7 @@ deterministic machine-readable list of `{workspace_id, name, role}` plus one pla
 pointing at `coswarm workspaces` / `coswarm use <id|name>`. No hang, no half-rendered prompt.
 
 **Agents select out-of-band:** list → `use` → invite. **Do not** invent a second silent env
-default; `use` is the explicit, inspectable selector. The interactive picker is a **human
-convenience only**.
+default; `use` is the explicit, inspectable selector.
 
 ## 2. Read authority — no new surface
 
@@ -145,9 +149,10 @@ limiting; revoke wiring; the T-sweep.
   unchanged**; id works when names collide; foreign/unknown id → fail with **no profile write**;
   confusable names sanitizing to one string → ambiguous when both live.
 - **Non-interactive tests:** n>1 with `--json` → deterministic list, **exit non-zero, no
-  prompt**; n>1 with non-TTY stdin → same; n>1 on a TTY → picker path; **non-TTY never blocks**
+  prompt**; n>1 with non-TTY stdin → same; **n>1 on a TTY also fails closed with the list and does
+  NOT wait on stdin**; **no path ever blocks**
   (assert no hang, not just correct output).
-- **Resolution tests:** each of the five steps in order, including a **stale profile default
+- **Resolution tests:** each of the five steps in order (flag → env → profile → sole → fail), including a **stale profile default
   whose membership was revoked** → falls through rather than acting on a dead tenant.
 - **Status tests:** empty project renders guidance not a blank table; lease rendered as
   human-readable remaining time; labels sanitized (control/bidi/ANSI — FIX-5 class) since member
