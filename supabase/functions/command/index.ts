@@ -266,8 +266,12 @@ const UUID_RE =
 const SLUG_RE = /^[a-z0-9][a-z0-9_-]{0,62}$/;
 const SHA_RE = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i;
 const SEMVER_RE = /^(\d+)\.(\d+)\.(\d+)(?:-[0-9A-Za-z.-]+)?$/;
-const CONTROL_RE = /[\u0000-\u001f\u007f-\u009f]/;
-const CONTROL_GLOBAL_RE = /[\u0000-\u001f\u007f-\u009f]/g;
+const CONTROL_RE =
+  /[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/;
+const CONTROL_GLOBAL_RE =
+  /[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g;
+const ANSI_ESCAPE_GLOBAL_RE = /\u001b\[[0-?]*[ -/]*[@-~]/g;
+const REGISTER_DEVICE_KIND = "register_device";
 const COMMAND_KINDS = [
   "create",
   "acquire",
@@ -1445,13 +1449,18 @@ async function mintBindingsValid(
   command: ValidatedCommand,
 ): Promise<boolean> {
   if (command.kind !== "mint_agent_token" || auth.actor.user === null) return true;
-  const devices = await tx<{ user_id: string }[]>`
-    SELECT user_id
+  const devices = await tx<{ user_id: string; revoked_at: Date | null }[]>`
+    SELECT user_id, revoked_at
     FROM swarm.devices
     WHERE device_id = ${command.device_id}::uuid
     LIMIT 1
   `;
-  if (devices[0] && devices[0].user_id !== auth.actor.user) return false;
+  const device = devices[0];
+  if (
+    !device ||
+    device.user_id !== auth.actor.user ||
+    device.revoked_at !== null
+  ) return false;
 
   const runs = await tx<{
     principal_id: string;
@@ -1832,19 +1841,11 @@ async function updateWorkspaceProjection(
         throw new Error("folded token projection missing narrow binding");
       }
       const userId = authUser(prepared.ctx.actor)!;
-      await tx`
-        INSERT INTO swarm.devices (device_id, user_id, label)
-        VALUES (
-          ${prepared.wire.device_id}::uuid,
-          ${userId}::uuid,
-          'coswarm-cli'
-        )
-        ON CONFLICT (device_id) DO NOTHING
-      `;
       const devices = await tx<{ user_id: string }[]>`
         SELECT user_id
         FROM swarm.devices
         WHERE device_id = ${prepared.wire.device_id}::uuid
+          AND revoked_at IS NULL
       `;
       if (devices[0]?.user_id !== userId) {
         throw new Error("authenticated device ownership changed during mint");
@@ -1936,6 +1937,128 @@ async function applyEventSideEffects(
   }
 }
 
+async function registerLoginDevice(
+  tx: Sql,
+  body: RequestBody,
+  auth: AuthContext,
+  ignoredIdentity: string | null,
+): Promise<HttpResult> {
+  const command = record(body.command);
+  const valid = auth.credentialKind === "user" &&
+    auth.actor.user !== null &&
+    auth.identityVerified &&
+    body.workspace_id === undefined &&
+    body.stream === undefined &&
+    typeof body.client_version === "string" &&
+    command !== null &&
+    exactKeys(command, ["kind", "device_id", "label"]) &&
+    command.kind === REGISTER_DEVICE_KIND &&
+    typeof command.device_id === "string" &&
+    UUID_RE.test(command.device_id) &&
+    boundedText(command.label, 80);
+  if (!valid) {
+    await insertAudit(tx, {
+      auth,
+      commandKind: REGISTER_DEVICE_KIND,
+      outcome: auth.credentialKind === "user" ? "validation" : "authz",
+      reason: auth.credentialKind === "user" ? "invalid_request" : "forbidden",
+      detail: ignoredIdentity,
+    });
+    return auth.credentialKind === "user"
+      ? { status: 400, body: { error: "invalid_request" } }
+      : { status: 403, body: { error: "forbidden" } };
+  }
+
+  const configRows = await tx<{ value: unknown }[]>`
+    SELECT value FROM swarm.config WHERE key = 'min_client_version' LIMIT 1
+  `;
+  const minClientVersion = configRows[0]?.value;
+  if (
+    typeof minClientVersion !== "string" ||
+    compareSemver(body.client_version as string, minClientVersion) === null
+  ) {
+    await insertAudit(tx, {
+      auth,
+      commandKind: REGISTER_DEVICE_KIND,
+      outcome: "validation",
+      reason: "invalid client_version",
+      detail: ignoredIdentity,
+    });
+    return { status: 400, body: { error: "invalid_request" } };
+  }
+  if (compareSemver(body.client_version as string, minClientVersion)! < 0) {
+    await insertAudit(tx, {
+      auth,
+      commandKind: REGISTER_DEVICE_KIND,
+      outcome: "validation",
+      reason: "client_unsupported",
+      detail: ignoredIdentity,
+    });
+    return {
+      status: 426,
+      body: { error: "upgrade_required", min_client_version: minClientVersion },
+    };
+  }
+
+  const deviceId = command!.device_id as string;
+  const label = command!.label as string;
+  await tx`
+    INSERT INTO swarm.devices (device_id, user_id, label, last_seen_at)
+    VALUES (
+      ${deviceId}::uuid,
+      ${auth.actor.user}::uuid,
+      ${label},
+      statement_timestamp()
+    )
+    ON CONFLICT (device_id) DO NOTHING
+  `;
+  const devices = await tx<{ user_id: string; revoked_at: Date | null }[]>`
+    SELECT user_id, revoked_at
+    FROM swarm.devices
+    WHERE device_id = ${deviceId}::uuid
+    FOR UPDATE
+  `;
+  const device = devices[0];
+  if (
+    !device ||
+    device.user_id !== auth.actor.user ||
+    device.revoked_at !== null
+  ) {
+    await insertAudit(tx, {
+      auth,
+      commandKind: REGISTER_DEVICE_KIND,
+      outcome: "authz",
+      reason: "forbidden",
+      detail: ignoredIdentity,
+    });
+    return { status: 403, body: { error: "forbidden" } };
+  }
+  await tx`
+    UPDATE swarm.devices
+    SET label = ${label}, last_seen_at = statement_timestamp()
+    WHERE device_id = ${deviceId}::uuid
+      AND user_id = ${auth.actor.user}::uuid
+      AND revoked_at IS NULL
+  `;
+  await insertAudit(tx, {
+    auth,
+    commandKind: REGISTER_DEVICE_KIND,
+    outcome: "accepted",
+    reason: null,
+    detail: ignoredIdentity,
+  });
+  return {
+    status: 200,
+    body: {
+      status: "accepted",
+      ok: true,
+      event_ids: [],
+      device_id: deviceId,
+      min_client_version: minClientVersion,
+    },
+  };
+}
+
 async function handleTransaction(
   body: RequestBody,
   verifiedHuman: VerifiedHuman | null,
@@ -1967,6 +2090,10 @@ async function handleTransaction(
     await beforeStep(4);
     const ignoredIdentity = forgedActorDetail(body);
     await afterStep(4);
+
+    if (kind === REGISTER_DEVICE_KIND) {
+      return await registerLoginDevice(tx, body, auth, ignoredIdentity);
+    }
 
     await beforeStep(5);
     const invitationToken = kind === "accept_invitation"
@@ -2513,12 +2640,16 @@ async function handleRequest(request: Request): Promise<Response> {
       metadata?.name,
       metadata?.user_name,
       email?.split("@")[0],
-      "Coswarm User",
     ].find((value) => typeof value === "string" && value.length > 0);
+    const strippedDisplayName = stripControls(
+      typeof displayNameCandidate === "string"
+        ? displayNameCandidate.replace(ANSI_ESCAPE_GLOBAL_RE, "")
+        : null,
+    )?.trim().slice(0, 120);
     verifiedHuman = {
       userId: data.user.id,
       email,
-      displayName: String(displayNameCandidate).slice(0, 120),
+      displayName: strippedDisplayName || "Coswarm User",
       identityVerified: data.user.email_confirmed_at !== undefined &&
         data.user.email_confirmed_at !== null,
     };

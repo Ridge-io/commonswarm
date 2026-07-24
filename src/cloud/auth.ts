@@ -3,11 +3,17 @@ import { createServer, type Server } from "node:http";
 import { spawn } from "node:child_process";
 import type { Readable, Writable } from "node:stream";
 import { createClient, type Session, type SupabaseClient } from "@supabase/supabase-js";
-import { authStorageKey, type CloudTarget } from "./config.js";
+import {
+  authStorageKey,
+  CLIENT_PROTOCOL_VERSION,
+  commandEndpoint,
+  type CloudTarget,
+} from "./config.js";
 import type { CredentialRecord, CredentialStore } from "./storage.js";
 
 const CALLBACK_PATH = "/callback";
 const CALLBACK_TIMEOUT_MS = 5 * 60_000;
+const PASTE_FALLBACK_DELAY_MS = 15_000;
 const HIGH_PORT_MIN = 49_152;
 const HIGH_PORT_MAX_EXCLUSIVE = 65_536;
 const CALLBACK_ATTEMPTS = 32;
@@ -41,12 +47,14 @@ export interface LoginOptions {
   input?: Readable;
   output?: Writable;
   timeoutMs?: number;
+  pasteFallbackDelayMs?: number;
 }
 
 export interface LoginResult {
   userId: string;
   deviceId: string;
   storage: "keychain" | "file";
+  workspaceId: string | null;
 }
 
 export interface RefreshedCredential {
@@ -118,9 +126,11 @@ function listen(server: Server, port: number): Promise<void> {
 
 function closeServer(server: Server): Promise<void> {
   if (!server.listening) return Promise.resolve();
-  return new Promise((resolve, reject) => {
+  const closed = new Promise<void>((resolve, reject) => {
     server.close((error) => error ? reject(error) : resolve());
   });
+  server.closeAllConnections();
+  return closed;
 }
 
 async function callbackReceiver(expectedState: string): Promise<CallbackReceiver> {
@@ -141,7 +151,7 @@ async function callbackReceiver(expectedState: string): Promise<CallbackReceiver
         "cache-control": "no-store",
         "content-security-policy": "default-src 'none'",
       });
-      response.end("Swarm login complete. You can return to the terminal.\n");
+      response.end("Coswarm login complete. You can return to the terminal.\n");
       if (!settled) {
         settled = true;
         resolveCode(code);
@@ -160,6 +170,7 @@ async function callbackReceiver(expectedState: string): Promise<CallbackReceiver
     const port = randomInt(HIGH_PORT_MIN, HIGH_PORT_MAX_EXCLUSIVE);
     try {
       await listen(server, port);
+      server.unref();
       origin = `http://127.0.0.1:${port}`;
       const redirect = new URL(CALLBACK_PATH, origin);
       redirect.searchParams.set("state", expectedState);
@@ -271,7 +282,10 @@ function pastedCallback(
   input.on("data", onData);
   return {
     promise,
-    close: () => input.off("data", onData),
+    close: () => {
+      input.off("data", onData);
+      input.pause();
+    },
   };
 }
 
@@ -281,11 +295,22 @@ async function waitForCode(
   input: Readable | undefined,
   output: Writable,
   timeoutMs: number,
+  pasteFallbackDelayMs: number,
 ): Promise<string> {
-  const pasted = pastedCallback(input, output, receiver.origin, state);
-  output.write(
-    "If the browser cannot reach the loopback callback, paste the complete callback URL here:\n",
-  );
+  const activePastes: Array<{ close(): void }> = [];
+  let pasteTimer: NodeJS.Timeout | null = null;
+  const paste = input
+    ? new Promise<string>((resolve) => {
+      pasteTimer = setTimeout(() => {
+        output.write(
+          "If the browser cannot reach the loopback callback, paste the complete callback URL here:\n",
+        );
+        const pasted = pastedCallback(input, output, receiver.origin, state);
+        if (pasted) activePastes.push(pasted);
+        pasted?.promise.then(resolve);
+      }, pasteFallbackDelayMs);
+    })
+    : null;
   let timer: NodeJS.Timeout | null = null;
   const timeout = new Promise<never>((_, reject) => {
     timer = setTimeout(
@@ -296,12 +321,13 @@ async function waitForCode(
   try {
     return await Promise.race([
       receiver.result,
-      ...(pasted ? [pasted.promise] : []),
+      ...(paste ? [paste] : []),
       timeout,
     ]);
   } finally {
     if (timer) clearTimeout(timer);
-    pasted?.close();
+    if (pasteTimer) clearTimeout(pasteTimer);
+    for (const pasted of activePastes) pasted.close();
   }
 }
 
@@ -310,6 +336,83 @@ function requireSession(session: Session | null): Session {
     throw new Error("GoTrue returned an incomplete session");
   }
   return session;
+}
+
+async function registerLoginDevice(
+  target: CloudTarget,
+  accessToken: string,
+  deviceId: string,
+): Promise<boolean> {
+  const response = await fetch(commandEndpoint(target), {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${accessToken}`,
+      apikey: target.anonKey,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      command_id: `login_${randomBytes(12).toString("base64url")}`,
+      client_version: CLIENT_PROTOCOL_VERSION,
+      command: {
+        kind: "register_device",
+        device_id: deviceId,
+        label: "coswarm-cli",
+      },
+    }),
+  });
+  let body: unknown;
+  try {
+    body = JSON.parse(await response.text());
+  } catch {
+    throw new Error(
+      `login device registration returned non-JSON (HTTP ${response.status})`,
+    );
+  }
+  if (response.status === 403) return false;
+  if (
+    !response.ok ||
+    !body ||
+    typeof body !== "object" ||
+    Array.isArray(body) ||
+    (body as Record<string, unknown>).status !== "accepted" ||
+    (body as Record<string, unknown>).device_id !== deviceId
+  ) {
+    throw new Error(`login device registration failed (HTTP ${response.status})`);
+  }
+  return true;
+}
+
+async function discoverSoleWorkspace(
+  target: CloudTarget,
+  accessToken: string,
+  userId: string,
+): Promise<string | null> {
+  const url = new URL("/rest/v1/memberships", target.url);
+  url.searchParams.set("select", "workspace_id");
+  url.searchParams.set("user_id", `eq.${userId}`);
+  url.searchParams.set("revoked_at", "is.null");
+  url.searchParams.set("limit", "2");
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      headers: {
+        authorization: `Bearer ${accessToken}`,
+        apikey: target.anonKey,
+        "accept-profile": "swarm_read",
+      },
+    });
+  } catch {
+    return null;
+  }
+  if (!response.ok) return null;
+  const body = await response.json().catch(() => null);
+  if (!Array.isArray(body) || body.length !== 1) return null;
+  const workspaceId = (body[0] as Record<string, unknown>)?.workspace_id;
+  return typeof workspaceId === "string" &&
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+        .test(workspaceId)
+    ? workspaceId
+    : null;
 }
 
 export async function login(options: LoginOptions): Promise<LoginResult> {
@@ -346,6 +449,9 @@ export async function login(options: LoginOptions): Promise<LoginResult> {
       options.input ?? (process.stdin.isTTY ? process.stdin : undefined),
       output,
       options.timeoutMs ?? CALLBACK_TIMEOUT_MS,
+      opened
+        ? options.pasteFallbackDelayMs ?? PASTE_FALLBACK_DELAY_MS
+        : 0,
     );
     const exchanged = await client.auth.exchangeCodeForSession(code);
     if (exchanged.error) {
@@ -355,18 +461,56 @@ export async function login(options: LoginOptions): Promise<LoginResult> {
 
     return await options.store.withLock(async () => {
       const existing = await options.store.read();
+      const existingProfile = await options.store.readProfile();
+      const sameUser = existing?.userId === session.user.id ||
+        existing === null && existingProfile.userId === session.user.id;
+      let deviceId = sameUser && existing?.deviceId
+        ? existing.deviceId
+        : randomUUID();
+      if (
+        !await registerLoginDevice(
+          options.target,
+          session.access_token,
+          deviceId,
+        )
+      ) {
+        deviceId = randomUUID();
+        if (
+          !await registerLoginDevice(
+            options.target,
+            session.access_token,
+            deviceId,
+          )
+        ) {
+          throw new Error("login device registration was forbidden");
+        }
+      }
+      const discoveredWorkspace = await discoverSoleWorkspace(
+        options.target,
+        session.access_token,
+        session.user.id,
+      );
       const record: CredentialRecord = {
         version: 1,
         refreshToken: session.refresh_token,
         generation: (existing?.generation ?? -1) + 1,
-        deviceId: existing?.deviceId ?? randomUUID(),
+        deviceId,
         userId: session.user.id,
       };
       await options.store.write(record);
+      const workspaceId = discoveredWorkspace ??
+        (sameUser ? existingProfile.workspaceId : null);
+      await options.store.writeProfile({
+        version: 1,
+        userId: session.user.id,
+        workspaceId,
+        pendingCommands: sameUser ? existingProfile.pendingCommands : {},
+      });
       return {
         userId: record.userId,
         deviceId: record.deviceId,
         storage: options.store.kind,
+        workspaceId,
       };
     });
   } finally {
@@ -382,7 +526,7 @@ export async function refreshedCredential(
   return await store.withLock(async () => {
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const before = await store.read();
-      if (!before) throw new Error("not logged in; run swarm login");
+      if (!before) throw new Error("not logged in; run coswarm login");
       const memory = new MemoryStorage();
       const client = authClient(target, memory);
       const refreshed = await client.auth.refreshSession({
@@ -415,6 +559,7 @@ export async function refreshedCredential(
 export async function logout(
   target: CloudTarget,
   store: CredentialStore,
+  scope: "local" | "global" = "local",
 ): Promise<boolean> {
   return await store.withLock(async () => {
     const record = await store.read();
@@ -427,7 +572,7 @@ export async function logout(
     if (refreshed.error) {
       throw new Error(`cannot revoke the GoTrue session: ${refreshed.error.message}`);
     }
-    const signedOut = await client.auth.signOut();
+    const signedOut = await client.auth.signOut({ scope });
     if (signedOut.error) {
       throw new Error(`GoTrue logout failed: ${signedOut.error.message}`);
     }

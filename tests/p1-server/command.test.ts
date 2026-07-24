@@ -127,6 +127,7 @@ after(async () => {
 
 async function createUser(
   label: string,
+  userMetadata?: Record<string, unknown>,
 ): Promise<{ id: string; jwt: string; email: string }> {
   const nonce = randomUUID();
   const email = `${label}-${nonce}@example.test`;
@@ -135,6 +136,7 @@ async function createUser(
     email,
     password,
     email_confirm: true,
+    ...(userMetadata === undefined ? {} : { user_metadata: userMetadata }),
   });
   assert.ifError(created.error);
   assert.ok(created.data.user);
@@ -392,6 +394,36 @@ async function issueConnect(
       "content-type": "application/json",
     },
     body: JSON.stringify(requestBody),
+  });
+  const text = await response.text();
+  return {
+    status: response.status,
+    text,
+    body: JSON.parse(text) as Record<string, unknown>,
+  };
+}
+
+async function registerDevice(
+  f: Fixture,
+  token: string,
+  deviceId: string,
+): Promise<CommandResponse> {
+  assert.ok(f.credentials.has(token), "test credential is registered");
+  const response = await fetch(`${local.API_URL}/functions/v1/command`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${token}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      command_id: commandId("registerdevice"),
+      client_version: "0.1.0",
+      command: {
+        kind: "register_device",
+        device_id: deviceId,
+        label: "coswarm-cli-test",
+      },
+    }),
   });
   const text = await response.text();
   return {
@@ -901,6 +933,46 @@ test("unknown-task agent command is history-only and replayable", async () => {
   });
 });
 
+test("login device registration is owned, live-only, and sanitizes profile names", async () => {
+  await scenario(async (f) => {
+    const user = await createUser("device-bootstrap", {
+      full_name: "\u001b[31m\u202eOperator\u001b[0m",
+    });
+    registerHuman(f, user);
+    const deviceId = randomUUID();
+    const registered = await registerDevice(f, user.jwt, deviceId);
+    assert.equal(registered.status, 200);
+    assert.equal(registered.body.device_id, deviceId);
+    assert.equal((await registerDevice(f, user.jwt, deviceId)).status, 200);
+
+    const [identity] = await sql<{ display_name: string }[]>`
+      SELECT display_name
+      FROM swarm.users
+      WHERE user_id = ${user.id}::uuid
+    `;
+    assert.equal(identity?.display_name, "Operator");
+    const [device] = await sql<{ user_id: string; revoked_at: Date | null }[]>`
+      SELECT user_id, revoked_at
+      FROM swarm.devices
+      WHERE device_id = ${deviceId}::uuid
+    `;
+    assert.equal(device?.user_id, user.id);
+    assert.equal(device?.revoked_at, null);
+
+    const foreign = await registerDevice(f, f.uaJwt, deviceId);
+    assert.equal(foreign.status, 403);
+    assert.deepEqual(foreign.body, { error: "forbidden" });
+    await sql`
+      UPDATE swarm.devices
+      SET revoked_at = statement_timestamp()
+      WHERE device_id = ${deviceId}::uuid
+    `;
+    const revoked = await registerDevice(f, user.jwt, deviceId);
+    assert.equal(revoked.status, 403);
+    assert.deepEqual(revoked.body, { error: "forbidden" });
+  });
+});
+
 test("connect loop invites, accepts, creates a principal, and mints a narrow token", async () => {
   await scenario(async (f) => {
     const invitee = await createUser("connect-invitee");
@@ -970,6 +1042,17 @@ test("connect loop invites, accepts, creates a principal, and mints a narrow tok
       epoch: 7,
       device_id: deviceId,
     };
+    const unregistered = await issueConnect(
+      f,
+      invitee.jwt,
+      mintCommand,
+      commandId("unregisteredmint"),
+    );
+    assert.equal(unregistered.status, 403);
+    assert.deepEqual(unregistered.body, { error: "forbidden" });
+    const registered = await registerDevice(f, invitee.jwt, deviceId);
+    assert.equal(registered.status, 200);
+    assert.equal(registered.body.device_id, deviceId);
     const minted = await issueConnect(
       f,
       invitee.jwt,
@@ -1179,6 +1262,8 @@ test("HTTP-only custom scope input is governed by the pure denylist", async () =
     const principalId = String(principal.body.principal_id);
     const runId = randomUUID();
     const deviceId = randomUUID();
+    const registered = await registerDevice(f, f.uaJwt, deviceId);
+    assert.equal(registered.status, 200);
     const rejected = await issueConnect(f, f.uaJwt, {
       kind: "mint_agent_token",
       principal_id: principalId,
@@ -1197,12 +1282,27 @@ test("HTTP-only custom scope input is governed by the pure denylist", async () =
     const [sideEffects] = await sql<{ count: string | number }[]>`
       SELECT
         (SELECT count(*) FROM swarm.agent_runs WHERE run_id = ${runId}::uuid) +
-        (SELECT count(*) FROM swarm.devices WHERE device_id = ${deviceId}::uuid) +
         (
           SELECT count(*) FROM swarm.agent_tokens
           WHERE principal_id = ${principalId}::uuid
         ) AS count
     `;
     assert.equal(Number(sideEffects?.count), 0);
+
+    await sql`
+      UPDATE swarm.devices
+      SET revoked_at = statement_timestamp()
+      WHERE device_id = ${deviceId}::uuid
+    `;
+    const revokedDevice = await issueConnect(f, f.uaJwt, {
+      kind: "mint_agent_token",
+      principal_id: principalId,
+      run_id: randomUUID(),
+      task_id: randomUUID(),
+      epoch: 1,
+      device_id: deviceId,
+    });
+    assert.equal(revokedDevice.status, 403);
+    assert.deepEqual(revokedDevice.body, { error: "forbidden" });
   });
 });

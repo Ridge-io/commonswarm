@@ -74,6 +74,13 @@ export interface ConnectCommandResult {
   response: CommandHttpResponse;
 }
 
+export class CommandTransportError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "CommandTransportError";
+  }
+}
+
 export function newCommandId(): string {
   return `cmd_${randomBytes(18).toString("base64url")}`;
 }
@@ -133,7 +140,14 @@ function responseBody(value: unknown): CommandHttpResponse {
 }
 
 async function parsedJson(response: Response): Promise<unknown> {
-  const text = await response.text();
+  let text: string;
+  try {
+    text = await response.text();
+  } catch {
+    throw new CommandTransportError(
+      "command response was interrupted before its outcome could be read",
+    );
+  }
   try {
     return JSON.parse(text);
   } catch {
@@ -177,9 +191,9 @@ export class ThinCommandClient {
       });
     } catch (error) {
       if ((error as Error).name === "AbortError") {
-        throw new Error("command request timed out");
+        throw new CommandTransportError("command request timed out");
       }
-      throw error;
+      throw new CommandTransportError("command request failed before a response");
     } finally {
       clearTimeout(timer);
     }
@@ -265,9 +279,9 @@ export class ThinCommandClient {
       });
     } catch (error) {
       if ((error as Error).name === "AbortError") {
-        throw new Error("command request timed out");
+        throw new CommandTransportError("command request timed out");
       }
-      throw error;
+      throw new CommandTransportError("command request failed before a response");
     } finally {
       clearTimeout(timer);
     }

@@ -8,9 +8,9 @@ local tool (the local swarm builds and runs from its own working tree).
 ## Status
 
 **P1 — invited dogfood.** The reducer-complete authority core is wired behind
-the transactional Supabase command function. The thin CLI adds GitHub OAuth
-login with PKCE and the eight task commands; persistent local cache, replay, and
-workspace-authority commands remain deliberately deferred.
+the transactional Supabase command function. The thin CLI provides GitHub OAuth
+login with PKCE, governed invite/accept/principal/token commands, and the eight
+task commands.
 
 ## Canonical spec
 
@@ -53,11 +53,35 @@ reach the loopback listener, paste the complete callback URL into the waiting
 terminal; the same CLI-generated `state` is verified before either path
 exchanges the code.
 
-Only the rotating refresh credential is persisted. On macOS it lives in the
-Keychain. A host without a supported keychain uses a warned `0600` file inside
-a `0700` directory; insecure permissions are refused. Set
+Only the rotating refresh credential is persisted as a secret. On macOS it
+lives in the Keychain alongside the local device identifier. A non-secret
+`0600` profile stores the default workspace and transport-ambiguous pending
+command IDs. A host without a supported keychain uses a warned `0600`
+credential file inside a `0700` directory; insecure permissions are refused. Set
 `SWARM_ALLOW_INSECURE_STORE=0` to refuse the file fallback entirely. Access
 tokens and the PKCE verifier remain process-memory-only.
+
+The first human can invite a second, who must use a GitHub identity with a
+different verified email—GoTrue deliberately links provider identities that
+share a verified email:
+
+```bash
+coswarm invite --email collaborator@example.com
+
+# On the collaborator's machine; keep the capability out of argv/history.
+printf '%s' "$INVITATION_TOKEN" |
+  coswarm accept --invitation-token-stdin
+
+coswarm principal create --name laptop-agent
+coswarm token mint \
+  --principal-id "$PRINCIPAL_ID" --run-id "$RUN_ID" \
+  --task-id "$TASK_ID" --epoch 1
+```
+
+The hosted URL and anon key may come from `SWARM_CLOUD_URL` and
+`SWARM_CLOUD_ANON_KEY`. `--workspace-id` overrides
+`SWARM_CLOUD_WORKSPACE_ID`, which overrides the workspace saved by `login`
+(when exactly one membership exists) or `accept`.
 
 Send one command with the human login:
 
@@ -71,8 +95,9 @@ coswarm command create \
 For the seeded simulated-agent credential, pass it over stdin so it never
 appears in the process list:
 
-```bash
-read -rsp "Agent token: " SWARM_AGENT_TOKEN_INPUT
+```zsh
+read -rs "SWARM_AGENT_TOKEN_INPUT?Agent token: "
+printf '\n' >&2
 printf %s "$SWARM_AGENT_TOKEN_INPUT" | coswarm command acquire \
   --url "$SWARM_CLOUD_URL" --anon-key "$SWARM_CLOUD_ANON_KEY" \
   --workspace-id "$WORKSPACE_ID" \
@@ -85,16 +110,17 @@ unset SWARM_AGENT_TOKEN_INPUT
 the fresh response events in memory for display. Run `coswarm help`
 for its required flags.
 
-`logout` calls GoTrue `signOut()` to revoke the refresh session, then removes
-the local credential. Remote device listing/revocation is deferred with the
-server-side device authority endpoint.
+`logout` revokes only this machine's GoTrue session, then removes the local
+credential. Use `logout --all-devices` only when intentionally revoking every
+session for the identity. Remote device listing/renaming/revocation remains
+deferred.
 
 ### First-dogfood fixture bridge
 
-Workspace-authority commands are not exposed yet. After logging in once, copy
-the UID printed by `login`, inject a privileged `DATABASE_URL` at runtime from
-the approved secret manager, choose a new absolute path outside the repository
-for the one-time agent credential, and run:
+For legacy fixture testing, after logging in once, copy the UID printed by
+`login`, inject a privileged `DATABASE_URL` at runtime from the approved secret
+manager, choose a new absolute path outside the repository for the one-time
+agent credential, and run:
 
 ```bash
 DATABASE_URL="$INJECTED_DATABASE_URL" \

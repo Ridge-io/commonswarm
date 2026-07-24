@@ -14,6 +14,7 @@ import {
 } from "../../src/cloud/auth.js";
 import { cloudTarget } from "../../src/cloud/config.js";
 import {
+  type CredentialProfile,
   credentialStore,
   type CredentialRecord,
   type CredentialStore,
@@ -23,6 +24,12 @@ class MemoryCredentialStore implements CredentialStore {
   readonly kind = "keychain" as const;
   readonly location = "test memory";
   record: CredentialRecord | null = null;
+  profile: CredentialProfile = {
+    version: 1,
+    userId: null,
+    workspaceId: null,
+    pendingCommands: {},
+  };
 
   async read(): Promise<CredentialRecord | null> {
     return this.record ? { ...this.record } : null;
@@ -34,6 +41,14 @@ class MemoryCredentialStore implements CredentialStore {
 
   async delete(): Promise<void> {
     this.record = null;
+  }
+
+  async readProfile(): Promise<CredentialProfile> {
+    return structuredClone(this.profile);
+  }
+
+  async writeProfile(profile: CredentialProfile): Promise<void> {
+    this.profile = structuredClone(profile);
   }
 
   async withLock<T>(work: () => Promise<T>): Promise<T> {
@@ -58,10 +73,46 @@ async function authServer(): Promise<{
   url: string;
   close(): Promise<void>;
   setChallenge(value: string): void;
+  workspaceId: string;
+  registrations(): number;
 }> {
   let expectedChallenge: string | null = null;
+  let registrationCount = 0;
+  const workspaceId = randomUUID();
   const server = createServer(async (request, response) => {
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
+    if (
+      request.method === "POST" &&
+      url.pathname === "/functions/v1/command"
+    ) {
+      const chunks: Buffer[] = [];
+      for await (const chunk of request) chunks.push(Buffer.from(chunk));
+      const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as {
+        command?: { kind?: string; device_id?: string };
+      };
+      assert.equal(request.headers.authorization, "Bearer test-access-token");
+      assert.equal(body.command?.kind, "register_device");
+      assert.match(String(body.command?.device_id), /^[0-9a-f-]{36}$/i);
+      registrationCount += 1;
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({
+        status: "accepted",
+        ok: true,
+        event_ids: [],
+        device_id: body.command?.device_id,
+      }));
+      return;
+    }
+    if (
+      request.method === "GET" &&
+      url.pathname === "/rest/v1/memberships"
+    ) {
+      assert.equal(request.headers.authorization, "Bearer test-access-token");
+      assert.equal(request.headers["accept-profile"], "swarm_read");
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify([{ workspace_id: workspaceId }]));
+      return;
+    }
     if (request.method !== "POST" || url.pathname !== "/auth/v1/token") {
       response.writeHead(404).end();
       return;
@@ -119,6 +170,8 @@ async function authServer(): Promise<{
     setChallenge(value: string) {
       expectedChallenge = value;
     },
+    workspaceId,
+    registrations: () => registrationCount,
   };
 }
 
@@ -127,9 +180,11 @@ async function refreshServer(): Promise<{
   close(): Promise<void>;
   refreshes(): number;
   logouts(): number;
+  logoutScopes(): string[];
 }> {
   let refreshCount = 0;
   let logoutCount = 0;
+  const logoutScopes: string[] = [];
   const server = createServer(async (request, response) => {
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
     if (
@@ -168,6 +223,7 @@ async function refreshServer(): Promise<{
     }
     if (request.method === "POST" && url.pathname === "/auth/v1/logout") {
       logoutCount += 1;
+      logoutScopes.push(url.searchParams.get("scope") ?? "global");
       response.writeHead(204).end();
       return;
     }
@@ -184,6 +240,7 @@ async function refreshServer(): Promise<{
       ),
     refreshes: () => refreshCount,
     logouts: () => logoutCount,
+    logoutScopes: () => [...logoutScopes],
   };
 }
 
@@ -212,10 +269,12 @@ test("PKCE loopback holds verifier client-side and stores only the refresh recor
   const server = await authServer();
   const credentials = new MemoryCredentialStore();
   const output = sink();
+  const input = new PassThrough();
   try {
     const result = await login({
       target: cloudTarget(server.url, "test-anon-key"),
       store: credentials,
+      input,
       output: output.output,
       openBrowser: async (authorizationUrl) => {
         const authorize = new URL(authorizationUrl);
@@ -228,17 +287,25 @@ test("PKCE loopback holds verifier client-side and stores only the refresh recor
         return true;
       },
       timeoutMs: 2_000,
+      pasteFallbackDelayMs: 1_000,
     });
     assert.equal(result.userId, "11111111-1111-4111-8111-111111111111");
     assert.equal(credentials.record?.refreshToken, "test-rotating-refresh-token");
     assert.equal(credentials.record?.generation, 0);
     assert.ok(credentials.record?.deviceId);
+    assert.equal(result.workspaceId, server.workspaceId);
+    assert.equal(credentials.profile.workspaceId, server.workspaceId);
+    assert.equal(credentials.profile.userId, result.userId);
+    assert.equal(server.registrations(), 1);
+    assert.doesNotMatch(output.text(), /paste the complete callback/i);
+    assert.equal(input.listenerCount("data"), 0);
     assert.equal(
       JSON.stringify(credentials.record).includes("test-access-token"),
       false,
       "access token must never enter persistent credential storage",
     );
   } finally {
+    input.end();
     await server.close();
   }
 });
@@ -266,6 +333,7 @@ test("copy/paste fallback verifies the same state before exchange", async () => 
     });
     assert.equal(result.userId, "11111111-1111-4111-8111-111111111111");
     assert.match(output.text(), /Open this URL/);
+    assert.match(output.text(), /paste the complete callback/i);
   } finally {
     input.end();
     await server.close();
@@ -292,7 +360,20 @@ test("refresh rotates under generation control and logout revokes then wipes", a
     assert.equal(await logout(target, credentials), true);
     assert.equal(server.refreshes(), 2);
     assert.equal(server.logouts(), 1);
+    assert.deepEqual(server.logoutScopes(), ["local"]);
     assert.equal(credentials.record, null);
+
+    credentials.record = {
+      version: 1,
+      refreshToken: "refresh-2",
+      generation: 7,
+      deviceId: randomUUID(),
+      userId: "22222222-2222-4222-8222-222222222222",
+    };
+    assert.equal(await logout(target, credentials, "global"), true);
+    assert.equal(server.refreshes(), 3);
+    assert.equal(server.logouts(), 2);
+    assert.deepEqual(server.logoutScopes(), ["local", "global"]);
   } finally {
     await server.close();
   }
@@ -322,6 +403,31 @@ test("headless file fallback warns and enforces 0700/0600", async () => {
     assert.equal((await stat(directory)).mode & 0o777, 0o700);
     assert.equal((await stat(store.location)).mode & 0o777, 0o600);
     assert.deepEqual(await store.read(), record);
+    const workspaceId = randomUUID();
+    await store.writeProfile({
+      version: 1,
+      userId: record.userId,
+      workspaceId,
+      pendingCommands: {
+        ["a".repeat(64)]: {
+          commandId: "cmd_pending123",
+          kind: "invite_member",
+          createdAt: 1,
+        },
+      },
+    });
+    assert.deepEqual(await store.readProfile(), {
+      version: 1,
+      userId: record.userId,
+      workspaceId,
+      pendingCommands: {
+        ["a".repeat(64)]: {
+          commandId: "cmd_pending123",
+          kind: "invite_member",
+          createdAt: 1,
+        },
+      },
+    });
     assert.ok(warnings.some((warning) => warning.startsWith("⚠")));
 
     await chmod(store.location, 0o644);

@@ -21,8 +21,12 @@ const KEYCHAIN_SERVICE = "io.ridge.coswarm";
 const LOCK_STALE_MS = 60_000;
 const LOCK_TIMEOUT_MS = 30_000;
 const MAX_KEYCHAIN_RECORD_BYTES = 126;
+const MAX_PROFILE_BYTES = 64 * 1024;
+const MAX_PENDING_COMMANDS = 32;
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const COMMAND_ID_RE = /^[A-Za-z0-9_-]{8,72}$/;
+const SHA256_RE = /^[0-9a-f]{64}$/;
 const FALLBACK_WARNING =
   "⚠ no OS keychain found. Storing the rotating refresh credential in a 0600 file under a 0700 directory. This is less protected than a keychain.";
 
@@ -34,12 +38,27 @@ export interface CredentialRecord {
   userId: string;
 }
 
+export interface PendingCommandRecord {
+  commandId: string;
+  kind: string;
+  createdAt: number;
+}
+
+export interface CredentialProfile {
+  version: 1;
+  userId: string | null;
+  workspaceId: string | null;
+  pendingCommands: Record<string, PendingCommandRecord>;
+}
+
 export interface CredentialStore {
   readonly kind: "keychain" | "file";
   readonly location: string;
   read(): Promise<CredentialRecord | null>;
   write(record: CredentialRecord): Promise<void>;
   delete(): Promise<void>;
+  readProfile(): Promise<CredentialProfile>;
+  writeProfile(profile: CredentialProfile): Promise<void>;
   withLock<T>(work: () => Promise<T>): Promise<T>;
 }
 
@@ -172,6 +191,60 @@ function keychainRecord(record: CredentialRecord): string {
   return compact;
 }
 
+function emptyProfile(): CredentialProfile {
+  return {
+    version: 1,
+    userId: null,
+    workspaceId: null,
+    pendingCommands: {},
+  };
+}
+
+function parseProfile(raw: string): CredentialProfile {
+  let value: Partial<CredentialProfile>;
+  try {
+    value = JSON.parse(raw) as Partial<CredentialProfile>;
+  } catch {
+    throw new Error("stored credential profile is malformed");
+  }
+  const pending = value.pendingCommands;
+  if (
+    value.version !== 1 ||
+    !(
+      value.userId === null ||
+      (typeof value.userId === "string" && UUID_RE.test(value.userId))
+    ) ||
+    !(
+      value.workspaceId === null ||
+      (typeof value.workspaceId === "string" && UUID_RE.test(value.workspaceId))
+    ) ||
+    !pending ||
+    typeof pending !== "object" ||
+    Array.isArray(pending) ||
+    Object.keys(pending).length > MAX_PENDING_COMMANDS
+  ) {
+    throw new Error("stored credential profile is malformed");
+  }
+  for (const [intentHash, record] of Object.entries(pending)) {
+    if (
+      !SHA256_RE.test(intentHash) ||
+      !record ||
+      typeof record !== "object" ||
+      Array.isArray(record) ||
+      typeof record.commandId !== "string" ||
+      !COMMAND_ID_RE.test(record.commandId) ||
+      typeof record.kind !== "string" ||
+      record.kind.length < 1 ||
+      record.kind.length > 64 ||
+      !Number.isSafeInteger(record.createdAt) ||
+      record.createdAt < 0
+    ) {
+      throw new Error("stored credential profile is malformed");
+    }
+  }
+  return value as CredentialProfile;
+}
+
 async function run(
   executable: string,
   args: string[],
@@ -216,11 +289,59 @@ abstract class LockedCredentialStore implements CredentialStore {
   abstract read(): Promise<CredentialRecord | null>;
   abstract write(record: CredentialRecord): Promise<void>;
   abstract delete(): Promise<void>;
+  private readonly profilePath: string;
 
   constructor(
     protected readonly stateDirectory: string,
     private readonly lockName: string,
-  ) {}
+  ) {
+    this.profilePath = join(stateDirectory, `${lockName}.profile.json`);
+  }
+
+  async readProfile(): Promise<CredentialProfile> {
+    await secureDirectory(this.stateDirectory);
+    try {
+      await secureCredentialFile(this.profilePath);
+      const raw = await readFile(this.profilePath, "utf8");
+      if (Buffer.byteLength(raw, "utf8") > MAX_PROFILE_BYTES) {
+        throw new Error("stored credential profile is malformed");
+      }
+      return parseProfile(raw);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        return emptyProfile();
+      }
+      throw error;
+    }
+  }
+
+  async writeProfile(profile: CredentialProfile): Promise<void> {
+    await secureDirectory(this.stateDirectory);
+    const serialized = JSON.stringify(parseProfile(JSON.stringify(profile)));
+    if (Buffer.byteLength(serialized, "utf8") > MAX_PROFILE_BYTES) {
+      throw new Error("stored credential profile is too large");
+    }
+    try {
+      await secureCredentialFile(this.profilePath);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+    const temporary =
+      `${this.profilePath}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`;
+    const handle = await open(temporary, "wx", 0o600);
+    try {
+      await handle.writeFile(serialized, "utf8");
+      await handle.sync();
+      await handle.close();
+      await rename(temporary, this.profilePath);
+    } catch (error) {
+      await handle.close().catch(() => undefined);
+      await unlink(temporary).catch(() => undefined);
+      throw error;
+    }
+    await chmod(this.profilePath, 0o600);
+    await secureCredentialFile(this.profilePath);
+  }
 
   async withLock<T>(work: () => Promise<T>): Promise<T> {
     await secureDirectory(this.stateDirectory);

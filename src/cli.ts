@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { open, unlink } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 import type { Command } from "./protocol/index.js";
@@ -18,16 +19,42 @@ import {
   type ConnectCommandResult,
   type StreamRoute,
 } from "./cloud/command-client.js";
-import { cloudTarget, type CloudTarget } from "./cloud/config.js";
+import {
+  CLIENT_PROTOCOL_VERSION,
+  cloudTarget,
+  type CloudTarget,
+} from "./cloud/config.js";
 import { seedDogfood } from "./cloud/seed.js";
-import { credentialStore, type CredentialStore } from "./cloud/storage.js";
+import {
+  credentialStore,
+  type CredentialStore,
+} from "./cloud/storage.js";
+import { sendConnectWithPending } from "./cloud/pending-command.js";
 
 const BOOLEAN_FLAGS = new Set([
   "agent-token-stdin",
+  "all-devices",
   "force-file-store",
   "help",
+  "invitation-token-stdin",
   "no-browser",
 ]);
+
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function packageVersion(): string {
+  try {
+    const value = JSON.parse(
+      readFileSync(new URL("../package.json", import.meta.url), "utf8"),
+    ) as Record<string, unknown>;
+    return typeof value.version === "string" ? value.version : "unknown";
+  } catch {
+    return "unknown";
+  }
+}
+
+const CLI_BUILD_VERSION = packageVersion();
 
 class Arguments {
   readonly positionals: string[] = [];
@@ -113,15 +140,18 @@ const TASK_FLAGS = [
 ] as const;
 
 function usage(): string {
-  return `Usage:
+  return `coswarm ${CLI_BUILD_VERSION} (protocol ${CLIENT_PROTOCOL_VERSION})
+
+Usage:
   coswarm login --url <project-url> --anon-key <key> [--no-browser]
-  coswarm logout --url <project-url> --anon-key <key>
-  coswarm invite --url <url> --anon-key <key> --workspace-id <uuid> --email <email>
-  coswarm accept <invitation-token> --url <url> --anon-key <key>
-  coswarm principal create --url <url> --anon-key <key> --workspace-id <uuid> --name <name>
-  coswarm token mint --url <url> --anon-key <key> --workspace-id <uuid> --principal-id <uuid> --run-id <uuid> --task-id <uuid> --epoch <n> [--ttl-ms <ms>]
-  coswarm command <kind> --url <url> --anon-key <key> --workspace-id <uuid> [command fields]
-  coswarm dogfood --url <url> --anon-key <key> --workspace-id <uuid> --slug <slug> --branch <branch> --head-sha <sha> --evidence <ref>
+  coswarm logout --url <project-url> --anon-key <key> [--all-devices]
+  coswarm invite --url <url> --anon-key <key> [--workspace-id <uuid>] --email <email>
+  coswarm accept --invitation-token-stdin --url <url> --anon-key <key>
+  coswarm accept <invitation-token> --url <url> --anon-key <key>  # unsafe: shell history/process list
+  coswarm principal create --url <url> --anon-key <key> [--workspace-id <uuid>] --name <name>
+  coswarm token mint --url <url> --anon-key <key> [--workspace-id <uuid>] --principal-id <uuid> --run-id <uuid> --task-id <uuid> --epoch <n> [--ttl-ms <ms>]
+  coswarm command <kind> --url <url> --anon-key <key> [--workspace-id <uuid>] [command fields]
+  coswarm dogfood --url <url> --anon-key <key> [--workspace-id <uuid>] --slug <slug> --branch <branch> --head-sha <sha> --evidence <ref>
   coswarm seed-fixture --uid <auth-user-uuid> [--device-id <uuid>]
 
 Credential selection for command/dogfood:
@@ -130,8 +160,12 @@ Credential selection for command/dogfood:
 
 Invite, accept, principal create, and token mint require a stored human login.
 Invitation and agent credentials are printed only in their fresh success response.
+GitHub identities with the same verified email may resolve to one GoTrue user;
+a second human must log in with a distinct verified email before accepting.
 
-Target flags may also be set with SWARM_CLOUD_URL and SWARM_CLOUD_ANON_KEY.
+Target/workspace flags may also be set with SWARM_CLOUD_URL,
+SWARM_CLOUD_ANON_KEY, and SWARM_CLOUD_WORKSPACE_ID. A sole accepted workspace
+is saved in the local profile and used when --workspace-id is omitted.
 The fixture bridge reads its privileged database connection only from DATABASE_URL
 and writes a newly minted agent token only to the absolute create-new path in
 SEED_TOKEN_OUT.`;
@@ -195,6 +229,34 @@ async function stdinCredential(): Promise<string> {
   return credential;
 }
 
+async function invitationCredential(args: Arguments): Promise<string> {
+  if (args.has("invitation-token-stdin")) {
+    args.assertShape([...TARGET_FLAGS, "invitation-token-stdin"], 1);
+    if (process.stdin.isTTY) {
+      throw new Error(
+        "--invitation-token-stdin requires the capability to be piped on stdin",
+      );
+    }
+    let value = "";
+    for await (const chunk of process.stdin) {
+      value += chunk.toString();
+      if (value.length > 256) {
+        throw new Error("invitation capability input is too large");
+      }
+    }
+    const capability = value.trim();
+    assertInvitationToken(capability);
+    return capability;
+  }
+  args.assertShape([...TARGET_FLAGS], 2);
+  process.stderr.write(
+    "Warning: positional invitation capabilities may be recorded in shell history and process listings; prefer --invitation-token-stdin.\n",
+  );
+  const capability = args.positionals[1]!;
+  assertInvitationToken(capability);
+  return capability;
+}
+
 async function credential(
   args: Arguments,
   cloud: CloudTarget,
@@ -204,11 +266,61 @@ async function credential(
   return (await refreshedCredential(cloud, credentials)).accessToken;
 }
 
+interface HumanSession extends RefreshedCredential {
+  store: CredentialStore;
+}
+
 async function humanCredential(
   args: Arguments,
   cloud: CloudTarget,
-): Promise<RefreshedCredential> {
-  return await refreshedCredential(cloud, await store(args, cloud));
+): Promise<HumanSession> {
+  const credentials = await store(args, cloud);
+  return {
+    ...await refreshedCredential(cloud, credentials),
+    store: credentials,
+  };
+}
+
+function checkedUuid(value: string, source: string): string {
+  if (!UUID_RE.test(value)) throw new Error(`${source} must be a UUID`);
+  return value;
+}
+
+async function workspaceId(
+  args: Arguments,
+  cloud: CloudTarget,
+  credentials?: CredentialStore,
+): Promise<string> {
+  const explicit = args.optional("workspace-id");
+  if (explicit !== undefined) return checkedUuid(explicit, "--workspace-id");
+  const environmental = process.env.SWARM_CLOUD_WORKSPACE_ID;
+  if (environmental) {
+    return checkedUuid(environmental, "SWARM_CLOUD_WORKSPACE_ID");
+  }
+  const profileStore = credentials ?? await store(args, cloud);
+  const profile = await profileStore.withLock(() => profileStore.readProfile());
+  if (profile.workspaceId === null) {
+    throw new Error(
+      "--workspace-id is required because this profile has no default; set SWARM_CLOUD_WORKSPACE_ID or accept an invitation first",
+    );
+  }
+  return profile.workspaceId;
+}
+
+async function writeWorkspaceDefault(
+  credentials: CredentialStore,
+  userId: string,
+  value: string,
+): Promise<void> {
+  await credentials.withLock(async () => {
+    const profile = await credentials.readProfile();
+    await credentials.writeProfile({
+      version: 1,
+      userId,
+      workspaceId: value,
+      pendingCommands: profile.userId === userId ? profile.pendingCommands : {},
+    });
+  });
 }
 
 function uuid(value: string | undefined, field: string): string {
@@ -242,16 +354,25 @@ async function runInvite(args: Arguments): Promise<void> {
   args.assertShape([...TARGET_FLAGS, "workspace-id", "email"], 1);
   const cloud = target(args);
   const human = await humanCredential(args, cloud);
+  const workspace = await workspaceId(args, cloud, human.store);
   const response = acceptedConnect(
     "invite",
-    await new ThinCommandClient(cloud).sendConnect({
-      workspaceId: args.required("workspace-id"),
-      command: { kind: "invite_member", email: args.required("email") },
-      credential: human.accessToken,
-    }),
+    await sendConnectWithPending(
+      new ThinCommandClient(cloud),
+      human,
+      workspace,
+      { kind: "invite_member", email: args.required("email") },
+    ),
   );
-  assertInvitationToken(response.invitation_token ?? "");
+  if (response.invitation_token === undefined) {
+    throw new Error(
+      "the invitation was accepted on a prior attempt, but its secret is fresh-response-only; run invite again to issue a new capability",
+    );
+  }
+  assertInvitationToken(response.invitation_token);
   printJson({
+    message:
+      "Invitation created. Share the one-time capability below so another verified human can join this workspace.",
     status: response.status,
     invitation_id: uuid(response.invitation_id, "invitation_id"),
     invitation_token: response.invitation_token,
@@ -259,21 +380,25 @@ async function runInvite(args: Arguments): Promise<void> {
 }
 
 async function runAccept(args: Arguments): Promise<void> {
-  args.assertShape([...TARGET_FLAGS], 2);
-  const invitationToken = args.positionals[1]!;
-  assertInvitationToken(invitationToken);
+  const invitationToken = await invitationCredential(args);
   const cloud = target(args);
   const human = await humanCredential(args, cloud);
   const response = acceptedConnect(
     "accept",
-    await new ThinCommandClient(cloud).sendConnect({
-      command: { kind: "accept_invitation", token: invitationToken },
-      credential: human.accessToken,
-    }),
+    await sendConnectWithPending(
+      new ThinCommandClient(cloud),
+      human,
+      undefined,
+      { kind: "accept_invitation", token: invitationToken },
+    ),
   );
+  const acceptedWorkspace = uuid(response.workspace_id, "workspace_id");
+  await writeWorkspaceDefault(human.store, human.userId, acceptedWorkspace);
   printJson({
+    message:
+      "Workspace joined. Coswarm saved it as your default so later commands need fewer flags.",
     status: response.status,
-    workspace_id: uuid(response.workspace_id, "workspace_id"),
+    workspace_id: acceptedWorkspace,
   });
 }
 
@@ -284,18 +409,22 @@ async function runPrincipal(args: Arguments): Promise<void> {
   }
   const cloud = target(args);
   const human = await humanCredential(args, cloud);
+  const workspace = await workspaceId(args, cloud, human.store);
   const response = acceptedConnect(
     "principal create",
-    await new ThinCommandClient(cloud).sendConnect({
-      workspaceId: args.required("workspace-id"),
-      command: {
+    await sendConnectWithPending(
+      new ThinCommandClient(cloud),
+      human,
+      workspace,
+      {
         kind: "create_agent_principal",
         name: args.required("name"),
       },
-      credential: human.accessToken,
-    }),
+    ),
   );
   printJson({
+    message:
+      "Agent identity created. It makes this machine's agent auditable inside the shared workspace.",
     status: response.status,
     principal_id: uuid(response.principal_id, "principal_id"),
   });
@@ -319,12 +448,15 @@ async function runToken(args: Arguments): Promise<void> {
   }
   const cloud = target(args);
   const human = await humanCredential(args, cloud);
+  const workspace = await workspaceId(args, cloud, human.store);
   const ttl = args.optional("ttl-ms");
   const response = acceptedConnect(
     "token mint",
-    await new ThinCommandClient(cloud).sendConnect({
-      workspaceId: args.required("workspace-id"),
-      command: {
+    await sendConnectWithPending(
+      new ThinCommandClient(cloud),
+      human,
+      workspace,
+      {
         kind: "mint_agent_token",
         principal_id: args.required("principal-id"),
         run_id: args.required("run-id"),
@@ -340,11 +472,17 @@ async function runToken(args: Arguments): Promise<void> {
             }),
           }),
       },
-      credential: human.accessToken,
-    }),
+    ),
   );
-  assertAgentToken(response.agent_token ?? "");
+  if (response.agent_token === undefined) {
+    throw new Error(
+      "the token mint was accepted on a prior attempt, but its secret is fresh-response-only; run token mint again to issue a new credential",
+    );
+  }
+  assertAgentToken(response.agent_token);
   printJson({
+    message:
+      "Agent credential minted. It is bound to this task and run so the agent's work stays scoped and attributable.",
     status: response.status,
     token_id: uuid(response.token_id, "token_id"),
     run_id: uuid(response.run_id, "run_id"),
@@ -419,6 +557,11 @@ function command(args: Arguments, kind: string): Command {
 
 function printable(result: CommandResult): Record<string, unknown> {
   return {
+    message: result.response.status === "accepted"
+      ? "Command accepted. The workspace recorded the change so collaborators and agents share the same authoritative state."
+      : `Command rejected because ${
+        result.response.reason ?? "a required condition was not met"
+      }. No accepted state change was recorded.`,
     status: result.response.status,
     ok: result.response.ok,
     event_ids: result.response.event_ids,
@@ -451,10 +594,11 @@ async function runTaskCommand(args: Arguments): Promise<void> {
   const kind = args.positionals[1];
   if (!kind) throw new Error("command kind is required");
   const cloud = target(args);
+  const selectedWorkspace = await workspaceId(args, cloud);
   const bearer = await credential(args, cloud);
   const client = new ThinCommandClient(cloud);
   const result = await client.send({
-    workspaceId: args.required("workspace-id"),
+    workspaceId: selectedWorkspace,
     stream: stream(args),
     command: command(args, kind),
     credential: bearer,
@@ -478,9 +622,9 @@ async function runDogfood(args: Arguments): Promise<void> {
     1,
   );
   const cloud = target(args);
+  const selectedWorkspace = await workspaceId(args, cloud);
   const bearer = await credential(args, cloud);
   const client = new ThinCommandClient(cloud);
-  const workspaceId = args.required("workspace-id");
   const route = stream(args);
   const taskId = args.optional("task-id") ?? randomUUID();
   const ttl = Number(args.optional("ttl-ms") ?? "3600000");
@@ -489,7 +633,11 @@ async function runDogfood(args: Arguments): Promise<void> {
   }
   const evidence = args.all("evidence");
   if (evidence.length === 0) throw new Error("--evidence is required");
-  const common = { workspaceId, stream: route, credential: bearer };
+  const common = {
+    workspaceId: selectedWorkspace,
+    stream: route,
+    credential: bearer,
+  };
   accepted("create", await client.send({
     ...common,
     command: {
@@ -611,12 +759,16 @@ async function main(): Promise<void> {
       openBrowser: args.has("no-browser") ? async () => false : undefined,
     });
     process.stdout.write(
-      `Logged in as ${result.userId}; device ${result.deviceId}; refresh credential: ${result.storage}.\n`,
+      `Login complete for ${result.userId}. This device (${result.deviceId}) is registered so its agent credentials can be governed independently; refresh credential: ${result.storage}; ${
+        result.workspaceId
+          ? `workspace ${result.workspaceId} is now the default`
+          : "no workspace is selected yet—accept an invitation to choose one"
+      }.\n`,
     );
     return;
   }
   if (verb === "logout") {
-    args.assertShape([...TARGET_FLAGS, "device"], 1);
+    args.assertShape([...TARGET_FLAGS, "device", "all-devices"], 1);
     if (args.optional("device") !== undefined) {
       throw new Error(
         "--device is deferred until the server-side device authority endpoint ships",
@@ -624,8 +776,19 @@ async function main(): Promise<void> {
     }
     const cloud = target(args);
     const credentials = await store(args, cloud);
-    const removed = await logout(cloud, credentials);
-    process.stdout.write(removed ? "Logged out.\n" : "Already logged out.\n");
+    const allDevices = args.has("all-devices");
+    const removed = await logout(
+      cloud,
+      credentials,
+      allDevices ? "global" : "local",
+    );
+    process.stdout.write(
+      removed
+        ? allDevices
+          ? "Logged out on all devices. Every refresh session for this identity was revoked for account-wide containment.\n"
+          : "Logged out on this device. Other machines stay signed in so collaborators are not disrupted.\n"
+        : "Already logged out.\n",
+    );
     return;
   }
   if (verb === "invite") {

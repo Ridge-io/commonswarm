@@ -66,8 +66,6 @@ async function runDogfoodCli(
     local.API_URL,
     "--anon-key",
     local.ANON_KEY,
-    "--workspace-id",
-    workspaceId,
     "--task-id",
     taskId,
     "--slug",
@@ -82,7 +80,11 @@ async function runDogfoodCli(
     "--force-file-store",
   ], {
     cwd: process.cwd(),
-    env: { ...process.env, SWARM_ALLOW_INSECURE_STORE: "0" },
+    env: {
+      ...process.env,
+      SWARM_ALLOW_INSECURE_STORE: "0",
+      SWARM_CLOUD_WORKSPACE_ID: workspaceId,
+    },
     stdio: ["pipe", "pipe", "pipe"],
   });
   let stdout = "";
