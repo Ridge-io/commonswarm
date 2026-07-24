@@ -335,20 +335,43 @@ agent identity, **link mode only**. Legacy token mode (`--invitation-token-stdin
 `swm_inv_` positional) stays *unchanged* and creates no principal, so `--name` does not apply
 there — supplying it with a legacy form is a validation error.
 
-Semantics:
-- **Validation:** same sanitization and bounds as the auto-name — control/bidi/ANSI stripped,
-  `[a-z0-9._@-]`, ≤80 chars (`boundedText` limit).
-- **Provided + a live principal of that name owned by the caller exists** → reuse it
-  (idempotent, same as the auto path).
-- **Provided + the name is held by a revoked row** → **fail plainly; never silently mutate a
-  user-chosen name.** An auto-generated name may be suffixed freely (the user never chose it,
-  so a suffix costs them nothing), but silently renaming *their* choice violates
-  least-surprise. Say so: *"The name "<name>" belongs to a retired agent identity here and
-  can't be reused. Re-run with a different `--name`."*
+Semantics — exactly three outcomes:
+- **Validation (before any network call):** control/bidi/ANSI stripped, `[a-z0-9._@-]`, ≤80
+  chars. The client enforces this **stricter-than-server** alphabet itself, so the user gets a
+  message naming `--name` rather than an opaque server 400 (server `boundedText` is more
+  permissive). If sanitizing empties or alters the string, **fail validation** — do NOT fall
+  through to the auto-name path; a user who passed `--name` expects that name or an error.
+- **Reusable by the caller** — a *live* principal of that name owned by the caller exists →
+  reuse it (idempotent, same as the auto path; no second create).
+- **Not reusable by the caller** — the name is held by any other row, whether **another
+  member's live principal** or **any revoked principal** → **fail plainly with ONE uniform
+  message; never silently mutate a user-chosen name.**
+  *"The name "<name>" is already taken in this workspace. Re-run with a different `--name`."*
+
+  Two notes on this rule. First, `UNIQUE (workspace_id, name)` is **per-workspace, not
+  per-owner** (`migration:181`), so another member's live principal collides exactly like a
+  revoked one — this third case is real and must not fall through or get mislabeled. Second,
+  the copy deliberately does **not** distinguish "retired" from "held by someone else": the
+  uniform "taken" wording is accurate for both and avoids teaching a distinction the user
+  doesn't need. (Members who care can already read `revoked_at` from the roster.)
 - **Omitted** → the §2.8 auto-name path, including the capped suffix escape.
-- **Suffix-cap failure copy** must name the escape: *"Several retired agent identities here
-  already use names like "<auto>". Re-run with `--name <your-choice>` to pick one
-  explicitly."*
+
+**The asymmetry stands and is not negotiable:** an auto-generated name may be suffixed freely;
+a user-supplied `--name` is never suffixed under any flag.
+
+**Do not build a roster oracle.** Resolve collisions with an *owner-scoped live read* →
+reuse-if-hit → else create, and let `create_agent_principal`'s rejection be authoritative for
+"taken." Do **not** issue an unfiltered `name=eq.<n>` read (without the owner filter) merely to
+branch the copy between "retired" and "another member's" — that trains the client to treat the
+roster as an oracle for no user benefit. Keep the client dumb; the server decides.
+
+**`--name` is not a rename.** If the §2.10 step-0 checkpoint short-circuit fires, an existing
+principal is reused and a differing `--name` is **ignored** (no accept, no create). Emit one
+stderr note when it differs from `checkpoint.principalName` — *"Already connected as
+<existing>; `--name` ignored."* — so the user isn't left thinking the flag silently failed.
+- **Suffix-cap failure copy** must name the escape: *"Couldn't pick an automatic name for this
+  machine's agent identity — names like "<auto>" are already taken here. Re-run with `--name
+  <your-choice>` to pick one explicitly."*
 
 This is one optional flag, needed by a path the brief already required, and it doubles as a
 comprehension win (a user-meaningful `laptop-agent` reads better than
@@ -454,10 +477,16 @@ tricks), malformed UUIDs, and any `url` failing `cloudTarget()` or the §2.5 ori
   default-workspace: fresh success switches + narrates was→now, re-run does not switch (R4);
   unknown origin non-interactive → hard-fail with **no login attempt**; unknown origin
   interactive → wrong host typed → refuse.
-- **`--name` tests (decision #83):** explicit name reused when a live principal matches;
-  explicit name held by a revoked row → plain failure with **no silent rename**; auto-name
-  suffix cap reached → failure copy names `--name`; `--name` with a legacy token form →
-  validation error; `--name` sanitization/bounds (control/bidi/ANSI, >80 chars).
+- **`--name` tests (decision #83):** explicit name reused when the caller's own **live**
+  principal matches (asserting **no second create** — stable `principal_id`, no extra event);
+  explicit name held by a **revoked** row → uniform "taken" failure with **no silent rename**;
+  explicit name held by **another member's live** principal → the **same** uniform "taken"
+  failure (not "retired", not reuse); auto-name suffix cap reached → failure copy names
+  `--name`; `--name` with a legacy token form → validation error naming link mode; `--name`
+  that sanitizes to empty or carries an illegal charset → **validation error before any network
+  call** (never a silent fall-through to the auto name); `--name` supplied when the step-0
+  short-circuit fires → no accept call, no create, and the ignore-note emitted when it differs
+  from `checkpoint.principalName`.
 - **Server tests:** invite response carries workspace_id/labels as fresh-only (absent on
   replay, absent from ledger/events/audit).
 - **Local integration:** invite → accept E2E on the live local stack, asserting single
