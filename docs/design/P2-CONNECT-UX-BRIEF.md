@@ -290,7 +290,9 @@ and the client cannot distinguish it.
   login only** (never authority): if the logged-in uid equals it, say plainly *"You're signed
   in as the person who sent this invitation. To join as a second person, use a GitHub
   account with a different verified email."*
-- Otherwise the §2.4 membership probe already resolves already-member into a success path.
+- Otherwise the §2.4 membership probe resolves already-member into the **non-claiming
+  recovery path** (R1) — *not* a "the invitation succeeded" path. Keep that distinction in
+  the implemented copy.
 - Distinct-email guidance belongs in the **invite emit output** and login help (partially
   present at `cli.ts:163-164`) — surfaced *before* the invitee burns a link, not after.
 
@@ -337,6 +339,35 @@ layer ships in P2-3, the affordances must exist now:
 - **`--json`** → machine-readable progress/result on stdout, human narration on stderr, so
   an agent can parse state while a human still reads plain lines. Redact link/token in both.
 - **Non-interactive mode hard-fails** (never prompts) on the §2.5 unknown-origin gate.
+
+### 2.10 Canonical execution order (implementation authority)
+
+§2.2 lists what the *user sees*; this is the order the *machine* runs. Where they appear to
+differ, this wins:
+
+1. **Parse** the positional/stdin per the §3.3 ordered grammar.
+2. **Origin pin** (§2.5) — refuse/confirm before anything touches the network.
+3. **Preview** the sanitized labels (§2.6) — comprehension before commitment.
+4. **Login** or skip-if-live-for-this-target (§2.2 step 1).
+5. **Same-identity check** (§2.7) — needs the logged-in uid, so it follows login and precedes
+   any invitation burn.
+6. **Step 0 checkpoint short-circuit** (§2.4) — *before* accept, never after.
+7. **Accept** → on 200 use the server `workspace_id`; on 403 probe (never decode the body).
+8. **Principal** read-live-then-create (§2.8).
+9. **Ready** narration + the §2.2 two-case default-workspace policy.
+
+**Mixed-target rule, resolved (O2 — pick one, and this is the pick):** a link together with
+`--url`/`--anon-key` is a **validation error**. No partial-override mode ships in this
+sub-slice; it is the only variant that cannot be talked into a split-host state, and it is
+trivially testable. Dev work uses flags *without* a link.
+
+**Suffix attempts are capped** (§2.8): bound the revoked-name escape (e.g. ≤5 attempts, then
+fail with a plain message telling the user to pass an explicit name) — never an unbounded
+probe loop.
+
+**Optional harden, only if a test exercises it:** on a 403 whose hint-probe is empty, a live
+membership at `checkpoint.workspaceId` may also be checked before the uniform failure. Do not
+build this speculatively.
 
 ## 3. Scope boundaries
 
