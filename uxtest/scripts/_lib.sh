@@ -10,9 +10,11 @@ UXTEST_MINI_IP="${UXTEST_MINI_IP:-100.127.131.115}"
 UXTEST_LAPTOP_IP="${UXTEST_LAPTOP_IP:-100.95.177.37}"
 UXTEST_SWARM_BIN="${UXTEST_SWARM_BIN:-/Users/yulanbot/Developer/Ridge.io/swarm/bin/swarm}"
 UXTEST_REMOTE_SWARM_BIN="${UXTEST_REMOTE_SWARM_BIN:-/opt/homebrew/bin/swarm}"
+UXTEST_CMUX_BIN="${UXTEST_CMUX_BIN:-cmux}"
 UXTEST_REMOTE_REPO="${UXTEST_REMOTE_REPO:-/Users/tom/Developer/Ridge.io/cloud-swarm}"
 UXTEST_MINI_HOME_ROOT="${UXTEST_MINI_HOME_ROOT:-$HOME/uxtest}"
 UXTEST_REMOTE_HOME_ROOT="${UXTEST_REMOTE_HOME_ROOT:-/Users/tom/uxtest}"
+UXTEST_SLEEP_BIN="${UXTEST_SLEEP_BIN:-sleep}"
 
 say() {
   printf '[uxtest] %s\n' "$*"
@@ -57,6 +59,56 @@ round_output_dir() {
 
 round_setup_path() {
   printf '%s/setup.json' "$(round_output_dir "$1")"
+}
+
+persona_workspace() {
+  local role="$1"
+  case "$role" in
+    human1) printf '%s/human1/workspace' "$UXTEST_MINI_HOME_ROOT" ;;
+    human2) printf '%s/human2/workspace' "$UXTEST_REMOTE_HOME_ROOT" ;;
+    *) die "unknown persona role: $role" ;;
+  esac
+}
+
+persona_spawn_state_path() {
+  local role="$1"
+  local round="$2"
+  case "$role" in
+    human1) printf '%s/human1/spawn-state/r%s.json' "$UXTEST_MINI_HOME_ROOT" "$round" ;;
+    human2) printf '%s/human2/spawn-state/r%s.json' "$UXTEST_REMOTE_HOME_ROOT" "$round" ;;
+    *) die "unknown persona role: $role" ;;
+  esac
+}
+
+assert_workspace_sweep() {
+  local path="$1"
+  local label="$2"
+  mkdir -p "$path"
+  local unexpected
+  unexpected="$(
+    find "$path" -mindepth 1 -maxdepth 1 ! -name BRIEF.md -print -quit
+  )"
+  [ -z "$unexpected" ] ||
+    die "$label trusted workspace contains prior-round or stray data: $unexpected; collect the prior round before launching another"
+  if [ -L "$path/BRIEF.md" ] ||
+    { [ -e "$path/BRIEF.md" ] && [ ! -f "$path/BRIEF.md" ]; }; then
+    die "$label trusted workspace BRIEF.md is not a regular file"
+  fi
+}
+
+assert_round_brief_only() {
+  local path="$1"
+  local label="$2"
+  local round="$3"
+  assert_workspace_sweep "$path" "$label"
+  [ -f "$path/BRIEF.md" ] ||
+    die "$label trusted workspace is missing BRIEF.md"
+  local entry_count
+  entry_count="$(find "$path" -mindepth 1 -maxdepth 1 -print | wc -l | tr -d ' ')"
+  [ "$entry_count" = "1" ] ||
+    die "$label trusted workspace is not isolated to BRIEF.md"
+  [ "$(sed -n '1p' "$path/BRIEF.md")" = "# Round $round brief" ] ||
+    die "$label trusted workspace contains a BRIEF.md for the wrong round"
 }
 
 load_cloud_env() {
@@ -132,14 +184,15 @@ wait_for_agent_local() {
   local swarm="$1"
   local name="$2"
   local timeout="${3:-45}"
+  local poll="${4:-2}"
   local elapsed=0
   while [ "$elapsed" -lt "$timeout" ]; do
     if "$UXTEST_SWARM_BIN" members --swarm "$swarm" 2>/dev/null |
       grep -Fq "$name ["; then
       return 0
     fi
-    sleep 2
-    elapsed=$((elapsed + 2))
+    "$UXTEST_SLEEP_BIN" "$poll"
+    elapsed=$((elapsed + poll))
   done
   return 1
 }
@@ -148,14 +201,15 @@ wait_for_agent_remote() {
   local swarm="$1"
   local name="$2"
   local timeout="${3:-90}"
+  local poll="${4:-2}"
   local elapsed=0
   while [ "$elapsed" -lt "$timeout" ]; do
     if remote_zsh "$UXTEST_REMOTE_SWARM_BIN members --swarm '$swarm'" 2>/dev/null |
       grep -Fq "$name ["; then
       return 0
     fi
-    sleep 2
-    elapsed=$((elapsed + 2))
+    "$UXTEST_SLEEP_BIN" "$poll"
+    elapsed=$((elapsed + poll))
   done
   return 1
 }

@@ -276,9 +276,12 @@ spend their attention.
    `~/uxtest/bin/coswarm` on their PATH — never a symlink into the repo. Preflight asserts the
    persona's PATH resolves to the non-repo copy. Personas may not inspect installation paths or
    open files behind the command.
-3. **Working tree leakage.** Per-round cwd `~/uxtest/human{1,2}/r<n>/`, **empty except this
+3. **Working tree leakage.** Each persona has one trusted cwd,
+   `~/uxtest/human{1,2}/workspace/`, **verified before every launch to contain only this
    round's `BRIEF.md`**. Scenario full text and this file never enter a persona cwd. Collect
-   pulls artifacts *out*; the next reset archives the round dir away from the persona.
+   pulls artifacts *out*, verifies the round output, and removes the raw persona artifacts
+   before the trusted directory can be reused. Virgin context comes from a fresh Claude
+   session, not a fresh directory (§7.9b).
 4. **Chat history.** Use a per-round swarm `uxtest-r<n>` (clean inbox). Never reuse a message
    board that still holds a prior round's links, commands, or jargon.
 5. **Web search / public repo.** Forbidden for this product during a round. Violation → void.
@@ -366,7 +369,7 @@ command_sequence[], golden_path_distance,
 used_link_stdin, used_positional_link, link_inspected,
 task_completed, gave_up, gave_up_reason,
 coswarm_sha_mini, coswarm_sha_laptop, workspace_id, seed_sha,
-oauth_consent, carryover, isolation_void
+oauth_consent, carryover, join_latency_ms, join_attempts, isolation_void
 ```
 
 Two traps, stated so nobody misreads the numbers: **wall-clock alone is confounded** by partner
@@ -392,7 +395,7 @@ line** the persona saw.
 
 | Question | Answer |
 |---|---|
-| Run R1 as a pilot? | **Yes** — after §7.2 items 2–3 (copied binary + empty per-round cwd), §7.7 header, and §7.9 |
+| Run R1 as a pilot? | **Yes** — after §7.2 items 2–3 (copied binary + swept trusted cwd), §7.7 header, and §7.9 |
 | Trust R1 as product truth? | Only for the §7.1 "Yes" rows; the operator's drive still decides |
 | Run R2+ as regression? | **No** until §7.4 is implemented and `carryover` is recorded |
 

@@ -26,11 +26,20 @@ redacting_tee="$root/.internal/stream.mjs"
 }
 
 case "$PWD" in
-  "$root"/human1/r*) role="human1" ;;
-  "$root"/human2/r*) role="human2" ;;
+  "$root"/human1/workspace) role="human1" ;;
+  "$root"/human2/workspace) role="human2" ;;
   *) role="${UXTEST_ROLE:-unknown}" ;;
 esac
-round="${UXTEST_ROUND:-$(basename "$PWD")}"
+round="${UXTEST_ROUND:-}"
+if [ -z "$round" ]; then
+  case "$role" in
+    human1|human2)
+      current_round="$root/$role/current-round"
+      [ -f "$current_round" ] && round="$(<"$current_round")"
+      ;;
+  esac
+fi
+[ -n "$round" ] || round="$(basename "$PWD")"
 round="${round#r}"
 case "$round" in
   ''|*[!0-9]*) round="unknown" ;;

@@ -13,7 +13,7 @@ write down why you stopped and do not keep grinding to please the study.
 
 ## Isolation is mandatory
 
-- Work only in the current `~/uxtest/human1/rN/` directory. Do not list or read
+- Work only in the current `~/uxtest/human1/workspace/` directory. Do not list or read
   its parent directories.
 - Do not read any Ridge.io or cloud-swarm repository, source, design document,
   test, Git history, harness file, scenario file, or another agent's terminal.

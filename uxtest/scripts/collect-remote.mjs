@@ -27,7 +27,7 @@ const messages = db.prepare(`
 `).all(swarmName, human1, human2, human2, human1);
 db.close();
 
-const cwd = join(root, "human2", `r${round}`);
+const cwd = join(root, "human2", "workspace");
 const read = (path) => existsSync(path) ? readFileSync(path, "utf8") : null;
 const readJsonl = (path) => {
   const raw = read(path);

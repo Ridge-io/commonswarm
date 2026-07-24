@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import {
+  chmodSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -16,6 +17,18 @@ import { test } from "node:test";
 const ROOT = process.cwd();
 const REDACTOR = join(ROOT, "uxtest", "scripts", "redacting-tee.mjs");
 const COLLECTOR = join(ROOT, "uxtest", "scripts", "collect-round.mjs");
+const VERIFY_WORKSPACE = join(
+  ROOT,
+  "uxtest",
+  "scripts",
+  "verify-persona-workspace.sh",
+);
+const SPAWN_OBSERVED = join(
+  ROOT,
+  "uxtest",
+  "scripts",
+  "spawn-observed.sh",
+);
 
 function invitation() {
   const token = `swm_inv_${"A".repeat(43)}`;
@@ -74,7 +87,7 @@ test("synthetic round collection is metrics-authoritative and capability-safe", 
     const mini = join(directory, "mini");
     const output = join(directory, "output");
     const setupPath = join(directory, "setup.json");
-    const human1Cwd = join(mini, "human1", "r1");
+    const human1Cwd = join(mini, "human1", "workspace");
     const logDirectory = join(mini, "logs", "r1");
     mkdirSync(human1Cwd, { recursive: true });
     mkdirSync(logDirectory, { recursive: true });
@@ -89,6 +102,10 @@ test("synthetic round collection is metrics-authoritative and capability-safe", 
       coswarm_sha_laptop: "same-bundle",
       oauth_consent: "first",
       carryover: false,
+      human1_join_latency_ms: 12_000,
+      human2_join_latency_ms: 18_000,
+      human1_join_attempts: 1,
+      human2_join_attempts: 2,
     }));
     writeFileSync(join(human1Cwd, "FEEDBACK.md"), "The output was clear.");
     writeFileSync(
@@ -196,6 +213,14 @@ test("synthetic round collection is metrics-authoritative and capability-safe", 
     assert.equal(metrics.link_form, "uri");
     assert.equal(metrics.wall_clock_link_to_connected, 1_500);
     assert.equal(metrics.carryover, false);
+    assert.deepEqual(metrics.join_latency_ms, {
+      human1: 12_000,
+      human2: 18_000,
+    });
+    assert.deepEqual(metrics.join_attempts, {
+      human1: 1,
+      human2: 2,
+    });
 
     const artifacts: string[] = [];
     const walk = (path: string) => {
@@ -211,6 +236,128 @@ test("synthetic round collection is metrics-authoritative and capability-safe", 
     assert.equal(combined.includes(capability.payload), false);
     assert.equal(combined.includes(capability.token), false);
     assert.match(combined, /\[INVITE LINK REDACTED\]/);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("trusted persona workspace sweep fails loudly on prior-round artifacts", () => {
+  const directory = mkdtempSync(join(tmpdir(), "uxtest-workspace-"));
+  try {
+    const workspace = join(directory, "workspace");
+    mkdirSync(workspace);
+    writeFileSync(join(workspace, "BRIEF.md"), "# Round 3 brief\n");
+    const clean = spawnSync(
+      "bash",
+      [VERIFY_WORKSPACE, "round", workspace, "Synthetic", "3"],
+      { encoding: "utf8" },
+    );
+    assert.equal(clean.status, 0, clean.stderr);
+
+    writeFileSync(join(workspace, "JOURNAL.md"), "prior round");
+    const leaked = spawnSync(
+      "bash",
+      [VERIFY_WORKSPACE, "sweep", workspace, "Synthetic"],
+      { encoding: "utf8" },
+    );
+    assert.equal(leaked.status, 1);
+    assert.match(leaked.stderr, /prior-round or stray data/);
+    assert.match(leaked.stderr, /JOURNAL\.md/);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("observed spawn retries the exact surface and records join latency", () => {
+  const directory = mkdtempSync(join(tmpdir(), "uxtest-spawn-"));
+  try {
+    const mini = join(directory, "mini");
+    const workspace = join(mini, "human1", "workspace");
+    const joined = join(directory, "joined");
+    const cmuxLog = join(directory, "cmux.log");
+    const swarm = join(directory, "mock-swarm");
+    const cmux = join(directory, "mock-cmux");
+    mkdirSync(workspace, { recursive: true });
+    writeFileSync(join(workspace, "BRIEF.md"), "# Round 1 brief\n");
+    writeFileSync(
+      swarm,
+      `#!/usr/bin/env bash
+set -euo pipefail
+case "\${1:-}" in
+  spawn)
+    printf 'Spawned new Claude Code session (new tab: workspace:7, surface:9)\\n'
+    ;;
+  members)
+    if [ -f "\$MOCK_JOINED" ]; then
+      printf '  Avery-r1 [cmux/claude-code]\\n'
+    fi
+    ;;
+  *)
+    exit 64
+    ;;
+esac
+`,
+    );
+    writeFileSync(
+      cmux,
+      `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\\n' "\$*" >>"\$MOCK_CMUX_LOG"
+if [ "\${1:-}" = "send" ]; then
+  : >"\$MOCK_JOINED"
+fi
+`,
+    );
+    chmodSync(swarm, 0o755);
+    chmodSync(cmux, 0o755);
+
+    const result = spawnSync(
+      "bash",
+      [SPAWN_OBSERVED, "1", "human1"],
+      {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          MOCK_JOINED: joined,
+          MOCK_CMUX_LOG: cmuxLog,
+          UXTEST_MINI_HOME_ROOT: mini,
+          UXTEST_REMOTE_HOME_ROOT: join(directory, "remote"),
+          UXTEST_HOME_ROOT: mini,
+          UXTEST_SWARM_BIN: swarm,
+          UXTEST_CMUX_BIN: cmux,
+          UXTEST_SLEEP_BIN: "/usr/bin/true",
+          UXTEST_JOIN_TIMEOUT_SECONDS: "1",
+          UXTEST_JOIN_ATTEMPTS: "2",
+          UXTEST_JOIN_POLL_SECONDS: "1",
+        },
+      },
+    );
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /re-sending \/join-swarm to surface:9/);
+    const sent = readFileSync(cmuxLog, "utf8");
+    assert.match(
+      sent,
+      /send --workspace workspace:7 --surface surface:9 \/join-swarm Avery-r1 --swarm uxtest-r1/,
+    );
+    assert.match(
+      sent,
+      /send-key --workspace workspace:7 --surface surface:9 Enter/,
+    );
+    const state = JSON.parse(
+      readFileSync(
+        join(mini, "human1", "spawn-state", "r1.json"),
+        "utf8",
+      ),
+    ) as Record<string, unknown>;
+    assert.equal(state.observed, true);
+    assert.equal(state.join_attempts, 2);
+    assert.equal(state.surface, "surface:9");
+    assert.equal(state.workspace, "workspace:7");
+    assert.equal(state.cwd, workspace);
+    assert.ok(
+      typeof state.join_latency_ms === "number" &&
+        state.join_latency_ms >= 0,
+    );
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

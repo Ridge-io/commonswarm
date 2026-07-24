@@ -14,13 +14,13 @@ swarm_name="$(round_swarm "$round")"
 human1="$(human1_name "$round")"
 human2="$(human2_name "$round")"
 
-[ -f "$UXTEST_MINI_HOME_ROOT/human1/r$round/FEEDBACK.md" ] ||
+[ -f "$UXTEST_MINI_HOME_ROOT/human1/workspace/FEEDBACK.md" ] ||
   die "Human1 has not written pre-debrief FEEDBACK.md"
-[ -f "$UXTEST_MINI_HOME_ROOT/human1/r$round/JOURNAL.md" ] ||
+[ -f "$UXTEST_MINI_HOME_ROOT/human1/workspace/JOURNAL.md" ] ||
   die "Human1 has not written JOURNAL.md"
 remote_zsh "
-  test -f '$UXTEST_REMOTE_HOME_ROOT/human2/r$round/FEEDBACK.md'
-  test -f '$UXTEST_REMOTE_HOME_ROOT/human2/r$round/JOURNAL.md'
+  test -f '$UXTEST_REMOTE_HOME_ROOT/human2/workspace/FEEDBACK.md'
+  test -f '$UXTEST_REMOTE_HOME_ROOT/human2/workspace/JOURNAL.md'
 " || die "Human2 has not written both pre-debrief FEEDBACK.md and JOURNAL.md"
 
 say "Collecting laptop evidence through memory-only stdout; raw capabilities are never staged."
@@ -76,6 +76,8 @@ node -e '
     "seed_sha",
     "oauth_consent",
     "carryover",
+    "join_latency_ms",
+    "join_attempts",
     "isolation_void",
   ];
   const missing = required.filter((key) => !Object.hasOwn(value, key));
@@ -86,5 +88,23 @@ node -e '
     throw new Error("version skew survived into collection");
   }
 ' "$output_dir/metrics.json"
+
+say "Removing collected raw persona artifacts before the trusted directories are reused."
+rm -f \
+  "$UXTEST_MINI_HOME_ROOT/human1/workspace/FEEDBACK.md" \
+  "$UXTEST_MINI_HOME_ROOT/human1/workspace/JOURNAL.md" \
+  "$UXTEST_MINI_HOME_ROOT/human1/workspace/RESULT.md" \
+  "$UXTEST_MINI_HOME_ROOT/human1/workspace/ISOLATION_VOID.md"
+assert_round_brief_only \
+  "$UXTEST_MINI_HOME_ROOT/human1/workspace" Human1 "$round"
+remote_zsh "
+  rm -f \
+    '$UXTEST_REMOTE_HOME_ROOT/human2/workspace/FEEDBACK.md' \
+    '$UXTEST_REMOTE_HOME_ROOT/human2/workspace/JOURNAL.md' \
+    '$UXTEST_REMOTE_HOME_ROOT/human2/workspace/RESULT.md' \
+    '$UXTEST_REMOTE_HOME_ROOT/human2/workspace/ISOLATION_VOID.md'
+  '$UXTEST_REMOTE_REPO/uxtest/scripts/verify-persona-workspace.sh' \
+    round '$UXTEST_REMOTE_HOME_ROOT/human2/workspace' Human2 '$round'
+"
 
 say "Round $round collected and verified in $output_dir."

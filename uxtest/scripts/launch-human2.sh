@@ -16,19 +16,18 @@ swarm_name="$(round_swarm "$round")"
 human1="$(human1_name "$round")"
 human2="$(human2_name "$round")"
 parent="$UXTEST_REMOTE_HOME_ROOT/human2"
-cwd="$parent/r$round"
+cwd="$parent/workspace"
+spawn_state="$(persona_spawn_state_path human2 "$round")"
 
 say "Staging Human2 persona rules outside the repository."
 remote_zsh "mkdir -p '$parent' '$cwd' && chmod 700 '$parent' '$cwd'"
 rsync -a "$UXTEST_DIR/personas/human2-invitee.md" \
   "$UXTEST_REMOTE:$parent/CLAUDE.md"
 remote_zsh "chmod 600 '$parent/CLAUDE.md'"
-
-unexpected="$(remote_zsh "
-  find '$cwd' -mindepth 1 -maxdepth 1 ! -name BRIEF.md -print -quit
-")"
-[ -z "$unexpected" ] ||
-  die "Human2 round cwd contains data other than BRIEF.md: $unexpected"
+remote_zsh "
+  '$UXTEST_REMOTE_REPO/uxtest/scripts/verify-persona-workspace.sh' \
+    sweep '$cwd' Human2
+"
 
 brief_file="$(mktemp "${TMPDIR:-/tmp}/uxtest-human2-brief.XXXXXX")"
 cleanup_brief() {
@@ -60,15 +59,17 @@ forcing completion.
 fs.writeFileSync(path, brief, { mode: 0o600 });
 NODE
 rsync -a "$brief_file" "$UXTEST_REMOTE:$cwd/BRIEF.md"
-remote_zsh "chmod 600 '$cwd/BRIEF.md'"
+remote_zsh "
+  chmod 600 '$cwd/BRIEF.md'
+  printf '%s\n' '$round' >'$parent/current-round'
+  chmod 600 '$parent/current-round'
+"
 lint_brief "$brief_file"
 audit_brief "$round" human2 "$brief_file"
-
-entry_count="$(remote_zsh "
-  find '$cwd' -mindepth 1 -maxdepth 1 -print | wc -l | tr -d ' '
-")"
-[ "$entry_count" = "1" ] ||
-  die "Human2 round cwd is not isolated to BRIEF.md"
+remote_zsh "
+  '$UXTEST_REMOTE_REPO/uxtest/scripts/verify-persona-workspace.sh' \
+    round '$cwd' Human2 '$round'
+"
 
 if wait_for_agent_remote "$swarm_name" "$human2" 2; then
   say "$human2 is already present; fresh-persona launch is idempotently satisfied."
@@ -80,6 +81,7 @@ printf '%s\n' "$base_members" | grep -Fq "Dana [" || die \
   "persistent GUI-session launcher Dana is absent. On the laptop in cmux run: mkdir -p ~/uxtest/human2/launcher && cd ~/uxtest/human2/launcher && swarm spawn --agent claude --name Dana --cwd ~/uxtest/human2/launcher --swarm uxtest --terminal cmux"
 
 say "Asking the persistent GUI-session Dana tab to spawn virgin-context $human2."
+remote_zsh "rm -f '$spawn_state'"
 remote_zsh "
   '$UXTEST_REMOTE_SWARM_BIN' register-a2a UxDriver \
     --endpoint 'http://$UXTEST_MINI_IP:18791' \
@@ -88,18 +90,21 @@ remote_zsh "
     --swarm uxtest >/dev/null
   SWARM_AGENT_NAME=UxDriver SWARM_NAME=uxtest \
     '$UXTEST_REMOTE_SWARM_BIN' send --swarm uxtest Dana \
-    'Launcher-only control task; you are not a study persona. Run: source $UXTEST_REMOTE_HOME_ROOT/config/cloud.env && PATH=$UXTEST_REMOTE_HOME_ROOT/bin:\$PATH UXTEST_HOME_ROOT=$UXTEST_REMOTE_HOME_ROOT UXTEST_ROLE=human2 UXTEST_ROUND=$round $UXTEST_REMOTE_SWARM_BIN spawn --agent claude --name $human2 --cwd $cwd --swarm $swarm_name --terminal cmux. Once it joins, stay out of the round.'
+    'Launcher-only control task; you are not a study persona. Run exactly: source $UXTEST_REMOTE_HOME_ROOT/config/cloud.env && PATH=$UXTEST_REMOTE_HOME_ROOT/bin:\$PATH UXTEST_HOME_ROOT=$UXTEST_REMOTE_HOME_ROOT UXTEST_MINI_HOME_ROOT=$UXTEST_REMOTE_HOME_ROOT UXTEST_REMOTE_HOME_ROOT=$UXTEST_REMOTE_HOME_ROOT UXTEST_SWARM_BIN=$UXTEST_REMOTE_SWARM_BIN UXTEST_CMUX_BIN=/Applications/cmux.app/Contents/Resources/bin/cmux UXTEST_ROLE=human2 UXTEST_ROUND=$round UXTEST_JOIN_TIMEOUT_SECONDS=${UXTEST_JOIN_TIMEOUT_SECONDS:-30} UXTEST_JOIN_ATTEMPTS=${UXTEST_JOIN_ATTEMPTS:-3} UXTEST_JOIN_POLL_SECONDS=${UXTEST_JOIN_POLL_SECONDS:-2} $UXTEST_REMOTE_REPO/uxtest/scripts/spawn-observed.sh $round human2. Once it completes, stay out of the round.'
 "
 
 node - "$setup" <<'NODE'
 const fs = require("node:fs");
 const path = process.argv[2];
 const value = JSON.parse(fs.readFileSync(path, "utf8"));
-value.human2_spawn_requested_at = new Date().toISOString();
+value.human2_spawn_dispatch_at = new Date().toISOString();
 fs.writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
 NODE
 
-if ! wait_for_agent_remote "$swarm_name" "$human2" 90; then
+join_timeout="${UXTEST_JOIN_TIMEOUT_SECONDS:-30}"
+join_attempts="${UXTEST_JOIN_ATTEMPTS:-3}"
+total_timeout=$((join_timeout * join_attempts + 30))
+if ! wait_for_agent_remote "$swarm_name" "$human2" "$total_timeout"; then
   node - "$setup" <<'NODE'
 const fs = require("node:fs");
 const path = process.argv[2];
@@ -108,8 +113,33 @@ value.human2_spawn_probe = "failed";
 value.carryover = true;
 fs.writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
 NODE
-  die "virgin-context $human2 did not join. Do not run R2+ as regression; inspect the persistent Dana launcher in the laptop GUI and use a manual fresh tab rather than SSH Claude."
+  die "virgin-context $human2 did not register after bounded observed-join retries; inspect Dana and the spawn state at $spawn_state"
 fi
+
+spawn_state_json="$(remote_zsh "cat '$spawn_state'")" ||
+  die "$human2 registered but the observed-spawn state is missing"
+printf '%s\n' "$spawn_state_json" | node -e '
+  const fs = require("node:fs");
+  let raw = "";
+  process.stdin.on("data", (chunk) => raw += chunk);
+  process.stdin.on("end", () => {
+    const setupPath = process.argv[1];
+    const setup = JSON.parse(fs.readFileSync(setupPath, "utf8"));
+    const state = JSON.parse(raw);
+    if (state.observed !== true) {
+      throw new Error("Human2 helper did not observe registration");
+    }
+    setup.human2_spawn_requested_at = state.spawn_requested_at;
+    setup.human2_joined_at = state.joined_at;
+    setup.human2_join_latency_ms = state.join_latency_ms;
+    setup.human2_join_attempts = state.join_attempts;
+    fs.writeFileSync(
+      setupPath,
+      `${JSON.stringify(setup, null, 2)}\n`,
+      { mode: 0o600 },
+    );
+  });
+' "$setup"
 
 spawn_evidence="$(remote_zsh "
   sqlite3 -json ~/.swarm/swarm.db \"
@@ -140,7 +170,6 @@ const fs = require("node:fs");
 const [path, name] = process.argv.slice(2);
 const value = JSON.parse(fs.readFileSync(path, "utf8"));
 value.human2_spawn_probe = "passed-distinct-cmux-surface";
-value.human2_joined_at = new Date().toISOString();
 value.fresh_human2_name = name;
 value.carryover = false;
 fs.writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });

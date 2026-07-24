@@ -19,7 +19,7 @@ let remoteRaw = "";
 for await (const chunk of process.stdin) remoteRaw += chunk.toString();
 const remote = JSON.parse(remoteRaw);
 const setup = JSON.parse(readFileSync(setupPath, "utf8"));
-const localCwd = join(miniRoot, "human1", `r${round}`);
+const localCwd = join(miniRoot, "human1", "workspace");
 
 const read = (path) => existsSync(path) ? readFileSync(path, "utf8") : null;
 const readJsonl = (path) => {
@@ -329,6 +329,14 @@ const metrics = {
   seed_sha: setup.seed_sha,
   oauth_consent: setup.oauth_consent,
   carryover: setup.carryover ?? true,
+  join_latency_ms: {
+    human1: setup.human1_join_latency_ms ?? null,
+    human2: setup.human2_join_latency_ms ?? null,
+  },
+  join_attempts: {
+    human1: setup.human1_join_attempts ?? null,
+    human2: setup.human2_join_attempts ?? null,
+  },
   isolation_void: isolationVoid,
   isolation_events: isolationEvents,
 };

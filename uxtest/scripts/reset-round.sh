@@ -68,6 +68,18 @@ const value = {
   oauth_consent: oauthConsent,
   reset_started_at: new Date().toISOString(),
   reset_complete: false,
+  human1_spawn_requested_at: null,
+  human1_joined_at: null,
+  human1_join_latency_ms: null,
+  human1_join_attempts: null,
+  human2_spawn_dispatch_at: null,
+  human2_spawn_requested_at: null,
+  human2_joined_at: null,
+  human2_join_latency_ms: null,
+  human2_join_attempts: null,
+  human2_spawn_probe: null,
+  fresh_human2_name: null,
+  carryover: true,
 };
 fs.writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
 NODE
@@ -137,20 +149,10 @@ remote_zsh "
   test ! -e '$remote_profile'
 "
 
-archive_persona_dir() {
-  local role="$1"
-  local path="$UXTEST_MINI_HOME_ROOT/$role/r$round"
-  if [ -d "$path" ]; then
-    local archive="$UXTEST_MINI_HOME_ROOT/archive/$role"
-    mkdir -p "$archive"
-    mv "$path" "$archive/r${round}-$(date -u +%Y%m%dT%H%M%SZ)"
-  fi
-  mkdir -p "$path"
-  [ -z "$(find "$path" -mindepth 1 -maxdepth 1 -print -quit)" ] ||
-    die "$path is not empty after reset"
-}
-
-archive_persona_dir human1
+human1_workspace="$(persona_workspace human1)"
+mkdir -p "$human1_workspace"
+chmod 700 "$UXTEST_MINI_HOME_ROOT/human1" "$human1_workspace"
+assert_workspace_sweep "$human1_workspace" "Human1"
 if [ -d "$UXTEST_MINI_HOME_ROOT/logs/r$round" ]; then
   mkdir -p "$UXTEST_MINI_HOME_ROOT/archive/logs"
   mv "$UXTEST_MINI_HOME_ROOT/logs/r$round" \
@@ -159,14 +161,11 @@ fi
 
 remote_zsh "
   set -e
-  path='$UXTEST_REMOTE_HOME_ROOT/human2/r$round'
-  if [ -d \"\$path\" ]; then
-    archive='$UXTEST_REMOTE_HOME_ROOT/archive/human2'
-    mkdir -p \"\$archive\"
-    mv \"\$path\" \"\$archive/r${round}-\$(date -u +%Y%m%dT%H%M%SZ)\"
-  fi
+  path='$UXTEST_REMOTE_HOME_ROOT/human2/workspace'
   mkdir -p \"\$path\"
-  test -z \"\$(find \"\$path\" -mindepth 1 -maxdepth 1 -print -quit)\"
+  chmod 700 '$UXTEST_REMOTE_HOME_ROOT/human2' \"\$path\"
+  '$UXTEST_REMOTE_REPO/uxtest/scripts/verify-persona-workspace.sh' \
+    sweep \"\$path\" Human2
   if [ -d '$UXTEST_REMOTE_HOME_ROOT/logs/r$round' ]; then
     mkdir -p '$UXTEST_REMOTE_HOME_ROOT/archive/logs'
     mv '$UXTEST_REMOTE_HOME_ROOT/logs/r$round' \
@@ -176,12 +175,12 @@ remote_zsh "
 
 say "Creating clean per-round local swarm '$swarm_name'."
 "$UXTEST_SWARM_BIN" create "$swarm_name" \
-  --root "$UXTEST_MINI_HOME_ROOT/human1/r$round" \
+  --root "$human1_workspace" \
   --description "Isolated UX test round $round"
 say "Creating the same clean per-round swarm on Tom's laptop."
 remote_zsh "
   '$UXTEST_REMOTE_SWARM_BIN' create '$swarm_name' \
-    --root '$UXTEST_REMOTE_HOME_ROOT/human2/r$round' \
+    --root '$UXTEST_REMOTE_HOME_ROOT/human2/workspace' \
     --description 'Isolated UX test round $round'
 "
 
@@ -211,4 +210,4 @@ value.reset_completed_at = new Date().toISOString();
 fs.writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
 NODE
 
-say "Round $round reset verified: cold clients, empty persona directories, clean chat, fresh workspace $workspace_id."
+say "Round $round reset verified: cold clients, swept trusted persona directories, clean chat, fresh workspace $workspace_id."

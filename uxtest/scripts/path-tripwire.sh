@@ -9,12 +9,21 @@ node_path_file="$root/product/NODE_BIN"
 [ -f "$real_path_file" ] && [ -f "$node_path_file" ] || exit 127
 real_path="$(<"$real_path_file")"
 node_path="$(<"$node_path_file")"
-round="${UXTEST_ROUND:-$(basename "$PWD")}"
+case "$PWD" in
+  "$root"/human1/workspace) role="human1" ;;
+  "$root"/human2/workspace) role="human2" ;;
+  *) role="${UXTEST_ROLE:-unknown}" ;;
+esac
+round="${UXTEST_ROUND:-}"
+if [ -z "$round" ]; then
+  current_round="$root/$role/current-round"
+  [ -f "$current_round" ] && round="$(<"$current_round")"
+fi
+[ -n "$round" ] || round="unknown"
 round="${round#r}"
-role="${UXTEST_ROLE:-unknown}"
 violating=false
 case "$role:$PWD" in
-  human1:"$root"/human1/r[0-9]*|human2:"$root"/human2/r[0-9]*) ;;
+  human1:"$root"/human1/workspace|human2:"$root"/human2/workspace) ;;
   human1:*|human2:*) violating=true ;;
 esac
 for arg in "$@"; do

@@ -18,16 +18,12 @@ swarm_name="$(round_swarm "$round")"
 human1="$(human1_name "$round")"
 human2="$(human2_name "$round")"
 parent="$UXTEST_MINI_HOME_ROOT/human1"
-cwd="$parent/r$round"
+cwd="$parent/workspace"
+spawn_state="$(persona_spawn_state_path human1 "$round")"
 
 mkdir -p "$parent" "$cwd"
 install -m 600 "$UXTEST_DIR/personas/human1-inviter.md" "$parent/CLAUDE.md"
-
-unexpected="$(
-  find "$cwd" -mindepth 1 -maxdepth 1 ! -name BRIEF.md -print -quit
-)"
-[ -z "$unexpected" ] ||
-  die "Human1 round cwd contains data other than BRIEF.md: $unexpected"
+assert_workspace_sweep "$cwd" "Human1"
 
 node - "$cwd/BRIEF.md" "$round" "$swarm_name" "$human1" "$human2" \
   "$UXTEST_HUMAN2_EMAIL" <<'NODE'
@@ -59,10 +55,9 @@ NODE
 
 lint_brief "$cwd/BRIEF.md"
 audit_brief "$round" human1 "$cwd/BRIEF.md"
-
-entry_count="$(find "$cwd" -mindepth 1 -maxdepth 1 -print | wc -l | tr -d ' ')"
-[ "$entry_count" = "1" ] && [ -f "$cwd/BRIEF.md" ] ||
-  die "Human1 round cwd is not isolated to BRIEF.md"
+printf '%s\n' "$round" >"$parent/current-round"
+chmod 600 "$parent/current-round"
+assert_round_brief_only "$cwd" "Human1" "$round"
 
 if "$UXTEST_SWARM_BIN" members --swarm "$swarm_name" 2>/dev/null |
   grep -Fq "$human1 ["; then
@@ -70,20 +65,29 @@ if "$UXTEST_SWARM_BIN" members --swarm "$swarm_name" 2>/dev/null |
   exit 0
 fi
 
-say "Launching fresh Human1 persona $human1 from isolated cwd $cwd."
+say "Launching fresh Human1 persona $human1 from swept trusted cwd $cwd."
 PATH="$UXTEST_MINI_HOME_ROOT/bin:$PATH" \
   UXTEST_HOME_ROOT="$UXTEST_MINI_HOME_ROOT" \
   UXTEST_ROLE=human1 \
   UXTEST_ROUND="$round" \
   SWARM_CLOUD_URL="$SWARM_CLOUD_URL" \
   SWARM_CLOUD_ANON_KEY="$SWARM_CLOUD_ANON_KEY" \
-  "$UXTEST_SWARM_BIN" spawn \
-    --agent claude \
-    --name "$human1" \
-    --cwd "$cwd" \
-    --swarm "$swarm_name" \
-    --terminal cmux
+  "$UXTEST_DIR/scripts/spawn-observed.sh" "$round" human1
 
-wait_for_agent_local "$swarm_name" "$human1" 45 ||
-  die "$human1 did not join $swarm_name after spawn"
-say "$human1 joined $swarm_name from the isolated round directory."
+node - "$setup" "$spawn_state" <<'NODE'
+const fs = require("node:fs");
+const [setupPath, statePath] = process.argv.slice(2);
+const setup = JSON.parse(fs.readFileSync(setupPath, "utf8"));
+const state = JSON.parse(fs.readFileSync(statePath, "utf8"));
+if (state.observed !== true) throw new Error("Human1 join was not observed");
+setup.human1_spawn_requested_at = state.spawn_requested_at;
+setup.human1_joined_at = state.joined_at;
+setup.human1_join_latency_ms = state.join_latency_ms;
+setup.human1_join_attempts = state.join_attempts;
+fs.writeFileSync(
+  setupPath,
+  `${JSON.stringify(setup, null, 2)}\n`,
+  { mode: 0o600 },
+);
+NODE
+say "$human1 joined $swarm_name from the swept trusted directory."
