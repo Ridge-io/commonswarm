@@ -161,12 +161,29 @@ also records the fabricated-Anvil-readback catch and the Track B landmines: aws-
 host from the Management API, 6543-needs-prepare:false, transient op-session drops, where
 every credential lives in 1Password). Real human GitHub PKCE login (gap#6 wildcard proven
 at port 53493), seeded workspace, agent-token cradle-to-grave vs hosted with replay +
-domain pin, verified at the event_id level via canary re-query. **OPEN ITEMS:** (a) slice-3
-FINAL acceptance held: Mason is fixing a keychain truncation bug (token echoed → treated
-compromised → all sessions revoked, worked) then repeating login/refresh/logout clean;
-(b) slice 2b: §3.4 workspace commands, T-04/07/08/09/12, rate limits; (c) operator to
-actually drive the CLI themself — the felt dogfood; (d) plan next phase from what the
-dogfood teaches (per §0b: stop, let it be used, then plan P2+).
+domain pin, verified at the event_id level via canary re-query. **Slice-3 final acceptance LANDED** (keychain fix `7736258` verified: tsc clean, P0 38/38,
+CLI 13/13, clean hosted login/refresh/logout re-proof; task `p1-login-cli` closed merged,
+decision #76).
+
+### ROTATION 2026-07-24 (Lead2 → successor). OPERATOR DIRECTIVE: "rotate and continue."
+State at handoff: HEAD `7736258` on main, tree clean, everything pushed; all tasks closed;
+Mason [codex] idle+warm with full slice 1–3 context. **YOUR TASK: SLICE 2b** — make the
+authority real by replacing the fixture bridge:
+1. **§3.4 workspace-authority commands** via `decideWorkspace` (new pure module, same
+   wrap-don't-fork pattern as `decide()`): priority order = `create_workspace` (operator-
+   allowlisted), `create_agent_principal`, `mint_agent_token` (§2.3 denylist + TTL caps —
+   this retires the seed script's token minting), `invite_member`/`accept_invitation`
+   (atomic consumption), `revoke_agent_token`/`revoke_agent_principal`. Repo
+   mapping/landing authority can trail (P2-adjacent).
+2. **Remaining launch-gate tests**: T-04 (grant double-spend), T-07 (revoke-mid-flight,
+   needs the test hooks), T-08/09/12; then T-13–T-25 as capacity allows. The §9.0
+   invariants harness already exists in `tests/p1-server/`.
+3. **Rate limiting** (§6, step 4½) + `rate_buckets`; **gap#15 auth-admin module** +
+   device endpoints (retires decision #69's deferral).
+Start a fresh swarm task per sub-slice; Mason implements, you orchestrate + verify.
+(c) operator personally driving the CLI (the felt dogfood) remains QUEUED — solicit their
+impressions when they do and fold into P2/P3 scoping; (d) plan P2+ from what the dogfood
+teaches (§0b).
 
 ## 1b. Governing steer (operator, 2026-07-23) — READ THIS BEFORE SCOPING ANYTHING
 
