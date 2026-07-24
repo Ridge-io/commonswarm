@@ -75,18 +75,25 @@ tested is never also the transport. Personas exchange short, human, jargon-free 
   window contents is blocked by Automation permissions, and driving `swarm spawn` through a
   Terminal `do script` produced no joined agent. **Do not build on GUI automation over SSH.**
 
-### 1.2 THE HARD CONSTRAINT: Claude Code auth is GUI-session-bound
+### 1.2 THE LAPTOP GUI-ORIGIN RULE: four layers, one constraint
 
 ```
 $ ssh laptop 'claude -p "..."'   →   Not logged in · Please run /login
 ```
 
-Claude Code and `coswarm` credentials on the laptop live in the GUI login session's keychain,
-which an SSH session cannot unlock. **Therefore Human2's agent cannot be launched over SSH,
-and Human2 cannot be logged out or keychain-verified over SSH.** This is a platform constraint,
-not a missing flag — no amount of retrying removes it without either the operator's keychain
-password or an `ANTHROPIC_API_KEY` (which would contradict §1c's "subscriptions, not API fees"
-thesis and change what we are testing).
+**General rule: anything that must reach laptop GUI state must originate inside the laptop GUI
+session.** Four observed layers share that one root cause:
+
+1. Claude authentication is unavailable to SSH.
+2. `swarm spawn` cannot create/control the GUI cmux surface from SSH.
+3. The `coswarm` refresh credential in the GUI login keychain cannot be read from SSH.
+4. An A2A `swarm serve` process started over SSH can accept and queue a POST, but cannot push
+   it into a cmux tab.
+
+Therefore Human2 cannot be launched, logged out, keychain-verified, or pushed an A2A message
+by an SSH-origin process. This is a platform boundary, not a missing flag. SSH remains valid
+for file sync, read-only state, starting services that do not touch GUI state, and registering
+remote endpoints.
 
 **Consequence — the one manual step:** the operator starts the persistent **launcher** `Dana`
 once in a cmux tab on the laptop; it joins the base `uxtest` swarm. The mini then drives
@@ -99,6 +106,10 @@ two laptops for every test.
 ```bash
 # on the laptop, in cmux, once:
 swarm spawn --agent claude --name Dana -s uxtest      # or open a tab and: swarm join Dana -s uxtest
+
+# after sync-machine2.sh has installed the helper, run inside Dana's GUI cmux session:
+UXTEST_HOME_ROOT=/Users/tom/uxtest \
+  /Users/tom/Developer/Ridge.io/cloud-swarm/uxtest/scripts/serve-human2-gui.sh launcher
 ```
 
 ### 1.3 Transport (the "Slack") — verified constraints
@@ -107,13 +118,18 @@ swarm spawn --agent claude --name Dana -s uxtest      # or open a tab and: swarm
   **must not** disturb it. Mini ports `18791` (round persona) and `18792` (launcher driver)
   are dedicated to uxtest.
 - Laptop port `18791` is the persistent Dana launcher endpoint and **must bind the Tailscale
-  IP explicitly**; `0.0.0.0` did not produce a reachable field result. Laptop `18790` is
-  reserved for the current `Dana-r<n>` persona endpoint.
-- Starting plain `swarm serve` and registering an A2A endpoint are allowed over SSH because
-  they are not GUI/keychain operations. **Identity-bearing headless swarm state does not
-  survive separate SSH invocations**: `join` + `send` and `SWARM_AGENT_NAME` both failed with
-  `identity could not be authenticated`. SSH is therefore not a launcher control plane; the
-  A2A bridge is the only supported one.
+  IP explicitly**; `0.0.0.0` did not produce a reachable field result. It must be started by
+  `serve-human2-gui.sh launcher` inside GUI cmux; `launcher-channel-up.sh` verifies that
+  origin marker and never starts it over SSH. Laptop `18790` is reserved for the current
+  `Dana-r<n>` persona endpoint, whose server Dana starts from the GUI on demand.
+- An SSH-origin Dana server accepted the A2A POST and logged the message, then reported
+  `[a2a-server] push to Dana not delivered: Dana's terminal is not reachable via the cmux socket`.
+  Accept-and-queue is a recovery property, not success: `swarm inbox --swarm uxtest` from
+  Dana's GUI tab can recover the queued instruction, but the preflight still fails until a
+  GUI-origin server is proven.
+- **Identity-bearing headless swarm state does not survive separate SSH invocations**:
+  `join` + `send` and `SWARM_AGENT_NAME` both failed with `identity could not be authenticated`.
+  SSH is therefore not a launcher control plane; the A2A bridge is the only supported one.
 - `swarm inbox --wait <seconds>` blocks until a message arrives — use it for event-driven
   waiting, never busy-polling.
 - Both machines now have the `uxtest` swarm created.
@@ -127,11 +143,11 @@ launch Human1 → run → collect → report**.
 
 ```
 uxtest/scripts/sync-machine2.sh      # rsync repo + npm install + npm run build on the laptop
-uxtest/scripts/preflight.sh <n>      # both machines ready? versions, reach, PATH, identities
-uxtest/scripts/launcher-channel-up.sh # persistent Dana ⇄ UxDriver control bridge
+uxtest/scripts/preflight.sh <n>      # fails early with exact GUI-bootstrap remedy if absent
+uxtest/scripts/launcher-channel-up.sh # verifies GUI Dana; starts/registers mini UxDriver
 uxtest/scripts/reset-round.sh <n>    # FRESH workspace; Human2 reset delegated to GUI Dana
 uxtest/scripts/launch-human2.sh <n>  # persistent GUI tab spawns fresh Dana-r<n>; evidence-gated
-uxtest/scripts/channel-up.sh <n>     # separate per-round persona bridge, both directions
+uxtest/scripts/channel-up.sh <n>     # asks GUI Dana to serve Dana-r<n>; verifies both directions
 uxtest/scripts/launch-human1.sh <n>  # fresh cmux persona tab here
 uxtest/scripts/collect-round.sh <n>  # gather transcripts, feedback, metrics into rounds/<n>/
 ```
@@ -233,6 +249,10 @@ that has expired.
 ```bash
 # sync before preflight so the fail-closed version gate sees the intended build
 uxtest/scripts/sync-machine2.sh
+
+# one-time laptop GUI bootstrap (preflight prints this exact remedy if missing)
+UXTEST_HOME_ROOT=/Users/tom/uxtest \
+  /Users/tom/Developer/Ridge.io/cloud-swarm/uxtest/scripts/serve-human2-gui.sh launcher
 
 # each round
 uxtest/scripts/preflight.sh 1

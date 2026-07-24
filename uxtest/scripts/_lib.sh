@@ -145,11 +145,56 @@ a2a_card_name() {
   ' "$body"
 }
 
-assert_launcher_channel() {
+gui_server_state_pid() {
+  local raw="$1"
+  local expected_name="$2"
+  local expected_swarm="$3"
+  local expected_port="$4"
+  node -e '
+    const value = JSON.parse(process.argv[1]);
+    if (
+      value.origin !== "gui-cmux" ||
+      value.name !== process.argv[2] ||
+      value.swarm !== process.argv[3] ||
+      value.bind !== process.argv[4] ||
+      value.port !== Number(process.argv[5]) ||
+      typeof value.surface_id !== "string" ||
+      value.surface_id.length === 0 ||
+      !Number.isInteger(value.pid) ||
+      value.pid < 1
+    ) process.exit(1);
+    process.stdout.write(String(value.pid));
+  ' "$raw" "$expected_name" "$expected_swarm" \
+    "$UXTEST_LAPTOP_IP" "$expected_port"
+}
+
+assert_gui_launcher_server() {
   local laptop_url="http://$UXTEST_LAPTOP_IP:$UXTEST_LAUNCHER_LAPTOP_PORT"
-  local mini_url="http://$UXTEST_MINI_IP:$UXTEST_LAUNCHER_MINI_PORT"
+  local state="$UXTEST_REMOTE_HOME_ROOT/run/launcher-a2a-$UXTEST_LAUNCHER_LAPTOP_PORT.json"
+  local pid_file="$UXTEST_REMOTE_HOME_ROOT/run/launcher-a2a-$UXTEST_LAUNCHER_LAPTOP_PORT.pid"
+  local remedy="On the laptop, inside Dana's GUI cmux session, run exactly: UXTEST_HOME_ROOT=$UXTEST_REMOTE_HOME_ROOT $UXTEST_REMOTE_REPO/uxtest/scripts/serve-human2-gui.sh launcher"
   [ "$(a2a_card_name "$laptop_url" || true)" = "$UXTEST_LAUNCHER_NAME" ] ||
-    die "GUI launcher A2A endpoint is absent; run launcher-channel-up.sh before reset"
+    die "GUI-origin Dana launcher endpoint is absent. An SSH-started server cannot push through the cmux socket. $remedy"
+  local raw
+  raw="$(remote_zsh "test -f '$state' && cat '$state'")" ||
+    die "Dana's endpoint lacks GUI-origin evidence. An SSH-started server may accept and queue A2A but cannot push through cmux. $remedy"
+  local state_pid
+  state_pid="$(
+    gui_server_state_pid "$raw" "$UXTEST_LAUNCHER_NAME" \
+      "$UXTEST_LAUNCHER_SWARM" "$UXTEST_LAUNCHER_LAPTOP_PORT"
+  )" || die "Dana's launcher state is not valid GUI-cmux evidence. $remedy"
+  local recorded_pid
+  recorded_pid="$(remote_zsh "test -f '$pid_file' && cat '$pid_file'")" ||
+    die "Dana's launcher PID evidence is missing. $remedy"
+  [ "$recorded_pid" = "$state_pid" ] ||
+    die "Dana's launcher PID does not match its GUI-origin evidence. $remedy"
+  remote_zsh "kill -0 '$state_pid'" 2>/dev/null ||
+    die "Dana's GUI-origin launcher process is not alive. $remedy"
+}
+
+assert_launcher_channel() {
+  local mini_url="http://$UXTEST_MINI_IP:$UXTEST_LAUNCHER_MINI_PORT"
+  assert_gui_launcher_server
   [ "$(a2a_card_name "$mini_url" || true)" = "$UXTEST_DRIVER_NAME" ] ||
     die "mini launcher-driver A2A endpoint is absent; run launcher-channel-up.sh before reset"
   local identity

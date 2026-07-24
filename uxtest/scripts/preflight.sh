@@ -111,6 +111,14 @@ remote_zsh "
 " >/dev/null
 say "Laptop prerequisites verified; cmux.app was checked by its app path, not PATH."
 
+base_members="$(remote_zsh \
+  "$UXTEST_REMOTE_SWARM_BIN members --swarm '$UXTEST_LAUNCHER_SWARM'")"
+printf '%s\n' "$base_members" | grep -Fq "$UXTEST_LAUNCHER_NAME [" || die \
+  "the one-time laptop launcher is absent. In a laptop cmux GUI tab run: mkdir -p ~/uxtest/human2/launcher && cd ~/uxtest/human2/launcher && swarm spawn --agent claude --name $UXTEST_LAUNCHER_NAME --cwd ~/uxtest/human2/launcher --swarm $UXTEST_LAUNCHER_SWARM --terminal cmux"
+say "Persistent laptop launcher $UXTEST_LAUNCHER_NAME is present in the base $UXTEST_LAUNCHER_SWARM swarm."
+assert_gui_launcher_server
+say "GUI-origin launcher endpoint verified before product or hosted round work."
+
 mini_bin="$UXTEST_MINI_HOME_ROOT/bin/coswarm"
 laptop_bin="$UXTEST_REMOTE_HOME_ROOT/bin/coswarm"
 [ -x "$mini_bin" ] || die "mini persona copy is missing; run sync-machine2.sh"
@@ -184,11 +192,6 @@ if [ -n "$existing_18790" ]; then
 else
   say "Mini port 18790 did not answer; the harness still reserves 18791 and will not touch it."
 fi
-
-base_members="$(remote_zsh "$UXTEST_REMOTE_SWARM_BIN members --swarm uxtest")"
-printf '%s\n' "$base_members" | grep -Fq "Dana [" || die \
-  "the one-time laptop launcher is absent. In a laptop cmux GUI tab run: mkdir -p ~/uxtest/human2/launcher && cd ~/uxtest/human2/launcher && swarm spawn --agent claude --name Dana --cwd ~/uxtest/human2/launcher --swarm uxtest --terminal cmux"
-say "Persistent laptop launcher Dana is present in the base uxtest swarm."
 
 if [ -f "$setup" ]; then
   profile="$(profile_id)"

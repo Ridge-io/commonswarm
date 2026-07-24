@@ -36,6 +36,15 @@ const RESET_HUMAN2_GUI = join(
   "scripts",
   "reset-human2-gui.sh",
 );
+const SERVE_HUMAN2_GUI = join(
+  ROOT,
+  "uxtest",
+  "scripts",
+  "serve-human2-gui.sh",
+);
+const UXTEST_LIB = join(ROOT, "uxtest", "scripts", "_lib.sh");
+const PREFLIGHT = join(ROOT, "uxtest", "scripts", "preflight.sh");
+const CHANNEL_UP = join(ROOT, "uxtest", "scripts", "channel-up.sh");
 
 function invitation() {
   const token = `swm_inv_${"A".repeat(43)}`;
@@ -459,4 +468,65 @@ test("Human2 GUI reset records success and fails if the keychain stays warm", ()
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
+});
+
+test("GUI-origin guard fails with the exact laptop remedy before a round", () => {
+  const remoteRoot = "/synthetic/tom/uxtest";
+  const remoteRepo = "/synthetic/tom/cloud-swarm";
+  const guarded = spawnSync(
+    "bash",
+    [
+      "-c",
+      [
+        'source "$1"',
+        'a2a_card_name() { printf "%s" "$UXTEST_LAUNCHER_NAME"; }',
+        "remote_zsh() { return 1; }",
+        "assert_gui_launcher_server",
+      ].join("\n"),
+      "bash",
+      UXTEST_LIB,
+    ],
+    {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        UXTEST_REMOTE_HOME_ROOT: remoteRoot,
+        UXTEST_REMOTE_REPO: remoteRepo,
+      },
+    },
+  );
+  assert.equal(guarded.status, 1);
+  assert.match(guarded.stderr, /accept and queue A2A but cannot push through cmux/);
+  assert.match(
+    guarded.stderr,
+    new RegExp(
+      `UXTEST_HOME_ROOT=${remoteRoot} ${remoteRepo}/uxtest/scripts/serve-human2-gui\\.sh launcher`,
+    ),
+  );
+
+  const preflight = readFileSync(PREFLIGHT, "utf8");
+  assert.ok(
+    preflight.indexOf("assert_gui_launcher_server") <
+      preflight.indexOf('mini_bin="$UXTEST_MINI_HOME_ROOT/bin/coswarm"'),
+    "GUI-origin gate must run before product/version round checks",
+  );
+
+  const noGui = spawnSync(
+    "bash",
+    [SERVE_HUMAN2_GUI, "launcher"],
+    {
+      encoding: "utf8",
+      env: { ...process.env, CMUX_SURFACE_ID: "" },
+    },
+  );
+  assert.equal(noGui.status, 1);
+  assert.match(noGui.stderr, /must run inside the laptop's GUI cmux session/);
+
+  const channel = readFileSync(CHANNEL_UP, "utf8");
+  assert.match(channel, /launcher_send/);
+  assert.match(channel, /serve-human2-gui\.sh round \$round/);
+  assert.doesNotMatch(
+    channel,
+    /remote_zsh "[\s\S]*nohup '\$UXTEST_REMOTE_SWARM_BIN' serve/,
+  );
 });

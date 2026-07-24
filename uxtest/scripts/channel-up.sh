@@ -70,71 +70,48 @@ ensure_mini_server() {
 
 ensure_laptop_server() {
   local expected="$1"
-  local current
-  current="$(curl -fsS --max-time 3 \
-    "http://$UXTEST_LAPTOP_IP:18790/.well-known/agent-card.json" 2>/dev/null |
-    node -e '
-      let raw = "";
-      process.stdin.on("data", chunk => raw += chunk);
-      process.stdin.on("end", () => {
-        if (!raw) return;
-        const value = JSON.parse(raw);
-        process.stdout.write(String(value.name ?? ""));
-      });
-    ' || true)"
-  if [ "$current" = "$expected" ]; then
-    say "Laptop A2A endpoint already serves $expected on port 18790."
+  local state="$UXTEST_REMOTE_HOME_ROOT/run/round-a2a-18790.json"
+  local pid_file="$UXTEST_REMOTE_HOME_ROOT/run/a2a-18790.pid"
+  local url="http://$UXTEST_LAPTOP_IP:18790"
+
+  laptop_gui_server_ready() {
+    [ "$(a2a_card_name "$url" || true)" = "$expected" ] || return 1
+    local raw
+    raw="$(remote_zsh "test -f '$state' && cat '$state'")" || return 1
+    local state_pid
+    state_pid="$(
+      gui_server_state_pid "$raw" "$expected" "$swarm_name" 18790
+    )" || return 1
+    local recorded_pid
+    recorded_pid="$(remote_zsh "test -f '$pid_file' && cat '$pid_file'")" ||
+      return 1
+    [ "$recorded_pid" = "$state_pid" ] || return 1
+    remote_zsh "kill -0 '$state_pid'" >/dev/null 2>&1
+  }
+
+  if laptop_gui_server_ready; then
+    say "GUI-origin laptop A2A endpoint already serves $expected on port 18790."
     return
   fi
-  if [ -n "$current" ]; then
-    say "Replacing the prior laptop uxtest A2A server '$current' on port 18790."
-  fi
-  remote_zsh "
-    set -e
-    run='$UXTEST_REMOTE_HOME_ROOT/run'
-    mkdir -p \"\$run\"
-    chmod 700 \"\$run\"
-    pid_file=\"\$run/a2a-18790.pid\"
-    if curl -fsS --max-time 2 http://127.0.0.1:18790/.well-known/agent-card.json >/dev/null 2>&1; then
-      test -f \"\$pid_file\" || {
-        echo 'port 18790 is occupied by a non-harness process' >&2
-        exit 42
-      }
-      old_pid=\$(cat \"\$pid_file\")
-      case \"\$old_pid\" in *[!0-9]*|'') exit 43 ;; esac
-      kill -0 \"\$old_pid\"
-      kill \"\$old_pid\"
-      for i in 1 2 3 4 5; do
-        kill -0 \"\$old_pid\" 2>/dev/null || break
-        sleep 1
-      done
-      ! kill -0 \"\$old_pid\" 2>/dev/null
+
+  say "Delegating $expected A2A server startup to GUI-session launcher $UXTEST_LAUNCHER_NAME."
+  launcher_send \
+    "Launcher-only channel task; you are not a study persona. Run exactly: UXTEST_HOME_ROOT=$UXTEST_REMOTE_HOME_ROOT UXTEST_MINI_HOME_ROOT=$UXTEST_REMOTE_HOME_ROOT UXTEST_REMOTE_HOME_ROOT=$UXTEST_REMOTE_HOME_ROOT UXTEST_REMOTE_SWARM_BIN=$UXTEST_REMOTE_SWARM_BIN $UXTEST_REMOTE_REPO/uxtest/scripts/serve-human2-gui.sh round $round. Once it completes, stay out of the round."
+
+  local timeout="${UXTEST_GUI_SERVE_TIMEOUT_SECONDS:-60}"
+  case "$timeout" in
+    ''|*[!0-9]*|0) die "UXTEST_GUI_SERVE_TIMEOUT_SECONDS must be a positive integer" ;;
+  esac
+  local elapsed=0
+  while [ "$elapsed" -lt "$timeout" ]; do
+    if laptop_gui_server_ready; then
+      say "GUI-origin laptop A2A endpoint verified for $expected."
+      return
     fi
-    nohup '$UXTEST_REMOTE_SWARM_BIN' serve \
-      --name '$expected' \
-      --swarm '$swarm_name' \
-      --port 18790 \
-      --bind 0.0.0.0 \
-      --advertise-host '$UXTEST_LAPTOP_IP' \
-      >\"\$run/a2a-18790.log\" 2>&1 </dev/null &
-    echo \$! >\"\$pid_file\"
-  "
-  for _ in 1 2 3 4 5 6 7 8 9 10; do
-    current="$(curl -fsS --max-time 3 \
-      "http://$UXTEST_LAPTOP_IP:18790/.well-known/agent-card.json" 2>/dev/null |
-      node -e '
-        let raw = "";
-        process.stdin.on("data", chunk => raw += chunk);
-        process.stdin.on("end", () => {
-          if (!raw) return;
-          const value = JSON.parse(raw);
-          process.stdout.write(String(value.name ?? ""));
-        });
-      ' || true)"
-    [ "$current" = "$expected" ] && return
-    sleep 1
+    "$UXTEST_SLEEP_BIN" 2
+    elapsed=$((elapsed + 2))
   done
-  die "laptop A2A server failed its agent-card postcondition"
+  die "$expected A2A server lacks verified GUI-cmux origin after ${timeout}s; inspect $state and $UXTEST_REMOTE_HOME_ROOT/run/a2a-18790.log"
 }
 
 wait_for_agent_remote "$swarm_name" "$human2" 5 ||
