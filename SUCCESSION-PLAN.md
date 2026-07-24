@@ -309,6 +309,14 @@ Mason's `ux-connect-polish` checkpoint (#001) and **LANDED it** — commit `87e4
   Then P2-3 agent-skill layer (the §1c endgame: the user's own agent drives coswarm), P2-4 invite
   page + `https://` link form. Same loop: brief → Sable adversarial review → Mason implements
   → Lead verifies by own execution → land → redeploy. Mason + Sable both warm.
+- **★ DECISION #84 (operator, 2026-07-24): OPTION A — fix the product, do NOT revoke.** Faced with
+  (A) do the expanded P2-2 multi-workspace fix now vs (B) authorize a narrow destructive revoke of
+  today's test memberships to get a uxtest pilot round sooner, the operator chose **A**. So: the
+  `auth.ts:410` multi-workspace bug is fixed as a real product change, no destructive hosted write
+  is authorized, additive-only reset stands, and **the uxtest harness stays blocked until the fix
+  lands** — at which point it unblocks as a side effect. Rationale worth preserving: the bug is
+  user-facing (any second real collaboration hits it), so fixing it serves users rather than
+  merely serving our test rig.
 - **OPERATOR ACTION OUTSTANDING:** drive `coswarm accept --link-stdin` as a second human with
   a **distinct verified email** (lesson #5) — the real test of whether P2-1 *feels* simpler.
   Solicit impressions and fold into P2-2+ scoping (§1c is a living calibration datum).
