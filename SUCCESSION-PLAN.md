@@ -185,6 +185,25 @@ Start a fresh swarm task per sub-slice; Mason implements, you orchestrate + veri
 impressions when they do and fold into P2/P3 scoping; (d) plan P2+ from what the dogfood
 teaches (§0b).
 
+### LEAD3 ACTIVE (2026-07-24, baton accepted at HEAD 7bf5f6f). Slice-2b decomposition:
+Lead2 stood down; Lead3 is current Lead. Sub-slices (each: build→green→Kimi K3 review→commit):
+- **2b-1 (IN FLIGHT — Mason holds `p1-slice2b-core`):** pure `decideWorkspace` core. Three new
+  sibling modules `src/protocol/workspace-{events,commands,reducer}.ts` + index export, mirroring
+  the P0 pure pattern. Commands: create_workspace, invite_member, revoke_invitation,
+  accept_invitation, remove_member, change_role, create_agent_principal, revoke_agent_principal,
+  mint_agent_token, revoke_agent_token (§3.4 table, P1-COMMAND-API.md:399). Unit tests in
+  `tests/protocol-workspace.test.ts`. Pure/no-I/O; token material+hashing + atomic invite
+  consumption are 2b-2's job. Deferred here: renew_worker_token, repo mapping, landing authority,
+  issue/revoke_grant, register/revoke_device.
+- **2b-2 (NEXT):** wire decideWorkspace into the `command` Edge Function (projection loader,
+  routing, atomic invite consumption under head lock, token material/hash on I/O side); **retire
+  `src/cloud/seed.ts` fixture minting**; local integration tests.
+- **2b-3:** launch-gate tests T-04 (adds issue_grant/revoke_grant + grant-consumption), T-07
+  (needs test hooks), T-08, T-09, T-12.
+- **2b-4:** rate limiting §6 + `rate_buckets`; gap#15 auth-admin module + device endpoints.
+OPEN FIRST-ACTION: `/remote-control` (operator-supervised remote drive) — I cannot self-invoke
+the slash command; surfaced to operator to enable.
+
 ## 1b. Governing steer (operator, 2026-07-23) — READ THIS BEFORE SCOPING ANYTHING
 
 **Swarm is primarily about coordination — keep it that way** (the Workbench.md
