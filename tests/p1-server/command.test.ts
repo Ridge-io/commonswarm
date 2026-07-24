@@ -9,6 +9,7 @@ import {
   reduceTask,
   requestHash,
   upcastEnvelope,
+  WORKSPACE_EVENT_TYPES,
   type Actor,
   type Command,
   type EventEnvelope,
@@ -36,8 +37,25 @@ interface Fixture {
   agentRun: string;
   agentToken: string;
   credentials: Map<string, { kind: "user" | "agent"; id: string; actor: Actor }>;
-  firstRequests: Map<string, Command>;
+  firstRequests: Map<string, WireCommand>;
 }
+
+type ConnectCommand =
+  | { kind: "invite_member"; email: string; ttl_ms?: number }
+  | { kind: "accept_invitation"; token: string }
+  | { kind: "create_agent_principal"; name: string }
+  | {
+    kind: "mint_agent_token";
+    principal_id: string;
+    run_id: string;
+    task_id: string;
+    epoch: number;
+    device_id: string;
+    ttl_ms?: number;
+    scopes?: string[];
+  };
+
+type WireCommand = Command | ConnectCommand;
 
 interface CommandResponse {
   status: number;
@@ -107,7 +125,9 @@ after(async () => {
   await sql?.end({ timeout: 5 });
 });
 
-async function createUser(label: string): Promise<{ id: string; jwt: string }> {
+async function createUser(
+  label: string,
+): Promise<{ id: string; jwt: string; email: string }> {
   const nonce = randomUUID();
   const email = `${label}-${nonce}@example.test`;
   const password = `T-${randomBytes(24).toString("base64url")}!`;
@@ -127,6 +147,7 @@ async function createUser(label: string): Promise<{ id: string; jwt: string }> {
   return {
     id: created.data.user.id,
     jwt: signedIn.data.session.access_token,
+    email,
   };
 }
 
@@ -330,6 +351,56 @@ async function issue(
   };
 }
 
+function registerHuman(
+  f: Fixture,
+  user: { id: string; jwt: string },
+): void {
+  f.credentials.set(user.jwt, {
+    kind: "user",
+    id: user.id,
+    actor: { user: user.id, agent_principal: null, run: null },
+  });
+}
+
+async function issueConnect(
+  f: Fixture,
+  token: string,
+  command: ConnectCommand,
+  id = commandId(command.kind),
+  workspaceId: string | undefined = f.workspaceA,
+): Promise<CommandResponse> {
+  const credential = f.credentials.get(token);
+  assert.ok(credential, "test credential is registered");
+  const ledgerKey = `${credential.kind}:${credential.id}:${id}`;
+  if (!f.firstRequests.has(ledgerKey)) f.firstRequests.set(ledgerKey, command);
+  const accepting = command.kind === "accept_invitation";
+  const requestBody = {
+    command_id: id,
+    client_version: "0.1.0",
+    ...(accepting
+      ? {}
+      : {
+        workspace_id: workspaceId,
+        stream: { kind: "workspace" },
+      }),
+    command,
+  };
+  const response = await fetch(`${local.API_URL}/functions/v1/command`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${token}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify(requestBody),
+  });
+  const text = await response.text();
+  return {
+    status: response.status,
+    text,
+    body: JSON.parse(text) as Record<string, unknown>,
+  };
+}
+
 function stored(body: Record<string, unknown>): Record<string, unknown> {
   return Object.fromEntries(
     ["ok", "reason", "detail", "class", "event_ids"]
@@ -384,6 +455,13 @@ async function assertInvariants(f: Fixture): Promise<void> {
   const folded = new Map<string, TaskState>();
   for (const row of events) {
     const payload = row.payload as Record<string, unknown>;
+    const workspaceEvent =
+      (WORKSPACE_EVENT_TYPES as readonly string[]).includes(String(row.type)) &&
+      (
+        row.type !== "CommandRejected" ||
+        typeof payload.task_id !== "string"
+      );
+    if (workspaceEvent) continue;
     const taskId = String(payload.task_id);
     const key = `${String(row.stream_id)}:${taskId}`;
     const event = upcastEnvelope({
@@ -466,7 +544,11 @@ async function assertInvariants(f: Fixture): Promise<void> {
       : [...f.credentials.values()].find((entry) =>
         entry.kind === "user" && entry.id === row.principal_id
       )!.actor;
-    assert.equal(row.request_hash, requestHash(actor, original), "I4 request hash");
+    assert.equal(
+      row.request_hash,
+      requestHash(actor, original as Command),
+      "I4 request hash",
+    );
   }
 
   // I5: every event is attributable; agent stamps join to the run/principal.
@@ -816,5 +898,311 @@ test("unknown-task agent command is history-only and replayable", async () => {
       WHERE stream_id = ${f.streamA}::uuid AND task_id = ${taskId}::uuid
     `;
     assert.equal(Number(tasks[0]?.count), 0);
+  });
+});
+
+test("connect loop invites, accepts, creates a principal, and mints a narrow token", async () => {
+  await scenario(async (f) => {
+    const invitee = await createUser("connect-invitee");
+    registerHuman(f, invitee);
+
+    const excessiveTtl = await issueConnect(f, f.uaJwt, {
+      kind: "invite_member",
+      email: `ttl-${randomUUID()}@example.test`,
+      ttl_ms: 7 * 24 * 60 * 60 * 1000 + 1,
+    });
+    assert.equal(excessiveTtl.status, 400);
+    assert.deepEqual(excessiveTtl.body, { error: "invalid_request" });
+
+    const inviteIdempotencyKey = commandId("connectinvite");
+    const invited = await issueConnect(
+      f,
+      f.uaJwt,
+      { kind: "invite_member", email: invitee.email },
+      inviteIdempotencyKey,
+    );
+    assert.equal(invited.status, 200);
+    assert.equal(invited.body.status, "accepted");
+    const invitationId = String(invited.body.invitation_id);
+    const invitationToken = String(invited.body.invitation_token);
+    assert.match(invitationId, /^[0-9a-f-]{36}$/i);
+    assert.match(invitationToken, /^swm_inv_[A-Za-z0-9_-]{43}$/);
+
+    const inviteReplay = await issueConnect(
+      f,
+      f.uaJwt,
+      { kind: "invite_member", email: invitee.email },
+      inviteIdempotencyKey,
+    );
+    assert.equal(inviteReplay.body.status, "accepted");
+    assert.equal(inviteReplay.body.invitation_id, invitationId);
+    assert.equal(Object.hasOwn(inviteReplay.body, "invitation_token"), false);
+
+    const accepted = await issueConnect(
+      f,
+      invitee.jwt,
+      { kind: "accept_invitation", token: invitationToken },
+      commandId("connectaccept"),
+      undefined,
+    );
+    assert.equal(accepted.status, 200);
+    assert.equal(accepted.body.status, "accepted");
+    assert.equal(accepted.body.workspace_id, f.workspaceA);
+
+    const principalResult = await issueConnect(
+      f,
+      invitee.jwt,
+      { kind: "create_agent_principal", name: "connect-worker" },
+    );
+    assert.equal(principalResult.body.status, "accepted");
+    const principalId = String(principalResult.body.principal_id);
+    assert.match(principalId, /^[0-9a-f-]{36}$/i);
+
+    const runId = randomUUID();
+    const taskId = randomUUID();
+    const deviceId = randomUUID();
+    const mintIdempotencyKey = commandId("connectmint");
+    const mintCommand: ConnectCommand = {
+      kind: "mint_agent_token",
+      principal_id: principalId,
+      run_id: runId,
+      task_id: taskId,
+      epoch: 7,
+      device_id: deviceId,
+    };
+    const minted = await issueConnect(
+      f,
+      invitee.jwt,
+      mintCommand,
+      mintIdempotencyKey,
+    );
+    assert.equal(minted.status, 200);
+    assert.equal(minted.body.status, "accepted");
+    assert.equal(minted.body.run_id, runId);
+    const agentToken = String(minted.body.agent_token);
+    assert.match(agentToken, /^swm_agt_[A-Za-z0-9_-]{43}$/);
+    const mintReplay = await issueConnect(
+      f,
+      invitee.jwt,
+      mintCommand,
+      mintIdempotencyKey,
+    );
+    assert.equal(mintReplay.body.status, "accepted");
+    assert.equal(mintReplay.body.token_id, minted.body.token_id);
+    assert.equal(mintReplay.body.run_id, runId);
+    assert.equal(Object.hasOwn(mintReplay.body, "agent_token"), false);
+
+    const [membership] = await sql<Record<string, unknown>[]>`
+      SELECT role, invited_by, revoked_at
+      FROM swarm.memberships
+      WHERE workspace_id = ${f.workspaceA}::uuid
+        AND user_id = ${invitee.id}::uuid
+    `;
+    assert.equal(membership?.role, "member");
+    assert.equal(membership?.invited_by, f.ua);
+    assert.equal(membership?.revoked_at, null);
+
+    const [invitation] = await sql<Record<string, unknown>[]>`
+      SELECT
+        token_hash, consumed_by, consumed_at, role, email,
+        created_at, expires_at
+      FROM swarm.invitations
+      WHERE invitation_id = ${invitationId}::uuid
+    `;
+    assert.equal(invitation?.consumed_by, invitee.id);
+    assert.ok(invitation?.consumed_at instanceof Date);
+    assert.equal(invitation?.role, "member");
+    assert.equal(invitation?.email, invitee.email.toLowerCase());
+    assert.equal(
+      (invitation?.expires_at as Date).getTime() -
+        (invitation?.created_at as Date).getTime(),
+      24 * 60 * 60 * 1000,
+    );
+    assert.equal(
+      Buffer.from(invitation?.token_hash as Uint8Array).toString("hex"),
+      createHash("sha256").update(invitationToken).digest("hex"),
+    );
+
+    const [tokenRow] = await sql<Record<string, unknown>[]>`
+      SELECT
+        t.token_hash, t.task_id, t.epoch, t.scopes,
+        r.principal_id AS run_principal_id, r.device_id,
+        d.user_id AS device_user_id
+      FROM swarm.agent_tokens AS t
+      JOIN swarm.agent_runs AS r ON r.run_id = t.run_id
+      JOIN swarm.devices AS d ON d.device_id = r.device_id
+      WHERE t.token_id = ${String(minted.body.token_id)}::uuid
+    `;
+    assert.equal(tokenRow?.task_id, taskId);
+    assert.equal(Number(tokenRow?.epoch), 7);
+    assert.deepEqual(tokenRow?.scopes, [
+      "create",
+      "acquire",
+      "renew",
+      "handoff",
+      "takeover",
+      "submit",
+      "close",
+      "reopen",
+    ]);
+    assert.equal(tokenRow?.run_principal_id, principalId);
+    assert.equal(tokenRow?.device_id, deviceId);
+    assert.equal(tokenRow?.device_user_id, invitee.id);
+    assert.equal(
+      Buffer.from(tokenRow?.token_hash as Uint8Array).toString("hex"),
+      createHash("sha256").update(agentToken).digest("hex"),
+    );
+
+    const [secretLeaks] = await sql<{ count: string | number }[]>`
+      SELECT
+        (
+          SELECT count(*) FROM swarm.events
+          WHERE strpos(payload::text, ${invitationToken}) > 0
+             OR strpos(payload::text, ${agentToken}) > 0
+        ) + (
+          SELECT count(*) FROM swarm.idempotency_keys
+          WHERE strpos(response::text, ${invitationToken}) > 0
+             OR strpos(response::text, ${agentToken}) > 0
+        ) + (
+          SELECT count(*) FROM swarm.audit_log
+          WHERE strpos(coalesce(detail, ''), ${invitationToken}) > 0
+             OR strpos(coalesce(detail, ''), ${agentToken}) > 0
+        ) AS count
+    `;
+    assert.equal(Number(secretLeaks?.count), 0);
+  });
+});
+
+test("forwarded invitation has exactly one atomic accept winner", async () => {
+  await scenario(async (f) => {
+    const [candidateA, candidateB, unknownCandidate] = await Promise.all([
+      createUser("accept-race-a"),
+      createUser("accept-race-b"),
+      createUser("accept-unknown"),
+    ]);
+    registerHuman(f, candidateA);
+    registerHuman(f, candidateB);
+    registerHuman(f, unknownCandidate);
+
+    const invited = await issueConnect(f, f.uaJwt, {
+      kind: "invite_member",
+      email: candidateA.email,
+    });
+    const invitationToken = String(invited.body.invitation_token);
+    const acceptAId = commandId("accepta");
+    const acceptBId = commandId("acceptb");
+    const command = { kind: "accept_invitation", token: invitationToken } as const;
+    const [acceptA, acceptB] = await Promise.all([
+      issueConnect(f, candidateA.jwt, command, acceptAId, undefined),
+      issueConnect(f, candidateB.jwt, command, acceptBId, undefined),
+    ]);
+    const results = [acceptA, acceptB];
+    assert.equal(
+      results.filter((result) => result.status === 200).length,
+      1,
+    );
+    assert.equal(
+      results.filter((result) => result.status === 403).length,
+      1,
+    );
+    const loser = acceptA.status === 403 ? acceptA : acceptB;
+    assert.deepEqual(loser.body, { error: "forbidden" });
+
+    const winner = acceptA.status === 200 ? candidateA : candidateB;
+    const loserUser = acceptA.status === 403 ? candidateA : candidateB;
+    const [invitation] = await sql<{ consumed_by: string }[]>`
+      SELECT consumed_by
+      FROM swarm.invitations
+      WHERE token_hash = ${createHash("sha256").update(invitationToken).digest()}
+    `;
+    assert.equal(invitation?.consumed_by, winner.id);
+    const members = await sql<{ user_id: string }[]>`
+      SELECT user_id
+      FROM swarm.memberships
+      WHERE workspace_id = ${f.workspaceA}::uuid
+        AND user_id IN (${winner.id}::uuid, ${loserUser.id}::uuid)
+        AND revoked_at IS NULL
+    `;
+    assert.deepEqual(members.map((row) => row.user_id), [winner.id]);
+
+    const raceEvents = await sql<{ type: string }[]>`
+      SELECT type
+      FROM swarm.events
+      WHERE command_id IN (${acceptAId}, ${acceptBId})
+      ORDER BY seq
+    `;
+    assert.equal(
+      raceEvents.filter((event) => event.type === "InvitationAccepted").length,
+      1,
+    );
+    assert.equal(
+      raceEvents.filter((event) => event.type === "MemberJoined").length,
+      1,
+    );
+    assert.equal(
+      raceEvents.filter((event) => event.type === "CommandRejected").length,
+      1,
+    );
+
+    const loserId = acceptA.status === 403 ? acceptAId : acceptBId;
+    const loserReplay = await issueConnect(
+      f,
+      loserUser.jwt,
+      command,
+      loserId,
+      undefined,
+    );
+    assert.equal(loserReplay.status, 403);
+    assert.deepEqual(loserReplay.body, { error: "forbidden" });
+
+    const unknown = await issueConnect(
+      f,
+      unknownCandidate.jwt,
+      {
+        kind: "accept_invitation",
+        token: `swm_inv_${randomBytes(32).toString("base64url")}`,
+      },
+      commandId("acceptunknown"),
+      undefined,
+    );
+    assert.equal(unknown.status, 403);
+    assert.deepEqual(unknown.body, { error: "forbidden" });
+  });
+});
+
+test("HTTP-only custom scope input is governed by the pure denylist", async () => {
+  await scenario(async (f) => {
+    const principal = await issueConnect(f, f.uaJwt, {
+      kind: "create_agent_principal",
+      name: `denylist-${randomBytes(4).toString("hex")}`,
+    });
+    const principalId = String(principal.body.principal_id);
+    const runId = randomUUID();
+    const deviceId = randomUUID();
+    const rejected = await issueConnect(f, f.uaJwt, {
+      kind: "mint_agent_token",
+      principal_id: principalId,
+      run_id: runId,
+      task_id: randomUUID(),
+      epoch: 1,
+      device_id: deviceId,
+      scopes: ["issue_grant"],
+    });
+    assert.equal(rejected.status, 200);
+    assert.equal(rejected.body.status, "rejected");
+    assert.equal(rejected.body.class, "domain");
+    assert.equal(rejected.body.reason, "scope_denylisted");
+    assert.equal(Object.hasOwn(rejected.body, "agent_token"), false);
+
+    const [sideEffects] = await sql<{ count: string | number }[]>`
+      SELECT
+        (SELECT count(*) FROM swarm.agent_runs WHERE run_id = ${runId}::uuid) +
+        (SELECT count(*) FROM swarm.devices WHERE device_id = ${deviceId}::uuid) +
+        (
+          SELECT count(*) FROM swarm.agent_tokens
+          WHERE principal_id = ${principalId}::uuid
+        ) AS count
+    `;
+    assert.equal(Number(sideEffects?.count), 0);
   });
 });

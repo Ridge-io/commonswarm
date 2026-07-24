@@ -4,11 +4,18 @@ import { randomUUID } from "node:crypto";
 import { open, unlink } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 import type { Command } from "./protocol/index.js";
-import { login, logout, refreshedCredential } from "./cloud/auth.js";
+import {
+  login,
+  logout,
+  refreshedCredential,
+  type RefreshedCredential,
+} from "./cloud/auth.js";
 import {
   assertAgentToken,
+  assertInvitationToken,
   ThinCommandClient,
   type CommandResult,
+  type ConnectCommandResult,
   type StreamRoute,
 } from "./cloud/command-client.js";
 import { cloudTarget, type CloudTarget } from "./cloud/config.js";
@@ -109,6 +116,10 @@ function usage(): string {
   return `Usage:
   coswarm login --url <project-url> --anon-key <key> [--no-browser]
   coswarm logout --url <project-url> --anon-key <key>
+  coswarm invite --url <url> --anon-key <key> --workspace-id <uuid> --email <email>
+  coswarm accept <invitation-token> --url <url> --anon-key <key>
+  coswarm principal create --url <url> --anon-key <key> --workspace-id <uuid> --name <name>
+  coswarm token mint --url <url> --anon-key <key> --workspace-id <uuid> --principal-id <uuid> --run-id <uuid> --task-id <uuid> --epoch <n> [--ttl-ms <ms>]
   coswarm command <kind> --url <url> --anon-key <key> --workspace-id <uuid> [command fields]
   coswarm dogfood --url <url> --anon-key <key> --workspace-id <uuid> --slug <slug> --branch <branch> --head-sha <sha> --evidence <ref>
   coswarm seed-fixture --uid <auth-user-uuid> [--device-id <uuid>]
@@ -116,6 +127,9 @@ function usage(): string {
 Credential selection for command/dogfood:
   default                 refresh the human login from secure storage
   --agent-token-stdin     read one seeded swm_agt_ credential from stdin
+
+Invite, accept, principal create, and token mint require a stored human login.
+Invitation and agent credentials are printed only in their fresh success response.
 
 Target flags may also be set with SWARM_CLOUD_URL and SWARM_CLOUD_ANON_KEY.
 The fixture bridge reads its privileged database connection only from DATABASE_URL
@@ -188,6 +202,154 @@ async function credential(
   if (args.has("agent-token-stdin")) return await stdinCredential();
   const credentials = await store(args, cloud);
   return (await refreshedCredential(cloud, credentials)).accessToken;
+}
+
+async function humanCredential(
+  args: Arguments,
+  cloud: CloudTarget,
+): Promise<RefreshedCredential> {
+  return await refreshedCredential(cloud, await store(args, cloud));
+}
+
+function uuid(value: string | undefined, field: string): string {
+  if (
+    value === undefined ||
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+      .test(value)
+  ) {
+    throw new Error(`server returned a malformed ${field}`);
+  }
+  return value;
+}
+
+function acceptedConnect(
+  label: string,
+  result: ConnectCommandResult,
+): ConnectCommandResult["response"] {
+  if (result.response.status !== "accepted") {
+    throw new Error(
+      `${label} was rejected: ${result.response.reason ?? "domain rejection"}`,
+    );
+  }
+  return result.response;
+}
+
+function printJson(value: Record<string, unknown>): void {
+  process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
+}
+
+async function runInvite(args: Arguments): Promise<void> {
+  args.assertShape([...TARGET_FLAGS, "workspace-id", "email"], 1);
+  const cloud = target(args);
+  const human = await humanCredential(args, cloud);
+  const response = acceptedConnect(
+    "invite",
+    await new ThinCommandClient(cloud).sendConnect({
+      workspaceId: args.required("workspace-id"),
+      command: { kind: "invite_member", email: args.required("email") },
+      credential: human.accessToken,
+    }),
+  );
+  assertInvitationToken(response.invitation_token ?? "");
+  printJson({
+    status: response.status,
+    invitation_id: uuid(response.invitation_id, "invitation_id"),
+    invitation_token: response.invitation_token,
+  });
+}
+
+async function runAccept(args: Arguments): Promise<void> {
+  args.assertShape([...TARGET_FLAGS], 2);
+  const invitationToken = args.positionals[1]!;
+  assertInvitationToken(invitationToken);
+  const cloud = target(args);
+  const human = await humanCredential(args, cloud);
+  const response = acceptedConnect(
+    "accept",
+    await new ThinCommandClient(cloud).sendConnect({
+      command: { kind: "accept_invitation", token: invitationToken },
+      credential: human.accessToken,
+    }),
+  );
+  printJson({
+    status: response.status,
+    workspace_id: uuid(response.workspace_id, "workspace_id"),
+  });
+}
+
+async function runPrincipal(args: Arguments): Promise<void> {
+  args.assertShape([...TARGET_FLAGS, "workspace-id", "name"], 2);
+  if (args.positionals[1] !== "create") {
+    throw new Error(`unknown principal command: ${args.positionals[1]}`);
+  }
+  const cloud = target(args);
+  const human = await humanCredential(args, cloud);
+  const response = acceptedConnect(
+    "principal create",
+    await new ThinCommandClient(cloud).sendConnect({
+      workspaceId: args.required("workspace-id"),
+      command: {
+        kind: "create_agent_principal",
+        name: args.required("name"),
+      },
+      credential: human.accessToken,
+    }),
+  );
+  printJson({
+    status: response.status,
+    principal_id: uuid(response.principal_id, "principal_id"),
+  });
+}
+
+async function runToken(args: Arguments): Promise<void> {
+  args.assertShape(
+    [
+      ...TARGET_FLAGS,
+      "workspace-id",
+      "principal-id",
+      "run-id",
+      "task-id",
+      "epoch",
+      "ttl-ms",
+    ],
+    2,
+  );
+  if (args.positionals[1] !== "mint") {
+    throw new Error(`unknown token command: ${args.positionals[1]}`);
+  }
+  const cloud = target(args);
+  const human = await humanCredential(args, cloud);
+  const ttl = args.optional("ttl-ms");
+  const response = acceptedConnect(
+    "token mint",
+    await new ThinCommandClient(cloud).sendConnect({
+      workspaceId: args.required("workspace-id"),
+      command: {
+        kind: "mint_agent_token",
+        principal_id: args.required("principal-id"),
+        run_id: args.required("run-id"),
+        task_id: args.required("task-id"),
+        epoch: integer(args, "epoch"),
+        device_id: human.deviceId,
+        ...(ttl === undefined
+          ? {}
+          : {
+            ttl_ms: integer(args, "ttl-ms", {
+              minimum: 1,
+              maximum: 28_800_000,
+            }),
+          }),
+      },
+      credential: human.accessToken,
+    }),
+  );
+  assertAgentToken(response.agent_token ?? "");
+  printJson({
+    status: response.status,
+    token_id: uuid(response.token_id, "token_id"),
+    run_id: uuid(response.run_id, "run_id"),
+    agent_token: response.agent_token,
+  });
 }
 
 function command(args: Arguments, kind: string): Command {
@@ -466,6 +628,22 @@ async function main(): Promise<void> {
     process.stdout.write(removed ? "Logged out.\n" : "Already logged out.\n");
     return;
   }
+  if (verb === "invite") {
+    await runInvite(args);
+    return;
+  }
+  if (verb === "accept") {
+    await runAccept(args);
+    return;
+  }
+  if (verb === "principal") {
+    await runPrincipal(args);
+    return;
+  }
+  if (verb === "token") {
+    await runToken(args);
+    return;
+  }
   if (verb === "command") {
     await runTaskCommand(args);
     return;
@@ -487,6 +665,6 @@ function safeError(error: unknown): string {
 }
 
 main().catch((error) => {
-  process.stderr.write(`swarm: ${safeError(error)}\n`);
+  process.stderr.write(`coswarm: ${safeError(error)}\n`);
   process.exitCode = 1;
 });

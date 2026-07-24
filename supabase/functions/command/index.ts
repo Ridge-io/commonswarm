@@ -6,8 +6,10 @@ import postgres from "npm:postgres@3.4.9";
 import {
   applyCommand,
   canonicalPrincipal,
+  decideWorkspace,
   DISPOSITIONS,
   reduceTask,
+  reduceWorkspace,
   requestHash,
 } from "../_shared/protocol.js";
 
@@ -51,12 +53,127 @@ type Command =
   }
   | { kind: "reopen"; task_id: string; epoch: number };
 
+type ConnectCommand =
+  | { kind: "invite_member"; email: string; ttl_ms?: number }
+  | { kind: "accept_invitation"; token: string }
+  | { kind: "create_agent_principal"; name: string }
+  | {
+    kind: "mint_agent_token";
+    principal_id: string;
+    run_id: string;
+    task_id: string;
+    epoch: number;
+    ttl_ms?: number;
+    device_id: string;
+    scopes?: string[];
+  };
+
+type ValidatedCommand = Command | ConnectCommand;
+
+type WorkspaceRole = "owner" | "admin" | "member";
+
+interface WorkspaceState {
+  workspace: {
+    workspace_id: string;
+    name: string;
+    created_by: string;
+    created_at: number;
+    archived_at: number | null;
+  };
+  members: Record<string, {
+    user_id: string;
+    role: WorkspaceRole;
+    invited_by: string | null;
+    joined_at: number;
+    revoked_at: number | null;
+  }>;
+  invitations: Record<string, {
+    invitation_id: string;
+    email: string | null;
+    role: WorkspaceRole;
+    token_hash: string;
+    expires_at: number;
+    created_by: string;
+    created_at: number;
+    consumed_at: number | null;
+    consumed_by: string | null;
+    revoked_at: number | null;
+  }>;
+  principals: Record<string, {
+    principal_id: string;
+    owner_user_id: string;
+    name: string;
+    created_at: number;
+    revoked_at: number | null;
+  }>;
+  tokens: Record<string, {
+    token_id: string;
+    principal_id: string;
+    run_id: string;
+    task_id: string | null;
+    epoch: number | null;
+    scopes: string[];
+    issued_at: number;
+    expires_at: number;
+    revoked_at: number | null;
+  }>;
+  owners_count: number;
+}
+
+type WorkspaceCommand =
+  | {
+    kind: "invite_member";
+    invitation_id: string;
+    email: string | null;
+    role: WorkspaceRole;
+    token_hash: string;
+    expires_at: number;
+  }
+  | { kind: "accept_invitation"; token_hash: string }
+  | { kind: "create_agent_principal"; principal_id: string; name: string }
+  | {
+    kind: "mint_agent_token";
+    token_id: string;
+    principal_id: string;
+    run_id: string;
+    task_id: string;
+    epoch: number;
+    scopes: string[];
+    ttl_ms?: number;
+  };
+
+interface WorkspaceDecideCtx {
+  now: number;
+  actor: Actor;
+  credential_kind: "human" | "agent";
+  presenting_token_id: string | null;
+  command_id: string;
+  workspace_id: string;
+  stream_id: string;
+  operatorAllowed(actor: Actor): boolean;
+  role(user_id: string): WorkspaceRole | null;
+  inviteeAlreadyMember(email: string | null): boolean;
+  identityVerified(user_id: string): boolean;
+  humanRights(actor: Actor): readonly string[];
+  landingAuthorityChangeResolved(
+    target_user_id: string,
+    successor_user_id: string | null,
+  ): boolean;
+  nextSeq(): number;
+  nextEventId(): string;
+}
+
 interface StoredResponse {
   ok: boolean;
   reason?: string;
   detail?: string;
   class?: "authz" | "domain";
   event_ids: string[];
+  invitation_id?: string;
+  principal_id?: string;
+  token_id?: string;
+  run_id?: string;
+  workspace_id?: string;
 }
 
 interface EventEnvelope {
@@ -138,8 +255,12 @@ interface FreshOutcome {
 const MAX_BODY_BYTES = 128 * 1024;
 const MAX_EVENT_PAYLOAD_BYTES = 64 * 1024;
 const MAX_TTL_MS = 4 * 60 * 60 * 1000;
+const INVITATION_TTL_MS = 24 * 60 * 60 * 1000;
+const INVITATION_MAX_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const AGENT_TOKEN_MAX_TTL_MS = 8 * 60 * 60 * 1000;
 const COMMAND_ID_RE = /^[A-Za-z0-9_-]{8,72}$/;
 const AGENT_TOKEN_RE = /^swm_agt_[A-Za-z0-9_-]{43}$/;
+const INVITATION_TOKEN_RE = /^swm_inv_[A-Za-z0-9_-]{43}$/;
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SLUG_RE = /^[a-z0-9][a-z0-9_-]{0,62}$/;
@@ -148,6 +269,36 @@ const SEMVER_RE = /^(\d+)\.(\d+)\.(\d+)(?:-[0-9A-Za-z.-]+)?$/;
 const CONTROL_RE = /[\u0000-\u001f\u007f-\u009f]/;
 const CONTROL_GLOBAL_RE = /[\u0000-\u001f\u007f-\u009f]/g;
 const COMMAND_KINDS = [
+  "create",
+  "acquire",
+  "renew",
+  "handoff",
+  "takeover",
+  "submit",
+  "close",
+  "reopen",
+  "invite_member",
+  "accept_invitation",
+  "create_agent_principal",
+  "mint_agent_token",
+] as const;
+const TASK_COMMAND_KINDS = [
+  "create",
+  "acquire",
+  "renew",
+  "handoff",
+  "takeover",
+  "submit",
+  "close",
+  "reopen",
+] as const;
+const CONNECT_COMMAND_KINDS = [
+  "invite_member",
+  "accept_invitation",
+  "create_agent_principal",
+  "mint_agent_token",
+] as const;
+const P0_AGENT_SCOPES = [
   "create",
   "acquire",
   "renew",
@@ -225,13 +376,33 @@ interface AuthContext {
   deviceId: string | null;
   actor: Actor;
   agent: AgentAuthRow | null;
+  identityVerified: boolean;
 }
 
 interface Route {
   workspaceId: string;
   streamId: string;
-  membershipRole: Role;
+  membershipRole: Role | null;
   membershipRevokedAt: Date | null;
+}
+
+interface VerifiedHuman {
+  userId: string;
+  email: string | null;
+  displayName: string;
+  identityVerified: boolean;
+}
+
+interface PreparedWorkspace {
+  wire: ConnectCommand;
+  command: WorkspaceCommand;
+  state: WorkspaceState;
+  ctx: WorkspaceDecideCtx;
+  invitationToken: string | null;
+  invitationHash: Uint8Array | null;
+  agentToken: string | null;
+  agentTokenHash: Uint8Array | null;
+  lineageId: string | null;
 }
 
 interface HttpResult {
@@ -407,6 +578,28 @@ async function sha256(value: string): Promise<Uint8Array> {
   );
 }
 
+function bytesToHex(value: Uint8Array): string {
+  return [...value].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function hexToBytes(value: string): Uint8Array {
+  if (!/^[0-9a-f]{64}$/i.test(value)) throw new Error("invalid SHA-256 hex");
+  return new Uint8Array(
+    value.match(/.{2}/g)!.map((byte) => Number.parseInt(byte, 16)),
+  );
+}
+
+function opaqueToken(prefix: "swm_inv_" | "swm_agt_"): string {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  const binary = String.fromCharCode(...bytes);
+  const encoded = btoa(binary)
+    .replaceAll("+", "-")
+    .replaceAll("/", "_")
+    .replace(/=+$/u, "");
+  return `${prefix}${encoded}`;
+}
+
 async function setTransaction(tx: Sql): Promise<void> {
   await tx.unsafe("SET TRANSACTION ISOLATION LEVEL READ COMMITTED");
   await tx.unsafe("SET LOCAL ROLE swarm_command");
@@ -484,13 +677,24 @@ function boundedText(
     !CONTROL_RE.test(value);
 }
 
+function normalizedEmail(value: unknown): string | null {
+  if (
+    typeof value !== "string" ||
+    value.length < 3 ||
+    value.length > 320 ||
+    CONTROL_RE.test(value)
+  ) return null;
+  const email = value.trim().toLowerCase();
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(email) ? email : null;
+}
+
 function nullableUuid(value: unknown): value is string | null {
   return value === null || (typeof value === "string" && UUID_RE.test(value));
 }
 
 function validateCommand(
   value: unknown,
-): { ok: true; command: Command } | { ok: false; status: number; reason: string } {
+): { ok: true; command: ValidatedCommand } | { ok: false; status: number; reason: string } {
   const cmd = record(value);
   if (!cmd || typeof cmd.kind !== "string") {
     return { ok: false, status: 400, reason: "invalid command shape" };
@@ -498,6 +702,98 @@ function validateCommand(
   if (!(COMMAND_KINDS as readonly string[]).includes(cmd.kind)) {
     return { ok: false, status: 400, reason: "unknown command kind" };
   }
+
+  if ((CONNECT_COMMAND_KINDS as readonly string[]).includes(cmd.kind)) {
+    if (cmd.kind === "invite_member") {
+      const email = normalizedEmail(cmd.email);
+      const optionalKeys = Object.hasOwn(cmd, "ttl_ms") ? ["ttl_ms"] : [];
+      const validTtl = cmd.ttl_ms === undefined ||
+        (integer(cmd.ttl_ms, 1) && cmd.ttl_ms <= INVITATION_MAX_TTL_MS);
+      return exactKeys(cmd, ["kind", "email", ...optionalKeys]) &&
+          email !== null &&
+          validTtl
+        ? {
+          ok: true,
+          command: {
+            kind: "invite_member",
+            email,
+            ...(cmd.ttl_ms === undefined
+              ? {}
+              : { ttl_ms: cmd.ttl_ms as number }),
+          },
+        }
+        : { ok: false, status: 400, reason: "invite fields are malformed" };
+    }
+    if (cmd.kind === "accept_invitation") {
+      return exactKeys(cmd, ["kind", "token"]) &&
+          typeof cmd.token === "string" &&
+          INVITATION_TOKEN_RE.test(cmd.token)
+        ? {
+          ok: true,
+          command: { kind: "accept_invitation", token: cmd.token },
+        }
+        : { ok: false, status: 400, reason: "invitation token is malformed" };
+    }
+    if (cmd.kind === "create_agent_principal") {
+      return exactKeys(cmd, ["kind", "name"]) && boundedText(cmd.name, 80)
+        ? {
+          ok: true,
+          command: { kind: "create_agent_principal", name: cmd.name },
+        }
+        : { ok: false, status: 400, reason: "principal name is malformed" };
+    }
+    const optionalKeys = [
+      ...(Object.hasOwn(cmd, "ttl_ms") ? ["ttl_ms"] : []),
+      ...(Object.hasOwn(cmd, "scopes") ? ["scopes"] : []),
+    ];
+    const validScopes = cmd.scopes === undefined ||
+      (
+        Array.isArray(cmd.scopes) &&
+        cmd.scopes.length >= 1 &&
+        cmd.scopes.length <= 64 &&
+        cmd.scopes.every((scope) => boundedText(scope, 128))
+      );
+    const validTtl = cmd.ttl_ms === undefined ||
+      (integer(cmd.ttl_ms, 1) && cmd.ttl_ms <= AGENT_TOKEN_MAX_TTL_MS);
+    const valid = exactKeys(cmd, [
+      "kind",
+      "principal_id",
+      "run_id",
+      "task_id",
+      "epoch",
+      "device_id",
+      ...optionalKeys,
+    ]) &&
+      typeof cmd.principal_id === "string" && UUID_RE.test(cmd.principal_id) &&
+      typeof cmd.run_id === "string" && UUID_RE.test(cmd.run_id) &&
+      typeof cmd.task_id === "string" && UUID_RE.test(cmd.task_id) &&
+      integer(cmd.epoch) &&
+      typeof cmd.device_id === "string" && UUID_RE.test(cmd.device_id) &&
+      validScopes &&
+      validTtl;
+    return valid
+      ? {
+        ok: true,
+        command: {
+          kind: "mint_agent_token",
+          principal_id: cmd.principal_id as string,
+          run_id: cmd.run_id as string,
+          task_id: cmd.task_id as string,
+          epoch: cmd.epoch as number,
+          device_id: cmd.device_id as string,
+          ...(cmd.ttl_ms === undefined ? {} : { ttl_ms: cmd.ttl_ms as number }),
+          ...(cmd.scopes === undefined
+            ? {}
+            : { scopes: [...cmd.scopes as string[]] }),
+        },
+      }
+      : {
+        ok: false,
+        status: 400,
+        reason: "mint_agent_token fields are malformed or out of bounds",
+      };
+  }
+
   if (typeof cmd.task_id !== "string" || !UUID_RE.test(cmd.task_id)) {
     return { ok: false, status: 400, reason: "task_id must be a UUID" };
   }
@@ -639,10 +935,29 @@ function storedResponse(value: unknown): StoredResponse {
       ? { class: response.class }
       : {}),
     event_ids: response.event_ids.map(String),
+    ...(typeof response.invitation_id === "string"
+      ? { invitation_id: response.invitation_id }
+      : {}),
+    ...(typeof response.principal_id === "string"
+      ? { principal_id: response.principal_id }
+      : {}),
+    ...(typeof response.token_id === "string"
+      ? { token_id: response.token_id }
+      : {}),
+    ...(typeof response.run_id === "string" ? { run_id: response.run_id } : {}),
+    ...(typeof response.workspace_id === "string"
+      ? { workspace_id: response.workspace_id }
+      : {}),
   };
 }
 
-function replayResult(response: StoredResponse): HttpResult {
+function replayResult(
+  response: StoredResponse,
+  commandKind?: string,
+): HttpResult {
+  if (commandKind === "accept_invitation" && !response.ok) {
+    return { status: 403, body: { error: "forbidden" } };
+  }
   return {
     status: 200,
     body: {
@@ -690,18 +1005,25 @@ async function authenticateAgent(
       run: agent.run_id,
     },
     agent,
+    identityVerified: false,
   };
 }
 
 async function authenticateHuman(
   tx: Sql,
-  verifiedUserId: string,
+  verified: VerifiedHuman,
 ): Promise<AuthContext | null> {
   const rows = await tx<{ user_id: string }[]>`
-    SELECT user_id
-    FROM swarm.users
-    WHERE user_id = ${verifiedUserId}::uuid
-    LIMIT 1
+    INSERT INTO swarm.users (user_id, display_name, email)
+    VALUES (
+      ${verified.userId}::uuid,
+      ${verified.displayName},
+      ${verified.email}
+    )
+    ON CONFLICT (user_id) DO UPDATE SET
+      display_name = EXCLUDED.display_name,
+      email = coalesce(EXCLUDED.email, swarm.users.email)
+    RETURNING user_id
   `;
   if (!rows[0]) return null;
   return {
@@ -710,6 +1032,7 @@ async function authenticateHuman(
     deviceId: null,
     actor: { user: rows[0].user_id, agent_principal: null, run: null },
     agent: null,
+    identityVerified: verified.identityVerified,
   };
 }
 
@@ -780,6 +1103,61 @@ async function resolveRoute(
     membershipRole: membership.role,
     membershipRevokedAt: membership.revoked_at,
   };
+}
+
+function invitationTokenForRoute(body: RequestBody): string | null {
+  if (body.workspace_id !== undefined || body.stream !== undefined) return null;
+  const command = record(body.command);
+  if (
+    !command ||
+    command.kind !== "accept_invitation" ||
+    !exactKeys(command, ["kind", "token"]) ||
+    typeof command.token !== "string" ||
+    !INVITATION_TOKEN_RE.test(command.token)
+  ) return null;
+  return command.token;
+}
+
+async function resolveInvitationRoute(
+  tx: Sql,
+  body: RequestBody,
+  auth: AuthContext,
+  tokenHash: Uint8Array,
+): Promise<Route | null> {
+  // Agent credentials never get a capability existence oracle.
+  if (auth.credentialKind !== "user" || invitationTokenForRoute(body) === null) {
+    return null;
+  }
+  const rows = await tx<{
+    workspace_id: string;
+    stream_id: string;
+    role: Role | null;
+    revoked_at: Date | null;
+  }[]>`
+    SELECT
+      i.workspace_id,
+      s.stream_id,
+      m.role,
+      m.revoked_at
+    FROM swarm.invitations AS i
+    JOIN swarm.streams AS s
+      ON s.workspace_id = i.workspace_id
+     AND s.kind = 'workspace'
+    LEFT JOIN swarm.memberships AS m
+      ON m.workspace_id = i.workspace_id
+     AND m.user_id = ${auth.actor.user}::uuid
+    WHERE i.token_hash = ${tokenHash}
+    LIMIT 1
+  `;
+  const row = rows[0];
+  return row
+    ? {
+      workspaceId: row.workspace_id,
+      streamId: row.stream_id,
+      membershipRole: row.role,
+      membershipRevokedAt: row.revoked_at,
+    }
+    : null;
 }
 
 async function revoked(
@@ -908,6 +1286,7 @@ async function buildContext(
     stream_id: route.streamId,
     isMember: (principal) =>
       principal === canonicalPrincipal(auth.actor) &&
+      route.membershipRole !== null &&
       route.membershipRevokedAt === null,
     role: (principal) =>
       principal === canonicalPrincipal(auth.actor) ? route.membershipRole : null,
@@ -931,6 +1310,275 @@ async function buildContext(
       command.kind === "create" && slug === command.slug && slugTaken,
     nextSeq: () => ++nextSeq,
     nextEventId: () => crypto.randomUUID(),
+  };
+}
+
+function millis(value: unknown): number | null {
+  return value instanceof Date ? value.getTime() : null;
+}
+
+function byteaHex(value: unknown): string {
+  if (value instanceof Uint8Array) return bytesToHex(value);
+  if (typeof value === "string" && /^(?:\\x)?[0-9a-f]{64}$/i.test(value)) {
+    return value.replace(/^\\x/u, "").toLowerCase();
+  }
+  throw new Error("invalid bytea digest in workspace projection");
+}
+
+async function loadWorkspaceState(
+  tx: Sql,
+  route: Route,
+): Promise<WorkspaceState> {
+  const [workspaceRows, memberRows, invitationRows, principalRows, tokenRows] =
+    await Promise.all([
+      tx<Record<string, unknown>[]>`
+        SELECT workspace_id, name, created_by, created_at, archived_at
+        FROM swarm.workspaces
+        WHERE workspace_id = ${route.workspaceId}::uuid
+        LIMIT 1
+      `,
+      tx<Record<string, unknown>[]>`
+        SELECT user_id, role, invited_by, joined_at, revoked_at
+        FROM swarm.memberships
+        WHERE workspace_id = ${route.workspaceId}::uuid
+      `,
+      tx<Record<string, unknown>[]>`
+        SELECT
+          invitation_id, email, role, token_hash, expires_at,
+          created_by, created_at, consumed_at, consumed_by, revoked_at
+        FROM swarm.invitations
+        WHERE workspace_id = ${route.workspaceId}::uuid
+      `,
+      tx<Record<string, unknown>[]>`
+        SELECT principal_id, owner_user_id, name, created_at, revoked_at
+        FROM swarm.agent_principals
+        WHERE workspace_id = ${route.workspaceId}::uuid
+      `,
+      tx<Record<string, unknown>[]>`
+        SELECT
+          t.token_id, t.principal_id, t.run_id, t.task_id, t.epoch,
+          t.scopes, t.issued_at, t.expires_at, t.revoked_at
+        FROM swarm.agent_tokens AS t
+        JOIN swarm.agent_principals AS p
+          ON p.principal_id = t.principal_id
+        WHERE p.workspace_id = ${route.workspaceId}::uuid
+      `,
+    ]);
+  const workspace = workspaceRows[0];
+  if (!workspace) throw new Error("validated workspace disappeared");
+
+  const members: WorkspaceState["members"] = {};
+  for (const row of memberRows) {
+    const userId = String(row.user_id);
+    members[userId] = {
+      user_id: userId,
+      role: row.role as WorkspaceRole,
+      invited_by: row.invited_by === null ? null : String(row.invited_by),
+      joined_at: millis(row.joined_at) ?? 0,
+      revoked_at: millis(row.revoked_at),
+    };
+  }
+  const invitations: WorkspaceState["invitations"] = {};
+  for (const row of invitationRows) {
+    const invitationId = String(row.invitation_id);
+    invitations[invitationId] = {
+      invitation_id: invitationId,
+      email: row.email === null ? null : String(row.email),
+      role: row.role as WorkspaceRole,
+      token_hash: byteaHex(row.token_hash),
+      expires_at: millis(row.expires_at) ?? 0,
+      created_by: String(row.created_by),
+      created_at: millis(row.created_at) ?? 0,
+      consumed_at: millis(row.consumed_at),
+      consumed_by: row.consumed_by === null ? null : String(row.consumed_by),
+      revoked_at: millis(row.revoked_at),
+    };
+  }
+  const principals: WorkspaceState["principals"] = {};
+  for (const row of principalRows) {
+    const principalId = String(row.principal_id);
+    principals[principalId] = {
+      principal_id: principalId,
+      owner_user_id: String(row.owner_user_id),
+      name: String(row.name),
+      created_at: millis(row.created_at) ?? 0,
+      revoked_at: millis(row.revoked_at),
+    };
+  }
+  const tokens: WorkspaceState["tokens"] = {};
+  for (const row of tokenRows) {
+    const tokenId = String(row.token_id);
+    tokens[tokenId] = {
+      token_id: tokenId,
+      principal_id: String(row.principal_id),
+      run_id: String(row.run_id),
+      task_id: row.task_id === null ? null : String(row.task_id),
+      epoch: row.epoch === null ? null : Number(row.epoch),
+      scopes: Array.isArray(row.scopes) ? row.scopes.map(String) : [],
+      issued_at: millis(row.issued_at) ?? 0,
+      expires_at: millis(row.expires_at) ?? 0,
+      revoked_at: millis(row.revoked_at),
+    };
+  }
+
+  return {
+    workspace: {
+      workspace_id: String(workspace.workspace_id),
+      name: String(workspace.name),
+      created_by: String(workspace.created_by),
+      created_at: millis(workspace.created_at) ?? 0,
+      archived_at: millis(workspace.archived_at),
+    },
+    members,
+    invitations,
+    principals,
+    tokens,
+    owners_count: Object.values(members).filter(
+      (member) => member.revoked_at === null && member.role === "owner",
+    ).length,
+  };
+}
+
+async function mintBindingsValid(
+  tx: Sql,
+  auth: AuthContext,
+  command: ValidatedCommand,
+): Promise<boolean> {
+  if (command.kind !== "mint_agent_token" || auth.actor.user === null) return true;
+  const devices = await tx<{ user_id: string }[]>`
+    SELECT user_id
+    FROM swarm.devices
+    WHERE device_id = ${command.device_id}::uuid
+    LIMIT 1
+  `;
+  if (devices[0] && devices[0].user_id !== auth.actor.user) return false;
+
+  const runs = await tx<{
+    principal_id: string;
+    device_id: string;
+    ended_at: Date | null;
+  }[]>`
+    SELECT principal_id, device_id, ended_at
+    FROM swarm.agent_runs
+    WHERE run_id = ${command.run_id}::uuid
+    LIMIT 1
+  `;
+  const run = runs[0];
+  return !run ||
+    (
+      run.principal_id === command.principal_id &&
+      run.device_id === command.device_id &&
+      run.ended_at === null
+    );
+}
+
+async function prepareWorkspaceCommand(
+  tx: Sql,
+  route: Route,
+  auth: AuthContext,
+  wire: ConnectCommand,
+  commandId: string,
+  headSeq: number,
+  now: number,
+): Promise<PreparedWorkspace> {
+  const state = await loadWorkspaceState(tx, route);
+  let invitationToken: string | null = null;
+  let invitationHash: Uint8Array | null = null;
+  let agentToken: string | null = null;
+  let agentTokenHash: Uint8Array | null = null;
+  let lineageId: string | null = null;
+  let command: WorkspaceCommand;
+
+  if (wire.kind === "invite_member") {
+    invitationToken = opaqueToken("swm_inv_");
+    invitationHash = await sha256(invitationToken);
+    command = {
+      kind: "invite_member",
+      invitation_id: crypto.randomUUID(),
+      email: wire.email,
+      role: "member",
+      token_hash: bytesToHex(invitationHash),
+      expires_at: now + (wire.ttl_ms ?? INVITATION_TTL_MS),
+    };
+  } else if (wire.kind === "accept_invitation") {
+    invitationHash = await sha256(wire.token);
+    command = {
+      kind: "accept_invitation",
+      token_hash: bytesToHex(invitationHash),
+    };
+  } else if (wire.kind === "create_agent_principal") {
+    command = {
+      kind: "create_agent_principal",
+      principal_id: crypto.randomUUID(),
+      name: wire.name,
+    };
+  } else {
+    agentToken = opaqueToken("swm_agt_");
+    agentTokenHash = await sha256(agentToken);
+    lineageId = crypto.randomUUID();
+    command = {
+      kind: "mint_agent_token",
+      token_id: crypto.randomUUID(),
+      principal_id: wire.principal_id,
+      run_id: wire.run_id,
+      task_id: wire.task_id,
+      epoch: wire.epoch,
+      scopes: [...(wire.scopes ?? P0_AGENT_SCOPES)],
+      ...(wire.ttl_ms === undefined ? {} : { ttl_ms: wire.ttl_ms }),
+    };
+  }
+
+  let inviteeAlreadyMember = false;
+  if (wire.kind === "invite_member") {
+    const rows = await tx<{ present: boolean }[]>`
+      SELECT EXISTS (
+        SELECT 1
+        FROM swarm.users AS u
+        JOIN swarm.memberships AS m
+          ON m.user_id = u.user_id
+         AND m.workspace_id = ${route.workspaceId}::uuid
+         AND m.revoked_at IS NULL
+        WHERE lower(u.email) = ${wire.email}
+      ) AS present
+    `;
+    inviteeAlreadyMember = rows[0]?.present ?? false;
+  }
+
+  let nextSeq = headSeq;
+  const ctx: WorkspaceDecideCtx = {
+    now,
+    actor: auth.actor,
+    credential_kind: auth.credentialKind === "user" ? "human" : "agent",
+    presenting_token_id: auth.agent?.token_id ?? null,
+    command_id: commandId,
+    workspace_id: route.workspaceId,
+    stream_id: route.streamId,
+    operatorAllowed: () => false,
+    role: (userId) => {
+      const member = state.members[userId];
+      return member?.revoked_at === null ? member.role : null;
+    },
+    inviteeAlreadyMember: (email) =>
+      wire.kind === "invite_member" &&
+      email === wire.email &&
+      inviteeAlreadyMember,
+    identityVerified: (userId) =>
+      userId === auth.actor.user && auth.identityVerified,
+    humanRights: () => [...P0_AGENT_SCOPES],
+    landingAuthorityChangeResolved: () => true,
+    nextSeq: () => ++nextSeq,
+    nextEventId: () => crypto.randomUUID(),
+  };
+  return {
+    wire,
+    command,
+    state,
+    ctx,
+    invitationToken,
+    invitationHash,
+    agentToken,
+    agentTokenHash,
+    lineageId,
   };
 }
 
@@ -1073,6 +1721,187 @@ async function updateProjection(
   return projection;
 }
 
+async function consumeInvitation(
+  tx: Sql,
+  prepared: PreparedWorkspace,
+  auth: AuthContext,
+  now: number,
+): Promise<boolean> {
+  if (
+    prepared.command.kind !== "accept_invitation" ||
+    prepared.invitationHash === null ||
+    auth.actor.user === null
+  ) return true;
+  const rows = await tx<{ invitation_id: string }[]>`
+    UPDATE swarm.invitations
+    SET
+      consumed_at = ${new Date(now)},
+      consumed_by = ${auth.actor.user}::uuid
+    WHERE token_hash = ${prepared.invitationHash}
+      AND consumed_at IS NULL
+      AND revoked_at IS NULL
+      AND expires_at > statement_timestamp()
+    RETURNING invitation_id
+  `;
+  return rows.length === 1;
+}
+
+async function updateWorkspaceProjection(
+  tx: Sql,
+  route: Route,
+  prepared: PreparedWorkspace,
+  events: readonly EventEnvelope[],
+): Promise<WorkspaceState> {
+  let projection = prepared.state;
+  for (const event of events) {
+    projection = reduceWorkspace(projection, event) as WorkspaceState;
+  }
+
+  for (const event of events) {
+    const payload = record(event.payload);
+    if (!payload || event.type === "CommandRejected") continue;
+
+    if (event.type === "MemberInvited") {
+      const invitation = projection.invitations[String(payload.invitation_id)];
+      if (!invitation) throw new Error("folded invitation projection missing");
+      await tx`
+        INSERT INTO swarm.invitations (
+          invitation_id, workspace_id, email, role, token_hash,
+          expires_at, created_by, created_at,
+          consumed_at, consumed_by, revoked_at
+        ) VALUES (
+          ${invitation.invitation_id}::uuid,
+          ${route.workspaceId}::uuid,
+          ${invitation.email},
+          ${invitation.role},
+          ${hexToBytes(invitation.token_hash)},
+          ${new Date(invitation.expires_at)},
+          ${invitation.created_by}::uuid,
+          ${new Date(invitation.created_at)},
+          NULL,
+          NULL,
+          NULL
+        )
+      `;
+    } else if (event.type === "MemberJoined") {
+      const member = projection.members[String(payload.user_id)];
+      if (!member) throw new Error("folded member projection missing");
+      await tx`
+        INSERT INTO swarm.memberships (
+          workspace_id, user_id, role, invited_by, joined_at, revoked_at
+        ) VALUES (
+          ${route.workspaceId}::uuid,
+          ${member.user_id}::uuid,
+          ${member.role},
+          ${member.invited_by}::uuid,
+          ${new Date(member.joined_at)},
+          NULL
+        )
+        ON CONFLICT (workspace_id, user_id) DO UPDATE SET
+          role = EXCLUDED.role,
+          invited_by = EXCLUDED.invited_by,
+          joined_at = EXCLUDED.joined_at,
+          revoked_at = NULL
+      `;
+    } else if (event.type === "AgentPrincipalCreated") {
+      const principal = projection.principals[String(payload.principal_id)];
+      if (!principal) throw new Error("folded principal projection missing");
+      await tx`
+        INSERT INTO swarm.agent_principals (
+          principal_id, workspace_id, owner_user_id, name, created_at, revoked_at
+        ) VALUES (
+          ${principal.principal_id}::uuid,
+          ${route.workspaceId}::uuid,
+          ${principal.owner_user_id}::uuid,
+          ${principal.name},
+          ${new Date(principal.created_at)},
+          NULL
+        )
+      `;
+    } else if (event.type === "AgentTokenMinted") {
+      if (
+        prepared.wire.kind !== "mint_agent_token" ||
+        prepared.agentTokenHash === null ||
+        prepared.lineageId === null ||
+        authUser(prepared.ctx.actor) === null
+      ) {
+        throw new Error("token mint side-effect material missing");
+      }
+      const token = projection.tokens[String(payload.token_id)];
+      if (!token || token.task_id === null || token.epoch === null) {
+        throw new Error("folded token projection missing narrow binding");
+      }
+      const userId = authUser(prepared.ctx.actor)!;
+      await tx`
+        INSERT INTO swarm.devices (device_id, user_id, label)
+        VALUES (
+          ${prepared.wire.device_id}::uuid,
+          ${userId}::uuid,
+          'coswarm-cli'
+        )
+        ON CONFLICT (device_id) DO NOTHING
+      `;
+      const devices = await tx<{ user_id: string }[]>`
+        SELECT user_id
+        FROM swarm.devices
+        WHERE device_id = ${prepared.wire.device_id}::uuid
+      `;
+      if (devices[0]?.user_id !== userId) {
+        throw new Error("authenticated device ownership changed during mint");
+      }
+      await tx`
+        INSERT INTO swarm.agent_runs (run_id, principal_id, device_id)
+        VALUES (
+          ${token.run_id}::uuid,
+          ${token.principal_id}::uuid,
+          ${prepared.wire.device_id}::uuid
+        )
+        ON CONFLICT (run_id) DO NOTHING
+      `;
+      const runs = await tx<{
+        principal_id: string;
+        device_id: string;
+        ended_at: Date | null;
+      }[]>`
+        SELECT principal_id, device_id, ended_at
+        FROM swarm.agent_runs
+        WHERE run_id = ${token.run_id}::uuid
+      `;
+      const run = runs[0];
+      if (
+        !run ||
+        run.principal_id !== token.principal_id ||
+        run.device_id !== prepared.wire.device_id ||
+        run.ended_at !== null
+      ) {
+        throw new Error("agent run binding changed during mint");
+      }
+      await tx`
+        INSERT INTO swarm.agent_tokens (
+          token_id, principal_id, run_id, task_id, epoch,
+          scopes, token_hash, issued_at, expires_at, lineage_id
+        ) VALUES (
+          ${token.token_id}::uuid,
+          ${token.principal_id}::uuid,
+          ${token.run_id}::uuid,
+          ${token.task_id}::uuid,
+          ${token.epoch},
+          ${tx.json(token.scopes)}::jsonb,
+          ${prepared.agentTokenHash},
+          ${new Date(token.issued_at)},
+          ${new Date(token.expires_at)},
+          ${prepared.lineageId}::uuid
+        )
+      `;
+    }
+  }
+  return projection;
+}
+
+function authUser(actor: Actor): string | null {
+  return actor.user;
+}
+
 async function applyEventSideEffects(
   tx: Sql,
   events: readonly EventEnvelope[],
@@ -1109,7 +1938,7 @@ async function applyEventSideEffects(
 
 async function handleTransaction(
   body: RequestBody,
-  verifiedUserId: string | null,
+  verifiedHuman: VerifiedHuman | null,
   agentTokenHash: Uint8Array | null,
 ): Promise<HttpResult> {
   const kind = commandKind(body);
@@ -1122,8 +1951,8 @@ async function handleTransaction(
     await beforeStep(3);
     const auth = agentTokenHash !== null
       ? await authenticateAgent(tx, agentTokenHash)
-      : verifiedUserId !== null
-      ? await authenticateHuman(tx, verifiedUserId)
+      : verifiedHuman !== null
+      ? await authenticateHuman(tx, verifiedHuman)
       : null;
     if (!auth) {
       await insertAudit(tx, {
@@ -1140,8 +1969,22 @@ async function handleTransaction(
     await afterStep(4);
 
     await beforeStep(5);
-    const route = await resolveRoute(tx, body, auth);
-    if (!route) {
+    const invitationToken = kind === "accept_invitation"
+      ? invitationTokenForRoute(body)
+      : null;
+    const invitationRouteHash = invitationToken === null
+      ? null
+      : await sha256(invitationToken);
+    const route = kind === "accept_invitation"
+      ? invitationRouteHash === null
+        ? null
+        : await resolveInvitationRoute(tx, body, auth, invitationRouteHash)
+      : await resolveRoute(tx, body, auth);
+    const workspaceCommandRouteOk =
+      !(CONNECT_COMMAND_KINDS as readonly string[]).includes(kind) ||
+      kind === "accept_invitation" ||
+      record(body.stream)?.kind === "workspace";
+    if (!route || !workspaceCommandRouteOk) {
       await insertAudit(tx, {
         auth,
         commandKind: kind,
@@ -1240,6 +2083,9 @@ async function handleTransaction(
     if (
       auth.agent !== null &&
       (
+        (CONNECT_COMMAND_KINDS as readonly string[]).includes(
+          validation.command.kind,
+        ) ||
         !Array.isArray(auth.agent.scopes) ||
         !auth.agent.scopes.every((scope) => typeof scope === "string") ||
         !auth.agent.scopes.includes(validation.command.kind)
@@ -1257,6 +2103,18 @@ async function handleTransaction(
       return { status: 403, body: { error: "forbidden" } };
     }
     const command = validation.command;
+    if (!await mintBindingsValid(tx, auth, command)) {
+      await insertAudit(tx, {
+        auth,
+        commandKind: kind,
+        workspaceId: route.workspaceId,
+        streamId: route.streamId,
+        outcome: "authz",
+        reason: "forbidden",
+        detail: ignoredIdentity,
+      });
+      return { status: 403, body: { error: "forbidden" } };
+    }
     const hash = requestHash(auth.actor, command);
     await afterStep(6);
 
@@ -1292,7 +2150,7 @@ async function handleTransaction(
         hash,
       });
       return matches
-        ? replayResult(storedResponse(existing.response))
+        ? replayResult(storedResponse(existing.response), kind)
         : { status: 409, body: { error: "command_id_conflict" } };
     }
     await afterStep(7);
@@ -1310,37 +2168,127 @@ async function handleTransaction(
     await afterStep(8);
 
     await beforeStep(9);
-    const taskRows = await tx<Record<string, unknown>[]>`
-      SELECT
-        task_id, slug, lifecycle, version, epoch, owner,
-        lease_expiry, submission, closed_disposition, updated_at
-      FROM swarm.tasks
-      WHERE stream_id = ${route.streamId}::uuid
-        AND task_id = ${command.task_id}::uuid
-      LIMIT 1
-    `;
-    const priorRow = taskRows[0];
-    const prior = stateFromRow(priorRow);
     const timeRows = await tx<{ now_ms: string | number }[]>`
       SELECT floor(extract(epoch FROM statement_timestamp()) * 1000)::bigint AS now_ms
     `;
-    const now = Number(timeRows[0]?.now_ms);
-    const ctx = await buildContext(
-      tx,
-      route,
-      auth,
-      command,
-      commandId,
-      prior,
-      headSeq,
-      now,
-    );
+    let now = Number(timeRows[0]?.now_ms);
+    const workspaceWire =
+      (CONNECT_COMMAND_KINDS as readonly string[]).includes(command.kind)
+        ? command as ConnectCommand
+        : null;
+    let prepared: PreparedWorkspace | null = null;
+    let priorRow: Record<string, unknown> | undefined;
+    let prior: TaskState | null = null;
+    let ctx: DecideCtx | null = null;
+    if (workspaceWire !== null) {
+      prepared = await prepareWorkspaceCommand(
+        tx,
+        route,
+        auth,
+        workspaceWire,
+        commandId,
+        headSeq,
+        now,
+      );
+    } else {
+      const taskCommand = command as Command;
+      const taskRows = await tx<Record<string, unknown>[]>`
+        SELECT
+          task_id, slug, lifecycle, version, epoch, owner,
+          lease_expiry, submission, closed_disposition, updated_at
+        FROM swarm.tasks
+        WHERE stream_id = ${route.streamId}::uuid
+          AND task_id = ${taskCommand.task_id}::uuid
+        LIMIT 1
+      `;
+      priorRow = taskRows[0];
+      prior = stateFromRow(priorRow);
+      ctx = await buildContext(
+        tx,
+        route,
+        auth,
+        taskCommand,
+        commandId,
+        prior,
+        headSeq,
+        now,
+      );
+    }
     await afterStep(9);
 
     await beforeStep(10);
-    const outcome = applyCommand(new Map(), prior, command, ctx) as FreshOutcome;
-    if (outcome.status !== "fresh") {
-      throw new Error("empty in-memory ledger unexpectedly replayed/conflicted");
+    let outcome: FreshOutcome;
+    if (prepared !== null) {
+      let decision = decideWorkspace(
+        prepared.state,
+        prepared.command,
+        prepared.ctx,
+      ) as Decision;
+      if (
+        decision.ok &&
+        prepared.command.kind === "accept_invitation" &&
+        !await consumeInvitation(tx, prepared, auth, now)
+      ) {
+        const retryTime = await tx<{ now_ms: string | number }[]>`
+          SELECT floor(extract(epoch FROM statement_timestamp()) * 1000)::bigint AS now_ms
+        `;
+        now = Number(retryTime[0]?.now_ms);
+        prepared = await prepareWorkspaceCommand(
+          tx,
+          route,
+          auth,
+          workspaceWire!,
+          commandId,
+          headSeq,
+          now,
+        );
+        decision = decideWorkspace(
+          prepared.state,
+          prepared.command,
+          prepared.ctx,
+        ) as Decision;
+        if (decision.ok) {
+          throw new Error("invitation atomic consumption lost without a domain state change");
+        }
+      }
+      const response: StoredResponse = decision.ok
+        ? {
+          ok: true,
+          event_ids: decision.events.map((event) => event.event_id),
+          ...(prepared.command.kind === "invite_member"
+            ? { invitation_id: prepared.command.invitation_id }
+            : prepared.command.kind === "create_agent_principal"
+            ? { principal_id: prepared.command.principal_id }
+            : prepared.command.kind === "mint_agent_token"
+            ? {
+              token_id: prepared.command.token_id,
+              run_id: prepared.command.run_id,
+            }
+            : { workspace_id: route.workspaceId }),
+        }
+        : {
+          ok: false,
+          reason: decision.reason,
+          detail: decision.detail,
+          class: decision.class,
+          event_ids: decision.events.map((event) => event.event_id),
+        };
+      outcome = {
+        status: "fresh",
+        decision,
+        response,
+        events: decision.events,
+      };
+    } else {
+      outcome = applyCommand(
+        new Map(),
+        prior,
+        command as Command,
+        ctx!,
+      ) as FreshOutcome;
+      if (outcome.status !== "fresh") {
+        throw new Error("empty in-memory ledger unexpectedly replayed/conflicted");
+      }
     }
     await afterStep(10);
 
@@ -1370,18 +2318,24 @@ async function handleTransaction(
     await afterStep(11);
 
     await beforeStep(12);
-    await updateProjection(
-      tx,
-      route,
-      prior,
-      priorRow?.updated_at instanceof Date ? priorRow.updated_at : null,
-      outcome.events,
-      now,
-    );
+    if (prepared !== null) {
+      await updateWorkspaceProjection(tx, route, prepared, outcome.events);
+    } else {
+      await updateProjection(
+        tx,
+        route,
+        prior,
+        priorRow?.updated_at instanceof Date ? priorRow.updated_at : null,
+        outcome.events,
+        now,
+      );
+    }
     await afterStep(12);
 
     await beforeStep(13);
-    await applyEventSideEffects(tx, outcome.events);
+    if (prepared === null) {
+      await applyEventSideEffects(tx, outcome.events);
+    }
     await afterStep(13);
 
     await beforeStep(14);
@@ -1427,7 +2381,16 @@ async function handleTransaction(
     await afterStep(14);
 
     await beforeStep(15);
-    const result: HttpResult = outcome.decision.ok
+    const freshOnly: Record<string, unknown> = {};
+    if (prepared?.command.kind === "invite_member") {
+      freshOnly.invitation_token = prepared.invitationToken;
+    } else if (prepared?.command.kind === "mint_agent_token") {
+      freshOnly.agent_token = prepared.agentToken;
+    }
+    const result: HttpResult =
+      prepared?.command.kind === "accept_invitation" && !outcome.decision.ok
+        ? { status: 403, body: { error: "forbidden" } }
+        : outcome.decision.ok
       ? {
         status: 200,
         body: {
@@ -1435,6 +2398,7 @@ async function handleTransaction(
           ...outcome.response,
           events: outcome.events,
           min_client_version: minClientVersion,
+          ...freshOnly,
         },
       }
       : {
@@ -1484,7 +2448,7 @@ async function resolveLedgerRace(error: LedgerRace): Promise<HttpResult> {
       detail: "resolved concurrent idempotency race",
     });
     return matches
-      ? replayResult(storedResponse(winner.response))
+      ? replayResult(storedResponse(winner.response), error.commandKind)
       : { status: 409, body: { error: "command_id_conflict" } };
   });
 }
@@ -1520,7 +2484,7 @@ async function handleRequest(request: Request): Promise<Response> {
     return json(401, { error: "unauthenticated" });
   }
 
-  let verifiedUserId: string | null = null;
+  let verifiedHuman: VerifiedHuman | null = null;
   let agentTokenHash: Uint8Array | null = null;
   if (credential.startsWith("swm_agt_")) {
     if (!AGENT_TOKEN_RE.test(credential)) {
@@ -1542,13 +2506,28 @@ async function handleRequest(request: Request): Promise<Response> {
       });
       return json(401, { error: "unauthenticated" });
     }
-    verifiedUserId = data.user.id;
+    const metadata = record(data.user.user_metadata);
+    const email = normalizedEmail(data.user.email);
+    const displayNameCandidate = [
+      metadata?.full_name,
+      metadata?.name,
+      metadata?.user_name,
+      email?.split("@")[0],
+      "Coswarm User",
+    ].find((value) => typeof value === "string" && value.length > 0);
+    verifiedHuman = {
+      userId: data.user.id,
+      email,
+      displayName: String(displayNameCandidate).slice(0, 120),
+      identityVerified: data.user.email_confirmed_at !== undefined &&
+        data.user.email_confirmed_at !== null,
+    };
   }
 
   try {
     const result = await handleTransaction(
       body,
-      verifiedUserId,
+      verifiedHuman,
       agentTokenHash,
     );
     return json(result.status, result.body);

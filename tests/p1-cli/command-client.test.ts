@@ -4,6 +4,7 @@ import { test } from "node:test";
 import type { Command, EventEnvelope, EventType } from "../../src/protocol/index.js";
 import {
   assertAgentToken,
+  assertInvitationToken,
   newCommandId,
   ThinCommandClient,
 } from "../../src/cloud/command-client.js";
@@ -43,6 +44,59 @@ test("agent token wire format is strict", () => {
   const token = `swm_agt_${randomBytes(32).toString("base64url")}`;
   assert.doesNotThrow(() => assertAgentToken(token));
   assert.throws(() => assertAgentToken("swm_agt_too-short"), /32 base64url/);
+});
+
+test("connect commands pin workspace routes while invite acceptance derives tenancy", async () => {
+  const target = cloudTarget("http://127.0.0.1:54321", "anon-key");
+  const workspaceId = randomUUID();
+  const invitationToken = `swm_inv_${randomBytes(32).toString("base64url")}`;
+  assert.doesNotThrow(() => assertInvitationToken(invitationToken));
+  assert.throws(
+    () => assertInvitationToken("swm_inv_too-short"),
+    /32 base64url/,
+  );
+  const requests: Array<Record<string, unknown>> = [];
+  const fetcher = (async (_url: URL | RequestInfo, init?: RequestInit) => {
+    requests.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+    return new Response(JSON.stringify({
+      status: "accepted",
+      ok: true,
+      event_ids: [],
+      min_client_version: "0.1.0",
+    }), { status: 200, headers: { "content-type": "application/json" } });
+  }) as typeof fetch;
+  const client = new ThinCommandClient(target, fetcher);
+
+  await client.sendConnect({
+    workspaceId,
+    command: { kind: "invite_member", email: "friend@example.test" },
+    credential: "human-jwt",
+  });
+  await client.sendConnect({
+    command: { kind: "accept_invitation", token: invitationToken },
+    credential: "other-human-jwt",
+  });
+
+  assert.equal(requests[0]?.workspace_id, workspaceId);
+  assert.deepEqual(requests[0]?.stream, { kind: "workspace" });
+  assert.deepEqual(requests[0]?.command, {
+    kind: "invite_member",
+    email: "friend@example.test",
+  });
+  assert.equal(Object.hasOwn(requests[1]!, "workspace_id"), false);
+  assert.equal(Object.hasOwn(requests[1]!, "stream"), false);
+  assert.deepEqual(requests[1]?.command, {
+    kind: "accept_invitation",
+    token: invitationToken,
+  });
+  await assert.rejects(
+    client.sendConnect({
+      workspaceId,
+      command: { kind: "accept_invitation", token: invitationToken },
+      credential: "other-human-jwt",
+    }),
+    /tenancy is derived/,
+  );
 });
 
 test("thin client sends the frozen wire contract and folds a dogfood sequence", async () => {

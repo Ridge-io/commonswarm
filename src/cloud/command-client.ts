@@ -14,6 +14,7 @@ import {
 } from "./config.js";
 
 const AGENT_TOKEN_RE = /^swm_agt_[A-Za-z0-9_-]{43}$/;
+const INVITATION_TOKEN_RE = /^swm_inv_[A-Za-z0-9_-]{43}$/;
 
 export type StreamRoute =
   | { kind: "workspace" }
@@ -31,12 +32,46 @@ export interface CommandHttpResponse extends StoredResponse {
   status: "accepted" | "rejected";
   events?: EventEnvelope[];
   min_client_version?: string;
+  invitation_id?: string;
+  invitation_token?: string;
+  principal_id?: string;
+  token_id?: string;
+  run_id?: string;
+  agent_token?: string;
+  workspace_id?: string;
 }
 
 export interface CommandResult {
   httpStatus: number;
   response: CommandHttpResponse;
   projection: TaskState | null;
+}
+
+export type ConnectCommand =
+  | { kind: "invite_member"; email: string; ttl_ms?: number }
+  | { kind: "accept_invitation"; token: string }
+  | { kind: "create_agent_principal"; name: string }
+  | {
+    kind: "mint_agent_token";
+    principal_id: string;
+    run_id: string;
+    task_id: string;
+    epoch: number;
+    device_id: string;
+    ttl_ms?: number;
+  };
+
+export interface ConnectCommandRequest {
+  /** Omitted for accept_invitation; the capability derives tenancy server-side. */
+  workspaceId?: string;
+  command: ConnectCommand;
+  credential: string;
+  commandId?: string;
+}
+
+export interface ConnectCommandResult {
+  httpStatus: number;
+  response: CommandHttpResponse;
 }
 
 export function newCommandId(): string {
@@ -47,6 +82,14 @@ export function assertAgentToken(value: string): void {
   if (!AGENT_TOKEN_RE.test(value)) {
     throw new Error(
       "agent credential must be swm_agt_ followed by 32 base64url-encoded random bytes",
+    );
+  }
+}
+
+export function assertInvitationToken(value: string): void {
+  if (!INVITATION_TOKEN_RE.test(value)) {
+    throw new Error(
+      "invitation capability must be swm_inv_ followed by 32 base64url-encoded random bytes",
     );
   }
 }
@@ -182,5 +225,76 @@ export class ThinCommandClient {
       }
     }
     return { httpStatus: response.status, response: body, projection };
+  }
+
+  async sendConnect(request: ConnectCommandRequest): Promise<ConnectCommandResult> {
+    const command = request.command;
+    const accepting = command.kind === "accept_invitation";
+    if (command.kind === "accept_invitation") {
+      if (request.workspaceId !== undefined) {
+        throw new Error("accept_invitation tenancy is derived from its capability");
+      }
+      assertInvitationToken(command.token);
+    } else if (!request.workspaceId) {
+      throw new Error("workspaceId is required for this command");
+    }
+    const commandId = request.commandId ?? newCommandId();
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 30_000);
+    let response: Response;
+    try {
+      response = await this.fetcher(commandEndpoint(this.target), {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${request.credential}`,
+          apikey: this.target.anonKey,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          command_id: commandId,
+          client_version: CLIENT_PROTOCOL_VERSION,
+          ...(accepting
+            ? {}
+            : {
+              workspace_id: request.workspaceId,
+              stream: { kind: "workspace" },
+            }),
+          command,
+        }),
+        signal: controller.signal,
+      });
+    } catch (error) {
+      if ((error as Error).name === "AbortError") {
+        throw new Error("command request timed out");
+      }
+      throw error;
+    } finally {
+      clearTimeout(timer);
+    }
+
+    const raw = await parsedJson(response);
+    if (!response.ok) {
+      const error = raw && typeof raw === "object" && !Array.isArray(raw)
+        ? (raw as Record<string, unknown>).error
+        : null;
+      throw new Error(
+        `command failed (HTTP ${response.status}): ${
+          typeof error === "string" ? error : "unknown_error"
+        }`,
+      );
+    }
+    const body = responseBody(raw);
+    if (body.min_client_version !== undefined) {
+      const order = compareVersion(CLIENT_PROTOCOL_VERSION, body.min_client_version);
+      if (order === null) {
+        throw new Error("server returned a malformed min_client_version");
+      }
+      if (order < 0) {
+        throw new Error(
+          `client upgrade required (minimum ${body.min_client_version})`,
+        );
+      }
+    }
+    return { httpStatus: response.status, response: body };
   }
 }
