@@ -534,6 +534,24 @@ continuously (this file + commits) — assume your session can die at any moment
   model-visible file. (An earlier ref `pgbblnyljguyfckhdnid` was created in the junk
   `ChartingAlpha-Free2` org and has been **deleted**; it was empty. Ignore it if you
   see it referenced anywhere.)
+- **★ ERROR CLASS: testing output that contains more than the thing you meant to test
+  (2026-07-24).** Four separate incidents in one day, all the same shape — a probe whose output
+  carried extra material, read as if it carried only the signal:
+  1. `git show --name-only <sha> | grep docs/research` → matched the **commit message**, which said
+     "docs/research/ deliberately excluded". Read as a file-path violation. Use
+     `git show --name-only --format=""` when you want paths only.
+  2. `command -v cmux` under **non-interactive SSH** → "not found" on a machine where the binary
+     exists at `/Applications/cmux.app/Contents/Resources/bin/cmux`. Both Lead and a laptop agent
+     made this call in opposite directions. A non-login PATH is not evidence of absence.
+  3. A hosted REST read returning **`406` (schema not exposed)** was swallowed by
+     `if (!response.ok) return null` and surfaced as *"no workspaces"* — an infrastructure fault
+     wearing the costume of empty data.
+  4. `grep "not a version signal"` missed the doc line because **markdown bold** (`**not**`) broke
+     the literal match — concluding a fix was missing when it was present.
+  **The rule:** before believing a negative result, confirm the probe could have produced a
+  positive one. Prefer path-only / value-only output modes, absolute paths over `PATH` lookups,
+  distinguishing HTTP status classes from empty payloads, and matching on structure rather than
+  prose. A grep that can match your own commentary is not a test.
 - **★ NEVER run `supabase config push` against hosted (landmine, 2026-07-24).**
   `supabase/config.toml` carries **scaffold defaults** — `site_url = "http://127.0.0.1:3000"` and
   `additional_redirect_urls = ["https://127.0.0.1:3000"]` — while hosted holds the hard-won real
