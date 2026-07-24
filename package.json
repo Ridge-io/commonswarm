@@ -4,8 +4,7 @@
   "description": "SWARM-CLOUD — multi-human, multi-agent coordination cloud service (authority core). Forked from swarm (local CLI) to keep the in-use local tool stable.",
   "type": "module",
   "bin": {
-    "swarm": "dist/cli.js",
-    "swarm-cloud": "dist/cli.js"
+    "coswarm": "dist/cli.js"
   },
   "scripts": {
     "build": "tsc",

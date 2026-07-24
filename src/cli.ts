@@ -107,11 +107,11 @@ const TASK_FLAGS = [
 
 function usage(): string {
   return `Usage:
-  swarm login --url <project-url> --anon-key <key> [--no-browser]
-  swarm logout --url <project-url> --anon-key <key>
-  swarm command <kind> --url <url> --anon-key <key> --workspace-id <uuid> [command fields]
-  swarm dogfood --url <url> --anon-key <key> --workspace-id <uuid> --slug <slug> --branch <branch> --head-sha <sha> --evidence <ref>
-  swarm seed-fixture --uid <auth-user-uuid> [--device-id <uuid>]
+  coswarm login --url <project-url> --anon-key <key> [--no-browser]
+  coswarm logout --url <project-url> --anon-key <key>
+  coswarm command <kind> --url <url> --anon-key <key> --workspace-id <uuid> [command fields]
+  coswarm dogfood --url <url> --anon-key <key> --workspace-id <uuid> --slug <slug> --branch <branch> --head-sha <sha> --evidence <ref>
+  coswarm seed-fixture --uid <auth-user-uuid> [--device-id <uuid>]
 
 Credential selection for command/dogfood:
   default                 refresh the human login from secure storage

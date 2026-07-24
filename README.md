@@ -44,7 +44,7 @@ Build once, then target either local or hosted Supabase with the same flags:
 
 ```bash
 npm run build
-node dist/cli.js login --url "$SWARM_CLOUD_URL" --anon-key "$SWARM_CLOUD_ANON_KEY"
+coswarm login --url "$SWARM_CLOUD_URL" --anon-key "$SWARM_CLOUD_ANON_KEY"
 ```
 
 Login opens GitHub OAuth in the system browser using a CLI-generated PKCE
@@ -62,7 +62,7 @@ tokens and the PKCE verifier remain process-memory-only.
 Send one command with the human login:
 
 ```bash
-node dist/cli.js command create \
+coswarm command create \
   --url "$SWARM_CLOUD_URL" --anon-key "$SWARM_CLOUD_ANON_KEY" \
   --workspace-id "$WORKSPACE_ID" \
   --task-id "$TASK_ID" --slug first-dogfood
@@ -73,7 +73,7 @@ appears in the process list:
 
 ```bash
 read -rsp "Agent token: " SWARM_AGENT_TOKEN_INPUT
-printf %s "$SWARM_AGENT_TOKEN_INPUT" | node dist/cli.js command acquire \
+printf %s "$SWARM_AGENT_TOKEN_INPUT" | coswarm command acquire \
   --url "$SWARM_CLOUD_URL" --anon-key "$SWARM_CLOUD_ANON_KEY" \
   --workspace-id "$WORKSPACE_ID" \
   --task-id "$TASK_ID" --ttl-ms 3600000 \
@@ -82,7 +82,7 @@ unset SWARM_AGENT_TOKEN_INPUT
 ```
 
 `dogfood` drives `create → acquire → submit → close` in one process and folds
-the fresh response events in memory for display. Run `node dist/cli.js help`
+the fresh response events in memory for display. Run `coswarm help`
 for its required flags.
 
 `logout` calls GoTrue `signOut()` to revoke the refresh session, then removes
@@ -99,7 +99,7 @@ for the one-time agent credential, and run:
 ```bash
 DATABASE_URL="$INJECTED_DATABASE_URL" \
 SEED_TOKEN_OUT="$ONE_TIME_TOKEN_PATH" \
-node dist/cli.js seed-fixture --uid "$AUTH_USER_ID"
+coswarm seed-fixture --uid "$AUTH_USER_ID"
 ```
 
 The bridge writes directly to the private `swarm` schema; it never exposes that

@@ -34,5 +34,5 @@ export function commandEndpoint(target: CloudTarget): string {
 }
 
 export function authStorageKey(target: CloudTarget): string {
-  return `swarm-cloud-${target.profileId}-auth`;
+  return `coswarm-${target.profileId}-auth`;
 }

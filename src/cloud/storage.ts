@@ -17,7 +17,7 @@ import { spawn } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
 import type { CloudTarget } from "./config.js";
 
-const KEYCHAIN_SERVICE = "io.ridge.swarm.cloud";
+const KEYCHAIN_SERVICE = "io.ridge.coswarm";
 const LOCK_STALE_MS = 60_000;
 const LOCK_TIMEOUT_MS = 30_000;
 const MAX_KEYCHAIN_RECORD_BYTES = 126;
@@ -60,7 +60,7 @@ interface ProcessResult {
 }
 
 function defaultStateDirectory(): string {
-  return join(homedir(), ".swarm", "credentials.d");
+  return join(homedir(), ".coswarm", "credentials.d");
 }
 
 function mode(statMode: number): number {
