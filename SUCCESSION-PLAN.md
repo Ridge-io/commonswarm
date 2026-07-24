@@ -61,7 +61,10 @@ Rotate at a **phase boundary** whenever possible — it's the cleanest resume po
 - **Dispatch hygiene:** never `nohup ... &` inside a `run_in_background` Bash call —
   it orphans the child. Let the tool own backgrounding. Codex needs a git-repo
   workdir (`--skip-git-repo-check` if not). Strip ANSI from opencode logs
-  (`sed 's/\x1b\[[0-9;]*m//g'`).
+  (`sed 's/\x1b\[[0-9;]*m//g'`). **`swarm send` to Mason[codex] MUST use `--now`** —
+  the default single-Enter queue leaves the message unsubmitted in his composer
+  (observed 2026-07-24: two briefs sat undelivered ~2h; `--now` landed instantly).
+  Verify delivery with `swarm read Mason` (composer shows "Working…"), not just "Message sent".
 
 ## 0b. CURRENT TARGET (operator, 2026-07-23): drive to the FIRST REAL DOGFOOD
 
