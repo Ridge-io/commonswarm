@@ -274,8 +274,25 @@ Mason's `ux-connect-polish` checkpoint (#001) and **LANDED it** — commit `87e4
   **(C)** login re-writes the last-used default when it is still live (partial comfort only, does
   not help a cold multi-member after a credential wipe). **A+B together are what §1c asks for.**
   Doing P2-2 also unblocks the harness as a side effect, so there is no real sequencing conflict.
-  This is the other half of the felt feedback ("I flew blind"). Then
-  P2-3 agent-skill layer (the §1c endgame: the user's own agent drives coswarm), P2-4 invite
+  This is the other half of the felt feedback ("I flew blind").
+  - **NON-INTERACTIVE CONTRACT for option B (pinned before the brief is written — Sable).** B puts
+    a prompt in the invite path, and P2-1 just hardened agent mode to never hang, so the same
+    discipline is mandatory. **Hard rule: never block on a TTY prompt when stdin is non-TTY,
+    `--json` is set, or the process is otherwise non-interactive.**
+    1. **Resolution order** for `invite` and every workspace-scoped command: explicit
+       `--workspace-id` → profile default (if still a live membership) → exactly one live
+       membership → if n>1 **and** interactive TTY, optional picker → if n>1 **and**
+       non-interactive, **fail closed** with a structured error.
+    2. **Non-interactive failure body** (and `--json` stdout): a deterministic machine-readable
+       list of `{workspace_id, name, role}` plus one plain-language line pointing at
+       `coswarm workspaces` / `coswarm use <id|name>`. No hang, no half-rendered prompt.
+    3. **Agents select out-of-band:** list → `coswarm use …` → invite. Do **not** invent a second
+       silent env default; `use` is the explicit, inspectable selector.
+    4. The interactive picker is a **human convenience only**; tests must cover both the TTY pick
+       and the non-interactive fail+list.
+    5. Mirror the origin-pin discipline — an unknown multi-member state must never wait forever in
+       agent mode.
+  Then P2-3 agent-skill layer (the §1c endgame: the user's own agent drives coswarm), P2-4 invite
   page + `https://` link form. Same loop: brief → Sable adversarial review → Mason implements
   → Lead verifies by own execution → land → redeploy. Mason + Sable both warm.
 - **OPERATOR ACTION OUTSTANDING:** drive `coswarm accept --link-stdin` as a second human with
