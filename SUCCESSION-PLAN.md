@@ -215,6 +215,17 @@ the slash command; surfaced to operator to enable.
   CLI verbs for invite_member / accept_invitation / create_agent_principal /
   mint_agent_token; deploy hosted; live 2-human E2E. Deferred to after: remove/change_role
   + revoke wiring, rate limiting, devices, T-04..12, create_workspace wiring.
+- **STATE 2026-07-24 ~10:00: CONNECT LOOP LIVE ON HOSTED.** 2b-1 landed `10d6d0a`
+  (Kimi FIX(7) all folded + pinned, 66/66); 2b-2 wiring landed `8b4bc1a` (Lead-verified
+  66/66 + CLI 14/14 + server 10/10 on live local stack); migration
+  `20260724000001_connect_loop.sql` APPLIED to hosted; Edge fn DEPLOYED to hosted
+  (canary good). Tasks p1-slice2b-core + p1-slice2b-connect closed merged. **Method
+  deviation, recorded:** 2b-2 committed+deployed on Lead review + test pinning BEFORE the
+  Kimi verdict (operator ASAP directive); Kimi fast-follow review in flight
+  (`scratchpad/kimi-2b2-review.log`) — findings = immediate fix pass + redeploy.
+  **AWAITING:** operator leg-1 (coswarm login + invite), human-#2 designation, Kimi
+  verdict. **QUEUED after E2E:** revoke fixture-era seeded null-bound agent tokens (#79d);
+  fold operator CLI-feel impressions into P2/P3 scoping (§1c).
 - **Decision #78:** invitationMatchesIdentity oracle DELETED (contradicted decision #13 —
   acceptance ignores email; forwarded capability links valid for any verified holder BY
   DESIGN). consumed_by binds from ctx actor only. Forwarded-invite is a positive test.
