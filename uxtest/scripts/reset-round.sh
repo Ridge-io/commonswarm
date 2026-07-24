@@ -12,6 +12,8 @@ require_env UXTEST_HUMAN1_UID
 require_env UXTEST_OAUTH_CONSENT
 require_command uuidgen
 require_command git
+require_command curl
+require_command node
 
 case "$UXTEST_OAUTH_CONSENT" in
   first|returning) ;;
@@ -26,6 +28,7 @@ mkdir -p "$output_dir"
 if [ -f "$output_dir/transcript.md" ] || [ -f "$output_dir/REPORT.md" ]; then
   die "round $round already has collected artifacts; use a new round number"
 fi
+assert_launcher_channel
 
 if [ -f "$setup" ]; then
   workspace_id="$(json_field "$setup" workspace_id)"
@@ -72,6 +75,9 @@ const value = {
   human1_joined_at: null,
   human1_join_latency_ms: null,
   human1_join_attempts: null,
+  human2_reset_dispatch_at: null,
+  human2_reset_completed_at: null,
+  human2_reset_via: null,
   human2_spawn_dispatch_at: null,
   human2_spawn_requested_at: null,
   human2_joined_at: null,
@@ -123,7 +129,7 @@ say "Fixture seed verified; its one-time agent credential was destroyed."
 
 profile="$(profile_id)"
 mini_profile="$HOME/.coswarm/credentials.d/$profile.profile.json"
-remote_profile="/Users/tom/.coswarm/credentials.d/$profile.profile.json"
+remote_reset_state="$UXTEST_REMOTE_HOME_ROOT/human2/reset-state/r$round.json"
 
 say "Logging Human1 out locally and removing only this target's profile sidecar."
 set +e
@@ -139,15 +145,85 @@ set -e
 rm -f "$mini_profile"
 [ ! -e "$mini_profile" ] || die "mini profile sidecar survived reset"
 
-say "Logging Human2 out remotely and removing only this target's profile sidecar."
-remote_zsh "
-  set -e
-  source '$UXTEST_REMOTE_HOME_ROOT/config/cloud.env'
-  node_bin=\$(cat '$UXTEST_REMOTE_HOME_ROOT/product/NODE_BIN')
-  \"\$node_bin\" '$UXTEST_REMOTE_HOME_ROOT/product/dist/cli.js' logout
-  rm -f '$remote_profile'
-  test ! -e '$remote_profile'
-"
+say "Delegating Human2 logout and keychain verification to GUI-session launcher $UXTEST_LAUNCHER_NAME."
+remote_zsh "rm -f '$remote_reset_state'"
+launcher_send \
+  "Launcher-only reset task; you are not a study persona. Do not spawn a round agent. Run exactly: UXTEST_HOME_ROOT=$UXTEST_REMOTE_HOME_ROOT UXTEST_MINI_HOME_ROOT=$UXTEST_REMOTE_HOME_ROOT UXTEST_REMOTE_HOME_ROOT=$UXTEST_REMOTE_HOME_ROOT UXTEST_SWARM_BIN=$UXTEST_REMOTE_SWARM_BIN UXTEST_SECURITY_BIN=/usr/bin/security $UXTEST_REMOTE_REPO/uxtest/scripts/reset-human2-gui.sh $round $profile. Once it completes, stay out of the round."
+
+node - "$setup" <<'NODE'
+const fs = require("node:fs");
+const path = process.argv[2];
+const value = JSON.parse(fs.readFileSync(path, "utf8"));
+value.human2_reset_dispatch_at = new Date().toISOString();
+fs.writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
+NODE
+
+gui_reset_timeout="${UXTEST_GUI_RESET_TIMEOUT_SECONDS:-120}"
+case "$gui_reset_timeout" in
+  ''|*[!0-9]*|0) die "UXTEST_GUI_RESET_TIMEOUT_SECONDS must be a positive integer" ;;
+esac
+gui_reset_elapsed=0
+gui_reset_json=
+while [ "$gui_reset_elapsed" -lt "$gui_reset_timeout" ]; do
+  gui_reset_json="$(remote_zsh \
+    "test -f '$remote_reset_state' && cat '$remote_reset_state' || true")"
+  if [ -n "$gui_reset_json" ]; then
+    gui_reset_status="$(
+      printf '%s\n' "$gui_reset_json" |
+        node -e '
+          let raw = "";
+          process.stdin.on("data", chunk => raw += chunk);
+          process.stdin.on("end", () => {
+            try {
+              const value = JSON.parse(raw);
+              process.stdout.write(String(value.status ?? ""));
+            } catch {
+              process.exitCode = 2;
+            }
+          });
+        ' 2>/dev/null || true
+    )"
+    case "$gui_reset_status" in
+      succeeded) break ;;
+      failed)
+        gui_reset_detail="$(
+          printf '%s\n' "$gui_reset_json" |
+            node -e '
+              let raw = "";
+              process.stdin.on("data", chunk => raw += chunk);
+              process.stdin.on("end", () => {
+                const value = JSON.parse(raw);
+                process.stdout.write(String(value.detail ?? "unknown failure"));
+              });
+            '
+        )"
+        die "Human2 GUI-session reset failed: $gui_reset_detail"
+        ;;
+    esac
+  fi
+  "$UXTEST_SLEEP_BIN" 2
+  gui_reset_elapsed=$((gui_reset_elapsed + 2))
+done
+[ "${gui_reset_status:-}" = "succeeded" ] ||
+  die "Human2 GUI-session reset did not complete within ${gui_reset_timeout}s"
+
+node - "$setup" "$gui_reset_json" "$round" "$profile" <<'NODE'
+const fs = require("node:fs");
+const [path, raw, roundRaw, profile] = process.argv.slice(2);
+const value = JSON.parse(fs.readFileSync(path, "utf8"));
+const state = JSON.parse(raw);
+if (
+  state.status !== "succeeded" ||
+  state.round !== Number(roundRaw) ||
+  state.profile !== profile
+) {
+  throw new Error("Human2 GUI reset state does not match this round and profile");
+}
+value.human2_reset_completed_at = state.updated_at;
+value.human2_reset_via = "dana-a2a-gui";
+fs.writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
+NODE
+say "Human2 cold-client reset was observed through the GUI launcher."
 
 human1_workspace="$(persona_workspace human1)"
 mkdir -p "$human1_workspace"

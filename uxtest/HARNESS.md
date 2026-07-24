@@ -49,10 +49,13 @@ salvaging it.
 deliberately a **different system** from the coswarm product under test, so the thing being
 tested is never also the transport. Personas exchange short, human, jargon-free messages.
 
-- Each machine runs `swarm serve` (A2A endpoint, default port 18790, advertises Tailscale IPv4).
-- Each registers the other with `swarm register-a2a`.
-- Personas live in a dedicated swarm (`uxtest`), **not** `cloud-swarm`, so build-team chatter
-  and persona chatter never mix.
+- The persistent launcher control plane is separate from each round's persona channel:
+  laptop `Dana` serves on `100.95.177.37:18791`, while mini `UxDriver` serves on
+  `100.127.131.115:18792`.
+- Round personas use laptop port `18790` (`Dana-r<n>`) and mini port `18791`
+  (`Avery-r<n>`), registered only in `uxtest-r<n>`.
+- Launcher control lives in `uxtest` and persona chat in `uxtest-r<n>`, **not**
+  `cloud-swarm`, so build-team chatter and study traffic never mix.
 
 ### 1.1 Machine-2 ground truth (probed 2026-07-24 — do not re-derive, do not assume)
 
@@ -78,15 +81,17 @@ tested is never also the transport. Personas exchange short, human, jargon-free 
 $ ssh laptop 'claude -p "..."'   →   Not logged in · Please run /login
 ```
 
-Claude Code's credentials on the laptop live in the GUI login session's keychain, which an SSH
-session cannot unlock. **Therefore Human2's agent cannot be launched over SSH.** This is a
-platform constraint, not a missing feature — no amount of scripting removes it without either
-the operator's keychain password or an `ANTHROPIC_API_KEY` (which would contradict §1c's
-"subscriptions, not API fees" thesis and change what we are testing).
+Claude Code and `coswarm` credentials on the laptop live in the GUI login session's keychain,
+which an SSH session cannot unlock. **Therefore Human2's agent cannot be launched over SSH,
+and Human2 cannot be logged out or keychain-verified over SSH.** This is a platform constraint,
+not a missing flag — no amount of retrying removes it without either the operator's keychain
+password or an `ANTHROPIC_API_KEY` (which would contradict §1c's "subscriptions, not API fees"
+thesis and change what we are testing).
 
-**Consequence — the one manual step:** the operator starts Human2's agent **once** in a cmux
-tab on the laptop; it joins the `uxtest` swarm and **persists across rounds**. From that point
-every round is driven remotely from the mini: resets, briefs, scenario, feedback collection.
+**Consequence — the one manual step:** the operator starts the persistent **launcher** `Dana`
+once in a cmux tab on the laptop; it joins the base `uxtest` swarm. The mini then drives
+GUI-bound reset and fresh `Dana-r<n>` creation through Dana's launcher-level A2A bridge. Dana
+is never a study persona and stays out of every per-round swarm.
 
 That is one command, once — against the status quo of hand-carrying every invite link between
 two laptops for every test.
@@ -99,9 +104,16 @@ swarm spawn --agent claude --name Dana -s uxtest      # or open a tab and: swarm
 ### 1.3 Transport (the "Slack") — verified constraints
 
 - The mini **already serves an unrelated A2A bridge ("Yulan") on port 18790**. The harness
-  **must not** disturb it — use a dedicated port (e.g. `18791`) for uxtest.
-- The laptop is not serving anything on 18790; `swarm serve` there is plain node (no GUI, no
-  Claude auth needed) and can be started over SSH.
+  **must not** disturb it. Mini ports `18791` (round persona) and `18792` (launcher driver)
+  are dedicated to uxtest.
+- Laptop port `18791` is the persistent Dana launcher endpoint and **must bind the Tailscale
+  IP explicitly**; `0.0.0.0` did not produce a reachable field result. Laptop `18790` is
+  reserved for the current `Dana-r<n>` persona endpoint.
+- Starting plain `swarm serve` and registering an A2A endpoint are allowed over SSH because
+  they are not GUI/keychain operations. **Identity-bearing headless swarm state does not
+  survive separate SSH invocations**: `join` + `send` and `SWARM_AGENT_NAME` both failed with
+  `identity could not be authenticated`. SSH is therefore not a launcher control plane; the
+  A2A bridge is the only supported one.
 - `swarm inbox --wait <seconds>` blocks until a message arrives — use it for event-driven
   waiting, never busy-polling.
 - Both machines now have the `uxtest` swarm created.
@@ -110,14 +122,16 @@ swarm spawn --agent claude --name Dana -s uxtest      # or open a tab and: swarm
 
 ## 2. Round lifecycle
 
-Every round is: **preflight → reset → channel up → launch → run → collect → report**.
+Every round is: **preflight → launcher channel → reset → launch Human2 → round channel →
+launch Human1 → run → collect → report**.
 
 ```
 uxtest/scripts/sync-machine2.sh      # rsync repo + npm install + npm run build on the laptop
 uxtest/scripts/preflight.sh <n>      # both machines ready? versions, reach, PATH, identities
-uxtest/scripts/reset-round.sh <n>    # FRESH workspace for round n; log both humans out; clear profiles
+uxtest/scripts/launcher-channel-up.sh # persistent Dana ⇄ UxDriver control bridge
+uxtest/scripts/reset-round.sh <n>    # FRESH workspace; Human2 reset delegated to GUI Dana
 uxtest/scripts/launch-human2.sh <n>  # persistent GUI tab spawns fresh Dana-r<n>; evidence-gated
-uxtest/scripts/channel-up.sh <n>     # per-round swarm serve + register-a2a, both directions
+uxtest/scripts/channel-up.sh <n>     # separate per-round persona bridge, both directions
 uxtest/scripts/launch-human1.sh <n>  # fresh cmux persona tab here
 uxtest/scripts/collect-round.sh <n>  # gather transcripts, feedback, metrics into rounds/<n>/
 ```
@@ -133,8 +147,9 @@ database.** Dead test workspaces accumulate harmlessly; a buggy delete script do
 Name them `uxtest-r<n>-<short-random>` so they are obviously test data.
 
 Per-round client-side reset (both machines): `coswarm logout`, then remove the local profile
-sidecar so no default workspace / principal checkpoint leaks between rounds. A round that
-starts with a warm login is testing the wrong thing.
+sidecar so no default workspace / principal checkpoint leaks between rounds. Human2's logout
+and keychain postcondition run inside Dana's GUI session and return a state artifact; SSH cannot
+make that assertion. A round that starts with a warm login is testing the wrong thing.
 
 ---
 
@@ -218,9 +233,10 @@ that has expired.
 ```bash
 # sync before preflight so the fail-closed version gate sees the intended build
 uxtest/scripts/sync-machine2.sh
-uxtest/scripts/preflight.sh 1
 
 # each round
+uxtest/scripts/preflight.sh 1
+uxtest/scripts/launcher-channel-up.sh
 uxtest/scripts/reset-round.sh 1
 uxtest/scripts/launch-human2.sh 1
 uxtest/scripts/channel-up.sh 1
@@ -338,6 +354,12 @@ theater. Protocol, in preference order:
 - **Version skew.** Record `coswarm_sha` for **both** machines; **preflight fails closed if
   they differ.** (The laptop was stale by an entire slice — §1.1.)
 - **Warm login.** Both machines log out and drop the profile sidecar per round.
+- **Keychain error ambiguity (product finding, do not normalize in the harness).** The exact
+  message `coswarm: unable to read the refresh credential from macOS Keychain` means either
+  the GUI login keychain is inaccessible/locked **or** no refresh credential is stored (not
+  logged in). A human and a script see the same text and cannot tell which state occurred; the
+  field run required manual keychain/profile inspection to disambiguate. This is a §1c output
+  defect for a future CLI-copy slice, not a reason to hide the path with harness behavior.
 - Leftover test workspaces are *not* a confounder — additive reset stays.
 - **Multi-project resolution is the measured path.** From round 1 onward identity A
   necessarily holds 2+ live memberships under additive reset, so every round exercises

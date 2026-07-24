@@ -7,6 +7,8 @@ source "$(cd "$(dirname "$0")" && pwd -P)/_lib.sh"
 round="${1:-}"
 validate_round "$round"
 assert_setup_exists "$round"
+require_command curl
+require_command node
 
 setup="$(round_setup_path "$round")"
 [ "$(json_field "$setup" reset_complete)" = "true" ] ||
@@ -82,16 +84,8 @@ printf '%s\n' "$base_members" | grep -Fq "Dana [" || die \
 
 say "Asking the persistent GUI-session Dana tab to spawn virgin-context $human2."
 remote_zsh "rm -f '$spawn_state'"
-remote_zsh "
-  '$UXTEST_REMOTE_SWARM_BIN' register-a2a UxDriver \
-    --endpoint 'http://$UXTEST_MINI_IP:18791' \
-    --description 'Local UX harness driver; launcher control only' \
-    --force \
-    --swarm uxtest >/dev/null
-  SWARM_AGENT_NAME=UxDriver SWARM_NAME=uxtest \
-    '$UXTEST_REMOTE_SWARM_BIN' send --swarm uxtest Dana \
-    'Launcher-only control task; you are not a study persona. Run exactly: source $UXTEST_REMOTE_HOME_ROOT/config/cloud.env && PATH=$UXTEST_REMOTE_HOME_ROOT/bin:\$PATH UXTEST_HOME_ROOT=$UXTEST_REMOTE_HOME_ROOT UXTEST_MINI_HOME_ROOT=$UXTEST_REMOTE_HOME_ROOT UXTEST_REMOTE_HOME_ROOT=$UXTEST_REMOTE_HOME_ROOT UXTEST_SWARM_BIN=$UXTEST_REMOTE_SWARM_BIN UXTEST_CMUX_BIN=/Applications/cmux.app/Contents/Resources/bin/cmux UXTEST_ROLE=human2 UXTEST_ROUND=$round UXTEST_JOIN_TIMEOUT_SECONDS=${UXTEST_JOIN_TIMEOUT_SECONDS:-30} UXTEST_JOIN_ATTEMPTS=${UXTEST_JOIN_ATTEMPTS:-3} UXTEST_JOIN_POLL_SECONDS=${UXTEST_JOIN_POLL_SECONDS:-2} $UXTEST_REMOTE_REPO/uxtest/scripts/spawn-observed.sh $round human2. Once it completes, stay out of the round.'
-"
+launcher_send \
+  "Launcher-only control task; you are not a study persona. Run exactly: source $UXTEST_REMOTE_HOME_ROOT/config/cloud.env && PATH=$UXTEST_REMOTE_HOME_ROOT/bin:\$PATH UXTEST_HOME_ROOT=$UXTEST_REMOTE_HOME_ROOT UXTEST_MINI_HOME_ROOT=$UXTEST_REMOTE_HOME_ROOT UXTEST_REMOTE_HOME_ROOT=$UXTEST_REMOTE_HOME_ROOT UXTEST_SWARM_BIN=$UXTEST_REMOTE_SWARM_BIN UXTEST_CMUX_BIN=/Applications/cmux.app/Contents/Resources/bin/cmux UXTEST_ROLE=human2 UXTEST_ROUND=$round UXTEST_JOIN_TIMEOUT_SECONDS=${UXTEST_JOIN_TIMEOUT_SECONDS:-30} UXTEST_JOIN_ATTEMPTS=${UXTEST_JOIN_ATTEMPTS:-3} UXTEST_JOIN_POLL_SECONDS=${UXTEST_JOIN_POLL_SECONDS:-2} $UXTEST_REMOTE_REPO/uxtest/scripts/spawn-observed.sh $round human2. Once it completes, stay out of the round."
 
 node - "$setup" <<'NODE'
 const fs = require("node:fs");

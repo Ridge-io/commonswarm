@@ -11,10 +11,16 @@ UXTEST_LAPTOP_IP="${UXTEST_LAPTOP_IP:-100.95.177.37}"
 UXTEST_SWARM_BIN="${UXTEST_SWARM_BIN:-/Users/yulanbot/Developer/Ridge.io/swarm/bin/swarm}"
 UXTEST_REMOTE_SWARM_BIN="${UXTEST_REMOTE_SWARM_BIN:-/opt/homebrew/bin/swarm}"
 UXTEST_CMUX_BIN="${UXTEST_CMUX_BIN:-cmux}"
+UXTEST_SECURITY_BIN="${UXTEST_SECURITY_BIN:-security}"
 UXTEST_REMOTE_REPO="${UXTEST_REMOTE_REPO:-/Users/tom/Developer/Ridge.io/cloud-swarm}"
 UXTEST_MINI_HOME_ROOT="${UXTEST_MINI_HOME_ROOT:-$HOME/uxtest}"
 UXTEST_REMOTE_HOME_ROOT="${UXTEST_REMOTE_HOME_ROOT:-/Users/tom/uxtest}"
 UXTEST_SLEEP_BIN="${UXTEST_SLEEP_BIN:-sleep}"
+UXTEST_LAUNCHER_SWARM="${UXTEST_LAUNCHER_SWARM:-uxtest}"
+UXTEST_LAUNCHER_NAME="${UXTEST_LAUNCHER_NAME:-Dana}"
+UXTEST_DRIVER_NAME="${UXTEST_DRIVER_NAME:-UxDriver}"
+UXTEST_LAUNCHER_LAPTOP_PORT="${UXTEST_LAUNCHER_LAPTOP_PORT:-18791}"
+UXTEST_LAUNCHER_MINI_PORT="${UXTEST_LAUNCHER_MINI_PORT:-18792}"
 
 say() {
   printf '[uxtest] %s\n' "$*"
@@ -125,6 +131,48 @@ remote_zsh() {
   local quoted
   printf -v quoted '%q' "$command"
   ssh -o BatchMode=yes -o ConnectTimeout=10 "$UXTEST_REMOTE" "zsh -lic $quoted"
+}
+
+a2a_card_name() {
+  local base_url="$1"
+  local body
+  body="$(curl -fsS --max-time 3 \
+    "$base_url/.well-known/agent-card.json" 2>/dev/null)" ||
+    return 1
+  node -e '
+    const value = JSON.parse(process.argv[1]);
+    process.stdout.write(String(value.name ?? ""));
+  ' "$body"
+}
+
+assert_launcher_channel() {
+  local laptop_url="http://$UXTEST_LAPTOP_IP:$UXTEST_LAUNCHER_LAPTOP_PORT"
+  local mini_url="http://$UXTEST_MINI_IP:$UXTEST_LAUNCHER_MINI_PORT"
+  [ "$(a2a_card_name "$laptop_url" || true)" = "$UXTEST_LAUNCHER_NAME" ] ||
+    die "GUI launcher A2A endpoint is absent; run launcher-channel-up.sh before reset"
+  [ "$(a2a_card_name "$mini_url" || true)" = "$UXTEST_DRIVER_NAME" ] ||
+    die "mini launcher-driver A2A endpoint is absent; run launcher-channel-up.sh before reset"
+  local identity
+  identity="$(
+    SWARM_AGENT_NAME="$UXTEST_DRIVER_NAME" \
+      SWARM_NAME="$UXTEST_LAUNCHER_SWARM" \
+      "$UXTEST_SWARM_BIN" whoami --swarm "$UXTEST_LAUNCHER_SWARM" 2>/dev/null
+  )" || die "launcher-driver identity is not registered locally; run launcher-channel-up.sh"
+  printf '%s\n' "$identity" | grep -Fq "Name: $UXTEST_DRIVER_NAME" ||
+    die "launcher-driver identity resolved to the wrong agent"
+  printf '%s\n' "$identity" | grep -Fq "Type: a2a" ||
+    die "launcher-driver identity is not A2A-backed"
+}
+
+launcher_send() {
+  local message="$1"
+  assert_launcher_channel
+  SWARM_AGENT_NAME="$UXTEST_DRIVER_NAME" \
+    SWARM_NAME="$UXTEST_LAUNCHER_SWARM" \
+    "$UXTEST_SWARM_BIN" send \
+      --swarm "$UXTEST_LAUNCHER_SWARM" \
+      "$UXTEST_LAUNCHER_NAME" \
+      "$message"
 }
 
 bundle_sha() {

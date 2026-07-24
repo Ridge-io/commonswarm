@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   chmodSync,
   mkdirSync,
@@ -28,6 +29,12 @@ const SPAWN_OBSERVED = join(
   "uxtest",
   "scripts",
   "spawn-observed.sh",
+);
+const RESET_HUMAN2_GUI = join(
+  ROOT,
+  "uxtest",
+  "scripts",
+  "reset-human2-gui.sh",
 );
 
 function invitation() {
@@ -376,6 +383,79 @@ fi
       typeof state.join_latency_ms === "number" &&
         state.join_latency_ms >= 0,
     );
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("Human2 GUI reset records success and fails if the keychain stays warm", () => {
+  const directory = mkdtempSync(join(tmpdir(), "uxtest-gui-reset-"));
+  try {
+    const root = join(directory, "uxtest");
+    const config = join(root, "config");
+    const product = join(root, "product");
+    const dist = join(product, "dist");
+    const security = join(directory, "mock-security");
+    const cloudUrl = "https://gui-reset.example.test";
+    const profile = createHash("sha256")
+      .update(cloudUrl)
+      .digest("hex")
+      .slice(0, 24);
+    mkdirSync(config, { recursive: true });
+    mkdirSync(dist, { recursive: true });
+    writeFileSync(
+      join(config, "cloud.env"),
+      [
+        `export SWARM_CLOUD_URL=${cloudUrl}`,
+        "export SWARM_CLOUD_ANON_KEY=public-test-key",
+        "",
+      ].join("\n"),
+    );
+    writeFileSync(join(product, "NODE_BIN"), "/usr/bin/true\n");
+    writeFileSync(join(dist, "cli.js"), "// synthetic copied cli\n");
+    writeFileSync(security, "#!/usr/bin/env bash\nexit 1\n");
+    chmodSync(security, 0o755);
+
+    const env = {
+      ...process.env,
+      UXTEST_HOME_ROOT: root,
+      UXTEST_MINI_HOME_ROOT: root,
+      UXTEST_REMOTE_HOME_ROOT: root,
+      UXTEST_SECURITY_BIN: security,
+    };
+    const success = spawnSync(
+      "bash",
+      [RESET_HUMAN2_GUI, "7", profile],
+      { encoding: "utf8", env },
+    );
+    assert.equal(success.status, 0, success.stderr);
+    const successState = JSON.parse(
+      readFileSync(
+        join(root, "human2", "reset-state", "r7.json"),
+        "utf8",
+      ),
+    ) as Record<string, unknown>;
+    assert.equal(successState.status, "succeeded");
+    assert.equal(successState.round, 7);
+    assert.equal(successState.profile, profile);
+
+    writeFileSync(security, "#!/usr/bin/env bash\nexit 0\n");
+    chmodSync(security, 0o755);
+    const warm = spawnSync(
+      "bash",
+      [RESET_HUMAN2_GUI, "8", profile],
+      { encoding: "utf8", env },
+    );
+    assert.equal(warm.status, 1);
+    assert.match(warm.stderr, /keychain credential survived/);
+    const failedState = JSON.parse(
+      readFileSync(
+        join(root, "human2", "reset-state", "r8.json"),
+        "utf8",
+      ),
+    ) as Record<string, unknown>;
+    assert.equal(failedState.status, "failed");
+    assert.match(String(failedState.detail), /keychain credential survived/);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

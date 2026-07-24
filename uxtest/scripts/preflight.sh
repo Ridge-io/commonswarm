@@ -200,10 +200,11 @@ if [ -f "$setup" ]; then
     -s io.ridge.coswarm >/dev/null 2>&1; then
     die "mini keychain still holds a warm coswarm login after reset"
   fi
-  if remote_zsh "security find-generic-password -a 'refresh:$profile' -s io.ridge.coswarm >/dev/null 2>&1"; then
-    die "laptop keychain still holds a warm coswarm login after reset"
-  fi
-  say "Round $round client-state reset is cold on both machines."
+  [ "$(json_field "$setup" human2_reset_via)" = "dana-a2a-gui" ] ||
+    die "Human2 cold-client reset lacks GUI-session verification"
+  [ -n "$(json_field "$setup" human2_reset_completed_at)" ] ||
+    die "Human2 GUI-session reset completion is missing"
+  say "Round $round client-state reset is cold on both machines; Human2 keychain verification came from the GUI session."
 fi
 
 mkdir -p "$output_dir"
