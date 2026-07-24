@@ -62,6 +62,9 @@ tested is never also the transport. Personas exchange short, human, jargon-free 
 - `coswarm` is `/opt/homebrew/bin/coswarm` → symlink to
   `~/Developer/Ridge.io/cloud-swarm/dist/cli.js`, so **rebuilding `dist` updates the binary;
   no relink needed**.
+- The laptop's Git `HEAD` is **not** a version signal for this harness: exact source content is
+  rsynced from the mini while Git history may intentionally lag. The order-stable SHA-256
+  manifest of every file in the built `dist/` tree is the sole version authority.
 - That repo was at `cbb9c89` — **stale by all of P2-1**. Every round must sync + rebuild it
   first, or the test measures old code.
 - SSH key auth mini→laptop works; Tailscale RTT ~52ms.
@@ -110,12 +113,12 @@ swarm spawn --agent claude --name Dana -s uxtest      # or open a tab and: swarm
 Every round is: **preflight → reset → channel up → launch → run → collect → report**.
 
 ```
-uxtest/scripts/preflight.sh          # both machines ready? versions, reach, PATH, identities
 uxtest/scripts/sync-machine2.sh      # rsync repo + npm install + npm run build on the laptop
+uxtest/scripts/preflight.sh <n>      # both machines ready? versions, reach, PATH, identities
 uxtest/scripts/reset-round.sh <n>    # FRESH workspace for round n; log both humans out; clear profiles
-uxtest/scripts/channel-up.sh         # swarm serve + register-a2a, both directions
-uxtest/scripts/launch-human1.sh <n>  # cmux tab agent here
-uxtest/scripts/launch-human2.sh <n>  # ssh + screen + driver loop on the laptop
+uxtest/scripts/launch-human2.sh <n>  # persistent GUI tab spawns fresh Dana-r<n>; evidence-gated
+uxtest/scripts/channel-up.sh <n>     # per-round swarm serve + register-a2a, both directions
+uxtest/scripts/launch-human1.sh <n>  # fresh cmux persona tab here
 uxtest/scripts/collect-round.sh <n>  # gather transcripts, feedback, metrics into rounds/<n>/
 ```
 
@@ -213,15 +216,15 @@ that has expired.
 ## 6. Running it
 
 ```bash
-# one-time per machine pair
-uxtest/scripts/preflight.sh
+# sync before preflight so the fail-closed version gate sees the intended build
+uxtest/scripts/sync-machine2.sh
+uxtest/scripts/preflight.sh 1
 
 # each round
-uxtest/scripts/sync-machine2.sh
 uxtest/scripts/reset-round.sh 1
-uxtest/scripts/channel-up.sh
-uxtest/scripts/launch-human1.sh 1
 uxtest/scripts/launch-human2.sh 1
+uxtest/scripts/channel-up.sh 1
+uxtest/scripts/launch-human1.sh 1
 # ... personas run the scenario ...
 uxtest/scripts/collect-round.sh 1
 ```

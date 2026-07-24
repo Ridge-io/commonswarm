@@ -17,5 +17,16 @@ supabase/.temp/
 # Lead scratch (agent dispatch logs, review artifacts) — not part of the build
 scratchpad/
 
+# Cross-machine UX runs can contain personal feedback and redacted transcripts.
+uxtest/rounds/*
+!uxtest/rounds/.gitkeep
+!uxtest/rounds/*/
+uxtest/rounds/*/*
+!uxtest/rounds/*/REPORT.md
+!uxtest/rounds/*/metrics.json
+!uxtest/rounds/*/transcript.md
+!uxtest/rounds/*/human1-feedback.md
+!uxtest/rounds/*/human2-feedback.md
+
 # Evidence artifacts are durable on purpose (see docs/evidence/README.md)
 !docs/evidence/*.log
