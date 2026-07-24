@@ -217,9 +217,43 @@ Mason's `ux-connect-polish` checkpoint (#001) and **LANDED it** — commit `87e4
   minor, folded into P2 CLI UX.
 - **OPEN FIRST-ACTION (operator):** `/remote-control` — I cannot self-invoke the slash
   command; surfaced to operator to enable remote supervision.
-- **NEXT: P2-connect-UX** per §1c felt-dogfood feedback (one-command `coswarm join <link>`,
-  agent-skill layer, `coswarm status` read surface, invite page). Scoping now; will decompose
-  into sub-slices, Mason implements, Lead4 orchestrates + verifies. Mason warm.
+- **★ P2-1 DONE + LANDED + HOSTED (`a823ab3`, evidence `80a1095`,
+  `docs/evidence/p2-connect-accept-link.md`, task `p2-connect-accept-link` closed merged).**
+  `coswarm accept <invite-link>` collapses the invitee's 4 commands into ONE with
+  plain-language narration per step. Hosted `command` fn at **v5** (ACTIVE 18:17:10 UTC),
+  deployed BEFORE relinking the CLI (old invite responses lack the label adjunct). Lead4
+  independent verify at both checkpoints: tsc, core 66/66, CLI 37/37, server 11/11, zero
+  drift, diff-check clean. **Live hosted proof the phishing gate works in the shipped
+  binary:** a link with `url=https://evil.example.com` piped to `accept --link-stdin --json`
+  → *"unrecognized Cloud host evil.example.com; non-interactive mode refuses before login"*.
+  - **Decision #82 — the verb is `accept`, NOT `join`.** `SWARM-CLOUD.md:696` locks "members
+    accept invites; agents join swarms"; §7 hardened that split. The baton's colloquial
+    "`coswarm join`" was unavailable — this WIDENS `coswarm accept`. Legacy bare `swm_inv_`
+    and `--invitation-token-stdin` unchanged + principal-free. **Future Leads: do not
+    reintroduce a human `join` verb.**
+  - **Decision #83 — optional `--name`, link mode only.** Own live principal → reuse; held by
+    another member's live principal OR any revoked row → ONE uniform "already taken", never
+    silently renamed (`UNIQUE (workspace_id, name)` is per-WORKSPACE not per-owner,
+    `migration:181`). Auto-names may be suffixed (cap 5); user-chosen never. Rejected
+    redirect-to-`principal create` (reintroduces friction AFTER membership commits).
+  - **METHOD NOTE — the review loop paid for itself four times.** Sable[grok] as a *visible
+    swarm tab* (operator directive: reviewers are cmux tabs, never headless one-shots) ran
+    brief v1 → **NO-GO** (3 BLOCKING/5 MAJOR incl. the OAuth-phishing vector), v2 →
+    **CONDITIONAL GO** (4 MAJOR incl. R1, a false-success path introduced *while fixing*
+    round 1), v2.1 → **GO**, implementation → **GO**, fix pass → **GO** (M1, a violation of
+    our own §2.4 convergence promise). Every finding was verified against live code before
+    folding. Design brief `docs/design/P2-CONNECT-UX-BRIEF.md` v2.1 is the durable artifact.
+  - **LANDMINE:** headless `opencode run` for Kimi **hung silently ~2h** with zero output and
+    zero credit burn (stream stalled, no timeout). The operator caught it, not us. Reviewers
+    must be visible tabs so progress is observable.
+- **NEXT: P2-2 — `coswarm status` read surface** (members + agents + tasks + leases, one
+  screen, plain words). This is the other half of the felt feedback ("I flew blind"). Then
+  P2-3 agent-skill layer (the §1c endgame: the user's own agent drives coswarm), P2-4 invite
+  page + `https://` link form. Same loop: brief → Sable adversarial review → Mason implements
+  → Lead verifies by own execution → land → redeploy. Mason + Sable both warm.
+- **OPERATOR ACTION OUTSTANDING:** drive `coswarm accept --link-stdin` as a second human with
+  a **distinct verified email** (lesson #5) — the real test of whether P2-1 *feels* simpler.
+  Solicit impressions and fold into P2-2+ scoping (§1c is a living calibration datum).
 
 ### LEAD3 ACTIVE (2026-07-24, baton accepted at HEAD 7bf5f6f). Slice-2b decomposition:
 Lead2 stood down; Lead3 is current Lead. Sub-slices (each: build→green→Kimi K3 review→commit):
