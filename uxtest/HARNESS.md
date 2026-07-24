@@ -376,6 +376,61 @@ line** the persona saw.
 
 | Question | Answer |
 |---|---|
-| Run R1 as a pilot? | **Yes** — after §7.2 items 2–3 (copied binary + empty per-round cwd) and the §7.7 header exist |
+| Run R1 as a pilot? | **Yes** — after §7.2 items 2–3 (copied binary + empty per-round cwd), §7.7 header, and §7.9 |
 | Trust R1 as product truth? | Only for the §7.1 "Yes" rows; the operator's drive still decides |
 | Run R2+ as regression? | **No** until §7.4 is implemented and `carryover` is recorded |
+
+### 7.9 BRIEF generator contract + mechanical enforcement
+
+The generated per-round `BRIEF.md` is the **highest-leakage artifact in the harness** — it is the
+one document the persona is told to read. Prose rules are not enough here; a single wrong noun
+burns the round. So the contract is enforced by a lint, not by care.
+
+**Goal framing (the fixture problem).** `reset-round.sh` seeds Avery a workspace and then logs
+both users out, so a brief saying "your **new** project workspace" sends her hunting for a
+create/init command **that does not exist** — a burned round producing a finding about a known
+unwired gap rather than about P2-1. Frame it as already-existing, without teaching the missing
+command:
+
+> Goal: get `<partner>`'s agent working with you on **your team's project** (it already exists
+> for this work). Signing in and connecting are part of what you need to figure out; the study
+> will not teach you the steps.
+
+**Never** write "you don't need to create one" (teaches `create`), "workspace id", or
+"provisioned by the harness".
+
+**Vocabulary.** Prefer "project" / "team project" / "shared project". Reserve "workspace" for
+when the *product itself* prints it and the persona quotes it — priming the noun helps a `--help`
+search that a real user would not run. Do not stack it ("cloud workspace", "workspace id").
+
+Also banned: **"opaque item"** and similar — describing the thing Avery sends as an opaque
+item/link/token primes a capability mental model *before the product introduces one*. Say "use
+only what `<partner>` sends you and what `coswarm` itself says." Opacity is already covered by
+the isolation rules.
+
+Naming `coswarm` **is** allowed and necessary (they must know which CLI exists), as is the
+`swarm send` chat recipe (a different system, required to talk at all).
+
+**The lint (fails the launch, not the round).** Refuse to launch if a rendered `BRIEF.md`
+matches:
+
+```
+(invite|accept|login|principal|swm_|--link|workspace-id|opaque item)
+```
+
+**Audit.** Dump every rendered brief to `rounds/<n>/briefs/` — operator-visible, **never** inside
+a persona cwd.
+
+### 7.10 Metrics are authoritative over persona self-report
+
+An LLM will not respect wall-clock. It can spam commands and declare "ten minutes of trying" in
+thirty seconds, which silently converts gold solo-discovery data into partner-rescued data.
+
+**Rule: every time-based condition is judged from collected timestamps, never from a persona's
+claim.** A step counts as partner-rescued only if `now - time_to_first_coswarm >= 10m`. The brief
+may still *say* ten minutes — the persona should behave that way — but the metric decides what
+the report claims. The same principle covers give-up, task completion, and link handling: if the
+scripts did not observe it, the report does not assert it.
+
+Transcript redaction is likewise the **scripts'** job (§4.1), never a persona discipline. The
+chat must carry the capability once; the artifact must not.
