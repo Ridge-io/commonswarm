@@ -206,6 +206,16 @@ Lead2 stood down; Lead3 is current Lead. Sub-slices (each: build→green→Kimi 
 - **2b-4:** rate limiting §6 + `rate_buckets`; gap#15 auth-admin module + device endpoints.
 OPEN FIRST-ACTION: `/remote-control` (operator-supervised remote drive) — I cannot self-invoke
 the slash command; surfaced to operator to enable.
+- **RENAME (operator-ordered, landed `981db90`):** CLI is now **`coswarm`** (single bin;
+  `swarm`/`swarm-cloud` bins killed; keychain `io.ridge.coswarm`, storage key `coswarm-<profile>-auth`,
+  headless dir `~/.coswarm/credentials.d` — did NOT touch swarm.* schema, swarm_command/swarm_admin,
+  swm_agt_, or spec branding). npm-linked globally. Renamed inside the zero-credential window.
+- **Decision #77 (2b-1 interfaces):** accept_invitation carries `{token_hash}` ONLY (no
+  invitation_id — client must not steer row selection); remove/change_role take optional
+  `landing_authority_successor_user_id` + injected `landingAuthorityChangeResolved` oracle
+  (unresolved → domain 'landing_authority_unresolved'); mint_agent_token REQUIRES
+  run_id/task_id/epoch (no broader binding offered in P1), ttl_ms default 1h / hard cap 8h;
+  §2.3 denylist is INTRINSIC (hardcoded in pure module), humanRights(actor) is injected.
 
 ## 1b. Governing steer (operator, 2026-07-23) — READ THIS BEFORE SCOPING ANYTHING
 
