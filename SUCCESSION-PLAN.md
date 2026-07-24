@@ -215,6 +215,17 @@ the slash command; surfaced to operator to enable.
   CLI verbs for invite_member / accept_invitation / create_agent_principal /
   mint_agent_token; deploy hosted; live 2-human E2E. Deferred to after: remove/change_role
   + revoke wiring, rate limiting, devices, T-04..12, create_workspace wiring.
+- **★ 2026-07-24 ~10:31: TODAY'S GOAL ACHIEVED — TWO HUMANS' AGENTS CONNECTED ACROSS
+  THE INTERNET VIA HOSTED COSWARM.** Full governed chain, operator-driven, verified at
+  the event level: see `docs/evidence/p1-two-human-connect.md` (uids, seqs, event ids,
+  7 field lessons, residual notes). Human A `d37e2ff2` (mini) invited; human B
+  `919ce195` (M1 Max, distinct-email GitHub) accepted invitation `345ad183` (seq 7/8);
+  B's principal `laptop-agent` `5103ae10` minted the FIRST governed agent token on
+  hosted and ACQUIRED A's task `first-connect` (seq 12 `LeaseAcquired`, triple-stamped).
+  E2E gate LIFTED post-achievement → Mason begins ux-connect-polish (bugs #1–#6 +
+  Kimi 2b-2 FIX-1/3/4/5, decisions #81). Then 2b remainder: revoke wiring (+ fixture
+  token cleanup #79d, epoch-binding enforcement), rate limiting §6 (Kimi FIX-2),
+  T-04..12, auth-admin/devices.
 - **STATE 2026-07-24 ~10:00: CONNECT LOOP LIVE ON HOSTED.** 2b-1 landed `10d6d0a`
   (Kimi FIX(7) all folded + pinned, 66/66); 2b-2 wiring landed `8b4bc1a` (Lead-verified
   66/66 + CLI 14/14 + server 10/10 on live local stack); migration
