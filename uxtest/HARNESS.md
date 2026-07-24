@@ -158,7 +158,7 @@ starts with a warm login is testing the wrong thing.
 
 ```
 uxtest/rounds/<n>/
-  transcript.md          the full chat exchange, verbatim
+  transcript.md          the chat exchange, verbatim EXCEPT redacted capabilities (§4.1)
   human1-feedback.md     persona's own words, pre-debrief
   human2-feedback.md     persona's own words, pre-debrief
   metrics.json           the objective numbers
@@ -167,6 +167,32 @@ uxtest/rounds/<n>/
 
 `REPORT.md` findings feed scoping directly. A finding that names a specific command's output
 is worth more than a general complaint — quote the exact line the persona saw.
+
+### 4.1 Capability redaction in artifacts — security beats literal "verbatim"
+
+The chat **necessarily carries a live invite capability** — that is the delivery mechanism under
+test, and the channel is *supposed* to carry it. But `rounds/<n>/` is a **committed git
+artifact**, and our standing rule is that bearer material never lands in transcripts, logs, or
+artifacts. Git history is permanent; a private repo is not a defense.
+
+**Ruling: redact in artifacts. The live channel stays untouched** — do not weaken the scenario
+to avoid the conflict.
+
+Redaction requirements:
+
+1. **Mirror the §3.3 parse grammar, not just the pretty prefix.** A prefix match on
+   `coswarm://accept/` misses the other valid forms. Redact all three: the
+   `coswarm://accept/<base64url>` form, a **bare base64url payload** (valid per the grammar), and
+   a raw `swm_inv_…` token. Replace with `[INVITE LINK REDACTED]` / `[INVITE TOKEN REDACTED]`.
+2. **Redact in-flight; never write the raw material to disk.** Do not write a raw transcript and
+   then rewrite it — that leaves the payload on disk and stageable, which is the thing we are
+   preventing.
+3. **Metrics come from server-authoritative DB event timestamps, not from parsing the chat.**
+   This is better methodology anyway, and it means redaction costs us no measurement.
+4. **Capture the fact before destroying the payload.** Whether a persona pasted a capability into
+   chat, and in which form, is itself a UX finding — a user treating a credential like a chat
+   message tells us something. Record `link_pasted_in_chat` and `link_form: uri|bare|token`
+   **before** redacting. We lose the secret, not the signal.
 
 ---
 
@@ -307,6 +333,10 @@ theater. Protocol, in preference order:
   they differ.** (The laptop was stale by an entire slice — §1.1.)
 - **Warm login.** Both machines log out and drop the profile sidecar per round.
 - Leftover test workspaces are *not* a confounder — additive reset stays.
+- **Workspace creation is not under test.** Each round uses the privileged, fixture-only
+  `seed-fixture` bridge because governed `create_workspace` is not wired yet. No report may
+  claim to test real workspace creation. Migrate the harness to the governed command when it
+  lands so the setup path does not permanently diverge from the product.
 
 ### 7.6 `metrics.json` schema (script-collected, never self-reported)
 
