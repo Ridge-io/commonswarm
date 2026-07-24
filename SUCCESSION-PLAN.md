@@ -229,6 +229,35 @@ platform — that is how this drifts into infrastructure nobody asked for. (Appl
 already: SPEC GAPS #18 defers snapshot bootstrap to P3, #3 defers claim kinds to P2 —
 both real, neither is coordination.)
 
+## 1c. Product vision steer (operator, 2026-07-24, verbatim-adjacent) — governs P2+ scoping
+
+The operator articulated WHY they want this product. Record kept here so every future
+Lead scopes against it (it strengthens and extends §1b):
+
+**Why (differentiators):** multiple subscriptions, not API fees (each human brings their
+own agents/subscriptions — matches §2.10 per-human-coordinator topology); model inversion
+(cross-model adversarial review) + model fusion (cross-model planning/consensus) as a
+product capability, not just our build method; frontier harnesses; visibility of each
+agent's work; full-swarm on-the-fly tuning/steering while the operator is looking.
+
+**Wants:** human vibing (agents handle tasks/tracking); coordination with project
+collaborators; agent-to-agent messaging; org-structure understanding / communications
+routing; work visibility (tasks/goals/areas of focus); shared knowledge; "run the
+business together"; **map the surface areas and work areas (related repos, related
+infrastructure)** — the infrastructure-surface mapping is genuinely NEW vs the spec
+(repo mapping §2.11 covers repos only); park as a P3+ design question.
+
+**Interface ruling:** CLI is the NOW interface, not the endgame (Devin-Desktop-like app
+or web UI later — collaborators are CLI-native today, so CLI first). **Near-term north
+star: nail HUMAN-DRIVEN swarm-to-swarm project coordination with exceptionally great
+onboarding + CLI UX.** Appendix C (operator UX spec) is elevated accordingly.
+
+**Sequencing implication (Lead3 reading):** slice 2b stays (invite/accept/principals/
+tokens ARE the swarm-to-swarm onboarding substrate). After 2b, P2 scoping should target
+the minimum two-human coordination loop E2E — second human onboards via invite page →
+accept → both see membership/tasks/messages — ahead of deeper authority machinery
+(remaining T-13–T-25 sweep, artifact plane, knowledge plane trail behind that loop).
+
 ## 2. Method
 
 Build **phase by phase**, each phase: **build → test (green) → model-inversion
