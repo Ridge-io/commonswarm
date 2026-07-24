@@ -18,6 +18,7 @@ import {
 
 interface LocalEnvironment {
   API_URL: string;
+  ANON_KEY: string;
   DB_URL: string;
   SERVICE_ROLE_KEY: string;
 }
@@ -75,7 +76,12 @@ function localEnvironment(): LocalEnvironment {
     stdio: ["ignore", "pipe", "ignore"],
   });
   const parsed = JSON.parse(output) as Partial<LocalEnvironment>;
-  assert.ok(parsed.API_URL && parsed.DB_URL && parsed.SERVICE_ROLE_KEY);
+  assert.ok(
+    parsed.API_URL &&
+      parsed.ANON_KEY &&
+      parsed.DB_URL &&
+      parsed.SERVICE_ROLE_KEY,
+  );
   return parsed as LocalEnvironment;
 }
 
@@ -649,6 +655,100 @@ test("T-01 cross-tenant and nonexistent workspaces are uniform 403s", async () =
       WHERE command_id = ${idB}
     `;
     assert.equal(Number(ledger[0]?.count), 0);
+  });
+});
+
+test("P2-2 read views retain the membership gate and hide foreign projects", async () => {
+  await scenario(async (f) => {
+    const headers = {
+      authorization: `Bearer ${f.uaJwt}`,
+      apikey: local.ANON_KEY,
+      "accept-profile": "swarm_read",
+    };
+    const visibleResponse = await fetch(
+      `${local.API_URL}/rest/v1/workspaces?select=workspace_id,name,archived_at&order=workspace_id.asc`,
+      { headers },
+    );
+    assert.equal(visibleResponse.status, 200);
+    const visible = await visibleResponse.json() as Array<
+      Record<string, unknown>
+    >;
+    assert.deepEqual(
+      visible.map((row) => row.workspace_id),
+      [f.workspaceA],
+    );
+
+    const foreignWorkspaceResponse = await fetch(
+      `${local.API_URL}/rest/v1/workspaces?select=workspace_id,name&workspace_id=eq.${f.workspaceB}`,
+      { headers },
+    );
+    assert.equal(foreignWorkspaceResponse.status, 200);
+    assert.deepEqual(await foreignWorkspaceResponse.json(), []);
+
+    const memberResponse = await fetch(
+      `${local.API_URL}/rest/v1/member_profiles?select=workspace_id,user_id,display_name,role&workspace_id=eq.${f.workspaceA}&order=user_id.asc`,
+      { headers },
+    );
+    assert.equal(memberResponse.status, 200);
+    const members = await memberResponse.json() as Array<
+      Record<string, unknown>
+    >;
+    assert.deepEqual(
+      new Set(members.map((row) => row.user_id)),
+      new Set([f.ua, f.ua2]),
+    );
+
+    const foreignMemberResponse = await fetch(
+      `${local.API_URL}/rest/v1/member_profiles?select=workspace_id,user_id&workspace_id=eq.${f.workspaceB}`,
+      { headers },
+    );
+    assert.equal(foreignMemberResponse.status, 200);
+    assert.deepEqual(await foreignMemberResponse.json(), []);
+
+    const viewRows = await sql<{
+      relname: string;
+      reloptions: string[] | null;
+      owner: string;
+      definition: string;
+      authenticated_select: boolean;
+      anon_select: boolean;
+    }[]>`
+      SELECT
+        c.relname,
+        c.reloptions,
+        pg_get_userbyid(c.relowner) AS owner,
+        pg_get_viewdef(c.oid) AS definition,
+        has_table_privilege(
+          'authenticated',
+          format('%I.%I', n.nspname, c.relname),
+          'SELECT'
+        ) AS authenticated_select,
+        has_table_privilege(
+          'anon',
+          format('%I.%I', n.nspname, c.relname),
+          'SELECT'
+        ) AS anon_select
+      FROM pg_class AS c
+      JOIN pg_namespace AS n ON n.oid = c.relnamespace
+      WHERE n.nspname = 'swarm_read'
+        AND c.relname IN ('workspaces', 'member_profiles')
+      ORDER BY c.relname
+    `;
+    assert.deepEqual(
+      viewRows.map((row) => row.relname),
+      ["member_profiles", "workspaces"],
+    );
+    for (const row of viewRows) {
+      assert.ok(row.reloptions?.includes("security_barrier=true"));
+      assert.equal(row.owner, "swarm_admin");
+      assert.match(row.definition, /swarm\.is_member\(/);
+      assert.equal(row.authenticated_select, true);
+      assert.equal(row.anon_select, false);
+    }
+    assert.match(
+      viewRows.find((row) => row.relname === "member_profiles")!.definition,
+      /revoked_at IS NULL/,
+    );
   });
 });
 

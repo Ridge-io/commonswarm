@@ -46,8 +46,25 @@ import {
   decodeInviteLink,
   encodeInviteLink,
   parseAcceptPositional,
+  sanitizeDisplayLabel,
   type InviteLinkPayload,
 } from "./cloud/invite-link.js";
+import {
+  clearWorkspaceDefault,
+  cloudWorkspaceDirectory,
+  DEFAULT_MEMBERSHIP_REVOKED,
+  renderStatus,
+  renderWorkspaces,
+  resolveWorkspace,
+  selectWorkspace,
+  WorkspaceCliError,
+  WorkspaceUnavailableError,
+  workspaceOverride,
+  writeWorkspaceDefault,
+  type WorkspaceDirectory,
+  type WorkspaceSummary,
+  type WorkspaceWarning,
+} from "./cloud/workspaces.js";
 
 const BOOLEAN_FLAGS = new Set([
   "agent-token-stdin",
@@ -165,6 +182,9 @@ function usage(): string {
 Usage:
   coswarm login --url <project-url> --anon-key <key> [--no-browser]
   coswarm logout --url <project-url> --anon-key <key> [--all-devices]
+  coswarm status --url <url> --anon-key <key> [--workspace-id <uuid>] [--json]
+  coswarm workspaces --url <url> --anon-key <key> [--json]
+  coswarm use <full-id|exact-name> --url <url> --anon-key <key> [--json]
   coswarm invite --url <url> --anon-key <key> [--workspace-id <uuid>] --email <email>
   coswarm accept --link-stdin [--name <name>] [--no-browser] [--json]
   coswarm accept <coswarm://accept/...> [--name <name>] [--no-browser] [--json]  # unsafe: shell history/process list
@@ -188,9 +208,12 @@ GitHub identities with the same verified email may resolve to one GoTrue user;
 a second human must log in with a distinct verified email before accepting.
 
 Target/workspace flags may also be set with SWARM_CLOUD_URL,
-SWARM_CLOUD_ANON_KEY, and SWARM_CLOUD_WORKSPACE_ID. A sole accepted workspace
-is saved in the local profile and used when --workspace-id is omitted. An invite
-link supplies its whole target and cannot be combined with --url or --anon-key.
+SWARM_CLOUD_ANON_KEY, and SWARM_CLOUD_WORKSPACE_ID. Normal project selection is:
+coswarm workspaces, then coswarm use <full-id|exact-name>. A sole accepted
+project is saved automatically; ambiguous names require the full id and Coswarm
+never guesses. The workspace-id environment variable is a power-user override,
+with --workspace-id taking precedence. An invite link supplies its whole target
+and cannot be combined with --url or --anon-key.
 For an unrecognized origin, --link-stdin and --json hard-fail without a prompt;
 use a positional link without --json when an interactive confirmation is needed.
 The fixture bridge is test-only. It reads its privileged database connection only
@@ -313,15 +336,6 @@ async function confirmationLine(prompt: string): Promise<string> {
   }
 }
 
-async function credential(
-  args: Arguments,
-  cloud: CloudTarget,
-): Promise<string> {
-  if (args.has("agent-token-stdin")) return await stdinCredential();
-  const credentials = await store(args, cloud);
-  return (await refreshedCredential(cloud, credentials)).accessToken;
-}
-
 interface HumanSession extends RefreshedCredential {
   store: CredentialStore;
 }
@@ -337,58 +351,31 @@ async function humanCredential(
   };
 }
 
-function checkedUuid(value: string, source: string): string {
-  if (!UUID_RE.test(value)) throw new Error(`${source} must be a UUID`);
-  return value;
+function writeWorkspaceWarning(warning: WorkspaceWarning): void {
+  process.stderr.write(`coswarm: ${warning.message}\n`);
+  process.stderr.write(`${JSON.stringify(warning)}\n`);
 }
 
 async function workspaceId(
   args: Arguments,
   cloud: CloudTarget,
-  credentials?: CredentialStore,
+  human: HumanSession,
+  options: {
+    directory?: WorkspaceDirectory;
+    workspaces?: readonly WorkspaceSummary[];
+    warn?: (warning: WorkspaceWarning) => void;
+  } = {},
 ): Promise<string> {
-  const explicit = args.optional("workspace-id");
-  if (explicit !== undefined) return checkedUuid(explicit, "--workspace-id");
-  const environmental = process.env.SWARM_CLOUD_WORKSPACE_ID;
-  if (environmental) {
-    return checkedUuid(environmental, "SWARM_CLOUD_WORKSPACE_ID");
-  }
-  const profileStore = credentials ?? await store(args, cloud);
-  const profile = await profileStore.withLock(() => profileStore.readProfile());
-  if (profile.workspaceId === null) {
-    throw new Error(
-      "--workspace-id is required because this profile has no default; set SWARM_CLOUD_WORKSPACE_ID or accept an invitation first",
-    );
-  }
-  return profile.workspaceId;
-}
-
-async function writeWorkspaceDefault(
-  credentials: CredentialStore,
-  userId: string,
-  value: string,
-): Promise<void> {
-  await credentials.withLock(async () => {
-    const profile = await credentials.readProfile();
-    const sameUser = profile.userId === userId;
-    const sameWorkspace = sameUser && profile.workspaceId === value;
-    await credentials.writeProfile({
-      ...(sameUser
-        ? profile
-        : {
-          version: 1 as const,
-          userId,
-          workspaceId: null,
-          email: null,
-          principalId: null,
-          principalName: null,
-          pendingCommands: {},
-        }),
-      userId,
-      workspaceId: value,
-      principalId: sameWorkspace ? profile.principalId ?? null : null,
-      principalName: sameWorkspace ? profile.principalName ?? null : null,
-    });
+  return await resolveWorkspace({
+    explicit: args.optional("workspace-id"),
+    environmental: process.env.SWARM_CLOUD_WORKSPACE_ID,
+    session: human,
+    store: human.store,
+    directory: options.directory ?? cloudWorkspaceDirectory(cloud),
+    ...(options.workspaces === undefined
+      ? {}
+      : { workspaces: options.workspaces }),
+    warn: options.warn ?? writeWorkspaceWarning,
   });
 }
 
@@ -419,11 +406,178 @@ function printJson(value: Record<string, unknown>): void {
   process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
 }
 
+async function profileIdentity(
+  human: HumanSession,
+): Promise<{ email: string | null; workspaceId: string | null }> {
+  const profile = await human.store.withLock(
+    () => human.store.readProfile(),
+  );
+  return profile.userId === human.userId
+    ? {
+      email: profile.email ?? null,
+      workspaceId: profile.workspaceId,
+    }
+    : { email: null, workspaceId: null };
+}
+
+async function runWorkspaces(args: Arguments): Promise<void> {
+  args.assertShape([...TARGET_FLAGS, "json"], 1);
+  const cloud = target(args);
+  const human = await humanCredential(args, cloud);
+  const directory = cloudWorkspaceDirectory(cloud);
+  const projects = await directory.list(human);
+  const profile = await profileIdentity(human);
+  const selectedWorkspaceId = projects.some(
+      (project) => project.workspace_id === profile.workspaceId,
+    )
+    ? profile.workspaceId
+    : null;
+  if (args.has("json")) {
+    printJson({
+      identity: {
+        user_id: human.userId,
+        email: profile.email,
+      },
+      selected_workspace_id: selectedWorkspaceId,
+      projects,
+      known_gaps: [
+        {
+          code: "workspace_archive_not_enforced",
+          message:
+            "Project archive enforcement is not available yet; archived projects remain selectable while your membership is live.",
+        },
+      ],
+    });
+    return;
+  }
+  process.stdout.write(
+    `${renderWorkspaces(projects, selectedWorkspaceId)}\n`,
+  );
+}
+
+async function runUse(args: Arguments): Promise<void> {
+  args.assertShape([...TARGET_FLAGS, "json"], 2);
+  const cloud = target(args);
+  const human = await humanCredential(args, cloud);
+  const directory = cloudWorkspaceDirectory(cloud);
+  const selected = await selectWorkspace(
+    args.positionals[1]!,
+    await directory.list(human),
+    human.store,
+    human.userId,
+  );
+  const message =
+    `Selected project ${selected.name} (${selected.workspace_id}). Later commands will use it unless --workspace-id or SWARM_CLOUD_WORKSPACE_ID overrides it.`;
+  if (args.has("json")) {
+    printJson({
+      code: "project_selected",
+      message,
+      project: selected,
+    });
+    return;
+  }
+  process.stdout.write(`${message}\n`);
+}
+
+async function runStatus(args: Arguments): Promise<void> {
+  args.assertShape([...TARGET_FLAGS, "workspace-id", "json"], 1);
+  const cloud = target(args);
+  const human = await humanCredential(args, cloud);
+  const directory = cloudWorkspaceDirectory(cloud);
+  const projects = await directory.list(human);
+  const profile = await profileIdentity(human);
+  const identityLabel = sanitizeDisplayLabel(
+    profile.email ?? human.userId,
+    human.userId,
+  );
+  if (projects.length === 0) {
+    const warnings: WorkspaceWarning[] = [];
+    if (
+      profile.workspaceId !== null &&
+      await clearWorkspaceDefault(
+        human.store,
+        human.userId,
+        profile.workspaceId,
+      )
+    ) {
+      warnings.push(DEFAULT_MEMBERSHIP_REVOKED);
+      if (!args.has("json")) writeWorkspaceWarning(warnings[0]!);
+    }
+    const message =
+      "You're not in any projects yet. Ask a colleague to send you an invitation link, then accept it with coswarm accept --link-stdin.";
+    if (args.has("json")) {
+      printJson({
+        identity: {
+          user_id: human.userId,
+          email: profile.email,
+          device_id: human.deviceId,
+        },
+        project_count: 0,
+        selected_project: null,
+        message,
+        members: [],
+        agents: [],
+        tasks: [],
+        warnings,
+      });
+      return;
+    }
+    process.stdout.write(
+      `You: ${identityLabel} (${human.userId})\nYou're not in any projects yet.\nAsk a colleague to send you an invitation link, then accept it with coswarm accept --link-stdin.\n`,
+    );
+    return;
+  }
+  const warnings: WorkspaceWarning[] = [];
+  const selectedWorkspaceId = await workspaceId(args, cloud, human, {
+    directory,
+    workspaces: projects,
+    warn: (warning) => {
+      warnings.push(warning);
+      if (!args.has("json")) writeWorkspaceWarning(warning);
+    },
+  });
+  const selected = projects.find(
+    (project) => project.workspace_id === selectedWorkspaceId,
+  );
+  if (!selected) throw new WorkspaceUnavailableError();
+  const status = await directory.status(human, selectedWorkspaceId);
+  if (args.has("json")) {
+    printJson({
+      identity: {
+        user_id: human.userId,
+        email: profile.email,
+        device_id: human.deviceId,
+      },
+      project_count: projects.length,
+      selected_project: selected,
+      members: status.members,
+      agents: status.agents,
+      tasks: status.tasks,
+      warnings,
+      known_gaps: [
+        {
+          code: "workspace_archive_not_enforced",
+          message:
+            "Project archive enforcement is not available yet; archived projects remain selectable while your membership is live.",
+        },
+      ],
+    });
+    return;
+  }
+  process.stdout.write(`${renderStatus({
+    userId: human.userId,
+    identityLabel,
+    projectCount: projects.length,
+    selected,
+    status,
+  })}\n`);
+}
+
 async function runInvite(args: Arguments): Promise<void> {
   args.assertShape([...TARGET_FLAGS, "workspace-id", "email"], 1);
   const cloud = target(args);
   const human = await humanCredential(args, cloud);
-  const workspace = await workspaceId(args, cloud, human.store);
+  const workspace = await workspaceId(args, cloud, human);
   const response = acceptedConnect(
     "invite",
     await sendConnectWithPending(
@@ -624,7 +778,7 @@ async function runPrincipal(args: Arguments): Promise<void> {
   }
   const cloud = target(args);
   const human = await humanCredential(args, cloud);
-  const workspace = await workspaceId(args, cloud, human.store);
+  const workspace = await workspaceId(args, cloud, human);
   const response = acceptedConnect(
     "principal create",
     await sendConnectWithPending(
@@ -663,7 +817,7 @@ async function runToken(args: Arguments): Promise<void> {
   }
   const cloud = target(args);
   const human = await humanCredential(args, cloud);
-  const workspace = await workspaceId(args, cloud, human.store);
+  const workspace = await workspaceId(args, cloud, human);
   const ttl = args.optional("ttl-ms");
   const response = acceptedConnect(
     "token mint",
@@ -801,6 +955,33 @@ function accepted(label: string, result: CommandResult): void {
   }
 }
 
+async function commandWorkspaceAndCredential(
+  args: Arguments,
+  cloud: CloudTarget,
+): Promise<{ selectedWorkspace: string; bearer: string }> {
+  const override = workspaceOverride(
+    args.optional("workspace-id"),
+    process.env.SWARM_CLOUD_WORKSPACE_ID,
+  );
+  if (args.has("agent-token-stdin")) {
+    if (override === null) {
+      throw new Error(
+        "not logged in; agent credentials require --workspace-id or SWARM_CLOUD_WORKSPACE_ID because they never infer a human's project selection",
+      );
+    }
+    return {
+      selectedWorkspace: override,
+      bearer: await stdinCredential(),
+    };
+  }
+  const human = await humanCredential(args, cloud);
+  return {
+    selectedWorkspace: override ??
+      await workspaceId(args, cloud, human),
+    bearer: human.accessToken,
+  };
+}
+
 async function runTaskCommand(args: Arguments): Promise<void> {
   args.assertShape(
     [...TARGET_FLAGS, ...ROUTE_FLAGS, ...CREDENTIAL_FLAGS, ...TASK_FLAGS],
@@ -809,8 +990,8 @@ async function runTaskCommand(args: Arguments): Promise<void> {
   const kind = args.positionals[1];
   if (!kind) throw new Error("command kind is required");
   const cloud = target(args);
-  const selectedWorkspace = await workspaceId(args, cloud);
-  const bearer = await credential(args, cloud);
+  const { selectedWorkspace, bearer } =
+    await commandWorkspaceAndCredential(args, cloud);
   const client = new ThinCommandClient(cloud);
   const result = await client.send({
     workspaceId: selectedWorkspace,
@@ -837,8 +1018,8 @@ async function runDogfood(args: Arguments): Promise<void> {
     1,
   );
   const cloud = target(args);
-  const selectedWorkspace = await workspaceId(args, cloud);
-  const bearer = await credential(args, cloud);
+  const { selectedWorkspace, bearer } =
+    await commandWorkspaceAndCredential(args, cloud);
   const client = new ThinCommandClient(cloud);
   const route = stream(args);
   const taskId = args.optional("task-id") ?? randomUUID();
@@ -985,8 +1166,8 @@ async function main(): Promise<void> {
     process.stdout.write(
       `Login complete for ${result.userId}. This device (${result.deviceId}) is registered so its agent credentials can be governed independently; refresh credential: ${result.storage}; ${
         result.workspaceId
-          ? `workspace ${result.workspaceId} is now the default`
-          : "no workspace is selected yet—accept an invitation to choose one"
+          ? `project ${result.workspaceId} is now selected`
+          : "no project is selected yet—run coswarm workspaces, then coswarm use <full-id|exact-name>"
       }.\n`,
     );
     return;
@@ -1017,6 +1198,18 @@ async function main(): Promise<void> {
   }
   if (verb === "invite") {
     await runInvite(args);
+    return;
+  }
+  if (verb === "status") {
+    await runStatus(args);
+    return;
+  }
+  if (verb === "workspaces") {
+    await runWorkspaces(args);
+    return;
+  }
+  if (verb === "use") {
+    await runUse(args);
     return;
   }
   if (verb === "accept") {
@@ -1055,6 +1248,31 @@ function safeError(error: unknown): string {
 }
 
 main().catch((error) => {
+  if (error instanceof WorkspaceCliError) {
+    const structured = error.structured();
+    const verb = process.argv[2];
+    const json = process.argv.includes("--json") &&
+      (verb === "status" || verb === "workspaces" || verb === "use");
+    if (json) {
+      process.stdout.write(`${JSON.stringify(structured, null, 2)}\n`);
+    } else {
+      process.stderr.write(`coswarm: ${error.message}\n`);
+      const projects = structured.projects;
+      if (Array.isArray(projects) && projects.length > 0) {
+        process.stderr.write("Available projects:\n");
+        for (const project of projects) {
+          if (!project || typeof project !== "object") continue;
+          const row = project as Record<string, unknown>;
+          process.stderr.write(
+            `- ${String(row.name)} (${String(row.workspace_id)}) — ${String(row.role)}\n`,
+          );
+        }
+      }
+      process.stderr.write(`${JSON.stringify(structured)}\n`);
+    }
+    process.exitCode = 1;
+    return;
+  }
   process.stderr.write(`coswarm: ${safeError(error)}\n`);
   process.exitCode = 1;
 });

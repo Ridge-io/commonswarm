@@ -29,6 +29,10 @@ import type {
   CredentialRecord,
   CredentialStore,
 } from "../../src/cloud/storage.js";
+import {
+  cloudWorkspaceDirectory,
+  selectWorkspace,
+} from "../../src/cloud/workspaces.js";
 
 interface LocalEnvironment {
   API_URL: string;
@@ -480,4 +484,89 @@ test("one-command invite link accept converges after a live local double-run", a
   } finally {
     await db.end({ timeout: 5 });
   }
+});
+
+test("live project reads list, select, and render status across two memberships", async () => {
+  const nonce = randomUUID();
+  const email = `p2-projects-${nonce}@example.test`;
+  const password = `T-${randomBytes(24).toString("base64url")}!`;
+  const created = await admin.auth.admin.createUser({
+    email,
+    password,
+    email_confirm: true,
+  });
+  assert.ifError(created.error);
+  assert.ok(created.data.user);
+  const auth = createClient(local.API_URL, local.ANON_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+  const signedIn = await auth.auth.signInWithPassword({ email, password });
+  assert.ifError(signedIn.error);
+  assert.ok(signedIn.data.session?.access_token);
+  const deviceId = randomUUID();
+  const alphaId = randomUUID();
+  const betaId = randomUUID();
+  await seedDogfood({
+    databaseUrl: local.DB_URL,
+    userId: created.data.user.id,
+    deviceId,
+    workspaceId: alphaId,
+    workspaceName: `Alpha ${nonce.slice(0, 8)}`,
+    displayName: "P2\u202e Operator",
+  });
+  await seedDogfood({
+    databaseUrl: local.DB_URL,
+    userId: created.data.user.id,
+    deviceId,
+    workspaceId: betaId,
+    workspaceName: `Beta ${nonce.slice(0, 8)}`,
+    displayName: "P2 Operator",
+  });
+  const db = postgres(local.DB_URL, { prepare: false });
+  try {
+    await db`
+      UPDATE swarm.workspaces
+      SET archived_at = statement_timestamp()
+      WHERE workspace_id = ${betaId}::uuid
+    `;
+  } finally {
+    await db.end({ timeout: 5 });
+  }
+
+  const directory = cloudWorkspaceDirectory(
+    cloudTarget(local.API_URL, local.ANON_KEY),
+  );
+  const session = {
+    accessToken: signedIn.data.session.access_token,
+    userId: created.data.user.id,
+    deviceId,
+  };
+  const projects = await directory.list(session);
+  assert.deepEqual(
+    projects.map((project) => project.workspace_id).sort(),
+    [alphaId, betaId].sort(),
+  );
+  assert.equal(
+    projects.find((project) => project.workspace_id === betaId)?.archived,
+    true,
+  );
+  assert.ok(projects.every((project) => project.name.includes(nonce.slice(0, 8))));
+
+  const store = new LocalMemoryStore(created.data.user.id, email);
+  const selected = await selectWorkspace(
+    `Beta ${nonce.slice(0, 8)}`,
+    projects,
+    store,
+    created.data.user.id,
+  );
+  assert.equal(selected.workspace_id, betaId);
+  assert.equal(store.profile.workspaceId, betaId);
+
+  const status = await directory.status(session, betaId);
+  assert.equal(status.members.length, 1);
+  assert.equal(status.members[0]?.name, "P2 Operator");
+  assert.equal(status.members[0]?.you, true);
+  assert.ok(status.agents.length >= 1);
+  assert.ok(status.agents.some((agent) => agent.this_machine));
+  assert.deepEqual(status.tasks, []);
 });

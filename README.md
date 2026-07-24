@@ -102,9 +102,29 @@ be confirmed in those modes; use a positional link without `--json` when a
 human needs the interactive origin confirmation.
 
 The hosted URL and anon key may come from `SWARM_CLOUD_URL` and
-`SWARM_CLOUD_ANON_KEY`. `--workspace-id` overrides
-`SWARM_CLOUD_WORKSPACE_ID`, which overrides the workspace saved by `login`
-(when exactly one membership exists) or `accept`.
+`SWARM_CLOUD_ANON_KEY`. To see and select a project:
+
+```bash
+coswarm workspaces
+coswarm use "$FULL_PROJECT_ID" # or an exact, unique project name
+coswarm status
+coswarm invite --email collaborator@example.com
+```
+
+`workspaces` always shows the project name and full id. `use` saves the
+selection only after confirming a live membership; it never uses prefixes,
+slugs, fuzzy matching, or a hidden prompt. If safe display names collide, it
+lists every collision and requires the full id. A sole project is selected
+automatically. With several projects and no saved selection, scoped commands
+fail promptly with the same list and point back to `workspaces` → `use`.
+
+`--workspace-id` overrides `SWARM_CLOUD_WORKSPACE_ID`, which overrides the
+saved selection. The environment variable is a power-user override, not the
+normal multi-project flow. If membership in a saved project is revoked, the
+next scoped command warns once, clears the stale selection, and continues with
+sole-project discovery or the fail-closed list. Archived projects remain
+visible and selectable while membership is live because server-side project
+archive enforcement has not shipped yet.
 
 Send one command with the human login:
 
