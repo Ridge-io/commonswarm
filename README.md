@@ -55,8 +55,9 @@ exchanges the code.
 
 Only the rotating refresh credential is persisted as a secret. On macOS it
 lives in the Keychain alongside the local device identifier. A non-secret
-`0600` profile stores the default workspace and transport-ambiguous pending
-command IDs. A host without a supported keychain uses a warned `0600`
+`0600` profile stores the login label, default workspace, reusable agent
+identity checkpoint, and transport-ambiguous pending command IDs. A host
+without a supported keychain uses a warned `0600`
 credential file inside a `0700` directory; insecure permissions are refused. Set
 `SWARM_ALLOW_INSECURE_STORE=0` to refuse the file fallback entirely. Access
 tokens and the PKCE verifier remain process-memory-only.
@@ -66,17 +67,39 @@ different verified email—GoTrue deliberately links provider identities that
 share a verified email:
 
 ```bash
-coswarm invite --email collaborator@example.com
+coswarm invite --email collaborator@example.com  # prints one coswarm://accept/... link
 
-# On the collaborator's machine; keep the capability out of argv/history.
-printf '%s' "$INVITATION_TOKEN" |
-  coswarm accept --invitation-token-stdin
+# On the collaborator's machine; one command signs in, accepts, and registers
+# this machine's agent identity. Keep the invite capability out of argv/history.
+printf '%s' "$COSWARM_INVITE_LINK" |
+  coswarm accept --link-stdin
 
-coswarm principal create --name laptop-agent
+# Optional: choose the identity name during the same one-command flow.
+printf '%s' "$COSWARM_INVITE_LINK" |
+  coswarm accept --link-stdin --name laptop-agent
+
+# Mint remains explicit because the credential is bound to a concrete run/task.
 coswarm token mint \
   --principal-id "$PRINCIPAL_ID" --run-id "$RUN_ID" \
   --task-id "$TASK_ID" --epoch 1
 ```
+
+`accept` narrates why each internal step happens. `--no-browser` prints the
+GitHub OAuth URL for a human to open; `--json` emits machine-readable progress
+on stdout while keeping the narration on stderr. A positional invite link is
+supported for convenience but warns because the one-time capability can remain
+in shell history and process listings. The legacy bare `swm_inv_…` and
+`--invitation-token-stdin` accept forms remain available and consume only the
+invitation; they do not auto-create a principal.
+
+Invite links pin their complete Cloud target. Production and loopback origins
+are allowed by the build; an unknown origin is refused before login unless an
+interactive user re-types the exact origin. For local development only,
+`COSWARM_DEV_ALLOWED_ORIGINS` may contain a comma-separated origin allowlist.
+It is deliberately ignored by non-interactive/agent mode. `--link-stdin` and
+`--json` always use that non-interactive gate, so an unrecognized origin cannot
+be confirmed in those modes; use a positional link without `--json` when a
+human needs the interactive origin confirmation.
 
 The hosted URL and anon key may come from `SWARM_CLOUD_URL` and
 `SWARM_CLOUD_ANON_KEY`. `--workspace-id` overrides

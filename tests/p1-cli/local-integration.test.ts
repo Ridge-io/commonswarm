@@ -7,8 +7,28 @@ import { join } from "node:path";
 import { after, before, test } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import { assertAgentToken } from "../../src/cloud/command-client.js";
+import postgres from "postgres";
+import {
+  acceptInviteLink,
+  cloudAcceptOperations,
+  type AcceptProgress,
+  type AcceptSession,
+} from "../../src/cloud/accept-link.js";
+import {
+  assertAgentToken,
+  ThinCommandClient,
+} from "../../src/cloud/command-client.js";
+import { cloudTarget } from "../../src/cloud/config.js";
+import {
+  decodeInviteLink,
+  encodeInviteLink,
+} from "../../src/cloud/invite-link.js";
 import { seedDogfood } from "../../src/cloud/seed.js";
+import type {
+  CredentialProfile,
+  CredentialRecord,
+  CredentialStore,
+} from "../../src/cloud/storage.js";
 
 interface LocalEnvironment {
   API_URL: string;
@@ -21,6 +41,44 @@ let local: LocalEnvironment;
 let admin: SupabaseClient;
 let functionProcess: ReturnType<typeof spawn>;
 let functionLogs = "";
+
+class LocalMemoryStore implements CredentialStore {
+  readonly kind = "keychain" as const;
+  readonly location = "local integration memory";
+  record: CredentialRecord | null = null;
+  profile: CredentialProfile;
+
+  constructor(userId: string, email: string) {
+    this.profile = {
+      version: 1,
+      userId,
+      workspaceId: null,
+      email,
+      principalId: null,
+      principalName: null,
+      pendingCommands: {},
+    };
+  }
+
+  async read(): Promise<CredentialRecord | null> {
+    return this.record ? structuredClone(this.record) : null;
+  }
+  async write(record: CredentialRecord): Promise<void> {
+    this.record = structuredClone(record);
+  }
+  async delete(): Promise<void> {
+    this.record = null;
+  }
+  async readProfile(): Promise<CredentialProfile> {
+    return structuredClone(this.profile);
+  }
+  async writeProfile(profile: CredentialProfile): Promise<void> {
+    this.profile = structuredClone(profile);
+  }
+  async withLock<T>(work: () => Promise<T>): Promise<T> {
+    return await work();
+  }
+}
 
 function environment(): LocalEnvironment {
   const output = execFileSync("supabase", ["status", "-o", "json"], {
@@ -243,5 +301,135 @@ test("fixture bridge is idempotent and CLI client drives cradle-to-grave", async
     assert.equal(transcript.stderr.includes(agentToken), false);
   } finally {
     await rm(tokenDirectory, { recursive: true, force: true });
+  }
+});
+
+test("one-command invite link accept converges after a live local double-run", async () => {
+  const nonce = randomUUID();
+  const ownerEmail = `p2-owner-${nonce}@example.test`;
+  const inviteeEmail = `p2-invitee-${nonce}@example.test`;
+  const ownerPassword = `T-${randomBytes(24).toString("base64url")}!`;
+  const inviteePassword = `T-${randomBytes(24).toString("base64url")}!`;
+  const [ownerCreated, inviteeCreated] = await Promise.all([
+    admin.auth.admin.createUser({
+      email: ownerEmail,
+      password: ownerPassword,
+      email_confirm: true,
+      user_metadata: { full_name: "P2 Owner" },
+    }),
+    admin.auth.admin.createUser({
+      email: inviteeEmail,
+      password: inviteePassword,
+      email_confirm: true,
+      user_metadata: { full_name: "P2 Invitee" },
+    }),
+  ]);
+  assert.ifError(ownerCreated.error);
+  assert.ifError(inviteeCreated.error);
+  assert.ok(ownerCreated.data.user && inviteeCreated.data.user);
+  const auth = createClient(local.API_URL, local.ANON_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+  const ownerAuth = await auth.auth.signInWithPassword({
+    email: ownerEmail,
+    password: ownerPassword,
+  });
+  assert.ifError(ownerAuth.error);
+  const ownerJwt = ownerAuth.data.session?.access_token;
+  assert.ok(ownerJwt);
+  const inviteeAuth = await auth.auth.signInWithPassword({
+    email: inviteeEmail,
+    password: inviteePassword,
+  });
+  assert.ifError(inviteeAuth.error);
+  const inviteeJwt = inviteeAuth.data.session?.access_token;
+  assert.ok(inviteeJwt);
+
+  const seeded = await seedDogfood({
+    databaseUrl: local.DB_URL,
+    userId: ownerCreated.data.user.id,
+    displayName: "P2 Owner",
+    workspaceName: `P2 Link ${nonce}`,
+  });
+  const target = cloudTarget(local.API_URL, local.ANON_KEY);
+  const invited = await new ThinCommandClient(target).sendConnect({
+    workspaceId: seeded.workspaceId,
+    credential: ownerJwt,
+    command: { kind: "invite_member", email: inviteeEmail },
+  });
+  assert.equal(invited.response.status, "accepted");
+  assert.ok(invited.response.invitation_token);
+  assert.equal(invited.response.workspace_id, seeded.workspaceId);
+  assert.equal(invited.response.workspace_name, `P2 Link ${nonce}`);
+  const linkPayload = decodeInviteLink(encodeInviteLink({
+    v: 1,
+    url: target.url,
+    anon_key: target.anonKey,
+    workspace_id: seeded.workspaceId,
+    invitation_token: invited.response.invitation_token,
+    workspace_name: String(invited.response.workspace_name),
+    inviter_display_name: String(invited.response.inviter_display_name),
+    inviter_user_id: String(invited.response.inviter_user_id),
+  }));
+  const store = new LocalMemoryStore(
+    inviteeCreated.data.user.id,
+    inviteeEmail,
+  );
+  const session: AcceptSession = {
+    accessToken: inviteeJwt,
+    userId: inviteeCreated.data.user.id,
+    deviceId: randomUUID(),
+    email: inviteeEmail,
+  };
+  const progress: AcceptProgress[] = [];
+  const operations = cloudAcceptOperations(target, store);
+  const runtime = {
+    ...operations,
+    pinOrigin: async () => undefined,
+    currentSession: async () => session,
+    loginSession: async () => {
+      throw new Error("live local flow should reuse its authenticated session");
+    },
+    autoName: () => `p2-agent-${nonce.slice(0, 8)}`,
+    emit: (entry: AcceptProgress) => progress.push(entry),
+  };
+  const first = await acceptInviteLink({
+    payload: linkPayload,
+    target,
+    store,
+    runtime,
+  });
+  const second = await acceptInviteLink({
+    payload: linkPayload,
+    target,
+    store,
+    runtime,
+  });
+  assert.equal(second.checkpointShortCircuit, true);
+  assert.equal(second.principalId, first.principalId);
+  assert.equal(store.profile.workspaceId, seeded.workspaceId);
+  assert.equal(store.profile.principalId, first.principalId);
+  assert.ok(progress.some((entry) => entry.message.includes("You're connected")));
+
+  const db = postgres(local.DB_URL, { prepare: false });
+  try {
+    const [membershipCount] = await db<{ count: string | number }[]>`
+      SELECT count(*) AS count
+      FROM swarm.memberships
+      WHERE workspace_id = ${seeded.workspaceId}::uuid
+        AND user_id = ${inviteeCreated.data.user.id}::uuid
+        AND revoked_at IS NULL
+    `;
+    const [principalCount] = await db<{ count: string | number }[]>`
+      SELECT count(*) AS count
+      FROM swarm.agent_principals
+      WHERE workspace_id = ${seeded.workspaceId}::uuid
+        AND owner_user_id = ${inviteeCreated.data.user.id}::uuid
+        AND revoked_at IS NULL
+    `;
+    assert.equal(Number(membershipCount?.count), 1);
+    assert.equal(Number(principalCount?.count), 1);
+  } finally {
+    await db.end({ timeout: 5 });
   }
 });

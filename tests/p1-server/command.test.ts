@@ -977,6 +977,11 @@ test("connect loop invites, accepts, creates a principal, and mints a narrow tok
   await scenario(async (f) => {
     const invitee = await createUser("connect-invitee");
     registerHuman(f, invitee);
+    await sql`
+      UPDATE swarm.workspaces
+      SET name = ${"\u001b[31mA\u202e\n"}
+      WHERE workspace_id = ${f.workspaceA}::uuid
+    `;
 
     const excessiveTtl = await issueConnect(f, f.uaJwt, {
       kind: "invite_member",
@@ -999,6 +1004,14 @@ test("connect loop invites, accepts, creates a principal, and mints a narrow tok
     const invitationToken = String(invited.body.invitation_token);
     assert.match(invitationId, /^[0-9a-f-]{36}$/i);
     assert.match(invitationToken, /^swm_inv_[A-Za-z0-9_-]{43}$/);
+    assert.equal(invited.body.workspace_id, f.workspaceA);
+    assert.equal(invited.body.workspace_name, "A");
+    assert.equal(invited.body.inviter_user_id, f.ua);
+    assert.equal(typeof invited.body.inviter_display_name, "string");
+    assert.doesNotMatch(
+      String(invited.body.inviter_display_name),
+      /[\u001b\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/,
+    );
 
     const inviteReplay = await issueConnect(
       f,
@@ -1008,7 +1021,47 @@ test("connect loop invites, accepts, creates a principal, and mints a narrow tok
     );
     assert.equal(inviteReplay.body.status, "accepted");
     assert.equal(inviteReplay.body.invitation_id, invitationId);
-    assert.equal(Object.hasOwn(inviteReplay.body, "invitation_token"), false);
+    for (
+      const freshOnly of [
+        "invitation_token",
+        "workspace_id",
+        "workspace_name",
+        "inviter_display_name",
+        "inviter_user_id",
+      ]
+    ) {
+      assert.equal(Object.hasOwn(inviteReplay.body, freshOnly), false);
+    }
+    const [storedInvite] = await sql<{ response: Record<string, unknown> }[]>`
+      SELECT response
+      FROM swarm.idempotency_keys
+      WHERE command_id = ${inviteIdempotencyKey}
+        AND principal_kind = 'user'
+        AND principal_id = ${f.ua}
+    `;
+    assert.ok(storedInvite);
+    for (
+      const freshOnly of [
+        "invitation_token",
+        "workspace_id",
+        "workspace_name",
+        "inviter_display_name",
+        "inviter_user_id",
+      ]
+    ) {
+      assert.equal(Object.hasOwn(storedInvite.response, freshOnly), false);
+    }
+    const labelLeak = await sql<{ count: string | number }[]>`
+      SELECT count(*) AS count
+      FROM swarm.events
+      WHERE command_id = ${inviteIdempotencyKey}
+        AND (
+          payload ? 'workspace_name'
+          OR payload ? 'inviter_display_name'
+          OR payload ? 'inviter_user_id'
+        )
+    `;
+    assert.equal(Number(labelLeak[0]?.count), 0);
 
     const accepted = await issueConnect(
       f,

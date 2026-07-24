@@ -5,6 +5,7 @@ import type { Command, EventEnvelope, EventType } from "../../src/protocol/index
 import {
   assertAgentToken,
   assertInvitationToken,
+  CommandHttpError,
   newCommandId,
   ThinCommandClient,
 } from "../../src/cloud/command-client.js";
@@ -97,6 +98,32 @@ test("connect commands pin workspace routes while invite acceptance derives tena
     }),
     /tenancy is derived/,
   );
+});
+
+test("uniform 403 connect failures are never decoded", async () => {
+  const target = cloudTarget("http://127.0.0.1:54321", "anon-key");
+  const invitationToken = `swm_inv_${randomBytes(32).toString("base64url")}`;
+  let decoded = false;
+  const client = new ThinCommandClient(
+    target,
+    (async () => ({
+      status: 403,
+      ok: false,
+      text: async () => {
+        decoded = true;
+        throw new Error("403 body must remain opaque");
+      },
+    } as Response)) as typeof fetch,
+  );
+  await assert.rejects(
+    client.sendConnect({
+      command: { kind: "accept_invitation", token: invitationToken },
+      credential: "human-jwt",
+    }),
+    (error: unknown) =>
+      error instanceof CommandHttpError && error.status === 403,
+  );
+  assert.equal(decoded, false);
 });
 
 test("thin client sends the frozen wire contract and folds a dogfood sequence", async () => {

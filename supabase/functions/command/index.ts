@@ -506,6 +506,13 @@ function stripControls(value: string | null | undefined): string | null {
   return value.replace(CONTROL_GLOBAL_RE, "").slice(0, 2048);
 }
 
+function displayLabel(value: string | null | undefined, fallback: string): string {
+  const cleaned = stripControls(
+    value?.replace(ANSI_ESCAPE_GLOBAL_RE, ""),
+  )?.trim().slice(0, 120);
+  return cleaned || fallback;
+}
+
 function commandKind(body: RequestBody | null): string {
   const command = record(body?.command);
   return typeof command?.kind === "string"
@@ -2511,6 +2518,22 @@ async function handleTransaction(
     const freshOnly: Record<string, unknown> = {};
     if (prepared?.command.kind === "invite_member") {
       freshOnly.invitation_token = prepared.invitationToken;
+      const inviters = await tx<{ display_name: string }[]>`
+        SELECT display_name
+        FROM swarm.users
+        WHERE user_id = ${auth.actor.user}::uuid
+        LIMIT 1
+      `;
+      freshOnly.workspace_id = route.workspaceId;
+      freshOnly.workspace_name = displayLabel(
+        prepared.state.workspace.name,
+        "this swarm",
+      );
+      freshOnly.inviter_display_name = displayLabel(
+        inviters[0]?.display_name,
+        "the inviter",
+      );
+      freshOnly.inviter_user_id = auth.actor.user;
     } else if (prepared?.command.kind === "mint_agent_token") {
       freshOnly.agent_token = prepared.agentToken;
     }

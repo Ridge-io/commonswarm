@@ -55,6 +55,7 @@ export interface LoginResult {
   deviceId: string;
   storage: "keychain" | "file";
   workspaceId: string | null;
+  email: string | null;
 }
 
 export interface RefreshedCredential {
@@ -504,6 +505,13 @@ export async function login(options: LoginOptions): Promise<LoginResult> {
         version: 1,
         userId: session.user.id,
         workspaceId,
+        email: session.user.email ?? null,
+        principalId: sameUser && existingProfile.workspaceId === workspaceId
+          ? existingProfile.principalId ?? null
+          : null,
+        principalName: sameUser && existingProfile.workspaceId === workspaceId
+          ? existingProfile.principalName ?? null
+          : null,
         pendingCommands: sameUser ? existingProfile.pendingCommands : {},
       });
       return {
@@ -511,6 +519,7 @@ export async function login(options: LoginOptions): Promise<LoginResult> {
         deviceId: record.deviceId,
         storage: options.store.kind,
         workspaceId,
+        email: session.user.email ?? null,
       };
     });
   } finally {

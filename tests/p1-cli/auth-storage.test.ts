@@ -296,6 +296,8 @@ test("PKCE loopback holds verifier client-side and stores only the refresh recor
     assert.equal(result.workspaceId, server.workspaceId);
     assert.equal(credentials.profile.workspaceId, server.workspaceId);
     assert.equal(credentials.profile.userId, result.userId);
+    assert.equal(result.email, "dogfood@example.test");
+    assert.equal(credentials.profile.email, "dogfood@example.test");
     assert.equal(server.registrations(), 1);
     assert.doesNotMatch(output.text(), /paste the complete callback/i);
     assert.equal(input.listenerCount("data"), 0);
@@ -310,7 +312,7 @@ test("PKCE loopback holds verifier client-side and stores only the refresh recor
   }
 });
 
-test("copy/paste fallback verifies the same state before exchange", async () => {
+test("no-browser path prints the OAuth URL and verifies pasted callback state", async () => {
   const server = await authServer();
   const credentials = new MemoryCredentialStore();
   const input = new PassThrough();

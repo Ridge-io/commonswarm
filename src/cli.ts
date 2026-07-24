@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { open, unlink } from "node:fs/promises";
 import { isAbsolute } from "node:path";
+import { createInterface } from "node:readline/promises";
 import type { Command } from "./protocol/index.js";
 import {
   login,
@@ -30,6 +31,23 @@ import {
   type CredentialStore,
 } from "./cloud/storage.js";
 import { sendConnectWithPending } from "./cloud/pending-command.js";
+import {
+  acceptInviteLink,
+  cloudAcceptOperations,
+  originPin,
+  type AcceptProgress,
+  type AcceptSession,
+  writeAcceptProgress,
+} from "./cloud/accept-link.js";
+import {
+  cloudTarget as inviteCloudTarget,
+} from "./cloud/config.js";
+import {
+  decodeInviteLink,
+  encodeInviteLink,
+  parseAcceptPositional,
+  type InviteLinkPayload,
+} from "./cloud/invite-link.js";
 
 const BOOLEAN_FLAGS = new Set([
   "agent-token-stdin",
@@ -37,6 +55,8 @@ const BOOLEAN_FLAGS = new Set([
   "force-file-store",
   "help",
   "invitation-token-stdin",
+  "json",
+  "link-stdin",
   "no-browser",
 ]);
 
@@ -146,6 +166,8 @@ Usage:
   coswarm login --url <project-url> --anon-key <key> [--no-browser]
   coswarm logout --url <project-url> --anon-key <key> [--all-devices]
   coswarm invite --url <url> --anon-key <key> [--workspace-id <uuid>] --email <email>
+  coswarm accept --link-stdin [--name <name>] [--no-browser] [--json]
+  coswarm accept <coswarm://accept/...> [--name <name>] [--no-browser] [--json]  # unsafe: shell history/process list
   coswarm accept --invitation-token-stdin --url <url> --anon-key <key>
   coswarm accept <invitation-token> --url <url> --anon-key <key>  # unsafe: shell history/process list
   coswarm principal create --url <url> --anon-key <key> [--workspace-id <uuid>] --name <name>
@@ -158,14 +180,19 @@ Credential selection for command/dogfood:
   default                 refresh the human login from secure storage
   --agent-token-stdin     read one seeded swm_agt_ credential from stdin
 
-Invite, accept, principal create, and token mint require a stored human login.
-Invitation and agent credentials are printed only in their fresh success response.
+Invite, legacy token accept, principal create, and token mint require a stored
+human login. Invite-link accept signs in when needed, then accepts and registers
+one principal. Invitation links and agent credentials appear only in fresh
+success responses.
 GitHub identities with the same verified email may resolve to one GoTrue user;
 a second human must log in with a distinct verified email before accepting.
 
 Target/workspace flags may also be set with SWARM_CLOUD_URL,
 SWARM_CLOUD_ANON_KEY, and SWARM_CLOUD_WORKSPACE_ID. A sole accepted workspace
-is saved in the local profile and used when --workspace-id is omitted.
+is saved in the local profile and used when --workspace-id is omitted. An invite
+link supplies its whole target and cannot be combined with --url or --anon-key.
+For an unrecognized origin, --link-stdin and --json hard-fail without a prompt;
+use a positional link without --json when an interactive confirmation is needed.
 The fixture bridge reads its privileged database connection only from DATABASE_URL
 and writes a newly minted agent token only to the absolute create-new path in
 SEED_TOKEN_OUT.`;
@@ -257,6 +284,33 @@ async function invitationCredential(args: Arguments): Promise<string> {
   return capability;
 }
 
+async function stdinInviteLink(): Promise<string> {
+  if (process.stdin.isTTY) {
+    throw new Error("--link-stdin requires an invite link to be piped on stdin");
+  }
+  let value = "";
+  for await (const chunk of process.stdin) {
+    value += chunk.toString();
+    if (value.length > 16_384) throw new Error("invite link input is too large");
+  }
+  const link = value.trim();
+  if (!link) throw new Error("--link-stdin received an empty invite link");
+  return link;
+}
+
+async function confirmationLine(prompt: string): Promise<string> {
+  const reader = createInterface({
+    input: process.stdin,
+    output: process.stderr,
+    terminal: Boolean(process.stdin.isTTY),
+  });
+  try {
+    return await reader.question(prompt);
+  } finally {
+    reader.close();
+  }
+}
+
 async function credential(
   args: Arguments,
   cloud: CloudTarget,
@@ -314,11 +368,24 @@ async function writeWorkspaceDefault(
 ): Promise<void> {
   await credentials.withLock(async () => {
     const profile = await credentials.readProfile();
+    const sameUser = profile.userId === userId;
+    const sameWorkspace = sameUser && profile.workspaceId === value;
     await credentials.writeProfile({
-      version: 1,
+      ...(sameUser
+        ? profile
+        : {
+          version: 1 as const,
+          userId,
+          workspaceId: null,
+          email: null,
+          principalId: null,
+          principalName: null,
+          pendingCommands: {},
+        }),
       userId,
       workspaceId: value,
-      pendingCommands: profile.userId === userId ? profile.pendingCommands : {},
+      principalId: sameWorkspace ? profile.principalId ?? null : null,
+      principalName: sameWorkspace ? profile.principalName ?? null : null,
     });
   });
 }
@@ -370,16 +437,38 @@ async function runInvite(args: Arguments): Promise<void> {
     );
   }
   assertInvitationToken(response.invitation_token);
+  const responseWorkspaceId = uuid(response.workspace_id, "workspace_id");
+  if (
+    typeof response.workspace_name !== "string" ||
+    typeof response.inviter_display_name !== "string"
+  ) {
+    throw new Error(
+      "the invitation was created without its fresh display labels; run invite again to issue a complete link",
+    );
+  }
+  const payload: InviteLinkPayload = {
+    v: 1,
+    url: cloud.url,
+    anon_key: cloud.anonKey,
+    workspace_id: responseWorkspaceId,
+    invitation_token: response.invitation_token,
+    workspace_name: response.workspace_name,
+    inviter_display_name: response.inviter_display_name,
+    ...(typeof response.inviter_user_id === "string"
+      ? { inviter_user_id: response.inviter_user_id }
+      : {}),
+  };
+  const inviteLink = encodeInviteLink(payload);
   printJson({
     message:
-      "Invitation created. Share the one-time capability below so another verified human can join this workspace.",
+      "Invitation created. Share the one-time link below with its intended recipient. It can be accepted once before it expires; use a GitHub account with a distinct verified email for a second person.",
     status: response.status,
     invitation_id: uuid(response.invitation_id, "invitation_id"),
-    invitation_token: response.invitation_token,
+    invite_link: inviteLink,
   });
 }
 
-async function runAccept(args: Arguments): Promise<void> {
+async function runLegacyAccept(args: Arguments): Promise<void> {
   const invitationToken = await invitationCredential(args);
   const cloud = target(args);
   const human = await humanCredential(args, cloud);
@@ -396,10 +485,134 @@ async function runAccept(args: Arguments): Promise<void> {
   await writeWorkspaceDefault(human.store, human.userId, acceptedWorkspace);
   printJson({
     message:
-      "Workspace joined. Coswarm saved it as your default so later commands need fewer flags.",
+      "Invitation accepted. Coswarm saved the workspace as your default so later commands need fewer flags.",
     status: response.status,
     workspace_id: acceptedWorkspace,
   });
+}
+
+function progressWriter(json: boolean): (progress: AcceptProgress) => void {
+  return (progress) =>
+    writeAcceptProgress(progress, {
+      json,
+      stdout: process.stdout,
+      stderr: process.stderr,
+    });
+}
+
+async function runLinkAccept(
+  args: Arguments,
+  payload: InviteLinkPayload,
+): Promise<void> {
+  if (args.has("url") || args.has("anon-key")) {
+    throw new Error(
+      "an invite link supplies its complete Cloud target; do not combine it with --url or --anon-key",
+    );
+  }
+  const cloud = inviteCloudTarget(payload.url, payload.anon_key);
+  const credentials = await store(args, cloud);
+  const json = args.has("json");
+  const operations = cloudAcceptOperations(cloud, credentials);
+  const emit = progressWriter(json);
+  const runtime = {
+    ...operations,
+    pinOrigin: originPin({
+      interactive: Boolean(
+        process.stdin.isTTY && !json && !args.has("link-stdin"),
+      ),
+      output: process.stderr,
+      readConfirmation: process.stdin.isTTY
+        ? async () => await confirmationLine("")
+        : undefined,
+      devAllowedOrigins: process.env.COSWARM_DEV_ALLOWED_ORIGINS,
+    }),
+    async currentSession(
+      selected: CloudTarget,
+      selectedStore: CredentialStore,
+    ): Promise<AcceptSession | null> {
+      try {
+        const refreshed = await refreshedCredential(selected, selectedStore);
+        const profile = await selectedStore.readProfile();
+        return {
+          ...refreshed,
+          email: profile.userId === refreshed.userId
+            ? profile.email ?? null
+            : null,
+        };
+      } catch {
+        return null;
+      }
+    },
+    async loginSession(
+      selected: CloudTarget,
+      selectedStore: CredentialStore,
+    ): Promise<AcceptSession> {
+      const result = await login({
+        target: selected,
+        store: selectedStore,
+        openBrowser: args.has("no-browser") ? async () => false : undefined,
+        input: args.has("no-browser") ? process.stdin : undefined,
+        output: process.stderr,
+      });
+      const refreshed = await refreshedCredential(selected, selectedStore);
+      return { ...refreshed, email: result.email };
+    },
+    emit,
+  };
+  const result = await acceptInviteLink({
+    payload,
+    target: cloud,
+    store: credentials,
+    runtime,
+    ...(args.optional("name") === undefined
+      ? {}
+      : { explicitName: args.required("name") }),
+  });
+  if (json) {
+    process.stdout.write(`${JSON.stringify({
+      type: "result",
+      status: "connected",
+      workspace_id: result.workspaceId,
+      principal_id: result.principalId,
+      principal_name: result.principalName,
+      accepted_fresh: result.acceptedFresh,
+      checkpoint_short_circuit: result.checkpointShortCircuit,
+    })}\n`);
+  }
+}
+
+async function runAccept(args: Arguments): Promise<void> {
+  if (args.has("link-stdin")) {
+    args.assertShape(
+      [...TARGET_FLAGS, "link-stdin", "no-browser", "json", "name"],
+      1,
+    );
+    const payload = decodeInviteLink(await stdinInviteLink());
+    await runLinkAccept(args, payload);
+    return;
+  }
+  if (args.has("invitation-token-stdin")) {
+    await runLegacyAccept(args);
+    return;
+  }
+  if (args.positionals.length !== 2) {
+    throw new Error(
+      "accept expects one swm_inv_ capability or coswarm://accept/<invite-link>",
+    );
+  }
+  const parsed = parseAcceptPositional(args.positionals[1]!);
+  if (parsed.mode === "token") {
+    await runLegacyAccept(args);
+    return;
+  }
+  args.assertShape(
+    [...TARGET_FLAGS, "no-browser", "json", "name"],
+    2,
+  );
+  process.stderr.write(
+    "Warning: positional invite links may be recorded in shell history and process listings; prefer --link-stdin.\n",
+  );
+  await runLinkAccept(args, parsed.payload);
 }
 
 async function runPrincipal(args: Arguments): Promise<void> {
@@ -824,7 +1037,10 @@ async function main(): Promise<void> {
 
 function safeError(error: unknown): string {
   const message = error instanceof Error ? error.message : "unknown error";
-  return message.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").slice(0, 1000);
+  return message
+    .replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, "")
+    .replace(/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g, " ")
+    .slice(0, 1000);
 }
 
 main().catch((error) => {

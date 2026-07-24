@@ -48,6 +48,9 @@ export interface CredentialProfile {
   version: 1;
   userId: string | null;
   workspaceId: string | null;
+  email?: string | null;
+  principalId?: string | null;
+  principalName?: string | null;
   pendingCommands: Record<string, PendingCommandRecord>;
 }
 
@@ -196,6 +199,9 @@ function emptyProfile(): CredentialProfile {
     version: 1,
     userId: null,
     workspaceId: null,
+    email: null,
+    principalId: null,
+    principalName: null,
     pendingCommands: {},
   };
 }
@@ -217,6 +223,31 @@ function parseProfile(raw: string): CredentialProfile {
     !(
       value.workspaceId === null ||
       (typeof value.workspaceId === "string" && UUID_RE.test(value.workspaceId))
+    ) ||
+    !(
+      value.email === undefined ||
+      value.email === null ||
+      (
+        typeof value.email === "string" &&
+        value.email.length >= 3 &&
+        value.email.length <= 320 &&
+        !/[\u0000-\u001f\u007f-\u009f]/.test(value.email)
+      )
+    ) ||
+    !(
+      value.principalId === undefined ||
+      value.principalId === null ||
+      (typeof value.principalId === "string" && UUID_RE.test(value.principalId))
+    ) ||
+    !(
+      value.principalName === undefined ||
+      value.principalName === null ||
+      (
+        typeof value.principalName === "string" &&
+        value.principalName.length >= 1 &&
+        value.principalName.length <= 80 &&
+        /^[a-z0-9._@-]+$/.test(value.principalName)
+      )
     ) ||
     !pending ||
     typeof pending !== "object" ||

@@ -14,7 +14,7 @@ import {
 } from "./config.js";
 
 const AGENT_TOKEN_RE = /^swm_agt_[A-Za-z0-9_-]{43}$/;
-const INVITATION_TOKEN_RE = /^swm_inv_[A-Za-z0-9_-]{43}$/;
+export const INVITATION_TOKEN_RE = /^swm_inv_[A-Za-z0-9_-]{43}$/;
 
 export type StreamRoute =
   | { kind: "workspace" }
@@ -34,6 +34,9 @@ export interface CommandHttpResponse extends StoredResponse {
   min_client_version?: string;
   invitation_id?: string;
   invitation_token?: string;
+  workspace_name?: string;
+  inviter_display_name?: string;
+  inviter_user_id?: string;
   principal_id?: string;
   token_id?: string;
   run_id?: string;
@@ -78,6 +81,16 @@ export class CommandTransportError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "CommandTransportError";
+  }
+}
+
+export class CommandHttpError extends Error {
+  constructor(
+    readonly status: number,
+    message = `command failed (HTTP ${status})`,
+  ) {
+    super(message);
+    this.name = "CommandHttpError";
   }
 }
 
@@ -198,12 +211,17 @@ export class ThinCommandClient {
       clearTimeout(timer);
     }
 
+    if (response.status === 403) {
+      // Forbidden responses carry no actionable client-side distinction.
+      throw new CommandHttpError(403);
+    }
     const raw = await parsedJson(response);
     if (!response.ok) {
       const error = raw && typeof raw === "object" && !Array.isArray(raw)
         ? (raw as Record<string, unknown>).error
         : null;
-      throw new Error(
+      throw new CommandHttpError(
+        response.status,
         `command failed (HTTP ${response.status}): ${
           typeof error === "string" ? error : "unknown_error"
         }`,
@@ -286,12 +304,18 @@ export class ThinCommandClient {
       clearTimeout(timer);
     }
 
+    if (response.status === 403) {
+      // Invitation failures are deliberately byte-identical. Do not decode or
+      // branch on their body; recovery is membership-side.
+      throw new CommandHttpError(403);
+    }
     const raw = await parsedJson(response);
     if (!response.ok) {
       const error = raw && typeof raw === "object" && !Array.isArray(raw)
         ? (raw as Record<string, unknown>).error
         : null;
-      throw new Error(
+      throw new CommandHttpError(
+        response.status,
         `command failed (HTTP ${response.status}): ${
           typeof error === "string" ? error : "unknown_error"
         }`,
