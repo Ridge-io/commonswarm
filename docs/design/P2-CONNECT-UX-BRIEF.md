@@ -322,6 +322,38 @@ retains revoked rows (`migration:181`). So a revoked principal permanently occup
 create. Never reuse a revoked `principal_id`. Persist the chosen name so later runs match it
 verbatim.
 
+### 2.8a Decision #83 — optional `--name` for link mode
+
+§2.10's suffix cap has to fail *somewhere*, and it must not fail into a second command:
+sending the user to `coswarm principal create --name …` would re-introduce the exact
+multi-step friction §1c objects to, and it would do so **after membership is already
+committed** — stranding them mid-state, told to run something else. So the one-command
+promise needs a one-command escape.
+
+**Ruling:** `coswarm accept` gains an optional **`--name <name>`** that names this machine's
+agent identity, **link mode only**. Legacy token mode (`--invitation-token-stdin` / bare
+`swm_inv_` positional) stays *unchanged* and creates no principal, so `--name` does not apply
+there — supplying it with a legacy form is a validation error.
+
+Semantics:
+- **Validation:** same sanitization and bounds as the auto-name — control/bidi/ANSI stripped,
+  `[a-z0-9._@-]`, ≤80 chars (`boundedText` limit).
+- **Provided + a live principal of that name owned by the caller exists** → reuse it
+  (idempotent, same as the auto path).
+- **Provided + the name is held by a revoked row** → **fail plainly; never silently mutate a
+  user-chosen name.** An auto-generated name may be suffixed freely (the user never chose it,
+  so a suffix costs them nothing), but silently renaming *their* choice violates
+  least-surprise. Say so: *"The name "<name>" belongs to a retired agent identity here and
+  can't be reused. Re-run with a different `--name`."*
+- **Omitted** → the §2.8 auto-name path, including the capped suffix escape.
+- **Suffix-cap failure copy** must name the escape: *"Several retired agent identities here
+  already use names like "<auto>". Re-run with `--name <your-choice>` to pick one
+  explicitly."*
+
+This is one optional flag, needed by a path the brief already required, and it doubles as a
+comprehension win (a user-meaningful `laptop-agent` reads better than
+`tom@macbook-a1b2c3d4`). Nothing else in the flow changes.
+
 **Auto-name** (MINOR 9): `user@hostname` is fragile — it can exceed `boundedText(…, 80)`,
 collides across cloned images/shared usernames, and admits unusual hostname characters.
 Use a **device-stable, sanitized, bounded** name — `<sanitized-user>@<sanitized-host>-<deviceId
@@ -361,9 +393,9 @@ differ, this wins:
 sub-slice; it is the only variant that cannot be talked into a split-host state, and it is
 trivially testable. Dev work uses flags *without* a link.
 
-**Suffix attempts are capped** (§2.8): bound the revoked-name escape (e.g. ≤5 attempts, then
-fail with a plain message telling the user to pass an explicit name) — never an unbounded
-probe loop.
+**Suffix attempts are capped** (§2.8): bound the revoked-name escape (e.g. ≤5 attempts), then
+fail with a plain message pointing at **`--name`** (decision #83, §2.8a) — never an unbounded
+probe loop, and never a redirect to a second command.
 
 **Optional harden, only if a test exercises it:** on a 403 whose hint-probe is empty, a live
 membership at `checkpoint.workspaceId` may also be checked before the uniform failure. Do not
@@ -422,6 +454,10 @@ tricks), malformed UUIDs, and any `url` failing `cloudTarget()` or the §2.5 ori
   default-workspace: fresh success switches + narrates was→now, re-run does not switch (R4);
   unknown origin non-interactive → hard-fail with **no login attempt**; unknown origin
   interactive → wrong host typed → refuse.
+- **`--name` tests (decision #83):** explicit name reused when a live principal matches;
+  explicit name held by a revoked row → plain failure with **no silent rename**; auto-name
+  suffix cap reached → failure copy names `--name`; `--name` with a legacy token form →
+  validation error; `--name` sanitization/bounds (control/bidi/ANSI, >80 chars).
 - **Server tests:** invite response carries workspace_id/labels as fresh-only (absent on
   replay, absent from ledger/events/audit).
 - **Local integration:** invite → accept E2E on the live local stack, asserting single
