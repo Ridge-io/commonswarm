@@ -62,22 +62,19 @@ demonstrated the failure itself by extrapolating a slope it withdrew within a mi
 not rate.** *Compressor as a fourth trip* — it moves **with** free%, so it would fire when condition
 one fires: **redundancy dressed as rigour.**
 
-★★ **KNOWN DEFECT, FOUND MINUTES AFTER LANDING: TWO OF THE THREE CONDITIONS ARE ONE MEASUREMENT.**
-`disk free` and `swap total` are the same quantity with the sign flipped — **the swapfiles ARE the
-disk**. Measured, five samples over twelve seconds:
-```
-disk_free=28.7G  swap_total=9.0G   SUM=37.72G
-disk_free=29.7G  swap_total=8.0G   SUM=37.72G
-disk_free=30.7G  swap_total=7.0G   SUM=37.71G   ← components moved 2 GB; sum moved 0.01 GB
-```
-So a **disk gate fires during any large swap excursion and goes quiet when it recovers** — it reports
-the same event as the swap condition rather than bounding it, and *"RED on two of three"* can be
-satisfied by **one underlying event**. That is the mirror of a gate that cannot fire: **a gate that
-reports RED on a recovering system.**
-**The proposed fix, not yet taken:** gate the **conserved sum** `disk_free + swap_total`, which is
-what actually bounds the denominator, moved 1–2 GB across an entire session, and is immune to the
-excursion. **The absolute `swap used` condition is untouched and was always right.** Redesign belongs
-to the envelope lane.
+★★ **DEFECT FOUND AND FIXED — the third condition is now the CONSERVED SUM, not raw disk.**
+`disk free` and `swap total` are one quantity with the sign flipped, because **the swapfiles ARE the
+disk.** Measured over twelve seconds: the components moved 2 GB while their sum moved **0.01 GB**. A
+raw-disk gate therefore **reports the swap excursion a second time instead of bounding it**, and
+*"RED on two of three"* could be satisfied by one event — the mirror of a gate that cannot fire.
+**The trip is now `disk_free + swap_total` — swap headroom**: the space swap already occupies plus the
+space it can grow into. Immune to the excursion, moved 1–2 GB across a whole session. Raw disk is
+demoted to a printed diagnostic.
+
+★ **AND ALWAYS `df -k`, NEVER `df -h`.** `-h` rounds to whole gigabytes, so a sum of two rounded
+readings carries ±1 GB — **which turned out to be the entire apparent "slow disk decline" reported
+earlier that evening.** The drift was measurement rounding, not consumption, and it was found by the
+lane that had reported the drift.
 
 ★★ **AND TWO LEAD RECLAIMS WERE MEASURED AND BOTH DID NOTHING.** Removing a worktree and three merged
 branches moved swap 94% → 93%. Stopping the local Supabase stack and quitting the container host
