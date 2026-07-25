@@ -446,6 +446,58 @@ in your §0<n> baton. If a lesson would still be true after every current SHA is
 belongs in this section, not in a handoff note — and not only in a message, which dies with the
 session that sent it.
 
+**7. ★★ EVERY VERIFICATION INSTRUMENT ENCODES A HYPOTHESIS ABOUT HOW THINGS GO WRONG, AND IS BLIND
+TO EVERY OTHER ONE (Atlas, 2026-07-25 — the most transferable thing the day produced).**
+Especially the hypotheses nobody has had yet. **So a clean run of a good instrument is not a clean
+bill of health.**
+
+*The evidence, and it is a convergence rather than an anecdote:* after a session-long send-side
+truncation failure, **two agents independently built the same defence and it had the same blind
+spot.** Ferry counted backticks and bytes on *inbound* messages; the Lead queried stored bodies in
+`~/.swarm/swarm.db` on *outbound* ones. Both ran faithfully, every message, all session. **Both were
+blind to RECIPIENT IDENTITY by construction** — and the actual next failure was that every message
+dispatched to `Anvil` for three hours landed in `Yulan`'s inbox, because the registry entry pointed
+at an endpoint serving a different agent's card. Content verified. Recipient never checked. **A
+DEFENCE BUILT FOR THE LAST FAILURE IS AIMED AT THE LAST FAILURE.**
+
+**★ THE RULE: WHEN YOU BUILD A DEFENCE FOR A NEW FAILURE CLASS, WRITE DOWN WHAT THE NEW DEFENCE WILL
+BE BLIND TO, NEXT TO IT.** Both agents could state their own lens once asked — *"mine are all two
+worlds, one output"*, *"mine was content survived, recipient unchecked"* — and **neither could find
+the other's.** Naming the blind spot is cheap at the moment you build the instrument and impossible
+afterwards, because from then on the instrument is what you look through.
+
+**8. ★ AN UNRULED FINDING IS THE LEAD'S DEBT, NOT THE FINDER'S — AND THE DEBT COMPOUNDS WITH TIME,
+NOT WITH SEVERITY (2026-07-25, two instances, one priced).**
+Same rule, two instances in one program:
+- A three-outcome gate confound was raised, not ruled on, and **re-raised hours later while still
+  cheap. Cost: nothing.**
+- The `Anvil`/`Yulan` endpoint-identity mismatch was flagged at 22:26, correctly, with the
+  reasoning attached — and **never ruled on. Ten hours later it cost three hours of messages
+  dispatched into a dead inbox**, including the trust task that was the program's single blocker,
+  and left that blocker *unassigned while everyone believed it was in flight.*
+**The price is set by how long a finding sits, not by how serious it looked when raised** — and how
+serious it looks when raised is exactly the judgement that defers it. **Rule on findings you cannot
+act on, even if the ruling is only "noted, not now, here is who owns it."** An unruled finding
+becomes invisible; a deferred one stays on a list.
+
+**9. ★ A PARTIAL FIX IS MORE DANGEROUS THAN NO FIX, BECAUSE THE CORRECTED NEIGHBOURS ARE EVIDENCE OF
+THOROUGHNESS (Atlas, 2026-07-25).** A citation repair matched two literal forms and missed a third
+variant one line away — leaving the single wrong pointer **sitting between two corrected
+neighbours**, in a file whose commit message claimed the class was fixed. Nobody re-reads a
+repaired section. **A FIX SCOPED TO THE INSTANCES YOU ALREADY FOUND CANNOT DISCOVER THE INSTANCE YOU
+DID NOT** — grep the whole artifact for the *pattern*, then **verify by searching for what should be
+ABSENT**, not by re-reading what you changed.
+
+**10. ★ A SHA IS CONTEXT WITH A TIMESTAMP — YOURS, MINE, ANYONE'S. QUOTE THE SHA NEXT TO THE CLAIM.**
+`git fetch` is necessary and **not sufficient**: the ref moves between the fetch and the report. In
+one morning a Lead published a stale `origin/main` twice and was corrected by two workers, and then
+**three agents — all of whom fetched, re-derived, and cited their command — independently converged
+on a superseded commit** and reported a defect that had been fixed fifteen minutes earlier. Nobody
+was careless in either direction. **The defence is not fetching more carefully; it is stating the SHA
+you read alongside the claim**, so a reader can tell in one glance whether you are describing the
+same world they are. Costs six characters. Closes the whole class in one command instead of an
+argument.
+
 ## 0f. SPAWN FOR PARALLELISM AND EXPERTISE — not only for degradation (operator, 2026-07-24)
 
 **§0c and this rule are different tools and get confused.** §0c *rotates a worker out* because its
