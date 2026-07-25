@@ -1292,9 +1292,19 @@ continuously (this file + commits) — assume your session can die at any moment
   **documented, not demonstrated** — those are different claims and the gap between them is
   where a hopeful maybe hides. Worth 5 minutes whenever the laptop is free.
   **★ It does NOT unblock uxtest R1, and must never be spent as a reason to skip the measured
-  step.** Every spawn path passes `--terminal cmux` (`uxtest/scripts/launch-human2.sh:83`,
-  `preflight.sh:117`), so the harness requires a **visible tab** — §1.2 layers 2 and 4 are
-  load-bearing for R1 and the token touches neither. File it as a future harness/product
+  step.** The executing spawn passes `--terminal cmux` — **`uxtest/scripts/spawn-observed.sh:58`**,
+  which is the only place a spawn is actually invoked — so the harness requires a **visible tab**;
+  §1.2 layers 2 and 4 are load-bearing for R1 and the token touches neither.
+  **★ CITATION CORRECTED (Atlas, 2026-07-25) — and the error is instructive.** The Lead originally
+  cited `launch-human2.sh:83` and `preflight.sh:117`. Both are **die-message TEXT** telling a human
+  what to type (now `:92` after an unrelated fix shifted it) — **not executing spawn calls.** The
+  conclusion was right and the evidence was wrong, which is the worse combination: a later reader
+  chasing those lines finds guidance strings, concludes the claim was overstated, and discards a
+  load-bearing fact. **This is §3 instance 1 in a new costume — a grep matching PROSE INSIDE THE
+  ARTIFACT rather than the code.** `grep -- "--terminal cmux"` cannot distinguish an invocation
+  from an error message that quotes one. **Grep for a flag and you find every sentence that
+  mentions it; only reading the surrounding lines tells you which one runs.** The corrected
+  evidence is *stronger* than the original — there is a real spawn call, not merely guidance text. File it as a future harness/product
   simplification (and see §5.4 of that report: `apiKeyHelper` is a borrowable pattern for
   `coswarm`'s own layer-3 keychain problem).
 
