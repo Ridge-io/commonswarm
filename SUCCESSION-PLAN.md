@@ -216,6 +216,29 @@ One is triage; the other is capacity.
   the default single-Enter queue leaves the message unsubmitted in his composer
   (observed 2026-07-24: two briefs sat undelivered ~2h; `--now` landed instantly).
   Verify delivery with `swarm read Mason` (composer shows "Working…"), not just "Message sent".
+- **★★ NEVER PUT A SWARM MESSAGE IN A DOUBLE-QUOTED SHELL STRING (2026-07-25, Lead5, cost: every
+  message of an entire session).** Anything in backticks — file paths, line refs, identifiers,
+  flags — is **executed by the shell and DELETED from the message body** before it is sent.
+  Measured, not suspected: of **39** messages Lead5 sent in one session, **ZERO contained a
+  backtick**; Sable's contained 28, Ferry's 5. Not intermittent — every single one.
+  - **★ The deletion leaves grammatical English, which is what makes it lethal.** A real example
+    that shipped: *"the check is scoped to , so it only ever reveals membership in a workspace the
+    caller is ALREADY a member of"* — predicate gone, comma intact, sentence still parses. The
+    recipient reads past it or silently fills the gap from context and is usually right, which is
+    precisely why the failure survives.
+  - **★ How it stayed invisible for a whole session: `... | tail -1`.** Piping every send through
+    `tail` scrolled the shell's `command not found` errors past and left only *"Message sent to
+    X"*. **The Lead truncated the output of the Lead's own probe until it could report nothing but
+    success** — §3's error class, self-inflicted, while actively naming it in other agents' work.
+    **A PROBE THAT CAN ONLY REPORT SUCCESS IS NOT A PROBE.**
+  - **THE FIX:** write the message to a file, then `swarm send <agent> "$(cat <file>)" --now`.
+    Command-substitution output is **not** re-scanned for substitutions, so backticks survive.
+    **Verify it worked by querying the stored body**, not by trusting the fix:
+    `sqlite3 ~/.swarm/swarm.db "SELECT body FROM messages WHERE from_agent='<you>' ORDER BY id DESC LIMIT 1;"`
+  - **General form, worth more than the bash tip: an outbound channel can be LOSSY IN A WAY THE
+    SENDER NEVER SEES.** "Message sent" describes the *call*, not the *content*. Same family as an
+    endpoint that answers but does not deliver — one layer further out, on the wire you yourself
+    are writing to.
 
 ## 0b. CURRENT TARGET (operator, 2026-07-23): drive to the FIRST REAL DOGFOOD
 
