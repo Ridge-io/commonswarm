@@ -90,6 +90,35 @@ finding, a Lead-authored rule that made the deliverable unbuildable, and a wall-
 neither Lead nor worker saw. Related operator directive: **reviewers run in visible tabs, never
 as headless one-shots** (a headless reviewer run hung ~2h with zero output).
 
+**4. ★ AUDIT YOUR VERIFIER, NOT JUST THE THING IT VERIFIES (2026-07-25, paid for in full).**
+A fan-out audit of the P3-1 brief raised **33 findings**; the adversarial verification stage
+refuted **66 of 66 verdicts with zero dissent** and the run returned `{confirmed: []}`. Read as
+"the document is clean", that is a **false all-clear on a document with eight real defects** —
+including a gate demanding two mutually exclusive behaviours, and the highest-risk deliverable
+shipping with no acceptance gate at all.
+
+**The instrument was broken, and the bug was in the prompt I wrote:** both verifier arms were told
+*"default to refuted=true when uncertain"*, and the keep-rule required **both** to say
+`refuted=false`. That gate can essentially only emit zeros. **A verification stage that cannot
+return a positive is not a verifier — it is a rubber stamp with extra steps and a large bill.**
+
+**The tell was the one already written down:** *identical answers where the arms should have
+differed* — 66/66, no split, across 33 heterogeneous findings from four different lenses. Two arms
+prompted to measure different things (a skeptic and an implementer) should disagree *sometimes*.
+Perfect unanimity is a property of the harness, not of the evidence.
+
+**Rules that follow:**
+- When a verification stage returns **nothing**, read the journal **before** believing it. The
+  raw findings are the positive control for the verifier.
+- Do not put *"default to refuted when uncertain"* in **every** arm and then **AND** them; that
+  compounds a bias into a certainty. Bias at most one arm, or require a **majority**, not unanimity.
+- **Report the raise count alongside the confirm count.** "0 confirmed" is meaningless; "0 confirmed
+  of 33 raised, 66/66 refuted" is self-evidently an instrument failure.
+- **★ And note where the defects came from: EVERY ONE WAS INTRODUCED BY REVISION.** Each section
+  was correct when written and made wrong by a later fold elsewhere — including one inconsistency
+  the Lead had reported as *fixed* after fixing two of its three sites. **A document under
+  revision needs a whole-document consistency pass, not just review of the diff.**
+
 **Corollary for rotation (§0):** when you rotate, put durable practice HERE and ephemeral state
 in your §0<n> baton. If a lesson would still be true after every current SHA is ancient, it
 belongs in this section, not in a handoff note — and not only in a message, which dies with the
