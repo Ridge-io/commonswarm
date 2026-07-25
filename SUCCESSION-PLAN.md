@@ -1328,8 +1328,12 @@ from    server-bound from the credential — a client can NEVER set or spoof it
 to      null = workspace broadcast; else member user_id / principal_id
 about   OPAQUE string, capped. URLs are a CONVENTION, not a parsed type. No GitHub sync.
 body    untrusted data, capped, control/bidi/ANSI stripped, never model instruction
-until   optional, `working-on` ONLY. Display-only staleness via read-time predicate.
-        Stale renders as "expired" — never deleted, never enforced.
+until   ★ SUPERSEDED — see `docs/design/P3-1-SIGNALS-BRIEF.md` §1.2, which is NORMATIVE.
+        This line said "`working-on` ONLY"; the brief revised it to EVERY KIND HAS ONE
+        ("`until` IS the lifecycle — this is why there is no close verb"), with per-kind
+        defaults, and the shipped code matches the BRIEF, not this line. Do not build from
+        the text above. Staleness stays a read-time predicate; stale renders as "expired",
+        never deleted, never enforced.
 ```
 
 - **★ `kind` is a THREE-value enum — the central design tension, resolved.** Free tags lose:
