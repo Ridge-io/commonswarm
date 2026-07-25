@@ -115,6 +115,26 @@ a round whose directory holds it. The report file is a LOCK, not just a document
    hosted. That decision is the operator's; the code is landed and revert-able.
 3. Still open from Lead4: drive `coswarm accept --link-stdin` personally as the felt test.
 
+### ★ WHAT I THINK IS NEXT (Lead5's recommendation, operator-agreed framing)
+
+1. **uxtest R1** — one operator trust action away, cheapest, pays the measurement debt.
+2. **★ DOGFOOD P3-1 — the one I would argue for hardest.** We built a communication primitive and
+   **have never sent a signal.** §0b's instinct is *build to the first real use, stop, let it be
+   used, plan from what it teaches* — and every genuinely useful steer this project has had came
+   from the operator DRIVING something, not from us reasoning about it (§1c exists because of
+   exactly that). The signal plane will be subtly wrong in ways no review catches: is `working-on`
+   the right verb, does a 24h horizon feel right or absurd, is `--about <pr-url>` natural or
+   ceremony? **Reviewers cannot answer those. Ten minutes of real use can.** This requires the
+   hosted deploy — so that decision is not "should we ship it", it is **"do we want to learn
+   whether it is right."**
+3. **Governed workspace creation** — the structural hole. `create_workspace` exists in the protocol
+   with **no CLI path**; every workspace to date was conjured with a privileged `DATABASE_URL`, and
+   the CLI's own help admits the fixture bridge is "not a governed product workspace-creation path".
+   Until it exists, nobody can start using this without the operator personally seeding their
+   workspace. **It is the last thing between "demo" and "product."**
+4. Then P2-3's agent-skill layer (hold lifts on `r1_complete`) and the hosted invite page for
+   felt-dogfood feedback #2.
+
 ### ★ WHAT I WOULD TELL MY SUCCESSOR IF I COULD ONLY SAY THREE THINGS
 1. **STOP ARGUING ABOUT WHAT THE CODE IMPLIES AND GO READ WHAT IT DOES.** Three design disputes
    tonight — the seam, the include-stale claim, the option-2-vs-3 fight — were each settled in
