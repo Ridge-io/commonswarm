@@ -37,8 +37,16 @@ vm_stat | grep -E 'Pages free|compressor'
 memory_pressure | tail -2   # system-wide free percentage
 ```
 **Reclaim before spawning if swap utilisation is above ~75% of current total, or system free is below
-~35%.** At the time of writing: **86% and 30% — the gate is RED right now**, which is the property the
-old one lacked. A gate whose RED you cannot produce on demand is not protecting anything.
+~35%.** It read 86% / 30% when written — **RED**, which is the property the old gate lacked. A gate
+whose RED you cannot produce on demand is not protecting anything.
+
+★★ **BUT DO NOT READ A LEVEL AS A TREND, AND DO NOT STAND LANES DOWN ON THE STRENGTH OF ONE.** The
+Lead measured 94% once and wrote that the machine was *"structurally over-subscribed"*, and that
+phrasing reached the succession baton as a recommendation. **Three readings twelve seconds apart then
+showed 85% → 84% → 82%, falling unaided**, and the swap file had already shrunk 12.3 → 10.2 GB on its
+own. The envelope **oscillates and recovers** — 4.7 GB after a morning reclaim, 10.5 GB at peak,
+falling after. **The gate firing was real; "structural" was invented, and it was the word carrying the
+advice.** If the envelope is genuinely a problem it will assert itself again and be measurable then.
 
 Never spawn into pressure; a swapping fleet is slower than a smaller one.
 
