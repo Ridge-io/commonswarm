@@ -420,6 +420,75 @@ the slash command; surfaced to operator to enable.
   run_id/task_id/epoch (no broader binding offered in P1), ttl_ms default 1h / hard cap 8h;
   §2.3 denylist is INTRINSIC (hardcoded in pure module), humanRights(actor) is injected.
 
+## 0d. ROTATION 2026-07-24 ~20:00 (Lead4 -> Lead5). READ THIS FIRST.
+
+Lead4 rotating at a clean boundary: everything landed and pushed, tree clean, HEAD `a62823a`,
+round 1 blocked only on a **human action on the laptop** (below). Nothing is mid-file.
+
+### What shipped under Lead4
+- **ux-connect-polish** (`87e41cf`) + hosted fn **v4** — felt-dogfood bugs #1-6 + Kimi minors.
+- **P2-1 `coswarm accept <invite-link>`** (`a823ab3`, evidence `80a1095`) + hosted **v5**. One command
+  collapses login->accept->principal. Decision **#82**: the verb is `accept`, NOT `join` —
+  `SWARM-CLOUD.md:696` locks "members accept invites; agents join swarms". Decision **#83**: optional
+  `--name`, link-mode only. Live proof the origin pin works in the shipped binary: a link with
+  `url=https://evil.example.com` is refused **before login**.
+- **P2-2 `coswarm status` / `workspaces` / `use`** (`053e972`, evidence `10bf782`) + hosted migration
+  `20260724000002`. Fixes the **MAJOR** multi-workspace bug (`auth.ts:410`) the harness found before
+  it ever ran a round.
+- **★ Second root cause of bug #3, found at deploy time:** hosted PostgREST never exposed
+  `swarm_read`, so every CLI read returned 406 and `discoverSoleWorkspace` swallowed it — workspace
+  discovery had been failing **invisibly on hosted since slice 3**. Fixed by
+  `PATCH /v1/projects/{ref}/postgrest`. **Never `supabase config push`** — see §3 landmine.
+- **uxtest cross-machine UX harness** (`9d4fde0` + 6 hardening commits through `a62823a`).
+
+### The harness: ONE human action away from round 1
+State: preflight passes all gates; fresh hosted workspace **`uxtest-r1-92cb361a`** seeded (additive);
+both machines on identical bundle `f12b47b8...`; Human1 logged out; **Dana** (launcher) live on the
+laptop in cmux. Blocked on the **GUI-ORIGIN RULE** — run this **inside Dana's laptop cmux tab**:
+
+```bash
+UXTEST_HOME_ROOT=/Users/tom/uxtest \
+  /Users/tom/Developer/Ridge.io/cloud-swarm/uxtest/scripts/serve-human2-gui.sh launcher
+```
+
+Then: rerun `preflight.sh 1` -> Dana drains its queued inbox instruction and does the Human2 logout
+(`coswarm logout`, local scope only — **never `--all-devices`**, it would revoke identity A) ->
+`launch-human2.sh 1` (spawns virgin `Dana-r1`) -> `channel-up.sh 1` -> `launch-human1.sh 1` ->
+round runs -> `collect-round.sh 1` -> write `rounds/1/REPORT.md` with the **mandatory §7.7 validity
+header**.
+
+### Credentials + identities (already in place, verified)
+- `~/.config/uxtest/cloud.env` — `DATABASE_URL` (0600 in 0700). Provided by **Anvil** (the Hermes
+  A2A agent on the mini, registered in cloud-swarm). **Lead4 verified it three ways** — file shape,
+  URI parse (session-mode pooler on **5432**; the landmine warns 6543 needs `prepare:false`), and a
+  live connection. **Never print the value; source the file.**
+- `~/.config/uxtest/round.env` — `UXTEST_HUMAN1_UID`, `UXTEST_HUMAN2_EMAIL`, `UXTEST_OAUTH_CONSENT`.
+- Identity **A** (mini, owner): `d37e2ff2-2efb-4bdc-b8fb-176ce4bfccbc` / `tom@ridge.io`.
+  Identity **B** (laptop, member): `919ce195-4e19-4c89-852b-8f09a4b556d9` /
+  `tom.langridge@mediafire.com`. Distinct verified emails — field lesson #5.
+
+### Fleet
+- **Quill [codex]** — implementation worker, fresh (replaced Mason at 14 compactions / ~24h; see
+  **§0c worker rotation hygiene**, which applies to workers too, not just the Lead). Warm, idle.
+- **Sable [grok]** — adversarial reviewer, in a **visible cmux tab** (operator directive: reviewers
+  are tabs, never headless one-shots — a headless Kimi run hung ~2h with zero output). Warm. It has
+  caught a phishing vector, a false-success path, an unbuildable rule of mine, and a wall-clock
+  cheat. **Route every brief through it before implementation.**
+- **Atlas [claude]** — research. Delivered `docs/research/AGENT-ORCHESTRATION-UX.md`. **IN FLIGHT:**
+  `docs/research/ACP-AND-BUZZ.md` (operator asked "can we do ACP how Buzz does it?"). Collect it.
+- **Dana [cmux/claude-code, laptop]** — Human2 launcher, spawns virgin `Dana-r<n>` per round and
+  stays out of rounds. Reachable **only** via A2A (18791), never SSH.
+- **Anvil [a2a]** — Hermes provisioning agent, holds 1Password. Demand **strict single-JSON**
+  replies and verify independently in both directions.
+
+### Operator asks still open
+1. The GUI command above (only a human/GUI agent can run it).
+2. Drive `coswarm accept --link-stdin` personally as a second human — the felt test of whether P2-1
+   is actually simpler (§1c is a living calibration datum, not a one-time note).
+3. Read `docs/research/AGENT-ORCHESTRATION-UX.md`; Atlas's sharpest finding is that **nothing** in
+   ~100 orchestrators scores well on multi-human AND visibility simultaneously — that intersection
+   is our gap, and it is not a UI gap.
+
 ## 1b. Governing steer (operator, 2026-07-23) — READ THIS BEFORE SCOPING ANYTHING
 
 **Swarm is primarily about coordination — keep it that way** (the Workbench.md
