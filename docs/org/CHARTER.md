@@ -22,8 +22,25 @@ FAN-OUT.** A resident cmux agent costs a tab, a process, and permanent memory. A
 costs tokens and nothing else, and it disappears. **Default to ephemeral. Spend residency only on
 lanes that need continuity of context.**
 
-**Before spawning anything, check the envelope.** If swap used exceeds ~12 GB, reclaim first. Never
-spawn into pressure; a swapping fleet is slower than a smaller one.
+**Before spawning anything, check the envelope.**
+
+★★ **THE FIRST VERSION OF THIS GATE COULD NOT FIRE, AND IT WAS WRITTEN BY THE LEAD WHO SPENT THE DAY
+CATALOGUING GATES THAT CANNOT FAIL.** It said *"reclaim if swap used exceeds ~12 GB."* **macOS resizes
+the swap file dynamically** — measured within one hour: 15.4 GB → 8.2 GB → 9.2 GB total. An absolute
+threshold against a moving denominator is meaningless, and at a 9.2 GB total *used > 12 GB* is
+**unreachable by construction.** Found by the infra lane; the RED was available the whole time.
+
+**The gate is a RATIO and a pressure reading, both of which can fire today:**
+```sh
+sysctl -n vm.swapusage      # utilisation = used / total, NOT an absolute
+vm_stat | grep -E 'Pages free|compressor'
+memory_pressure | tail -2   # system-wide free percentage
+```
+**Reclaim before spawning if swap utilisation is above ~75% of current total, or system free is below
+~35%.** At the time of writing: **86% and 30% — the gate is RED right now**, which is the property the
+old one lacked. A gate whose RED you cannot produce on demand is not protecting anything.
+
+Never spawn into pressure; a swapping fleet is slower than a smaller one.
 
 ---
 
