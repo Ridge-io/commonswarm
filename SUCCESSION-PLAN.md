@@ -742,6 +742,40 @@ continuously (this file + commits) — assume your session can die at any moment
   landing authority; audit; revocation; rate limits; invite flow. **Provisioning
   (Supabase project, GitHub App) → OpenClaw/Hermes.** Wire the P0 `decide()` core
   behind the Supabase command function — that is the whole point of building it pure.
+- **★ OPERATOR DECISIONS 2026-07-24 ~21:20 — three, taken together:**
+  1. **uxtest R1 GOES AHEAD.** The operator is running the §1.2 GUI-origin launcher command in
+     Dana's laptop cmux tab. The measurement debt gets **paid, not deferred** — so the P2-3 hold
+     lifts on **`r1_complete`**, and the 72h timebox should never fire.
+  2. **Next build track is P3 COORDINATION CORE**, ahead of P2-3, the hosted invite page, and
+     governed workspace creation. Rationale (operator-endorsed): §1b holds that P1/P2 authority
+     machinery is *scaffolding for* the P3 payoff and is "not the product". We can now connect two
+     humans through the cloud-authoritative path and deliver **zero coordination**; onboarding
+     polish makes the front door nicer on a building with no rooms.
+  3. **Scope P3 through the adversarial reviewer before any brief** (§0e practice 3). Dispatched.
+  **Consequence for P2-3:** unchanged and still held — it is now *after* P3-1, not next.
+- **P3-1 (minimum coordination slice) — SCOPING, contracts not yet pinned.** Spec §9 P3 is
+  enormous (reservations, trusted-content, structural wiki, board, messages, ACP transport,
+  triggers, ASK/claim, ETag reconcile, awaiting-human, heartbeats, triage, dead-letter) and
+  shipping it as one phase contradicts §1b outright. **Lead5's proposed cut, under review:**
+  advisory reservations (§2.9) at ONE grain, auto-placed on task claim, plus a read verb; and
+  workspace-scoped messages on the P1 durable inbox substrate. **Explicitly out:** board, wiki,
+  trusted-content, triggers, ACP, ETag reconcile, ASK/claim, repo-scoped messages, redirect
+  uptake-confirmation. **Four open questions sent to review, two of which could reshape the plan:**
+  - **★ The launch gate may already block us.** Spec `:369` — *"the reservation,
+    coordinator-confinement, and pre-landing tests gate P2/P3 exposure DIRECTLY, not P4"*. The
+    **pre-landing check does not exist** (§4 P0-github item c calls it a P2 deliverable, still
+    unbuilt). If that gate binds P3-1 exposure, P3-1's real first task is unscheduled P2 debt.
+  - **Does P3 need governed workspace creation first?** `create_workspace` exists at
+    `src/protocol/workspace-commands.ts:21` with **no CLI path**; every workspace is seeded with a
+    privileged `DATABASE_URL`, and the CLI's own help states the fixture bridge *"is not a governed
+    product workspace-creation path"*. Is coordination inside a workspace no user can create a demo
+    that **lies about readiness**?
+  - **Is the P1 inbox substrate actually there?** The "messages is exposure, not construction"
+    claim rests on §2.13 alone and is **unverified against the schema**. If absent, P3-1 should be
+    reservations only.
+  - **Auto-placement vs comprehension.** Spec `:873` auto-places reservations so newcomers skip the
+    verb. Good UX — and it hides the mechanism, against §1c's "I didn't know what I was doing or
+    why". Is an invisible coordination primitive acceptable under the comprehension standard?
 - **P2-3 (agent-skill layer) — SCOPED / CONTRACT-PINNED / ★ IMPLEMENTATION HOLD.**
   §1c NEXT PHASE item 2: a distributable SKILL.md so a collaborator's OWN coding agent drives
   `coswarm` and the human never touches a terminal. Scope reviewed adversarially by Sable
