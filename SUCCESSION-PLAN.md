@@ -68,6 +68,64 @@ worker as hygiene, not judgement, and record what it contributed.
 instead; §0h below is history. **Re-derive `origin/main` yourself and gate the fetch** — `git fetch
 origin && git rev-parse origin/main`. A failed fetch still lets rev-parse answer (§0e.10a).
 
+### ★ DELTA SINCE §0i WAS WRITTEN — read this before the rest, it is two hours newer
+
+**`origin/main` has moved past the SHA in this section several times. Fetch.**
+
+**1. THE CHARTER'S RESOURCE GATE WAS VACUOUS AND IS FIXED.** It said *reclaim if swap used > 12 GB.*
+**macOS resizes swap dynamically** — 15.4 → 8.2 → 9.2 GB total measured within one hour — so an
+absolute threshold against a moving denominator **cannot fire**. Replaced with a ratio plus a pressure
+reading. **Both are RED as of writing: 86% swap utilisation, 30% system free.** The machine is at the
+edge of its envelope with ten resident seats. **Reclaim before spawning anything.**
+
+**2. SHIP 3 IS MID-BUILD and its contract lives in messages, not in a file.** Scope: *"strings that
+fail to say what is now true"* — deliberately widened from *"misleading first-contact errors"* by
+definition rather than by exception. Three items: **C11** (four verbs, one dead end, `--url is
+required`, never says a URL of what or where) · **C12** (`working-on` with no argument reports
+*"unexpected positional argument"*; `assertShape` at `cli.ts:181` throws one string for both
+directions) · **C0** (the *"immutable, tenancy-scoped"* sentence ships only to `--json`).
+  ★ **C0's pinned shape, which took four corrections to reach:**
+  - **Prose carries past+present; the ROW carries future.** F1/F2 already renders `expires in 30d`,
+    so prose restating the horizon is duplication, not emphasis.
+  - ★ **A directed signal is NOT workspace-visible.** `README:155`. **Verified live by the Lead: the
+    post response populates `to`** — directed returns a uuid, broadcast returns `null` — so
+    `signal.to === null` branches with no new lookup. **"Only visible to this workspace" would have
+    shipped FALSE inside a fix for false strings.**
+  - Gates: **G-C0-JSON `--json` byte-identical** (agents poll it) · **G-C0-NO-DUP** (do not restate
+    the horizon) · **G-C0-DIRECTED** (a directed post must not claim workspace-wide visibility).
+  - **C4 is queued, NOT in this ship** — the human post path reuses the feed renderer *including its
+    header*, so posting one signal answers *"Recent signals:"*. One string, same call site,
+    deliberately held: widening twice on "it's cheap" is how a tight ship stops being tight.
+
+**3. THE SHIP QUEUE, RE-ORDERED TWICE AND NOW CORRECT:**
+  1. **Silent message drop** — `docs/swarm-cli/…`. RED fails today.
+  2. **Hook-gate** — an agent mid-turn is unreachable, queue unbounded. **And the mitigation does not
+     exist: `--now`/`--interject` is a documented no-op on Claude and Codex — 1 seat of 10.**
+  3. **C4**, then **edge/DB region split** (`us-east-2` functions, `us-east-1` database, ~68ms per
+     round trip over ~13 sequential statements — **config, not code, and a Lead deploy call. Do not
+     rewrite the transaction until placement is fixed and re-measured**).
+  ★ **"Routing" was dropped entirely** — `to_agent` is the recipient column and cannot express a hop.
+  ★ **"Transport latency" was dropped entirely** — it was a recipient turn boundary, and a RED for it
+    could not fail.
+
+**4. `message_deliveries` MEANS "A RECIPIENT READ THE STORE."** Not agent class, not an era. `getInbox`
+calls `ensureDeliveryRows` on every read; `agent_type` appears **zero** times in the writer; a2a seats
+are pushed over HTTP and never poll. Confirmed in **source and in the built artifact**. **Absence of a
+row says nothing about delivery** — three wrong explanations preceded this one and they are all
+recorded in the doc, because the progression is the lesson: *the first two were built from counts and
+the third from the writer.*
+
+**5. THE `swarm update available` BANNER HAS AN UNKNOWN REFERENT.** That repo has **no `origin`** —
+remote is `fork`, `origin/main` is an unknown revision, the branch **tracks nothing**. *"Behind
+origin/main"* is not a question it can answer. Two agents independently inferred a comparison the repo
+cannot perform; the Lead treated it as background noise all day. **Do not cite it as staleness
+evidence.**
+
+**6. LEAD PROBE RESIDUE, DISCLOSED:** four signals in the Dogfood Workspace
+(`g5:…`, `c0:scope:probe`, `c0:json:probe`, `c0:directed:probe`, `c0:broadcast:probe`). **Immutable by
+design; they cannot be deleted and will expire on their horizons.** Flagged rather than left to be
+found — the rule the Lead failed on the cmux surfaces.
+
 ### THE ORG NOW EXISTS — read `docs/org/CHARTER.md` before anything else
 Operator directive: a standing organisation driving coswarm to launchable continuously, hunting
 defects and debt of every kind, **with the Lead as sole production-deploy authority and an
