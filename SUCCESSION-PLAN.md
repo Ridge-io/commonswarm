@@ -1133,6 +1133,14 @@ continuously (this file + commits) — assume your session can die at any moment
   separated. Anyone tired at 3am can run it.
   **★ AND THE META-LESSON: testimony was wrong in both directions all evening; artifacts with
   timestamps were right every time.** When they disagree, the filesystem wins.
+  **★ THE REFINEMENT THAT MAKES THAT RULE USABLE (Atlas, at the rotation) — AN ARTIFACT READ BADLY
+  IS TESTIMONY AGAIN.** The wrong-citation catch proves it: the Lead's `grep` **was** an artifact
+  query, and it returned a **die-message string quoting the command**. The instrument was right;
+  the reading was wrong. **An artifact answers the question you actually asked it, which is rarely
+  the question you meant.** Without this rider, "trust artifacts over testimony" licenses exactly
+  the four citation errors of that night. What separates the two is thirty seconds of opening the
+  surrounding lines before citing them — no suspicion required, which is why it works when you are
+  tired.
   **The rule:** before believing a negative result, confirm the probe could have produced a
   positive one. Prefer path-only / value-only output modes, absolute paths over `PATH` lookups,
   distinguishing HTTP status classes from empty payloads, and matching on structure rather than
