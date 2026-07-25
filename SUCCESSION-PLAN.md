@@ -508,6 +508,18 @@ clean SHA **with no indication the fetch died** — `git fetch bad-remote 2>/dev
 origin/main` emits only the SHA. *(Honest limit: the Lead could NOT reproduce Dana's specific ssh
 auth case — ssh-to-self failed on host-key verification. Dana measured that; the Lead confirmed the
 general mechanism only.)*
+**★ THREE GRADES, NOT TWO (Lead5, having tested its own form rather than assuming it):**
+**(1) FAILURE INVISIBLE** — `2>/dev/null`, `2>&1 | tail -1`. The probe *cannot* report failure.
+**(2) FAILURE VISIBLE, UNGATED** — `git fetch -q origin ;` then read the ref. **The error DOES
+print** (`-q` is not `2>/dev/null`; the fatal still appears, exit 128) — **and nothing stops the
+stale SHA being printed directly underneath it.** **(3) FAILURE GATED** — `&&`, stderr intact.
+**★ GRADE 2 IS THE DANGEROUS ONE BECAUSE IT FEELS SAFE.** Grade 1 fails silently; grade 3 cannot
+fail; **grade 2 is right by ATTENTION rather than by CONSTRUCTION** — it depends on a human noticing
+stderr scroll past above the answer they were looking for, which is exactly the attention that is
+gone at 3am or when the answer matches expectation. **It is also the grade that SURVIVES REVIEW,
+because the transcript contains the evidence and reads as having been checked.**
+**★ THE GENERAL FORM: when you audit an instrument, do not only ask "COULD THIS REPORT FAILURE" —
+ask "AND IF IT DID, WOULD ANYTHING STOP?"**
 **THE FIX: CHECK THE FETCH'S EXIT STATUS, DO NOT JUST RUN IT.** `git fetch origin || echo "FETCH
 FAILED — the SHA below is CACHED, not derived"`. Never `2>/dev/null` a fetch, and never chain it with
 `;` to the command that consumes it — **`&&`, so a dead fetch cannot be followed by a confident
@@ -575,6 +587,25 @@ is worse than no probe at that step.
 defect at **line 134 and line 135**. The stale pair straddled two lines. **NEARLY identical answers
 concealing that the arms were pointed at different things** — not identical answers where they
 should have differed, but a one-line drift that reads as agreement.
+
+**13. ★★ A DETECTOR THAT WORKS ON ITS OWN OUTPUT WILL NEVER RUN OUT, AND THAT IS NOT A HEALTH
+SIGNAL (Atlas, 2026-07-25, calling a stop on this very section).**
+In one hour §0e gained 10a, 11a, an attribution correction, and a correction to that correction.
+**Every one was individually right.** But the object under review had become *the fleet's
+documentation of the fleet's own verification*, and **the things being corrected got smaller each
+round while the cost of a round did not.**
+**Practices 7 and 12 in particular will ALWAYS find something**, because every new rule is a new
+instrument with a new blind spot, and a fresh blind spot is always findable by the rule that says
+blind spots exist. **Self-sustaining is not the same as healthy.**
+**★ THE MEASURABLE FORM, which is what makes this a finding and not a mood: six defects came out of
+the runbook review and every one would have corrupted a real measurement round. Everything after it
+was line numbers in a practice list. Same method, same rigour, TWO VERY DIFFERENT DENOMINATORS.
+A METHOD'S VALUE IS SET BY WHAT IT IS POINTED AT.**
+**★ AND THE TEST TO APPLY: WHAT IS ACTUALLY BLOCKED, AND HAS IT MOVED?** On the day this was
+written, R1 needed **one operator ruling** and Phase G needed **one login** — and *neither moved
+while this section grew by six entries.* **When the practice list is growing faster than the
+product, the fleet has run out of things to point the instrument at and should say so out loud
+rather than keep finding.** Point it at an external object or stop.
 
 **Corollary for rotation (§0):** when you rotate, put durable practice HERE and ephemeral state
 in your §0<n> baton. If a lesson would still be true after every current SHA is ancient, it
