@@ -1326,7 +1326,20 @@ continuously (this file + commits) — assume your session can die at any moment
   worth anything. **Do not let a later refactor "simplify" this gate away on the grounds that
   `is_member` already covers it. It does not, and now there is a test that proves so.**
 
-- **★ DEBT: `T-10` (concurrent `acquire`) IS A FLAKY GATE UNDER MACHINE LOAD (observed 2026-07-25).**
+- **★ DEBT: THE ACQUIRE/LEASE PATH IS LOAD-SENSITIVE — at least TWO tests expose it, and the
+  symptoms differ (observed 2026-07-25). Do not file this as "T-10 is flaky".**
+  Under machine saturation, a run showed **T-10 AND T-11 failing together**. T-11 expected
+  `not_acquirable` and got `undefined`.
+  **A cascade hypothesis (T-10 leaves no lease, T-11 inherits the state) was proposed and
+  DISPROVED by reading the test:** T-11 is self-contained — it creates its own task, acquires it as
+  one human, then has a second human attempt acquire. So the two are **independent victims of the
+  same condition**, not cause and effect. The likeliest mechanism is that T-11's *own* setup
+  acquire fails or times out under load, leaving the task unheld, so the second acquire succeeds
+  and no rejection reason exists. **Stated as a hypothesis: one joint-failure sample, shared
+  subsystem, mechanism not directly instrumented.**
+  **Why this matters more than "one flaky test":** a reader who meets a red T-10 has a note. A
+  reader who meets red T-10 *and* T-11 sees two failures, finds the note covers only one, and goes
+  hunting a phantom second defect at 3am. **Both are the acquire path under load.**
   Seen **red twice** during P3-1 Phase B while this machine was running a 70-agent workflow and
   then a 15-agent review; then **green 2/2 in isolation** and **14/14 in-suite** once quiet.
   **The failure shape is the diagnostic: `0 accepted` (no winner at all), NOT multiple winners.**
