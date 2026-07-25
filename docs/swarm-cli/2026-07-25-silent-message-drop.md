@@ -5,8 +5,32 @@ the Lead before anyone had the right one.
 
 ## The defect
 
-**37 messages from one agent have `delivered=0` and NO ROW AT ALL in `message_deliveries`.** They were
-never queued for anyone. They span **fifteen hours** — 06:48 to 21:57 on 2026-07-25.
+★★ **CORRECTED AFTER FIRST LANDING — THIS DOCUMENT ORIGINALLY CITED THE WRONG COLUMN.** It claimed 37
+messages "failed" because they had no row in `message_deliveries`. **Absence of a delivery row does not
+mean failure.** Delivery rows are an artifact of the *hook-injection* path; an a2a recipient never gets
+them. Measured:
+
+| recipient | messages | with delivery row |
+|---|---|---|
+| Dana (a2a) | 32 | **0** — and they all arrive |
+| Ferry (cmux) | 130 | 129 |
+| Lead6 (cmux) | 178 | 177 |
+
+**The count was built on a column that carries no information for that seat.** Retracted by its own
+finder within twenty minutes, and re-derived here.
+
+**THE DEFECT IS REAL AND THE EVIDENCE IS THE `delivered` FLAG.** Messages to the wedged seat:
+
+| window | delivered | count |
+|---|---|---|
+| before 20:40 | 1 | **1685** |
+| before 20:40 | 0 | 24 |
+| after 20:40 | 1 | **0** ★ |
+| after 20:40 | 0 | **15** ★ |
+
+**After 20:39:54, nothing succeeded. Fifteen consecutive failures, zero successes.** The finder
+reported the cliff at 20:41:40 from the far side; the sending machine's own store puts it at 20:39:54
+— **two independent observations of the same wedge.**
 
 They are not machine chatter. They open with a human name: `FERRY —` ×11, `LEAD6 —` ×2,
 `FERRY + ATLAS —`, `LEAD5 + FERRY —`.
@@ -44,6 +68,15 @@ rows in `message_deliveries` is the state that should be impossible and is inste
 
 The agent addressed a seat whose endpoint accepts TCP and serves no HTTP — `http_code=000` in 0.03s
 **including from the host's own loopback**, so not network. `swarm redeliver` reported 0/2, twice.
+
+★★ **AND THE MITIGATION DOES NOT EXIST.** This property was tolerated on the reasoning that `--now` /
+`--interject` provides an urgent path. **It is a documented no-op on Claude and Codex** —
+`transport-interface.ts:26` (*"No-op on Claude/Codex"*) and `transport.ts:191` (*"Claude/Codex submit on
+the first"*). Only a Grok seat honours it. **In this fleet that is 1 seat of 10; the Lead had been
+using `--now` all day for urgent messages and it had done nothing all day.** The gate is not
+"queueing with a bypass" — for almost every seat it is queueing, full stop.
+*(Read from source in two places by different authors, not from a runtime test — confirm live before
+scoping work on it.)*
 
 ★ **A port that accepts is not a server that serves.** Fourth instance of that family in one day,
 after a registry entry resolving to the wrong agent, a cmux surface outliving its process, and a
