@@ -114,9 +114,13 @@ UXTEST_HOME_ROOT=/Users/tom/uxtest \
 
 ### 1.3 Transport (the "Slack") — verified constraints
 
-- The mini **already serves an unrelated A2A bridge on port 18790** (documented as "Yulan";
-  it currently answers as **Anvil** — harmless, since `preflight.sh:188` only refuses
-  `Avery-r*`/`Dana-r*` there, but do not re-derive the name from this line). The harness
+- The mini **already serves an unrelated A2A bridge ("Yulan") on port 18790** — confirmed live by
+  its agent-card (`name: "Yulan"`). **★ Do not "correct" this to Anvil.** The `cloud-swarm`
+  registry lists `Anvil [a2a] @ http://127.0.0.1:18790/`, which is a **registry entry pointing at
+  Yulan's bridge**, not a second server. Both facts are true at once, and reading the registry
+  record as evidence about the live endpoint produced a wrong "doc is stale" report on
+  2026-07-24 that briefly corrupted this line. *A registry entry naming an address is not an
+  observation of what serves that address* — same class as §7.9b item 3. The harness
   **must not** disturb it. Mini ports `18791` (round persona) and `18792` (launcher driver)
   are dedicated to uxtest.
 - Laptop port `18791` is the persistent Dana launcher endpoint and **must bind the Tailscale
