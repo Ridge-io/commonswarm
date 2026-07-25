@@ -1725,6 +1725,14 @@ continuously (this file + commits) — assume your session can die at any moment
      usually is not.** Third citation-bite in two days (Lead5's four die-message greps, Atlas
      catching Lead5's spawn-path cite, now Ferry catching Ferry) — which is the fourth confirmation
      of Lead5's own third lesson, *the citation is where you will be wrong, not the reasoning*.
+     ★★ **AND THE RESOLUTION, AFTER THIS CLASS BIT FIVE TIMES IN TWO DAYS: STATE THE FACT IN
+     GREP-RECOVERABLE FORM RATHER THAN PINNING A LINE NUMBER.** Write *"`operatorAllowed` is
+     constructed `() => false` in the production Edge wiring"* — a reader greps the identifier and
+     finds it wherever it now lives. A line number is a **coordinate into a moving file**; the
+     identifier is the fact. ★ Proven in the smallest possible way: one agent corrected another's
+     `cli.ts:1389` to `:1120`, and by the time a third checked, it was **`:1127`** — the corrected
+     number had drifted between the correction and its verification. **Nobody was careless three
+     times; the coordinate was the wrong thing to record.**
      **Substance survived intact:** preconditions `:36-37`, state dir `:38`, `write_state` `:74`,
      earliest write `:109` — the directory is still created strictly before the file, so a MISSING
      directory means never-started and an EMPTY one means killed-mid-flight.
