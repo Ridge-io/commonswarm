@@ -811,6 +811,23 @@ continuously (this file + commits) — assume your session can die at any moment
 
 ## 5. Queued design tasks (don't lose these)
 
+- **`CLAUDE_CODE_OAUTH_TOKEN` — DOCUMENTED, NOT DEMONSTRATED (5-min test, low priority).**
+  From `docs/research/ACP-AND-BUZZ.md` §5.3: `claude setup-token` mints a one-year,
+  **subscription-backed** (not API-key) token, read as a plain env var at credential precedence 5
+  — no Keychain, so it crosses SSH. That is a real answer to §1.2 **layer 1**.
+  **Verified by execution:** the subcommand exists and self-describes as *"requires Claude
+  subscription"*; no `--bare` exists anywhere in `uxtest/` or `src/`, so the documented
+  `--bare` exclusion is moot for us.
+  **NOT verified:** nobody has run an SSH-origin `claude -p` with the token set. The fix is
+  **documented, not demonstrated** — those are different claims and the gap between them is
+  where a hopeful maybe hides. Worth 5 minutes whenever the laptop is free.
+  **★ It does NOT unblock uxtest R1, and must never be spent as a reason to skip the measured
+  step.** Every spawn path passes `--terminal cmux` (`uxtest/scripts/launch-human2.sh:83`,
+  `preflight.sh:117`), so the harness requires a **visible tab** — §1.2 layers 2 and 4 are
+  load-bearing for R1 and the token touches neither. File it as a future harness/product
+  simplification (and see §5.4 of that report: `apiKeyHelper` is a borrowable pattern for
+  `coswarm`'s own layer-3 keychain problem).
+
 - **★ PROCESS GAP: there is no decision ledger, but briefs cite decision numbers
   (found 2026-07-24).** `#80`–`#83` are cited as authority in `docs/design/P2-CONNECT-UX-BRIEF.md`,
   evidence docs, and this file — but they are **narrative embeds**, not entries in any canonical
