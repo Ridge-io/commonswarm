@@ -95,10 +95,22 @@ code showed they disagreed with each other.
 
 ## What is genuinely good, stated because a findings list that only finds is not calibrated
 
-- **The post echo is excellent and pin 12 is doing real work.** *"Signal shared. It is immutable,
-  tenancy-scoped, and will quietly expire at its horizon."* That sentence says what happened, what is
-  now true, and what will happen later, in plain language, unprompted. It is the best single piece of
-  UX in the product and it is exactly what §1c asked for.
+- **★ CORRECTED — THIS ENTRY WAS WRONG, AND THE ERROR IS THE SAME CLASS THE REST OF THIS DOCUMENT IS
+  ABOUT.** The original text praised *"Signal shared. It is immutable, tenancy-scoped, and will
+  quietly expire at its horizon."* as the best writing in the product and as proof the write path had
+  received §1c's comprehension treatment.
+  **That sentence lives only in the `--json` branch** (`src/cli.ts:1354` gates it; the string is at
+  `:1358`). The human branch at `:1371` prints `Signal shared.` and a rendered feed row — nothing
+  more. It has never been otherwise; the same shape exists at `c87a653`, the first signals commit.
+  **★ AND THE REASON I MISSED IT: EVERY POST I MADE DURING THIS SESSION USED `--json`.** I never
+  executed the human write path, then wrote a finding about human comprehension from machine output.
+  That is *verifying the right property of the wrong object* — the dominant error of the day —
+  committed inside the document that names it.
+  **★ SO F1's HEADLINE IS NARROWER THAN STATED.** It is not "the write path got the §1c treatment and
+  the read path did not." It is: **the write path got it IN JSON ONLY. The plain human write path
+  never had it either.** Found by Pitch on its first task, with the command attached.
+  *(What survives: the sentence itself is good writing, and it is the model for what the human
+  surface should say. It just is not what a human is shown.)*
 - **`--about <pr-url>` is natural, not ceremony.** Typing a real GitHub URL as the subject felt
   obvious and made the signal actionable rather than chatty. The decision to keep `about` an opaque
   string rather than a parsed type costs nothing in use.
