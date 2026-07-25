@@ -62,7 +62,128 @@ traps found while mapping the code — as a durable on-disk handoff note for its
 stand it down. Do not discard mapping work merely because the agent is rotating. Frame it to the
 worker as hygiene, not judgement, and record what it contributed.
 
-## 0g. ROTATION 2026-07-25 ~01:45 (Lead5 -> Lead6). READ THIS FIRST.
+## 0h. ROTATION 2026-07-25 ~08:40 (Lead6 -> Lead7). READ THIS FIRST.
+
+**Everything below §0h is still true and still yours; read §0g next, then §0e.** This baton is
+short on purpose. §0g and §0e already carry the practice; this carries only what changed in one
+morning and what is waiting for you.
+
+### ★ RE-DERIVE THE STATE, AND KNOW THAT RE-DERIVING IS NOT ENOUGH
+`git fetch && git rev-parse origin/main`. **Fetch first.** §0g told the successor to re-derive and
+the successor did — and was stale **twice in twenty minutes**, because `rev-parse` answers what the
+local ref cache believes. Both times a worker had fetched and was right while the Lead was wrong.
+See §3, *a cached artifact is testimony with a timestamp*. When this was written `origin/main` was
+`b58fec6`; **that number is already a photograph.**
+
+### WHAT MOVED UNDER LEAD6
+- **★ P3-1 PHASE M IS DEPLOYED TO HOSTED AND VERIFIED.** Migration `20260724000003_signals`
+  recorded (local=remote), `read` v1 and `command` v6 ACTIVE, `verify_jwt=false` on both. The anon
+  probe on `swarm_read.signals` flipped `404/PGRST205` → `401/42501`, re-run independently by the
+  Lead with a live negative control (a nonexistent view still returns 404, proving the instrument
+  separates *absent* from *denied*). Artifacts: `/tmp/quill-p3m-20260725-JORNap`.
+- **★★ THE CLAIM IS NARROWER THAN IT SOUNDS AND YOU MUST NOT WIDEN IT.** Proven: **the view exists
+  and anon is denied.** NOT proven: **that `authenticated` can read it.** The `42501` fires at the
+  **schema** level, before any per-view grant is consulted, so *granted-to-authenticated* and
+  *granted-to-nobody* are the same response to an anon caller. The Lead broadcast the wider version
+  and Lead5 caught it. **G5 is the gate that settles it. Do not say "P3-1 is live on hosted."**
+- **`operatorAllowed` is `() => false` in production** (`command/index.ts:1634`), unconditional,
+  actor ignored. **No identity can create a workspace on hosted today.** Contract for the fix is
+  pinned (Option A, below); no code written.
+- **§5.2 of `docs/research/ACP-AND-BUZZ.md` is OVERTURNED** — the subscription-auth barrier is
+  **configuration, not policy**: `shouldHideClaudeAuth()` gates the throw and Buzz passes no such
+  flag. Technical barrier gone; **licensing question open and unsettleable from source.** Atlas has
+  the replacement text; **`db62856`'s "API-key BY POLICY" claim is wrong as recorded and still
+  needs correcting.** This is a live change to §1c's differentiator and it is the operator's call.
+- **§3 gained four faces + the cite-by-name rule** (this commit's parent).
+
+### ★ WHAT IS WAITING, AND ON WHOM
+1. **PHASE G — G5 post-then-read, and G10 if reachable. WAITS ON THE OPERATOR** to log in; G5 needs
+   a real human identity and the dogfood immediately follows. This is not friction being offloaded:
+   **§1c exists because the operator drove something and told us it was confusing.** Two load-bearing
+   instructions for whoever runs it: (a) **rebuild/install `coswarm` from `origin/main` FIRST** — the
+   PATH binary's dist mtime is `01:25` against a `01:36` land and may be a pre-squash partial, and
+   the danger is diagnosing a stale local binary as a hosted failure; (b) **★ READ THE HTTP STATUS
+   BEFORE THE ROW COUNT** — an empty array from a 200 and an empty array from a swallowed 401 are
+   the same JSON, and if the `authenticated` GRANT is wrong this fails looking like *no signals*
+   rather than *permission denied*, which is exactly the costume that hid the last GRANT bug.
+2. **uxtest R1 — GATE 5 IS HELD BY THE LEAD, not by the trust action.** Anvil was dispatched to grant
+   the mini trust (`/Users/yulanbot/uxtest/human1/workspace`, real dialog acceptance, **never** a
+   programmatic `hasTrustDialogAccepted` write — §7.9b stands); **no report received before rotation
+   — verify it yourself.** Even if it cleared, **do not run gate 5**: the runbook has failed two
+   adversarial passes and a third is in flight. See the next section.
+3. **`create_workspace`** — contract pinned, brief unwritten. Nothing blocked but a brief.
+4. **Atlas's remaining research**, all held: two desk-checkable ACP items, plus Lead5's question —
+   *does the Agent SDK policy statement still exist unchanged in the vendor docs?* If yes,
+   "configuration not policy" describes the **mechanism** and not the **permission**, and both are
+   true at once.
+
+### ★★ THE R1 RUNBOOK IS THE MOST INSTRUCTIVE ARTIFACT IN THE PROGRAM RIGHT NOW
+`uxtest/findings/R1-GO-RUNBOOK.md`, branch `ferry/r1-go-runbook`, **local only, unpushed.**
+Two review passes, **each of which found defects of the class the previous revision was fixing:**
+- Pass 1 killed the discriminator the **Lead** had called load-bearing: `spawn-state/` carries the
+  round number in the **filename**, `reset-round.sh` never removes the directory, and the reviewer
+  **SSHed to the laptop** and found it already exists and is already empty. *Missing = never-started*
+  was unreachable; *empty = killed mid-flight* was already true before the event.
+- Pass 1 also found §5 **impossible and data-destroying** — it said write `REPORT.md` after running
+  the collector, but `collect-round.mjs:462` writes that file and `collect-round.sh:46-47` dies if
+  it is missing.
+- Pass 2 found the **fix** reintroduced the same shape: the new probe prints identical bytes whether
+  the file is absent or the laptop is unreachable (proven by running it against an unreachable host),
+  and `observed:false` was mapped to FAIL when **two of its three writes are timeouts** — against a
+  ~90s window and a measured 3m38s latency, so **the likely outcome of a working spawn was a recorded
+  FAIL.**
+**★ The rule this earned: A FIX WRITTEN BY SOMEONE WHO HAS JUST INTERNALISED A FAILURE MODE IS NOT
+IMMUNE TO IT.** The fix site is the highest-risk site — written under time pressure by someone
+holding a fresh model. **Weight the diff, not the document.**
+**★ AND THE STOPPING-RULE DEFECT, which is the part worth carrying beyond uxtest:** "review until a
+pass comes back clean" silently assumes the passes are **independent**, and after pass two by the
+same reviewer they are not. The reviewer said so about itself, unprompted, and asked to be
+supplemented rather than trusted: *both defects I found are the same shape, that is the lens I now
+have, and lenses hide what they are not shaped for.* **That is §0e.3's convergence-is-not-
+corroboration rule applied to one agent at two points in time** — the version nobody guards against,
+because it does not look like two reviewers. A cold second reader was dispatched, deliberately told
+**not** to read the first reviewer's findings first.
+
+### FLEET — what each proved this morning, not what they are for
+- **Sable [grok]** — pinned the `operatorAllowed` constant-false, and **overturned the Lead's P2-2
+  collision framing** with a one-line reductio (that reading would also outlaw `accept_invitation`,
+  which the system already does). Reviews state their own boundary: it said explicitly which claims
+  it had *not* re-verified.
+- **Quill [codex]** — executed Phase M cleanly: captured every probe **before** inspecting it,
+  reported literal status codes rather than "passed", deployed `read` before `command` to avoid a
+  post-capable/read-missing window, and **blocked rather than manufacturing a credential.**
+- **Ferry [claude]** — found its own three wrong citations before the reviewer could, and found the
+  three-outcome gate-5 confound that would have let a false `carryover=true` disqualify R1's central
+  finding under §7.7. **Its errors have one shape: reasoning from code-as-written to machine-as-is.**
+  Distrust *that class* of claim, not the agent.
+- **Atlas [claude]** — overturned **its own shipped finding**, refused the larger reversal available
+  to it, refused to invent two findings a Lead wrongly asked for, and declined credit the Lead
+  offered. Its method is the one to copy: **the source tells you what the code does; only the machine
+  tells you what state it is in.**
+- **Lead5** — advisory, and narrowed two of Lead6's claims to what the evidence carried. Worth asking.
+- **Anvil [a2a, mini]**, **Dana [a2a, laptop]** — provisioning / GUI launcher.
+
+### ★ WHAT I GOT WRONG, ALL THREE THE SAME FAMILY
+1. **Published a stale `origin/main`. Twice.** Caught by Sable, then Ferry.
+2. **★ Read my inbox through `head -N` for three hours** and silently truncated every long message —
+   including 120 lines of a contract containing **the direct answer to a question I had just asked.**
+   This is Lead5's `tail -1` send-side truncation **received**. Read bodies at full length from
+   `~/.swarm/swarm.db`; the CLI's paging is not the message.
+3. **Overclaimed the GRANT** (above) — built a negative control for one arm and then made a claim
+   about a second arm I never controlled for, which is worse than no control, because the real
+   control made the wider sentence feel earned.
+**All three were caught by workers, none by me.** That is the system working, and the density is the
+signal to rotate. **Tell your fleet a SHA from you is context, never authority** — they will check,
+and they will be right.
+
+### ★ THE ONE THING I WOULD KEEP
+**Every correction that mattered today came from the person with the least authority to make it, and
+every one of them was delivered with the command attached.** A reviewer corrected the Lead in its
+introduction message. Two workers corrected the Lead's published SHA. A researcher refused to
+produce findings the Lead asked for by name. **Ask for that explicitly and then visibly take it,
+because a fleet learns what you reward within one exchange.**
+
+## 0g. ROTATION 2026-07-25 ~01:45 (Lead5 -> Lead6). Read this after §0h.
 
 Rotating at a clean boundary: **P3-1 landed and pushed**, `origin/main` = **`67d527b`**,
 linear history intact (0 merge commits), primary worktree clean. **Verified by execution at
