@@ -687,49 +687,81 @@ on the operator's explicit instruction.
 concluded messages were *expensive*, so we deferred them and prioritised reservations. The shell
 was a **signpost**, not a warning. We deferred the only thing that mattered.
 
-### Proposed shape (Lead5, under adversarial review — not yet pinned)
+### ★ R1 NIT THAT BELONGS IN THE PITCH (reviewer, accepted)
 
-**One primitive: the signal.**
+*"Git already handles concurrency"* is true for **code** and false for **attention**. Two swarms
+can waste a full day on the same PR **without ever colliding in git**. Merge conflicts are not the
+waste signals prevent — **duplicated and misdirected effort is.** Do not let R1 be heard as "git
+makes coordination unnecessary."
+
+### ★★ P3-1 = THE SIGNAL PLANE — SHAPE PINNED (adversarially reviewed 2026-07-24)
+
+**v1 schema. Anything not listed is OUT.**
 
 ```
-{ from, to?, about?, kind, body, until?, state }
+{ id, from, to?, about?, kind, body, until?, created_at }
+
+kind ∈ { working-on, note, ask }     // exactly three; see below
+from    server-bound from the credential — a client can NEVER set or spoof it
+to      null = workspace broadcast; else member user_id / principal_id
+about   OPAQUE string, capped. URLs are a CONVENTION, not a parsed type. No GitHub sync.
+body    untrusted data, capped, control/bidi/ANSI stripped, never model instruction
+until   optional, `working-on` ONLY. Display-only staleness via read-time predicate.
+        Stale renders as "expired" — never deleted, never enforced.
 ```
 
-- **`from`** — principal / human / swarm (P1 identity, already built)
-- **`to`** — optional: a swarm, a human, an agent, or workspace broadcast
-- **`about`** — optional subject: a **GitHub URL** (repo / PR / issue / branch) or a named area
-- **`kind`** — `working-on` | `heads-up` | `steer` | `fyi` | `ask`
-- **`body`** — plain text; **UNTRUSTED DATA, never instruction** (P3-1 pin 5 survives intact and
-  matters more here, because the body *is* the payload)
-- **`until`** — optional soft horizon for `working-on`; **read-time predicate, never a cron sweep**
-- **`state`** — `open` | `acked` | `resolved`
+- **★ `kind` is a THREE-value enum — the central design tension, resolved.** Free tags lose:
+  unqueryable, unrenderable, and agents invent private dialects until the product dissolves into
+  chat. A fat enum also loses: it is the structure tax §1d warns about, and it bikesheds forever.
+  **`working-on`** = active intent · **`note`** = heads-up / fyi / steer / plan, one bucket ·
+  **`ask`** = needs a response. **`heads-up`, `steer` and `fyi` are TONES, not TYPES** — the human
+  writes tone in the body. Add a fourth kind only when a **read path requires the distinction**.
+- **★ NO `state` FIELD DAY ONE.** Posts are immutable with `created_at`. No `open|acked|resolved`
+  machine. Requiring acks on `working-on`/`note` is notification spam plus structure tax. An
+  `acked_at` for **`ask` only** may come at v1.1 if a needs-you loop earns it. **§2.13's Buzz acks
+  are DELIVERY transport, not social "resolved"** — do not conflate the two.
+- **★ NO THREADS OR REPLIES.** The operator's examples are short intention signals with optional
+  subjects, not conversations. Threading is structure; one-shot posts plus a feed is the shape.
+- **Two reads, not three:** `coswarm feed` (what's happening — non-stale) and `coswarm inbox`
+  (`to` = me / my principals). The subject query is **`feed --about <url>`, a filter, not a third
+  verb.**
 
-**Three reads:** *what's happening* (workspace feed / board) · *what's for me* (inbox) ·
-*what's about this PR* (subject query).
+**★ THE FLOOR — below any of these it is not a product, it is Slack with an extra login:**
+1. Tenant-scoped post + read (membership gate), never a public channel
+2. An **agent** can post and poll **without a human terminal ritual** (CLI + `--json`)
+3. Persistence across session death
+4. Addressing: workspace-broadcast + optional human target
+5. Subject hook: optional opaque `about`
+6. Untrusted body (pin 5) + rate/fairness (pin 13)
+7. Two reads: feed + inbox
 
-**It serves every operator example directly:** `working-on` answers duplicated effort;
-`heads-up` bound to a PR answers order-of-operations ("hold this, wait for that");
-`steer` answers human-to-human attention-shifting; `ask`/`fyi` answers cross-swarm suggestions.
-All of it persists in the cloud across session death — the "time and space" requirement.
+**★ THE COLLAPSE TEST — the four differentiators are sacred; drop ONE and "just use Slack" wins:**
+**agent-addressable · machine-queryable · tenancy-scoped · survives session death.** Plus one the
+reviewer added: signals ride the **same identity/principal model as the agents themselves** — "who
+said it" is an **auditable principal**, not a Slack display name. Compete with GitHub on nothing
+(R4), and with Slack on human banter never.
 
-**Pins that transfer unchanged from the P3-1 review:** 1 (tenancy), 2 (read-time horizon, no cron
-dependency), 5 (untrusted text), 6 (status/feed rendering in P2-2's voice), 7 (no-prompt agent
-path), 8 (audit on commands, not reads), 9 (idempotency), 11 (hosted read-plane canary before
-believing an empty feed), 12 (narration), 13 (**rate/fairness — now MORE important**: an open
-message plane between separate organisations is spammable in a way a task board is not), 14 (no
-pub/sub day one — polling suffices).
-**Pins that fall away:** 3 (holder/epoch binding), 4 (advisory-never-blocks — vacuous once nothing
-blocks), 10.
+**Pins transferred (11 of 14):** 1 tenancy (critical) · 2 read-time horizon (`until` only) ·
+5 untrusted body (**most important — bodies ARE the product**) · 6 rendering · 7 no-prompt/`--json` ·
+8 audit on post · 9 idempotency via pending `command_id` · 11 hosted read canary before believing
+an empty feed · 12 narration (post echoes what was recorded) · 13 rate/fairness
+(**launch-gate level** — multi-org spam) · 14 no pub/sub, poll.
+**Dropped:** 3 holder/epoch binding · 4 advisory-never-blocks (vacuous once nothing blocks) · 10.
+**Added by review:** **15 — no GitHub replication** (`about` stores a string; never sync issue
+state) · **16 — server-bound `from`** (authorship unspoofable) · **17 — the collapse test is an
+ACCEPTANCE criterion**: a feature serving none of the four differentiators gets cut.
 
-**Open questions for review, honestly flagged:**
-1. **Is `kind` an enum at all**, or a free tag? An enum is structure — exactly what the steer warns
-   against — but a free tag makes agent behaviour unpredictable. This is the central design tension.
-2. **Does `about` need a typed GitHub reference**, or is an opaque URL/string enough day one?
-3. **Do `state`/ack exist in v1?** §2.13 wants per-message acks; acks are also structure creep.
-4. **★ Should the LOCAL swarm's task model bridge upward** — local `swarm task` activity
-   auto-emitting `working-on` signals to the cloud? That would give cross-swarm awareness **for
-   free** from a model that already works and that the PromptEden swarm already runs daily. It is
-   the auto-placement idea from P3-1, moved to the layer where it is honest.
+**OUT of v1, explicitly:** state/ack machine · kind explosion · typed GitHub refs · threads ·
+pub/sub · agent-to-agent fine addressing · board UI · **the local-swarm auto-bridge**.
+
+**★ LOCAL `swarm task` → auto `working-on` BRIDGE: HELD for v1 (opt-in at v1.1).** Tempting —
+free awareness from a model PromptEden already runs daily — and rejected day one for five reasons:
+local task churn becomes a cross-org feed firehose (a pin-13 crisis); local task titles are often
+low-signal (*"fix tests"*, *"wip"*); auto-emit couples two planes, so local flakiness looks like
+coswarm being broken; silent auto-posts recreate §1c's "didn't know what or why" **for the
+recipients**; and it reimports the task model into the plane we just simplified. **v1 = a human or
+agent explicitly posts.** v1.1 may add an opt-in bridge with allowlist, rate limit and
+draft-then-confirm — **never default-on.**
 
 ## 2. Method
 
