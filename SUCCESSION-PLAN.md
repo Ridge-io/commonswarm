@@ -1337,6 +1337,16 @@ continuously (this file + commits) — assume your session can die at any moment
   acquire fails or times out under load, leaving the task unheld, so the second acquire succeeds
   and no rejection reason exists. **Stated as a hypothesis: one joint-failure sample, shared
   subsystem, mechanism not directly instrumented.**
+  **★ AND THERE IS A SECOND, DISTINCT FLAKE MODE — do not merge the two.** Under load the local
+  Supabase **Edge runtime returns HTTP 502**, which fails whatever test happens to be running.
+  Observed on a Group B verification run: three failures — a P3-1 signal test, T-02 and T-03 —
+  **all 502, none a logic mismatch**; clean 16/16 on a re-run twenty seconds later with zero 502s.
+  **Telling them apart is trivial IF you captured the output:**
+  - *acquire-path flake* → an assertion mismatch (`undefined` where a rejection was expected).
+    Looks exactly like a logic bug.
+  - *edge-runtime flake* → `502 !== 200`. The status code IS the diagnosis.
+  **★ A 502 IS AN INFRASTRUCTURE FAULT WEARING A TEST FAILURE'S COSTUME** — the same family as the
+  `406`-read-as-empty landmine in §3, one layer up. Read the status before reading the assertion.
   **Why this matters more than "one flaky test":** a reader who meets a red T-10 has a note. A
   reader who meets red T-10 *and* T-11 sees two failures, finds the note covers only one, and goes
   hunting a phantom second defect at 3am. **Both are the acquire path under load.**
