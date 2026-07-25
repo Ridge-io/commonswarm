@@ -1312,6 +1312,20 @@ continuously (this file + commits) — assume your session can die at any moment
 
 ## 5. Queued design tasks (don't lose these)
 
+- **★ MEASURED, NOT ASSUMED: the `principal_workspace_id` gate IS what isolates an agent from its
+  owner's other workspaces (2026-07-25).** This is the **fourth proxy watch** — the one the
+  reviewer commits to blocking any PR over, because it *looks* redundant beside the view's
+  `is_member` predicate on an owner-derived claim and is not.
+  **It was untested until now, and the original test could not have caught its removal:** agent-A
+  read workspace B and got empty — but `ua` was not a member of B, so **non-membership alone
+  produced the same result**. The assertion could not distinguish *"the gate works"* from
+  *"there was nothing to gate."*
+  **Now forced:** `ua` is made a **live member of B**, the human `ua` is proven to read B's
+  signals, and agent-A (owner `ua`, principal pinned to A) **still** reads empty. The property
+  held **under a test that could have refuted it** — which is the only kind of passing result
+  worth anything. **Do not let a later refactor "simplify" this gate away on the grounds that
+  `is_member` already covers it. It does not, and now there is a test that proves so.**
+
 - **★ DEBT: `T-10` (concurrent `acquire`) IS A FLAKY GATE UNDER MACHINE LOAD (observed 2026-07-25).**
   Seen **red twice** during P3-1 Phase B while this machine was running a 70-agent workflow and
   then a 15-agent review; then **green 2/2 in isolation** and **14/14 in-suite** once quiet.
