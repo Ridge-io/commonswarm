@@ -1122,6 +1122,74 @@ continuously (this file + commits) — assume your session can die at any moment
      real mint response omitted it, and a live `coswarm token mint` would have thrown on
      `uuid(response.principal_id)` and never emitted the artifact a whole design rested on.
      Caught in review, before anyone ran it.
+  **★★ CITE THESE BY NAME, NEVER BY NUMBER (Ferry, 2026-07-25 — adopted as a rule).**
+  The numbers above and below are **LOCAL TO THIS LIST AND ARE NOT CITABLE.** This section and
+  `uxtest/findings/2026-07-24-r1-attempt-1.md` already number the *same* faces in *different*
+  orders — four of seven collide, so "face 3" today means the registry face in one landed document
+  and the process-name face in the other. This section also already contains an unrelated 1-5
+  (ERROR CLASS instances) and an unrelated 8. **A FACE NUMBER IS ITSELF A CITATION: it has the
+  visual grammar of a reference, it looks checked, and nobody re-derives it** — which is the
+  citation face applied to the numbering of the citation face. Use the phrase instead. The phrases
+  are self-describing, survive reordering, and cannot silently mean something else in another file;
+  nobody has ever misremembered what *"an endpoint that answers is not an endpoint that delivers"*
+  meant. **This numbering hazard was caught by the reviewer BEFORE the numbered version reached
+  `main`**, on a Lead commit that had already been written.
+  8. **A RESTATEMENT IS NOT THE THING; A PARAPHRASE OF A RULE IS NOT THE RULE.** Stated
+     normatively in **§0e.5** — see there, not here. (Deliberately a reference and not a summary,
+     because summarising it would instantiate it.)
+  9. **★ A CACHED ARTIFACT IS TESTIMONY WITH A TIMESTAMP. FETCH BEFORE YOU REV-PARSE.**
+     (Lead6, 2026-07-25.) §0g warns that a baton cannot contain the SHA of the commit adding it and
+     instructs the successor to re-derive. Lead6 did exactly that — and got a stale answer **twice
+     in twenty minutes**, because `git rev-parse origin/main` is an artifact query that faithfully
+     answers a question nobody meant to ask: **what does my local ref cache believe**, not what
+     origin holds. Both times a worker (Sable, then Ferry) had fetched and was right while the Lead
+     was wrong. **The instrument was correct, the reading was wrong, and the successor was following
+     instructions** — an instruction defect is worse than an ordinary error because it punishes
+     compliance. Fifth independent confirmation in one session that artifacts-beat-testimony is
+     incomplete without face-refinement below.
+     **★ THE STRUCTURAL RULE THAT OUTRANKS THE TIP — ONE AUTHOR PER DOCUMENT AT A TIME.** The
+     rotating-out Lead landed three commits on this file while the incoming Lead was reading it.
+     Each was an improvement; together they meant the baton changed three times underneath someone
+     with no way to perceive it. Had they touched FLEET or OPEN OPERATOR ASKS rather than a phrasing
+     detail, the successor would have run the swarm off a superseded baton having done the careful
+     thing. **A document with two writers can disagree with itself and neither writer can see it.**
+     Hand content to the current author; do not edit behind them. Same shape as §0e.5 one level up:
+     one normative statement per fact, one author per artifact.
+  10. **★ A HEADING IS A PARAPHRASE THE AUTHOR DID NOT INTEND AS ONE.** (Lead6, 2026-07-25.)
+     The Lead read P2-2's rule title — *"NO NEW AUTHORIZATION PREDICATE"* — and promoted it to a
+     universal constraint, then built a whole slice framing on a collision with it. The **body**
+     scopes it to membership-gated **read projections**; it never governed founding writes. Sable's
+     reductio settled it in one line: the Lead's reading would also outlaw `accept_invitation`,
+     **which the system already does**. Face 7 in a fresh costume — right identifier, never read the
+     enclosing scope — except the "enclosing scope" was the section the heading sat on top of.
+     **Test a rule-reading against an existing counterexample before building on it.**
+  11. **★ A CITATION NOT RE-DERIVED IS TESTIMONY WEARING AN ARTIFACT'S CLOTHES — IT READS AS RIGOUR
+     BECAUSE IT HAS A COLON AND A NUMBER IN IT.** (Ferry, 2026-07-25, on its own published
+     numbers.) Ferry cited `spawn-observed.sh:37/:73/:108`; the true lines are **:38 / :74 / :109**,
+     every one low by one. **The mechanism was verified by reading the file; the citation was
+     propagated from a message and never re-derived** — so the verification confirmed the *claim*
+     while never testing the *pointer that supports it*. Those are two separate acts and this
+     program had been treating them as one. **The claim is usually checked; the pointer to it
+     usually is not.** Third citation-bite in two days (Lead5's four die-message greps, Atlas
+     catching Lead5's spawn-path cite, now Ferry catching Ferry) — which is the fourth confirmation
+     of Lead5's own third lesson, *the citation is where you will be wrong, not the reasoning*.
+     **Substance survived intact:** preconditions `:36-37`, state dir `:38`, `write_state` `:74`,
+     earliest write `:109` — the directory is still created strictly before the file, so a MISSING
+     directory means never-started and an EMPTY one means killed-mid-flight.
+  **★ THE THIRD FACE OF THE REFINEMENT (Ferry) — AN ARTIFACT CAN BE FRESH, CORRECTLY READ, AND
+  STILL ANSWER A DIFFERENT QUESTION THAN THE ONE YOU MEANT.** Not staleness (face 9), not misreading
+  (the Atlas refinement). Ferry checked the filesystem for `spawn-state/r1.json`, found it absent,
+  and concluded a process had never run — live query, correct result, wrong conclusion, because the
+  directory is created at `:38` and the file only at `:109`, so absence of the file attests to
+  nothing about execution. Ferry hit the same face twelve hours later from the other side, reporting
+  `HEAD 0abeac8` without noticing it was reading `quill/p3-1-signals` rather than `main`.
+  **★ THE DEFENCE, and it is cheaper than vigilance: ASK WHAT THE ARTIFACT WOULD LOOK LIKE IF THE
+  OPPOSITE WERE TRUE, BEFORE YOU READ IT.** If both worlds produce the same output, the query cannot
+  settle the question and you need a different one. Atlas ran exactly this and it worked: grepping
+  `claude-agent-acp` for `CLAUDE_CODE_OAUTH_TOKEN` returns nothing **in both worlds** — an adapter
+  that rejects OAuth would not mention it, and one that passes env through would not need to — so
+  Atlas replaced it with a question whose answers look different (passthrough vs allowlist) and
+  overturned its own shipped finding in thirty minutes.
   **★ WHERE THESE KEEP HAPPENING, which is specific enough to act on: not in the reasoning — in
   the CITATIONS.** Four of the seven were the same motion: grep up a line containing the right
   identifier, and promote it to proof without reading what the enclosing function *does*.
