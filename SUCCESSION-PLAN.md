@@ -106,7 +106,36 @@ See §3, *a cached artifact is testimony with a timestamp*. When this was writte
    BEFORE THE ROW COUNT** — an empty array from a 200 and an empty array from a swallowed 401 are
    the same JSON, and if the `authenticated` GRANT is wrong this fails looking like *no signals*
    rather than *permission denied*, which is exactly the costume that hid the last GRANT bug.
-2. **uxtest R1 — GATE 5 IS HELD BY THE LEAD, not by the trust action.** Anvil was dispatched to grant
+2. **★★ uxtest R1 — THE TRUST IS *MEASURED ABSENT*, AND THE AGENT SENT TO GRANT IT WAS NEVER
+   REACHED.** Two findings from Dana, both verified independently by the Lead before landing:
+   **(a) ANVIL'S REGISTRY ENTRY IS MISROUTED.** `swarm members` lists Anvil at
+   `http://127.0.0.1:18790/`, and that endpoint serves an agent card named **`Yulan`**. Control:
+   `:18792` serves `UxDriver`, so the probe discriminates. **Every message dispatched to Anvil for
+   three hours landed in another agent's inbox. Anvil never received the trust task** — it was not
+   silent, it was unreachable, and *those look identical from the sender's side*.
+   **★ THE FACE: A CARD THAT RESOLVES IS NOT PROOF IT RESOLVES TO WHO YOU MEANT.** Same family as
+   *an endpoint that answers is not an endpoint that delivers*, one turn further out — the endpoint
+   answered, delivered, and was **the wrong recipient**. §1.2's failure mode caught in the field for
+   the second time in two days.
+   **(b) THE TRUST KEY IS ABSENT, not merely unconfirmed.** Dana read the mini's config back:
+   47 project entries, **no entry** for `/Users/yulanbot/uxtest/human1/workspace`,
+   `hasTrustDialogAccepted` **KEY ABSENT**, and the workspace itself `entry_count=0`. That converts
+   *"Anvil never reported"* — a state nobody could act on — into a value.
+   **★ AND THE PRISTINE BASELINE IS AN OPPORTUNITY, per Dana:** because the persona dir is currently
+   **empty**, no before/after diff is needed. After whoever grants the trust, **one command decides
+   whether the session method is clean**: `ls -A /Users/yulanbot/uxtest/human1/workspace`. Empty
+   proves the dialog-acceptance method leaves no residue and is worth recording permanently, since
+   §7.9b prefers it over a config write. Non-empty means sweep before gate 5 —
+   `_lib.sh:110-116 assert_round_brief_only` requires **exactly one** entry and
+   `launch-human1.sh:28` writes `BRIEF.md` there later.
+   **★ DANA DECLINED TO GRANT IT, CORRECTLY, AND THE REASONING SHOULD BE HONOURED:** it could do it
+   in seconds and holds the exact procedure, but the operator's loosening was scoped to **Dana, on
+   the laptop**, and the mini is a different machine and user. OPEN OPERATOR ASK 1 —
+   *agent-scoped vs target-scoped* — **is still unresolved**, and acting would have been Dana
+   deciding its own scope. **The measurement was Dana's to make; the write is not.** If it is ever
+   done by config write rather than dialog, **back up first and add only the new key** — that was
+   the operator's own condition and it travels with the action, not with the agent.
+   (Superseded text, kept for provenance:) Anvil was dispatched to grant
    the mini trust (`/Users/yulanbot/uxtest/human1/workspace`, real dialog acceptance, **never** a
    programmatic `hasTrustDialogAccepted` write — §7.9b stands); **no report received before rotation
    — verify it yourself.** Even if it cleared, **do not run gate 5**: the runbook has failed two
@@ -177,7 +206,22 @@ because it does not look like two reviewers. A cold second reader was dispatched
   a past decision was made. NOT current on the code — do not ask it to judge live work.** Its own
   framing, offered after it instructed an agent to do something that agent had already done. It did
   narrow two of Lead6's claims usefully, but it named that as the least repeatable thing it did.
-- **Anvil [a2a, mini]**, **Dana [a2a, laptop]** — provisioning / GUI launcher.
+- **Anvil [a2a, mini]** — provisioning. **★ ITS REGISTRY ENTRY IS MISROUTED TO `Yulan` (see item 2);
+  fix or re-verify the entry before dispatching anything to it.**
+- **Dana [cmux/claude-code] on the laptop — NOT `[a2a]`, and this is not cosmetic.** Its own
+  correction: `swarm whoami` reports **Type cmux, Host claude-code**; the `:18791` bridge is a
+  *served endpoint*, not its agent type. **cmux receives mid-turn push; a2a surfaces only at a turn
+  boundary** — a successor reading it as a2a will mis-model its response latency. It also produced
+  both findings in item 2 and, separately, found that `_lib.sh wait_for_agent_local` pipes
+  `swarm members` into `grep` with `2>/dev/null`, discarding stderr **and** the exit status, so a
+  **failed query and a genuine absence are identical** — and `uxtest-r1` does not exist yet, so the
+  error case is the **current** state, not a hypothetical. Query-failure belongs in UNDETERMINED,
+  not FAIL, and must not burn a retry.
+  **★ AND A BATON-LEVEL TRAP DANA HIT: THE LAPTOP CLONE CANNOT VERIFY SHAs.**
+  `/Users/tom/Developer/Ridge.io/cloud-swarm` fails `fetch` with *Repository not found* while
+  `rev-parse` cheerfully returns a stale `cbb9c89`. Dana nearly reported a correct Lead SHA as
+  wrong. **Derive SHAs on the mini only** — this is the cached-artifact face with a broken remote
+  underneath it.
 
 ### ★ WHAT I GOT WRONG, ALL THREE THE SAME FAMILY
 1. **Published a stale `origin/main`. Twice.** Caught by Sable, then Ferry.
