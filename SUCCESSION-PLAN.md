@@ -62,6 +62,75 @@ traps found while mapping the code — as a durable on-disk handoff note for its
 stand it down. Do not discard mapping work merely because the agent is rotating. Frame it to the
 worker as hygiene, not judgement, and record what it contributed.
 
+## 0g. ROTATION 2026-07-25 ~01:45 (Lead5 -> Lead6). READ THIS FIRST.
+
+Rotating at a clean boundary: **P3-1 landed and pushed**, `origin/main` = **`67d527b`**,
+linear history intact (0 merge commits), primary worktree clean. **Verified by execution at
+write time — but per §3 instance 5, RE-DERIVE IT YOURSELF: `git rev-parse origin/main`. This
+document cannot contain the SHA of the commit that adds it.**
+
+### What shipped under Lead5
+- **P3-1 THE SIGNAL PLANE** (`67d527b`) — the coordination primitive. Five plain verbs over a
+  three-value enum the user never types; `until` as the lifecycle instead of a state machine;
+  agents as first-class posters **and** pollers via a read proxy running the same `is_member`
+  predicate. **NOT DEPLOYED TO HOSTED** — deliberate, see residuals.
+- **§1d, the communication-first re-scope** — advisory reservations PARKED after the operator's
+  steer. Leases prevent double-writes to shared mutable state; cross-swarm has none, because each
+  swarm holds its own clone and the only shared state is GitHub. *GitHub holds the artifacts;
+  coswarm holds the intentions.*
+- **uxtest harness hardening** — four defects fixed including the idempotence short-circuit, and
+  the R1 sequence corrected (the baton's own sequence would have died on its first command).
+- **§0e practices 4/5/6, §0f, and eight faces of one error class in §3.**
+
+### THE STATE OF uxtest R1 — READ BEFORE TOUCHING IT
+`carryover=true`, `human2_spawn_probe=failed`, `reset_complete=true`, `oauth_consent=returning`.
+**There is no round.** Gate 5 failed and Ferry correctly STOPPED rather than proceeding.
+**Gate 5 is unblocked** (the operator ratified the laptop trust entry). **Gate 7 is not** — the
+mini's `/Users/yulanbot/uxtest/human1/workspace` has no trust entry, and only a human can grant
+it. Ferry recommends running 5->6->7 contiguously rather than firing 5 alone and stranding a
+persona overnight. Full write-up: `uxtest/findings/2026-07-24-r1-attempt-1.md`.
+**★ Do NOT write `rounds/1/REPORT.md` before a round runs** — `reset-round.sh:28` refuses to reset
+a round whose directory holds it. The report file is a LOCK, not just a document.
+
+### FLEET
+- **Sable [grok]** — adversarial reviewer, and the deepest signal-plane context in the fleet. It
+  caught the vacuous-gate class, the rate-ordering blocker, and a live mint break. **Route every
+  brief through it. Keep it on signals** (§0f).
+- **Quill [codex]** — implementation. Strong: it discarded an over-strict gate that returned the
+  wrong count rather than papering over it, and inspected real row shapes before scoping a query.
+- **Ferry [claude]** — uxtest harness lane. Found the idempotence short-circuit and the zsh `path`
+  bug; gave us the "identical answers where the arms should have differed" detector.
+- **Atlas [claude]** — research, idle. Delivered the ACP clean negative and later corrected a
+  citation of mine — **it checks upward, which is rare; encourage it.**
+- **Dana [a2a, laptop]** — GUI launcher, constraint loosened by the operator (may write trust
+  entries for uxtest persona dirs with backup + narrow diff + disclosure).
+- **Anvil [a2a]** — provisioning. Note its registry entry points at *Yulan's* bridge on 18790.
+
+### OPEN OPERATOR ASKS
+1. **The mini trust action** — one Claude session opened in `/Users/yulanbot/uxtest/human1/workspace`,
+   accepted, exited. Or a ruling on whether the trust loosening is **agent-scoped** (Dana only) or
+   **target-scoped** (any uxtest persona dir, so Ferry may seed it). This is the ONLY thing between
+   us and R1.
+2. **Hosted deploy of P3-1** — G5 is unclaimed; nobody has run a positive post-then-read against
+   hosted. That decision is the operator's; the code is landed and revert-able.
+3. Still open from Lead4: drive `coswarm accept --link-stdin` personally as the felt test.
+
+### ★ WHAT I WOULD TELL MY SUCCESSOR IF I COULD ONLY SAY THREE THINGS
+1. **STOP ARGUING ABOUT WHAT THE CODE IMPLIES AND GO READ WHAT IT DOES.** Three design disputes
+   tonight — the seam, the include-stale claim, the option-2-vs-3 fight — were each settled in
+   under two minutes by one `grep`, one `curl`, one `stat`. None was settled by authority or
+   argument. When two capable reviewers disagree, the disagreement is almost always about a fact
+   one of them can check.
+2. **A GATE THAT CANNOT FAIL IS WORSE THAN NO GATE**, and its inverse — a gate that reddens for
+   unrelated reasons — is nearly as bad, because it trains people to ignore reds. Demand a
+   RED-then-GREEN proof for every gate. Both blocking defects tonight were gates that could not
+   fail, and one of them was mine.
+3. **THE CITATION IS WHERE YOU WILL BE WRONG, NOT THE REASONING.** Four of my errors tonight were
+   the same motion: grep up a line containing the right identifier and promote it to proof without
+   reading what the enclosing function does. Read the signature first. Ten seconds. I skipped it
+   four times while actively cataloguing the error, which is why the fix is a habit and not
+   vigilance.
+
 ## 0e. STANDING PRACTICE — how this program works, not one Lead's advice
 
 Written down 2026-07-24 at the Lead4→Lead5 rotation, because the prior handoff put *state* in
