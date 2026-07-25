@@ -216,6 +216,15 @@ One is triage; the other is capacity.
   the default single-Enter queue leaves the message unsubmitted in his composer
   (observed 2026-07-24: two briefs sat undelivered ~2h; `--now` landed instantly).
   Verify delivery with `swarm read Mason` (composer shows "Working…"), not just "Message sent".
+- **★★ ONE WORKING DIRECTORY, TWO ACTORS: BRANCH STATE IS SHARED (2026-07-25).** When a worker
+  commits WIP to a feature branch in the repo the Lead is also using, **the Lead's next commit lands
+  on the worker's branch**, and switching back mid-work would yank the tree out from under them.
+  **Fix: the Lead keeps a separate `git worktree` on `main` for documentation commits.**
+  `git worktree add <path outside the repo> main` — the worker keeps the primary checkout, the Lead
+  writes docs on main, neither can disturb the other. Put it **outside the repo tree** so the
+  janitor's debris counter does not adopt it.
+  Same instinct as committing WIP to a branch in the first place: **remove the class rather than
+  ask two actors to remember a rule about a shared mutable resource.**
 - **★★ A REVIEW FAN-OUT MUST BE TOLD IT IS READ-ONLY — IN WORDS (2026-07-25, near-miss).**
   A verifier agent in a pre-ship review ran **`git checkout -- supabase/functions/command/index.ts`**
   during cleanup, on a file holding **~300 lines of uncommitted implementation**. It recovered from
