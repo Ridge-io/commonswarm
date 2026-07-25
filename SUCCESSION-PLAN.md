@@ -216,6 +216,28 @@ One is triage; the other is capacity.
   the default single-Enter queue leaves the message unsubmitted in his composer
   (observed 2026-07-24: two briefs sat undelivered ~2h; `--now` landed instantly).
   Verify delivery with `swarm read Mason` (composer shows "Working…"), not just "Message sent".
+- **★★ A REVIEW FAN-OUT MUST BE TOLD IT IS READ-ONLY — IN WORDS (2026-07-25, near-miss).**
+  A verifier agent in a pre-ship review ran **`git checkout -- supabase/functions/command/index.ts`**
+  during cleanup, on a file holding **~300 lines of uncommitted implementation**. It recovered from
+  a backup and disclosed immediately and unprompted; the Lead verified the recovery independently
+  (line count, five landmark functions at expected offsets, `tsc` clean, core suite green, and
+  **md5-identical to the backup**). Nothing was lost — **by luck, not by design.**
+  - **The prompt said "Inspect it with `git diff` / `git status`". It never said DO NOT MUTATE.**
+    An agent told to investigate a working tree will tidy up after itself, and `git checkout --`
+    is a normal tidying reflex that happens to be destructive exactly when the tree is dirty.
+  - **RULE 1 — say it explicitly in every review/audit prompt:** *read-only; do not run any
+    mutating git command (`checkout`, `restore`, `stash`, `clean`, `reset`), do not edit, move or
+    delete files; if you need a scratch file, write it outside the repo and remove it.*
+  - **★ RULE 2 — the structural fix, which does not depend on prompt discipline: DO NOT LEAVE
+    HOURS OF WORK UNCOMMITTED WHILE FANNING OUT AGENTS OVER IT.** Have the worker commit to a
+    branch first. A committed tree makes `git checkout --` a no-op instead of a catastrophe, and it
+    removes the whole class rather than asking N agents to each remember a rule. The Lead held this
+    slice uncommitted for hours specifically so a review could see the diff — which is precisely
+    the state in which reviewing it is most dangerous.
+  - **Worth noting what worked:** the agent backed up before acting and disclosed without being
+    asked, which is the difference between a near-miss and a loss. Same pattern as the laptop
+    config edit earlier the same night — **the disclosure is what made it recoverable, and it
+    should be praised even while the action is ruled against.**
 - **★★ NEVER PUT A SWARM MESSAGE IN A DOUBLE-QUOTED SHELL STRING (2026-07-25, Lead5, cost: every
   message of an entire session).** Anything in backticks — file paths, line refs, identifiers,
   flags — is **executed by the shell and DELETED from the message body** before it is sent.
