@@ -114,7 +114,9 @@ UXTEST_HOME_ROOT=/Users/tom/uxtest \
 
 ### 1.3 Transport (the "Slack") — verified constraints
 
-- The mini **already serves an unrelated A2A bridge ("Yulan") on port 18790**. The harness
+- The mini **already serves an unrelated A2A bridge on port 18790** (documented as "Yulan";
+  it currently answers as **Anvil** — harmless, since `preflight.sh:188` only refuses
+  `Avery-r*`/`Dana-r*` there, but do not re-derive the name from this line). The harness
   **must not** disturb it. Mini ports `18791` (round persona) and `18792` (launcher driver)
   are dedicated to uxtest.
 - Laptop port `18791` is the persistent Dana launcher endpoint and **must bind the Tailscale

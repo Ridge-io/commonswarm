@@ -515,7 +515,24 @@ UXTEST_HOME_ROOT=/Users/tom/uxtest \
   /Users/tom/Developer/Ridge.io/cloud-swarm/uxtest/scripts/serve-human2-gui.sh launcher
 ```
 
-Then: rerun `preflight.sh 1` -> Dana drains its queued inbox instruction and does the Human2 logout
+**★ CORRECTED 2026-07-24 (Ferry, verified by Lead5 against the files) — THE SEQUENCE BELOW WAS
+WRONG AND WOULD HAVE DIED ON ITS FIRST COMMAND.** `preflight.sh 1` cannot run first for round 1.
+`uxtest/rounds/1/setup.json` already exists from a **half-finished pre-`502b103` reset**
+(`reset_started_at` set, `reset_complete: false`) and is missing the three keys that commit added.
+`preflight.sh:196` gates its cold-state block on `[ -f "$setup" ]` — the file exists, so the block
+**runs** and dies at `:206` on `human2_reset_via != dana-a2a-gui`. Those fields are written **only**
+by `reset-round.sh:210-225`, *after* Dana's GUI reset returns its artifact — so that block is a
+**post-reset assertion** that only passes pre-reset on a virgin round. Round 1 is not virgin. It was
+never caught because preflight dies earlier at `:119` on the launcher gate. Also missing below:
+`launcher-channel-up.sh` stands up the mini UxDriver on 18792, which `reset-round.sh:31` requires.
+**CORRECT ORDER:** `launcher-channel-up.sh` → `reset-round.sh 1` → `preflight.sh 1` (now as
+post-reset verification: version skew, cold keychain, cold sidecars, membership snapshot) →
+`launch-human2.sh 1` → `channel-up.sh 1` → `launch-human1.sh 1` → round → `collect-round.sh 1`.
+**Do NOT delete `setup.json` to make preflight pass first** — `reset-round.sh:33-41` reuses
+`workspace_id`/`workspace_name` from it, so deleting abandons the seeded `uxtest-r1-92cb361a` and
+seeds a second workspace. Additive-safe, but it discards state for cosmetics.
+
+*(superseded original:)* rerun `preflight.sh 1` -> Dana drains its queued inbox instruction and does the Human2 logout
 (`coswarm logout`, local scope only — **never `--all-devices`**, it would revoke identity A) ->
 `launch-human2.sh 1` (spawns virgin `Dana-r1`) -> `channel-up.sh 1` -> `launch-human1.sh 1` ->
 round runs -> `collect-round.sh 1` -> write `rounds/1/REPORT.md` with the **mandatory §7.7 validity
