@@ -235,13 +235,18 @@ if [ -d "$UXTEST_MINI_HOME_ROOT/logs/r$round" ]; then
     "$UXTEST_MINI_HOME_ROOT/archive/logs/r${round}-$(date -u +%Y%m%dT%H%M%SZ)"
 fi
 
+# ★ NEVER name a variable 'path' inside remote_zsh. In zsh `path` is a special
+# array tied to $PATH, so `path=<dir>` REPLACES PATH with that single directory
+# and every external command in the rest of the block vanishes. Verified live:
+# `zsh -lic "path=/x; command -v mkdir"` -> NOT_FOUND; same block with
+# `workspace_path` -> /bin/mkdir. remote_zsh runs zsh, not bash.
 remote_zsh "
   set -e
-  path='$UXTEST_REMOTE_HOME_ROOT/human2/workspace'
-  mkdir -p \"\$path\"
-  chmod 700 '$UXTEST_REMOTE_HOME_ROOT/human2' \"\$path\"
+  workspace_path='$UXTEST_REMOTE_HOME_ROOT/human2/workspace'
+  mkdir -p \"\$workspace_path\"
+  chmod 700 '$UXTEST_REMOTE_HOME_ROOT/human2' \"\$workspace_path\"
   '$UXTEST_REMOTE_REPO/uxtest/scripts/verify-persona-workspace.sh' \
-    sweep \"\$path\" Human2
+    sweep \"\$workspace_path\" Human2
   if [ -d '$UXTEST_REMOTE_HOME_ROOT/logs/r$round' ]; then
     mkdir -p '$UXTEST_REMOTE_HOME_ROOT/archive/logs'
     mv '$UXTEST_REMOTE_HOME_ROOT/logs/r$round' \
