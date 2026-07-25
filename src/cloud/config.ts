@@ -9,7 +9,11 @@ export interface CloudTarget {
 }
 
 export function cloudTarget(url: string, anonKey: string): CloudTarget {
-  if (!url.trim()) throw new Error("--url is required");
+  if (!url.trim()) {
+    throw new Error(
+      "--url is required: use the Supabase project base URL (https://<ref>.supabase.co) from the deployment operator who invited you, or start with coswarm accept --link-stdin because invite links carry the Cloud target; if you already have a project, pass --url and --anon-key or set SWARM_CLOUD_URL and SWARM_CLOUD_ANON_KEY.",
+    );
+  }
   const parsed = new URL(url);
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
     throw new Error("--url must use http or https");

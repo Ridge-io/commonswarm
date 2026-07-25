@@ -647,6 +647,95 @@ async function runCli(
   return { code, stdout, stderr };
 }
 
+test("human-readable signal post states permanence and tenancy while its row owns the horizon", async () => {
+  const postedSignal = signal({
+    until: new Date(Date.now() + 3_600_000).toISOString(),
+  });
+  const server = createServer((request, response) => {
+    let body = "";
+    request.setEncoding("utf8");
+    request.on("data", (chunk: string) => body += chunk);
+    request.on("end", () => {
+      const parsed = JSON.parse(body) as Record<string, unknown>;
+      const command = parsed.command as Record<string, unknown> | undefined;
+      response.statusCode = 200;
+      response.setHeader("content-type", "application/json");
+      response.end(
+        parsed.resource === "members"
+          ? JSON.stringify({
+            members: [{ user_id: USER, display_name: "Quill" }],
+          })
+          : JSON.stringify({
+            status: "accepted",
+            ok: true,
+            event_ids: [],
+            signal: {
+              ...postedSignal,
+              to: typeof command?.to_user_id === "string"
+                ? command.to_user_id
+                : null,
+            },
+          }),
+      );
+    });
+  });
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  try {
+    const address = server.address();
+    assert.ok(address && typeof address === "object");
+    const base = [
+      "note",
+      "copy gate",
+      "--url",
+      `http://127.0.0.1:${address.port}`,
+      "--anon-key",
+      "anon",
+      "--workspace-id",
+      WORKSPACE,
+      "--agent-token-stdin",
+    ];
+    const human = await runCli(base, TOKEN);
+    assert.equal(human.code, 0, human.stderr);
+    const narration = human.stdout.split("\n")[0]!;
+    assert.match(narration, /Signal shared/);
+    assert.match(narration, /immutable/);
+    assert.match(narration, /visible to members of this workspace/);
+    assert.doesNotMatch(narration, /horizon|expir|until|30d/);
+    assert.match(human.stdout, /expires in/);
+    assert.doesNotMatch(
+      human.stdout,
+      /It is immutable, tenancy-scoped, and will quietly expire/,
+    );
+
+    const directed = await runCli([...base, "--to", USER], TOKEN);
+    assert.equal(directed.code, 0, directed.stderr);
+    const directedNarration = directed.stdout.split("\n")[0]!;
+    assert.match(directedNarration, /immutable/);
+    assert.match(directedNarration, /visible only to its recipient/);
+    assert.doesNotMatch(
+      directedNarration,
+      /members of this workspace|horizon|expir|until|30d/,
+    );
+    assert.match(directed.stdout, /expires in/);
+
+    const json = await runCli([...base, "--json"], TOKEN);
+    assert.equal(json.code, 0, json.stderr);
+    const payload = JSON.parse(json.stdout) as Record<string, unknown>;
+    assert.deepEqual(Object.keys(payload), ["status", "message", "signal"]);
+    assert.equal(
+      payload.message,
+      "Signal shared. It is immutable, tenancy-scoped, and will quietly expire at its horizon.",
+    );
+  } finally {
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => error ? reject(error) : resolve());
+    });
+  }
+});
+
 test("agent feed resolves only member labels and JSON skips enrichment", async () => {
   const requests: Array<Record<string, unknown>> = [];
   const memberRow = signal({

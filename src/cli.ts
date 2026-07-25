@@ -179,8 +179,15 @@ class Arguments {
     allowedFlags: readonly string[],
     positionals: number,
   ): void {
-    if (this.positionals.length !== positionals) {
-      throw new Error("unexpected positional argument");
+    if (this.positionals.length < positionals) {
+      throw new Error(
+        `too few positional arguments: expected ${positionals}, received ${this.positionals.length}`,
+      );
+    }
+    if (this.positionals.length > positionals) {
+      throw new Error(
+        `too many positional arguments: expected ${positionals}, received ${this.positionals.length}`,
+      );
     }
     const allowed = new Set(allowedFlags);
     for (const name of this.flags.keys()) {
@@ -1367,8 +1374,11 @@ async function runPostSignal(
       credential,
     ),
   );
+  const audience = signal.to === null
+    ? "visible to members of this workspace"
+    : "visible only to its recipient";
   process.stdout.write(
-    `Signal shared.\n${renderSignals([signal], {
+    `Signal shared. It is immutable and ${audience}.\n${renderSignals([signal], {
       inbox: false,
       includeStale: true,
       authors,
