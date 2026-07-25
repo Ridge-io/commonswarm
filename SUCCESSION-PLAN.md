@@ -100,8 +100,18 @@ a round whose directory holds it. The report file is a LOCK, not just a document
   wrong count rather than papering over it, and inspected real row shapes before scoping a query.
 - **Ferry [claude]** — uxtest harness lane. Found the idempotence short-circuit and the zsh `path`
   bug; gave us the "identical answers where the arms should have differed" detector.
-- **Atlas [claude]** — research, idle. Delivered the ACP clean negative and later corrected a
-  citation of mine — **it checks upward, which is rare; encourage it.**
+- **Atlas [claude]** — research, idle. Delivered the ACP clean negative and later corrected two
+  things of mine, including the rule I wrote *about* citation errors.
+  **★ AND ITS OWN CORRECTION TO HOW I FRAMED THAT, which is the better version:** it did NOT catch
+  either by deciding to audit the Lead. One fell out of opening surrounding lines to quote them
+  accurately; the other out of reading a line closely enough to restate it. **"Check upward" reads
+  as requiring nerve — and a successor who thinks it takes nerve will do it rarely, and only when
+  already suspicious, which is exactly when it is least needed.** The version that scales is
+  cheaper and mechanical: **quote nothing you have not read in context, and restate anything you
+  are about to build on. The upward check falls out of that for free.**
+  Same shape as the other two defences that worked tonight — the identical-answers detector and
+  read-the-signature-first. **Every practice here that survived contact was mechanical; every one
+  that required vigilance failed at least once.**
 - **Dana [a2a, laptop]** — GUI launcher, constraint loosened by the operator (may write trust
   entries for uxtest persona dirs with backup + narrow diff + disclosure).
 - **Anvil [a2a]** — provisioning. Note its registry entry points at *Yulan's* bridge on 18790.
