@@ -789,9 +789,64 @@ continuously (this file + commits) — assume your session can die at any moment
     overlap → **neither is blocked from editing**. Comprehension is the product. If that demo
     seems to need messages to "feel like coordination", say plainly that chat stays on the local
     swarm CLI until P3-2 — **do not fake it with half an inbox.**
-  - **Contract pins still owed before any brief:** tenancy, TTL max, holder binding,
-    advisory-never-blocks, untrusted reason text, status rendering, no-prompt agent path.
-    **No Quill until those pins pass review.**
+  - **★ CONTRACT PINS — reviewed and ACCEPTED (2026-07-24), one revised. These bind the brief.**
+    1. **Tenancy.** Member-only (`is_member`); `workspace_id` filter **server-side** (client filters
+       are defence-in-depth only); store `workspace_id` even though task implies it. Anon stays
+       denied by the P1 `REVOKE`.
+    2. **TTL — ★ REVISED, and the Lead's version was wrong.** Default 1h; **each place/renew**
+       gets `expires_at ≤ now + min(requested, 2h)` in **server** time. The Lead proposed a total
+       lifetime cap from original placement to stop an "infinite ratchet" — **killed**: that makes
+       multi-hour tasks unreservable and fights real work. §2.9's actual anti-stale mechanism is
+       simpler — *a dead agent stops renewing and the hold dies.* Renew is holder-only and bumps
+       generation. Correctness is the **read-time predicate** `expires_at > now()`, never a cron
+       sweep (cron may reap rows; correctness must not depend on it). A continuous-horizon abuse
+       cap is a later pin only if spam appears.
+    3. **Holder binding.** Holder derived **server-side from the credential**, never client-claimed.
+       Keyed `(workspace_id, task_id, epoch)`; epoch is what makes takeover safe — a fenced-out
+       predecessor's hold dies with its epoch. Auto-clears on lease release / handoff / takeover /
+       task close-or-reopen / expiry. **Not** a PK forbidding history: one **live** row per
+       `(ws, task, holder)` where `expires_at > now()`. For a human credential with no agent
+       principal, bind `user_id` (chosen over refusing auto-place, for CLI dogfood).
+    4. **Advisory-never-blocks — a LAUNCH-GATE test, not a comment.** A's reservation never makes
+       B's acquire/close/edit non-zero **because of the reservation**. ★ The test must not confuse
+       lease fencing with reservation blocking: B failing to acquire a task A holds a **live lease**
+       on is *authority working*, not the reservation blocking. The brief states explicitly which
+       lifecycle applies when a lease expires but a reservation has not.
+    5. **Untrusted text.** Any label/reason/note is DATA: length-capped, control/bidi/ANSI stripped,
+       never interpolated into model instruction context. Pinned now even though P3-1 has no
+       override-reason field yet.
+    6. **Status rendering.** Section in `coswarm status` + `coswarm reservations` + `--json`;
+       empty state stated in words; P2-2's voice.
+    7. **No-prompt agent path.** Auto-place never prompts, never hangs; `--json` structured only.
+    8. **Audit — commands, not reads.** place/renew/release → `audit_log`. Soft-state mutations are
+       **not** domain ledger events (that's reserved for a future override). Read-time expiry must
+       **not** write audit per read — do not audit every status poll.
+    9. **Idempotency.** A retried acquire under the pending-`command_id` machinery must not
+       double-place or warn against itself. Coalesce same `(holder, task, epoch)`. Load-bearing:
+       self-overlap warnings would train users to ignore the only signal the feature emits.
+    10. **Soft-state, not ledger** — no domain events invented for `place`.
+    11. **★ Hosted read-plane canary before trusting an empty reservation list** — the PGRST106
+        lesson (§3): prove the schema is exposed before believing there is no data.
+    12. **Acquire narration is an output contract**, not a nicety — auto-place must say so.
+    13. **Per-credential rate/fairness** may be deferred, but as a **documented residual** in the
+        OUT list, never silently unbounded.
+    14. **No pub/sub in P3-1** — polling `reservations`/`status` suffices; Broadcast is P4 comfort.
+  - **★ OPEN — GRAIN POSTURE (blocks the brief; operator's call).** Reviewer's structural attack:
+    task-grain auto-place-on-acquire is **nearly isomorphic to the lease**, which P2-2 `status`
+    already surfaces as the task holder. It answers the same question twice unless the grain
+    changes. Two honest postures, and **shipping A while describing B is forbidden**:
+    - **A — machinery slice.** Land the reservation *plane* (schema, tenancy, TTL, advisory
+      invariant, status section, auto-place hook) with task grain as the simplest validated scope,
+      and an **explicit non-goal**: *"does not yet improve multi-writer awareness beyond leases."*
+      Path grain becomes P3-1.1. Reviewer leans here. Honest, tested, low-risk — and delivers
+      little new user-visible value.
+    - **B — product-value slice.** Path grain, single canonical prefix, **no globs**, manual
+      `reserve` with auto later. Produces real overlap warnings when two agents touch related
+      paths under different tasks. Harder (canonicalization, intersection math) and the first
+      genuine multi-writer win.
+    If A is chosen, auto-clear-with-lease (pin 3) is **mandatory** or `status` double-counts ghost
+    holds.
+  - **No Quill until the grain posture is decided and the brief passes review.**
 - **P3-1 — superseded scoping notes (kept for the reasoning, not the conclusion).** Spec §9 P3 is
   enormous (reservations, trusted-content, structural wiki, board, messages, ACP transport,
   triggers, ASK/claim, ETag reconcile, awaiting-human, heartbeats, triage, dead-letter) and
