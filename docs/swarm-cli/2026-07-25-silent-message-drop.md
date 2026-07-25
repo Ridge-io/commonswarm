@@ -9,14 +9,31 @@ the Lead before anyone had the right one.
 messages "failed" because they had no row in `message_deliveries`. **Absence of a delivery row does not
 mean failure.**
 
-★ **The first explanation for *why* was also wrong, and is corrected here.** It said delivery rows are
-an artifact of the hook-injection path and an a2a seat never gets them. **It is not a property of the
-a2a class — it is a time cutoff.** The same agent, `Anvil`, has **4-of-4** rows in one swarm on
-2026-07-23 and **0-of-3** in another on 2026-07-24/25. The last a2a message with a delivery row
-anywhere is **2026-07-23T12:37**.
+★★ **THE EXPLANATION HAS NOW BEEN WRONG TWICE AND IS FINALLY MECHANISM-LEVEL. Both earlier versions
+named a property of the RECIPIENT; the actual discriminator names none.**
 
-**`message_deliveries` has had no coverage for a2a seats since then, so for those recipients the table
-answers neither yes nor no.** The conclusion survives; the reason did not. Measured:
+  - v1: *"delivery rows are a hook-path artifact; an a2a seat never gets them"* — **wrong**, the same
+    agent has 4-of-4 rows in one swarm and 0-of-3 in another.
+  - v2: *"it is a time cutoff — no coverage since 2026-07-23T12:37"* — **wrong**, and killed by a date.
+  - v3, verified in source: **`message_deliveries` RECORDS THAT A RECIPIENT READ THE STORE.**
+
+```
+mailbox.ts:289   getInbox() calls ensureDeliveryRows on every read   <- reading CREATES the row
+mailbox.ts       occurrences of `agent_type`:            0           <- the class is not in the writer
+a2a-transport.ts occurrences of `getInbox`:              0           <- a2a is pushed over HTTP
+git log -S ensureDeliveryRows -> 9743629, 2026-07-18                 <- predates BOTH the 07-23 rows
+                                                                        and the first 07-24 absence
+```
+
+★ **Nothing was removed, so the regression/time hypothesis is dead on a date.** An a2a seat receives by
+HTTP push to its endpoint and **never calls the reader**, so no row is ever written — not because of
+what it *is*, but because of what it *does not do*. A row means *someone read this*; **its absence
+means nobody read the store, which for a pushed seat is the normal case and carries no information
+about delivery.**
+
+★ The two earlier framings were each built from counts. **The third was built from the writer**, and
+it is the only one that explains all the data — including the 4-of-4 row that falsified v1 and the
+date that falsified v2. Measured:
 
 | recipient | messages | with delivery row |
 |---|---|---|
