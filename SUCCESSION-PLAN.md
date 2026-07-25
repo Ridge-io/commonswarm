@@ -119,6 +119,37 @@ Perfect unanimity is a property of the harness, not of the evidence.
   the Lead had reported as *fixed* after fixing two of its three sites. **A document under
   revision needs a whole-document consistency pass, not just review of the diff.**
 
+**5. ★ A FACT IS STATED NORMATIVELY IN EXACTLY ONE PLACE (operator-adopted, 2026-07-25).**
+Everywhere else it appears, it is a **reference or a verbatim quote — never a paraphrase.**
+
+**Why, from the evidence:** all eight defects the P3-1 audit found were in **restatements, not
+statements**. No section was wrong about the thing it was the authority on. `--include-stale` was
+right in the prose and missing from the CLI grammar; the rate limit was right in §4.5 and stale in
+§7; the gates restated requirements the deliverables already owned. **Paraphrase is a copy that
+looks like prose**, and copies drift. A reference cannot fall out of sync — there is nothing to
+fall.
+
+**★ The generalisation — the eighth face of §3's error class: A RESTATEMENT IS NOT THE THING. A
+PARAPHRASE OF A RULE IS NOT THE RULE.** Same shape as a registry entry not being the server, a
+process name not being the work, an answering endpoint not being a delivering one, a backup not
+being a safe destination. **The moment you write a fact for the second time, you have created
+something capable of disagreeing with itself.** Redundancy is where truth decays — in documents,
+in caches, in registries, in status reports.
+
+Cost: slightly worse readability, since a reader follows references. Worth it for any document an
+agent will build from **literally**.
+
+**6. ★ THE CONSISTENCY AUDIT IS A GATE, NOT AN EVENT (operator-adopted, 2026-07-25).**
+Run the fan-out consistency audit before **every** "cleared for implementation" transition — not
+once, and not only when something feels wrong. Human-style review catches whether an *edit* is
+right; it structurally cannot catch that the edit invalidated something 200 lines away. Two review
+rounds missed all eight defects for exactly that reason. **Wire the verifier per practice 4**:
+majority not unanimity, bias at most one arm, and always report **raised alongside confirmed**.
+
+*(Deliberately NOT adopted yet: a mechanical consistency lint — flags↔grammar, deliverables↔gates
+bijection, constants-defined-once, pin coverage, vocabulary. It is the strongest of the three and
+it is real work; it queues behind P3-1. Revisit if drift recurs after 5 and 6.)*
+
 **Corollary for rotation (§0):** when you rotate, put durable practice HERE and ephemeral state
 in your §0<n> baton. If a lesson would still be true after every current SHA is ancient, it
 belongs in this section, not in a handoff note — and not only in a message, which dies with the
