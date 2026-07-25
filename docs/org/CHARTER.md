@@ -40,6 +40,33 @@ memory_pressure | tail -2   # system-wide free percentage
 ~35%.** It read 86% / 30% when written — **RED**, which is the property the old gate lacked. A gate
 whose RED you cannot produce on demand is not protecting anything.
 
+★★ **THE GATE IS NOW A SCRIPT, NOT A SENTENCE: `scripts/envelope-check.sh`.** Run it; it exits **1**
+on RED so it can guard a spawn (`./scripts/envelope-check.sh && swarm spawn …`). **Three trip
+conditions, each with a FIXED denominator** — which is the property the two earlier versions lacked:
+
+| condition | source | denominator |
+|---|---|---|
+| system free < 35% | `memory_pressure` | **physical RAM — cannot move** |
+| swap used > 8192 MB | `vm.swapusage` *used* | **absolute bytes paged out, not a ratio** |
+| disk free < 20 GB | `df -k /` | the floor under the swapfiles |
+| compressor | `vm.compressor_bytes_used` | **recorded, NOT a trip** — diagnostic only |
+
+★ **Two of three were RED on delivery, without contrivance**, and the GREEN one is the one drifting
+toward its threshold — which is the honest picture rather than a gate tuned to fire.
+
+★ **Rejected, with reasons, by the lane that owns the envelope:** *swap utilisation %* — its
+denominator is `count(swapfile) × 1 GB` and was measured moving a full gigabyte inside **twelve
+seconds**, so two agents reading the same gate seconds apart legitimately disagree; that is not a
+threshold problem and not tunable. *Pageout rate* — needs two samples, is noisy, and the lane
+demonstrated the failure itself by extrapolating a slope it withdrew within a minute. **Level gates,
+not rate.** *Compressor as a fourth trip* — it moves **with** free%, so it would fire when condition
+one fires: **redundancy dressed as rigour.**
+
+★ **THE CONSTANTS ARE CALIBRATED, NOT DERIVED.** 8192 MB and 20 GB are anchored to one machine on one
+day — the session's healthy floor and its observed excursions. **The shapes are principled; the
+numbers should be revisited once anyone has a second day of data.** Recorded at the author's
+insistence rather than allowed to harden into derived values.
+
 ★★ **BUT DO NOT READ A LEVEL AS A TREND, AND DO NOT STAND LANES DOWN ON THE STRENGTH OF ONE.** The
 Lead measured 94% once and wrote that the machine was *"structurally over-subscribed"*, and that
 phrasing reached the succession baton as a recommendation. **Three readings twelve seconds apart then
