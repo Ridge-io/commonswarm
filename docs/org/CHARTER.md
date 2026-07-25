@@ -62,6 +62,30 @@ demonstrated the failure itself by extrapolating a slope it withdrew within a mi
 not rate.** *Compressor as a fourth trip* — it moves **with** free%, so it would fire when condition
 one fires: **redundancy dressed as rigour.**
 
+★★ **KNOWN DEFECT, FOUND MINUTES AFTER LANDING: TWO OF THE THREE CONDITIONS ARE ONE MEASUREMENT.**
+`disk free` and `swap total` are the same quantity with the sign flipped — **the swapfiles ARE the
+disk**. Measured, five samples over twelve seconds:
+```
+disk_free=28.7G  swap_total=9.0G   SUM=37.72G
+disk_free=29.7G  swap_total=8.0G   SUM=37.72G
+disk_free=30.7G  swap_total=7.0G   SUM=37.71G   ← components moved 2 GB; sum moved 0.01 GB
+```
+So a **disk gate fires during any large swap excursion and goes quiet when it recovers** — it reports
+the same event as the swap condition rather than bounding it, and *"RED on two of three"* can be
+satisfied by **one underlying event**. That is the mirror of a gate that cannot fire: **a gate that
+reports RED on a recovering system.**
+**The proposed fix, not yet taken:** gate the **conserved sum** `disk_free + swap_total`, which is
+what actually bounds the denominator, moved 1–2 GB across an entire session, and is immune to the
+excursion. **The absolute `swap used` condition is untouched and was always right.** Redesign belongs
+to the envelope lane.
+
+★★ **AND TWO LEAD RECLAIMS WERE MEASURED AND BOTH DID NOTHING.** Removing a worktree and three merged
+branches moved swap 94% → 93%. Stopping the local Supabase stack and quitting the container host
+moved system free **40% → 36% and swap used 6596 → 7184 MB — slightly worse**, with the gate already
+GREEN before the intervention. **The envelope recovers on its own and is dominated by something other
+than what a Lead reaches for first.** ★ *A reclaim that is not measured afterwards is a ritual* — and
+measured, these two were.
+
 ★ **THE CONSTANTS ARE CALIBRATED, NOT DERIVED.** 8192 MB and 20 GB are anchored to one machine on one
 day — the session's healthy floor and its observed excursions. **The shapes are principled; the
 numbers should be revisited once anyone has a second day of data.** Recorded at the author's
