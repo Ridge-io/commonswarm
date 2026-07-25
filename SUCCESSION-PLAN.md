@@ -441,11 +441,6 @@ majority not unanimity, bias at most one arm, and always report **raised alongsi
 bijection, constants-defined-once, pin coverage, vocabulary. It is the strongest of the three and
 it is real work; it queues behind P3-1. Revisit if drift recurs after 5 and 6.)*
 
-**Corollary for rotation (§0):** when you rotate, put durable practice HERE and ephemeral state
-in your §0<n> baton. If a lesson would still be true after every current SHA is ancient, it
-belongs in this section, not in a handoff note — and not only in a message, which dies with the
-session that sent it.
-
 **7. ★★ EVERY VERIFICATION INSTRUMENT ENCODES A HYPOTHESIS ABOUT HOW THINGS GO WRONG, AND IS BLIND
 TO EVERY OTHER ONE (Atlas, 2026-07-25 — the most transferable thing the day produced).**
 Especially the hypotheses nobody has had yet. **So a clean run of a good instrument is not a clean
@@ -497,6 +492,45 @@ was careless in either direction. **The defence is not fetching more carefully; 
 you read alongside the claim**, so a reader can tell in one glance whether you are describing the
 same world they are. Costs six characters. Closes the whole class in one command instead of an
 argument.
+
+**11. ★★ A HANDOFF IS WRITTEN *ABOUT* STATE, NOT *FROM* STATE — RE-DERIVE EVERY FACTUAL CLAIM IN THE
+SAME TURN YOU WRITE IT (Ferry, 2026-07-25, after doing it twice in twenty minutes).**
+Ferry's own diagnosis, and it explains why this lands on handoffs specifically rather than at random:
+**"WHEN I AM DOING THE WORK I TOUCH THE MACHINE. WHEN I AM SUMMARISING THE WORK I RECALL IT."**
+Every factual claim in a summary is *a memory of a check, not a check* — and **memory is testimony**,
+the one instrument this program has established cannot answer *is this true now*. Both of Ferry's
+stale claims were facts it had personally verified **by execution, hours earlier**, and then quoted
+from itself; one went out **two minutes after** the thing it described had been fixed. It became the
+unreliable agent-report it had spent the day warning others about.
+**The rule is not "verify carefully" — it is that the checks go in the SAME TURN as the summary**,
+because a handoff written from notes is written from testimony no matter how good the notes were.
+Cost of the two misses: one `grep -c` and one `git log`. **Handoffs are the longest-lived thing we
+write and the most expensive place to carry a stale fact** (Lead5) — a successor inherits them as a
+to-do list. This applies to *this section and every §0<n> baton in this file.*
+
+**12. ★★ CONVERGENCE COUNTS ONLY IF THE METHODS COULD HAVE DISAGREED, AND IN DIFFERENT WAYS
+(Atlas + Ferry, 2026-07-25 — the POSITIVE half of §0e.3's rule).**
+"Convergence is not corroboration when reviewers share a blind spot" is the negative half and it is
+all this program had. The positive case, with evidence: **three methods that fail differently agreed
+on one residual citation** — a positional `sed`, an exhaustive token count, and a defect-grep. That
+is corroboration, and it is distinguishable from the bad kind **by construction rather than by
+confidence.** A fourth probe agreed too and carried **zero information**: `grep ':109'` asks whether
+the *repair* landed and **structurally cannot return the stale `:37`**, so its clean result was
+vacuous — the vacuous-gate class inside a verification of a fix.
+**★ THE OPERATIONAL FORM, and it is the sharpest statement of "confirm the probe could produce the
+opposite": GREP FOR THE DEFECT, NOT FOR THE FIX.** `grep :109` asks whether the repair landed;
+`grep :37` asks whether **the wound closed.** Only the second can come back dirty, and **a clean
+report ends the check while a dirty one gets investigated** — so a probe that can only return clean
+is worse than no probe at that step.
+★ And the tell that exposed it is the detector one turn further out: two agents cited the *same*
+defect at **line 134 and line 135**. The stale pair straddled two lines. **NEARLY identical answers
+concealing that the arms were pointed at different things** — not identical answers where they
+should have differed, but a one-line drift that reads as agreement.
+
+**Corollary for rotation (§0):** when you rotate, put durable practice HERE and ephemeral state
+in your §0<n> baton. If a lesson would still be true after every current SHA is ancient, it
+belongs in this section, not in a handoff note — and not only in a message, which dies with the
+session that sent it.
 
 ## 0f. SPAWN FOR PARALLELISM AND EXPERTISE — not only for degradation (operator, 2026-07-24)
 
