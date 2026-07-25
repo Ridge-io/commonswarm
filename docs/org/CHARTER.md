@@ -27,8 +27,17 @@ lanes that need continuity of context.**
 ★★ **THE FIRST VERSION OF THIS GATE COULD NOT FIRE, AND IT WAS WRITTEN BY THE LEAD WHO SPENT THE DAY
 CATALOGUING GATES THAT CANNOT FAIL.** It said *"reclaim if swap used exceeds ~12 GB."* **macOS resizes
 the swap file dynamically** — measured within one hour: 15.4 GB → 8.2 GB → 9.2 GB total. An absolute
-threshold against a moving denominator is meaningless, and at a 9.2 GB total *used > 12 GB* is
-**unreachable by construction.** Found by the infra lane; the RED was available the whole time.
+threshold against a moving denominator is meaningless. Found by the infra lane; the RED was
+available the whole time.
+
+★ **CORRECTION, by the lane that made the original claim.** This paragraph first said *"at a 9.2 GB
+total, `used > 12 GB` is **unreachable by construction**."* **That is false and was falsified the
+same evening:** swap total reached **12.29 GB** with **used 11.17 GB** — the old gate was minutes
+from firing. The true statement is worse and more useful: **it is unreachable until macOS spends
+disk to make it reachable.** It does not fail to fire; it **fires late, on the mitigation rather
+than the pressure**, after ~5 GB of disk has already gone to growing the swapfile. "Unreachable by
+construction" is itself falsifiable, and a successor who checks it on a loaded day will find it
+false and reasonably distrust the paragraph around it.
 
 **The gate is a RATIO and a pressure reading, both of which can fire today:**
 ```sh
