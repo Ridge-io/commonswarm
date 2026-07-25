@@ -72,6 +72,49 @@ origin && git rev-parse origin/main`. A failed fetch still lets rev-parse answer
 
 **`origin/main` has moved past the SHA in this section several times. Fetch.**
 
+### ★★ LAST DELTA BEFORE ROTATION — newest first, these are hours newer than the numbered list below
+
+**A. THE MACHINE'S `coswarm` SERVES A BUILD THAT CORRESPONDS TO NO REF. Measured:**
+`src/cloud/config.ts` carries the ship-3 string (**1 occurrence**); `dist/cli.js`, which is what bare
+`coswarm` executes, carries **0**. `/opt/homebrew/lib/node_modules/cloud-swarm` is a **symlink into the
+live shared checkout**, and that checkout sits on `quill/cli-first-errors`, which **does not contain
+`origin/main`**. So bare `coswarm` is not main and not Quill's branch — **it is a stale `dist` matching
+neither.** The complete mechanism: `dist/` is gitignored → no ref carries a built artifact; no `prepare`
+script → `npm install`/`npm link` never build; the global link points at a working tree → the binary
+tracks whoever last checked out. **Nothing announces the drift.** No error, no conflict, no diff.
+  - ★ **THIS GATES DOGFOOD VALIDITY, and the check is one command.** `readlink $(which coswarm)`, then
+    `grep -c "use the Supabase project base URL" <that path>`. **1 = the fix is in the binary. 0 = the
+    observation was about a build nobody can name.** **The laptop was NOT measured** — do that before
+    trusting any dogfood result taken tonight. This is R1's persona-isolation problem in a second
+    costume: the validity blocker is not in the test, it is in **what the test was pointed at.**
+  - **Part 1 (Vane, Sable reviews):** add `"prepare": "npm run build"` and `"files": ["dist"]`. This is
+    the *mechanism*; "remember to rebuild" is the *rule*, and the rule lost tonight with four agents
+    watching. **It does not fix a `git checkout` moving a tree under an existing link — nothing in npm
+    does.** Do not let it be reported as closing the class.
+  - **Part 2 (Lead7, with the isolation fix):** unlink the global `coswarm` from the shared tree. Machine
+    state, touches what Dana tests against, **not a 6pm change under a rotating Lead.**
+
+**B. THE ENVELOPE GATE IS ON ITS FOURTH VERSION AND IS NOW TRACKED.** `scripts/envelope-check.sh` and
+`docs/perf/2026-07-25-infra-baseline.md` landed at `c216050` — both were in a gitignored scratchpad,
+**invisible to every successor and both other machines.** An artifact one seat can see is testimony, not
+evidence. **Verified by running it, not by reading it.** Version history is the lesson: v1 could not fire
+(absolute 12 GB against a dynamic swap total) · v2 had a moving denominator (swapfile count on a shared
+disk) · v3 flapped RED→GREEN in **eight seconds with nothing freed** · v4 is worst-of-3 with the trip at
+30%. **Swap used has since moved 5122 → 7052 MB against an 8192 trip — the condition closest to firing.**
+
+**C. WORKTREE-PER-AGENT IS CONFIRMED BY FOUR INDEPENDENT LIVE INSTANCES, NOT BY ARGUMENT.** Atlas wrote a
+brief into the shared tree while the branch moved under it; Ferry nearly committed to Quill's branch and
+**was saved only by running `git branch --show-current` for an unrelated reason**; Pitch read `src/cli.ts`
+with plain `sed`/`grep` before a 17:56 switch and **got away with it by timing rather than by method**;
+Vane found the binary problem in A. **Cost: ~12 MB bare, but Ledger's correction is the one to carry —
+a worktree costs 12 MB *plus that repo's `node_modules`*, so ~65 MB here and 0.73 GB in PromptEden next
+door.** A successor applying "12 MB" to a heavy repo under-budgets by two orders of magnitude.
+  - ★ **Pitch's addition, which widens the hazard:** it is not only *committing*. **It is reading.** A rule
+    phrased around commits never fires for an agent that only reads, and **a read from a shared tree is a
+    read with no timestamp on it** — no conflict, no error, no trace. Read-side fix: `git show <ref>:<path>`
+    instead of opening the file. Same shape as "grep for the defect, not the fix" — **name the object
+    instead of trusting the ambient one.**
+
 **1. THE CHARTER'S RESOURCE GATE WAS VACUOUS AND IS FIXED.** It said *reclaim if swap used > 12 GB.*
 **macOS resizes swap dynamically** — 15.4 → 8.2 → 9.2 GB total measured within one hour — so an
 absolute threshold against a moving denominator **cannot fire**. Replaced with a ratio plus a pressure
@@ -1761,6 +1804,43 @@ continuously (this file + commits) — assume your session can die at any moment
      the wrong machine, while the harness already had both `wait_for_agent_local` (`_lib.sh:276`)
      and `wait_for_agent_remote` (`:293`). **When a helper exists in both local and remote form,
      which one a document reaches for is a correctness property, not a style choice.**
+  13. **★★ A RULE WHERE A MECHANISM WOULD DO.** (Atlas, 2026-07-25 — named as the *third costume*
+     alongside *a gate that cannot fail* and *a check pointed at the wrong object*.) The first two are
+     about **instruments that report wrongly**; this one is about **choosing an instrument that requires
+     a human to fire it.** The worktree rule had lived in §1 since before Lead6 arrived and **was broken
+     twice in one day by agents who had read it** — while the mechanism that makes it unnecessary costs
+     **~126 ms and ~12 MB**. A rule with a 100% compliance requirement and a demonstrated sub-100%
+     compliance rate **is not a control.** There was no trade-off to weigh, only a decision nobody had
+     made. **The honest counterweight, and it is Ledger's:** the rule *did* fire that day — two agents
+     coordinated and a collision did not happen — **it worked because two agents happened to be careful,
+     and it bought the time to find the mechanism.** Both are true.
+     **THE QUESTION TO ASK OF EVERY RULE THIS PROGRAM WRITES: is there a mechanism that would make this
+     unnecessary?** It applies far past worktrees. Ferry's instance is the one to remember: it avoided
+     committing to another agent's branch **only because it ran `git branch --show-current` for an
+     unrelated reason.** That is the true shape of every rule-based control — **it works until the day
+     nobody is idly curious.**
+     ★ The costume it wore here: **`dist/` gitignored + no `prepare` script + a global npm link pointing
+     into a live checkout** = an installed binary that drifts from source forever with **no error, no
+     conflict, and no diff.** "Remember to rebuild after switching branches" is the rule; `prepare` is
+     the mechanism. See §0i delta A.
+  14. **★★ A THRESHOLD PLACED INSIDE THE INSTRUMENT'S QUANTISATION IS A COIN, AND IT LOOKS EXACTLY LIKE
+     A NOISY SIGNAL.** (Ledger, 2026-07-25, on the fourth defect in one gate.) The gate read RED at 33%
+     and GREEN at 37% **eight seconds later with nothing freed.** 25 rapid samples of `memory_pressure`
+     free% returned **34 or 35 — a spread of one point — against a 35% trip**: 10 RED, 15 GREEN, on a
+     machine whose state never changed. **The signal is a quantised integer and the threshold was sitting
+     on the value the machine idles at.** No amount of smoothing fixes that; it only changes which side
+     the coin favours.
+     **THE TELL: if min and max differ by a single quantisation step, the defect is the threshold's
+     PLACEMENT, not the instrument's noise.** Fixed by worst-of-3 (fails safe toward do-not-spawn, and a
+     genuine dip inside the window still trips) **and** moving the trip 35 → 30 so it separates states
+     actually observed — 28-29% under real pressure, 34-37% marginal-but-working for hours, 64% recovered.
+     **The trade-off is a real loss, stated plainly: a sustained 32% is now GREEN.** Accepted because a
+     gate that reads RED during normal operation gets ignored, **which ends with nobody reading it at all.**
+     ★ **The Lead's error here is worth more than the fix:** it handed Ledger a dichotomy — *noise to
+     smooth, or signal to keep* — and **both options presupposed the threshold was correctly placed.**
+     Ledger checked the thing neither option contained. **A dichotomy from a Lead is still a leading
+     question.** Fourth defect in this gate found by measuring rather than designing; fourth the Lead
+     did not find.
   **★ THE THIRD FACE OF THE REFINEMENT (Ferry) — AN ARTIFACT CAN BE FRESH, CORRECTLY READ, AND
   STILL ANSWER A DIFFERENT QUESTION THAN THE ONE YOU MEANT.** Not staleness (face 9), not misreading
   (the Atlas refinement). Ferry checked the filesystem for `spawn-state/r1.json`, found it absent,
