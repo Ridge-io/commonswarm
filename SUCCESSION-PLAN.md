@@ -82,11 +82,19 @@ live shared checkout**, and that checkout sits on `quill/cli-first-errors`, whic
 neither.** The complete mechanism: `dist/` is gitignored → no ref carries a built artifact; no `prepare`
 script → `npm install`/`npm link` never build; the global link points at a working tree → the binary
 tracks whoever last checked out. **Nothing announces the drift.** No error, no conflict, no diff.
-  - ★ **THIS GATES DOGFOOD VALIDITY, and the check is one command.** `readlink $(which coswarm)`, then
-    `grep -c "use the Supabase project base URL" <that path>`. **1 = the fix is in the binary. 0 = the
-    observation was about a build nobody can name.** **The laptop was NOT measured** — do that before
-    trusting any dogfood result taken tonight. This is R1's persona-isolation problem in a second
-    costume: the validity blocker is not in the test, it is in **what the test was pointed at.**
+  - ★★ **THIS GATES DOGFOOD VALIDITY. USE THE TREE GREP — THE OBVIOUS ONE-FILE VERSION IS VACUOUS:**
+    ```
+    grep -rl "use the Supabase project base URL" "$(dirname "$(readlink -f "$(which coswarm)")")/"
+    ```
+    **A path printed = the fix is in the binary. Empty = stale.**
+    ★ **DO NOT grep `dist/cli.js` — `build` is plain `tsc`, not a bundler**, so `src/cloud/config.ts`
+    compiles to `dist/cloud/config.js` and is **never inlined into `cli.js`.** A `grep -c` on `cli.js`
+    returns **0 for a current build and 0 for a stale one** — measured against both. **Lead6 broadcast
+    exactly that vacuous form, five agents ran it, and every reported 0 was manufactured by the
+    instrument.** The conclusion happened to be right, which is why nobody caught it: **a wrong probe
+    that agrees with the truth is invisible to anyone checking the truth.** See §3 face 15.
+    This is also R1's persona-isolation problem in a second costume: the validity blocker is not in the
+    test, it is in **what the test was pointed at.**
   - **Part 1 (Vane, Sable reviews):** add `"prepare": "npm run build"` and `"files": ["dist"]`. This is
     the *mechanism*; "remember to rebuild" is the *rule*, and the rule lost tonight with four agents
     watching. **It does not fix a `git checkout` moving a tree under an existing link — nothing in npm
@@ -1841,6 +1849,33 @@ continuously (this file + commits) — assume your session can die at any moment
      Ledger checked the thing neither option contained. **A dichotomy from a Lead is still a leading
      question.** Fourth defect in this gate found by measuring rather than designing; fourth the Lead
      did not find.
+  15. **★★★ A CHECK WITH NO TRUE-NEGATIVE, PUBLISHED TO A FLEET, AND THE FLEET'S AGREEMENT WAS
+     MANUFACTURED BY THE INSTRUMENT.** (Lead6, 2026-07-25 — the last finding of the session and the
+     worst one, because the Lead built it while holding the catalogue of this exact class.)
+     Lead6 broadcast a one-command dogfood-validity check: `grep -c "use the Supabase project base URL"
+     <resolved coswarm path>` — **1 = fix present, 0 = stale.** Measured afterwards against two builds
+     of known opposite status:
+     ```
+     KNOWN-CURRENT build (prepare-built, fix provably present)  ->  0
+     KNOWN-STALE build   (the live machine binary)              ->  0
+     ```
+     **The mechanism: `build` is plain `tsc`, not a bundler.** `src/cloud/config.ts` compiles to
+     `dist/cloud/config.js` and is **never inlined into `dist/cli.js`.** The string could not appear in
+     the file the check read, under any build. **Correct fix: `grep -rl` over the `dist/` TREE.**
+     ★ **FIVE AGENTS RAN IT AND ALL FIVE REPORTED 0** — two machines, three re-derivations, one ACK.
+     **Every one was unsupported, and the conclusion was nonetheless correct**, because the binary
+     genuinely was stale. **THAT IS WHY IT SURVIVED: a wrong instrument that happens to agree with the
+     truth is undetectable by checking the truth.** It is detectable only by running it against a case
+     where it MUST answer differently.
+     **★★ THE RULE: NEVER PUBLISH A CHECK WHOSE GREEN ARM YOU HAVE NOT RUN.** Lead6 had run only the
+     RED arm — every invocation was against a stale build — and published on a perfect record of
+     confirmations. **RED-then-GREEN is not a thoroughness preference; a probe validated on one arm is
+     not validated.**
+     ★ **AND THE SOCIAL FAILURE IS THE EXPENSIVE HALF.** Sable's rule — *convergence is not
+     corroboration when reviewers share a blind spot* — applies one level lower than anyone had
+     applied it: **these reviewers did not share a blind spot, they shared a broken probe.** Five
+     independent seats agreeing looked like the strongest evidence produced all night and carried
+     **no information at all.** When a fleet converges, ask what instrument they converged through.
   **★ THE THIRD FACE OF THE REFINEMENT (Ferry) — AN ARTIFACT CAN BE FRESH, CORRECTLY READ, AND
   STILL ANSWER A DIFFERENT QUESTION THAN THE ONE YOU MEANT.** Not staleness (face 9), not misreading
   (the Atlas refinement). Ferry checked the filesystem for `spawn-state/r1.json`, found it absent,
