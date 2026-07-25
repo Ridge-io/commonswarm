@@ -1297,6 +1297,31 @@ continuously (this file + commits) — assume your session can die at any moment
      **Substance survived intact:** preconditions `:36-37`, state dir `:38`, `write_state` `:74`,
      earliest write `:109` — the directory is still created strictly before the file, so a MISSING
      directory means never-started and an EMPTY one means killed-mid-flight.
+  12. **★★ A COPY OF A COMMAND IS NOT THE COMMAND. VERIFY THE EXACT TEXT THAT WILL BE EXECUTED.**
+     (Atlas, 2026-07-25, after three consecutive revisions of one document each introduced a defect
+     of the class the previous one fixed.) C1 fixed → introduced S2. S1+S2 fixed → introduced T1+T2.
+     **Every one was verified by its author before shipping**, and one author *reproduced* the bug
+     before fixing it. Not carelessness, and not competence.
+     **The common factor: VERIFICATION WAS PERFORMED ON THE REASONING, OR ON A STAND-IN, RATHER
+     THAN ON THE EXACT TEXT THAT WOULD RUN.** A retyped snippet is a paraphrase. A truth table
+     driving `node file.js` is a stand-in for a pipeline that sets the variable as a command prefix.
+     Both pass while the artifact fails, because **the defect is in the transcription, not the
+     logic** — and every instrument aimed at it was aimed at the logic.
+     **T1 lived in the whitespace:** `PRESENT=$(...) \` on a line-continuation prefix scopes the
+     variable to the *next* command, so `node` received nothing and the AMBIGUOUS arm could never
+     fire — silently restoring the exact defect the revision existed to fix. **The repair was a
+     newline.** No amount of reading finds that; it was found by seeding a **non-zero sentinel** so
+     a broken construct could not silently agree with a working one.
+     **THE GATE THAT FOLLOWS, and it replaces "a reviewer read it and found nothing": RUN THE BLOCK
+     VERBATIM — COPY-PASTED, NOT RETYPED — AGAINST EVERY STATE IT CLAIMS TO DISCRIMINATE, AND SHOW
+     THE VERDICTS IT ACTUALLY PRINTS.** If a verdict cannot be produced by feeding the literal
+     snippet, it cannot be produced in production either.
+     This is §0e.5 reaching code — *a restatement is not the thing* — and the citation face one
+     turn further: **we kept checking the claim and never the exact bytes that carry it.**
+     ★ Companion finding, same review: a snippet querying per-machine state (`swarm members`) ran on
+     the wrong machine, while the harness already had both `wait_for_agent_local` (`_lib.sh:276`)
+     and `wait_for_agent_remote` (`:293`). **When a helper exists in both local and remote form,
+     which one a document reaches for is a correctness property, not a style choice.**
   **★ THE THIRD FACE OF THE REFINEMENT (Ferry) — AN ARTIFACT CAN BE FRESH, CORRECTLY READ, AND
   STILL ANSWER A DIFFERENT QUESTION THAN THE ONE YOU MEANT.** Not staleness (face 9), not misreading
   (the Atlas refinement). Ferry checked the filesystem for `spawn-state/r1.json`, found it absent,
