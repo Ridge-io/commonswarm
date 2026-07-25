@@ -17,7 +17,13 @@
 # +/-1 GB — which is the entire apparent "slow disk decline" reported earlier tonight.
 set -uo pipefail
 
-FREE_PCT=$(memory_pressure 2>/dev/null | sed -n 's/.*free percentage: *\([0-9]*\)%.*/\1/p')
+# free% is an INTEGER with a ~1-point spread, so a threshold placed on a value the machine
+# actually sits at makes the gate a coin: measured 25 rapid samples reading 34 or 35 against a
+# 35% trip = 40% RED / 60% GREEN on an unchanged machine. Two fixes, both needed:
+#   1. worst-of-3 — fails safe toward "do not spawn", kills the residual flap.
+#   2. threshold moved 35 -> 30 — it now SEPARATES observed states (28-29% under real pressure
+#      tonight, 34-36% marginal-but-working, 64% recovered) instead of bisecting the idle range.
+FREE_PCT=$(for _ in 1 2 3; do memory_pressure 2>/dev/null | sed -n 's/.*free percentage: *\([0-9]*\)%.*/\1/p'; done | sort -n | head -1)
 SWAP_USED_MB=$(sysctl -n vm.swapusage | sed -n 's/.*used = \([0-9.]*\)M.*/\1/p' | cut -d. -f1)
 SWAP_TOTAL_GB=$(sysctl -n vm.swapusage | sed -n 's/.*total = \([0-9.]*\)M.*/\1/p' | awk '{printf "%.1f", $1/1024}')
 DISK_GB=$(df -k / | awk 'NR==2{printf "%.1f", $4/1048576}')
@@ -34,7 +40,7 @@ chk() { # label value op threshold unit
 }
 
 echo "envelope: RAM ${RAM_GB}GB  compressor ${COMPRESSOR_GB}GB  swap_total ${SWAP_TOTAL_GB}GB  disk ${DISK_GB}GB   (diagnostics, not trips)"
-chk "system free"               "$FREE_PCT"     lt 35   "%"
+chk "system free (worst of 3)"  "$FREE_PCT"     lt 30   "%"
 chk "swap used (absolute)"      "$SWAP_USED_MB" gt 8192 "MB"
 chk "swap headroom (disk+total)" "$HEADROOM_GB" lt 25   "GB"
 echo
