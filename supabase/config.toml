@@ -411,3 +411,8 @@ s3_secret_key = "env(S3_SECRET_KEY)"
 enabled = true
 verify_jwt = false
 entrypoint = "./functions/command/index.ts"
+
+[functions.read]
+enabled = true
+verify_jwt = false
+entrypoint = "./functions/read/index.ts"

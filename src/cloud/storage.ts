@@ -11,7 +11,7 @@ import {
   unlink,
 } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
@@ -54,15 +54,18 @@ export interface CredentialProfile {
   pendingCommands: Record<string, PendingCommandRecord>;
 }
 
-export interface CredentialStore {
+export interface PendingProfileStore {
+  readProfile(): Promise<CredentialProfile>;
+  writeProfile(profile: CredentialProfile): Promise<void>;
+  withLock<T>(work: () => Promise<T>): Promise<T>;
+}
+
+export interface CredentialStore extends PendingProfileStore {
   readonly kind: "keychain" | "file";
   readonly location: string;
   read(): Promise<CredentialRecord | null>;
   write(record: CredentialRecord): Promise<void>;
   delete(): Promise<void>;
-  readProfile(): Promise<CredentialProfile>;
-  writeProfile(profile: CredentialProfile): Promise<void>;
-  withLock<T>(work: () => Promise<T>): Promise<T>;
 }
 
 export interface CredentialStoreOptions {
@@ -576,4 +579,31 @@ export async function credentialStore(
     );
   }
   return new SecureFileStore(stateDirectory, options.target.profileId, warn);
+}
+
+export async function agentSignalPendingStore(options: {
+  target: CloudTarget;
+  principalId: string;
+  stateDirectory?: string;
+}): Promise<PendingProfileStore> {
+  if (!UUID_RE.test(options.principalId)) {
+    throw new Error("agent principal id must be a UUID");
+  }
+  const configured = options.stateDirectory ??
+    process.env.SWARM_AGENT_STATE_DIR ??
+    (process.env.XDG_STATE_HOME
+      ? join(process.env.XDG_STATE_HOME, "coswarm", "agent-pending")
+      : join(homedir(), ".coswarm", "agent-state"));
+  if (!isAbsolute(configured)) {
+    throw new Error("agent pending state directory must be an absolute path");
+  }
+  const store = new SecureFileStore(
+    configured,
+    `agent-${options.target.profileId}-${options.principalId.toLowerCase()}`,
+    () => undefined,
+  );
+  await store.withLock(async () => {
+    await store.readProfile();
+  });
+  return store;
 }

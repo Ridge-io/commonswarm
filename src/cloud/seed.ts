@@ -12,6 +12,7 @@ const P0_SCOPES = [
   "submit",
   "close",
   "reopen",
+  "post_signal",
 ] as const;
 
 export interface SeedDogfoodOptions {

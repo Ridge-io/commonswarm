@@ -33,6 +33,10 @@ export function commandEndpoint(target: CloudTarget): string {
   return `${target.url}/functions/v1/command`;
 }
 
+export function readEndpoint(target: CloudTarget): string {
+  return `${target.url}/functions/v1/read`;
+}
+
 export function authStorageKey(target: CloudTarget): string {
   return `coswarm-${target.profileId}-auth`;
 }

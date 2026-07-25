@@ -268,8 +268,27 @@ test("fixture bridge is idempotent and CLI client drives cradle-to-grave", async
     assert.equal(publicSeed.workspaceName, "Dogfood Workspace");
     assert.equal(publicSeed.tokenWritten, true);
     assert.equal(seeded.stdout.includes(tokenPath), false);
-    const agentToken = await readFile(tokenPath, "utf8");
+    const agentCredential = await readFile(tokenPath, "utf8");
+    const agentArtifact = JSON.parse(agentCredential) as {
+      message: string;
+      status: string;
+      principal_id: string;
+      token_id: string;
+      run_id: string;
+      agent_token: string;
+    };
+    assert.deepEqual(Object.keys(agentArtifact).sort(), [
+      "agent_token",
+      "message",
+      "principal_id",
+      "run_id",
+      "status",
+      "token_id",
+    ]);
+    const agentToken = agentArtifact.agent_token;
     assertAgentToken(agentToken);
+    assert.equal(agentArtifact.status, "accepted");
+    assert.equal(agentArtifact.principal_id, publicSeed.principalId);
     assert.equal((await stat(tokenPath)).mode & 0o777, 0o600);
     assert.equal(seeded.stdout.includes(agentToken), false);
     assert.equal(seeded.stderr.includes(agentToken), false);
@@ -339,7 +358,10 @@ test("fixture bridge is idempotent and CLI client drives cradle-to-grave", async
     assert.match(refused.stderr, /already exists/);
     assert.equal(await readFile(existingPath, "utf8"), "sentinel");
 
-    const transcript = await runDogfoodCli(publicSeed.workspaceId, agentToken);
+    const transcript = await runDogfoodCli(
+      publicSeed.workspaceId,
+      agentCredential,
+    );
     assert.match(transcript.stdout, /create: \{/);
     assert.match(transcript.stdout, /acquire: \{/);
     assert.match(transcript.stdout, /submit: \{/);

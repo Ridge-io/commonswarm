@@ -18,6 +18,9 @@ import {
   ThinCommandClient,
   type CommandResult,
   type ConnectCommandResult,
+  type PostSignalCommand,
+  type PostSignalResult,
+  type SignalKind,
   type StreamRoute,
 } from "./cloud/command-client.js";
 import {
@@ -27,10 +30,14 @@ import {
 } from "./cloud/config.js";
 import { seedDogfood } from "./cloud/seed.js";
 import {
+  agentSignalPendingStore,
   credentialStore,
   type CredentialStore,
 } from "./cloud/storage.js";
-import { sendConnectWithPending } from "./cloud/pending-command.js";
+import {
+  sendConnectWithPending,
+  sendSignalWithPending,
+} from "./cloud/pending-command.js";
 import {
   acceptInviteLink,
   cloudAcceptOperations,
@@ -65,12 +72,23 @@ import {
   type WorkspaceSummary,
   type WorkspaceWarning,
 } from "./cloud/workspaces.js";
+import {
+  readAgentSignalMembers,
+  readSignals,
+  renderSignalStatus,
+  renderSignals,
+  resolveSignalRecipient,
+  settleSignalStatus,
+  type SignalCredential,
+  type SignalMember,
+} from "./cloud/signals.js";
 
 const BOOLEAN_FLAGS = new Set([
   "agent-token-stdin",
   "all-devices",
   "force-file-store",
   "help",
+  "include-stale",
   "invitation-token-stdin",
   "json",
   "link-stdin",
@@ -79,6 +97,8 @@ const BOOLEAN_FLAGS = new Set([
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const AGENT_CREDENTIAL_MESSAGE =
+  "Agent credential minted. It is bound to this task and run so the agent's work stays scoped and attributable.";
 
 function packageVersion(): string {
   try {
@@ -98,10 +118,15 @@ class Arguments {
   private readonly flags = new Map<string, string[]>();
 
   constructor(values: string[]) {
+    let positionalOnly = false;
     for (let index = 0; index < values.length; index += 1) {
       const value = values[index]!;
-      if (!value.startsWith("--")) {
+      if (positionalOnly || !value.startsWith("--")) {
         this.positionals.push(value);
+        continue;
+      }
+      if (value === "--") {
+        positionalOnly = true;
         continue;
       }
       const name = value.slice(2);
@@ -183,6 +208,11 @@ Usage:
   coswarm login --url <project-url> --anon-key <key> [--no-browser]
   coswarm logout --url <project-url> --anon-key <key> [--all-devices]
   coswarm status --url <url> --anon-key <key> [--workspace-id <uuid>] [--json]
+  coswarm working-on "<what>" --url <url> --anon-key <key> [--workspace-id <uuid>] [--about <ref>] [--until <dur>] [--json]
+  coswarm note "<text>" --url <url> --anon-key <key> [--workspace-id <uuid>] [--to <member>] [--about <ref>] [--until <dur>] [--json]
+  coswarm ask "<text>" --url <url> --anon-key <key> [--workspace-id <uuid>] [--to <member>] [--about <ref>] [--until <dur>] [--json]
+  coswarm feed --url <url> --anon-key <key> [--workspace-id <uuid>] [--about <ref>] [--kind <kind>] [--since <timestamp>] [--limit <n>] [--include-stale] [--json]
+  coswarm inbox --url <url> --anon-key <key> [--workspace-id <uuid>] [--since <timestamp>] [--limit <n>] [--include-stale] [--json]
   coswarm workspaces --url <url> --anon-key <key> [--json]
   coswarm use <full-id|exact-name> --url <url> --anon-key <key> [--json]
   coswarm invite --url <url> --anon-key <key> [--workspace-id <uuid>] --email <email>
@@ -198,7 +228,12 @@ Usage:
 
 Credential selection for command/dogfood:
   default                 refresh the human login from secure storage
-  --agent-token-stdin     read one seeded swm_agt_ credential from stdin
+  --agent-token-stdin     read a mint/seed credential artifact (or legacy swm_agt_) from stdin
+
+Signals (intention sharing) accept the same credential selection. Agent mode
+never opens a browser or infers a human's saved project. Durations use a whole
+number plus m, h, or d (for example 90m, 24h, or 7d) and are capped at 30d.
+Place -- before signal text that itself begins with -- to stop option parsing.
 
 Invite, legacy token accept, principal create, and token mint require a stored
 human login. Invite-link accept signs in when needed, then accepts and registers
@@ -265,7 +300,81 @@ function stream(args: Arguments): StreamRoute {
     : { kind: "workspace" };
 }
 
-async function stdinCredential(): Promise<string> {
+interface AgentCredentialInput {
+  token: string;
+  principalId: string | null;
+  tokenId: string | null;
+  runId: string | null;
+  durable: boolean;
+}
+
+function agentCredentialArtifact(input: {
+  principalId: string;
+  tokenId: string;
+  runId: string;
+  token: string;
+}): Record<string, unknown> {
+  return {
+    message: AGENT_CREDENTIAL_MESSAGE,
+    status: "accepted",
+    principal_id: input.principalId,
+    token_id: input.tokenId,
+    run_id: input.runId,
+    agent_token: input.token,
+  };
+}
+
+function parsedAgentCredential(value: string): AgentCredentialInput {
+  if (!value.startsWith("{")) {
+    assertAgentToken(value);
+    return {
+      token: value,
+      principalId: null,
+      tokenId: null,
+      runId: null,
+      durable: false,
+    };
+  }
+  const parsed = JSON.parse(value) as unknown;
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("agent credential JSON is malformed");
+  }
+  const artifact = parsed as Record<string, unknown>;
+  const expectedKeys = [
+    "agent_token",
+    "message",
+    "principal_id",
+    "run_id",
+    "status",
+    "token_id",
+  ];
+  const actualKeys = Object.keys(artifact).sort();
+  if (
+    actualKeys.length !== expectedKeys.length ||
+    !actualKeys.every((key, index) => key === expectedKeys[index]) ||
+    artifact.message !== AGENT_CREDENTIAL_MESSAGE ||
+    artifact.status !== "accepted" ||
+    typeof artifact.principal_id !== "string" ||
+    !UUID_RE.test(artifact.principal_id) ||
+    typeof artifact.token_id !== "string" ||
+    !UUID_RE.test(artifact.token_id) ||
+    typeof artifact.run_id !== "string" ||
+    !UUID_RE.test(artifact.run_id) ||
+    typeof artifact.agent_token !== "string"
+  ) {
+    throw new Error("agent credential JSON is malformed");
+  }
+  assertAgentToken(artifact.agent_token);
+  return {
+    token: artifact.agent_token,
+    principalId: artifact.principal_id.toLowerCase(),
+    tokenId: artifact.token_id.toLowerCase(),
+    runId: artifact.run_id.toLowerCase(),
+    durable: true,
+  };
+}
+
+async function stdinCredential(): Promise<AgentCredentialInput> {
   if (process.stdin.isTTY) {
     throw new Error(
       "--agent-token-stdin requires a piped secret; it is never accepted as a command-line argument",
@@ -274,11 +383,14 @@ async function stdinCredential(): Promise<string> {
   let value = "";
   for await (const chunk of process.stdin) {
     value += chunk.toString();
-    if (value.length > 256) throw new Error("agent credential input is too large");
+    // Mint JSON carries the token plus three UUIDs. Keep stdin bounded while
+    // allowing that closed artifact instead of only the legacy bare token.
+    if (value.length > 4096) {
+      throw new Error("agent credential input is too large");
+    }
   }
   const credential = value.trim();
-  assertAgentToken(credential);
-  return credential;
+  return parsedAgentCredential(credential);
 }
 
 async function invitationCredential(args: Arguments): Promise<string> {
@@ -364,6 +476,7 @@ async function workspaceId(
     directory?: WorkspaceDirectory;
     workspaces?: readonly WorkspaceSummary[];
     warn?: (warning: WorkspaceWarning) => void;
+    validateOverride?: boolean;
   } = {},
 ): Promise<string> {
   return await resolveWorkspace({
@@ -375,6 +488,9 @@ async function workspaceId(
     ...(options.workspaces === undefined
       ? {}
       : { workspaces: options.workspaces }),
+    ...(options.validateOverride === undefined
+      ? {}
+      : { validateOverride: options.validateOverride }),
     warn: options.warn ?? writeWorkspaceWarning,
   });
 }
@@ -540,7 +656,39 @@ async function runStatus(args: Arguments): Promise<void> {
     (project) => project.workspace_id === selectedWorkspaceId,
   );
   if (!selected) throw new WorkspaceUnavailableError();
-  const status = await directory.status(human, selectedWorkspaceId);
+  const [status, signalStatus] = await Promise.all([
+    directory.status(human, selectedWorkspaceId),
+    settleSignalStatus(
+      readSignals(cloud, {
+        kind: "human",
+        accessToken: human.accessToken,
+        userId: human.userId,
+      }, {
+        workspaceId: selectedWorkspaceId,
+        inbox: false,
+        limit: 5,
+      }),
+      readSignals(cloud, {
+        kind: "human",
+        accessToken: human.accessToken,
+        userId: human.userId,
+      }, {
+        workspaceId: selectedWorkspaceId,
+        inbox: true,
+        kind: "ask",
+        limit: 100,
+      }),
+    ),
+  ]);
+  const statusWarnings: Array<
+    WorkspaceWarning | { code: "signal_status_unavailable"; message: string }
+  > = [...warnings];
+  if (signalStatus.warning !== null) {
+    statusWarnings.push({
+      code: "signal_status_unavailable",
+      message: signalStatus.warning,
+    });
+  }
   if (args.has("json")) {
     printJson({
       identity: {
@@ -553,7 +701,9 @@ async function runStatus(args: Arguments): Promise<void> {
       members: status.members,
       agents: status.agents,
       tasks: status.tasks,
-      warnings,
+      recent_signals: signalStatus.recentSignals,
+      inbox_asks_waiting: signalStatus.waitingAsks,
+      warnings: statusWarnings,
       known_gaps: [
         {
           code: "workspace_archive_not_enforced",
@@ -564,13 +714,19 @@ async function runStatus(args: Arguments): Promise<void> {
     });
     return;
   }
+  const renderedSignalStatus = signalStatus.warning === null
+    ? renderSignalStatus(
+      signalStatus.recentSignals!,
+      signalStatus.waitingAsks!,
+    )
+    : `Recent signals:\n${signalStatus.warning}`;
   process.stdout.write(`${renderStatus({
     userId: human.userId,
     identityLabel,
     projectCount: projects.length,
     selected,
     status,
-  })}\n`);
+  })}\n\n${renderedSignalStatus}\n`);
 }
 
 async function runInvite(args: Arguments): Promise<void> {
@@ -819,6 +975,7 @@ async function runToken(args: Arguments): Promise<void> {
   const human = await humanCredential(args, cloud);
   const workspace = await workspaceId(args, cloud, human);
   const ttl = args.optional("ttl-ms");
+  const principalId = args.required("principal-id");
   const response = acceptedConnect(
     "token mint",
     await sendConnectWithPending(
@@ -827,7 +984,7 @@ async function runToken(args: Arguments): Promise<void> {
       workspace,
       {
         kind: "mint_agent_token",
-        principal_id: args.required("principal-id"),
+        principal_id: principalId,
         run_id: args.required("run-id"),
         task_id: args.required("task-id"),
         epoch: integer(args, "epoch"),
@@ -849,14 +1006,12 @@ async function runToken(args: Arguments): Promise<void> {
     );
   }
   assertAgentToken(response.agent_token);
-  printJson({
-    message:
-      "Agent credential minted. It is bound to this task and run so the agent's work stays scoped and attributable.",
-    status: response.status,
-    token_id: uuid(response.token_id, "token_id"),
-    run_id: uuid(response.run_id, "run_id"),
-    agent_token: response.agent_token,
-  });
+  printJson(agentCredentialArtifact({
+    principalId,
+    tokenId: uuid(response.token_id, "token_id"),
+    runId: uuid(response.run_id, "run_id"),
+    token: response.agent_token,
+  }));
 }
 
 function command(args: Arguments, kind: string): Command {
@@ -958,7 +1113,15 @@ function accepted(label: string, result: CommandResult): void {
 async function commandWorkspaceAndCredential(
   args: Arguments,
   cloud: CloudTarget,
-): Promise<{ selectedWorkspace: string; bearer: string }> {
+  options: { validateHumanWorkspace?: boolean } = {},
+): Promise<{
+  selectedWorkspace: string;
+  bearer: string;
+  credentials?: CredentialStore;
+  kind: "human" | "agent";
+  human?: HumanSession;
+  agent?: AgentCredentialInput;
+}> {
   const override = workspaceOverride(
     args.optional("workspace-id"),
     process.env.SWARM_CLOUD_WORKSPACE_ID,
@@ -969,17 +1132,250 @@ async function commandWorkspaceAndCredential(
         "not logged in; agent credentials require --workspace-id or SWARM_CLOUD_WORKSPACE_ID because they never infer a human's project selection",
       );
     }
+    const agent = await stdinCredential();
     return {
       selectedWorkspace: override,
-      bearer: await stdinCredential(),
+      bearer: agent.token,
+      kind: "agent",
+      agent,
     };
   }
   const human = await humanCredential(args, cloud);
   return {
-    selectedWorkspace: override ??
-      await workspaceId(args, cloud, human),
+    selectedWorkspace: await workspaceId(args, cloud, human, {
+      validateOverride: options.validateHumanWorkspace ?? false,
+    }),
     bearer: human.accessToken,
+    credentials: human.store,
+    kind: "human",
+    human,
   };
+}
+
+function signalKind(value: string): SignalKind {
+  if (!["working-on", "note", "ask"].includes(value)) {
+    throw new Error("--kind must be working-on, note, or ask");
+  }
+  return value as SignalKind;
+}
+
+function signalDuration(value: string | undefined): number | undefined {
+  if (value === undefined) return undefined;
+  const match = /^([1-9]\d*)(m|h|d)$/.exec(value);
+  if (!match) {
+    throw new Error("--until must be a duration such as 90m, 24h, or 7d");
+  }
+  const unit = match[2] === "m"
+    ? 60_000
+    : match[2] === "h"
+    ? 3_600_000
+    : 86_400_000;
+  const milliseconds = Number(match[1]) * unit;
+  if (!Number.isSafeInteger(milliseconds) || milliseconds > 30 * 86_400_000) {
+    throw new Error("--until must be no more than 30d");
+  }
+  return milliseconds;
+}
+
+function signalText(value: string, label: "body" | "about"): string {
+  const maximum = label === "body" ? 2000 : 500;
+  if (value.length < (label === "body" ? 1 : 0) || value.length > maximum) {
+    throw new Error(
+      `${label === "body" ? "signal text" : "--about"} must be ${
+        label === "body" ? "1.." : "at most "
+      }${maximum} characters`,
+    );
+  }
+  return value;
+}
+
+async function signalMembers(
+  cloud: CloudTarget,
+  selectedWorkspace: string,
+  credential: Awaited<ReturnType<typeof commandWorkspaceAndCredential>>,
+): Promise<SignalMember[]> {
+  if (credential.kind === "agent") {
+    return await readAgentSignalMembers(
+      cloud,
+      credential.bearer,
+      selectedWorkspace,
+    );
+  }
+  const human = credential.human!;
+  const status = await cloudWorkspaceDirectory(cloud).status(
+    human,
+    selectedWorkspace,
+  );
+  return status.members.map((member) => ({
+    user_id: member.user_id,
+    display_name: member.name,
+  }));
+}
+
+async function runPostSignal(
+  args: Arguments,
+  kind: SignalKind,
+): Promise<void> {
+  const allowTo = kind !== "working-on";
+  args.assertShape([
+    ...TARGET_FLAGS,
+    "workspace-id",
+    ...CREDENTIAL_FLAGS,
+    ...(allowTo ? ["to"] : []),
+    "about",
+    "until",
+    "json",
+  ], 2);
+  const cloud = target(args);
+  const credential = await commandWorkspaceAndCredential(args, cloud, {
+    validateHumanWorkspace: true,
+  });
+  const toSelector = allowTo ? args.optional("to") : undefined;
+  const toUserId = toSelector === undefined
+    ? null
+    : resolveSignalRecipient(
+      toSelector,
+      await signalMembers(cloud, credential.selectedWorkspace, credential),
+    );
+  const untilMs = signalDuration(args.optional("until"));
+  const command: PostSignalCommand = {
+    kind: "post_signal",
+    signal_kind: kind,
+    body: signalText(args.positionals[1]!, "body"),
+    to_user_id: toUserId,
+    about: args.optional("about") === undefined
+      ? null
+      : signalText(args.required("about"), "about"),
+    ...(untilMs === undefined
+      ? {}
+      : { until_ms: untilMs }),
+  };
+  const client = new ThinCommandClient(cloud);
+  let result: PostSignalResult;
+  if (credential.kind === "human") {
+    result = await sendSignalWithPending(
+      client,
+      {
+        credential: credential.bearer,
+        credentialIdentity: `user:${credential.human!.userId}`,
+        store: credential.credentials!,
+      },
+      credential.selectedWorkspace,
+      command,
+    );
+  } else {
+    const agent = credential.agent!;
+    let pendingStore = null;
+    if (agent.durable && agent.principalId !== null) {
+      try {
+        pendingStore = await agentSignalPendingStore({
+          target: cloud,
+          principalId: agent.principalId,
+        });
+      } catch {
+        process.stderr.write(
+          "coswarm: durable agent signal recovery state is unavailable; this post uses an ephemeral command ID and an ambiguous retry may create a visible duplicate.\n",
+        );
+      }
+    } else {
+      process.stderr.write(
+        "coswarm: bare agent credentials post with ephemeral command IDs; pipe the JSON from coswarm token mint for durable retry recovery.\n",
+      );
+    }
+    result = pendingStore === null
+      ? await client.sendSignal({
+        workspaceId: credential.selectedWorkspace,
+        command,
+        credential: credential.bearer,
+      })
+      : await sendSignalWithPending(
+        client,
+        {
+          credential: credential.bearer,
+          credentialIdentity: `agent:${agent.principalId}`,
+          store: pendingStore,
+        },
+        credential.selectedWorkspace,
+        command,
+      );
+  }
+  const signal = result.response.signal!;
+  if (args.has("json")) {
+    printJson({
+      status: result.response.status,
+      message:
+        "Signal shared. It is immutable, tenancy-scoped, and will quietly expire at its horizon.",
+      signal,
+    });
+    return;
+  }
+  process.stdout.write(
+    `Signal shared.\n${renderSignals([signal], {
+      inbox: false,
+      includeStale: true,
+    })}\n`,
+  );
+}
+
+async function runSignalRead(
+  args: Arguments,
+  inbox: boolean,
+): Promise<void> {
+  args.assertShape([
+    ...TARGET_FLAGS,
+    "workspace-id",
+    ...CREDENTIAL_FLAGS,
+    ...(inbox ? [] : ["about", "kind"]),
+    "since",
+    "limit",
+    "include-stale",
+    "json",
+  ], 1);
+  const cloud = target(args);
+  const selected = await commandWorkspaceAndCredential(args, cloud, {
+    validateHumanWorkspace: true,
+  });
+  const credential: SignalCredential = selected.kind === "agent"
+    ? { kind: "agent", token: selected.bearer }
+    : {
+      kind: "human",
+      accessToken: selected.bearer,
+      userId: selected.human!.userId,
+    };
+  const rows = await readSignals(cloud, credential, {
+    workspaceId: selected.selectedWorkspace,
+    inbox,
+    ...(args.optional("about") === undefined
+      ? {}
+      : { about: signalText(args.required("about"), "about") }),
+    ...(args.optional("kind") === undefined
+      ? {}
+      : { kind: signalKind(args.required("kind")) }),
+    ...(args.optional("since") === undefined
+      ? {}
+      : { since: args.required("since") }),
+    ...(args.optional("limit") === undefined
+      ? {}
+      : { limit: integer(args, "limit", { minimum: 1, maximum: 100 }) }),
+    includeStale: args.has("include-stale"),
+  });
+  if (args.has("json")) {
+    printJson({
+      workspace_id: selected.selectedWorkspace,
+      view: inbox ? "inbox" : "feed",
+      signals: rows,
+      message: rows.length === 0
+        ? inbox
+          ? "Nothing is waiting for you."
+          : "No matching signals are visible."
+        : `${rows.length} signal${rows.length === 1 ? "" : "s"} visible.`,
+    });
+    return;
+  }
+  process.stdout.write(`${renderSignals(rows, {
+    inbox,
+    includeStale: args.has("include-stale"),
+  })}\n`);
 }
 
 async function runTaskCommand(args: Arguments): Promise<void> {
@@ -1120,7 +1516,15 @@ async function runSeed(args: Arguments): Promise<void> {
       agentName: args.optional("agent-name"),
     });
     if (result.agentToken) {
-      await tokenFile.writeFile(result.agentToken, "utf8");
+      await tokenFile.writeFile(
+        JSON.stringify(agentCredentialArtifact({
+          principalId: result.principalId,
+          tokenId: result.tokenId,
+          runId: result.runId,
+          token: result.agentToken,
+        })),
+        "utf8",
+      );
       await tokenFile.sync();
       tokenWritten = true;
     }
@@ -1204,6 +1608,14 @@ async function main(): Promise<void> {
     await runStatus(args);
     return;
   }
+  if (verb === "working-on" || verb === "note" || verb === "ask") {
+    await runPostSignal(args, verb);
+    return;
+  }
+  if (verb === "feed" || verb === "inbox") {
+    await runSignalRead(args, verb === "inbox");
+    return;
+  }
   if (verb === "workspaces") {
     await runWorkspaces(args);
     return;
@@ -1252,7 +1664,16 @@ main().catch((error) => {
     const structured = error.structured();
     const verb = process.argv[2];
     const json = process.argv.includes("--json") &&
-      (verb === "status" || verb === "workspaces" || verb === "use");
+      (
+        verb === "status" ||
+        verb === "workspaces" ||
+        verb === "use" ||
+        verb === "working-on" ||
+        verb === "note" ||
+        verb === "ask" ||
+        verb === "feed" ||
+        verb === "inbox"
+      );
     if (json) {
       process.stdout.write(`${JSON.stringify(structured, null, 2)}\n`);
     } else {

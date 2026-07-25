@@ -158,6 +158,41 @@ test("workspace override preserves flag then env precedence without a read", asy
   assert.equal(reads, 0);
 });
 
+test("validated human overrides reject foreign and unknown projects uniformly", async () => {
+  const store = new MemoryStore(USER_ID);
+  assert.equal(
+    await resolveWorkspace({
+      explicit: WORKSPACE_A,
+      session,
+      store,
+      directory: directory([project(WORKSPACE_A, "Alpha")]),
+      validateOverride: true,
+    }),
+    WORKSPACE_A,
+  );
+
+  const failures: WorkspaceUnavailableError[] = [];
+  for (const explicit of [WORKSPACE_B, WORKSPACE_C]) {
+    await assert.rejects(
+      resolveWorkspace({
+        explicit,
+        session,
+        store,
+        directory: directory([project(WORKSPACE_A, "Alpha")]),
+        validateOverride: true,
+      }),
+      (error) => {
+        assert.ok(error instanceof WorkspaceUnavailableError);
+        failures.push(error);
+        return true;
+      },
+    );
+  }
+  assert.equal(failures[0]!.message, failures[1]!.message);
+  assert.deepEqual(failures[0]!.structured(), failures[1]!.structured());
+  assert.equal(failures[0]!.code, "project_not_available");
+});
+
 test("agent credentials never infer a human project and existing commands reject --json", async () => {
   const base = [
     "command",

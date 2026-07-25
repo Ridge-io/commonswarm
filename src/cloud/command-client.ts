@@ -42,6 +42,7 @@ export interface CommandHttpResponse extends StoredResponse {
   run_id?: string;
   agent_token?: string;
   workspace_id?: string;
+  signal?: SignalRecord;
 }
 
 export interface CommandResult {
@@ -73,6 +74,42 @@ export interface ConnectCommandRequest {
 }
 
 export interface ConnectCommandResult {
+  httpStatus: number;
+  response: CommandHttpResponse;
+}
+
+export type SignalKind = "working-on" | "note" | "ask";
+
+export interface PostSignalCommand {
+  kind: "post_signal";
+  signal_kind: SignalKind;
+  body: string;
+  to_user_id: string | null;
+  about: string | null;
+  until_ms?: number;
+}
+
+export interface SignalRecord {
+  id: string;
+  workspace_id: string;
+  from: string;
+  from_kind: "user" | "agent";
+  to: string | null;
+  about: string | null;
+  kind: SignalKind;
+  body: string;
+  until: string;
+  created_at: string;
+}
+
+export interface PostSignalRequest {
+  workspaceId: string;
+  command: PostSignalCommand;
+  credential: string;
+  commandId?: string;
+}
+
+export interface PostSignalResult {
   httpStatus: number;
   response: CommandHttpResponse;
 }
@@ -322,6 +359,92 @@ export class ThinCommandClient {
       );
     }
     const body = responseBody(raw);
+    if (body.min_client_version !== undefined) {
+      const order = compareVersion(CLIENT_PROTOCOL_VERSION, body.min_client_version);
+      if (order === null) {
+        throw new Error("server returned a malformed min_client_version");
+      }
+      if (order < 0) {
+        throw new Error(
+          `client upgrade required (minimum ${body.min_client_version})`,
+        );
+      }
+    }
+    return { httpStatus: response.status, response: body };
+  }
+
+  async sendSignal(request: PostSignalRequest): Promise<PostSignalResult> {
+    const commandId = request.commandId ?? newCommandId();
+    const command: PostSignalCommand = {
+      kind: "post_signal",
+      signal_kind: request.command.signal_kind,
+      body: request.command.body,
+      to_user_id: request.command.to_user_id,
+      about: request.command.about,
+      ...(request.command.until_ms === undefined
+        ? {}
+        : { until_ms: request.command.until_ms }),
+    };
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 30_000);
+    let response: Response;
+    try {
+      response = await this.fetcher(commandEndpoint(this.target), {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${request.credential}`,
+          apikey: this.target.anonKey,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          command_id: commandId,
+          client_version: CLIENT_PROTOCOL_VERSION,
+          workspace_id: request.workspaceId,
+          stream: { kind: "workspace" },
+          command,
+        }),
+        signal: controller.signal,
+      });
+    } catch (error) {
+      if ((error as Error).name === "AbortError") {
+        throw new CommandTransportError("signal request timed out");
+      }
+      throw new CommandTransportError(
+        "signal request failed before a response",
+      );
+    } finally {
+      clearTimeout(timer);
+    }
+
+    let raw: unknown;
+    try {
+      raw = await parsedJson(response);
+    } catch (error) {
+      if (response.status >= 500) {
+        throw new CommandHttpError(
+          response.status,
+          `signal failed (HTTP ${response.status})`,
+        );
+      }
+      throw error;
+    }
+    if (!response.ok) {
+      const error = raw && typeof raw === "object" && !Array.isArray(raw)
+        ? raw as Record<string, unknown>
+        : {};
+      throw new CommandHttpError(
+        response.status,
+        typeof error.message === "string"
+          ? error.message
+          : `signal failed (HTTP ${response.status}): ${
+            typeof error.error === "string" ? error.error : "unknown_error"
+          }`,
+      );
+    }
+    const body = responseBody(raw);
+    if (body.status !== "accepted" || body.signal === undefined) {
+      throw new Error("signal endpoint accepted without a signal receipt");
+    }
     if (body.min_client_version !== undefined) {
       const order = compareVersion(CLIENT_PROTOCOL_VERSION, body.min_client_version);
       if (order === null) {

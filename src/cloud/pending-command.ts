@@ -1,18 +1,23 @@
 import { createHash } from "node:crypto";
 import { canonicalJson } from "../protocol/index.js";
 import {
+  CommandHttpError,
   CommandTransportError,
   newCommandId,
   type ConnectCommand,
   type ConnectCommandResult,
+  type PostSignalCommand,
+  type PostSignalResult,
   type ThinCommandClient,
 } from "./command-client.js";
 import type {
   CredentialProfile,
   CredentialStore,
+  PendingProfileStore,
 } from "./storage.js";
 
 const MAX_PENDING_COMMANDS = 32;
+export const SIGNAL_PENDING_RECOVERY_MS = 60 * 60 * 1000;
 
 function intentHash(
   workspace: string | undefined,
@@ -104,6 +109,117 @@ export async function sendConnectWithPending(
     }
     throw new CommandTransportError(
       `${error.message}; retry the same command to resolve its pending outcome`,
+    );
+  }
+}
+
+function signalIntentHash(
+  workspace: string,
+  command: PostSignalCommand,
+  credentialIdentity: string,
+): string {
+  return createHash("sha256")
+    .update(canonicalJson({
+      workspace_id: workspace,
+      command,
+      credential_identity: credentialIdentity,
+    }))
+    .digest("hex");
+}
+
+async function pendingSignalCommandId(
+  credentials: PendingProfileStore,
+  workspace: string,
+  command: PostSignalCommand,
+  credentialIdentity: string,
+): Promise<{ intent: string; commandId: string }> {
+  const intent = signalIntentHash(workspace, command, credentialIdentity);
+  return await credentials.withLock(async () => {
+    const profile = await credentials.readProfile();
+    const now = Date.now();
+    for (const [pendingIntent, record] of
+      Object.entries(profile.pendingCommands)) {
+      if (
+        record.createdAt > now ||
+        now - record.createdAt >= SIGNAL_PENDING_RECOVERY_MS
+      ) {
+        delete profile.pendingCommands[pendingIntent];
+      }
+    }
+    const existing = profile.pendingCommands[intent];
+    if (existing) {
+      await credentials.writeProfile(profile);
+      return { intent, commandId: existing.commandId };
+    }
+    const entries = Object.entries(profile.pendingCommands)
+      .sort((left, right) => left[1].createdAt - right[1].createdAt);
+    while (entries.length >= MAX_PENDING_COMMANDS) {
+      const removed = entries.shift();
+      if (removed) delete profile.pendingCommands[removed[0]];
+    }
+    const commandId = newCommandId();
+    profile.pendingCommands[intent] = {
+      commandId,
+      kind: command.kind,
+      createdAt: now,
+    };
+    await credentials.writeProfile(profile);
+    return { intent, commandId };
+  });
+}
+
+async function clearPendingSignal(
+  credentials: PendingProfileStore,
+  intent: string,
+): Promise<void> {
+  await credentials.withLock(async () => {
+    const profile = await credentials.readProfile();
+    if (!profile.pendingCommands[intent]) return;
+    delete profile.pendingCommands[intent];
+    await credentials.writeProfile(profile);
+  });
+}
+
+export async function sendSignalWithPending(
+  client: ThinCommandClient,
+  session: {
+    credential: string;
+    credentialIdentity: string;
+    store: PendingProfileStore;
+  },
+  workspace: string,
+  command: PostSignalCommand,
+): Promise<PostSignalResult> {
+  const pending = await pendingSignalCommandId(
+    session.store,
+    workspace,
+    command,
+    session.credentialIdentity,
+  );
+  try {
+    const result = await client.sendSignal({
+      workspaceId: workspace,
+      command,
+      credential: session.credential,
+      commandId: pending.commandId,
+    });
+    await clearPendingSignal(session.store, pending.intent);
+    return result;
+  } catch (error) {
+    const ambiguous = error instanceof CommandTransportError ||
+      (error instanceof CommandHttpError && error.status >= 500);
+    if (!ambiguous) {
+      await clearPendingSignal(session.store, pending.intent);
+      throw error;
+    }
+    if (error instanceof CommandHttpError) {
+      throw new CommandHttpError(
+        error.status,
+        `${error.message}; retry the same signal to resolve its pending outcome`,
+      );
+    }
+    throw new CommandTransportError(
+      `${error.message}; retry the same signal to resolve its pending outcome`,
     );
   }
 }

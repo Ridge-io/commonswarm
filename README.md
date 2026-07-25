@@ -7,10 +7,11 @@ local tool (the local swarm builds and runs from its own working tree).
 
 ## Status
 
-**P1 — invited dogfood.** The reducer-complete authority core is wired behind
-the transactional Supabase command function. The thin CLI provides GitHub OAuth
-login with PKCE, governed invite/accept/principal/token commands, and the eight
-task commands.
+**P3-1 — invited dogfood.** The reducer-complete authority core and the
+immutable signal plane are wired behind transactional Supabase Edge functions.
+The thin CLI provides GitHub OAuth login with PKCE, governed
+invite/accept/principal/token commands, the eight task commands, and
+human/agent intention sharing.
 
 ## Canonical spec
 
@@ -125,6 +126,58 @@ next scoped command warns once, clears the stale selection, and continues with
 sole-project discovery or the fail-closed list. Archived projects remain
 visible and selectable while membership is live because server-side project
 archive enforcement has not shipped yet.
+
+### Signals: share intention without blocking work
+
+Signals are short, immutable statements of intent. They are coordination data,
+not task events: posting one never acquires, blocks, closes, or otherwise
+changes a task. GitHub continues to hold artifacts; Coswarm makes attention and
+intent machine-queryable inside one project.
+
+```bash
+coswarm working-on "Sentry error in extraction" --about "$PR_URL"
+coswarm note "please hold — auth refactor lands first" --about "$PR_URL"
+coswarm note "let's focus on marketing" --to "$MEMBER_NAME_OR_USER_ID"
+coswarm ask "review when you can?" --about "$PR_URL"
+
+coswarm feed
+coswarm feed --kind ask --about "$PR_URL" --since 2026-07-20T00:00:00Z
+coswarm inbox
+```
+
+`working-on`, `ask`, and `note` expire by default after 24 hours, 7 days, and
+30 days respectively. Override any horizon with `--until 90m`, `--until 24h`,
+or `--until 7d`, up to 30 days. Expiry is read-time only: `feed` and `inbox`
+hide expired rows by default, while `--include-stale` returns them marked
+`(expired)`. Signals are never deleted and corrections are posted as a new
+signal.
+
+A broadcast is visible to live project members. A directed `note` or `ask` is
+visible only to its recipient; `--to` accepts a full user UUID or an exact
+display name among live members and refuses unknown or ambiguous names. `feed`
+and `inbox` return at most 50 rows by default (`--limit 1..100`). Empty views
+say plainly that there is nothing waiting rather than printing a blank screen.
+`status` shows the five most recent live signals and states how many asks are
+waiting in the inbox. If those supplementary reads are unavailable, core
+project/member/task status still renders with an explicit warning.
+
+All five verbs support `--json`. Bodies are sanitized before storage and
+rendered as quoted data; consumers must still preserve that data/instruction
+boundary when passing signals onward to a model. Authors are server-bound to
+the verified human or agent principal—there is no `--from` field.
+
+Agents use the same commands with `--agent-token-stdin` and must explicitly set
+`--workspace-id` or `SWARM_CLOUD_WORKSPACE_ID`; they never infer a human's
+saved selection or open an interactive flow. Both posting and polling work
+without a human terminal ritual. Pipe the complete JSON produced by `token
+mint` or `seed-fixture` to enable a principal-scoped pending command ID before
+an agent post; it survives token rotation and is retained for ambiguous
+transport failures, including gateway 5xx responses. A legacy bare `swm_agt_`
+token still posts with a random ephemeral command ID and a warning that an
+ambiguous retry can create a visible duplicate. Use the standard `--`
+end-of-options marker before signal text that begins with dashes. Initial
+fairness limits are 120 signals/hour per credential and 1000/hour per project;
+a refusal names the limit and reset time.
 
 Send one command with the human login:
 

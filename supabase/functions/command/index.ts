@@ -1,5 +1,10 @@
 import { createClient } from "npm:@supabase/supabase-js@2.110.8";
 import postgres from "npm:postgres@3.4.9";
+import {
+  agentCredentialRevoked,
+  loadAgentCredential,
+  type AgentAuthRow,
+} from "../_shared/agent-auth.ts";
 // Supabase's edge graph cannot resolve the NodeNext `.js` specifiers in the
 // frozen TypeScript core. This checked-in bundle is regenerated directly from
 // src/protocol/index.ts by build:command-core; it is not a second implementation.
@@ -68,7 +73,31 @@ type ConnectCommand =
     scopes?: string[];
   };
 
-type ValidatedCommand = Command | ConnectCommand;
+type SignalKind = "working-on" | "note" | "ask";
+
+interface SignalCommand {
+  kind: "post_signal";
+  signal_kind: SignalKind;
+  body: string;
+  to_user_id: string | null;
+  about: string | null;
+  until_ms?: number;
+}
+
+interface SignalRecord {
+  id: string;
+  workspace_id: string;
+  from: string;
+  from_kind: CredentialKind;
+  to: string | null;
+  about: string | null;
+  kind: SignalKind;
+  body: string;
+  until: string;
+  created_at: string;
+}
+
+type ValidatedCommand = Command | ConnectCommand | SignalCommand;
 
 type WorkspaceRole = "owner" | "admin" | "member";
 
@@ -174,6 +203,7 @@ interface StoredResponse {
   token_id?: string;
   run_id?: string;
   workspace_id?: string;
+  signal?: SignalRecord;
 }
 
 interface EventEnvelope {
@@ -258,6 +288,14 @@ const MAX_TTL_MS = 4 * 60 * 60 * 1000;
 const INVITATION_TTL_MS = 24 * 60 * 60 * 1000;
 const INVITATION_MAX_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const AGENT_TOKEN_MAX_TTL_MS = 8 * 60 * 60 * 1000;
+const SIGNAL_MAX_UNTIL_MS = 30 * 24 * 60 * 60 * 1000;
+const SIGNAL_DEFAULT_UNTIL_MS: Record<SignalKind, number> = {
+  "working-on": 24 * 60 * 60 * 1000,
+  ask: 7 * 24 * 60 * 60 * 1000,
+  note: 30 * 24 * 60 * 60 * 1000,
+};
+const SIGNAL_CREDENTIAL_LIMIT = 120;
+const SIGNAL_WORKSPACE_LIMIT = 1000;
 const COMMAND_ID_RE = /^[A-Za-z0-9_-]{8,72}$/;
 const AGENT_TOKEN_RE = /^swm_agt_[A-Za-z0-9_-]{43}$/;
 const INVITATION_TOKEN_RE = /^swm_inv_[A-Za-z0-9_-]{43}$/;
@@ -270,6 +308,9 @@ const CONTROL_RE =
   /[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/;
 const CONTROL_GLOBAL_RE =
   /[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g;
+const SIGNAL_UNSAFE_GLOBAL_RE =
+  /[\u0000-\u001f\u007f-\u009f\u061c\u200b-\u200f\u2028-\u202e\u2060\u2066-\u2069\ufeff\u{e0000}-\u{e007f}]/gu;
+const SIGNAL_WHITESPACE_GLOBAL_RE = /[\t\n\v\f\r\u0085\u2028\u2029]+/gu;
 const ANSI_ESCAPE_GLOBAL_RE = /\u001b\[[0-?]*[ -/]*[@-~]/g;
 const REGISTER_DEVICE_KIND = "register_device";
 const COMMAND_KINDS = [
@@ -285,6 +326,7 @@ const COMMAND_KINDS = [
   "accept_invitation",
   "create_agent_principal",
   "mint_agent_token",
+  "post_signal",
 ] as const;
 const TASK_COMMAND_KINDS = [
   "create",
@@ -311,6 +353,7 @@ const P0_AGENT_SCOPES = [
   "submit",
   "close",
   "reopen",
+  "post_signal",
 ] as const;
 
 const databaseUrl =
@@ -355,23 +398,6 @@ interface RequestBody {
   stream?: unknown;
   command?: unknown;
   [key: string]: unknown;
-}
-
-interface AgentAuthRow {
-  token_id: string;
-  principal_id: string;
-  run_id: string;
-  device_id: string;
-  owner_user_id: string;
-  principal_workspace_id: string;
-  lineage_id: string;
-  scopes: unknown;
-  surrender_only: boolean;
-  token_revoked_at: Date | null;
-  principal_revoked_at: Date | null;
-  run_ended_at: Date | null;
-  device_revoked_at: Date | null;
-  unexpired: boolean;
 }
 
 interface AuthContext {
@@ -504,6 +530,13 @@ function record(value: unknown): Record<string, unknown> | null {
 function stripControls(value: string | null | undefined): string | null {
   if (value === null || value === undefined) return null;
   return value.replace(CONTROL_GLOBAL_RE, "").slice(0, 2048);
+}
+
+function sanitizeSignalText(value: string): string {
+  return value
+    .replace(ANSI_ESCAPE_GLOBAL_RE, "")
+    .replace(SIGNAL_WHITESPACE_GLOBAL_RE, " ")
+    .replace(SIGNAL_UNSAFE_GLOBAL_RE, "");
 }
 
 function displayLabel(value: string | null | undefined, fallback: string): string {
@@ -712,6 +745,76 @@ function validateCommand(
   }
   if (!(COMMAND_KINDS as readonly string[]).includes(cmd.kind)) {
     return { ok: false, status: 400, reason: "unknown command kind" };
+  }
+
+  if (cmd.kind === "post_signal") {
+    if (Object.hasOwn(cmd, "from")) {
+      return {
+        ok: false,
+        status: 400,
+        reason: "client-supplied from is forbidden",
+      };
+    }
+    const optionalKeys = Object.hasOwn(cmd, "until_ms") ? ["until_ms"] : [];
+    const signalKinds: readonly SignalKind[] = ["working-on", "note", "ask"];
+    const sanitizedBody = typeof cmd.body === "string"
+      ? sanitizeSignalText(cmd.body)
+      : "";
+    const sanitizedAbout = typeof cmd.about === "string"
+      ? sanitizeSignalText(cmd.about) || null
+      : null;
+    const valid = exactKeys(cmd, [
+      "kind",
+      "signal_kind",
+      "body",
+      "to_user_id",
+      "about",
+      ...optionalKeys,
+    ]) &&
+      typeof cmd.signal_kind === "string" &&
+      signalKinds.includes(cmd.signal_kind as SignalKind) &&
+      typeof cmd.body === "string" &&
+      cmd.body.length >= 1 &&
+      cmd.body.length <= 2000 &&
+      sanitizedBody.length >= 1 &&
+      nullableUuid(cmd.to_user_id) &&
+      (
+        cmd.signal_kind !== "working-on" ||
+        cmd.to_user_id === null
+      ) &&
+      (
+        cmd.about === null ||
+        (
+          typeof cmd.about === "string" &&
+          cmd.about.length <= 500
+        )
+      ) &&
+      (
+        cmd.until_ms === undefined ||
+        (
+          integer(cmd.until_ms, 1) &&
+          cmd.until_ms <= SIGNAL_MAX_UNTIL_MS
+        )
+      );
+    return valid
+      ? {
+        ok: true,
+        command: {
+          kind: "post_signal",
+          signal_kind: cmd.signal_kind as SignalKind,
+          body: sanitizedBody,
+          to_user_id: cmd.to_user_id as string | null,
+          about: sanitizedAbout,
+          ...(cmd.until_ms === undefined
+            ? {}
+            : { until_ms: cmd.until_ms as number }),
+        },
+      }
+      : {
+        ok: false,
+        status: 400,
+        reason: "signal fields are malformed or over their limits",
+      };
   }
 
   if ((CONNECT_COMMAND_KINDS as readonly string[]).includes(cmd.kind)) {
@@ -959,6 +1062,9 @@ function storedResponse(value: unknown): StoredResponse {
     ...(typeof response.workspace_id === "string"
       ? { workspace_id: response.workspace_id }
       : {}),
+    ...(record(response.signal) === null
+      ? {}
+      : { signal: response.signal as unknown as SignalRecord }),
   };
 }
 
@@ -986,26 +1092,8 @@ async function authenticateAgent(
   tx: Sql,
   tokenHash: Uint8Array,
 ): Promise<AuthContext | null> {
-  const rows = await tx<AgentAuthRow[]>`
-    SELECT
-      t.token_id, t.principal_id, t.run_id, r.device_id,
-      p.owner_user_id, p.workspace_id AS principal_workspace_id,
-      t.lineage_id, t.scopes, t.surrender_only,
-      t.revoked_at AS token_revoked_at,
-      p.revoked_at AS principal_revoked_at,
-      r.ended_at AS run_ended_at,
-      d.revoked_at AS device_revoked_at,
-      t.expires_at > statement_timestamp() AS unexpired
-    FROM swarm.agent_tokens AS t
-    JOIN swarm.agent_principals AS p ON p.principal_id = t.principal_id
-    JOIN swarm.agent_runs AS r
-      ON r.run_id = t.run_id AND r.principal_id = t.principal_id
-    JOIN swarm.devices AS d ON d.device_id = r.device_id
-    WHERE t.token_hash = ${tokenHash}
-    LIMIT 1
-  `;
-  const agent = rows[0];
-  if (!agent || !agent.unexpired) return null;
+  const agent = await loadAgentCredential(tx, tokenHash);
+  if (!agent) return null;
   return {
     credentialKind: "agent",
     credentialId: agent.token_id,
@@ -1176,36 +1264,10 @@ async function revoked(
   auth: AuthContext,
   route: Route,
 ): Promise<boolean> {
-  if (route.membershipRevokedAt !== null) return true;
   const agent = auth.agent;
-  if (!agent) return false;
-  if (
-    agent.token_revoked_at !== null ||
-    agent.principal_revoked_at !== null ||
-    agent.run_ended_at !== null ||
-    agent.device_revoked_at !== null ||
-    agent.surrender_only
-  ) {
-    return true;
-  }
-
-  const targets: Array<[string, string]> = [
-    ["token", agent.token_id],
-    ["principal", agent.principal_id],
-    ["run", agent.run_id],
-    ["device", agent.device_id],
-    ["membership", agent.owner_user_id],
-    ["lineage", agent.lineage_id],
-    ["family", agent.lineage_id],
-  ];
-  const ids = [...new Set(targets.map(([, id]) => id))];
-  const rows = await tx<{ kind: string; target_id: string }[]>`
-    SELECT kind, target_id
-    FROM swarm.revocation_tombstones
-    WHERE target_id = ANY(${ids}::uuid[])
-  `;
-  const expected = new Set(targets.map(([kind, id]) => `${kind}:${id}`));
-  return rows.some((row) => expected.has(`${row.kind}:${row.target_id}`));
+  return agent === null
+    ? route.membershipRevokedAt !== null
+    : await agentCredentialRevoked(tx, agent, route.membershipRevokedAt);
 }
 
 async function buildContext(
@@ -2066,6 +2128,147 @@ async function registerLoginDevice(
   };
 }
 
+interface SignalRateLimit {
+  bucket: "credential" | "workspace";
+  limit: number;
+  resetsAt: string;
+}
+
+async function incrementSignalBucket(
+  tx: Sql,
+  bucketKey: string,
+  limit: number,
+): Promise<{ count: number; resetsAt: string }> {
+  const rows = await tx<{ count: number; resets_at: Date }[]>`
+    INSERT INTO swarm.rate_buckets (bucket_key, window_start, count)
+    VALUES (
+      ${bucketKey},
+      date_trunc('hour', statement_timestamp()),
+      1
+    )
+    ON CONFLICT (bucket_key, window_start) DO UPDATE
+    SET count = LEAST(swarm.rate_buckets.count + 1, ${limit + 1})
+    RETURNING count, window_start + interval '1 hour' AS resets_at
+  `;
+  const row = rows[0];
+  if (!row) throw new Error("signal rate bucket did not return a row");
+  return {
+    count: Number(row.count),
+    resetsAt: row.resets_at.toISOString(),
+  };
+}
+
+async function enforceSignalRate(
+  tx: Sql,
+  auth: AuthContext,
+  workspaceId: string,
+): Promise<SignalRateLimit | null> {
+  const credentialIdentity = auth.credentialKind === "agent"
+    ? auth.credentialId
+    : auth.actor.user;
+  if (credentialIdentity === null) {
+    throw new Error("authenticated signal credential has no stable identity");
+  }
+  const credential = await incrementSignalBucket(
+    tx,
+    `signal:credential:${auth.credentialKind}:${credentialIdentity}`,
+    SIGNAL_CREDENTIAL_LIMIT,
+  );
+  if (credential.count > SIGNAL_CREDENTIAL_LIMIT) {
+    return {
+      bucket: "credential",
+      limit: SIGNAL_CREDENTIAL_LIMIT,
+      resetsAt: credential.resetsAt,
+    };
+  }
+  const workspace = await incrementSignalBucket(
+    tx,
+    `signal:workspace:${workspaceId}`,
+    SIGNAL_WORKSPACE_LIMIT,
+  );
+  if (workspace.count > SIGNAL_WORKSPACE_LIMIT) {
+    return {
+      bucket: "workspace",
+      limit: SIGNAL_WORKSPACE_LIMIT,
+      resetsAt: workspace.resetsAt,
+    };
+  }
+  return null;
+}
+
+async function signalTargetIsLive(
+  tx: Sql,
+  route: Route,
+  toUserId: string | null,
+): Promise<boolean> {
+  if (toUserId === null) return true;
+  const targetRows = await tx<{ user_id: string }[]>`
+    SELECT user_id
+    FROM swarm.memberships
+    WHERE workspace_id = ${route.workspaceId}::uuid
+      AND user_id = ${toUserId}::uuid
+      AND revoked_at IS NULL
+    LIMIT 1
+  `;
+  return targetRows[0] !== undefined;
+}
+
+async function postSignal(
+  tx: Sql,
+  route: Route,
+  auth: AuthContext,
+  command: SignalCommand,
+): Promise<SignalRecord> {
+  const untilMs = command.until_ms ??
+    SIGNAL_DEFAULT_UNTIL_MS[command.signal_kind];
+  const signalId = crypto.randomUUID();
+  const rows = await tx<{
+    id: string;
+    workspace_id: string;
+    from_principal: string;
+    from_kind: CredentialKind;
+    to_user_id: string | null;
+    about: string | null;
+    kind: SignalKind;
+    body: string;
+    until: Date;
+    created_at: Date;
+  }[]>`
+    INSERT INTO swarm.signals (
+      id, workspace_id, from_principal, from_kind, to_user_id,
+      about, kind, body, until, created_at
+    ) VALUES (
+      ${signalId}::uuid,
+      ${route.workspaceId}::uuid,
+      ${canonicalPrincipal(auth.actor)}::uuid,
+      ${auth.credentialKind},
+      ${command.to_user_id}::uuid,
+      ${command.about},
+      ${command.signal_kind},
+      ${command.body},
+      statement_timestamp() + ${untilMs} * interval '1 millisecond',
+      statement_timestamp()
+    )
+    RETURNING
+      id, workspace_id, from_principal, from_kind, to_user_id,
+      about, kind, body, until, created_at
+  `;
+  const signal = rows[0];
+  if (!signal) throw new Error("signal insert did not return a row");
+  return {
+    id: signal.id,
+    workspace_id: signal.workspace_id,
+    from: signal.from_principal,
+    from_kind: signal.from_kind,
+    to: signal.to_user_id,
+    about: signal.about,
+    kind: signal.kind,
+    body: signal.body,
+    until: signal.until.toISOString(),
+    created_at: signal.created_at.toISOString(),
+  };
+}
+
 async function handleTransaction(
   body: RequestBody,
   verifiedHuman: VerifiedHuman | null,
@@ -2097,6 +2300,16 @@ async function handleTransaction(
     await beforeStep(4);
     const ignoredIdentity = forgedActorDetail(body);
     await afterStep(4);
+
+    if (Object.hasOwn(body, "from")) {
+      await insertAudit(tx, {
+        auth,
+        commandKind: kind,
+        outcome: "validation",
+        reason: "client-supplied from is forbidden",
+      });
+      return { status: 400, body: { error: "invalid_request" } };
+    }
 
     if (kind === REGISTER_DEVICE_KIND) {
       return await registerLoginDevice(tx, body, auth, ignoredIdentity);
@@ -2289,6 +2502,114 @@ async function handleTransaction(
     }
     await afterStep(7);
 
+    if (command.kind === "post_signal") {
+      if (!await signalTargetIsLive(tx, route, command.to_user_id)) {
+        await insertAudit(tx, {
+          auth,
+          commandKind: kind,
+          workspaceId: route.workspaceId,
+          streamId: route.streamId,
+          outcome: "authz",
+          reason: "signal target is not a live workspace member",
+          hash,
+        });
+        return { status: 403, body: { error: "forbidden" } };
+      }
+      const rateLimit = await enforceSignalRate(
+        tx,
+        auth,
+        route.workspaceId,
+      );
+      if (rateLimit !== null) {
+        const detail =
+          `${rateLimit.bucket} limit ${rateLimit.limit} signals/hour; resets at ${rateLimit.resetsAt}`;
+        await insertAudit(tx, {
+          auth,
+          commandKind: kind,
+          workspaceId: route.workspaceId,
+          streamId: route.streamId,
+          outcome: "rate_limit",
+          reason: "rate_limited",
+          detail,
+          hash,
+        });
+        await tx`
+          INSERT INTO swarm.security_alerts (kind, subject, detail)
+          VALUES (
+            'signal_rate_limit',
+            ${rateLimit.bucket},
+            ${tx.json({
+              workspace_id: route.workspaceId,
+              credential_kind: auth.credentialKind,
+              credential_id: auth.credentialId,
+              limit: rateLimit.limit,
+              resets_at: rateLimit.resetsAt,
+            })}::jsonb
+          )
+        `;
+        return {
+          status: 429,
+          body: {
+            error: "rate_limited",
+            message: `Signal refused: ${detail}.`,
+            limit: rateLimit.limit,
+            resets_at: rateLimit.resetsAt,
+          },
+        };
+      }
+
+      const signal = await postSignal(tx, route, auth, command);
+      const signalResponse: StoredResponse = {
+        ok: true,
+        event_ids: [],
+        signal,
+      };
+      const inserted = await tx<{ command_id: string }[]>`
+        INSERT INTO swarm.idempotency_keys (
+          principal_kind, principal_id, command_id,
+          workspace_id, stream_id, request_hash, response
+        ) VALUES (
+          ${auth.credentialKind},
+          ${canonicalPrincipal(auth.actor)},
+          ${commandId},
+          ${route.workspaceId}::uuid,
+          ${route.streamId}::uuid,
+          ${hash},
+          ${tx.json(signalResponse as unknown as postgres.JSONValue)}::jsonb
+        )
+        ON CONFLICT (principal_kind, principal_id, command_id) DO NOTHING
+        RETURNING command_id
+      `;
+      if (inserted.length === 0) {
+        throw new LedgerRace(
+          auth,
+          commandId,
+          kind,
+          route.workspaceId,
+          route.streamId,
+          hash,
+        );
+      }
+      await insertAudit(tx, {
+        auth,
+        commandKind: kind,
+        workspaceId: route.workspaceId,
+        streamId: route.streamId,
+        outcome: "accepted",
+        detail: ignoredIdentity,
+        hash,
+      });
+      return {
+        status: 200,
+        body: {
+          status: "accepted",
+          ...signalResponse,
+          events: [],
+          min_client_version: minClientVersion,
+        },
+      };
+    }
+
     await beforeStep(8);
     const streamRows = await tx<{ head_seq: string | number }[]>`
       SELECT head_seq
@@ -2396,6 +2717,7 @@ async function handleTransaction(
             : prepared.command.kind === "mint_agent_token"
             ? {
               token_id: prepared.command.token_id,
+              principal_id: prepared.command.principal_id,
               run_id: prepared.command.run_id,
             }
             : { workspace_id: route.workspaceId }),

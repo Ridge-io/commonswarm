@@ -526,6 +526,7 @@ export interface ResolveWorkspaceOptions {
   directory: WorkspaceDirectory;
   workspaces?: readonly WorkspaceSummary[];
   warn?: (warning: WorkspaceWarning) => void;
+  validateOverride?: boolean;
 }
 
 export function workspaceOverride(
@@ -554,11 +555,19 @@ export async function resolveWorkspace(
     options.explicit,
     options.environmental,
   );
-  if (override !== null) return override;
+  if (override !== null && !options.validateOverride) return override;
 
   const workspaces = sortWorkspaces(
     options.workspaces ?? await options.directory.list(options.session),
   );
+  if (override !== null) {
+    if (
+      workspaces.some((workspace) => workspace.workspace_id === override)
+    ) {
+      return override;
+    }
+    throw new WorkspaceUnavailableError();
+  }
   const profile = await options.store.withLock(
     () => options.store.readProfile(),
   );
