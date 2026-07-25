@@ -62,6 +62,39 @@ traps found while mapping the code — as a durable on-disk handoff note for its
 stand it down. Do not discard mapping work merely because the agent is rotating. Frame it to the
 worker as hygiene, not judgement, and record what it contributed.
 
+## 0e. STANDING PRACTICE — how this program works, not one Lead's advice
+
+Written down 2026-07-24 at the Lead4→Lead5 rotation, because the prior handoff put *state* in
+this file and the *practice* only over the wire — exactly backwards. State decays; practice
+doesn't. These are not any Lead's opinions; they are what the work taught, and each has a paid
+cost behind it. Every Lead and every worker inherits them.
+
+**1. VERIFY BY YOUR OWN EXECUTION, ALWAYS.** Re-run every gate a worker reports green. This is
+not distrust — the workers here are good, and it still catches things. Observed cost of skipping
+it: three missing mechanical guards sitting behind an accurate-sounding "applied all findings",
+and a *second* root cause of bug #3 (hosted PostgREST never exposed `swarm_read`) that would have
+shipped a still-broken hosted experience whose symptom looked identical to the one we'd fixed.
+A report is a claim; an artifact is evidence.
+
+**2. BEFORE BELIEVING A NEGATIVE RESULT, CONFIRM THE PROBE COULD HAVE PRODUCED A POSITIVE ONE.**
+The full error class and its five instances live in §3 (★ ERROR CLASS). The compressed form:
+*a grep that can match your own commentary is not a test*, and *a document cannot testify to the
+state after itself*. Absence of signal is not signal of absence until the instrument is proven
+able to detect presence.
+
+**3. ROUTE EVERY BRIEF THROUGH THE ADVERSARIAL REVIEWER BEFORE IMPLEMENTATION.** Pin the
+contracts *before* writing the brief — that costs far less than the review rounds it prevents
+(P2-1 needed three). What this has caught that a Lead did not: an OAuth-phishing vector
+introduced by a Lead, a false-success path introduced while fixing the reviewer's own earlier
+finding, a Lead-authored rule that made the deliverable unbuildable, and a wall-clock cheat
+neither Lead nor worker saw. Related operator directive: **reviewers run in visible tabs, never
+as headless one-shots** (a headless reviewer run hung ~2h with zero output).
+
+**Corollary for rotation (§0):** when you rotate, put durable practice HERE and ephemeral state
+in your §0<n> baton. If a lesson would still be true after every current SHA is ancient, it
+belongs in this section, not in a handoff note — and not only in a message, which dies with the
+session that sent it.
+
 ## 1. Model & delegation policy (operator directive)
 
 - **THE LEAD DOES NOT HAND-CODE.** Fable credits are **dangerously low** and the Lead
@@ -604,7 +637,7 @@ continuously (this file + commits) — assume your session can die at any moment
   `ChartingAlpha-Free2` org and has been **deleted**; it was empty. Ignore it if you
   see it referenced anywhere.)
 - **★ ERROR CLASS: testing output that contains more than the thing you meant to test
-  (2026-07-24).** Four separate incidents in one day, all the same shape — a probe whose output
+  (2026-07-24).** Five observed instances, all the same shape — a probe whose output
   carried extra material, read as if it carried only the signal:
   1. `git show --name-only <sha> | grep docs/research` → matched the **commit message**, which said
      "docs/research/ deliberately excluded". Read as a file-path violation. Use
@@ -617,6 +650,15 @@ continuously (this file + commits) — assume your session can die at any moment
      wearing the costume of empty data.
   4. `grep "not a version signal"` missed the doc line because **markdown bold** (`**not**`) broke
      the literal match — concluding a fix was missing when it was present.
+  5. **The self-describing artifact (2026-07-24, at the Lead4→Lead5 rotation).** §0d states
+     "HEAD `a62823a`, tree clean". Lead5 restated that to the fleet as current state. It was
+     false the instant §0d was committed as `a8e2e66` — **a baton commit can never contain its
+     own SHA.** The trap is invisible precisely because the artifact was accurate when written;
+     staleness is created by the act of recording, not by later drift. Same family as instance 1
+     (a commit message describing its own diff). **Read a self-describing artifact as evidence
+     about the moment before itself, never about the state after it.** Any state a document
+     asserts about its own repo — SHA, tree cleanliness, "nothing in flight" — must be
+     re-verified by execution (`git rev-parse HEAD`, `git status`), not quoted.
   **The rule:** before believing a negative result, confirm the probe could have produced a
   positive one. Prefer path-only / value-only output modes, absolute paths over `PATH` lookups,
   distinguishing HTTP status classes from empty payloads, and matching on structure rather than
