@@ -493,6 +493,29 @@ you read alongside the claim**, so a reader can tell in one glance whether you a
 same world they are. Costs six characters. Closes the whole class in one command instead of an
 argument.
 
+**★★ 10a. AND PRACTICE 10 HAS ITS OWN BLIND SPOT — IT PRESUMES THE FETCH RAN (Dana, 2026-07-25).**
+Practice 10 says *fetch is necessary and not sufficient, because the ref moves between the fetch and
+the report.* **That describes a race. The failure actually observed on this fleet is worse and
+different: THE FETCH NEVER EXECUTES AT ALL, and `rev-parse` then serves the cache with total
+confidence.**
+  mini, over ssh:  `git fetch origin` → *fatal: could not read Username for 'https://github.com'*
+                   `git rev-parse origin/main` → **answers anyway**
+  laptop clone:    `git fetch` → *Repository not found* (recorded above), `rev-parse` → stale SHA
+**An agent following practice 10 over ssh believes it DERIVED a SHA it merely RECALLED** — and it
+will say "re-derived" in good faith, because it ran the command practice 10 told it to run.
+*Verified generically by the Lead:* a failed fetch followed by `rev-parse` on the same line prints a
+clean SHA **with no indication the fetch died** — `git fetch bad-remote 2>/dev/null; git rev-parse
+origin/main` emits only the SHA. *(Honest limit: the Lead could NOT reproduce Dana's specific ssh
+auth case — ssh-to-self failed on host-key verification. Dana measured that; the Lead confirmed the
+general mechanism only.)*
+**THE FIX: CHECK THE FETCH'S EXIT STATUS, DO NOT JUST RUN IT.** `git fetch origin || echo "FETCH
+FAILED — the SHA below is CACHED, not derived"`. Never `2>/dev/null` a fetch, and never chain it with
+`;` to the command that consumes it — **`&&`, so a dead fetch cannot be followed by a confident
+answer.** Interactive shells on the mini fetch fine; **ssh and cron are where this bites.**
+**★ AND NOTE HOW THIS WAS FOUND — it is practice 7 executed against practice 10, one turn after
+practice 10 landed.** The new defence was asked what it would be blind to, and it had an answer.
+That is the practice working, and it is the reason 7 is worth more than any rule it protects.
+
 **11. ★★ A HANDOFF IS WRITTEN *ABOUT* STATE, NOT *FROM* STATE — RE-DERIVE EVERY FACTUAL CLAIM IN THE
 SAME TURN YOU WRITE IT (Ferry, 2026-07-25, after doing it twice in twenty minutes).**
 Ferry's own diagnosis, and it explains why this lands on handoffs specifically rather than at random:
