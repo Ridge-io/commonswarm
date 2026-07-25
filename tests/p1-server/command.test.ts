@@ -771,6 +771,170 @@ async function scenario(run: (f: Fixture) => Promise<void>): Promise<void> {
   await assertInvariants(f);
 }
 
+test("pre-principal failures never write audit rows while authenticated validation remains audited", async () => {
+  const postCommand = async (
+    headers: Record<string, string>,
+    body: Record<string, unknown>,
+  ): Promise<Response> => {
+    let response: Response | null = null;
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      response = await fetch(`${local.API_URL}/functions/v1/command`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(body),
+      });
+      if (response.status !== 502) return response;
+      await response.arrayBuffer();
+      await delay(100);
+    }
+    return response!;
+  };
+  const commandKind = "security_preauth_probe";
+  const unknownAgentToken = `swm_agt_${"A".repeat(43)}`;
+  const beforePreAuth = await sql<{ audit_id: string }[]>`
+    SELECT COALESCE(max(audit_id), 0)::text AS audit_id
+    FROM swarm.audit_log
+  `;
+  const watermark = beforePreAuth[0]?.audit_id ?? "0";
+  const validEnvelope = {
+    command_id: commandId("security_preauth"),
+    client_version: "0.1.0",
+    workspace_id: randomUUID(),
+    stream: { kind: "workspace" },
+    command: { kind: commandKind },
+  };
+  const logStart = functionLogs.length;
+  const requests = [
+    {
+      label: "malformed command_id",
+      headers: { "content-type": "application/json" },
+      body: { ...validEnvelope, command_id: "!" },
+      status: 400,
+      error: "invalid_request",
+    },
+    {
+      label: "missing bearer",
+      headers: { "content-type": "application/json" },
+      body: validEnvelope,
+      status: 401,
+      error: "unauthenticated",
+    },
+    {
+      label: "bad agent token shape",
+      headers: {
+        authorization: "Bearer swm_agt_bad",
+        "content-type": "application/json",
+      },
+      body: validEnvelope,
+      status: 401,
+      error: "unauthenticated",
+    },
+    {
+      label: "unknown well-shaped agent token",
+      headers: {
+        authorization: `Bearer ${unknownAgentToken}`,
+        "content-type": "application/json",
+      },
+      body: validEnvelope,
+      status: 401,
+      error: "unauthenticated",
+    },
+    {
+      label: "failed getUser",
+      headers: {
+        authorization: "Bearer not-a-valid-user-jwt",
+        "content-type": "application/json",
+      },
+      body: validEnvelope,
+      status: 401,
+      error: "unauthenticated",
+    },
+  ] as const;
+
+  for (const request of requests) {
+    const response = await postCommand(request.headers, request.body);
+    assert.equal(response.status, request.status, request.label);
+    assert.deepEqual(await response.json(), { error: request.error }, request.label);
+  }
+
+  const preAuthAudits = await sql<{
+    audit_id: string;
+    actor_user: string | null;
+    actor_agent_principal: string | null;
+    outcome: string;
+    reason: string | null;
+  }[]>`
+    SELECT
+      audit_id::text, actor_user, actor_agent_principal, outcome, reason
+    FROM swarm.audit_log
+    WHERE audit_id > ${watermark}::bigint
+      AND command_kind = ${commandKind}
+    ORDER BY audit_id
+  `;
+  assert.equal(
+    preAuthAudits.length,
+    0,
+    `pre-principal HTTP requests wrote audit rows after watermark ${watermark}: ${
+      JSON.stringify(preAuthAudits)
+    }`,
+  );
+
+  await delay(100);
+  const preAuthLogs = functionLogs.slice(logStart);
+  assert.equal(
+    (preAuthLogs.match(/"event":"command_pre_auth_failure"/g) ?? []).length,
+    requests.length,
+    preAuthLogs,
+  );
+  assert.match(preAuthLogs, /"command_kind":"security_preauth_probe"/);
+  assert.doesNotMatch(preAuthLogs, /swm_agt_bad|not-a-valid-user-jwt/);
+  assert.ok(!preAuthLogs.includes(unknownAgentToken));
+
+  await scenario(async (f) => {
+    const beforeAuthenticated = await sql<{ audit_id: string }[]>`
+      SELECT COALESCE(max(audit_id), 0)::text AS audit_id
+      FROM swarm.audit_log
+    `;
+    const response = await postCommand(
+      {
+        authorization: `Bearer ${f.uaJwt}`,
+        "content-type": "application/json",
+      },
+      {
+        command_id: commandId("authenticated_validation"),
+        client_version: "0.1.0",
+        workspace_id: f.workspaceA,
+        stream: { kind: "workspace" },
+        command: { kind: "create" },
+      },
+    );
+    assert.equal(response.status, 400);
+    assert.deepEqual(await response.json(), { error: "invalid_request" });
+
+    const authenticatedAudits = await sql<{
+      audit_id: string;
+      actor_user: string | null;
+      actor_agent_principal: string | null;
+      outcome: string;
+      reason: string | null;
+    }[]>`
+      SELECT
+        audit_id::text, actor_user, actor_agent_principal, outcome, reason
+      FROM swarm.audit_log
+      WHERE audit_id > ${
+        beforeAuthenticated[0]?.audit_id ?? "0"
+      }::bigint
+        AND command_kind = 'create'
+        AND actor_user = ${f.ua}::uuid
+      ORDER BY audit_id
+    `;
+    assert.equal(authenticatedAudits.length, 1, JSON.stringify(authenticatedAudits));
+    assert.equal(authenticatedAudits[0]?.actor_user, f.ua);
+    assert.equal(authenticatedAudits[0]?.actor_agent_principal, null);
+    assert.equal(authenticatedAudits[0]?.outcome, "validation");
+  });
+});
+
 test("T-01 cross-tenant and nonexistent workspaces are uniform 403s", async () => {
   await scenario(async (f) => {
     const bHead = await sql<{ head_seq: string | number }[]>`

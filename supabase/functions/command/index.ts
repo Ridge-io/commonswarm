@@ -441,7 +441,7 @@ interface HttpResult {
 }
 
 interface Audit {
-  auth?: AuthContext | null;
+  auth: AuthContext;
   commandKind: string;
   workspaceId?: string | null;
   streamId?: string | null;
@@ -652,7 +652,7 @@ async function setTransaction(tx: Sql): Promise<void> {
 }
 
 async function insertAudit(tx: Sql, audit: Audit): Promise<void> {
-  const auth = audit.auth ?? null;
+  const auth = audit.auth;
   await tx`
     INSERT INTO swarm.audit_log (
       actor_user, actor_agent_principal, actor_run,
@@ -678,22 +678,27 @@ async function insertAudit(tx: Sql, audit: Audit): Promise<void> {
   `;
 }
 
-async function standaloneAudit(audit: Audit): Promise<void> {
-  try {
-    await db.begin(async (tx) => {
-      await setTransaction(tx);
-      await insertAudit(tx, audit);
-    });
-  } catch (error) {
-    console.error("command audit write failed", safeError(error));
-  }
-}
-
 function safeError(error: unknown): string {
   if (error instanceof Error) {
     return `${error.name}: ${stripControls(error.message) ?? ""}`.slice(0, 512);
   }
   return "unknown error";
+}
+
+function logCommandFailure(
+  event: "command_pre_auth_failure" | "command_request_failure",
+  commandKind: string,
+  outcome: string,
+  reason: string,
+  detail?: string,
+): void {
+  console.error(JSON.stringify({
+    event,
+    command_kind: stripControls(commandKind)?.slice(0, 64) || "unknown",
+    outcome,
+    reason,
+    ...(detail === undefined ? {} : { detail: stripControls(detail) }),
+  }));
 }
 
 function exactKeys(
@@ -2288,11 +2293,12 @@ async function handleTransaction(
       ? await authenticateHuman(tx, verifiedHuman)
       : null;
     if (!auth) {
-      await insertAudit(tx, {
-        commandKind: kind,
-        outcome: "authn",
-        reason: "unauthenticated",
-      });
+      logCommandFailure(
+        "command_pre_auth_failure",
+        kind,
+        "authn",
+        "unverified principal",
+      );
       return { status: 401, body: { error: "unauthenticated" } };
     }
     await afterStep(3);
@@ -2938,21 +2944,23 @@ async function handleRequest(request: Request): Promise<Response> {
     typeof body.command_id !== "string" ||
     !COMMAND_ID_RE.test(body.command_id)
   ) {
-    await standaloneAudit({
-      commandKind: kind,
-      outcome: "validation",
-      reason: "invalid command_id",
-    });
+    logCommandFailure(
+      "command_pre_auth_failure",
+      kind,
+      "validation",
+      "invalid command_id",
+    );
     return json(400, { error: "invalid_request" });
   }
 
   const credential = bearer(request);
   if (!credential) {
-    await standaloneAudit({
-      commandKind: kind,
-      outcome: "authn",
-      reason: "unauthenticated",
-    });
+    logCommandFailure(
+      "command_pre_auth_failure",
+      kind,
+      "authn",
+      "missing bearer",
+    );
     return json(401, { error: "unauthenticated" });
   }
 
@@ -2960,22 +2968,24 @@ async function handleRequest(request: Request): Promise<Response> {
   let agentTokenHash: Uint8Array | null = null;
   if (credential.startsWith("swm_agt_")) {
     if (!AGENT_TOKEN_RE.test(credential)) {
-      await standaloneAudit({
-        commandKind: kind,
-        outcome: "authn",
-        reason: "unauthenticated",
-      });
+      logCommandFailure(
+        "command_pre_auth_failure",
+        kind,
+        "authn",
+        "invalid agent token",
+      );
       return json(401, { error: "unauthenticated" });
     }
     agentTokenHash = await sha256(credential);
   } else {
     const { data, error } = await authClient.auth.getUser(credential);
     if (error || !data.user) {
-      await standaloneAudit({
-        commandKind: kind,
-        outcome: "authn",
-        reason: "unauthenticated",
-      });
+      logCommandFailure(
+        "command_pre_auth_failure",
+        kind,
+        "authn",
+        "unverified user token",
+      );
       return json(401, { error: "unauthenticated" });
     }
     const metadata = record(data.user.user_metadata);
@@ -3018,16 +3028,17 @@ async function handleRequest(request: Request): Promise<Response> {
     }
     const isTestRollback = error instanceof TestRollback;
     const isLockTimeout = dbCode(error) === "55P03";
-    await standaloneAudit({
-      commandKind: kind,
-      outcome: "error",
-      reason: isTestRollback
+    logCommandFailure(
+      "command_request_failure",
+      kind,
+      "error",
+      isTestRollback
         ? "test_rollback"
         : isLockTimeout
         ? "lock_timeout"
         : "internal_error",
-      detail: safeError(error),
-    });
+      safeError(error),
+    );
     return isLockTimeout
       ? json(503, { error: "temporarily_unavailable" })
       : json(500, { error: "internal_error" });
