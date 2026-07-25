@@ -753,7 +753,46 @@ continuously (this file + commits) — assume your session can die at any moment
      polish makes the front door nicer on a building with no rooms.
   3. **Scope P3 through the adversarial reviewer before any brief** (§0e practice 3). Dispatched.
   **Consequence for P2-3:** unchanged and still held — it is now *after* P3-1, not next.
-- **P3-1 (minimum coordination slice) — SCOPING, contracts not yet pinned.** Spec §9 P3 is
+- **★ P3-1 CUT ADOPTED (reviewed 2026-07-24): ADVISORY TASK-GRAIN RESERVATIONS ONLY.**
+  `= advisory task-grain reservations + visibility in status/list + auto-place on acquire with
+  plain-language narration.` **OUT:** messages, board, wiki, trusted-content, ACP, ETag
+  service-state, ASK/claim, repo-scoped anything, multi-grain, pre-landing check,
+  `create_workspace` CLI. **P3-2 = workspace messages** — and it is *construction*, not
+  "expose the P1 substrate" (below).
+  - **★ THE "CHEAP UNLOCK" WAS FALSE — verified by execution, twice independently.** The Lead
+    proposed pairing reservations with messages because §2.13 says the durable per-recipient
+    inbox substrate shipped at P1. What exists: `swarm.inbox_deliveries`
+    (`20260723000001_p1_schema.sql:424` — message_event_id, workspace_id, recipient_principal,
+    enqueued/delivered/acked), owned, RLS-enabled, exposed for read. What does **not** exist:
+    any `message` command kind in `src/protocol/`, any writer to `inbox_deliveries` in
+    `supabase/functions/command/index.ts`, any send verb, any reducer, any read projection.
+    **It is a delivery-ack table skeleton, not a messaging plane.** Spec prose overselling a
+    table is the §3 error class one layer up: *trusting a design doc's account of what exists
+    instead of executing against the code.* Messages therefore costs event schema + command path
+    + tenancy + untrusted-content rules + delivery/ack + CLI + tests — a full slice. Pairing it
+    with reservations would have shipped two substrates under one name (phase inflation, §1b).
+  - **Why task grain only:** it is the smallest unit already in the authority model (`acquire`
+    exists). Path/component/project grains need canonicalization and overlap math — that is
+    where abuse and confusion live, and it is not worth paying for the first coordination demo.
+  - **Two blockers cleared by review, both of which could have reshaped the plan:** the spec `:369`
+    launch gate blocks **landing claims**, not P3-1 reservations (build the reservation tests
+    *with* the feature); and **`create_workspace` is NOT required for P3-1** — it remains real
+    debt for the self-serve story, just not on this path.
+  - **★ Auto-placement must be NARRATED, never silent.** Spec `:873` auto-places on claim so
+    newcomers skip the verb; silent auto-place reproduces §1c feedback #2 exactly ("didn't know
+    what I was doing or why"). Required: (1) `coswarm status` / `reservations` shows who holds
+    what, scope, expires-in, in P2-2's voice; (2) acquire narrates *"Noted you're working on
+    <scope> (advisory — others can still edit)"*; (3) overlap **warns, never blocks**; (4) no
+    second silent mechanism — no hidden env, no skill-only knowledge.
+  - **Honest demo:** two humans in a fixture workspace, both accepted via P2-1 → A acquires task
+    T, a reservation appears and status shows it → B sees A's advisory hold and is warned on
+    overlap → **neither is blocked from editing**. Comprehension is the product. If that demo
+    seems to need messages to "feel like coordination", say plainly that chat stays on the local
+    swarm CLI until P3-2 — **do not fake it with half an inbox.**
+  - **Contract pins still owed before any brief:** tenancy, TTL max, holder binding,
+    advisory-never-blocks, untrusted reason text, status rendering, no-prompt agent path.
+    **No Quill until those pins pass review.**
+- **P3-1 — superseded scoping notes (kept for the reasoning, not the conclusion).** Spec §9 P3 is
   enormous (reservations, trusted-content, structural wiki, board, messages, ACP transport,
   triggers, ASK/claim, ETag reconcile, awaiting-human, heartbeats, triage, dead-letter) and
   shipping it as one phase contradicts §1b outright. **Lead5's proposed cut, under review:**
