@@ -531,8 +531,34 @@ Cost of the two misses: one `grep -c` and one `git log`. **Handoffs are the long
 write and the most expensive place to carry a stale fact** (Lead5) — a successor inherits them as a
 to-do list. This applies to *this section and every §0<n> baton in this file.*
 
+**★★ 11a. AND FRESHNESS CANNOT CLOSE THE WINDOW — MARK WHICH FACTS ARE VOLATILE (Ferry, correcting
+its own rule one hour later, after Sable found a drift in the handoff Ferry wrote *under* the rule).**
+Ferry's lane close quoted `origin/main = c43e12e`; Sable read `2b0d5db`; Ferry then read `dce46ae`.
+**Three SHAs, three readings, ten minutes — and Ferry HAD re-derived in the turn it wrote.** Practice
+11 was followed and the fact was stale anyway. **A FRESHLY TAKEN PHOTOGRAPH IS STILL A PHOTOGRAPH.**
+Re-deriving narrows the interval in which you were right; it does not confer durability.
+**So a handoff must MARK ITS VOLATILE FACTS AND INSTRUCT THE READER TO RE-DERIVE THEM. Freshness is a
+courtesy on top of that, not a substitute for it.**
+**★ AND THE USEFUL AXIS IS NOT FRESH-VERSUS-STALE. IT IS: WHAT CAN CHANGE THIS FACT, AND WOULD I HEAR
+ABOUT IT?** A ref nobody writes is durable at any age; a ref five agents push is stale on arrival
+however recently you read it. Sort a handoff by volatility, not by importance:
+  · `origin/main` — **VOLATILE**, moved three times in ten minutes. Never authority (§0e.10).
+  · a trust flag / any human-flippable state — **VOLATILE**, and nobody announces the flip.
+  · a branch ref **no process advances** — **STABLE at any age**, and stable *for a reason you can
+    state*, not because you checked recently.
+  · a defect count after a fix — **stable by direction of travel** (monotonic once closed).
+  · a hold-dependent fact — stable *only while the hold is*; name the hold as the thing holding it.
+*Ferry had already applied the right treatment to the one fact it felt uneasy about — writing "do not
+take this line, re-derive it" about the trust state — and applied none of it to the SHA, which was the
+more volatile of the two.* **Instinct picked the right mechanism and the wrong target.**
+
 **12. ★★ CONVERGENCE COUNTS ONLY IF THE METHODS COULD HAVE DISAGREED, AND IN DIFFERENT WAYS
-(Atlas + Ferry, 2026-07-25 — the POSITIVE half of §0e.3's rule).**
+(2026-07-25 — the POSITIVE half of §0e.3's rule). *Two clauses, two authors:* the CONVERGENCE half is
+Atlas's and Ferry's, who together with Lead5 hit one answer by three probes that fail differently;
+the OPERATIONAL half below — grep for the defect, not the fix — is **LEAD5'S**, stated as a general
+rule before either had generalised it, and arrived at independently by **Sable**. Recorded at Atlas's
+insistence after the Lead misattributed both clauses to Atlas and Ferry — Lead5 is the one seat with
+no lane of its own to be credited from.**
 "Convergence is not corroboration when reviewers share a blind spot" is the negative half and it is
 all this program had. The positive case, with evidence: **three methods that fail differently agreed
 on one residual citation** — a positional `sed`, an exhaustive token count, and a defect-grep. That
