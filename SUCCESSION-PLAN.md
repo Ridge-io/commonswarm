@@ -747,10 +747,23 @@ continuously (this file + commits) — assume your session can die at any moment
   `coswarm` and the human never touches a terminal. Scope reviewed adversarially by Sable
   before any brief existed (§0e practice 3). **Verdict: right slice, wrong to ship before R1.**
   - **HOLD lifts on exactly one of:** (a) uxtest R1 completes; (b) the operator explicitly
-    releases R1 ("don't wait"); (c) **timebox 2026-07-27 ~20:00** (72h) expires — and the
-    release reason is **recorded** in this file either way. Operator release supersedes the
-    timebox in both directions. **Quill does not build until the hold lifts.** Writing the full
-    brief during the hold is fine **if labeled HOLD SHIP**.
+    releases R1 ("don't wait"); (c) the timebox expires. Operator release supersedes the timebox
+    in both directions. **Quill does not build until the hold lifts.** Writing the full brief
+    during the hold is fine **if labeled HOLD SHIP**.
+  - **★ TIMEBOX — started 2026-07-24 20:00, expires 2026-07-27 20:00 (72h).** The start is
+    recorded here **so the box cannot be quietly restarted**; a later Lead extending it must
+    say so in this file, in the open. 72h over 48h deliberately: a 48h box would mostly fire on
+    *operator unavailability*, which is a false "judgement" release dressed as a decision; 72h
+    is still short enough that the hold can't become fleet-as-excuse.
+  - **Release reason is MANDATORY and drawn from a closed set** — no free-text rationalising:
+    `r1_complete` | `operator_release` | `timebox_expired_operator_unavailable` |
+    `timebox_expired_with_cli_risk_accepted`.
+  - **★ `timebox_expired_*` DOES NOT AUTO-SHIP.** It lifts the hold only far enough to write a
+    HOLD SHIP brief for an adversarial pass. **Landing still requires that pass plus green
+    suites.** An expiring clock is permission to *propose*, never permission to *merge*.
+  - **★ If the reason is operator-unavailable, R1 STAYS SCHEDULED.** Shipping the skill does not
+    cancel the raw-CLI measurement debt — it defers it, and the debt is recorded here until R1
+    actually runs. This is the pressure-drop failure mode (below) made procedural.
   - **Why the hold (Sable's correction to the Lead's framing, which was sharper than the
     Lead's):** shipping the skill does **not** invalidate R1 — R1 measures the CLI, and CLI
     findings stay true of the CLI. What it changes is **what we optimize for**: the skill
@@ -797,6 +810,19 @@ continuously (this file + commits) — assume your session can die at any moment
 - **P2–P5:** per spec §9. P5 = public free-to-start SaaS on b9rk.com.
 
 ## 5. Queued design tasks (don't lose these)
+
+- **★ PROCESS GAP: there is no decision ledger, but briefs cite decision numbers
+  (found 2026-07-24).** `#80`–`#83` are cited as authority in `docs/design/P2-CONNECT-UX-BRIEF.md`,
+  evidence docs, and this file — but they are **narrative embeds**, not entries in any canonical
+  file. There is no `docs/design/DECISIONS.md`. Current known homes: **#80** SUCCESSION (connect-loop
+  wiring a–f); **#81** `docs/evidence/ux-connect-polish` + briefs (pending `command_id`); **#82/#83**
+  P2-CONNECT-UX-BRIEF + SUCCESSION + the `p2-connect-accept-link` evidence. Citing a bare `#8x`
+  with no canonical source is how numbers **drift or get double-allocated**.
+  **Minimal fix (low priority — do NOT let it displace P2-3 or R1):** create
+  `docs/design/DECISIONS.md` with `id | date | one-line rule | pointer to brief/evidence | status`,
+  backfill #80–#83 from the files above, and thereafter allocate the next integer **only** by
+  appending to that file. **Until it exists, write "contract pin" plus a section anchor — never
+  invent `#84`.** (Followed already: the P2-3 contracts in §4 are pins, not numbered decisions.)
 
 - **Add the "Access plane" track to the spec** (operator approved). A key-less
   secrets broker + policy egress proxy so agents operate third-party services
