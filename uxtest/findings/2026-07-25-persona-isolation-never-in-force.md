@@ -68,6 +68,39 @@ false report has shipped. **That is timing, not design.**
   step*, which measurement 1 shows was never reaching the persona anyway — **zero isolation cost**,
   because there was no isolation coverage there to lose.
 
+## ★ AND CLEANLINESS WAS BEING VERIFIED AT THE WRONG LAYER TOO — MEASURED, AND DIRTY
+
+Added after the fact, because it is the same defect one layer over and it was found the same day.
+
+Every "the machine is clean" check this program has run reads the **swarm registry**: zero agents in
+`uxtest-r1` on both machines, personas' cwds untouched, reset cold. Those checks were **true**.
+
+**They were also the wrong object.** A cmux *surface* is a separate object from the agent that ran in
+it, and it survives that agent's exit — `swarm leave` does not close a tab, and `kill <pid>` does not
+either. Dana enumerated the surface layer directly (`cmux list-pane-surfaces`) and found **five**: its
+own, plus **four orphaned spawn-created tabs** — DiagB, Beacon, DiagC, DiagD. Their agents had left
+the swarm. The surfaces and their processes had not.
+
+**So the registry said `uxtest-r1` is empty, and that was true, and the machine was not clean.**
+
+### The requirement this adds
+**A round's pre-flight must sweep SURFACES, not agents.** Enumerate them, and treat any
+spawn-created surface in or near a persona area as contamination. A registry-only cleanliness
+assertion is a check on the wrong noun — and, like `preflight.sh:126`, it will pass while the thing
+it names is false.
+
+### ★ And the uncomfortable part, recorded because it is luck rather than method
+**THE INSTRUMENT WAS THE DEBRIS.** Those four orphaned tabs were the only true samples of a
+spawn-created persona environment that has ever existed — and they are the reason the human2 arm of
+the leak could be measured *without running a spawn at all*. The contamination risk became the
+measuring device.
+
+That cuts both ways and both readings are correct: **probe residue is contamination for the round and
+evidence for the diagnosis, and which one it is depends on what you are about to do next.** A blanket
+"always clean up immediately" would have destroyed the only instrument available. A blanket "leave it"
+silently pollutes the next round. Neither rule is safe on its own; **the sweep belongs in the round's
+pre-flight, not in the prober's reflex.**
+
 ## What has to happen before a round claims isolation
 
 1. **Decide whether §7.2.2 is enforced or dropped.** An unenforceable claim in a measurement harness
