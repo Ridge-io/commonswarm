@@ -444,7 +444,7 @@ ruler. `df -k` is now enforced in the script header.
 
 | condition | source | why |
 |---|---|---|
-| system free **< 35%** | `memory_pressure` | fixed denominator, 16 GB physical |
+| system free **< 30%, worst of 3** | `memory_pressure` | fixed denominator, 16 GB physical. **Threshold and sampling both corrected — see §8a-v** |
 | swap used **> 8192 MB** | `vm.swapusage used` | absolute, monotonic, no denominator |
 | swap headroom **< 25 GB** | `df -k` + `swap_total` | **the conserved quantity** — space the swap system can occupy in total |
 | compressor / swap_total / disk | — | printed as **diagnostics, not trips** |
@@ -1113,3 +1113,49 @@ The rest of A1 came from the schema and live `curl` and stands.
 **Stark version for anyone measuring:** Dogfood Workspace holds **9 signals, of which 6
 are mine.** My probes are 67% of that workspace's entire signal history. The three genuine
 ones are the G5 canary, the spawn-hang `working-on`, and the bounded-timeout `ask`.
+
+---
+
+## 8a-v. A threshold placed inside the instrument's quantisation is a coin
+
+**Found after this document was first landed; recorded here because the doc and the shipped
+script had already drifted apart without it.**
+
+Lead6 observed the `system free` condition flapping GREEN→RED→GREEN within seconds and asked
+whether it was noise the gate should smooth, or the instrument correctly catching a momentary
+dip. **It was neither.** 25 rapid samples of `memory_pressure` free percentage:
+
+```
+35 35 35 35 35 35 35 35 35 35 35 35 35 35 35 34 34 34 34 34 34 34 34 34 34
+min 34   max 35   spread = ONE point
+```
+
+Against a 35% trip: **10 RED / 15 GREEN on a machine whose state never changed.** The signal is
+a quantised integer with a one-point range and the threshold was sitting inside it. **It was a
+coin by construction, not by noise** — and no amount of smoothing fixes a threshold placed on
+the operating value; it only changes which way the coin lands more often.
+
+**Two fixes, both shipped in `scripts/envelope-check.sh`:**
+
+1. **Worst of 3 samples** — takes the minimum, so it fails safe toward *do not spawn*, and a
+   genuine dip inside the sampling window still trips it.
+2. **Threshold 35 → 30** — so it *separates* the states observed on 2026-07-25 (28–29% during
+   the real excursion, 34–37% marginal-but-working for hours, 64% recovered) rather than
+   bisecting the idle range.
+
+Verified: **ten consecutive runs, identical verdict, no flap.** Before the fix the same machine
+produced both answers within seconds.
+
+**The trade-off, stated because it is a real loss:** 30% is less sensitive. A sustained 32% is
+now GREEN and would previously have been RED. Accepted because the machine demonstrably
+functioned at 34–37% for hours while the gate would have been telling everyone not to spawn —
+and **a gate that is RED during normal operation gets ignored**, which is the failure mode that
+ends with nobody reading it at all. The RED remains producible: 28–29% occurred twice that day.
+
+> **★ THE GENERAL FORM — a threshold placed within the instrument's quantisation is a coin, and
+> it looks exactly like a noisy signal. The tell is a spread of one unit: if min and max differ
+> by a single quantisation step, the defect is the threshold's placement, not the instrument.**
+
+**Also note:** this section exists because the *document* said 35% while the *script* said 30%
+— a doc/artifact disagreement of exactly the class catalogued elsewhere in this file, created
+by landing the two at different moments. Whoever edits either should check the other.
