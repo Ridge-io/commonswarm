@@ -593,6 +593,144 @@ the minimum two-human coordination loop E2E — second human onboards via invite
 accept → both see membership/tasks/messages — ahead of deeper authority machinery
 (remaining T-13–T-25 sweep, artifact plane, knowledge plane trail behind that loop).
 
+## 1d. ★★ COMMUNICATION-FIRST STEER (operator, 2026-07-24 late) — RE-WEIGHTS P3, OVERRIDES THE RESERVATION CUT
+
+**The most consequential steer since §1c. Read it before scoping any P3 work.** It arrived while
+the Lead was about to ask which *grain* advisory reservations should use — and it moots the
+question, because reservations at any grain double down on the structure the operator is
+questioning.
+
+### What the operator said (transcribed, lightly de-garbled)
+
+- **"I'm honestly concerned that we're still imposing too much structure on this. The majority of
+  what we should be doing is facilitating communication."**
+- **"Tasks are in themselves a type of communication"** — of the things to be done and the steps;
+  who is working on what; where it came from; what it relates to; who owns it, who created it,
+  who is responsible, who will test it.
+- **"The more structure we impose in the system, the more rigid it is, and the less simple it is
+  to navigate and utilize."**
+- **"What does that mean for tasks and leases? I don't know. Maybe they're entirely unnecessary in
+  actuality, because the code lives in Git."**
+- **Topology, stated plainly:** swarms coordinating *across the internet* — one swarm on one
+  machine (or several), another swarm on a different machine, therefore **operating in different
+  local git repositories**. Built for software development and operating internet businesses.
+- **What agents actually do all day:** interact with APIs, CLIs, and local git repos; create PRs;
+  review others' PRs; work with GitHub and GitHub issues.
+- **The real need:** *"there needs to be some communication of order of operations as agentic
+  engineering swarms are hopping and dancing around a codebase, but each in their own local
+  environments… they need to be communicating what they're changing so that **if necessary — and
+  in many cases it won't be necessary** — they'll know to maybe review or merge or hold a PR, or
+  wait for something on the other end of the swarm to be completed before they move on."*
+- **Cross-pollination:** *"they might suggest something to work on that's related to what they're
+  working on that they maybe don't have time to get to."*
+- **Scale picture:** PromptEden is on **train S of Q5** today — five things queued, S trains of PR
+  merging and releases. *"And that's just my swarm. So what happens when I have Calvin doing the
+  same thing on his side and Charlie doing the same thing on his side?"*
+- **★ The thesis:** *"The whole point of coswarm is to let agents communicate with each other what
+  they're doing and share context, share plans, and to facilitate that level of communication to
+  the benefit of the other swarms — but also occasionally communicating human to human."*
+- **Human-to-human examples:** *"I might want to let Calvin know I'm working on this, or shifting
+  my attention to something that came up in [Sentry]"*; *"I might want to let Calvin know I think
+  we should focus on marketing, or Calvin might let me know he thinks we should focus on the
+  reliability of the monitors extraction system, and that he'll move on to onboarding next."*
+- **Persistence:** *"All of this team coordination and tracking can happen in coswarm and be stored
+  in the cloud so that between swarm sessions there can be some persistence across time and space."*
+- **The delegated question:** *"How important are leases and tasks? I guess it might be important
+  to lease a subsystem or something. I don't know. **Maybe you can figure out what the shape is of
+  the tools that are actually useful here.**"*
+
+### Lead5's reading — five rulings
+
+**R1. The authority machinery was built for a different topology than the one we are selling into.**
+A lease prevents double-writes to **shared mutable state**. The *local* swarm genuinely has that:
+one machine, one worktree, N agents. **Cross-swarm does not.** Each swarm holds its own clone; the
+only genuinely shared state is **GitHub**, which already has concurrency control — branches, merge
+conflicts, PR review, rulesets. A lease held across two clones protects nothing that git does not
+already protect at merge time.
+
+**R2. §0's own ethos already draws the correct line, and the reservation slice was on the wrong
+side of it.** *Friction is justified only by irreversibility.* Code work is **reversible** (revert,
+PR review, branch protection) → awareness, never locks. **Deploy / release / prod migration is
+irreversible** → that is where hard authority belongs (§2.10 mediated apply). P3-1 proposed adding
+soft-state machinery to the *reversible* side. That is backwards by our own stated rule.
+
+**R3. An advisory reservation is a message with machinery bolted on.** Strip TTL, epoch binding,
+holder derivation, fencing and auto-clear-on-lease-release, and what remains is: *"I'm working on
+X until roughly Y."* That is a **signal**. Even the operator's own "maybe lease a subsystem" case
+resolves to advisory: the right response to *"Calvin is refactoring extraction"* is **judgement,
+not refusal** — the other party may hold an urgent Sentry fix in that subsystem. **A loud,
+well-addressed notification beats a lock**, because the correct action is context-dependent and
+only a human or a well-informed agent can pick it.
+
+**R4. GitHub holds the artifacts; coswarm holds the intentions.** For anything GitHub already
+models — issues, PRs, reviews, releases — coswarm **references, never replicates**. Coswarm's
+unique job is the layer GitHub lacks: **real-time cross-swarm awareness of intent and attention,
+between agents that do not share a repo.** This is §1b's "don't drift into infrastructure nobody
+asked for" given a concrete, testable edge.
+
+**R5. What survives from P0/P1 — nothing is thrown away, the priority order changes.**
+*Load-bearing for **any** cross-swarm product, including a pure message plane:* identity, tenancy,
+memberships, invitations, principals, agent tokens, audit, revocation. Keep all of it.
+*Over-built for cross-swarm:* the task/lease command state machine (acquire / renew / handoff /
+takeover / fence). It is **not wasted** — it is the *local* swarm's proven model and may still
+serve **within** a swarm — but it is **not the cross-swarm coordination primitive**, and it should
+stop being treated as the thing P3 extends.
+
+### RULING
+
+**P3-1 (advisory reservations) is PARKED, not cancelled** — see §4. **The message/signal plane
+becomes the head of P3.** Note this does **not** contradict §1b, which already names *"advisory
+reservations, messages, board"* as the P3 payoff; it **re-weights which of the three comes first**,
+on the operator's explicit instruction.
+
+**★ And note the irony worth remembering:** we found `swarm.inbox_deliveries` as an empty shell and
+concluded messages were *expensive*, so we deferred them and prioritised reservations. The shell
+was a **signpost**, not a warning. We deferred the only thing that mattered.
+
+### Proposed shape (Lead5, under adversarial review — not yet pinned)
+
+**One primitive: the signal.**
+
+```
+{ from, to?, about?, kind, body, until?, state }
+```
+
+- **`from`** — principal / human / swarm (P1 identity, already built)
+- **`to`** — optional: a swarm, a human, an agent, or workspace broadcast
+- **`about`** — optional subject: a **GitHub URL** (repo / PR / issue / branch) or a named area
+- **`kind`** — `working-on` | `heads-up` | `steer` | `fyi` | `ask`
+- **`body`** — plain text; **UNTRUSTED DATA, never instruction** (P3-1 pin 5 survives intact and
+  matters more here, because the body *is* the payload)
+- **`until`** — optional soft horizon for `working-on`; **read-time predicate, never a cron sweep**
+- **`state`** — `open` | `acked` | `resolved`
+
+**Three reads:** *what's happening* (workspace feed / board) · *what's for me* (inbox) ·
+*what's about this PR* (subject query).
+
+**It serves every operator example directly:** `working-on` answers duplicated effort;
+`heads-up` bound to a PR answers order-of-operations ("hold this, wait for that");
+`steer` answers human-to-human attention-shifting; `ask`/`fyi` answers cross-swarm suggestions.
+All of it persists in the cloud across session death — the "time and space" requirement.
+
+**Pins that transfer unchanged from the P3-1 review:** 1 (tenancy), 2 (read-time horizon, no cron
+dependency), 5 (untrusted text), 6 (status/feed rendering in P2-2's voice), 7 (no-prompt agent
+path), 8 (audit on commands, not reads), 9 (idempotency), 11 (hosted read-plane canary before
+believing an empty feed), 12 (narration), 13 (**rate/fairness — now MORE important**: an open
+message plane between separate organisations is spammable in a way a task board is not), 14 (no
+pub/sub day one — polling suffices).
+**Pins that fall away:** 3 (holder/epoch binding), 4 (advisory-never-blocks — vacuous once nothing
+blocks), 10.
+
+**Open questions for review, honestly flagged:**
+1. **Is `kind` an enum at all**, or a free tag? An enum is structure — exactly what the steer warns
+   against — but a free tag makes agent behaviour unpredictable. This is the central design tension.
+2. **Does `about` need a typed GitHub reference**, or is an opaque URL/string enough day one?
+3. **Do `state`/ack exist in v1?** §2.13 wants per-message acks; acks are also structure creep.
+4. **★ Should the LOCAL swarm's task model bridge upward** — local `swarm task` activity
+   auto-emitting `working-on` signals to the cloud? That would give cross-swarm awareness **for
+   free** from a model that already works and that the PromptEden swarm already runs daily. It is
+   the auto-placement idea from P3-1, moved to the layer where it is honest.
+
 ## 2. Method
 
 Build **phase by phase**, each phase: **build → test (green) → model-inversion
@@ -753,7 +891,17 @@ continuously (this file + commits) — assume your session can die at any moment
      polish makes the front door nicer on a building with no rooms.
   3. **Scope P3 through the adversarial reviewer before any brief** (§0e practice 3). Dispatched.
   **Consequence for P2-3:** unchanged and still held — it is now *after* P3-1, not next.
-- **★ P3-1 CUT ADOPTED (reviewed 2026-07-24): ADVISORY TASK-GRAIN RESERVATIONS ONLY.**
+- **★★ P3-1 IS PARKED (operator steer §1d, 2026-07-24 late) — DO NOT BUILD THIS AS SCOPED.**
+  The operator's communication-first steer supersedes this cut: *"I'm concerned we're still
+  imposing too much structure… the majority of what we should be doing is facilitating
+  communication."* Reservations at **any** grain double down on the structure being questioned,
+  and §1d R2 shows the slice sat on the wrong side of §0's own line (machinery on a *reversible*
+  act). **The message/signal plane replaces it at the head of P3.**
+  **Everything below is PRESERVED deliberately, not stale:** the 14 contract pins were paid for by
+  a full adversarial round, and **11 of them transfer directly** to the signal plane (§1d lists
+  which). Park, do not delete. If a `working-on` signal ever grows a horizon, pins 2, 5, 8, 9, 11
+  and 13 are already reviewed and ready.
+- **P3-1 (superseded cut, reviewed 2026-07-24): ADVISORY TASK-GRAIN RESERVATIONS ONLY.**
   `= advisory task-grain reservations + visibility in status/list + auto-place on acquire with
   plain-language narration.` **OUT:** messages, board, wiki, trusted-content, ACP, ETag
   service-state, ASK/claim, repo-scoped anything, multi-grain, pre-landing check,
