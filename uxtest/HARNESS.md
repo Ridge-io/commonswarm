@@ -523,6 +523,31 @@ timeout; on timeout **re-send `/join-swarm`** (idempotent); after a bounded numb
 registration. Record join latency in `metrics.json` so degradation is visible instead of becoming
 an occasional mystery round.
 
+**3. The idempotence short-circuit — exit 0 lying in its third costume (2026-07-25).** Both
+launchers opened with "if an agent by this name is already present, we're done, exit 0." That is
+the same lie as #2 wearing a helpful face: it reports success while skipping the virgin-context
+spawn probe, the distinct-cmux-surface assertion, and the `carryover=false` flip. The round then
+runs to completion and `REPORT.md` prints `Carryover: true` — which under §7.4/§7.7 forbids every
+discovery-UX claim the round exists to produce. A green launch that has quietly converted the
+round into an expensive no-op.
+
+The path is a re-run, not a first run: `reset-round.sh`'s `swarm create` is *create-or-update* and
+does not clear agents, and its only cleanliness assertion was the **message** count — so a persona
+that joined during an aborted attempt survives the reset with a chat history of zero and looks
+exactly like a fresh round. Worst-case timing, too: it fires on the re-run, when someone is
+already debugging something else and is least likely to interrogate a green launch.
+
+**The rule: IDEMPOTENCE MEANS THE EVIDENCE IS RECORDED, NOT THAT A PROCESS WITH THAT NAME
+EXISTS.** A skip-if-already-done check must test the *artifact the step was supposed to produce*
+(`human2_spawn_probe == passed-distinct-cmux-surface` and `fresh_human2_name` matching this
+round; `human1_joined_at` and its latency fields populated), never the mere presence of something
+named like the result. Reset asserts **zero agents** as well as zero messages, because a surviving
+agent with no chat is precisely the hole.
+
+Generalised, this is §7.10's principle pointed at the harness instead of the personas: *if the
+scripts did not observe it, the harness does not assert it* — and "an agent with the right name is
+running" is not an observation of the thing we needed to observe.
+
 ### 7.10 Metrics are authoritative over persona self-report
 
 An LLM will not respect wall-clock. It can spam commands and declare "ten minutes of trying" in

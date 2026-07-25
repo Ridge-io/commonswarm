@@ -60,21 +60,30 @@ forcing completion.
 `;
 fs.writeFileSync(path, brief, { mode: 0o600 });
 NODE
+# §7.9: lint the STAGED brief before it reaches the persona's trusted cwd. A lint
+# that runs after delivery can only report a burn, never prevent one.
+lint_brief "$brief_file"
 rsync -a "$brief_file" "$UXTEST_REMOTE:$cwd/BRIEF.md"
 remote_zsh "
   chmod 600 '$cwd/BRIEF.md'
   printf '%s\n' '$round' >'$parent/current-round'
   chmod 600 '$parent/current-round'
 "
-lint_brief "$brief_file"
 audit_brief "$round" human2 "$brief_file"
 remote_zsh "
   '$UXTEST_REMOTE_REPO/uxtest/scripts/verify-persona-workspace.sh' \
     round '$cwd' Human2 '$round'
 "
 
-if wait_for_agent_remote "$swarm_name" "$human2" 2; then
-  say "$human2 is already present; fresh-persona launch is idempotently satisfied."
+# ★ IDEMPOTENCE MEANS THE EVIDENCE IS RECORDED, NOT THAT A PROCESS WITH THAT NAME
+# EXISTS (§7.9b). A bare presence check exits 0 having skipped the virgin-context
+# spawn probe, the distinct-surface assertion, and the carryover flip — leaving
+# carryover=true, which forbids every discovery-UX claim the round exists to make.
+if [ "$(json_field "$setup" human2_spawn_probe || true)" = \
+  "passed-distinct-cmux-surface" ] &&
+  [ "$(json_field "$setup" fresh_human2_name || true)" = "$human2" ] &&
+  wait_for_agent_remote "$swarm_name" "$human2" 2; then
+  say "$human2 is present AND this round already recorded a passed spawn probe; launch is idempotently satisfied."
   exit 0
 fi
 

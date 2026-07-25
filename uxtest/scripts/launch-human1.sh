@@ -25,7 +25,13 @@ mkdir -p "$parent" "$cwd"
 install -m 600 "$UXTEST_DIR/personas/human1-inviter.md" "$parent/CLAUDE.md"
 assert_workspace_sweep "$cwd" "Human1"
 
-node - "$cwd/BRIEF.md" "$round" "$swarm_name" "$human1" "$human2" \
+brief_file="$(mktemp "${TMPDIR:-/tmp}/uxtest-human1-brief.XXXXXX")"
+cleanup_brief() {
+  rm -f "$brief_file"
+}
+trap cleanup_brief EXIT
+
+node - "$brief_file" "$round" "$swarm_name" "$human1" "$human2" \
   "$UXTEST_HUMAN2_EMAIL" <<'NODE'
 const fs = require("node:fs");
 const [path, round, swarmName, human1, human2, email] = process.argv.slice(2);
@@ -53,15 +59,24 @@ forcing completion.
 fs.writeFileSync(path, brief, { mode: 0o600 });
 NODE
 
-lint_brief "$cwd/BRIEF.md"
+# §7.9: lint the STAGED brief before it reaches the persona's trusted cwd. A lint
+# that runs after delivery can only report a burn, never prevent one.
+lint_brief "$brief_file"
+install -m 600 "$brief_file" "$cwd/BRIEF.md"
 audit_brief "$round" human1 "$cwd/BRIEF.md"
 printf '%s\n' "$round" >"$parent/current-round"
 chmod 600 "$parent/current-round"
 assert_round_brief_only "$cwd" "Human1" "$round"
 
-if "$UXTEST_SWARM_BIN" members --swarm "$swarm_name" 2>/dev/null |
-  grep -Fq "$human1 ["; then
-  say "$human1 is already present; launch is idempotently satisfied."
+# ★ IDEMPOTENCE MEANS THE EVIDENCE IS RECORDED, NOT THAT A PROCESS WITH THAT NAME
+# EXISTS (§7.9b). A bare presence check exits 0 leaving §7.6's join fields null,
+# which silently defeats the join-latency record that makes degradation visible.
+if [ -n "$(json_field "$setup" human1_joined_at || true)" ] &&
+  [ -n "$(json_field "$setup" human1_join_latency_ms || true)" ] &&
+  [ -n "$(json_field "$setup" human1_join_attempts || true)" ] &&
+  "$UXTEST_SWARM_BIN" members --swarm "$swarm_name" 2>/dev/null |
+    grep -Fq "$human1 ["; then
+  say "$human1 is present AND this round already recorded observed-join evidence; launch is idempotently satisfied."
   exit 0
 fi
 

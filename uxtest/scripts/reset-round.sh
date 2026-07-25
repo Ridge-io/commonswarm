@@ -277,6 +277,26 @@ remote_messages="$(remote_zsh "
 [ "$local_messages" = "0" ] && [ "$remote_messages" = "0" ] ||
   die "per-round swarm already contains chat history; choose a new round number"
 
+# `swarm create` is create-or-update: it does NOT clear agents. A persona that
+# joined during an aborted attempt survives a re-reset with zero messages, and
+# launch-human{1,2}.sh would then find it already present. Assert agents too.
+local_agents="$(
+  sqlite3 "$HOME/.swarm/swarm.db" "
+    SELECT count(*)
+    FROM agents a JOIN swarms s ON s.id=a.swarm_id
+    WHERE s.name='$swarm_name';
+  "
+)"
+remote_agents="$(remote_zsh "
+  sqlite3 ~/.swarm/swarm.db \"
+    SELECT count(*)
+    FROM agents a JOIN swarms s ON s.id=a.swarm_id
+    WHERE s.name='$swarm_name';
+  \"
+")"
+[ "$local_agents" = "0" ] && [ "$remote_agents" = "0" ] ||
+  die "per-round swarm already has registered agents (mini=$local_agents, laptop=$remote_agents); a surviving persona is not a fresh round — choose a new round number"
+
 node - "$setup" <<'NODE'
 const fs = require("node:fs");
 const path = process.argv[2];
