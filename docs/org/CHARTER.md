@@ -183,6 +183,42 @@ silently removed three tests and cost a review round.
 
 ---
 
+## 4b. ★★ THE SHARED SUBSTRATE — the near-miss that cost nothing only because two agents talked
+
+**Measured: four processes are cwd'd into the same checkout, and one local database stack serves all
+of them on fixed ports** (`54321`, `54322`). §1 already records that *branch state is shared* between
+two actors in one working directory. **This is that hazard one layer down: the RUNTIME is shared
+too.**
+
+★ **The instance, and it was a near-miss rather than a loss.** The infra lane ran a full integration
+suite in the shared tree — twice. **That suite spawns its own `supabase functions serve` against the
+same local stack the development lane was taking security REDs on.** It was safe only because the
+infra lane asked first and the development lane cleared the window. **Had either skipped that, both
+would have gotten results they could not explain and no way to attribute them** — a green that was
+someone else's serve, or a red that was someone else's teardown.
+
+★★ **AND A GATE POISONED THIS WAY DOES NOT LOOK POISONED.** It looks like a test result. That is the
+whole family this org has spent a day cataloguing — a layer reporting success while doing something
+else — applied to the substrate the gates themselves run on. **One branch switch away from costing a
+ship gate.**
+
+**The rules, and they cost nothing:**
+1. **CLAIM THE STACK OUT LOUD BEFORE RUNNING ANYTHING THAT BINDS ITS PORTS**, and say when you are
+   done. The development lane did exactly this tonight — *"free to stop when appropriate"* — and it
+   is the only reason the collision did not happen.
+2. **DO NOT SWITCH THE SHARED CHECKOUT'S BRANCH.** A bare `git commit` there lands on whoever's
+   branch is checked out; a branch switch yanks the tree out from under a running suite. Use your own
+   worktree outside the repo tree for anything that needs a different ref.
+3. **A TEST RESULT FROM THE SHARED TREE IS ONLY ATTRIBUTABLE IF YOU KNOW WHO ELSE WAS IN IT.** Quote
+   the branch and the commit with the number — a baseline taken on a checkout that has since moved
+   twice is not a baseline. *(An infra baseline of "69/69" was retired tonight for exactly this: the
+   suite grew to 72 because the checkout moved from one branch at one commit to another.)*
+
+★ **AND THE ENVELOPE IS MARGINAL, NOT COMFORTABLE.** With the local stack up the gate reads GREEN —
+but system free has sat as close as **36% against a 35% trip**, one point from RED, while ranging
+29%–64% across the session. **The stack is not what holds it there**; free% was 29% *before* the stack
+came back. Read GREEN as *passing*, not as *headroom*.
+
 ## 5. SHIP CADENCE — the Lead's standing obligation
 
 **Ship small, ship often, ship verified.** The bar for a production deploy:
