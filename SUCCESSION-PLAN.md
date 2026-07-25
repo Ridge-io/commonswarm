@@ -292,6 +292,9 @@ One is triage; the other is capacity.
   `git worktree add <path outside the repo> main` — the worker keeps the primary checkout, the Lead
   writes docs on main, neither can disturb the other. Put it **outside the repo tree** so the
   janitor's debris counter does not adopt it.
+  **Cleanup:** a Lead's worktree under a session scratchpad dies with the session, leaving a stale
+  entry in `git worktree list` pointing at a path that no longer exists. If you see one, it is not
+  a mystery — run `git worktree prune`.
   Same instinct as committing WIP to a branch in the first place: **remove the class rather than
   ask two actors to remember a rule about a shared mutable resource.**
 - **★★ A REVIEW FAN-OUT MUST BE TOLD IT IS READ-ONLY — IN WORDS (2026-07-25, near-miss).**
@@ -1102,6 +1105,12 @@ continuously (this file + commits) — assume your session can die at any moment
   looking. It caught two live bugs in one evening (an empty `sed` extraction where all four cases
   "passed"; `mkdir --version` failing on BSD in *both* arms). In both, the broken instrument would
   have CONFIRMED the hypothesis — and right-by-luck is indistinguishable from right until it isn't.
+  **★ Provenance, stated accurately at its author's insistence, because a mechanism gets adopted on
+  its provenance and a flattering origin story makes it easier to dismiss:** it was not derived. The
+  agent got caught by it *twice in twenty minutes* and only noticed the second time because the
+  first had just embarrassed them. **That is exactly why it is worth having — it requires no
+  cleverness.** You do not have to imagine a counterfactual; you just look at whether your two arms
+  separated. Anyone tired at 3am can run it.
   **★ AND THE META-LESSON: testimony was wrong in both directions all evening; artifacts with
   timestamps were right every time.** When they disagree, the filesystem wins.
   **The rule:** before believing a negative result, confirm the probe could have produced a
