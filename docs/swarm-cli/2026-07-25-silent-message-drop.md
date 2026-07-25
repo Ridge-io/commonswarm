@@ -7,12 +7,21 @@ the Lead before anyone had the right one.
 
 ★★ **CORRECTED AFTER FIRST LANDING — THIS DOCUMENT ORIGINALLY CITED THE WRONG COLUMN.** It claimed 37
 messages "failed" because they had no row in `message_deliveries`. **Absence of a delivery row does not
-mean failure.** Delivery rows are an artifact of the *hook-injection* path; an a2a recipient never gets
-them. Measured:
+mean failure.**
+
+★ **The first explanation for *why* was also wrong, and is corrected here.** It said delivery rows are
+an artifact of the hook-injection path and an a2a seat never gets them. **It is not a property of the
+a2a class — it is a time cutoff.** The same agent, `Anvil`, has **4-of-4** rows in one swarm on
+2026-07-23 and **0-of-3** in another on 2026-07-24/25. The last a2a message with a delivery row
+anywhere is **2026-07-23T12:37**.
+
+**`message_deliveries` has had no coverage for a2a seats since then, so for those recipients the table
+answers neither yes nor no.** The conclusion survives; the reason did not. Measured:
 
 | recipient | messages | with delivery row |
 |---|---|---|
-| Dana (a2a) | 32 | **0** — and they all arrive |
+| Dana (a2a, since 07-24) | 32 | **0** — and they all arrive |
+| Anvil (a2a, 07-23) | 4 | **4** — same class, same table, rows present |
 | Ferry (cmux) | 130 | 129 |
 | Lead6 (cmux) | 178 | 177 |
 
