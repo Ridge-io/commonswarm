@@ -877,6 +877,37 @@ continuously (this file + commits) — assume your session can die at any moment
      about the moment before itself, never about the state after it.** Any state a document
      asserts about its own repo — SHA, tree cleanliness, "nothing in flight" — must be
      re-verified by execution (`git rev-parse HEAD`, `git status`), not quoted.
+  **★★ SIX FACES OF THIS ONE ERROR, ALL OBSERVED IN A SINGLE EVENING (2026-07-24/25), by five
+  different agents — including four instances AFTER the rule was written down.** Keep the concrete
+  faces, not just the principle: the principle is easy to agree with and evidently hard to apply.
+  1. **An endpoint that ANSWERS is not an endpoint that DELIVERS.** Lead4's SSH-origin A2A bridge
+     served a valid agent-card for ~6h while structurally unable to push into the cmux tab.
+  2. **A process with the RIGHT NAME is not the WORK.** `launch-human{1,2}.sh` exited 0 because an
+     agent by that name existed, skipping the spawn probe and the `carryover` flip.
+  3. **A REGISTRY ENTRY naming an address is not an observation of WHAT SERVES that address.**
+     `Anvil [a2a] @ 127.0.0.1:18790` is a pointer at *Yulan's* bridge; reading it as the server
+     produced a false "the doc is stale" report that corrupted a correct doc.
+  4. **The absence of a LATE artifact is not evidence of NON-EXECUTION.** A missing spawn-state
+     *file* was read as "never ran"; the state *directory* (created 71 lines earlier) proved it had
+     run and reached line 38.
+  5. **A SURFACE THAT EXISTS is not a surface that ACCEPTS.** The spawn retry re-sends keystrokes
+     to a surface it never verified is input-ready, so a modal swallows all three attempts.
+  6. **★ AN AGENT'S REPORT THAT SOMETHING DID NOT RUN IS EVIDENCE ABOUT ITS TOOL LAYER, NOT ABOUT
+     THE FILESYSTEM.** An interrupt landing *after* `exec` is reported to the agent as though it
+     landed *before*, and the agent **cannot distinguish those two from inside**. Dana asserted
+     "never executed, zero side effects" about a process that had created a directory two minutes
+     earlier. **The false negative was unreliable BY CONSTRUCTION, not by carelessness** — which
+     matters, because carelessness is fixable by trying harder and this is not. **For any "did X
+     run?", go to the filesystem.**
+  **★ THE PRACTICAL DETECTOR (better than the principle, because it needs no imagination):
+  IDENTICAL ANSWERS WHERE THE ARMS SHOULD HAVE DIFFERED.** "Could this probe have produced a
+  positive?" requires imagining a counterfactual — exactly the imagination that fails when you are
+  tired and the result matches your hypothesis. "Did my two arms actually separate?" requires only
+  looking. It caught two live bugs in one evening (an empty `sed` extraction where all four cases
+  "passed"; `mkdir --version` failing on BSD in *both* arms). In both, the broken instrument would
+  have CONFIRMED the hypothesis — and right-by-luck is indistinguishable from right until it isn't.
+  **★ AND THE META-LESSON: testimony was wrong in both directions all evening; artifacts with
+  timestamps were right every time.** When they disagree, the filesystem wins.
   **The rule:** before believing a negative result, confirm the probe could have produced a
   positive one. Prefer path-only / value-only output modes, absolute paths over `PATH` lookups,
   distinguishing HTTP status classes from empty payloads, and matching on structure rather than
