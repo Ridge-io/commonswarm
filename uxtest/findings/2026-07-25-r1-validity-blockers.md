@@ -38,7 +38,24 @@ orphans were the only observable sample of a spawn-created persona environment i
 why blocker 1 could be measured on the second machine **without running a spawn**. *Sweep before a
 round; preserve while diagnosing.*
 
-## 3. ★ THE TWO MACHINES RUN THE HARNESS ON RUNTIMES TWO MAJOR VERSIONS APART, AND NOTHING CHECKS IT
+## 3. ★ RUNTIME SKEW ACROSS THE TWO MACHINES — A FIX, **NOT** A BLOCKER
+
+★★ **CORRECTED AFTER FIRST LANDING.** This section originally filed the skew as a third *blocker*.
+**It is not one, and the correction came from the lane that found it.** Vane measured the severity
+rather than asserting it: one bundle, verified byte-identical at both ends, **run under both
+interpreters — byte-identical output on every reachable path.** So the skew is real, the mechanism is
+exact, and **the consequence on the paths R1 actually exercises is zero.**
+
+**A finding without a severity is not decision-ready**, and the number supplied here argues *against*
+its own finding's urgency. Left as written, a successor would have treated a config drift as a gate
+on scheduling a round. **It is a fix. Do it; do not wait for it.**
+
+★ And Ferry found the sharper form while verifying it: **`preflight.sh` HOLDS BOTH VALUES AND COMPARES
+NEITHER.** Lines 161 and 165 read each machine's `NODE_BIN`, run `--help` under each on its own
+machine, and compare the *output*. **Both runtimes are already in its hands at the moment of
+comparison — one equality check closes it, in a function that already has both.**
+
+### The drift itself, which is still worth fixing
 
 **Found by the product lane, 2026-07-25. Measured, and re-derived by the Lead:**
 
@@ -60,10 +77,10 @@ v26.5.0. The laptop half runs through `remote_zsh`, which is `zsh -lic`, so it c
 node an interactive login shell loads — v24.14.1. **Nothing declares an intended version and nothing
 compares the two files.**
 
-**Why it matters for R1 specifically:** R1 compares two personas' first-run experience. If they run
-the product on runtimes two majors apart, **a difference between them is not attributable to the
-product.** Blockers 1 and 2 make a round *invalid*; this one makes it **incomparable**, which is a
-different and equally disqualifying failure.
+**Why it is worth fixing anyway:** the *reason* it is harmless today is that the reachable paths
+happen not to diverge — which is luck, measured, rather than a property anyone designed. A future
+change to either runtime could make the two personas incomparable without anything reporting it,
+because **nothing compares the two files.**
 
 **Fix shape (not taken):** declare an intended version, pin it, and **compare the two `NODE_BIN`
 files as a pre-flight gate with a real RED** — today's skew is the RED, available immediately, which
