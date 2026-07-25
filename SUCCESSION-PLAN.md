@@ -1013,6 +1013,19 @@ continuously (this file + commits) — assume your session can die at any moment
      earlier. **The false negative was unreliable BY CONSTRUCTION, not by carelessness** — which
      matters, because carelessness is fixable by trying harder and this is not. **For any "did X
      run?", go to the filesystem.**
+  7. **★ A PARSER THAT CAN READ A FIELD IS NOT A PRODUCER THAT WRITES IT.** The Lead cited
+     `storedResponse()`'s conditional `principal_id` handling as evidence that `mint` *returns*
+     `principal_id`. That function is a **parser** — it carries the field through *if the stored
+     value happens to have one*. It proves only that something downstream would not choke. The
+     real mint response omitted it, and a live `coswarm token mint` would have thrown on
+     `uuid(response.principal_id)` and never emitted the artifact a whole design rested on.
+     Caught in review, before anyone ran it.
+  **★ WHERE THESE KEEP HAPPENING, which is specific enough to act on: not in the reasoning — in
+  the CITATIONS.** Four of the seven were the same motion: grep up a line containing the right
+  identifier, and promote it to proof without reading what the enclosing function *does*.
+  **The fix is not "be more careful". It is: WHEN YOU CITE A LINE AS EVIDENCE THAT SOMETHING
+  HAPPENS, READ THE ENCLOSING FUNCTION'S SIGNATURE FIRST.** Ten seconds, skipped four times in
+  one session by someone actively cataloguing the error.
   **★ THE PRACTICAL DETECTOR (better than the principle, because it needs no imagination):
   IDENTICAL ANSWERS WHERE THE ARMS SHOULD HAVE DIFFERED.** "Could this probe have produced a
   positive?" requires imagining a counterfactual — exactly the imagination that fails when you are
