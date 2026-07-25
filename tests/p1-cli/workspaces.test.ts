@@ -13,6 +13,7 @@ import {
   clearWorkspaceDefault,
   cloudWorkspaceDirectory,
   DEFAULT_MEMBERSHIP_REVOKED,
+  relativeAge,
   relativeExpiry,
   renderStatus,
   resolveWorkspace,
@@ -518,6 +519,13 @@ test("status rendering gives empty-work guidance and human lease time", () => {
     },
   });
   assert.match(rendered, /held by Quill .*expires in 12m/);
+  assert.equal(
+    relativeAge(
+      "2026-07-24T19:58:00.000Z",
+      Date.parse("2026-07-24T20:00:00.000Z"),
+    ),
+    "2m ago",
+  );
   assert.equal(
     relativeExpiry(
       "2026-07-24T19:58:00.000Z",

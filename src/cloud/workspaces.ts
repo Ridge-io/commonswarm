@@ -635,12 +635,8 @@ function holderLabel(holder: WorkspaceHolder): string {
     : `${holder.name} (${holder.id})`;
 }
 
-export function relativeExpiry(
-  expiry: string,
-  now = Date.now(),
-): string {
-  const remaining = Date.parse(expiry) - now;
-  const magnitude = Math.abs(remaining);
+function relativeMagnitude(milliseconds: number): string {
+  const magnitude = Math.abs(milliseconds);
   const amount = magnitude < 60_000
     ? "under 1m"
     : magnitude < 3_600_000
@@ -648,6 +644,22 @@ export function relativeExpiry(
     : magnitude < 86_400_000
     ? `${Math.ceil(magnitude / 3_600_000)}h`
     : `${Math.ceil(magnitude / 86_400_000)}d`;
+  return amount;
+}
+
+export function relativeAge(
+  timestamp: string,
+  now = Date.now(),
+): string {
+  return `${relativeMagnitude(Math.max(0, now - Date.parse(timestamp)))} ago`;
+}
+
+export function relativeExpiry(
+  expiry: string,
+  now = Date.now(),
+): string {
+  const remaining = Date.parse(expiry) - now;
+  const amount = relativeMagnitude(remaining);
   return remaining >= 0 ? `expires in ${amount}` : `expired ${amount} ago`;
 }
 

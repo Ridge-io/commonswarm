@@ -6,6 +6,10 @@ import type {
   SignalKind,
   SignalRecord,
 } from "./command-client.js";
+import {
+  relativeAge,
+  relativeExpiry,
+} from "./workspaces.js";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -286,6 +290,21 @@ export interface SignalStatusSupplement {
   warning: string | null;
 }
 
+export interface SignalAuthorLabels {
+  users: ReadonlyMap<string, string>;
+  agents: ReadonlyMap<string, string>;
+  currentUserId?: string;
+}
+
+export async function settleSignalAuthorLabels(
+  labels: Promise<SignalAuthorLabels>,
+): Promise<SignalAuthorLabels> {
+  return await labels.catch(() => ({
+    users: new Map(),
+    agents: new Map(),
+  }));
+}
+
 export async function settleSignalStatus(
   recent: Promise<SignalRecord[]>,
   asks: Promise<SignalRecord[]>,
@@ -304,9 +323,31 @@ export async function settleSignalStatus(
   };
 }
 
+export function signalReadJsonPayload(
+  workspaceId: string,
+  inbox: boolean,
+  signals: readonly SignalRecord[],
+): Record<string, unknown> {
+  return {
+    workspace_id: workspaceId,
+    view: inbox ? "inbox" : "feed",
+    signals,
+    message: signals.length === 0
+      ? inbox
+        ? "Nothing is waiting for you."
+        : "No matching signals are visible."
+      : `${signals.length} signal${signals.length === 1 ? "" : "s"} visible.`,
+  };
+}
+
 export function renderSignals(
   signals: readonly SignalRecord[],
-  options: { inbox: boolean; includeStale: boolean; now?: number },
+  options: {
+    inbox: boolean;
+    includeStale: boolean;
+    now?: number;
+    authors?: SignalAuthorLabels;
+  },
 ): string {
   if (signals.length === 0) {
     return [
@@ -321,13 +362,28 @@ export function renderSignals(
   const now = options.now ?? Date.now();
   const lines = [options.inbox ? "Inbox:" : "Recent signals:"];
   for (const signal of signals) {
-    const author = signal.from_kind === "agent" ? "agent" : "member";
+    const authorKind = signal.from_kind === "agent" ? "agent" : "member";
+    const authorName = signal.from_kind === "agent"
+      ? options.authors?.agents.get(signal.from)
+      : options.authors?.users.get(signal.from);
+    const author = authorName === undefined
+      ? `${authorKind} ${signal.from}`
+      : `${authorKind} ${authorName} (${signal.from})${
+        signal.from_kind === "user" &&
+          options.authors?.currentUserId === signal.from
+          ? " — you"
+          : ""
+      }`;
     const expired = Date.parse(signal.until) <= now ? " (expired)" : "";
     const about = signal.about === null
       ? ""
       : ` about ${JSON.stringify(signal.about)}`;
     lines.push(
-      `- [${signal.kind}] ${author} ${signal.from} at ${signal.created_at}${expired}${about}: ${JSON.stringify(signal.body)}`,
+      `- [${signal.kind}] ${author} — ${
+        relativeAge(signal.created_at, now)
+      } — ${relativeExpiry(signal.until, now)}${expired}${about}: ${
+        JSON.stringify(signal.body)
+      }`,
     );
   }
   return lines.join("\n");
@@ -336,6 +392,7 @@ export function renderSignals(
 export function renderSignalStatus(
   recent: readonly SignalRecord[],
   waitingAsks: number,
+  options: { authors?: SignalAuthorLabels; now?: number } = {},
 ): string {
   const askSummary = waitingAsks === 0
     ? "No asks are waiting in your inbox."
@@ -345,5 +402,6 @@ export function renderSignalStatus(
   return `${renderSignals(recent, {
     inbox: false,
     includeStale: false,
+    ...options,
   })}\n${askSummary}`;
 }

@@ -69,6 +69,7 @@ import {
   workspaceOverride,
   writeWorkspaceDefault,
   type WorkspaceDirectory,
+  type WorkspaceStatus,
   type WorkspaceSummary,
   type WorkspaceWarning,
 } from "./cloud/workspaces.js";
@@ -78,7 +79,10 @@ import {
   renderSignalStatus,
   renderSignals,
   resolveSignalRecipient,
+  settleSignalAuthorLabels,
   settleSignalStatus,
+  signalReadJsonPayload,
+  type SignalAuthorLabels,
   type SignalCredential,
   type SignalMember,
 } from "./cloud/signals.js";
@@ -718,6 +722,9 @@ async function runStatus(args: Arguments): Promise<void> {
     ? renderSignalStatus(
       signalStatus.recentSignals!,
       signalStatus.waitingAsks!,
+      {
+        authors: signalAuthorLabelsFromStatus(status, human.userId),
+      },
     )
     : `Recent signals:\n${signalStatus.warning}`;
   process.stdout.write(`${renderStatus({
@@ -1212,6 +1219,50 @@ async function signalMembers(
   }));
 }
 
+function signalAuthorLabelsFromStatus(
+  status: WorkspaceStatus,
+  currentUserId: string,
+): SignalAuthorLabels {
+  return {
+    users: new Map(
+      status.members.map((member) => [member.user_id, member.name]),
+    ),
+    agents: new Map(
+      status.agents.map((agent) => [agent.principal_id, agent.name]),
+    ),
+    currentUserId,
+  };
+}
+
+async function signalAuthorLabels(
+  cloud: CloudTarget,
+  selectedWorkspace: string,
+  credential: Awaited<ReturnType<typeof commandWorkspaceAndCredential>>,
+): Promise<SignalAuthorLabels> {
+  if (credential.kind === "agent") {
+    const members = await readAgentSignalMembers(
+      cloud,
+      credential.bearer,
+      selectedWorkspace,
+    );
+    return {
+      users: new Map(
+        members.map((member) => [
+          member.user_id,
+          sanitizeDisplayLabel(member.display_name, "Unnamed member"),
+        ]),
+      ),
+      agents: new Map(),
+    };
+  }
+  const human = credential.human!;
+  const status = await cloudWorkspaceDirectory(cloud).status(
+    human,
+    selectedWorkspace,
+  );
+  return signalAuthorLabelsFromStatus(status, human.userId);
+}
+
 async function runPostSignal(
   args: Arguments,
   kind: SignalKind,
@@ -1309,10 +1360,18 @@ async function runPostSignal(
     });
     return;
   }
+  const authors = await settleSignalAuthorLabels(
+    signalAuthorLabels(
+      cloud,
+      credential.selectedWorkspace,
+      credential,
+    ),
+  );
   process.stdout.write(
     `Signal shared.\n${renderSignals([signal], {
       inbox: false,
       includeStale: true,
+      authors,
     })}\n`,
   );
 }
@@ -1360,21 +1419,22 @@ async function runSignalRead(
     includeStale: args.has("include-stale"),
   });
   if (args.has("json")) {
-    printJson({
-      workspace_id: selected.selectedWorkspace,
-      view: inbox ? "inbox" : "feed",
-      signals: rows,
-      message: rows.length === 0
-        ? inbox
-          ? "Nothing is waiting for you."
-          : "No matching signals are visible."
-        : `${rows.length} signal${rows.length === 1 ? "" : "s"} visible.`,
-    });
+    printJson(
+      signalReadJsonPayload(selected.selectedWorkspace, inbox, rows),
+    );
     return;
   }
+  const authors = await settleSignalAuthorLabels(
+    signalAuthorLabels(
+      cloud,
+      selected.selectedWorkspace,
+      selected,
+    ),
+  );
   process.stdout.write(`${renderSignals(rows, {
     inbox,
     includeStale: args.has("include-stale"),
+    authors,
   })}\n`);
 }
 

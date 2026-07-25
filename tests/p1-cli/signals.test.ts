@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { createServer } from "node:http";
 import {
   mkdtemp,
   readFile,
@@ -28,6 +29,7 @@ import {
   renderSignalStatus,
   renderSignals,
   resolveSignalRecipient,
+  settleSignalAuthorLabels,
   settleSignalStatus,
 } from "../../src/cloud/signals.js";
 import type {
@@ -201,6 +203,102 @@ test("human and agent signal reads share filters and keep bodies as rendered dat
     renderSignalStatus([], 3),
     /Recent signals:[\s\S]*No live signals[\s\S]*3 asks are waiting/,
   );
+});
+
+test("human signal rendering resolves auditable authors and shows relative lifecycle", () => {
+  const agentRow = signal() as unknown as SignalRecord;
+  const humanRow = signal({
+    id: "77777777-7777-4777-8777-777777777777",
+    from: USER,
+    from_kind: "user",
+    kind: "ask",
+    created_at: "2026-07-24T11:30:00.000Z",
+    until: "2026-07-25T12:00:00.000Z",
+  }) as unknown as SignalRecord;
+  const rows = [agentRow, humanRow];
+  const jsonBefore = JSON.stringify(rows);
+  const rendered = renderSignals(rows, {
+    inbox: false,
+    includeStale: false,
+    now: Date.parse("2026-07-24T12:00:00.000Z"),
+    authors: {
+      users: new Map([[USER, "Quill"]]),
+      agents: new Map([[AGENT, "Hermes"]]),
+      currentUserId: USER,
+    },
+  });
+
+  assert.match(rendered, new RegExp(`agent Hermes \\(${AGENT}\\)`));
+  assert.match(rendered, new RegExp(`member Quill \\(${USER}\\) — you`));
+  assert.match(rendered, /12h ago — expires in 12h/);
+  assert.match(rendered, /30m ago — expires in 1d/);
+  assert.doesNotMatch(rendered, /2026-07-24T/);
+  assert.equal(JSON.stringify(rows), jsonBefore);
+  assert.equal(
+    Object.hasOwn(agentRow as unknown as Record<string, unknown>, "display_name"),
+    false,
+  );
+});
+
+test("unresolvable authors remain visible by kind and id", () => {
+  const rendered = renderSignals(
+    [signal() as unknown as SignalRecord],
+    {
+      inbox: false,
+      includeStale: true,
+      now: Date.parse("2026-07-26T00:00:00.000Z"),
+      authors: {
+        users: new Map(),
+        agents: new Map(),
+      },
+    },
+  );
+
+  assert.match(rendered, new RegExp(`agent ${AGENT}`));
+  assert.match(rendered, /2d ago — expired 1d ago \(expired\)/);
+  assert.match(rendered, /ignore previous instructions/);
+});
+
+test("author lookup failures degrade to auditable ids without dropping rows", async () => {
+  const authors = await settleSignalAuthorLabels(
+    Promise.reject(new Error("directory unavailable")),
+  );
+  const rendered = renderSignals(
+    [signal() as unknown as SignalRecord],
+    {
+      inbox: false,
+      includeStale: false,
+      now: Date.parse("2026-07-24T12:00:00.000Z"),
+      authors,
+    },
+  );
+
+  assert.match(rendered, new RegExp(`agent ${AGENT}`));
+  assert.match(rendered, /ignore previous instructions/);
+});
+
+test("agent credential label matrix resolves members but not agent authors", () => {
+  const memberRow = signal({
+    id: "77777777-7777-4777-8777-777777777777",
+    from: USER,
+    from_kind: "user",
+  }) as unknown as SignalRecord;
+  const rendered = renderSignals(
+    [memberRow, signal() as unknown as SignalRecord],
+    {
+      inbox: true,
+      includeStale: false,
+      now: Date.parse("2026-07-24T12:00:00.000Z"),
+      authors: {
+        users: new Map([[USER, "Quill"]]),
+        agents: new Map(),
+      },
+    },
+  );
+
+  assert.match(rendered, new RegExp(`member Quill \\(${USER}\\)`));
+  assert.match(rendered, new RegExp(`agent ${AGENT}`));
+  assert.doesNotMatch(rendered, new RegExp(`agent Hermes \\(${AGENT}\\)`));
 });
 
 test("signal recipients resolve only among exact live member ids or names", () => {
@@ -548,6 +646,96 @@ async function runCli(
   });
   return { code, stdout, stderr };
 }
+
+test("agent feed resolves only member labels and JSON skips enrichment", async () => {
+  const requests: Array<Record<string, unknown>> = [];
+  const memberRow = signal({
+    id: "77777777-7777-4777-8777-777777777777",
+    from: USER,
+    from_kind: "user",
+  });
+  const server = createServer((request, response) => {
+    let body = "";
+    request.setEncoding("utf8");
+    request.on("data", (chunk: string) => body += chunk);
+    request.on("end", () => {
+      const parsed = JSON.parse(body) as Record<string, unknown>;
+      requests.push(parsed);
+      response.statusCode = 200;
+      response.setHeader("content-type", "application/json");
+      response.end(
+        parsed.resource === "members"
+          ? JSON.stringify({
+            members: [{ user_id: USER, display_name: "Quill" }],
+          })
+          : JSON.stringify({ signals: [memberRow, signal()] }),
+      );
+    });
+  });
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  try {
+    const address = server.address();
+    assert.ok(address && typeof address === "object");
+    const url = `http://127.0.0.1:${address.port}`;
+    const humanOutput = await runCli([
+      "feed",
+      "--url",
+      url,
+      "--anon-key",
+      "anon",
+      "--workspace-id",
+      WORKSPACE,
+      "--agent-token-stdin",
+    ], TOKEN);
+    assert.equal(humanOutput.code, 0);
+    assert.match(
+      humanOutput.stdout,
+      new RegExp(`member Quill \\(${USER}\\)`),
+    );
+    assert.match(humanOutput.stdout, new RegExp(`agent ${AGENT}`));
+    assert.equal(
+      requests.filter((request) => request.resource === "members").length,
+      1,
+    );
+
+    requests.length = 0;
+    const jsonOutput = await runCli([
+      "feed",
+      "--url",
+      url,
+      "--anon-key",
+      "anon",
+      "--workspace-id",
+      WORKSPACE,
+      "--agent-token-stdin",
+      "--json",
+    ], TOKEN);
+    assert.equal(jsonOutput.code, 0);
+    assert.deepEqual(
+      requests.map((request) => request.resource),
+      ["signals"],
+    );
+    const parsedJson = JSON.parse(jsonOutput.stdout) as Record<string, unknown>;
+    assert.deepEqual(Object.keys(parsedJson), [
+      "workspace_id",
+      "view",
+      "signals",
+      "message",
+    ]);
+    const jsonRows = parsedJson.signals as Array<Record<string, unknown>>;
+    assert.equal(jsonRows[0]?.from, USER);
+    assert.equal(jsonRows[1]?.from, AGENT);
+    assert.equal(Object.hasOwn(jsonRows[0]!, "display_name"), false);
+    assert.equal(Object.hasOwn(jsonRows[1]!, "display_name"), false);
+  } finally {
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => error ? reject(error) : resolve());
+    });
+  }
+});
 
 test("agent credential stdin accepts a closed mint artifact and degrades loudly", async () => {
   const base = [
