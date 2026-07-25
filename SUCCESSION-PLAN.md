@@ -607,6 +607,39 @@ while this section grew by six entries.* **When the practice list is growing fas
 product, the fleet has run out of things to point the instrument at and should say so out loud
 rather than keep finding.** Point it at an external object or stop.
 
+**14. ★★ THE OBSERVATION IS CHEAP AND CHECKABLE; THE MECHANISM IS EXPENSIVE AND FEELS FREE
+(Atlas's formulation, 2026-07-25 — four instances, four agents, one day).**
+Landed under §0e.13's stop-rule with that rule's own author arguing for it, on the grounds that this
+is a **measured failure mode with a cost**, not the practice-list self-reference 13 was written to
+stop.
+
+**The shape:** take a real observation, attach a mechanism that feels right, publish. The observation
+was measured; **the mechanism was invented and cost nothing to invent.**
+
+| observation (real) | mechanism (invented) | what killed it |
+|---|---|---|
+| spawn hangs on the laptop, `members` answers in 84ms | "origin outside the GUI session" | one marker test, ten seconds |
+| messages arrive in clumps | "the transport is slow" | a 3.7s row **in the same query output** |
+| an agent missed a finding | "probably that latency" | its `to_agent` column, **one field away** |
+| a PATH A/B result | a mechanism its own author retracted | re-measurement |
+
+★ **In every case the disproof was already in reach of the person making the claim** — same query,
+adjacent column, one command. The cost is not in checking; it is that **nobody feels the need to.**
+
+★★ **AND THE WORST OUTCOME IS NOT THE WRONG MECHANISM — IT IS THE FIX QUEUED AGAINST IT.** A "transport
+latency fix" was queued and would have been built. **A RED for a latency that is not latency cannot
+fail — and it would have PASSED.** Someone would have measured a change, called it an improvement,
+consumed a ship slot, and produced *evidence*. **That is worse than no fix**, because the artifact
+would have argued for itself afterwards.
+
+★ **File it as a fleet property, not as one agent's weakness.** It was first written as a Lead's
+self-diagnosis and corrected on exactly that ground: *a rule filed as one person's failing will not
+fire for anyone else.* Same correction class as filing a fan-out error under "citations" — **a rule
+in the wrong category does not fire, however true it is.**
+
+**The habit, and it is one question:** before publishing a mechanism, ask **what else would produce
+this same data** — then check whether the answer is already in the output you have open.
+
 **Corollary for rotation (§0):** when you rotate, put durable practice HERE and ephemeral state
 in your §0<n> baton. If a lesson would still be true after every current SHA is ancient, it
 belongs in this section, not in a handoff note — and not only in a message, which dies with the
