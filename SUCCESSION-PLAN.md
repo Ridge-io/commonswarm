@@ -95,6 +95,37 @@ in your §0<n> baton. If a lesson would still be true after every current SHA is
 belongs in this section, not in a handoff note — and not only in a message, which dies with the
 session that sent it.
 
+## 0f. SPAWN FOR PARALLELISM AND EXPERTISE — not only for degradation (operator, 2026-07-24)
+
+**§0c and this rule are different tools and get confused.** §0c *rotates a worker out* because its
+context has **degraded**. This rule *spawns a worker in* because a **new subsystem has started**.
+One is triage; the other is capacity.
+
+> Operator: *"Your swarmmates are getting some fairly full context windows… you should consider
+> spinning up new swarmmates for new projects, or especially when work begins on new subsystems or
+> components. This allows you to use multiple context windows, and create tiers of expertise."*
+
+**Two things this buys, both of which the Lead tends to under-use:**
+1. **Multiple context windows.** A single worker serialises everything through one window; N
+   workers on N subsystems genuinely run in parallel and none of them pays to carry the others'
+   history.
+2. **★ Tiers of expertise — the part worth protecting.** A worker that has followed one subsystem
+   through scoping → review → revision holds context that is *expensive to rebuild and cheap to
+   keep*. **Deep context on a live subsystem is an asset, not a liability** — do not rotate it away
+   on a schedule, and do not dilute it by handing that worker an unrelated lane.
+
+**The practical rule:**
+- **New subsystem or component → new agent**, briefed narrowly, reading only what its lane needs.
+- **Keep a specialist ON its specialty.** (Live example: the reviewer that carried P2-3 scoping →
+  the P3-1 reservations cut → the §1d re-scope → the signals brief now holds the deepest
+  signal-plane context in the fleet. That agent stays on signals.)
+- **Rotate on §0c's evidence** (≥10 compactions / ≥12h), **not** because a window looks busy.
+  Measure first: `~/.codex/sessions/<yyyy>/<mm>/<dd>/rollout-*.jsonl`, then size / lines /
+  `grep -ci compacted`.
+- Spawning is **cheap and reversible**; a blocked lane with no owner is not. Prefer spawning
+  slightly early — a warm agent that has already read its lane's docs is worth more than a fast
+  one briefed under pressure.
+
 ## 1. Model & delegation policy (operator directive)
 
 - **THE LEAD DOES NOT HAND-CODE.** Fable credits are **dangerously low** and the Lead
