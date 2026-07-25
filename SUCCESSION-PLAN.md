@@ -1281,6 +1281,22 @@ continuously (this file + commits) — assume your session can die at any moment
 
 ## 5. Queued design tasks (don't lose these)
 
+- **★ DEBT: `T-10` (concurrent `acquire`) IS A FLAKY GATE UNDER MACHINE LOAD (observed 2026-07-25).**
+  Seen **red twice** during P3-1 Phase B while this machine was running a 70-agent workflow and
+  then a 15-agent review; then **green 2/2 in isolation** and **14/14 in-suite** once quiet.
+  **The failure shape is the diagnostic: `0 accepted` (no winner at all), NOT multiple winners.**
+  A broken fence produces *more* than one winner; a starved 50-iteration race under saturation
+  produces none. **Not a P3-1 regression** — proven by static reachability rather than a re-run:
+  the diff touches nothing matching `acquire`/`lease`/`FOR UPDATE`/`pg_advisory`/`head_seq`/
+  `afterStep`, and the only new in-envelope code on the acquire path is a no-I/O
+  `Object.hasOwn(body, "from")` guard that cannot fire on a legitimate acquire.
+  **Recorded rather than fixed, deliberately — but recorded rather than left silent**, because a
+  flaky gate is a real defect even when it is not *this* slice's defect: it will eventually go red
+  on someone at 3am who will spend an evening hunting a regression that was never there. **If you
+  meet a red T-10: check machine load first, re-run in isolation, and only then suspect your
+  change.** Whoever fixes it should make the race deterministic or make the failure message say
+  "no winner" vs "many winners", since that distinction is the entire diagnosis.
+
 - **`CLAUDE_CODE_OAUTH_TOKEN` — DOCUMENTED, NOT DEMONSTRATED (5-min test, low priority).**
   From `docs/research/ACP-AND-BUZZ.md` §5.3: `claude setup-token` mints a one-year,
   **subscription-backed** (not API-key) token, read as a plain env var at credential precedence 5
