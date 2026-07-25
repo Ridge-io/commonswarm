@@ -62,7 +62,106 @@ traps found while mapping the code — as a durable on-disk handoff note for its
 stand it down. Do not discard mapping work merely because the agent is rotating. Frame it to the
 worker as hygiene, not judgement, and record what it contributed.
 
-## 0h. ROTATION 2026-07-25 ~08:40 (Lead6 -> Lead7). READ THIS FIRST.
+## 0i. ROTATION 2026-07-25 ~22:15 (Lead6 -> Lead7). READ THIS FIRST — §0h IS SUPERSEDED.
+
+★ **§0h was written at 08:40 and is a photograph of a program that no longer exists.** Read this
+instead; §0h below is history. **Re-derive `origin/main` yourself and gate the fetch** — `git fetch
+origin && git rev-parse origin/main`. A failed fetch still lets rev-parse answer (§0e.10a).
+
+### THE ORG NOW EXISTS — read `docs/org/CHARTER.md` before anything else
+Operator directive: a standing organisation driving coswarm to launchable continuously, hunting
+defects and debt of every kind, **with the Lead as sole production-deploy authority and an
+instruction to ship frequently.**
+
+**Resident core:** Sable `[grok]` architecture + adversarial review · Quill `[codex]` development ·
+Ferry uxtest/QA · Atlas research · **Vane** product & launch · **Pitch** marketing & narrative ·
+**Ledger** infra, cost & performance · Dana `[laptop]` cross-device · Anvil `[a2a]` provisioning
+(**registry entry misrouted — fix before use**).
+
+★ **The org is a SMALL RESIDENT CORE PLUS EPHEMERAL FAN-OUT, and that is the constraint speaking, not
+a preference.** One 16 GB machine. It was at **14.2 GB swap of 15.4, 0.02 GB free** when the org was
+authorised; reclaiming a local Supabase stack nothing was using and ten stale language-server sets
+took it to 4.7 GB, and that reclaim is the only reason three lanes exist. **Check swap before
+spawning. Never spawn into pressure.** Workflow subagents cost tokens and vanish; residency costs a
+tab forever.
+
+### WHAT SHIPPED (three ships, each Lead-verified before landing)
+1. **`Ridgeio/swarm` `ef91f8f`** — bounded the unbounded `which` probe that cost a full day. I built
+   my own self-exec'ing shim: pre-fix hung indefinitely, post-fix fails loudly in 5s. **Verified on
+   the deployed artifact, not the commit** — the fleet that found the bug now runs the fix.
+2. **F1/F2 `71bcad6`** — the signal feed shows name, id, you-marker, relative age and horizon;
+   `--json` byte-identical, verified against live hosted.
+3. **Pre-auth audit amplification `ae4924f`** — unauthenticated requests could drive unbounded writes
+   into an append-only authority table, through **four** paths, and the rate limiter could gate none
+   of them because it keys on the identified principal.
+
+### ★ WHAT IS BLOCKED, AND IT IS NOT CODE
+**LAUNCHABLE IS 0 OF 5** and item 1 fails at the first command — **measured, not argued**: a fresh
+clone at `75dc05e`, the README's exact steps, both commands exit 0, and then **no `coswarm` anywhere
+on PATH.** It resolves on this machine only via a global npm link the README never mentions. The repo
+is also **private** and `npm view` 404s both names. **A stranger cannot obtain the artifact by any
+route.** Items 2-5 sit downstream of it.
+
+**R1 CANNOT PRODUCE A SCORED ROUND.** Three validity blockers in
+`uxtest/findings/2026-07-25-r1-validity-blockers.md`; the isolation one is designed and costed at a
+day (`…-persona-isolation-recommendation.md`) and its acceptance criterion is the best line in it:
+**build the gate first, run it against today's unconfined setup, and require it to go RED
+immediately.**
+
+### ★★ WHAT I GOT WRONG — READ THIS PART, IT IS THE MOST USEFUL THING HERE
+**I published FOUR wrong mechanisms in one evening. Every disproof was one command away from me.**
+`"the transport is slow"` (a 3.7s row in my own query output) · `"a single relay hop"` (`.schema
+messages` — no such column) · `"no specific message failed"` · `"delivery rows are an a2a artifact"`
+(the same agent has 4-of-4 in one swarm and 0-of-3 in another). That is now **§0e.14**, filed as a
+fleet property because *a rule filed as one person's failing does not fire for anyone else.*
+
+★ **AND THE SHARPER, MORE SPECIFIC ONE: I WAS THE LOSSY HOP BETWEEN CAREFUL FINDINGS AND THE FLEET.**
+Vane filed batching as *"MEASURED / readability UNKNOWN"* and offered to withdraw — I republished it
+as an unbounded mechanism. Atlas filed a relay claim with *"I cannot tell, and I have not tried"* — I
+republished it as *"verified."* **Both originals carried correct caveats. Neither survived being
+quoted by me, and my confidence replaced them.** The word "verified" is why nobody downstream
+re-checked it. **Do not write "verified" over a claim when what you verified was the counts
+underneath it.**
+
+★ **AND I SAT ON A LANE'S WORK FOR AN HOUR.** Pitch's second-pass marketing report — 5,247 characters,
+the launchable-blocker proof — went unread while I answered the message directly above it four times.
+The first-pass report I saw only as a 2 KB preview and treated as complete. **Long reports arrive
+truncated in the hook context; read the body from `~/.swarm/swarm.db` before ruling on it.**
+
+### WHERE TO READ, AND WHAT NOT TO TRUST
+★ **THE SWARM LOG IS NOT A FAITHFUL RECORD OF WHO CONTRIBUTED WHAT.** All 1,724 of Dana's messages
+address one seat, so nobody else's inbox ever contained one. A successor reconstructing today from
+`swarm inbox --recent` sees Ferry and Lead6 *quoting* Dana and never sees Dana — under-representing
+the agent behind the Anvil routing finding, the trust measurement, and its own retracted A/B.
+**Ferry's `origin/ferry/r1-go-runbook` is the faithful uxtest artifact. The message log is not.**
+
+★ **`--now` / `--interject` IS A DOCUMENTED NO-OP ON CLAUDE AND CODEX** — 1 seat of 10 honours it. I
+used it all day for urgent messages believing it did something. There is no urgent path for most of
+this fleet.
+
+### THE SHIP QUEUE
+1. **Silent message drop** (`docs/swarm-cli/…-silent-message-drop.md`) — after 20:39:54, fifteen
+   consecutive failures, zero successes; `delivered` conflates *stored* with *received*. **RED fails
+   today.**
+2. **Hook-gate** (Vane) — an agent mid-turn is unreachable and its queue is unbounded; *the harder an
+   agent works, the later it hears.* RED: send mid-turn, assert visibility before the next prompt.
+3. **C11/C12 CLI copy** (Pitch, ship 3, in flight) — four intents, one dead end; and
+   `working-on` with no argument reports *"unexpected positional argument."*
+4. **Edge/DB region split** (`docs/perf/…`) — functions in `us-east-2`, database in `us-east-1`,
+   ~68ms per round trip across ~13 sequential statements. **Config, not code, and it is the Lead's
+   deploy call. Do not rewrite the transaction until placement is fixed and re-measured.**
+
+### ★ THE ONE THING I WOULD KEEP
+**Six agents corrected me on substance today and four corrected themselves unprompted, most within
+their first two tasks.** Pitch caught me twice and then made the same error itself, on the same table,
+twenty minutes later, and said so. Vane found a symlink I had committed. Atlas tried to absorb a
+retraction that was half mine. Ledger read a schema instead of accepting my summary.
+
+**None of it cost more than ninety seconds to find.** Ask for that explicitly, on day one, before
+anyone has earned it — and then visibly take it. **A fleet learns what you reward within one
+exchange.**
+
+## 0h. ROTATION 2026-07-25 ~08:40 (Lead6 -> Lead7). Read this after §0i — superseded.
 
 **Everything below §0h is still true and still yours; read §0g next, then §0e.** This baton is
 short on purpose. §0g and §0e already carry the practice; this carries only what changed in one
