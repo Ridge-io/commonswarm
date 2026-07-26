@@ -1,7 +1,7 @@
 node_modules
-dist/
-build/
-coverage/
+dist
+build
+coverage
 *.log
 *.db
 *.db-wal
@@ -11,11 +11,11 @@ coverage/
 .env.*
 
 # Supabase local state
-supabase/.branches/
-supabase/.temp/
+supabase/.branches
+supabase/.temp
 
 # Lead scratch (agent dispatch logs, review artifacts) — not part of the build
-scratchpad/
+scratchpad
 
 # Cross-machine UX runs can contain personal feedback and redacted transcripts.
 uxtest/rounds/*
