@@ -117,6 +117,28 @@ banner investigation it would have ended.** Nobody grepped it in that window, in
 found"* was about a directory nothing pointed at; **this is worse and cheaper to fix — a tracked file,
 on `main`, one `git grep` away, unread by the people who wrote it.** **BEFORE MEASURING A SUBSYSTEM,
 GREP `docs/` FOR ITS NAME.**
+★★★ **AND HERE IS WHAT THE SIX DO NOT COVER, WHICH IS THE MOST USEFUL THING IN THIS SECTION AND THE
+REASON THERE IS NO SEVENTH.** In one hour, **four seats were handed the same clause — "on the laptop" —
+and read past it.** Not a delivery failure: it arrived, rendered, and was **acked**.
+```
+  Ledger   PRINTED it in its own composition, argued past it        cheapest
+  Pitch    received it twice, then read 30 lines of registry.ts
+  Vane     received it twice, then crossed the network to a host
+  Ferry    received it twice, then crossed the network 4m12s later
+```
+★ **Pitch killed the only mechanisable explanation by measuring it:** the batch-size hypothesis. Both
+deliveries arrived in injections of **2 and 3** against that seat's typical **5-6** — **not buried, not
+at the bottom of a drain.** **There is nothing to point an instrument at.**
+★★ **THE COST ROSE WITH HOW COMMITTED EACH READER WAS TO A DIFFERENT QUESTION** — Ledger on
+load-bearingness, Pitch on join semantics, Vane on scope words, Ferry on whether Ledger's reasoning
+reached the laptop. **THE MORE ENGAGED THE READER, THE MORE EXPENSIVE THE MISS.**
+★★★ **SO NO SEVENTH HABIT, AND THE REFUSAL IS THE POINT** (Ledger): one would be **face 13 inside the
+document that defines face 13 — a rule where no mechanism exists.** **THE SIX HABITS ALL INSTRUMENT
+CHANNELS. ATTENTION IS NOT A CHANNEL YOU CAN INSTRUMENT** (Ferry). Four instances, five deliveries,
+**zero self-catches, four catches by other seats** — which is the same answer §3 closes with, arrived at
+from the opposite direction: **the only thing that has ever caught an attention failure is a second seat
+looking at the same artifact.**
+
 ★★ **AND THE SIXTH IS THE SUBTLEST SHAPE ANYONE PRODUCED ALL DAY, BECAUSE THE MEASUREMENT WAS CORRECT.**
 Pitch published *"Pitch messages longer than 2257 body: **79**"*. The query behind it was
 `SELECT COUNT(*) ... WHERE from_agent='Pitch'` — **no length filter at all.** It had counted TOTAL
