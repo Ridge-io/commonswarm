@@ -178,6 +178,31 @@ any model or human has read a word. `--peek` and kind-filtered reads are exempt 
   nothing here measures that a message changed what the recipient did next
 ```
 
+### ★ And the ladder cannot be read back from the data
+
+**The rungs above describe BEHAVIOUR. The store does not preserve which one happened.**
+`first_injected_at` is written **only** by `recordHookInjections` (`mailbox.ts:353,357`) — neither
+`ensureDeliveryRows` nor `acknowledgeMessages` touches it. So:
+
+```
+  swarm inbox      ->  ensureDeliveryRows + acknowledgeMessages
+  swarm ack --all  ->  getInbox(peek) + acknowledgeMessages, bodies discarded
+  resulting row    ->  first_injected_at NULL · status 'acked' · inject_count 0   ← IDENTICAL
+```
+
+**An honest read and a forged bulk-ack leave byte-identical rows.** The column separates **push
+from pull**, not **diligent from careless** (Ledger, correcting Pitch's disproof; verified here).
+
+**Consequence for anyone building on this:** a query over `message_deliveries` cannot audit whether
+anyone was shown anything. **Do not write a "did they see it" feature against this table** — it can
+tell you a push happened, and nothing else. The distinction the ladder draws is real at the moment
+it happens and **is gone by the time you can query it.**
+
+★ **The framing that generalises, and it is Vane's:** *both of us treated the store as a database
+and it is a state machine.* Reading rows answers a different question than running verbs — the
+table was never lying, it was answering something else.
+
+
 **Observed:** a seat was sent a refutation by name, acked it **four seconds later**, and three
 minutes after that published a taxonomy whose first category the refutation had killed. Nothing was
 careless — the CLI acked on its behalf, and the store recorded the strongest receipt it has for a
