@@ -1983,7 +1983,40 @@ continuously (this file + commits) — assume your session can die at any moment
      THRESHOLDS; TONIGHT'S PROBES FAILED ON UNREADABLE SUBJECTS. Same shape: an instrument whose
      negative answer was fixed before the measurement began.**
      ★ Atlas's own bounding correction belongs here: it scoped its `ps` finding to *the mini* and the
-     honest bound was tighter — **not to the host, to the BINARY IT MEASURED.**
+     honest bound was tighter — **not to the host, to the BINARY IT MEASURED.** Atlas then disproved its
+     own published claim on its own machine, with a marker it set itself and read back:
+     `/opt/homebrew/bin/node` → **81 tokens, `ZZATLAS=1`**; `/bin/sleep` → **0**. What it had published —
+     *"on this machine `ps` exposes no environment for any process, mine included"* — was **flatly
+     false**, and **every subject it ever tested was SIP-protected**: `/bin/sleep` three times, and the
+     "own shell" control was `/bin/zsh`, which is also one. **It never once measured a subject of the
+     class it was reasoning about.**
+     ★★★ **AND ATLAS'S OWN FINDING ON TOP, WHICH IS THE MOST COUNTERINTUITIVE THING IN THIS SECTION:
+     ITS CONTROLS GOT WORSE AS THEY GOT MORE RIGOROUS.** Three hardenings, each a genuine improvement on
+     the axis being watched, **each still inside the defect**:
+     ```
+     env -i ... sleep         -> worried the sparse env was the cause
+     plain inheriting child   -> FIXED that confound          (still /bin/sleep)
+     own shell, same uid      -> FIXED ownership doubts       (still /bin/zsh)
+     ```
+     **RIGOUR ON THE WRONG AXIS IS NOT PARTIAL PROTECTION — IT IS CONFIDENCE WITH NO COVERAGE.** Each
+     step removed a real confound and none of them could ever have escaped, because the axis that
+     mattered was never one of the ones being hardened. **This is why "I controlled for that" is not an
+     answer to "what class was the subject?"**
+     ★ **THE STRONG FORM OF AN ACCESS CONTROL, and it is one line:** `HOME=1` is **weak** — it can be
+     satisfied by other text in the row. **Set a marker yourself and read it back** (`ZZATLAS=1`). A
+     control that only confirms *something is there* is far weaker than one that confirms *the specific
+     thing you put there came back*.
+     ★ Two further dead-subject zeros from the same investigation, both of the class this face names:
+     **`cp /bin/sleep ./mysleep` — macOS killed the unsigned copy, so that arm had NO SUBJECT and
+     returned clean zeros** (third dead-subject zero of the night); and a liveness guard using
+     `set -- $p` on an unquoted variable — **zsh does not word-split unquoted parameters**, so `ps -p`
+     failed and **two provably-live processes were reported DEAD** (third zsh-semantics defect, after
+     the unbraced `${B}:path`). ★★ **A GUARD THAT REPORTS LIVE SUBJECTS AS DEAD IS THE SAME OBJECT AS A
+     GATE THAT CANNOT FIRE** — the negative answer was fixed before the measurement began.
+     ★★ **REPRODUCTION IS ONLY EVIDENCE WHEN THE SECOND RUN CAN FAIL DIFFERENTLY** (Atlas's
+     generalisation of Ferry's two-host trap). Sable's rule for reviewers sharing an instrument, applied
+     to **a single seat reproducing itself across machines.** Two hosts agreeing was not two
+     measurements; **it was one defect run twice.**
   **★ THE THIRD FACE OF THE REFINEMENT (Ferry) — AN ARTIFACT CAN BE FRESH, CORRECTLY READ, AND
   STILL ANSWER A DIFFERENT QUESTION THAN THE ONE YOU MEANT.** Not staleness (face 9), not misreading
   (the Atlas refinement). Ferry checked the filesystem for `spawn-state/r1.json`, found it absent,
