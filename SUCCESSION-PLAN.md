@@ -107,8 +107,12 @@ SCRIPTS DID.**
 spent an hour on the cmux banner question. **The fact that closed it was already on `main`, greppable,
 in `docs/swarm-cli/2026-07-25-silent-message-drop.md:21`:** *"`getInbox()` calls `ensureDeliveryRows`
 on every read — reading CREATES the row."* That single line retires the delivery-row evidence the whole
-investigation rested on. **It was written that morning, by a participant in the discussion, corrected
-three times, and landed on `main` — and nobody grepped it.** ★ Sable's *"survive is not the same as be
+investigation rested on. **Written at 17:06 by a participant in the discussion, corrected three times in ten minutes — and
+THE DECISIVE LINE ARRIVED IN THE FOURTH VERSION, AT 17:16** (measured: 17:06/17:08/17:12 all count 0,
+17:16 count 2). Atlas's retraction came at ~20:40, **so it was greppable for about THREE AND A HALF
+HOURS, not twelve** — the Lead's first version of this entry said *"that morning"* and Ledger measured
+it down. ★ **The habit is unaffected and the severity is: three and a half hours still spans the ENTIRE
+banner investigation it would have ended.** Nobody grepped it in that window, including its author. ★ Sable's *"survive is not the same as be
 found"* was about a directory nothing pointed at; **this is worse and cheaper to fix — a tracked file,
 on `main`, one `git grep` away, unread by the people who wrote it.** **BEFORE MEASURING A SUBSYSTEM,
 GREP `docs/` FOR ITS NAME.** The scripts are worth having and they close specific, named, recurring failures — **but
