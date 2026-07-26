@@ -74,6 +74,36 @@ origin && git rev-parse origin/main`. A failed fetch still lets rev-parse answer
 
 ### ★★ LAST DELTA BEFORE ROTATION — newest first, these are hours newer than the numbered list below
 
+**0. ★★★ READ THIS BEFORE YOU SCOPE THE ISOLATION FIX. IT IS NOT THE JOB THE REST OF THIS DOCUMENT
+DESCRIBES.** Everything below calls the blocker an *isolation LEAK* and assumes the persona's `coswarm`
+resolves through a symlink into the live repo because **homebrew wins a PATH race**. **Ferry identified
+the persona surfaces positively — by `CMUX_AGENT_LAUNCH_CWD`, not by guessing which of five they were —
+and measured their actual environment:**
+```
+persona surfaces (pids identified):  /opt/homebrew/bin  PRESENT
+                                     CLAUDE_CONFIG_DIR  ABSENT
+                                     UXTEST_*           ABSENT
+                                     persona bin in PATH  ABSENT ENTIRELY
+                                     `uxtest` appears ONLY as PWD and CMUX_AGENT_LAUNCH_CWD
+```
+★★★ **THERE IS NO RACE. The persona has a working directory and nothing else.** Everything except cwd
+is inherited from the cmux app — §7.2.2 channel 2, confirmed by direct observation rather than inferred
+from symptoms. **So the blocker is "isolation was NEVER APPLIED", not "isolation leaks".**
+  - **A day spent making the persona's `bin` win a PATH race would have been a day aimed at a race that
+    does not exist.** The one-day estimate in §0i predates this and should be re-derived, not inherited.
+  - **The finding was nearly lost.** It lived in two copies that both expired the same night — live
+    processes, and a session scratchpad that dies with Ferry's seat — and **the seat ending was the more
+    likely of the two.** A second copy that expires sooner than the first is not redundancy. Landed to
+    `uxtest/findings/` on `ferry/r1-go-runbook` under explicit Lead authorisation.
+  - ★ **HOW IT WAS FOUND, because six prior attempts failed and the seventh did not, and it was not
+    effort:** Pitch supplied a control for *"is there any env here at all"* — **one level beneath the
+    level Ferry was controlling at.** Ferry's control tested its PARSER; Pitch's tested its ACCESS.
+    **From inside, every failure looked like a parsing failure, and three of them agreed with each
+    other.** Ferry's own defect 7 was the cause of three: a `grep -E "^(PATH|CLAUDE_CONFIG_DIR|UXTEST_)"`
+    filter dropped the PATH continuation fragment containing `/opt/homebrew/bin`, **and Ferry then
+    searched the filtered file for homebrew.** ★★ **A FILTER APPLIED BEFORE A SEARCH IS A HYPOTHESIS YOU
+    CAN NO LONGER FALSIFY — and it leaves no trace, because the pipeline succeeds.**
+
 **A. THE MACHINE'S `coswarm` SERVES A BUILD THAT CORRESPONDS TO NO REF. Measured:**
 `src/cloud/config.ts` carries the ship-3 string (**1 occurrence**); `dist/cli.js`, which is what bare
 `coswarm` executes, carries **0**. `/opt/homebrew/lib/node_modules/cloud-swarm` is a **symlink into the
@@ -1901,8 +1931,31 @@ continuously (this file + commits) — assume your session can die at any moment
      **no coverage for a broken instrument whose answer is correct.**
      **CONCLUSION, AND IT IS UNCOMFORTABLE: NAMING A FAILURE MODE DOES NOT IMMUNISE ANYONE AGAINST IT,
      AND HAVING RECENTLY PAID FOR IT APPEARS TO PROVIDE NO PROTECTION AT ALL.** This section is
-     therefore **not a defence** — it is a catalogue for recognising the damage afterwards. **The only
-     thing that has actually worked all session is a second seat running the discriminating case.**
+     therefore **not a defence** — it is a catalogue for recognising the damage afterwards.
+     ★★★ **AND THE CLOSING LINE, CORRECTED BY FERRY INTO SOMETHING BETTER THAN THE LEAD WROTE.** Lead6
+     wrote: *"the only thing that has worked all session is a second seat running the discriminating
+     case."* Ferry: **"it is not that a second seat is RELIABLE — it is that two seats fail DIFFERENTLY,
+     and THE DISAGREEMENT IS THE INSTRUMENT."** Atlas's clean zeros came from an empty process table;
+     Ferry's came from a filtered file. **Identical signature, different cause, and either agent alone
+     would have believed them.** That version is strictly better because it **explains why the second
+     seat helps and predicts when it will not: two seats sharing a probe fail IDENTICALLY** — which is
+     this face. **Redundancy is worthless; divergence is the whole mechanism.**
+  16. **★★ A FILTER APPLIED BEFORE A SEARCH IS A HYPOTHESIS YOU CAN NO LONGER FALSIFY.** (Ferry,
+     2026-07-25 — the cause of three of its own six failed isolation measurements.) Ferry captured
+     process environments through `grep -E "^(PATH|CLAUDE_CONFIG_DIR|UXTEST_)"` **and then searched the
+     filtered file for homebrew.** The Figma space splits `PATH` into two tokens; the filter dropped the
+     continuation fragment — **the exact fragment containing `/opt/homebrew/bin`.** Every run reported
+     `homebrew: 0`. Re-run against the full token stream: **`homebrew=1` on all three.**
+     **THE SIGNATURE IS THE PROBLEM: an empty measurement and a real negative are identical at the
+     output, and the pipeline SUCCEEDS**, so there is no stderr to read and no exit code to check. The
+     filter encodes what you already believe is relevant, and anything it drops becomes unfindable
+     **without ever being reported as missing.**
+     ★ **THE DEFENCE THAT WORKED, and it was not more care — it was a SECOND SEAT CONTROLLING ONE LEVEL
+     LOWER.** Six attempts failed. Ferry's own positive controls all tested its PARSER. Pitch supplied a
+     control for **"is there any env here at all"** — testing ACCESS — and it came back `HOME=1 USER=1,
+     70 tokens`, which made the absence of `CLAUDE_CONFIG_DIR` a **real negative** rather than an empty
+     extraction. **From inside, all six failures looked like parsing failures and three agreed with each
+     other.** Companion to face 15: **capture wide, filter at read time.**
   **★ THE THIRD FACE OF THE REFINEMENT (Ferry) — AN ARTIFACT CAN BE FRESH, CORRECTLY READ, AND
   STILL ANSWER A DIFFERENT QUESTION THAN THE ONE YOU MEANT.** Not staleness (face 9), not misreading
   (the Atlas refinement). Ferry checked the filesystem for `spawn-state/r1.json`, found it absent,
