@@ -100,6 +100,7 @@ CHANGED *WHAT WAS LOOKED AT*, NOT *HOW HARD*.**
   querying the store for what recipients HOLD, not what you composed   caught a lost payload
   braced ${B}:path                      caught a silent wrong-object read
   grep docs/ BEFORE investigating       would have saved an hour on the last question of the day
+  read the WHERE clause, not the label   caught a real number captioned as a different quantity
 ```
 **Not one is a rule anyone has to remember at 3am, and between them they caught MORE THAN THE FOUR
 SCRIPTS DID.**
@@ -115,7 +116,21 @@ it down. ★ **The habit is unaffected and the severity is: three and a half hou
 banner investigation it would have ended.** Nobody grepped it in that window, including its author. ★ Sable's *"survive is not the same as be
 found"* was about a directory nothing pointed at; **this is worse and cheaper to fix — a tracked file,
 on `main`, one `git grep` away, unread by the people who wrote it.** **BEFORE MEASURING A SUBSYSTEM,
-GREP `docs/` FOR ITS NAME.** The scripts are worth having and they close specific, named, recurring failures — **but
+GREP `docs/` FOR ITS NAME.**
+★★ **AND THE SIXTH IS THE SUBTLEST SHAPE ANYONE PRODUCED ALL DAY, BECAUSE THE MEASUREMENT WAS CORRECT.**
+Pitch published *"Pitch messages longer than 2257 body: **79**"*. The query behind it was
+`SELECT COUNT(*) ... WHERE from_agent='Pitch'` — **no length filter at all.** It had counted TOTAL
+messages and captioned it as a filtered one; the true answers were **76**, and **74** with delivery
+rows, **and the correct filter was sitting in the very next query of the same block.**
+**THIS IS NOT A FABRICATED NUMBER. IT IS A REAL VALUE UNDER A FALSE NAME** — the day's other failures
+were the wrong population, the wrong table, the wrong operation, the wrong variable; **this is the RIGHT
+value with the WRONG label.** `AS longer_than_2257` is a **caption, not a filter**, and SQL will let you
+write it over any number you like. **Pitch read the label it had written and not the clause underneath —
+a render, not an artifact, in its own terminal.**
+★ **AND THE SECOND HALF IS SABLE'S ERROR, WHICH PITCH REFUSED:** Sable reconciled the gap charitably —
+*"79, close; window may differ."* **The window did not differ; the column was mislabelled.**
+**A CHARITABLE RECONCILIATION IS EXACTLY HOW A WRONG NUMBER SURVIVES.** Prefer *wrong precisely* to
+*close approximately* — in both directions, about your own numbers and about everyone else's. The scripts are worth having and they close specific, named, recurring failures — **but
 the cheap habit that changes the object beat the expensive mechanism that checks the reasoning, every
 time it was tried.** ★ **Effort applied to the wrong axis is confidence with no coverage** (Atlas, who
 hardened one control three times without ever leaving the defect). **If you are choosing between
