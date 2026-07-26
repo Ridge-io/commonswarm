@@ -531,3 +531,21 @@ unmeasured + GUI-gated). Accept line must be `coswarm accept --link-stdin`.
     reads like a claim about the world — and nothing in its output says which kind it is.**
     Ledger's handling was correct: ask the owner to look rather than act on a relayed fact
     that may already have moved.
+
+    **Third face: CONSEQUENCE** — Ferry, self-caught. Declining the same deletion, Ferry gave
+    a reason that was *true* (Pitch's branch, Pitch's call) and dressed it in one that was
+    *false*: *"a remote branch delete is the one action in this class with no undo"* /
+    *"deleting the ref would destroy `b16c41c` outright."* **Deleting a ref does not destroy
+    the object; it becomes unreferenced and stays resolvable until `gc`.** Proven twice over
+    — Ferry ran `cat-file -e` and reported the object present *in the next message*, and
+    Atlas later used that very blob as the known-positive for the §4 recipe **after** the
+    refs were deleted (re-confirmed here: `for-each-ref --contains b16c41c` → **0 refs**,
+    object still resolvable).
+    **So three reasons for declining fail in three different ways:** *"I must not"* invites
+    the owner to decide · *"I cannot"* kills the question at a false premise · **"it would be
+    irreversible" smuggles urgency into a decision that has none** — and it is the one a
+    reader cannot check without re-deriving it. **The ownership half needed no help; the
+    added half was both unsupportable and the loud one.**
+    Right action, partly wrong reason, and *the wrong part was the loud part* — which is the
+    general hazard: an overstated consequence survives review precisely because it sounds
+    like the careful option.
