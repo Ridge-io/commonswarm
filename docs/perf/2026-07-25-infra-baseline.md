@@ -357,7 +357,7 @@ signal, I did not establish.** The charter should say *"disk bounds the denomina
 
 Lead6 handed this lane the design after three failed attempts of its own (an absolute that
 could not fire, a ratio with a disk-shadowed denominator, a trend from one sample).
-Implemented at `scratchpad/envelope-check.sh` — 25 lines, exits 1 on RED so it can guard a spawn.
+Implemented at `scripts/envelope-check.sh` — exits 1 on RED so it can guard a spawn.
 
 | condition | source | denominator | now |
 |---|---|---|---|
@@ -440,7 +440,7 @@ On `df -k` the residual is 0.29 GB. **There is no measurable fleet debris in tha
 own "32 → 26 → 24.7 → 23" was therefore wrong twice: a mirrored excursion, read with a blunt
 ruler. `df -k` is now enforced in the script header.
 
-**Final conditions** (`scratchpad/envelope-check.sh`):
+**Conditions** (`scripts/envelope-check.sh`) — *superseded in one arm, see §8a-vi*:
 
 | condition | source | why |
 |---|---|---|
@@ -1159,3 +1159,56 @@ ends with nobody reading it at all. The RED remains producible: 28–29% occurre
 **Also note:** this section exists because the *document* said 35% while the *script* said 30%
 — a doc/artifact disagreement of exactly the class catalogued elsewhere in this file, created
 by landing the two at different moments. Whoever edits either should check the other.
+
+---
+
+## 8a-vi. The replacement gate inherited the defect it replaced — found by Atlas
+
+**`swap used (absolute) > 8192 MB` was the same defect as the ~12 GB charter gate, one
+threshold lower.** Atlas caught it; confirmed here, and it was **live at the moment of the
+fix**:
+
+```
+sysctl -n vm.swapusage  ->  total = 6144.00M   used = 5244.81M
+```
+
+**`used` cannot exceed `total`, and the trip sat at 8192 MB — above the entire swapfile.**
+The arm could not fire. Of eight distinct swap totals observed across the session
+(6144 … 13312 MB), **three put the gate in the unreachable state**, and the machine was in
+one of them.
+
+**And when it *was* reachable it was still wrong**: `total` is `count(swapfile) × 1 GB`, which
+macOS **grows in response to the pressure being measured**. So the arm fired only after the
+mitigation had already happened — *"on the mitigation rather than the pressure"*, which is the
+exact wording of my own charter correction, applied to my own replacement. **I removed an
+absolute threshold against a moving bound and then shipped another one.**
+
+**Replacement — `memory under duress > 100% of physical RAM`:**
+
+```
+DURESS = (vm.compressor_bytes_used + swap_used) / hw.memsize
+```
+
+**Compressor is bounded by RAM, not by the swapfile count**, so the metric is reachable at any
+`swap_total`. Session evidence:
+
+| moment | compressor | swap used | duress |
+|---|---|---|---|
+| baseline | 2.0 GB | 4558 MB | 40% |
+| **pressure** | 7.2 GB | 12125 MB | **119%** |
+| **peak** | 7.0 GB | 11167 MB | **112%** |
+| mid | 6.0 GB | 8552 MB | 90% |
+| easing | 3.2 GB | 7089 MB | 63% |
+| recovered | 2.2 GB | 5443 MB | 47% |
+
+A trip at **>100%** fires on exactly the two genuine excursions and stays quiet on everything
+else. **Reachability verified at the state that killed the old arm**: at `swap_total` 6144 MB,
+lowering the threshold makes the new arm go RED — the old one could not have, at any threshold
+at or above the total.
+
+`swap used` is retained as a printed **diagnostic**, since Vane's monotonicity argument for it
+is still correct — it is a good *reading* and was a bad *trip*.
+
+> **★ THE GENERAL FORM — an absolute threshold is only as good as its bound. If the quantity
+> is capped by something that grows in response to the pressure, the threshold measures the
+> mitigation, not the pressure. Check what caps the numerator, not just what divides it.**

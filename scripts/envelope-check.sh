@@ -12,6 +12,15 @@
 #                         disk_free+swap_total held to 0.29 GB on unrounded readings.
 #                         A raw-disk gate reports the swap excursion twice; it does not bound it.
 #   pageout rate        — needs two samples, noisy. Level gates, not rate.
+#   swap used, ABSOLUTE — REMOVED 2026-07-25 after Atlas caught it inheriting the very defect
+#                         this gate replaced. `used` cannot exceed `total`, and `total` is
+#                         count(swapfile)*1GB which macOS GROWS IN RESPONSE TO PRESSURE. So
+#                         `used > 8192MB` was UNREACHABLE whenever total <= 8192 — the live
+#                         state at the time of the fix (total 6144MB) — and became reachable
+#                         only after macOS had already grown the file. It fired on the
+#                         mitigation, not the pressure: the same shape as the ~12GB charter
+#                         gate this replaced, one threshold lower. Replaced by memory-under-
+#                         duress below, whose denominator is physical RAM and cannot move.
 #
 # ALWAYS df -k, never df -h: -h rounds to whole GB, and a sum of two rounded readings carries
 # +/-1 GB — which is the entire apparent "slow disk decline" reported earlier tonight.
@@ -25,12 +34,30 @@ set -uo pipefail
 #      tonight, 34-36% marginal-but-working, 64% recovered) instead of bisecting the idle range.
 FREE_PCT=$(for _ in 1 2 3; do memory_pressure 2>/dev/null | sed -n 's/.*free percentage: *\([0-9]*\)%.*/\1/p'; done | sort -n | head -1)
 SWAP_USED_MB=$(sysctl -n vm.swapusage | sed -n 's/.*used = \([0-9.]*\)M.*/\1/p' | cut -d. -f1)
-# The CEILING for swap used. `used` can never exceed `total`, and macOS moves `total` by a whole
-# GB while you read it — so an ABSOLUTE trip on `used` is reachable or not depending on the
-# swapfile count at the moment of reading. Measured three times in one evening at a fixed 8192
-# trip: total 8192 (trip == ceiling, unreachable), total 9216 (reachable), total 6144
-# (unreachable by 2048 MB). This value exists to let chk() detect that, not to gate anything.
 SWAP_TOTAL_MB=$(sysctl -n vm.swapusage | sed -n 's/.*total = \([0-9.]*\)M.*/\1/p' | cut -d. -f1)
+# Memory under duress = compressed + swapped out, against PHYSICAL RAM (Ledger).
+# >100% means the machine is holding more than its physical memory in duress storage.
+# Session evidence: 119% and 112% at the two real excursions; 40-63% otherwise. It fires on
+# pressure, which is what the absolute-MB arm could not do.
+#
+# ★ WORDING CORRECTED PER ATLAS, and the correction matters because the strong version is
+# FALSIFIABLE ON A QUIET MACHINE. This arm is NOT "reachable at any swap_total" in the sense of
+# having comfortable margin everywhere. The accurate claim is narrower: THE NUMERATOR IS NO
+# LONGER BOUNDED BELOW THE TRIP. Its cap is compressor_max + swap_total, which still contains
+# swap_total — the dependency on the moving bound is REDUCED, NOT REMOVED. At low swap totals,
+# firing requires a compressor excursion larger than any observed this session (Atlas measured
+# a ~75% practical ceiling at total 6144 MB, holding compressor constant, against a 100% trip).
+# A successor who checks the strong claim on an idle machine finds ~71% and reasonably distrusts
+# the arm. This is the same trap as the charter's "unreachable by construction": an overstated
+# justification protects the defect it is defending against.
+DURESS_PCT=$(awk -v c="$(sysctl -n vm.compressor_bytes_used)" -v s="$SWAP_USED_MB" \
+  -v r="$(sysctl -n hw.memsize)" 'BEGIN{printf "%d", 100*(c + s*1048576)/r}')
+# HARD ceiling for the arm above: compressor cannot exceed RAM and swap_used cannot exceed
+# swap_total, so duress% <= 100*(RAM + swap_total)/RAM. Passed to chk() so the reachability
+# assertion covers THIS arm too — the mechanism must watch the replacement, not just the
+# thing it replaced. Measured now: 156% against a 100% trip, so the arm is genuinely reachable.
+DURESS_MAX_PCT=$(awk -v r="$(sysctl -n hw.memsize)" -v st="$SWAP_TOTAL_MB" \
+  'BEGIN{printf "%d", 100*(r + st*1048576)/r}')
 SWAP_TOTAL_GB=$(sysctl -n vm.swapusage | sed -n 's/.*total = \([0-9.]*\)M.*/\1/p' | awk '{printf "%.1f", $1/1024}')
 DISK_GB=$(df -k / | awk 'NR==2{printf "%.1f", $4/1048576}')
 HEADROOM_GB=$(awk -v d="$DISK_GB" -v s="$SWAP_TOTAL_GB" 'BEGIN{printf "%d", d+s}')
@@ -68,9 +95,9 @@ chk() {
   printf "  %-27s %8s%-3s (trip: %s %s)  %s\n" "$1" "$2" "$5" "$3" "$4$5" "$s"
 }
 
-echo "envelope: RAM ${RAM_GB}GB  compressor ${COMPRESSOR_GB}GB  swap_total ${SWAP_TOTAL_GB}GB  disk ${DISK_GB}GB   (diagnostics, not trips)"
+echo "envelope: RAM ${RAM_GB}GB  compressor ${COMPRESSOR_GB}GB  swap_total ${SWAP_TOTAL_GB}GB  swap_used ${SWAP_USED_MB}MB  disk ${DISK_GB}GB   (diagnostics, not trips)"
 chk "system free (worst of 3)"  "$FREE_PCT"     lt 30   "%"
-chk "swap used (absolute)"      "$SWAP_USED_MB" gt 8192 "MB" "$SWAP_TOTAL_MB"
+chk "memory under duress"       "$DURESS_PCT"   gt 100  "%"  "$DURESS_MAX_PCT"
 chk "swap headroom (disk+total)" "$HEADROOM_GB" lt 25   "GB"
 echo
 if [ "$RED" = 1 ]; then
