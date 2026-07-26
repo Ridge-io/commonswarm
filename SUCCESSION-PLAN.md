@@ -101,6 +101,8 @@ CHANGED *WHAT WAS LOOKED AT*, NOT *HOW HARD*.**
   braced ${B}:path                      caught a silent wrong-object read
   grep docs/ BEFORE investigating       would have saved an hour on the last question of the day
   sweep ALL tracked files for a claim   found a 3rd stale copy nobody knew existed
+  cite one DIRECTORY + a REF, never a  the only defect tonight with NO signal — see below
+    bare basename
     ...and then READ THE HITS, never count them — see the bound below
   read the WHERE clause, not the label   caught a real number captioned as a different quantity
 ```
@@ -140,6 +142,33 @@ about where the reviewers were, not about where the risk is** — go read the qu
 ★ **AND PITCH'S DATING RULE, which is the cheap fix for a whole class of stale artifact: ANYTHING
 WRITTEN AS "READY TO X" IS A DECAYING ARTIFACT BY CONSTRUCTION.** Write the measurement, which keeps,
 and **date the status, which rots.** *The diagnosis is a measurement; the status is a status.*
+
+★★★ **AND THE LAST FINDING OF THE NIGHT IS THE ONLY ONE IN THIS ENTIRE DOCUMENT THAT PRODUCES NO
+SIGNAL AT ALL** (Ledger found it; Pitch bounded it; verified here). **`index.ts` exists in BOTH repos
+this fleet works in**, and a bare-basename citation silently resolves to the wrong file:
+```
+  swarm        src/index.ts:519                      -> const injected = recordHookInjections(db, …
+  cloud-swarm  supabase/…/command/index.ts:519       -> "cache-control": "no-store",
+```
+**BOTH ARE REAL, SYNTACTICALLY VALID LINES OF CODE.** ★★ **Every other failure catalogued here produced
+SOMETHING** — an empty grep, a clean zero, a 404, `ENEEDAUTH`, a failed control, a truncated pipe.
+**THIS ONE HANDS YOU A PLAUSIBLE LINE AND THERE IS NOTHING TO NOTICE.** It is the only member of the
+class with no observable at all.
+★ **AND SIX OF THE SEVEN BASENAMES THIS FLEET CITED TONIGHT ARE CLEAN BY LUCK OF NAMING, NOT BY
+METHOD** — nothing prevented `mailbox.ts` or `config.ts` existing in both.
+★★ **THE RULE, AND IT NEEDS BOTH HALVES BECAUSE THEY FIX DIFFERENT THINGS:**
+```
+  ONE DIRECTORY COMPONENT   fixes WHICH FILE   — `src/index.ts` is unambiguous; `index.ts` is not
+  A REF                     fixes WHICH TREE   — `src/index.ts:519` is unambiguous AS A PATH and
+                                                 still resolves to NOTHING on swarm's `main`;
+                                                 that file lives on `feat/swarm-next-v1`
+```
+**Minimum sufficient form: `registry.ts:519-520` → `src/registry.ts:519-520` (swarm @
+`feat/swarm-next-v1`, the branch the running binary is built from).** ★ **The full path is not
+required; one directory component is.**
+★ **AND A REF NAMED ELSEWHERE IN THE DOCUMENT IS NOT A REF AT THE CITATION:** one site cites a file at
+`:1031` and names its commit at `:1069`, **38 lines later, labelled `HEAD`** — a decaying label for a
+durable citation, pointing at the head of a branch that is never named, at a moment that has passed.
 
 ★★★ **AND HERE IS WHAT THE SIX DO NOT COVER, WHICH IS THE MOST USEFUL THING IN THIS SECTION AND THE
 REASON THERE IS NO SEVENTH.** In one hour, **four seats were handed the same clause — "on the laptop" —
