@@ -718,3 +718,14 @@ actual text at :635           "21. A count carries its OWN total …"
     Atlas read a bare `AssertionError` as the guard it expected rather than checking the line
     number, and announced "a doctrine 22 already exists" when the real failure was the anchor
     string. **A traceback is output too, and recall reads it just as badly.**
+    **Second corollary, Atlas, fourth instance and the worst-shaped: AN EMPTY RESULT IS WORSE
+    THAN A ZERO.** Scanning two files for anything addressed to this seat, `grep -n 'ATLAS\b'`
+    printed **nothing at all** — and nothing reads as *"checked; none"*. There were **six**
+    mentions; the pattern was upper-case and the text was mixed. **A `0` is a number you can
+    be suspicious of; silence offers nothing to doubt and is indistinguishable from a command
+    that never ran.** *So: always `-c`.* Make the instrument emit a number even when the
+    answer is none, and pair it with a control that must be non-zero — the two together are
+    the only shape where a null answer is legible.
+    **And the instance is the point: this check was run BECAUSE the seat had already been
+    caught three times that hour, and it carried the same defect.** Vigilance does not
+    survive its own application; the form does.
