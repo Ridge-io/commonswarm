@@ -72,6 +72,39 @@ origin && git rev-parse origin/main`. A failed fetch still lets rev-parse answer
 
 **`origin/main` has moved past the SHA in this section several times. Fetch.**
 
+### ★★★ WHAT EXISTS NOW — READ THIS BEFORE YOU BUILD ANYTHING, IT IS ALL NEW TODAY
+
+**Four executable checks landed 2026-07-25. None existed this morning. Each states in its OWN OUTPUT
+what it does NOT answer, because that is where every caveat went missing.** Run them; **do not quote
+their output into a message** — see face 19.
+```
+  scripts/envelope-check.sh   before spawning. Is each trip INSIDE its metric's attainable range?
+                              Prints UNREACHABLE instead of GREEN when not. NOT: is the metric right.
+  scripts/probe-check.sh      before trusting a probe. Can its positive control produce a hit?
+                              exit 2 VACUOUS is distinct from exit 1 CLEAN. NOT: did it hit the
+                              right object. Header carries the `ls -lO` SIP tell.
+  scripts/path-check.sh       before trusting a shimmed measurement. Was the instrument actually in
+                              the subject's PATH? NOT: does shimming it cover everything you varied.
+  scripts/branch-audit.sh     before pruning or landing a branch. Four questions, four instruments,
+                              and it MARKS WHICH ANSWERS DECAY (per-commit STABLE vs tip-relative).
+```
+★ **PRUNE and LAND are different questions and the tool answers both separately.** `0 unabsorbed` =
+debris that reads like an open item · `N unabsorbed` = a record that reads like debris.
+
+**SURVIVING BRANCHES — resolve these by NAME, never by a SHA quoted anywhere (they moved constantly):**
+```
+  origin/ferry/r1-go-runbook   R1 runbook, findings, and the persona-surface env capture.
+                               ONLY COPY. Cherry-pick the uxtest/findings files; NEVER squash;
+                               DO NOT PRUNE. Reader hazard, known: its own findings cite tools that
+                               do not exist in that tree — read them from main.
+  origin/vane/launch-audit     The launchable audit and §6 scoring, with item 1(a)'s closure and
+                               its attribution. ONLY COPY. Cherry-pick or merge; NEVER squash;
+                               DO NOT PRUNE. Vane's condition: RE-RUN THE AUDIT AT LAND TIME —
+                               it was not re-run before this handoff, so do not land it as verified.
+```
+★ **Both are pushed, so both are durable. Neither is on `main` and neither is debris.** `branch-audit.sh`
+will tell you their current state; **this paragraph will not, and is not trying to.**
+
 ### ★★ LAST DELTA BEFORE ROTATION
 
 **-1. ★★★ THE `private: true` PUBLISH GUARD IS VERIFIED AND GREEN — CLOSED, NOT OPEN.** An earlier
