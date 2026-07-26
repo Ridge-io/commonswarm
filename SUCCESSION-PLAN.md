@@ -253,8 +253,21 @@ tracks whoever last checked out. **Nothing announces the drift.** No error, no c
 ★★★ **BEFORE YOU DEFER PART 2 ON DANA'S ACCOUNT, CHECK THAT DANA IS DOING ANYTHING.** This document
 defers Part 2 because it *"touches what Dana tests against"* — **that premise is unverified.** Measured
 at handoff: **Dana has sent ZERO messages in this swarm** and has **zero `message_deliveries` rows**.
-  - ★ **DO NOT read zero delivery rows as "unread" — that inference is WRONG and Sable caught it.**
-    Dana is **`agent_type=a2a`**, receives by **HTTP push**, and **never calls `getInbox`** — and
+  - ★★★ **AND THE TYPE ITSELF IS DISPUTED IN THIS DOCUMENT — RESOLVE IT BEFORE USING EITHER READING.**
+    The `agents` **registry** says `agent_type=a2a`. **§ below (search: *"NOT `[a2a]`, and this is not
+    cosmetic"*) records DANA'S OWN CORRECTION: `swarm whoami` reported Type **cmux**, Host
+    claude-code, and the `:18791` bridge is a SERVED ENDPOINT, NOT ITS AGENT TYPE.** That section
+    exists because the same file already burned someone on `Anvil [a2a]` — **a registry entry naming
+    an address is not an observation of what serves it.**
+    ★ **THE LEAD TOOK THE REGISTRY AND DID NOT CHECK THE SELF-REPORT — in a block whose whole purpose
+    is to stop an unchecked premise, citing the registry the same document calls unreliable.**
+    **IT CHANGES THE CONCLUSION:** if Dana is **cmux** it DOES call `getInbox`, and zero delivery rows
+    would NOT be normal. The a2a reading below is therefore **conditional, not established.**
+    **DISCRIMINATOR (one command, on the laptop): `swarm whoami` AS DANA — not `swarm members`, which
+    reads the registry both readings dispute.**
+  - ★ **DO NOT read zero delivery rows as "unread" IF the a2a reading holds** — that inference is
+    wrong under a2a and Sable caught it.
+    **Under `agent_type=a2a`**, Dana receives by **HTTP push**, **never calls `getInbox`** — and
     delivery rows are written *by* `getInbox`. **Zero rows is the NORMAL, EXPECTED state for an a2a
     seat**, not evidence of a dead one. All 36 directed messages carry `delivered = 1`, and the
     endpoint's heartbeat was live at handoff. **"36 unread" is an overclaim; do not repeat it.**
