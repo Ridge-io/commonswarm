@@ -622,3 +622,25 @@ Ferry        <ferry@cloud-swarm.local> 1   <- a seat that set its own NAME
     **The practice — narrower and cheaper than a set review, one question at the moment of
     surprise: when a measurement surprises you, ask what you have already said that it
     contradicts, before filing it.** All three of Ferry's would have died there.
+
+21. **A count carries its own total, or a future reader cannot tell "you were wrong" from
+    "time passed."** Pitch's form, Ledger's reason for it, Sable's floor. The identity
+    question above was answered five times — **2 → 3 → "≥3" → 5 → 5-reconciled** — and every
+    answer was correct for the query that produced it. Only the last one survives being
+    re-run:
+```
+git log <ref> --format='%an <%ae>' | sort | uniq -c | sort -rn   # enumerate
+git log <ref> --format='%an <%ae>' | wc -l                       # sum of parts
+git rev-list --count <ref>                                       # independent total
+```
+    **Pitch got 274, Ledger 275, Atlas 277 — none of them wrong.** Commits landed in between,
+    and the `<employer-a-address REDACTED 2026-08-10>` row (12 → 13 → 14) grew because *the seat re-running the
+    measurement was the one committing*: **the observer was the perturbation.** Without the
+    sum-to-total, three different numbers read as three miscounts; with it, each closes
+    against its own total and the difference is visibly the world moving.
+    **So reconciliation is not only a completeness proof — it is a FRAME LABEL**, the thing
+    a bare cardinality can never carry: it says *this was true of a repository in this
+    state*, which is precisely what doctrine 18's corollary says ref lists silently omit.
+    **And Sable's `">=3"` was the only honest intermediate**: a *bound* is a claim about what
+    you measured, a bare number is a claim about the world. Four seats made the second claim;
+    one meant it. **When you cannot reconcile, publish a bound rather than a number.**
