@@ -40,21 +40,63 @@ Real, shipped surface (from `coswarm --help`, verified):
 - Install: `curl -fsSL <url>/install.sh | sh` → `~/.local/bin/coswarm`, checksum
   verified, no sudo. Requires Node >= 24.
 
-### The honest differentiator — this is the whole pitch
+### ⚠ THE DIFFERENTIATOR WAS WRONG. THIS SUPERSEDES IT. (2026-07-26)
 
-Workbench optimises for **zero friction**: one link, no account, everyone edits a doc.
+**The retired framing, kept so nobody re-derives it:** "coswarm optimises for authority —
+who authorised this, what is this agent allowed to do, what actually happened." I wrote
+that, every seat inherited it because I told them to, and it produced a hero reading
+"Every agent action, authorised and on the record" over a demo captioned "Ask the agent to
+do something it was never granted. Watch the refusal get written down."
 
-coswarm optimises for **authority**. When several humans and many agents share work,
-the questions that actually bite are: *who authorised this? what is this agent allowed
-to do? what actually happened?* Our answer is a governed authority core (principals,
-scoped minted tokens) plus an **immutable signal plane** — an append-only record.
+The operator's verdict, and it is correct: that reads as *"a super annoying system where
+you can't do what you want and you get blocked at every pass. That's not the benefit."*
+We built a beautiful advertisement for friction.
 
-The design ethos, from the spec §0, and the best line we own:
+**THE ACTUAL BENEFIT: agent-to-agent communication, so collaborators are unblocked and
+don't step on each other's toes.**
 
-> **Friction is justified only by irreversibility.** Smooth by default, hard only at
-> the few genuinely irreversible acts.
+Pitch's one-line reframe is the test to apply to every sentence:
 
-That is a real, differentiated, defensible position. Lead with it.
+> OLD — *we know what your agents did.*
+> NEW — **your agents know what each other are doing.**
+>
+> An audit trail is written for someone who arrives later to judge. A signal is written for
+> the teammate working now. Our records were always addressed to peers, and we described
+> them as evidence.
+
+Same signal plane, same leases. The difference is **who the information is for**. A lease
+is not a police officer — it is how builder-2 learns that scout is already in that file.
+
+**Refusals are a failure mode to minimise, not a feature to demonstrate.** Every refusal a
+real user meets is us failing to have coordinated smoothly.
+
+#### Vocabulary — four seats are rewriting at once and the old words will leak back
+
+| retired | use instead |
+|---|---|
+| authorised | announced |
+| permission | heads-up |
+| refusal | "someone's already there" |
+| audit trail | shared feed |
+| immutable record | written once so nobody loses it |
+| governed | coordinated |
+| lease | a claim, so the next agent routes around it |
+| enforcement | awareness |
+| scoped token | keep credentials out of the hero entirely |
+
+Rule of thumb: **if a sentence would sound at home in a compliance datasheet, it is the old
+story wearing new words.**
+
+#### On the ethos line
+
+"Friction is justified only by irreversibility" stays in the spec and in fleet decisions.
+It does **not** go in a headline — it is a sentence about friction, and putting it in the
+largest type on the site makes friction the subject. It is a builder's rule, not a pitch.
+
+#### And it binds the product, not just the copy
+
+Safeguards now carry the burden of proof. Assume the agent is intelligent and
+well-intentioned; if an act is reversible, it should not be gated. Simpler is better.
 
 ### The onboarding story — lead with this, it is genuinely clean
 
