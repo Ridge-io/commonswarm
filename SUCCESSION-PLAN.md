@@ -159,10 +159,31 @@ METHOD** — nothing prevented `mailbox.ts` or `config.ts` existing in both.
 ★★ **THE RULE, AND IT NEEDS BOTH HALVES BECAUSE THEY FIX DIFFERENT THINGS:**
 ```
   ONE DIRECTORY COMPONENT   fixes WHICH FILE   — `src/index.ts` is unambiguous; `index.ts` is not
-  A REF                     fixes WHICH TREE   — `src/index.ts:519` is unambiguous AS A PATH and
-                                                 still resolves to NOTHING on swarm's `main`;
-                                                 that file lives on `feat/swarm-next-v1`
+  A REF                     fixes WHICH TREE   — but NOT for the reason first landed here; see below
 ```
+★★★ **AND THE REASON I FIRST GAVE FOR THE REF CLAUSE WAS ITSELF A VACUOUS MEASUREMENT — THE LAST AND
+LARGEST OF THE NIGHT, FOUND BY SABLE IN A ONE-CLAUSE BOUND APPENDED TO AN ACK.** This entry said
+`src/index.ts:519` *"resolves to NOTHING on swarm's `main`"*. **THE `swarm` REPO HAS NO `main`.**
+```
+  git symbolic-ref refs/remotes/origin/HEAD  ->  refs/remotes/origin/master
+  origin/main:src/index.ts    ->     0 lines   <- THE REF DOES NOT EXIST
+  origin/master:src/index.ts  ->  2259 lines
+  registry.ts:519 on master   ->  "SELECT * FROM agents WHERE swarm_id = ? AND name = ? COLLATE NO…
+```
+**`git show <missing-ref>:<path>` PRINTS EMPTY AND DOES NOT ERROR.** Three seats ran it, got nothing,
+and read *"the citation is unresolvable."* **The citations were correct the whole time**, and
+`origin/master` and `feat/swarm-next-v1` carry **identical blobs** for the cited files.
+★★ **WHAT FALLS:** *"four landed documents cite lines that do not exist"* · *"the running binary is
+built from a branch whose source is absent from main"* · *"seven unpinned line numbers."* **The
+addresses resolve. The ref was never wrong; the checker was.**
+★★ **WHAT STANDS, AND WHY THE CLAUSE IS STILL RIGHT:** **name the ref because a successor guessing
+`main` in a `master` repo gets SILENCE, not an error** — which is the trap that produced this entry.
+★ **AND `index.ts` STILL COLLIDES** across the two repos and returns a plausible wrong line; that was
+measured by reading both files from disk and **is independent of any ref.**
+★★★ **THE SHAPE, ONE LAST TIME AND ON MYSELF: I DOCUMENTED "THE ONLY DEFECT WITH NO SIGNAL" USING AN
+INSTRUMENT WHOSE NEGATIVE ANSWER WAS FIXED BEFORE THE MEASUREMENT BEGAN.** Ledger had already written
+the rule that would have caught it — *"name which ref, do not pick a favourite one"* — **and we picked
+a favourite. It was `main`, and the repo does not have one.**
 **Minimum sufficient form: `registry.ts:519-520` → `src/registry.ts:519-520` (swarm @
 `feat/swarm-next-v1`, the branch the running binary is built from).** ★ **The full path is not
 required; one directory component is.**
