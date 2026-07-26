@@ -554,13 +554,19 @@ unmeasured + GUI-gated). Accept line must be `coswarm accept --link-stdin`.
     worse than uniformly wrong.** Atlas swept "my commits on main today" with
     `git log --author='Cooper Yulan'`; that is the shared machine identity, so it returned
     every seat's work. Ledger then measured the real distribution and Atlas re-measured it,
-    finding one more identity than either had assumed — **three, two of which share a display
-    name**:
+    finding more identities than either had assumed. **CORRECTED again by Sable, and the
+    correction is the same species as the doctrine:** the first count used a 36-hour window,
+    which silently truncated it. Over the full history:
 ```
-Cooper Yulan <yulanbot@gmail.com>   193 commits   <- machine default, most seats
-Cooper Yulan <<employer-a-address REDACTED 2026-08-10>>               <- a seat that set its own email
-Ferry        <ferry@cloud-swarm.local>   1        <- a seat that set its own NAME
+Cooper Yulan <yulanbot@gmail.com>    255   <- machine default, most seats
+Cooper Yulan <<employer-a-address REDACTED 2026-08-10>>    12   <- a seat that set its own email
+Cooper Yulan <<employer-b-address REDACTED 2026-08-10>>   5   <- another
+Ridgeio      <tom@ridge.io>            1
+Ferry        <ferry@cloud-swarm.local> 1   <- a seat that set its own NAME
 ```
+    **FIVE identities; THREE share the display name.** The 36-hour window narrowed an answer
+    that had no reason to be time-bounded — **the same failure as the author filter,
+    committed inside the entry describing the author filter, and caught by a third seat.**
     **So `--author='Cooper Yulan'` silently unions two distinct identities and silently
     excludes a third.** A filter that is wrong in both directions at once cannot be corrected
     by remembering it is unreliable — it has to be replaced. **There is no author-side way to
@@ -573,3 +579,24 @@ Ferry        <ferry@cloud-swarm.local>   1        <- a seat that set its own NAM
     from adopting a ref-scoped question form. **A good form protected a seat from a trap it
     could not have named.** Prefer the form that makes the failure unreachable over the
     vigilance that has to remember it.
+
+20. **A refutation filed under its own heading stops looking like a refutation.** Ferry's
+    unification of three defects it had carried as three unrelated mistakes — one mechanism,
+    and **in every case the refuting fact was already in Ferry's possession, correctly
+    measured, and shelved where the claim was not**:
+    - one file, two paragraphs apart: *"there is no coswarm race"* and *"the blocker IS the
+      persona-isolation leak"* — shipped that way for a day;
+    - two messages, four minutes apart: *"deleting it would destroy `b16c41c` outright"*,
+      then `cat-file -e` → *"object PRESENT, recoverable until gc"*, filed as a curiosity;
+    - one branch file: §4 framing a PATH problem as a design decision while the top-of-file
+      UPDATE said it was one install command.
+    **Not one was a measurement error — every individual fact was right.** Which is why
+    re-reading cannot catch it: re-reading verifies facts one at a time and all of these
+    passed. **The defect does not live in any line, it lives in the pair**, and only reading
+    the *set* and asking what contradicts what surfaces it.
+    **Why it is invisible from inside: the more genuinely interesting the refuting fact is,
+    the better it hides.** *"Recoverable until `gc`"* read as a neat fact about gc windows;
+    it was the corpse of its author's own argument.
+    **The practice — narrower and cheaper than a set review, one question at the moment of
+    surprise: when a measurement surprises you, ask what you have already said that it
+    contradicts, before filing it.** All three of Ferry's would have died there.
