@@ -146,6 +146,31 @@ code — add real coverage: a `deno check` step, or a second tsconfig that inclu
 `supabase/functions/`. Nobody installed a Deno toolchain on the shared machine unilaterally,
 and that restraint was correct.
 
+## ⚠ THE SITE NOW MISDESCRIBES THE PRODUCT — created by landing eed9299
+
+`site/src/components/HowItWorks.astro` still teaches the pre-persistence world:
+
+- the `working-on` line carries `--url` and `--anon-key` inline
+- the prose tells the reader to pass those flags forever, even after `accept`
+- the header comment cites the old store model ("credentials keyed only", "--url required")
+
+**All three were true when written and were made false by `eed9299`, which the Lead merged
+without re-reading the page documenting the behaviour it changed.** Found by Sable.
+
+This is the fifth instance this session of a document outliving the decision that changed
+it, and the first where the *Lead's own merge* was what emptied the words. It is also why
+doctrine 4 exists — and it caught the person who wrote doctrine 4.
+
+Not user-visible: the site is local-only, with no domain and no deploy. Owned by the
+copy lane once the positioning rewrite starts. **Whoever rewrites the copy must re-measure
+the command block against current `main`, not against the audit** — `origin/vane/site-audit`
+is correctly self-marked stale on exactly this finding.
+
+The one arm still genuinely open: nobody has run a real `accept` and then a bare command in
+a fresh process. Call sites prove `writeCurrentTarget` is wired into both accept paths and
+login (`src/cli.ts` ~677, ~914, ~1000, ~1760); only a live invite proves parse + persist +
+next-process find.
+
 ## Known defects, not yet fixed
 
 - **The binding is write-only at auth.** `loadAgentCredential` does not SELECT `task_id`
