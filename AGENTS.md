@@ -163,3 +163,32 @@ curl -s "$U" | grep -c '<the thing that must be GONE>'      # must be 0
 ```
 
 There is no CI. Deploys are manual and are the Lead's call; nothing deploys on push.
+
+### zsh mangles `$rev:src/...` — brace it
+
+This cost three agents six failed probes in one session, each blaming "zsh being zsh":
+
+```sh
+git rev-parse "$r:src/cli.ts"      # zsh: bad substitution   <- DIES
+git rev-parse "${r}:src/cli.ts"    # works                   <- the fix
+```
+
+zsh parses `$r:s` as parameter `$r` with a **`:s` substitution modifier**. Any git revision
+written as `$var:path` where the path begins with `s` (`src/`, `site/`, `supabase/`) is
+mangled before git sees it. `tests/` and `docs/` are fine — it is specifically `s`.
+
+**The trigger is a literal `s` in the source text after the colon, not the expanded value:**
+
+```sh
+p=src/cli.ts; git rev-parse "$r:$p"   # WORKS — identical value, parses fine
+```
+
+`$r:$p` is immune because the character after `:` is `$`. That is why this bug hides: **the
+loops and helper functions we write to be careful are exactly the form that cannot reproduce
+it.** It only bites in the quick literal one-liner you type while checking something else —
+and a passing test written as a loop does **not** clear a literal call site.
+
+**Why it matters beyond ergonomics:** the failure prints to stderr and the command produces no
+stdout, so a probe wrapped in `$(...)` yields an empty string that reads as *"absent"*. It is a
+dead command wearing the costume of a measurement — one more way to manufacture a zero. If a
+path-existence check comes back negative, confirm the command actually ran.
