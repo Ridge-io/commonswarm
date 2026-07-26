@@ -250,6 +250,20 @@ tracks whoever last checked out. **Nothing announces the drift.** No error, no c
     the *mechanism*; "remember to rebuild" is the *rule*, and the rule lost tonight with four agents
     watching. **It does not fix a `git checkout` moving a tree under an existing link — nothing in npm
     does.** Do not let it be reported as closing the class.
+★★★ **BEFORE YOU DEFER PART 2 ON DANA'S ACCOUNT, CHECK THAT DANA IS DOING ANYTHING.** This document
+defers Part 2 because it *"touches what Dana tests against"* — **that premise is unverified.** Measured
+at handoff: **Dana has sent ZERO messages in this swarm** and has **zero `message_deliveries` rows**.
+  - ★ **DO NOT read zero delivery rows as "unread" — that inference is WRONG and Sable caught it.**
+    Dana is **`agent_type=a2a`**, receives by **HTTP push**, and **never calls `getInbox`** — and
+    delivery rows are written *by* `getInbox`. **Zero rows is the NORMAL, EXPECTED state for an a2a
+    seat**, not evidence of a dead one. All 36 directed messages carry `delivered = 1`, and the
+    endpoint's heartbeat was live at handoff. **"36 unread" is an overclaim; do not repeat it.**
+  - **WHAT ACTUALLY STANDS:** zero sends (no participation as a sender) · **an endpoint that is alive
+    is not an operator who is testing** · and **why** Dana does not send is **unmeasured**.
+  - **THE PRECONDITION, and it is one laptop-side check:** *confirm Dana's participation mode and that
+    a human session is actually exercising it* **before** treating it as a constraint on scheduling.
+    **Deferring real work to protect a seat that is idle costs more than the change would.**
+
   - **Part 2 (Lead7, with the isolation fix):** unlink the global `coswarm` from the shared tree. Machine
     state, touches what Dana tests against, **not a 6pm change under a rotating Lead.**
 
