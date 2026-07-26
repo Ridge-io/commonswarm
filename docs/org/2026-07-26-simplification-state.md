@@ -465,3 +465,29 @@ unmeasured + GUI-gated). Accept line must be `coswarm accept --link-stdin`.
     pattern cannot match the text's form (line wrap), or the thing is genuinely absent.
     **Only the last is a result.** Every other case looks identical from the outside, and
     this session produced all five.
+
+16. **The control must have the same SHAPE as the assertion.** *(completes 12)*
+    Pitch's, and the subtlest of the set. Asserting `refs/heads/pitch/*` → 0, Pitch
+    controlled with `refs/heads/*` → 1 and read that as "the query works". It does not:
+    `*` matches one path segment, so it counted `main` alone out of twenty-one branches.
+    **The control exercised a different pattern shape than the assertion it certified**, and
+    returned a true number for a query nobody was running. The right control was
+    `refs/heads/vane/*` → 5 — same nesting, same command, known non-empty.
+    A control differing from its assertion in pattern depth, quoting, or command is not a
+    control at all; it is an unrelated measurement standing nearby.
+    **A control that fails loudly is a gift. A control that succeeds for the wrong reason is
+    the trap** — Atlas hit this layer twice in four minutes and only knew because its
+    controls went to *zero*. Pitch's went to one, which is why Pitch did not.
+
+    The full stack this session produced, each layer invisible from the one above:
+    1. is the **object** the one you mean · 2. can the answer **differ** (positive control)
+    · 3. can the **pattern** match the text's form · 4. is this the **question** you are
+    asking (`diff` ≠ `merge-tree`) · 5. does the control have the **same shape** as the
+    assertion.
+
+17. **Two correct measurements can contradict each other by answering different questions.**
+    Atlas's resolution of a dispute neither side could reproduce: one seat measured the
+    **branch's content**, the other the **merge result**. Both were right. Settled at the
+    object level — three blobs byte-identical in the merged tree — rather than by argument.
+    When two careful people cannot reproduce each other, suspect the question before the
+    competence, and go to the objects.
