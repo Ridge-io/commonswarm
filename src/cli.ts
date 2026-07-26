@@ -212,6 +212,14 @@ const TASK_FLAGS = [
   "disposition",
 ] as const;
 
+/**
+ * An error whose remedy is the usage block. The message is still sanitized —
+ * it quotes what the user typed — but the usage block is our own constant and
+ * is written verbatim, because safeError() maps the C0 range (newline
+ * included) to spaces and would flatten it to one truncated line.
+ */
+class UsageError extends Error {}
+
 function usage(): string {
   return `coswarm ${CLI_BUILD_VERSION} (protocol ${CLIENT_PROTOCOL_VERSION})
 
@@ -1718,7 +1726,7 @@ async function main(): Promise<void> {
     await runSeed(args);
     return;
   }
-  throw new Error(`unknown command: ${verb}\n${usage()}`);
+  throw new UsageError(`unknown command: ${verb}`);
 }
 
 function safeError(error: unknown): string {
@@ -1761,6 +1769,11 @@ main().catch((error) => {
       }
       process.stderr.write(`${JSON.stringify(structured)}\n`);
     }
+    process.exitCode = 1;
+    return;
+  }
+  if (error instanceof UsageError) {
+    process.stderr.write(`coswarm: ${safeError(error)}\n${usage()}\n`);
     process.exitCode = 1;
     return;
   }
