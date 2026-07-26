@@ -266,15 +266,18 @@ not as prune authority. A broken blob-board run (Pitch #15562) nearly published 
 false zeros when `git` was missing inside a subshell — **implausible first cell + interleaved
 errors** stopped publication; a plausible `8` would have shipped.
 
-**Owner confirmations recorded so far (re-derive; do not invent the rest):**
+**Owner confirmations recorded so far (re-derive; do not invent the rest).** Pitch #15579
+corrected an undercount of this list (had omitted Quill — the seat whose counterexample
+reversed the path-absence board):
 
 | owner | ref | ruling |
 |---|---|---|
 | Atlas | `origin/atlas/binding-deletion` | **do not prune** — PUSHED / not LANDED / not APPLIED; `git cherry` `+3` (`55f1b41` `291d901` `325ce44`); path-absence 0 is the Quill-class false |
+| Quill | `origin/quill/current-target-followup` | **do not prune** — live accept-link / bare `working-on` work at shared paths; path-absence 0 was the first counterexample |
+| Ferry | `origin/ferry/r1-go-runbook` | **cherry-pick, not wholesale** — tip `6126f1d`; hang headline struck; three sole paths ≠ three files of equal value (see row) |
 | Ledger | `origin/ledger/epoch-binding-test` | **prunable** (owner) — named test content on main at `f6aab12`; cherry `+6` is false non-zero for content |
-| Ferry | `origin/ferry/r1-go-runbook` | **holds three files; cherry-pick them; never squash** |
 
-Fourteen other non-ancestor rows remain **unconfirmed** by their owners. Pitch is not
+**Thirteen** other non-ancestor rows remain **unconfirmed** by their owners. Pitch is not
 classifying them. Sable is not classifying them.
 
 Notable rows (successor must not misread these):
