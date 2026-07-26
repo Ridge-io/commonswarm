@@ -190,3 +190,48 @@ Consequences, and they bind:
 
 Astro + Tailwind, deployed to Vercel. Static output. No external runtime deps in the
 page. Target: Lighthouse 100/100/100/100, and it must look right at 375px.
+
+---
+
+## Load-bearing coupling — read before editing any heading
+
+The page is a **decision set**, not a list of independently-correct parts. Two elements are
+only honest *in combination*, and changing either one alone silently breaks the page:
+
+| heading | command shown | result |
+|---|---|---|
+| "What you run once you're invited" | carries `--url` / `--anon-key` | **honest** |
+| "Getting started" | carries `--url` / `--anon-key` | **a broken promise** — implies a stranger can run it |
+| "What you run once you're invited" | bare, no flags | needlessly grim, and false once the fix lands |
+
+**The heading is load-bearing copy that looks like decoration.** That is precisely why it is
+the element most likely to be "tidied" by someone improving the page, and why this note
+exists. Pitch's rule: the heading and the command block should live in **one constant**, so
+they cannot drift apart. The commands already share a single block in `HowItWorks.astro`
+that feeds both display and clipboard — if the heading sits outside that block, it can drift.
+
+### The gate for moving to the flagless form — stated as a command, not as prose
+
+Run, with a stored login and no flags:
+
+```
+coswarm working-on "x"
+```
+
+- **prints `--url is required`** → keep the flag-carrying command *and* the "once you're
+  invited" heading.
+- **succeeds** → Quill's target persistence has landed; move to the bare command *and* the
+  friendlier heading.
+
+**Both lines move together or neither moves.** This exists to stop copy shipping ahead of
+code.
+
+### Why this section exists at all
+
+Two rulings this session were each individually correct, individually reviewed, and unsafe
+*in combination* — "fix the binding, drop the timer" plus "delete the binding fields", and
+"delete the mint surface fields" plus "server generates run_id". Neither was findable by
+reviewing either decision alone.
+
+**Doctrine: when a decision set grows, someone must review the set, not the items.** Applies
+to copy exactly as it applies to code.
