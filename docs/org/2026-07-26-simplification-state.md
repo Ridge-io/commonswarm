@@ -146,30 +146,32 @@ code — add real coverage: a `deno check` step, or a second tsconfig that inclu
 `supabase/functions/`. Nobody installed a Deno toolchain on the shared machine unilaterally,
 and that restraint was correct.
 
-## ⚠ THE SITE NOW MISDESCRIBES THE PRODUCT — created by landing eed9299
+## ~~THE SITE MISDESCRIBES THE PRODUCT~~ — FIXED at `6cdaa81`
 
-`site/src/components/HowItWorks.astro` still teaches the pre-persistence world:
+Struck rather than deleted, per doctrine 5. Superseded by `6cdaa81`, which removed four
+false claims from the page a stranger reads:
 
-- the `working-on` line carries `--url` and `--anon-key` inline
-- the prose tells the reader to pass those flags forever, even after `accept`
-- the header comment cites the old store model ("credentials keyed only", "--url required")
+- the hero's "bound to one run, one task and one epoch" — **false**; the binding is
+  write-only and a token mints against a well-formed UUID naming no task
+- Authority's identical claim, plus a "four hours" maximum TTL that is really **eight**
+- two places still instructing readers to pass `--url`/`--anon-key`, removed by `eed9299`
+- the justification comment quoting "the url is the storage key and cannot be recovered",
+  now marked SUPERSEDED in place (correct at its commit; `current-target.json` stores the
+  url in plaintext)
 
-**All three were true when written and were made false by `eed9299`, which the Lead merged
-without re-reading the page documenting the behaviour it changed.** Found by Sable.
+**Two lessons banked from the fix itself.** The first pass corrected only the three sites
+the report listed and the built page *still* carried the claim — a findings list treated as
+an inventory, caught only by a positive control returning 1 where it should have returned 0.
+And Ledger, who found that two of the three were its own errors, refused to fix them quietly:
+*"that is exactly when a seat should not be the one to quietly fix the record."*
 
-This is the fifth instance this session of a document outliving the decision that changed
-it, and the first where the *Lead's own merge* was what emptied the words. It is also why
-doctrine 4 exists — and it caught the person who wrote doctrine 4.
+Ledger's sentence is the one to carry forward: **"My sentence travelled further than my
+correction did."** The retraction reached the fleet in a broadcast; it never reached the file
+that quoted it.
 
-Not user-visible: the site is local-only, with no domain and no deploy. Owned by the
-copy lane once the positioning rewrite starts. **Whoever rewrites the copy must re-measure
-the command block against current `main`, not against the audit** — `origin/vane/site-audit`
-is correctly self-marked stale on exactly this finding.
-
-The one arm still genuinely open: nobody has run a real `accept` and then a bare command in
-a fresh process. Call sites prove `writeCurrentTarget` is wired into both accept paths and
-login (`src/cli.ts` ~677, ~914, ~1000, ~1760); only a live invite proves parse + persist +
-next-process find.
+Still open on the site, and it is the positioning rewrite rather than a defect: the copy is
+still built on the retired authority framing. See the vocabulary table in
+`docs/marketing/SITE-BRIEF.md`.
 
 ## Known defects, not yet fixed
 
