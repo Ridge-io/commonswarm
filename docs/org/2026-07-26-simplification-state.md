@@ -362,3 +362,19 @@ Three-line quickstart is **supported by the call chain** for a fresh reader. Sti
 an end-to-end run** (two-identity operator test). Accept line must be
 `coswarm accept --link-stdin` (not the unsafe argv form). Site line 3 still ships flags —
 those should come off; bare `working-on` is correct under both outcomes.
+
+10. **Never predict a merge from a diff. Run `git merge-tree --write-tree`.**
+    Three people were misled by this in one session, the Lead first. `git diff a..b` shows
+    the *other* branch's newer commits as "removals", which looks exactly like a revert and
+    is not one — a merge applies what a branch added since the **merge base**, not the
+    two-dot difference. It produced a false "this branch would revert the site fixes" alarm
+    about a branch that changes zero site files, and earlier a false warning to Ferry that a
+    merge would delete an evening's work.
+    *"How do these two trees differ"* and *"what happens if I merge"* are different
+    questions with different answers. Only `merge-tree` answers the second.
+
+11. **A broken arm of a check is not evidence, even next to a working one.**
+    While disproving the alarm above, one of the Lead's two probes threw a shell error and
+    printed a reassuring `0` anyway. The conclusion rested entirely on the arm that ran
+    clean, and that had to be said out loud rather than quietly leaned on. Report which arm
+    actually ran.
