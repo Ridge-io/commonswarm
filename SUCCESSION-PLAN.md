@@ -2115,6 +2115,26 @@ continuously (this file + commits) — assume your session can die at any moment
      the strength of a cached artifact.** Face 9 pointed at one's own accurate statement.
      **SO: BEFORE LANDING ANYTHING, DIFF THE BRANCH AGAINST CURRENT `main` BY FILE AND COMPARE THE
      COUNT TO WHAT YOU BELIEVE YOU CHANGED. Long-lived branches acquire reverts by standing still.**
+  20. **★★★ THE COST ESTIMATE ATTACHED TO A FAILURE IS ITSELF A CLAIM, AND AN OVER-COSTED RESIDUAL
+     DOES NOT GET DONE — IT GETS DEFERRED PERMANENTLY.** (Ledger, 2026-07-25, on its own number; the
+     Lead propagated it.) Ledger honestly reported failing to verify the `private:true` publish guard
+     and attached a price: *"needs an authenticated session against a throwaway registry — verdaccio
+     plus a real `adduser` — materially more setup than `--registry`."* **The failure report was
+     scrupulous. The number was invented.** It had run three vacuous attempts and **inferred the price
+     of success from them — which is inferring the shape of a door from three failed pushes.**
+     ★★ **THE REAL COST WAS TWO LINES IN AN `.npmrc`.** A dummy token suffices, because **auth is
+     RESOLVED before `private`, not CHECKED before it, and resolution is satisfiable locally** (Atlas's
+     correction; Ledger's ordering was right and its remedy wrong, and *checked* vs *resolved* is the
+     entire task).
+     ★★★ **AND THE DAMAGE RAN THROUGH THIS DOCUMENT: the Lead put that unmeasured estimate into §0i
+     delta −1 — the successor's FIRST ORDERED READ — where "unverified and expensive" teaches SKIP.**
+     A cheap open item gets picked up; **an expensive one gets respected and left.** So a failure
+     reported with perfect honesty still nearly closed the task, **by making it look too costly to
+     attempt.** Nobody lied and nobody was careless.
+     **REPORTING A FAILURE HONESTLY IS NECESSARY AND NOT SUFFICIENT. If you attach a cost, either
+     measure it or say you did not** — and a Lead relaying someone's cost estimate is republishing a
+     claim, not a fact. ★ Closed by Quill running the arm skipped twice: **remove ONLY the field under
+     test**, which is what makes a discriminator out of a demonstration.
   19. **★★★ A PROPERTY OF THE COMMITS OUTLIVES A PROPERTY OF THE DIFF.** (Vane, 2026-07-25; sorted into
      a usable split by Ferry.) This is the resolution of the whole evening's stale-SHA problem, and it
      explains why three seats re-measured the same branch tip for an hour and kept disagreeing.
