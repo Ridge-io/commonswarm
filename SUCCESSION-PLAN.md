@@ -260,7 +260,10 @@ at handoff: **Dana has sent ZERO messages in this swarm** and has **zero `messag
     line 257 / this block   MINI store registration     -> a2a
     line 584 (search "NOT `[a2a]`")   LAPTOP whoami, per-machine DB  -> cmux
     ```
-    **Neither is wrong. Line 584 needs "on the laptop"; this block needs "on the mini store."**
+    **Neither is wrong** — and **line 584 ALREADY BEGINS "on the laptop"**, so nothing needs adding
+    there; only *this* block needed the words "on the mini store." ★ An earlier version of this line
+    told you to add a scope clause that was already present, **and the fix reached the SECOND copy of
+    that mistake and not this one — the N-1-of-N defect, third time today, caught by Quill.**
   - ★ **THE EVIDENCE IS MULTI-FIELD, NOT THE ONE COLUMN BOTH READINGS DISPUTED** (Sable):
     `Dana` → `surface_id=a2a:<uuid>:Dana` · `endpoint=…:18791` · `ppid=0` · `host=(none)` — **the same
     shape as `Anvil [a2a]` on every field**, where every cmux seat carries a bare-UUID `surface_id`,
