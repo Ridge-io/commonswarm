@@ -99,9 +99,19 @@ CHANGED *WHAT WAS LOOKED AT*, NOT *HOW HARD*.**
   reading the artifact, not the render  caught the vacuous grep, the stale dist, the wrong branch
   querying the store for what recipients HOLD, not what you composed   caught a lost payload
   braced ${B}:path                      caught a silent wrong-object read
+  grep docs/ BEFORE investigating       would have saved an hour on the last question of the day
 ```
 **Not one is a rule anyone has to remember at 3am, and between them they caught MORE THAN THE FOUR
-SCRIPTS DID.** The scripts are worth having and they close specific, named, recurring failures — **but
+SCRIPTS DID.**
+★★ **THE LAST ONE IS THE CHEAPEST AND IT WAS LEARNED THE HARD WAY AT THE END OF THE DAY.** Four seats
+spent an hour on the cmux banner question. **The fact that closed it was already on `main`, greppable,
+in `docs/swarm-cli/2026-07-25-silent-message-drop.md:21`:** *"`getInbox()` calls `ensureDeliveryRows`
+on every read — reading CREATES the row."* That single line retires the delivery-row evidence the whole
+investigation rested on. **It was written that morning, by a participant in the discussion, corrected
+three times, and landed on `main` — and nobody grepped it.** ★ Sable's *"survive is not the same as be
+found"* was about a directory nothing pointed at; **this is worse and cheaper to fix — a tracked file,
+on `main`, one `git grep` away, unread by the people who wrote it.** **BEFORE MEASURING A SUBSYSTEM,
+GREP `docs/` FOR ITS NAME.** The scripts are worth having and they close specific, named, recurring failures — **but
 the cheap habit that changes the object beat the expensive mechanism that checks the reasoning, every
 time it was tried.** ★ **Effort applied to the wrong axis is confidence with no coverage** (Atlas, who
 hardened one control three times without ever leaving the defect). **If you are choosing between
