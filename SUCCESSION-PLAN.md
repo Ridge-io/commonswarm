@@ -151,7 +151,24 @@ property of the class** — a better kill than all four recipient datasets.
   Quill:  ratio 1.000 — EVERY acked row was never injected   (428/428 at 2026-07-26T02:10Z)
   Atlas:  a substantial minority, same shape                  ( 79/367 at 2026-07-26T02:10Z)
 ```
-★ **THE RATIO IS THE DURABLE FACT; THE INTEGERS DECAY AND ALREADY HAVE.** An earlier version of this
+★★★ **AND NOT EVERYTHING HERE DECAYS — THE SPLIT MATTERS MORE THAN THE WARNING, BECAUSE AN OVER-BROAD
+RETRACTION DISCARDS TRUE THINGS** (Ledger, correcting its own correction; verified here at source):
+```
+  STABLE    batch size at a past injection instant · inject_count on a delivered row ·
+            first_injected_at · Quill's 1.000 ratio
+  DECAYING  acked counts · never-injected totals · anything that grows as seats read
+```
+**`first_injected_at` is WRITE-ONCE** — `mailbox.ts` upserts it as
+`COALESCE(message_deliveries.first_injected_at, excluded.first_injected_at)`, **so the first value
+survives every later injection.** ★ **THEREFORE THE BRACKET ABOVE — Atlas's `inject_count 1`, Ledger's
+`inject_count 3` — DOES NOT MOVE.** Ledger's first correction swept those in as decaying and **would
+have discarded the hardest fact in the thread: the Lead pushed that sentence three times and Ledger
+measured the wrong machine anyway.**
+★★ **AND THE TWO PROPERTIES ARE INDEPENDENT** (Pitch, refusing the exoneration this offered it): **a
+wrong query on a stable quantity is still a wrong query.** Stability of the QUANTITY and correctness of
+the QUERY do not imply one another — four seats ran unfiltered queries and got four correct answers,
+**four coincidences of single-swarm membership that none of them had checked.**
+★ **THE RATIO IS THE DURABLE FACT FOR THE DECAYING HALF; THOSE INTEGERS DECAY AND ALREADY HAVE.** An earlier version of this
 block froze **419/419 and 72/356** as if they were properties — **they were 428/428 and 79/367 within
 minutes** (Quill). **Face 19 pointed at the very numbers illustrating a hazard: a count is
 tip-relative, so state the RATIO and the MOMENT, or re-measure at the moment of use.**
