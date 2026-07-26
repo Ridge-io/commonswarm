@@ -269,7 +269,22 @@ Not "the tests pass." A stranger, on their own machine, can:
 2. Create their own workspace **— blocked today: `operatorAllowed` ships as a constant `false`**
 3. Invite a collaborator who accepts without a terminal ritual
 4. Post and read signals from **both** machines **— blocked today: the CLI is not on the second machine at all**
-5. Understand what they are looking at without reading source
+5. Understand what they are looking at without reading source **— blocked today: THE REPO IS
+   PRIVATE, so a stranger cannot read the README at all.** The README opening was fixed on
+   2026-07-25 (`c1d1213`: thesis first line, plain-language statement above the fold, the
+   invite-accept front door named, no installer claimed) — **that improves the document for
+   everyone WITH access and does not move this item.** ★ It is blocked by the operator's
+   distribution ruling, which is deliberate and correct; **the unblock is the installer plus a
+   public surface to read, not more copy.**
 
 **Every item is a lane. Item 5 is marketing's, and it is the one most likely to be treated as
 optional.**
+
+★★★ **AND THE PRECISE VERSION OF WHY A DAY OF REAL WORK CAN LEAVE THIS AT 0 OF 5** (Vane's
+observation, Atlas's guard, corrected once more here). **It is NOT "nothing shipped":** ships 3, 5
+and 6 plus the publish guard landed across 13 product files and closed C0, C11, C12, C1 and item
+1(c) — real, verified changes. **The true statement is narrower and worse: NOT ONE OF THEM CAN
+MOVE A §6 CRITERION, because items 1-4 all require an installer that nobody built, and item 5
+requires a stranger who can see the repo.** ★ **A seat reading "moved the bar zero" alone would
+conclude the day was wasted. It was not, and this bar does not claim it was** — the bar measures
+one thing, and a fleet can do ten hours of correct work that is orthogonal to it.
