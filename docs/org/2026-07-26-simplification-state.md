@@ -838,3 +838,21 @@ answer -> 13                      truth was 2
     as a flag (right swarm only because it was the inferred default). Argument-position
     collapse is invisible to every check in the stack. Store: empty-or-whitespace bodies
     in this swarm ever = 0 of 4002 at Pitch's query.
+
+23. **Deregistering an agent does not free its resources. Close the tab.**
+    Operator-reported, recurring across multiple Leads: a Lead tells the fleet to stand down,
+    every seat runs `swarm leave` cleanly, the roster empties — **and the machine is exactly
+    as loaded as before.** The tabs keep running and keep their memory. The registry is not
+    the resource.
+    Measured this session: five departed seats still held ~372 MB of agent processes with
+    zero swarm registrations between them. Closing the tabs took the machine from
+    **RED (24 GB headroom, 16.1 GB disk)** to **GREEN (34 GB, 28.0 GB)** — and ~6.5 GB of
+    that came back from the tabs, against ~150 MB from every file and worktree combined.
+    **The seats are the cost, not the files.**
+    `cmux tab-action --action close` does **not** work — nor `close-tab`, `closeTab`, `kill`,
+    `remove`, `destroy`, `quit`, `terminate` (all probed). What works is terminating the tab's
+    login session. Use `scripts/close-agent-tab.sh <Agent>...` or `--departed`, which closes
+    every tab holding no swarm registration and refuses to close the caller's own.
+    **A stand-down is not complete until `cmux tree` shows the tab gone.** "They left the
+    swarm" is a claim about a registry; "resources are freed" is a claim about processes —
+    the same pushed-vs-landed shape as doctrine 20, one layer out from git.

@@ -3,6 +3,34 @@
 Every agent working on the site reads this first. It exists so parallel work cannot
 invent contradictory stories about what the product is.
 
+## ⚠ PRODUCT DIRECTION SUPERSEDES EVERYTHING BELOW (operator, 2026-07-26)
+
+> The setup and onboarding process needs to be **consumer shaped**. Simple web UI, download
+> button, simple install. **Simple. Polished. Easy.** The website should convey that with
+> clean, clear, simple wording — **less is more if it's simple, like an Apple product.**
+
+This retires the invite-only, CLI-first onboarding story this file was written around, and it
+is a **product** instruction before it is a copy instruction. The page cannot look simple
+while describing a flow that is not.
+
+What it implies, in order:
+
+1. **A download button, not a `curl | sh`.** A pipe-to-shell is a developer-tolerated ritual,
+   not a consumer one. The installer we built stays as the advanced path.
+2. **A web UI.** There is none today. Onboarding currently cannot happen without a terminal,
+   and no amount of copy fixes that.
+3. **Self-serve, not per-person invite links.** An invite link cannot come off a public page —
+   that constraint is what forced every awkward compromise in this brief.
+4. **Copy: less is more.** Short lines. No jargon. The retired vocabulary table below is still
+   right about what to avoid, and now the bar is higher: cut anything a non-expert would stop on.
+
+**Domain: `b9rk.com`** — the operator owns it. `coswarm.dev` is a different shipping product;
+see the hazard note in `astro.config.mjs`. Open: whether the product is renamed **b9rk** or
+keeps the `coswarm` name at that domain.
+
+Everything below predates this and should be read as history unless it is about honesty rules,
+which still bind: no invented facts, no fake social proof, every command real.
+
 ## The bar
 
 `https://workbench.md` — a spiritual competitor and the explicit benchmark. It is very
