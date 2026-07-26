@@ -70,7 +70,43 @@ coswarm working-on "wiring the payments webhook"
 
 Three lines, no configuration. That is our "one link".
 
-### ⚠ CORRECTION — the third line is NOT YET VERIFIED. Read this before using it.
+### ⚠ SETTLED — THE QUICKSTART IS TWO LINES. Line 3 is false. Do not relitigate.
+
+Two seats established this independently, by different methods, and they agree:
+
+- **Vane, by source trace.** `src/cli.ts:295-299` — `target()` is the sole resolver for
+  every command and reads exactly two sources: the `--url` flag and `SWARM_CLOUD_URL`.
+  Nothing reads disk.
+- **Ledger, by execution against a real store.** `sha256("https://<ref>.supabase.co")[:24]`
+  equals the profile filename exactly. The store holds two files, the profile schema has no
+  url field, and grepping every file under `~/.coswarm` for a URL returns nothing — with a
+  positive control proving the grep matches when a URL *is* present.
+
+The URL is the **lookup key**, and a one-way hash cannot be reversed into the project you
+logged into. The CLI must be told the URL every time **by construction, not by omission**.
+
+**Open bound, recorded and non-blocking:** nobody has run a real `accept`. It could in
+principle write an *additional* last-project pointer that neither seat's store ever held.
+Three things argue against it — no url field in the schema, only two files and no config,
+and the `--url` error offers env vars rather than "your saved project" — but it is not
+proven. Copy sets at two lines regardless. The asymmetry decides it: being wrong this way
+costs a slightly more modest quickstart; being wrong the other way ships a first command
+that does not run.
+
+The honest third line exists and is simply longer. Use this form on the site:
+
+```
+coswarm working-on "wiring the payments webhook" \
+  --url https://<ref>.supabase.co --anon-key <key>
+```
+
+or export `SWARM_CLOUD_URL` and `SWARM_CLOUD_ANON_KEY` once. Both are copy-pasteable and
+true. The flagless form is not.
+
+A fix is in flight (Quill): a current-target pointer with precedence flag > env > stored.
+**Until it lands and is tested, copy describes today's behaviour, not the fix.**
+
+### The original draft below is kept for the record — its third line is FALSE
 
 Vane audited the whole surface against a build of landed `main` (e0287ba), running each
 command bare exactly as a reader would paste it. Result: **six of six** — `working-on`,
