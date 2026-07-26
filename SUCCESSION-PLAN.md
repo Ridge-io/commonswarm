@@ -72,7 +72,32 @@ origin && git rev-parse origin/main`. A failed fetch still lets rev-parse answer
 
 **`origin/main` has moved past the SHA in this section several times. Fetch.**
 
-### ★★ LAST DELTA BEFORE ROTATION — newest first, these are hours newer than the numbered list below
+### ★★ LAST DELTA BEFORE ROTATION
+
+**-1. ★★★ THE `private: true` PUBLISH GUARD IS UNVERIFIED, AND THE OBVIOUS WAY TO VERIFY IT PRODUCES A
+FALSE CONFIRMATION.** `package.json` carries `"private": true` (operator ruling `54795ec`: installer,
+source private, `coswarm` unpublished). **It is on npm's documented behaviour, not on a test anyone ran.**
+Four attempts by three seats, **all four vacuous**:
+```
+  npm publish --dry-run, private:true    ->  exit 0, word "private" NOWHERE   (dry-run ignores the flag)
+  npm publish --dry-run, private absent  ->  exit 0, identical shape
+  real publish -> unreachable registry, private:true    ->  ENEEDAUTH
+  real publish -> unreachable registry, private absent  ->  ENEEDAUTH   ← IDENTICAL
+```
+★★★ **npm CHECKS AUTHENTICATION BEFORE IT CHECKS `private`.** So an unauthenticated attempt **cannot
+reach the guard**, and **`ENEEDAUTH` IS NOT EVIDENCE THE GUARD FIRED.** Anyone who reads the earlier
+residual wording — *"verify against a scratch registry"* — points npm at localhost, sees `ENEEDAUTH`, and
+**reasonably concludes it worked. That line was a trap and this replaces it.**
+  - **WHAT IT ACTUALLY COSTS:** an **AUTHENTICATED session against a throwaway registry** — verdaccio plus
+    a real `npm adduser`, or equivalent. **Materially more setup than "use `--registry`".** (Ledger.)
+  - ★ **AND THE DISCRIMINATOR THAT LIED, because it is a NEW shape and the mirror of the vacuous control:**
+    diffing the two arms' output reported **DIFFER** — and the difference was **`57B package.json` vs
+    `42B package.json`**, i.e. the tarball is larger *because the word `private` is in the file*. **THE
+    INPUT DIFFERED, NOT THE BEHAVIOUR.** A vacuous control returns the same answer either way; **this
+    returns a DIFFERENT answer for a reason unrelated to the hypothesis.** Both read as evidence.
+  - **DO NOT** attempt a real publish to the public registry to settle it.
+
+### ★★ EARLIER DELTA — newest first, these are hours newer than the numbered list below
 
 **0. ★★★ READ THIS BEFORE YOU SCOPE THE ISOLATION FIX. IT IS NOT THE JOB THE REST OF THIS DOCUMENT
 DESCRIBES.** Everything below calls the blocker an *isolation LEAK* and assumes the persona's `coswarm`
