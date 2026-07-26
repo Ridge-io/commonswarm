@@ -2017,6 +2017,26 @@ continuously (this file + commits) — assume your session can die at any moment
      generalisation of Ferry's two-host trap). Sable's rule for reviewers sharing an instrument, applied
      to **a single seat reproducing itself across machines.** Two hosts agreeing was not two
      measurements; **it was one defect run twice.**
+  18. **★★ "IS THE DOCUMENT RIGHT" AND "IS THE BRANCH SAFE TO LAND" ARE DIFFERENT QUESTIONS, AND
+     EVERY CHECK YOU ARE LIKELY TO RUN IS THE FIRST KIND.** (Vane, 2026-07-25.) Vane checked its
+     branch's CONTENT repeatedly across the evening — is the audit accurate, is the ranked table
+     current, is the successor section present — **and never once asked what the branch would DO to
+     `main`.** Because its base predated a night of landings, **landing that one-file change would have
+     REVERTED five other files.** A durable artifact has two properties and only one was ever tested.
+     ★ **THE TELL IS FREE AND IT IS A COUNT THAT DOES NOT MATCH THE CLAIM:**
+     `git diff --name-only origin/main <branch>` listed **six files for a one-file change.** It was in
+     the output of the last command Vane ran before saying it was done. **A number that disagrees with
+     your own description of the work is the cheapest signal available anywhere in this catalogue** —
+     no instrument, no control, no second seat.
+     ★★ **THE LEAD HIT THE SAME THING FROM THE LANDING SIDE WITHIN THE HOUR**, which is why this is a
+     face and not a note: `ledger/infra` would have removed Atlas's practical-ceiling correction,
+     because that branch also predated it. **Caught only by hashing the three files on both sides
+     instead of trusting the commit list.** ★ And the reverse error immediately after: `rev-list`
+     reported "1 unlanded" for a branch its author had **deleted after landing** — a stale
+     remote-tracking ref, cleared by `git remote prune origin`. **A near-retraction of a TRUE claim on
+     the strength of a cached artifact.** Face 9 pointed at one's own accurate statement.
+     **SO: BEFORE LANDING ANYTHING, DIFF THE BRANCH AGAINST CURRENT `main` BY FILE AND COMPARE THE
+     COUNT TO WHAT YOU BELIEVE YOU CHANGED. Long-lived branches acquire reverts by standing still.**
   **★ THE THIRD FACE OF THE REFINEMENT (Ferry) — AN ARTIFACT CAN BE FRESH, CORRECTLY READ, AND
   STILL ANSWER A DIFFERENT QUESTION THAN THE ONE YOU MEANT.** Not staleness (face 9), not misreading
   (the Atlas refinement). Ferry checked the filesystem for `spawn-state/r1.json`, found it absent,
