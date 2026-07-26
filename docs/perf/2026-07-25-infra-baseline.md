@@ -755,7 +755,11 @@ addressability gap Vane filed has never been exercised in practice.
   black-box timings that predicts a second function to 5% — a model, not a probe.
 - The 197ms and 432ms boot floors bundle Cloudflare + TLS + isolate boot. Not separated.
 - Lever 2's multi-statement assumption (§10e) is unverified.
-- Latency from the second machine — the CLI is not installed there.
+- Latency from the second machine — **unmeasured.** ★ **CORRECTED (Ledger's line, Vane's
+  measurement):** this read *"the CLI is not installed there"* and **that is false.** `coswarm`
+  IS present at `/opt/homebrew/bin/coswarm`; it is a **stale Jul 24 16:47 build with zero signal
+  verbs and an empty credentials dir.** So the gap is **staleness plus never-logged-in, not
+  absence** — and those have different fixes. The original read as a distribution gap.
 - Concurrent or sustained load. Every number here is a single sequential client.
 
 ---

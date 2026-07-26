@@ -74,9 +74,17 @@ So to read *my own signals* on *my own second machine* I would have to: get node
 non-interactive PATH, rebuild the CLI, then complete a full browser OAuth flow again.
 
 This is §1c's *"a lot of steps… I didn't really know what I was doing or why"* — but one level worse,
-because it is not a step count, **it is that the product is not present on the second machine at
+because it is not a step count, **it is that the product is not USABLE on the second machine at
 all.** Whatever the distribution story is (the P2-connect-UX agent-skill layer is the obvious
 candidate), it is load-bearing for the thesis and does not exist yet.
+
+> **★ CORRECTED 2026-07-26 (Vane measured, Ledger swept):** an earlier version of this said the
+> product **is not present** on the second machine. **It is present** — `/opt/homebrew/bin/coswarm`,
+> a stale Jul 24 16:47 build with **zero signal verbs and an empty credentials dir.** The finding
+> stands and its cause changes: **not absence, but a build too old to speak the protocol and never
+> logged in.** ★ This document already carried a `★ CORRECTED` marker for a *different* entry, which
+> made it read as maintained while this line was still wrong (Pitch).
+
 
 ## ★ F4 — A SUPERSEDED PIN IN SUCCESSION-PLAN.md, FOUND BY POSTING RATHER THAN BY READING
 
