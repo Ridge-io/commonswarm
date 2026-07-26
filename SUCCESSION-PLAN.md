@@ -275,8 +275,24 @@ at handoff: **Dana has sent ZERO messages in this swarm** and has **zero `messag
     delivery rows are written *by* `getInbox`. **Zero rows is the NORMAL, EXPECTED state for an a2a
     seat**, not evidence of a dead one. All 36 directed messages carry `delivered = 1`, and the
     endpoint's heartbeat was live at handoff. **"36 unread" is an overclaim; do not repeat it.**
-  - **WHAT ACTUALLY STANDS:** zero sends (no participation as a sender) · **an endpoint that is alive
-    is not an operator who is testing** · and **why** Dana does not send is **unmeasured**.
+  - ★★★ **"ZERO SENDS" IS A SCOPING ARTIFACT AND IT LOST ITS QUALIFIER INSIDE THIS BLOCK.** Two lines
+    above, correctly: *"zero messages **in this swarm**"*. Here it had already become *"zero sends, no
+    participation as a sender"* — **and in that form it is FALSE.** Vane measured both stores:
+    ```
+    mini   ~/.swarm/swarm.db     Dana sends in uxtest ...... 1,724
+    laptop /Users/tom/.swarm/…   Dana sends in uxtest ......    52
+    either store, cloud-swarm ..................................  0
+    ```
+    **Dana sends constantly — in `uxtest`, the swarm R1 actually uses.** The zero is real and it is
+    **cloud-swarm only**, a swarm Dana is registered in and does not work in.
+    ★ **AND IT DISSOLVES THE RESIDUAL RATHER THAN ANSWERING IT:** *"why does Dana not send?"* **has no
+    referent.** What remains is *"Dana is registered in cloud-swarm and does not use it"* — for a seat
+    whose whole job is the uxtest harness on another machine, **the expected arrangement, not a
+    symptom.** ★ The qualifier was in the original and gone by the third repetition, through four
+    seats including its author, **in the messages where we were cataloguing exactly that failure.**
+  - **WHAT ACTUALLY STANDS, NARROWED:** **an endpoint that is alive is not an operator who is
+    testing** — 1,724 sends prove Dana's seat is active in `uxtest`; **they prove nothing about
+    whether an operator is doing isolation work right now**, which is the only half that gates Part 2.
   - ★★★ **DO NOT RE-ADD `swarm whoami` AS THE DISCRIMINATOR. IT IS NOT ONE, AND AN EARLIER VERSION OF
     THIS BLOCK NAMED IT AS THE RESOLUTION** (Ledger, from source; verified here). `whoami` prints
     `self.agent_type`, and **every lookup behind it is `SELECT * FROM agents` — it IS the registry, so
@@ -299,7 +315,9 @@ at handoff: **Dana has sent ZERO messages in this swarm** and has **zero `messag
       mini   | Dana | a2a  | joined 2026-07-24T21:24:29Z
     ```
     **Two databases, two registrations, sixty-six minutes apart, both current, both correct.** Line
-    584 needs no correction — **it needs the words "on the laptop."**
+    584 needs no correction **and needs nothing added** — an earlier version of this line said it
+    *"needs the words 'on the laptop'"*; **it already begins with them** (Atlas, Quill). **A
+    prescription written without re-reading the line it prescribes for.**
     ★ **AND THIS IS THE BEST LIVENESS SIGNAL ANYONE HAS: Dana's laptop heartbeat is ticking, in swarm
     `uxtest` — the swarm R1 actually uses.** One `ssh` away, and better than anything on the mini.
   - ★★ **THE TRANSPORT HALF IS ALSO MEASURED — FERRY RAN IT:** port **18791 OPEN**, node **pid 27486**
