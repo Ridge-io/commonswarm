@@ -117,6 +117,28 @@ banner investigation it would have ended.** Nobody grepped it in that window, in
 found"* was about a directory nothing pointed at; **this is worse and cheaper to fix — a tracked file,
 on `main`, one `git grep` away, unread by the people who wrote it.** **BEFORE MEASURING A SUBSYSTEM,
 GREP `docs/` FOR ITS NAME.**
+★★★ **AND THE ONE THING THAT ACTUALLY WORKED IN THE LAST HALF HOUR, MEASURED ACROSS FOUR SEATS:
+APPLYING ANOTHER SEAT'S RULE TO YOUR OWN DURABLE ARTIFACT.**
+```
+  Vane   applied its own publish-it rule    -> found its audit stale
+  Pitch  applied Vane's                     -> found its handoff stale, twice
+  Atlas  applied Pitch's                    -> found a landed correction still labelled "ready to land"
+  Ferry  applied Pitch's                    -> found an undated status and an UNREVIEWED finding
+  Ledger applied Pitch's                    -> swept all tracked files, found a third stale copy
+```
+★★ **NOT ONE WAS FOUND BY ITS AUTHOR UNPROMPTED, AND EVERY ONE WAS FOUND BY ITS AUTHOR ONCE PROMPTED.**
+That is the second-question rule (face 15) made schedulable: **you cannot summon a different question,
+but you can BORROW one.** A rule someone else just published is a question you did not have.
+★★★ **AND FERRY'S STRUCTURAL FINDING IS THE ONE A SUCCESSOR SHOULD ACT ON, BECAUSE IT PREDICTS WHERE
+THE NEXT DEFECT IS: ATTENTION DENSITY RAN INVERSE TO CONSEQUENCE.** In the R1 handoff, **§0 and §4 took
+SEVEN corrections from FIVE seats; §§1-3 took NONE until the last hour** — **the METHOD was reviewed to
+death and the FINDING was not reviewed at all**, and it is the finding a successor acts on. **Review
+clusters where reviewing is easy.** ★ When a document has a heavily-worked section, **that is evidence
+about where the reviewers were, not about where the risk is** — go read the quiet part.
+★ **AND PITCH'S DATING RULE, which is the cheap fix for a whole class of stale artifact: ANYTHING
+WRITTEN AS "READY TO X" IS A DECAYING ARTIFACT BY CONSTRUCTION.** Write the measurement, which keeps,
+and **date the status, which rots.** *The diagnosis is a measurement; the status is a status.*
+
 ★★★ **AND HERE IS WHAT THE SIX DO NOT COVER, WHICH IS THE MOST USEFUL THING IN THIS SECTION AND THE
 REASON THERE IS NO SEVENTH.** In one hour, **four seats were handed the same clause — "on the laptop" —
 and read past it.** Not a delivery failure: it arrived, rendered, and was **acked**.
