@@ -25,7 +25,11 @@
  */
 
 const install = "curl -fsSL https://<host>/install.sh | sh";
-const accept = "coswarm accept <invite-link>";
+// The bare form `coswarm accept <link>` is marked "# unsafe: shell history/process list"
+// by our own --help. An invite link is a CAPABILITY -- putting it in argv leaks it into
+// shell history and the process table. We must not teach the unsafe form on the page
+// that teaches people their first command. --link-stdin is the safe equivalent.
+const accept = "coswarm accept --link-stdin";
 const signal =
   'coswarm working-on "wiring the payments webhook" \\\n  --url https://<ref>.supabase.co --anon-key <key>';
 

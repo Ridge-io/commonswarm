@@ -157,6 +157,19 @@ and that restraint was correct.
 - **The name `coswarm` collides** with a shipping self-hosted PaaS that owns `coswarm.dev`.
 - **`/docs` and the GitHub nav link 404.** The repo is private.
 
+## Unlanded branches — sole copies that nothing else points at
+
+Recorded because these are pushed but referenced nowhere, and a successor would not find
+them:
+
+| branch | what |
+|---|---|
+| `origin/vane/friction` | ceremony inventory + the mint spec. **This is the artifact of record for the friction work — not the Lead's broadcasts.** Spec-only, sequenced behind Quill, carries the four-place ordering list. |
+| `origin/vane/site-audit` | site command-string audit |
+| `origin/vane/launch-audit` | the §6 launch-bar audit, all five items re-run |
+| `origin/ledger/epoch-binding-test` | the four-arm characterisation test, with a header saying arms 3-4 assert WRONG behaviour and must be inverted when the binding is fixed |
+| `origin/atlas/binding-deletion` | the deletion diff. **Edge half is parsed, not typechecked — see the gap above. Treat as unproven until `npm run test:p1-server` runs against it.** |
+
 ## Open, operator-only
 
 1. The name collision.

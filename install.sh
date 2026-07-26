@@ -139,4 +139,5 @@ esac
 # Access is by invitation and `accept` is the only first-contact verb that needs no
 # --url, because an invite link carries its own target. Sending someone to `login`
 # would send them looking for a project URL that has no page to come from.
-printf '\nNext: accept your invite.\n\n  coswarm accept <invite-link>\n\n'
+printf '\nNext: accept your invite. Paste the link when prompted -- passing it as an
+argument would leave a live capability in your shell history.\n\n  coswarm accept --link-stdin\n\n'
