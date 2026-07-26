@@ -196,6 +196,23 @@ them:
 | `origin/atlas/binding-deletion` | the deletion diff. **Edge half is parsed, not typechecked — see the gap above. Treat as unproven until `npm run test:p1-server` runs against it.** |
 | `origin/ferry/r1-go-runbook` | the uxtest R1 go-runbook and the gate-5 diagnosis. **Touches `uxtest/findings/` only and no commit on it deletes anything — both measured across every commit, so both stay true however far `main` moves.** Therefore **cherry-pick the files; never squash or `diff \| apply`.** That second half is *tip-relative and decays*: at 82 commits of drift a squash already replaced 31 paths, deleting four defence scripts and reverting the `private: true` publish guard — none of it in any commit on the branch, all of it the gap. **R1 has no round; it is gated on an operator ruling (*hand off as diagnosed*), not on a missing fix.** |
 
+## The last open measurement is OPERATOR-ONLY — no seat can run it
+
+`accept` followed by a bare command in a fresh process is the one arm nobody has closed.
+**It is not "someone should run this."** Ledger tried and found it structurally closed to
+every agent, measured with a controlled grep (control: a JWT-shaped literal in a temp file
+*did* match, proving the pattern works):
+
+- **No anon key exists anywhere a seat can reach** — not in `~/.coswarm`, not in tracked
+  `supabase/`, not in the environment. Seats hold human *profiles* but no key to talk to the
+  project with; the profile schema never contained one.
+- **No invite link can be issued** without a stored human login, which is operator authority.
+
+So the handoff must not read as a task. Closing it needs the operator to supply a target and
+issue one invite. Until then: `writeCurrentTarget` is proven **wired** at four call sites in
+`src/cli.ts` (~677 `target set`, ~914 legacy accept, ~1000 link accept, ~1760 login), and
+that is call-site evidence, not a run. Parse + persist + next-process find remain unproven.
+
 ## Open, operator-only
 
 1. The name collision.
