@@ -200,12 +200,26 @@ still built on the retired authority framing. See the vocabulary table in
 
 ## Unlanded branches — sole copies that nothing else points at
 
+**Three words, not two (Pitch #15487, Ledger #15467):**
+
+| word | means | instrument |
+|---|---|---|
+| **PUSHED** | ref exists on origin | `git ls-remote` |
+| **LANDED** | the *branch* is an ancestor of `main` | `git merge-base --is-ancestor` |
+| **APPLIED** | the *content* is on `main`, by any route | `git cat-file -e origin/main:<path>` |
+
+Re-derived at landing of this paragraph (`origin/main` tip then): **18** origin heads,
+**1** is an ancestor of main (**`main` itself**), **17** are not — sum reconciles.
+**No seat branch from this session is LANDED.** Work that appears on main was **committed
+on main** (or APPLIED as content by re-application). "Landed" in fleet speech almost always
+meant APPLIED; a branch *table* must not use that word for content-only cases.
+
 Recorded because these are pushed but referenced nowhere, and a successor would not find
 them:
 
 | branch | what |
 |---|---|
-| `origin/vane/friction` | ~~unlanded sole copy~~ — **LANDED on main at `265edb0`** (same two docs under `docs/friction/`). Branch may remain as history; main is durable. |
+| `origin/vane/friction` | **APPLIED, not LANDED.** Content (`docs/friction/*.md`) on main since `265edb0` (cat-file resolves). Branch tip is **not** an ancestor of main. ~~LANDED on main~~ was content-grammar wearing a ref word — successor running `--is-ancestor` would falsely conclude the doc is wrong. |
 | `origin/vane/site-audit` | site command-string audit |
 | `origin/vane/launch-audit` | the §6 launch-bar audit, all five items re-run |
 | `origin/ledger/epoch-binding-test` | the four-arm characterisation test, with a header saying arms 3-4 assert WRONG behaviour and must be inverted when the binding is fixed |
