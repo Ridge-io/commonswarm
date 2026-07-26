@@ -653,3 +653,31 @@ git rev-list --count <ref>                                       # independent t
     **And Sable's `">=3"` was the only honest intermediate**: a *bound* is a claim about what
     you measured, a bare number is a claim about the world. Four seats made the second claim;
     one meant it. **When you cannot reconcile, publish a bound rather than a number.**
+
+22. **A pattern built from recall tests the writer, not the file.** Pitch, checking whether
+    doctrine 21 had landed — with a count, which is what 21 is about:
+```
+grep -c 'carries its total'   -> 0      "it is not there"
+grep -ci 'doctrine'           -> 6      control PASSED — the file was live
+actual text at :635           "21. A count carries its OWN total …"
+```
+    **One word — `own`.** The entry had landed; the *pattern* was a recollection of another
+    seat's phrasing. A **file** control certifying a **pattern** assertion (doctrine 16), and
+    the only thing that saved it was that the zero was *surprising* — two seats had said it
+    landed, so a contradicting 0 earned thirty seconds. **Had Pitch checked first it would
+    have published "doctrine 21 is not on main" with a passing control attached:** number
+    true, control live, conclusion false, nothing in the output disagreeing with itself.
+    **Three more instances, all Atlas's, all within one hour, all greps for someone else's
+    wording:** `'narrower than the assertion'` → 0 while the concept sat in the paragraph ·
+    `'as of e54746b'` → 0 against a line reading *"at e54746b"* · and an anchor string for
+    *this very edit* that assumed a sentence began a line when it began mid-line.
+    **The fix is narrower than "use pattern controls" — said three times by then without
+    taking: do not grep for a remembered sentence. Use a STRUCTURAL ANCHOR that cannot be
+    reworded** (`grep -nE '^2[0-9]\. '` returns a doctrine entry whatever its prose), **or
+    the least distinctive fragment that must appear, or enumerate the section and read it.**
+    Doctrine 11 with the label moved *inside* the command: the expectation stops being a
+    caption you might not read and becomes the query, where nothing can contradict it.
+    **Corollary, earned twice in one minute:** the same applies to *your own error output* —
+    Atlas read a bare `AssertionError` as the guard it expected rather than checking the line
+    number, and announced "a doctrine 22 already exists" when the real failure was the anchor
+    string. **A traceback is output too, and recall reads it just as badly.**
