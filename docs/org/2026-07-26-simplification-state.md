@@ -89,6 +89,34 @@ safeguard gets removed by momentum:
 `scope_not_allowed` · `scope_denylisted` · the `humanRights` ceiling · `principal_revoked`
 · `principal_not_owned` · the `agent_runs` INSERT · the reducer's `assertEpochIncrease`.
 
+## ⚠ THE LARGEST GAP: `supabase/functions/` IS TYPECHECKED BY NOTHING
+
+Found by Atlas, who walked into it while verifying its own diff and then corrected its own
+report. Verified independently by the Lead with a positive control:
+
+```
+tsconfig.json  "include": ["src/**/*.ts"]
+npx tsc --listFiles | grep -c 'supabase/functions/'   ->  0
+npx tsc --listFiles | grep -c '/src/'                 ->  21   (positive control)
+```
+
+**The edge functions are the deployed authority — the thing a stranger actually talks to —
+and no typechecker in this repo covers them.** `esbuild` bundles them successfully, but a
+bundle is a *parse*, not a typecheck: it proves the file is syntactically valid and nothing
+more. The `p1-server` suite is the only real coverage and it needs a live stack.
+
+This is not hypothetical. It already hid a real bug: `mintBindingsValid` referenced
+`command.run_id` after that field had been deleted from the wire type, which at runtime
+interpolates `undefined` into a `::uuid` cast. `tsc` reported exit 0 and could not have
+caught it. Atlas's own summary is the right one: **a green check whose scope you have not
+verified is indistinguishable from no check.**
+
+**Consequence for the successor: every edge-function change made during this session landed
+on parse-level confidence.** Before implementing the specced sequence — which is mostly edge
+code — add real coverage: a `deno check` step, or a second tsconfig that includes
+`supabase/functions/`. Nobody installed a Deno toolchain on the shared machine unilaterally,
+and that restraint was correct.
+
 ## Known defects, not yet fixed
 
 - **The binding is write-only at auth.** `loadAgentCredential` does not SELECT `task_id`
