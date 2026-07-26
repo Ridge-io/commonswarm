@@ -564,7 +564,15 @@ Cooper Yulan <<employer-b-address REDACTED 2026-08-10>>   5   <- another
 Ridgeio      <tom@ridge.io>            1
 Ferry        <ferry@cloud-swarm.local> 1   <- a seat that set its own NAME
 ```
-    **FIVE identities; THREE share the display name.** The 36-hour window narrowed an answer
+    **FIVE identities; THREE share the display name.**
+    **And the opt-out is itself partial — Ferry's data point, which is what makes this
+    unfixable rather than merely awkward.** The one seat that set its own name did so only
+    partway through the session and never backfilled: on its own branch, **41 of 44 commits
+    carry the shared machine identity and 3 carry `Ferry`** (verified independently here).
+    So the `Ferry 1` line above is exactly right *for main* and would be a **3-of-44 answer
+    to a 44 question** on that branch. **There is no seat that is cleanly attributable, not
+    even the one that tried** — identity here is a function of *when* a commit was made, not
+    *who* made it. The 36-hour window narrowed an answer
     that had no reason to be time-bounded — **the same failure as the author filter,
     committed inside the entry describing the author filter, and caught by a third seat.**
     **So `--author='Cooper Yulan'` silently unions three emails and silently excludes at
