@@ -316,23 +316,26 @@ silent-dead-token). `55f1b41` keeps `--run-id` **accepted** on the CLI and cross
 supplied value against `agent_runs`. That is a different product disposition than the one
 this document banks. Resolve before merge; do not land both stories.
 
-**Which authority each follows, so the choice is informed rather than a coin-flip
-(Atlas):** `55f1b41`/`291d901` implements **Lead6's final ruling #14921 verbatim** — *"the
-surface still ACCEPTS run_id / task_id / epoch. NOBODY MUST SUPPLY THEM."* Vane's spec is
-**stricter than the ruling**, not a restatement of it.
+**RETRACTED BY ATLAS — THIS PARAGRAPH WAS WRONG AND IS RESOLVED AT `325ce44`.** It read:
+*"`55f1b41`/`291d901` implements Lead6's final ruling #14921 verbatim … Vane's spec is
+stricter than the ruling, not a restatement of it."* **Vane is right and I was not.** I
+quoted Lead6's **broadcast** while **this document had already refined it** — §2 above says
+in terms that `run_id` *"is NOT optional … differs from `task_id`/`epoch` deliberately and
+the handoff previously left it ambiguous (Sable caught it)."* **The artifact of record beat
+the broadcast and I cited the broadcast** — the exact failure this fleet spent the night
+naming, committed while arguing about it. **`run_id` now leaves the surface at `325ce44`:**
+absent from `assertShape` so the CLI rejects it, absent from the accepted wire key set so
+`exactKeys` refuses a supplied value, always server-generated at prepare, and the
+`mintBindingsValid` run cross-check removed as unreachable. `task_id`/`epoch` keep the
+optional treatment. **Divergence closed; the branch and this document now agree.**
 
-**And the conflict may dissolve rather than need deciding.** The stated reason for
-*reject* was Vane's silent-dead-token footgun: reuse a `run_id` belonging to another
-principal, `ON CONFLICT (run_id) DO NOTHING` writes nothing, the mint succeeds, and the
-auth join (`r.principal_id = t.principal_id`) can never match — a credential dead on
-arrival with no error at the point of the mistake. **`mintBindingsValid` on this branch
-cross-checks a supplied `run_id` against `agent_runs` for principal, device, and
-`ended_at IS NULL`, and refuses when it does not match — which closes that hazard while
-still accepting the flag.** So *accept + cross-check* and *reject* defend against the same
-thing; the remaining difference is surface-minimalism, not safety. **Not asserting this
-resolves it — it is a decision for whoever lands code — but the safety argument for
-`reject` no longer stands on its own.** Unverified in the same way as the rest of the edge
-tree.
+**Also retracted:** I argued the conflict might *dissolve* because a supplied `run_id`
+was cross-checked, so *accept + cross-check* and *reject* defended against the same
+hazard and only surface-minimalism separated them. **That argument was built to defend an
+implementation I should not have written**, and it is moot now that `run_id` is off the
+surface — there is no supplied value left to check. **Recorded rather than deleted because
+the shape is worth seeing: I reached for a technical argument that the safeguard was
+redundant, at the point where I had misread which disposition was decided.**
 
 ### 3. Real accept is a two-identity operator test (Ledger #15032)
 
