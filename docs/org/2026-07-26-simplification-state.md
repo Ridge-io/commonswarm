@@ -241,3 +241,63 @@ them:
    entries to five when a second seat looked, and both original entries were correct.
    **So a list in a durable artifact carries the command that regenerates it, or says
    plainly that it cannot be regenerated.** Absence from a list is not permission.
+
+## Residuals banked after Lead stand-down (2026-07-26, Sable)
+
+Lead6 instructed: stop reporting into the Lead sink; put findings in the artifact;
+do not implement the parked sequence; nobody deploys. The following were re-derived
+from source after that instruction. They are not a reopening of closed rulings.
+
+### 1. Atlas VARIANT 2 attempt — RED on the omit path (exactKeys half unfinished)
+
+Local commit `55f1b41` (*Agent-token binding: optional, not required*) implements most of
+variant 2 in one commit (throw dropped; reducer folds absent → null; prepare defaults
+`run_id` via `crypto.randomUUID()`; `binding_required` gone from decide path; auth path
+untouched — `git diff` empty on `agent-auth.ts` is the right control). **Not on a remote
+branch as of this write** (`git branch -r --contains 55f1b41` empty from this machine).
+
+**Ship-breaking residual:** wire validation still has:
+
+```ts
+exactKeys(cmd, [
+  "kind", "principal_id", "run_id", "task_id", "epoch", "device_id",
+  ...optionalKeys,  // only ttl_ms / scopes are conditional
+])
+```
+
+`exactKeys` requires **exact key set equality**. CLI deliberately **omits** absent binding
+keys (`...(args.has("run-id") ? { run_id } : {})`). So the friction-win mint (no flags)
+**400s before** the optional predicates, prepare, or reducer run — the same shape as
+variant 1 (optional wording + dead mint), arriving through the **presence** half of the
+wire gate that Vane's four-place list named first.
+
+**Fix shape (not implemented here):** move `run_id`/`task_id`/`epoch` into the same
+conditional `optionalKeys` pattern as `ttl_ms`/`scopes`. Value predicates already allow
+undefined when present-or-absent is correct; presence must match.
+
+### 2. run_id disposition still disagrees with the banked handoff
+
+Handoff above: **`run_id` REMOVED from the surface; caller value rejected** (ON CONFLICT
+silent-dead-token). `55f1b41` keeps `--run-id` **accepted** on the CLI and cross-checks a
+supplied value against `agent_runs`. That is a different product disposition than the one
+this document banks. Resolve before merge; do not land both stories.
+
+### 3. Real accept is a two-identity operator test (Ledger #15032)
+
+Not "one seat runs one command." Requires project anon key + **second verified human
+email** (cli help / invite copy). Fleet seats are ineligible as identity B. Operator
+runbook: invite as A → accept --link-stdin as B in clean HOME → bare `working-on` →
+**report exit status**, not message text (both error strings still live).
+
+### 4. Site residuals (still live on main when last measured)
+
+- Hero / AuthorityDemo claim token **bound to one run, one task and one epoch** — false as
+  a conjunction (task_id/epoch write-only at auth).
+- `working-on` command block still teaches `--url`/`--anon-key` after current-target landed.
+- Unsafe accept form fixed (`--link-stdin` on main).
+
+### 5. Process note
+
+Lead parked the sequence; Atlas rebuilt OPTIONAL locally anyway. Evaluation of `55f1b41`
+belongs to whoever lands code next — against Vane's friction spec + this residual list —
+not as "already done." Edge half remains parse-only until typecheck coverage exists.
