@@ -30,3 +30,6 @@ uxtest/rounds/*/*
 
 # Evidence artifacts are durable on purpose (see docs/evidence/README.md)
 !docs/evidence/*.log
+
+# Release bundle produced by scripts/build-release.sh — built artifact, not source.
+dist-release/

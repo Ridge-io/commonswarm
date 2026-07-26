@@ -104,7 +104,16 @@ const UUID_RE =
 const AGENT_CREDENTIAL_MESSAGE =
   "Agent credential minted. It is bound to this task and run so the agent's work stays scoped and attributable.";
 
+// Injected by scripts/build-release.sh via esbuild --define. Absent in dev/test builds,
+// where the package.json read below is correct. A bundled release has no package.json
+// beside it, so without this a release binary reports "unknown" and support cannot ask
+// "what version are you on?".
+declare const __COSWARM_VERSION__: string;
+
 function packageVersion(): string {
+  if (typeof __COSWARM_VERSION__ === "string" && __COSWARM_VERSION__.length > 0) {
+    return __COSWARM_VERSION__;
+  }
   try {
     const value = JSON.parse(
       readFileSync(new URL("../package.json", import.meta.url), "utf8"),
@@ -1632,6 +1641,22 @@ async function runSeed(args: Arguments): Promise<void> {
 }
 
 async function main(): Promise<void> {
+  // `--version` is checked against RAW ARGV before parsing, because the parser treats an
+  // unknown `--flag` as one requiring a value — so `coswarm --version` failed with
+  // "--version requires a value", on the single most-typed diagnostic a user has.
+  // Found while writing the installer, which could not read back what it had installed.
+  //
+  // ONLY the FIRST token counts. An earlier draft scanned all of argv, which meant any
+  // argument that happened to be the string "-v" — a message body, a value, a branch
+  // name — printed the version and silently did not run the command the user typed.
+  // A version flag is only a version flag in the leading position.
+  const firstArg = process.argv[2];
+  if (firstArg === "--version" || firstArg === "-v") {
+    process.stdout.write(
+      `coswarm ${CLI_BUILD_VERSION} (protocol ${CLIENT_PROTOCOL_VERSION})\n`,
+    );
+    return;
+  }
   const args = new Arguments(process.argv.slice(2));
   const verb = args.positionals[0];
   if (!verb || verb === "help" || args.has("help")) {
