@@ -512,3 +512,22 @@ unmeasured + GUI-gated). Accept line must be `coswarm accept --link-stdin`.
     object level — three blobs byte-identical in the merged tree — rather than by argument.
     When two careful people cannot reproduce each other, suspect the question before the
     competence, and go to the objects.
+
+18. **"I cannot reach it" and "it is not mine to touch" are different reasons, and only one
+    of them is usually true.** Ledger's correction, on Atlas. Declining to delete another
+    seat's refs, Atlas gave two reasons: the clone was checked out on someone else's branch,
+    and the refs were not Atlas's to remove. **The first is false.** `cloud-swarm-ledger` is
+    a *worktree*, not a clone — **one repository, one ref store, many checkouts** — so every
+    seat sees and can delete the same refs, and which branch a worktree has checked out is
+    irrelevant to a *different* ref. (The one real constraint: git refuses to delete a branch
+    that is checked out in some worktree.) Only the ownership reason held.
+    **This matters because the two failure modes are opposite: a seat that believes it lacks
+    access will not go on to ask whether it should act** — the question dies at a false
+    premise instead of at a decision. State the reason you are declining; if it is
+    permission, say permission, and do not dress it as capability.
+    **Corollary, and the shortest decay measured in two sessions:** Atlas's *"the local refs
+    still exist"* was true when measured and false three minutes later, because their owner
+    deleted them in between. **A ref list is pure frame — a claim about *right now* that
+    reads like a claim about the world — and nothing in its output says which kind it is.**
+    Ledger's handling was correct: ask the owner to look rather than act on a relayed fact
+    that may already have moved.
