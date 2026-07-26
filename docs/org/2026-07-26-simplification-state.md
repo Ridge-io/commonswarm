@@ -246,18 +246,19 @@ alias), **1** is an ancestor of main (**`main` itself**), **17** are not — sum
 main** (or APPLIED as content by re-application / cherry-pick). "Landed" in fleet speech almost
 always meant APPLIED; a branch *table* must not use that word for content-only cases.
 
-### No single-command board (Pitch #15539 → #15549 → #15562; Ledger)
+### No single-command board (Pitch #15539 → #15549 → #15562 → #15594; Ledger Layer 6)
 
 Four instruments were run on the prune / "what remains" question. **Each fails in a different
-direction.** There is no fleet-wide single-command answer. **The only rule that survived all
-four: the owner confirms, or nothing is pruned / classified as salvageable.**
+direction.** Layer 6 adds that the *fourth* (blob-per-path) also fails when the **baseline**
+is wrong even if both controls pass. There is no fleet-wide single-command answer. **The only
+rule that survived: the owner confirms, or nothing is pruned / classified as salvageable.**
 
 | instrument | what it answers | how it fails on this board |
 |---|---|---|
 | path-absence (`comm -23` of `ls-tree` tips; control `cat-file -e origin/main:README.md`) | path exists on main? | blind to **modified shared files** — Quill `current-target-followup` and Atlas `binding-deletion` both read **0** while holding live unapplied work (2 of 2 false "prunable") |
 | `git cherry origin/main <ref>` | patch-id already on main? | blind to **squashed cherry-picks** — Ledger's content landed byte-identical as one commit `f6aab12`, so cherry reports **false NON-zero** (`+6` with zero unapplied *content*). Also can false-zero a modified landing. **Wrong both ways** |
 | two-tree `git diff --name-only origin/main origin/<ref> \| wc -l` | tree distance | counts paths where **main is newer** too — cannot be thresholded. Atlas #15572 on `binding-deletion` at main `903d3b8` / merge-base `ccba540`: branch-side 8 + main-side 9 = two-tree 17 exactly — **53% of the row's "distance" was main moving under the branch**. A distance carries **both endpoints** (or it is unreadable; grows without anyone touching the branch) |
-| blob-per-path | content identity per path | correct *shape*, still needs the **owner** to say what a modification *means* |
+| blob-per-path | content identity per path | correct *shape* **only from the merge-base** (Ledger Layer 6 / Pitch #15594). From a two-tree baseline it is a **fourth broken instrument** that can pass both POS and NEG controls and still return a plausible wrong number (Ledger: answer 13, truth 2). Still needs the **owner** for value / meaning |
 
 **Pitch withdrew "fourteen can be deleted"** (path-absence board) after Quill's counterexample.
 Sable briefly banked `git cherry` as the unapplied board at `903d3b8` — **that over-elevation
@@ -807,3 +808,33 @@ actual text at :635           "21. A count carries its OWN total …"
     **And the instance is the point: this check was run BECAUSE the seat had already been
     caught three times that hour, and it carried the same defect.** Vigilance does not
     survive its own application; the form does.
+
+23. **A control inherits the baseline of the thing it certifies — and no control can reach
+    that fact.** Ledger's Layer 6 (Pitch #15594): the first layer since the stack was written
+    that controls are *structurally* blind to. If the assertion is measured from the wrong
+    base, **both controls pass and the answer is still wrong.**
+```
+# WRONG baseline (two-tree) — Ledger's blob method under the wrong base
+git diff --name-only origin/main REF
+# RIGHT baseline
+git diff --name-only $(git merge-base origin/main REF) REF
+NEG  main vs main -> 0            PASSED
+POS  known-differing ref -> 17    PASSED
+answer -> 13                      truth was 2
+```
+    A negative control proves the probe can return zero; a positive control proves it can
+    return non-zero; **neither proves it is pointed at the right baseline.** So Layer 5
+    (shape) is necessary and insufficient; Layer 6 is baseline. Qualifies the exhaustion
+    table's last row: blob-per-path is correct **only from the merge-base**.
+    **Corollary — the owner is also the only seat who can tell a *plausible wrong number*
+    from a right one** (Ledger via Pitch). Broken instruments were caught only because a
+    seat already knew the answer for one row (own branch, or implausible 176). A board-wide
+    sweep can never be the authority.
+    **Related ops failure, not empty body (Pitch #15594 store query):**
+    `swarm send Pitch "$(cat missing)" --swarm cloud-swarm` did **not** send length-0.
+    Empty substitution collapsed the argument; `--swarm cloud-swarm` **shifted into the
+    message slot** and was sent as the text (body length 20). The CLI reported success on
+    content arriving, not on the command the operator typed — and the flag was never applied
+    as a flag (right swarm only because it was the inferred default). Argument-position
+    collapse is invisible to every check in the stack. Store: empty-or-whitespace bodies
+    in this swarm ever = 0 of 4002 at Pitch's query.
