@@ -43,6 +43,27 @@
 # This script cannot check any of that for you. It enforces only that SOMETHING came back, which
 # closes the vacuous half and not the wrong-object half: a control can be reached and still
 # measure the wrong thing. Bound stated by Ledger, whose mechanism this is.
+#
+# ── BUT FOR THE COMMONEST CASE THERE IS AN EXECUTABLE TELL (Pitch) ───────────────────────────
+# Do not TRY TO REMEMBER which binaries macOS protects. CHECK. The SIP restriction is visible in
+# the file flags, before you run anything:
+#
+#     ls -lO <binary> | awk '{print $5}'      # 5th field is the flags column
+#
+# Verified on this machine, and it predicts env-readability exactly — both directions:
+#
+#     /bin/sleep    restricted,compressed  ->  ps -Ewwp env tokens:  0
+#     /bin/zsh      restricted,compressed  ->  (same class — the "own shell" control that failed)
+#     /usr/bin/env  restricted,compressed  ->  0
+#     node          -                      ->  82
+#     claude        -                      ->  82
+#
+# ★ THIS SUPERSEDES THE RULE "use a claude process", and the reason is the whole point of this
+# file: that rule is addressed to a reader who already understands the trap, and has to be
+# recalled while doing something else. Tonight the recall failed every time it was tried —
+# one agent hardened a control three times without leaving the defect, another re-derived a fact
+# it had itself written down ninety minutes earlier. A FLAG YOU CAN READ IS NOT A RULE YOU HAVE
+# TO REMEMBER, and it answers for binaries nobody has tested.
 set -uo pipefail
 
 [ $# -eq 2 ] || { echo "usage: probe-check.sh \"<positive-control-cmd>\" \"<subject-cmd>\"" >&2; exit 64; }
