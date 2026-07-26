@@ -25,7 +25,17 @@
 # "behind 1". A correction posted after a claim does not reach a reader who does not rewind —
 # so the durable form is the MEASUREMENT, kept next to the thing it protects, not the result.
 #
-# ── TWO TRAPS, BOTH PAID FOR ─────────────────────────────────────────────────────────────────
+# TRAP 3, found by Vane and Sable AFTER this landed, and it had a live hazard behind it: the
+# merge column alone is the wrong question for this repo. `git rev-list --count --merges main`
+# is ZERO across 184 commits — nothing here has ever been merged. Work lands by squash or
+# cherry-pick, and a SQUASH HAS NO MERGE BASE: for every path it touches it replaces main's
+# version wholesale. The original WARNING counted only D (a file vanishing) and would have
+# cleared a branch whose `M package.json` reverts `"private": true` — re-enabling `npm publish`
+# on a repo the operator had just ruled must stay private. Ferry published the D-only form as
+# the check and retracted it; Vane supplied the correct one. Both columns are now printed and
+# the footer says which method each answers.
+#
+# ── THREE TRAPS, ALL PAID FOR ─────────────────────────────────────────────────────────────────
 #
 # TRAP 2, found by this script on its FIRST RUN: the merge-safety column originally used
 # `git diff --name-status main <branch>` and reported "merging deletes 15 file(s)" for a branch
@@ -53,30 +63,44 @@ refs=$(git for-each-ref --format='%(refname:short)' refs/remotes/origin \
 
 if [ -z "$refs" ]; then echo "no remote branches to audit (besides $BASE)"; exit 0; fi
 
-printf "%-30s %11s %7s  %s\n" BRANCH UNABSORBED BEHIND VERDICT
+printf "%-26s %6s %6s  %-22s %s\n" BRANCH UNABS BEHIND "MERGE" "SQUASH / CHERRY-PICK"
 for b in $refs; do
   plus=$(git cherry "$BASE" "$b" 2>/dev/null | grep -c '^+')
   behind=$(git rev-list --count "$b".."$BASE" 2>/dev/null || echo '?')
-  # merge-tree, NOT two-dot diff: see TRAP 2. Falls back to "?" on older git rather than lying.
+
+  # MERGE column — merge-tree against the merge base. NOT a two-dot diff: see TRAP 2.
   mt=$(git merge-tree --write-tree "$BASE" "$b" 2>/dev/null | head -1)
-  if [ -n "$mt" ]; then dels=$(git diff --name-status "$BASE" "$mt" 2>/dev/null | grep -c '^D'); else dels="?"; fi
+  if [ -n "$mt" ]; then
+    md=$(git diff --name-status "$BASE" "$mt" 2>/dev/null | grep -c '^D')
+    [ "$md" = "0" ] && mv_="merge: clean" || mv_="merge: LOSES $md file(s)"
+  else
+    mv_="merge: preview unavailable"
+  fi
+
+  # SQUASH/CHERRY-PICK column — see TRAP 3. A squash has no merge base, so for every path it
+  # touches it substitutes the branch's content wholesale. EVERY A/M/D is a candidate revert of
+  # whatever main did to that file since. D-only is the degenerate case and misses the rest.
+  sq=$(git diff --name-status "$BASE" "$b" 2>/dev/null | awk '$1 ~ /^[AMD]/ {print $NF}')
+  sqn=$(printf '%s' "$sq" | grep -c . || true)
+  if [ "$sqn" = "0" ]; then sv="squash: clean"
+  else sv="squash: $sqn path(s) REPLACED — verify each: $(printf '%s' "$sq" | tr '\n' ' ' | cut -c1-60)"; fi
+
   if [ "$plus" = "0" ]; then
-    v="ABSORBED — safe to delete"
+    verdict="ABSORBED — safe to delete"
+    printf "%-26s %6s %6s  %-22s %s\n" "${b#origin/}" "$plus" "$behind" "$verdict" ""
   else
     ONLY_COPY=1
-    v="ONLY COPY — DO NOT PRUNE"
-    case "$dels" in
-      0) : ;;
-      \?) v="$v · merge preview unavailable (git too old for merge-tree --write-tree)" ;;
-      *) v="$v · WARNING: a real merge deletes $dels file(s) from $BASE" ;;
-    esac
+    printf "%-26s %6s %6s  %-22s %s\n" "${b#origin/}" "$plus" "$behind" "ONLY COPY — keep" "$mv_ | $sv"
   fi
-  printf "%-30s %11s %7s  %s\n" "${b#origin/}" "$plus" "$behind" "$v"
 done
 
 echo
-echo "BEHIND is informational — a branch behind $BASE is not unsafe to keep or to merge. The"
-echo "WARNING column is computed with git merge-tree, not a two-dot diff, because a two-dot diff"
-echo "reports every file added to $BASE since the branch's base as a deletion. 'Is the document"
-echo "right' and 'is the branch safe to land' are different questions."
+echo "PRUNE verdict is the UNABS column alone: 0 = absorbed debris, N = the only copy."
+echo "LANDING is a SEPARATE question and the two columns answer it for two DIFFERENT methods."
+echo "  merge  — computed with git merge-tree against the merge base. Safe, or it conflicts loudly."
+echo "  squash — every A/M/D path is a candidate revert of main's version. THERE IS NO SAFETY RAIL;"
+echo "           the listed paths must be checked by hand. This repo has 0 merges in 184 commits,"
+echo "           so SQUASH IS THE COLUMN THAT MATCHES HOW WORK ACTUALLY LANDS HERE."
+echo "Silence in the merge column is not a general clearance. 'Is the document right' and 'is the"
+echo "branch safe to land, by the method you will actually use' are different questions."
 exit "$ONLY_COPY"
