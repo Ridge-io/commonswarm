@@ -31,17 +31,17 @@ See that file for the retired framing (kept and marked) and the vocabulary table
 Target: first use goes from two commands and seven flags to `coswarm token mint --scope <scope>`.
 
 **Artifact of record for this friction work** (Lead6 #14973): Vane's files, not any Lead
-broadcast. A Lead's ruling is a *decision*; the file is the *specification*. As of this
-edit they are **not all on `main`** — verify before trusting either location:
+broadcast. A Lead's ruling is a *decision*; the file is the *specification*.
 
 ```
-origin/vane/friction   docs/friction/2026-07-26-ceremony-before-first-work.md
-                       docs/friction/2026-07-26-spec-token-mint-one-flag.md
-origin/main            NEITHER of those paths (yet)
+docs/friction/2026-07-26-ceremony-before-first-work.md   ON main (265edb0)
+docs/friction/2026-07-26-spec-token-mint-one-flag.md     ON main (265edb0)
 ```
 
-`git cat-file -e origin/main:<path>` before treating either as durable. An artifact of
-record on an unmerged branch is one force-push from gone.
+~~*origin/main NEITHER of those paths (yet)*~~ — **superseded.** Landed by Vane at `265edb0`
+after Pitch named the 404 as the handoff's own failure mode. Control: `git cat-file -e
+origin/main:docs/friction/2026-07-26-spec-token-mint-one-flag.md` resolves. The branch
+`origin/vane/friction` may still exist as history; **main is now the durable copy.**
 
 1. **`task_id` / `epoch` become OPTIONAL — as VARIANT 2, not as a bare word.**
    ~~*Binding fields (`run_id`, `task_id`, `epoch`) become OPTIONAL*~~ — **superseded wording.**
@@ -189,7 +189,7 @@ them:
 
 | branch | what |
 |---|---|
-| `origin/vane/friction` | ceremony inventory + the mint spec. **This is the artifact of record for the friction work — not the Lead's broadcasts.** Spec-only, sequenced behind Quill, carries the four-place ordering list. |
+| `origin/vane/friction` | ~~unlanded sole copy~~ — **LANDED on main at `265edb0`** (same two docs under `docs/friction/`). Branch may remain as history; main is durable. |
 | `origin/vane/site-audit` | site command-string audit |
 | `origin/vane/launch-audit` | the §6 launch-bar audit, all five items re-run |
 | `origin/ledger/epoch-binding-test` | the four-arm characterisation test, with a header saying arms 3-4 assert WRONG behaviour and must be inverted when the binding is fixed |
