@@ -262,7 +262,7 @@ on the same channel, or the recipient is right to refuse.**
 
 ---
 
-## 6. LAUNCHABLE — the bar
+## 6. LAUNCHABLE — the bar   *(§6 — this section. The label is here so grepping for it finds it.)*
 
 Not "the tests pass." A stranger, on their own machine, can:
 1. Install `coswarm` and authenticate without being walked through it **— blocked today: THERE IS
@@ -276,7 +276,15 @@ Not "the tests pass." A stranger, on their own machine, can:
    the only first-contact verb needing no `--url`. **But an invitee has no `coswarm` to run
    either** (Pitch), so the installer gates the invite path as surely as it gates the installer's
    own item. **Do not schedule 3 as independent work.**
-4. Post and read signals from **both** machines **— blocked today: the CLI is not on the second machine at all**
+4. Post and read signals from **both** machines **— blocked today: BY ITEM 1.** ★ An earlier version
+   of this line said *"the CLI is not on the second machine at all"* and **that is FALSE** (Vane;
+   re-measured 2026-07-26): `zsh -lc 'command -v coswarm'` on the laptop returns
+   `/opt/homebrew/bin/coswarm`. **It is there — hand-installed by `npm link` into a shared
+   checkout, which is exactly what a stranger cannot do.** The blocker is the missing installer,
+   not absence. ★★ **Measuring this took three attempts and the first two were FALSE NEGATIVES:**
+   non-login `ssh` has no homebrew on PATH (measured: 0 occurrences), and `bash -lc` is the wrong
+   shell because the account is **zsh** and homebrew's PATH lives in `.zprofile`. **A positive
+   control — `command -v brew` — is the only reason the third reading is trustworthy.**
 5. Understand what they are looking at without reading source **— blocked today: THE REPO IS
    PRIVATE, so a stranger cannot read the README at all.** The README opening was fixed on
    2026-07-25 (`c1d1213`: thesis first line, plain-language statement above the fold, the
