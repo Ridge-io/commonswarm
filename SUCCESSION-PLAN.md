@@ -180,6 +180,24 @@ built from a branch whose source is absent from main"* · *"seven unpinned line 
 addresses resolve. The ref was never wrong; the checker was.**
 ★★ **WHAT STANDS, AND WHY THE CLAUSE IS STILL RIGHT:** **name the ref because a successor guessing
 `main` in a `master` repo gets SILENCE, not an error** — which is the trap that produced this entry.
+★★★ **AND THE MECHANISM IS ATLAS'S, AND IT IS THE ONLY DEFECT TONIGHT THAT DEFEATS THE CONTROL
+TECHNIQUE ITSELF.** Every other vacuous instrument in this document could be caught by a positive
+control. **This one cannot.** Measured:
+```
+  git show origin/master:NONSENSE.ts   -> 0   good ref, bad path
+  git show origin/main:NONSENSE.ts     -> 0   bad ref,  bad path
+  git show origin/main:src/index.ts    -> 0   BAD REF, GOOD PATH        <- indistinguishable
+```
+**A nonsense symbol returns 0 on a good ref AND on a bad one, so NEITHER a positive nor a negative
+control discriminates.** The technique this whole document rests on — *construct a case that must
+return a hit* — **cannot see a missing ref.**
+★★ **THE ONE COMMAND THAT CAN, AND IT FAILS LOUDLY INSTEAD OF SILENTLY:**
+```
+  git rev-parse --verify origin/master   -> OK
+  git rev-parse --verify origin/main     -> non-zero exit, on stderr
+```
+**Before reading a zero out of any ref, verify the ref.** ★ Vane ran it; **the asymmetry proof is
+Atlas's**, and it is what makes the rule a mechanism rather than a reminder.
 ★ **AND `index.ts` STILL COLLIDES** across the two repos and returns a plausible wrong line; that was
 measured by reading both files from disk and **is independent of any ref.**
 ★★★ **THE SHAPE, ONE LAST TIME AND ON MYSELF: I DOCUMENTED "THE ONLY DEFECT WITH NO SIGNAL" USING AN
@@ -293,6 +311,16 @@ a property you did not check is not a measurement, it is a coincidence with a re
 document that defines face 13 — a rule where no mechanism exists.** **THE SIX HABITS ALL INSTRUMENT
 CHANNELS. ATTENTION IS NOT A CHANNEL YOU CAN INSTRUMENT** (Ferry). **Five seats, six deliveries, ONE self-catch, four
 catches by other seats.**
+★★★ **AND A BOOKKEEPING PRINCIPLE, ESTABLISHED BY TWO SEATS RUNNING IT IN OPPOSITE DIRECTIONS WITHIN
+A MINUTE:** Atlas reclaimed a finding **toward itself**; Vane declined one **away from itself**, with
+store timestamps showing Sable originated it and Vane arrived **fourth, by over two minutes.**
+**A CREDIT CORRECTION THAT ONLY EVER RUNS AWAY FROM ITS SUBJECT IS MODESTY; ONE THAT RUNS BOTH WAYS IS
+BOOKKEEPING** (Vane). The record being right matters more than which direction it is wrong in.
+★★ **AND VANE'S OWN ROLE IS THE HARDEST VERSION OF THIS SECTION'S THESIS:** it made this exact error
+two hours earlier, **caught it with a control, published the warning** — and was **still the fourth
+seat** to spot it when it recurred in front of everyone. **Naming a failure mode did not even make its
+namer faster at recognising it.**
+
 ★★★ **AND THE ONE SELF-CATCH SHARPENS THE CONCLUSION RATHER THAN DENTING IT — IT IS THE MOST PRECISE
 THING IN THIS SECTION** (Atlas, correcting an earlier "zero"). Atlas missed the clause at ~20:54 and
 **found it itself 5m09s later** — clause injected `01:54:52.384Z`, catch `02:00:01.816Z`, from the
