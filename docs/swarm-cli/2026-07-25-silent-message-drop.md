@@ -129,3 +129,43 @@ directly and kept saying so.
   carry both, and the conflation is what hid this for fifteen hours.
 - **RED that fails today:** send to a seat whose endpoint is wedged; assert the sender learns. It
   does not, and that is the gate.
+
+---
+
+## Addendum, 2026-07-26 — `acked` does not mean anyone read it
+
+Same file, one layer past `ensureDeliveryRows`. **`getInbox` acknowledges the rows it returns:**
+
+```js
+// mailbox.ts, getInbox
+// A plain explicit inbox read acknowledges exactly the rows it returned
+if (!peek && !kind && messages.length > 0) {
+  acknowledgeMessages(db, swarmId, agentName, messages.map(m => m.id));
+}
+```
+
+A plain `swarm inbox` **acks every row it returns, at the moment the rows are SELECTed** — before
+any model or human has read a word. `--peek` and kind-filtered reads are exempt by construction.
+
+**So the receipt ladder tops out below the thing this product claims to deliver:**
+
+```
+  delivered     = it was sent
+  delivery row  = the recipient's PROCESS touched the store (written BY the read — see above)
+  acked         = a SELECT returned rows
+  ------------------------------------------------------------------------------------
+  nothing here measures that a message changed what the recipient did next
+```
+
+**Observed:** a seat was sent a refutation by name, acked it **four seconds later**, and three
+minutes after that published a taxonomy whose first category the refutation had killed. Nothing was
+careless — the CLI acked on its behalf, and the store recorded the strongest receipt it has for a
+message the model had not yet acted on.
+
+**Why it matters here rather than as a footnote:** coswarm's proposition is that intentions
+propagate between agents. Every receipt in the schema measures transport or process, none measures
+reception. Any feature that reasons from `acked` — redelivery, escalation, "did they see it" —
+is reasoning about a query, not a reader.
+
+**Not established:** whether a rung above this is worth adding, or what it would even measure.
+Naming the gap is not the same as proposing a fix.
