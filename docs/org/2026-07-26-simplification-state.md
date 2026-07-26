@@ -177,6 +177,20 @@ next-process find.
   or `epoch`; a token "for task X" drives its command kind against any task in the
   workspace. NOT a workspace escape and NOT an auth bypass — over-breadth inside a
   workspace the principal already legitimately holds.
+- **Revocation tombstones are read on every agent request and written by nothing.**
+  `agent-auth.ts` queries `revocation_tombstones` for seven target kinds (token,
+  principal, run, device, membership, lineage, family); the table is `GRANT INSERT`ed
+  and `p1_schema.sql:766` says *"Section 3.2 step 13 requires tombstone inserts"* — but
+  there are **zero INSERT sites in the repo** (control: the same search finds 1 for
+  `swarm.agent_runs`). So that query always returns zero rows and its branch can never
+  be true. **What still works is the column path** — `token_revoked_at`,
+  `principal_revoked_at`, `run_ended_at`, `device_revoked_at`, `surrender_only`,
+  membership — which `revoke_agent_token` and `revoke_agent_principal` do set, so
+  revoking a token or a principal genuinely works. **What does not exist is the
+  cascade**: lineage/family revocation — the "stop this agent's whole succession"
+  button — has no writer and no command. Relevant because renewal mints successors
+  carrying `lineage_id`. Not an auth bypass: a *missing* containment, not a broken one.
+  Source-and-schema trace, not executed.
 - **`Ridge-io/coswarm-dist` does not exist**, so `install.sh`'s default target 404s.
   `COSWARM_BASE_URL` overrides it, which unblocks gate 5 without any publish decision.
 - **The name `coswarm` collides** with a shipping self-hosted PaaS that owns `coswarm.dev`.
@@ -193,7 +207,7 @@ them:
 | `origin/vane/site-audit` | site command-string audit |
 | `origin/vane/launch-audit` | the §6 launch-bar audit, all five items re-run |
 | `origin/ledger/epoch-binding-test` | the four-arm characterisation test, with a header saying arms 3-4 assert WRONG behaviour and must be inverted when the binding is fixed |
-| `origin/atlas/binding-deletion` | the deletion diff. **Edge half is parsed, not typechecked — see the gap above. Treat as unproven until `npm run test:p1-server` runs against it.** |
+| `origin/atlas/binding-deletion` | **VARIANT 2 (optional, not deleted) at `55f1b41`, rebuilt on `ccba540` — NOT the deletion diff this row previously described.** The delete implementation was discarded once Vane's hold landed: deletion is the irreversible move. Fields stay, default NULL, `binding_required` gone, projection throw dropped in the same commit (keeping it while defaulting to NULL leaves mint dead), **auth path untouched — control: an empty `git diff --stat` against `agent-auth.ts`** — and **no migration**. 67 protocol tests pass; 64 of the 66 pre-existing ones passed *unchanged*, which is the evidence for "forecloses nothing". **Edge half is esbuild-PARSED, NOT TYPECHECKED — see the gap above — and `test:p1-server` has never run against it. Treat the edge half as unproven.** Pushed to preserve it only: **this branch is the parked sequence and must not be landed on that basis.** |
 | `origin/ferry/r1-go-runbook` | the uxtest R1 go-runbook and the gate-5 diagnosis. **Touches `uxtest/findings/` only and no commit on it deletes anything — both measured across every commit, so both stay true however far `main` moves.** Therefore **cherry-pick the files; never squash or `diff \| apply`.** That second half is *tip-relative and decays*: at 82 commits of drift a squash already replaced 31 paths, deleting four defence scripts and reverting the `private: true` publish guard — none of it in any commit on the branch, all of it the gap. **R1 has no round; it is gated on an operator ruling (*hand off as diagnosed*), not on a missing fix.** |
 
 ## The last open measurement is OPERATOR-ONLY — no seat can run it
