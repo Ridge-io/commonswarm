@@ -109,7 +109,13 @@ function packageVersion(): string {
     const value = JSON.parse(
       readFileSync(new URL("../package.json", import.meta.url), "utf8"),
     ) as Record<string, unknown>;
-    return typeof value.version === "string" ? value.version : "unknown";
+    // usage() is written to the terminal without going through safeError(), so
+    // everything interpolated into it must be safe at its source. A version is
+    // a short printable token; anything else is reported as unknown rather
+    // than passed through.
+    const version = value.version;
+    if (typeof version !== "string") return "unknown";
+    return /^[\x20-\x7e]{1,64}$/.test(version) ? version : "unknown";
   } catch {
     return "unknown";
   }
