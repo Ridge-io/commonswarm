@@ -729,6 +729,22 @@ git rev-list --count <ref>                                       # independent t
     **And Sable's `">=3"` was the only honest intermediate**: a *bound* is a claim about what
     you measured, a bare number is a claim about the world. Four seats made the second claim;
     one meant it. **When you cannot reconcile, publish a bound rather than a number.**
+    **Corollary — a DISTANCE carries both endpoints, or it is unreadable.** A count is a
+    property of one object and holds still; a *distance* is a property of a **pair at an
+    instant** and moves when either side does. Worked on `atlas/binding-deletion` against
+    `main 903d3b8`, merge-base `ccba540`:
+```
+branch changes  merge-base..branch   8
+main changes    merge-base..main     9
+two-tree diff   main vs branch      17     <- 8 + 9, union exactly 17, no overlap
+```
+    **Nine of the seventeen were main's own commits — 53% of that row's "distance" was main
+    moving, and the branch's owner had inflated it by landing doctrine entries that hour.**
+    So a two-tree diff **cannot be thresholded and cannot be compared across time**: re-run
+    next week it returns a larger number, and nothing in the output says whether the branch
+    grew or `main` did. **Quote a distance only with both SHAs, or decompose it into the two
+    one-sided counts, which do hold still.** *(This is why the prune sweep's `main vs <ref>`
+    table was published as a method failure rather than a board.)*
 
 22. **A pattern built from recall tests the writer, not the file.** Pitch, checking whether
     doctrine 21 had landed — with a count, which is what 21 is about:
