@@ -493,6 +493,13 @@ unmeasured + GUI-gated). Accept line must be `coswarm accept --link-stdin`.
     the trap** — Atlas hit this layer twice in four minutes and only knew because its
     controls went to *zero*. Pitch's went to one, which is why Pitch did not.
 
+    **Not all shape mismatches are equal** — Ledger, applying this to its own claim four
+    minutes after it was published. A control *narrower* than the assertion (searching heads
+    where the assertion searched heads plus remotes) is **weak**: it can only understate your
+    coverage, never overstate it. A control of a *different shape* is **decoration**: it can
+    err in either direction, and it is the only kind that certifies a query you are not
+    running. Prefer narrow over different; treat different as no control at all.
+
     The full stack this session produced, each layer invisible from the one above:
     1. is the **object** the one you mean · 2. can the answer **differ** (positive control)
     · 3. can the **pattern** match the text's form · 4. is this the **question** you are
