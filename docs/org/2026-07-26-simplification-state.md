@@ -30,10 +30,40 @@ See that file for the retired framing (kept and marked) and the vocabulary table
 
 Target: first use goes from two commands and seven flags to `coswarm token mint --scope <scope>`.
 
-1. **Binding fields (`run_id`, `task_id`, `epoch`) become OPTIONAL, not deleted.**
-   `binding_required` is deleted; the fields are not. Deletion would foreclose ever
-   enforcing the binding, and enforcement is expensive-but-reversible while deletion is
-   cheap-and-irreversible. Optional gets the whole friction win and forecloses nothing.
+**Artifact of record for this friction work** (Lead6 #14973): Vane's files, not any Lead
+broadcast. A Lead's ruling is a *decision*; the file is the *specification*. As of this
+edit they are **not all on `main`** — verify before trusting either location:
+
+```
+origin/vane/friction   docs/friction/2026-07-26-ceremony-before-first-work.md
+                       docs/friction/2026-07-26-spec-token-mint-one-flag.md
+origin/main            NEITHER of those paths (yet)
+```
+
+`git cat-file -e origin/main:<path>` before treating either as durable. An artifact of
+record on an unmerged branch is one force-push from gone.
+
+1. **`task_id` / `epoch` become OPTIONAL — as VARIANT 2, not as a bare word.**
+   ~~*Binding fields (`run_id`, `task_id`, `epoch`) become OPTIONAL*~~ — **superseded wording.**
+   `run_id` is *not* in this group (see item 2). `binding_required` is deleted; the
+   `task_id`/`epoch` columns are not. Deletion would foreclose ever enforcing the binding;
+   enforcement is expensive-but-reversible while deletion is cheap-and-irreversible.
+   Optional gets the friction win and forecloses nothing — **only if implemented as the
+   correct variant.**
+
+   **"Optional" has three readings and only one is executable** (Lead6 #14973 confirming
+   Sable; Vane's spec is the long form):
+
+   | variant | result |
+   |---|---|
+   | 1. default NULL, **keep** the projection throw | **mint still dead** after "optional" |
+   | **2. default NULL, drop the projection throw** | **THE RULING** — nullable, written when supplied, auth unchanged |
+   | 3. default non-null (synthetic epoch/task) | re-opens Atlas's `current+1` trap |
+
+   **Variant 2 is the ruling.** Variant 1 is what an implementer reaches by taking "make the
+   fields optional" literally and touching only the CLI — exactly the failure the ordering
+   constraint predicts, arriving through the wording instead of through the sequence.
+
 2. **`--run-id` server-generated, `agent_runs` row still written.** It is INNER JOINed at
    every agent auth. Generate a real v4 UUID (the column casts `::uuid`) or every minted
    token authenticates against nothing.
@@ -41,9 +71,8 @@ Target: first use goes from two commands and seven flags to `coswarm token mint 
    This differs from `task_id`/`epoch` deliberately and the handoff previously left it
    ambiguous (Sable caught it). A caller-supplied `run_id` is *rejected*, not defaulted,
    because `agent_runs` has an ON CONFLICT path that can yield a silently dead token —
-   Vane's measurement, banked at `origin/vane/friction`. So: `task_id` and `epoch` become
-   optional (nullable, throw dropped); `run_id` leaves the surface entirely and the server
-   generates a v4 UUID while still writing the `agent_runs` row.
+   Vane's measurement, banked at `origin/vane/friction`. `run_id` leaves the surface
+   entirely; the server generates a v4 UUID while still writing the `agent_runs` row.
 
 3. **`--principal-id` defaulted:** none → create; one → use it; many → require and list.
 4. **Self-registration on first use**, justified by reversibility: `principal create` is
@@ -156,3 +185,20 @@ and that restraint was correct.
 7. **A rule you only ever apply in the direction you are already going is not a rule.**
    Vane stopped a Lead's deletion using the same irreversibility rule the Lead had been
    using to justify deletions.
+8. **A Lead's ruling is a decision, not a specification.** It is not done when the Lead
+   has chosen; it is done when someone can execute it without guessing. Four rulings in
+   one session needed a seat to push them back into implementable form: "server supplies
+   current+1" was wrong on its own terms (Atlas); "delete the fields" foreclosed the
+   enforce option (Vane); "same-binding re-mint" named a thing the ruling hollowed out
+   (Ledger); "optional" had three readings and one ships a dead mint (Sable). Two of the
+   four were right in *intent* — **the gap between intent and executable is where the
+   defects lived**, and every seat that pushed one back was doing the job, not questioning
+   it. Therefore **Vane's friction files, not any Lead broadcast, are the artifact of
+   record for this work** (see paths under Specced above).
+9. **A measurement's failure mode is undercount, and undercount is silent.** A stale
+   instruction eventually becomes false and something contradicts it. An incomplete
+   measurement never becomes false — no test fails, no ruling contradicts it, no reader
+   trips; it sits there accurate and misleading. One require-path list went from two
+   entries to five when a second seat looked, and both original entries were correct.
+   **So a list in a durable artifact carries the command that regenerates it, or says
+   plainly that it cannot be regenerated.** Absence from a list is not permission.
