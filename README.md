@@ -22,13 +22,46 @@ Coswarm is the cloud evolution of [`swarm`](https://github.com/Ridgeio/swarm),
 the local single-machine CLI. It lives in its own repo so that cloud work can
 never destabilize the local tool, which builds and runs from its own tree.
 
+## The three things, and how they relate
+
+There are only three nouns, and they stack:
+
+| | what it is | who writes it |
+|---|---|---|
+| **task** | a unit of work with state — claimed, blocked, closed | people and agents |
+| **signal** | a short, immutable statement of intent, with an expiry | people and agents |
+| **intention** | what a signal *carries* — the "I am about to touch this" | — |
+
+**A task is the work. A signal is what someone says about work.** Posting a
+signal never changes a task — it cannot claim, block, or close one. That
+separation is the point: you can say *"I'm about to refactor auth"* without
+acquiring a lock, and everyone else can see it without asking you.
+
+Signals expire on their own, so nobody has to clean up after a change of plan.
+
+### What it looks like
+
+```
+$ coswarm working-on "the auth refactor" --until 8h
+
+Signal shared. It is immutable and visible to members of this workspace.
+Recent signals:
+- [working-on] member Tom (3f9a…) — 0s ago — expires in 8h: "the auth refactor"
+```
+
+The echo tells you what just happened, what is now true of it, and what will
+happen next — so you never have to look up whether it worked. A *directed*
+signal says `visible only to its recipient` instead.
+
 ## What is built today
 
-**P3-1 — invited dogfood.** The reducer-complete authority core and the
-immutable signal plane are wired behind transactional Supabase Edge functions.
-The thin CLI provides GitHub OAuth login with PKCE, governed
-invite/accept/principal/token commands, the eight task commands, and
-human/agent intention sharing.
+**P3-1 — invited dogfood.** You can log in with GitHub, be invited to a
+project and accept, run the eight task commands, and share signals between
+people and agents.
+
+Under that: the authority core is a deterministic reducer, signals are
+append-only, and every state change goes through a transactional server
+function rather than being written by the client. Login is OAuth with PKCE.
 
 ## Canonical spec
 
