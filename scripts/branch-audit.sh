@@ -35,7 +35,14 @@
 # the check and retracted it; Vane supplied the correct one. Both columns are now printed and
 # the footer says which method each answers.
 #
-# ── THREE TRAPS, ALL PAID FOR ─────────────────────────────────────────────────────────────────
+# TRAP 4: there is a THIRD question and the first two do not cover it. A successor who CHECKS
+# OUT the branch sees its tree, not a merge result and not a squash. Ferry's findings file lived
+# on a branch and told readers to run three tools that do not exist in that tree — true of main,
+# false of where the reader stands. The instrument is the two-dot D-list, which is WRONG for a
+# merge and CORRECT here; verified against `git cat-file -e` ground truth rather than assumed.
+# The two-dot diff was never broken. It answers a question nobody had named.
+#
+# ── FOUR TRAPS, ALL PAID FOR ─────────────────────────────────────────────────────────────────
 #
 # TRAP 2, found by this script on its FIRST RUN: the merge-safety column originally used
 # `git diff --name-status main <branch>` and reported "merging deletes 15 file(s)" for a branch
@@ -63,7 +70,7 @@ refs=$(git for-each-ref --format='%(refname:short)' refs/remotes/origin \
 
 if [ -z "$refs" ]; then echo "no remote branches to audit (besides $BASE)"; exit 0; fi
 
-printf "%-26s %6s %6s  %-22s %s\n" BRANCH UNABS BEHIND "MERGE" "SQUASH / CHERRY-PICK"
+printf "%-26s %6s %6s  %s\n" BRANCH UNABS BEHIND "LANDING / READING"
 for b in $refs; do
   plus=$(git cherry "$BASE" "$b" 2>/dev/null | grep -c '^+')
   behind=$(git rev-list --count "$b".."$BASE" 2>/dev/null || echo '?')
@@ -85,22 +92,37 @@ for b in $refs; do
   if [ "$sqn" = "0" ]; then sv="squash: clean"
   else sv="squash: $sqn path(s) REPLACED — verify each: $(printf '%s' "$sq" | tr '\n' ' ' | cut -c1-60)"; fi
 
+  # READER column — TRAP 4. What a successor who CHECKS OUT this branch actually sees. The
+  # two-dot D-list is the WRONG instrument for a merge and the RIGHT one here: files on $BASE
+  # absent from the branch's tree are exactly what a reader will not find. Verified against
+  # ground truth (git cat-file -e) rather than assumed. Ferry hit this personally — a findings
+  # file on a branch told successors to run tools that do not exist in the tree they are in.
+  rd=$(git diff --name-status "$BASE" "$b" 2>/dev/null | awk '$1=="D"{print $2}')
+  rdn=$(printf '%s' "$rd" | grep -c . || true)
+  if [ "$rdn" = "0" ]; then rv="reader: sees all of $BASE"
+  else rv="reader: MISSING $rdn file(s) present on $BASE"; fi
+
   if [ "$plus" = "0" ]; then
     verdict="ABSORBED — safe to delete"
-    printf "%-26s %6s %6s  %-22s %s\n" "${b#origin/}" "$plus" "$behind" "$verdict" ""
+    printf "%-26s %6s %6s  %s\n" "${b#origin/}" "$plus" "$behind" "$verdict"
   else
     ONLY_COPY=1
-    printf "%-26s %6s %6s  %-22s %s\n" "${b#origin/}" "$plus" "$behind" "ONLY COPY — keep" "$mv_ | $sv"
+    printf "%-26s %6s %6s  %s\n" "${b#origin/}" "$plus" "$behind" "ONLY COPY — keep"
+    printf "%-26s %6s %6s    %s\n" "" "" "" "$mv_"
+    printf "%-26s %6s %6s    %s\n" "" "" "" "$sv"
+    printf "%-26s %6s %6s    %s\n" "" "" "" "$rv"
   fi
 done
 
 echo
 echo "PRUNE verdict is the UNABS column alone: 0 = absorbed debris, N = the only copy."
-echo "LANDING is a SEPARATE question and the two columns answer it for two DIFFERENT methods."
+echo "LANDING and READING are SEPARATE questions, and the three lines below answer three DIFFERENT ones."
 echo "  merge  — computed with git merge-tree against the merge base. Safe, or it conflicts loudly."
 echo "  squash — every A/M/D path is a candidate revert of main's version. THERE IS NO SAFETY RAIL;"
 echo "           the listed paths must be checked by hand. This repo has 0 merges in 184 commits,"
 echo "           so SQUASH IS THE COLUMN THAT MATCHES HOW WORK ACTUALLY LANDS HERE."
-echo "Silence in the merge column is not a general clearance. 'Is the document right' and 'is the"
+echo "  reader — what a successor who CHECKS OUT the branch sees. Files on main that are absent"
+echo "           from its tree. This is the two-dot D-list: wrong for a merge, RIGHT here."
+echo "Silence in the merge line is not a general clearance. 'Is the document right' and 'is the"
 echo "branch safe to land, by the method you will actually use' are different questions."
 exit "$ONLY_COPY"
