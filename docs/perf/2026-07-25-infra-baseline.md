@@ -1189,8 +1189,29 @@ absolute threshold against a moving bound and then shipped another one.**
 DURESS = (vm.compressor_bytes_used + swap_used) / hw.memsize
 ```
 
-**Compressor is bounded by RAM, not by the swapfile count**, so the metric is reachable at any
-`swap_total`. Session evidence:
+**Compressor is bounded by RAM, not by the swapfile count**, so **the numerator is no longer bounded
+below the trip** — which is precisely attempt 3's defect, fixed.
+
+★ **CORRECTED PER ATLAS — the original sentence here read *"reachable at any `swap_total`"*, which is
+true in principle and OVERSTATES THE MARGIN.** The numerator's cap is `compressor_max + swap_total` and
+**still contains `swap_total`**: the dependency on the moving bound is **reduced, not removed.** At
+`total` 6144 MB the practical ceiling is **~75% against a 100% trip**, holding compressor constant —
+a compressor excursion ~1.4x the largest observed this session. **A successor who checks the strong
+claim on a quiet machine finds ~71-78% and reasonably distrusts the arm**, which is the same
+falsifiability trap as the charter's *"unreachable by construction"*. The script asserts the **hard**
+ceiling (`100*(RAM + swap_total)/RAM`, measured 156%) on every run and prints `UNREACHABLE` if a trip
+ever sits outside it.
+
+★★ **AND THE PROCESS DEFECT WORTH MORE THAN THE SENTENCE: THIS CLAIM EXISTED IN THREE PLACES AND THE
+FIX REACHED TWO OF THEM, TWICE IN ONE HOUR.** Script + charter + this file all describe one gate in
+prose. The first correction landed in the script and missed the charter; the second landed in the
+charter and missed this file — **both by the same hand, minutes apart, while explicitly hunting this
+exact class.** The rule *"update all three"* has now failed twice with the author watching for it.
+**The mechanism that would retire it: ONE of these should be generated from, or point at, the script
+rather than restating it.** Three prose copies of one fact is three chances to be two-thirds right.
+See §3 face 13 — *a rule where a mechanism would do*.
+
+Session evidence:
 
 | moment | compressor | swap used | duress |
 |---|---|---|---|
