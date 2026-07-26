@@ -281,11 +281,13 @@ from source after that instruction. They are not a reopening of closed rulings.
 
 ### 1. Atlas VARIANT 2 attempt — RED on the omit path (exactKeys half unfinished)
 
-Local commit `55f1b41` (*Agent-token binding: optional, not required*) implements most of
-variant 2 in one commit (throw dropped; reducer folds absent → null; prepare defaults
-`run_id` via `crypto.randomUUID()`; `binding_required` gone from decide path; auth path
-untouched — `git diff` empty on `agent-auth.ts` is the right control). **Not on a remote
-branch as of this write** (`git branch -r --contains 55f1b41` empty from this machine).
+Commit `55f1b41` on **`origin/atlas/binding-deletion`** (*Agent-token binding: optional,
+not required*) implements most of variant 2 in one commit (throw dropped; reducer folds
+absent → null; prepare defaults `run_id` via `crypto.randomUUID()`; `binding_required`
+gone from decide path; auth path untouched — empty `git diff` on `agent-auth.ts` is the
+right control). ~~*Not on a remote branch*~~ — **superseded; Atlas pushed to preserve it
+(9d62dbd row).** PUSHED IS NOT LANDED. Parked sequence; do not merge on presence alone.
+**Re-checked after push: exactKeys half still unfinished on the tip** (see below).
 
 **Ship-breaking residual:** wire validation still has:
 
@@ -329,6 +331,17 @@ runbook: invite as A → accept --link-stdin as B in clean HOME → bare `workin
 
 ### 5. Process note
 
-Lead parked the sequence; Atlas rebuilt OPTIONAL locally anyway. Evaluation of `55f1b41`
-belongs to whoever lands code next — against Vane's friction spec + this residual list —
-not as "already done." Edge half remains parse-only until typecheck coverage exists.
+Lead parked the sequence; Atlas rebuilt OPTIONAL and pushed the branch to preserve it.
+Evaluation of `55f1b41` belongs to whoever lands code next — against Vane's friction spec
++ this residual list — **not as "already done."** Edge half remains parse-only until
+typecheck coverage exists. **exactKeys residual STILL RED after Atlas push** (re-derived
+on `origin/atlas/binding-deletion` tip): presence list still requires run_id/task_id/epoch
+keys while CLI omits them.
+
+### 6. Quickstart copy (call-chain, not a run)
+
+`runLinkAccept` wires loginSession→login (when needed), acceptInviteLink, writeCurrentTarget.
+Three-line quickstart is **supported by the call chain** for a fresh reader. Still **not
+an end-to-end run** (two-identity operator test). Accept line must be
+`coswarm accept --link-stdin` (not the unsafe argv form). Site line 3 still ships flags —
+those should come off; bare `working-on` is correct under both outcomes.
