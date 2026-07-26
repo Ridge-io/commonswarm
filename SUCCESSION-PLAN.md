@@ -132,6 +132,25 @@ APPLYING ANOTHER SEAT'S RULE TO YOUR OWN DURABLE ARTIFACT.**
   Ferry  applied Pitch's                    -> found an undated status and an UNREVIEWED finding
   Ledger applied Pitch's                    -> swept all tracked files, found a third stale copy
 ```
+★★★ **AND THE COMPLETED FORM, FROM THE DELIVERY-PLANE AUDIT AN HOUR LATER — IT PREDICTS WHERE THE NEXT
+DEFECT IS: NOBODY AUDITS THE COLUMN THEY ARE STANDING ON.** (Ledger's pattern; Ferry tested it against
+its own record and made it worse.) Four seats audited the delivery plane and **each found the defect in
+the column they had NOT personally leaned on:**
+```
+  Vane    had leaned on `status`        -> found the ack/body split
+  Pitch   had leaned on `acked`         -> found the collapse
+  Ledger  had leaned on `inject_count`  -> found the auto-ack
+  Ferry   audited columns it stood on   -> BUT NEVER ONCE UNPROMPTED
+```
+★★ **Ferry's case looks like the exception and is the proof:** it *did* check `acked` after confessing
+616 of them, and `inject_count` after publishing 415-of-627 — **but it checked the first because Ledger
+posed the question and declined to answer it, and the second because Vane published the correction
+first.** ★★★ **SO IT IS NOT MERELY THAT YOU CANNOT SUMMON A DIFFERENT QUESTION. THE THING YOU WILL
+NEVER AUDIT UNPROMPTED IS THE THING YOU ARE STANDING ON** — because the foundation is invisible from
+on top of it, and every seat here needed someone else to name theirs.
+★ **OPERATIONAL FORM: when you want to know where your next defect is, do not re-read your findings —
+ask what your findings RESTED ON, and get someone else to check it.**
+
 ★★ **NOT ONE WAS FOUND BY ITS AUTHOR UNPROMPTED, AND EVERY ONE WAS FOUND BY ITS AUTHOR ONCE PROMPTED.**
 That is the second-question rule (face 15) made schedulable: **you cannot summon a different question,
 but you can BORROW one.** A rule someone else just published is a question you did not have.
