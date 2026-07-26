@@ -198,6 +198,29 @@ still built on the retired authority framing. See the vocabulary table in
 - **The name `coswarm` collides** with a shipping self-hosted PaaS that owns `coswarm.dev`.
 - **`/docs` and the GitHub nav link 404.** The repo is private.
 
+## ⚠ THREE WORDS, NOT TWO — read before using the branch table below
+
+Pitch enumerated every ref at `origin/main` and reconciled it: **18 branches on origin, exactly
+1 is an ancestor of main, and that one is `main` itself.** No seat's branch has ever been merged
+this session. Everything on main arrived by being committed on main or cherry-picked.
+
+So the word "landed" has been doing two jobs and a successor will test the wrong one:
+
+| word | means | check |
+|---|---|---|
+| **PUSHED** | the ref exists on origin | `git ls-remote` |
+| **LANDED** | the **branch** is an ancestor of main | `git merge-base --is-ancestor` — true of **nothing** |
+| **APPLIED** | the **content** is on main, by any route | `git cat-file -e origin/main:<path>` |
+
+**Every "landed" said in this fleet meant APPLIED.** The row below marking
+`origin/vane/friction` as landed is a claim about *files* wearing the grammar of a claim about a
+*ref*: `docs/friction/*.md` is present on main, the branch is not an ancestor. A successor
+running `--is-ancestor` on it gets "unmerged" and wrongly concludes the doc is wrong.
+
+**`origin/ledger/epoch-binding-test` is now APPLIED, not landed** — `tests/protocol-agent-token-binding.test.ts`
+is on main and named by the runner, protocol suite 66 → 70. The branch is still not an ancestor,
+because it was cherry-picked. It no longer carries anything main lacks.
+
 ## Unlanded branches — sole copies that nothing else points at
 
 **Three words, not two (Pitch #15487, Ledger #15467):**
