@@ -1164,6 +1164,16 @@ by landing the two at different moments. Whoever edits either should check the o
 
 ## 8a-vi. The replacement gate inherited the defect it replaced — found by Atlas
 
+> **★ COUNT CORRECTION (Lead6): the gate has FIVE defects, not the four counted in §8a-v.**
+> The fifth is the one below — **introduced by the fix for the fourth, by its author, hours
+> after cataloguing the class.** Third independent instance that evening of *naming a failure
+> mode does not immunise you against it*, alongside Ferry's per-file `dist/` fact and Pitch's
+> unexpected-pass rule.
+>
+> **§3's operative line, for a successor who reads this section as a checklist:** the catalogue
+> is not a defence. **The only thing that reliably worked all session was a second seat running
+> the discriminating case** — every one of the five was found by someone other than its author.
+
 **`swap used (absolute) > 8192 MB` was the same defect as the ~12 GB charter gate, one
 threshold lower.** Atlas caught it; confirmed here, and it was **live at the moment of the
 fix**:
