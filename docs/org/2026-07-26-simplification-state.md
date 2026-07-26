@@ -194,6 +194,7 @@ them:
 | `origin/vane/launch-audit` | the §6 launch-bar audit, all five items re-run |
 | `origin/ledger/epoch-binding-test` | the four-arm characterisation test, with a header saying arms 3-4 assert WRONG behaviour and must be inverted when the binding is fixed |
 | `origin/atlas/binding-deletion` | the deletion diff. **Edge half is parsed, not typechecked — see the gap above. Treat as unproven until `npm run test:p1-server` runs against it.** |
+| `origin/ferry/r1-go-runbook` | the uxtest R1 go-runbook and the gate-5 diagnosis. **Touches `uxtest/findings/` only and no commit on it deletes anything — both measured across every commit, so both stay true however far `main` moves.** Therefore **cherry-pick the files; never squash or `diff \| apply`.** That second half is *tip-relative and decays*: at 82 commits of drift a squash already replaced 31 paths, deleting four defence scripts and reverting the `private: true` publish guard — none of it in any commit on the branch, all of it the gap. **R1 has no round; it is gated on an operator ruling (*hand off as diagnosed*), not on a missing fix.** |
 
 ## Open, operator-only
 
