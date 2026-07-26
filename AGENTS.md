@@ -125,3 +125,41 @@ explicitly retired for reading as friction; see `docs/marketing/SITE-BRIEF.md`.
 Reduce safeguards where they only add ceremony; assume agents are intelligent. Simpler is
 better. But the safeguards named in the doctrine file as must-survive are load-bearing —
 check that list before removing a check.
+
+## Deploying the marketing site
+
+Live: **https://coswarm-site.vercel.app** (Vercel project `coswarm-site`, scope `ridgedotio`).
+No custom domain yet — the name `coswarm` is decided, the domain is not.
+
+```sh
+cd site && rm -rf dist && npm run build          # rm -rf is load-bearing, see below
+vercel deploy dist --prod --yes --name coswarm-site --scope ridgedotio
+```
+
+`--scope ridgedotio` is required; without it the CLI stops and asks. `vercel link
+--project coswarm-site --scope ridgedotio --yes` is needed before any `vercel project`
+subcommand.
+
+**Four traps, each of which cost a deploy:**
+
+1. **`rm -rf dist` before building.** Astro does not clean `dist/`, so stale files survive and
+   get deployed. A grep of `dist/` can report content that is no longer in `src/`.
+2. **Astro ships HTML comments verbatim.** `<!-- ... -->` in a template is published to the
+   browser; only frontmatter `/* ... */` is stripped. A retired headline sitting in an HTML
+   comment went live on a public page.
+3. **New deployment URLs are SSO-protected.** `coswarm-site-<hash>-ridgedotio.vercel.app`
+   returns **302** to `vercel.com/sso-api` for anyone not logged in. The **project alias**
+   `coswarm-site.vercel.app` is the public one. Never hand out a per-deployment URL as if it
+   were public — check for a 302 first.
+4. **Verify the DEPLOYED page, not the source you edited.** Fetch the live URL and grep it,
+   with a positive control proving the grep matches. Two false claims survived a source-level
+   fix and were only caught by curling production.
+
+```sh
+U=https://coswarm-site.vercel.app
+curl -s -o /dev/null -w '%{http_code}\n' "$U"        # 200, not 302
+curl -s "$U" | grep -c '<some string that MUST be there>'   # positive control
+curl -s "$U" | grep -c '<the thing that must be GONE>'      # must be 0
+```
+
+There is no CI. Deploys are manual and are the Lead's call; nothing deploys on push.

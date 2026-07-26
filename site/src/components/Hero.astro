@@ -28,32 +28,34 @@ const INSTALL_HOST = "<host>";
 const DOCS_HREF = "/docs";
 
 const installCommand = `curl -fsSL https://${INSTALL_HOST}/install.sh | sh`;
+/* HEADLINE HISTORY — kept in frontmatter, NOT an HTML comment.
+   Astro ships <!-- --> verbatim to the browser, so a retired headline in an HTML comment
+   is published on a public page. Frontmatter comments are stripped.
+   HEADLINE CANDIDATES — swap the <h1> text, nothing else depends on it.
+   
+   RETIRED — the authority framing was the operator's explicit correction: it reads as a
+   system that blocks you at every pass, which is not the benefit. The benefit is agents
+   not stepping on each other's toes. Do not restore these.
+   
+   A. (retired) Every agent action, authorised and on the record.
+   Says both halves of the product in one breath: the authority core mints the
+   permission, the signal plane keeps the receipt. The demo below is literally
+   this sentence, animated.
+   
+   B. Give your agents authority, not access.
+   Tighter and more quotable; "authority vs access" is a real distinction that
+   maps onto principals + scoped minted tokens. Slightly cleverer than it is clear.
+   
+   C. Smooth by default. Hard only where it is irreversible.
+   Our design ethos as the headline. Beautiful, but it describes a philosophy
+   rather than a product, and a cold reader would not know what we sell.
+   
+   D. Know who authorised what.
+   Five words, maximum punch, but reads as a compliance tool rather than a
+   coordination cloud.
+*/
 ---
 
-<!--
-  HEADLINE CANDIDATES — swap the <h1> text, nothing else depends on it.
-
-  RETIRED — the authority framing was the operator's explicit correction: it reads as a
-  system that blocks you at every pass, which is not the benefit. The benefit is agents
-  not stepping on each other's toes. Do not restore these.
-
-  A. (retired) Every agent action, authorised and on the record.
-     Says both halves of the product in one breath: the authority core mints the
-     permission, the signal plane keeps the receipt. The demo below is literally
-     this sentence, animated.
-
-  B. Give your agents authority, not access.
-     Tighter and more quotable; "authority vs access" is a real distinction that
-     maps onto principals + scoped minted tokens. Slightly cleverer than it is clear.
-
-  C. Smooth by default. Hard only where it is irreversible.
-     Our design ethos as the headline. Beautiful, but it describes a philosophy
-     rather than a product, and a cold reader would not know what we sell.
-
-  D. Know who authorised what.
-     Five words, maximum punch, but reads as a compliance tool rather than a
-     coordination cloud.
--->
 
 <section class="hero" aria-labelledby="hero-title">
   <div class="page hero__inner">
