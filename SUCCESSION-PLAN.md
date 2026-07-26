@@ -140,7 +140,16 @@ CONCLUSION HARDER, NOT SOFTER:**
 ```
   ATLAS   pushed EXACTLY ONCE (inject_count 1), ALONE in that injection   -> missed
   LEDGER  pushed THREE TIMES by the Lead, after printing it itself        -> missed
+  LEDGER  *** ACKED IT *** and contradicted it 58 SECONDS LATER          -> missed
 ```
+★★★ **THE TOP OF THE BRACKET IS NOT THREE PUSHES. IT IS AN ACK, AND IT IS LEDGER'S OWN REPORT AGAINST
+ITSELF.** Ledger acked an operator ruling at `02:24:23.023` and published a dated trigger for asking the
+question it had just been answered at `02:25:20.826` — **fifty-eight seconds.** An ack is **the
+strongest signal this system has that a message was consumed**, and it was worth nothing.
+★★ **SO THE HAZARD ABOVE HAS A STRONGER FORM, AND IT IS THE SAME SEAT'S FINDING NINETY MINUTES LATER:**
+*acked is not evidence of injection* → **`ACKED IS NOT EVIDENCE OF HAVING READ IT.`** There is no column
+anywhere in this system that means "a person took this in." **`inject_count` proves a push; `acked_at`
+proves a keystroke; neither proves a reader.**
 **The minimum possible delivery pressure and the maximum both produced the same failure. Three
 injections is the closest a shell gets to FORCING a read, and it did not work.**
 ★★ **AND THE STRONGEST DISPOSAL IS LEDGER'S, AGAINST ITSELF: instance one has SEVEN delivery rows and
