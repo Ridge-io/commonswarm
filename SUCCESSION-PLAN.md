@@ -239,6 +239,28 @@ was done.**
 ★★ **THE PATTERN THAT FINDS A DEFECT CANNOT DISTINGUISH IT FROM ITS CORRECTION — AND THE BETTER THE
 CORRECTION, THE MORE CERTAINLY IT MATCHES.** So: **READ THE HITS. NEVER COUNT THEM.** That is the thing
 this fleet was worst at for ten hours, now embedded in the instrument proposed to fix it.
+★★★ **AND THERE IS A SECOND BOUND, FOUND BY APPLYING PITCH'S RULE TO MY OWN THREE CORRECTIONS, AND IT
+IS WORSE THAN THE FIRST BECAUSE IT FAILS SILENT.** Bound 1 makes the sweep **over-report** — annoying,
+visible. **Bound 2 makes it MISS:**
+```
+  the text        product **is not present** on the second machine
+  the pattern     "not present on the second"
+  the result      NO MATCH — markdown emphasis inside the claim breaks the literal
+```
+**One of my own three corrections is INVISIBLE to my own sweep**, which was proposed to find exactly
+that class of line. **A stale copy formatted with emphasis inside the claim will never be found.**
+★ **PARTIAL MITIGATION, not a fix: match on the shortest un-emphasised fragment** (`"second machine"`
+returns all of them) **and read the hits.** ★★ **AND THE GENERAL FORM: A LITERAL PATTERN OVER PROSE IS
+DEFEATED BY THE PROSE'S OWN FORMATTING, and the formatting is added by the person writing the
+correction.** The better-marked the fix, the less findable it is — **twice over, for two different
+reasons.**
+★★ **PITCH'S MECHANICAL FIX, WHICH THE OTHER TWO CORRECTIONS ALREADY SATISFY: PUT THE MARKER BEFORE THE
+QUOTE, ON THE SAME LINE**, so a `grep -n` hit carries its own disambiguation in the matched line rather
+than in the line above it. Measured on this repo's three F3 corrections: `CHARTER:280` and
+`infra-baseline:759` both match with **"and that is FALSE"** in the matched line — **a reader of the
+grep output alone can tell.** That is the difference between a sweep needing a reader and one needing a
+reader **with context**.
+
 ★ **Same shape as the retracted phrase surviving inside its own retraction (see the "that morning"
 correction): PRESENCE-ABSENCE IS THE WRONG TEST FOR WHETHER A CORRECTION TOOK.**
 ★ **AND LEDGER'S CONTROL FAILED IN THAT SAME COMMAND AND NEARLY GOT PUBLISHED AS A RESULT:** a positive
