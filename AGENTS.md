@@ -188,6 +188,28 @@ loops and helper functions we write to be careful are exactly the form that cann
 it.** It only bites in the quick literal one-liner you type while checking something else —
 and a passing test written as a loop does **not** clear a literal call site.
 
+**It has TWO faces and the second is far worse — measured, not theorised:**
+
+```
+$r:src/...      -> "bad substitution", and it ABORTS THE WHOLE SCRIPT.
+                   Nothing after it runs. A later line reporting
+                   "command not found: head" is this, not a PATH problem.
+
+$r:site/...     -> SUCCEEDS. SILENTLY. AND RETURNS THE WRONG OBJECT.
+                   unbraced  $r:site/src/pages/index.astro -> 362cb4307d48...
+                   braced  ${r}:site/src/pages/index.astro -> 4dded0a0f977...
+                   Two different blobs. No error. No warning.
+```
+
+zsh's `:s` takes the next character as its delimiter, so `site/` parses as a *valid*
+substitution with `i` as the delimiter — it mangles the path and git resolves whatever it is
+handed. You get a real 40-character SHA for an object you did not ask about.
+
+**Retroactive consequence:** any past "not found", or any blob comparison, produced by an
+unbraced literal is **suspect, not evidence**. One wrong claim in this repo has already been
+traced to it — a seat was told their finding was overstated on the strength of a path that
+had silently resolved elsewhere.
+
 **Why it matters beyond ergonomics:** the failure prints to stderr and the command produces no
 stdout, so a probe wrapped in `$(...)` yields an empty string that reads as *"absent"*. It is a
 dead command wearing the costume of a measurement — one more way to manufacture a zero. If a
