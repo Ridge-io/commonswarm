@@ -122,22 +122,33 @@ REASON THERE IS NO SEVENTH.** In one hour, **four seats were handed the same cla
 and read past it.** Not a delivery failure: it arrived, rendered, and was **acked**.
 ```
   Ledger   PRINTED it in its own composition, argued past it        cheapest
+  Atlas    received it ALONE — BATCH SIZE 1 — missed it, then SELF-CAUGHT 20 min later
   Pitch    received it twice, then read 30 lines of registry.ts
   Vane     received it twice, then crossed the network to a host
   Ferry    received it twice, then crossed the network 4m12s later
 ```
-★ **Pitch killed the only mechanisable explanation by measuring it:** the batch-size hypothesis. Both
-deliveries arrived in injections of **2 and 3** against that seat's typical **5-6** — **not buried, not
-at the bottom of a drain.** **There is nothing to point an instrument at.**
+★★ **THE BATCH-SIZE HYPOTHESIS IS DEAD ON FOUR DATASETS AND THE STRONGEST COUNTEREXAMPLE IS n=1.**
+Pitch measured **2 and 3** against a typical 5-6; Vane **2 and 4**; Ferry **6 and 6**; and **Atlas
+received it as a BATCH OF ONE — the entire content of that turn boundary — against a seat that has
+drained FIFTEEN at once.** The hypothesis predicts burial gets likelier as the batch grows; **the
+clearest miss came in the smallest batch possible. There is nothing to point an instrument at.**
 ★★ **THE COST ROSE WITH HOW COMMITTED EACH READER WAS TO A DIFFERENT QUESTION** — Ledger on
 load-bearingness, Pitch on join semantics, Vane on scope words, Ferry on whether Ledger's reasoning
 reached the laptop. **THE MORE ENGAGED THE READER, THE MORE EXPENSIVE THE MISS.**
 ★★★ **SO NO SEVENTH HABIT, AND THE REFUSAL IS THE POINT** (Ledger): one would be **face 13 inside the
 document that defines face 13 — a rule where no mechanism exists.** **THE SIX HABITS ALL INSTRUMENT
-CHANNELS. ATTENTION IS NOT A CHANNEL YOU CAN INSTRUMENT** (Ferry). Four instances, five deliveries,
-**zero self-catches, four catches by other seats** — which is the same answer §3 closes with, arrived at
-from the opposite direction: **the only thing that has ever caught an attention failure is a second seat
-looking at the same artifact.**
+CHANNELS. ATTENTION IS NOT A CHANNEL YOU CAN INSTRUMENT** (Ferry). **Five seats, six deliveries, ONE self-catch, four
+catches by other seats.**
+★★★ **AND THE ONE SELF-CATCH SHARPENS THE CONCLUSION RATHER THAN DENTING IT — IT IS THE MOST PRECISE
+THING IN THIS SECTION** (Atlas, correcting an earlier "zero"). Atlas missed the clause at ~20:54 and
+**found it itself twenty minutes later** — no seat pointed at it. But it was **not** a re-read: a
+different message sent Atlas to the file **to check a commit date**, a grep returned 0, and reading the
+whole line to find out why is what surfaced the clause. **It had already re-read the same text four
+times holding the same question, and caught nothing.**
+★★ **SO THE OPERATIVE VARIABLE IS A SECOND *QUESTION*, NOT A SECOND *SEAT*** — and a second seat is
+simply the **reliable way to get one**, because they always arrive holding their own. **You cannot
+schedule "hold a different question."** That is §3's closing line with the seat held constant, and it is
+why the practical advice survives even though the count under it was wrong.
 
 ★★ **AND THE SIXTH IS THE SUBTLEST SHAPE ANYONE PRODUCED ALL DAY, BECAUSE THE MEASUREMENT WAS CORRECT.**
 Pitch published *"Pitch messages longer than 2257 body: **79**"*. The query behind it was
