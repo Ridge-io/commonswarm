@@ -74,28 +74,32 @@ origin && git rev-parse origin/main`. A failed fetch still lets rev-parse answer
 
 ### ★★ LAST DELTA BEFORE ROTATION
 
-**-1. ★★★ THE `private: true` PUBLISH GUARD IS UNVERIFIED, AND THE OBVIOUS WAY TO VERIFY IT PRODUCES A
-FALSE CONFIRMATION.** `package.json` carries `"private": true` (operator ruling `54795ec`: installer,
-source private, `coswarm` unpublished). **It is on npm's documented behaviour, not on a test anyone ran.**
-Four attempts by three seats, **all four vacuous**:
+**-1. ★★★ THE `private: true` PUBLISH GUARD IS VERIFIED AND GREEN — CLOSED, NOT OPEN.** An earlier
+version of this entry said UNVERIFIED and sent the reader to verdaccio plus a real `adduser`.
+**That was wrong and it over-costed the task.** Closed by Quill (authenticated localhost pair) and
+independently by Atlas (dummy token); re-derived here before this edit.
 ```
-  npm publish --dry-run, private:true    ->  exit 0, word "private" NOWHERE   (dry-run ignores the flag)
-  npm publish --dry-run, private absent  ->  exit 0, identical shape
-  real publish -> unreachable registry, private:true    ->  ENEEDAUTH
-  real publish -> unreachable registry, private absent  ->  ENEEDAUTH   ← IDENTICAL
+  ARM A  private:true + ANY token  ->  EPRIVATE · "This package has been marked as private" · rc=1
+  ARM B  identical, no private     ->  no EPRIVATE; proceeds to the NETWORK and retries
 ```
-★★★ **npm CHECKS AUTHENTICATION BEFORE IT CHECKS `private`.** So an unauthenticated attempt **cannot
-reach the guard**, and **`ENEEDAUTH` IS NOT EVIDENCE THE GUARD FIRED.** Anyone who reads the earlier
-residual wording — *"verify against a scratch registry"* — points npm at localhost, sees `ENEEDAUTH`, and
-**reasonably concludes it worked. That line was a trap and this replaces it.**
-  - **WHAT IT ACTUALLY COSTS:** an **AUTHENTICATED session against a throwaway registry** — verdaccio plus
-    a real `npm adduser`, or equivalent. **Materially more setup than "use `--registry`".** (Ledger.)
-  - ★ **AND THE DISCRIMINATOR THAT LIED, because it is a NEW shape and the mirror of the vacuous control:**
-    diffing the two arms' output reported **DIFFER** — and the difference was **`57B package.json` vs
-    `42B package.json`**, i.e. the tarball is larger *because the word `private` is in the file*. **THE
-    INPUT DIFFERED, NOT THE BEHAVIOUR.** A vacuous control returns the same answer either way; **this
-    returns a DIFFERENT answer for a reason unrelated to the hypothesis.** Both read as evidence.
-  - **DO NOT** attempt a real publish to the public registry to settle it.
+**The guard fires AFTER packing and BEFORE any network I/O — a client-side, fail-closed mechanism**,
+which is exactly the property the operator ruling needs. Arm B's network attempt IS arm A's control:
+with the flag npm stops locally, without it npm leaves the machine.
+
+★★★ **THE ONE STEP THAT MAKES IT WORK, AND IT IS WHY THREE EARLIER ATTEMPTS FAILED: AUTH IS NOT
+*CHECKED* BEFORE `private` — IT IS *RESOLVED* BEFORE IT, AND RESOLUTION IS SATISFIABLE LOCALLY.**
+A **fake** token in `.npmrc` is sufficient; the registry never has to exist or be reachable.
+```
+  no token   ->  ENEEDAUTH, guard never reached   ← the trap: reads as if the guard fired
+  any token  ->  the guard discriminates
+```
+**Neither verdaccio nor a real account is needed.** ★ **DO NOT** settle it against the public registry.
+
+★ **THE HISTORY IS WORTH KEEPING BECAUSE THE TRAP IS STILL LIVE FOR ANYONE WHO IMPROVISES:** four
+attempts across three seats were vacuous first — two `--dry-run`s that ignore the flag entirely, and
+two unauthenticated publishes that stop before reaching it. **And a discriminator that lied:** diffing
+the two arms reported DIFFER on `57B` vs `42B package.json` — **the tarball is bigger because the word
+`private` is in the file. The input differed, not the behaviour.**
 
 ### ★★ EARLIER DELTA — newest first, these are hours newer than the numbered list below
 
