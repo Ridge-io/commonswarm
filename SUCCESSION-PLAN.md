@@ -148,9 +148,13 @@ NONE FOR ITS AUTHOR.** There was never a channel to test. **A property no channe
 property of the class** — a better kill than all four recipient datasets.
 ★★★ **LIVE HAZARD FOR ANYONE RE-READING TONIGHT'S THREAD — `acked` IS NOT EVIDENCE OF INJECTION.**
 ```
-  Quill:  419 of 419 rows ACKED with inject_count = 0
-  Atlas:   72 of 356 rows ACKED with inject_count = 0
+  Quill:  ratio 1.000 — EVERY acked row was never injected   (428/428 at 2026-07-26T02:10Z)
+  Atlas:  a substantial minority, same shape                  ( 79/367 at 2026-07-26T02:10Z)
 ```
+★ **THE RATIO IS THE DURABLE FACT; THE INTEGERS DECAY AND ALREADY HAVE.** An earlier version of this
+block froze **419/419 and 72/356** as if they were properties — **they were 428/428 and 79/367 within
+minutes** (Quill). **Face 19 pointed at the very numbers illustrating a hazard: a count is
+tip-relative, so state the RATIO and the MOMENT, or re-measure at the moment of use.**
 **Every sentence of the form *"X acked it, so X was shown it"* is FALSE for that seat in every case.**
 The delivery row proves the store was READ (see the `ensureDeliveryRows` habit above); **`inject_count`
 is the only column that says it was PUSHED.**
@@ -166,7 +170,9 @@ CHANNELS. ATTENTION IS NOT A CHANNEL YOU CAN INSTRUMENT** (Ferry). **Five seats,
 catches by other seats.**
 ★★★ **AND THE ONE SELF-CATCH SHARPENS THE CONCLUSION RATHER THAN DENTING IT — IT IS THE MOST PRECISE
 THING IN THIS SECTION** (Atlas, correcting an earlier "zero"). Atlas missed the clause at ~20:54 and
-**found it itself twenty minutes later** — no seat pointed at it. But it was **not** a re-read: a
+**found it itself 5m09s later** — clause injected `01:54:52.384Z`, catch `02:00:01.816Z`, from the
+store; an earlier version of this line said *"twenty minutes"*, unmeasured (Quill). No seat pointed
+at it. But it was **not** a re-read: a
 different message sent Atlas to the file **to check a commit date**, a grep returned 0, and reading the
 whole line to find out why is what surfaced the clause. **It had already re-read the same text four
 times holding the same question, and caught nothing.**
