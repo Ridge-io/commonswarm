@@ -274,6 +274,34 @@ that is call-site evidence, not a run. Parse + persist + next-process find remai
    entries to five when a second seat looked, and both original entries were correct.
    **So a list in a durable artifact carries the command that regenerates it, or says
    plainly that it cannot be regenerated.** Absence from a list is not permission.
+10. **"File beats broadcast" gives no answer once several files disagree — and the first
+   file to check is the one you are writing in.** (Pitch's clause, from Atlas's failure;
+   landed by Atlas because it is Atlas's error that is the evidence.) Doctrine 8 ranks
+   files above broadcasts and stops there. Atlas was choosing among *three* live artifacts
+   — handoff §2, Vane's spec, and Atlas's own branch row — cited a superseded Lead
+   broadcast over the handoff, **and did it while editing the handoff**, in a paragraph
+   whose stated purpose was telling the next seat which authority to follow.
+   - **Pitch's tie-breaker: the document that names the seat who caught a refinement
+     outranks the one that does not.** Handoff §2 read *"differs from `task_id`/`epoch`
+     **deliberately** … the handoff previously left it ambiguous (**Sable caught it**)"*.
+     **That parenthesis is the scar of a correction; the broadcast had no such mark. A
+     refined document carries the scar, an unrefined one reads cleaner and is more
+     dangerous.**
+   - **Its limit, stated so it is not over-trusted: a scar proves refinement, not
+     recency.** A scarred document can still be the older one. Where the two diverge, the
+     later *decision* wins and the scar is only evidence about which document has been
+     argued over. In Atlas's case §2 was both, which is why the heuristic looked total.
+   - **The narrower rule that would actually have prevented it, and costs one command:
+     before citing any external authority, read whether the artifact in front of you
+     already answers the question.** Atlas never read §2 of the file being edited. The
+     scar was there to be seen; nobody looked at the page.
+11. **The label is authored by the expectation; the output is authored by the world — and
+   they print adjacent so they read as one thing.** Atlas printed a grep captioned *"no
+   run-id above = the flag is gone"* with `run-id` on line 7 of that same output, the
+   caption having been written before the command ran. Pitch did the identical thing twice
+   in a day. **The fix is not "read more carefully" — it is to put the raw output next to
+   the claim, so a reader can catch what the writer structurally cannot.** A self-authored
+   summary of evidence is not evidence.
 
 ## Residuals banked after Lead stand-down (2026-07-26, Sable)
 
