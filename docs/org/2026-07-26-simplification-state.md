@@ -746,7 +746,27 @@ two-tree diff   main vs branch      17     <- 8 + 9, union exactly 17, no overla
     So a two-tree diff **cannot be thresholded and cannot be compared across time**: re-run
     next week it returns a larger number, and nothing in the output says whether the branch
     grew or `main` did. **Quote a distance only with both SHAs, or decompose it into the two
-    one-sided counts, which do hold still.** *(This is why the prune sweep's `main vs <ref>`
+    one-sided counts, which do hold still.**
+    **AMENDED — Ledger, and the amendment matters more than the rule.** The worked example
+    above has *no path changed on both sides*, so `B + M = T` there. **It does not generalise.
+    There are three cases, and the third deletes evidence:**
+```
+changed on ONE side only ........ appears once      T = B + M
+changed on BOTH, differently .... appears once      T = B + M - overlap
+changed on BOTH, IDENTICALLY .... APPEARS NOWHERE   T = B + M - overlap - 2*converged
+```
+    Measured on `ledger/epoch-binding-test` (independently reproduced): **B=2, M=15, T=13** —
+    both branch-side paths (`package.json`, the binding test) are **absent from the two-tree
+    diff entirely** because Lead6's cherry-pick made both sides byte-identical. `17 - 2×2 = 13`.
+    **A converged path is not counted once and not counted twice — it vanishes, and it is
+    subtracted from BOTH one-sided counts.**
+    **So the clause: the one-sided counts hold still, but they DO NOT SUM TO THE DISTANCE
+    whenever any path has converged. Report B and M; never use T as their check.**
+    **And the consequence for a prune decision is the sharp end:** *"this branch's work is
+    already on main, identically"* is exactly what a prune wants to know, **and it is the one
+    state the two-tree diff cannot show.** It does not surface as `0` — it surfaces as a
+    *smaller number*, indistinguishable from a branch that simply changed less. **Ledger's row
+    is the prune question already answered, rendered by the instrument as an unremarkable 13.** *(This is why the prune sweep's `main vs <ref>`
     table was published as a method failure rather than a board.)*
 
 22. **A pattern built from recall tests the writer, not the file.** Pitch, checking whether
