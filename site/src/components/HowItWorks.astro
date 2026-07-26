@@ -1,0 +1,544 @@
+---
+/**
+ * HowItWorks — the honest onboarding story.
+ *
+ * VERIFIED GROUND TRUTH (do not "simplify" this back into a 3-line zero-config quickstart):
+ *
+ *  - `coswarm accept <invite-link>` genuinely needs no --url and no --anon-key. The invite
+ *    link carries its own Cloud target. Confirmed by running it: it gets past target
+ *    resolution to payload parsing. This exception IS the story.
+ *
+ *  - EVERY other verb resolves its target through `target()` (src/cli.ts:272-277), whose
+ *    only two sources are the --url flag and SWARM_CLOUD_URL. Nothing reads the target back
+ *    off disk — credentials are stored KEYED by sha256(normalized_url).slice(0,24), so the
+ *    URL is the storage key, not a stored field, and cannot be recovered from the store.
+ *    An empty url throws "--url is required" (src/cloud/config.ts:12-16). Verified:
+ *      $ node dist/cli.js working-on "..."   ->  coswarm: --url is required   (exit 1)
+ *    So `working-on` is shown WITH its target. A command a reader cannot run is a defect.
+ *
+ *  - The Supabase project base URL shape `https://<ref>.supabase.co` is quoted from the
+ *    error text in src/cloud/config.ts:14.
+ *
+ * INSTALL HOST IS A PLACEHOLDER: install.sh documents its own usage as
+ * `curl -fsSL https://<host>/install.sh | sh`. The public host is not live. We mirror that
+ * placeholder verbatim rather than invent a domain.
+ */
+
+const install = "curl -fsSL https://<host>/install.sh | sh";
+const accept = "coswarm accept <invite-link>";
+const signal =
+  'coswarm working-on "wiring the payments webhook" \\\n  --url https://<ref>.supabase.co --anon-key <key>';
+
+// Displayed lines and copied text derive from the same constants, so what you see
+// is always exactly what lands on the clipboard.
+const joinLines = [
+  { kind: "comment", text: "# 1. install — one file, no sudo" },
+  { kind: "cmd", text: install },
+  { kind: "spacer", text: "" },
+  {
+    kind: "comment",
+    text: "# 2. accept — the link carries its own target",
+  },
+  { kind: "cmd", text: accept },
+];
+
+const joinCopy = `${install}\n${accept}`;
+
+// Split for display from the same constant that feeds the clipboard, so the two can
+// never drift. Rendered per-line because `white-space: pre` would otherwise preserve
+// source-formatting newlines from the markup.
+const signalLines = signal.split("\n");
+
+const steps = [
+  {
+    n: "1",
+    title: "Install",
+    body:
+      "A single file into ~/.local/bin. No sudo, no node_modules, and the download is SHA-256 verified before a byte is written.",
+  },
+  {
+    n: "2",
+    title: "Accept your invite",
+    lead: "No --url. No --anon-key. Nothing to configure first. ",
+    strong:
+      "It is the only verb that needs nothing — the invite link carries its own Cloud target.",
+    body: "",
+  },
+  {
+    n: "3",
+    title: "Work in the open",
+    body:
+      "From here on, commands name the workspace they act on. Pass --url and --anon-key, or export SWARM_CLOUD_URL and SWARM_CLOUD_ANON_KEY once and drop the flags.",
+  },
+];
+---
+
+<section class="how" id="how-it-works" aria-labelledby="how-title">
+  <div class="page">
+    <p class="eyebrow">Getting started</p>
+    <h2 class="h-section" id="how-title">
+      You get a link.<br class="brk" /> The link carries everything.
+    </h2>
+    <p class="lede">
+      Joining a workspace is the part that should never be interesting. Two
+      commands, and the second one asks you for no configuration at all —
+      because the invite already knows where it points.
+    </p>
+
+    <div class="how__grid">
+      <!-- Artifacts -->
+      <div class="how__art">
+        <div class="term" role="group" aria-label="Commands to join a workspace">
+          <div class="term__bar">
+            <span class="term__dots" aria-hidden="true">
+              <i></i><i></i><i></i>
+            </span>
+            <span class="term__label mono">joining</span>
+            <button
+              class="copy"
+              type="button"
+              data-copy={joinCopy}
+              data-label="Copy"
+              aria-label="Copy both join commands"
+            >
+              <span class="copy__txt">Copy</span>
+            </button>
+          </div>
+
+          <div class="term__body">
+            {
+              joinLines.map((l) =>
+                l.kind === "spacer" ? (
+                  <div class="term__spacer" aria-hidden="true"></div>
+                ) : l.kind === "comment" ? (
+                  <div class="term__line mono term__line--comment">{l.text}</div>
+                ) : (
+                  <div class="term__line mono">
+                    <span class="term__prompt" aria-hidden="true">$</span>
+                    <span class="term__text">{l.text}</span>
+                  </div>
+                ),
+              )
+            }
+          </div>
+        </div>
+
+        <!-- Steady state, shown separately and honestly -->
+        <div class="term term--after" role="group" aria-label="A command once you are in">
+          <div class="term__bar">
+            <span class="term__label mono term__label--after">
+              <span class="dot" aria-hidden="true"></span>once you are in
+            </span>
+            <button
+              class="copy"
+              type="button"
+              data-copy={signal}
+              data-label="Copy"
+              aria-label="Copy the working-on command"
+            >
+              <span class="copy__txt">Copy</span>
+            </button>
+          </div>
+          <div class="term__body">
+            {
+              signalLines.map((line, i) => (
+                <div class="term__line mono">
+                  <span class="term__prompt" aria-hidden="true">{i === 0 ? "$" : " "}</span><span class={i === 0 ? "term__text" : "term__text term__text--flags"}>{line}</span>
+                </div>
+              ))
+            }
+          </div>
+        </div>
+
+        <p class="how__note">
+          <span class="how__flag mono">&lt;host&gt;</span> is a placeholder — the
+          public install host goes live at launch. Invite links are issued per
+          person, so there is no link to hand out on a web page. That is what
+          invited dogfood means.
+        </p>
+      </div>
+
+      <!-- Numbered steps -->
+      <ol class="how__steps">
+        {
+          steps.map((s) => (
+            <li class="how__step">
+              <span class="how__num mono" aria-hidden="true">
+                {s.n}
+              </span>
+              <div class="how__stepbody">
+                <h3 class="how__steptitle">{s.title}</h3>
+                <p class="how__steptext">
+                  {s.lead}
+                  {s.strong && <strong>{s.strong}</strong>}
+                  {s.body}
+                </p>
+              </div>
+            </li>
+          ))
+        }
+      </ol>
+    </div>
+  </div>
+
+  <p class="sr-only" role="status" aria-live="polite" id="copy-status"></p>
+</section>
+
+<style>
+  .how {
+    padding-block: var(--s-32) var(--s-24);
+  }
+
+  .brk {
+    display: none;
+  }
+
+  .how__grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
+    gap: var(--s-12) var(--s-16);
+    align-items: start;
+    margin-top: var(--s-12);
+  }
+
+  /* ---------- terminal artifact ---------- */
+  .term {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--ring-top), var(--shadow-lg);
+    overflow: hidden;
+  }
+
+  .term--after {
+    margin-top: var(--s-4);
+    box-shadow: var(--ring-top);
+    background: var(--bg-raised);
+  }
+
+  .term__bar {
+    display: flex;
+    align-items: center;
+    gap: var(--s-3);
+    padding: var(--s-3) var(--s-3) var(--s-3) var(--s-4);
+    background: var(--surface-2);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .term--after .term__bar {
+    background: transparent;
+  }
+
+  .term__dots {
+    display: flex;
+    gap: 6px;
+  }
+  .term__dots i {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--border-strong);
+  }
+
+  .term__label {
+    font-size: var(--t-xs);
+    color: var(--text-faint);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin-inline-end: auto;
+    display: flex;
+    align-items: center;
+    gap: var(--s-2);
+  }
+
+  .term__label--after {
+    color: var(--text-muted);
+  }
+
+  .dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--verified);
+    box-shadow: 0 0 0 3px var(--verified-dim);
+  }
+
+  .term__body {
+    padding: var(--s-4);
+    overflow-x: auto;
+    scrollbar-width: thin;
+  }
+
+  .term__line {
+    display: flex;
+    gap: var(--s-3);
+    white-space: pre;
+    font-size: var(--t-sm);
+    line-height: 1.85;
+    color: var(--text);
+    /* Long commands scroll the body rather than wrapping mid-flag, which would
+       break the shell continuation into something unreadable. */
+    width: max-content;
+    min-width: 100%;
+  }
+
+  .term__line > span {
+    flex: none;
+  }
+
+  .term__line--comment {
+    color: var(--text-faint);
+  }
+
+  .term__spacer {
+    height: var(--s-4);
+  }
+
+  .term__prompt {
+    color: var(--accent);
+    user-select: none;
+    flex: none;
+  }
+
+  .term__text--flags {
+    color: var(--text-muted);
+  }
+
+  /* ---------- copy button ---------- */
+  .copy {
+    flex: none;
+    font: inherit;
+    font-size: var(--t-xs);
+    font-weight: 500;
+    color: var(--text-muted);
+    background: var(--bg-raised);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: var(--s-1) var(--s-3);
+    min-height: 28px;
+    cursor: pointer;
+    transition:
+      color var(--dur) var(--ease),
+      border-color var(--dur) var(--ease),
+      background var(--dur) var(--ease);
+  }
+
+  .copy:hover {
+    color: var(--text);
+    border-color: var(--border-strong);
+    background: var(--surface-2);
+  }
+
+  .copy:focus-visible {
+    outline: 2px solid var(--accent-bright);
+    outline-offset: 2px;
+  }
+
+  .copy.is-done {
+    color: var(--verified);
+    border-color: color-mix(in oklab, var(--verified) 45%, transparent);
+    background: var(--verified-dim);
+  }
+  .copy.is-fail {
+    color: var(--warn);
+    border-color: color-mix(in oklab, var(--warn) 45%, transparent);
+  }
+
+  .how__note {
+    margin-top: var(--s-6);
+    font-size: var(--t-sm);
+    line-height: var(--lh-body);
+    color: var(--text-faint);
+    max-width: 48ch;
+  }
+
+  .how__flag {
+    color: var(--warn);
+    background: color-mix(in oklab, var(--warn) 12%, transparent);
+    border-radius: 4px;
+    padding: 1px 5px;
+  }
+
+  /* ---------- numbered steps ---------- */
+  .how__steps {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-8);
+  }
+
+  .how__step {
+    display: flex;
+    gap: var(--s-4);
+    align-items: flex-start;
+  }
+
+  .how__num {
+    flex: none;
+    width: 30px;
+    height: 30px;
+    display: grid;
+    place-items: center;
+    border-radius: 50%;
+    font-size: var(--t-xs);
+    font-weight: 600;
+    color: var(--accent-bright);
+    background: var(--accent-dim);
+    box-shadow: inset 0 0 0 1px
+      color-mix(in oklab, var(--accent) 34%, transparent);
+  }
+
+  .how__steptitle {
+    margin: 3px 0 var(--s-2);
+    font-size: var(--t-lg);
+    font-weight: 600;
+    letter-spacing: var(--track-head);
+    color: var(--text);
+  }
+
+  .how__steptext {
+    margin: 0;
+    font-size: var(--t-base);
+    line-height: var(--lh-body);
+    color: var(--text-muted);
+    max-width: 42ch;
+  }
+
+  .how__steptext strong {
+    color: var(--text);
+    font-weight: 500;
+  }
+
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  /* ---------- responsive ---------- */
+  @media (min-width: 60rem) {
+    .brk {
+      display: inline;
+    }
+  }
+
+  @media (max-width: 60rem) {
+    .how__grid {
+      grid-template-columns: minmax(0, 1fr);
+      gap: var(--s-12);
+    }
+  }
+
+  @media (max-width: 30rem) {
+    .how {
+      padding-block: var(--s-24) var(--s-16);
+    }
+    .term__body {
+      padding: var(--s-3);
+    }
+    .term__line {
+      font-size: 0.78rem;
+    }
+    .how__steptext,
+    .how__note {
+      max-width: none;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .copy {
+      transition: none;
+    }
+  }
+</style>
+
+<script>
+  // Copy-to-clipboard with a real fallback. navigator.clipboard is unavailable on
+  // insecure origins and in older Safari, so fall back to a hidden textarea +
+  // execCommand rather than silently doing nothing.
+  function legacyCopy(text: string): boolean {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.setAttribute("readonly", "");
+    ta.style.position = "fixed";
+    ta.style.top = "-1000px";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    let ok = false;
+    try {
+      ok = document.execCommand("copy");
+    } catch {
+      ok = false;
+    }
+    document.body.removeChild(ta);
+    return ok;
+  }
+
+  async function writeClipboard(text: string): Promise<boolean> {
+    if (navigator.clipboard && window.isSecureContext) {
+      try {
+        await navigator.clipboard.writeText(text);
+        return true;
+      } catch {
+        /* fall through to the legacy path */
+      }
+    }
+    return legacyCopy(text);
+  }
+
+  // The status region lives in this component, but create it on demand so the
+  // behaviour is identical if this section is ever rendered on its own.
+  function statusRegion(): HTMLElement {
+    let el = document.getElementById("copy-status");
+    if (!el) {
+      el = document.createElement("p");
+      el.id = "copy-status";
+      el.className = "sr-only";
+      el.setAttribute("role", "status");
+      el.setAttribute("aria-live", "polite");
+      document.body.appendChild(el);
+    }
+    return el;
+  }
+
+  const status = statusRegion();
+
+  document.querySelectorAll<HTMLButtonElement>("button.copy").forEach((btn) => {
+    // Other sections ship the same handler; bind each button exactly once.
+    if (btn.dataset.copyBound) return;
+    btn.dataset.copyBound = "1";
+
+    const label = btn.dataset.label ?? "Copy";
+    const txt = btn.querySelector<HTMLElement>(".copy__txt");
+    let timer: number | undefined;
+
+    btn.addEventListener("click", async () => {
+      const ok = await writeClipboard(btn.dataset.copy ?? "");
+
+      window.clearTimeout(timer);
+      btn.classList.remove("is-done", "is-fail");
+      btn.classList.add(ok ? "is-done" : "is-fail");
+      if (txt) txt.textContent = ok ? "Copied" : "Select + ⌘C";
+      if (status) {
+        status.textContent = ok
+          ? "Copied to clipboard"
+          : "Copy failed — select the command and press Command-C";
+      }
+
+      timer = window.setTimeout(() => {
+        btn.classList.remove("is-done", "is-fail");
+        if (txt) txt.textContent = label;
+        if (status) status.textContent = "";
+      }, 2000);
+    });
+  });
+</script>

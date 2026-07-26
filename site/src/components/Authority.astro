@@ -1,0 +1,237 @@
+---
+/**
+ * Authority — the differentiator section.
+ *
+ * VERIFIED GROUND TRUTH for every claim below:
+ *  - `coswarm principal create --name <name>`               -> coswarm --help
+ *  - `coswarm token mint --principal-id --run-id --task-id --epoch [--ttl-ms]`
+ *                                                            -> coswarm --help
+ *  - TTL default 3_600_000 ms (1h), max 14_400_000 ms (4h)   -> src/cli.ts:1492-1494
+ *  - Signals are append-only: a BEFORE UPDATE OR DELETE trigger
+ *    (`signals_append_only` -> `swarm.prevent_append_only_mutation()`) plus grants of
+ *    only SELECT, INSERT to swarm_command                    -> supabase/migrations/
+ *                                                               20260724000003_signals.sql:36-41
+ *  - `--until` durations are capped at 30d                   -> coswarm --help
+ *  - Signal verbs: working-on, note, ask, feed, inbox        -> coswarm --help
+ *
+ * We do not name, quote, or characterise any competitor. The contrast is stated as our
+ * own position: smooth by default, hard only where an act cannot be taken back.
+ */
+
+const pillars = [
+  {
+    label: "Principals",
+    title: "Every actor is somebody",
+    body:
+      "Humans and agents are both principals — named, registered, and distinguishable. “the agent did it” stops being an acceptable answer, because there is a specific principal on the other end of every act.",
+    cmd: "coswarm principal create --name reviewer-1",
+  },
+  {
+    label: "Scoped tokens",
+    title: "Authority with edges",
+    body:
+      "A minted token is bound to a principal, a run, a task, and an epoch, and it expires. One hour by default, four hours at the absolute maximum. There is no ambient, standing, forever credential to leak.",
+    cmd: "coswarm token mint --principal-id <id> --run-id <id> \\\n  --task-id <id> --epoch 1 --ttl-ms 3600000",
+  },
+  {
+    label: "Signal plane",
+    title: "A record that cannot be edited",
+    body:
+      "Intent is shared on an append-only plane. The database refuses UPDATE and DELETE on signals outright — not by convention, by trigger — and the writer role is granted only SELECT and INSERT. What happened stays happened.",
+    cmd: "coswarm feed --about task/42 \\\n  --since 2026-07-01T00:00:00Z",
+  },
+];
+---
+
+<section class="auth" id="authority" aria-labelledby="auth-title">
+  <div class="page">
+    <p class="eyebrow">Why coswarm</p>
+    <h2 class="h-section" id="auth-title">
+      Coordination is easy.<br class="brk" /> Authority is the hard part.
+    </h2>
+    <p class="lede">
+      Put several humans and many agents on the same work and the questions that
+      actually bite are not about layout or syntax. They are:
+      <em>who authorised this, what is this agent allowed to do,</em> and
+      <em>what actually happened?</em> coswarm is built to answer all three.
+    </p>
+
+    <!-- The ethos -->
+    <figure class="ethos">
+      <blockquote class="ethos__quote">
+        Friction is justified only by irreversibility.
+      </blockquote>
+      <figcaption class="ethos__cap">
+        Smooth by default — hard only at the few acts you cannot take back.
+        Joining a workspace asks you for nothing. Minting authority asks you for
+        everything.
+      </figcaption>
+    </figure>
+
+    <ul class="pillars">
+      {
+        pillars.map((p) => (
+          <li class="card pillar">
+            <p class="pillar__label mono">{p.label}</p>
+            <h3 class="pillar__title">{p.title}</h3>
+            <p class="pillar__body">{p.body}</p>
+            <pre class="pillar__cmd mono"><code>{p.cmd}</code></pre>
+          </li>
+        ))
+      }
+    </ul>
+
+    <p class="auth__foot">
+      These snippets omit the <span class="mono">--url</span> and
+      <span class="mono">--anon-key</span> every workspace command carries —
+      export <span class="mono">SWARM_CLOUD_URL</span> and
+      <span class="mono">SWARM_CLOUD_ANON_KEY</span> once and that is exactly
+      what you type. And none of it is a dashboard to go and check: coswarm is a
+      CLI and a hosted service, so the guarantees hold whether the act came from
+      a person at a terminal or an agent in a loop at three in the morning.
+    </p>
+  </div>
+</section>
+
+<style>
+  .auth {
+    padding-block: var(--s-24);
+  }
+
+  .brk {
+    display: none;
+  }
+
+  .lede em {
+    color: var(--text);
+    font-style: normal;
+  }
+
+  /* ---------- ethos pull-quote ---------- */
+  .ethos {
+    margin: var(--s-16) 0 var(--s-16);
+    padding: var(--s-8) var(--s-8) var(--s-8) var(--s-12);
+    border-left: 2px solid var(--accent);
+    background: linear-gradient(
+      90deg,
+      var(--accent-dim),
+      transparent 70%
+    );
+    border-radius: 0 var(--radius) var(--radius) 0;
+  }
+
+  .ethos__quote {
+    margin: 0;
+    font-size: var(--t-2xl);
+    font-weight: 600;
+    line-height: var(--lh-snug);
+    letter-spacing: var(--track-head);
+    color: var(--text);
+    text-wrap: balance;
+  }
+
+  .ethos__cap {
+    margin-top: var(--s-4);
+    font-size: var(--t-base);
+    line-height: var(--lh-body);
+    color: var(--text-muted);
+    max-width: 56ch;
+  }
+
+  /* ---------- pillars ---------- */
+  .pillars {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: var(--s-6);
+  }
+
+  .pillar {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+
+  .pillar__label {
+    margin: 0 0 var(--s-4);
+    font-size: var(--t-xs);
+    text-transform: uppercase;
+    letter-spacing: var(--track-eyebrow);
+    color: var(--accent-bright);
+  }
+
+  .pillar__title {
+    margin: 0 0 var(--s-3);
+    font-size: var(--t-xl);
+    font-weight: 600;
+    line-height: var(--lh-snug);
+    letter-spacing: var(--track-head);
+    color: var(--text);
+    text-wrap: balance;
+  }
+
+  .pillar__body {
+    margin: 0 0 var(--s-6);
+    font-size: var(--t-base);
+    line-height: var(--lh-body);
+    color: var(--text-muted);
+    flex: 1 1 auto;
+  }
+
+  .pillar__cmd {
+    margin: 0;
+    padding: var(--s-3) var(--s-4);
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    font-size: var(--t-xs);
+    line-height: 1.7;
+    color: var(--text-muted);
+    overflow-x: auto;
+    scrollbar-width: thin;
+    white-space: pre;
+  }
+
+  .auth__foot {
+    margin: var(--s-12) 0 0;
+    font-size: var(--t-base);
+    line-height: var(--lh-body);
+    color: var(--text-faint);
+    max-width: 62ch;
+  }
+
+  /* ---------- responsive ---------- */
+  @media (min-width: 60rem) {
+    .brk {
+      display: inline;
+    }
+  }
+
+  @media (max-width: 60rem) {
+    .pillars {
+      grid-template-columns: minmax(0, 1fr);
+      gap: var(--s-4);
+    }
+    .ethos {
+      margin-block: var(--s-12);
+    }
+  }
+
+  @media (max-width: 30rem) {
+    .auth {
+      padding-block: var(--s-16);
+    }
+    .ethos {
+      padding: var(--s-6);
+      padding-left: var(--s-6);
+    }
+    .ethos__quote {
+      font-size: var(--t-xl);
+    }
+    .pillar__cmd {
+      font-size: 0.72rem;
+    }
+  }
+</style>

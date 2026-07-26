@@ -1,0 +1,160 @@
+---
+/**
+ * Hero.astro — coswarm above the fold.
+ *
+ * Positioning is AUTHORITY (SITE-BRIEF.md). Workbench.md owns "zero friction";
+ * we own "who authorised this, and what actually happened". The hero states that
+ * claim and the demo directly below proves it.
+ *
+ * Everything asserted here is checked against the shipped surface:
+ *   - `coswarm --help` (node dist/cli.js --help) for commands and flags
+ *   - package.json  engines.node ">=24"
+ *   - SITE-BRIEF.md for status (P3-1, invited dogfood; CLI + hosted service; no web UI)
+ */
+
+import "../styles/hero.css";
+
+/* ------------------------------------------------------------------
+ * SET BEFORE SHIP.
+ *
+ * The install command below must actually resolve. As of P3-1 there is no
+ * install.sh published anywhere in this repo — the installer is described in
+ * SITE-BRIEF.md but not yet built, and no domain has been decided. Point
+ * INSTALL_HOST at the real host (and publish install.sh) before this page goes
+ * live, or hard rule 5 ("every command shown must be copy-pasteable and real")
+ * is broken by exactly one string. Both values are here so it is a one-line fix.
+ * ------------------------------------------------------------------ */
+const INSTALL_HOST = "coswarm.dev";
+const DOCS_HREF = "/docs";
+
+const installCommand = `curl -fsSL https://${INSTALL_HOST}/install.sh | sh`;
+---
+
+<!--
+  HEADLINE CANDIDATES — swap the <h1> text, nothing else depends on it.
+
+  A. (chosen) Every agent action, authorised and on the record.
+     Says both halves of the product in one breath: the authority core mints the
+     permission, the signal plane keeps the receipt. The demo below is literally
+     this sentence, animated.
+
+  B. Give your agents authority, not access.
+     Tighter and more quotable; "authority vs access" is a real distinction that
+     maps onto principals + scoped minted tokens. Slightly cleverer than it is clear.
+
+  C. Smooth by default. Hard only where it is irreversible.
+     Our design ethos as the headline. Beautiful, but it describes a philosophy
+     rather than a product, and a cold reader would not know what we sell.
+
+  D. Know who authorised what.
+     Five words, maximum punch, but reads as a compliance tool rather than a
+     coordination cloud.
+-->
+
+<section class="hero" aria-labelledby="hero-title">
+  <div class="page hero__inner">
+    <p class="eyebrow hero__eyebrow">
+      <span class="hero__eyebrow-dot" aria-hidden="true"></span>
+      Authority core &middot; P3-1 invited dogfood
+    </p>
+
+    <h1 class="h-display hero__title" id="hero-title">
+      Every agent action, <em>authorised</em> and on the record.
+    </h1>
+
+    <p class="lede hero__lede">
+      coswarm is a coordination cloud for teams of humans and agents: every actor is a
+      named principal, every agent run holds a <strong>scoped token</strong> bound to one
+      run, one task and one epoch — and every decision, <strong>including every refusal</strong>,
+      lands on an append-only record.
+    </p>
+
+    <div class="hero__ctas">
+      <button
+        class="btn hero__install"
+        type="button"
+        id="hero-install"
+        data-command={installCommand}
+        aria-label={`Copy the install command: ${installCommand}`}
+      >
+        <span class="hero__install-prompt mono" aria-hidden="true">$</span>
+        <code class="hero__install-cmd">{installCommand}</code>
+        <span class="hero__install-copy" id="hero-install-copy" aria-hidden="true">Copy</span>
+      </button>
+
+      <a class="btn hero__secondary" href={DOCS_HREF}>
+        Read the docs
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+          <path
+            d="M2 7h9M7.5 3.5 11 7l-3.5 3.5"
+            stroke="currentColor"
+            stroke-width="1.6"
+            stroke-linecap="round"
+            stroke-linejoin="round"></path>
+        </svg>
+      </a>
+    </div>
+
+    <p class="hero__status">
+      <b>Where this is:</b> P3-1, invited dogfood. A CLI plus a hosted service &mdash; there is
+      no web UI and no self-serve signup yet. Installs to <code class="mono">~/.local/bin</code>
+      without sudo; requires Node&nbsp;24 or newer.
+    </p>
+
+    <div class="hero__ethos">
+      <span class="hero__ethos-label">The rule everything here is built on</span>
+      <p class="hero__ethos-line">Friction is justified only by irreversibility.</p>
+    </div>
+  </div>
+</section>
+
+<script>
+  // Copy-the-install-command. Progressive: without JS the command is still selectable
+  // text inside the button, so nothing is lost.
+  const installButton = document.getElementById("hero-install");
+  const copyLabel = document.getElementById("hero-install-copy");
+
+  if (installButton instanceof HTMLElement && copyLabel) {
+    let resetTimer: ReturnType<typeof setTimeout> | undefined;
+
+    installButton.addEventListener("click", async () => {
+      const command = installButton.dataset.command ?? "";
+      let ok = false;
+
+      try {
+        if (navigator.clipboard?.writeText) {
+          await navigator.clipboard.writeText(command);
+          ok = true;
+        }
+      } catch {
+        ok = false;
+      }
+
+      if (!ok) {
+        // Fallback for non-secure contexts, where the async clipboard is unavailable.
+        const scratch = document.createElement("textarea");
+        scratch.value = command;
+        scratch.setAttribute("readonly", "");
+        scratch.style.position = "fixed";
+        scratch.style.opacity = "0";
+        document.body.appendChild(scratch);
+        scratch.select();
+        try {
+          ok = document.execCommand("copy");
+        } catch {
+          ok = false;
+        }
+        scratch.remove();
+      }
+
+      copyLabel.textContent = ok ? "Copied" : "Select";
+      installButton.dataset.copied = ok ? "true" : "false";
+
+      if (resetTimer) clearTimeout(resetTimer);
+      resetTimer = setTimeout(() => {
+        copyLabel.textContent = "Copy";
+        delete installButton.dataset.copied;
+      }, 2000);
+    });
+  }
+</script>

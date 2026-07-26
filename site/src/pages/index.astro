@@ -1,0 +1,32 @@
+---
+/*
+ * The landing page.
+ *
+ * Section order is a deliberate bet, taken from Pitch's positioning read: the hero makes the
+ * claim and the demo sits IMMEDIATELY under it, because the claim is abstract and dies
+ * without something concrete in the same screenful. Everything after that is elaboration —
+ * how you get in, why the authority model is shaped the way it is, and what installing
+ * actually does to your machine.
+ */
+
+import Base from "../layouts/Base.astro";
+import Hero from "../components/Hero.astro";
+import AuthorityDemo from "../components/AuthorityDemo.astro";
+import HowItWorks from "../components/HowItWorks.astro";
+import Authority from "../components/Authority.astro";
+import Install from "../components/Install.astro";
+import Footer from "../components/Footer.astro";
+
+const title = "coswarm — every agent action, authorised and on the record";
+const description =
+  "A coordination cloud for teams running many agents. Principals, scoped tokens, and an append-only signal plane: smooth by default, hard only where an act is irreversible.";
+---
+
+<Base title={title} description={description} path="/">
+  <Hero />
+  <AuthorityDemo />
+  <HowItWorks />
+  <Authority />
+  <Install />
+  <Footer slot="footer" />
+</Base>

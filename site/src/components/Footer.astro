@@ -1,0 +1,310 @@
+---
+/**
+ * Footer — honest and minimal.
+ *
+ * VERIFIED:
+ *  - License is MIT            -> package.json "license": "MIT" (repo root).
+ *                                 Note there is no LICENSE file in the tree yet.
+ *  - Repo is Ridge-io/cloud-swarm -> `git remote -v`.
+ *  - Release host is Ridge-io/coswarm-dist -> install.sh REPO default.
+ *  - Status is P3-1, invited dogfood, pre-launch -> docs/marketing/SITE-BRIEF.md.
+ *
+ * DELIBERATELY NOT HYPERLINKED: both github.com/Ridge-io/cloud-swarm and
+ * .../coswarm-dist return HTTP 404 to a logged-out visitor (checked). Shipping a
+ * "GitHub" link that dead-ends is worse than saying plainly that the repo is private
+ * during dogfood. Docs live in that same private repo, so the same applies. Revisit
+ * the moment either goes public.
+ *
+ * No newsletter. No social links. We have neither.
+ *
+ * Anchor targets are only ones this file's sibling sections own (#how-it-works,
+ * #authority, #install) — no assumptions about the hero's markup.
+ */
+
+const year = new Date().getFullYear();
+
+const sections = [
+  { href: "#how-it-works", label: "Getting started" },
+  { href: "#authority", label: "Why coswarm" },
+  { href: "#install", label: "Installing" },
+];
+
+const project = [
+  { k: "Repository", v: "Ridge-io/cloud-swarm", note: "private during dogfood" },
+  { k: "Releases", v: "Ridge-io/coswarm-dist", note: "private during dogfood" },
+  { k: "License", v: "MIT", note: null },
+];
+---
+
+<footer class="foot" aria-labelledby="foot-title">
+  <div class="page">
+    <h2 class="sr-only" id="foot-title">Site footer</h2>
+
+    <div class="foot__top">
+      <div class="foot__brand">
+        <p class="foot__mark mono">coswarm</p>
+        <p class="foot__blurb">
+          A coordination cloud for teams where several humans and many agents
+          share the same work. A CLI and a hosted service — there is no web app.
+        </p>
+        <p class="foot__status">
+          <span class="foot__pip" aria-hidden="true"></span>
+          <span
+            ><strong>P3-1 — invited dogfood.</strong> Pre-launch and not
+            self-serve: access is by invitation while we run it on our own
+            work.</span
+          >
+        </p>
+      </div>
+
+      <nav class="foot__nav" aria-label="Sections">
+        <h3 class="foot__h">On this page</h3>
+        <ul class="foot__list">
+          {
+            sections.map((s) => (
+              <li>
+                <a class="foot__link" href={s.href}>
+                  {s.label}
+                </a>
+              </li>
+            ))
+          }
+        </ul>
+      </nav>
+
+      <div class="foot__nav">
+        <h3 class="foot__h">Project</h3>
+        <dl class="foot__facts">
+          {
+            project.map((p) => (
+              <div class="fact">
+                <dt class="fact__k">{p.k}</dt>
+                <dd class="fact__v">
+                  <span class="mono">{p.v}</span>
+                  {p.note && <span class="fact__note">{p.note}</span>}
+                </dd>
+              </div>
+            ))
+          }
+        </dl>
+      </div>
+    </div>
+
+    <div class="foot__bar">
+      <p class="foot__legal">© {year} Ridge.io — released under the MIT licence.</p>
+      <p class="foot__legal foot__legal--dim">
+        No tracking on this page. Nothing to sign up for yet.
+      </p>
+    </div>
+  </div>
+</footer>
+
+<style>
+  .foot {
+    border-top: 1px solid var(--border);
+    background: var(--bg-raised);
+    padding-block: var(--s-16) var(--s-8);
+    margin-top: var(--s-24);
+  }
+
+  .foot__top {
+    display: grid;
+    grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr) minmax(0, 1.1fr);
+    gap: var(--s-12);
+    align-items: start;
+  }
+
+  .foot__mark {
+    margin: 0 0 var(--s-4);
+    font-size: var(--t-lg);
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    color: var(--text);
+  }
+
+  .foot__blurb {
+    margin: 0 0 var(--s-6);
+    font-size: var(--t-sm);
+    line-height: var(--lh-body);
+    color: var(--text-muted);
+    max-width: 44ch;
+  }
+
+  .foot__status {
+    display: flex;
+    gap: var(--s-3);
+    align-items: flex-start;
+    margin: 0;
+    padding: var(--s-3) var(--s-4);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    font-size: var(--t-sm);
+    line-height: var(--lh-body);
+    color: var(--text-muted);
+    max-width: 46ch;
+  }
+
+  .foot__status strong {
+    color: var(--text);
+    font-weight: 600;
+  }
+
+  .foot__pip {
+    flex: none;
+    width: 7px;
+    height: 7px;
+    margin-top: 0.55em;
+    border-radius: 50%;
+    background: var(--warn);
+    box-shadow: 0 0 0 3px color-mix(in oklab, var(--warn) 16%, transparent);
+  }
+
+  .foot__h {
+    margin: 0 0 var(--s-4);
+    font-size: var(--t-xs);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: var(--track-eyebrow);
+    color: var(--text-faint);
+  }
+
+  .foot__list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-3);
+  }
+
+  .foot__link {
+    font-size: var(--t-sm);
+    color: var(--text-muted);
+    text-decoration: none;
+    border-radius: 3px;
+    transition: color var(--dur) var(--ease);
+  }
+
+  .foot__link:hover {
+    color: var(--text);
+    text-decoration: underline;
+    text-underline-offset: 3px;
+  }
+
+  .foot__link:focus-visible {
+    outline: 2px solid var(--accent-bright);
+    outline-offset: 3px;
+  }
+
+  /* project facts */
+  .foot__facts {
+    margin: 0;
+  }
+
+  .fact {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: var(--s-2);
+    padding: var(--s-2) 0;
+  }
+
+  .fact__k {
+    font-size: var(--t-xs);
+    color: var(--text-faint);
+    min-width: 5.5rem;
+  }
+
+  .fact__v {
+    margin: 0;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: var(--s-2);
+    font-size: var(--t-sm);
+    color: var(--text);
+  }
+
+  .fact__note {
+    font-size: var(--t-xs);
+    color: var(--text-faint);
+    background: var(--surface-2);
+    border-radius: 3px;
+    padding: 1px 6px;
+    white-space: nowrap;
+  }
+
+  /* bottom bar */
+  .foot__bar {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: var(--s-3);
+    margin-top: var(--s-16);
+    padding-top: var(--s-6);
+    border-top: 1px solid var(--border);
+  }
+
+  .foot__legal {
+    margin: 0;
+    font-size: var(--t-xs);
+    color: var(--text-faint);
+  }
+
+  .foot__legal--dim {
+    color: var(--text-faint);
+    opacity: 0.75;
+  }
+
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  /* ---------- responsive ---------- */
+  @media (max-width: 60rem) {
+    .foot__top {
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      gap: var(--s-8);
+    }
+    .foot__brand {
+      grid-column: 1 / -1;
+    }
+  }
+
+  @media (max-width: 30rem) {
+    .foot {
+      padding-block: var(--s-12) var(--s-8);
+      margin-top: var(--s-16);
+    }
+    .foot__top {
+      grid-template-columns: minmax(0, 1fr);
+      gap: var(--s-8);
+    }
+    .foot__blurb,
+    .foot__status {
+      max-width: none;
+    }
+    .fact {
+      flex-direction: column;
+      gap: var(--s-1);
+    }
+    .foot__bar {
+      margin-top: var(--s-8);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .foot__link {
+      transition: none;
+    }
+  }
+</style>

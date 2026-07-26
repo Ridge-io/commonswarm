@@ -1,0 +1,101 @@
+/* coswarm design tokens
+ *
+ * Deliberately NOT workbench.md's palette. They own warm orange on near-black. We take a
+ * cooler, denser dark with a single indigo accent and a separate "verified" green, because
+ * our pitch is authority and provenance rather than zero-friction warmth. Two accents, each
+ * with one job: indigo = action, green = something the system has actually confirmed.
+ */
+
+:root {
+  /* Surfaces — a cool near-black, stepped so cards read without borders doing all the work */
+  --bg: #08090c;
+  --bg-raised: #0d0f14;
+  --surface: #12151c;
+  --surface-2: #171b24;
+  --border: #232837;
+  --border-strong: #313849;
+
+  /* Ink */
+  --text: #f4f6fa;
+  --text-muted: #98a1b3;
+  --text-faint: #6b7488;
+
+  /* Accents */
+  --accent: #7c6cff;
+  --accent-bright: #9b8fff;
+  --accent-dim: rgba(124, 108, 255, 0.14);
+  --verified: #34d399;
+  --verified-dim: rgba(52, 211, 153, 0.13);
+  --warn: #fbbf24;
+  --danger: #f87171;
+
+  /* Type — one variable family, self-hosted; mono for the many commands we show */
+  --font-sans: "InterVariable", Inter, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    Roboto, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+
+  /* Type scale — 1.25 minor third at the small end, widening through the display sizes.
+   * clamp() everywhere so the page never needs a mobile-specific scale. */
+  --t-xs: 0.75rem;
+  --t-sm: 0.875rem;
+  --t-base: 1rem;
+  --t-lg: 1.125rem;
+  --t-xl: clamp(1.25rem, 0.5vw + 1.1rem, 1.5rem);
+  --t-2xl: clamp(1.6rem, 1.2vw + 1.3rem, 2.1rem);
+  --t-3xl: clamp(2.1rem, 2.4vw + 1.5rem, 3.1rem);
+  --t-display: clamp(2.9rem, 6.2vw + 1rem, 5.6rem);
+
+  --lh-tight: 1.04;
+  --lh-snug: 1.22;
+  --lh-body: 1.62;
+
+  /* Optical letter-spacing: large type needs negative tracking, small caps need positive */
+  --track-display: -0.035em;
+  --track-head: -0.022em;
+  --track-eyebrow: 0.14em;
+
+  /* Space — 4px base */
+  --s-1: 0.25rem;
+  --s-2: 0.5rem;
+  --s-3: 0.75rem;
+  --s-4: 1rem;
+  --s-6: 1.5rem;
+  --s-8: 2rem;
+  --s-12: 3rem;
+  --s-16: 4rem;
+  --s-24: 6rem;
+  --s-32: 8rem;
+
+  --radius-sm: 6px;
+  --radius: 10px;
+  --radius-lg: 16px;
+  --radius-xl: 22px;
+
+  --measure: 34rem;
+  --measure-wide: 44rem; /* ledes and intro paragraphs, which sit at a larger size than prose */
+  --page: 76rem;
+
+  /* Shell metrics. The gutter is a token because the header, the page container and any
+   * full-bleed section have to agree on it to the pixel or the left edge visibly drifts. */
+  --gutter: clamp(1.25rem, 4vw, 2.5rem);
+  --header-h: 4rem;
+
+  /* Foreground for text sitting ON --accent. White on #7c6cff is only 3.86:1, which fails
+   * AA for button-sized text, so the accent surfaces take near-black ink instead (5.4:1). */
+  --accent-ink: #0a0b14;
+
+  /* Focus ring. Deliberately lighter than --accent-bright so it clears AA against every
+   * surface in the palette, including the accent button it may be drawn next to. */
+  --focus: #a5b4ff;
+
+  /* Depth — dark UI needs a light top edge more than it needs a drop shadow */
+  --ring-top: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  --shadow-lg: 0 24px 60px -18px rgba(0, 0, 0, 0.75);
+  --shadow-glow: 0 0 0 1px rgba(124, 108, 255, 0.28), 0 18px 50px -14px rgba(124, 108, 255, 0.3);
+
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --dur: 200ms;
+}
+
+/* The page commits to dark. A light theme is a real project, not a media query bolted on —
+ * a half-done light mode would read worse than an intentional dark-only page. */

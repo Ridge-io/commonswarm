@@ -1,0 +1,349 @@
+---
+import "../styles/global.css";
+
+/*
+ * Base.astro — the shell every page renders into.
+ *
+ * Owns: <head>, the skip link, the sticky site header, the <main> landmark and a named
+ * `footer` slot. Page content goes in the default slot.
+ *
+ * Three values below are placeholders that need a real decision before launch — they are
+ * collected here rather than scattered through the markup:
+ *   FALLBACK_ORIGIN  no domain is established anywhere in the repo. Set `site:` in
+ *                    astro.config.mjs and this constant stops being used at all.
+ *   NAV.docs         there is no docs page yet; /docs will 404 until one exists.
+ *   NAV.github       the repo is currently private, so this 404s for logged-out visitors.
+ */
+
+const FALLBACK_ORIGIN = "https://coswarm.dev";
+
+const NAV = {
+  how: "/#how-it-works",
+  docs: "/docs",
+  github: "https://github.com/Ridge-io/cloud-swarm",
+};
+
+const CTA = { href: "/#install", label: "Install the CLI", labelShort: "Install" };
+
+interface Props {
+  /** Full <title>. Defaults to the site-wide title. */
+  title?: string;
+  /** Meta + OG description. Keep it under ~160 characters. */
+  description?: string;
+  /** Site-root-relative path for the canonical URL, e.g. "/docs". */
+  path?: string;
+  /** Root-relative path to a social card image. */
+  ogImage?: string;
+  /** Suppress the site header (e.g. a bare error page). */
+  bareHeader?: boolean;
+}
+
+const {
+  title = "coswarm — authority and provenance for multi-agent teams",
+  description =
+    "coswarm is a coordination cloud for teams where several humans and many agents share the same work. A governed authority core and an append-only signal plane, driven entirely from the CLI.",
+  path = "/",
+  ogImage = "/og.png",
+  bareHeader = false,
+} = Astro.props;
+
+const origin = (Astro.site ?? new URL(FALLBACK_ORIGIN)).origin;
+const canonical = new URL(path, origin).href;
+const ogImageUrl = new URL(ogImage, origin).href;
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    <link rel="canonical" href={canonical} />
+
+    <meta name="theme-color" content="#08090c" />
+    <meta name="color-scheme" content="dark" />
+
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+
+    <!-- Self-hosted, so no preconnect to any third party is needed or wanted.
+         crossorigin is required even same-origin: font fetches are CORS-mode, and a
+         preload without it downloads the file a second time. -->
+    <link
+      rel="preload"
+      href="/fonts/inter-latin.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
+    <link
+      rel="preload"
+      href="/fonts/jetbrains-mono-latin.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="coswarm" />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:url" content={canonical} />
+    <meta property="og:locale" content="en_US" />
+    <meta property="og:image" content={ogImageUrl} />
+    <meta property="og:image:type" content="image/png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta
+      property="og:image:alt"
+      content="coswarm — friction is justified only by irreversibility."
+    />
+
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content={title} />
+    <meta name="twitter:description" content={description} />
+    <meta name="twitter:image" content={ogImageUrl} />
+    <meta
+      name="twitter:image:alt"
+      content="coswarm — friction is justified only by irreversibility."
+    />
+
+    <slot name="head" />
+  </head>
+
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    {
+      !bareHeader && (
+        <header class="site-header" data-header>
+          <div class="page site-header__inner">
+            <a class="wordmark" href="/">
+              <svg
+                class="wordmark__mark"
+                viewBox="0 0 32 32"
+                width="22"
+                height="22"
+                aria-hidden="true"
+                focusable="false"
+              >
+                <g
+                  stroke="#7c6cff"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  opacity="0.6"
+                  fill="none"
+                >
+                  <path d="M16 10.2 9.2 22" />
+                  <path d="M16 10.2 22.8 22" />
+                  <path d="M9.2 22h13.6" />
+                </g>
+                <circle cx="9.2" cy="22" r="3.5" fill="#9b8fff" />
+                <circle cx="22.8" cy="22" r="3.5" fill="#9b8fff" />
+                <circle cx="16" cy="10.2" r="4" fill="#34d399" />
+              </svg>
+              <span class="wordmark__text">coswarm</span>
+            </a>
+
+            <nav class="site-nav" aria-label="Primary">
+              <a class="site-nav__link site-nav__link--long" href={NAV.how}>
+                How it works
+              </a>
+              <a class="site-nav__link site-nav__link--secondary" href={NAV.docs}>
+                Docs
+              </a>
+              <a
+                class="site-nav__link"
+                href={NAV.github}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                GitHub<span class="visually-hidden"> (opens in a new tab)</span>
+              </a>
+            </nav>
+
+            <a class="btn btn-primary site-header__cta" href={CTA.href}>
+              <span class="site-header__cta--full">{CTA.label}</span>
+              <span class="site-header__cta--short">{CTA.labelShort}</span>
+            </a>
+          </div>
+        </header>
+      )
+    }
+
+    <main id="main" tabindex="-1">
+      <slot />
+    </main>
+
+    <slot name="footer" />
+
+    <script is:inline>
+      // Keeps the header hairline off until the page has actually scrolled, so the bar is
+      // invisible over the hero. ~200 bytes, inline, no request.
+      (() => {
+        const header = document.querySelector("[data-header]");
+        if (!header) return;
+        const sync = () => header.toggleAttribute("data-scrolled", window.scrollY > 8);
+        sync();
+        addEventListener("scroll", sync, { passive: true });
+      })();
+    </script>
+  </body>
+</html>
+
+<style>
+  /* main is programmatically focusable for the skip link; it must never show a ring. */
+  main:focus {
+    outline: none;
+  }
+
+  .site-header {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    background: color-mix(in oklab, var(--bg) 76%, transparent);
+    -webkit-backdrop-filter: blur(14px) saturate(1.6);
+    backdrop-filter: blur(14px) saturate(1.6);
+    border-bottom: 1px solid transparent;
+    transition:
+      background var(--dur) var(--ease),
+      border-color var(--dur) var(--ease);
+  }
+
+  .site-header[data-scrolled] {
+    background: color-mix(in oklab, var(--bg) 90%, transparent);
+    border-bottom-color: var(--border);
+  }
+
+  /* Without backdrop-filter the translucent bar would smear text under it. */
+  @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    .site-header,
+    .site-header[data-scrolled] {
+      background: var(--bg);
+    }
+  }
+
+  .site-header__inner {
+    display: flex;
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: var(--s-6);
+    min-height: var(--header-h);
+  }
+
+  .wordmark {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    gap: 0.55rem;
+    color: var(--text);
+    font-size: 1.0625rem;
+    font-weight: 640;
+    letter-spacing: -0.028em;
+    text-decoration: none;
+    transition: opacity var(--dur) var(--ease);
+  }
+
+  .wordmark:hover {
+    color: var(--text);
+    opacity: 0.82;
+  }
+
+  .wordmark__mark {
+    flex: none;
+    width: 22px;
+    height: 22px;
+  }
+
+  .site-nav {
+    display: flex;
+    flex: none;
+    align-items: center;
+    gap: var(--s-6);
+    margin-left: auto;
+  }
+
+  .site-nav__link {
+    color: var(--text-muted);
+    font-size: var(--t-sm);
+    font-weight: 500;
+    letter-spacing: -0.004em;
+    text-decoration: none;
+    white-space: nowrap;
+    transition: color var(--dur) var(--ease);
+  }
+
+  .site-nav__link:hover {
+    color: var(--text);
+  }
+
+  .site-header__cta {
+    --btn-h: 2.5rem;
+    flex: none;
+    padding-inline: 0.9rem;
+  }
+
+  .site-header__cta--short {
+    display: none;
+  }
+
+  /* --- collapse ladder. No hamburger: the bar sheds its longest items instead. --- */
+
+  /* The hero CTA duplicates this one, so losing the long label costs nothing. */
+  @media (max-width: 56rem) {
+    .site-nav__link--long {
+      display: none;
+    }
+  }
+
+  @media (max-width: 40rem) {
+    .site-header__inner {
+      gap: var(--s-4);
+    }
+
+    .site-nav {
+      gap: var(--s-4);
+    }
+
+    .site-nav__link {
+      font-size: 0.8125rem;
+    }
+
+    .wordmark {
+      font-size: 1rem;
+    }
+
+    .wordmark__mark {
+      width: 20px;
+      height: 20px;
+    }
+
+    .site-header__cta {
+      --btn-h: 2.25rem;
+      padding-inline: 0.75rem;
+      font-size: var(--t-xs);
+    }
+
+    .site-header__cta--full {
+      display: none;
+    }
+
+    .site-header__cta--short {
+      display: inline;
+    }
+  }
+
+  /* Final guard for 320px-class devices. */
+  @media (max-width: 23rem) {
+    .site-header__inner,
+    .site-nav {
+      gap: var(--s-3);
+    }
+
+    .site-nav__link--secondary {
+      display: none;
+    }
+  }
+</style>
