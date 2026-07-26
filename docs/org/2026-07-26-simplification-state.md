@@ -372,12 +372,28 @@ email** (cli help / invite copy). Fleet seats are ineligible as identity B. Oper
 runbook: invite as A → accept --link-stdin as B in clean HOME → bare `working-on` →
 **report exit status**, not message text (both error strings still live).
 
-### 4. Site residuals (still live on main when last measured)
+### 4. Site defects — CLOSED (re-derive; do not trust a status line)
 
-- Hero / AuthorityDemo claim token **bound to one run, one task and one epoch** — false as
-  a conjunction (task_id/epoch write-only at auth).
-- `working-on` command block still teaches `--url`/`--anon-key` after current-target landed.
-- Unsafe accept form fixed (`--link-stdin` on main).
+~~*Hero false binding / HowItWorks flags still live*~~ — **closed earlier on main** (fix
+landed while residual prose lagged). Pitch #15305 handed this paragraph back as doctrine-5
+ownership; Sable corrects it here rather than leaving a successor to re-open closed work.
+
+Re-derive on `origin/main` (pattern controls, not file controls; do not use a single-line
+grep for `"bound to one run"` — the bad sentence wraps and that false negative cost a
+fleet alarm today):
+
+```
+git show origin/main:site/src/components/Hero.astro | grep -c 'bound to one'     # expect 0
+git show origin/main:site/src/components/Hero.astro | grep -c 'scoped token'     # expect 1  (pattern live)
+git show origin/main:site/src/components/HowItWorks.astro | grep -c 'working-on' # expect ≥1 (probe live)
+git show origin/main:site/src/components/HowItWorks.astro | grep -E "const signal = .*working-on" 
+# expect bare form: working-on "…" with no --url/--anon-key on that constant
+```
+
+**Do not** use bare `grep -c -- '--url'` as a closed-form test: the superseded comment block
+and override prose still mention `--url` (kept marked dead). The command constant is the
+subject. Re-derived at landing of this paragraph: `bound to one`=0, `scoped token`=1,
+`const signal` bare, accept=`--link-stdin`.
 
 ### 5. Process note
 
@@ -390,9 +406,9 @@ typecheck coverage exists. ~~*exactKeys residual STILL RED*~~ — **CLOSED at `2
 
 `runLinkAccept` wires loginSession→login (when needed), acceptInviteLink, writeCurrentTarget.
 Three-line quickstart is **supported by the call chain** for a fresh reader. Still **not
-an end-to-end run** (two-identity operator test). Accept line must be
-`coswarm accept --link-stdin` (not the unsafe argv form). Site line 3 still ships flags —
-those should come off; bare `working-on` is correct under both outcomes.
+an end-to-end run** (two-identity / operator — Ferry: Human2 harness exists but is
+unmeasured + GUI-gated). Accept line must be `coswarm accept --link-stdin`.
+~~*Site line 3 still ships flags*~~ — **closed** with §4; bare `working-on` is on main.
 
 10. **Never predict a merge from a diff. Run `git merge-tree --write-tree`.**
     Three people were misled by this in one session, the Lead first. `git diff a..b` shows
