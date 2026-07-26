@@ -62,7 +62,7 @@ conditions, each with a FIXED denominator AND a bound that cannot grow in respon
 | condition | source | why it cannot be gamed by the swapfile count |
 |---|---|---|
 | system free < 30%, **worst of 3** | `memory_pressure` | **physical RAM — cannot move.** Worst-of-3 because the reading is a quantised integer and a threshold placed *inside* its one-point spread is a coin, not a gate |
-| memory under duress > 100% | `(vm.compressor_bytes_used + swap used) / hw.memsize` | **physical RAM.** Compressor is bounded by RAM, not by swapfiles, so this is reachable at any `swap_total` |
+| memory under duress > 100% | `(vm.compressor_bytes_used + swap used) / hw.memsize` | **physical RAM — cannot move.** The numerator is **no longer bounded below the trip**, which is the defect attempt 3 had. **Not the same as comfortable margin:** the cap is `compressor_max + swap_total` and *still contains* `swap_total`, so the dependency on the moving bound is **reduced, not removed** — at `total` 6144 MB the practical ceiling is ~75% against a 100% trip (Atlas). The script asserts the **hard** ceiling each run and prints `UNREACHABLE` if the trip ever sits outside it |
 | swap headroom < 25 GB | `df -k /` **+** `swap_total` | the **conserved** quantity. Raw `disk free` alone is *not* independent of swap — the swapfiles *are* the disk |
 | compressor · swap used · swap_total · disk | — | **recorded, NOT trips** — diagnostics only |
 
