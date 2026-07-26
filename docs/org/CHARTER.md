@@ -278,7 +278,8 @@ Not "the tests pass." A stranger, on their own machine, can:
    own item. **Do not schedule 3 as independent work.**
 4. Post and read signals from **both** machines **— blocked today: BY ITEM 1.** ★ An earlier version
    of this line said *"the CLI is not on the second machine at all"* and **that is FALSE** (Vane;
-   re-measured 2026-07-26): `zsh -lc 'command -v coswarm'` on the laptop returns
+   re-measured 2026-07-26 **UTC** = 2026-07-25 ~21:30 local — **the launch audit dates the same
+   probe by local clock; there is ONE measurement, not two**): `zsh -lc 'command -v coswarm'` on the laptop returns
    `/opt/homebrew/bin/coswarm`. **It is there — hand-installed by `npm link` into a shared
    checkout, which is exactly what a stranger cannot do.** The blocker is the missing installer,
    not absence. ★★ **Measuring this took three attempts and the first two were FALSE NEGATIVES:**
