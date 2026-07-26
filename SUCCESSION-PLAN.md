@@ -2062,6 +2062,27 @@ continuously (this file + commits) — assume your session can die at any moment
      the strength of a cached artifact.** Face 9 pointed at one's own accurate statement.
      **SO: BEFORE LANDING ANYTHING, DIFF THE BRANCH AGAINST CURRENT `main` BY FILE AND COMPARE THE
      COUNT TO WHAT YOU BELIEVE YOU CHANGED. Long-lived branches acquire reverts by standing still.**
+  19. **★★★ A PROPERTY OF THE COMMITS OUTLIVES A PROPERTY OF THE DIFF.** (Vane, 2026-07-25; sorted into
+     a usable split by Ferry.) This is the resolution of the whole evening's stale-SHA problem, and it
+     explains why three seats re-measured the same branch tip for an hour and kept disagreeing.
+     ```
+     PER-COMMIT  — STABLE. Does not decay when main moves.
+        does any commit delete?      git log --diff-filter=D <base>..<branch>
+        does any commit touch paths outside its lane?
+     TIP-RELATIVE — DECAYS ON EVERY COMMIT TO MAIN.
+        merge result · squash --name-status · behind-count · "is it safe to land"
+     ```
+     ★★ **SO "ASK THE THREE QUESTIONS ONCE" IS NOT A STANDING CLEARANCE, AND THAT IS NOT A DISCIPLINE
+     PROBLEM** (Sable). **The answers have a shelf life measured in other people's commits.** Two of the
+     three questions anyone asked about a branch tonight were tip properties, which is precisely why
+     every published SHA was stale before it was read — six times, across five seats, in one evening.
+     ★ **VERIFIED on `ferry/r1-go-runbook`:** 0 commits delete anything · 0 paths touched outside
+     `uxtest/findings/`. **Both hold no matter where `main` goes.** The tip-relative answers for the same
+     branch changed four times in ninety minutes.
+     ★★ **THE OPERATIONAL RULE: RECORD PER-COMMIT INVARIANTS IN PROSE; COMPUTE TIP-RELATIVE FACTS AT THE
+     MOMENT OF USE.** Ledger's form of it — **"it is the measurement that is durable, not the result"** —
+     is why `scripts/branch-audit.sh` exists instead of a table in a document. **Run the script; do not
+     quote its output.** A number in a message is a tip-relative fact with no timestamp on it.
   **★ THE THIRD FACE OF THE REFINEMENT (Ferry) — AN ARTIFACT CAN BE FRESH, CORRECTLY READ, AND
   STILL ANSWER A DIFFERENT QUESTION THAN THE ONE YOU MEANT.** Not staleness (face 9), not misreading
   (the Atlas refinement). Ferry checked the filesystem for `spawn-state/r1.json`, found it absent,
