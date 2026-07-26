@@ -265,9 +265,17 @@ on the same channel, or the recipient is right to refuse.**
 ## 6. LAUNCHABLE — the bar
 
 Not "the tests pass." A stranger, on their own machine, can:
-1. Install `coswarm` and authenticate without being walked through it
+1. Install `coswarm` and authenticate without being walked through it **— blocked today: THERE IS
+   NO INSTALLER.** Distribution was ruled on 2026-07-25 (operator: signed installer, source stays
+   private, npm unpublished, `54795ec`) and the guard is measured — **but a ruling is not a
+   deliverable and nobody built it.** `prepare`+`files` closed 1(c): install-from-git now yields a
+   working binary. **1(a) is DECIDED, NOT BUILT.**
 2. Create their own workspace **— blocked today: `operatorAllowed` ships as a constant `false`**
-3. Invite a collaborator who accepts without a terminal ritual
+3. Invite a collaborator who accepts without a terminal ritual **— blocked today: BY ITEM 1, and
+   this is the non-obvious one.** The invite path itself is sound and `coswarm accept <link>` is
+   the only first-contact verb needing no `--url`. **But an invitee has no `coswarm` to run
+   either** (Pitch), so the installer gates the invite path as surely as it gates the installer's
+   own item. **Do not schedule 3 as independent work.**
 4. Post and read signals from **both** machines **— blocked today: the CLI is not on the second machine at all**
 5. Understand what they are looking at without reading source **— blocked today: THE REPO IS
    PRIVATE, so a stranger cannot read the README at all.** The README opening was fixed on
