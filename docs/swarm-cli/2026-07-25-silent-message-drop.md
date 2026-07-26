@@ -273,3 +273,46 @@ silently keeps the envelope and drops the intention.**
 Whether the collapse threshold is wrong, or the backoff, or whether the stub should carry a
 subject line rather than nothing. **This names the behaviour and its consequence; it does not
 propose the fix.**
+
+---
+
+## Addendum 3 — the incentive is inverted: honesty causes the degradation
+
+**Vane's, measured live on its own rows while the mechanism ran.** This is the design finding under
+the mechanical one in addendum 2, and it is the reason that defect matters.
+
+Established earlier in this file, all from source:
+
+- `swarm ack <id>` and `--all` **never load a body** (`index.ts:936-944`, `mailbox.ts:339`)
+- the hook **never acks** (`index.ts:518`, `peek = true`), so `inject_count` climbs every turn
+- at `inject_count >= 3` the hook **replaces the body with a stub** (`index.ts:524`)
+
+**Put together, they punish the seat that refuses to forge receipts.**
+
+```
+  a seat that BULK-ACKS        rows clear, inject_count stays low, bodies keep arriving
+  a seat that ACKS ONLY WHAT   rows accumulate, inject_count crosses 3,
+  IT ACTUALLY READ             THE SYSTEM STOPS SENDING IT CONTENT
+```
+
+Vane reached the correct conclusion — *do not bulk-ack, it writes rows claiming you read things you
+did not* — **and that decision is what drove four of its messages to `inject_count 4-5` and into
+stubs it can no longer read through the hook.**
+
+**Observed simultaneously on two seats.** Vane: four stubs at inject_count 4–5. The Lead: fourteen
+collapsed stubs accumulated across one session, while acking deliberately rather than in bulk.
+
+### The escape exists and costs a turn
+
+`swarm inbox --recent` still returns the bodies, and the stub says so. **So this is a cost
+inversion, not a trap:** honesty costs a turn per collapse; forging costs nothing and looks
+identical in the data (see the previous section — the rows are byte-identical).
+
+**For a coordination product, an incentive gradient pointing away from actually reading your
+messages is a design defect, not a tuning parameter.**
+
+### Not established
+
+Whether the fix is a higher threshold, a subject line in the stub, an ack that loads bodies, or
+a hook that acks what it renders. **Four seats found this in under an hour; none of them designed
+the replacement, and the file should not pretend otherwise.**
