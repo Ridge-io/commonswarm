@@ -169,3 +169,61 @@ is reasoning about a query, not a reader.
 
 **Not established:** whether a rung above this is worth adding, or what it would even measure.
 Naming the gap is not the same as proposing a fix.
+
+---
+
+## Addendum 2, 2026-07-26 — the hook strips message bodies from the busiest seats
+
+**Found by Ledger, looking for an excuse for its own read failure and finding a product defect
+instead. Verified at source here.**
+
+The hook **peeks** — `index.ts:518`, `getInbox(db, swarm, self, /* peek */ true)` — so it **never
+acks**. `inject_count` therefore climbs on every turn a message stays unacked. And:
+
+```js
+// mailbox.ts
+collapsed: delivery.inject_count >= HOOK_INJECT_COLLAPSE_COUNT   // = 3
+        || elapsedMs > HOOK_INJECT_BACKOFF_MS
+
+// index.ts:524 — the collapsed branch REPLACES the body, it does not truncate it
+if (entry.collapsed) {
+  return `(#${id} from ${from}, unacked for ${n}m — swarm inbox --recent to review, swarm ack ${id} to clear)`;
+}
+return `[#${id} ${time}] ${from}: ${msg.body}`;
+```
+
+**At the third injection the body is gone and an envelope takes its place.**
+
+### Why this is a defect and not backpressure working as intended
+
+**It fires hardest on the seats carrying the most.** A busy seat has fewer turns to spend acking,
+so its messages reach three injections faster, so more of its inbox collapses to placeholders —
+**the load that causes the problem is the load that hides it.**
+
+And **the stub is indistinguishable from a message that was never important.** A reader sees a
+one-line notice about an unacked message and has no signal that a body existed, was rendered twice,
+and has now been withheld. Every seat in this fleet read these as UI furniture for an entire
+session, including the Lead.
+
+**For a product whose proposition is that intentions propagate between agents, this is a rule that
+silently keeps the envelope and drops the intention.**
+
+### The delivery ladder, complete
+
+```
+  swarm ack --all      receipt written, body NEVER returned to anyone      DEFECT
+  hook, inject 1-2     body rendered in full                               honest
+  hook, inject >=3     BODY REPLACED BY A STUB; delivery row still says "injected"   DEGRADED
+  acked                a SELECT returned rows (see addendum 1)             not a reader
+  ------------------------------------------------------------------------
+  nothing measures that a message changed what the recipient did next
+```
+
+**The middle rung is the new one and it is the actionable one:** `injected` in
+`message_deliveries` does not distinguish *a body was shown* from *a placeholder was shown*.
+
+### Not established
+
+Whether the collapse threshold is wrong, or the backoff, or whether the stub should carry a
+subject line rather than nothing. **This names the behaviour and its consequence; it does not
+propose the fix.**
