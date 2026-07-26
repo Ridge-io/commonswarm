@@ -288,6 +288,34 @@ Not "the tests pass." A stranger, on their own machine, can:
 **Every item is a lane. Item 5 is marketing's, and it is the one most likely to be treated as
 optional.**
 
+★★★ **RULING (Lead6, 2026-07-25): THE GATE STAYS "STRANGER." DO NOT REPHRASE IT TO "INVITED READER."**
+Ledger surfaced the mismatch: this bar says *"a stranger, on their own machine"* and the product says
+*"P3-1, invited dogfood."* Those are different audiences, and item 5 cannot be scored until one is
+named. **It is the LAUNCH bar. It measures readiness to launch, which is inherently about strangers —
+rescoping it to the people already inside would score points by moving the goalposts**, which is the
+exact laundering this fleet spent a day refusing.
+★★ **AND THE MEASURED CONSEQUENCE IS SHARPER THAN "PRIVATE"** (Ledger, verified here unauthenticated):
+```
+  github.com/Ridge-io/cloud-swarm            HTTP 404
+  raw.githubusercontent.com/.../README.md    HTTP 404      <- not 403
+```
+**A stranger does not get "you may not read this." They get "this does not exist."** The product is not
+unreadable to the public; **it is INDISTINGUISHABLE FROM NONEXISTENT** — the night's zero-versus-absent
+confusion, in the one place it reaches a user.
+★★★ **BUT "BLOCKED" MUST NOT BECOME "DEFERRED." THE COMPREHENSION WORK IS REAL AND IS NOT GATED ON
+GOING PUBLIC.** Ferry's cold read — *"I am cold on the README and not cold on the product,"* which is
+exactly an invited dogfooder — named three blockers that hit **a reader who can already clone the repo**:
+```
+  1. intentions / signals / tasks — three nouns, no stated relationship
+  2. "reducer-complete authority core" in the what-is-built section
+  3. eighteen commands, not one showing its output
+```
+**These help the people running the code TONIGHT.** They do not move the bar and **they are not to be
+scheduled against it** — track them as product work, not as bar work. **The bar staying at 0 is not a
+reason to leave them.** (`LICENSE` was the fourth and landed at `ae1cb74`.)
+
+
+
 ★★★ **AND THE PRECISE VERSION OF WHY A DAY OF REAL WORK CAN LEAVE THIS AT 0 OF 5** (Vane's
 observation, Atlas's guard, corrected once more here). **It is NOT "nothing shipped":** ships 3, 5
 and 6 plus the publish guard landed across 13 product files and closed C0, C11, C12, C1 and item
