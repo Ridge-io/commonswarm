@@ -567,10 +567,24 @@ Ferry        <ferry@cloud-swarm.local> 1   <- a seat that set its own NAME
     **FIVE identities; THREE share the display name.** The 36-hour window narrowed an answer
     that had no reason to be time-bounded — **the same failure as the author filter,
     committed inside the entry describing the author filter, and caught by a third seat.**
-    **So `--author='Cooper Yulan'` silently unions two distinct identities and silently
-    excludes a third.** A filter that is wrong in both directions at once cannot be corrected
-    by remembering it is unreliable — it has to be replaced. **There is no author-side way to
-    ask "what did *this seat* do"; the question has no answer in this repo.**
+    **So `--author='Cooper Yulan'` silently unions three emails and silently excludes at
+    least two identities.** A filter that is wrong in both directions at once cannot be
+    corrected by remembering it is unreliable — it has to be replaced. **There is no
+    author-side way to ask "what did *this seat* do"; the question has no answer in this repo.**
+
+    **Matching vs enumerating (Pitch #15393):** if the list is of *values*, regenerate by
+    enumerating the whole field (`sort | uniq -c`) and **reconcile** against an independent
+    total (`rev-list --count` must equal the sum of parts — here 274 = 255+12+5+1+1). Matching
+    the identities you thought of is undercount class. A bare number claims completeness; a
+    bound (`≥N`) is honest until reconciled. Cardinality went 2 → 3 → ≥3 → 5 across four seats
+    on one object; every count was correct for its query and three of four read as complete.
+
+    **Partial opt-in is worse than no opt-in (Ferry #15391):** a seat that set an explicit
+    identity mid-session still left most of its commits on the machine default (e.g. 3 of 44
+    on `origin/ferry/r1-go-runbook` under `ferry@…`, rest shared). The author query returns a
+    confident small number that *reads as complete*. Vigilance applied late fails in the
+    direction that looks like an answer.
+
     **The transferable half is Ledger's, and it is the strongest case for forms over
     judgement anyone made this session:** every scoping Ledger used was **ref-scoped**
     (`diff-tree` over a `rev-list` range, `diff --stat merge-base..branch`) rather than
