@@ -549,3 +549,27 @@ unmeasured + GUI-gated). Accept line must be `coswarm accept --link-stdin`.
     Right action, partly wrong reason, and *the wrong part was the loud part* — which is the
     general hazard: an overstated consequence survives review precisely because it sounds
     like the careful option.
+
+19. **Author identity is not seat identity — and here it is *inconsistently* wrong, which is
+    worse than uniformly wrong.** Atlas swept "my commits on main today" with
+    `git log --author='Cooper Yulan'`; that is the shared machine identity, so it returned
+    every seat's work. Ledger then measured the real distribution and Atlas re-measured it,
+    finding one more identity than either had assumed — **three, two of which share a display
+    name**:
+```
+Cooper Yulan <yulanbot@gmail.com>   193 commits   <- machine default, most seats
+Cooper Yulan <<employer-a-address REDACTED 2026-08-10>>               <- a seat that set its own email
+Ferry        <ferry@cloud-swarm.local>   1        <- a seat that set its own NAME
+```
+    **So `--author='Cooper Yulan'` silently unions two distinct identities and silently
+    excludes a third.** A filter that is wrong in both directions at once cannot be corrected
+    by remembering it is unreliable — it has to be replaced. **There is no author-side way to
+    ask "what did *this seat* do"; the question has no answer in this repo.**
+    **The transferable half is Ledger's, and it is the strongest case for forms over
+    judgement anyone made this session:** every scoping Ledger used was **ref-scoped**
+    (`diff-tree` over a `rev-list` range, `diff --stat merge-base..branch`) rather than
+    author-scoped, so the shared identity could not reach its claims — **and Ledger did not
+    choose that to avoid this hazard, having not known the hazard existed.** The habit came
+    from adopting a ref-scoped question form. **A good form protected a seat from a trap it
+    could not have named.** Prefer the form that makes the failure unreachable over the
+    vigilance that has to remember it.
