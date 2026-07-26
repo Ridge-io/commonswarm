@@ -839,7 +839,7 @@ answer -> 13                      truth was 2
     collapse is invisible to every check in the stack. Store: empty-or-whitespace bodies
     in this swarm ever = 0 of 4002 at Pitch's query.
 
-23. **Deregistering an agent does not free its resources. Close the tab.**
+24. **Deregistering an agent does not free its resources. Close the tab.**
     Operator-reported, recurring across multiple Leads: a Lead tells the fleet to stand down,
     every seat runs `swarm leave` cleanly, the roster empties — **and the machine is exactly
     as loaded as before.** The tabs keep running and keep their memory. The registry is not
