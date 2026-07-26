@@ -1956,6 +1956,34 @@ continuously (this file + commits) — assume your session can die at any moment
      70 tokens`, which made the absence of `CLAUDE_CONFIG_DIR` a **real negative** rather than an empty
      extraction. **From inside, all six failures looked like parsing failures and three agreed with each
      other.** Companion to face 15: **capture wide, filter at read time.**
+  17. **★★★ A CONTROL IS ONLY VALID FOR THE CLASS OF SUBJECT IT WAS RUN AGAINST — AND A CONTROL CAN BE
+     VACUOUS EXACTLY THE WAY A GATE CAN.** (Ferry, 2026-07-25; verified independently by Lead6 on the
+     mini, same host, same minute, both arms.)
+     ```
+     ps -Ewwp <claude pid>   ->  66 env tokens, HOME=1    <- env IS readable
+     ps -Ewwp <sleep pid>    ->  0 env tokens             <- env NOT readable
+     ```
+     **One host. Opposite answers. macOS withholds the environment of SIP-protected platform binaries**
+     — `/bin/sleep` is one; `claude`, a node binary under `~/.local/bin`, is not. **Every readability
+     probe built on `sleep`, `env`, or any `/bin` or `/usr/bin` tool returns a STRUCTURAL zero and has
+     no way to know it.**
+     ★★ **THIS MAKES THE ACCESS CONTROL OF FACE 16 ITSELF VACUOUS WHEN MISAIMED.** *"Is there any env
+     here at all"* is the right question, and **asked of the wrong process class it answers NO on a host
+     where the answer is YES.** Apply the gate test to the control: **is there any state under which
+     this returns a hit?** Against a platform binary — **no.** A control that cannot come back positive
+     is not a control, and it is **indistinguishable from a rigorous one** in the write-up.
+     ★★★ **AND THE TRAP INSIDE THE TRAP: FERRY RAN A TWO-HOST VERSION AND GOT THE SAME ZERO TWICE**,
+     which read as clean cross-host confirmation of a macOS-version hypothesis (mini 26.3.1, laptop
+     26.2). **Both arms were the same defect. THE REPRODUCTION WAS THE TRAP** — reproducing a result
+     with a broken instrument produces confidence, not evidence. Face 15 across machines instead of
+     across agents.
+     ★ **THE UNIFYING LINE, AND IT CLOSES THE EVENING'S TWO FAMILIES:** *a bound is only as good as what
+     caps it* (Ledger, on thresholds) and *a control is only valid for the class it was run against*
+     (Ferry, on probes) **are one sentence in two domains. TONIGHT'S GATES FAILED ON UNREACHABLE
+     THRESHOLDS; TONIGHT'S PROBES FAILED ON UNREADABLE SUBJECTS. Same shape: an instrument whose
+     negative answer was fixed before the measurement began.**
+     ★ Atlas's own bounding correction belongs here: it scoped its `ps` finding to *the mini* and the
+     honest bound was tighter — **not to the host, to the BINARY IT MEASURED.**
   **★ THE THIRD FACE OF THE REFINEMENT (Ferry) — AN ARTIFACT CAN BE FRESH, CORRECTLY READ, AND
   STILL ANSWER A DIFFERENT QUESTION THAN THE ONE YOU MEANT.** Not staleness (face 9), not misreading
   (the Atlas refinement). Ferry checked the filesystem for `spawn-state/r1.json`, found it absent,
