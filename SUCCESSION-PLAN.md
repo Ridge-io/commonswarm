@@ -277,7 +277,32 @@ at handoff: **Dana has sent ZERO messages in this swarm** and has **zero `messag
     endpoint's heartbeat was live at handoff. **"36 unread" is an overclaim; do not repeat it.**
   - **WHAT ACTUALLY STANDS:** zero sends (no participation as a sender) · **an endpoint that is alive
     is not an operator who is testing** · and **why** Dana does not send is **unmeasured**.
-  - ★★ **THE TRANSPORT HALF IS NOW MEASURED — FERRY RAN IT:** port **18791 OPEN**, node **pid 27486**
+  - ★★★ **DO NOT RE-ADD `swarm whoami` AS THE DISCRIMINATOR. IT IS NOT ONE, AND AN EARLIER VERSION OF
+    THIS BLOCK NAMED IT AS THE RESOLUTION** (Ledger, from source; verified here). `whoami` prints
+    `self.agent_type`, and **every lookup behind it is `SELECT * FROM agents` — it IS the registry, so
+    it cannot contradict it.** Worse, the obvious remote form is a **vacuous control**:
+    ```
+    registry.ts:519-520
+      SELECT * FROM agents WHERE name = ? COLLATE NOCASE
+        AND agent_type IN ('headless', 'a2a') …          <- FILTERS TO a2a BEFORE READING TYPE
+    ```
+    **`SWARM_AGENT_NAME=Dana swarm whoami` over ssh CAN ONLY RETURN a2a OR NOTHING.** It is the
+    can-never-fail class, sitting inside the instruction handed to a successor as the answer.
+    ★ **AND `ssh` DOES NOT GIVE YOU DANA'S CONTEXT AT ALL** (Ferry, who ran it): `ssh laptop → swarm
+    whoami` returns *"Not in a swarm context"* — **it measures the ssh session, not Dana.** Anything
+    that must reflect Dana's identity has to **originate inside Dana's session**. That is why every
+    Dana check in the R1 runbook reads **artifacts** and never asks Dana anything.
+  - ★★★ **AND IT IS ALREADY SETTLED, BY THE LAPTOP'S OWN STORE — FERRY MEASURED THE ROW:**
+    ```
+    laptop ~/.swarm/swarm.db (6.5 MB, 5 agents — control passes, not an empty DB)
+      uxtest | Dana | cmux | joined 2026-07-24T20:18:26Z | heartbeat 2026-07-26T01:59:05Z  <- LIVE
+      mini   | Dana | a2a  | joined 2026-07-24T21:24:29Z
+    ```
+    **Two databases, two registrations, sixty-six minutes apart, both current, both correct.** Line
+    584 needs no correction — **it needs the words "on the laptop."**
+    ★ **AND THIS IS THE BEST LIVENESS SIGNAL ANYONE HAS: Dana's laptop heartbeat is ticking, in swarm
+    `uxtest` — the swarm R1 actually uses.** One `ssh` away, and better than anything on the mini.
+  - ★★ **THE TRANSPORT HALF IS ALSO MEASURED — FERRY RAN IT:** port **18791 OPEN**, node **pid 27486**
     listening, card path returns a real **404**, 5 claude sessions, **both persona pids alive (fixture
     intact)**. **THE TRANSPORT IS ALIVE. THAT IS NOT THE QUESTION THAT GATES PART 2.**
   - **THE PRECONDITION THAT REMAINS, and no query on this machine can reach it:** *confirm Dana's participation mode and that
