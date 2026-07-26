@@ -105,6 +105,8 @@ CHANGED *WHAT WAS LOOKED AT*, NOT *HOW HARD*.**
     bare basename
     ...and then READ THE HITS, never count them — see the bound below
   read the WHERE clause, not the label   caught a real number captioned as a different quantity
+  RESAMPLE before calling a               settled a 3-seat 'discrepancy' that was one volatile
+    disagreement a discrepancy            signal read once each — costs 2 seconds
 ```
 **Not one is a rule anyone has to remember at 3am, and between them they caught MORE THAN THE FOUR
 SCRIPTS DID.**
@@ -190,6 +192,27 @@ required; one directory component is.**
 ★ **AND A REF NAMED ELSEWHERE IN THE DOCUMENT IS NOT A REF AT THE CITATION:** one site cites a file at
 `:1031` and names its commit at `:1069`, **38 lines later, labelled `HEAD`** — a decaying label for a
 durable citation, pointing at the head of a branch that is never named, at a moment that has passed.
+
+★★★ **THE SEVENTH IS ADMISSIBLE WHERE THE ATTENTION ONE WAS NOT, AND THE DIFFERENCE IS THE WHOLE TEST:
+IT HAS A MECHANISM.** Ledger's refusal was never about the number seven — it was that a rule with no
+mechanism is face 13. **`sleep 2` is a mechanism.**
+★★ **THREE SEATS BUILT AN UNRESOLVED QUESTION OUT OF ONE SAMPLE EACH:** compressor read **2.8 GB**
+(Vane), **6.7 GB** (Ledger), **4.13 GB** (Ferry) — and Ferry's own moved **4.17 → 4.12 in two seconds.**
+Measured here, five reads eight seconds apart: **3.94 · 3.78 · 3.72 · 3.70 · 3.70** — **a 0.24 GB swing
+while nothing happened.** ★ **It was never a metric disagreement. It was one volatile signal sampled
+once per seat**, and the same two seconds would have retired the swap-percentage argument at 19:00 and
+the duress-trend alarm at 21:41.
+★★★ **AND THE COMPANION, WHICH IS THE SHARPEST SELF-SUPPLIED INSTANCE OF THE NIGHT:** Vane published
+*"free RAM 0.1 GB on a 16 GB machine"* as a headline **and, one paragraph later, wrote the rule that
+kills it** — *"careful about the instrument that returned an error, careless about the instrument that
+returned a real number measuring the wrong thing."* Measured here:
+```
+  vm_stat free ......... 0.01 GB      <- correct, and means nothing
+  memory_pressure ...... 51% free     <- what the gate uses, deliberately
+```
+**macOS holds free pages near zero BY DESIGN.** A near-zero free-RAM reading is **the expected steady
+state, not an excursion** — which is exactly why the landed gate measures **duress** and **headroom**
+and has never contained `vm_stat`. **The broken instrument was caught; the wrong metric was not.**
 
 ★★★ **AND HERE IS WHAT THE SIX DO NOT COVER, WHICH IS THE MOST USEFUL THING IN THIS SECTION AND THE
 REASON THERE IS NO SEVENTH.** In one hour, **four seats were handed the same clause — "on the laptop" —
