@@ -2747,7 +2747,7 @@ continuously (this file + commits) — assume your session can die at any moment
   (`~/Developer/Ridge.io/swarm`, `dist/index.js`); a broken build there (`rm -rf dist
   && tsc`) would kill the live tool. cloud-swarm is forked so cloud work can never do
   that. **Never build or churn the swarm repo's working tree to serve cloud work.**
-- **SaaS domain:** `b9rk.com` (invite/board URLs → `swarm.b9rk.com` or similar; wire
+- **SaaS domain:** `a domain that is not yet decided` (invite/board URLs → `swarm.a domain that is not yet decided` or similar; wire
   into the spec's `swarm.<domain>` placeholders when P5/hosting is designed).
 - **Spec (canonical):** `docs/design/SWARM-CLOUD.md` — multi-model-reviewed; the §0
   design ethos (*friction is justified only by irreversibility*; smooth UX +
@@ -3000,7 +3000,7 @@ continuously (this file + commits) — assume your session can die at any moment
     skill helps someone who already has an agent and a CLI. Comprehension for a non-agent human
     stays **§1c item 4 (hosted invite page)** — larger, correct later, still next-after.
   - **Do not couple to ACP.** The skill talks to the CLI; ACP is local agent transport (P3).
-- **P2–P5:** per spec §9. P5 = public free-to-start SaaS on b9rk.com.
+- **P2–P5:** per spec §9. P5 = public free-to-start SaaS on a domain that is not yet decided.
 
 ## 5. Queued design tasks (don't lose these)
 

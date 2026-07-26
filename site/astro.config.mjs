@@ -14,9 +14,10 @@ export default defineConfig({
   // it is a REAL, UNRELATED SHIPPING PRODUCT (a self-hosted Docker Swarm PaaS) whose
   // /install.sh returns HTTP 200 and runs as root. The hero's copy button was handing readers
   // a command that would root-install a stranger's software. Verified live before this fix.
-  // b9rk.com IS owned by the operator -- that is why it is safe to use. Do NOT switch this to
-  // coswarm.dev until it is actually ours; it is a live third-party product today.
-  site: "https://b9rk.com",
+  // NO DOMAIN IS DECIDED. .invalid is reserved by RFC 2606 and can never resolve, which is the
+  // point: a placeholder must not be a real host. Do NOT put coswarm.dev here -- it is a live,
+  // unrelated product whose /install.sh returns 200 and runs as root.
+  site: "https://coswarm.invalid",
   output: "static",
   build: {
     inlineStylesheets: "auto",

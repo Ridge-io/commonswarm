@@ -24,9 +24,10 @@ What it implies, in order:
 4. **Copy: less is more.** Short lines. No jargon. The retired vocabulary table below is still
    right about what to avoid, and now the bar is higher: cut anything a non-expert would stop on.
 
-**Domain: `b9rk.com`** — the operator owns it. `coswarm.dev` is a different shipping product;
-see the hazard note in `astro.config.mjs`. Open: whether the product is renamed **b9rk** or
-keeps the `coswarm` name at that domain.
+**Name: `coswarm`, decided.** **Domain: UNDECIDED** — a candidate is not a decision, and
+nothing is wired. Interim hosting will be a Vercel URL. `coswarm.dev` belongs to a live,
+unrelated product and must not be referenced until it is actually ours; see the hazard note
+in `site/astro.config.mjs`.
 
 Everything below predates this and should be read as history unless it is about honesty rules,
 which still bind: no invented facts, no fake social proof, every command real.
