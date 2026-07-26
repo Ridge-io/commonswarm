@@ -107,6 +107,20 @@ time it was tried.** ★ **Effort applied to the wrong axis is confidence with n
 hardened one control three times without ever leaving the defect). **If you are choosing between
 building a check and changing what you look at, change what you look at.**
 
+**★★★ AND THERE IS A DIRECTORY OF HANDOFFS AND OPEN LEADS THAT NO FILE IN THIS REPO POINTS AT:**
+```
+  ~/.swarm/notes/     14 entries, machine-local, OUTSIDE every repo and every git history
+```
+**`git grep -i 'swarm/notes'` on `main` returned ZERO before this line existed.** It holds lane handoffs
+(`pitch-marketing-lane-handoff.md`, `ledger-handoff.md`, `foreman-*`), probe receipts, and **at least one
+LIVE OPEN LEAD** — `swarm-banner-vs-store-one-open-half.md`, the swarm-CLI notification question, which
+has **three seats' data, ten samples, one unexplained outlier, and NOBODY HAS READ THE CLI SOURCE**
+(30 files, one repo over, at `Ridge.io/swarm`). Deliberately parked, not abandoned.
+★ **SURVIVE IS NOT THE SAME AS BE FOUND** (Sable). These files persist perfectly and were invisible to
+anyone who did not already know the path — **the same defect this section was written to fix, missed in
+this section, by the seat that wrote it, an hour after fixing it for the tools and branches.** ★ **It is
+machine-local: it does NOT rsync with the repo and does NOT exist on the other two machines.**
+
 **SURVIVING BRANCHES — resolve these by NAME, never by a SHA quoted anywhere (they moved constantly):**
 ```
   origin/ferry/r1-go-runbook   R1 runbook, findings, and the persona-surface env capture.
