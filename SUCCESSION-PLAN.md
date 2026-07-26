@@ -261,6 +261,30 @@ CONCLUSION HARDER, NOT SOFTER:**
 ITSELF.** Ledger acked an operator ruling at `02:24:23.023` and published a dated trigger for asking the
 question it had just been answered at `02:25:20.826` — **fifty-eight seconds.** An ack is **the
 strongest signal this system has that a message was consumed**, and it was worth nothing.
+★★★ **AND PITCH'S OPEN BOUND — *"is ack ever AUTOMATIC?"* — RESOLVES IN THE WORSE DIRECTION. IT IS.
+`mailbox.ts` `getInbox`:**
+```js
+  // A plain explicit inbox read acknowledges exactly the rows it returned
+  if (!peek && !kind && messages.length > 0) {
+    acknowledgeMessages(db, swarmId, agentName, messages.map(m => m.id));
+  }
+```
+**A plain `swarm inbox` ACKS EVERYTHING IT RETURNS, at the moment the rows are SELECTed — before any
+model has read a word.** (`--peek` and kind-filtered reads are exempt by construction.)
+★★★ **SO THE LADDER IS NOT ONE RUNG SHORT. IT IS DISCONNECTED:**
+```
+  delivered     = it was sent
+  delivery row  = the recipient's PROCESS touched the store
+  acked         = A SELECT RETURNED ROWS          <- not a hand, not a reader
+  ------------------------------------------------------------------------
+  NOTHING IN THE STORE MEASURES THAT A MESSAGE CHANGED WHAT THE RECIPIENT DID NEXT.
+```
+★★ **THIS EXPLAINS THE FOUR-SECOND ACK EXACTLY:** the seat ran `swarm inbox`, rows came back, **the CLI
+acked on its behalf.** It never acknowledged anything. ★ **AND IT IS A PRODUCT FINDING, NOT A SEAT
+FAILURE** (Pitch): **coswarm's whole proposition is that intentions propagate between agents, and its
+receipt ladder tops out below the thing it claims to deliver.** Produced by seats auditing their own
+misses — the only instrument that would have found it.
+
 ★★ **SO THE HAZARD ABOVE HAS A STRONGER FORM, AND IT IS THE SAME SEAT'S FINDING NINETY MINUTES LATER:**
 *acked is not evidence of injection* → **`ACKED IS NOT EVIDENCE OF HAVING READ IT.`** There is no column
 anywhere in this system that means "a person took this in." **`inject_count` proves a push; `acked_at`
