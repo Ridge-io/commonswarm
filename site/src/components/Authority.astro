@@ -30,7 +30,7 @@ const pillars = [
     label: "Scoped tokens",
     title: "Authority with edges",
     body:
-      "A minted token is bound to a principal, a run, a task, and an epoch, and it expires. One hour by default, four hours at the absolute maximum. There is no ambient, standing, forever credential to leak.",
+      "A minted token carries a principal and a set of scopes, and it expires — one hour by default, eight hours at the absolute maximum. There is no ambient, standing, forever credential to leak.",
     cmd: "coswarm token mint --principal-id <id> --run-id <id> \\\n  --task-id <id> --epoch 1 --ttl-ms 3600000",
   },
   {
@@ -83,7 +83,7 @@ const pillars = [
 
     <p class="auth__foot">
       These snippets omit the <span class="mono">--url</span> and
-      <span class="mono">--anon-key</span> every workspace command carries —
+      <span class="mono">--anon-key</span> that workspace commands used to carry —
       export <span class="mono">SWARM_CLOUD_URL</span> and
       <span class="mono">SWARM_CLOUD_ANON_KEY</span> once and that is exactly
       what you type. And none of it is a dashboard to go and check: coswarm is a

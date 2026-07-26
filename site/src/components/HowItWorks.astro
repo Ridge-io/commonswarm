@@ -8,13 +8,15 @@
  *    link carries its own Cloud target. Confirmed by running it: it gets past target
  *    resolution to payload parsing. This exception IS the story.
  *
- *  - EVERY other verb resolves its target through `target()` (src/cli.ts:272-277), whose
- *    only two sources are the --url flag and SWARM_CLOUD_URL. Nothing reads the target back
- *    off disk — credentials are stored KEYED by sha256(normalized_url).slice(0,24), so the
- *    URL is the storage key, not a stored field, and cannot be recovered from the store.
- *    An empty url throws "--url is required" (src/cloud/config.ts:12-16). Verified:
- *      $ node dist/cli.js working-on "..."   ->  coswarm: --url is required   (exit 1)
- *    So `working-on` is shown WITH its target. A command a reader cannot run is a defect.
+ *  - SUPERSEDED by eed9299. This block argued that every verb must be shown WITH --url
+ *    and --anon-key, because target() read only the flag and the env var and the store
+ *    was keyed by sha256(url), so the url was the storage key and unrecoverable. That
+ *    measurement was correct at the commit it was taken on and is now FALSE: Quill
+ *    added current-target.json, a stored field holding the url in plaintext, written
+ *    on login and on both accept paths, resolved flag > env > stored. The flags are no
+ *    longer required and must not be shown as if they were. Kept and marked rather
+ *    than deleted, because this reasoning was quoted as justification and a reader who
+ *    half-remembers it should find it marked dead rather than find nothing.
  *
  *  - The Supabase project base URL shape `https://<ref>.supabase.co` is quoted from the
  *    error text in src/cloud/config.ts:14.
@@ -30,8 +32,7 @@ const install = "curl -fsSL https://<host>/install.sh | sh";
 // shell history and the process table. We must not teach the unsafe form on the page
 // that teaches people their first command. --link-stdin is the safe equivalent.
 const accept = "coswarm accept --link-stdin";
-const signal =
-  'coswarm working-on "wiring the payments webhook" \\\n  --url https://<ref>.supabase.co --anon-key <key>';
+const signal = 'coswarm working-on "wiring the payments webhook"';
 
 // Displayed lines and copied text derive from the same constants, so what you see
 // is always exactly what lands on the clipboard.
@@ -72,7 +73,7 @@ const steps = [
     n: "3",
     title: "Work in the open",
     body:
-      "From here on, commands name the workspace they act on. Pass --url and --anon-key, or export SWARM_CLOUD_URL and SWARM_CLOUD_ANON_KEY once and drop the flags.",
+      "From here on, commands just run. Accepting your invite saves the target, so nothing needs configuring — and --url or SWARM_CLOUD_URL still override it when you want a different project.",
   },
 ];
 ---
