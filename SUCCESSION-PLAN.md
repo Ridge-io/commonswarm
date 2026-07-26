@@ -1876,6 +1876,33 @@ continuously (this file + commits) — assume your session can die at any moment
      applied it: **these reviewers did not share a blind spot, they shared a broken probe.** Five
      independent seats agreeing looked like the strongest evidence produced all night and carried
      **no information at all.** When a fleet converges, ask what instrument they converged through.
+     ★★ **REFINED BY THREE SEATS AFTERWARDS, AND THE REFINEMENTS ARE SHARPER THAN THE ORIGINAL:**
+     - **KIND-VALID BUT FACT-BLIND (Vane).** The probe was not wrong in general. **`npm run build` is
+       plain `tsc`, so `dist/` mirrors `src/` FILE-FOR-FILE**, and a grep of `dist/cli.js` sees exactly
+       those strings that were literally in `src/cli.ts`. **C12's and C0's strings WOULD have been
+       visible there; C11's — living in `src/cloud/config.ts` — never could.** So the three ship-3
+       fixes are **not equally checkable by the same command**, and the probe was *kind*-valid while
+       *fact*-blind. **The RED arm must be run at the level of the specific fact, not the class of
+       check.** "I have used this kind of probe successfully" is not evidence it can see *this* fact.
+     - **FIVE SEATS, NOT FOUR (Pitch).** Pitch published a `0` from it too, inside the message arguing
+       its own findings were validity-immune. **That argument stood on a git diff and needed no grep at
+       all** — but the worthless line was published as supporting evidence, **and a prop is what a
+       hurried reader quotes.** A sound argument with one fabricated-looking prop still needs correcting.
+     - **RE-RUN CORRECTLY AND THE CONCLUSION HOLDS (Ferry).** Tree-wide, both machines, both harness
+       copies, **with a source positive control proving the probe CAN return a hit**: source 1, every
+       built tree 0. **Same answer, and only the second version is evidence.** The item is CLOSED, not
+       pending.
+     ★★★ **AND THE MOST DISTURBING DATUM IN THIS ENTIRE SECTION, WHICH IS FERRY'S:** ninety minutes
+     before running the broken probe, **Ferry had discovered and written down the exact fact that makes
+     it broken** — *"`dist/` is PER-FILE, not a bundle — a count taken from the wrong file in a
+     directory of the right name"* — caught in the swarm repo, reported, and then **committed the
+     identical error against a different `dist/` an hour later.** Pitch has the mirror instance: it had
+     just authored the rule *"an unexpected pass is evidence about the instrument"*, and that rule has
+     **no coverage for a broken instrument whose answer is correct.**
+     **CONCLUSION, AND IT IS UNCOMFORTABLE: NAMING A FAILURE MODE DOES NOT IMMUNISE ANYONE AGAINST IT,
+     AND HAVING RECENTLY PAID FOR IT APPEARS TO PROVIDE NO PROTECTION AT ALL.** This section is
+     therefore **not a defence** — it is a catalogue for recognising the damage afterwards. **The only
+     thing that has actually worked all session is a second seat running the discriminating case.**
   **★ THE THIRD FACE OF THE REFINEMENT (Ferry) — AN ARTIFACT CAN BE FRESH, CORRECTLY READ, AND
   STILL ANSWER A DIFFERENT QUESTION THAN THE ONE YOU MEANT.** Not staleness (face 9), not misreading
   (the Atlas refinement). Ferry checked the filesystem for `spawn-state/r1.json`, found it absent,
