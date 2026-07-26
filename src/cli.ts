@@ -28,6 +28,13 @@ import {
   cloudTarget,
   type CloudTarget,
 } from "./cloud/config.js";
+import {
+  clearCurrentTarget,
+  currentTargetSummary,
+  readCurrentTarget,
+  resolveCloudTarget,
+  writeCurrentTarget,
+} from "./cloud/current-target.js";
 import { seedDogfood } from "./cloud/seed.js";
 import {
   agentSignalPendingStore,
@@ -239,25 +246,28 @@ function usage(): string {
   return `coswarm ${CLI_BUILD_VERSION} (protocol ${CLIENT_PROTOCOL_VERSION})
 
 Usage:
-  coswarm login --url <project-url> --anon-key <key> [--no-browser]
-  coswarm logout --url <project-url> --anon-key <key> [--all-devices]
-  coswarm status --url <url> --anon-key <key> [--workspace-id <uuid>] [--json]
-  coswarm working-on "<what>" --url <url> --anon-key <key> [--workspace-id <uuid>] [--about <ref>] [--until <dur>] [--json]
-  coswarm note "<text>" --url <url> --anon-key <key> [--workspace-id <uuid>] [--to <member>] [--about <ref>] [--until <dur>] [--json]
-  coswarm ask "<text>" --url <url> --anon-key <key> [--workspace-id <uuid>] [--to <member>] [--about <ref>] [--until <dur>] [--json]
-  coswarm feed --url <url> --anon-key <key> [--workspace-id <uuid>] [--about <ref>] [--kind <kind>] [--since <timestamp>] [--limit <n>] [--include-stale] [--json]
-  coswarm inbox --url <url> --anon-key <key> [--workspace-id <uuid>] [--since <timestamp>] [--limit <n>] [--include-stale] [--json]
-  coswarm workspaces --url <url> --anon-key <key> [--json]
-  coswarm use <full-id|exact-name> --url <url> --anon-key <key> [--json]
-  coswarm invite --url <url> --anon-key <key> [--workspace-id <uuid>] --email <email>
+  coswarm login [--url <project-url> --anon-key <key>] [--no-browser]
+  coswarm logout [--url <project-url> --anon-key <key>] [--all-devices]
+  coswarm target [show] [--json]
+  coswarm target set --url <project-url> --anon-key <key> [--json]
+  coswarm target clear [--json]
+  coswarm status [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--json]
+  coswarm working-on "<what>" [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--about <ref>] [--until <dur>] [--json]
+  coswarm note "<text>" [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--to <member>] [--about <ref>] [--until <dur>] [--json]
+  coswarm ask "<text>" [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--to <member>] [--about <ref>] [--until <dur>] [--json]
+  coswarm feed [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--about <ref>] [--kind <kind>] [--since <timestamp>] [--limit <n>] [--include-stale] [--json]
+  coswarm inbox [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--since <timestamp>] [--limit <n>] [--include-stale] [--json]
+  coswarm workspaces [--url <url> --anon-key <key>] [--json]
+  coswarm use <full-id|exact-name> [--url <url> --anon-key <key>] [--json]
+  coswarm invite [--url <url> --anon-key <key>] [--workspace-id <uuid>] --email <email>
   coswarm accept --link-stdin [--name <name>] [--no-browser] [--json]
   coswarm accept <coswarm://accept/...> [--name <name>] [--no-browser] [--json]  # unsafe: shell history/process list
-  coswarm accept --invitation-token-stdin --url <url> --anon-key <key>
-  coswarm accept <invitation-token> --url <url> --anon-key <key>  # unsafe: shell history/process list
-  coswarm principal create --url <url> --anon-key <key> [--workspace-id <uuid>] --name <name>
-  coswarm token mint --url <url> --anon-key <key> [--workspace-id <uuid>] --principal-id <uuid> --run-id <uuid> --task-id <uuid> --epoch <n> [--ttl-ms <ms>]
-  coswarm command <kind> --url <url> --anon-key <key> [--workspace-id <uuid>] [command fields]
-  coswarm dogfood --url <url> --anon-key <key> [--workspace-id <uuid>] --slug <slug> --branch <branch> --head-sha <sha> --evidence <ref>
+  coswarm accept --invitation-token-stdin [--url <url> --anon-key <key>]
+  coswarm accept <invitation-token> [--url <url> --anon-key <key>]  # unsafe: shell history/process list
+  coswarm principal create [--url <url> --anon-key <key>] [--workspace-id <uuid>] --name <name>
+  coswarm token mint [--url <url> --anon-key <key>] [--workspace-id <uuid>] --principal-id <uuid> --run-id <uuid> --task-id <uuid> --epoch <n> [--ttl-ms <ms>]
+  coswarm command <kind> [--url <url> --anon-key <key>] [--workspace-id <uuid>] [command fields]
+  coswarm dogfood [--url <url> --anon-key <key>] [--workspace-id <uuid>] --slug <slug> --branch <branch> --head-sha <sha> --evidence <ref>
   coswarm seed-fixture --uid <auth-user-uuid> [--device-id <uuid>] [--workspace-id <uuid>]
 
 Credential selection for command/dogfood:
@@ -276,8 +286,11 @@ success responses.
 GitHub identities with the same verified email may resolve to one GoTrue user;
 a second human must log in with a distinct verified email before accepting.
 
-Target/workspace flags may also be set with SWARM_CLOUD_URL,
-SWARM_CLOUD_ANON_KEY, and SWARM_CLOUD_WORKSPACE_ID. Normal project selection is:
+Successful login and invite acceptance save the current Cloud target. Override it
+per command with --url/--anon-key or SWARM_CLOUD_URL/SWARM_CLOUD_ANON_KEY;
+flags take precedence over environment, which takes precedence over the saved target.
+Agent credentials never inherit a human's saved target. Workspace flags may also
+be set with SWARM_CLOUD_WORKSPACE_ID. Normal project selection is:
 coswarm workspaces, then coswarm use <full-id|exact-name>. A sole accepted
 project is saved automatically; ambiguous names require the full id and Coswarm
 never guesses. The workspace-id environment variable is a power-user override,
@@ -292,11 +305,14 @@ workspace only for callers who already hold that full-database credential; it
 grants no new authority and is not a governed product workspace-creation path.`;
 }
 
-function target(args: Arguments): CloudTarget {
-  return cloudTarget(
-    args.optional("url") ?? process.env.SWARM_CLOUD_URL ?? "",
-    args.optional("anon-key") ?? process.env.SWARM_CLOUD_ANON_KEY ?? "",
-  );
+async function target(args: Arguments): Promise<CloudTarget> {
+  return await resolveCloudTarget({
+    explicitUrl: args.optional("url"),
+    explicitAnonKey: args.optional("anon-key"),
+    environmentalUrl: process.env.SWARM_CLOUD_URL,
+    environmentalAnonKey: process.env.SWARM_CLOUD_ANON_KEY,
+    mode: args.has("agent-token-stdin") ? "agent" : "human",
+  });
 }
 
 async function store(
@@ -572,7 +588,7 @@ async function profileIdentity(
 
 async function runWorkspaces(args: Arguments): Promise<void> {
   args.assertShape([...TARGET_FLAGS, "json"], 1);
-  const cloud = target(args);
+  const cloud = await target(args);
   const human = await humanCredential(args, cloud);
   const directory = cloudWorkspaceDirectory(cloud);
   const projects = await directory.list(human);
@@ -607,7 +623,7 @@ async function runWorkspaces(args: Arguments): Promise<void> {
 
 async function runUse(args: Arguments): Promise<void> {
   args.assertShape([...TARGET_FLAGS, "json"], 2);
-  const cloud = target(args);
+  const cloud = await target(args);
   const human = await humanCredential(args, cloud);
   const directory = cloudWorkspaceDirectory(cloud);
   const selected = await selectWorkspace(
@@ -629,9 +645,72 @@ async function runUse(args: Arguments): Promise<void> {
   process.stdout.write(`${message}\n`);
 }
 
+async function runTarget(args: Arguments): Promise<void> {
+  const action = args.positionals[1] ?? "show";
+  if (action === "show") {
+    args.assertShape(["json"], args.positionals[1] === undefined ? 1 : 2);
+    const saved = await readCurrentTarget();
+    if (args.has("json")) {
+      printJson({
+        current_target: saved === null ? null : currentTargetSummary(saved),
+      });
+      return;
+    }
+    if (saved === null) {
+      process.stdout.write(
+        "No current Cloud target is saved. Start with coswarm accept --link-stdin, or run coswarm target set --url <project-url> --anon-key <key>.\n",
+      );
+      return;
+    }
+    const summary = currentTargetSummary(saved);
+    process.stdout.write(
+      `Current Cloud target: ${summary.url}\nAnon key fingerprint: ${summary.anon_key_fingerprint}\n`,
+    );
+    return;
+  }
+  if (action === "set") {
+    args.assertShape(["url", "anon-key", "json"], 2);
+    const selected = cloudTarget(
+      args.required("url"),
+      args.required("anon-key"),
+    );
+    await writeCurrentTarget(selected);
+    const summary = currentTargetSummary(selected);
+    if (args.has("json")) {
+      printJson({
+        code: "current_target_set",
+        current_target: summary,
+      });
+      return;
+    }
+    process.stdout.write(
+      `Current Cloud target set to ${summary.url}. Later human commands will use it unless flags or environment variables override it.\n`,
+    );
+    return;
+  }
+  if (action === "clear") {
+    args.assertShape(["json"], 2);
+    const removed = await clearCurrentTarget();
+    if (args.has("json")) {
+      printJson({
+        code: removed ? "current_target_cleared" : "current_target_absent",
+        removed,
+      });
+      return;
+    }
+    process.stdout.write(
+      removed
+        ? "Current Cloud target cleared. Saved login profiles were not deleted.\n"
+        : "No current Cloud target was saved.\n",
+    );
+    return;
+  }
+  throw new Error(`unknown target command: ${action}`);
+}
+
 async function runStatus(args: Arguments): Promise<void> {
   args.assertShape([...TARGET_FLAGS, "workspace-id", "json"], 1);
-  const cloud = target(args);
+  const cloud = await target(args);
   const human = await humanCredential(args, cloud);
   const directory = cloudWorkspaceDirectory(cloud);
   const projects = await directory.list(human);
@@ -768,7 +847,7 @@ async function runStatus(args: Arguments): Promise<void> {
 
 async function runInvite(args: Arguments): Promise<void> {
   args.assertShape([...TARGET_FLAGS, "workspace-id", "email"], 1);
-  const cloud = target(args);
+  const cloud = await target(args);
   const human = await humanCredential(args, cloud);
   const workspace = await workspaceId(args, cloud, human);
   const response = acceptedConnect(
@@ -819,7 +898,7 @@ async function runInvite(args: Arguments): Promise<void> {
 
 async function runLegacyAccept(args: Arguments): Promise<void> {
   const invitationToken = await invitationCredential(args);
-  const cloud = target(args);
+  const cloud = await target(args);
   const human = await humanCredential(args, cloud);
   const response = acceptedConnect(
     "accept",
@@ -832,6 +911,7 @@ async function runLegacyAccept(args: Arguments): Promise<void> {
   );
   const acceptedWorkspace = uuid(response.workspace_id, "workspace_id");
   await writeWorkspaceDefault(human.store, human.userId, acceptedWorkspace);
+  await writeCurrentTarget(cloud);
   printJson({
     message:
       "Invitation accepted. Coswarm saved the workspace as your default so later commands need fewer flags.",
@@ -917,6 +997,7 @@ async function runLinkAccept(
       ? {}
       : { explicitName: args.required("name") }),
   });
+  await writeCurrentTarget(cloud);
   if (json) {
     process.stdout.write(`${JSON.stringify({
       type: "result",
@@ -969,7 +1050,7 @@ async function runPrincipal(args: Arguments): Promise<void> {
   if (args.positionals[1] !== "create") {
     throw new Error(`unknown principal command: ${args.positionals[1]}`);
   }
-  const cloud = target(args);
+  const cloud = await target(args);
   const human = await humanCredential(args, cloud);
   const workspace = await workspaceId(args, cloud, human);
   const response = acceptedConnect(
@@ -1008,7 +1089,7 @@ async function runToken(args: Arguments): Promise<void> {
   if (args.positionals[1] !== "mint") {
     throw new Error(`unknown token command: ${args.positionals[1]}`);
   }
-  const cloud = target(args);
+  const cloud = await target(args);
   const human = await humanCredential(args, cloud);
   const workspace = await workspaceId(args, cloud, human);
   const ttl = args.optional("ttl-ms");
@@ -1307,7 +1388,7 @@ async function runPostSignal(
     "until",
     "json",
   ], 2);
-  const cloud = target(args);
+  const cloud = await target(args);
   const credential = await commandWorkspaceAndCredential(args, cloud, {
     validateHumanWorkspace: true,
   });
@@ -1423,7 +1504,7 @@ async function runSignalRead(
     "include-stale",
     "json",
   ], 1);
-  const cloud = target(args);
+  const cloud = await target(args);
   const selected = await commandWorkspaceAndCredential(args, cloud, {
     validateHumanWorkspace: true,
   });
@@ -1478,7 +1559,7 @@ async function runTaskCommand(args: Arguments): Promise<void> {
   );
   const kind = args.positionals[1];
   if (!kind) throw new Error("command kind is required");
-  const cloud = target(args);
+  const cloud = await target(args);
   const { selectedWorkspace, bearer } =
     await commandWorkspaceAndCredential(args, cloud);
   const client = new ThinCommandClient(cloud);
@@ -1506,7 +1587,7 @@ async function runDogfood(args: Arguments): Promise<void> {
     ],
     1,
   );
-  const cloud = target(args);
+  const cloud = await target(args);
   const { selectedWorkspace, bearer } =
     await commandWorkspaceAndCredential(args, cloud);
   const client = new ThinCommandClient(cloud);
@@ -1666,7 +1747,7 @@ async function main(): Promise<void> {
   }
   if (verb === "login") {
     args.assertShape([...TARGET_FLAGS, "no-browser"], 1);
-    const cloud = target(args);
+    const cloud = await target(args);
     const credentials = await store(args, cloud);
     process.stderr.write(
       "Swarm stores the rotating refresh credential in the OS keychain when available; the access token remains in memory only.\n",
@@ -1676,6 +1757,7 @@ async function main(): Promise<void> {
       store: credentials,
       openBrowser: args.has("no-browser") ? async () => false : undefined,
     });
+    await writeCurrentTarget(cloud);
     process.stdout.write(
       `Login complete for ${result.userId}. This device (${result.deviceId}) is registered so its agent credentials can be governed independently; refresh credential: ${result.storage}; ${
         result.workspaceId
@@ -1692,7 +1774,7 @@ async function main(): Promise<void> {
         "--device is deferred until the server-side device authority endpoint ships",
       );
     }
-    const cloud = target(args);
+    const cloud = await target(args);
     const credentials = await store(args, cloud);
     const allDevices = args.has("all-devices");
     const removed = await logout(
@@ -1711,6 +1793,10 @@ async function main(): Promise<void> {
   }
   if (verb === "invite") {
     await runInvite(args);
+    return;
+  }
+  if (verb === "target") {
+    await runTarget(args);
     return;
   }
   if (verb === "status") {

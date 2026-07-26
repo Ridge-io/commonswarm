@@ -84,7 +84,7 @@ interface ProcessResult {
   stderr: string;
 }
 
-function defaultStateDirectory(): string {
+export function defaultCredentialStateDirectory(): string {
   return join(homedir(), ".coswarm", "credentials.d");
 }
 
@@ -549,7 +549,8 @@ class SecureFileStore extends LockedCredentialStore {
 export async function credentialStore(
   options: CredentialStoreOptions,
 ): Promise<CredentialStore> {
-  const stateDirectory = options.stateDirectory ?? defaultStateDirectory();
+  const stateDirectory = options.stateDirectory ??
+    defaultCredentialStateDirectory();
   const platform = options.platform ?? process.platform;
   const securityPath = options.securityPath ?? "/usr/bin/security";
   const warn = options.warn ?? ((message) => process.stderr.write(`${message}\n`));

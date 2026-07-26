@@ -14,6 +14,10 @@ import {
 } from "../../src/cloud/auth.js";
 import { cloudTarget } from "../../src/cloud/config.js";
 import {
+  readCurrentTarget,
+  writeCurrentTarget,
+} from "../../src/cloud/current-target.js";
+import {
   type CredentialProfile,
   credentialStore,
   type CredentialRecord,
@@ -344,6 +348,9 @@ test("no-browser path prints the OAuth URL and verifies pasted callback state", 
 
 test("refresh rotates under generation control and logout revokes then wipes", async () => {
   const server = await refreshServer();
+  const targetStateDirectory = await mkdtemp(
+    join(tmpdir(), "coswarm-logout-target-"),
+  );
   const credentials = new MemoryCredentialStore();
   credentials.record = {
     version: 1,
@@ -354,6 +361,9 @@ test("refresh rotates under generation control and logout revokes then wipes", a
   };
   const target = cloudTarget(server.url, "test-anon-key");
   try {
+    await writeCurrentTarget(target, {
+      stateDirectory: targetStateDirectory,
+    });
     const refreshed = await refreshedCredential(target, credentials);
     assert.equal(refreshed.accessToken, "access-1");
     assert.equal(credentials.record?.refreshToken, "refresh-1");
@@ -364,6 +374,11 @@ test("refresh rotates under generation control and logout revokes then wipes", a
     assert.equal(server.logouts(), 1);
     assert.deepEqual(server.logoutScopes(), ["local"]);
     assert.equal(credentials.record, null);
+    assert.deepEqual(
+      await readCurrentTarget({ stateDirectory: targetStateDirectory }),
+      target,
+      "local logout removes auth but keeps the non-secret target pointer",
+    );
 
     credentials.record = {
       version: 1,
@@ -376,8 +391,14 @@ test("refresh rotates under generation control and logout revokes then wipes", a
     assert.equal(server.refreshes(), 3);
     assert.equal(server.logouts(), 2);
     assert.deepEqual(server.logoutScopes(), ["local", "global"]);
+    assert.deepEqual(
+      await readCurrentTarget({ stateDirectory: targetStateDirectory }),
+      target,
+      "global logout revokes sessions but does not forget which host to re-login to",
+    );
   } finally {
     await server.close();
+    await rm(targetStateDirectory, { recursive: true, force: true });
   }
 });
 
