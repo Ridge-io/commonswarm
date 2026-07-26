@@ -299,8 +299,8 @@ optional.**
 
 ★★★ **RULING (Lead6, 2026-07-25): THE GATE STAYS "STRANGER." DO NOT REPHRASE IT TO "INVITED READER."**
 Ledger surfaced the mismatch: this bar says *"a stranger, on their own machine"* and the product says
-*"P3-1, invited dogfood."* Those are different audiences, and item 5 cannot be scored until one is
-named. **It is the LAUNCH bar. It measures readiness to launch, which is inherently about strangers —
+*"P3-1, invited dogfood."* Those are different audiences, and item 5 **could not** be scored until one
+was named — **it is named here, and the question is closed.** **It is the LAUNCH bar. It measures readiness to launch, which is inherently about strangers —
 rescoping it to the people already inside would score points by moving the goalposts**, which is the
 exact laundering this fleet spent a day refusing.
 ★★ **AND THE MEASURED CONSEQUENCE IS SHARPER THAN "PRIVATE"** (Ledger, verified here unauthenticated):

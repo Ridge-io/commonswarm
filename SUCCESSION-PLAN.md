@@ -237,7 +237,9 @@ property of the class** — a better kill than all four recipient datasets.
 ★★★ **AND NOT EVERYTHING HERE DECAYS — THE SPLIT MATTERS MORE THAN THE WARNING, BECAUSE AN OVER-BROAD
 RETRACTION DISCARDS TRUE THINGS** (Ledger, correcting its own correction; verified here at source):
 ```
-  STABLE    batch size at a past injection instant · inject_count on a delivered row ·
+  STABLE    batch size at a past injection instant · inject_count on an ACKED row (Quill: it
+            increments on every re-injection until ack — `mailbox.ts` CASE, frozen only once
+            status='acked'; both bracket values above are acked rows, so the bracket holds) ·
             first_injected_at · Quill's 1.000 ratio
   DECAYING  acked counts · never-injected totals · anything that grows as seats read
 ```
