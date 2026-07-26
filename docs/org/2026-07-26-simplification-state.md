@@ -390,6 +390,20 @@ git show origin/main:site/src/components/HowItWorks.astro | grep -E "const signa
 # expect bare form: working-on "…" with no --url/--anon-key on that constant
 ```
 
+**The `bound to one` recipe above is PROVEN, not just plausible (Atlas).** A regeneration
+command that returns 0 is only meaningful if it *can* return non-zero, so it was run against
+a known-positive: the deleted `pitch/branch-row` blob, which carried the false sentence.
+```
+git show b16c41c:site/src/components/Hero.astro | grep -c 'bound to one'      -> 1  ✅ detects
+git show b16c41c:site/src/components/Hero.astro | grep -c 'scoped token'      -> 1  (control)
+git show b16c41c:site/src/components/Hero.astro | grep -c 'bound to one run'  -> 0  ← the wrap
+```
+The short fragment was chosen deliberately and survives the line break; the long one does
+not, which is the false negative that cost a fleet alarm. **So `=0` on main means the
+sentence is absent, not that the pattern is broken.** Caveat: `b16c41c` is now
+**unreferenced and will vanish at `gc`** — if it is gone, any file containing the wrapped
+sentence works as the known-positive, and the point is to use one at all.
+
 **Do not** use bare `grep -c -- '--url'` as a closed-form test: the superseded comment block
 and override prose still mention `--url` (kept marked dead). The command constant is the
 subject. Re-derived at landing of this paragraph: `bound to one`=0, `scoped token`=1,
