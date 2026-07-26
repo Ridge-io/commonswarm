@@ -66,6 +66,14 @@ RAM_GB=$(sysctl -n hw.memsize | awk '{printf "%.0f", $1/1073741824}')
 
 RED=0
 VACUOUS=0
+# The names of the arms that tripped, accumulated so the VERDICT can carry its own reason.
+# WHY: on 2026-07-25 this gate returned a genuine RED that was never attributed, because the
+# reader piped it to `tail -2` — which keeps the blank line and the verdict and discards both
+# the three condition lines AND the diagnostic header. The finding survived; its reason did not,
+# and a transient's reason cannot be re-measured. "Use the full output, not a tail" is a rule
+# aimed at the memory of whoever runs this at 3am. Naming the arm in the verdict needs nobody to
+# remember anything, and a `tail -1` still says what to reclaim. (Vane and Atlas, independently.)
+RED_ARMS=""
 # chk label value op threshold unit [attainable-bound]
 #
 # The 6th argument is the EXTREME the metric can reach IN THE TRIP DIRECTION — the max for a
@@ -83,7 +91,7 @@ VACUOUS=0
 chk() {
   if [ "$3" = "lt" ]; then [ "$2" -lt "$4" ] && s=RED || s=GREEN
   else [ "$2" -gt "$4" ] && s=RED || s=GREEN; fi
-  [ "$s" = "RED" ] && RED=1
+  [ "$s" = "RED" ] && { RED=1; RED_ARMS="${RED_ARMS:+$RED_ARMS, }$1"; }
   if [ -n "${6:-}" ]; then
     if { [ "$3" = "gt" ] && [ "$6" -le "$4" ]; } || { [ "$3" = "lt" ] && [ "$6" -ge "$4" ]; }; then
       s="UNREACHABLE"; VACUOUS=1
@@ -101,7 +109,7 @@ chk "memory under duress"       "$DURESS_PCT"   gt 100  "%"  "$DURESS_MAX_PCT"
 chk "swap headroom (disk+total)" "$HEADROOM_GB" lt 25   "GB"
 echo
 if [ "$RED" = 1 ]; then
-  echo "RESULT: RED — reclaim before spawning."
+  echo "RESULT: RED (${RED_ARMS}) — reclaim before spawning."
 elif [ "$VACUOUS" = 1 ]; then
   # Deliberately NOT exit 1: a vacuous arm is not evidence of pressure, and a gate that blocks
   # every spawn until someone re-tunes it is a gate that gets ignored. The arms that CAN fire
