@@ -429,8 +429,23 @@ those should come off; bare `working-on` is correct under both outcomes.
     regenerates it there, now carrying a standing green light whose reason does not apply.
     The precise rule: **clean is safe in a tree whose HEAD tracks what you care about.**
 
-14. **A verdict decays as fast as the tip it was measured against.**
-    The Lead called a branch harmless after `merge-tree` showed zero site files changed.
-    Main moved; the same branch became a clean-merging revert of a security claim within
-    minutes. A merge verdict is only valid against the exact tip it was computed on —
-    re-run it at merge time, never cite an earlier one.
+14. **"Merges cleanly" and "changes content" are different questions.**
+    *Corrected: the example first written here was itself wrong.* A branch was reported as a
+    clean-merging revert of a security claim, on the strength of `merge-tree` showing the
+    merge succeeds. Sable then ran the only independent `merge-tree` on the object and found
+    the resulting **site blobs identical to main** — the hero kept its corrected text, and
+    three-dot showed a single added line. The branch never reverted anything.
+    The error was inferring content change from absence of conflict. **A clean merge that
+    changes nothing is still a clean merge.** Ask what the resulting tree *contains*, not
+    whether the merge succeeds.
+    The related caution still holds and is worth keeping: a merge verdict is computed against
+    a specific tip, so re-run it at merge time rather than citing an earlier one.
+    Deleting the branch remains correct as hygiene — it held nothing main needed.
+
+15. **A zero has at least five causes, and only controls separate them.**
+    Vane's generalisation of Pitch's pattern-control point, after reporting four vacuous
+    zeros rather than one false finding. A `0` can mean: the shell errored (bad
+    substitution), the ref does not exist, the path is wrong (`src/` vs `site/src/`), the
+    pattern cannot match the text's form (line wrap), or the thing is genuinely absent.
+    **Only the last is a result.** Every other case looks identical from the outside, and
+    this session produced all five.
