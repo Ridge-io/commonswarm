@@ -39,29 +39,43 @@ than the pressure**, after ~5 GB of disk has already gone to growing the swapfil
 construction" is itself falsifiable, and a successor who checks it on a loaded day will find it
 false and reasonably distrust the paragraph around it.
 
-**The gate is a RATIO and a pressure reading, both of which can fire today:**
+★ **SUPERSEDED — kept as history, not as instruction. The ratio below was the SECOND attempt and
+is rejected further down this page; do not act on this paragraph.** It is here because the gate's
+three failures are more instructive than its final shape.
+
+**Attempt 2 was a RATIO and a pressure reading, both of which could fire that day:**
 ```sh
 sysctl -n vm.swapusage      # utilisation = used / total, NOT an absolute
 vm_stat | grep -E 'Pages free|compressor'
 memory_pressure | tail -2   # system-wide free percentage
 ```
-**Reclaim before spawning if swap utilisation is above ~75% of current total, or system free is below
-~35%.** It read 86% / 30% when written — **RED**, which is the property the old gate lacked. A gate
-whose RED you cannot produce on demand is not protecting anything.
+*"Reclaim before spawning if swap utilisation is above ~75% of current total, or system free is
+below ~35%."* It read 86% / 30% when written — RED, which is the property the old gate lacked. **A
+gate whose RED you cannot produce on demand is not protecting anything** — that principle survives;
+the ratio does not.
 
 ★★ **THE GATE IS NOW A SCRIPT, NOT A SENTENCE: `scripts/envelope-check.sh`.** Run it; it exits **1**
 on RED so it can guard a spawn (`./scripts/envelope-check.sh && swarm spawn …`). **Three trip
-conditions, each with a FIXED denominator** — which is the property the two earlier versions lacked:
+conditions, each with a FIXED denominator AND a bound that cannot grow in response to the pressure**
+— jointly the property all THREE earlier versions lacked:
 
-| condition | source | denominator |
+| condition | source | why it cannot be gamed by the swapfile count |
 |---|---|---|
-| system free < 35% | `memory_pressure` | **physical RAM — cannot move** |
-| swap used > 8192 MB | `vm.swapusage` *used* | **absolute bytes paged out, not a ratio** |
-| disk free < 20 GB | `df -k /` | the floor under the swapfiles |
-| compressor | `vm.compressor_bytes_used` | **recorded, NOT a trip** — diagnostic only |
+| system free < 30%, **worst of 3** | `memory_pressure` | **physical RAM — cannot move.** Worst-of-3 because the reading is a quantised integer and a threshold placed *inside* its one-point spread is a coin, not a gate |
+| memory under duress > 100% | `(vm.compressor_bytes_used + swap used) / hw.memsize` | **physical RAM.** Compressor is bounded by RAM, not by swapfiles, so this is reachable at any `swap_total` |
+| swap headroom < 25 GB | `df -k /` **+** `swap_total` | the **conserved** quantity. Raw `disk free` alone is *not* independent of swap — the swapfiles *are* the disk |
+| compressor · swap used · swap_total · disk | — | **recorded, NOT trips** — diagnostics only |
 
-★ **Two of three were RED on delivery, without contrivance**, and the GREEN one is the one drifting
-toward its threshold — which is the honest picture rather than a gate tuned to fire.
+★ **THIS TABLE IS ATTEMPT 4.** Attempt 3 shipped `swap used > 8192 MB` and **inherited the exact
+defect of attempt 1**: `used` cannot exceed `total`, and `total` is `count(swapfile) × 1 GB` which
+macOS **grows in response to the pressure being measured**. It was found unreachable in the live
+state (`total` 6144 MB, trip 8192 MB) and, when reachable, fired only *after* the mitigation.
+**Caught by a second seat, not by its author, who had written the correction for attempt 1 an hour
+earlier.**
+
+★ **THE RULE THAT COMES OUT OF FOUR ATTEMPTS: an absolute threshold is only as good as its BOUND.**
+Checking the denominator is not enough — ask what **caps the numerator**. If the cap grows in
+response to the pressure, the threshold measures the mitigation.
 
 ★ **Rejected, with reasons, by the lane that owns the envelope:** *swap utilisation %* — its
 denominator is `count(swapfile) × 1 GB` and was measured moving a full gigabyte inside **twelve
@@ -92,7 +106,7 @@ GREEN before the intervention. **The envelope recovers on its own and is dominat
 than what a Lead reaches for first.** ★ *A reclaim that is not measured afterwards is a ritual* — and
 measured, these two were.
 
-★ **THE CONSTANTS ARE CALIBRATED, NOT DERIVED.** 8192 MB and 20 GB are anchored to one machine on one
+★ **THE CONSTANTS ARE CALIBRATED, NOT DERIVED.** 30%, 100% and 25 GB are anchored to one machine on one
 day — the session's healthy floor and its observed excursions. **The shapes are principled; the
 numbers should be revisited once anyone has a second day of data.** Recorded at the author's
 insistence rather than allowed to harden into derived values.
