@@ -84,13 +84,23 @@ for b in $refs; do
     mv_="merge: preview unavailable"
   fi
 
-  # SQUASH/CHERRY-PICK column — see TRAP 3. A squash has no merge base, so for every path it
+  # SQUASH column — see TRAP 3. NOT cherry-pick: a cherry-pick replays each commit, so its
+  # safety is the STABLE per-commit question above (does any commit delete, which lanes), not
+  # this two-dot line. Sable caught the label; the measurement was always squash-only. A squash has no merge base, so for every path it
   # touches it substitutes the branch's content wholesale. EVERY A/M/D is a candidate revert of
   # whatever main did to that file since. D-only is the degenerate case and misses the rest.
   sq=$(git diff --name-status "$BASE" "$b" 2>/dev/null | awk '$1 ~ /^[AMD]/ {print $NF}')
   sqn=$(printf '%s' "$sq" | grep -c . || true)
   if [ "$sqn" = "0" ]; then sv="squash: clean"
   else sv="squash: $sqn path(s) REPLACED — verify each: $(printf '%s' "$sq" | tr '\n' ' ' | cut -c1-60)"; fi
+
+  # ── STABLE half (Face 19, Vane): a property of the COMMITS outlives a property of the diff.
+  # These do not change when $BASE moves, so they are the only answers with no shelf life.
+  mb=$(git merge-base "$BASE" "$b" 2>/dev/null)
+  cdel=$(git log --diff-filter=D --oneline "$mb".."$b" 2>/dev/null | wc -l | tr -d ' ')
+  lanes=$(git log --format= --name-only "$mb".."$b" 2>/dev/null | grep -v '^$' | cut -d/ -f1 | sort -u | tr '\n' ' ')
+  [ "$cdel" = "0" ] && cv="commits: none delete · lanes: $lanes" \
+                    || cv="commits: $cdel DELETE something · lanes: $lanes"
 
   # READER column — TRAP 4. What a successor who CHECKS OUT this branch actually sees. The
   # two-dot D-list is the WRONG instrument for a merge and the RIGHT one here: files on $BASE
@@ -108,12 +118,19 @@ for b in $refs; do
   else
     ONLY_COPY=1
     printf "%-26s %6s %6s  %s\n" "${b#origin/}" "$plus" "$behind" "ONLY COPY — keep"
-    printf "%-26s %6s %6s    %s\n" "" "" "" "$mv_"
-    printf "%-26s %6s %6s    %s\n" "" "" "" "$sv"
-    printf "%-26s %6s %6s    %s\n" "" "" "" "$rv"
+    printf "%-26s %6s %6s    STABLE  %s\n" "" "" "" "$cv"
+    printf "%-26s %6s %6s    decays  %s\n" "" "" "" "$mv_"
+    printf "%-26s %6s %6s    decays  %s\n" "" "" "" "$sv"
+    printf "%-26s %6s %6s    decays  %s\n" "" "" "" "$rv"
   fi
 done
 
+echo
+echo "STABLE lines are properties of the COMMITS and do not change when $BASE moves — the only"
+echo "answers here with no shelf life (Face 19, Vane). Everything marked 'decays' is TIP-RELATIVE"
+echo "and is false again as soon as anyone lands anything: those answers changed four times in"
+echo "ninety minutes on one branch. RUN THIS AT THE MOMENT OF LANDING, NOT BEFORE REPORTING"
+echo "READINESS — an owner cannot clear a branch in advance because the hazard is $BASE moving."
 echo
 echo "PRUNE verdict is the UNABS column alone: 0 = absorbed debris, N = the only copy."
 echo "LANDING and READING are SEPARATE questions, and the three lines below answer three DIFFERENT ones."
@@ -121,6 +138,8 @@ echo "  merge  — computed with git merge-tree against the merge base. Safe, or
 echo "  squash — every A/M/D path is a candidate revert of main's version. THERE IS NO SAFETY RAIL;"
 echo "           the listed paths must be checked by hand. This repo has 0 merges in 184 commits,"
 echo "           so SQUASH IS THE COLUMN THAT MATCHES HOW WORK ACTUALLY LANDS HERE."
+echo "  cherry-pick — NOT measured by the squash line. A cherry-pick replays commits, so its"
+echo "           safety is the STABLE pair above: no commit deletes, and the lanes are known."
 echo "  reader — what a successor who CHECKS OUT the branch sees. Files on main that are absent"
 echo "           from its tree. This is the two-dot D-list: wrong for a merge, RIGHT here."
 echo "Silence in the merge line is not a general clearance. 'Is the document right' and 'is the"
