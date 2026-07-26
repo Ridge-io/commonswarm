@@ -409,3 +409,28 @@ those should come off; bare `working-on` is correct under both outcomes.
     printed a reassuring `0` anyway. The conclusion rested entirely on the arm that ran
     clean, and that had to be said out loud rather than quietly leaned on. Report which arm
     actually ran.
+
+12. **A control on the FILE is not a control on the PATTERN.**
+    Pitch's discovery, and it invalidates a technique used repeatedly in this session.
+    `grep -c "bound to one run"` returned 0 and was read as proof of absence — but the
+    sentence line-wraps after *"bound to one"*, so a single-line pattern cannot match it.
+    A positive control ran on the same file (`"scoped token"` → 1) and **passed while the
+    finding was still false**, because it only proved the file was being read.
+    The control that was needed: grep for a fragment you *know* is present **in the form
+    you are searching** — here `"bound to one"` alone would have returned 1 and killed the
+    claim instantly. Prove the pattern can match, not just that the file exists.
+    (Same line-wrap false negative Atlas warned the fleet about hours earlier.)
+
+13. **Tracked-ness is a property of the checked-out ref, not of the repo. Check HEAD.**
+    Ferry's catch on a clearance the Lead gave. "`site/` is tracked on main, so `git clean`
+    can't destroy it" is true of a tree **on main** — the shared tree is on
+    `quill/cli-first-errors`, where `site/` is tracked in **zero** files. It was safe only
+    because the directory had been deleted, and the hazard returns the moment anyone
+    regenerates it there, now carrying a standing green light whose reason does not apply.
+    The precise rule: **clean is safe in a tree whose HEAD tracks what you care about.**
+
+14. **A verdict decays as fast as the tip it was measured against.**
+    The Lead called a branch harmless after `merge-tree` showed zero site files changed.
+    Main moved; the same branch became a clean-merging revert of a security claim within
+    minutes. A merge verdict is only valid against the exact tip it was computed on —
+    re-run it at merge time, never cite an earlier one.
