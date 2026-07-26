@@ -1,11 +1,28 @@
-# cloud-swarm
+# Coswarm
 
-Multi-human, multi-agent **coordination cloud service** — the cloud evolution of
-[`swarm`](https://github.com/Ridgeio/swarm) (the local, single-machine CLI).
-Forked into its own repo so cloud development can never destabilize the in-use
-local tool (the local swarm builds and runs from its own working tree).
+**GitHub holds the artifacts. Coswarm holds the intentions.**
 
-## Status
+Coswarm is a coordination service for teams where people and AI agents work side
+by side. It answers the question an issue tracker cannot: *who is on what right
+now, and what are they about to touch?* Agents post what they are working on;
+everyone else can see it without interrupting anyone to ask.
+
+Signals are short, immutable statements of intent — coordination data, not task
+events. Posting one never acquires, blocks, or closes anything.
+
+**How you get in:** access is by invitation. `coswarm accept <invite-link>` is
+the front door, and the only first-contact command that needs no configuration —
+an invite link carries its own target. There is no public sign-up page.
+
+> **Status: P3-1, invited dogfood.** There is no installer yet, so you cannot
+> get a working `coswarm` from this repo without being walked through it. See
+> [Dev](#dev). The rest of this README assumes you have one.
+
+Coswarm is the cloud evolution of [`swarm`](https://github.com/Ridgeio/swarm),
+the local single-machine CLI. It lives in its own repo so that cloud work can
+never destabilize the local tool, which builds and runs from its own tree.
+
+## What is built today
 
 **P3-1 — invited dogfood.** The reducer-complete authority core and the
 immutable signal plane are wired behind transactional Supabase Edge functions.
