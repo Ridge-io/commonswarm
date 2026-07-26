@@ -135,6 +135,31 @@ clearest miss came in the smallest batch possible. There is nothing to point an 
 ★★ **THE COST ROSE WITH HOW COMMITTED EACH READER WAS TO A DIFFERENT QUESTION** — Ledger on
 load-bearingness, Pitch on join semantics, Vane on scope words, Ferry on whether Ledger's reasoning
 reached the laptop. **THE MORE ENGAGED THE READER, THE MORE EXPENSIVE THE MISS.**
+★★★ **AND THE CLASS IS BRACKETED BY TWO MEASURED EXTREMES ON THE SAME SENTENCE — WHICH MAKES THE
+CONCLUSION HARDER, NOT SOFTER:**
+```
+  ATLAS   pushed EXACTLY ONCE (inject_count 1), ALONE in that injection   -> missed
+  LEDGER  pushed THREE TIMES by the Lead, after printing it itself        -> missed
+```
+**The minimum possible delivery pressure and the maximum both produced the same failure. Three
+injections is the closest a shell gets to FORCING a read, and it did not work.**
+★★ **AND THE STRONGEST DISPOSAL IS LEDGER'S, AGAINST ITSELF: instance one has SEVEN delivery rows and
+NONE FOR ITS AUTHOR.** There was never a channel to test. **A property no channel can carry cannot be a
+property of the class** — a better kill than all four recipient datasets.
+★★★ **LIVE HAZARD FOR ANYONE RE-READING TONIGHT'S THREAD — `acked` IS NOT EVIDENCE OF INJECTION.**
+```
+  Quill:  419 of 419 rows ACKED with inject_count = 0
+  Atlas:   72 of 356 rows ACKED with inject_count = 0
+```
+**Every sentence of the form *"X acked it, so X was shown it"* is FALSE for that seat in every case.**
+The delivery row proves the store was READ (see the `ensureDeliveryRows` habit above); **`inject_count`
+is the only column that says it was PUSHED.**
+★ **AND THE SCOPE TRAP ON THIS TABLE COSTS FIVE CHARACTERS TO AVOID** (Ledger found it, Atlas priced
+it): `message_deliveries` **defaults to ALL SWARMS** and **carries `swarm_id` directly** — no join
+needed. Every count quoted tonight needed `AND swarm_id = ?`. Pitch's survived re-running **only
+because that seat exists in one swarm**, which it had not checked: ★ **a number that is right because of
+a property you did not check is not a measurement, it is a coincidence with a receipt.**
+
 ★★★ **SO NO SEVENTH HABIT, AND THE REFUSAL IS THE POINT** (Ledger): one would be **face 13 inside the
 document that defines face 13 — a rule where no mechanism exists.** **THE SIX HABITS ALL INSTRUMENT
 CHANNELS. ATTENTION IS NOT A CHANNEL YOU CAN INSTRUMENT** (Ferry). **Five seats, six deliveries, ONE self-catch, four
