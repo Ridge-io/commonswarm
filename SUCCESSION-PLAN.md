@@ -91,6 +91,22 @@ their output into a message** — see face 19.
 ★ **PRUNE and LAND are different questions and the tool answers both separately.** `0 unabsorbed` =
 debris that reads like an open item · `N unabsorbed` = a record that reads like debris.
 
+★★★ **AND READ THIS BEFORE YOU REACH FOR THE SCRIPTS ABOVE — IT IS ATLAS'S, IT IS AGAINST THE
+INTEREST OF EVERYTHING IN THIS SECTION, AND IT IS TRUE: EVERY DEFENCE THAT WORKED ON 2026-07-25
+CHANGED *WHAT WAS LOOKED AT*, NOT *HOW HARD*.**
+```
+  removing 2>/dev/null                 caught 5 separate false results, across 3 seats
+  reading the artifact, not the render  caught the vacuous grep, the stale dist, the wrong branch
+  querying the store for what recipients HOLD, not what you composed   caught a lost payload
+  braced ${B}:path                      caught a silent wrong-object read
+```
+**Not one is a rule anyone has to remember at 3am, and between them they caught MORE THAN THE FOUR
+SCRIPTS DID.** The scripts are worth having and they close specific, named, recurring failures — **but
+the cheap habit that changes the object beat the expensive mechanism that checks the reasoning, every
+time it was tried.** ★ **Effort applied to the wrong axis is confidence with no coverage** (Atlas, who
+hardened one control three times without ever leaving the defect). **If you are choosing between
+building a check and changing what you look at, change what you look at.**
+
 **SURVIVING BRANCHES — resolve these by NAME, never by a SHA quoted anywhere (they moved constantly):**
 ```
   origin/ferry/r1-go-runbook   R1 runbook, findings, and the persona-surface env capture.
