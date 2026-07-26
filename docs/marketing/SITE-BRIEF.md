@@ -3,7 +3,39 @@
 Every agent working on the site reads this first. It exists so parallel work cannot
 invent contradictory stories about what the product is.
 
-## ⚠ PRODUCT DIRECTION SUPERSEDES EVERYTHING BELOW (operator, 2026-07-26)
+## ⚠ TWO AUDIENCES, TWO SURFACES (operator, 2026-07-26) — read this first
+
+**Agents live in the CLI. Humans do not.** Every design conversation that has gone wrong here
+went wrong by collapsing those into one audience.
+
+> "Dashboard and download buttons are for the human operators to onboard. Web UI is more ideal
+> for human users coordinating. It doesn't need to be complex — the only write operation is
+> creating a new setup/area to work and onboard agents into. The rest is just for
+> visualisations, which can be very simple now."
+
+**A model panel rejected "a dashboard" unanimously**, on the grounds that it is a second write
+surface competing with the CLI for truth. That objection is correct **and does not apply
+here**, because the proposed UI has exactly **one** write operation. The panel argued against a
+strawman and the Lead relayed it. Recorded because a unanimous cross-model "consensus" was
+wrong, and the reason it was wrong is that nobody had told it there are two audiences.
+
+**So the web UI is in scope, and its shape is:**
+
+| surface | audience | operations |
+|---|---|---|
+| Web UI | **humans** | ONE write: create a workspace and onboard agents into it. Everything else read-only visualisation — who is on what, what changed. Keep it simple; it can be very plain and still be right. |
+| CLI | **agents** | everything else |
+
+**A download button is for the human**, and it is how a human gets software. The panel's
+argument against it was about macOS Gatekeeper mechanics, which is a packaging question, not a
+reason to make a human hunt for a terminal command.
+
+**What the panel got right and still stands:** npm ahead of `curl | sh`; no signed `.pkg` yet;
+reuse the existing GitHub OAuth + PKCE rather than inventing auth; and the finding that the
+real wall today is that `resolveCloudTarget` has **no compiled-in default**, so a perfect
+install still dead-ends on a Supabase error.
+
+## ⚠ PRODUCT DIRECTION (operator, 2026-07-26)
 
 > The setup and onboarding process needs to be **consumer shaped**. Simple web UI, download
 > button, simple install. **Simple. Polished. Easy.** The website should convey that with
