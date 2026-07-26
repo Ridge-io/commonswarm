@@ -37,6 +37,14 @@ Target: first use goes from two commands and seven flags to `coswarm token mint 
 2. **`--run-id` server-generated, `agent_runs` row still written.** It is INNER JOINed at
    every agent auth. Generate a real v4 UUID (the column casts `::uuid`) or every minted
    token authenticates against nothing.
+   **`run_id` is NOT optional — it is REMOVED from the surface and server-generated.**
+   This differs from `task_id`/`epoch` deliberately and the handoff previously left it
+   ambiguous (Sable caught it). A caller-supplied `run_id` is *rejected*, not defaulted,
+   because `agent_runs` has an ON CONFLICT path that can yield a silently dead token —
+   Vane's measurement, banked at `origin/vane/friction`. So: `task_id` and `epoch` become
+   optional (nullable, throw dropped); `run_id` leaves the surface entirely and the server
+   generates a v4 UUID while still writing the `agent_runs` row.
+
 3. **`--principal-id` defaulted:** none → create; one → use it; many → require and list.
 4. **Self-registration on first use**, justified by reversibility: `principal create` is
    reversible (`revoked_at`, checked at every mint) and minting is reversible (it expires).
@@ -46,6 +54,12 @@ Target: first use goes from two commands and seven flags to `coswarm token mint 
 The `AgentTokenMinted` handler throws when `task_id`/`epoch` are null, the reducer's
 `req()` lists them as required, and `mintBindingsValid()` keys its `agent_runs` lookup by
 the caller-supplied `run_id`. The database will NOT catch this: the columns are nullable.
+
+> **⚠ THE LIST BELOW IS NOT AN INVENTORY. RE-GREP BEFORE IMPLEMENTING.** Sable found it
+> already undercounts: besides the four named, the mint wire type requires
+> `run_id`/`task_id`/`epoch` (~`164-169`) and there is a runtime `exactKeys` + UUID/integer
+> check on the mint wire (~`879-901`, `command/index.ts`). That is the same silent-undercount
+> class this session kept paying for. Treat these as *known* sites, not *all* sites.
 
 **Land the server side first** — `prepareWorkspaceCommand`, the reducer event shape and
 `req()` list, the null-check side-effect, `mintBindingsValid` — **then** change the CLI
