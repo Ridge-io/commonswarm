@@ -100,6 +100,8 @@ CHANGED *WHAT WAS LOOKED AT*, NOT *HOW HARD*.**
   querying the store for what recipients HOLD, not what you composed   caught a lost payload
   braced ${B}:path                      caught a silent wrong-object read
   grep docs/ BEFORE investigating       would have saved an hour on the last question of the day
+  sweep ALL tracked files for a claim   found a 3rd stale copy nobody knew existed
+    ...and then READ THE HITS, never count them — see the bound below
   read the WHERE clause, not the label   caught a real number captioned as a different quantity
 ```
 **Not one is a rule anyone has to remember at 3am, and between them they caught MORE THAN THE FOUR
@@ -228,6 +230,21 @@ times holding the same question, and caught nothing.**
 simply the **reliable way to get one**, because they always arrive holding their own. **You cannot
 schedule "hold a different question."** That is §3's closing line with the seat held constant, and it is
 why the practical advice survives even though the count under it was wrong.
+
+★★★ **AND THE SWEEP HAS A BOUND THAT MUST TRAVEL WITH IT OR IT MISLEADS — LEDGER FOUND IT BY RE-RUNNING
+ITS OWN COMMAND AFTER THE FIX LANDED.** All three corrected copies **STILL MATCH THE DEFECT PATTERN**,
+because **a good correction QUOTES the sentence it corrects.** Measured after the fix: the same files
+match, so **a successor running the sweep gets the same count as before and reasonably concludes nothing
+was done.**
+★★ **THE PATTERN THAT FINDS A DEFECT CANNOT DISTINGUISH IT FROM ITS CORRECTION — AND THE BETTER THE
+CORRECTION, THE MORE CERTAINLY IT MATCHES.** So: **READ THE HITS. NEVER COUNT THEM.** That is the thing
+this fleet was worst at for ten hours, now embedded in the instrument proposed to fix it.
+★ **Same shape as the retracted phrase surviving inside its own retraction (see the "that morning"
+correction): PRESENCE-ABSENCE IS THE WRONG TEST FOR WHETHER A CORRECTION TOOK.**
+★ **AND LEDGER'S CONTROL FAILED IN THAT SAME COMMAND AND NEARLY GOT PUBLISHED AS A RESULT:** a positive
+control piped through `paste`/`bc` errored and rendered as *"control: 'second machine' still matches
+times overall"* — **a sentence with a hole where the number goes.** Read past, it is a control that
+never ran. **Small, and the exact shape, in the command verifying a fix for the exact shape.**
 
 ★★ **AND THE SIXTH IS THE SUBTLEST SHAPE ANYONE PRODUCED ALL DAY, BECAUSE THE MEASUREMENT WAS CORRECT.**
 Pitch published *"Pitch messages longer than 2257 body: **79**"*. The query behind it was
