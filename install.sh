@@ -18,13 +18,26 @@ die() { printf '\ncoswarm install failed: %s\n\n' "$1" >&2; exit 1; }
 # --- Node check first. -------------------------------------------------------
 # coswarm ships JavaScript, not a native binary. Checking here means the failure
 # is one clear sentence instead of "node: command not found" from a shebang later.
+# A bare `command -v node` is correct but its ADVICE is wrong for a large share of users.
+# Version managers (nvm, fnm, asdf) put node on PATH from a shell init file, so node is
+# invisible to any non-login, non-interactive shell -- ssh, CI, docker exec, a GUI-spawned
+# process. Telling someone who already runs v24 under nvm to "brew install node" is a false
+# statement on the very first thing they see. So we say WHERE we looked, and name the case.
 command -v node >/dev/null 2>&1 || die \
-"coswarm needs Node.js 24 or newer, and node was not found on your PATH.
+"coswarm needs Node.js 24 or newer, and node was not found on this PATH:
+
+  $PATH
+
+If you use a version manager (nvm, fnm, asdf), node is set up by your shell's startup
+files and is not visible to a non-interactive shell. That is the most likely cause here.
+Open a normal terminal and run this installer again, or run it through a login shell:
+
+  zsh -lic 'curl -fsSL <url>/install.sh | sh'
+
+If you genuinely do not have Node yet:
 
   macOS:  brew install node
-  other:  https://nodejs.org/en/download
-
-Then run this installer again."
+  other:  https://nodejs.org/en/download"
 
 NODE_MAJOR="$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)"
 [ "$NODE_MAJOR" -ge 24 ] 2>/dev/null || die \
