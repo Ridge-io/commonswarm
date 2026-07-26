@@ -166,7 +166,7 @@ const project = [
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: var(--track-eyebrow);
-    color: var(--text-faint);
+    color: var(--text-muted);
   }
 
   .foot__list {
@@ -212,7 +212,7 @@ const project = [
 
   .fact__k {
     font-size: var(--t-xs);
-    color: var(--text-faint);
+    color: var(--text-muted);
     min-width: 5.5rem;
   }
 
@@ -228,7 +228,7 @@ const project = [
 
   .fact__note {
     font-size: var(--t-xs);
-    color: var(--text-faint);
+    color: var(--text-muted);
     background: var(--surface-2);
     border-radius: 3px;
     padding: 1px 6px;
@@ -249,12 +249,13 @@ const project = [
   .foot__legal {
     margin: 0;
     font-size: var(--t-xs);
-    color: var(--text-faint);
+    color: var(--text-muted);
   }
 
+  /* No opacity here — it would blend the text back toward the background and undo
+     the contrast this colour was chosen for. */
   .foot__legal--dim {
-    color: var(--text-faint);
-    opacity: 0.75;
+    color: var(--text-muted);
   }
 
   .sr-only {

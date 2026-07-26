@@ -138,14 +138,18 @@ import "../styles/hero.css";
             <p class="ad__feed-title">The record &mdash; append only</p>
             <span class="ad__count" id="ad-count">3 entries</span>
           </div>
-          <ol
-            class="ad__feed"
-            id="ad-feed"
-            tabindex="0"
-            aria-live="polite"
-            aria-label="Append-only record of every attempted action"
-          >
-          </ol>
+          <!-- The scroll box is sized by the action column beside it, never by its own
+               contents — otherwise the frame would grow without bound as entries append. -->
+          <div class="ad__feed-scroll">
+            <ol
+              class="ad__feed"
+              id="ad-feed"
+              tabindex="0"
+              aria-live="polite"
+              aria-label="Append-only record of every attempted action"
+            >
+            </ol>
+          </div>
         </div>
       </div>
 

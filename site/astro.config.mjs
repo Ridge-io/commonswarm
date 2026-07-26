@@ -10,7 +10,13 @@ import { defineConfig } from "astro/config";
 // is likewise not live yet (there is no public dist repo). Both are tracked as launch
 // blockers rather than quietly invented.
 export default defineConfig({
-  site: "https://coswarm.dev",
+  // DO NOT put a plausible-sounding domain here. "coswarm.dev" was used as a placeholder and
+  // it is a REAL, UNRELATED SHIPPING PRODUCT (a self-hosted Docker Swarm PaaS) whose
+  // /install.sh returns HTTP 200 and runs as root. The hero's copy button was handing readers
+  // a command that would root-install a stranger's software. Verified live before this fix.
+  // .invalid is reserved by RFC 2606 and can never resolve. Only replace it with a domain we
+  // have actually registered.
+  site: "https://coswarm.invalid",
   output: "static",
   build: {
     inlineStylesheets: "auto",

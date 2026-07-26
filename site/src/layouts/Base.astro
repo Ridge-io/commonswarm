@@ -15,7 +15,13 @@ import "../styles/global.css";
  *   NAV.github       the repo is currently private, so this 404s for logged-out visitors.
  */
 
-const FALLBACK_ORIGIN = "https://coswarm.dev";
+// DO NOT put a plausible-sounding domain here. "coswarm.dev" was used as a placeholder and
+// it is a REAL, UNRELATED SHIPPING PRODUCT (a self-hosted Docker Swarm PaaS) whose
+// /install.sh returns HTTP 200 and runs as root. The hero's copy button was handing readers
+// a command that would root-install a stranger's software. Verified live before this fix.
+// .invalid is reserved by RFC 2606 and can never resolve. Only replace it with a domain we
+// have actually registered.
+const FALLBACK_ORIGIN = "https://coswarm.invalid";
 
 const NAV = {
   how: "/#how-it-works",

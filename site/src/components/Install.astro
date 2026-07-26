@@ -47,7 +47,7 @@ const guarantees = [
   },
   {
     t: "Checksum verified, with no way to skip",
-    d: "The installer fetches the release and its published SHA-256 alongside it. If the checksum file is missing, if the hashes disagree, or if your machine has no tool to compute one, it stops and installs nothing. There is no --force and no environment variable that turns this off.",
+    d: "The installer fetches the release and its published SHA-256 alongside it. If the checksum file is missing, if the hashes disagree, or if your machine has no tool to compute one, it stops and installs nothing. There is no skip flag, and no environment variable that turns this off.",
   },
   {
     t: "It refuses a trap it can see coming",
@@ -197,7 +197,7 @@ const guarantees = [
 
   .term__label {
     font-size: var(--t-xs);
-    color: var(--text-faint);
+    color: var(--text-muted);
     letter-spacing: 0.08em;
     text-transform: uppercase;
     margin-inline-end: auto;
@@ -273,7 +273,7 @@ const guarantees = [
     margin: var(--s-4) 0 0;
     font-size: var(--t-sm);
     line-height: var(--lh-body);
-    color: var(--text-faint);
+    color: var(--text-muted);
   }
 
   .inst__flag {
@@ -290,7 +290,7 @@ const guarantees = [
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: var(--track-eyebrow);
-    color: var(--text-faint);
+    color: var(--text-muted);
   }
 
   .reqs {
@@ -373,7 +373,7 @@ const guarantees = [
     margin: var(--s-12) 0 0;
     font-size: var(--t-base);
     line-height: var(--lh-body);
-    color: var(--text-faint);
+    color: var(--text-muted);
     max-width: 62ch;
   }
 

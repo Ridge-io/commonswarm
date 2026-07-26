@@ -156,6 +156,14 @@
   flex: none;
 }
 
+/* The button is already the frame; global.css gives bare <code> its own chrome, which
+ * would read as a box inside a box here. Neutralised locally, not redefined globally. */
+.hero__install .hero__install-cmd {
+  background: none;
+  border: 0;
+  padding: 0;
+}
+
 .hero__install-cmd {
   font-family: var(--font-mono);
   font-size: clamp(0.78rem, 0.5vw + 0.66rem, 0.95rem);
@@ -261,9 +269,14 @@
     align-items: stretch;
   }
 
+  /* Narrow enough that the command must wrap: keep the $ hanging beside the first
+     line rather than orphaned above it, and drop the copy chip onto its own row. */
   .hero__install {
-    flex-wrap: wrap;
-    justify-content: flex-start;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: start;
+    row-gap: var(--s-3);
+    padding: var(--s-3) var(--s-4);
   }
 
   .hero__install-cmd {
@@ -272,7 +285,9 @@
   }
 
   .hero__install-copy {
-    margin-left: auto;
+    grid-column: 2;
+    justify-self: start;
+    margin-left: 0;
   }
 
   .hero__secondary {
@@ -387,7 +402,8 @@
 
 .ad__grid {
   display: grid;
-  grid-template-columns: minmax(0, 21rem) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 23rem) minmax(0, 1fr);
+  align-items: stretch;
 }
 
 .ad__left {
@@ -539,6 +555,7 @@
   display: flex;
   flex-direction: column;
   min-width: 0;
+  min-height: 0;
 }
 
 .ad__feed-head {
@@ -564,12 +581,23 @@
   color: var(--text-faint);
 }
 
+/* The list is taken out of flow so its length can never push the frame taller. The
+ * wrapper stretches to whatever height the action column sets, so the two panes always
+ * finish level; min-height keeps it usable once the grid goes single-column. */
+.ad__feed-scroll {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 22rem;
+}
+
 .ad__feed {
+  position: absolute;
+  inset: 0;
   list-style: none;
   margin: 0;
   padding: 0;
   overflow-y: auto;
-  height: 27rem;
+  overscroll-behavior: contain;
   scrollbar-width: thin;
   scrollbar-color: var(--border-strong) transparent;
 }
@@ -802,8 +830,10 @@
     border-bottom: 1px solid var(--border);
   }
 
-  .ad__feed {
+  .ad__feed-scroll {
+    flex: none;
     height: 22rem;
+    min-height: 0;
   }
 }
 
