@@ -147,12 +147,33 @@ if (!peek && !kind && messages.length > 0) {
 A plain `swarm inbox` **acks every row it returns, at the moment the rows are SELECTed** — before
 any model or human has read a word. `--peek` and kind-filtered reads are exempt by construction.
 
+> **★ CORRECTED — the paragraph below was too broad, and the fleet narrowed it (Atlas, Pitch,
+> Vane, Ledger).** It read as though every ack path were disconnected. **It is not: a plain
+> `swarm inbox` acks AND RETURNS THE BODIES — that is one rung short, not disconnected**, and the
+> hook never acks at all. **The genuine disconnect is the EXPLICIT ack verb**, and it is worse
+> than described because it is two separate paths:
+> ```js
+>   acknowledgeAllMessages()          // mailbox.ts:332
+>     const pending = getInbox(..., /* peek */ true);            // bodies FETCHED
+>     return acknowledgeMessages(..., pending.map(m => m.id));   // bodies DISCARDED
+>     ): number[]                                                // ids only, to no one
+>
+>   swarm ack <id>                    // index.ts:936-944
+>     rawIds -> Number() -> acknowledgeMessages(db, swarm, self, ids)
+>     // never SELECTs a message. never touches a body.
+> ```
+> **`swarm ack --all` reads every pending body and throws all of them away.** `swarm ack <id>`
+> writes a receipt from an integer for a message it never opened. **Neither returns a body to any
+> reader, ever** — so a seat can mark an inbox consumed without a single word having been rendered.
+
 **So the receipt ladder tops out below the thing this product claims to deliver:**
 
 ```
-  delivered     = it was sent
-  delivery row  = the recipient's PROCESS touched the store (written BY the read — see above)
-  acked         = a SELECT returned rows
+  delivered ............. it was sent
+  delivery row .......... the process called getInbox (the row is written BY the read)
+  acked via `inbox` ..... the DB returned rows — and the bodies WERE printed   one rung short
+  injected (hook) ....... body rendered IN FULL, unless collapsed -> stub      see addendum 2
+  acked via `ack`/--all . NOTHING returned to anyone                           ★ DISCONNECTED
   ------------------------------------------------------------------------------------
   nothing here measures that a message changed what the recipient did next
 ```
