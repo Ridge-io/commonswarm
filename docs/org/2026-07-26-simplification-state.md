@@ -292,7 +292,7 @@ untouched). PUSHED IS NOT LANDED — parked sequence.
 presence-conditional in `optionalKeys` (same idiom as `ttl_ms`/`scopes`); required list is
 only `kind` / `principal_id` / `device_id` + conditionals. Supplied values still validated.
 **Still unproven at the edge** (no typecheck; `test:p1-server` not run against the branch).
-**Still open:** run_id accept-vs-reject vs handoff (caller `--run-id` still accepted).
+~~*Still open: run_id accept-vs-reject*~~ — **CLOSED at `325ce44`** (see §2 below).
 
 > **RESOLVED by Atlas at `291d901`** (tip of `origin/atlas/binding-deletion`), exactly the
 > fix shape Sable specified: the three keys are now presence-conditional in `optionalKeys`
