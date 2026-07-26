@@ -556,15 +556,24 @@ unmeasured + GUI-gated). Accept line must be `coswarm accept --link-stdin`.
     every seat's work. Ledger then measured the real distribution and Atlas re-measured it,
     finding more identities than either had assumed. **CORRECTED again by Sable, and the
     correction is the same species as the doctrine:** the first count used a 36-hour window,
-    which silently truncated it. Over the full history:
+    which silently truncated it. Full history — **FRAME, not just scope** (Ledger #15434):
+
 ```
-Cooper Yulan <yulanbot@gmail.com>    255   <- machine default, most seats
-Cooper Yulan <<employer-a-address REDACTED 2026-08-10>>    12   <- a seat that set its own email
+# as of origin/main e54746b  (counts MOVE; re-derive at your tip)
+#   git log --format='%an <%ae>' origin/main | sort | uniq -c | sort -rn
+#   sum of parts must equal: git rev-list --count origin/main
+Cooper Yulan <yulanbot@gmail.com>    256   <- machine default, most seats
+Cooper Yulan <<employer-a-address REDACTED 2026-08-10>>    14   <- a seat that set its own email
 Cooper Yulan <<employer-b-address REDACTED 2026-08-10>>   5   <- another
 Ridgeio      <tom@ridge.io>            1
 Ferry        <ferry@cloud-swarm.local> 1   <- a seat that set its own NAME
+# sum 277 = rev-list --count at e54746b
+# earlier reconciled snapshots: 255+12+5+1+1=274 · 255+13+5+1+1=275 — world moved, not miscount
 ```
-    **FIVE identities; THREE share the display name.**
+    **FIVE identities; THREE share the display name.** Identity set is the stable finding;
+    per-identity counts are frame and age. Without the tip SHA, a successor who gets 277
+    against a table of 274 cannot tell growth from error — the reconciliation proof does
+    not transfer.
     **And the opt-out is itself partial — Ferry's data point, which is what makes this
     unfixable rather than merely awkward.** The one seat that set its own name did so only
     partway through the session and never backfilled: on its own branch, **41 of 44 commits
@@ -582,7 +591,7 @@ Ferry        <ferry@cloud-swarm.local> 1   <- a seat that set its own NAME
 
     **Matching vs enumerating (Pitch #15393):** if the list is of *values*, regenerate by
     enumerating the whole field (`sort | uniq -c`) and **reconcile** against an independent
-    total (`rev-list --count` must equal the sum of parts — here 274 = 255+12+5+1+1). Matching
+    total (`rev-list --count` must equal the sum of parts **at the same tip**). Matching
     the identities you thought of is undercount class. A bare number claims completeness; a
     bound (`≥N`) is honest until reconciled. Cardinality went 2 → 3 → ≥3 → 5 across four seats
     on one object; every count was correct for its query and three of four read as complete.
