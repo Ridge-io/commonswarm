@@ -292,12 +292,45 @@ only `kind` / `principal_id` / `device_id` + conditionals. Supplied values still
 **Still unproven at the edge** (no typecheck; `test:p1-server` not run against the branch).
 **Still open:** run_id accept-vs-reject vs handoff (caller `--run-id` still accepted).
 
+> **RESOLVED by Atlas at `291d901`** (tip of `origin/atlas/binding-deletion`), exactly the
+> fix shape Sable specified: the three keys are now presence-conditional in `optionalKeys`
+> alongside `ttl_ms`/`scopes`, and the required list is `kind`/`principal_id`/`device_id`.
+> Both paths traced: a bare mint now passes `exactKeys`, every value predicate short-circuits
+> on `undefined`, `run_id` is server-generated at prepare and `task_id`/`epoch` fold to null;
+> a fully-supplied mint is still validated field-for-field.
+> **Sable found this AFTER the branch was pushed and re-checked the tip rather than the
+> commit that was reported — which is the only reason it was caught.**
+> **Still unproven in the same way as everything else in this tree: `291d901` is
+> esbuild-parsed, not typechecked, and no suite here exercises the wire validator.**
+> **This was the THIRD defect shipped into `supabase/functions/` tonight** (after the
+> `mintBindingsValid` `undefined`-interpolation), all three in the tree no typechecker
+> covers. That is the strongest available evidence for the open `deno check` decision:
+> the gap is not theoretical, it has produced three real bugs in one session.
+
 ### 2. run_id disposition still disagrees with the banked handoff
 
 Handoff above: **`run_id` REMOVED from the surface; caller value rejected** (ON CONFLICT
 silent-dead-token). `55f1b41` keeps `--run-id` **accepted** on the CLI and cross-checks a
 supplied value against `agent_runs`. That is a different product disposition than the one
 this document banks. Resolve before merge; do not land both stories.
+
+**Which authority each follows, so the choice is informed rather than a coin-flip
+(Atlas):** `55f1b41`/`291d901` implements **Lead6's final ruling #14921 verbatim** — *"the
+surface still ACCEPTS run_id / task_id / epoch. NOBODY MUST SUPPLY THEM."* Vane's spec is
+**stricter than the ruling**, not a restatement of it.
+
+**And the conflict may dissolve rather than need deciding.** The stated reason for
+*reject* was Vane's silent-dead-token footgun: reuse a `run_id` belonging to another
+principal, `ON CONFLICT (run_id) DO NOTHING` writes nothing, the mint succeeds, and the
+auth join (`r.principal_id = t.principal_id`) can never match — a credential dead on
+arrival with no error at the point of the mistake. **`mintBindingsValid` on this branch
+cross-checks a supplied `run_id` against `agent_runs` for principal, device, and
+`ended_at IS NULL`, and refuses when it does not match — which closes that hazard while
+still accepting the flag.** So *accept + cross-check* and *reject* defend against the same
+thing; the remaining difference is surface-minimalism, not safety. **Not asserting this
+resolves it — it is a decision for whoever lands code — but the safety argument for
+`reject` no longer stands on its own.** Unverified in the same way as the rest of the edge
+tree.
 
 ### 3. Real accept is a two-identity operator test (Ledger #15032)
 
