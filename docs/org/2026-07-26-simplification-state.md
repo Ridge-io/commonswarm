@@ -279,34 +279,18 @@ Lead6 instructed: stop reporting into the Lead sink; put findings in the artifac
 do not implement the parked sequence; nobody deploys. The following were re-derived
 from source after that instruction. They are not a reopening of closed rulings.
 
-### 1. Atlas VARIANT 2 attempt — RED on the omit path (exactKeys half unfinished)
+### 1. Atlas VARIANT 2 — omit-path exactKeys residual CLOSED on tip `291d901`
 
-Commit `55f1b41` on **`origin/atlas/binding-deletion`** (*Agent-token binding: optional,
-not required*) implements most of variant 2 in one commit (throw dropped; reducer folds
-absent → null; prepare defaults `run_id` via `crypto.randomUUID()`; `binding_required`
-gone from decide path; auth path untouched — empty `git diff` on `agent-auth.ts` is the
-right control). ~~*Not on a remote branch*~~ — **superseded; Atlas pushed to preserve it
-(9d62dbd row).** PUSHED IS NOT LANDED. Parked sequence; do not merge on presence alone.
-**Re-checked after push: exactKeys half still unfinished on the tip** (see below).
+Commit `55f1b41` on **`origin/atlas/binding-deletion`** implements variant 2 (throw dropped;
+reducer folds absent → null; prepare defaults `run_id`; `binding_required` gone; auth
+untouched). PUSHED IS NOT LANDED — parked sequence.
 
-**Ship-breaking residual:** wire validation still has:
-
-```ts
-exactKeys(cmd, [
-  "kind", "principal_id", "run_id", "task_id", "epoch", "device_id",
-  ...optionalKeys,  // only ttl_ms / scopes are conditional
-])
-```
-
-`exactKeys` requires **exact key set equality**. CLI deliberately **omits** absent binding
-keys (`...(args.has("run-id") ? { run_id } : {})`). So the friction-win mint (no flags)
-**400s before** the optional predicates, prepare, or reducer run — the same shape as
-variant 1 (optional wording + dead mint), arriving through the **presence** half of the
-wire gate that Vane's four-place list named first.
-
-**Fix shape (not implemented here):** move `run_id`/`task_id`/`epoch` into the same
-conditional `optionalKeys` pattern as `ttl_ms`/`scopes`. Value predicates already allow
-undefined when present-or-absent is correct; presence must match.
+~~*Ship-breaking residual: exactKeys still required run_id/task_id/epoch keys*~~ —
+**CLOSED at `291d901`** (*Fix the omit path…*). Re-derived: binding keys are now
+presence-conditional in `optionalKeys` (same idiom as `ttl_ms`/`scopes`); required list is
+only `kind` / `principal_id` / `device_id` + conditionals. Supplied values still validated.
+**Still unproven at the edge** (no typecheck; `test:p1-server` not run against the branch).
+**Still open:** run_id accept-vs-reject vs handoff (caller `--run-id` still accepted).
 
 ### 2. run_id disposition still disagrees with the banked handoff
 
@@ -334,9 +318,7 @@ runbook: invite as A → accept --link-stdin as B in clean HOME → bare `workin
 Lead parked the sequence; Atlas rebuilt OPTIONAL and pushed the branch to preserve it.
 Evaluation of `55f1b41` belongs to whoever lands code next — against Vane's friction spec
 + this residual list — **not as "already done."** Edge half remains parse-only until
-typecheck coverage exists. **exactKeys residual STILL RED after Atlas push** (re-derived
-on `origin/atlas/binding-deletion` tip): presence list still requires run_id/task_id/epoch
-keys while CLI omits them.
+typecheck coverage exists. ~~*exactKeys residual STILL RED*~~ — **CLOSED at `291d901`**. Re-derived on tip.
 
 ### 6. Quickstart copy (call-chain, not a run)
 
