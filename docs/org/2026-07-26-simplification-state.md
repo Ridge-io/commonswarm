@@ -238,43 +238,63 @@ below are the instrument; this heading only says *look at them*.
 | **LANDED** | the *branch* is an ancestor of `main` | `git merge-base --is-ancestor` |
 | **APPLIED** | the *content* is on `main`, by any route | `git cat-file -e origin/main:<path>` |
 
-**Frame at last re-derive of this section: `origin/main` = `810db36`.** Re-derived then:
-**18** origin heads (excluding the `origin` remote-tracking alias), **1** is an ancestor of
-main (**`main` itself**), **17** are not — sum reconciles. **No seat branch from this session
-is LANDED.** Work that appears on main was **committed on main** (or APPLIED as content by
-re-application / cherry-pick). "Landed" in fleet speech almost always meant APPLIED; a branch
-*table* must not use that word for content-only cases.
+**Frame at last re-derive of this section: re-run at your tip** (numbers below were measured
+while `origin/main` sat at `ce91d63` parent `810db36` — the heading fix — then corrected in the
+next commit). **18** origin heads (excluding the `origin` remote-tracking alias), **1** is an
+ancestor of main (**`main` itself**), **17** are not — sum reconciles. **No seat branch from
+this session is LANDED.** Work that appears on main was **committed on main** (or APPLIED as
+content by re-application / cherry-pick). "Landed" in fleet speech almost always meant APPLIED;
+a branch *table* must not use that word for content-only cases.
 
-**Unique-path probe (Pitch #15539, re-run by Sable at the same tip):** for each non-ancestor
-ref, count paths present on the branch tip tree and **absent** from main's tree
-(`comm -23` of `git ls-tree -r --name-only`). Positive control: `cat-file -e origin/main:README.md`
-succeeds. Result: **three branches hold five sole files; fourteen non-ancestors hold zero
-unique paths.**
+### Right question, wrong instrument (Pitch #15539 then #15549)
 
-| sole-file count | branch | paths absent from main |
-|---|---|---|
-| 3 | `origin/ferry/r1-go-runbook` | `uxtest/findings/2026-07-25-persona-surface-env-capture.md`, `…/2026-07-25-r1-gate5-hang.md`, `…/R1-GO-RUNBOOK.md` |
-| 1 | `origin/vane/launch-audit` | `docs/launch/2026-07-25-launchable-audit.md` |
-| 1 | `origin/vane/site-audit` | `docs/marketing/2026-07-25-command-copy-audit.md` |
-| 0 | the other fourteen non-ancestors | *(including* `ledger/epoch-binding-test`, `vane/friction`, `atlas/binding-deletion`, all quill/l6 refs*)* |
+**Path-absence** (`comm -23` of `git ls-tree -r --name-only` branch vs main; control:
+`cat-file -e origin/main:README.md`) answers only *does this path exist on main*. At tip
+`810db36` it returned **three branches / five sole files / fourteen zeros**. That number is
+true **for new files** and false as a board-wide "what remains / what is prunable" answer.
 
-Bound on that probe: **`0` means "no path unique to this branch", not "nothing to salvage".**
-It does not compare content at paths that exist on both sides — so `atlas/binding-deletion`
-shows 0 (paths already on main) and is emphatically **not** prunable; its parked mint sequence
-is code at shared paths. Ferry/Ledger/friction rows are the ones the path-probe answers cleanly
-when their content is new files. Re-run at your tip; numbers decay.
+**Quill's counterexample (Pitch #15549):** `quill/current-target-followup` is not an ancestor,
+`git cherry` shows `+ 7bb77c8`, diff vs merge-base touches four *existing* paths
+(`src/cli.ts`, `src/cloud/accept-link.ts`, two tests) — and path-absence reads **0** because
+those paths already exist on main. **Live work, invisible to the path probe.** Atlas
+independently: binding-deletion changes 8 files vs merge-base, path-absence 0, `git cherry`
+`+3` (`55f1b41` `291d901` `325ce44`). Control: `l6/safe` → cherry `+0`.
 
-Notable rows (full board still includes pure-history refs; these are the ones a successor
-must not misread):
+**Pitch withdrew "fourteen can be deleted" in the same breath as the bound that kills it**
+(`0` ≠ nothing to salvage). The bound and the deletion conclusion contradicted inside one
+message; the conclusion is what travels. **Nobody prunes on path-absence numbers. The only
+safe prune is one the ref's owner confirms** (Pitch #15549; Atlas owner-confirmed
+`atlas/binding-deletion` not prunable).
+
+**Instrument for "does main already contain this change":** `git cherry origin/main <ref>`
+(patch-id; a change that landed in modified form can still read applied — second look still
+required). Sable re-run at `origin/main=ce91d63` (counts of lines starting `+`):
+
+| cherry+ | branch |
+|---:|---|
+| 45 | `origin/ferry/r1-go-runbook` |
+| 16 | `origin/vane/launch-audit` |
+| 9 | `origin/vane/friction` |
+| 6 | `origin/ledger/epoch-binding-test` |
+| 5 | `origin/vane/site-audit` |
+| 3 | `origin/atlas/binding-deletion` · `origin/l6/verify-f1f2` · `origin/quill/p3-1-signals` |
+| 1 | `origin/quill/current-target-followup` · `origin/quill/current-target-prerebase` |
+| 0 | `origin/l6/safe` · `origin/quill/cli-first-errors` · `origin/quill/current-target` · `origin/quill/preauth-audit` · `origin/swarm/lead/p0-github-and-supabase-scaffold` · `origin/vane/launch-2-and-4` |
+
+**Ten refs hold unapplied commits; six read zero.** Not three and fourteen. Path-absence remains
+useful for *new-file sole copies* (ferry runbook, two vane audits) and is the wrong board for
+modifications. Re-run at your tip; numbers decay.
+
+Notable rows (successor must not misread these):
 
 | branch | what |
 |---|---|
-| `origin/vane/friction` | **APPLIED, not LANDED.** Content (`docs/friction/*.md`) on main since `265edb0` (cat-file resolves). Branch tip is **not** an ancestor of main. Unique-path count **0** at `810db36`. ~~LANDED on main~~ was content-grammar wearing a ref word — successor running `--is-ancestor` would falsely conclude the doc is wrong. |
-| `origin/vane/site-audit` | site command-string audit. **Sole file at `810db36`:** `docs/marketing/2026-07-25-command-copy-audit.md` (count 1). |
-| `origin/vane/launch-audit` | the §6 launch-bar audit, all five items re-run. **Sole file at `810db36`:** `docs/launch/2026-07-25-launchable-audit.md` (count 1). |
-| `origin/ledger/epoch-binding-test` | **APPLIED, not LANDED** (same shape as vane/friction). Content on main at `f6aab12` (`tests/protocol-agent-token-binding.test.ts` resolves). Branch tip **not** an ancestor of main. Unique-path count **0** at `810db36` — content is on main; the branch is redundant history, not a sole copy. Four-arm characterisation; header was later measurement-only. |
-| `origin/atlas/binding-deletion` | **TIP IS `325ce44` — check out the TIP, not a SHA quoted elsewhere in this file.** Unique-path count **0** (paths exist on main) — **not** a signal to prune; parked code at shared paths. Two earlier SHAs appear in the prose below as point-in-time records (doctrine 5) and **both carry defects fixed later on this branch**: `55f1b41` has the `exactKeys` omit-path bug (bare mint 400s at the wire) *and* accepts a caller `run_id` against the ruling; `291d901` fixes the first only. **Only `325ce44` has both.** **VARIANT 2 (optional, not deleted), rebuilt on `ccba540` — NOT the deletion diff this row previously described.** The delete implementation was discarded once Vane's hold landed: deletion is the irreversible move. Fields stay, default NULL, `binding_required` gone, projection throw dropped in the same commit (keeping it while defaulting to NULL leaves mint dead), **auth path untouched — control: an empty `git diff --stat` against `agent-auth.ts`** — and **no migration**. 67 protocol tests pass; 64 of the 66 pre-existing ones passed *unchanged*, which is the evidence for "forecloses nothing". **Edge half is esbuild-PARSED, NOT TYPECHECKED — see the gap above — and `test:p1-server` has never run against it. Treat the edge half as unproven.** Pushed to preserve it only: **this branch is the parked sequence and must not be landed on that basis.** |
-| `origin/ferry/r1-go-runbook` | the uxtest R1 go-runbook and the gate-5 diagnosis. **Three sole files at `810db36`** (see probe table). **Touches `uxtest/findings/` only and no commit on it deletes anything — both measured across every commit, so both stay true however far `main` moves.** Therefore **cherry-pick the files; never squash or `diff \| apply`.** That second half is *tip-relative and decays*: at 82 commits of drift a squash already replaced 31 paths, deleting four defence scripts and reverting the `private: true` publish guard — none of it in any commit on the branch, all of it the gap. **R1 has no round; it is gated on an operator ruling (*hand off as diagnosed*), not on a missing fix.** |
+| `origin/vane/friction` | **Content APPLIED, not LANDED** (`docs/friction/*.md` on main since `265edb0`). Branch tip is **not** an ancestor. Path-absence 0; `git cherry` still `+9` at `ce91d63` (history / other commits on the ref — do not equate content-applied with cherry-zero). ~~LANDED on main~~ was content-grammar wearing a ref word. |
+| `origin/vane/site-audit` | site command-string audit. Sole *new* file: `docs/marketing/2026-07-25-command-copy-audit.md`. `git cherry` `+5`. |
+| `origin/vane/launch-audit` | §6 launch-bar audit. Sole *new* file: `docs/launch/2026-07-25-launchable-audit.md`. `git cherry` `+16`. |
+| `origin/ledger/epoch-binding-test` | **Named test APPLIED, not LANDED** — content on main at `f6aab12` (`tests/protocol-agent-token-binding.test.ts` resolves; suite 66→70). Branch tip **not** an ancestor. Path-absence 0; `git cherry` `+6` (other commits on the ref). Four-arm characterisation; header was later measurement-only. |
+| `origin/atlas/binding-deletion` | **TIP IS `325ce44`.** **PUSHED yes / LANDED no / APPLIED no** (Atlas #15545, owner): `binding_required` still on main; three unapplied commits (`git cherry` `+3`). Path-absence 0 is *not* prunable — parked code at shared paths. Two earlier SHAs in prose below are point-in-time records (doctrine 5); **both carry defects fixed later on this branch**: `55f1b41` has the `exactKeys` omit-path bug *and* accepts a caller `run_id`; `291d901` fixes the first only. **Only `325ce44` has both.** **VARIANT 2 (optional, not deleted), rebuilt on `ccba540` — NOT the deletion diff.** Delete discarded once Vane's hold landed. Fields stay, default NULL, `binding_required` gone on the *branch*, projection throw dropped, **auth path untouched — control: empty `git diff --stat` against `agent-auth.ts`** — **no migration**. 67 protocol tests pass on the branch. **Edge half esbuild-PARSED, NOT TYPECHECKED; `test:p1-server` never run against it.** **Parked sequence — must not land on that basis; owner: do not prune.** |
+| `origin/ferry/r1-go-runbook` | uxtest R1 go-runbook + gate-5 diagnosis. Three sole *new* files under `uxtest/findings/`. **Touches `uxtest/findings/` only and no commit on it deletes anything** — both measured across every commit. **Cherry-pick the files; never squash or `diff \| apply`.** That second half is tip-relative and decays. **R1 has no round; gated on operator ruling (*hand off as diagnosed*), not a missing fix.** `git cherry` large (`+45` at `ce91d63`). |
 
 ## The last open measurement is OPERATOR-ONLY — no seat can run it
 
