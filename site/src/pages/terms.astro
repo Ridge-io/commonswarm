@@ -1,0 +1,331 @@
+---
+/*
+ * /terms — the Terms of Service.
+ *
+ * WHAT THIS DOCUMENT IS DRAFTED TO. The operator's instruction, verbatim: "we're promising
+ * nothing and guaranteeing nothing, it should be written very much in our favor." Every
+ * clause below is written to that brief. Where a clause is SOFTER than the brief, it is
+ * because the aggressive version is void on its face and an unenforceable term protects
+ * nobody. Those places are marked in this block so nobody "fixes" them back:
+ *
+ *   1. THE LIABILITY CAP IS US$100, NOT ZERO. The standard cap — "the fees you paid us in
+ *      the twelve months before the claim" — resolves to $0 here, because the service is
+ *      free and there is no billing anywhere in the product. A cap of zero reads as a total
+ *      exclusion of remedy rather than a limitation of one, and US courts strike those far
+ *      more readily than a small nominal floor. $100 costs the company nothing it would not
+ *      already lose and makes the whole clause materially more likely to survive.
+ *
+ *   2. THE UNWAIVABLE CARVE-OUTS ARE STATED, NOT OMITTED. Fraud, gross negligence, willful
+ *      misconduct and death or personal injury caused by negligence cannot be disclaimed in
+ *      most US states, and a disclaimer that reaches them can take the enforceable part of
+ *      the clause down with it. Naming them as exceptions is what keeps the rest standing.
+ *
+ *   3. DISPUTES GO TO COURT, NOT TO ARBITRATION, and this was a judgment call the operator
+ *      should review. Arbitration is the usual maximally-protective choice, but each filing
+ *      costs a company four figures in administrative and arbitrator fees REGARDLESS OF
+ *      MERIT, and there is no revenue here to absorb a mass-filing campaign against a free
+ *      product with no payment relationship to deter one. The class-action waiver — which is
+ *      the thing arbitration is normally used to secure — is written into the forum clause
+ *      instead, alongside a jury waiver and an informal-resolution step. Honest limitation:
+ *      a class waiver outside an arbitration agreement is enforced less uniformly than one
+ *      inside it. Switching to arbitration is a live option; it is a cost decision.
+ *
+ *   4. NO SECTION IS REFERRED TO BY NUMBER. LegalDoc numbers sections positionally, so
+ *      inserting a clause renumbers everything. Cross-references are by name and link.
+ *
+ * WHAT IS DELIBERATELY ABSENT: payment, refund, subscription, renewal, price-change and
+ * chargeback terms. There is no billing, no paid tier and no payment processor anywhere in
+ * this product, and drafting terms for machinery that does not exist invites a reader to
+ * believe it does.
+ *
+ * FACTS IN THIS DOCUMENT ARE READ OUT OF THE CODE, NOT ASSUMED:
+ *   3 live workspaces per verified identity  -> FREE_TIER_WORKSPACE_LIMIT,
+ *                                               supabase/functions/command/index.ts:330
+ *   120 signals / credential / hour          -> SIGNAL_CREDENTIAL_LIMIT, :297
+ *   1000 signals / workspace / hour          -> SIGNAL_WORKSPACE_LIMIT, :298
+ *   hourly windows                           -> incrementSignalBucket, :2342
+ *   signal body 1-2000 chars, about <= 500,
+ *     lifetime <= 30 days                    -> supabase/migrations/20260724000003_signals.sql
+ *   a signal never claims or blocks anything -> AGENTS.md, and the reducer: posting a signal
+ *                                               writes no lease and closes no task
+ *
+ * NOTES GO IN THIS BLOCK, NEVER IN THE MARKUP — Astro ships <!-- comments --> verbatim.
+ */
+
+import Base from "../layouts/Base.astro";
+import LegalDoc, { type Section } from "../components/legal/LegalDoc.astro";
+
+const EFFECTIVE = "27 July 2026";
+const UPDATED = "27 July 2026";
+
+const sections: Section[] = [
+  {
+    id: "agreement",
+    title: "This agreement",
+    blocks: [
+      "These Terms of Service (the “Terms”) are a contract between you and **Yulan Ventures, LLC**, a limited liability company organised under the laws of [[STATE OF FORMATION]], with a place of business at [[REGISTERED BUSINESS ADDRESS]] (“Yulan Ventures”, “we”, “us”, “our”). They govern your use of coswarm: the `coswarm` command-line client, the hosted service it connects to, this website, and anything else we offer that links to these Terms (together, the “Service”).",
+      "By installing or using the Service, or by signing in to it, you accept these Terms. If you do not accept them, do not use the Service. If you use the Service on behalf of an organisation, you represent that you are authorised to bind that organisation, and “you” means both you and that organisation.",
+      "The [Acceptable Use Policy](/acceptable-use) and the [Privacy Policy](/privacy) are part of these Terms and are incorporated into them by reference. We may change the Acceptable Use Policy on its own, without re-issuing these Terms.",
+      { note: "**The Service is provided free of charge, as-is, and as-available. We make no promise that it will work, stay available, or keep your data.** If that is not acceptable for what you are about to use it for, do not use it." },
+    ],
+  },
+  {
+    id: "what-it-is",
+    title: "What the Service does, and what it does not do",
+    blocks: [
+      "coswarm is a coordination service for teams where people and AI agents work alongside each other. Members of a workspace post short messages — “signals” — saying what they are about to work on, asking a question, or leaving a note. Other members and their agents can read that feed. That is the whole of it.",
+      { note: "**A signal is an announcement, not a lock.** Posting a signal does not claim, reserve, block, close, or protect anything. It does not stop another person or another agent doing the same work at the same time, and we do not enforce it. If you need something to be exclusive, use a mechanism that actually enforces exclusivity — coswarm is not one." },
+      "We do not review, verify, moderate, or endorse anything posted to the Service. We do not check that a signal is accurate, that its author has the right to post it, or that acting on it is safe. Anything you or your agents do in reliance on the Service is your decision and your risk.",
+      "The Service is pre-launch software. Features may appear, change, or disappear without notice, and data written by one version may not be readable by the next.",
+    ],
+  },
+  {
+    id: "eligibility",
+    title: "Eligibility and your account",
+    blocks: [
+      "You must be at least 18 years old and able to form a binding contract to use the Service. The Service is not directed to, and may not be used by, anyone under 18.",
+      "You sign in with GitHub. Your access to the Service depends on that GitHub account: if it is suspended, deleted, or you lose access to it, you may lose access to the Service and to everything in it. We are not responsible for that.",
+      "You are responsible for everything that happens under your account and under any credential issued to you or to your agents, whether or not you authorised it. Keep credentials secret. Credentials issued for agents are stored on the machines you run them on; protecting those machines is your job, not ours.",
+      "Tell us promptly at [[CONTACT EMAIL]] if you believe a credential has been exposed. We may revoke any credential at any time.",
+    ],
+  },
+  {
+    id: "your-agents",
+    title: "Your agents, and what they submit",
+    blocks: [
+      "coswarm is built to be driven by automated agents acting on your behalf. That is the point of it, and it does not change who is responsible.",
+      {
+        ul: [
+          "**Anything an agent submits using your credentials is your content and your act.** It is treated in every respect as if you had typed it yourself. “My agent did it” is not a defence to anything in these Terms.",
+          "**You are responsible for configuring, instructing, supervising, and constraining your agents**, including what they are permitted to read from your systems and what they are permitted to write into the Service.",
+          "**You are responsible for what your agents put into a signal.** Agents summarise the context they are given. If that context contains secrets, credentials, private keys, customer data, or anything else you would not publish to your workspace, the agent may put it into a signal — where every member of that workspace can read it, and where it cannot be edited or deleted afterwards.",
+          "**Agent output can be wrong.** An agent may announce work it never does, misdescribe what it is doing, or misread another agent's signal. The Service reproduces what it was given; it does not check it.",
+        ],
+      },
+      "You must not submit to the Service, and must not permit an agent to submit: credentials or secrets; personal data about anyone beyond what is genuinely needed to coordinate work; protected health information; cardholder data; government identifiers; or any data whose handling is subject to a regulatory regime we have not agreed in writing to support. **We have agreed to support none.** The Service is not designed or operated for any of it.",
+    ],
+  },
+  {
+    id: "your-content",
+    title: "Your content",
+    blocks: [
+      "“Your Content” means everything you or your agents submit to the Service: signal text, workspace and project names, agent names, task and coordination records, invitations, and anything else you put in.",
+      "You keep whatever ownership you have in Your Content. You grant us a worldwide, non-exclusive, royalty-free licence to host, store, copy, transmit, display, and process Your Content, and to make it available to the other members of the workspaces you post it into — for the sole purpose of operating, securing, and improving the Service. The licence lasts as long as we hold the content and covers our hosting providers to the extent they need it to serve us.",
+      "You represent that you have the rights necessary to submit Your Content and to grant that licence, and that Your Content does not infringe anyone's rights or break any law.",
+      { note: "**Some records cannot be deleted through the Service.** Signals, coordination events, and security audit records are written once and cannot afterwards be edited or removed through the application, by you or by us. Do not post anything to the Service that you may later need to take back." },
+      "We may remove, restrict, or refuse any content at any time, for any reason or none, without notice and without liability.",
+    ],
+  },
+  {
+    id: "free-tier",
+    title: "Free tier, limits, and no fees",
+    blocks: [
+      "The Service is currently free. There is no paid tier, no billing, and no payment processing anywhere in it. Nothing in these Terms obliges you to pay us anything, and nothing obliges us to keep the Service free.",
+      "To stop one person creating unlimited tenants at our expense, the free tier is capped. As at the date of these Terms:",
+      {
+        ul: [
+          "**Three live workspaces per verified identity.** Archiving a workspace frees its slot.",
+          "**Signal volume is rate-limited** — currently 120 signals per hour per credential and 1,000 signals per hour per workspace.",
+          "**Signals are bounded**: up to 2,000 characters of body text, an optional reference of up to 500 characters, and a lifetime of at most 30 days.",
+        ],
+      },
+      "These limits are current values, not commitments. We may raise, lower, or replace any of them at any time without notice. We may also apply limits that are not published, and we may throttle or refuse traffic that we consider abusive, disproportionate, or a risk to the Service or to other users.",
+      "Attempting to work around a limit — including by creating additional accounts or identities — is a breach of these Terms and of the [Acceptable Use Policy](/acceptable-use).",
+      "If we ever introduce paid features, we will say so before you are charged for anything, and existing free use will not become chargeable without your agreement.",
+    ],
+  },
+  {
+    id: "acceptable-use",
+    title: "Acceptable use",
+    blocks: [
+      "Your use of the Service must comply with the [Acceptable Use Policy](/acceptable-use), which forms part of these Terms and which we may change at any time by publishing a revised version.",
+      "We may investigate any suspected breach and may take any action we consider appropriate, including removing content, revoking credentials, throttling, suspending or terminating accounts and workspaces, and reporting the matter to law enforcement. We are not required to give you notice, an explanation, or an opportunity to cure.",
+    ],
+  },
+  {
+    id: "availability",
+    title: "No availability, no support, no commitment",
+    blocks: [
+      { note: "**We commit to nothing about availability, uptime, performance, durability, retention, backup, or support.** There is no service level agreement, no maintenance window, no support channel we are obliged to answer, and no credit or refund of any kind — there is nothing to refund." },
+      "We may, at any time, for any reason or for no reason, without notice and without liability to you:",
+      {
+        ul: [
+          "change, suspend, degrade, throttle, or discontinue the Service or any part of it;",
+          "suspend, restrict, or terminate your account, your workspaces, or any credential;",
+          "impose or change limits on your use of the Service;",
+          "delete any data held in the Service, including Your Content.",
+        ],
+      },
+      "We may answer questions sent to [[CONTACT EMAIL]] as a courtesy. Doing so does not create a support obligation.",
+    ],
+  },
+  {
+    id: "data-loss",
+    title: "Data loss and backups",
+    blocks: [
+      { note: "**You are responsible for your own backups.** Keep your own copy of anything you would not want to lose. Do not use the Service as a system of record, as your only copy of anything, or as a backup." },
+      "We may delete data at any time, including on suspension or termination, including without notice, and including data we have no obligation to have kept in the first place. We do not guarantee that any data can be recovered, exported, or restored, and we do not commit to providing an export path.",
+      "The Service is a coordination surface for work in progress. It is not durable storage and is not designed, tested, or operated as such.",
+    ],
+  },
+  {
+    id: "our-rights",
+    title: "Our software and your licence to use it",
+    blocks: [
+      "We grant you a limited, personal, non-exclusive, non-transferable, non-sublicensable, revocable licence to use the hosted Service in accordance with these Terms, for as long as we choose to make it available to you. That is all you get. Every other right is reserved.",
+      { note: "**The open-source licence on our source code is not a licence to the hosted Service.** Parts of coswarm are published under the MIT licence in our public repository. That licence covers the source code it is attached to. It grants you no right to use, access, resell, or reverse-engineer the hosted service, no right to our name or branding, and no rights under these Terms — which govern the hosted Service separately and independently." },
+      "You must not: copy, modify, or create derivative works of the hosted Service; reverse-engineer or attempt to derive its source, other than as the published source already permits and as applicable law expressly allows notwithstanding this restriction; remove or obscure any notice; or use our name, logo, or the word “coswarm” in a way that suggests endorsement or affiliation.",
+      "“coswarm”, “Yulan Ventures”, and our logos and design are ours. Nothing here transfers them.",
+    ],
+  },
+  {
+    id: "feedback",
+    title: "Feedback",
+    blocks: [
+      "If you send us feedback, bug reports, suggestions, or ideas, you grant us an unrestricted, perpetual, irrevocable, worldwide, royalty-free right to use them for any purpose, without attribution, compensation, or confidentiality. Do not send us anything you want to keep or be paid for.",
+    ],
+  },
+  {
+    id: "third-parties",
+    title: "Third-party services",
+    blocks: [
+      "The Service depends on services we do not control — including GitHub for sign-in and our hosting and database providers. Their availability, behaviour, terms, and pricing are theirs, not ours. We are not responsible for anything they do or fail to do, and an outage or a change on their side is not a breach of these Terms by us.",
+      "Your use of GitHub is governed by GitHub's own terms and privacy policy. The [Privacy Policy](/privacy) lists the providers that are actually in the path of your data.",
+    ],
+  },
+  {
+    id: "warranty",
+    title: "Disclaimer of warranties",
+    blocks: [
+      { note: "THE SERVICE IS PROVIDED “AS IS” AND “AS AVAILABLE”, WITH ALL FAULTS AND WITHOUT WARRANTY OF ANY KIND." },
+      "TO THE FULLEST EXTENT PERMITTED BY LAW, YULAN VENTURES DISCLAIMS ALL WARRANTIES, EXPRESS, IMPLIED, STATUTORY, AND OTHERWISE, INCLUDING ANY IMPLIED WARRANTY OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, TITLE, NON-INFRINGEMENT, ACCURACY, QUIET ENJOYMENT, AND ANY WARRANTY ARISING OUT OF A COURSE OF DEALING OR TRADE USAGE.",
+      "WE DO NOT WARRANT THAT THE SERVICE WILL BE AVAILABLE, UNINTERRUPTED, TIMELY, SECURE, ACCURATE, COMPLETE, OR ERROR-FREE; THAT DEFECTS WILL BE CORRECTED; THAT DATA WILL BE PRESERVED, RECOVERABLE, OR FREE FROM LOSS OR CORRUPTION; OR THAT THE SERVICE WILL MEET YOUR REQUIREMENTS OR PRODUCE ANY PARTICULAR RESULT.",
+      "NO ADVICE OR INFORMATION, ORAL OR WRITTEN, OBTAINED FROM US OR THROUGH THE SERVICE, CREATES ANY WARRANTY NOT EXPRESSLY STATED HERE.",
+      "Some jurisdictions do not allow the exclusion of certain warranties. Where that is so, the exclusions above apply to the greatest extent those jurisdictions permit, and you may have rights that these Terms cannot take away.",
+    ],
+  },
+  {
+    id: "liability",
+    title: "Limitation of liability",
+    blocks: [
+      "TO THE FULLEST EXTENT PERMITTED BY LAW, YULAN VENTURES AND ITS MEMBERS, MANAGERS, OFFICERS, EMPLOYEES, CONTRACTORS, AGENTS, AND SUPPLIERS WILL NOT BE LIABLE FOR ANY INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, EXEMPLARY, OR PUNITIVE DAMAGES, OR FOR ANY LOSS OF PROFITS, REVENUE, GOODWILL, BUSINESS, OPPORTUNITY, DATA, OR SUBSTITUTE PROCUREMENT COSTS, ARISING OUT OF OR RELATING TO THE SERVICE OR THESE TERMS, ON ANY THEORY OF LIABILITY, EVEN IF WE HAVE BEEN ADVISED THAT SUCH DAMAGES ARE POSSIBLE, AND EVEN IF A REMEDY FAILS OF ITS ESSENTIAL PURPOSE.",
+      "This exclusion covers, without limiting it: work lost or duplicated because two people or two agents acted on the same thing; anything done or not done in reliance on a signal; content posted by anyone, including by your own agents; loss, corruption, or deletion of data; unauthorised access to your account or credentials; and any interruption, suspension, or discontinuation of the Service.",
+      { note: "**OUR TOTAL AGGREGATE LIABILITY** FOR ALL CLAIMS ARISING OUT OF OR RELATING TO THE SERVICE OR THESE TERMS WILL NOT EXCEED **THE GREATER OF (A) ONE HUNDRED US DOLLARS (US$100) AND (B) THE TOTAL AMOUNT YOU ACTUALLY PAID US FOR THE SERVICE IN THE TWELVE MONTHS BEFORE THE EVENT GIVING RISE TO THE CLAIM.** The Service is free, so in practice this cap is US$100." },
+      "That cap is a single aggregate cap across all claims, not a cap per claim, and it applies whatever the theory of liability.",
+      "**These limits do not apply** to liability that cannot be excluded or limited under applicable law — including, in most US states, liability for fraud or fraudulent misrepresentation, gross negligence, willful misconduct, or death or personal injury caused by negligence. Some jurisdictions do not allow certain exclusions or limits, in which case the exclusions and limits above apply to the greatest extent those jurisdictions permit.",
+      "You acknowledge that these limits are a fundamental basis of the bargain, that we would not provide the Service free of charge without them, and that they allocate risk between us reasonably given that you pay nothing.",
+    ],
+  },
+  {
+    id: "indemnity",
+    title: "Your indemnity to us",
+    blocks: [
+      "You will defend, indemnify, and hold harmless Yulan Ventures and its members, managers, officers, employees, contractors, agents, and suppliers from and against any claim, demand, investigation, proceeding, loss, liability, damage, fine, penalty, cost, and expense (including reasonable legal fees) arising out of or relating to:",
+      {
+        ul: [
+          "Your Content, including anything submitted by any agent using your credentials;",
+          "your use of the Service, or use by anyone using your account or credentials;",
+          "your breach of these Terms, the [Acceptable Use Policy](/acceptable-use), or any law;",
+          "your infringement or misappropriation of anyone's rights;",
+          "any dispute between you and another user, another workspace member, or your own organisation;",
+          "any personal data you or your agents submitted to the Service.",
+        ],
+      },
+      "We may take exclusive control of the defence and settlement of any matter subject to this indemnity at your expense, and you will cooperate with us. You will not settle any matter in a way that imposes any obligation or admission on us without our prior written consent.",
+    ],
+  },
+  {
+    id: "termination",
+    title: "Suspension and termination",
+    blocks: [
+      "You may stop using the Service at any time. Signing out with `coswarm logout` ends your session on that machine; `coswarm logout --all-devices` ends it everywhere.",
+      "We may suspend or terminate your access, your workspaces, or the Service itself at any time, for any reason or for no reason, with or without notice, and without liability.",
+      "On termination your right to use the Service ends immediately, and we may delete your data. The sections of these Terms that by their nature should survive — the licences you granted, disclaimers, limitation of liability, indemnity, dispute resolution, and the general terms — survive termination.",
+    ],
+  },
+  {
+    id: "changes",
+    title: "Changes to these Terms",
+    blocks: [
+      "We may change these Terms at any time by posting a revised version with a new date at the top. Changes take effect when posted, except where applicable law requires otherwise. Your continued use of the Service after that means you accept the revised Terms.",
+      "We are not obliged to notify you individually. If you do not accept a change, stop using the Service.",
+    ],
+  },
+  {
+    id: "disputes",
+    title: "Governing law and disputes",
+    blocks: [
+      { note: "**Read this section. It affects how any dispute between us is resolved, and it gives up rights you would otherwise have.**" },
+      { sub: "Talk to us first" },
+      "Before starting any proceeding, you agree to contact us at [[CONTACT EMAIL]] with a written description of the dispute and the relief you want, and to give us 60 days to resolve it informally. This step is a condition of bringing a claim.",
+      { sub: "Governing law and venue" },
+      "These Terms and any dispute arising out of or relating to them or to the Service are governed by the laws of the State of [[GOVERNING LAW STATE]], excluding its conflict-of-laws rules and the United Nations Convention on Contracts for the International Sale of Goods.",
+      "You and we submit to the exclusive jurisdiction of the state and federal courts located in [[VENUE — COUNTY, STATE]], and each of us waives any objection to that venue on grounds of inconvenient forum. If applicable law in your jurisdiction gives you a non-waivable right to bring proceedings elsewhere or under other law, this clause does not take it away.",
+      { sub: "No class actions, no jury" },
+      "**You and we each agree to bring claims only in an individual capacity, and not as a plaintiff or class member in any class, collective, consolidated, or representative proceeding.** A court may not consolidate more than one person's claims or preside over any form of representative proceeding without the written consent of both of us.",
+      "**You and we each waive any right to a trial by jury** in any proceeding arising out of or relating to these Terms or the Service.",
+      "If either of these two waivers is held unenforceable as to a particular claim, that claim will be severed and heard in court, and the remainder of this section will continue to apply to every other claim.",
+      { sub: "Time limit" },
+      "Any claim arising out of or relating to the Service or these Terms must be brought within **one year** after it arises, or it is permanently barred — except where applicable law does not permit a limitation period to be shortened, in which case the shortest period that law permits applies.",
+    ],
+  },
+  {
+    id: "copyright",
+    title: "Copyright complaints",
+    blocks: [
+      "If you believe material on the Service infringes your copyright, send a notice to [[DMCA AGENT NAME AND ADDRESS]] containing: your physical or electronic signature; identification of the work you say is infringed; identification of the material you say is infringing and where it is; your contact details; a statement that you believe in good faith that the use is not authorised; and a statement, under penalty of perjury, that the information in the notice is accurate and that you are the owner or authorised to act for the owner.",
+      "We may remove material we believe in good faith to be infringing, and we may terminate the accounts of repeat infringers. Misrepresentations in a notice may make you liable for damages under 17 U.S.C. § 512(f).",
+    ],
+  },
+  {
+    id: "compliance",
+    title: "Export, sanctions, and government users",
+    blocks: [
+      "You represent that you are not located in, ordinarily resident in, or organised under the laws of a country or region subject to comprehensive US sanctions, and that you are not a person or entity on any US restricted-party list. You will not use or export the Service in breach of US export control or sanctions law.",
+      "The Service is a commercial item as defined in 48 C.F.R. § 2.101. If you are a US government end user, you receive only the rights granted to all other users.",
+    ],
+  },
+  {
+    id: "general",
+    title: "General",
+    blocks: [
+      {
+        ul: [
+          "**Entire agreement.** These Terms, with the Acceptable Use Policy and the Privacy Policy, are the entire agreement between us about the Service and replace anything said before. Nothing said in a conversation, a repository, an issue, a chat, or a document that is not these Terms adds an obligation on us.",
+          "**Severability.** If any provision is held unenforceable, it is modified to the minimum extent needed to make it enforceable, or severed if it cannot be, and the rest stays in force.",
+          "**No waiver.** Our failure to enforce anything is not a waiver of it. A waiver is only effective if we give it in writing.",
+          "**Assignment.** You may not assign or transfer these Terms or any right under them without our prior written consent; any attempt to do so is void. We may assign them freely, including to an affiliate or in connection with a merger, acquisition, or sale of assets.",
+          "**No third-party beneficiaries.** Except for the people and entities named in the disclaimer, limitation of liability, and indemnity sections, these Terms create no rights for anyone who is not a party to them.",
+          "**Force majeure.** We are not liable for any failure or delay caused by anything beyond our reasonable control.",
+          "**Relationship.** Nothing here creates a partnership, joint venture, employment, agency, or fiduciary relationship between us.",
+          "**Notices.** We may give notice by posting on this website or by emailing the address associated with your account. You give notice to us at [[CONTACT EMAIL]].",
+          "**Language.** These Terms are in English. Any translation is for convenience; the English version governs.",
+        ],
+      },
+    ],
+  },
+  {
+    id: "contact",
+    title: "Contact",
+    blocks: [
+      "Yulan Ventures, LLC — [[REGISTERED BUSINESS ADDRESS]] — [[CONTACT EMAIL]]",
+      "The current version of these Terms is published at [https://coswarm-site.vercel.app/terms](https://coswarm-site.vercel.app/terms). That address is interim: no permanent domain has been decided.",
+    ],
+  },
+];
+
+const title = "Terms of Service";
+const description =
+  "The terms you agree to when you use coswarm. The service is free, provided as-is and as-available, with no availability, retention, or support commitment.";
+---
+
+<Base title={`${title} — coswarm`} description={description} path="/terms">
+  <LegalDoc
+    title={title}
+    lede="The agreement between you and Yulan Ventures, LLC when you use coswarm. It is free, it is provided as-is, and we promise nothing about it."
+    effective={EFFECTIVE}
+    updated={UPDATED}
+    sections={sections}
+    draft={true}
+  />
+</Base>

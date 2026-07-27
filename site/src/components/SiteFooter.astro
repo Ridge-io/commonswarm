@@ -104,6 +104,29 @@ const COLUMNS = [
       { href: `${REPO}/blob/main/LICENSE`, label: "MIT license", external: true },
     ],
   },
+  /* Legal. Added when the three documents landed, EXTENDING this list rather than forking
+   * it — the note at the top of this file records what forking the footer cost last time.
+   *
+   * A third column and not a row of small print in .ft__bar: the bottom bar is already a
+   * status sentence plus the copyright line, and three more links there would push the
+   * legal line to a second row at every width below ~72rem. It also puts these where a
+   * reader looks for them, which is a footer column headed "Legal".
+   *
+   * These are real routes — site/src/pages/terms.astro, privacy.astro and
+   * acceptable-use.astro — not hashes, so they resolve from all seven routes. Every one of
+   * them renders a draft banner today; they are written and they are not yet in force.
+   *
+   * The "MIT license" link one column left is about the SOURCE CODE. /terms governs the
+   * HOSTED SERVICE, and says so out loud in its "Our software and your licence to use it"
+   * section, because a reader who finds MIT first will otherwise assume it covers both. */
+  {
+    title: "Legal",
+    links: [
+      { href: "/terms", label: "Terms of Service" },
+      { href: "/privacy", label: "Privacy" },
+      { href: "/acceptable-use", label: "Acceptable use" },
+    ],
+  },
 ];
 
 /* Built at build time. The site is static, so this is the year of the last deploy — which is

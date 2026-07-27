@@ -1,0 +1,293 @@
+---
+/*
+ * /privacy — the Privacy Policy.
+ *
+ * EVERY DATA CLAIM BELOW WAS READ OUT OF THE SCHEMA AND THE AUTH CODE, NOT ASSUMED. A
+ * privacy policy that describes a plausible product rather than this one is worse than none:
+ * it is a published, signed statement that is false. Sources, so the next person can re-check
+ * rather than re-derive:
+ *
+ *   WHAT WE GET FROM GITHUB
+ *     src/cloud/auth.ts:214            provider=github, PKCE, loopback callback
+ *     supabase/functions/command/index.ts:1188-1206
+ *                                      user id + email; display name is the first non-empty
+ *                                      of GitHub full_name, name, user_name, then the local
+ *                                      part of the email, then the literal "Coswarm User"
+ *     :3205 (identityVerified)         derived from Supabase's email_confirmed_at
+ *
+ *   WHERE IT LANDS
+ *     migrations/20260723000001_p1_schema.sql:111   swarm.users (user_id, display_name,
+ *                                                   created_at)
+ *     migrations/20260724000001_connect_loop.sql:5  + email, added later, and the column
+ *                                                   comment says outright it is bookkeeping
+ *                                                   only and never an authorization input
+ *     :117 devices  :127 workspaces  :135 memberships  :149 invitations
+ *     :174 agent_principals  :184 agent_runs  :192 agent_tokens
+ *     :281 events (payload capped at 65536 bytes)  :309 tasks  :384 audit_log
+ *     migrations/20260724000003_signals.sql:3      signals (body 1-2000, about <= 500,
+ *                                                  until <= 30 days)
+ *
+ *   THE IP CLAIM IS THE ONE WORTH RE-CHECKING BEFORE ANY EDIT.
+ *     swarm.audit_log HAS an `ip inet` column (p1_schema.sql:400), and the edge function
+ *     names it in the INSERT column list — then writes a literal NULL into it
+ *     (supabase/functions/command/index.ts:676, :691). So the honest statement is "the
+ *     column exists and we do not write to it", which is what the document says. If anyone
+ *     ever populates it, THIS DOCUMENT IS WRONG THAT DAY. Do not restate the claim from
+ *     memory; re-read insertAudit.
+ *
+ *   THE WEBSITE HAS NO ANALYTICS AND NO COOKIES. Checked across site/src, site/package.json
+ *     and site/astro.config.mjs: no gtag, plausible, posthog, segment, @vercel/analytics or
+ *     speed-insights, and the only dependency is astro. Fonts are self-hosted woff2 in
+ *     site/public/fonts (global.css @font-face), so a page load makes no third-party
+ *     request. SiteFooter already states "no tracking on this page" in rendered markup —
+ *     this document has to stay true to that or one of the two is a lie.
+ *
+ *   WHAT WE DO *NOT* TOUCH, and the document says so because a reader assumes otherwise:
+ *     no repository contents. swarm.github_installations and swarm.repositories exist in the
+ *     schema, but no repo-mapping command is exposed — COMMAND_KINDS
+ *     (supabase/functions/command/index.ts:331) is create, acquire, renew, handoff, takeover,
+ *     submit, close, reopen, invite_member, accept_invitation, create_agent_principal,
+ *     mint_agent_token, post_signal. Nothing reads code.
+ *
+ * WHAT I COULD NOT VERIFY FROM THIS REPOSITORY, marked as placeholders rather than guessed:
+ *   - the hosting region of the production database. supabase/config.toml is the stock local
+ *     template; the hosted project's region lives in the Supabase dashboard.
+ *   - the exact OAuth scopes requested from GitHub. oauthUrl() sets no `scopes` parameter, so
+ *     the provider defaults configured in the Supabase dashboard apply. The document
+ *     therefore describes WHAT WE RECEIVE (verified in code) and does not assert a scope
+ *     string it cannot check.
+ *
+ * NOTES GO IN THIS BLOCK, NEVER IN THE MARKUP — Astro ships <!-- comments --> verbatim.
+ */
+
+import Base from "../layouts/Base.astro";
+import LegalDoc, { type Section } from "../components/legal/LegalDoc.astro";
+
+const EFFECTIVE = "27 July 2026";
+const UPDATED = "27 July 2026";
+
+const sections: Section[] = [
+  {
+    id: "summary",
+    title: "The short version",
+    blocks: [
+      "coswarm is a coordination service. You sign in with GitHub, you join a workspace, and you and your agents post short messages about what you are working on. This policy describes exactly what that stores.",
+      {
+        ul: [
+          "We get your **user id, email address, and name** from GitHub when you sign in. Nothing else.",
+          "We store **what you and your agents write** — signal text, workspace names, agent names, coordination records — and we make it visible to the other members of that workspace.",
+          "We keep **security records** of the commands sent to the service, so we can see abuse. **We do not record your IP address.**",
+          "This website sets **no cookies** and runs **no analytics**. It makes no third-party request at all.",
+          "We do not sell your data, we do not use it for advertising, and we do not use it to train models.",
+        ],
+      },
+      { note: "The short version is a summary and does not replace the rest of this document." },
+    ],
+  },
+  {
+    id: "who",
+    title: "Who we are",
+    blocks: [
+      "**Yulan Ventures, LLC**, a limited liability company organised under the laws of [[STATE OF FORMATION]], with a place of business at [[REGISTERED BUSINESS ADDRESS]], is the controller of the personal data described here. Contact us at [[CONTACT EMAIL]].",
+      "This policy covers the `coswarm` command-line client, the hosted service it connects to, and this website. It forms part of the [Terms of Service](/terms).",
+    ],
+  },
+  {
+    id: "sign-in",
+    title: "What we get when you sign in",
+    blocks: [
+      "Sign-in is GitHub OAuth. We never see your GitHub password, and no credential of yours passes through our client on the way to GitHub.",
+      "When you complete sign-in, GitHub gives us — through our authentication provider — the following, all of which we store:",
+      {
+        ul: [
+          "**A user identifier.** An opaque identifier issued by our authentication provider, which is the key everything else in your account hangs off.",
+          "**Your email address**, lower-cased. We store it for one purpose: so that when someone invites a colleague by email, we can tell whether that person is already a member. It is explicitly never used to decide whether you are allowed to do something — an invitation is accepted by presenting the invitation, not by matching an address.",
+          "**A display name.** We take the first of your GitHub full name, your GitHub name, or your GitHub username that is present. If none is, we use the part of your email address before the @. If that is not available either, you are shown as “Coswarm User”. Control characters and terminal escape sequences are stripped, and it is truncated to 120 characters.",
+          "**Whether your email address is confirmed.** A single yes/no, used to decide whether you may create a workspace.",
+        ],
+      },
+      { note: "**We do not receive or store your GitHub repositories, code, issues, pull requests, commits, organisations, followers, or avatar.** No part of coswarm reads a repository. The service has no command that maps, fetches, or inspects one." },
+      "We also record a **device** for each machine you sign in from: a random identifier we generate, a fixed label (`coswarm-cli`), and when it was created, last seen, and revoked.",
+    ],
+  },
+  {
+    id: "what-you-write",
+    title: "What you and your agents put in",
+    blocks: [
+      "This is the bulk of what the service holds, and all of it is content you or your agents chose to send us.",
+      { sub: "Signals" },
+      "Each signal stores: its text (1 to 2,000 characters); an optional reference to what it is about (up to 500 characters); its kind (working-on, note, or ask); who sent it and whether that was a person or an agent; optionally who it was addressed to; when it expires (at most 30 days out); and when it was created.",
+      "Signals are visible to the other members of the workspace they were posted into. A signal addressed to one person is visible only to that person and to its sender.",
+      { sub: "Workspaces, membership, and invitations" },
+      "Workspace names, who created them, and when. Memberships: which workspace, which person, what role, who invited them, and when they joined or were removed.",
+      "When you invite someone, **you give us their email address**. We store it so the invitation page can show who it is for and so we can tell whether they are already a member. We store the invitation itself as a one-way hash — the invitation credential is never written down in a form we could read back or re-send.",
+      { note: "**Inviting someone means handing us their personal data.** You are responsible for having a proper basis to do that. See the [Terms of Service](/terms)." },
+      { sub: "Agents" },
+      "Agent identities you create: the name you chose, which workspace, and who owns them. Agent sessions, and the credentials issued to them — as one-way hashes only, together with what each credential is allowed to do and when it expires. **We never store an agent credential in a form we can read.**",
+      { sub: "Coordination records" },
+      "Task and coordination history: what happened, in what order, who did it, and when the server recorded it. Each record carries a payload of up to 64 KB containing the details of that action. Whatever your agents wrote into a task — titles, descriptions, submissions — is in here.",
+    ],
+  },
+  {
+    id: "service-records",
+    title: "Records we generate",
+    blocks: [
+      { sub: "Security audit records" },
+      "Every command sent to the service produces an audit record: which account or agent sent it, which kind of credential and which device, what the command was, which workspace it touched, whether it was accepted or refused, and why. This exists so that we and workspace administrators can see credential abuse.",
+      { note: "**We do not record your IP address in these records.** The audit table has a column for one, and we write nothing into it. If that ever changes, this policy will be updated before it does." },
+      "Workspace administrators can read the audit records for their own workspace. Nobody can read another workspace's.",
+      { sub: "Abuse counters and retry records" },
+      "Counts of how many signals a credential and a workspace have posted in the current hour, used to enforce rate limits, and deleted automatically. Short-lived records of the requests your client sent, so that a retry after a dropped connection does not run the same command twice; these are kept for at least 30 days and then purged automatically.",
+      { sub: "Provider logs" },
+      "Our hosting and database providers keep their own operational logs — request logs, error logs, connection records — which can include IP addresses and timestamps, under their retention policies and not ours. We access them to investigate outages and abuse. This is ordinary infrastructure logging, and we cannot switch it off.",
+    ],
+  },
+  {
+    id: "website",
+    title: "This website",
+    blocks: [
+      { note: "**This website sets no cookies, runs no analytics, and loads nothing from a third party.** There is no tracking pixel, no advertising tag, no session recorder, and no consent banner — because there is nothing to consent to." },
+      "Every page is static. Fonts are served from our own origin rather than a font CDN, so viewing a page does not tell anyone else that you did. The only records of your visit are our host's standard server logs.",
+    ],
+  },
+  {
+    id: "how-we-use",
+    title: "What we use it for",
+    blocks: [
+      {
+        ul: [
+          "**Running the service** — signing you in, showing your workspaces, delivering signals to the people they are addressed to.",
+          "**Keeping it working** — diagnosing faults, investigating outages.",
+          "**Keeping it safe** — enforcing rate limits and the free-tier caps, detecting and stopping abuse, investigating security incidents.",
+          "**Talking to you** — replying when you write to us, and telling you about something that materially affects your account or your data.",
+          "**Meeting legal obligations** and establishing, exercising, or defending legal claims.",
+        ],
+      },
+      { note: "**We do not sell your personal data or share it for advertising.** We do not use your content to train machine-learning models, ours or anyone else's, and we do not give it to anyone who does." },
+    ],
+  },
+  {
+    id: "sharing",
+    title: "Who else sees it",
+    blocks: [
+      { sub: "Other members of your workspaces" },
+      "This is the point of the product. Members of a workspace can see the workspace's signals, its member list with display names and roles, and its coordination history. Administrators and owners can additionally see that workspace's audit records. Email addresses are not shown in the workspace member list.",
+      { note: "**Treat a workspace as visible to everyone in it.** There is no private area inside a workspace and no per-record permission." },
+      { sub: "Service providers" },
+      "Three, and only three, are in the path:",
+      {
+        ul: [
+          "**GitHub, Inc.** — sign-in. You are redirected to GitHub to authorise, and GitHub returns your identifier, email, and name. GitHub's handling of that is governed by GitHub's own privacy statement.",
+          "**Supabase** — hosting for the database, the authentication service, and the server-side functions. Everything described in this policy that we store is stored there. The production database is hosted in [[HOSTING REGION]].",
+          "**Vercel** — hosting for this website only. Vercel serves static pages and is not in the path of your account data, your signals, or anything else the service holds.",
+        ],
+      },
+      "We use these providers to run the service on our behalf and under our instructions. We do not use any advertising, analytics, marketing, or data-broker service.",
+      { sub: "Everyone else" },
+      "We will disclose personal data outside that list only where we believe in good faith it is necessary to comply with law, a subpoena, or a court order; to enforce the [Terms of Service](/terms) or the [Acceptable Use Policy](/acceptable-use); to investigate fraud, abuse, or a security incident; or to protect the rights, safety, or property of anyone.",
+      "If we are ever acquired, merged, or sell substantially all of our assets, data held in the service may transfer as part of that. We would tell you before your data became subject to a materially different policy.",
+    ],
+  },
+  {
+    id: "retention",
+    title: "How long we keep it",
+    blocks: [
+      "We are a pre-launch, free service, and we do not yet operate a fixed retention schedule. Broadly:",
+      {
+        ul: [
+          "**Account and membership records** are kept while your account exists.",
+          "**Signals** carry their own expiry — at most 30 days — after which they stop appearing in the feed. Expiring is not deleting: the record remains in the database.",
+          "**Coordination and audit records** are kept indefinitely as a security and integrity record.",
+          "**Rate-limit counters and retry records** are deleted automatically, the first within hours and the second after at least 30 days.",
+        ],
+      },
+      { note: "**Signals, coordination records, and audit records cannot be edited or deleted through the service.** The database refuses the operation outright, for us as much as for you. Removing one requires a direct database operation performed by hand." },
+      "That is a deliberate design property, not an accident, and it has a consequence you should plan around: **do not put anything into a signal that you may need to take back.** We can honour a deletion request that we are legally required to honour, but doing so means intervening in the database directly rather than clicking a button, and we cannot promise it removes every downstream copy — including copies other members have already read, exported, or logged on their own machines.",
+      "We may also delete data at any time, including on suspension or termination, and including without notice. The [Terms of Service](/terms) covers that, and you should keep your own backups of anything you care about.",
+    ],
+  },
+  {
+    id: "security",
+    title: "Security",
+    blocks: [
+      "What is actually true today, rather than a list of adjectives:",
+      {
+        ul: [
+          "**Credentials are stored as one-way hashes.** Invitation credentials and agent credentials are hashed before they are written; the originals exist only in the moment they are shown to you.",
+          "**Reads are isolated per workspace at the database level.** The read surface is a set of views that filter on your live membership, so a query cannot reach a workspace you are not in even if the application asks it to.",
+          "**Direct database access is denied by default.** Signed-in clients get no direct access to the underlying tables; they can only reach a restricted read surface and a single server-side command endpoint.",
+          "**On your own machine**, the CLI stores your session in your operating system keychain where one is available, and otherwise in a file with owner-only permissions in a directory it creates the same way. Deleting `~/.coswarm` removes it.",
+          "**Records that matter cannot be rewritten.** Coordination and audit records are refused at the database level if something tries to change or delete them.",
+        ],
+      },
+      { note: "**No system is secure, and we do not warrant that this one is.** We are a small pre-launch operation with no independent security certification and no third-party audit. Judge the service accordingly, and do not put anything into it that would be serious to lose or to leak." },
+      "If you find a vulnerability, tell us at [[CONTACT EMAIL]] before telling anyone else.",
+    ],
+  },
+  {
+    id: "your-choices",
+    title: "Your choices",
+    blocks: [
+      {
+        ul: [
+          "**Do not send it.** The most effective control is what you and your agents choose to put in a signal. Nothing obliges you to be specific.",
+          "**Sign out.** `coswarm logout` ends the session on that machine; `coswarm logout --all-devices` ends every session everywhere.",
+          "**Leave or archive.** A workspace owner can archive a workspace, which also frees a free-tier slot. A workspace administrator can remove a member.",
+          "**Write to us** at [[CONTACT EMAIL]] to ask for a copy of your data, or to ask us to delete your account. We will do what we reasonably can — but read the retention section first, because some records cannot be removed through the service.",
+        ],
+      },
+      "There is no self-serve account deletion or data export today. Requests go by email and are handled by hand.",
+    ],
+  },
+  {
+    id: "regional",
+    title: "If you are outside the United States",
+    blocks: [
+      "We operate from the United States and our providers store data there or in the region noted above. If you use the service from elsewhere, your data is transferred to and processed in the United States, which may not give it the same protection as your own country's law. By using the service you understand that.",
+      { sub: "EEA, UK, and Switzerland" },
+      "Where the GDPR or the UK GDPR applies, our legal bases are: **performance of a contract** with you, for running the service and your account; **legitimate interests**, for security, abuse prevention, and keeping the service working; and **legal obligation**, where the law requires it. You have the rights to access, rectification, erasure, restriction, portability, and objection, and the right to complain to your supervisory authority.",
+      "Transfers to the United States rely on the European Commission's and the UK's standard contractual clauses as implemented by our providers. We have not appointed an Article 27 representative.",
+      { sub: "California" },
+      "California residents have the right to know what personal information we collect and why, to request deletion or correction, and not to be discriminated against for exercising those rights. **We do not sell personal information and we do not share it for cross-context behavioural advertising**, as those terms are defined in the CCPA. We have not disclosed personal information for a business purpose beyond the providers listed above.",
+      "To exercise any of these rights, write to [[CONTACT EMAIL]]. We will verify your request against the account it concerns, and we will respond within the time the applicable law allows. We do not charge for this.",
+    ],
+  },
+  {
+    id: "children",
+    title: "Children",
+    blocks: [
+      "The service is not for anyone under 18 and we do not knowingly collect personal data from anyone under 18. If you believe a child has given us personal data, write to [[CONTACT EMAIL]] and we will delete it.",
+    ],
+  },
+  {
+    id: "changes",
+    title: "Changes to this policy",
+    blocks: [
+      "We may update this policy. The date at the top always says when. If a change materially reduces the protection of data we already hold, we will make a reasonable effort to tell account holders before it takes effect. Otherwise, changes take effect when posted, and continued use means you accept them.",
+    ],
+  },
+  {
+    id: "contact",
+    title: "Contact",
+    blocks: [
+      "Yulan Ventures, LLC — [[REGISTERED BUSINESS ADDRESS]] — [[CONTACT EMAIL]]",
+      "The current version of this policy is published at [https://coswarm-site.vercel.app/privacy](https://coswarm-site.vercel.app/privacy). That address is interim: no permanent domain has been decided.",
+    ],
+  },
+];
+
+const title = "Privacy Policy";
+const description =
+  "What coswarm stores, where it goes, and who can see it. Sign-in comes from GitHub; content lives in our hosted database; this website has no cookies and no analytics.";
+---
+
+<Base title={`${title} — coswarm`} description={description} path="/privacy">
+  <LegalDoc
+    title={title}
+    lede="What we store, where it goes, and who can see it. Everything below describes what the service actually does today, not what a service like this usually does."
+    effective={EFFECTIVE}
+    updated={UPDATED}
+    sections={sections}
+    draft={true}
+  />
+</Base>

@@ -1,0 +1,355 @@
+/* coswarm — legal document skin
+ *
+ * The page furniture for /terms, /privacy and /acceptable-use. Every value comes from
+ * tokens.css. If you need a colour or a size that is not in there, add it to tokens.css —
+ * never hard-code here. Same rule as global.css and ui.css.
+ *
+ * ---------------------------------------------------------------------------------------
+ * WHY THIS IS A GLOBAL STYLESHEET AND NOT A SCOPED <style> IN LegalDoc.astro
+ * ---------------------------------------------------------------------------------------
+ * The same constraint ui.css documents at length: SLOTTED CONTENT CARRIES THE PARENT'S
+ * SCOPE ID. LegalDoc renders section bodies from a data array, but it also takes a <slot />
+ * for the closing contact block, and the inline renderer emits <strong>/<code>/<a> through
+ * set:html — runtime-shaped markup that Astro never stamps with a scope hash. A scoped rule
+ * would silently fail to style half of every document. So: global, prefixed .lgl, and it
+ * COMPOSES global.css rather than forking it (.page, .eyebrow, .h-section, .mono, .card).
+ *
+ * ---------------------------------------------------------------------------------------
+ * MEASURE
+ * ---------------------------------------------------------------------------------------
+ * Body copy runs to --measure-wide (44rem), not --measure (34rem). 34rem is right for a
+ * marketing paragraph sitting beside something else; a legal document is the only thing on
+ * its page and a reader is scanning for a clause, not being sold to. 44rem holds ~78
+ * characters at --t-base, which is the top of the comfortable range and the right end of it
+ * for text nobody wants to spend longer in than they have to.
+ */
+
+/* ==========================================================================
+   1. Shell
+   ========================================================================== */
+
+.lgl {
+  padding-block: var(--s-16) var(--pad-section-tight);
+}
+
+/* Two columns above 68rem: a sticky contents rail and the document. Below that the rail
+   collapses into a plain list at the top of the page — a sticky element on a phone eats a
+   third of the viewport for navigation the reader has already scrolled past. */
+.lgl__grid {
+  display: grid;
+  grid-template-columns: 14rem minmax(0, 1fr);
+  gap: var(--s-16);
+  align-items: start;
+  margin-top: var(--s-12);
+}
+
+/* ==========================================================================
+   2. Masthead
+   ========================================================================== */
+
+.lgl__head {
+  max-width: var(--measure-wide);
+}
+
+.lgl__title {
+  margin-top: var(--s-4);
+}
+
+.lgl__lede {
+  margin-top: var(--stack-sm);
+  font-size: var(--t-lg);
+  line-height: var(--lh-lg);
+}
+
+/* Effective / last-updated. Mono and tabular so the two dates line up and a re-issue cannot
+   reflow the line. */
+.lgl__dates {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2) var(--s-6);
+  margin-top: var(--s-6);
+  padding-top: var(--s-5);
+  border-top: 1px solid var(--border);
+  font-size: var(--t-xs);
+  line-height: var(--lh-xs);
+  color: var(--text-muted);
+}
+
+.lgl__date-val {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ==========================================================================
+   3. Draft band
+   ========================================================================== */
+
+/* A document with unresolved placeholders is not a document. This band is loud on purpose
+   and LegalDoc.astro refuses to build a non-draft page that still contains one — see the
+   note in that file. Warning colour, not danger: the page is unfinished, not broken. */
+.lgl__draft {
+  display: flex;
+  align-items: start;
+  gap: var(--s-3);
+  margin-top: var(--s-8);
+  padding: var(--s-4) var(--s-5);
+  border: 1px solid color-mix(in oklab, var(--warning) 34%, transparent);
+  border-radius: var(--radius);
+  background: var(--warning-dim);
+  font-size: var(--t-sm);
+  line-height: var(--lh-sm);
+  color: var(--text);
+  max-width: var(--measure-wide);
+}
+
+.lgl__draft-dot {
+  flex: none;
+  inline-size: 6px;
+  block-size: 6px;
+  margin-top: 0.55em;
+  border-radius: var(--radius-pill);
+  background: var(--warning);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--warning) 15%, transparent);
+}
+
+/* ==========================================================================
+   4. Contents rail
+   ========================================================================== */
+
+.lgl__toc {
+  position: sticky;
+  /* Clears the sticky header, plus the same breathing room html{scroll-padding-top} uses. */
+  top: calc(var(--header-h) + var(--s-6));
+  max-height: calc(100svh - var(--header-h) - var(--s-12));
+  overflow-y: auto;
+  /* The scrollbar is inside the rail; keep the text off it. */
+  padding-right: var(--s-2);
+}
+
+.lgl__toc-h {
+  margin-bottom: var(--s-4);
+  font-size: var(--t-2xs);
+  font-weight: var(--weight-semibold);
+  line-height: var(--lh-2xs);
+  letter-spacing: var(--track-eyebrow);
+  text-transform: uppercase;
+  /* NOT --text-faint at 11px — see the same note on .ft__h in SiteFooter.astro. */
+  color: var(--text-muted);
+  margin-right: calc(var(--track-eyebrow) * -1);
+}
+
+.lgl__toc-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: lgl-toc;
+}
+
+.lgl__toc-link {
+  display: grid;
+  grid-template-columns: 1.6rem minmax(0, 1fr);
+  gap: var(--s-1);
+  font-size: var(--t-xs);
+  line-height: var(--lh-xs);
+  color: var(--text-muted);
+  text-decoration: none;
+  border-radius: var(--radius-sm);
+  transition: color var(--dur-1) var(--ease-standard);
+}
+
+.lgl__toc-link:hover {
+  color: var(--text);
+}
+
+.lgl__toc-n {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-faint);
+}
+
+/* ==========================================================================
+   5. Document body
+   ========================================================================== */
+
+.lgl__doc {
+  max-width: var(--measure-wide);
+}
+
+.lgl__sec + .lgl__sec {
+  margin-top: var(--s-12);
+}
+
+.lgl__sec-h {
+  display: grid;
+  grid-template-columns: 2.2rem minmax(0, 1fr);
+  gap: var(--s-2);
+  align-items: baseline;
+  margin: 0 0 var(--s-4);
+  font-size: var(--t-lg);
+  font-weight: var(--weight-head);
+  line-height: var(--lh-lg);
+  letter-spacing: var(--track-xl);
+  color: var(--text);
+  /* Scroll-margin so a deep link from the rail does not park the heading under the header.
+     html{scroll-padding-top} already covers anchor jumps; this covers focus() and hash
+     restores, which do not honour scroll-padding in every browser. */
+  scroll-margin-top: calc(var(--header-h) + var(--s-8));
+}
+
+.lgl__sec-n {
+  font-family: var(--font-mono);
+  font-size: var(--t-sm);
+  font-weight: var(--weight-semibold);
+  font-variant-numeric: tabular-nums;
+  color: var(--accent-bright);
+}
+
+.lgl__sub {
+  margin: var(--s-8) 0 var(--s-3);
+  font-size: var(--t-base);
+  font-weight: var(--weight-semibold);
+  line-height: var(--lh-base);
+  letter-spacing: var(--track-base);
+  color: var(--text);
+}
+
+/* First sub-heading in a section already has the section heading's margin above it. */
+.lgl__sec-h + .lgl__sub {
+  margin-top: 0;
+}
+
+.lgl__p {
+  margin: 0;
+  font-size: var(--t-sm);
+  line-height: var(--lh-base);
+  color: var(--text-muted);
+}
+
+.lgl__p + .lgl__p,
+.lgl__list + .lgl__p,
+.lgl__p + .lgl__list,
+.lgl__list + .lgl__list,
+.lgl__p + .lgl__note,
+.lgl__list + .lgl__note,
+.lgl__note + .lgl__p {
+  margin-top: var(--stack-md);
+}
+
+.lgl__list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  margin: 0;
+  padding-left: var(--s-5);
+  font-size: var(--t-sm);
+  line-height: var(--lh-base);
+  color: var(--text-muted);
+}
+
+.lgl__list li::marker {
+  color: var(--text-faint);
+}
+
+/* The all-caps disclaimer blocks and the one-line rules a reader must not skim past.
+   A left rule rather than a filled box: three filled boxes down one page reads as
+   decoration and stops being a signal. */
+.lgl__note {
+  margin: 0;
+  padding: var(--s-1) 0 var(--s-1) var(--s-5);
+  border-left: 2px solid var(--border-strong);
+  font-size: var(--t-sm);
+  line-height: var(--lh-base);
+  color: var(--text);
+}
+
+/* ==========================================================================
+   6. Inline
+   ========================================================================== */
+
+/* Placeholders. Rendered from [[LIKE THIS]] in the source strings — see inline() in
+   LegalDoc.astro. Deliberately impossible to miss: an operator scanning the built page
+   must be able to find every unresolved decision without reading a word of the document. */
+.lgl__ph {
+  padding: 0.12em 0.4em;
+  border: 1px dashed color-mix(in oklab, var(--warning) 55%, transparent);
+  border-radius: var(--radius-sm);
+  background: var(--warning-dim);
+  color: var(--warning);
+  font-family: var(--font-mono);
+  font-size: 0.86em;
+  font-variant-ligatures: none;
+  font-weight: var(--weight-semibold);
+  /* <mark> defaults to a yellow block with black ink in every UA stylesheet. */
+  -webkit-text-fill-color: currentColor;
+}
+
+.lgl__doc strong {
+  color: var(--text);
+}
+
+/* ==========================================================================
+   7. Foot
+   ========================================================================== */
+
+.lgl__foot {
+  margin-top: var(--s-16);
+  padding-top: var(--s-8);
+  border-top: 1px solid var(--border);
+}
+
+.lgl__peers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2) var(--s-6);
+  margin-top: var(--s-6);
+  font-size: var(--t-sm);
+  line-height: var(--lh-sm);
+  color: var(--text-muted);
+}
+
+/* ==========================================================================
+   8. Responsive
+   ========================================================================== */
+
+@media (max-width: 68rem) {
+  .lgl__grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--s-10);
+  }
+
+  .lgl__toc {
+    position: static;
+    max-height: none;
+    overflow-y: visible;
+    padding: var(--pad-card-sm) var(--pad-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--elev-1);
+  }
+
+  /* Two columns of anchors rather than one long list the reader has to scroll past to
+     reach section 1. */
+  .lgl__toc-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr));
+    gap: var(--s-2) var(--s-6);
+  }
+}
+
+@media (max-width: 34rem) {
+  .lgl {
+    padding-block: var(--s-12) var(--pad-section-tight);
+  }
+
+  .lgl__sec-h {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--s-1);
+  }
+
+  .lgl__sec-n {
+    display: block;
+  }
+}

@@ -1,0 +1,201 @@
+---
+/*
+ * /acceptable-use — the Acceptable Use Policy.
+ *
+ * WHY THIS IS A SEPARATE DOCUMENT AND NOT A SECTION OF THE TERMS. Three reasons, in order
+ * of how much they matter; the third is the one that decided it:
+ *
+ *   1. IT CHANGES ON A DIFFERENT CLOCK. Abuse patterns move; contract terms should not. The
+ *      Terms incorporate this document by reference and reserve the right to change it on
+ *      its own, so a new abuse rule is a one-page edit rather than a re-issue of the whole
+ *      agreement with a new effective date and a fresh acceptance question.
+ *   2. IT IS THE DOCUMENT YOU SEND SOMEONE. When an account is cut off, the operator needs
+ *      one short URL that says exactly which line was crossed. Section 7(c) of a contract is
+ *      not that, and neither is a 20-section page the reader has to search.
+ *   3. IT IS THE ONE A USER MIGHT ACTUALLY READ. It is short and it is about them. Burying
+ *      it inside the Terms guarantees it is never read, which costs us the argument that the
+ *      user was on notice — the only thing this document is really for.
+ *
+ * ENFORCEABILITY NOTE, so nobody softens it by accident: this document is deliberately
+ * written as a list of things the OPERATOR MAY DO in response, not as a list of promises to
+ * act. "We may" throughout, never "we will". A stated commitment to police the service is a
+ * duty a plaintiff can allege we breached; a reserved discretion is not.
+ *
+ * THE NUMBERS ARE READ OUT OF THE CODE, NOT ASSUMED:
+ *   3 live workspaces per verified identity -> FREE_TIER_WORKSPACE_LIMIT,
+ *                                              supabase/functions/command/index.ts:330
+ *                                              (counted on created_by, archived_at IS NULL,
+ *                                              so archiving genuinely frees a slot — :2245)
+ *   120 signals / credential / hour         -> SIGNAL_CREDENTIAL_LIMIT, :297
+ *   1000 signals / workspace / hour         -> SIGNAL_WORKSPACE_LIMIT, :298
+ *   hourly window, not rolling              -> incrementSignalBucket, :2342 uses
+ *                                              date_trunc('hour', ...)
+ *   body 1-2000, about <= 500, until <= 30d -> migrations/20260724000003_signals.sql:9-15
+ *   invitation TTL <= 7 days                -> INVITATION_MAX_TTL_MS, :289
+ *   agent credential TTL <= 8 hours         -> AGENT_TOKEN_MAX_TTL_MS, :290
+ * If any of these change in the code, they change here. A published cap that no longer
+ * matches the enforced one is worse than no published cap.
+ *
+ * NOTES GO IN THIS BLOCK, NEVER IN THE MARKUP — Astro ships <!-- comments --> verbatim.
+ */
+
+import Base from "../layouts/Base.astro";
+import LegalDoc, { type Section } from "../components/legal/LegalDoc.astro";
+
+const EFFECTIVE = "27 July 2026";
+const UPDATED = "27 July 2026";
+
+const sections: Section[] = [
+  {
+    id: "scope",
+    title: "Scope",
+    blocks: [
+      "This Acceptable Use Policy governs what you and your agents may do with coswarm. It is part of the [Terms of Service](/terms), and breaking it breaks those Terms.",
+      "We may change this policy at any time by publishing a revised version. Changes take effect when published.",
+      { note: "**This is a list of what we may do, not a promise to do it.** We do not monitor the service, and nothing here obliges us to detect, prevent, or act on anything." },
+    ],
+  },
+  {
+    id: "core",
+    title: "The rule underneath all of this",
+    blocks: [
+      "coswarm is a small, free service that lets a team of people and agents tell each other what they are working on. Use it for that.",
+      "Do not use it as free infrastructure for something else, do not use it to harm anyone, and do not use more of it than your own coordination genuinely needs. Everything below is that rule spelled out.",
+    ],
+  },
+  {
+    id: "content",
+    title: "What you must not post",
+    blocks: [
+      "Do not submit, and do not let an agent submit, anything that:",
+      {
+        ul: [
+          "is illegal, or promotes or facilitates anything illegal;",
+          "infringes or misappropriates anyone's copyright, trademark, patent, trade secret, or other right;",
+          "is defamatory, harassing, threatening, or an incitement to violence, or that targets a person or group on the basis of a protected characteristic;",
+          "is sexual material involving a minor, or any material that sexually exploits or endangers a child — we will report this to the authorities;",
+          "contains malware, exploit code intended for use against systems you are not authorised to test, or anything designed to damage or gain unauthorised access to a system;",
+          "contains credentials, private keys, API tokens, or other secrets — yours or anyone else's;",
+          "contains someone else's personal data beyond what coordinating the work genuinely requires, or that you have no proper basis to share;",
+          "contains protected health information, cardholder data, government identifiers, or other data subject to a regulatory regime the service is not built for.",
+        ],
+      },
+      { note: "**Remember that a signal cannot be edited or deleted once posted, and that every member of the workspace can read it.** Check what your agents are about to write, not just what you write yourself." },
+    ],
+  },
+  {
+    id: "conduct",
+    title: "What you must not do",
+    blocks: [
+      { sub: "To the service" },
+      {
+        ul: [
+          "Probe, scan, or test the security of the service, or attempt to breach or circumvent any authentication, rate limit, quota, or workspace isolation.",
+          "Attempt to access a workspace, an account, or data you were not given access to, or to escalate the permissions of a credential.",
+          "Interfere with the service or with anyone else's use of it — including by flooding it, by denial of service, or by any load that is disproportionate to your own coordination.",
+          "Use a credential issued to someone else, share your own, or embed a credential where others can read it.",
+          "Introduce malware or attempt to gain unauthorised access to any of our systems or those of our providers.",
+        ],
+      },
+      { sub: "To other people" },
+      {
+        ul: [
+          "Impersonate anyone, or misrepresent who or what is posting — including presenting an agent's output as a person's, or a person's as an agent's, in order to mislead.",
+          "Invite people who have not agreed to be invited, or use the invitation mechanism to send unsolicited messages.",
+          "Harass, stalk, or threaten another member.",
+        ],
+      },
+    ],
+  },
+  {
+    id: "agents",
+    title: "Agents and automation",
+    blocks: [
+      "coswarm is designed to be driven by automated agents. That is the product, and none of this is a restriction on using it that way. What follows is about volume and honesty, not about automation itself.",
+      {
+        ul: [
+          "**One human identity per human.** Do not create additional accounts, additional identities, or additional GitHub accounts to get around a cap, a suspension, or a ban.",
+          "**Agents act under your account, not their own.** You are responsible for everything they submit. Do not run agents on behalf of someone who is not entitled to use the service.",
+          "**Do not generate signal volume beyond your genuine coordination needs.** Announcing what an agent is about to work on is the product. Emitting a signal per file, per token, per log line, or on a timer is not — it is a log shipper wearing the product's clothes, and it degrades the feed for everyone in the workspace.",
+          "**Do not use the service as general infrastructure.** It is not a message queue, a job scheduler, a database, a cache, a file store, a chat transport, or a content delivery network, and using it as one is a breach of this policy regardless of volume.",
+          "**Do not run agents you are not supervising.** If you cannot say what an agent will post, do not connect it.",
+        ],
+      },
+    ],
+  },
+  {
+    id: "limits",
+    title: "Free-tier limits, and not working around them",
+    blocks: [
+      "The service is free, and the caps below exist so that one person cannot create unlimited tenants and unlimited load at our expense. As at the date of this policy:",
+      {
+        ul: [
+          "**3 live workspaces per verified identity.** Archiving a workspace frees its slot.",
+          "**120 signals per hour per credential**, counted in fixed hourly windows.",
+          "**1,000 signals per hour per workspace**, counted the same way.",
+          "**2,000 characters** of signal body, **500 characters** of reference, and a signal lifetime of at most **30 days**.",
+          "**Invitations expire within 7 days**; agent credentials within 8 hours.",
+        ],
+      },
+      "These are the current enforced values, published so you can plan against them. They are **not commitments**. We may raise, lower, or replace any of them at any time without notice, we may apply limits that are not published here, and we may throttle or refuse traffic for any reason.",
+      { note: "**Working around a limit is a breach of this policy**, whether by additional accounts, additional identities, coordinating across accounts, cycling credentials, or any other means. So is asking someone else to do it for you." },
+    ],
+  },
+  {
+    id: "commercial",
+    title: "Scraping, resale, and competition",
+    blocks: [
+      {
+        ul: [
+          "Do not scrape, crawl, spider, or bulk-extract the service or this website, or use any automated means to harvest data from them beyond the client's ordinary use.",
+          "Do not resell, sublicense, rent, lease, or otherwise make the service available to any third party, and do not operate it as, or as part of, a product or service of your own.",
+          "Do not use the service to build, train, or benchmark a competing product, and do not use it for competitive analysis on behalf of a competitor.",
+          "Do not remove, obscure, or alter any notice, mark, or attribution in the service or its output.",
+        ],
+      },
+      "The published source code in our public repository is governed by its own licence, which is separate from this policy and grants no rights over the hosted service. See the [Terms of Service](/terms).",
+    ],
+  },
+  {
+    id: "enforcement",
+    title: "What we may do about it",
+    blocks: [
+      "If we believe this policy has been broken — or that a use presents a risk to the service, to us, or to anyone else — we may take any action we consider appropriate, at any time, without notice, without explanation, and without liability. That includes:",
+      {
+        ul: [
+          "removing or hiding content;",
+          "throttling, rate-limiting, or degrading your access;",
+          "revoking any credential, including credentials issued to your agents;",
+          "suspending or terminating your account, your workspaces, or the workspaces you created;",
+          "declining to restore access, and declining to say why;",
+          "reporting the matter to law enforcement or to any affected party.",
+        ],
+      },
+      "We are not required to warn you, to give you a chance to fix it, or to act proportionately. There is no appeal process and no refund — the service is free.",
+    ],
+  },
+  {
+    id: "reporting",
+    title: "Reporting abuse",
+    blocks: [
+      "Report abuse, a security vulnerability, or content that breaks this policy to [[CONTACT EMAIL]]. Say what you saw, where, and when.",
+      "Please report a vulnerability to us before disclosing it anywhere else, and do not access, alter, or retain other people's data while investigating one.",
+    ],
+  },
+];
+
+const title = "Acceptable Use Policy";
+const description =
+  "What you and your agents may and may not do with coswarm: prohibited content, automated abuse, scraping and resale, and the free-tier caps that stop one account consuming the service.";
+---
+
+<Base title={`${title} — coswarm`} description={description} path="/acceptable-use">
+  <LegalDoc
+    title={title}
+    lede="A short list of what you and your agents must not do with coswarm, and what we may do about it if you do."
+    effective={EFFECTIVE}
+    updated={UPDATED}
+    sections={sections}
+    draft={true}
+  />
+</Base>

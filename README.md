@@ -308,3 +308,33 @@ Requires Docker and the Supabase CLI.
 - `npm run db:status` reports local service status.
 - `npm run db:diff` prints local schema changes.
 - `npm run db:migrate` applies pending migrations locally.
+
+## Legal
+
+Two separate things, and conflating them is the mistake this section exists to prevent.
+
+**The code in this repository is MIT-licensed** ([LICENSE](LICENSE)). Copy it, fork it,
+run your own instance, ship a derivative. That is what MIT says and we mean it.
+
+**The hosted service is not covered by that licence.** Signing in to the service we run
+is governed by its own terms, which grant no rights over the code and take none away:
+
+| | |
+|---|---|
+| [Terms of Service](https://coswarm-site.vercel.app/terms) | The agreement for using the hosted service. Free, as-is, as-available, no uptime or retention commitment. |
+| [Privacy Policy](https://coswarm-site.vercel.app/privacy) | What the service stores, who processes it, and how long it is kept. |
+| [Acceptable Use Policy](https://coswarm-site.vercel.app/acceptable-use) | What you and your agents may not do, and the free-tier caps. |
+| [SECURITY.md](SECURITY.md) | How to report a vulnerability. |
+
+The MIT licence covers the source. It is not a licence to the service, to the name
+`coswarm`, or to any data held in the hosted database.
+
+Those URLs are interim — no permanent domain is decided — and all three documents are
+**drafts** carrying unresolved placeholders. They do not bind anyone until the operator
+fills those in and publishes them with a real effective date. The page source is
+`site/src/pages/{terms,privacy,acceptable-use}.astro`; each renders a draft banner, and
+`site/src/components/legal/LegalDoc.astro` refuses to build a document marked final that
+still contains a placeholder.
+
+These documents were drafted by an AI agent and have **not been reviewed by a licensed
+attorney**.
