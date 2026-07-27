@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { after, before, test } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
@@ -81,6 +84,7 @@ let sql: postgres.Sql;
 let admin: SupabaseClient;
 let functionProcess: ReturnType<typeof spawn>;
 let functionLogs = "";
+let envDir: string | undefined;
 
 function localEnvironment(): LocalEnvironment {
   const output = execFileSync("supabase", ["status", "-o", "json"], {
@@ -124,9 +128,17 @@ before(async () => {
   admin = createClient(local.API_URL, local.SERVICE_ROLE_KEY, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
+  // `supabase functions serve` gives the Deno runtime ONLY what --env-file
+  // holds; the parent process env is not forwarded. This was previously
+  // /dev/null, so the runtime ran with an empty environment and any env-gated
+  // branch was untestable. SWARM_SELF_SERVE is off in production until the
+  // free-tier abuse controls land; the suite turns it on here.
+  envDir = mkdtempSync(join(tmpdir(), "coswarm-fn-env-"));
+  const envFile = join(envDir, "test.env");
+  writeFileSync(envFile, "SWARM_ENV=test\nSWARM_SELF_SERVE=1\n");
   functionProcess = spawn(
     "supabase",
-    ["functions", "serve", "--no-verify-jwt", "--env-file", "/dev/null"],
+    ["functions", "serve", "--no-verify-jwt", "--env-file", envFile],
     {
       cwd: process.cwd(),
       env: { ...process.env, SWARM_ENV: "test" },
@@ -156,6 +168,7 @@ after(async () => {
     }
   }
   await sql?.end({ timeout: 5 });
+  if (envDir) rmSync(envDir, { recursive: true, force: true });
 });
 
 async function createUser(
@@ -588,6 +601,31 @@ async function registerDevice(
         device_id: deviceId,
         label: "coswarm-cli-test",
       },
+    }),
+  });
+  const text = await response.text();
+  return {
+    status: response.status,
+    text,
+    body: JSON.parse(text) as Record<string, unknown>,
+  };
+}
+
+async function createWorkspace(
+  token: string,
+  workspaceId: string,
+  name = "self-serve workspace",
+): Promise<CommandResponse> {
+  const response = await fetch(`${local.API_URL}/functions/v1/command`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${token}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      command_id: commandId("createworkspace"),
+      client_version: "0.1.0",
+      command: { kind: "create_workspace", workspace_id: workspaceId, name },
     }),
   });
   const text = await response.text();
@@ -2035,6 +2073,99 @@ test("login device registration is owned, live-only, and sanitizes profile names
     const revoked = await registerDevice(f, user.jwt, deviceId);
     assert.equal(revoked.status, 403);
     assert.deepEqual(revoked.body, { error: "forbidden" });
+  });
+});
+
+test("self-serve creates an owned workspace with a workspace stream", async () => {
+  await scenario(async (f) => {
+    const user = await createUser("self-serve-owner");
+    registerHuman(f, user);
+    const workspaceId = randomUUID();
+
+    const created = await createWorkspace(user.jwt, workspaceId, "acme");
+    assert.equal(created.status, 200);
+    assert.equal(created.body.workspace_id, workspaceId);
+    assert.equal(typeof created.body.stream_id, "string");
+
+    const [workspace] = await sql<{ name: string; created_by: string }[]>`
+      SELECT name, created_by
+      FROM swarm.workspaces
+      WHERE workspace_id = ${workspaceId}::uuid
+    `;
+    assert.equal(workspace?.name, "acme");
+    assert.equal(workspace?.created_by, user.id);
+
+    const [membership] = await sql<{ role: string; revoked_at: Date | null }[]>`
+      SELECT role, revoked_at
+      FROM swarm.memberships
+      WHERE workspace_id = ${workspaceId}::uuid
+        AND user_id = ${user.id}::uuid
+    `;
+    assert.equal(membership?.role, "owner");
+    assert.equal(membership?.revoked_at, null);
+
+    // Matches every workspace seedDogfood has ever made: one workspace stream,
+    // head_seq 0, no events. Self-serve tenants must not be a different shape.
+    const streams = await sql<{ kind: string; head_seq: string }[]>`
+      SELECT kind, head_seq::text
+      FROM swarm.streams
+      WHERE workspace_id = ${workspaceId}::uuid
+    `;
+    assert.equal(streams.length, 1);
+    assert.equal(streams[0]?.kind, "workspace");
+    assert.equal(streams[0]?.head_seq, "0");
+  });
+});
+
+test("self-serve is capped per identity and closed to agent credentials", async () => {
+  await scenario(async (f) => {
+    const user = await createUser("self-serve-capped");
+    registerHuman(f, user);
+
+    // Three succeed; the cap is a property of the identity, not the request.
+    for (let i = 0; i < 3; i += 1) {
+      const ok = await createWorkspace(user.jwt, randomUUID(), `ws-${i}`);
+      assert.equal(ok.status, 200, `workspace ${i} should be allowed`);
+    }
+    const capped = await createWorkspace(user.jwt, randomUUID(), "one-too-many");
+    assert.equal(capped.status, 403);
+    assert.deepEqual(capped.body, {
+      error: "workspace_limit_reached",
+      limit: 3,
+    });
+
+    // Archiving frees a slot, so the cap counts live tenants, not lifetime ones.
+    await sql`
+      UPDATE swarm.workspaces
+      SET archived_at = statement_timestamp()
+      WHERE created_by = ${user.id}::uuid
+        AND name = 'ws-0'
+    `;
+    const afterArchive = await createWorkspace(user.jwt, randomUUID(), "reuse");
+    assert.equal(afterArchive.status, 200);
+
+    // The load-bearing one: a compromised worker must not be able to mint
+    // tenants. create_workspace is human-interactive-credential only.
+    const byAgent = await createWorkspace(f.agentToken, randomUUID(), "agent");
+    assert.equal(byAgent.status, 403);
+    assert.deepEqual(byAgent.body, { error: "forbidden" });
+
+    // A workspace id already owned by someone else is refused, not handed over.
+    const [existing] = await sql<{ workspace_id: string }[]>`
+      SELECT workspace_id
+      FROM swarm.workspaces
+      WHERE created_by = ${user.id}::uuid
+      LIMIT 1
+    `;
+    const stranger = await createUser("self-serve-stranger");
+    registerHuman(f, stranger);
+    const taken = await createWorkspace(
+      stranger.jwt,
+      String(existing?.workspace_id),
+      "takeover",
+    );
+    assert.equal(taken.status, 403);
+    assert.deepEqual(taken.body, { error: "forbidden" });
   });
 });
 

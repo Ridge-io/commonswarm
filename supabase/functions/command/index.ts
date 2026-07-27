@@ -313,6 +313,21 @@ const SIGNAL_UNSAFE_GLOBAL_RE =
 const SIGNAL_WHITESPACE_GLOBAL_RE = /[\t\n\v\f\r\u0085\u2028\u2029]+/gu;
 const ANSI_ESCAPE_GLOBAL_RE = /\u001b\[[0-?]*[ -/]*[@-~]/g;
 const REGISTER_DEVICE_KIND = "register_device";
+const CREATE_WORKSPACE_KIND = "create_workspace";
+
+/**
+ * Self-serve workspace creation is the public front door (§9 P5). It ships
+ * dark: until the free-tier abuse controls land, an operator must opt in.
+ * Absent or any value other than "1", a stranger gets the same 403 as before.
+ */
+const selfServeEnabled = Deno.env.get("SWARM_SELF_SERVE") === "1";
+
+/**
+ * §9 P5 caps free-tier workspaces per *verified* identity so one attacker
+ * cannot mint tenants at zero marginal cost. Counts only live workspaces, so
+ * archiving frees a slot.
+ */
+const FREE_TIER_WORKSPACE_LIMIT = 3;
 const COMMAND_KINDS = [
   "create",
   "acquire",
@@ -2133,6 +2148,182 @@ async function registerLoginDevice(
   };
 }
 
+/**
+ * Creates a workspace for a caller who belongs to nothing yet — the one command
+ * that cannot resolve a route, because the tenant it addresses does not exist.
+ * That is why it short-circuits ahead of resolveRoute, exactly as
+ * registerLoginDevice does, rather than threading through the routed path whose
+ * idempotency key is itself (workspace_id, stream_id).
+ *
+ * It deliberately appends NO WorkspaceCreated event. seedDogfood has never
+ * written one, so every workspace in production today starts at head_seq 0 with
+ * an empty stream; emitting one here would give self-serve tenants a different
+ * shape from every tenant that already exists.
+ */
+async function createSelfServeWorkspace(
+  tx: Sql,
+  body: RequestBody,
+  auth: AuthContext,
+  ignoredIdentity: string | null,
+): Promise<HttpResult> {
+  const forbid = async (reason: string): Promise<HttpResult> => {
+    await insertAudit(tx, {
+      auth,
+      commandKind: CREATE_WORKSPACE_KIND,
+      outcome: "authz",
+      reason,
+      detail: ignoredIdentity,
+    });
+    return { status: 403, body: { error: "forbidden" } };
+  };
+
+  // Order matters: the feature gate answers first, so that while self-serve is
+  // dark the response cannot be used to probe whether an identity is verified.
+  if (!selfServeEnabled) return await forbid("self_serve_disabled");
+  if (auth.credentialKind !== "user" || auth.actor.user === null) {
+    return await forbid("credential_kind_forbidden");
+  }
+  if (!auth.identityVerified) return await forbid("identity_not_verified");
+
+  const command = record(body.command);
+  const valid = body.workspace_id === undefined &&
+    body.stream === undefined &&
+    typeof body.client_version === "string" &&
+    command !== null &&
+    exactKeys(command, ["kind", "workspace_id", "name"]) &&
+    command.kind === CREATE_WORKSPACE_KIND &&
+    typeof command.workspace_id === "string" &&
+    UUID_RE.test(command.workspace_id) &&
+    boundedText(command.name, 80);
+  if (!valid) {
+    await insertAudit(tx, {
+      auth,
+      commandKind: CREATE_WORKSPACE_KIND,
+      outcome: "validation",
+      reason: "invalid_request",
+      detail: ignoredIdentity,
+    });
+    return { status: 400, body: { error: "invalid_request" } };
+  }
+
+  const configRows = await tx<{ value: unknown }[]>`
+    SELECT value FROM swarm.config WHERE key = 'min_client_version' LIMIT 1
+  `;
+  const minClientVersion = configRows[0]?.value;
+  if (
+    typeof minClientVersion !== "string" ||
+    compareSemver(body.client_version as string, minClientVersion) === null
+  ) {
+    await insertAudit(tx, {
+      auth,
+      commandKind: CREATE_WORKSPACE_KIND,
+      outcome: "validation",
+      reason: "invalid client_version",
+      detail: ignoredIdentity,
+    });
+    return { status: 400, body: { error: "invalid_request" } };
+  }
+  if (compareSemver(body.client_version as string, minClientVersion)! < 0) {
+    await insertAudit(tx, {
+      auth,
+      commandKind: CREATE_WORKSPACE_KIND,
+      outcome: "validation",
+      reason: "client_unsupported",
+      detail: ignoredIdentity,
+    });
+    return {
+      status: 426,
+      body: { error: "upgrade_required", min_client_version: minClientVersion },
+    };
+  }
+
+  const workspaceId = command!.workspace_id as string;
+  const name = command!.name as string;
+
+  // Counted inside the transaction and against created_by, so two concurrent
+  // requests cannot both read limit-1. Archived workspaces free their slot.
+  const countRows = await tx<{ live: string }[]>`
+    SELECT count(*)::text AS live
+    FROM swarm.workspaces
+    WHERE created_by = ${auth.actor.user}::uuid
+      AND archived_at IS NULL
+  `;
+  if (Number(countRows[0]?.live ?? "0") >= FREE_TIER_WORKSPACE_LIMIT) {
+    await insertAudit(tx, {
+      auth,
+      commandKind: CREATE_WORKSPACE_KIND,
+      outcome: "authz",
+      reason: "workspace_limit_reached",
+      detail: ignoredIdentity,
+    });
+    return {
+      status: 403,
+      body: {
+        error: "workspace_limit_reached",
+        limit: FREE_TIER_WORKSPACE_LIMIT,
+      },
+    };
+  }
+
+  await tx`
+    INSERT INTO swarm.workspaces (workspace_id, name, created_by)
+    VALUES (${workspaceId}::uuid, ${name}, ${auth.actor.user}::uuid)
+    ON CONFLICT (workspace_id) DO NOTHING
+  `;
+  // A client-proposed id that is already taken must not silently hand the
+  // caller someone else's tenant — the same guard seedDogfood applies.
+  const owned = await tx<{ created_by: string }[]>`
+    SELECT created_by
+    FROM swarm.workspaces
+    WHERE workspace_id = ${workspaceId}::uuid
+  `;
+  if (owned[0]?.created_by !== auth.actor.user) {
+    return await forbid("workspace_id_taken");
+  }
+  await tx`
+    INSERT INTO swarm.memberships (workspace_id, user_id, role, revoked_at)
+    VALUES (${workspaceId}::uuid, ${auth.actor.user}::uuid, 'owner', NULL)
+    ON CONFLICT (workspace_id, user_id) DO UPDATE SET
+      role = 'owner',
+      revoked_at = NULL
+  `;
+  await tx`
+    INSERT INTO swarm.streams (stream_id, workspace_id, kind, repo_mapping_id)
+    VALUES (${crypto.randomUUID()}::uuid, ${workspaceId}::uuid, 'workspace', NULL)
+    ON CONFLICT DO NOTHING
+  `;
+  const streams = await tx<{ stream_id: string }[]>`
+    SELECT stream_id
+    FROM swarm.streams
+    WHERE workspace_id = ${workspaceId}::uuid
+      AND kind = 'workspace'
+    LIMIT 1
+  `;
+  const streamId = streams[0]?.stream_id;
+  if (!streamId) throw new Error("workspace stream creation failed");
+
+  await insertAudit(tx, {
+    auth,
+    commandKind: CREATE_WORKSPACE_KIND,
+    workspaceId,
+    streamId,
+    outcome: "accepted",
+    reason: null,
+    detail: ignoredIdentity,
+  });
+  return {
+    status: 200,
+    body: {
+      status: "accepted",
+      ok: true,
+      event_ids: [],
+      workspace_id: workspaceId,
+      stream_id: streamId,
+      min_client_version: minClientVersion,
+    },
+  };
+}
+
 interface SignalRateLimit {
   bucket: "credential" | "workspace";
   limit: number;
@@ -2319,6 +2510,12 @@ async function handleTransaction(
 
     if (kind === REGISTER_DEVICE_KIND) {
       return await registerLoginDevice(tx, body, auth, ignoredIdentity);
+    }
+
+    // Must precede resolveRoute: the caller has no membership anywhere yet, so
+    // route resolution would reject them before the command could be read.
+    if (kind === CREATE_WORKSPACE_KIND) {
+      return await createSelfServeWorkspace(tx, body, auth, ignoredIdentity);
     }
 
     await beforeStep(5);

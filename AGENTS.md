@@ -21,6 +21,7 @@ All verified working from a clean `npm install` on this repo.
 | `npm run test:uxtest` | 6 tests, the cross-machine UX harness. |
 | `npm run db:start` / `db:stop` / `db:reset` / `db:status` | Local Supabase lifecycle. |
 | `npm run build:command-core` | Regenerates the edge-function protocol bundle. |
+| `npm run check:edge` | `deno check` over both edge functions. Needs `brew install deno`. |
 
 Anything touching the database needs local Supabase up (`npm run db:start`, needs Docker).
 
@@ -55,10 +56,25 @@ file leaves the count at 66; the same file runs when named. If you add a root-le
 add it to the `test` script. (`test:p1-cli` and `test:p1-server` do glob their
 directories, so files added there are picked up.)
 
-**Edge functions are outside every typechecker here.** `tsconfig.json` sets
-`include: ["src/**/*.ts"]`, so nothing under `supabase/functions/` is checked by `tsc`.
-They are Deno, and Deno is not necessarily installed. `npm run build` passing tells you
+**Edge functions are outside `tsc`.** `tsconfig.json` sets `include: ["src/**/*.ts"]`, so
+nothing under `supabase/functions/` is checked by it. `npm run build` passing tells you
 **nothing** about whether an edge function compiles.
+
+★ **They are no longer unchecked, though — use `npm run check:edge`** (added 2026-07-27).
+It runs `deno check` over both functions and needs Deno (`brew install deno`). Measured on
+the tree at `ab9babb`: both functions pass, and a deliberately broken copy exits 1 with
+TS2322, so the check discriminates. The superseded line — *"Deno is not necessarily
+installed, so edge functions cannot be checked here"* — is **dead**: install it and check.
+Two caveats that still stand: the checker is not run by any other script, and
+`_shared/protocol.js` is generated, so a stale bundle typechecks fine while being wrong.
+
+**`supabase functions serve` does NOT inherit the parent environment.** The runtime gets
+only what `--env-file` holds. `tests/p1-server` passed `--env-file /dev/null` for a long
+time, which means the function ran with an **empty** environment and every env-gated branch
+was silently untestable — the `SWARM_ENV=test` in the spawn's `env:` never reached
+`Deno.env.get`. It only went unnoticed because the guard it protects also depends on env
+vars that never arrived. The suite now writes a real temp env file. If you add an env-gated
+branch, add it there or your test asserts against the default, not your feature.
 
 **`supabase/functions/_shared/protocol.js` is generated — do not hand-edit.** It is built
 from `src/protocol/index.ts` by `build:command-core`, which runs automatically as
