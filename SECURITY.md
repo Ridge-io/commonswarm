@@ -6,7 +6,7 @@ anyone else does.
 
 ## Reporting a vulnerability
 
-Email **[[SECURITY CONTACT EMAIL]]**. Include what you found, how to reproduce it, and
+Email **security@roboridge.com**. Include what you found, how to reproduce it, and
 what an attacker could do with it. Please do not open a public issue or a pull request
 for a security problem — an issue is a disclosure.
 
