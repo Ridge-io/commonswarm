@@ -5,11 +5,19 @@
  * WHAT IS REAL AND WHAT IS NOT, stated once so nobody has to guess:
  *   - The three screens, the validation, the focus handling, the busy states and the back
  *     navigation are all real and complete.
- *   - The GitHub button and the create-workspace submit have nothing to call. There is no
- *     self-serve signup on the server. Both are stubs, both are labelled as stubs on screen,
+ *   - The GitHub button and the create-workspace submit have nothing to call. This page makes
+ *     no network request of any kind. Both are stubs, both are labelled as stubs on screen,
  *     and neither ever renders an outcome that implies an account or a workspace now exists.
  *     Step 1's stub reports the truth ("not connected yet"); step 3 opens by saying that
  *     nothing was created.
+ *   - THE REASON CHANGED, AND THE OLD ONE IS DEAD. This note used to read "There is no
+ *     self-serve signup on the server". There is: `create_workspace` is handled by
+ *     createSelfServeWorkspace() in supabase/functions/command/index.ts, ahead of route
+ *     resolution because a brand-new caller has no membership yet. Two separate things are
+ *     true now — the handler is behind `SWARM_SELF_SERVE === "1"` (:323, :2182), unset in
+ *     production; and this page has no client wiring to call it in any case. The screens say
+ *     both. Do not collapse them back into "there is no signup": that sentence is now false,
+ *     and it was the one that made the whole site read as having nothing to offer.
  *   - Every CLI command on step 3 was checked against `node dist/cli.js --help` and against
  *     install.sh. See the header of StepAgents.astro for the per-command provenance.
  *
@@ -25,6 +33,14 @@
  * bareFooter was added at integration. Before it, this page took Base's default footer —
  * a 392px block with six more exits under a 1388px flow — which contradicted the paragraph
  * above in the same file. Both suppressions are now on one page and read as one decision.
+ *
+ * WHAT bareFooter COST, AND WHAT WAS PUT BACK. Suppressing the footer also removed the only
+ * route to /terms and /privacy from the one page on the site that asks someone to agree to
+ * them. A flow may hide its exits; it may not hide the documents its assent line names. So
+ * the page carries its own legal row — two links and a copyright, no nav — and the assent
+ * sentence itself sits under "Create workspace" in StepWorkspace.astro, next to the press it
+ * belongs to. BOTH PATHS 404 UNTIL `legal/terms-and-policies` MERGES; those pages are not in
+ * this working tree. Check for 200s on the deployed site before calling this flow shippable.
  */
 
 import Base from "../layouts/Base.astro";
@@ -35,11 +51,15 @@ import StepWorkspace from "../components/start/StepWorkspace.astro";
 import StepAgents from "../components/start/StepAgents.astro";
 
 const STEPS = ["Sign in", "Workspace", "Agents"];
+
+/* Built at build time, like SiteFooter's — the site is static, so the year of the last
+ * deploy is the only year this page can honestly claim. */
+const year = new Date().getFullYear();
 ---
 
 <Base
   title="Create a workspace — coswarm"
-  description="Create a coswarm workspace and bring your agents in. Self-serve signup is not live yet, so the sign-in and create steps are clearly marked stubs."
+  description="Sign in with GitHub, name a workspace, and bring your agents in. Free: three workspaces per verified identity, no card. Signup is not switched on for everyone yet, so these screens are a preview."
   path="/start"
   bareHeader
   bareFooter
@@ -65,6 +85,12 @@ const STEPS = ["Sign in", "Workspace", "Agents"];
         <StepWorkspace />
         <StepAgents />
       </div>
+
+      <p class="st__legal">
+        <span>© {year} Ridge.io</span>
+        <a href="/terms">Terms</a>
+        <a href="/privacy">Privacy Policy</a>
+      </p>
     </div>
   </div>
 </Base>
@@ -167,6 +193,37 @@ const STEPS = ["Sign in", "Workspace", "Agents"];
 
   .st__stepper {
     margin-block-end: var(--s-6);
+  }
+
+  /* The whole footer this page suppresses, reduced to the part it may not suppress. It sits
+     OUTSIDE .st__body, so it is not part of what `align-content: center` centres — the card
+     stays in the middle of the screen and this closes the column under it. Centred rather
+     than left-aligned because the card above it is the only other thing in the column.
+
+     Not a <footer> landmark: two links and a copyright are not the site footer, and a second
+     contentinfo on the page would be one more thing for a screen reader to move through in a
+     flow whose whole design is to have few. */
+  .st__legal {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    align-items: baseline;
+    gap: var(--s-2) var(--s-4);
+    margin-block-start: var(--s-6);
+    font-size: var(--t-2xs);
+    line-height: var(--lh-2xs);
+    color: var(--text-muted);
+  }
+
+  .st__legal a {
+    color: var(--text-muted);
+    text-decoration: none;
+    border-radius: var(--radius-sm);
+    transition: color var(--dur-1) var(--ease-standard);
+  }
+
+  .st__legal a:hover {
+    color: var(--text);
   }
 
   /* There was a standing "Preview" footnote here, under all three steps, restating the

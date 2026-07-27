@@ -15,6 +15,11 @@ import {
 
 const AGENT_TOKEN_RE = /^swm_agt_[A-Za-z0-9_-]{43}$/;
 export const INVITATION_TOKEN_RE = /^swm_inv_[A-Za-z0-9_-]{43}$/;
+const CONTROL_RE =
+  /[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/;
+
+/** Mirrors the bound the command function enforces, so a typo fails before the round trip. */
+export const WORKSPACE_NAME_MAX_LENGTH = 80;
 
 export type StreamRoute =
   | { kind: "workspace" }
@@ -42,6 +47,7 @@ export interface CommandHttpResponse extends StoredResponse {
   run_id?: string;
   agent_token?: string;
   workspace_id?: string;
+  stream_id?: string;
   signal?: SignalRecord;
 }
 
@@ -54,6 +60,7 @@ export interface CommandResult {
 export type ConnectCommand =
   | { kind: "invite_member"; email: string; ttl_ms?: number }
   | { kind: "accept_invitation"; token: string }
+  | { kind: "create_workspace"; workspace_id: string; name: string }
   | { kind: "create_agent_principal"; name: string }
   | {
     kind: "mint_agent_token";
@@ -128,6 +135,100 @@ export class CommandHttpError extends Error {
   ) {
     super(message);
     this.name = "CommandHttpError";
+  }
+}
+
+/**
+ * Creating a project is the one refusal a stranger meets before they have any
+ * context, so it carries a sentence instead of a status code.
+ */
+export class CreateWorkspaceError extends Error {
+  constructor(
+    readonly status: number,
+    readonly code: string,
+    message: string,
+  ) {
+    super(message);
+    this.name = "CreateWorkspaceError";
+  }
+}
+
+/**
+ * Turns a refused create_workspace response into something the person who typed
+ * the command can act on, rather than a raw HTTP status.
+ */
+export function createWorkspaceError(
+  status: number,
+  body: unknown,
+): CreateWorkspaceError {
+  const record = body && typeof body === "object" && !Array.isArray(body)
+    ? body as Record<string, unknown>
+    : {};
+  const code = typeof record.error === "string" ? record.error : "unknown";
+  if (status === 403 && code === "workspace_limit_reached") {
+    const limit = typeof record.limit === "number" ? record.limit : null;
+    return new CreateWorkspaceError(
+      status,
+      code,
+      `${
+        limit === null
+          ? "You have already created as many projects as this account allows."
+          : `You have already created ${limit} projects, which is the limit for one account.`
+      } Archiving a project frees its slot; the CLI cannot archive one yet, so ask whoever operates this deployment. Projects you were invited to do not count against the limit.`,
+    );
+  }
+  if (status === 403) {
+    return new CreateWorkspaceError(
+      status,
+      "forbidden",
+      "Coswarm did not create the project. Creating your own project is not open on this deployment yet, and it also needs a confirmed email address on your account. If someone has already invited you, coswarm accept --link-stdin joins their project.",
+    );
+  }
+  if (status === 426) {
+    const minimum = typeof record.min_client_version === "string"
+      ? record.min_client_version
+      : null;
+    return new CreateWorkspaceError(
+      status,
+      "upgrade_required",
+      `This copy of coswarm is older than the deployment accepts${
+        minimum === null ? "" : ` (minimum ${minimum})`
+      }. Update coswarm, then run the same command again.`,
+    );
+  }
+  if (status === 400) {
+    return new CreateWorkspaceError(
+      status,
+      code === "unknown" ? "invalid_request" : code,
+      "The deployment did not accept the request. Nothing was created. Check coswarm --version against the deployment before trying again.",
+    );
+  }
+  if (status === 401) {
+    return new CreateWorkspaceError(
+      status,
+      "unauthenticated",
+      "Your sign-in is no longer valid for this deployment. Run coswarm login, then run the same command again.",
+    );
+  }
+  return new CreateWorkspaceError(
+    status,
+    code,
+    `Coswarm could not tell whether the project was created (HTTP ${status}). Run coswarm workspaces to see whether it exists before trying again.`,
+  );
+}
+
+/** Bounds the name here so a typo is answered locally, in the same words the server uses. */
+export function assertWorkspaceName(value: string): void {
+  if (value.length === 0) {
+    throw new Error("a project name is required");
+  }
+  if (value.length > WORKSPACE_NAME_MAX_LENGTH) {
+    throw new Error(
+      `a project name may be at most ${WORKSPACE_NAME_MAX_LENGTH} characters; this one is ${value.length}`,
+    );
+  }
+  if (CONTROL_RE.test(value)) {
+    throw new Error("a project name may not contain control characters");
   }
 }
 
@@ -298,12 +399,23 @@ export class ThinCommandClient {
 
   async sendConnect(request: ConnectCommandRequest): Promise<ConnectCommandResult> {
     const command = request.command;
-    const accepting = command.kind === "accept_invitation";
+    const creating = command.kind === "create_workspace";
+    // Both of these run before the caller has a tenancy to route to, so neither
+    // may carry workspace_id or stream: the command function reads them ahead of
+    // route resolution and rejects a request that pins a route it cannot check.
+    const untenanted = command.kind === "accept_invitation" || creating;
     if (command.kind === "accept_invitation") {
       if (request.workspaceId !== undefined) {
         throw new Error("accept_invitation tenancy is derived from its capability");
       }
       assertInvitationToken(command.token);
+    } else if (creating) {
+      if (request.workspaceId !== undefined) {
+        throw new Error(
+          "create_workspace carries its own client-generated workspace_id and cannot be routed to an existing one",
+        );
+      }
+      assertWorkspaceName(command.name);
     } else if (!request.workspaceId) {
       throw new Error("workspaceId is required for this command");
     }
@@ -322,7 +434,7 @@ export class ThinCommandClient {
         body: JSON.stringify({
           command_id: commandId,
           client_version: CLIENT_PROTOCOL_VERSION,
-          ...(accepting
+          ...(untenanted
             ? {}
             : {
               workspace_id: request.workspaceId,
@@ -341,6 +453,18 @@ export class ThinCommandClient {
       clearTimeout(timer);
     }
 
+    if (creating && !response.ok) {
+      // The one connect command whose refusals do differ for the caller: the
+      // limit is recoverable, a closed front door is not. Read the body once.
+      let body: unknown = null;
+      try {
+        body = await parsedJson(response);
+      } catch (error) {
+        // A body that never arrived is a transport fact, not a refusal.
+        if (error instanceof CommandTransportError) throw error;
+      }
+      throw createWorkspaceError(response.status, body);
+    }
     if (response.status === 403) {
       // Invitation failures are deliberately byte-identical. Do not decode or
       // branch on their body; recovery is membership-side.

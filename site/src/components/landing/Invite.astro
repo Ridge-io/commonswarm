@@ -1,12 +1,51 @@
 ---
 /*
- * Invite — the pre-launch CTA, and the most honest thing on the page.
+ * Invite — the closing CTA: what signing up costs, and how you get in before it opens.
  *
- * THERE IS NO SIGNUP SERVICE. Not "coming soon", not "in beta" — the endpoint does not
- * exist. So this is a complete, real front end whose submit path is a stub, and it says so
- * in three places that a reader cannot miss:
+ * ---------------------------------------------------------------------------------------
+ * THE HEADING WAS FALSE-IN-WAITING. "There is no signup yet." IS DEAD.
+ * ---------------------------------------------------------------------------------------
+ * Kept here so nobody re-derives it from the git history. It was written when the endpoint
+ * genuinely did not exist. It does now: `create_workspace` is handled by
+ * createSelfServeWorkspace() in supabase/functions/command/index.ts, dispatched ahead of
+ * route resolution because a brand-new caller has no membership to resolve against. What is
+ * true today is that sign-up is GATED, not absent — and "gated" is a fact that survives
+ * launch day, where "there is none" would have had to be found and rewritten.
  *
- *   1. the section heading, before anything is typed;
+ * THIS CARD IS SPLIT DOWN THE MIDDLE ON PURPOSE, AND THE SPLIT IS THE POINT:
+ *
+ *   LEFT — heading, lede, facts. Permanent terms only. Every sentence there is true today
+ *          AND on the day SWARM_SELF_SERVE flips to "1". Nothing on that side says "yet",
+ *          "soon", or "not live", so nothing on that side rots.
+ *   RIGHT — the invite form. This is the only part that speaks about today, because it is
+ *          also the only part that has to be rewritten when the endpoint is reachable. Put
+ *          temporal copy here or nowhere.
+ *
+ * WHERE THE LEFT-HAND FACTS WERE CHECKED, all in supabase/functions/command/index.ts:
+ *   3 live workspaces .... FREE_TIER_WORKSPACE_LIMIT = 3 (:330), counted against rows with
+ *                          archived_at IS NULL (:2245-2251) — archiving one frees the slot,
+ *                          which is why the row says "live" and not just "three".
+ *   verified identity .... a non-human credential is refused, then an unverified one
+ *                          (:2183-2186); identityVerified is email_confirmed_at (:3205).
+ *   no card .............. no billing surface exists in this repo. Enumerated with a control:
+ *                          stripe|billing|payment|subscription|invoice|\bprice\b over src/,
+ *                          supabase/functions/, supabase/migrations/ and package.json is 0
+ *                          hits; "workspace" over the same paths is 1002, so the grep runs.
+ *   GitHub sign-in ....... the front door on /start, and the OAuth the CLI already uses
+ *                          (`coswarm login`, GitHub + PKCE — docs/marketing/SITE-BRIEF.md).
+ *                          NOT VERIFIED: no provider is enabled in supabase/config.toml, so
+ *                          this names the flow we ship, not a wired integration.
+ *
+ * NOTHING HERE SAYS SIGN-UP IS OPEN. It is not: the handler's first gate is
+ * `SWARM_SELF_SERVE === "1"` (:323, :2182), unset in production, so an attempt today is a
+ * 403. The form is what carries that, and it carries it once.
+ *
+ * ---------------------------------------------------------------------------------------
+ *
+ * THE SUBMIT PATH IS STILL A STUB, and it says so in three places a reader cannot miss —
+ * all three now on the form side of the card, none of them in the heading:
+ *
+ *   1. the line under the form's title, before anything is typed;
  *   2. the field's own hint, which is read out with the control by a screen reader;
  *   3. the outcome after submitting, which reports exactly what happened — nothing.
  *
@@ -16,10 +55,9 @@
  * outcome making six and the site footer a seventh 200px below. Measured on the built page,
  * the closing screenful restated the same fact eight times. Honesty was never the problem;
  * the volume was, and a page that says one thing eight times reads as apologising for
- * itself. The badge and the bolded clause are gone, the Access row states the fact
- * ("Invited dogfood") without also negating its opposite, and the lede now spends its
- * length on how you DO get in rather than on what is missing. Anything added here that
- * restates the stub is a fourth placement: put it in one of the three or leave it out.
+ * itself. The badge and the bolded clause went then; the heading went now, when it stopped
+ * being true. Count stays at three: anything added here that restates the stub is a fourth
+ * placement — put it in one of the three or leave it out.
  *
  * It NEVER shows a success state. A green tick reading "You're on the list!" over a form
  * with no backend is the single most common lie on a pre-launch page, and it is the one
@@ -50,21 +88,29 @@ import Input from "../ui/Input.astro";
   <div class="page">
     <div class="card card--lg card--raised invite__card js-reveal">
       <div class="invite__copy">
-        {/* "Status", not "Where this is" — that was not grammatical English. The list below
-            used to open on a key also called "Status", so that key is now "Access", which is
-            what its value ("Invited dogfood") actually describes. */}
-        <p class="eyebrow">Status</p>
+        {/* "Pricing", because that is what the list under it now answers. The eyebrow read
+            "Status" while the rows below were access, licence and repo — a heading for a
+            different table. */}
+        <p class="eyebrow">Pricing</p>
         <h2 class="h-section invite__title" id="invite-title">
-          There is no signup yet.
+          Free, and capped at three workspaces.
         </h2>
         <p class="lede invite__lede">
-          We are running coswarm on our own work first, and invitations go out by hand.
+          Sign in with GitHub, name a workspace, bring your agents in. No card at any point.
         </p>
 
         <ul class="invite__facts">
           <li>
-            <span class="invite__k">Access</span>
-            <span class="invite__v">Invited dogfood</span>
+            <span class="invite__k">Free tier</span>
+            <span class="invite__v">3 live workspaces per verified identity</span>
+          </li>
+          <li>
+            <span class="invite__k">Sign-in</span>
+            <span class="invite__v">GitHub</span>
+          </li>
+          <li>
+            <span class="invite__k">Cost</span>
+            <span class="invite__v">No card, no billing</span>
           </li>
           <li>
             <span class="invite__k">Shape</span>
@@ -89,6 +135,13 @@ import Input from "../ui/Input.astro";
         <h3 class="invite__form-title">
           Request an invite
         </h3>
+
+        {/* Placement 1 of 3. The only sentence on this card that talks about today, and it
+            is on the side of the card that has to be rewritten when the endpoint opens. */}
+        <p class="invite__form-note">
+          Self-serve signup is built and not switched on for everyone yet. Until it is,
+          invitations come from someone who already has a workspace.
+        </p>
 
         <Input
           id="invite-email"
@@ -118,9 +171,9 @@ import Input from "../ui/Input.astro";
         <div class="invite__out" id="invite-out" role="status" hidden>
           <p class="invite__out-title">Nothing was sent.</p>
           <p class="invite__out-body">
-            That is not an error and you did not do anything wrong — there is no signup
-            service to receive it. When there is one, this is the button that will reach it.
-            Until then, invitations come from someone who already has a project.
+            That is not an error and you did not do anything wrong — this button has nothing
+            behind it to receive an address. When it does, this is the button that will reach
+            it. Until then, invitations come from someone who already has a workspace.
           </p>
         </div>
       </form>
@@ -288,6 +341,16 @@ import Input from "../ui/Input.astro";
     font-weight: var(--weight-semibold);
     line-height: var(--lh-lg);
     color: var(--text);
+  }
+
+  /* Pulled up against the form title rather than sitting on the form's own --s-4 gap: it is
+     a subhead for that title, not the next thing in the form. Same negative-margin trick
+     .invite__err uses below, for the same reason. */
+  .invite__form-note {
+    margin-block-start: calc(var(--s-4) * -1 + var(--s-2));
+    font-size: var(--t-sm);
+    line-height: var(--lh-sm);
+    color: var(--text-muted); /* 7.03:1 on --elev-2, the form's surface */
   }
 
   .invite__err {

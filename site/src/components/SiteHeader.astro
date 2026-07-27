@@ -210,10 +210,15 @@ const isCurrent = (href: string) => !href.includes("#") && href === path;
             button that now goes to /start — a real, complete, three-step flow. The sentence
             was written when the CTA was "Install the CLI" and nothing pointed at /start. It
             still has to say the flow does not end in an account, because it does not; it just
-            has to stop contradicting the button above it. */}
+            has to stop contradicting the button above it.
+
+            SECOND PASS: "nothing to create an account with yet" is dead too. The server can
+            create one — createSelfServeWorkspace() in supabase/functions/command/index.ts —
+            it is behind SWARM_SELF_SERVE and this site is not wired to it. Under a button,
+            the useful half is what the thing costs; the caveat is one clause, once. */}
         <p class="mnav__note">
-          Pre-launch. You can walk the whole flow — it just has nothing to create an account
-          with yet.
+          Free — three workspaces, no card. Signup is not switched on for everyone yet, so
+          the flow is a preview.
         </p>
       </div>
     </div>

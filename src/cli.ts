@@ -15,6 +15,8 @@ import {
 import {
   assertAgentToken,
   assertInvitationToken,
+  assertWorkspaceName,
+  CommandTransportError,
   ThinCommandClient,
   type CommandResult,
   type ConnectCommandResult,
@@ -257,6 +259,8 @@ Usage:
   coswarm ask "<text>" [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--to <member>] [--about <ref>] [--until <dur>] [--json]
   coswarm feed [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--about <ref>] [--kind <kind>] [--since <timestamp>] [--limit <n>] [--include-stale] [--json]
   coswarm inbox [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--since <timestamp>] [--limit <n>] [--include-stale] [--json]
+  coswarm new "<project name>" [--url <url> --anon-key <key>] [--json]
+  coswarm new --name "<project name>" [--url <url> --anon-key <key>] [--json]
   coswarm workspaces [--url <url> --anon-key <key>] [--json]
   coswarm use <full-id|exact-name> [--url <url> --anon-key <key>] [--json]
   coswarm invite [--url <url> --anon-key <key>] [--workspace-id <uuid>] --email <email>
@@ -279,9 +283,9 @@ never opens a browser or infers a human's saved project. Durations use a whole
 number plus m, h, or d (for example 90m, 24h, or 7d) and are capped at 30d.
 Place -- before signal text that itself begins with -- to stop option parsing.
 
-Invite, legacy token accept, principal create, and token mint require a stored
-human login. Invite-link accept signs in when needed, then accepts and registers
-one principal. Invitation links and agent credentials appear only in fresh
+Invite, legacy token accept, principal create, token mint, and new require a
+stored human login. Invite-link accept signs in when needed, then accepts and
+registers one principal. Invitation links and agent credentials appear only in fresh
 success responses.
 GitHub identities with the same verified email may resolve to one GoTrue user;
 a second human must log in with a distinct verified email before accepting.
@@ -290,7 +294,10 @@ Successful login and invite acceptance save the current Cloud target. Override i
 per command with --url/--anon-key or SWARM_CLOUD_URL/SWARM_CLOUD_ANON_KEY;
 flags take precedence over environment, which takes precedence over the saved target.
 Agent credentials never inherit a human's saved target. Workspace flags may also
-be set with SWARM_CLOUD_WORKSPACE_ID. Normal project selection is:
+be set with SWARM_CLOUD_WORKSPACE_ID. coswarm new starts a project of your own
+(a name of 1 to 80 characters) and selects it; whether a deployment accepts that
+is a setting on the deployment, and an invite link is the other way in.
+Normal project selection is:
 coswarm workspaces, then coswarm use <full-id|exact-name>. A sole accepted
 project is saved automatically; ambiguous names require the full id and Coswarm
 never guesses. The workspace-id environment variable is a power-user override,
@@ -643,6 +650,66 @@ async function runUse(args: Arguments): Promise<void> {
     return;
   }
   process.stdout.write(`${message}\n`);
+}
+
+async function runNew(args: Arguments): Promise<void> {
+  const named = args.has("name");
+  if (named && args.positionals.length > 1) {
+    throw new Error(
+      "give the project name once: as a positional or as --name, not both",
+    );
+  }
+  args.assertShape([...TARGET_FLAGS, "name", "json"], named ? 1 : 2);
+  // Validated before any credential or network work, so a typo costs one line.
+  const name = (named ? args.required("name") : args.positionals[1]!).trim();
+  assertWorkspaceName(name);
+  const cloud = await target(args);
+  const human = await humanCredential(args, cloud);
+  // The id is ours: the project has no route to be addressed by until it exists,
+  // so the server takes the one we propose rather than handing one back.
+  const proposedId = randomUUID();
+  let result: ConnectCommandResult;
+  try {
+    result = await new ThinCommandClient(cloud).sendConnect({
+      command: { kind: "create_workspace", workspace_id: proposedId, name },
+      credential: human.accessToken,
+    });
+  } catch (error) {
+    if (error instanceof CommandTransportError) {
+      throw new CommandTransportError(
+        `${error.message}; run coswarm workspaces to see whether the project exists before creating it again`,
+      );
+    }
+    throw error;
+  }
+  const response = acceptedConnect("project creation", result);
+  const created = uuid(response.workspace_id, "workspace_id");
+  if (created !== proposedId) {
+    throw new Error(
+      "the server confirmed a different project than this command created; run coswarm workspaces before doing anything else",
+    );
+  }
+  await writeWorkspaceDefault(human.store, human.userId, created);
+  const message =
+    `Created project ${name} (${created}). It is now your selected project, so later commands will use it unless --workspace-id or SWARM_CLOUD_WORKSPACE_ID overrides it.`;
+  const next =
+    `Next: coswarm invite --email <address> brings someone in, and coswarm working-on "<what>" tells them what you have started.`;
+  if (args.has("json")) {
+    printJson({
+      code: "project_created",
+      message: `${message} ${next}`,
+      project: {
+        workspace_id: created,
+        name,
+        stream_id: typeof response.stream_id === "string" &&
+            UUID_RE.test(response.stream_id)
+          ? response.stream_id
+          : null,
+      },
+    });
+    return;
+  }
+  process.stdout.write(`${message}\n${next}\n`);
 }
 
 async function runTarget(args: Arguments): Promise<void> {
@@ -1817,6 +1884,10 @@ async function main(): Promise<void> {
   }
   if (verb === "use") {
     await runUse(args);
+    return;
+  }
+  if (verb === "new") {
+    await runNew(args);
     return;
   }
   if (verb === "accept") {

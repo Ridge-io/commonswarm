@@ -328,6 +328,52 @@ const selfServeEnabled = Deno.env.get("SWARM_SELF_SERVE") === "1";
  * archiving frees a slot.
  */
 const FREE_TIER_WORKSPACE_LIMIT = 3;
+
+/**
+ * §9 P5 again: the same identity archiving and recreating in a loop would slip
+ * the live cap above, so creations themselves are capped over a rolling day.
+ * Deliberately larger than FREE_TIER_WORKSPACE_LIMIT — a user who archives a
+ * mistake and starts over must not be locked out for a day.
+ */
+const SELF_SERVE_CREATE_DAILY_LIMIT = 6;
+
+/**
+ * §8: free self-serve plus transactional email is a branded-phishing vector,
+ * so outbound invites are capped per verified identity per rolling day.
+ */
+const INVITE_IDENTITY_DAILY_LIMIT = 10;
+
+/**
+ * §10's per-tenant caps. Seats count live members plus invitations still
+ * outstanding, so an attacker cannot park unbounded pending invites in one
+ * workspace; principals bound the agent identities a free tenant can hold.
+ * These are free-tier resource ceilings, not authority boundaries.
+ */
+const FREE_TIER_MEMBER_LIMIT = 25;
+const FREE_TIER_PRINCIPAL_LIMIT = 50;
+
+/**
+ * A speed bump, and honestly nothing more: it turns away the laziest throwaway
+ * inbox and anyone determined registers a domain in a minute. It is not a
+ * security control and nothing downstream may treat it as one — identity
+ * verification is what the abuse posture actually rests on. Kept short and
+ * obvious on purpose; a long list belongs in data, not in this file.
+ */
+const DISPOSABLE_EMAIL_DOMAINS = [
+  "10minutemail.com",
+  "dispostable.com",
+  "fakeinbox.com",
+  "getnada.com",
+  "guerrillamail.com",
+  "mailinator.com",
+  "maildrop.cc",
+  "sharklasers.com",
+  "temp-mail.org",
+  "tempmail.com",
+  "throwaway.email",
+  "trashmail.com",
+  "yopmail.com",
+] as const;
 const COMMAND_KINDS = [
   "create",
   "acquire",
@@ -422,6 +468,8 @@ interface AuthContext {
   actor: Actor;
   agent: AgentAuthRow | null;
   identityVerified: boolean;
+  /** Bookkeeping for the §8 disposable-domain speed bump; never authorization. */
+  email: string | null;
 }
 
 interface Route {
@@ -750,6 +798,24 @@ function normalizedEmail(value: unknown): string | null {
   ) return null;
   const email = value.trim().toLowerCase();
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(email) ? email : null;
+}
+
+/**
+ * True only when the address sits on a domain we recognise as throwaway. An
+ * address we cannot parse is NOT treated as disposable: the speed bump exists
+ * to turn away the obvious case, and guessing would refuse honest signups on
+ * no evidence. Subdomains of a listed domain count (mail.mailinator.com).
+ */
+function disposableEmailDomain(value: string | null): boolean {
+  if (value === null) return false;
+  const at = value.lastIndexOf("@");
+  if (at < 0) return false;
+  const domain = value.slice(at + 1).trim().toLowerCase();
+  if (domain.length === 0) return false;
+  for (const listed of DISPOSABLE_EMAIL_DOMAINS) {
+    if (domain === listed || domain.endsWith(`.${listed}`)) return true;
+  }
+  return false;
 }
 
 function nullableUuid(value: unknown): value is string | null {
@@ -1125,6 +1191,7 @@ async function authenticateAgent(
     },
     agent,
     identityVerified: false,
+    email: null,
   };
 }
 
@@ -1132,7 +1199,7 @@ async function authenticateHuman(
   tx: Sql,
   verified: VerifiedHuman,
 ): Promise<AuthContext | null> {
-  const rows = await tx<{ user_id: string }[]>`
+  const rows = await tx<{ user_id: string; email: string | null }[]>`
     INSERT INTO swarm.users (user_id, display_name, email)
     VALUES (
       ${verified.userId}::uuid,
@@ -1142,7 +1209,7 @@ async function authenticateHuman(
     ON CONFLICT (user_id) DO UPDATE SET
       display_name = EXCLUDED.display_name,
       email = coalesce(EXCLUDED.email, swarm.users.email)
-    RETURNING user_id
+    RETURNING user_id, email
   `;
   if (!rows[0]) return null;
   return {
@@ -1152,6 +1219,7 @@ async function authenticateHuman(
     actor: { user: rows[0].user_id, agent_principal: null, run: null },
     agent: null,
     identityVerified: verified.identityVerified,
+    email: verified.email ?? rows[0].email,
   };
 }
 
@@ -2184,6 +2252,12 @@ async function createSelfServeWorkspace(
     return await forbid("credential_kind_forbidden");
   }
   if (!auth.identityVerified) return await forbid("identity_not_verified");
+  // A speed bump, not a security control (see DISPOSABLE_EMAIL_DOMAINS). It
+  // sits behind the verification gate so it can never be the only thing
+  // standing between a stranger and a tenant.
+  if (disposableEmailDomain(auth.email)) {
+    return await forbid("disposable_email_domain");
+  }
 
   const command = record(body.command);
   const valid = body.workspace_id === undefined &&
@@ -2261,6 +2335,52 @@ async function createSelfServeWorkspace(
       body: {
         error: "workspace_limit_reached",
         limit: FREE_TIER_WORKSPACE_LIMIT,
+      },
+    };
+  }
+
+  // The live cap above counts tenants that exist now; this counts creations,
+  // so archive-and-recreate churn is bounded too. Counted from the workspaces
+  // rows themselves rather than swarm.rate_buckets — see enforceFreeTierBudget
+  // for why a daily window cannot live in that table.
+  const madeRows = await tx<{ made: string; resets_at: Date | null }[]>`
+    SELECT
+      count(*)::text AS made,
+      min(created_at) + interval '24 hours' AS resets_at
+    FROM swarm.workspaces
+    WHERE created_by = ${auth.actor.user}::uuid
+      AND created_at > statement_timestamp() - interval '24 hours'
+  `;
+  if (Number(madeRows[0]?.made ?? "0") >= SELF_SERVE_CREATE_DAILY_LIMIT) {
+    const resetsAt = (madeRows[0]?.resets_at ?? new Date()).toISOString();
+    const detail =
+      `identity limit ${SELF_SERVE_CREATE_DAILY_LIMIT} workspaces/day; resets at ${resetsAt}`;
+    await insertAudit(tx, {
+      auth,
+      commandKind: CREATE_WORKSPACE_KIND,
+      outcome: "rate_limit",
+      reason: "workspace_create_rate_limited",
+      detail,
+    });
+    await tx`
+      INSERT INTO swarm.security_alerts (kind, subject, detail)
+      VALUES (
+        'workspace_create_rate_limit',
+        'identity',
+        ${tx.json({
+          user_id: auth.actor.user,
+          limit: SELF_SERVE_CREATE_DAILY_LIMIT,
+          resets_at: resetsAt,
+        })}::jsonb
+      )
+    `;
+    return {
+      status: 429,
+      body: {
+        error: "rate_limited",
+        message: `Workspace creation refused: ${detail}.`,
+        limit: SELF_SERVE_CREATE_DAILY_LIMIT,
+        resets_at: resetsAt,
       },
     };
   }
@@ -2389,6 +2509,148 @@ async function enforceSignalRate(
       resetsAt: workspace.resetsAt,
     };
   }
+  return null;
+}
+
+/**
+ * The free-tier ceilings §9 P5 makes launch-blocking, for commands that spend a
+ * shared resource: outbound invites (transactional email, hence a branded
+ * phishing vector), workspace seats, and agent principals.
+ *
+ * Why these counts are not swarm.rate_buckets, unlike enforceSignalRate: that
+ * table is swept hourly of every row whose window_start is older than two hours
+ * (migration 20260723000001_p1_schema.sql, purge_expired_rate_buckets), so a
+ * *daily* window stored there would silently reset every couple of hours — a
+ * cap that reads as enforced and is not. Counting the invitations, memberships,
+ * and principals themselves also measures the artifact instead of a proxy for
+ * it.
+ *
+ * The counts are exact rather than best-effort under concurrency: the workspace
+ * stream is already locked FOR UPDATE by the caller, so commands into one
+ * workspace serialize, and invite_member/create_agent_principal are
+ * human-credential-only (§2.3), so the caller also holds the row lock
+ * authenticateHuman's upsert took on its own swarm.users row.
+ */
+async function enforceFreeTierBudget(
+  tx: Sql,
+  auth: AuthContext,
+  route: Route,
+  command: ValidatedCommand,
+  hash: string,
+): Promise<HttpResult | null> {
+  const refuse = async (
+    reason: string,
+    detail: string,
+    result: HttpResult,
+  ): Promise<HttpResult> => {
+    await insertAudit(tx, {
+      auth,
+      commandKind: command.kind,
+      workspaceId: route.workspaceId,
+      streamId: route.streamId,
+      outcome: result.status === 429 ? "rate_limit" : "quota",
+      reason,
+      detail,
+      hash,
+    });
+    return result;
+  };
+
+  if (command.kind === "invite_member") {
+    const sentRows = await tx<{ sent: string; resets_at: Date | null }[]>`
+      SELECT
+        count(*)::text AS sent,
+        min(created_at) + interval '24 hours' AS resets_at
+      FROM swarm.invitations
+      WHERE created_by = ${auth.actor.user}::uuid
+        AND created_at > statement_timestamp() - interval '24 hours'
+    `;
+    if (Number(sentRows[0]?.sent ?? "0") >= INVITE_IDENTITY_DAILY_LIMIT) {
+      const resetsAt = (sentRows[0]?.resets_at ?? new Date()).toISOString();
+      const detail =
+        `identity limit ${INVITE_IDENTITY_DAILY_LIMIT} invites/day; resets at ${resetsAt}`;
+      await tx`
+        INSERT INTO swarm.security_alerts (kind, subject, detail)
+        VALUES (
+          'invite_rate_limit',
+          'identity',
+          ${tx.json({
+            workspace_id: route.workspaceId,
+            user_id: auth.actor.user,
+            limit: INVITE_IDENTITY_DAILY_LIMIT,
+            resets_at: resetsAt,
+          })}::jsonb
+        )
+      `;
+      return await refuse("invite_rate_limited", detail, {
+        status: 429,
+        body: {
+          error: "rate_limited",
+          message: `Invite refused: ${detail}.`,
+          limit: INVITE_IDENTITY_DAILY_LIMIT,
+          resets_at: resetsAt,
+        },
+      });
+    }
+
+    // Seats in use, not members: an outstanding invitation is a seat someone
+    // can still walk through, so parking pending invites cannot evade the cap.
+    const seatRows = await tx<{ used: string }[]>`
+      SELECT (
+        (
+          SELECT count(*)
+          FROM swarm.memberships
+          WHERE workspace_id = ${route.workspaceId}::uuid
+            AND revoked_at IS NULL
+        ) + (
+          SELECT count(*)
+          FROM swarm.invitations
+          WHERE workspace_id = ${route.workspaceId}::uuid
+            AND consumed_at IS NULL
+            AND revoked_at IS NULL
+            AND expires_at > statement_timestamp()
+        )
+      )::text AS used
+    `;
+    const used = Number(seatRows[0]?.used ?? "0");
+    if (used >= FREE_TIER_MEMBER_LIMIT) {
+      return await refuse(
+        "workspace_member_limit_reached",
+        `seats in use: ${used}`,
+        {
+          status: 403,
+          body: {
+            error: "member_limit_reached",
+            limit: FREE_TIER_MEMBER_LIMIT,
+          },
+        },
+      );
+    }
+  }
+
+  if (command.kind === "create_agent_principal") {
+    const principalRows = await tx<{ live: string }[]>`
+      SELECT count(*)::text AS live
+      FROM swarm.agent_principals
+      WHERE workspace_id = ${route.workspaceId}::uuid
+        AND revoked_at IS NULL
+    `;
+    const live = Number(principalRows[0]?.live ?? "0");
+    if (live >= FREE_TIER_PRINCIPAL_LIMIT) {
+      return await refuse(
+        "workspace_principal_limit_reached",
+        `live principals: ${live}`,
+        {
+          status: 403,
+          body: {
+            error: "principal_limit_reached",
+            limit: FREE_TIER_PRINCIPAL_LIMIT,
+          },
+        },
+      );
+    }
+  }
+
   return null;
 }
 
@@ -2963,6 +3225,16 @@ async function handleTransaction(
         hash,
       });
       return { status: 403, body: { error: "forbidden" } };
+    }
+
+    // Free-tier ceilings are charged only against a command that would
+    // otherwise be accepted: a caller who is not entitled to invite is refused
+    // above and never learns anything about the workspace's remaining budget.
+    // Nothing is appended or ledgered when a ceiling refuses, so a retry after
+    // the window rolls over is the same fresh command.
+    if (outcome.decision.ok) {
+      const budget = await enforceFreeTierBudget(tx, auth, route, command, hash);
+      if (budget !== null) return budget;
     }
 
     await beforeStep(11);

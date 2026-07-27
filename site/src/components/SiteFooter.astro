@@ -31,6 +31,43 @@
  *
  * The hash anchor points at a section id that exists on the landing page today, prefixed
  * with "/" so it still resolves from a route that is not "/". The rest are real routes.
+ *
+ * ---------------------------------------------------------------------------------------
+ * THE STATUS LINE WAS FALSE-IN-WAITING AND HAS BEEN REPLACED
+ * ---------------------------------------------------------------------------------------
+ * SUPERSEDED, KEPT SO NOBODY RE-DERIVES IT — this line rendered on every page:
+ *
+ *     "Pre-launch. Access is by invitation while we run coswarm on our own work — there
+ *      is nothing to sign up for yet."
+ *
+ * The last clause is DEAD. Self-serve workspace creation exists on the server: the
+ * `create_workspace` command is handled by createSelfServeWorkspace() in
+ * supabase/functions/command/index.ts, dispatched ahead of route resolution because a new
+ * caller has no membership yet. There IS something to sign up for; it is gated, not absent.
+ *
+ * WHAT THE LINE SAYS NOW, AND WHERE EACH PART WAS CHECKED IN THAT FILE:
+ *   three workspaces ........ FREE_TIER_WORKSPACE_LIMIT = 3 (:330), compared against a
+ *                             count of rows with archived_at IS NULL (:2245-2251) — so it
+ *                             is three LIVE workspaces and archiving one frees a slot.
+ *   per verified identity ... the handler refuses a non-human credential and then refuses
+ *                             an unverified one (:2183-2186); identityVerified is Supabase's
+ *                             email_confirmed_at (:3205).
+ *   no card ................. there is no billing surface in this repo. Enumerated, not
+ *                             assumed: a case-insensitive grep for stripe|billing|payment|
+ *                             subscription|invoice|\bprice\b over src/, supabase/functions/,
+ *                             supabase/migrations/ and package.json returns 0 hits, and the
+ *                             SAME grep for "workspace" over the SAME paths returns 1002 —
+ *                             so the zero is a measurement and not a broken instrument.
+ *
+ * IT DOES NOT SAY SIGN-UP IS OPEN, because it is not: the handler's first gate is
+ * `SWARM_SELF_SERVE === "1"` (:323, :2182) and that variable is not set in production, so a
+ * real attempt today gets 403. Every sentence here is chosen to be true both today and on
+ * the day that flag flips — a footer that has to be rewritten on launch day gets forgotten.
+ *
+ * THE LEGAL COLUMN LINKS PAGES THAT DO NOT EXIST IN THIS BRANCH. /terms and /privacy are
+ * built on `legal/terms-and-policies` and merge later; until that merge both links 404. They
+ * are here because /start now carries an assent line pointing at the same two paths, and an
+ * assent line whose targets are unreachable from anywhere else is worse than a pending merge.
  */
 
 /* `?raw` rather than fs.readFileSync: Vite resolves these at compile time, relative to THIS
@@ -104,6 +141,14 @@ const COLUMNS = [
       { href: `${REPO}/blob/main/LICENSE`, label: "MIT license", external: true },
     ],
   },
+  /* Both of these 404 until legal/terms-and-policies merges — see the note in the header. */
+  {
+    title: "Legal",
+    links: [
+      { href: "/terms", label: "Terms" },
+      { href: "/privacy", label: "Privacy Policy" },
+    ],
+  },
 ];
 
 /* Built at build time. The site is static, so this is the year of the last deploy — which is
@@ -158,8 +203,8 @@ const year = new Date().getFullYear();
       <p class="ft__status">
         <span class="ft__pip" aria-hidden="true"></span>
         <span>
-          <strong>Pre-launch.</strong> Access is by invitation while we run coswarm on our
-          own work — there is nothing to sign up for yet.
+          <strong>Early access.</strong> Access is by invitation while we run coswarm on our
+          own work. Self-serve signup is built but is not open on this deployment yet.
         </span>
       </p>
       <p class="ft__legal">© {year} Ridge.io · MIT · no tracking on this page</p>

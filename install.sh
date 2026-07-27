@@ -136,8 +136,21 @@ case ":$PATH:" in
 esac
 
 # --- What to do next. --------------------------------------------------------
-# Access is by invitation and `accept` is the only first-contact verb that needs no
-# --url, because an invite link carries its own target. Sending someone to `login`
-# would send them looking for a project URL that has no page to come from.
-printf '\nNext: accept your invite. Paste the link when prompted -- passing it as an
-argument would leave a live capability in your shell history.\n\n  coswarm accept --link-stdin\n\n'
+# Two kinds of people reach this line and only one of them was invited. An earlier draft
+# said only "accept your invite", which is a dead end for anyone who arrived cold.
+#
+# WITH a link: `accept` is the only first-contact verb that needs no --url, because the
+# link carries its own target. Sending someone to `login` would send them looking for a
+# project URL that has no page to come from.
+#
+# WITHOUT one: do NOT invite them to sign up. `coswarm new` DOES exist and does call the
+# server -- but the edge function keeps create_workspace behind SWARM_SELF_SERVE, which is
+# unset in production, so a stranger still gets 403 and `coswarm new` prints "not open on
+# this deployment yet". Promising a signup the very next command cannot deliver is worse
+# than saying "not yet". Revisit this text when SWARM_SELF_SERVE is turned on.
+printf '\nNext, if you have an invite link:\n\n  coswarm accept --link-stdin\n\n'
+printf 'Paste the link when prompted -- passing it as an argument would leave a live\n'
+printf 'capability in your shell history.\n'
+printf '\nNo invite? coswarm is invite-only today; creating your own workspace is not open\n'
+printf 'yet. Ask whoever runs the workspace you want to join for a link. Meanwhile this\n'
+printf 'works with no account and no network:\n\n  coswarm --help\n\n'

@@ -46,6 +46,22 @@
  *
  * `required` is not passed to Input on purpose: the prop draws a red asterisk, which on a
  * one-field form is noise. aria-required carries the same semantics without the glyph.
+ *
+ * ---------------------------------------------------------------------------------------
+ * THE ASSENT LINE, AND WHY IT IS HERE RATHER THAN ON STEP 3
+ * ---------------------------------------------------------------------------------------
+ * "Create workspace" is the last thing anyone presses in this flow — step 3 hands out
+ * commands and creates nothing — so it is the press that assent has to be attached to. A
+ * consent sentence that arrives on the screen AFTER the act is not consent.
+ *
+ * It is a plain sentence rather than a checkbox on purpose: nothing here is optional, and a
+ * required checkbox is a click that only exists to be clicked.
+ *
+ * BOTH LINKS 404 TODAY. /terms and /privacy are built on the `legal/terms-and-policies`
+ * branch and are not in this working tree; they resolve when that branch merges. The paths
+ * are written now because the sentence is not honest without them, and because a link added
+ * "after the merge" is a link nobody adds. Verify both return 200 on the deployed site
+ * before treating this flow as shippable.
  */
 
 import Button from "../ui/Button.astro";
@@ -114,6 +130,11 @@ import StepShell from "./StepShell.astro";
         </svg>
       </Button>
     </div>
+
+    <p class="st-assent">
+      By continuing you agree to the <a href="/terms">Terms</a> and
+      <a href="/privacy">Privacy Policy</a>.
+    </p>
   </form>
 </StepShell>
 
@@ -207,6 +228,29 @@ import StepShell from "./StepShell.astro";
     align-items: center;
     gap: var(--gap-inline);
     margin-block-start: var(--s-6);
+  }
+
+  /* Sits under the row it qualifies, at the size the rest of the flow uses for fine print.
+     The links are underlined rather than only coloured: this is the one sentence on the page
+     where a reader has to be able to find the two documents they are agreeing to. */
+  .st-assent {
+    margin-block-start: var(--s-4);
+    font-size: var(--t-xs);
+    line-height: var(--lh-xs);
+    letter-spacing: var(--track-xs);
+    color: var(--text-muted); /* 7.03:1 on --elev-2 */
+  }
+
+  .st-assent a {
+    color: var(--text);
+    text-decoration: underline;
+    text-decoration-color: var(--border-strong);
+    text-underline-offset: 3px;
+    transition: text-decoration-color var(--dur-2) var(--ease-standard);
+  }
+
+  .st-assent a:hover {
+    text-decoration-color: currentColor;
   }
 
   /* The primary takes the remaining width, which also fixes its box: the loading spinner

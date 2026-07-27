@@ -2,11 +2,27 @@
 /*
  * Step 1 — sign in.
  *
- * THE BUTTON IS A STUB AND IT SAYS SO OUT LOUD. There is no self-serve signup on the server,
+ * THE BUTTON IS A STUB AND IT SAYS SO OUT LOUD. Nothing on this page is wired to the server,
  * so the only honest outcome of pressing "Continue with GitHub" is "this is not connected
  * yet". That is what it reports — after a real idle → busy → resolved transition, because the
  * transition is the part worth building. It never renders a signed-in identity, never shows a
  * handle or an avatar, and never implies an account now exists.
+ *
+ * WHAT CHANGED, AND WHY THE OLD WORDING IS DEAD. The panel used to say "coswarm has no
+ * self-serve signup on the server". That is now FALSE and is kept here only so it is not
+ * re-derived: `create_workspace` is handled by createSelfServeWorkspace() in
+ * supabase/functions/command/index.ts. Two things are true instead, and the panel says both:
+ * the server side exists but is behind `SWARM_SELF_SERVE === "1"` (:323, :2182), which is
+ * unset in production; and this page has no client wiring to call it either way.
+ *
+ * THE THREE FREE-TIER FACTS UNDER THE BUTTON are the terms of the thing being signed up for,
+ * which a stranger has to be able to read before pressing a sign-in button. Checked in that
+ * same file: FREE_TIER_WORKSPACE_LIMIT = 3 (:330), counted against archived_at IS NULL
+ * (:2245-2251) so archiving frees a slot; verified identity is email_confirmed_at (:3205)
+ * and a non-human credential is refused outright (:2183-2186); "no card" is enumerated, not
+ * assumed — stripe|billing|payment|subscription|invoice|price over src/, supabase/functions/,
+ * supabase/migrations/ and package.json is 0 hits against a "workspace" control of 1002 on
+ * the same paths. They are stated as terms, not as availability.
  *
  * Telling the truth is also what gives this screen a genuine unavailable state rather than a
  * decorative one: the panel below is a real response to a real failure to connect, not a
@@ -45,6 +61,12 @@ import StepShell from "./StepShell.astro";
     </Button>
   </div>
 
+  <ul class="st-terms">
+    <li>Free</li>
+    <li>3 workspaces</li>
+    <li>No card</li>
+  </ul>
+
   <div class="st-alert" data-gh-note hidden role="alert">
     <span class="st-alert__icon" aria-hidden="true">
       <svg
@@ -63,9 +85,10 @@ import StepShell from "./StepShell.astro";
     <div class="st-alert__main">
       <p class="st-alert__title">GitHub sign-in is not connected yet</p>
       <p class="st-alert__body">
-        coswarm has no self-serve signup on the server, so there is nothing for this button to
-        talk to. Everything past this point is a preview of the real screens: it creates no
-        account, and nothing you type leaves this browser.
+        Signup exists on the server and is not switched on for everyone, and this page is not
+        wired to it either way — so there is nothing for this button to talk to. Everything
+        past this point is a preview of the real screens: it creates no account, and nothing
+        you type leaves this browser.
       </p>
       <div class="st-alert__act">
         <Button variant="secondary" data-gh-continue>
@@ -80,8 +103,8 @@ import StepShell from "./StepShell.astro";
   </div>
 
   <p class="st-fine">
-    Today the only way into a workspace is an invitation from someone already in it, accepted
-    from the CLI.
+    Joining a workspace that already exists is the other path, and it does not start here: it
+    is an invitation from someone in it, accepted from the CLI.
   </p>
 
   <noscript>
@@ -104,6 +127,39 @@ import StepShell from "./StepShell.astro";
 
   .st-actions {
     margin-block-start: var(--s-8);
+  }
+
+  /* The terms of the free tier, in three words each, directly under the button they apply to.
+     A <ul> because it is a list of three independent facts and a screen reader should be told
+     how many there are; the separators are generated content, so they are never announced. */
+  .st-terms {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: var(--s-2) var(--s-3);
+    margin-block-start: var(--s-4);
+    padding: 0;
+    list-style: none;
+    font-size: var(--t-xs);
+    line-height: var(--lh-xs);
+    letter-spacing: var(--track-xs);
+    color: var(--text-muted); /* 7.03:1 on --elev-2 */
+  }
+
+  .st-terms li {
+    display: flex;
+    align-items: baseline;
+    gap: var(--s-3);
+  }
+
+  .st-terms li + li::before {
+    content: "";
+    inline-size: 3px;
+    block-size: 3px;
+    border-radius: var(--radius-pill);
+    background: var(--border-strong);
+    /* Baseline-aligned dots sit on the baseline; lift onto the x-height. */
+    transform: translateY(-0.35em);
   }
 
   .st-fine {
