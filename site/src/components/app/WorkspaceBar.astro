@@ -1,0 +1,368 @@
+---
+/*
+ * The workspace bar — who you are looking at, and which preview you are in.
+ *
+ * Carries the page's <h1>. Base.astro renders no heading of its own, so without this the
+ * document would start at h2 and a screen-reader user navigating by headings would land in
+ * the middle of the outline. The workspace name is the honest h1: it is what the page is
+ * about.
+ *
+ * THE COUNTS ARE PASSED IN, ALREADY COUNTED. This component never re-derives them, so the
+ * bar cannot claim four agents while the roster lists five.
+ *
+ * NO "LIVE" INDICATOR. The obvious flourish here is a pulsing green dot labelled "Live", and
+ * it is exactly the thing this page may not do: there is no connection to be live. The
+ * pulse on this page is attached to an individual agent's presence inside clearly-marked
+ * sample data, never to a claim about the page's own state.
+ *
+ * THE TABLIST SHIPS HIDDEN. app.astro's script gives these buttons their roles and then
+ * unhides them. Until it does they are not in the accessibility tree or the tab order, so
+ * nobody can reach a control that cannot do anything yet. The buttons carry only
+ * data-preview-tab in the markup for that reason.
+ *
+ * ---------------------------------------------------------------------------------------
+ * THE FACTS ROW HAS THREE VERSIONS, NOT ONE VERSION AND TWO ABSENCES
+ * ---------------------------------------------------------------------------------------
+ * The bar sits ABOVE the panels, so it does not change when one is swapped in — which put
+ * "3 active · 4 agents · 1 member" over a panel saying "Nobody has announced anything yet".
+ * The first fix was to hide the row with `visibility` in those two states. That kept the
+ * layout still (it is measured: the bar is 89.9px and the panels start at y=304 in all three
+ * previews, before this change and after it) but it answered a contradiction by deleting the
+ * sentence, which leaves a hole under the h1 and — worse — teaches the wrong lesson about the
+ * real dashboard, where a load is exactly when a reader wants the shape of what is coming.
+ *
+ * So each state now says the true thing for that state:
+ *   active   the counts the roster was measured from
+ *   new      "0 active · 0 agents · 1 member" — a brand-new workspace is not a workspace with
+ *            no facts, it is one whose facts are all zero except the person who just made it
+ *   loading  the same row skeletonised, three pills where three counts will be
+ *
+ * The id row follows the same rule: a new workspace HAS an id (it is what an agent needs for
+ * --workspace-id, and it is the one thing on this screen the owner has to hand over), so it
+ * is shown; a loading one does not know it yet, so it is a pill.
+ *
+ * All three rows carry the same min-block-size, derived from the type scale rather than
+ * measured with a ruler, so the header is the same height whichever is showing.
+ */
+
+import Skeleton from "../ui/Skeleton.astro";
+
+interface Props {
+  name: string;
+  id: string;
+  agentCount: number;
+  activeCount: number;
+  memberCount: number;
+}
+
+const { name, id, agentCount, activeCount, memberCount } = Astro.props;
+
+const plural = (n: number, one: string, many: string) => (n === 1 ? one : many);
+
+const TABS = [
+  { key: "active", label: "Active" },
+  { key: "new", label: "New" },
+  { key: "loading", label: "Loading" },
+] as const;
+---
+
+<div class="bar" data-bar>
+  <div class="bar__identity">
+    <h1 class="bar__name">{name}</h1>
+
+    <p class="bar__meta" data-facts="active">
+      <span class="bar__stat">
+        <span class="dot dot--success bar__pulse" aria-hidden="true"></span>
+        <span class="tabular">{activeCount}</span> active
+      </span>
+      <span class="bar__sep" aria-hidden="true">·</span>
+      <span class="bar__stat">
+        <span class="tabular">{agentCount}</span>
+        {plural(agentCount, "agent", "agents")}
+      </span>
+      <span class="bar__sep" aria-hidden="true">·</span>
+      <span class="bar__stat">
+        <span class="tabular">{memberCount}</span>
+        {plural(memberCount, "member", "members")}
+      </span>
+    </p>
+
+    {/* The empty preview. The numbers are literals rather than the props above because they
+        describe a DIFFERENT workspace — the one the empty panel is showing — and deriving
+        them from the populated sample's roster would be the same contradiction in reverse.
+        No pulse on the dot: nothing is active, so nothing should look alive. */}
+    <p class="bar__meta" data-facts="new">
+      <span class="bar__stat">
+        <span class="dot" aria-hidden="true"></span>
+        <span class="tabular">0</span> active
+      </span>
+      <span class="bar__sep" aria-hidden="true">·</span>
+      <span class="bar__stat"><span class="tabular">0</span> agents</span>
+      <span class="bar__sep" aria-hidden="true">·</span>
+      <span class="bar__stat"><span class="tabular">1</span> member</span>
+    </p>
+
+    {/* The loading preview. aria-hidden because LoadingPanel already renders the single live
+        region for the whole screen — a second "Loading" here would be the same news twice. */}
+    <p class="bar__meta bar__meta--skeleton" data-facts="loading" aria-hidden="true">
+      <Skeleton variant="rect" width="4.75rem" height="0.8rem" radius="5px" />
+      <Skeleton variant="rect" width="4.5rem" height="0.8rem" radius="5px" />
+      <Skeleton variant="rect" width="5.25rem" height="0.8rem" radius="5px" />
+    </p>
+
+    {/* The workspace id, the way the CLI wants it for --workspace-id. Selectable, monospace,
+        and truncated only by CSS so a copy still yields the whole thing. */}
+    <p class="bar__id" data-facts="active new">
+      <span class="visually-hidden">Workspace id: </span>
+      <code class="bar__idvalue">{id}</code>
+    </p>
+
+    <p class="bar__id bar__id--skeleton" data-facts="loading" aria-hidden="true">
+      <Skeleton variant="rect" width="16rem" height="0.7rem" radius="5px" />
+    </p>
+  </div>
+
+  <div class="bar__tabs" data-preview-tabs hidden>
+    <span class="bar__tabslabel" aria-hidden="true">Preview</span>
+    <div class="bar__tabgroup">
+      {
+        TABS.map((tab) => (
+          <button type="button" class="bar__tab" data-preview-tab={tab.key}>
+            {tab.label}
+          </button>
+        ))
+      }
+    </div>
+  </div>
+</div>
+
+<style>
+  .bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: var(--s-4);
+  }
+
+  .bar__identity {
+    min-inline-size: 0;
+  }
+
+  /* Deliberately smaller than the landing page's h1. A dashboard title is a label for what
+     you are looking at, not a claim that needs display type — and --t-3xl here would make
+     the workspace name the loudest thing on a screen whose job is the feed. */
+  .bar__name {
+    font-size: var(--t-xl);
+    line-height: var(--lh-xl);
+    letter-spacing: var(--track-xl);
+    font-weight: var(--weight-head);
+    color: var(--text);
+    /* A workspace name is an identifier, so it gets the mono face — it is the string you
+       would type after `coswarm use`. */
+    font-family: var(--font-mono);
+    font-variant-ligatures: none;
+    overflow-wrap: anywhere;
+  }
+
+  .bar__meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--s-2);
+    margin-block-start: var(--s-2);
+    font-size: var(--t-sm);
+    line-height: var(--lh-sm);
+    color: var(--text-muted);
+    /* The skeleton version holds three 0.8rem pills and no text, so its flex line would be
+       shorter than the two rows it stands in for. Derived from the type scale rather than
+       measured off a screenshot, so it follows the tokens if they move. */
+    min-block-size: calc(var(--t-sm) * var(--lh-sm));
+  }
+
+  /* The pills are the row's content, not decoration inside it, so they get the same gap the
+     counts do. gap is inherited from .bar__meta; only the extra breathing room between a
+     pill and the "·" that is not there needs restating. */
+  .bar__meta--skeleton {
+    gap: var(--s-3);
+  }
+
+  .bar__stat {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    white-space: nowrap;
+  }
+
+  .bar__stat .tabular {
+    color: var(--text);
+    font-weight: var(--weight-medium);
+  }
+
+  .bar__sep {
+    color: var(--text-faint);
+  }
+
+  /* The pulse. --pulse-color is the variable motion.css's pulse-ring keyframe reads, so this
+     inherits that animation’s reduced-motion handling (it becomes a static ring) rather than
+     shipping a second one. */
+  .bar__pulse {
+    --pulse-color: var(--success-dim);
+    animation: pulse-ring 2.4s var(--ease-standard) infinite;
+  }
+
+  .bar__id {
+    display: flex;
+    align-items: center;
+    margin-block-start: var(--s-2);
+    font-size: var(--t-xs);
+    line-height: var(--lh-xs);
+    color: var(--text-muted);
+    /* Same reason as .bar__meta: the pill version carries no text to set the line box. */
+    min-block-size: calc(var(--t-xs) * var(--lh-xs));
+  }
+
+  /*
+   * WHICH VERSION OF THE FACTS IS SHOWING.
+   *
+   * The default — no data-preview-state at all, which is what ships when the switcher's
+   * script never runs — is the populated one, matching the panel that is visible without
+   * JavaScript. Everything else is opt-in from the attribute app.astro sets on the bar.
+   *
+   * display, not visibility, now that there is something true to put in each state: the rows
+   * are interchangeable and all three carry the same min-block-size, so swapping them cannot
+   * move the panels underneath. (Measured on the built page at 1440: bar height 89.9px and
+   * .app__panels top y=304 in all three previews.)
+   *
+   * The workspace NAME stays in all three states. A new workspace still has a name, and a
+   * loading one still knows which one it is fetching.
+   */
+  /* data-facts is a LIST of the states a row belongs to — the id row is "active new" because
+     both of those workspaces have one — so every match below is ~=, not =. */
+  .bar [data-facts]:not([data-facts~="active"]) {
+    display: none;
+  }
+
+  .bar[data-preview-state="new"] [data-facts]:not([data-facts~="new"]) {
+    display: none;
+  }
+
+  .bar[data-preview-state="new"] [data-facts~="new"] {
+    display: flex;
+  }
+
+  .bar[data-preview-state="loading"] [data-facts]:not([data-facts~="loading"]) {
+    display: none;
+  }
+
+  .bar[data-preview-state="loading"] [data-facts~="loading"] {
+    display: flex;
+  }
+
+  .bar__idvalue {
+    /* global.css chips any :not(pre) > code with a border and a background. This one is a
+       quiet identifier under a heading, not an inline command, so the chip is removed. */
+    padding: 0;
+    border: 0;
+    background: none;
+    color: inherit;
+    font-size: inherit;
+    white-space: nowrap;
+  }
+
+  /* --- the preview switcher ---------------------------------------------- */
+
+  .bar__tabs {
+    display: flex;
+    align-items: center;
+    gap: var(--s-3);
+    flex: none;
+  }
+
+  /* [hidden] is display:none by default, but .bar__tabs sets display:flex, which would win
+     on specificity and reveal the control before the script has wired it. */
+  .bar__tabs[hidden] {
+    display: none;
+  }
+
+  .bar__tabslabel {
+    font-size: var(--t-2xs);
+    font-weight: var(--weight-semibold);
+    letter-spacing: var(--track-eyebrow);
+    text-transform: uppercase;
+    color: var(--text-muted);
+  }
+
+  .bar__tabgroup {
+    display: flex;
+    gap: 2px;
+    padding: 3px;
+    background: var(--elev-1);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+  }
+
+  .bar__tab {
+    padding: 0.34rem 0.7rem;
+    border: 0;
+    border-radius: 7px;
+    background: none;
+    color: var(--text-muted);
+    font-size: var(--t-xs);
+    font-weight: var(--weight-medium);
+    line-height: 1.35;
+    letter-spacing: var(--track-xs);
+    white-space: nowrap;
+    transition:
+      background var(--dur-2) var(--ease-standard),
+      color var(--dur-1) var(--ease-standard);
+  }
+
+  .bar__tab:hover {
+    color: var(--text);
+    background: var(--elev-3);
+  }
+
+  /* The selected tab is a raised surface, not a colour change: the label also goes to full
+     --text, so the state survives greyscale and forced-colors. */
+  .bar__tab[aria-selected="true"] {
+    background: var(--elev-4);
+    color: var(--text);
+    box-shadow: var(--ring-top), var(--shadow-sm);
+  }
+
+  .bar__tab:focus-visible {
+    border-radius: 7px;
+  }
+
+  @media (forced-colors: active) {
+    .bar__tab[aria-selected="true"] {
+      /* Backgrounds are dropped in forced-colors, so the selected state needs a real border
+         to survive. */
+      border: 1px solid Highlight;
+    }
+  }
+
+  /* At narrow widths the bar stacks; the switcher goes full width and its buttons share the
+     space equally rather than sitting in a lopsided huddle on the left. */
+  @media (max-width: 34rem) {
+    .bar {
+      align-items: stretch;
+    }
+
+    .bar__tabs {
+      inline-size: 100%;
+      justify-content: space-between;
+    }
+
+    .bar__tabgroup {
+      flex: 1;
+      max-inline-size: 17rem;
+    }
+
+    .bar__tab {
+      flex: 1;
+      text-align: center;
+    }
+  }
+</style>

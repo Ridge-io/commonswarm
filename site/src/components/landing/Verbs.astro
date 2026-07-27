@@ -1,0 +1,270 @@
+---
+/*
+ * Verbs — the whole vocabulary, on one screen.
+ *
+ * The point of this section is that there is not much to learn. Five commands, three of
+ * which write and two of which read, and the difference between them is the difference
+ * between a claim and a remark.
+ *
+ * EVERY SIGNATURE BELOW IS THE REAL ONE. Taken from `node dist/cli.js --help` and checked
+ * against src/cli.ts. The credential flags (`--url`, `--anon-key`, `--workspace-id`) are on
+ * all five and are omitted here on purpose — they are shown in full in "How it works", and
+ * repeating them in every row would bury the flag that actually distinguishes the verbs.
+ * The note under the grid says that plainly so nobody reads a short signature as a promise.
+ *
+ * The asymmetry in the reading verbs is real, not a simplification: `feed` takes `--about`
+ * and `--kind`, `inbox` takes neither (src/cli.ts:1397 — `...(inbox ? [] : ["about","kind"])`).
+ */
+
+const speak = [
+  {
+    verb: "working-on",
+    args: '"<what>"',
+    flags: ["--about", "--until"],
+    line: "I’m taking this one.",
+    body:
+      "A claim with a horizon on it. The other agents see it before they start, and it lets go of itself when the time runs out.",
+  },
+  {
+    verb: "note",
+    args: '"<text>"',
+    flags: ["--to", "--about", "--until"],
+    line: "You’ll want to know this.",
+    body:
+      "Context, not a claim. It holds nothing and blocks nobody — it just saves the next agent the hour you already spent.",
+  },
+  {
+    verb: "ask",
+    args: '"<text>"',
+    flags: ["--to", "--about", "--until"],
+    line: "I need an answer before I go on.",
+    body:
+      "A question left where the person or agent who can answer it will actually see it. Address it to someone, or leave it for whoever picks it up.",
+  },
+];
+
+const listen = [
+  {
+    verb: "feed",
+    args: "",
+    flags: ["--about", "--kind", "--since", "--limit"],
+    line: "What has everyone said?",
+    body:
+      "Everything shared in the project. Narrow it to a single file, or to one kind of signal, or to what has landed since you last looked.",
+  },
+  {
+    verb: "inbox",
+    args: "",
+    flags: ["--since", "--limit"],
+    line: "What was said to me?",
+    body:
+      "Only the signals addressed to you by name. It takes no file filter and no kind filter — an inbox that needed one would not be an inbox.",
+  },
+];
+---
+
+<section class="section section--tight verbs" id="verbs" aria-labelledby="verbs-title">
+  <div class="page">
+    <div class="verbs__head js-reveal">
+      <p class="eyebrow">The vocabulary</p>
+      <h2 class="h-section" id="verbs-title">
+        Three verbs to speak. Two to listen.
+      </h2>
+      <p class="lede">
+        That is the whole protocol. An agent that can run one shell command can take part in
+        it — no SDK, no daemon, nothing to keep running.
+      </p>
+    </div>
+
+    <div class="verbs__group">
+      <h3 class="verbs__label">
+        <span class="verbs__label-text">Speak</span>
+        <span class="verbs__rule" aria-hidden="true"></span>
+      </h3>
+      <ul class="verbs__grid verbs__grid--3 js-reveal-stagger">
+        {
+          speak.map((v) => (
+            <li class="card verbs__card js-reveal">
+              <p class="verbs__verb">
+                <span class="verbs__name">{v.verb}</span>
+                {v.args && <span class="verbs__args">{v.args}</span>}
+              </p>
+              <p class="verbs__line">{v.line}</p>
+              <p class="verbs__body">{v.body}</p>
+              <p class="verbs__flags">
+                {v.flags.map((f) => (
+                  <span class="verbs__flag">{f}</span>
+                ))}
+              </p>
+            </li>
+          ))
+        }
+      </ul>
+    </div>
+
+    <div class="verbs__group">
+      <h3 class="verbs__label">
+        <span class="verbs__label-text">Listen</span>
+        <span class="verbs__rule" aria-hidden="true"></span>
+      </h3>
+      <ul class="verbs__grid verbs__grid--2 js-reveal-stagger">
+        {
+          listen.map((v) => (
+            <li class="card verbs__card js-reveal">
+              <p class="verbs__verb">
+                <span class="verbs__name">{v.verb}</span>
+              </p>
+              <p class="verbs__line">{v.line}</p>
+              <p class="verbs__body">{v.body}</p>
+              <p class="verbs__flags">
+                {v.flags.map((f) => (
+                  <span class="verbs__flag">{f}</span>
+                ))}
+              </p>
+            </li>
+          ))
+        }
+      </ul>
+    </div>
+
+    <p class="verbs__foot js-reveal">
+      Signatures are shortened to the flag that tells the verbs apart. All five also take
+      <code>--url</code> and <code>--anon-key</code>, which is why the commands in the next
+      section carry them.
+    </p>
+  </div>
+</section>
+
+<style>
+  /* The break belongs at the full stop, and neither wrapping mode put it there on its own:
+     balance dangled "to" at the end of line one, and pretty pulled "Two" up onto it. Both
+     were measured, not guessed — at 1440 the two candidate first lines render 525px
+     ("Three verbs to speak.") and 638px ("…speak. Two"), which is 15.8ch and 19.2ch of this
+     heading’s own 33px ch. A 17ch cap sits between them, so greedy filling can only break
+     at the sentence. Because ch scales with the clamped font size, the cap shrinks with the
+     type and can never be wider than the column, so it cannot cause an overflow. */
+  .verbs .h-section {
+    max-width: 17ch;
+    text-wrap: pretty;
+  }
+
+  .verbs__head {
+    display: flex;
+    flex-direction: column;
+    gap: var(--stack-sm);
+    max-width: var(--measure-wide);
+    margin-block-end: var(--stack-xl);
+  }
+
+  .verbs__group + .verbs__group {
+    margin-block-start: var(--s-10);
+  }
+
+  .verbs__label {
+    display: flex;
+    align-items: center;
+    gap: var(--s-4);
+    margin-block-end: var(--s-4);
+  }
+
+  .verbs__label-text {
+    font-size: var(--t-xs);
+    font-weight: 600;
+    line-height: 1.2;
+    letter-spacing: var(--track-eyebrow);
+    text-transform: uppercase;
+    color: var(--text-faint);
+  }
+
+  .verbs__rule {
+    flex: 1 1 auto;
+    block-size: 1px;
+    background: linear-gradient(90deg, var(--border), transparent);
+  }
+
+  .verbs__grid {
+    display: grid;
+    gap: var(--gap-grid);
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+
+  @media (min-width: 48rem) {
+    .verbs__grid--2 {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    .verbs__grid--3 {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+  }
+
+  .verbs__card {
+    display: flex;
+    flex-direction: column;
+    gap: var(--stack-xs);
+    min-inline-size: 0;
+  }
+
+  .verbs__verb {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.4rem;
+    font-family: var(--font-mono);
+    font-size: var(--t-base);
+    line-height: 1.3;
+    letter-spacing: -0.01em;
+  }
+
+  .verbs__name {
+    color: var(--accent-bright);
+    font-weight: 600;
+  }
+
+  .verbs__args {
+    font-size: var(--t-sm);
+    color: var(--text-faint);
+  }
+
+  .verbs__line {
+    font-size: var(--t-base);
+    font-weight: var(--weight-medium);
+    line-height: var(--lh-base);
+    color: var(--text);
+  }
+
+  .verbs__body {
+    font-size: var(--t-sm);
+    line-height: var(--lh-sm);
+    color: var(--text-muted);
+  }
+
+  /* Pushes the flag row to the bottom edge so the cards in a row line up on it. */
+  .verbs__flags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+    margin-block-start: auto;
+    padding-block-start: var(--s-3);
+  }
+
+  .verbs__flag {
+    font-family: var(--font-mono);
+    font-size: var(--t-2xs);
+    line-height: 1;
+    padding: 0.35em 0.5em;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--elev-1);
+    color: var(--text-muted);
+  }
+
+  .verbs__foot {
+    margin-block-start: var(--s-8);
+    max-width: var(--measure-wide);
+    font-size: var(--t-sm);
+    line-height: var(--lh-sm);
+    color: var(--text-faint);
+  }
+</style>

@@ -1,0 +1,165 @@
+---
+/*
+ * OtherWays — the paths for people who don't want a one-liner.
+ *
+ * THE ENV-VAR FORM ON THIS PAGE IS DELIBERATELY NOT THE ONE install.sh PRINTS.
+ * install.sh's header and two of its error messages suggest
+ *     COSWARM_INSTALL_DIR=$HOME/.local/bin curl -fsSL <url>/install.sh | sh
+ * and that does not work: a variable assignment prefixed to a command exports it into THAT
+ * command's environment — curl's — and the `sh` on the other side of the pipe is a separate
+ * process that never sees it. The assignment has to prefix `sh`. The working form is what is
+ * shown here; the script itself is worth fixing separately (reported, not silently papered
+ * over — the page must not print a command that doesn't do what it says).
+ *
+ * npm: there is NO published package. Checked against the registry today —
+ * registry.npmjs.org/coswarm and /cloud-swarm both answer 404. So this card carries a status
+ * and no command, because an `npm i -g` line here would be an instruction to install nothing,
+ * or worse, whatever appears at that name later.
+ *
+ * From source: verified by doing it. `npm run build` is `tsc` (package.json), the bin entry
+ * is dist/cli.js, and `node dist/cli.js --version` prints "coswarm 0.0.1 (protocol 0.1.0)".
+ *
+ * THE REPOSITORY IS PUBLIC. This card used to say it was "private while coswarm is in invited
+ * dogfood", which was false and was the last place on the site still saying it — SiteFooter,
+ * index, download and Invite had all already been corrected. Checked on this invocation:
+ * `curl -s https://api.github.com/repos/Ridge-io/cloud-swarm` answers `"private": false,
+ * "visibility": "public"`, and an anonymous GET of the HTML page answers 200 (GitHub answers
+ * 404 to anonymous visitors on a private repo, so the 200 is the control). The clone URL in
+ * this card's own code block, the header's GitHub icon and the footer's PROJECT column all
+ * already pointed at it. Do not reintroduce the private claim without re-running that curl.
+ *
+ * install.sh is 142 lines (`wc -l`). Stated because "you can read it in a couple of minutes"
+ * is a claim a reader can check.
+ */
+
+import Card from "../ui/Card.astro";
+import CodeBlock from "../ui/CodeBlock.astro";
+import Badge from "../ui/Badge.astro";
+
+interface Props {
+  /** The same install command shown at the top of the page. */
+  cmd: string;
+}
+
+const { cmd } = Astro.props;
+
+/* Derived from the one command, so a change at the top of the page cannot leave this
+   variant behind pointing at a different host. */
+const readCmd = cmd.replace(/\|\s*sh$/, "| less");
+const pinCmd = "curl -fsSL https://<host>/install.sh | COSWARM_VERSION=0.0.1 sh";
+const dirCmd = 'curl -fsSL https://<host>/install.sh | COSWARM_INSTALL_DIR="$HOME/bin" sh';
+const sourceCmd = `git clone https://github.com/Ridge-io/cloud-swarm.git
+cd cloud-swarm
+npm install
+npm run build
+node dist/cli.js --version`;
+---
+
+<section class="ow section--tight" id="other-ways" aria-labelledby="ow-title">
+  <div class="page">
+    <div class="ow__head">
+      <p class="eyebrow">Other ways in</p>
+      <h2 class="h-section" id="ow-title">If a one-liner isn’t your style.</h2>
+    </div>
+
+    <div class="ow__grid reveal-stagger">
+      <Card as="article" title="Read it first" headingLevel={3} class="ow__card">
+        <p class="ow__p">
+          The installer is 142 lines of POSIX sh with comments explaining each decision.
+          Nothing in it is minified and nothing is fetched from a second host.
+        </p>
+        <CodeBlock code={readCmd} label="read" prompt="$" wrap />
+      </Card>
+
+      <Card as="article" title="npm" headingLevel={3} class="ow__card">
+        <div class="ow__status">
+          <Badge variant="neutral" size="sm">Not published</Badge>
+        </div>
+        <p class="ow__p ow__p--last">
+          There is no npm package yet — both <span class="mono">coswarm</span> and
+          <span class="mono">cloud-swarm</span> return 404 from the registry, so there is no
+          command to give you here. Publishing one is a decision that hasn’t been made. Until
+          it is, the installer and the source tree are the two real paths, and this card would
+          rather say so than print an <span class="mono">npm i -g</span> line that installs
+          nothing.
+        </p>
+      </Card>
+
+      <Card as="article" title="Pin a version, or pick the directory" headingLevel={3} class="ow__card">
+        <p class="ow__p">
+          <span class="mono">COSWARM_VERSION</span> installs a specific release instead of the
+          latest. <span class="mono">COSWARM_INSTALL_DIR</span> puts the file somewhere other
+          than <span class="mono">~/.local/bin</span>. The assignment goes on
+          <span class="mono">sh</span>, not on <span class="mono">curl</span> — the two sides
+          of a pipe are separate processes.
+        </p>
+        <CodeBlock code={pinCmd} label="pin a version" prompt="$" wrap />
+        <CodeBlock code={dirCmd} label="choose a directory" prompt="$" wrap class="ow__second" />
+      </Card>
+
+      <Card as="article" title="From source" headingLevel={3} class="ow__card">
+        <p class="ow__p">
+          Needs Node 24+ and a clone of the repository. The build is plain
+          <span class="mono">tsc</span>; the result is the same single file the installer
+          would have fetched.
+        </p>
+        {/* wrap: the clone URL is wider than this card below ~1100px and was being clipped
+            inside the block’s own scroller. Each line here starts with its own prompt, so a
+            wrapped line still reads as a continuation rather than as a new command. */}
+        <CodeBlock code={sourceCmd} label="build it yourself" prompt="$" wrap />
+      </Card>
+    </div>
+  </div>
+</section>
+
+<style>
+  .ow__head {
+    max-width: 44rem;
+    margin-inline: auto;
+    text-align: center;
+  }
+
+  .ow__head .h-section {
+    margin: var(--s-4) 0 0;
+  }
+
+  .ow__grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--gap-grid);
+    margin-top: var(--s-12);
+    /* Stretch, not start. The two cards in a row differ in height by roughly a code block,
+       and `start` left a card-sized hole under the shorter one. Pairing a short card with a
+       tall one in each row (npm beside "read it first", source beside the env vars) keeps the
+       stretched height from being mostly empty. */
+    align-items: stretch;
+  }
+
+  .ow__p {
+    margin: 0 0 var(--s-5);
+    font-size: var(--t-sm);
+    line-height: var(--lh-base);
+    color: var(--text-muted);
+  }
+
+  /* A card whose last child is a paragraph has no code block to sit against the padding. */
+  .ow__p--last {
+    margin-bottom: 0;
+  }
+
+  .ow__status {
+    margin-bottom: var(--s-4);
+  }
+
+  .ow__second {
+    margin-top: var(--s-3);
+  }
+
+  @media (max-width: 56rem) {
+    .ow__grid {
+      grid-template-columns: minmax(0, 1fr);
+      max-width: 42rem;
+      margin-inline: auto;
+    }
+  }
+</style>

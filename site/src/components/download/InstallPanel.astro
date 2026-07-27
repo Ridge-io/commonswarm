@@ -1,0 +1,927 @@
+---
+/*
+ * InstallPanel — the top of /download: the one action a human came here for.
+ *
+ * WHAT IS COPIED IS THE `cmd` PROP, EXACTLY. The "$" is decoration in its own aria-hidden
+ * span and never reaches the clipboard, and the highlighted <host> is a <span> wrapped around
+ * the same characters that are in the string — the display is a re-render of the prop, not a
+ * second copy of it. Verified by spying on the clipboard write, not by reading the markup.
+ *
+ * THE COMMAND DOES NOT RUN YET AND THE PAGE SAYS SO — ONCE. <host> is a placeholder: no
+ * public install host has been decided. It is marked TWO ways, which is one statement and its
+ * explanation: the token is tinted inside the command, and the sentence under the card says
+ * what the tint means. A reader who copies this and gets "could not resolve host" without
+ * warning has been lied to by omission, so the disclosure is not optional — but it was
+ * previously made THREE times in this one panel (a warning badge on the card bar as well),
+ * and a fact restated three times in 200px reads as nerves, not candour. Do not add the badge
+ * back; if the tint or the sentence goes, that is the regression to fix.
+ *
+ * PLATFORM TABS ARE PROGRESSIVE ENHANCEMENT, NOT A JS-ONLY UI. The HTML ships all three
+ * platform panels, stacked and each under its own heading, so a reader with no JS gets every
+ * instruction rather than one third of them. Only when JS is present does the block collapse
+ * into a tab set: the inline script at the top of the wrapper sets [data-js] during parse —
+ * before the panels are parsed — so there is no flash of all-three-then-one. The module then
+ * wires roving tabindex, arrow keys, and the tabpanel roles, and hides each panel's heading
+ * (the tab is the accessible name from that point on).
+ *
+ * DETECTION IS A SUGGESTION AND IS LABELLED AS ONE. Detection picks the tab; it never hides
+ * the others, and a line under the tabs says the choice was automatic so a reader on an
+ * unusual setup knows why they are looking at the wrong panel. On a phone or tablet the
+ * detection line says the honest thing instead: this is a command-line tool and you will want
+ * a desktop machine.
+ */
+
+import "../../styles/ui.css";
+import Button from "../ui/Button.astro";
+
+interface Props {
+  /** The exact install command. Displayed and copied from this one string. */
+  cmd: string;
+}
+
+const { cmd } = Astro.props;
+
+/* Everything before / after the placeholder, so the token can be tinted without the
+   displayed text and the copied text ever being authored twice. */
+const HOST_TOKEN = "<host>";
+const cmdHead = cmd.slice(0, cmd.indexOf(HOST_TOKEN));
+const cmdTail = cmd.slice(cmd.indexOf(HOST_TOKEN) + HOST_TOKEN.length);
+
+/* `text` with `backticks` becomes inline code. Saves authoring markup in three data tables. */
+const seg = (s: string) =>
+  s.split(/`([^`]+)`/).map((t, i) => ({ t, code: i % 2 === 1 }));
+
+const PLATFORMS = [
+  {
+    id: "mac",
+    tab: "macOS",
+    heading: "On macOS",
+    notes: [
+      {
+        k: "Node 24 or newer",
+        v: "`brew install node`, or the installer from nodejs.org. The script checks this before it downloads anything.",
+      },
+      {
+        k: "Nothing else to install",
+        v: "`shasum` and `curl` already ship with macOS, so the checksum step has what it needs.",
+      },
+      {
+        k: "If the shell can’t find it afterwards",
+        v: "The installer prints the exact PATH line for your shell — on a stock Mac that’s zsh and `~/.zprofile`. It prints it; it never edits the file for you.",
+      },
+    ],
+  },
+  {
+    id: "linux",
+    tab: "Linux",
+    heading: "On Linux",
+    notes: [
+      {
+        k: "Node 24 or newer",
+        v: "Check with `node -v` first — distro packages are often several majors behind. nodejs.org or a version manager will be newer.",
+      },
+      {
+        k: "Nothing else to install",
+        v: "`sha256sum` comes with coreutils; the script takes that or `shasum`, whichever it finds.",
+      },
+      {
+        k: "If the shell can’t find it afterwards",
+        v: "The installer prints the exact PATH line for your shell — for bash that’s `~/.bash_profile`. It prints it; it never edits the file for you.",
+      },
+    ],
+  },
+  {
+    id: "win",
+    tab: "Windows",
+    heading: "On Windows, via WSL",
+    notes: [
+      {
+        k: "Run it inside WSL",
+        v: "The installer is POSIX sh. There is no PowerShell path and no .exe — open a WSL shell with `wsl`, then run the command above in there.",
+      },
+      {
+        k: "Node 24 or newer, inside WSL",
+        v: "A Node installed on Windows is not on WSL’s PATH. Install it in the Linux environment the script will actually run in.",
+      },
+      {
+        k: "Where it lands",
+        v: "`~/.local/bin` inside your WSL home directory — nothing is written to a Windows drive.",
+      },
+    ],
+  },
+] as const;
+---
+
+<section class="dl-hero" aria-labelledby="dl-title">
+  <div class="page dl-hero__inner">
+    {/* "Install", not "Download" — the nav, the footer and the h1 all say Install, and one
+        destination should not answer to four names. The route stays /download; only the
+        visible label is normalised. */}
+    <p class="eyebrow">Install</p>
+    <h1 class="h-display dl-hero__h" id="dl-title">Install coswarm.</h1>
+    {/* Two elements, not one. As a single 146-character sentence this ran to five lines at
+        375px with a rag that swung 70px, and the fifth line existed only to carry "256" —
+        the browser broke "SHA-256" at its hyphen, which is a break that changes what the word
+        says. The promise ("one command, one file, here") is the lede; the three caveats are
+        support, and they get the size that says so. Not one word was cut. */}
+    <p class="lede dl-hero__lede">
+      One command. One file in <span class="mono">~/.local/bin</span>.
+    </p>
+    <p class="dl-hero__sub">
+      No sudo, no <span class="mono">node_modules</span>, and nothing lands on your machine
+      unless its <span class="dl-nb">SHA-256</span> matches the published one.
+    </p>
+
+    <div class="dl-card">
+      <div class="dl-card__bar">
+        <span class="dl-card__dots" aria-hidden="true"><i></i><i></i><i></i></span>
+        <span class="dl-card__label mono">install</span>
+      </div>
+
+      <div class="dl-card__body">
+        <div class="dl-cmd">
+          <pre class="dl-cmd__pre mono"><code><span class="dl-cmd__prompt" aria-hidden="true">$ </span>{cmdHead}<span class="dl-cmd__host">&lt;host&gt;</span>{cmdTail}</code></pre>
+        </div>
+
+        <div class="dl-go" data-dl-go>
+          <Button
+            variant="primary"
+            size="lg"
+            block
+            class="dl-go__btn"
+            data-dl-copy={cmd}
+            aria-describedby="dl-go-hint"
+          >
+            <span class="dl-go__ico" slot="start">
+              <svg
+                class="dl-go__clip"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.75"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <rect x="9" y="9" width="11" height="11" rx="2"></rect>
+                <path d="M5 15V6a2 2 0 0 1 2-2h8"></path>
+              </svg>
+              <svg
+                class="dl-go__tick"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2.2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <path d="M4 12.5 9.5 18 20 6.5"></path>
+              </svg>
+            </span>
+            <span class="dl-go__txt">Copy install command</span>
+          </Button>
+
+          <p class="dl-go__hint" id="dl-go-hint" data-dl-hint>
+            Paste it into a terminal. Nothing runs on this page.
+          </p>
+        </div>
+
+        <ul class="dl-meta">
+          <li class="dl-meta__i">Node 24 or newer</li>
+          <li class="dl-meta__i">macOS · Linux · WSL</li>
+          <li class="dl-meta__i">No sudo</li>
+        </ul>
+
+        <p class="dl-placeholder">
+          <span class="dl-placeholder__flag mono">&lt;host&gt;</span>
+          is a placeholder, not an address. The public install host isn’t decided yet, so this
+          command won’t resolve as written — it’s here so you can read exactly what installing
+          would do. coswarm is pre-launch and invite-only; there’s no self-serve signup.
+        </p>
+      </div>
+
+      <div class="dl-plat" data-dl-plat>
+        <script is:inline>
+          /* Set during parse, before the panels below are parsed: with JS the block is a tab
+             set from first paint, without it every panel stays visible. */
+          document.currentScript.parentElement.setAttribute("data-js", "");
+        </script>
+
+        <div class="dl-plat__head">
+          <h2 class="dl-plat__title" id="dl-plat-label">Your platform</h2>
+          <div class="dl-seg-slot">
+            <div class="dl-seg" role="tablist" aria-labelledby="dl-plat-label" hidden data-dl-seg>
+              {
+                PLATFORMS.map((p, i) => (
+                  <button
+                    type="button"
+                    role="tab"
+                    class="dl-seg__btn"
+                    id={`dl-tab-${p.id}`}
+                    aria-controls={`dl-panel-${p.id}`}
+                    aria-selected={i === 0 ? "true" : "false"}
+                    tabindex={i === 0 ? 0 : -1}
+                    data-dl-tab={p.id}
+                  >
+                    {p.tab}
+                  </button>
+                ))
+              }
+            </div>
+          </div>
+        </div>
+
+        <p class="dl-detect" hidden data-dl-detect></p>
+
+        <div class="dl-panels">
+          {
+            PLATFORMS.map((p, i) => (
+              <div
+                class:list={["dl-panel", i === 0 && "is-active"]}
+                id={`dl-panel-${p.id}`}
+                data-dl-panel={p.id}
+              >
+                <h3 class="dl-panel__h" data-dl-panel-h>
+                  {p.heading}
+                </h3>
+                <ul class="dl-notes">
+                  {p.notes.map((n) => (
+                    <li class="dl-note">
+                      <span class="dl-note__k">{n.k}</span>
+                      <span class="dl-note__v">
+                        {seg(n.v).map((part) =>
+                          part.code ? <code class="dl-ic">{part.t}</code> : <>{part.t}</>
+                        )}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))
+          }
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<style>
+  /* ---------------------------------------------------------------- hero -- */
+  .dl-hero {
+    padding-block: clamp(var(--s-12), 7vw, var(--s-24)) var(--s-8);
+  }
+
+  .dl-hero__inner {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+  }
+
+  /* .h-display, not .h-section: every other heading on this page is .h-section, and a page
+     title that measures the same as the section titles under it gives the outline no visible
+     top. --t-display already clamps down to 2.9rem, so it does not run away at 375px. */
+  .dl-hero__h {
+    margin: var(--s-4) 0 0;
+  }
+
+  .dl-hero__lede {
+    margin: var(--stack-sm) 0 0;
+    max-width: 40rem;
+    /* NO text-wrap: balance here, deliberately — .lede's inherited `pretty` is the right one,
+       and this was measured both ways at 375px rather than reasoned about:
+         balance  "One command. One"        183px / "file in ~/.local/bin."  189px
+         pretty   "One command. One file in" 239px / "~/.local/bin."          135px
+       balance wins on evenness and loses on sense: it strands "One" at the end of a line where
+       the eye tries to bind it to "command." above it, and splits "One file in" mid-phrase.
+       pretty breaks at the phrase instead and gives the path a line of its own, which is the
+       one thing on this page a reader is looking for. An uneven rag over two lines is a shape;
+       a dangling "One" is a stumble. */
+  }
+
+  /* The caveats. A size step, not a colour step: both this and the lede are --text-muted, so
+     the hierarchy has to come from something that still works for a reader who has overridden
+     colours entirely. */
+  .dl-hero__sub {
+    margin: var(--s-3) 0 0;
+    max-width: 34rem;
+    font-size: var(--t-base);
+    line-height: var(--lh-base);
+    color: var(--text-muted);
+    text-wrap: pretty;
+  }
+
+  /* "SHA-256" is one token. A hyphen is its own soft-wrap opportunity in UAX #14, so Chrome
+     broke it as "SHA-" / "256" at 375px — a line break that changes what the word says, on a
+     page whose entire claim is that it tells you exactly what will run. Same class of bug as
+     the "--until" break already documented in CollisionStory, same fix. */
+  .dl-nb {
+    white-space: nowrap;
+  }
+
+  /*
+   * MONO INSIDE THE LEDE IS SET SMALLER THAN THE SANS AROUND IT.
+   *
+   * JetBrains Mono has a larger x-height and a much wider advance than Inter at the same
+   * nominal size, so `~/.local/bin` at 1em did not read as a path inside a sentence — it read
+   * as emphasis. At 375px it took most of a line on its own and the paragraph looked like it
+   * was shouting two words in the middle of a calm sentence.
+   *
+   * 0.9em is the optical match, and it is the same correction global.css already applies to
+   * inline <code> (`:not(pre) > code { font-size: 0.88em }`) — the .mono spans here simply
+   * were not getting it, because .mono sets a family and no size. The negative tracking takes
+   * back the small extra the smaller size gives to mono's already-loose default fit.
+   */
+  .dl-hero__lede .mono,
+  .dl-hero__sub .mono {
+    font-size: 0.9em;
+    letter-spacing: -0.005em;
+  }
+
+  /* ------------------------------------------------------------ the card -- */
+  .dl-card {
+    width: 100%;
+    max-width: 46rem;
+    margin-top: var(--s-10);
+    text-align: start;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--ring-top), var(--shadow-lg);
+    overflow: hidden;
+  }
+
+  .dl-card__bar {
+    display: flex;
+    align-items: center;
+    gap: var(--s-3);
+    padding: var(--s-3) var(--s-4);
+    background: var(--surface-2);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .dl-card__dots {
+    display: inline-flex;
+    gap: 6px;
+  }
+
+  .dl-card__dots i {
+    inline-size: 10px;
+    block-size: 10px;
+    border-radius: 50%;
+    background: var(--border-strong);
+  }
+
+  /* There was a warning "Placeholder host" badge to the right of this label, which is why the
+     label used to carry `margin-inline-end: auto`. It was the FIRST of three statements of the
+     same fact inside one panel — the amber <host> in the command and the paragraph under it
+     are the other two — and it said the least of the three while shouting the loudest. The
+     badge is gone; the highlight and the paragraph carry it. */
+  .dl-card__label {
+    font-size: var(--t-xs);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+  }
+
+  .dl-card__body {
+    padding: var(--pad-card-lg);
+  }
+
+  /* ----------------------------------------------------------- command --- */
+  .dl-cmd {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    /* The command is one long line: it scrolls inside this box rather than widening
+       the page. This is the only horizontal scroller on the page and it is intended. */
+    overflow-x: auto;
+    scrollbar-width: thin;
+  }
+
+  .dl-cmd__pre {
+    margin: 0;
+    padding: var(--s-4);
+    background: none;
+    border: 0;
+    font-size: var(--t-sm);
+    line-height: 1.6;
+    color: var(--text);
+    white-space: pre;
+    width: max-content;
+    min-width: 100%;
+  }
+
+  /* --accent-bright, matching ui.css's .ui-code__prompt exactly. This page renders both this
+     hand-built strip and six real CodeBlocks; two different prompt colours on one page reads
+     as a mistake. --accent is a fill colour and measures lower as text. */
+  .dl-cmd__prompt {
+    color: var(--accent-bright);
+    user-select: none;
+  }
+
+  .dl-cmd__host {
+    color: var(--warning);
+    background: color-mix(in oklab, var(--warning) 13%, transparent);
+    border-radius: 4px;
+    padding: 1px 4px;
+  }
+
+  /* -------------------------------------------------------- the action --- */
+  .dl-go {
+    margin-top: var(--s-5);
+  }
+
+  .dl-go__btn {
+    --btn-h: 3.25rem;
+    font-size: var(--t-base);
+  }
+
+  .dl-go__ico {
+    display: inline-grid;
+    place-items: center;
+  }
+
+  /* Both glyphs occupy the same cell, so swapping them cannot move the label. */
+  .dl-go__clip,
+  .dl-go__tick {
+    grid-area: 1 / 1;
+    inline-size: 18px;
+    block-size: 18px;
+  }
+
+  .dl-go__tick {
+    opacity: 0;
+    transform: scale(0.7);
+    transition:
+      opacity var(--dur-1) var(--ease-standard),
+      transform var(--dur-2) var(--ease-spring);
+  }
+
+  .dl-go[data-state="done"] .dl-go__clip {
+    opacity: 0;
+  }
+
+  .dl-go[data-state="done"] .dl-go__tick {
+    opacity: 1;
+    transform: none;
+  }
+
+  /* On a failed copy neither glyph is a lie: the clipboard icon stays, the words change. */
+  .dl-go__hint {
+    margin: var(--s-3) 0 0;
+    text-align: center;
+    font-size: var(--t-sm);
+    line-height: var(--lh-sm);
+    color: var(--text-muted);
+  }
+
+  .dl-go[data-state="done"] .dl-go__hint {
+    color: var(--success);
+  }
+
+  .dl-go[data-state="fail"] .dl-go__hint {
+    color: var(--warning);
+  }
+
+  /* ------------------------------------------------------------- meta ---- */
+  .dl-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s-2) var(--s-5);
+    justify-content: center;
+    margin: var(--s-5) 0 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .dl-meta__i {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s-2);
+    font-size: var(--t-xs);
+    line-height: var(--lh-xs);
+    color: var(--text-muted);
+  }
+
+  .dl-meta__i::before {
+    content: "";
+    inline-size: 5px;
+    block-size: 5px;
+    border-radius: 50%;
+    background: var(--success);
+    flex: none;
+  }
+
+  .dl-placeholder {
+    margin: var(--s-6) 0 0;
+    padding-top: var(--s-5);
+    border-top: 1px solid var(--border);
+    font-size: var(--t-sm);
+    line-height: var(--lh-sm);
+    color: var(--text-muted);
+  }
+
+  .dl-placeholder__flag {
+    color: var(--warning);
+    background: color-mix(in oklab, var(--warning) 13%, transparent);
+    border-radius: 4px;
+    padding: 1px 5px;
+    white-space: nowrap;
+  }
+
+  /* -------------------------------------------------------- platforms ---- */
+  .dl-plat {
+    padding: var(--pad-card-lg);
+    border-top: 1px solid var(--border);
+    background: var(--bg-raised);
+  }
+
+  .dl-plat__head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--s-3);
+    justify-content: space-between;
+  }
+
+  .dl-plat__title {
+    margin: 0;
+    font-size: var(--t-xs);
+    font-weight: 600;
+    letter-spacing: var(--track-eyebrow);
+    text-transform: uppercase;
+    color: var(--text-muted);
+  }
+
+  /* Holds the tab row's height before the module unhides it, so the panel below
+     does not shift downwards a frame later. Only reserved when JS is present. */
+  .dl-plat[data-js] .dl-seg-slot {
+    min-block-size: 2.25rem;
+  }
+
+  /* MUST come with the rule below it. `hidden` is a UA-stylesheet `display: none`, and any
+     author `display` beats it — without this the tab row rendered in full for a reader with
+     no JavaScript, three pills that could not switch anything. Caught by disabling scripts
+     and looking at the page, not by reading the markup. */
+  .dl-seg[hidden] {
+    display: none;
+  }
+
+  .dl-seg {
+    display: inline-flex;
+    padding: 3px;
+    gap: 2px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-pill);
+  }
+
+  .dl-seg__btn {
+    appearance: none;
+    border: 0;
+    background: none;
+    font: inherit;
+    font-size: var(--t-xs);
+    font-weight: 600;
+    letter-spacing: var(--track-xs);
+    color: var(--text-muted);
+    padding: 0.4rem 0.85rem;
+    border-radius: var(--radius-pill);
+    cursor: pointer;
+    white-space: nowrap;
+    transition:
+      color var(--dur-2) var(--ease-standard),
+      background var(--dur-2) var(--ease-standard);
+  }
+
+  .dl-seg__btn:hover {
+    color: var(--text);
+  }
+
+  .dl-seg__btn[aria-selected="true"] {
+    background: var(--accent-dim);
+    color: var(--accent-bright);
+    box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--accent) 34%, transparent);
+  }
+
+  .dl-seg__btn:focus-visible {
+    outline: 2px solid var(--focus);
+    outline-offset: 2px;
+  }
+
+  /* --text-muted, not --text-faint: tokens.css is explicit that --text-faint is for large
+     text and non-text only (4.25:1), and this is 12px body copy. */
+  .dl-detect {
+    margin: var(--s-3) 0 0;
+    font-size: var(--t-xs);
+    line-height: var(--lh-xs);
+    color: var(--text-muted);
+  }
+
+  .dl-panel {
+    margin-top: var(--s-5);
+  }
+
+  /* With JS the panels are a tab set; without it they stay stacked and all visible. */
+  .dl-plat[data-js] .dl-panel {
+    display: none;
+  }
+
+  .dl-plat[data-js] .dl-panel.is-active {
+    display: block;
+  }
+
+  .dl-panel__h {
+    margin: 0 0 var(--s-4);
+    font-size: var(--t-base);
+    font-weight: 600;
+    color: var(--text);
+  }
+
+  .dl-notes {
+    display: grid;
+    gap: var(--s-4);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .dl-note {
+    display: grid;
+    gap: 2px;
+  }
+
+  .dl-note__k {
+    font-size: var(--t-sm);
+    font-weight: 600;
+    color: var(--text);
+    letter-spacing: var(--track-sm);
+  }
+
+  .dl-note__v {
+    font-size: var(--t-sm);
+    line-height: var(--lh-sm);
+    color: var(--text-muted);
+  }
+
+  .dl-ic {
+    font-family: var(--font-mono);
+    font-size: 0.92em;
+    color: var(--text);
+    background: var(--surface-2);
+    border-radius: 4px;
+    padding: 1px 4px;
+  }
+
+  /* ------------------------------------------------------- responsive ---- */
+  @media (max-width: 40rem) {
+    .dl-card__body,
+    .dl-plat {
+      padding: var(--s-5);
+    }
+
+    /* A measure in ch, so it tracks the font rather than the viewport. Below ~560px this is
+       wider than the gutters allow and does nothing; between there and 640px it stops the
+       two hero paragraphs stretching to a 55-character line the moment the card below them
+       stops being the widest thing on the page. */
+    .dl-hero__lede,
+    .dl-hero__sub {
+      max-inline-size: 34ch;
+    }
+
+    /* Below this width the command cannot fit on one line at any legible size, and a
+       horizontally-scrolled hero command means the reader is looking at "…/install.s".
+       Wrapping keeps the whole thing visible; the continuation line is indented so it still
+       reads as one command. Verified at 375px: two lines, nothing clipped. */
+    .dl-cmd {
+      overflow-x: visible;
+    }
+
+    .dl-cmd__pre {
+      padding: var(--s-3);
+      font-size: 0.78rem;
+      white-space: pre-wrap;
+      overflow-wrap: break-word;
+      width: auto;
+      padding-left: calc(var(--s-3) + 1.1rem);
+      text-indent: -1.1rem;
+    }
+
+    .dl-go__btn {
+      --btn-h: 3rem;
+    }
+
+    /* Only narrow enough for the hint to wrap: reserve the second line here so swapping
+       "Paste it into a terminal…" for the longer copied message cannot shove the meta row
+       down under the reader’s finger. At wider sizes both messages are one line. */
+    .dl-go__hint {
+      min-height: calc(2 * var(--t-sm) * var(--lh-sm));
+    }
+
+    .dl-plat__head {
+      /* The tab row gets its own line rather than being squeezed beside the label. */
+      justify-content: flex-start;
+    }
+
+    .dl-seg {
+      width: 100%;
+      justify-content: space-between;
+    }
+
+    .dl-seg__btn {
+      flex: 1;
+      padding-inline: 0.5rem;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .dl-seg__btn,
+    .dl-go__tick {
+      transition: none;
+    }
+  }
+</style>
+
+<script>
+  /*
+   * Copy, platform detection, and the tab set. All three are enhancements: with this file
+   * removed the page still shows the command, every platform's notes, and the placeholder
+   * warning.
+   */
+
+  const plat = document.querySelector<HTMLElement>("[data-dl-plat]");
+  const go = document.querySelector<HTMLElement>("[data-dl-go]");
+
+  /* ------------------------------------------------------------- copy ---- */
+
+  function legacyCopy(text: string): boolean {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.setAttribute("readonly", "");
+    ta.style.position = "fixed";
+    ta.style.top = "-1000px";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    let ok = false;
+    try {
+      ok = document.execCommand("copy");
+    } catch {
+      ok = false;
+    }
+    document.body.removeChild(ta);
+    return ok;
+  }
+
+  async function writeClipboard(text: string): Promise<boolean> {
+    if (navigator.clipboard && window.isSecureContext) {
+      try {
+        await navigator.clipboard.writeText(text);
+        return true;
+      } catch {
+        /* Denied, or called outside a user gesture. Fall through — never report a
+           success that did not happen. */
+      }
+    }
+    return legacyCopy(text);
+  }
+
+  /* Built at runtime, so it carries .ui-sr from ui.css: a class in this component's
+     scoped <style> would never match a node created here, and the status text would
+     render visibly in the corner of the page. */
+  function statusRegion(): HTMLElement {
+    let el = document.getElementById("dl-copy-status");
+    if (!el) {
+      el = document.createElement("p");
+      el.id = "dl-copy-status";
+      el.className = "ui-sr";
+      el.setAttribute("role", "status");
+      el.setAttribute("aria-live", "polite");
+      document.body.appendChild(el);
+    }
+    return el;
+  }
+
+  if (go) {
+    const btn = go.querySelector<HTMLElement>("[data-dl-copy]");
+    const txt = go.querySelector<HTMLElement>(".dl-go__txt");
+    const hint = go.querySelector<HTMLElement>("[data-dl-hint]");
+    const status = statusRegion();
+    const idleLabel = txt?.textContent ?? "Copy install command";
+    const idleHint = hint?.textContent ?? "";
+    let timer: number | undefined;
+
+    btn?.addEventListener("click", async () => {
+      const ok = await writeClipboard(btn.dataset.dlCopy ?? "");
+
+      window.clearTimeout(timer);
+      go.dataset.state = ok ? "done" : "fail";
+      /* The word changes, not only the colour and the glyph. */
+      if (txt) txt.textContent = ok ? "Copied" : "Couldn’t copy";
+      if (hint) {
+        hint.textContent = ok
+          ? "Copied. Replace <host> with a real address before you run it."
+          : "Select the command above and press Command-C or Control-C.";
+      }
+      status.textContent = ok
+        ? "Install command copied to clipboard. It contains the placeholder <host>, which must be replaced before the command will run."
+        : "Copy is unavailable here — select the command and press Command-C or Control-C.";
+
+      timer = window.setTimeout(() => {
+        delete go.dataset.state;
+        if (txt) txt.textContent = idleLabel;
+        if (hint) hint.textContent = idleHint;
+        /* Clearing matters: leaving the old text means the NEXT copy writes the same
+           string, the region never changes, and nothing is announced. */
+        status.textContent = "";
+      }, 2600);
+    });
+  }
+
+  /* -------------------------------------------------- platform tab set --- */
+
+  if (plat) {
+    const list = plat.querySelector<HTMLElement>("[data-dl-seg]");
+    const tabs = Array.from(plat.querySelectorAll<HTMLButtonElement>("[data-dl-tab]"));
+    const panels = Array.from(plat.querySelectorAll<HTMLElement>("[data-dl-panel]"));
+    const detect = plat.querySelector<HTMLElement>("[data-dl-detect]");
+
+    if (list && tabs.length && tabs.length === panels.length) {
+      /* The roles that only make sense once the tabs exist are added here, not in the
+         HTML — a tabpanel with no reachable tab is worse than a plain section. */
+      panels.forEach((panel) => {
+        const id = panel.dataset.dlPanel;
+        panel.setAttribute("role", "tabpanel");
+        panel.setAttribute("aria-labelledby", `dl-tab-${id}`);
+        /* The tab now names the panel; its heading would be read twice. */
+        panel.querySelector("[data-dl-panel-h]")?.classList.add("visually-hidden");
+      });
+
+      list.removeAttribute("hidden");
+
+      const select = (id: string, moveFocus: boolean) => {
+        tabs.forEach((tab) => {
+          const on = tab.dataset.dlTab === id;
+          tab.setAttribute("aria-selected", on ? "true" : "false");
+          tab.tabIndex = on ? 0 : -1;
+          if (on && moveFocus) tab.focus();
+        });
+        panels.forEach((panel) => {
+          panel.classList.toggle("is-active", panel.dataset.dlPanel === id);
+        });
+      };
+
+      tabs.forEach((tab, i) => {
+        tab.addEventListener("click", () => {
+          select(tab.dataset.dlTab ?? "", false);
+          /* A deliberate choice replaces the "we guessed" line rather than leaving a
+             stale claim about detection sitting under a tab the reader picked. */
+          if (detect && detect.dataset.mode === "auto") detect.hidden = true;
+        });
+
+        tab.addEventListener("keydown", (e: KeyboardEvent) => {
+          const last = tabs.length - 1;
+          let next = -1;
+          if (e.key === "ArrowRight") next = i === last ? 0 : i + 1;
+          else if (e.key === "ArrowLeft") next = i === 0 ? last : i - 1;
+          else if (e.key === "Home") next = 0;
+          else if (e.key === "End") next = last;
+          if (next < 0) return;
+          e.preventDefault();
+          select(tabs[next].dataset.dlTab ?? "", true);
+          if (detect && detect.dataset.mode === "auto") detect.hidden = true;
+        });
+      });
+
+      /* --- detection. A suggestion, stated as one. --- */
+      const uaData = (navigator as Navigator & { userAgentData?: { platform?: string } })
+        .userAgentData;
+      const hay = `${uaData?.platform ?? ""} ${navigator.platform ?? ""} ${
+        navigator.userAgent ?? ""
+      }`.toLowerCase();
+
+      if (detect) {
+        if (/iphone|ipad|ipod|android/.test(hay)) {
+          /* Honest rather than helpful-looking: you cannot install a CLI here. */
+          detect.textContent =
+            "coswarm is a command-line tool — you’ll want a Mac or Linux machine to install it.";
+          detect.dataset.mode = "device";
+          detect.hidden = false;
+        } else {
+          let guess = "";
+          if (/mac/.test(hay)) guess = "mac";
+          else if (/win/.test(hay)) guess = "win";
+          else if (/linux|cros|x11/.test(hay)) guess = "linux";
+
+          if (guess) {
+            select(guess, false);
+            const label = tabs.find((t) => t.dataset.dlTab === guess)?.textContent?.trim();
+            detect.textContent = `Showing ${label} because that’s what this browser reports. Pick another if it’s wrong.`;
+            detect.dataset.mode = "auto";
+            detect.hidden = false;
+          }
+        }
+      }
+    }
+  }
+</script>

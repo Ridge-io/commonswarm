@@ -1,0 +1,345 @@
+---
+/*
+ * Invite — the pre-launch CTA, and the most honest thing on the page.
+ *
+ * THERE IS NO SIGNUP SERVICE. Not "coming soon", not "in beta" — the endpoint does not
+ * exist. So this is a complete, real front end whose submit path is a stub, and it says so
+ * in three places that a reader cannot miss:
+ *
+ *   1. the section heading, before anything is typed;
+ *   2. the field's own hint, which is read out with the control by a screen reader;
+ *   3. the outcome after submitting, which reports exactly what happened — nothing.
+ *
+ * THREE MEANS THREE, and it did not used to. This card had shipped five: the heading, a
+ * bolded clause in the lede ("a front end with nothing behind it"), the Access row's
+ * "— not self-serve", a "Front end only" badge on the form title, and the hint — with the
+ * outcome making six and the site footer a seventh 200px below. Measured on the built page,
+ * the closing screenful restated the same fact eight times. Honesty was never the problem;
+ * the volume was, and a page that says one thing eight times reads as apologising for
+ * itself. The badge and the bolded clause are gone, the Access row states the fact
+ * ("Invited dogfood") without also negating its opposite, and the lede now spends its
+ * length on how you DO get in rather than on what is missing. Anything added here that
+ * restates the stub is a fourth placement: put it in one of the three or leave it out.
+ *
+ * It NEVER shows a success state. A green tick reading "You're on the list!" over a form
+ * with no backend is the single most common lie on a pre-launch page, and it is the one
+ * thing this component is written to make impossible.
+ *
+ * WHY THE VALIDATION IS REAL ANYWAY. The parts that can be honest are: the field validates,
+ * the error is a real error, and the outcome is the truth. That is a working front end
+ * waiting for a server, which is what it actually is.
+ *
+ * WHY THERE IS NO SPINNER. Nothing is in flight. A loading state here would be a fabricated
+ * latency invented to make a stub feel like a service.
+ *
+ * INTEGRATION CORRECTION: the Repository row read "Private while we dogfood". It is not.
+ * Re-checked live: github.com/Ridge-io/cloud-swarm answers 200 to a logged-out request, with
+ * a made-up repo path returning 404 as the control. The row now names and links the repo.
+ * The same false claim was rendered by two of the site's three footers; those are deleted.
+ *
+ * FACTS: pre-launch, invited dogfood — docs/marketing/SITE-BRIEF.md. (Historical note, kept
+ * because it explains the fix above: the repo WAS private, which is why nothing here linked
+ * to it. The old note read: github.com/Ridge-io/cloud-swarm returns
+ * 404 to a logged-out visitor). Licence MIT — package.json at the repo root.
+ */
+
+import Input from "../ui/Input.astro";
+---
+
+<section class="section section--tight invite" id="invite" aria-labelledby="invite-title">
+  <div class="page">
+    <div class="card card--lg card--raised invite__card js-reveal">
+      <div class="invite__copy">
+        {/* "Status", not "Where this is" — that was not grammatical English. The list below
+            used to open on a key also called "Status", so that key is now "Access", which is
+            what its value ("Invited dogfood") actually describes. */}
+        <p class="eyebrow">Status</p>
+        <h2 class="h-section invite__title" id="invite-title">
+          There is no signup yet.
+        </h2>
+        <p class="lede invite__lede">
+          We are running coswarm on our own work first, and invitations go out by hand.
+        </p>
+
+        <ul class="invite__facts">
+          <li>
+            <span class="invite__k">Access</span>
+            <span class="invite__v">Invited dogfood</span>
+          </li>
+          <li>
+            <span class="invite__k">Shape</span>
+            <span class="invite__v">A CLI and a hosted service</span>
+          </li>
+          <li>
+            <span class="invite__k">Repository</span>
+            <span class="invite__v">
+              <a class="invite__a" href="https://github.com/Ridge-io/cloud-swarm" rel="noopener noreferrer" target="_blank">
+                Ridge-io/cloud-swarm<span class="visually-hidden"> (opens in a new tab)</span>
+              </a>
+            </span>
+          </li>
+          <li>
+            <span class="invite__k">Licence</span>
+            <span class="invite__v">MIT</span>
+          </li>
+        </ul>
+      </div>
+
+      <form class="invite__form" id="invite-form" novalidate>
+        <h3 class="invite__form-title">
+          Request an invite
+        </h3>
+
+        <Input
+          id="invite-email"
+          name="email"
+          type="email"
+          label="Email"
+          placeholder="you@company.com"
+          autocomplete="email"
+          hint="Nothing is sent. There is no service behind this button yet."
+        />
+        <p class="invite__err" id="invite-email-err" hidden>
+          <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor"
+            stroke-width="1.8" stroke-linecap="round">
+            <circle cx="12" cy="12" r="9"></circle>
+            <path d="M12 7.5v5"></path>
+            <path d="M12 16.2v.2"></path>
+          </svg>
+          <span id="invite-email-err-text">That does not look like an email address.</span>
+        </p>
+
+        <button class="btn btn--lg btn--primary btn--block" type="submit">
+          Request an invite
+        </button>
+
+        {/* Server-rendered and empty, so the live region is registered before anything is
+            put in it — a region created in the same tick as its content announces nothing. */}
+        <div class="invite__out" id="invite-out" role="status" hidden>
+          <p class="invite__out-title">Nothing was sent.</p>
+          <p class="invite__out-body">
+            That is not an error and you did not do anything wrong — there is no signup
+            service to receive it. When there is one, this is the button that will reach it.
+            Until then, invitations come from someone who already has a project.
+          </p>
+        </div>
+      </form>
+    </div>
+  </div>
+</section>
+
+<script>
+  /* No network call is made here, and none is possible: there is nothing to call. The
+     form’s only job is to validate honestly and then say what really happened. */
+  const form = document.getElementById("invite-form") as HTMLFormElement | null;
+  const field = document.getElementById("invite-email") as HTMLInputElement | null;
+  const err = document.getElementById("invite-email-err");
+  const errText = document.getElementById("invite-email-err-text");
+  const out = document.getElementById("invite-out");
+
+  if (form && field && err && errText && out) {
+    const wrapper = field.closest(".ui-field");
+
+    const setError = (message: string | null) => {
+      err.hidden = message === null;
+      if (message) errText.textContent = message;
+      field.setAttribute("aria-invalid", message ? "true" : "false");
+      field.setAttribute(
+        "aria-describedby",
+        message ? "invite-email-hint invite-email-err" : "invite-email-hint"
+      );
+      wrapper?.classList.toggle("ui-field--error", message !== null);
+    };
+
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const value = field.value.trim();
+
+      if (!value) {
+        out.hidden = true;
+        setError("Enter an email address first.");
+        field.focus();
+        return;
+      }
+      /* Deliberately loose. Tight email regexes reject real addresses, and the only thing
+         this check is for is catching an obvious typo before an honest dead end. */
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) {
+        out.hidden = true;
+        setError("That does not look like an email address.");
+        field.focus();
+        return;
+      }
+
+      setError(null);
+      out.hidden = false;
+    });
+
+    field.addEventListener("input", () => {
+      if (field.value.trim()) setError(null);
+    });
+  }
+</script>
+
+<style>
+  /* [hidden] is (0,1,0) in the UA sheet and any author rule of the same weight beats it.
+     .invite__out and .invite__err are both flex, so without this they would never hide. */
+  [hidden] {
+    display: none !important;
+  }
+
+  /* center, not start: the facts list runs about twice the height of the form, and
+     top-aligning left a column of nothing under the button inside the card. */
+  .invite__card {
+    display: grid;
+    gap: clamp(var(--s-8), 5vw, var(--s-16));
+    align-items: center;
+  }
+
+  @media (min-width: 56rem) {
+    .invite__card {
+      grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+    }
+  }
+
+  .invite__copy {
+    min-inline-size: 0;
+  }
+
+  .invite .invite__title {
+    font-size: var(--t-2xl);
+    margin-block: var(--s-3) var(--stack-sm);
+  }
+
+  .invite__lede {
+    font-size: var(--t-lg);
+    line-height: var(--lh-lg);
+  }
+
+  .invite__facts {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    list-style: none;
+    margin: var(--s-8) 0 0;
+    padding: 0;
+    border-block-start: 1px solid var(--border);
+  }
+
+  .invite__facts li {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--s-3);
+    padding-block: var(--s-3);
+    border-block-end: 1px solid var(--border);
+  }
+
+  .invite__k {
+    font-size: var(--t-xs);
+    letter-spacing: var(--track-eyebrow);
+    text-transform: uppercase;
+    color: var(--text-faint);
+  }
+
+  .invite__v {
+    font-size: var(--t-sm);
+    color: var(--text);
+    text-align: end;
+  }
+
+  /* The Repository row is the one fact here that is also a place you can go. Monospace
+     because it is a repo path, not prose. */
+  .invite__a {
+    font-family: var(--font-mono);
+    font-size: var(--t-xs);
+    color: var(--text);
+    text-decoration: underline;
+    text-decoration-color: var(--border-strong);
+    text-underline-offset: 3px;
+    transition: color var(--dur-2) var(--ease-standard),
+      text-decoration-color var(--dur-2) var(--ease-standard);
+  }
+
+  .invite__a:hover {
+    color: var(--accent-bright);
+    text-decoration-color: currentColor;
+  }
+
+  /* --- form --------------------------------------------------------------- */
+
+  .invite__form {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-4);
+    min-inline-size: 0;
+    padding: var(--pad-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--elev-2);
+  }
+
+  .invite__form-title {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--s-3);
+    font-size: var(--t-lg);
+    font-weight: var(--weight-semibold);
+    line-height: var(--lh-lg);
+    color: var(--text);
+  }
+
+  .invite__err {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--s-2);
+    margin-block-start: calc(var(--s-4) * -1 + var(--s-1));
+    font-size: var(--t-sm);
+    line-height: var(--lh-sm);
+    color: var(--danger);
+  }
+
+  .invite__err svg {
+    inline-size: 1.05em;
+    block-size: 1.05em;
+    flex: none;
+    margin-block-start: 0.2em;
+  }
+
+  /* Deliberately NOT success-coloured. This is an outcome, and the outcome is "nothing
+     happened" — painting it green would be the lie this component exists to avoid. */
+  .invite__out {
+    display: flex;
+    flex-direction: column;
+    gap: var(--stack-xs);
+    padding: var(--pad-card-sm);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
+    background: var(--elev-0);
+    animation: invite-in var(--dur-3) var(--ease-decelerate) both;
+  }
+
+  @keyframes invite-in {
+    from {
+      opacity: 0;
+      transform: translate3d(0, 4px, 0);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
+  .invite__out-title {
+    font-size: var(--t-sm);
+    font-weight: var(--weight-semibold);
+    color: var(--text);
+  }
+
+  .invite__out-body {
+    font-size: var(--t-sm);
+    line-height: var(--lh-sm);
+    color: var(--text-muted);
+  }
+</style>

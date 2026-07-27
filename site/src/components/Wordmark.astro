@@ -1,0 +1,102 @@
+---
+/*
+ * Wordmark — the coswarm mark and word, in one place.
+ *
+ * WHY THIS EXISTS. Integration found the same mark drawn three times, in SiteHeader,
+ * SiteFooter and start/StartHeader, and the three copies did not agree:
+ *
+ *   - StartHeader hard-coded the brand colours as hex — #7c6cff, #9b8fff, #34d399. They
+ *     happen to equal --accent, --accent-bright and --success TODAY, so the drift was
+ *     invisible; the next edit to tokens.css would have changed the logo on three pages and
+ *     not on /start. That is precisely the failure tokens.css exists to prevent, and the
+ *     comment above it named the reason: the mark lived inside a file that pass did not own.
+ *     It is owned here now.
+ *   - SiteFooter set the word at --t-base (16px) / -0.024em / 0.5rem gap while both header
+ *     copies set 17px / -0.028em / 0.55rem. The same wordmark rendered two ways on one page.
+ *
+ * The settings below are the header's, which were the most considered of the three.
+ *
+ * `href` is optional: pass it for a link (every current caller does, all to "/"), omit it for
+ * a plain label. The <svg> is aria-hidden and the word is real text, so the accessible name
+ * is just "coswarm" — no alt, no duplicate announcement.
+ */
+
+interface Props {
+  /** Renders an <a> when set, a <span> when not. */
+  href?: string;
+  /** Pixel size of the mark. The word does not scale with it. */
+  markSize?: number;
+  class?: string;
+}
+
+const { href, markSize = 22, class: klass = "" } = Astro.props;
+
+const Tag = href ? "a" : "span";
+---
+
+<Tag class:list={["wm", klass]} href={href}>
+  <svg
+    class="wm__mark"
+    viewBox="0 0 32 32"
+    width={markSize}
+    height={markSize}
+    aria-hidden="true"
+    focusable="false"
+  >
+    <g
+      stroke="var(--accent)"
+      stroke-width="2"
+      stroke-linecap="round"
+      opacity="0.6"
+      fill="none"
+    >
+      <path d="M16 10.2 9.2 22"></path>
+      <path d="M16 10.2 22.8 22"></path>
+      <path d="M9.2 22h13.6"></path>
+    </g>
+    <circle cx="9.2" cy="22" r="3.5" fill="var(--accent-bright)"></circle>
+    <circle cx="22.8" cy="22" r="3.5" fill="var(--accent-bright)"></circle>
+    <circle cx="16" cy="10.2" r="4" fill="var(--success)"></circle>
+  </svg>
+  <span class="wm__word">coswarm</span>
+</Tag>
+
+<style>
+  .wm {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    gap: 0.55rem;
+    color: var(--text);
+    font-size: 1.0625rem;
+    font-weight: 640;
+    letter-spacing: -0.028em;
+    text-decoration: none;
+    border-radius: var(--radius-sm);
+    transition: opacity var(--dur-2) var(--ease-standard);
+  }
+
+  /* Hover dims rather than recolours: the mark is three tokens deep and a colour change
+     would have to restate all of them. Only an <a> is interactive, so a plain <span>
+     wordmark cannot pick this up. */
+  a.wm:hover {
+    color: var(--text);
+    opacity: 0.8;
+  }
+
+  .wm__mark {
+    flex: none;
+  }
+
+  /* SiteHeader used to carry this step as `@media (max-width: 26rem) { .hdr__brand }`.
+     When the brand became a component, that rule SILENTLY STOPPED APPLYING: Astro scopes a
+     parent's styles with the parent's cid attribute, and the class passed down lands on this
+     component's root, which does not carry it. Measured after the extraction and before this
+     fix — 17px at a 400px viewport where it should have been 16px. It lives here now, where
+     the element it styles actually is, and it is correct for the footer mark too. */
+  @media (max-width: 26rem) {
+    .wm {
+      font-size: 1rem;
+    }
+  }
+</style>

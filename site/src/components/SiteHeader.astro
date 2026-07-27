@@ -1,0 +1,802 @@
+---
+/*
+ * SiteHeader — the app bar every route renders under.
+ *
+ * TWO STATES, ONE COMPONENT. `signedIn` picks the nav. There is no auth in the product yet,
+ * so nothing sets it to true today and the signed-in branch is dormant scaffolding, not a
+ * live surface. That distinction matters: the signed-out links below all resolve to routes
+ * that are actually built (/download, /app, /start) or to a section id that exists on the
+ * landing page (#how-it-works), whereas APP_NAV points at routes that DO NOT EXIST
+ * (/app/feed, /app/agents, /app/workspaces — /app itself is built, its children are not).
+ * Wiring `signedIn` to a real session is therefore a two-part job — flip the prop AND build
+ * /app/*. Do not flip it first.
+ *
+ * WHY /docs IS NOT IN THE NAV. It used to be. There is no docs page in src/pages, so the
+ * link was a guaranteed 404 for every visitor who clicked it. A nav entry that dead-ends is
+ * worse than a missing one; it goes back when the page exists.
+ *
+ * THE MOBILE MENU IS PROGRESSIVE, NOT MANDATORY. The burger is hidden until this file's own
+ * script sets [data-menu-ready] on the header. Without JavaScript the inline nav simply stays
+ * visible in its compact form, so a reader never meets a button that cannot do anything. The
+ * panel is a real <dialog> opened with showModal(), which buys the focus trap, the Escape
+ * handler and top-layer painting from the platform rather than from hand-written JS that
+ * would have to be re-audited.
+ *
+ * WHY THE DIALOG IS A SIBLING OF <header> AND NOT A CHILD. The header carries backdrop-filter,
+ * and a filter or backdrop-filter makes an element the containing block for its
+ * position: fixed descendants. A panel nested inside the header would therefore anchor to the
+ * 64px-tall header instead of to the viewport. showModal() promotes the dialog to the top
+ * layer, which sidesteps this — but the markup stays outside the header anyway so the trap
+ * cannot come back if the dialog is ever downgraded to a plain div.
+ */
+
+import Button from "./ui/Button.astro";
+import Wordmark from "./Wordmark.astro";
+
+interface Props {
+  /**
+   * Signed-in shows the app nav; signed-out shows the marketing nav. Defaults to false
+   * because there is no session to read — see the note above before changing this.
+   */
+  signedIn?: boolean;
+  /** Current route, used to mark the active app link. Hash links are never "current". */
+  path?: string;
+}
+
+const { signedIn = false, path = "/" } = Astro.props;
+
+/* Marketing nav. INTEGRATION: this used to be two same-page hashes, one of which
+ * (`/#authority`) pointed at a section the landing page no longer has — it was removed with
+ * the retired framing. It shipped on all four pages as a dead link AND as the only remaining
+ * occurrence of the retired vocabulary in the built output (8 hits, all from this array and
+ * SiteFooter's copy of it). It is gone, not renamed.
+ *
+ * The nav is now three real destinations plus the CTA, which is how every route becomes
+ * reachable: /download and /app had NOTHING linking to them from anywhere on the site, and
+ * /start was reachable only via the canonical <link>. Verified after this change by grepping
+ * every href in dist/ — see the note in Base.astro.
+ *
+ * Absolute (`/#…`) rather than bare (`#…`) so the hash still resolves from a route that is
+ * not "/". */
+const MARKETING_NAV = [
+  { href: "/#how-it-works", label: "How it works" },
+  { href: "/download", label: "Install" },
+  { href: "/app", label: "Dashboard" },
+];
+
+/* App nav. NONE of these routes are built. Rendered only when signedIn is true, which
+ * nothing does. Listed here so the shell's two states are visible in one place. */
+const APP_NAV = [
+  { href: "/app/feed", label: "Feed" },
+  { href: "/app/agents", label: "Agents" },
+  { href: "/app/workspaces", label: "Workspaces" },
+];
+
+const REPO = "https://github.com/Ridge-io/cloud-swarm";
+
+const nav = signedIn ? APP_NAV : MARKETING_NAV;
+/* The CTA is the one write operation the product has for a human: create a workspace and
+ * onboard agents into it. It used to be "Install the CLI" -> /#install, which is a job for
+ * the nav (and now has a whole page), not for the single most prominent action on the site. */
+const cta = signedIn
+  ? { href: "/app/new", label: "New workspace" }
+  : { href: "/start", label: "Create a workspace" };
+
+/* Only a real route can be the current page. A hash link points inside the page we are
+ * already on, so aria-current would be a lie on every one of them. */
+const isCurrent = (href: string) => !href.includes("#") && href === path;
+---
+
+<header class="hdr" data-header>
+  <div class="page hdr__inner">
+    <Wordmark href="/" class="hdr__brand" />
+
+    <nav class="hdr__nav" aria-label="Primary">
+      {
+        nav.map((item) => (
+          <a
+            class="hdr__link"
+            href={item.href}
+            aria-current={isCurrent(item.href) ? "page" : undefined}
+          >
+            {item.label}
+          </a>
+        ))
+      }
+    </nav>
+
+    <div class="hdr__actions">
+      <a
+        class="hdr__icon"
+        href={REPO}
+        target="_blank"
+        rel="noopener noreferrer"
+        title="GitHub"
+      >
+        <svg viewBox="0 0 16 16" width="17" height="17" aria-hidden="true" focusable="false">
+          <path
+            fill="currentColor"
+            d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"
+          ></path>
+        </svg>
+        <span class="hdr__sr">GitHub repository (opens in a new tab)</span>
+      </a>
+
+      <Button href={cta.href} variant="primary" class="hdr__cta">{cta.label}</Button>
+
+      <button
+        class="hdr__burger"
+        type="button"
+        aria-expanded="false"
+        aria-controls="site-menu"
+        data-menu-open
+      >
+        <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false">
+          <path
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.8"
+            stroke-linecap="round"
+            d="M4 8h16M4 16h16"></path>
+        </svg>
+        <span class="hdr__sr">Menu</span>
+      </button>
+    </div>
+  </div>
+
+  {/* Scroll progress. Pure CSS, no scroll listener — see the note in the stylesheet. */}
+  <div class="hdr__progress" aria-hidden="true"></div>
+</header>
+
+<dialog class="mnav" id="site-menu" aria-label="Menu" data-menu>
+  <div class="mnav__panel" tabindex="-1" autofocus>
+    <div class="page mnav__bar">
+      {/* No href: the bar behind this sheet already has the brand as a link home, and two
+          nested "go home" targets a thumb-width apart is a mis-tap waiting to happen. */}
+      <Wordmark />
+      <button class="mnav__close" type="button" data-menu-close>
+        <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false">
+          <path
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.8"
+            stroke-linecap="round"
+            d="m6 6 12 12M18 6 6 18"></path>
+        </svg>
+        <span class="hdr__sr">Close menu</span>
+      </button>
+    </div>
+
+    <div class="page mnav__body">
+      <nav class="mnav__nav" aria-label="Menu">
+        {
+          nav.map((item) => (
+            <a
+              class="mnav__link"
+              href={item.href}
+              aria-current={isCurrent(item.href) ? "page" : undefined}
+            >
+              {item.label}
+            </a>
+          ))
+        }
+        <a class="mnav__link" href={REPO} target="_blank" rel="noopener noreferrer">
+          GitHub<span class="hdr__sr"> (opens in a new tab)</span>
+          <svg
+            class="mnav__ext"
+            viewBox="0 0 24 24"
+            width="15"
+            height="15"
+            aria-hidden="true"
+            focusable="false"
+          >
+            <path
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              d="M14 5h5v5M19 5l-8 8M17 14v4a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V8a1 1 0 0 1 1-1h4"
+            ></path>
+          </svg>
+        </a>
+      </nav>
+
+      <div class="mnav__foot">
+        <Button href={cta.href} variant="primary" size="lg" block class="mnav__cta">
+          {cta.label}
+        </Button>
+        {/* This note read "there is no signup to click yet" while sitting directly under a
+            button that now goes to /start — a real, complete, three-step flow. The sentence
+            was written when the CTA was "Install the CLI" and nothing pointed at /start. It
+            still has to say the flow does not end in an account, because it does not; it just
+            has to stop contradicting the button above it. */}
+        <p class="mnav__note">
+          Pre-launch. You can walk the whole flow — it just has nothing to create an account
+          with yet.
+        </p>
+      </div>
+    </div>
+  </div>
+</dialog>
+
+<script>
+  /*
+   * Header behaviour. Three jobs, all of them enhancements — nothing here is required for
+   * the page to be readable or navigable.
+   *
+   *   1. [data-scrolled] on the header, so the hairline only appears once the page has moved.
+   *   2. [data-menu-ready] on the header, which is what REVEALS the burger. Set from script,
+   *      so a reader without JS keeps the inline nav instead of a button that does nothing.
+   *   3. The menu dialog itself.
+   *
+   * The focus trap and the Escape key are NOT implemented here. showModal() gives both from
+   * the platform, correctly, including the "focus returns to the element that opened it"
+   * behaviour that hand-rolled traps routinely get wrong.
+   */
+  const header = document.querySelector<HTMLElement>("[data-header]");
+
+  if (header) {
+    const syncScrolled = () => {
+      header.toggleAttribute("data-scrolled", window.scrollY > 8);
+    };
+    syncScrolled();
+    addEventListener("scroll", syncScrolled, { passive: true });
+
+    /*
+     * The progress bar is only honest on a page long enough to have progress. On a short
+     * route the whole scroll range can be a few pixels, so the bar snaps to 100% instantly
+     * and reads as a decorative indigo underline welded to the header rather than as an
+     * indicator of anything. Half a screenful of overflow is the floor.
+     *
+     * Measured here rather than on every scroll: scrollHeight forces layout, and paying that
+     * on a passive scroll listener is exactly the kind of cost this bar was made scroll-driven
+     * to avoid.
+     */
+    const syncScrollable = () => {
+      const over = document.documentElement.scrollHeight - window.innerHeight;
+      header.toggleAttribute("data-scrollable", over > window.innerHeight * 0.5);
+    };
+    syncScrollable();
+    addEventListener("resize", syncScrollable, { passive: true });
+    addEventListener("load", syncScrollable);
+
+    const dialog = document.querySelector<HTMLDialogElement>("[data-menu]");
+    const openBtn = header.querySelector<HTMLButtonElement>("[data-menu-open]");
+
+    /* Feature-detect before promising a menu. An old browser without showModal keeps the
+     * inline nav, which is a worse layout but a working one. */
+    if (dialog && openBtn && typeof dialog.showModal === "function") {
+      header.setAttribute("data-menu-ready", "");
+
+      const root = document.documentElement;
+
+      const open = () => {
+        if (dialog.open) return;
+        dialog.showModal();
+        /* The dialog is in the top layer and covers the page, but the document behind it
+         * still scrolls on some engines, which drags the page under the panel. */
+        root.classList.add("is-menu-open");
+        openBtn.setAttribute("aria-expanded", "true");
+      };
+
+      const close = () => {
+        if (dialog.open) dialog.close();
+      };
+
+      openBtn.addEventListener("click", open);
+
+      dialog
+        .querySelectorAll<HTMLElement>("[data-menu-close]")
+        .forEach((el) => el.addEventListener("click", close));
+
+      /* A link inside the panel navigates; the panel must not still be sitting there when
+       * the anchor target scrolls into view. */
+      dialog.querySelectorAll("a[href]").forEach((el) => el.addEventListener("click", close));
+
+      /* Light dismiss. The sheet does not fill the dialog, so the exposed area below it is
+       * the dialog element itself — a click landing directly on it (rather than bubbling up
+       * from the panel) is a click on the backdrop. */
+      dialog.addEventListener("click", (e) => {
+        if (e.target === dialog) close();
+      });
+
+      /* One place to undo everything, so Escape, the close button, a link and a resize all
+       * leave the page in the same state. `close` fires for every one of them. */
+      dialog.addEventListener("close", () => {
+        root.classList.remove("is-menu-open");
+        openBtn.setAttribute("aria-expanded", "false");
+      });
+
+      /* Growing past the breakpoint hides the burger. Leaving the panel open would strand
+       * the reader in a modal with no visible way back to a nav that is now on screen. */
+      const wide = matchMedia("(min-width: 52rem)");
+      wide.addEventListener("change", (e) => {
+        if (e.matches) close();
+      });
+    }
+  }
+</script>
+
+<style>
+  /* ==========================================================================
+     Header bar
+     ========================================================================== */
+
+  .hdr {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    background: color-mix(in oklab, var(--bg) 72%, transparent);
+    -webkit-backdrop-filter: blur(16px) saturate(1.7);
+    backdrop-filter: blur(16px) saturate(1.7);
+    border-bottom: 1px solid transparent;
+    transition:
+      background var(--dur-2) var(--ease-standard),
+      border-color var(--dur-2) var(--ease-standard);
+  }
+
+  .hdr[data-scrolled] {
+    background: color-mix(in oklab, var(--bg) 88%, transparent);
+    border-bottom-color: var(--border);
+  }
+
+  /* Without backdrop-filter a translucent bar smears the text scrolling under it. */
+  @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    .hdr,
+    .hdr[data-scrolled] {
+      background: var(--bg);
+    }
+  }
+
+  .hdr__inner {
+    display: flex;
+    align-items: center;
+    gap: var(--s-6);
+    min-height: var(--header-h);
+  }
+
+  /* --- brand --------------------------------------------------------------- */
+
+  /* The brand's box, type and hover all come from Wordmark.astro now — this file used to
+     restate them, and so did SiteFooter and StartHeader, with three different answers. What
+     is left here is only what is true of the brand IN THIS BAR: the narrow-viewport size
+     step below. */
+
+
+
+  /* --- nav ----------------------------------------------------------------- */
+
+  .hdr__nav {
+    display: flex;
+    align-items: center;
+    gap: var(--s-6);
+    margin-left: auto;
+    min-width: 0;
+  }
+
+  .hdr__link {
+    position: relative;
+    color: var(--text-muted);
+    font-size: var(--t-sm);
+    font-weight: var(--weight-medium);
+    letter-spacing: -0.004em;
+    text-decoration: none;
+    white-space: nowrap;
+    border-radius: var(--radius-sm);
+    transition: color var(--dur-1) var(--ease-standard);
+  }
+
+  .hdr__link:hover {
+    color: var(--text);
+  }
+
+  .hdr__link[aria-current="page"] {
+    color: var(--text);
+  }
+
+  /* The active marker is a hairline under the link rather than a colour change alone,
+     so "which page am I on" survives a monochrome or high-contrast rendering. */
+  .hdr__link[aria-current="page"]::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: -0.45rem;
+    height: 2px;
+    border-radius: var(--radius-pill);
+    background: var(--accent-bright);
+  }
+
+  /* --- actions ------------------------------------------------------------- */
+
+  .hdr__actions {
+    display: flex;
+    flex: none;
+    align-items: center;
+    gap: var(--s-3);
+  }
+
+  .hdr__icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    inline-size: 2.25rem;
+    block-size: 2.25rem;
+    flex: none;
+    color: var(--text-muted);
+    border-radius: var(--radius-sm);
+    text-decoration: none;
+    transition:
+      color var(--dur-1) var(--ease-standard),
+      background var(--dur-1) var(--ease-standard);
+  }
+
+  .hdr__icon:hover {
+    color: var(--text);
+    background: color-mix(in oklab, var(--text) 8%, transparent);
+  }
+
+  /* Component-local visually-hidden. global.css has .visually-hidden, but this one is used
+     inside the dialog too and keeping one name for both halves of the component is simpler
+     than remembering which of the two files owns which element. */
+  .hdr__sr {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  /* The Button primitive renders its own element, which carries ITS scope id and not this
+     file’s — so a plain `.hdr__cta` rule here would compile to a selector that can never
+     match. :global is the correct tool, and the class is namespaced so it cannot leak. */
+  .hdr__actions :global(.hdr__cta) {
+    --btn-h: 2.25rem;
+    flex: none;
+    padding-inline: 0.875rem;
+  }
+
+  .hdr__burger {
+    display: none;
+    align-items: center;
+    justify-content: center;
+    inline-size: 2.25rem;
+    block-size: 2.25rem;
+    flex: none;
+    padding: 0;
+    color: var(--text-muted);
+    border-radius: var(--radius-sm);
+    transition:
+      color var(--dur-1) var(--ease-standard),
+      background var(--dur-1) var(--ease-standard);
+  }
+
+  .hdr__burger:hover {
+    color: var(--text);
+    background: color-mix(in oklab, var(--text) 8%, transparent);
+  }
+
+  /* --- scroll progress -----------------------------------------------------
+     A scroll-driven animation, so there is no scroll listener and no layout read on any
+     frame. It is DECORATION: it rests at scaleX(0), and the only thing that ever grows it
+     is a timeline the browser has confirmed it supports. Under prefers-reduced-motion the
+     bar never gets its opacity, so motion.css’s `animation: none !important` cannot strand
+     it at a misleading width — it is simply absent, which loses no information.
+     ------------------------------------------------------------------------- */
+
+  .hdr__progress {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: -1px;
+    height: 2px;
+    transform: scaleX(0);
+    transform-origin: 0 50%;
+    opacity: 0;
+    background: linear-gradient(90deg, var(--accent), var(--accent-bright));
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    @supports (animation-timeline: scroll()) {
+      .hdr[data-scrollable] .hdr__progress {
+        opacity: 1;
+        animation-name: hdr-progress;
+        animation-duration: auto;
+        animation-timing-function: linear;
+        animation-fill-mode: both;
+        animation-timeline: scroll(root block);
+      }
+    }
+  }
+
+  @keyframes hdr-progress {
+    from {
+      transform: scaleX(0);
+    }
+    to {
+      transform: scaleX(1);
+    }
+  }
+
+  /* --- collapse ------------------------------------------------------------
+     Below 52rem the inline nav is replaced by the burger — but ONLY once the script has
+     confirmed the menu works. [data-menu-ready] is the whole progressive-enhancement
+     contract: no attribute, no burger, nav stays.
+     ------------------------------------------------------------------------- */
+
+  @media (max-width: 51.999rem) {
+    .hdr__inner {
+      gap: var(--s-4);
+    }
+
+    .hdr__nav {
+      gap: var(--s-4);
+    }
+
+    .hdr__link {
+      font-size: var(--t-xs);
+    }
+
+    .hdr[data-menu-ready] .hdr__nav,
+    .hdr[data-menu-ready] .hdr__icon {
+      display: none;
+    }
+
+    .hdr[data-menu-ready] .hdr__burger {
+      display: inline-flex;
+      /* Optical alignment. The button BOX ends at the gutter, which puts the 20px glyph 8px
+         short of it while the wordmark’s glyph starts exactly on it — the bar looks
+         lopsided. Pulling the box out by half its slack lands the glyph on the gutter, and
+         it lands on the same x as the sheet’s close button, so opening the menu does not
+         nudge the icon sideways. The filled CTA needs no such correction: its box IS its
+         visible edge. */
+      margin-right: -0.5rem;
+    }
+
+    /* With the nav gone the actions have to take over pushing themselves right. */
+    .hdr[data-menu-ready] .hdr__actions {
+      margin-left: auto;
+    }
+
+    /* --- the no-JS collapse ladder ---------------------------------------
+       Everything above assumes the burger exists. When it does not, the bar still has to
+       fit, and it cannot: wordmark + two links + icon + CTA is about 450px of content in
+       335px of usable width at 375. The nav is the only flexible item, so it shrinks below
+       its content and its nowrap children spill straight over the CTA — the links and the
+       button render on top of each other, unreadable.
+
+       That failure is INVISIBLE to the usual `scrollWidth === innerWidth` check, because
+       global.css puts `overflow-x: clip` on <body>, which clips the spill and leaves the
+       measurement looking perfect. It was caught by screenshot and then confirmed by
+       comparing the elements' bounding boxes for intersection.
+
+       So the no-JS bar sheds items on a ladder instead, longest-reach first. Nothing is
+       lost outright: every link here is also in the footer, which needs no JavaScript.
+       ---------------------------------------------------------------------- */
+    .hdr:not([data-menu-ready]) .hdr__icon {
+      display: none;
+    }
+  }
+
+  @media (max-width: 30rem) {
+    .hdr:not([data-menu-ready]) .hdr__link:nth-of-type(n + 2) {
+      display: none;
+    }
+  }
+
+  @media (max-width: 22rem) {
+    .hdr:not([data-menu-ready]) .hdr__link {
+      display: none;
+    }
+  }
+
+  @media (max-width: 26rem) {
+    /* The .hdr__brand font-size step that was here moved into Wordmark.astro — from this
+       file it no longer reached the element. See the note there. */
+
+    .hdr__actions {
+      gap: var(--s-2);
+    }
+
+    .hdr__actions :global(.hdr__cta) {
+      padding-inline: 0.75rem;
+      font-size: var(--t-xs);
+    }
+  }
+
+  /* ==========================================================================
+     Mobile menu
+     ========================================================================== */
+
+  /* <dialog> ships with width/height: fit-content and margin: auto. All four are reset
+     rather than overridden piecemeal, or the panel lands centred and boxed. */
+  .mnav {
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    max-width: none;
+    height: 100%;
+    max-height: none;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    overflow: hidden;
+    background: transparent;
+    color: var(--text);
+  }
+
+  .mnav::backdrop {
+    background: color-mix(in oklab, var(--elev-0) 72%, transparent);
+    -webkit-backdrop-filter: blur(6px);
+    backdrop-filter: blur(6px);
+  }
+
+  /* A sheet that drops from the top and is only as tall as its contents — NOT a full-height
+     takeover. With three links a full-screen panel leaves most of a phone empty, and the
+     emptiness reads as a page that failed to load rather than as restraint. Capped at the
+     viewport so a longer nav scrolls inside itself instead of running off the bottom. */
+  .mnav__panel {
+    display: flex;
+    flex-direction: column;
+    max-block-size: 100%;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    background: var(--elev-1);
+    border-bottom: 1px solid var(--border);
+    border-end-start-radius: var(--radius-lg);
+    border-end-end-radius: var(--radius-lg);
+    box-shadow: var(--shadow-lg);
+  }
+
+  /* Focus lands here on open, not on the close button: a ring drawn around the X the instant
+     the sheet appears reads as an error state to a pointer user. A container is also what a
+     screen reader should land on, because it announces the dialog and its label rather than
+     one control inside it. Tab from here reaches the close button first, as it should. */
+  .mnav__panel:focus {
+    outline: none;
+  }
+
+  /* Matches the header's own geometry so the close button lands exactly where the burger
+     was — the panel reads as the bar opening rather than as a new screen arriving. */
+  .mnav__bar {
+    display: flex;
+    flex: none;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--s-4);
+    min-height: var(--header-h);
+    border-bottom: 1px solid var(--border);
+  }
+
+  /* .mnav__word is gone — this bar showed the word with no mark, the only place on the site
+     that did. It is <Wordmark /> now, same as the bar behind it. */
+
+  .mnav__close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    inline-size: 2.25rem;
+    block-size: 2.25rem;
+    flex: none;
+    padding: 0;
+    /* Optically aligns the glyph with the burger it replaced, which sits at the very edge
+       of the same gutter. */
+    margin-right: -0.5rem;
+    color: var(--text-muted);
+    border-radius: var(--radius-sm);
+    transition: color var(--dur-1) var(--ease-standard);
+  }
+
+  .mnav__close:hover {
+    color: var(--text);
+  }
+
+  .mnav__body {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-6);
+    padding-block: var(--s-2) var(--s-6);
+  }
+
+  .mnav__nav {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .mnav__link {
+    display: flex;
+    align-items: center;
+    gap: var(--s-2);
+    /* A full-width row, so the touch target is the line rather than the word. */
+    padding-block: var(--s-4);
+    border-bottom: 1px solid var(--border);
+    color: var(--text);
+    font-size: var(--t-lg);
+    font-weight: var(--weight-medium);
+    letter-spacing: -0.012em;
+    text-decoration: none;
+    transition: color var(--dur-1) var(--ease-standard);
+  }
+
+  /* The rules separate rows; a rule under the LAST row separates it from nothing and reads
+     as a cut-off list. */
+  .mnav__link:last-child {
+    border-bottom: 0;
+  }
+
+  .mnav__link:hover {
+    color: var(--accent-bright);
+  }
+
+  .mnav__link[aria-current="page"] {
+    color: var(--accent-bright);
+  }
+
+  /* --text-faint is 4.09:1 on --elev-1, which is under AA for text — but this is a decorative
+     glyph beside a label that already says "GitHub", and the "(opens in a new tab)" part is
+     carried by hidden text, so the 3:1 non-text bar is the one that applies and it clears it.
+     Do not copy this colour onto anything anyone has to read. */
+  .mnav__ext {
+    flex: none;
+    color: var(--text-faint);
+  }
+
+  .mnav__foot {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-4);
+  }
+
+  .mnav__note {
+    margin: 0;
+    font-size: var(--t-xs);
+    line-height: var(--lh-xs);
+    color: var(--text-muted);
+    text-align: center;
+  }
+
+  /* Entry only. The exit is deliberately instant: an exit animation has to be waited on
+     before the dialog can actually close, and every mechanism for waiting (transitionend,
+     animationend) stops firing under prefers-reduced-motion, which turns a decorative
+     flourish into a menu that will not shut. A snappy close is also just better. */
+  @media (prefers-reduced-motion: no-preference) {
+    .mnav[open] .mnav__panel {
+      animation: mnav-in var(--dur-3) var(--ease-decelerate) both;
+    }
+
+    .mnav[open]::backdrop {
+      animation: fade-in var(--dur-2) var(--ease-standard) both;
+    }
+  }
+
+  @keyframes mnav-in {
+    from {
+      opacity: 0;
+      transform: translate3d(0, -0.75rem, 0);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
+  /* The scroll lock. `overflow: hidden` goes on <html>, never on <body>: global.css sets
+     `overflow-x: clip` on body precisely because `hidden` there kills position: sticky, and
+     the header has to still be sticky the moment the menu closes. */
+  :global(html.is-menu-open) {
+    overflow: hidden;
+  }
+
+  /* Nothing below 52rem should ever see the dialog's contents laid out inline, and nothing
+     above it should be able to open a menu that the burger no longer offers. */
+  @media (min-width: 52rem) {
+    .mnav {
+      display: none;
+    }
+  }
+</style>

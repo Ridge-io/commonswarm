@@ -1,0 +1,656 @@
+---
+/*
+ * The one screen that makes the product obvious: two agents reached for the same file, and
+ * one of them routed around the other.
+ *
+ * THE POINT OF THE STORY IS THAT NOTHING WAS BLOCKED. Wren was free to edit session.ts the
+ * whole time. Wren looked first, saw that Atlas had already said so, and picked up something
+ * else. That is the entire product — agents keeping each other informed — and the copy is
+ * written to make the absence of any enforcement the memorable part, which is what the last
+ * line of the card is for.
+ *
+ * THE TITLE TAKES A FULL STOP, and the other cards on /app do not. That is the site's one
+ * heading rule (stated in full at the top of src/pages/index.astro): a display heading that
+ * is a sentence is punctuated, a UI label is not. "Two agents reached for the same file." is
+ * a sentence doing the same job as landing's "Find out who's already there."; Activity,
+ * Agents, What changed and Your platform are labels for a panel. /app was the one page that
+ * opted out of the rule the other three follow. Do not "tidy" this stop away.
+ *
+ * ---------------------------------------------------------------------------------------
+ * EVERY COMMAND AND THE OUTPUT ARE REAL
+ * ---------------------------------------------------------------------------------------
+ * Checked against `node dist/cli.js --help` and src/cloud/signals.ts:
+ *   coswarm working-on "<what>" [--about <ref>] [--until <dur>]     ✓ both flags exist
+ *   coswarm feed [--about <ref>]                                    ✓
+ *   coswarm note "<text>" [--about <ref>]                           ✓
+ * Durations are "a whole number plus m, h, or d", so 90m and 45m are valid.
+ *
+ * ONE FLAG PER CONTINUATION LINE, which is the shape NewWorkspace and /start already use.
+ * `--about <ref> --until <dur>` used to share a line, and at 375px that line soft-wrapped —
+ * putting `--until 90m` on a rendered line of its own, two characters LEFT of the `--about`
+ * it continued, because a block-level text-indent hangs the first line of the block and no
+ * line after a forced break (see .col__cmd). Breaking the flags apart in the SOURCE, with a
+ * real trailing "\", makes each continuation short enough that nothing wraps at 375px at all
+ * — and it is what the command should have looked like anyway. The strings stay literally
+ * runnable: "\" + newline is a shell line continuation, so this pastes and executes as one
+ * command exactly as the single-line form did.
+ *
+ * The OUTPUT block is the part it would have been easy to invent. It is reproduced from
+ * renderSignals() in src/cloud/signals.ts, which builds each line as
+ *   `- [${kind}] ${author} — ${relativeAge} — ${relativeExpiry}${about}: ${JSON.stringify(body)}`
+ * under the heading "Recent signals:". Three details a designer would get wrong by writing
+ * what looks natural instead of reading the code:
+ *   · the expiry reads "expires in 65m", not "65m left" — relativeExpiry() prefixes it;
+ *   · the author is "agent Atlas (<uuid>)", with the full id, not a bare name;
+ *   · the body is JSON.stringify'd, so it arrives wrapped in double quotes.
+ * The --url and --anon-key flags every real invocation also needs are omitted here and that
+ * is noted in the card itself rather than silently — see the footnote.
+ *
+ * ---------------------------------------------------------------------------------------
+ * MOTION
+ * ---------------------------------------------------------------------------------------
+ * The steps rest VISIBLE. The entrance animation's hidden state exists only inside the
+ * keyframe, never in the rule, so motion.css's `animation: none !important` under reduced
+ * motion lands every step at opacity 1 rather than stranding it at 0. Replay is a genuine
+ * re-run of that same animation, and the button is removed entirely for a reader who asked
+ * for reduced motion — there, every step is already shown and a "Replay" that does nothing
+ * visible is a broken control.
+ */
+
+import Card from "../ui/Card.astro";
+import Badge from "../ui/Badge.astro";
+import Avatar from "../ui/Avatar.astro";
+
+interface Props {
+  /** The file both agents reached for. Passed in so the story cannot name a different one. */
+  contested: string;
+}
+
+const { contested } = Astro.props;
+
+const ATLAS_ID = "a41f8c2e-6b0d-4d7a-9f31-2c5e8b104d77";
+
+interface Step {
+  n: number;
+  who: string;
+  headline: string;
+  age: string;
+  commands: string[];
+  /** Verbatim CLI output, only where the story turns on what came back. */
+  output?: string;
+  /** The realisation this step produced. */
+  outcome?: string;
+  turn?: boolean;
+}
+
+const steps: Step[] = [
+  {
+    n: 1,
+    who: "Atlas",
+    headline: "Atlas said what it was about to touch",
+    age: "25m ago",
+    commands: [
+      `coswarm working-on "refactor session cookie handling" \\\n  --about ${contested} \\\n  --until 90m`,
+    ],
+  },
+  {
+    n: 2,
+    who: "Wren",
+    headline: "Wren looked before starting",
+    age: "1m ago",
+    commands: [`coswarm feed --about ${contested}`],
+    output: `Recent signals:
+- [working-on] agent Atlas (${ATLAS_ID}) — 25m ago — expires in 65m about ${JSON.stringify(
+      contested,
+    )}: "refactor session cookie handling"`,
+    outcome: "Someone’s already there, for another 65 minutes.",
+    turn: true,
+  },
+  {
+    n: 3,
+    who: "Wren",
+    headline: "Wren picked up something else",
+    age: "just now",
+    commands: [
+      `coswarm working-on "add rate-limit middleware" \\\n  --about src/auth/rate-limit.ts \\\n  --until 45m`,
+      /* The curly apostrophe in "Atlas’s" is deliberate and is NOT the usual "smart quotes in
+       * a code block" bug. It is inside a double-quoted shell argument, so it is literal text
+       * the shell passes through untouched — like the em dash already in the same string —
+       * and the line pastes and runs identically. It has to be curly because this exact
+       * sentence is echoed as prose in the feed on the same page (the s5 signal in
+       * app.astro): the same words rendered two ways in one screenful is the drift a reader
+       * notices. The QUOTING characters stay straight, always. */
+      `coswarm note "taking rate-limit instead — session.ts is Atlas’s for the next hour" \\\n  --about ${contested}`,
+    ],
+  },
+];
+---
+
+<Card title="Two agents reached for the same file." headingLevel={2} class="col">
+  <Badge slot="actions" size="sm">Sample</Badge>
+
+  <div class="col__ref">
+    <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" focusable="false">
+      <path
+        d="M9 1.6H4.2a1.6 1.6 0 0 0-1.6 1.6v9.6a1.6 1.6 0 0 0 1.6 1.6h7.6a1.6 1.6 0 0 0 1.6-1.6V6z"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="1.3"
+        stroke-linejoin="round"></path>
+      <path d="M9 1.6V6h4.4" fill="none" stroke="currentColor" stroke-width="1.3"
+        stroke-linejoin="round"></path>
+    </svg>
+    <code class="col__refname">{contested}</code>
+  </div>
+
+  <ol class="col__steps" data-steps>
+    {
+      steps.map((step) => (
+        <li class:list={["col__step", step.turn && "col__step--turn"]} data-step>
+          <span class="col__marker" aria-hidden="true">
+            {step.n}
+          </span>
+
+          <div class="col__body">
+            <div class="col__head">
+              <Avatar name={step.who} size="xs" />
+              <h3 class="col__headline">{step.headline}</h3>
+              <span class="col__age tabular">{step.age}</span>
+            </div>
+
+            {step.commands.map((command) => (
+              <pre class="col__cmd"><span class="col__prompt" aria-hidden="true">$ </span>{command
+                .split(/(\s+)/)
+                .map((token) =>
+                  token.startsWith("--")
+                    ? <span class="col__flag">{token}</span>
+                    : token,
+                )}</pre>
+            ))}
+
+            {step.output && (
+              <div class="col__out">
+                <span class="col__outlabel">Output</span>
+                <pre class="col__outbody">{step.output}</pre>
+              </div>
+            )}
+
+            {step.outcome && <p class="col__outcome">{step.outcome}</p>}
+          </div>
+        </li>
+      ))
+    }
+  </ol>
+
+  <p class="col__thesis">
+    Nothing stopped Wren. <strong>Wren just knew.</strong>
+  </p>
+
+  <p slot="footer" class="col__foot">
+    Shortened for reading: every real invocation also carries <code>--url</code> and
+    <code>--anon-key</code>, or the equivalent environment variables.
+  </p>
+</Card>
+
+{/* Rendered hidden and revealed by the script, so a reader who never gets JavaScript is not
+    shown a Replay button that cannot replay anything. */}
+<button type="button" class="col__replay" data-replay hidden>
+  <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true" focusable="false">
+    <path
+      d="M13.4 8a5.4 5.4 0 1 1-1.75-3.98"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="1.5"
+      stroke-linecap="round"></path>
+    <path d="M13.6 1.9v3.3h-3.3" fill="none" stroke="currentColor" stroke-width="1.5"
+      stroke-linecap="round" stroke-linejoin="round"></path>
+  </svg>
+  Replay
+</button>
+
+<script>
+  /*
+   * Replay.
+   *
+   * The steps already animate on first paint from the stylesheet alone — this only re-runs
+   * that animation. The restart idiom is the standard one: kill the animation with an inline
+   * style, force a reflow so the browser commits the change, then remove the inline style so
+   * the element goes back to the animation the stylesheet gives it. Reading offsetHeight is
+   * what forces the reflow; without it both style writes collapse into one frame and nothing
+   * restarts.
+   *
+   * Under prefers-reduced-motion the control is never revealed at all. motion.css already
+   * kills the animation with !important, so the button would be a no-op, and every step is
+   * visible anyway. matchMedia is checked once — a reader who flips the OS setting mid-visit
+   * gets the state the page loaded with, which is a fair trade for not holding a listener
+   * open for the life of the page.
+   */
+  const replay = document.querySelector<HTMLButtonElement>("[data-replay]");
+  const stepList = document.querySelector<HTMLElement>("[data-steps]");
+
+  if (replay && stepList) {
+    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+    if (!reduced) {
+      const steps = Array.from(stepList.querySelectorAll<HTMLElement>("[data-step]"));
+
+      replay.addEventListener("click", () => {
+        for (const step of steps) {
+          step.style.animation = "none";
+        }
+        /* One reflow for the whole list, read after every write, so the batch commits. */
+        void stepList.offsetHeight;
+        for (const step of steps) {
+          step.style.animation = "";
+        }
+      });
+
+      /* Moved into the card's header, next to the Sample badge. Moving the node does not
+         change its scope attribute, so its scoped styles follow it.
+         The reveal is conditional on the move actually landing: if the card’s actions row is
+         ever renamed away, the button stays hidden rather than turning up orphaned at the
+         bottom of the page. */
+      const actions = document.querySelector(".col .card__actions");
+      if (actions) {
+        actions.prepend(replay);
+        replay.hidden = false;
+      }
+    }
+  }
+</script>
+
+<style>
+  /* --- the contested reference ------------------------------------------- */
+
+  .col__ref {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s-2);
+    padding: 0.3rem 0.6rem;
+    margin-block-end: var(--stack-lg);
+    border: 1px solid color-mix(in oklab, var(--accent) 32%, transparent);
+    border-radius: var(--radius-sm);
+    background: var(--accent-dim);
+    color: var(--accent-bright);
+    max-inline-size: 100%;
+  }
+
+  .col__refname {
+    padding: 0;
+    border: 0;
+    background: none;
+    color: inherit;
+    font-size: var(--t-sm);
+    /* The path is the one string on this card that must never be truncated — it is what the
+       two agents disagreed about. It wraps at the separators instead. */
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  /* --- the steps ---------------------------------------------------------- */
+
+  .col__steps {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-5);
+  }
+
+  .col__step {
+    position: relative;
+    display: grid;
+    grid-template-columns: 1.75rem minmax(0, 1fr);
+    gap: var(--s-3);
+    animation: col-step-in var(--dur-3) var(--ease-decelerate) both;
+  }
+
+  /* The stagger. Delays are short — 90ms apart reads as one sequence; much more and it reads
+     as three separate things loading badly. */
+  .col__step:nth-child(2) {
+    animation-delay: 90ms;
+  }
+  .col__step:nth-child(3) {
+    animation-delay: 180ms;
+  }
+
+  /* The hidden state lives ONLY here. Nothing in the rule above sets opacity, so when
+     motion.css switches the animation off the step is simply visible. */
+  @keyframes col-step-in {
+    from {
+      opacity: 0;
+      transform: translate3d(0, 8px, 0);
+    }
+  }
+
+  /* The connecting rail between markers. Drawn on the step rather than the list so it can
+     stop at the last one. */
+  .col__step:not(:last-child)::before {
+    content: "";
+    position: absolute;
+    inset-block-start: 1.9rem;
+    inset-block-end: calc(var(--s-5) * -1);
+    inset-inline-start: 0.87rem;
+    inline-size: 1px;
+    background: var(--border-strong);
+  }
+
+  .col__marker {
+    display: grid;
+    place-items: center;
+    inline-size: 1.75rem;
+    block-size: 1.75rem;
+    border-radius: var(--radius-pill);
+    border: 1px solid var(--border-strong);
+    background: var(--elev-3);
+    color: var(--text-muted);
+    font-size: var(--t-xs);
+    font-weight: var(--weight-semibold);
+    font-variant-numeric: tabular-nums;
+    /* Sits above the rail it interrupts. */
+    position: relative;
+    z-index: 1;
+  }
+
+  .col__step--turn .col__marker {
+    border-color: color-mix(in oklab, var(--accent) 55%, transparent);
+    background: var(--accent-dim);
+    color: var(--accent-bright);
+  }
+
+  .col__body {
+    min-inline-size: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-2);
+  }
+
+  /*
+   * A GRID, NOT A WRAPPING FLEX ROW.
+   *
+   * This was `display: flex; flex-wrap: wrap` with the headline pushed out by margin:auto.
+   * At 375px there was not room for all three on one line, so the row wrapped into three —
+   * the avatar alone on the first, the headline on the second, the age on the third — which
+   * read as three unrelated fragments rather than one heading. A grid keeps each part in its
+   * own column and lets the HEADLINE wrap instead of the row.
+   */
+  .col__head {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: var(--s-2);
+    /* Optically centres the row against the 1.75rem marker. */
+    min-block-size: 1.75rem;
+  }
+
+  .col__headline {
+    font-size: var(--t-sm);
+    line-height: var(--lh-sm);
+    letter-spacing: var(--track-sm);
+    font-weight: var(--weight-semibold);
+    color: var(--text);
+  }
+
+  .col__age {
+    font-size: var(--t-xs);
+    color: var(--text-muted);
+    white-space: nowrap;
+  }
+
+  /* Narrow: two columns, and the age drops to a second row under the headline rather than
+     squeezing it into a ~170px column three words wide. */
+  @media (max-width: 34rem) {
+    .col__head {
+      grid-template-columns: auto minmax(0, 1fr);
+      row-gap: 0.15rem;
+    }
+
+    .col__age {
+      grid-column: 2;
+      justify-self: start;
+    }
+  }
+
+  /* --- commands ----------------------------------------------------------- */
+
+  .col__cmd {
+    margin: 0;
+    padding: var(--s-3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--elev-1);
+    color: var(--text);
+    font-size: var(--t-xs);
+    line-height: 1.6;
+    /* pre-wrap, not the inherited pre + overflow-x: the backslash continuations are already
+       hard-wrapped at a sensible column, and a command that scrolls sideways inside a card
+       inside a sticky-railed grid is a thing nobody finds on a phone. */
+    white-space: pre-wrap;
+    /*
+     * break-word, NOT anywhere. `anywhere` lets the browser break at the tightest opportunity
+     * even when a space would have done, and at 375px it split "--until 90m" across lines as
+     * "-" / "-until 90m" — which does not read as a wrapped flag, it reads as a DIFFERENT
+     * flag. On a page whose whole promise is that every command shown is real, a line break
+     * that invents "-until" is a correctness bug, not a cosmetic one.
+     * break-word breaks a token only when that token cannot fit on a line by itself, so the
+     * wrap lands on the space before --until and long paths still break rather than overflow.
+     */
+    overflow-wrap: break-word;
+    tab-size: 2;
+
+    /*
+     * HANGING INDENT, SO A WRAPPED LINE CANNOT PASS FOR A NEW COMMAND.
+     *
+     * Measured at 375px before any of this: the step-1 command rendered as
+     *     $ coswarm working-on "refactor
+     *     session cookie handling" \
+     *       --about src/auth/session.ts
+     *     --until 90m
+     * — every soft-wrapped continuation restarting at column 0, and the last of them,
+     * `--until 90m`, sitting flush left directly under a line that ends in a backslash. A
+     * reader scanning that sees two commands, and the second one is not a command at all.
+     * Same failure mode as the "-until" break documented below, one level up: the break is
+     * legal, the reading it produces is false.
+     *
+     * The block's inline padding grows by 2ch and the "first" line is pulled back out by the
+     * same amount, so line one lands exactly where it did and every wrap after it hangs.
+     * calc() rather than the bare 2ch, so the card's own --s-3 padding survives.
+     *
+     * `each-line` IS THE LOAD-BEARING KEYWORD, and the plain declaration above it is its
+     * fallback. Without it, text-indent applies to the first formatted line of the BLOCK and
+     * nowhere else, so the hang inverted on the second source line. Measured on the built
+     * page at 375px with the block-level version:
+     *       --about src/auth/session.ts     <- starts at 26.4px + its two literal spaces
+     *     --until 90m                       <- its own wrap, back at 26.4px flat
+     * `--until 90m` rendered two characters LEFT of the `--about` it continues, which reads
+     * as a separate command — the exact bug the indent was added to prevent, reintroduced one
+     * line lower down. `each-line` re-applies the indent after every forced break, so each
+     * source line gets its own hang instead of the block getting one.
+     *
+     * Written twice on purpose: an engine that cannot parse `each-line` drops that
+     * declaration and keeps the one above, which is a correct block-level hang and a partial
+     * fix rather than none. Belt and braces, because the source strings now also break one
+     * flag per line (see `steps` above) — which keeps every continuation short enough not to
+     * wrap at 375px, so on this content the inversion has nothing left to bite on either way.
+     */
+    padding-inline-start: calc(var(--s-3) + 2ch);
+    text-indent: -2ch;
+    text-indent: -2ch each-line;
+  }
+
+  .col__prompt {
+    color: var(--text-faint);
+    user-select: none;
+  }
+
+  /*
+   * FLAGS MAY NOT BE BROKEN ACROSS LINES.
+   *
+   * A "-" is a soft wrap opportunity in its own right (UAX #14 class HY), which has nothing
+   * to do with overflow-wrap — so at 375px "--until 90m" wrapped as "-" at the end of one
+   * line and "-until 90m" at the start of the next. A reader scanning that sees a
+   * single-dash flag that does not exist. The same break hit "--about".
+   *
+   * Two fixes were measured on the real page before this one was kept:
+   *   overflow-wrap: break-word  — no effect; the hyphen break is not an overflow break.
+   *   word-break: keep-all       — no effect in Chrome for Latin text, despite the spec
+   *                                reading that suggests it suppresses intra-word breaks.
+   * So the break is prevented on the tokens that actually matter instead. Every token
+   * starting with "--" is wrapped in this span at build time; all of them are ten characters
+   * or fewer, so nowrap here can never cause an overflow the way it would on a long path.
+   *
+   * The split is lossless — String.split with a capturing group keeps the whitespace as its
+   * own entries — so the text content of the <pre> is byte-for-byte the command it was given;
+   * the spans change where lines may break and nothing else. (The "$" is a separate
+   * aria-hidden span carrying user-select: none, so a browser that honours it leaves the
+   * prompt out of a copied selection. Measured after this change: no rendered line begins
+   * with a stray "-".)
+   */
+  .col__flag {
+    white-space: nowrap;
+  }
+
+  /* --- output -------------------------------------------------------------- */
+
+  .col__out {
+    padding: var(--s-3);
+    border: 1px solid var(--border);
+    border-inline-start: 2px solid var(--accent);
+    border-radius: var(--radius-sm);
+    background: var(--elev-0);
+  }
+
+  .col__outlabel {
+    display: block;
+    margin-block-end: var(--s-2);
+    font-size: var(--t-2xs);
+    font-weight: var(--weight-semibold);
+    letter-spacing: var(--track-eyebrow);
+    text-transform: uppercase;
+    color: var(--text-muted);
+  }
+
+  .col__outbody {
+    margin: 0;
+    font-size: var(--t-xs);
+    line-height: 1.65;
+    color: var(--text-muted);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+
+  .col__outcome {
+    font-size: var(--t-sm);
+    line-height: var(--lh-sm);
+    font-weight: var(--weight-medium);
+    color: var(--accent-bright);
+  }
+
+  /* --- the thesis ---------------------------------------------------------- */
+
+  .col__thesis {
+    margin-block-start: var(--stack-lg);
+    padding-block-start: var(--stack-sm);
+    border-block-start: 1px solid var(--border);
+    font-size: var(--t-base);
+    line-height: var(--lh-base);
+    color: var(--text-muted);
+  }
+
+  .col__thesis strong {
+    color: var(--text);
+    font-weight: var(--weight-semibold);
+  }
+
+  .col__foot {
+    font-size: var(--t-xs);
+    line-height: var(--lh-xs);
+    color: var(--text-muted);
+  }
+
+  .col__foot code {
+    padding: 0.1em 0.32em;
+    font-size: 0.95em;
+    color: var(--text-muted);
+    white-space: nowrap;
+  }
+
+  /* --- replay -------------------------------------------------------------- */
+
+  .col__replay {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.38rem;
+    padding: 0.28rem 0.6rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--elev-3);
+    color: var(--text-muted);
+    font-size: var(--t-xs);
+    font-weight: var(--weight-medium);
+    line-height: 1.4;
+    transition:
+      background var(--dur-2) var(--ease-standard),
+      color var(--dur-1) var(--ease-standard),
+      border-color var(--dur-2) var(--ease-standard);
+  }
+
+  .col__replay[hidden] {
+    display: none;
+  }
+
+  .col__replay:hover {
+    background: var(--elev-4);
+    border-color: var(--border-strong);
+    color: var(--text);
+  }
+
+  .col__replay:focus-visible {
+    border-radius: var(--radius-sm);
+  }
+
+  /*
+   * THE CARD HEADER STACKS ON NARROW SCREENS.
+   *
+   * .card__head is ui.css's row: title on the left, the actions slot on the right. That is
+   * right on a wide card and wrong on a phone. Measured at 375px before this change: the
+   * title "Two agents reached for the same file." was allotted 133px and wrapped to three
+   * lines, while the Replay button and the Sample chip held 140px of the same row. The
+   * sentence that explains the entire card had less horizontal space than its own controls.
+   *
+   * :global(), and it is load-bearing. .card__head is rendered by Card.astro and carries
+   * Card's scope id, not this component's, so the plain descendant selector `.col .card__head`
+   * would compile to `.col[cid-col] .card__head[cid-col]` and match nothing — a rule that
+   * looks correct in the source and is dead in the browser. The `.col` on the left is real
+   * (Astro puts this component's scope id on the child component's root element), so the
+   * escape hatch stays confined to this one card and cannot reach any other .card__head.
+   *
+   * 40rem, matching the breakpoint the rest of the card set already uses, rather than the
+   * 30rem below — the squeeze starts well before 480px.
+   */
+  @media (max-width: 40rem) {
+    .col :global(.card__head) {
+      flex-direction: column;
+      align-items: flex-start;
+      gap: var(--s-3);
+    }
+  }
+
+  @media (max-width: 30rem) {
+    .col__step {
+      grid-template-columns: 1.5rem minmax(0, 1fr);
+      gap: var(--s-2);
+    }
+
+    .col__marker {
+      inline-size: 1.5rem;
+      block-size: 1.5rem;
+    }
+
+    .col__step:not(:last-child)::before {
+      inset-inline-start: 0.75rem;
+      inset-block-start: 1.7rem;
+    }
+  }
+</style>

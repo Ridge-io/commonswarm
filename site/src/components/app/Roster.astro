@@ -1,0 +1,196 @@
+---
+/*
+ * The roster — who is in this workspace, what each one is on, and when it was last heard
+ * from.
+ *
+ * "IDLE" HERE MEANS "HAS NOTHING CURRENT TO SAY", NOT "DISCONNECTED". A signal carries an
+ * --until, and when that runs out the agent stops holding the thing it announced. Juno is
+ * idle below because its heads-up expired, not because a socket dropped. The empty cell says
+ * "nothing announced" for exactly that reason — writing "offline" would be a claim about a
+ * connection this product does not track.
+ *
+ * Avatar's own `status` prop supplies the presence dot and, importantly, a visually hidden
+ * "Active now" / "Idle" for screen readers — so the state is never carried by the dot's
+ * colour alone. The visible word next to the name is the sighted half of the same pairing.
+ *
+ * The pulse is attached to an agent, not to the page. A pulsing dot that meant "connected"
+ * would be a lie on a screen with no connection; a pulsing dot on a sample agent inside a
+ * banner that says "sample data" is just what the component looks like.
+ */
+
+import Card from "../ui/Card.astro";
+import Badge from "../ui/Badge.astro";
+import Avatar from "../ui/Avatar.astro";
+
+interface RosterMember {
+  name: string;
+  kind: "agent" | "member";
+  status: "active" | "idle";
+  on: string | null;
+  about: string | null;
+  lastSeen: string;
+}
+
+interface Props {
+  members: RosterMember[];
+}
+
+const { members } = Astro.props;
+---
+
+<Card title="Agents" headingLevel={2} class="roster">
+  <Badge slot="actions" size="sm">Sample</Badge>
+
+  <ul class="roster__list">
+    {
+      members.map((member, i) => (
+        <li
+          class:list={["roster__row", `roster__row--${member.status}`]}
+          style={`--i:${i}`}
+        >
+          <span class="roster__avatar">
+            <Avatar name={member.name} size="sm" status={member.status} />
+          </span>
+
+          <div class="roster__main">
+            <div class="roster__head">
+              <span class="roster__name">{member.name}</span>
+              {member.kind === "member" && <span class="roster__who">member</span>}
+              <span class="roster__seen tabular">{member.lastSeen}</span>
+            </div>
+
+            {member.on ? (
+              <p class="roster__on">{member.on}</p>
+            ) : (
+              <p class="roster__on roster__on--none">Nothing announced</p>
+            )}
+
+            {member.about && (
+              <code class="roster__about">{member.about}</code>
+            )}
+          </div>
+        </li>
+      ))
+    }
+  </ul>
+</Card>
+
+<style>
+  .roster__list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+  }
+
+  .roster__row {
+    position: relative;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: var(--s-3);
+    margin-inline: calc(var(--pad-card) * -1);
+    padding: var(--s-3) var(--pad-card);
+    border-radius: var(--radius-sm);
+    animation: roster-row-in var(--dur-3) var(--ease-decelerate) both;
+    animation-delay: calc(var(--i, 0) * 40ms);
+  }
+
+  @keyframes roster-row-in {
+    from {
+      opacity: 0;
+      transform: translate3d(0, 5px, 0);
+    }
+  }
+
+  .roster__row + .roster__row::before {
+    content: "";
+    position: absolute;
+    inset-block-start: 0;
+    inset-inline: var(--pad-card);
+    block-size: 1px;
+    background: var(--border);
+  }
+
+  .roster__avatar {
+    display: inline-flex;
+    /* Nudges the avatar onto the optical centre of the name line rather than the top of the
+       three-line block. */
+    margin-block-start: 0.1rem;
+  }
+
+  /* The presence pulse, on the active rows only. --pulse-color is the custom property
+     motion.css’s pulse-ring keyframe reads, so this inherits that animation’s reduced-motion
+     treatment (a static ring) instead of shipping a second one.
+
+     The dot lives inside Avatar, whose styles are scoped to Avatar.astro — but the ANIMATION
+     is applied from here through a descendant selector, which works because the selector’s
+     scope attribute lands on .roster__row (an element this file owns) and .av__status is
+     matched as an ordinary descendant. Astro only scopes the LAST compound selector, so this
+     would not have worked the other way round. */
+  .roster__row--active :global(.av__status) {
+    --pulse-color: var(--success-dim);
+    animation: pulse-ring 2.6s var(--ease-standard) infinite;
+  }
+
+  .roster__main {
+    min-inline-size: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.22rem;
+  }
+
+  .roster__head {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: var(--s-2);
+  }
+
+  .roster__name {
+    font-size: var(--t-sm);
+    line-height: var(--lh-sm);
+    font-weight: var(--weight-semibold);
+    color: var(--text);
+  }
+
+  .roster__who {
+    font-size: var(--t-2xs);
+    font-weight: var(--weight-semibold);
+    letter-spacing: var(--track-eyebrow);
+    text-transform: uppercase;
+    color: var(--text-muted);
+  }
+
+  .roster__seen {
+    margin-inline-start: auto;
+    font-size: var(--t-xs);
+    color: var(--text-muted);
+    white-space: nowrap;
+    flex: none;
+  }
+
+  .roster__on {
+    font-size: var(--t-xs);
+    line-height: var(--lh-xs);
+    color: var(--text-muted);
+    overflow-wrap: anywhere;
+  }
+
+  .roster__on--none {
+    color: var(--text-muted);
+    font-style: italic;
+  }
+
+  .roster__about {
+    /* align-self, NOT justify-self. The parent is a flex column, so the horizontal axis is
+       the CROSS axis — justify-self is ignored in flex layout entirely and the chip stretched
+       to the full width of the rail, which read as an input field rather than a tag. */
+    align-self: start;
+    max-inline-size: 100%;
+    padding: 0.08em 0.34em;
+    font-size: var(--t-2xs);
+    color: var(--text-muted);
+    background: var(--elev-1);
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+</style>

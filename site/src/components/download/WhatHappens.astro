@@ -1,0 +1,267 @@
+---
+/*
+ * WhatHappens — the honest walkthrough. Trust is the product on this page, so every claim
+ * below is read straight out of install.sh (repo root; 142 lines of POSIX sh) and is stated
+ * in the order the script actually does it. Line references are to that file:
+ *
+ *   1. node check BEFORE any download, with the searched PATH printed  -> `command -v node` +
+ *      the die() message that prints "$PATH" and names version managers (l.26-40)
+ *   2. NODE_MAJOR >= 24                                                -> l.42-47
+ *   3. two curl calls into mktemp -d, trap rm -rf on EXIT INT TERM     -> l.61-69
+ *   4. missing checksum file => stop                                   -> l.68-69
+ *   5. shasum or sha256sum; neither => stop; mismatch => stop and
+ *      print both hashes. No flag and no env var disables this.        -> l.74-86
+ *   6. walks every parent of INSTALL_DIR for a package.json with
+ *      "type":"module" and stops if it finds one                       -> l.97-107
+ *   7. chmod +x then mv into $INSTALL_DIR (default $HOME/.local/bin)   -> l.108-110
+ *   8. reads --version back OUT OF the installed file                  -> l.115-121
+ *   9. PATH advice printed, per $SHELL. It prints the line; it does
+ *      not edit any file.                                             -> l.126-136
+ *  10. ends by pointing at `coswarm accept <invite-link>`              -> l.142
+ *
+ * ABOUT THAT LAST ONE. `coswarm accept <invite-link>` is the positional form, and our own
+ * `--help` annotates it "# unsafe: shell history/process list" — an invite link is a one-time
+ * capability and argv is recorded. The line above is NOT an endorsement: it is a record of the
+ * string install.sh actually prints at l.142, and it must not be edited to the safe form until
+ * the script is. Nothing rendered on this page names a command — step 10's copy says "the one
+ * command to run next" — and the card that does name one, AfterInstall.astro, teaches
+ * `printf '%s' "$COSWARM_INVITE_LINK" | coswarm accept --link-stdin`, the form --help lists
+ * first. Fix install.sh l.142, then fix this note.
+ *
+ * "Two network requests" is the two curl calls at l.65 and l.68 — the only network calls in
+ * the file. Do not soften that into "minimal network activity"; the number is checkable and
+ * the number is the point.
+ *
+ * ~/.coswarm is where the CLI keeps sign-in state, NOT something the installer creates:
+ * src/cloud/storage.ts:88 (credentials.d) and :597 (agent-state), created 0700 with 0600
+ * files (storage.ts:116, :365). Stated here because "what is on my machine afterwards" is
+ * the question a reader is actually asking.
+ */
+
+const steps = [
+  {
+    t: "It checks Node before downloading anything",
+    d: "coswarm ships JavaScript, not a native binary, so it needs Node 24 or newer. If node isn’t there, the script prints the PATH it searched and names the likely cause — nvm, fnm and asdf set up node from your shell’s startup files, so it’s invisible to a non-interactive shell. Telling someone already running v24 to install Node would be a false statement on the very first thing they see.",
+  },
+  {
+    t: "It downloads two files into a temp directory",
+    d: "The coswarm executable and its published coswarm.sha256. Those are the only two network requests the script makes. The temp directory is deleted when the script exits, whichever way it exits.",
+  },
+  {
+    t: "It computes the checksum itself and compares",
+    d: "If the checksum file is missing, if your machine has neither shasum nor sha256sum, or if the two hashes disagree, it stops and installs nothing — and prints both hashes so you can see what it saw. There is no skip flag and no environment variable that turns this off.",
+  },
+  {
+    t: "It looks at where it’s about to write",
+    d: "The bundle is CommonJS, and Node picks CJS or ESM from the nearest package.json. So the script walks every parent of the install directory, and if one declares \"type\": \"module\" it stops and explains — rather than leaving you with “require is not defined in ES module scope” after an install that otherwise looked fine.",
+  },
+  {
+    t: "It moves one file into place",
+    d: "~/.local/bin/coswarm, marked executable. No sudo. Nothing outside your home directory, no node_modules tree, no background service, and nothing added to your login items. Set COSWARM_INSTALL_DIR to send it elsewhere, or COSWARM_VERSION to pin a release.",
+  },
+  {
+    t: "It reads the version back off disk, then gets out of the way",
+    d: "Not the version it meant to install — the one the installed file reports. If ~/.local/bin isn’t on your PATH it prints the exact line to add for your shell, and leaves you to add it: the script never edits a profile file. Then it prints the one command to run next.",
+  },
+];
+
+const nots = [
+  "No sudo, at any point",
+  "No shell profile is edited",
+  "Two network requests, both to the release",
+  "No background service, no login item",
+];
+---
+
+<section class="wh section section--tight" id="what-happens" aria-labelledby="wh-title">
+  <div class="page">
+    <div class="wh__head">
+      <p class="eyebrow">Transparency</p>
+      <h2 class="h-section" id="wh-title">What happens on your machine.</h2>
+      <p class="lede wh__lede">
+        Piping a script into a shell deserves the suspicion it gets. Here is every step of
+        that script, in the order it runs them.
+      </p>
+    </div>
+
+    <ol class="wh__steps reveal-stagger">
+      {
+        steps.map((s, i) => (
+          <li class="wh__step">
+            <span class="wh__n mono" aria-hidden="true">
+              {String(i + 1).padStart(2, "0")}
+            </span>
+            <div class="wh__body">
+              <h3 class="wh__t">{s.t}</h3>
+              <p class="wh__d">{s.d}</p>
+            </div>
+          </li>
+        ))
+      }
+    </ol>
+
+    <div class="wh__foot">
+      <ul class="wh__nots">
+        {
+          nots.map((n) => (
+            <li class="wh__not">
+              <svg
+                class="wh__tick"
+                viewBox="0 0 16 16"
+                width="13"
+                height="13"
+                fill="none"
+                aria-hidden="true"
+              >
+                <path
+                  d="M2.5 8.5l3.5 3.5 7.5-8"
+                  stroke="currentColor"
+                  stroke-width="2.2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"></path>
+              </svg>
+              {n}
+            </li>
+          ))
+        }
+      </ul>
+      <p class="wh__uninstall">
+        <strong>Removing it is one file.</strong> Delete
+        <span class="mono">~/.local/bin/coswarm</span> and it’s gone. If you get as far as
+        signing in, the CLI keeps that in <span class="mono">~/.coswarm</span> — a directory
+        it creates at 0700 with 0600 files — so
+        <span class="mono">rm -rf ~/.coswarm</span> clears the rest.
+      </p>
+    </div>
+  </div>
+</section>
+
+<style>
+  /* INTEGRATION: this was `.section` (--pad-section, 128px at 1440) with a one-sided
+     override pulling the bottom edge back to --pad-section-tight. Measured across all four
+     routes, EVERY other top-level section on the site is .section--tight (86.4px) — the
+     landing page’s five sections, and /download’s own OtherWays. This page alone read
+     128 / 86.4 / 86.4 / 86.4 / 128 down the scroll. It is .section--tight now, so the
+     override is gone and the rhythm is one number everywhere. */
+
+  .wh__head {
+    max-width: 44rem;
+    margin-inline: auto;
+    text-align: center;
+  }
+
+  .wh__head .h-section {
+    margin: var(--s-4) 0 0;
+  }
+
+  .wh__lede {
+    margin: var(--stack-sm) auto 0;
+    font-size: var(--t-lg);
+    line-height: var(--lh-lg);
+  }
+
+  .wh__steps {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--s-10) var(--s-12);
+    margin: var(--s-16) 0 0;
+    padding: 0;
+    list-style: none;
+    counter-reset: none;
+  }
+
+  .wh__step {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: var(--s-4);
+    align-items: start;
+  }
+
+  .wh__n {
+    font-size: var(--t-xs);
+    font-weight: 600;
+    line-height: 1.6;
+    color: var(--accent-bright);
+    padding-top: 2px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .wh__t {
+    margin: 0;
+    font-size: var(--t-base);
+    font-weight: 600;
+    letter-spacing: var(--track-head);
+    color: var(--text);
+  }
+
+  .wh__d {
+    margin: var(--s-2) 0 0;
+    font-size: var(--t-sm);
+    line-height: var(--lh-sm);
+    color: var(--text-muted);
+  }
+
+  .wh__foot {
+    margin-top: var(--s-16);
+    padding-top: var(--s-8);
+    border-top: 1px solid var(--border);
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: var(--s-8) var(--s-12);
+    align-items: start;
+  }
+
+  .wh__nots {
+    display: grid;
+    gap: var(--s-3);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .wh__not {
+    display: flex;
+    align-items: center;
+    gap: var(--s-3);
+    font-size: var(--t-sm);
+    line-height: var(--lh-sm);
+    color: var(--text);
+  }
+
+  .wh__tick {
+    flex: none;
+    color: var(--success);
+  }
+
+  .wh__uninstall {
+    margin: 0;
+    font-size: var(--t-sm);
+    line-height: var(--lh-base);
+    color: var(--text-muted);
+  }
+
+  @media (max-width: 56rem) {
+    .wh__steps {
+      grid-template-columns: minmax(0, 1fr);
+      gap: var(--s-8);
+      max-width: 42rem;
+      margin-inline: auto;
+    }
+
+    .wh__foot {
+      grid-template-columns: minmax(0, 1fr);
+      max-width: 42rem;
+      margin-inline: auto;
+    }
+  }
+
+  @media (max-width: 30rem) {
+    .wh__steps {
+      margin-top: var(--s-10);
+    }
+
+    .wh__step {
+      gap: var(--s-3);
+    }
+  }
+</style>

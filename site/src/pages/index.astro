@@ -2,31 +2,111 @@
 /*
  * The landing page.
  *
- * Section order is a deliberate bet, taken from Pitch's positioning read: the hero makes the
- * claim and the demo sits IMMEDIATELY under it, because the claim is abstract and dies
- * without something concrete in the same screenful. Everything after that is elaboration —
- * how you get in, why the authority model is shaped the way it is, and what installing
- * actually does to your machine.
+ * ORDER IS AN ARGUMENT, and this one runs: here is the claim (hero) -> prove it by letting
+ * me do it (demo) -> here is everything there is to learn (verbs) -> here is how I get in
+ * (start) -> here is honestly where you are (invite). Each section is eyebrow -> headline ->
+ * one-sentence lede -> the proof, so the rhythm repeats without the layout repeating.
+ *
+ * WHAT WAS CUT, and why, because "less is more" is only real if something goes:
+ *   - the separate "why coswarm" essay section. The demo argues it better, in one click.
+ *   - a features grid. Five commands is not a feature grid, it is a vocabulary.
+ *   - the ethos line as a hero pull-quote. "Friction is justified only by irreversibility"
+ *     is a builder's rule; in the largest type on the page it makes friction the subject,
+ *     which is precisely the framing the operator retired. It stays in the spec.
+ *   - the install one-liner as the hero CTA. The installer is not published and the host is
+ *     undecided, so it would be a placeholder in the most prominent position on the site.
+ *     It lives in step one of "how it works", with its caveat attached to it.
+ *
+ * ---------------------------------------------------------------------------------------
+ * HEADING PUNCTUATION — ONE RULE, WHOLE SITE
+ * ---------------------------------------------------------------------------------------
+ * DISPLAY AND SECTION HEADINGS END IN A FULL STOP. That is `.h-display` (the hero h1 and
+ * /download's h1), every `.h-section` h2, and the three `.st-title` step headings on /start.
+ * The voice is declarative — "Your agents know what each other are doing." — and a full stop
+ * is what makes it a statement rather than a label.
+ *
+ * NOTHING ELSE TAKES ONE: eyebrows, Card titles, tab labels, form labels, the `.wh__t` and
+ * `.ai__t` step titles inside a section, and any heading whose text is data (the /app
+ * workspace name). Those are labels for a thing, not sentences about it.
+ *
+ * This was applied at roughly 60% before — "Find out who's already there." next to "What you
+ * run once you're invited" — which reads as inattention rather than as a system. If a new
+ * heading is added, it takes the rule or the rule is wrong; it does not take an exception.
+ *
+ * Header and footer nav (SiteHeader/SiteFooter) point at /#how-it-works. That id exists here
+ * — the section is #how-it-works and its first step is #install. Renaming either breaks a
+ * link in a file this page does not own.
+ *
+ * INTEGRATION: this page used to override Base's footer slot with landing/SiteFoot.astro.
+ * The site had three footers; it now has one, in SiteFooter.astro, which every page reaches
+ * by passing nothing. SiteFoot also asserted the repository is "private during dogfood",
+ * which is no longer true — it answers 200 logged out.
  */
 
 import Base from "../layouts/Base.astro";
-import Hero from "../components/Hero.astro";
-import AuthorityDemo from "../components/AuthorityDemo.astro";
-import HowItWorks from "../components/HowItWorks.astro";
-import Authority from "../components/Authority.astro";
-import Install from "../components/Install.astro";
-import Footer from "../components/Footer.astro";
+import Hero from "../components/landing/Hero.astro";
+import Demo from "../components/landing/Demo.astro";
+import Verbs from "../components/landing/Verbs.astro";
+import Start from "../components/landing/Start.astro";
+import Invite from "../components/landing/Invite.astro";
 
 const title = "coswarm — your agents know what each other are doing";
 const description =
-  "A coordination cloud for teams running many agents. Each agent says what it is working on, and the others can read it — so nobody steps on anyone's toes.";
+  "Every agent announces what it is picking up, and the others read it before they start. A shared feed for teams running many agents, driven from the CLI.";
 ---
 
 <Base title={title} description={description} path="/">
+  {/* is:inline and in <head>, so the attribute is set before the body is parsed. Setting it
+      from a bundled module further down the document would paint the sections VISIBLE and
+      then hide them, which is a flash rather than an entrance. */}
+  <script is:inline slot="head">
+    (() => {
+      // motion.css's contract for the JS reveal path: set [data-motion-js] on <html>,
+      // observe .js-reveal, add .is-in on entry. Nothing is hidden unless this runs, so a
+      // browser without IntersectionObserver simply gets the page with everything visible.
+      if (!("IntersectionObserver" in window)) return;
+      if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+
+      const root = document.documentElement;
+      root.setAttribute("data-motion-js", "");
+
+      // Failsafe. That attribute is the thing that hides the sections, so if anything below
+      // throws — or simply never runs — the page would hold content permanently invisible.
+      // This is the one guarantee that must not depend on the rest of the script, so it is
+      // armed immediately and only stood down once the observer is actually watching.
+      let wired = false;
+      setTimeout(() => {
+        if (!wired) root.removeAttribute("data-motion-js");
+      }, 2000);
+
+      const reveal = () => {
+        const io = new IntersectionObserver(
+          (entries) => {
+            for (const entry of entries) {
+              if (!entry.isIntersecting) continue;
+              entry.target.classList.add("is-in");
+              io.unobserve(entry.target);
+            }
+          },
+          // Fires a little before the element's top edge reaches the fold, so the motion has
+          // finished by the time the reader's eye arrives.
+          { rootMargin: "0px 0px -6% 0px", threshold: 0.06 }
+        );
+        for (const el of document.querySelectorAll(".js-reveal")) io.observe(el);
+        wired = true;
+      };
+
+      if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", reveal, { once: true });
+      } else {
+        reveal();
+      }
+    })();
+  </script>
+
   <Hero />
-  <AuthorityDemo />
-  <HowItWorks />
-  <Authority />
-  <Install />
-  <Footer slot="footer" />
+  <Demo />
+  <Verbs />
+  <Start />
+  <Invite />
 </Base>

@@ -1,0 +1,423 @@
+---
+/*
+ * AfterInstall — what to run once the file is on disk, and the four ways this actually goes
+ * wrong. Every command and every printed line here was run today against a build of the CLI
+ * on this branch:
+ *
+ *   coswarm --version   -> "coswarm 0.0.1 (protocol 0.1.0)", exit 0. (`-v` prints the same.)
+ *                          Worth knowing: this only became true recently — the parser used to
+ *                          treat --version as a flag expecting a value and answered
+ *                          "--version requires a value" on the single most-typed diagnostic
+ *                          there is. src/cli.ts checks it against raw argv now.
+ *   coswarm --help      -> the full command list, exit 0.
+ *
+ * `accept` is the ONE first-contact verb that needs no --url and no --anon-key, because the
+ * link carries its own target (see the help text: "An invite link supplies its whole target
+ * and cannot be combined with --url or --anon-key"). Every other verb needs both flags. That
+ * is why this page stops at `accept` and does not print a quickstart a stranger could not
+ * run — SITE-BRIEF is explicit that the flagless third line is false today.
+ *
+ * THE FORM SHOWN IS --link-stdin, AND THAT IS NOT A STYLE CHOICE. `node dist/cli.js --help`
+ * lists `coswarm accept --link-stdin [--name <name>]` first and annotates the positional form
+ * on the very next line: "coswarm accept <coswarm://accept/...> ... # unsafe: shell
+ * history/process list". An invite link is a one-time capability, and argv is written to your
+ * shell history and visible to anyone who can run ps. This card used to print the annotated-
+ * unsafe form while /start taught the safe one two pages away, on a site whose /download
+ * thesis is "Piping a script into a shell deserves the suspicion it gets". The string here is
+ * the one StepAgents.astro already ships; if one changes, change both.
+ *
+ * STILL UNFIXED UPSTREAM, DELIBERATELY NOT PAPERED OVER HERE: install.sh l.142 itself prints
+ * "Next: accept your invite.\n\n  coswarm accept <invite-link>". The script is the wrong
+ * place for this page to fix, and WhatHappens.astro's step 10 still records what the script
+ * actually prints rather than what we wish it printed. Fix the script, then that note.
+ *
+ * The troubleshooting entries are the failure paths install.sh handles by name, phrased as
+ * the message a reader would actually see. The zsh PATH line is the exact string install.sh
+ * prints (l.131).
+ *
+ * STEP NUMBERING. The numeral is a badge element beside the heading, never characters inside
+ * it. The landing Start section and /start both do it that way, and this page used to be the
+ * one that did not: it shipped `<h3>1. Check it landed</h3>`, which a screen reader says as
+ * "one dot Check it landed" and which draws no badge at all where the other two pages draw
+ * one. The badge is aria-hidden because the heading text is the whole accessible name and the
+ * order is already carried by the reading order. Skin matches /start's step marker
+ * (StepAgents.astro .st-cmd__title::before) — same 1.5rem violet ring at the same heading
+ * scale; the landing's larger 2.25rem numeral belongs to a heading two sizes up.
+ */
+
+import CodeBlock from "../ui/CodeBlock.astro";
+
+const versionCmd = "coswarm --version";
+const versionOut = "coswarm 0.0.1 (protocol 0.1.0)";
+/* The safe form, broken at the pipe exactly as StepAgents.astro breaks it on /start.
+   BROKEN BY HAND, AND WITH NO PROMPT GLYPH, FOR ONE MEASURED REASON. Written as a single
+   line with prompt="$" it does not fit this card: at 14px JetBrains Mono the 64-character
+   command is ~594px against a 584px column, and `wrap` broke it INSIDE the flag — the block
+   rendered "--link-" then "stdin" on the next line, which is a flag a reader can mistype and
+   a hyphen that is not in the command. Breaking after the trailing `|` is a real shell line
+   continuation, so what lands on the clipboard still runs verbatim.
+   The prompt is dropped rather than kept because CodeBlock prefixes EVERY non-comment line
+   with it (CodeBlock.astro:108), which would draw a second "$" on the continuation and make
+   it read as a second command. StepAgents made the same trade for the same reason; the
+   window chrome and the mono face already say "terminal". */
+const acceptCmd = `printf '%s' "$COSWARM_INVITE_LINK" |
+  coswarm accept --link-stdin`;
+
+/* `text` with `backticks` becomes inline code — paths and flags read as what they are. */
+const seg = (s: string) =>
+  s.split(/`([^`]+)`/).map((t, i) => ({ t, code: i % 2 === 1 }));
+
+/* Each entry may carry ONE real command. It is a code block rather than a sentence because a
+   reader who is here is about to paste it, and a shell line set in body type — with body-type
+   quotes — is a line that does not run when it is pasted. */
+const faqs = [
+  {
+    q: "It said node wasn’t found — but I have Node",
+    a: "Almost always a version manager. nvm, fnm and asdf put node on PATH from your shell’s startup files, so it doesn’t exist for a non-interactive shell — which is what the far side of a pipe is. That’s why the installer prints the PATH it searched instead of telling you to install a Node you already have. Run it from a normal terminal window, or push it through a login shell:",
+    cmd: "zsh -lic 'curl -fsSL https://<host>/install.sh | sh'",
+    label: "login shell",
+  },
+  {
+    q: "It installed, but my shell can’t find coswarm",
+    a: "`~/.local/bin` isn’t on your PATH. The installer prints the exact line for your shell when it notices — on zsh, this one. It prints it rather than writing it, because editing your shell profile is not something an installer should do behind your back.",
+    cmd: "echo 'export PATH=\"$HOME/.local/bin:$PATH\"' >> ~/.zprofile && exec zsh -l",
+    label: "zsh",
+  },
+  {
+    q: "Checksum mismatch",
+    a: "Nothing was installed — the script stops before it writes anything, and prints the hash it expected next to the one it got. A partial or proxied download is the usual cause, so running it again is a reasonable first move. If it happens twice, stop and tell us: that is the exact case this check exists for.",
+    cmd: null,
+    label: null,
+  },
+  {
+    q: "require is not defined in ES module scope",
+    a: "You shouldn’t see this — the installer checks for it. It means coswarm ended up under a directory whose package.json declares `\"type\": \"module\"`, so Node loaded a CommonJS bundle as ESM. Install it outside that tree instead:",
+    cmd: 'curl -fsSL https://<host>/install.sh | COSWARM_INSTALL_DIR="$HOME/bin" sh',
+    label: "elsewhere",
+  },
+];
+
+/* Split into two INDEPENDENT columns rather than handed to a two-column grid as four items.
+   A grid row-locks its cells: with all four in one grid, opening entry 1 grew its row to
+   311px while its right-hand neighbour stayed 55px, leaving a 256px hole under the closed
+   one. Since a reader opens exactly one of these, that hole was the normal state. Each
+   column now flows on its own, so an open entry pushes only the entries beneath it. The
+   halves are authored here so the template stays a plain map. */
+const faqCols = [faqs.slice(0, 2), faqs.slice(2)];
+---
+
+<section class="ai section section--tight" id="after" aria-labelledby="ai-title">
+  <div class="page">
+    <div class="ai__head">
+      <p class="eyebrow">Once it’s installed</p>
+      <h2 class="h-section" id="ai-title">Two commands, then you’re in.</h2>
+    </div>
+
+    <div class="ai__grid">
+      <div class="ai__steps">
+        <div class="ai__step">
+          <div class="ai__sh">
+            <span class="ai__n" aria-hidden="true">1</span>
+            <h3 class="ai__t">Check it landed</h3>
+          </div>
+          <CodeBlock code={versionCmd} label="verify" prompt="$" />
+          <CodeBlock code={versionOut} label="output" copy={false} chrome={false} class="ai__out" />
+          <p class="ai__p">
+            The installer prints this same line for you, read back out of the file it just
+            wrote rather than out of what it intended to write.
+          </p>
+        </div>
+
+        <div class="ai__step">
+          <div class="ai__sh">
+            <span class="ai__n" aria-hidden="true">2</span>
+            <h3 class="ai__t">Accept your invite</h3>
+          </div>
+          <CodeBlock code={acceptCmd} label="join a workspace" wrap />
+          <p class="ai__p">
+            <strong>This is the one command that needs no configuration.</strong> An invite
+            link carries its own target, so it takes no
+            <span class="mono">--url</span> and no <span class="mono">--anon-key</span> —
+            every other command does. Put the link you were sent in
+            <span class="mono">COSWARM_INVITE_LINK</span> and it goes in on stdin, never as an
+            argument: a link works once, and anything in argv is written to your shell history
+            and shows up in process listings. coswarm is invite-only while we run it on our
+            own work, so there’s no self-serve signup and no link on this page that will get
+            you one.
+          </p>
+          <p class="ai__p ai__p--last">
+            After that, <span class="mono">coswarm --help</span> lists the rest: announce what
+            you’re working on, read the shared feed, check your inbox.
+          </p>
+        </div>
+      </div>
+
+      <div class="ai__faq">
+        <h3 class="ai__faqt">If it goes wrong</h3>
+        <div class="ai__ds">
+        {
+          faqCols.map((col) => (
+            <div class="ai__col">
+              {col.map((f) => (
+                <details class="ai__d">
+                  <summary class="ai__q">
+                    <span>{f.q}</span>
+                    <svg
+                      class="ai__chev"
+                      viewBox="0 0 16 16"
+                      width="14"
+                      height="14"
+                      fill="none"
+                      aria-hidden="true"
+                    >
+                      <path
+                        d="M4 6.5 8 10.5l4-4"
+                        stroke="currentColor"
+                        stroke-width="1.8"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      />
+                    </svg>
+                  </summary>
+                  <div class="ai__a">
+                    <p class="ai__ap">
+                      {seg(f.a).map((part) =>
+                        part.code ? <code class="ai__ic">{part.t}</code> : <>{part.t}</>
+                      )}
+                    </p>
+                    {f.cmd && <CodeBlock code={f.cmd} label={f.label ?? ""} chrome={false} wrap />}
+                  </div>
+                </details>
+              ))}
+            </div>
+          ))
+        }
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<style>
+  .ai__head {
+    max-width: 44rem;
+    margin-inline: auto;
+    text-align: center;
+  }
+
+  .ai__head .h-section {
+    margin: var(--s-4) 0 0;
+  }
+
+  /* INTEGRATION: was `.section` with a one-sided override pulling only the TOP edge to
+     --pad-section-tight, which left 128px under the last card and above the footer while
+     every other section end on the site sits on 86.4px. Now .section--tight on both edges;
+     the override is gone. See the matching note in WhatHappens.astro. */
+
+  /* Two steps across the top, troubleshooting as a full-width band under them. The earlier
+     arrangement — steps left, FAQ right — left the bottom-right quarter of the section empty
+     because the FAQ is half the height of the steps. */
+  .ai__grid {
+    display: grid;
+    gap: var(--s-16);
+    margin-top: var(--s-12);
+  }
+
+  .ai__steps {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--s-12);
+    align-items: start;
+  }
+
+  /* The numeral sits BESIDE the heading, not inside its text — the badge is a sibling of the
+     h3 rather than a child, so the heading's text content is the heading, whether it is being
+     read aloud or scraped. */
+  .ai__sh {
+    display: flex;
+    align-items: center;
+    gap: var(--s-3);
+    margin: 0 0 var(--s-4);
+  }
+
+  .ai__n {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    inline-size: 1.5rem;
+    block-size: 1.5rem;
+    border-radius: var(--radius-pill);
+    background: var(--accent-dim);
+    border: 1px solid color-mix(in oklab, var(--accent) 30%, transparent);
+    color: var(--accent-bright);
+    font-size: var(--t-2xs);
+    font-weight: var(--weight-semibold);
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
+  }
+
+  .ai__t {
+    margin: 0;
+    font-size: var(--t-base);
+    font-weight: 600;
+    letter-spacing: var(--track-head);
+    color: var(--text);
+  }
+
+  .ai__out {
+    margin-top: var(--s-2);
+  }
+
+  .ai__p {
+    margin: var(--s-4) 0 0;
+    font-size: var(--t-sm);
+    line-height: var(--lh-base);
+    color: var(--text-muted);
+  }
+
+  .ai__p--last {
+    margin-top: var(--s-3);
+  }
+
+  /* ------------------------------------------------------------- faq ----- */
+  .ai__faqt {
+    margin: 0 0 var(--s-4);
+    font-size: var(--t-xs);
+    font-weight: 600;
+    letter-spacing: var(--track-eyebrow);
+    text-transform: uppercase;
+    color: var(--text-muted);
+  }
+
+  /* TWO COLUMNS, TWO INDEPENDENT FLOWS — the grid holds the columns, never the disclosures.
+     Putting all four <details> straight into the grid row-locked them in pairs: opening the
+     first entry stretched its row to 311px while the closed entry beside it stayed 55px, so
+     256px of empty panel opened up under it and the next row was pushed down by an entry it
+     had nothing to do with. Opening exactly one is what a reader does, so that was the
+     ordinary state, not an edge case. Each column is its own flex column now and only the
+     entries BELOW an open one move.
+     Each entry carries its own top hairline and each column closes itself at the bottom, so
+     both columns read as complete lists whatever their heights. */
+  .ai__ds {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    column-gap: var(--s-12);
+    /* start, NOT the grid default of stretch. Stretched, the short column's box still grew to
+       the tall column's height and its closing hairline was drawn at the bottom of that box —
+       measured 258px below its own last entry, which is the same floating-rule fault the row
+       lock produced, just relocated. Each column ends where its entries end. */
+    align-items: start;
+  }
+
+  .ai__col {
+    display: flex;
+    flex-direction: column;
+    min-inline-size: 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .ai__d {
+    border-top: 1px solid var(--border);
+  }
+
+  .ai__q {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--s-4);
+    padding: var(--s-4) 0;
+    font-size: var(--t-sm);
+    font-weight: 600;
+    line-height: var(--lh-sm);
+    color: var(--text);
+    cursor: pointer;
+    list-style: none;
+    transition: color var(--dur-2) var(--ease-standard);
+  }
+
+  /* Safari still needs the pseudo-element removed explicitly. */
+  .ai__q::-webkit-details-marker {
+    display: none;
+  }
+
+  .ai__q:hover {
+    color: var(--accent-bright);
+  }
+
+  .ai__q:focus-visible {
+    outline: 2px solid var(--focus);
+    outline-offset: 2px;
+    border-radius: var(--radius-sm);
+  }
+
+  .ai__chev {
+    flex: none;
+    color: var(--text-faint);
+    transition: transform var(--dur-2) var(--ease-standard);
+  }
+
+  .ai__d[open] .ai__chev {
+    transform: rotate(180deg);
+  }
+
+  .ai__a {
+    margin: 0 0 var(--s-5);
+    padding-right: var(--s-8);
+  }
+
+  .ai__ap {
+    margin: 0 0 var(--s-3);
+    font-size: var(--t-sm);
+    line-height: var(--lh-base);
+    color: var(--text-muted);
+    /* Shell lines inside these answers must not widen the column. */
+    overflow-wrap: break-word;
+  }
+
+  .ai__ic {
+    font-family: var(--font-mono);
+    font-size: 0.92em;
+    color: var(--text);
+    background: var(--surface-2);
+    border-radius: 4px;
+    padding: 1px 4px;
+    overflow-wrap: anywhere;
+  }
+
+  @media (max-width: 56rem) {
+    .ai__grid {
+      gap: var(--s-12);
+      max-width: 42rem;
+      margin-inline: auto;
+    }
+
+    .ai__steps,
+    .ai__ds {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .ai__steps {
+      gap: var(--s-10);
+    }
+
+    /* Stacked, the two columns become one list, so the first column's closing rule would sit
+       directly on the next column's opening one and draw 2px. */
+    .ai__col:not(:last-child) {
+      border-bottom: 0;
+    }
+  }
+
+  @media (max-width: 30rem) {
+    .ai__a {
+      padding-right: 0;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .ai__chev,
+    .ai__q {
+      transition: none;
+    }
+  }
+</style>

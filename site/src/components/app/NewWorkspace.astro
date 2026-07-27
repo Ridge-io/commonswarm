@@ -1,0 +1,302 @@
+---
+/*
+ * A workspace nobody has announced anything in yet.
+ *
+ * The two ways an empty state fails are a bare "No results" with no way forward, and a
+ * paragraph of apology. This one says what is missing in the reader's words and then hands
+ * over the one command that ends the emptiness.
+ *
+ * WHY THE COMMAND IS THE WHOLE ANSWER. The product's split is that humans read the web UI and
+ * agents drive the CLI. So the honest next step on an empty dashboard is not a button on this
+ * page — there is nothing for a human to click that would fill this screen. It is a line the
+ * reader gives to an agent. Putting a "Create your first signal" button here would invent the
+ * second write operation in a web UI that is specified to have exactly one, and that one is
+ * not here.
+ *
+ * THE COMMAND IS REAL, AND IT IS THE SHORT FORM. `coswarm working-on "<what>" --about <ref>
+ * --until <dur>` is verbatim from the CLI's usage text; --url and --anon-key (or their
+ * environment variables) are also required on a real invocation and the line under the block
+ * says so rather than letting the reader find out from an error.
+ *
+ * `until` is capped at 30d by the CLI, so 90m is comfortably valid.
+ */
+
+import Card from "../ui/Card.astro";
+import EmptyState from "../ui/EmptyState.astro";
+import CodeBlock from "../ui/CodeBlock.astro";
+
+/*
+ * THE COMMAND IS BROKEN WITH "\", THE WAY EVERY OTHER COMMAND ON THE SITE IS.
+ *
+ * It used to be one 96-character line, and the measurement is why that had to go: in the
+ * built page at 1440 the block's scrollWidth was 830 against a clientWidth of 510, so the
+ * single most important line on a brand-new workspace rendered as
+ *     $ coswarm working-on "refactor session cookie handling" --a
+ * and stopped mid-flag. macOS draws overlay scrollbars, so nothing on screen said there was
+ * more.
+ *
+ * The earlier note against continuations was right about the mechanism and wrong about the
+ * conclusion. CodeBlock does prefix its prompt to EVERY line that is not blank and not a
+ * shell comment, so a naive two-liner renders "$" twice — a second prompt in front of
+ * something that is not a second command. That is a rendering problem with a rendering fix:
+ * the style block below keeps the glyph's WIDTH on lines 2 and 3 (visibility, not display)
+ * and hides the character. The result is what a terminal actually shows — one "$", and the
+ * continuations indented under the command they belong to — while the copy button still puts
+ * the exact `code` string below on the clipboard, backslashes and newlines intact, which is a
+ * command that runs when pasted.
+ *
+ * Three lines rather than two: the flags then sit one per line, so the longest rendered line
+ * is 56 characters instead of 96 and the block fits without scrolling at every width from
+ * about 30rem up. Below that it still scrolls, and the script below gives it the edge fade
+ * and the visible track that the one-line version never had.
+ */
+const FIRST_SIGNAL = [
+  'coswarm working-on "refactor session cookie handling" \\',
+  "  --about src/auth/session.ts \\",
+  "  --until 90m",
+].join("\n");
+---
+
+<Card class="new" size="lg">
+  <EmptyState
+    class="new__empty"
+    title="Nobody has announced anything yet"
+    description="When your first agent says what it’s working on, it shows up here — and every other agent in the workspace can see it before they start."
+    headingLevel={3}
+  >
+    <svg slot="icon" viewBox="0 0 24 24" width="26" height="26" aria-hidden="true">
+      <circle cx="12" cy="12" r="2.6" fill="none" stroke="currentColor" stroke-width="1.5"
+      ></circle>
+      <path
+        d="M12 4.2v4.6M12 15.2v4.6M4.2 12h4.6M15.2 12h4.6"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="1.5"
+        stroke-linecap="round"></path>
+    </svg>
+
+    <div class="new__how">
+      <p class="new__lead">Give this to an agent:</p>
+
+      {/*
+        STILL NO `wrap` — measured, not guessed.
+
+        With wrap the lines soft-wrap, and at 320px Chrome takes the hyphen break opportunity
+        inside the flags: the rendered lines were "... --" / "about" and "src/auth/session.ts
+        -" / "-until 90m". A reader scanning that sees "-until", a flag that does not exist,
+        and no CSS suppresses it (overflow-wrap and word-break: keep-all were both tried on
+        the live page).
+
+        So the block scrolls inside its own overflow-x container instead, and no flag can
+        ever be split. What is new is that the scroll is now VISIBLE: the script below marks
+        the block whenever its content is wider than its box, and the style block gives that
+        state an edge fade, a scrollbar track that is drawn whether or not macOS feels like
+        showing one, and a tab stop so a keyboard can reach the part it cannot see.
+      */}
+      <CodeBlock code={FIRST_SIGNAL} label="Terminal" prompt="$" data-first-signal />
+
+      <p class="new__note">
+        Real invocations also need <code>--url</code> and <code>--anon-key</code>, or the
+        <code>SWARM_CLOUD_URL</code> and <code>SWARM_CLOUD_ANON_KEY</code> environment
+        variables.
+      </p>
+    </div>
+  </EmptyState>
+</Card>
+
+<script>
+  /*
+   * THE SCROLL AFFORDANCE FOR THE FIRST-SIGNAL BLOCK.
+   *
+   * The command is broken with "\" so it fits without scrolling on a desktop card, but a
+   * 375px phone still cannot hold a 56-character monospace line. macOS draws overlay
+   * scrollbars, so on that platform an overflowing block looks exactly like a block that ends
+   * where the text stops — which is how the one-line version shipped truncated and nobody saw
+   * it. Three things fix that, and all three are driven from here rather than being always-on,
+   * because a fade over a command that fits is a lie in the other direction.
+   *
+   *   data-overflow  — the CSS below draws an edge fade on whichever side has more text, and
+   *                    a real scrollbar track. Recomputed on scroll, so the fade disappears
+   *                    when the reader reaches the end.
+   *   tabIndex       — a scroll container that only a mouse can move is a 2.1.1 failure. A
+   *                    tab stop with an accessible name lets arrow keys do it.
+   *
+   * ResizeObserver, not a resize listener: the panel this lives in starts display:none (it is
+   * one of three preview states), so its width is 0 until the reader switches to it. The
+   * observer fires on that transition; a window listener never would.
+   */
+  const body = document.querySelector<HTMLElement>("[data-first-signal] .ui-code__body");
+
+  if (body) {
+    const update = () => {
+      const max = body.scrollWidth - body.clientWidth;
+
+      /* 1px, not 0: fractional layout widths leave a sub-pixel remainder on blocks that fit. */
+      if (max <= 1) {
+        body.removeAttribute("data-overflow");
+        body.removeAttribute("tabindex");
+        body.removeAttribute("aria-label");
+        return;
+      }
+
+      const atStart = body.scrollLeft <= 1;
+      const atEnd = body.scrollLeft >= max - 1;
+      body.dataset.overflow = atStart ? "end" : atEnd ? "start" : "both";
+      body.tabIndex = 0;
+      body.setAttribute("aria-label", "The first signal command — scroll to read it all");
+    };
+
+    body.addEventListener("scroll", update, { passive: true });
+    new ResizeObserver(update).observe(body);
+    update();
+  }
+</script>
+
+<style>
+  /*
+   * ONE AXIS. EmptyState centres its title, body and icon; this panel's whole point is the
+   * command block under them, which cannot be centred and be readable. Two alignment systems
+   * in one card is what a reader notices before they read a word of it, so the panel is
+   * left-aligned throughout and the medallion, the heading, the sentence, the label and the
+   * block all start on the same x.
+   */
+  /*
+   * AND THE COLUMN IS CENTRED IN THE PANEL, which is the other half of the same decision.
+   *
+   * Left-aligning the content inside a panel that still stretched to the grid's full width
+   * moved the problem rather than fixing it: measured at 1440, the panel ran x=112→1328 and
+   * every line of content ended at x≈864, leaving 464px — 38% of the panel — empty on the
+   * right. A card with nothing in its right-hand third does not read as a deliberate measure,
+   * it reads as a column that failed to load.
+   *
+   * The panel keeps its width, because it is one of three preview states of the SAME dashboard
+   * and the other two are full-width feeds; a panel that changed size when the workspace
+   * emptied would make the emptiness look like a different screen. So the CONTENT is capped
+   * and centred instead, and the leftover splits evenly either side (208px each at 1440)
+   * instead of piling up on one edge.
+   *
+   * 46rem, not a round number picked by eye: .ui-empty carries 1rem of inline padding, so
+   * 46rem of box is exactly --measure-wide (44rem) of content — the same measure .new__how
+   * already used. The heading, the sentence, the label and the command block therefore all
+   * still start on one x and the widest of them ends on the wrapper's edge.
+   */
+  .new__empty {
+    align-items: flex-start;
+    text-align: start;
+    max-inline-size: 46rem;
+    margin-inline: auto;
+  }
+
+  /* Capped by the wrapper above rather than here now: at 46rem the wrapper's content box IS
+     --measure-wide, so a second cap on this element would be the same number written twice.
+     What the cap was for still holds — left-aligned and uncapped the terminal ran 1116px for
+     a 56-character command and read as a mostly empty box. */
+  .new__how {
+    inline-size: 100%;
+    margin-block-start: var(--stack-lg);
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-3);
+  }
+
+  /*
+   * The prompt is per-LINE in CodeBlock, and a "\" continuation is not a second command — a
+   * "$" in front of it is a line that does not run, handed to someone whose next move is to
+   * paste. visibility rather than display so the glyph keeps its two-character width: that
+   * width IS the indent a terminal shows under the command, and removing it would slide the
+   * continuations left of the text they continue.
+   */
+  .new__how :global(.ui-code__line:not(:first-child) .ui-code__prompt) {
+    visibility: hidden;
+  }
+
+  /*
+   * The overflow state. Set by the script above only when the content really is wider than
+   * the box, so nothing here fires on a block that fits.
+   *
+   * The fade is on the scroller itself rather than on a wrapper: a wrapper would also fade
+   * the window bar and the copy button sitting in it. mask-image paints against the element's
+   * own box, not its scrolled content, so the fade stays pinned to the edge as the command
+   * slides underneath it.
+   */
+  .new__how :global(.ui-code__body[data-overflow]) {
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-strong) transparent;
+  }
+
+  .new__how :global(.ui-code__body[data-overflow="end"]) {
+    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 2.5rem), transparent);
+    mask-image: linear-gradient(to right, #000 calc(100% - 2.5rem), transparent);
+  }
+
+  .new__how :global(.ui-code__body[data-overflow="start"]) {
+    -webkit-mask-image: linear-gradient(to right, transparent, #000 2.5rem);
+    mask-image: linear-gradient(to right, transparent, #000 2.5rem);
+  }
+
+  .new__how :global(.ui-code__body[data-overflow="both"]) {
+    -webkit-mask-image: linear-gradient(
+      to right,
+      transparent,
+      #000 2.5rem,
+      #000 calc(100% - 2.5rem),
+      transparent
+    );
+    mask-image: linear-gradient(
+      to right,
+      transparent,
+      #000 2.5rem,
+      #000 calc(100% - 2.5rem),
+      transparent
+    );
+  }
+
+  /* scrollbar-width covers Firefox. WebKit and Blink only draw a persistent track once the
+     scrollbar is styled at all — which is the entire point on macOS, where the default is an
+     overlay bar that appears for a moment and then is never seen again. */
+  .new__how :global(.ui-code__body[data-overflow])::-webkit-scrollbar {
+    height: 0.5rem;
+  }
+
+  .new__how :global(.ui-code__body[data-overflow])::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .new__how :global(.ui-code__body[data-overflow])::-webkit-scrollbar-thumb {
+    background: var(--border-strong);
+    border-radius: var(--radius-pill);
+  }
+
+  .new__how :global(.ui-code__body[data-overflow])::-webkit-scrollbar-thumb:hover {
+    background: var(--text-faint);
+  }
+
+  /* The block is a tab stop only while it scrolls, so it needs the page's focus ring. */
+  .new__how :global(.ui-code__body:focus-visible) {
+    outline: 2px solid var(--focus);
+    outline-offset: -2px;
+  }
+
+  .new__lead {
+    font-size: var(--t-sm);
+    line-height: var(--lh-sm);
+    font-weight: var(--weight-medium);
+    color: var(--text-muted);
+  }
+
+  .new__note {
+    font-size: var(--t-xs);
+    line-height: var(--lh-xs);
+    color: var(--text-muted);
+  }
+
+  .new__note code {
+    padding: 0.1em 0.32em;
+    font-size: 0.95em;
+    color: var(--text-muted);
+    /* These are flags and variable names, so they should not break mid-token — but at 375px
+       four of them in one sentence will not fit on one line, and the sentence must wrap
+       between them. nowrap on the token, normal wrapping between tokens. */
+    white-space: nowrap;
+  }
+</style>

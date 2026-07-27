@@ -1,0 +1,116 @@
+---
+/*
+ * StepShell — the panel one step of /start lives in.
+ *
+ * WHY THIS EXISTS. Astro scopes a component's <style> to elements authored in that
+ * component's own template, so the same `.st-title` rule written in three step files would be
+ * three separate rules on three separate hashes. Rendering the shared chrome — section, card,
+ * heading, lede — from ONE component means the shared type and spacing are declared once and
+ * cannot drift between steps. The step-specific body comes in through the slot and is styled
+ * by the step that authored it.
+ *
+ * WHY .card DIRECTLY AND NOT ui/Card.astro. Card.astro renders the surface inside its own
+ * template, so it carries Card's scope id and no rule written here could reach it — including
+ * the one thing this shell actually needs, the tighter padding under 30rem. `.card .card--lg`
+ * are global.css primitives and are the same classes Card.astro itself composes, so this is
+ * the design system either way, minus a wrapper whose head/body/foot scaffolding this screen
+ * does not use.
+ *
+ * ONE h1 AT A TIME. Every step owns an <h1>, and the two inactive steps carry `hidden`, which
+ * takes them out of the accessibility tree entirely. So exactly one h1 is ever exposed — the
+ * one describing the screen actually in front of the reader. The heading is also the
+ * programmatic focus target when a step opens without a field to focus.
+ *
+ * MOTION. The entrance rests in its VISIBLE state and animates FROM hidden with no fill-mode,
+ * so if the animation never runs — reduced motion, an old browser, JS that failed — the panel
+ * is on screen. Same never-invisible invariant motion.css sets out.
+ */
+
+interface Props {
+  /** 1-based index. The controller finds panels by this. */
+  step: number;
+  /** id of the <h1>, referenced by the section's aria-labelledby. */
+  titleId: string;
+  title: string;
+  lede: string;
+  /** Steps after the first start hidden; the controller reveals them. */
+  hidden?: boolean;
+}
+
+const { step, titleId, title, lede, hidden = false } = Astro.props;
+---
+
+<section class="st-step" data-step={step} aria-labelledby={titleId} hidden={hidden || undefined}>
+  <div class="card card--lg st-card">
+    <h1 class="st-title" id={titleId} data-step-title tabindex="-1">{title}</h1>
+    <p class="st-lede">{lede}</p>
+    <slot />
+  </div>
+</section>
+
+<style>
+  /* No `display` is declared on .st-step, so the UA's [hidden] rule is unopposed. The
+     explicit rule below is a guard against a future edit adding one. */
+  .st-step[hidden] {
+    display: none;
+  }
+
+  .st-step--in {
+    --motion-rise: 8px;
+    /* No fill-mode: outside the animation's run the panel is at its natural, visible state. */
+    animation: fade-in-up var(--dur-3) var(--ease-decelerate);
+  }
+
+  .st-card {
+    /* The card is the widest thing on the page; nothing inside it may push it sideways. */
+    min-inline-size: 0;
+  }
+
+  .st-title {
+    font-size: var(--t-2xl);
+    line-height: var(--lh-2xl);
+    letter-spacing: var(--track-head);
+    font-weight: var(--weight-head);
+    color: var(--text); /* 16.88:1 on --elev-2 */
+  }
+
+  /* The heading is focused programmatically when a step opens, and a ring drawn around a
+     heading nobody tabbed to reads as a rendering fault. Removing it is safe because
+     tabindex="-1" means the ONLY way to focus this element is the script that just did.
+
+     BOTH declarations are needed, and the screenshot is what proved it. Chrome does match
+     :focus-visible on a scripted focus of a tabindex="-1" element (measured:
+     `h.matches(':focus-visible')` is true here), and global.css's rule sets an outline AND a
+     box-shadow halo. Killing only the outline left the 2px halo drawn as a rectangle around
+     the whole heading — visible in the render, invisible in the source. */
+  .st-title:focus {
+    outline: none;
+    box-shadow: none;
+  }
+
+  .st-lede {
+    margin-block-start: var(--stack-sm);
+    font-size: var(--t-base);
+    line-height: var(--lh-base);
+    color: var(--text-muted); /* 7.03:1 on --elev-2 */
+    max-inline-size: 30rem;
+  }
+
+  @media (max-width: 30rem) {
+    .st-card {
+      padding: var(--s-5);
+    }
+
+    .st-title {
+      font-size: var(--t-xl);
+      line-height: var(--lh-xl);
+      letter-spacing: var(--track-xl);
+    }
+
+    .st-lede {
+      font-size: var(--t-sm);
+      line-height: var(--lh-sm);
+      letter-spacing: var(--track-sm);
+    }
+  }
+</style>

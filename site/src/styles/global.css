@@ -1,4 +1,5 @@
 @import "./tokens.css";
+@import "./motion.css";
 
 /* coswarm — global stylesheet
  *
@@ -6,11 +7,16 @@
  *   1. @font-face      self-hosted variable Inter + JetBrains Mono, zero third-party requests
  *   2. reset           modern, minimal, opinionated where it buys us something
  *   3. base            element defaults so unclassed markup already looks right
- *   4. primitives      .page .eyebrow .h-display .h-section .lede .btn .card .mono
- *   5. a11y            focus rings, skip link, reduced motion
+ *   4. primitives      .page .eyebrow .h-display .h-section .lede .btn .card .mono .stack
+ *   5. a11y            focus rings, skip link, contrast preferences
  *
  * Every value comes from tokens.css. If you need a colour or a size that is not in there,
  * add it to tokens.css — do not hard-code it here.
+ *
+ * MOTION lives in motion.css and is imported ABOVE, which matters: @import inserts those
+ * rules before everything below, so any reduced-motion rule written in this file would
+ * outrank motion.css's kill switch on an !important tie. There is deliberately no
+ * prefers-reduced-motion block in this file. Put motion rules in motion.css.
  */
 
 /* ==========================================================================
@@ -168,6 +174,10 @@ table {
   border-spacing: 0;
 }
 
+/* Selection keeps --text as the ink rather than forcing white, and holds the accent at 42%
+ * so the highlight tints rather than blocks out. Verified against both extremes of the
+ * elevation ladder: --text on the selection tint is 10.31:1 over --elev-0 and 8.18:1 over
+ * --elev-4, so selected text is legible on every surface in the product. */
 ::selection {
   background: color-mix(in oklab, var(--accent) 42%, transparent);
   color: var(--text);
@@ -177,34 +187,62 @@ table {
    3. Base element styles
    ========================================================================== */
 
+/* Each heading level binds its OWN size, line-height and tracking. A single global
+   line-height cannot serve 11px and 90px: the small end needs air to stay scannable,
+   the display end needs to close up or the lines drift apart into separate objects. */
 h1,
 h2,
 h3,
 h4 {
-  font-weight: 620;
-  line-height: var(--lh-snug);
-  letter-spacing: var(--track-head);
+  font-weight: var(--weight-head);
 }
 
 h1 {
   font-size: var(--t-3xl);
-  line-height: var(--lh-tight);
+  line-height: var(--lh-3xl);
+  letter-spacing: var(--track-3xl);
 }
 h2 {
   font-size: var(--t-2xl);
+  line-height: var(--lh-2xl);
+  letter-spacing: var(--track-head);
 }
 h3 {
   font-size: var(--t-xl);
+  line-height: var(--lh-xl);
+  letter-spacing: var(--track-xl);
 }
 h4 {
   font-size: var(--t-lg);
+  line-height: var(--lh-lg);
+  letter-spacing: var(--track-xl);
 }
 
 h5,
 h6 {
   font-size: var(--t-base);
-  font-weight: 600;
-  line-height: var(--lh-snug);
+  font-weight: var(--weight-semibold);
+  line-height: var(--lh-base);
+  letter-spacing: var(--track-base);
+}
+
+small,
+.text-sm {
+  font-size: var(--t-sm);
+  line-height: var(--lh-sm);
+  letter-spacing: var(--track-sm);
+}
+
+.text-xs {
+  font-size: var(--t-xs);
+  line-height: var(--lh-xs);
+  letter-spacing: var(--track-xs);
+}
+
+.text-2xs {
+  font-size: var(--t-2xs);
+  line-height: var(--lh-2xs);
+  letter-spacing: var(--track-xs);
 }
 
 strong,
@@ -221,7 +259,8 @@ a {
   text-decoration-thickness: 1px;
   text-underline-offset: 0.18em;
   text-decoration-color: color-mix(in oklab, var(--accent-bright) 45%, transparent);
-  transition: color var(--dur) var(--ease), text-decoration-color var(--dur) var(--ease);
+  transition: color var(--dur-1) var(--ease-standard),
+    text-decoration-color var(--dur-1) var(--ease-standard);
 }
 
 a:hover {
@@ -285,13 +324,46 @@ kbd {
 }
 
 /* Consistent vertical rhythm between top-level sections, so parallel authors of
- * different sections do not each invent their own spacing. */
+ * different sections do not each invent their own spacing. Both values are derived
+ * tokens — change the density of the whole product in tokens.css §7, not here. */
 .section {
-  padding-block: clamp(var(--s-16), 9vw, var(--s-32));
+  padding-block: var(--pad-section);
 }
 
 .section--tight {
-  padding-block: clamp(var(--s-12), 6vw, var(--s-24));
+  padding-block: var(--pad-section-tight);
+}
+
+/* --- stacks -------------------------------------------------------------
+ * One vertical rhythm for flow content. .stack puts the gap BETWEEN children
+ * only (never a leading or trailing margin), so a stack can be dropped inside
+ * a card without fighting the card's padding.
+ * ---------------------------------------------------------------------- */
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--stack-md);
+}
+
+.stack-xs { gap: var(--stack-xs); }
+.stack-sm { gap: var(--stack-sm); }
+.stack-lg { gap: var(--stack-lg); }
+.stack-xl { gap: var(--stack-xl); }
+
+/* Horizontal group: buttons in a row, chips in a row. Wraps by default —
+   a button row that overflows on a narrow screen is a layout bug. */
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--gap-inline);
+}
+
+.grid-cards {
+  display: grid;
+  gap: var(--gap-grid);
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 17rem), 1fr));
 }
 
 /* --- type --------------------------------------------------------------- */
@@ -318,8 +390,8 @@ kbd {
   /* At 320px a word like "irreversibility" is wider than the column at display size.
      Breaking it is ugly; letting it push the page sideways is worse. */
   overflow-wrap: break-word;
-  font-weight: 700;
-  line-height: var(--lh-tight);
+  font-weight: var(--weight-display);
+  line-height: var(--lh-display);
   letter-spacing: var(--track-display);
   /* Very slight top-to-bottom falloff. The fallback colour is declared first, so a
    * browser without background-clip:text still gets solid --text. */
@@ -352,17 +424,17 @@ kbd {
 .h-section {
   font-size: var(--t-3xl);
   overflow-wrap: break-word;
-  font-weight: 660;
-  line-height: var(--lh-snug);
-  letter-spacing: var(--track-head);
+  font-weight: var(--weight-head);
+  line-height: var(--lh-3xl);
+  letter-spacing: var(--track-3xl);
   color: var(--text);
 }
 
 .lede {
   font-size: var(--t-xl);
-  font-weight: 400;
-  line-height: var(--lh-body);
-  letter-spacing: -0.008em;
+  font-weight: var(--weight-body);
+  line-height: var(--lh-xl);
+  letter-spacing: var(--track-xl);
   color: var(--text-muted);
   max-width: var(--measure-wide);
 }
@@ -401,6 +473,80 @@ kbd {
   white-space: nowrap;
 }
 
+/* --- status ------------------------------------------------------------- */
+
+/* A badge for the state of something in the shared feed. The tint is the background and
+ * the full-strength colour is the text. Measured with the tint composited over each real
+ * surface, every variant clears AA — but not by much at the top of the ladder: the worst
+ * case is .badge--danger on --elev-4 at 4.62:1, against a 4.5 requirement. Two consequences:
+ * do not darken any -dim tint further, and do not add a surface above --elev-4 without
+ * re-running the audit. Never invert the pairing either — the -dim tints are backgrounds
+ * only and the full-strength colours are text only, on dark.
+ *
+ * Colour is never the only signal — each variant is expected to carry a word. */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding: 0.25em 0.6em;
+  border: 1px solid transparent;
+  border-radius: var(--radius-pill);
+  font-size: var(--t-xs);
+  font-weight: var(--weight-semibold);
+  line-height: var(--lh-xs);
+  letter-spacing: var(--track-xs);
+  white-space: nowrap;
+  background: var(--surface-2);
+  color: var(--text-muted);
+}
+
+.badge--success {
+  background: var(--success-dim);
+  color: var(--success);
+  border-color: color-mix(in oklab, var(--success) 30%, transparent);
+}
+
+.badge--warning {
+  background: var(--warning-dim);
+  color: var(--warning);
+  border-color: color-mix(in oklab, var(--warning) 30%, transparent);
+}
+
+.badge--danger {
+  background: var(--danger-dim);
+  color: var(--danger);
+  border-color: color-mix(in oklab, var(--danger) 30%, transparent);
+}
+
+.badge--info {
+  background: var(--info-dim);
+  color: var(--info);
+  border-color: color-mix(in oklab, var(--info) 30%, transparent);
+}
+
+.badge--accent {
+  background: var(--accent-dim);
+  color: var(--accent-bright);
+  border-color: color-mix(in oklab, var(--accent) 34%, transparent);
+}
+
+/* A small round dot for the same job when there is no room for a word. Because a bare
+ * dot is colour-only, it must be paired with adjacent text or its own accessible name. */
+.dot {
+  display: inline-block;
+  inline-size: 0.5rem;
+  block-size: 0.5rem;
+  border-radius: var(--radius-pill);
+  background: var(--text-faint);
+  flex: none;
+}
+
+.dot--success { background: var(--success); }
+.dot--warning { background: var(--warning); }
+.dot--danger { background: var(--danger); }
+.dot--info { background: var(--info); }
+.dot--accent { background: var(--accent-bright); }
+
 /* --- buttons ------------------------------------------------------------ */
 
 .btn {
@@ -421,16 +567,23 @@ kbd {
   text-decoration: none;
   cursor: pointer;
   user-select: none;
-  transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease),
-    color var(--dur) var(--ease), transform var(--dur) var(--ease),
-    box-shadow var(--dur) var(--ease);
+  transition: background var(--dur-2) var(--ease-standard),
+    border-color var(--dur-2) var(--ease-standard), color var(--dur-1) var(--ease-standard),
+    transform var(--dur-2) var(--ease-standard), box-shadow var(--dur-2) var(--ease-standard),
+    outline-color var(--dur-1) var(--ease-standard),
+    outline-offset var(--dur-1) var(--ease-decelerate);
+}
+
+/* A press must feel immediate, so it outruns the hover it interrupts. */
+.btn:active {
+  transition-duration: var(--dur-1);
 }
 
 .btn:hover {
   text-decoration: none;
 }
 
-.btn-lg {
+.btn--lg {
   --btn-h: 3.25rem;
   padding-inline: 1.5rem;
   font-size: var(--t-base);
@@ -441,42 +594,32 @@ kbd {
   flex: none;
 }
 
-.btn-primary {
+.btn--primary {
   background: linear-gradient(180deg, var(--accent-bright), var(--accent));
   color: var(--accent-ink);
   border-color: color-mix(in oklab, var(--accent-bright) 70%, transparent);
   box-shadow: var(--ring-top), 0 8px 24px -12px rgba(124, 108, 255, 0.65);
 }
 
-.btn-primary:hover {
+.btn--primary:hover {
   color: var(--accent-ink);
   background: linear-gradient(180deg, #b0a6ff, var(--accent-bright));
   transform: translateY(-1px);
   box-shadow: var(--shadow-glow);
 }
 
-.btn-primary:active {
+.btn--primary:active {
   transform: translateY(0);
   box-shadow: var(--ring-top);
 }
 
-.btn-ghost {
-  background: var(--surface);
-  color: var(--text);
-  border-color: var(--border);
-  box-shadow: var(--ring-top);
-}
-
-.btn-ghost:hover {
-  color: var(--text);
-  background: var(--surface-2);
-  border-color: var(--border-strong);
-  transform: translateY(-1px);
-}
-
-.btn-ghost:active {
-  transform: translateY(0);
-}
+/* A single-dash `.btn-ghost` USED TO BE HERE AND IS DELETED. It was a surface-plus-border
+ * button — visually identical to ui.css's .btn--secondary — sitting one dash away from
+ * ui.css's genuinely transparent `.btn--ghost`. Nothing in the markup used it: checked
+ * across all four routes' built HTML and every .astro file, zero occurrences.
+ *
+ * That was the last single-dash button modifier apart from the two directly above, and
+ * those are now `--` as well. Every modifier in this system is `--`; see ui.css §1. */
 
 .btn[aria-disabled="true"],
 .btn:disabled {
@@ -488,11 +631,20 @@ kbd {
 
 .card {
   position: relative;
-  padding: var(--s-6);
+  padding: var(--pad-card);
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   box-shadow: var(--ring-top);
+}
+
+.card--sm {
+  padding: var(--pad-card-sm);
+  border-radius: var(--radius);
+}
+
+.card--lg {
+  padding: var(--pad-card-lg);
 }
 
 .card--raised {
@@ -511,8 +663,9 @@ a.card,
   display: block;
   color: inherit;
   text-decoration: none;
-  transition: border-color var(--dur) var(--ease), background var(--dur) var(--ease),
-    transform var(--dur) var(--ease);
+  transition: border-color var(--dur-2) var(--ease-standard),
+    background var(--dur-2) var(--ease-standard), transform var(--dur-2) var(--ease-standard),
+    box-shadow var(--dur-2) var(--ease-standard);
 }
 
 a.card:hover,
@@ -559,22 +712,49 @@ a.card:hover,
    5. Accessibility
    ========================================================================== */
 
-/* One ring, everywhere, always visible. Never remove it — narrow it if it clips. */
+/* THE FOCUS RING — two bands, so it survives any surface it lands on.
+ *
+ *   band 1 (box-shadow, 0–2px)  --focus-halo, near-black. Carries the indicator when the
+ *                               ring is drawn against a BRIGHT fill: 5.25:1 on --accent,
+ *                               7.32:1 on --danger, 12.13:1 on --warning.
+ *   band 2 (outline, 2–4px)     --focus, light indigo. Carries it against the dark page:
+ *                               10.02:1 on --bg, 7.91:1 on --elev-4.
+ *
+ * A single light band was the previous design and it measured 1.94:1 on --accent and
+ * 1.39:1 on --danger — invisible exactly where a primary or destructive button lives.
+ * WCAG 1.4.11 wants 3:1; with two bands the worst case across the whole palette is 5.25:1.
+ *
+ * `outline` (not box-shadow) carries the visible band because outline is preserved in
+ * Windows High Contrast / forced-colors mode, where box-shadow is dropped entirely.
+ * Never remove this ring — narrow the offset if it clips.
+ */
 :focus-visible {
   outline: 2px solid var(--focus);
-  outline-offset: 3px;
+  outline-offset: 2px;
+  box-shadow: 0 0 0 2px var(--focus-halo);
   border-radius: var(--radius-sm);
 }
 
-/* Elements whose own radius is larger keep their shape when focused. */
+/* Elements that carry their own box-shadow must re-declare it, or focusing them would
+ * drop their top edge. Radius is restated so the ring follows the real shape. */
 .card:focus-visible,
-a.card:focus-visible {
+a.card:focus-visible,
+.card--link:focus-visible {
   border-radius: var(--radius-lg);
+  box-shadow: 0 0 0 2px var(--focus-halo), var(--ring-top);
 }
 
 .btn:focus-visible {
-  outline-offset: 3px;
   border-radius: var(--radius);
+  box-shadow: 0 0 0 2px var(--focus-halo), var(--ring-top);
+}
+
+/* forced-colors: hand the ring back to the OS palette rather than guessing at it. */
+@media (forced-colors: active) {
+  :focus-visible {
+    outline: 3px solid Highlight;
+    outline-offset: 2px;
+  }
 }
 
 .skip-link {
@@ -594,7 +774,7 @@ a.card:focus-visible {
   font-weight: 600;
   text-decoration: none;
   box-shadow: var(--shadow-lg);
-  transition: top var(--dur) var(--ease);
+  transition: top var(--dur-2) var(--ease-decelerate);
 }
 
 /* :focus, not :focus-visible — a keyboard tab is the only way to reach this link, and
@@ -604,21 +784,12 @@ a.card:focus-visible {
   top: var(--s-2);
 }
 
+/* prefers-reduced-motion is handled ENTIRELY in motion.css — see the note at the top of
+ * this file. A block here would be inserted after the @import and would win the !important
+ * tie, silently downgrading motion.css's `animation: none` back to a shortened animation.
+ * The only motion-related rule left in this file is the transform reset below, which is
+ * scoped to primitives this file owns and is safe because motion.css also resets them. */
 @media (prefers-reduced-motion: reduce) {
-  html {
-    scroll-behavior: auto;
-  }
-
-  *,
-  *::before,
-  *::after {
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
-    scroll-behavior: auto !important;
-  }
-
-  /* Movement-based affordances are removed outright rather than merely sped up. */
   .btn:hover,
   a.card:hover,
   .card--link:hover {
@@ -626,11 +797,21 @@ a.card:focus-visible {
   }
 }
 
+/* prefers-contrast: raise the two ramps that sit closest to the AA line. --text-muted goes
+ * from 7.66:1 to 11.96:1 on --bg, and --text-faint from 4.25:1 to 7.57:1 — which lifts it
+ * out of "large text only" and makes it safe for body copy. Hairlines get enough weight to
+ * be seen as real edges rather than implied ones. */
 @media (prefers-contrast: more) {
   :root {
-    --text-muted: #c2c9d6;
-    --text-faint: #97a0b2;
+    --text-muted: #c2c9d6; /* 11.96:1 on --bg */
+    --text-faint: #97a0b2; /* 7.57:1 on --bg */
     --border: #3a4155;
     --border-strong: #4d556c;
+    --border-interactive: #98a3ba; /* 7.85:1 on --bg */
+  }
+
+  /* At this setting the ring should read as a hard edge, not a soft one. */
+  :focus-visible {
+    outline-width: 3px;
   }
 }

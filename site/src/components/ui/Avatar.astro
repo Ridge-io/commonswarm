@@ -1,0 +1,179 @@
+---
+/*
+ * Avatar — an image or initials for a teammate or an agent.
+ *
+ * Styles are SCOPED here rather than in ui.css: this component takes no slots and builds no
+ * DOM at runtime, so Astro's scope id reaches everything it renders. (Slotted content carries
+ * the PARENT's scope id, which is why the slot-taking primitives cannot do this — see the
+ * note at the top of ui.css.) The one exception is .ui-avatars, the overlapping group, which
+ * styles its children and therefore lives in ui.css.
+ *
+ * `name` IS REQUIRED. It is the alt text when there is an image, the source of the initials
+ * when there is not, and the tint seed. An avatar with no name is a decorative blob.
+ *
+ * TINT SELECTION is a hash of the name, so the same person keeps the same colour across the
+ * app without anyone storing a preference. --danger is excluded from the pool: its tint
+ * measures 4.62:1 under the initials on --elev-4, which passes but leaves no headroom, and a
+ * colour assigned automatically should not be the one sitting closest to the line. The four
+ * that remain are 6.30:1 or better at that same worst-case surface. Red is also the wrong
+ * signal to attach to a person at random.
+ *
+ * IMAGE FAILURE. If `src` 404s the <img> would leave an empty box, so the initials are always
+ * rendered underneath and the image sits on top. No JS, no onerror handler — the fallback is
+ * simply already there.
+ */
+
+import "../../styles/ui.css";
+
+type Size = "xs" | "sm" | "md" | "lg";
+type Status = "active" | "idle" | "offline";
+
+interface Props {
+  /** Person or agent name. Used for alt text, initials and the tint. */
+  name: string;
+  /** Optional image. The initials stay behind it as the fallback. */
+  src?: string;
+  size?: Size;
+  /** Adds a presence dot with a visible-to-screen-readers label. */
+  status?: Status;
+  class?: string;
+  [key: string]: unknown;
+}
+
+const { name, src, size = "md", status, class: className, ...rest } = Astro.props;
+
+/* Up to two initials, from the first and last word. Handles "Ada", "Ada Lovelace" and
+ * "ada lovelace-king" alike, and falls back to the first character for anything else. */
+const initials = (() => {
+  const parts = name.trim().split(/[\s_-]+/).filter(Boolean);
+  if (parts.length === 0) return "?";
+  const first = [...parts[0]][0] ?? "";
+  const last = parts.length > 1 ? ([...parts[parts.length - 1]][0] ?? "") : "";
+  return (first + last).toUpperCase();
+})();
+
+const TINTS = ["accent", "success", "info", "warning"] as const;
+/* djb2. Deterministic, stable across builds and machines — the point is that a name always
+ * lands on the same colour, so a plain sum of code points would do, but djb2 spreads short
+ * similar names ("Ada"/"Ade") across different buckets instead of adjacent ones. */
+const hash = [...name].reduce((h, c) => ((h << 5) + h + c.codePointAt(0)!) >>> 0, 5381);
+const tint = TINTS[hash % TINTS.length];
+
+const STATUS_LABEL: Record<Status, string> = {
+  active: "Active now",
+  idle: "Idle",
+  offline: "Offline",
+};
+---
+
+<span class:list={["av", `av--${size}`, className]} {...rest}>
+  {/* Initials are always hidden from assistive tech: read aloud, "AL" is "A L", not a name.
+      The accessible name comes from the image's alt, or from the hidden span below. */}
+  <span class:list={["av__fill", `av--${tint}`]} aria-hidden="true">{initials}</span>
+  {src && <img class="av__img" src={src} alt={name} loading="lazy" decoding="async" />}
+  {!src && <span class="ui-sr">{name}</span>}
+  {
+    status && (
+      <>
+        <span class:list={["av__status", `av__status--${status}`]} aria-hidden="true" />
+        <span class="ui-sr">{` — ${STATUS_LABEL[status]}`}</span>
+      </>
+    )
+  }
+</span>
+
+<style>
+  .av {
+    --av-size: 2.25rem;
+    position: relative;
+    display: inline-flex;
+    flex: none;
+    inline-size: var(--av-size);
+    block-size: var(--av-size);
+    border-radius: var(--radius-pill);
+  }
+
+  .av--xs {
+    --av-size: 1.5rem;
+  }
+  .av--sm {
+    --av-size: 1.875rem;
+  }
+  .av--md {
+    --av-size: 2.25rem;
+  }
+  .av--lg {
+    --av-size: 3rem;
+  }
+
+  .av__fill,
+  .av__img {
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+  }
+
+  .av__fill {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    /* Initials scale with the circle rather than being set per size, so adding a size is one
+     * line above and nothing here. 0.4 of the diameter is the ratio at which two capitals fit
+     * without touching the edge. */
+    font-size: calc(var(--av-size) * 0.4);
+    line-height: 1;
+    font-weight: var(--weight-semibold);
+    letter-spacing: 0.01em;
+    user-select: none;
+  }
+
+  /* Tints composited over the real surfaces and measured with the initials on top:
+   * accent 6.47:1 on --bg / 4.89:1 on --elev-4, success 6.30:1, info 6.99:1, warning 7.09:1
+   * at that same worst-case surface. All clear 4.5 for small text. */
+  .av--accent {
+    background: var(--accent-dim);
+    color: var(--accent-bright);
+  }
+  .av--success {
+    background: var(--success-dim);
+    color: var(--success);
+  }
+  .av--info {
+    background: var(--info-dim);
+    color: var(--info);
+  }
+  .av--warning {
+    background: var(--warning-dim);
+    color: var(--warning);
+  }
+
+  .av__img {
+    inline-size: 100%;
+    block-size: 100%;
+    object-fit: cover;
+  }
+
+  .av__status {
+    position: absolute;
+    inset-block-end: -1px;
+    inset-inline-end: -1px;
+    inline-size: calc(var(--av-size) * 0.3);
+    block-size: calc(var(--av-size) * 0.3);
+    min-inline-size: 0.5rem;
+    min-block-size: 0.5rem;
+    border-radius: var(--radius-pill);
+    /* The ring cuts the dot out of the face behind it. It follows the page background by
+     * default; set --av-ring on the avatar when it sits on a card. */
+    box-shadow: 0 0 0 2px var(--av-ring, var(--bg));
+  }
+
+  .av__status--active {
+    background: var(--success);
+  }
+  .av__status--idle {
+    background: var(--warning);
+  }
+  .av__status--offline {
+    background: var(--text-faint);
+  }
+</style>

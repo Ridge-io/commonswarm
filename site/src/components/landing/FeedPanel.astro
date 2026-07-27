@@ -1,0 +1,411 @@
+---
+/*
+ * FeedPanel — the shared feed, rendered as a panel.
+ *
+ * THIS IS THE PRODUCT ON THE PAGE, so what it shows has to be exactly what the product
+ * holds. Every field below is a real field of a signal, verified against the CLI source:
+ *
+ *   kind      src/cloud/command-client.ts:81 — the set is exactly "working-on" | "note" | "ask"
+ *   from      renderSignals() prints `agent <name>` or `member <name>` (src/cloud/signals.ts)
+ *   to        a signal may be addressed to one member; otherwise the workspace sees it
+ *   about     the optional `--about <ref>` a signal is attached to
+ *   age       relativeAge()    — "6m ago"      (src/cloud/workspaces.ts:650)
+ *   expiry    relativeExpiry() — "expires in 84m" / "expired 3m ago"  (:657)
+ *
+ * The CLI prints those six fields as one line of text per signal. This panel lays the same
+ * six out as a table so they can be read at a glance. It is NOT a screenshot of a web app —
+ * there is no web app — and the caption under every instance says so.
+ *
+ * SAMPLE DATA IS ALWAYS MARKED. The `sample` prop is on by default and renders a visible
+ * badge in the panel bar. There is no configuration of this component that shows invented
+ * activity without labelling it.
+ *
+ * MOTION. Rows fade up on load via a scoped keyframe. The resting rule never sets opacity: 0
+ * — only the keyframe's `from` does — so motion.css's `animation: none !important` under
+ * prefers-reduced-motion lands every row at full opacity instead of parking it invisible.
+ * That is the same never-invisible invariant motion.css documents; this file has to honour it
+ * itself because these keyframes are its own.
+ */
+
+import Avatar from "../ui/Avatar.astro";
+
+type Kind = "working-on" | "note" | "ask";
+
+interface Signal {
+  /** One of the three real signal kinds. Shown verbatim, in mono — it is the vocabulary. */
+  kind: Kind;
+  /** Display name of the agent or person who shared it. */
+  from: string;
+  fromKind: "agent" | "member";
+  /** The signal text. */
+  body: string;
+  /** The `--about <ref>` it is attached to. */
+  about?: string;
+  /** The one member a `note` or `ask` is addressed to. */
+  to?: string;
+  /** relativeAge() form, e.g. "6m ago". */
+  age: string;
+  /** relativeExpiry() form, e.g. "expires in 84m". */
+  expiry?: string;
+  /** Highlights the row as the one that just landed. */
+  fresh?: boolean;
+  /** Renders the row hidden, for a script to reveal. Used by the demo only. */
+  pending?: boolean;
+}
+
+interface Props {
+  signals: Signal[];
+  /** The command whose output this is. Shown in the panel bar, in mono. */
+  command: string;
+  /** Turns the "Sample data" badge off. Only pass false for real data. */
+  sample?: boolean;
+  /** Rows arrive in a staggered fade on load. Off for panels below the fold. */
+  animate?: boolean;
+  /** Accessible name for the list. */
+  label?: string;
+  class?: string;
+  [key: string]: unknown;
+}
+
+const {
+  signals,
+  command,
+  sample = true,
+  animate = false,
+  label = "Shared feed",
+  class: className,
+  ...rest
+} = Astro.props;
+
+/* working-on is the accent because it is the announcement the whole product is about.
+ * `ask` is info because a question is not a warning. `note` stays neutral. Each badge
+ * carries its word — colour is never the only signal. */
+const KIND_CLASS: Record<Kind, string> = {
+  "working-on": "sig__kind--working",
+  note: "sig__kind--note",
+  ask: "sig__kind--ask",
+};
+---
+
+<div class:list={["fp", animate && "fp--animate", className]} {...rest}>
+  <div class="fp__bar">
+    <span class="fp__pip" aria-hidden="true"></span>
+    <code class="fp__cmd">{command}</code>
+    {sample && <span class="badge badge--sm fp__sample">Sample data</span>}
+  </div>
+
+  <ol class="fp__list" aria-label={label}>
+    {
+      signals.map((s) => (
+        <li
+          class:list={["sig", s.fresh && "sig--fresh"]}
+          hidden={s.pending || undefined}
+          data-pending={s.pending ? "" : undefined}
+        >
+          <Avatar name={s.from} size="sm" class="sig__av" />
+
+          <p class="sig__who">
+            <span class="sig__name">{s.from}</span>
+            <span class="sig__role">{s.fromKind}</span>
+            <span class:list={["sig__kind", KIND_CLASS[s.kind]]}>{s.kind}</span>
+            {s.to && (
+              <span class="sig__to">
+                <span class="ui-sr">addressed to </span>
+                <span aria-hidden="true">→&nbsp;</span>
+                {s.to}
+              </span>
+            )}
+          </p>
+
+          <p class="sig__age">{s.age}</p>
+
+          <p class="sig__body">{s.body}</p>
+
+          {(s.about || s.expiry) && (
+            <p class="sig__meta">
+              {/* The ref gets its own element rather than being a bare text node beside the
+                  screen-reader prefix: a script that wants to change it can then set one
+                  element’s textContent instead of guessing which child node is the ref. */}
+              {s.about && (
+                <span class="sig__about"><span class="ui-sr">about </span><span class="sig__ref">{s.about}</span></span>
+              )}
+              {s.expiry && <span class="sig__exp">{s.expiry}</span>}
+            </p>
+          )}
+        </li>
+      ))
+    }
+  </ol>
+</div>
+
+<style>
+  /* [hidden] is `display: none` in the UA sheet at (0,1,0), and any author rule of the same
+     specificity BEATS it — so a row styled `display: grid` would stay on screen while
+     claiming to be hidden. This is the guard, and it is why `pending` works at all. */
+  [hidden] {
+    display: none !important;
+  }
+
+  .fp {
+    display: flex;
+    flex-direction: column;
+    background: var(--elev-1);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--ring-top), var(--shadow-lg);
+    overflow: hidden;
+  }
+
+  /* --- bar ---------------------------------------------------------------- */
+
+  .fp__bar {
+    display: flex;
+    align-items: center;
+    gap: var(--s-3);
+    padding: var(--s-3) var(--s-4);
+    background: var(--elev-2);
+    border-bottom: 1px solid var(--border);
+    min-height: 3rem;
+  }
+
+  .fp__pip {
+    inline-size: 0.5rem;
+    block-size: 0.5rem;
+    flex: none;
+    border-radius: var(--radius-pill);
+    background: var(--success);
+    --pulse-color: var(--success-dim);
+    animation: fp-pulse 2.6s var(--ease-standard) infinite;
+  }
+
+  @keyframes fp-pulse {
+    0% {
+      box-shadow: 0 0 0 0 var(--success-dim);
+    }
+    70% {
+      box-shadow: 0 0 0 7px transparent;
+    }
+    100% {
+      box-shadow: 0 0 0 0 transparent;
+    }
+  }
+
+  /* global.css styles every `code` outside a `pre` as an inline chip — border, fill, padding.
+     Stretched across this bar that read as an empty text input rather than as the command
+     the panel is showing. The chip is unset here and the element hugs its own text. */
+  .fp__cmd {
+    flex: 0 1 auto;
+    min-inline-size: 0;
+    padding: 0;
+    border: 0;
+    background: none;
+    border-radius: 0;
+    font-family: var(--font-mono);
+    font-size: var(--t-xs);
+    letter-spacing: var(--track-xs);
+    color: var(--text-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* The label is the point of the badge, so it never shrinks away — and it is what pushes
+     itself to the far edge, rather than the command stretching to fill the gap. */
+  .fp__sample {
+    flex: none;
+    margin-inline-start: auto;
+  }
+
+  /* --- rows --------------------------------------------------------------- */
+
+  .fp__list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+
+  .sig {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-areas:
+      "av who age"
+      ".  body body"
+      ".  meta meta";
+    column-gap: var(--s-3);
+    row-gap: 0.2rem;
+    align-items: baseline;
+    padding: var(--s-4);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .sig:last-child {
+    border-bottom: 0;
+  }
+
+  /* :global — the Avatar is a child component and carries its OWN scope id, so an
+     unqualified selector here would never match it. */
+  .sig :global(.sig__av) {
+    grid-area: av;
+    align-self: start;
+    /* Optically centres the 30px avatar against the cap-height of the first line. */
+    margin-block-start: -0.15rem;
+  }
+
+  .sig__who {
+    grid-area: who;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.4rem;
+    min-inline-size: 0;
+  }
+
+  .sig__name {
+    font-size: var(--t-sm);
+    font-weight: var(--weight-semibold);
+    letter-spacing: var(--track-sm);
+    color: var(--text);
+  }
+
+  .sig__role {
+    font-size: var(--t-2xs);
+    line-height: var(--lh-2xs);
+    letter-spacing: var(--track-eyebrow);
+    text-transform: uppercase;
+    color: var(--text-faint);
+  }
+
+  .sig__kind {
+    font-family: var(--font-mono);
+    font-size: var(--t-2xs);
+    line-height: 1;
+    padding: 0.28em 0.5em;
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    white-space: nowrap;
+    /* Neutral: `note`. */
+    background: var(--elev-3);
+    color: var(--text-muted);
+  }
+
+  .sig__kind--working {
+    background: var(--accent-dim);
+    color: var(--accent-bright);
+    border-color: color-mix(in oklab, var(--accent) 34%, transparent);
+  }
+
+  .sig__kind--ask {
+    background: var(--info-dim);
+    color: var(--info);
+    border-color: color-mix(in oklab, var(--info) 30%, transparent);
+  }
+
+  .sig__to {
+    font-size: var(--t-xs);
+    color: var(--text-muted);
+    white-space: nowrap;
+  }
+
+  .sig__age {
+    grid-area: age;
+    font-size: var(--t-xs);
+    letter-spacing: var(--track-xs);
+    color: var(--text-faint);
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .sig__body {
+    grid-area: body;
+    font-size: var(--t-sm);
+    line-height: var(--lh-sm);
+    color: var(--text);
+  }
+
+  .sig__meta {
+    grid-area: meta;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.35rem 0.6rem;
+    margin-block-start: 0.3rem;
+  }
+
+  .sig__about {
+    font-family: var(--font-mono);
+    font-size: var(--t-2xs);
+    line-height: 1;
+    padding: 0.32em 0.5em;
+    border-radius: var(--radius-sm);
+    background: var(--elev-2);
+    color: var(--text-muted);
+    /* A long path must wrap rather than push the panel sideways at 375px. */
+    overflow-wrap: anywhere;
+  }
+
+  .sig__exp {
+    font-size: var(--t-2xs);
+    line-height: var(--lh-2xs);
+    color: var(--text-faint);
+  }
+
+  /* --- the row that just landed ------------------------------------------- */
+
+  .sig--fresh {
+    background: linear-gradient(
+      90deg,
+      color-mix(in oklab, var(--accent) 9%, transparent),
+      transparent 70%
+    );
+    box-shadow: inset 2px 0 0 var(--accent);
+  }
+
+  /* --- load-in ------------------------------------------------------------
+     Only inside .fp--animate, and only as an animation: the resting rule above
+     never hides a row, so killing the animation leaves every row visible.
+     ---------------------------------------------------------------------- */
+
+  @keyframes fp-row-in {
+    from {
+      opacity: 0;
+      transform: translate3d(0, 8px, 0);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
+  .fp--animate .sig {
+    animation: fp-row-in var(--dur-4) var(--ease-decelerate) both;
+  }
+
+  /* Rows are newest-first, so the newest is :nth-child(1) — and that is the payoff row,
+     one agent routing around another. The standing feed settles first and the new signal
+     drops in on top of it a beat later, which is what actually happens. */
+  .fp--animate .sig:nth-child(1) { animation-delay: 1050ms; }
+  .fp--animate .sig:nth-child(2) { animation-delay: 120ms; }
+  .fp--animate .sig:nth-child(3) { animation-delay: 220ms; }
+  .fp--animate .sig:nth-child(4) { animation-delay: 320ms; }
+  .fp--animate .sig:nth-child(n + 5) { animation-delay: 420ms; }
+
+  /* --- narrow ------------------------------------------------------------- */
+
+  @media (max-width: 30rem) {
+    /* The age is the least useful field on a phone, and keeping it on the first row is
+       what forces the name and the kind tag to wrap. It moves under the body instead. */
+    .sig {
+      padding: var(--s-3);
+      column-gap: var(--s-2);
+      grid-template-areas:
+        "av who who"
+        ".  body body"
+        ".  meta meta"
+        ".  age  age";
+    }
+
+    .sig__age {
+      margin-block-start: 0.1rem;
+    }
+  }
+</style>

@@ -1,0 +1,192 @@
+---
+/*
+ * Stepper — the three-step progress indicator for /start.
+ *
+ * SEMANTICS. This is a real <ol> inside a <nav aria-label="Progress">, because the steps are
+ * an ordered list of places in a flow. State is carried three ways so no single channel has
+ * to be trusted alone:
+ *   - aria-current="step" on the current item (the machine-readable answer)
+ *   - a visually-hidden word per item ("done" / "not started"), swapped by the controller,
+ *     so a reader that walks the list hears state without relying on colour
+ *   - the visual channel: a tick, a track colour, and a label weight
+ *
+ * ---------------------------------------------------------------------------------------
+ * THREE STATES, AND WHY THE CURRENT ONE IS NOW FULLY FILLED
+ * ---------------------------------------------------------------------------------------
+ * There used to be effectively two visual states, not three. Completed and upcoming rendered
+ * the SAME label — --text-muted at medium weight — and differed only in track colour, so on
+ * step 2 "Sign in" (cleared) and "Agents" (never reached) were the same object with a
+ * different-coloured hairline under them. A user who stepped back could not tell from the
+ * labels which steps they had already been through.
+ *
+ * The current step's bar was also deliberately HALF filled, to keep it from looking like a
+ * completed one. That solved the right problem the wrong way: a segment half-filled reads as
+ * progress WITHIN the step — an indeterminate loading bar — when the segment represents the
+ * step itself, which you are either on or not. It is now full.
+ *
+ * Full is safe now because "completed" carries its own mark and does not depend on the fill
+ * being longer:
+ *
+ *              tick        track                    label
+ *   completed   ✓ shown    --accent (full)          --text-muted, medium
+ *   current     ✓ hidden   --accent-bright (full)   --text, semibold
+ *   upcoming    ✓ hidden   --border-strong (empty)  --text-muted, medium
+ *
+ * Completed vs current: the tick, the track tint, and the label weight — three channels, so
+ * the pair survives greyscale (weight), colour-blindness (tick + weight) and a dimmed screen.
+ * Completed vs upcoming: the tick and the track. Upcoming is NOT dimmed below --text-muted to
+ * make room: --text-faint is 4.25:1 and tokens.css forbids it for 12px copy, so the state is
+ * carried by adding a mark to the cleared step rather than by taking contrast off the others.
+ *
+ * THE TICK'S BOX IS ALWAYS RESERVED, drawn or not. Revealing a 14px glyph only on completion
+ * would shove every label right by 20px at the moment the step clears, in a component whose
+ * whole job is to be a stable reference point. It is `visibility` that changes, not `display`.
+ *
+ * The controller (start.astro) owns data-done / aria-current and the hidden state word. This
+ * file only supplies the resting markup and the skin.
+ */
+
+interface Props {
+  steps: string[];
+}
+
+const { steps } = Astro.props;
+---
+
+<nav class="stp" aria-label="Progress">
+  <ol class="stp__list">
+    {
+      steps.map((label, i) => (
+        <li class="stp__item" data-step-marker={i + 1} aria-current={i === 0 ? "step" : undefined}>
+          <span class="stp__bar" aria-hidden="true" />
+          <span class="stp__label">
+            <svg
+              class="stp__tick"
+              width="14"
+              height="14"
+              viewBox="0 0 14 14"
+              fill="none"
+              aria-hidden="true"
+              focusable="false"
+            >
+              <path
+                d="M2.6 7.4 5.5 10.2 11.4 4"
+                stroke="currentColor"
+                stroke-width="1.9"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+            <span class="stp__text">{label}</span>
+            <span class="visually-hidden" data-marker-state>
+              {i === 0 ? "" : " (not started)"}
+            </span>
+          </span>
+        </li>
+      ))
+    }
+  </ol>
+</nav>
+
+<style>
+  .stp__list {
+    display: flex;
+    gap: var(--s-2);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .stp__item {
+    flex: 1 1 0;
+    min-inline-size: 0;
+  }
+
+  .stp__bar {
+    display: block;
+    block-size: 3px;
+    border-radius: var(--radius-pill);
+    background: var(--border-strong);
+    /* Only the fill moves, and only between flat colours — no layout is animated. */
+    transition: background var(--dur-3) var(--ease-standard);
+  }
+
+  /* Current: a whole segment, filled. A step is not a thing you are partway through. */
+  .stp__item[aria-current="step"] .stp__bar {
+    background: var(--accent-bright);
+  }
+
+  /* Completed: filled too, in the deeper accent, so the row reads as a filling track while
+     the brighter segment stays findable as "here". */
+  .stp__item[data-done] .stp__bar {
+    background: var(--accent);
+  }
+
+  .stp__label {
+    display: flex;
+    align-items: center;
+    gap: var(--s-2);
+    margin-block-start: var(--s-2);
+    font-size: var(--t-xs);
+    line-height: var(--lh-xs);
+    letter-spacing: var(--track-xs);
+    font-weight: var(--weight-medium);
+    /* --text-faint is 4.25:1 and is not allowed to carry 12px copy, so an upcoming step is
+       distinguished by what a CLEARED step gains — a tick and a filled track — not by
+       dropping the others under the contrast floor. */
+    color: var(--text-muted);
+    transition: color var(--dur-2) var(--ease-standard);
+  }
+
+  .stp__text {
+    min-inline-size: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* The box is always here; only the ink appears. See the note at the top. */
+  .stp__tick {
+    flex: none;
+    inline-size: 14px;
+    block-size: 14px;
+    color: var(--accent-bright); /* 7.36:1 on --bg — a legible mark, not a decorative tint */
+    visibility: hidden;
+    opacity: 0;
+    transform: scale(0.7);
+    transition:
+      opacity var(--dur-2) var(--ease-standard),
+      transform var(--dur-2) var(--ease-standard);
+  }
+
+  .stp__item[data-done] .stp__tick {
+    visibility: visible;
+    opacity: 1;
+    transform: none;
+  }
+
+  .stp__item[aria-current="step"] .stp__label {
+    color: var(--text);
+    font-weight: var(--weight-semibold);
+  }
+
+  @media (max-width: 26rem) {
+    .stp__label {
+      font-size: var(--t-2xs);
+      line-height: var(--lh-2xs);
+      gap: var(--s-1);
+    }
+
+    .stp__tick {
+      inline-size: 12px;
+      block-size: 12px;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .stp__tick {
+      transform: none;
+      transition: opacity var(--dur-1) var(--ease-standard);
+    }
+  }
+</style>

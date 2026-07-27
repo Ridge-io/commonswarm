@@ -1,0 +1,860 @@
+---
+/*
+ * Demo — the one interactive thing on the page.
+ *
+ * IT TEACHES ONE IDEA: you say what you are about to touch, and you immediately find out
+ * whether a teammate is already there. Everything else in the widget is in service of that.
+ *
+ * IT IS AN ILLUSTRATION AND IT SAYS SO — twice: a badge on the panel and a line under the
+ * widget. It makes no network calls, it holds no state anywhere, and the three outcomes are
+ * server-rendered into the page and toggled. Nothing here pretends to reach a server.
+ *
+ * WHY NO LOADING STATE. There is no request, so a spinner would be a lie about latency
+ * invented purely for texture. The outcome appears immediately, which is also the truth.
+ *
+ * WHY THE LIVE COMMAND HAS NO COPY BUTTON. ui/CodeBlock puts the exact `code` prop on the
+ * clipboard, which is right — but that prop is baked at build time, and this command changes
+ * as the reader types. A copy button handing over a stale command is exactly the failure
+ * CodeBlock is written to prevent. The canonical, copyable command lives in "How it works".
+ *
+ * SHELL QUOTING IS REAL. The signal text is rendered into a double-quoted shell word, so
+ * `"`, `\`, `$` and a backtick are escaped the way sh actually requires. Type a quote into
+ * the field and the command stays something you could paste.
+ *
+ * VERIFIED against the shipped CLI:
+ *   the flag set  `working-on "<what>" --url <url> --anon-key <key> [--about <ref>]
+ *                 [--until <dur>]`  — node dist/cli.js --help
+ *   `--until` takes a whole number plus m/h/d and is capped at 30d — src/cli.ts:1180,1189
+ *   --url / --anon-key are ALWAYS required: target() reads only the flag and SWARM_CLOUD_URL
+ *   (src/cli.ts:295-299), so a flagless command on this page would not run. See SITE-BRIEF.
+ */
+
+import FeedPanel from "./FeedPanel.astro";
+import Input from "../ui/Input.astro";
+import EmptyState from "../ui/EmptyState.astro";
+
+/* Sample data — the same project as the hero, so the page tells one story. */
+const REFS = [
+  { id: "webhook", ref: "src/payments/webhook.ts" },
+  { id: "session", ref: "src/auth/session.ts" },
+  { id: "orders", ref: "migrations/0042_orders.sql" },
+];
+
+const DURATIONS = ["90m", "4h", "24h"];
+
+/* The two signals already in this sample project. One is a live claim, one is a note —
+ * and the difference between them is a thing worth teaching, so the outcomes below say
+ * so in different words. */
+const existing = [
+  {
+    kind: "working-on" as const,
+    from: "scout",
+    fromKind: "agent" as const,
+    body: "Mapping the Stripe webhook retry paths",
+    about: "src/payments/webhook.ts",
+    age: "6m ago",
+    expiry: "expires in 84m",
+  },
+  {
+    kind: "note" as const,
+    from: "codex-1",
+    fromKind: "agent" as const,
+    body: "Session cookies sign with the new key now. Nothing to do — just don’t cache them.",
+    about: "src/auth/session.ts",
+    age: "21m ago",
+    expiry: "expires in 3h",
+  },
+];
+
+/* The reader's own signal. Rendered hidden; the script fills its text and reveals it. */
+const yours = {
+  kind: "working-on" as const,
+  from: "you",
+  fromKind: "member" as const,
+  body: "wiring the payments webhook",
+  about: "src/payments/webhook.ts",
+  age: "under 1m ago",
+  expiry: "expires in 90m",
+  fresh: true,
+  pending: true,
+};
+
+const DEFAULT_TEXT = "wiring the payments webhook";
+---
+
+<section class="section section--tight demo" id="demo" aria-labelledby="demo-title">
+  <div class="page">
+    <div class="demo__head js-reveal">
+      <p class="eyebrow">Try it</p>
+      <h2 class="h-section" id="demo-title">Find out who’s already there.</h2>
+      <p class="lede">
+        Say what you’re about to touch, the way an agent would. The command assembles as
+        you type — it is the real one — and the panel shows what the rest of the
+        project sees.
+      </p>
+    </div>
+
+    <div class="demo__grid js-reveal">
+      {/* ------------------------------------------------------------- the form */}
+      <div class="demo__col">
+      <h3 class="demo__col-title">
+        <span class="demo__step" aria-hidden="true">1</span>
+        What you run
+      </h3>
+
+      <div class="card card--lg demo__form">
+        <Input
+          id="demo-what"
+          label="What are you working on?"
+          value={DEFAULT_TEXT}
+          maxlength="90"
+          autocomplete="off"
+          hint="One line. Enough that a teammate knows whether it overlaps with them."
+        />
+        <p class="demo__err" id="demo-what-err" hidden>
+          <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor"
+            stroke-width="1.8" stroke-linecap="round">
+            <circle cx="12" cy="12" r="9"></circle>
+            <path d="M12 7.5v5"></path>
+            <path d="M12 16.2v.2"></path>
+          </svg>
+          <span>Say something, so the signal is worth reading.</span>
+        </p>
+
+        <fieldset class="demo__group">
+          <legend class="demo__legend">
+            Which file? <span class="demo__flag mono">--about</span>
+          </legend>
+          <div class="demo__chips">
+            {
+              REFS.map((r, i) => (
+                <span class="demo__opt">
+                  <input
+                    class="ui-sr demo__radio"
+                    type="radio"
+                    name="demo-ref"
+                    id={`demo-ref-${r.id}`}
+                    value={r.ref}
+                    checked={i === 0}
+                    data-outcome={r.id}
+                  />
+                  <label class="demo__chip demo__chip--mono" for={`demo-ref-${r.id}`}>
+                    {r.ref}
+                  </label>
+                </span>
+              ))
+            }
+          </div>
+        </fieldset>
+
+        <fieldset class="demo__group">
+          <legend class="demo__legend">
+            For how long? <span class="demo__flag mono">--until</span>
+          </legend>
+          <div class="demo__chips">
+            {
+              DURATIONS.map((d, i) => (
+                <span class="demo__opt">
+                  <input
+                    class="ui-sr demo__radio"
+                    type="radio"
+                    name="demo-until"
+                    id={`demo-until-${d}`}
+                    value={d}
+                    checked={i === 0}
+                  />
+                  <label class="demo__chip demo__chip--mono" for={`demo-until-${d}`}>
+                    {d}
+                  </label>
+                </span>
+              ))
+            }
+          </div>
+          <p class="demo__note">
+            A claim lets go of itself when the time is up. Nobody has to remember to release
+            it. Anything up to 30&nbsp;days.
+          </p>
+        </fieldset>
+
+        <div class="demo__cmd">
+          <span class="demo__cmd-label">The command</span>
+          <pre class="demo__cmd-body"><code id="demo-command">{
+            `coswarm working-on "${DEFAULT_TEXT}" \\\n  --about ${REFS[0].ref} --until ${DURATIONS[0]} \\\n  --url https://<ref>.supabase.co --anon-key <key>`
+          }</code></pre>
+        </div>
+
+        {/* The tick is rendered here rather than built in the script: a node created at
+            runtime carries no scope id, and .btn__icon is the class the button already uses
+            to keep its own width while the glyph inside it changes. It is hidden until the
+            announce lands. */}
+        <button class="btn btn--lg btn--primary btn--block demo__run" type="button" id="demo-run">
+          <span class="btn__icon demo__run-tick" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+              stroke-linecap="round" stroke-linejoin="round">
+              <path d="M4 12.5 9.5 18 20 6.5"></path>
+            </svg>
+          </span>
+          <span data-run-label>Announce it</span>
+        </button>
+      </div>
+      </div>
+
+      {/* ----------------------------------------------------------- the result */}
+      <div class="demo__col">
+      <h3 class="demo__col-title">
+        <span class="demo__step" aria-hidden="true">2</span>
+        What everyone else sees
+      </h3>
+
+      <div class="demo__result">
+        {/* Before the first announce. A real empty state, not a blank box. */}
+        <div class="card card--lg demo__empty" id="demo-empty">
+          <EmptyState
+            headingLevel={4}
+            title="Nothing from you yet"
+            description="Announce it, and this is where your signal lands next to everyone else’s."
+          >
+            <svg
+              slot="icon"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.6"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M4 6h16M4 12h10M4 18h7"></path>
+            </svg>
+          </EmptyState>
+        </div>
+
+        <div class="demo__out" id="demo-out" hidden>
+          {/* The short verdict, and the only thing announced to a screen reader. Swapping
+              the whole panel into a live region would read the entire feed aloud again on
+              every change; this sentence is the outcome. */}
+          <p class="ui-sr" id="demo-verdict" role="status"></p>
+
+          {/* Outcome A — a live claim on the same file. */}
+          <div class="callout callout--heads" data-outcome-panel="webhook" hidden>
+            <p class="callout__title">
+              <span class="callout__icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+                  stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M12 4.5 21 19H3z"></path>
+                  <path d="M12 10v3.5M12 16.3v.2"></path>
+                </svg>
+              </span>
+              Someone’s already there
+            </p>
+            <p class="callout__body">
+              <b>scout</b> announced <code>src/payments/webhook.ts</code> six minutes ago:
+              &ldquo;Mapping the Stripe webhook retry paths&rdquo;. That claim has 84 minutes
+              left on it.
+            </p>
+            <p class="callout__foot">
+              Nothing stopped you, and your signal went out anyway. You both just found out —
+              which is the whole trick. One of you takes the retries, the other takes the
+              tests.
+            </p>
+          </div>
+
+          {/* Outcome B — free, but there is context worth reading. */}
+          <div class="callout callout--clear" data-outcome-panel="session" hidden>
+            <p class="callout__title">
+              <span class="callout__icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                  stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M4 12.5 9.5 18 20 6.5"></path>
+                </svg>
+              </span>
+              Nobody’s in it
+            </p>
+            <p class="callout__body">
+              No live claim on <code>src/auth/session.ts</code>. It is yours.
+            </p>
+            <p class="callout__foot">
+              Worth reading first, though: <b>codex-1</b> left a note on this file 21 minutes
+              ago. A note is not a claim — it does not hold anything, it just saves you the
+              hour.
+            </p>
+          </div>
+
+          {/* Outcome C — free and quiet. */}
+          <div class="callout callout--clear" data-outcome-panel="orders" hidden>
+            <p class="callout__title">
+              <span class="callout__icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                  stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M4 12.5 9.5 18 20 6.5"></path>
+                </svg>
+              </span>
+              Nobody’s in it
+            </p>
+            <p class="callout__body">
+              No live claim and no notes on <code>migrations/0042_orders.sql</code>. It is
+              yours.
+            </p>
+            <p class="callout__foot">
+              Every agent in the project sees your line the next time it reads the feed —
+              including the one that was about to open the same migration.
+            </p>
+          </div>
+
+          <FeedPanel
+            signals={[yours, ...existing]}
+            command="coswarm feed"
+            label="The shared feed after your signal — sample data"
+          />
+        </div>
+
+        <p class="demo__disclaimer">
+          <b>Illustration.</b> Sample data, and it runs entirely in your browser — this page
+          makes no network calls and nothing is stored.
+        </p>
+      </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<script>
+  /* Progressive: without this script the form is still a legible, keyboard-usable
+     description of the command, and the empty state explains what the panel is for. The
+     page never depends on JS to say something true. */
+  const root = document.getElementById("demo");
+  const field = document.getElementById("demo-what") as HTMLInputElement | null;
+  const err = document.getElementById("demo-what-err");
+  const cmdEl = document.getElementById("demo-command");
+  const runBtn = document.getElementById("demo-run");
+  const emptyEl = document.getElementById("demo-empty");
+  const outEl = document.getElementById("demo-out");
+  const verdictEl = document.getElementById("demo-verdict");
+
+  if (root && field && err && cmdEl && runBtn && emptyEl && outEl && verdictEl) {
+    const refInputs = Array.from(
+      root.querySelectorAll<HTMLInputElement>('input[name="demo-ref"]')
+    );
+    const untilInputs = Array.from(
+      root.querySelectorAll<HTMLInputElement>('input[name="demo-until"]')
+    );
+    const panels = Array.from(
+      root.querySelectorAll<HTMLElement>("[data-outcome-panel]")
+    );
+    const yourRow = outEl.querySelector<HTMLElement>("[data-pending]");
+    /* The .ui-field wrapper owns the error styling; ui.css declares .ui-field--error
+       globally, so adding the class from here is enough. */
+    const wrapper = field.closest(".ui-field");
+
+    const checked = (list: HTMLInputElement[]) =>
+      list.find((i) => i.checked) ?? list[0];
+
+    /* Escape for a DOUBLE-QUOTED sh word. Inside "…", sh still interprets \ " $ and `,
+       and nothing else — so those four are the complete set. Control characters are
+       flattened to a space rather than escaped, because a literal newline inside the
+       displayed command would be read as a second command line. */
+    const shQuote = (raw: string) =>
+      `"${raw.replace(/\s+/g, " ").replace(/([\\"$`])/g, "\\$1")}"`;
+
+    const buildCommand = () => {
+      const text = field.value.trim() || field.placeholder || "";
+      const ref = checked(refInputs).value;
+      const until = checked(untilInputs).value;
+      return (
+        `coswarm working-on ${shQuote(text)} \\\n` +
+        `  --about ${ref} --until ${until} \\\n` +
+        `  --url https://<ref>.supabase.co --anon-key <key>`
+      );
+    };
+
+    const syncCommand = () => {
+      cmdEl.textContent = buildCommand();
+    };
+
+    const setError = (on: boolean) => {
+      err.hidden = !on;
+      field.setAttribute("aria-invalid", on ? "true" : "false");
+      /* Point the control at the error only while it exists, and keep the hint first so
+         the guidance is heard before the correction. */
+      field.setAttribute(
+        "aria-describedby",
+        on ? "demo-what-hint demo-what-err" : "demo-what-hint"
+      );
+      wrapper?.classList.toggle("ui-field--error", on);
+    };
+
+    let announced = false;
+
+    /*
+     * THE BUTTON RESOLVES, THE WAY EVERY OTHER ACTION ON THIS SITE DOES.
+     *
+     * Copy buttons flip to a green "Copied" for two seconds and back; /start's submit spins
+     * and then advances. This was the one action that fired and then sat there in full
+     * primary weight still reading "Announce it", with nothing to say whether it had worked
+     * and no way back — on the page's single most important piece of proof.
+     *
+     * So: a tick and "Announced" in the success colour for 1.4s, then the button settles into
+     * a secondary "Announce again". Secondary is the honest weight afterwards, because the
+     * primary action on this panel has been taken. And "again" rather than "another" is the
+     * literal truth about what happens: re-running REPLACES your signal in the feed below
+     * — there is exactly one "you" row and it is rewritten in place, never a second one.
+     *
+     * Only a real press comes through here. Editing the text or changing a chip after the
+     * first announce re-renders the panel live, and firing the tick on every keystroke would
+     * turn confirmation into decoration.
+     */
+    const runLabel = runBtn.querySelector<HTMLElement>("[data-run-label]");
+    let resolveTimer: number | undefined;
+
+    const resolveButton = () => {
+      window.clearTimeout(resolveTimer);
+      runBtn.classList.remove("btn--primary");
+      runBtn.classList.add("btn--secondary", "is-done");
+      if (runLabel) runLabel.textContent = "Announced";
+
+      resolveTimer = window.setTimeout(() => {
+        runBtn.classList.remove("is-done");
+        if (runLabel) runLabel.textContent = "Announce again";
+      }, 1400);
+    };
+
+    const render = (confirmed = false) => {
+      const text = field.value.trim();
+      if (!text) {
+        setError(true);
+        field.focus();
+        return;
+      }
+      setError(false);
+
+      const ref = checked(refInputs);
+      const until = checked(untilInputs).value;
+      const outcome = ref.dataset.outcome ?? "";
+
+      for (const p of panels) p.hidden = p.dataset.outcomePanel !== outcome;
+
+      if (yourRow) {
+        yourRow.hidden = false;
+        /* Astro does not rewrite class names — scoping is a data- attribute — so these
+           selectors reach into FeedPanel’s markup exactly as written. Text only: never
+           innerHTML, because `text` comes from a field the reader controls. */
+        const body = yourRow.querySelector(".sig__body");
+        const ref_ = yourRow.querySelector(".sig__ref");
+        const exp = yourRow.querySelector(".sig__exp");
+        if (body) body.textContent = text;
+        if (ref_) ref_.textContent = ref.value;
+        if (exp) exp.textContent = `expires in ${until}`;
+      }
+
+      emptyEl.hidden = true;
+      outEl.hidden = false;
+
+      verdictEl.textContent =
+        outcome === "webhook"
+          ? `Someone’s already there. scout announced ${ref.value} six minutes ago, with 84 minutes left on the claim. Your signal went out as well.`
+          : `Nobody has a live claim on ${ref.value}. Your signal is in the shared feed.`;
+
+      announced = true;
+      if (confirmed) resolveButton();
+    };
+
+    field.addEventListener("input", () => {
+      syncCommand();
+      if (field.value.trim()) setError(false);
+      if (announced) render();
+    });
+
+    for (const input of [...refInputs, ...untilInputs]) {
+      input.addEventListener("change", () => {
+        syncCommand();
+        if (announced) render();
+      });
+    }
+
+    /* Enter in the text field is the obvious way to run it, and it is as deliberate a press
+       as the button, so it gets the same confirmation. */
+    field.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        render(true);
+      }
+    });
+
+    /* Written as an arrow rather than passed straight in: `render` as a listener would take
+       the MouseEvent as its `confirmed` argument, which happens to be truthy and would work
+       for the wrong reason. */
+    runBtn.addEventListener("click", () => render(true));
+
+    syncCommand();
+  }
+</script>
+
+<style>
+  /* [hidden] is `display: none` in the UA sheet at (0,1,0), and an author rule of the same
+     specificity BEATS it — so `.demo__out { display: flex }` would keep the results panel on
+     screen while the attribute claims it is hidden. Every toggle in this component depends on
+     this one rule. */
+  [hidden] {
+    display: none !important;
+  }
+
+  .demo__head {
+    display: flex;
+    flex-direction: column;
+    gap: var(--stack-sm);
+    max-width: var(--measure-wide);
+    margin-block-end: var(--stack-xl);
+  }
+
+  .demo__head .eyebrow {
+    margin-block-end: var(--s-1);
+  }
+
+  /* stretch, not start: the two columns are a matched pair, and before the first announce
+     the result side is only an empty state. Left to size itself it left a card a third the
+     height of the form beside it, with a void underneath. */
+  .demo__grid {
+    display: grid;
+    gap: var(--s-6);
+    align-items: stretch;
+  }
+
+  @media (min-width: 62rem) {
+    .demo__grid {
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    }
+  }
+
+  .demo__col {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-4);
+    min-inline-size: 0;
+  }
+
+  .demo__col-title {
+    display: flex;
+    align-items: center;
+    gap: var(--s-3);
+    font-size: var(--t-base);
+    font-weight: var(--weight-semibold);
+    letter-spacing: var(--track-base);
+    color: var(--text);
+  }
+
+  .demo__step {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    inline-size: 1.5rem;
+    block-size: 1.5rem;
+    flex: none;
+    border-radius: var(--radius-pill);
+    background: var(--accent-dim);
+    border: 1px solid color-mix(in oklab, var(--accent) 34%, transparent);
+    color: var(--accent-bright);
+    font-family: var(--font-mono);
+    font-size: var(--t-xs);
+    line-height: 1;
+  }
+
+  /* --- form --------------------------------------------------------------- */
+
+  .demo__form {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-5);
+    /* A grid item's default min-width is auto, so the horizontally-scrolling command block
+       inside would otherwise widen the column past its track and push the page sideways. */
+    min-inline-size: 0;
+  }
+
+  /* --- the announce button's resolved state ---------------------------------
+   * Deliberately the same vocabulary as ui.css's copy button: the glyph swaps in, the WORD
+   * changes, and the colour is --success — never the colour alone. The button is a grid item
+   * of nothing, so a colour change is all that moves; the box does not resize, because the
+   * icon slot is in the markup from the start rather than being inserted on success. */
+  .demo__run-tick {
+    display: none;
+  }
+
+  .demo__run.is-done .demo__run-tick {
+    display: inline-flex;
+  }
+
+  .demo__run.is-done,
+  .demo__run.is-done:hover {
+    color: var(--success); /* 10.36:1 on --bg, 8.17:1 on the secondary's --elev-4 */
+    border-color: color-mix(in oklab, var(--success) 40%, transparent);
+  }
+
+  .demo__err {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--s-2);
+    margin-block-start: calc(var(--s-5) * -1 + var(--s-2));
+    font-size: var(--t-sm);
+    line-height: var(--lh-sm);
+    color: var(--danger);
+  }
+
+  .demo__err svg {
+    inline-size: 1.05em;
+    block-size: 1.05em;
+    flex: none;
+    margin-block-start: 0.2em;
+  }
+
+  .demo__group {
+    border: 0;
+    padding: 0;
+    margin: 0;
+    min-inline-size: 0;
+  }
+
+  .demo__legend {
+    display: flex;
+    align-items: center;
+    gap: var(--s-2);
+    padding: 0;
+    margin-block-end: var(--stack-xs);
+    font-size: var(--t-sm);
+    font-weight: var(--weight-medium);
+    color: var(--text);
+  }
+
+  .demo__flag {
+    font-size: var(--t-xs);
+    color: var(--text-faint);
+  }
+
+  .demo__chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s-2);
+  }
+
+  .demo__opt {
+    position: relative;
+    display: inline-flex;
+  }
+
+  .demo__chip {
+    display: inline-flex;
+    align-items: center;
+    min-block-size: 2.25rem;
+    padding-inline: 0.7rem;
+    border: 1px solid var(--border-interactive);
+    border-radius: var(--radius);
+    background: var(--elev-1);
+    color: var(--text-muted);
+    font-size: var(--t-sm);
+    line-height: 1;
+    cursor: pointer;
+    transition:
+      background var(--dur-2) var(--ease-standard),
+      border-color var(--dur-2) var(--ease-standard),
+      color var(--dur-1) var(--ease-standard);
+  }
+
+  .demo__chip--mono {
+    font-family: var(--font-mono);
+    font-size: var(--t-xs);
+    letter-spacing: var(--track-xs);
+    overflow-wrap: anywhere;
+  }
+
+  .demo__chip:hover {
+    color: var(--text);
+    border-color: var(--text-faint);
+  }
+
+  .demo__radio:checked + .demo__chip {
+    background: var(--accent-dim);
+    border-color: var(--accent);
+    color: var(--text);
+  }
+
+  /* The input is visually hidden, so the ring has to be drawn on the label it labels. */
+  .demo__radio:focus-visible + .demo__chip {
+    outline: 2px solid var(--focus);
+    outline-offset: 2px;
+    box-shadow: 0 0 0 2px var(--focus-halo);
+  }
+
+  .demo__note {
+    margin-block-start: var(--stack-xs);
+    font-size: var(--t-xs);
+    line-height: var(--lh-xs);
+    color: var(--text-faint);
+    max-width: 34rem;
+  }
+
+  .demo__cmd {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-2);
+    padding: var(--s-4);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--elev-0);
+  }
+
+  .demo__cmd-label {
+    font-size: var(--t-2xs);
+    line-height: var(--lh-2xs);
+    letter-spacing: var(--track-eyebrow);
+    text-transform: uppercase;
+    color: var(--text-faint);
+  }
+
+  /* WRAPS, not scrolls. This block was `white-space: pre; overflow-x: auto`, which on a phone
+   * showed 180px of a 360px command and cut it mid-character at the card edge — with no
+   * scrollbar, no fade, nothing saying there was more. Measured at 320px: the reader saw
+   * `coswarm working-on "wiring the pa` and that was the whole hero demo.
+   *
+   * `pre-wrap` keeps the authored newlines and the leading indent on the continuation lines,
+   * so the shape of the command survives; `anywhere` lets the long --url token break rather
+   * than push the line wide again. Desktop is unchanged — the command already fits there, and
+   * a rule that only bites when the text is too wide cannot alter the case where it isn't.
+   *
+   * This also puts the block in line with every other listing on the site: CodeBlock's
+   * `wrap` variant (ui-code--wrap) is what /download and /app already use. */
+  .demo__cmd-body {
+    margin: 0;
+    font-size: var(--t-xs);
+    line-height: 1.75;
+    color: var(--text);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+
+  /* --- result ------------------------------------------------------------- */
+
+  .demo__result {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-4);
+    flex: 1 1 auto;
+    min-inline-size: 0;
+  }
+
+  .demo__empty {
+    display: flex;
+    flex: 1 1 auto;
+    align-items: center;
+    justify-content: center;
+    min-block-size: 14rem;
+  }
+
+  .demo__out {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-4);
+    min-inline-size: 0;
+  }
+
+  .callout {
+    padding: var(--pad-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--elev-2);
+    box-shadow: var(--ring-top);
+    animation: demo-in var(--dur-3) var(--ease-decelerate) both;
+  }
+
+  @keyframes demo-in {
+    from {
+      opacity: 0;
+      transform: translate3d(0, 6px, 0);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
+  .callout--heads {
+    border-color: color-mix(in oklab, var(--warning) 34%, transparent);
+    background: linear-gradient(
+      180deg,
+      color-mix(in oklab, var(--warning) 7%, var(--elev-2)),
+      var(--elev-2)
+    );
+  }
+
+  .callout--clear {
+    border-color: color-mix(in oklab, var(--success) 30%, transparent);
+    background: linear-gradient(
+      180deg,
+      color-mix(in oklab, var(--success) 6%, var(--elev-2)),
+      var(--elev-2)
+    );
+  }
+
+  .callout__title {
+    display: flex;
+    align-items: center;
+    gap: var(--s-2);
+    font-size: var(--t-lg);
+    font-weight: var(--weight-head);
+    letter-spacing: var(--track-xl);
+    color: var(--text);
+  }
+
+  .callout__icon {
+    display: inline-flex;
+    flex: none;
+  }
+
+  .callout__icon svg {
+    inline-size: 1.25rem;
+    block-size: 1.25rem;
+  }
+
+  .callout--heads .callout__icon {
+    color: var(--warning);
+  }
+
+  .callout--clear .callout__icon {
+    color: var(--success);
+  }
+
+  .callout__body {
+    margin-block-start: var(--stack-xs);
+    font-size: var(--t-base);
+    line-height: var(--lh-base);
+    color: var(--text-muted);
+  }
+
+  .callout__body b {
+    color: var(--text);
+  }
+
+  .callout__body code {
+    overflow-wrap: anywhere;
+    white-space: normal;
+  }
+
+  .callout__foot {
+    margin-block-start: var(--stack-sm);
+    padding-block-start: var(--stack-sm);
+    border-block-start: 1px solid var(--border);
+    font-size: var(--t-sm);
+    line-height: var(--lh-sm);
+    color: var(--text-faint);
+  }
+
+  .callout__foot b {
+    color: var(--text-muted);
+  }
+
+  .demo__disclaimer {
+    font-size: var(--t-xs);
+    line-height: var(--lh-xs);
+    color: var(--text-faint);
+  }
+
+  .demo__disclaimer b {
+    color: var(--text-muted);
+  }
+</style>

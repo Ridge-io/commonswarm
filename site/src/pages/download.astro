@@ -1,0 +1,43 @@
+---
+/*
+ * /download — the install page.
+ *
+ * ONE CONSTANT, TWO CONSUMERS. INSTALL_CMD is declared here and passed down, because the
+ * string that is DISPLAYED and the string that is COPIED must be the same object. SITE-BRIEF
+ * calls this out as load-bearing: a command block and the promise around it drift apart the
+ * moment they live in two files.
+ *
+ * THE HOST IS A PLACEHOLDER AND THE PAGE SAYS SO OUT LOUD. There is no decided install host.
+ * "<host>" is install.sh's own documented placeholder (its usage comment reads
+ * `curl -fsSL https://<host>/install.sh | sh`), so this page shows the same thing rather than
+ * inventing a domain. Do not replace it with anything that resolves — an earlier draft of this
+ * site used coswarm.dev, which is a REAL, UNRELATED shipping product whose /install.sh answers
+ * 200 and installs as root.
+ *
+ * FOOTER. This page used to ship its own (PageFoot.astro), written to avoid the then-shared
+ * Footer.astro whose nav was a list of landing-page hashes that pointed at nothing from
+ * /download. That reason is gone: SiteFooter's Product column is now real routes, so the
+ * page passes no footer at all and takes Base's default. PageFoot is deleted — it also
+ * claimed the repository is "private during dogfood", which is no longer true.
+ */
+
+import Base from "../layouts/Base.astro";
+import InstallPanel from "../components/download/InstallPanel.astro";
+import WhatHappens from "../components/download/WhatHappens.astro";
+import OtherWays from "../components/download/OtherWays.astro";
+import AfterInstall from "../components/download/AfterInstall.astro";
+
+/* The single source of truth for the install command, character for character. */
+const INSTALL_CMD = "curl -fsSL https://<host>/install.sh | sh";
+
+const title = "Install coswarm — one file, no sudo";
+const description =
+  "Install the coswarm CLI: one command, one file in ~/.local/bin, checked against a published SHA-256 before it lands. Node 24 or newer, macOS or Linux.";
+---
+
+<Base title={title} description={description} path="/download">
+  <InstallPanel cmd={INSTALL_CMD} />
+  <WhatHappens />
+  <OtherWays cmd={INSTALL_CMD} />
+  <AfterInstall />
+</Base>

@@ -1,0 +1,57 @@
+---
+/*
+ * Badge — a small status pill. Composes .badge / .badge--* from global.css; the only thing
+ * added here is the `sm` size.
+ *
+ * COLOUR IS NEVER THE ONLY SIGNAL. Every badge carries a word. The optional `dot` is an
+ * extra cue for scanning, not a replacement for the text — a bare coloured dot is invisible
+ * to anyone who cannot distinguish the hue, and to anyone using a screen reader.
+ *
+ * The tint/text pairings were audited in global.css and are reused verbatim rather than
+ * re-derived. The tightest is danger on --elev-4 at 4.62:1 against a 4.5 requirement, which
+ * is why no -dim tint may be darkened and no surface may be added above --elev-4 without
+ * re-running that audit.
+ */
+
+import "../../styles/ui.css";
+
+type Variant = "neutral" | "success" | "warning" | "danger" | "info" | "accent";
+type Size = "sm" | "md";
+
+interface Props {
+  variant?: Variant;
+  size?: Size;
+  /** Adds a leading dot in the variant colour. Decorative — the label still carries meaning. */
+  dot?: boolean;
+  class?: string;
+  [key: string]: unknown;
+}
+
+const { variant = "neutral", size = "md", dot = false, class: className, ...rest } = Astro.props;
+
+const VARIANT_CLASS: Record<Variant, string | null> = {
+  neutral: null, // the bare .badge
+  success: "badge--success",
+  warning: "badge--warning",
+  danger: "badge--danger",
+  info: "badge--info",
+  accent: "badge--accent",
+};
+
+const DOT_CLASS: Record<Variant, string | null> = {
+  neutral: null,
+  success: "dot--success",
+  warning: "dot--warning",
+  danger: "dot--danger",
+  info: "dot--info",
+  accent: "dot--accent",
+};
+---
+
+<span
+  class:list={["badge", VARIANT_CLASS[variant], size === "sm" && "badge--sm", className]}
+  {...rest}
+>
+  {dot && <span class:list={["dot", DOT_CLASS[variant]]} aria-hidden="true" />}
+  <slot />
+</span>

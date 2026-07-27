@@ -1,0 +1,404 @@
+---
+/*
+ * SiteFooter — the shell's footer. Minimal on purpose: a wordmark, two short link columns,
+ * one status line, one legal line. No newsletter and no social icons, because there is no
+ * newsletter and there are no accounts.
+ *
+ * EVERY CLAIM AND EVERY LINK WAS CHECKED, logged out, on the day this was written:
+ *   github.com/Ridge-io/cloud-swarm            HTTP 200   (public)
+ *   .../cloud-swarm/blob/main/LICENSE          HTTP 200   (MIT, © 2026 Ridge.io)
+ *   github.com/Ridge-io/coswarm-dist           HTTP 404   -> deliberately NOT linked
+ *   controls: a made-up repo and a made-up blob path both returned 404, so the 200s above
+ *   are a real signal and not a GitHub soft-200.
+ *
+ * The releases repo is the one thing here with no link, and that is the honest rendering:
+ * it is still private, so a "Releases" link would dead-end. It is not mentioned at all
+ * rather than mentioned-and-unclickable, which only raises a question the page cannot answer.
+ *
+ * INTEGRATION — THIS IS NOW THE ONLY FOOTER ON THE SITE. Three existed, built in parallel:
+ * this one, landing/SiteFoot.astro and download/PageFoot.astro, plus the older
+ * components/Footer.astro. They disagreed on layout, on link set, and — worse — on fact:
+ * two of them stated in rendered markup that the repository is "private during dogfood".
+ * Re-checked live on the day of integration: github.com/Ridge-io/cloud-swarm answers 200
+ * logged out and .../blob/main/LICENSE answers 200, with a made-up repo path returning 404
+ * as the control, so the 200s are real and the "private" claim was false on two pages. The
+ * other three footers are deleted; every page now falls through to Base.astro's default slot.
+ *
+ * "/#authority" was removed from the Product column at the same time. That id no longer
+ * exists on the landing page (the framing it named was retired), so it was a dead link on
+ * all four pages, and it was one of the two sources of the only retired vocabulary left in
+ * the built output.
+ *
+ * The hash anchor points at a section id that exists on the landing page today, prefixed
+ * with "/" so it still resolves from a route that is not "/". The rest are real routes.
+ */
+
+/* `?raw` rather than fs.readFileSync: Vite resolves these at compile time, relative to THIS
+ * file. readFileSync + import.meta.url does not work here — by the time the frontmatter runs
+ * it lives in dist/.prerender/chunks/, so the relative path pointed at site/src/cloud/. */
+import pkgSource from "../../../package.json?raw";
+import cloudConfigSource from "../../../src/cloud/config.ts?raw";
+
+import Wordmark from "./Wordmark.astro";
+
+const REPO = "https://github.com/Ridge-io/cloud-swarm";
+
+/*
+ * THE VERSION LINE IS READ FROM THE BINARY'S OWN SOURCES AT BUILD TIME, NOT TYPED.
+ *
+ * The footer's left column used to be a wordmark and two lines of blurb against a column
+ * that ran 80px further down, so it opened on a hole. The fix is not filler: it is the one
+ * fact a footer on a pre-launch developer tool has earned the right to state, and the only
+ * honest way to state it is to derive it.
+ *
+ *   coswarm 0.0.1  <- package.json "version" at the repo root, which is what
+ *                     packageVersion() feeds CLI_BUILD_VERSION (src/cli.ts:140)
+ *   protocol 0.1.0 <- CLIENT_PROTOCOL_VERSION (src/cloud/config.ts:3)
+ *
+ * Rendered in the same shape the binary prints for `--version` (src/cli.ts:246 and :1737):
+ * `coswarm <v> (protocol <p>)`. Checked against the built CLI on the day this was written:
+ *   $ node dist/cli.js --version   ->  coswarm 0.0.1 (protocol 0.1.0)
+ *
+ * Both reads throw at BUILD time if they come back empty, so this can never silently ship a
+ * blank or a stale version. A hard-coded string would have gone stale on the next bump; a
+ * build error is cheaper than a footer that lies about which binary is current.
+ */
+const cliVersion: unknown = JSON.parse(pkgSource).version;
+
+const protocolVersion = cloudConfigSource.match(
+  /CLIENT_PROTOCOL_VERSION\s*=\s*"([^"]+)"/
+)?.[1];
+
+if (typeof cliVersion !== "string" || !cliVersion) {
+  throw new Error(
+    "SiteFooter: could not read `version` from the repo-root package.json. The footer states " +
+      "the shipping CLI version and must not render a blank or a guess."
+  );
+}
+if (!protocolVersion) {
+  throw new Error(
+    "SiteFooter: could not read CLIENT_PROTOCOL_VERSION from src/cloud/config.ts. Either the " +
+      "constant moved or its shape changed; fix the read rather than hard-coding the number."
+  );
+}
+
+const versionLine = `coswarm ${cliVersion} (protocol ${protocolVersion})`;
+
+const COLUMNS = [
+  {
+    title: "Product",
+    links: [
+      { href: "/#how-it-works", label: "How it works" },
+      /* "Install", matching the header nav and the page's own h1 and eyebrow. The route is
+       * still /download — URL churn is not worth it — but nothing visible says "download"
+       * or "the CLI" any more, so one destination now has one name. */
+      { href: "/download", label: "Install" },
+      { href: "/app", label: "Dashboard" },
+      { href: "/start", label: "Create a workspace" },
+    ],
+  },
+  {
+    title: "Project",
+    links: [
+      { href: REPO, label: "GitHub", external: true },
+      { href: `${REPO}/blob/main/LICENSE`, label: "MIT license", external: true },
+    ],
+  },
+];
+
+/* Built at build time. The site is static, so this is the year of the last deploy — which is
+ * the only year a static page can honestly claim. */
+const year = new Date().getFullYear();
+---
+
+<footer class="ft">
+  <div class="page ft__inner">
+    <div class="ft__top">
+      <div class="ft__brand">
+        <Wordmark href="/" markSize={20} />
+        <p class="ft__blurb">
+          Every agent says what it is working on, so the next one finds out before it
+          starts the same job.
+        </p>
+        <p class="ft__version">
+          <span class="ft__version-label">Shipping</span>
+          <span class="mono ft__version-str">{versionLine}</span>
+        </p>
+      </div>
+
+      <div class="ft__cols">
+        {
+          COLUMNS.map((col) => (
+            <nav class="ft__col" aria-label={col.title}>
+              <h2 class="ft__h">{col.title}</h2>
+              <ul class="ft__list">
+                {col.links.map((link) => (
+                  <li>
+                    <a
+                      class="ft__link"
+                      href={link.href}
+                      target={link.external ? "_blank" : undefined}
+                      rel={link.external ? "noopener noreferrer" : undefined}
+                    >
+                      {link.label}
+                      {link.external && (
+                        <span class="ft__sr"> (opens in a new tab)</span>
+                      )}
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            </nav>
+          ))
+        }
+      </div>
+    </div>
+
+    <div class="ft__bar">
+      <p class="ft__status">
+        <span class="ft__pip" aria-hidden="true"></span>
+        <span>
+          <strong>Pre-launch.</strong> Access is by invitation while we run coswarm on our
+          own work — there is nothing to sign up for yet.
+        </span>
+      </p>
+      <p class="ft__legal">© {year} Ridge.io · MIT · no tracking on this page</p>
+    </div>
+  </div>
+</footer>
+
+<style>
+  /* NO margin-top. This footer had 6rem of it, which was invisible while it rendered on
+     nothing. Now that it is the site’s only footer it lands under a section that already
+     ends on a full --pad-section-tight (86.4px at 1440), and the two stack: measured 182px
+     of empty page above the rule. Both of the per-page footers that this one replaced had
+     independently discovered and fixed the same thing — landing/SiteFoot called it "a ~220px
+     band of nothing", download/PageFoot "a ~225px empty band". The border and the change of
+     background are what separate the footer; it does not also need a gap. */
+  .ft {
+    border-top: 1px solid var(--border);
+    background: var(--elev-1);
+  }
+
+  /* Was --s-16 (64px) on top. Measured at 1440 the footer opened on a hole: the brand
+     column ended 83px above the link column and the divider sat another 81px below that,
+     so the block was large and half empty. The top pad comes down one step and the rest of
+     the gap is closed by .ft__bar's margin, below. */
+  .ft__inner {
+    padding-block: var(--s-12) var(--s-8);
+  }
+
+  .ft__top {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: start;
+    gap: var(--s-12);
+  }
+
+  /* --- brand --------------------------------------------------------------- */
+
+  .ft__brand {
+    /* Holds the blurb to a readable measure without letting it starve the columns
+       when the row is tight. */
+    flex: 1 1 20rem;
+    max-width: 30rem;
+  }
+
+  /* The .ft__word / .ft__mark rules are gone: the wordmark is Wordmark.astro now. They set
+     the word at --t-base / -0.024em / 0.5rem gap while both header copies set
+     1.0625rem / -0.028em / 0.55rem, so the same mark was typeset two ways on one page. */
+
+  .ft__blurb {
+    margin-top: var(--s-3);
+    font-size: var(--t-sm);
+    line-height: var(--lh-sm);
+    color: var(--text-muted);
+    max-width: 38ch;
+  }
+
+  /* The version line. It is the reason this column no longer bottoms out 80px above the one
+     beside it, and it is a real string read out of the binary's own sources at build time —
+     see the note in the frontmatter. Set in mono because that is how it is printed. */
+  .ft__version {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: var(--s-2) var(--s-3);
+    margin-top: var(--s-5);
+  }
+
+  .ft__version-label {
+    font-size: var(--t-2xs);
+    line-height: var(--lh-2xs);
+    letter-spacing: var(--track-eyebrow);
+    text-transform: uppercase;
+    /* Same reasoning as .ft__h: --text-faint is 4.09:1 on --elev-1 and is not allowed to
+       carry text this small. --text-muted is 7.38:1 here. */
+    color: var(--text-muted);
+  }
+
+  .ft__version-str {
+    font-size: var(--t-xs);
+    line-height: var(--lh-xs);
+    color: var(--text);
+    /* Tabular figures so a version bump cannot reflow the line. */
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* --- columns ------------------------------------------------------------- */
+
+  .ft__cols {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s-16);
+  }
+
+  .ft__col {
+    min-width: 8rem;
+  }
+
+  .ft__h {
+    margin-bottom: var(--s-4);
+    font-size: var(--t-2xs);
+    font-weight: var(--weight-semibold);
+    line-height: var(--lh-2xs);
+    letter-spacing: var(--track-eyebrow);
+    text-transform: uppercase;
+    /* NOT --text-faint. It measures 4.09:1 on this footer's --elev-1 surface, under the 4.5
+       AA needs, and tokens.css says outright that it is for large text and non-text only.
+       --text-muted is 7.38:1 here. The same applies to .ft__legal below. */
+    color: var(--text-muted);
+    /* Uppercase tracking leaves a gap on the right; pull it back so the label optically
+       aligns with the links under it. */
+    margin-right: calc(var(--track-eyebrow) * -1);
+  }
+
+  .ft__list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-3);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .ft__link {
+    font-size: var(--t-sm);
+    color: var(--text-muted);
+    text-decoration: none;
+    border-radius: var(--radius-sm);
+    transition: color var(--dur-1) var(--ease-standard);
+  }
+
+  .ft__link:hover {
+    color: var(--text);
+  }
+
+  .ft__sr {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  /* --- bottom bar ---------------------------------------------------------- */
+
+  .ft__bar {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: var(--s-4);
+    /* Was --s-16 (64px). The rule sat 81px under the taller column with nothing in between,
+       which read as the footer running out rather than closing. --s-6 puts it a card's
+       padding below the last link — close enough to belong to the block above it. */
+    margin-top: var(--s-6);
+    padding-top: var(--s-6);
+    border-top: 1px solid var(--border);
+  }
+
+  .ft__status {
+    display: flex;
+    align-items: baseline;
+    gap: var(--s-3);
+    max-width: 54ch;
+    font-size: var(--t-xs);
+    line-height: var(--lh-xs);
+    color: var(--text-muted);
+  }
+
+  .ft__status strong {
+    color: var(--text);
+    font-weight: var(--weight-semibold);
+  }
+
+  /* Amber, not green: this is "not finished yet", not "all good". The dot is decorative —
+     the sentence beside it carries the whole meaning, so nothing is lost without colour. */
+  .ft__pip {
+    flex: none;
+    inline-size: 6px;
+    block-size: 6px;
+    border-radius: var(--radius-pill);
+    background: var(--warning);
+    box-shadow: 0 0 0 3px color-mix(in oklab, var(--warning) 15%, transparent);
+    /* Baseline alignment puts a 6px box on the text baseline; nudge it onto the x-height. */
+    transform: translateY(-0.15em);
+  }
+
+  .ft__legal {
+    font-size: var(--t-xs);
+    line-height: var(--lh-xs);
+    color: var(--text-muted);
+    white-space: nowrap;
+  }
+
+  /* --- responsive ----------------------------------------------------------- */
+
+  @media (max-width: 60rem) {
+    .ft__top {
+      gap: var(--s-10);
+    }
+
+    .ft__cols {
+      gap: var(--s-12);
+    }
+  }
+
+  @media (max-width: 34rem) {
+    .ft {
+      margin-top: var(--s-16);
+    }
+
+    .ft__inner {
+      padding-block: var(--s-12) var(--s-8);
+    }
+
+    .ft__brand,
+    .ft__blurb {
+      max-width: none;
+    }
+
+    .ft__cols {
+      /* Two columns rather than a stack: both are short, and stacking them pushes the
+         legal line a whole screen away from the links it belongs with. */
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: var(--s-8);
+      width: 100%;
+    }
+
+    .ft__bar {
+      margin-top: var(--s-8);
+    }
+
+    .ft__legal {
+      white-space: normal;
+    }
+  }
+</style>

@@ -1,0 +1,198 @@
+---
+/*
+ * CodeBlock — a terminal-styled block with a working copy button.
+ *
+ * WHAT LANDS ON THE CLIPBOARD IS THE `code` PROP, EXACTLY. The prompt glyph is decoration:
+ * it is rendered into its own span, marked aria-hidden, and is NOT part of the copied string,
+ * which is carried on a data attribute taken straight from the prop. This matters more here
+ * than it sounds — this component's whole job on a landing page is handing someone a command
+ * they will paste into a shell, and a copy button that quietly adds a "$ " to the front hands
+ * them something that does not run.
+ *
+ * COPY HAS A REAL FALLBACK. navigator.clipboard is undefined on insecure origins and in older
+ * Safari. When it is missing or throws, the script falls back to a hidden textarea plus
+ * document.execCommand("copy"). If BOTH fail, the button says so and tells the reader to
+ * select the text — it never reports a success that did not happen.
+ *
+ * FEEDBACK IS ANNOUNCED, NOT JUST SHOWN. The label swaps to "Copied" and the glyph to a tick
+ * for 2 seconds, and the same outcome goes to a polite live region so a screen reader user
+ * learns the copy worked. Colour is never the only signal: the word changes too.
+ *
+ * ESCAPING: {code} is an Astro expression, so it is HTML-escaped on output. Never switch this
+ * to set:html.
+ */
+
+import "../../styles/ui.css";
+
+interface Props {
+  /** The exact text. This is what the copy button puts on the clipboard, character for character. */
+  code: string;
+  /** Window-bar caption, e.g. "Terminal" or a file path. */
+  label?: string;
+  /** Decorative prompt glyph prefixed to each command line. Not copied. */
+  prompt?: string;
+  /** Set false for a block that is output rather than something to run. */
+  copy?: boolean;
+  /** Soft-wrap long lines instead of scrolling horizontally. */
+  wrap?: boolean;
+  /** The three window dots. */
+  chrome?: boolean;
+  class?: string;
+  [key: string]: unknown;
+}
+
+const {
+  code,
+  label,
+  prompt,
+  copy = true,
+  wrap = false,
+  chrome = true,
+  class: className,
+  ...rest
+} = Astro.props;
+
+/* One trailing newline is an artefact of template literals, not a blank line the author meant. */
+const lines = code.replace(/\n+$/, "").split("\n");
+
+/* Shell comments and blank lines do not get a prompt — a "$ # note" is not a command. */
+const isCommand = (line: string) => {
+  const t = line.trim();
+  return t.length > 0 && !t.startsWith("#");
+};
+
+const showBar = chrome || Boolean(label) || copy;
+---
+
+<figure class:list={["ui-code", wrap && "ui-code--wrap", className]} {...rest}>
+  {
+    showBar && (
+      <figcaption class="ui-code__bar">
+        {chrome && (
+          <span class="ui-code__dots" aria-hidden="true">
+            <i />
+            <i />
+            <i />
+          </span>
+        )}
+        <span class="ui-code__label">{label ?? ""}</span>
+        {copy && (
+          <button
+            type="button"
+            class="btn btn--sm btn--ghost ui-code__copy"
+            data-ui-copy
+            data-copy={code}
+            data-copy-label="Copy"
+          >
+            <span class="btn__icon" aria-hidden="true">
+              <svg class="ui-code__clip" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="9" y="9" width="11" height="11" rx="2" />
+                <path d="M5 15V6a2 2 0 0 1 2-2h8" />
+              </svg>
+              <svg class="ui-code__tick" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M4 12.5 9.5 18 20 6.5" />
+              </svg>
+            </span>
+            <span class="ui-code__txt">Copy</span>
+          </button>
+        )}
+      </figcaption>
+    )
+  }
+
+  {/* The line break is a real "\n" text node so that selecting the block with a mouse copies
+      it with its newlines intact. The LAST line does not get one: a trailing newline before
+      </pre> renders as a blank line and puts a visible gap under the listing. */}
+  <pre class="ui-code__body"><code>{lines.map((line, i) => (
+    <span class:list={["ui-code__line", !isCommand(line) && line.trim() && "ui-code__line--comment"]}>{
+      prompt && isCommand(line) ? <><span class="ui-code__prompt" aria-hidden="true">{prompt} </span>{line}</> : line
+    }{i < lines.length - 1 ? "\n" : ""}</span>
+  ))}</code></pre>
+</figure>
+
+<script>
+  // Copy to clipboard with a real fallback, and honest reporting when both paths fail.
+  // Astro bundles this module once per page no matter how many CodeBlocks are on it.
+
+  function legacyCopy(text: string): boolean {
+    // navigator.clipboard is undefined on insecure origins and in older Safari. A hidden
+    // textarea plus execCommand still works there.
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.setAttribute("readonly", "");
+    ta.style.position = "fixed";
+    ta.style.top = "-1000px";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    let ok = false;
+    try {
+      ok = document.execCommand("copy");
+    } catch {
+      ok = false;
+    }
+    document.body.removeChild(ta);
+    return ok;
+  }
+
+  async function writeClipboard(text: string): Promise<boolean> {
+    if (navigator.clipboard && window.isSecureContext) {
+      try {
+        await navigator.clipboard.writeText(text);
+        return true;
+      } catch {
+        // Permission denied, or a non-user-gesture call. Fall through rather than report
+        // a success that did not happen.
+      }
+    }
+    return legacyCopy(text);
+  }
+
+  // One polite live region for the whole page. Built at runtime, so it uses .ui-sr from
+  // ui.css — a class in a component's scoped <style> would never apply to a node created
+  // here, and the status text would render visibly in the corner of the page.
+  function statusRegion(): HTMLElement {
+    let el = document.getElementById("ui-copy-status");
+    if (!el) {
+      el = document.createElement("p");
+      el.id = "ui-copy-status";
+      el.className = "ui-sr";
+      el.setAttribute("role", "status");
+      el.setAttribute("aria-live", "polite");
+      document.body.appendChild(el);
+    }
+    return el;
+  }
+
+  const status = statusRegion();
+
+  document.querySelectorAll<HTMLButtonElement>("[data-ui-copy]").forEach((btn) => {
+    if (btn.dataset.copyBound) return;
+    btn.dataset.copyBound = "1";
+
+    const idle = btn.dataset.copyLabel ?? "Copy";
+    const txt = btn.querySelector<HTMLElement>(".ui-code__txt");
+    let timer: number | undefined;
+
+    btn.addEventListener("click", async () => {
+      const ok = await writeClipboard(btn.dataset.copy ?? "");
+
+      window.clearTimeout(timer);
+      btn.classList.remove("is-done", "is-fail");
+      btn.classList.add(ok ? "is-done" : "is-fail");
+      // The word changes, not just the colour.
+      if (txt) txt.textContent = ok ? "Copied" : "Select it";
+      status.textContent = ok
+        ? "Copied to clipboard"
+        : "Copy is unavailable here — select the text and press Command-C or Control-C";
+
+      timer = window.setTimeout(() => {
+        btn.classList.remove("is-done", "is-fail");
+        if (txt) txt.textContent = idle;
+        // Clearing the region matters: leaving the old text in place means the NEXT copy
+        // writes the same string, the region does not change, and nothing is announced.
+        status.textContent = "";
+      }, 2000);
+    });
+  });
+</script>

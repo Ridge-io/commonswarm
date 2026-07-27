@@ -1,0 +1,171 @@
+---
+/*
+ * Input — a labelled text control with hint, error, and prefix/suffix slots.
+ *
+ * LABEL IS REQUIRED. Not optional-with-a-fallback: a placeholder is not a label (it vanishes
+ * the moment someone types, and it is not announced as one), so there is no way to build
+ * this component correctly without one. `hideLabel` exists for the search-box case where the
+ * design genuinely has no room — it hides the label visually and keeps it for screen readers,
+ * which is a different thing from not having one.
+ *
+ * aria-describedby WIRING. The hint and the error each get an id, and the control points at
+ * whichever of them actually rendered — never at an id that does not exist, which silently
+ * drops the whole description in several screen readers. When both are present the control
+ * lists both, hint first, so the reader hears the guidance before the correction.
+ *
+ * WHY THE ERROR IS aria-live AND NOT role="alert". role="alert" is an assertive live region,
+ * so a server-rendered error would be shouted at the reader the instant the page loads,
+ * interrupting whatever they were listening to. A live region's INITIAL content is not
+ * announced — only later changes are — so aria-live="polite" gives the behaviour that is
+ * actually wanted: silent on load (the error is still announced on focus, via
+ * aria-describedby), announced politely when client-side validation swaps the text later.
+ *
+ * THE RING IS ON THE BOX, NOT THE CONTROL. The bordered box holds the prefix, the control and
+ * the suffix, and takes the focus ring via :focus-within. Ringing the bare <input> inside a
+ * field that has a "https://" prefix draws a rectangle around half the control. See ui.css §4.
+ */
+
+import "../../styles/ui.css";
+
+type Size = "sm" | "md" | "lg";
+
+interface Props {
+  /** Required. Use `hideLabel` if the design cannot show it — never drop it. */
+  label: string;
+  /** Supply one to make the label/hint/error ids stable; otherwise one is generated. */
+  id?: string;
+  name?: string;
+  /** Any text-like input type, or use `multiline` for a textarea. */
+  type?: string;
+  value?: string;
+  placeholder?: string;
+  /** Guidance shown under the control and read out with it. */
+  hint?: string;
+  /** Present ⇒ the field is in its error state and the control is marked aria-invalid. */
+  error?: string;
+  required?: boolean;
+  disabled?: boolean;
+  readonly?: boolean;
+  /** Renders a <textarea> instead of an <input>. */
+  multiline?: boolean;
+  rows?: number;
+  size?: Size;
+  /** Keeps the label for screen readers but removes it from the layout. */
+  hideLabel?: boolean;
+  class?: string;
+  /** Forwarded to the control: autocomplete, inputmode, pattern, maxlength, data-*, … */
+  [key: string]: unknown;
+}
+
+const {
+  label,
+  id,
+  name,
+  type = "text",
+  value,
+  placeholder,
+  hint,
+  error,
+  required = false,
+  disabled = false,
+  readonly = false,
+  multiline = false,
+  rows = 4,
+  size = "md",
+  hideLabel = false,
+  class: className,
+  ...rest
+} = Astro.props;
+
+/* Astro has no useId. randomUUID is fine here: the build is static, so the id is baked once
+ * and never changes between server and client. */
+const fieldId = id ?? `ui-field-${crypto.randomUUID().slice(0, 8)}`;
+const hintId = hint ? `${fieldId}-hint` : null;
+const errorId = error ? `${fieldId}-error` : null;
+
+/* Only ids that were actually rendered. Pointing at a missing id drops the description. */
+const describedBy = [hintId, errorId].filter(Boolean).join(" ") || undefined;
+
+const hasPrefix = Astro.slots.has("prefix");
+const hasSuffix = Astro.slots.has("suffix");
+const Control = multiline ? "textarea" : "input";
+
+const SIZE_CLASS: Record<Size, string | null> = {
+  sm: "ui-field--sm",
+  md: null,
+  lg: "ui-field--lg",
+};
+---
+
+<div
+  class:list={[
+    "ui-field",
+    SIZE_CLASS[size],
+    error && "ui-field--error",
+    disabled && "ui-field--disabled",
+    className,
+  ]}
+>
+  <label class:list={["ui-field__label", hideLabel && "ui-sr"]} for={fieldId}>
+    {label}
+    {
+      required && (
+        <>
+          <span class="ui-field__req" aria-hidden="true">
+            *
+          </span>
+          <span class="ui-sr">(required)</span>
+        </>
+      )
+    }
+  </label>
+
+  <div class="ui-field__box">
+    {
+      hasPrefix && (
+        <span class="ui-field__affix ui-field__affix--prefix">
+          <slot name="prefix" />
+        </span>
+      )
+    }
+
+    <Control
+      class="ui-field__control"
+      id={fieldId}
+      name={name}
+      type={multiline ? undefined : type}
+      rows={multiline ? rows : undefined}
+      value={multiline ? undefined : value}
+      placeholder={placeholder}
+      required={required || undefined}
+      disabled={disabled || undefined}
+      readonly={readonly || undefined}
+      aria-invalid={error ? "true" : undefined}
+      aria-describedby={describedBy}
+      {...rest}>{multiline ? value : undefined}</Control
+    >
+
+    {
+      hasSuffix && (
+        <span class="ui-field__affix ui-field__affix--suffix">
+          <slot name="suffix" />
+        </span>
+      )
+    }
+  </div>
+
+  {hint && <p class="ui-field__msg" id={hintId}>{hint}</p>}
+
+  {
+    error && (
+      <p class="ui-field__msg ui-field__msg--error" id={errorId} aria-live="polite">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="12" cy="12" r="9" />
+          <path d="M12 7.5v5" />
+          <path d="M12 16.2v.2" />
+        </svg>
+        <span>{error}</span>
+      </p>
+    )
+  }
+</div>

@@ -1,0 +1,304 @@
+---
+/*
+ * The shared feed — what every agent has announced, newest first. The same ordering
+ * `coswarm feed` returns.
+ *
+ * THREE KINDS, AND ONLY THREE. src/cloud/signals.ts pins SIGNAL_KINDS to exactly
+ * "working-on" | "note" | "ask". This component renders those three and has no branch for a
+ * fourth, so a kind that does not exist cannot be drawn by accident.
+ *
+ * COLOUR IS NEVER THE ONLY SIGNAL. Each row carries the kind as a word in a badge. An expired
+ * signal is dimmed AND says "expired" AND drops its accent — a reader who cannot see the
+ * difference in tone still reads the difference in words.
+ *
+ * WHY <ol> AND NOT A TABLE. These rows are a sequence, not a grid: the ordering is the
+ * meaning ("newest first"), and no column is comparable down its length. A table would
+ * promise a structure the data does not have and would cost a screen-reader user a row/column
+ * announcement on every cell.
+ *
+ * TABULAR NUMERALS on the ages, via .tabular from global.css, so "25m ago" and "18m ago" put
+ * their digits in the same place down the right-hand edge and the column stops shimmering.
+ *
+ * WHY THE NOTES SHOW NO EXPIRY, STATED PLAINLY. Every signal has an `until` — signals.ts
+ * validates it with checkedTimestamp(), so the field is never null, not even on a note. This
+ * component still only SURFACES it on working-on and ask, because that is where the number
+ * changes what a reader does: a working-on expiry is how long the file is spoken for, and an
+ * ask expiry is how long someone is still waiting. A note's expiry is real but inert, and
+ * printing it on every row buys a column of noise. That is a display decision about a field
+ * that exists — not a claim that notes do not have one.
+ */
+
+import Card from "../ui/Card.astro";
+import Badge from "../ui/Badge.astro";
+import Avatar from "../ui/Avatar.astro";
+
+type SignalKind = "working-on" | "note" | "ask";
+
+interface FeedSignal {
+  id: string;
+  kind: SignalKind;
+  author: string;
+  fromKind: "agent" | "user";
+  about: string | null;
+  body: string;
+  age: string;
+  expiry?: string;
+  expired?: boolean;
+}
+
+interface Props {
+  signals: FeedSignal[];
+}
+
+const { signals } = Astro.props;
+
+/* working-on is the accent because it is the one that makes another agent change course.
+ * A note is neutral; an ask is info-toned because it is waiting on somebody. */
+const KIND_VARIANT: Record<SignalKind, "accent" | "neutral" | "info"> = {
+  "working-on": "accent",
+  note: "neutral",
+  ask: "info",
+};
+---
+
+<Card title="Activity" headingLevel={2} class="feed">
+  <Badge slot="actions" size="sm">Sample</Badge>
+
+  <ol class="feed__list">
+    {
+      signals.map((signal, i) => (
+        <li
+          class:list={["feed__row", signal.expired && "feed__row--expired"]}
+          style={`--i:${i}`}
+        >
+          {/* Wrapped rather than given a class directly. A scoped rule in THIS file compiles
+              to `.feed__avatar[data-astro-cid-activityfeed]`, and Avatar’s root element is
+              authored in Avatar.astro, so it carries Avatar’s scope id and would never match.
+              The wrapper is an element this template owns, so it does. */}
+          <span class="feed__avatar">
+            <Avatar name={signal.author} size="sm" />
+          </span>
+
+          <div class="feed__main">
+            <div class="feed__meta">
+              <span class="feed__author">{signal.author}</span>
+
+              {signal.fromKind === "user" && (
+                <span class="feed__who">member</span>
+              )}
+
+              <Badge variant={KIND_VARIANT[signal.kind]} size="sm">
+                {signal.kind}
+              </Badge>
+
+              <span class="feed__age tabular">{signal.age}</span>
+            </div>
+
+            <p class="feed__body">{signal.body}</p>
+
+            <div class="feed__tail">
+              {signal.about && (
+                <span class="feed__about">
+                  <span class="visually-hidden">About </span>
+                  <code>{signal.about}</code>
+                </span>
+              )}
+
+              {signal.expiry && (
+                <span class:list={["feed__expiry", signal.expired && "feed__expiry--done"]}>
+                  {signal.expiry}
+                </span>
+              )}
+            </div>
+          </div>
+        </li>
+      ))
+    }
+  </ol>
+
+  <p slot="footer" class="feed__foot">
+    Agents write to this feed with <code>coswarm working-on</code>, <code>coswarm note</code>
+    and <code>coswarm ask</code>. This page only reads it.
+  </p>
+</Card>
+
+<style>
+  .feed__list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+  }
+
+  /*
+   * The negative inline margin trick. The row is pulled out to the card's edge and given the
+   * card's padding back, so its hover tint and its divider reach the full width of the card
+   * while the text stays aligned with the card's title. Without it the hover state stops
+   * short of the edge on both sides and reads like a misdrawn box.
+   */
+  .feed__row {
+    position: relative;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: var(--s-3);
+    margin-inline: calc(var(--pad-card) * -1);
+    padding: var(--s-3) var(--pad-card);
+    border-radius: var(--radius-sm);
+    transition: background var(--dur-2) var(--ease-standard);
+    animation: feed-row-in var(--dur-3) var(--ease-decelerate) both;
+    /* Each row is 45ms behind the one above it. Capped by the modulo below so a long feed
+       does not end up with a two-second wait on its last row. */
+    animation-delay: calc(var(--i, 0) * 45ms);
+  }
+
+  /* Hidden state lives only in the keyframe — see the note in motion.css. With
+     `animation: none` under reduced motion the row is simply visible. */
+  @keyframes feed-row-in {
+    from {
+      opacity: 0;
+      transform: translate3d(0, 6px, 0);
+    }
+  }
+
+  .feed__row + .feed__row {
+    /* A hairline between rows rather than around them. Drawn as a pseudo-element inset to
+       the text column so it starts under the name, not under the avatar — the standard
+       list-divider inset that keeps the avatar column reading as a gutter. */
+    margin-block-start: 1px;
+  }
+
+  .feed__row + .feed__row::before {
+    content: "";
+    position: absolute;
+    inset-block-start: -1px;
+    inset-inline: var(--pad-card);
+    block-size: 1px;
+    background: var(--border);
+  }
+
+  .feed__row:hover {
+    background: var(--elev-3);
+  }
+
+  /* The divider would otherwise cut across the hovered row's tint. */
+  .feed__row:hover::before,
+  .feed__row:hover + .feed__row::before {
+    background: transparent;
+  }
+
+  .feed__main {
+    min-inline-size: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+  }
+
+  .feed__meta {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--s-2);
+  }
+
+  .feed__author {
+    font-size: var(--t-sm);
+    line-height: var(--lh-sm);
+    font-weight: var(--weight-semibold);
+    color: var(--text);
+  }
+
+  /* Marks the one row that came from a human rather than an agent. A word, not a colour. */
+  .feed__who {
+    font-size: var(--t-2xs);
+    font-weight: var(--weight-semibold);
+    letter-spacing: var(--track-eyebrow);
+    text-transform: uppercase;
+    color: var(--text-muted);
+  }
+
+  .feed__age {
+    margin-inline-start: auto;
+    font-size: var(--t-xs);
+    color: var(--text-muted);
+    white-space: nowrap;
+    flex: none;
+  }
+
+  .feed__body {
+    font-size: var(--t-sm);
+    line-height: var(--lh-sm);
+    letter-spacing: var(--track-sm);
+    color: var(--text);
+    overflow-wrap: anywhere;
+  }
+
+  .feed__tail {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--s-2) var(--s-3);
+    margin-block-start: 0.1rem;
+  }
+
+  .feed__about code {
+    padding: 0.1em 0.36em;
+    font-size: var(--t-xs);
+    color: var(--text-muted);
+    background: var(--elev-1);
+    border-color: var(--border);
+    /* Long paths must wrap rather than force the card wide. global.css sets nowrap on inline
+       code, which is right for a command and wrong for a 40-character path on a phone. */
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .feed__expiry {
+    font-size: var(--t-xs);
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* --- expired ------------------------------------------------------------- */
+
+  /* Dimmed, but never below the readable ramp: the row keeps --text-muted rather than
+     dropping to --text-faint, and the word "expired" is doing the real work. */
+  .feed__row--expired .feed__author,
+  .feed__row--expired .feed__body {
+    color: var(--text-muted);
+  }
+
+  .feed__avatar {
+    display: inline-flex;
+  }
+
+  .feed__row--expired .feed__avatar {
+    opacity: 0.55;
+  }
+
+  .feed__expiry--done {
+    color: var(--warning);
+  }
+
+  .feed__foot {
+    font-size: var(--t-xs);
+    line-height: var(--lh-xs);
+    color: var(--text-muted);
+  }
+
+  .feed__foot code {
+    padding: 0.1em 0.32em;
+    font-size: 0.95em;
+    color: var(--text-muted);
+  }
+
+  @media (max-width: 30rem) {
+    .feed__row {
+      gap: var(--s-2);
+    }
+
+    /* The age drops onto its own line rather than squeezing the badge row; on a phone the
+       author and the kind matter more than the minute. */
+    .feed__age {
+      margin-inline-start: 0;
+    }
+  }
+</style>

@@ -1,0 +1,115 @@
+---
+/*
+ * Card — a surface. Composes .card from global.css and adds only the header/body/footer
+ * scaffolding that file does not have.
+ *
+ * WHOLE-CARD LINKS. Passing `href` makes the entire card the link. That is deliberate and it
+ * has one rule attached: a linked card must not contain another link or button, because
+ * nesting interactive elements inside an <a> is invalid HTML and produces a control that
+ * neither the keyboard nor a screen reader can reach predictably. If you need a card with
+ * its own actions, leave `href` off and put a Button in the `actions` slot.
+ *
+ * HEADING LEVEL is a prop rather than a fixed <h3>, because the correct level depends on
+ * where the card sits in the document outline — and a card that hard-codes h3 under an h2
+ * section quietly breaks the heading order for anyone navigating by headings.
+ */
+
+import "../../styles/ui.css";
+
+type Size = "sm" | "md" | "lg";
+
+interface Props {
+  /** Element to render when this is not a link. */
+  as?: "div" | "article" | "section" | "li";
+  /** Present ⇒ the whole card becomes an <a>. See the note above before using it. */
+  href?: string;
+  /** Renders a heading in the card header. */
+  title?: string;
+  /** Secondary line under the title. */
+  subtitle?: string;
+  /** Padding step. */
+  size?: Size;
+  /** Lifted off the page with a shadow — for popovers and pinned panels. */
+  raised?: boolean;
+  /** Removes padding so media or a table can go edge to edge. Header/footer keep their inset. */
+  flush?: boolean;
+  /** Hover affordance without making the card a link (for JS-driven selection). */
+  interactive?: boolean;
+  /** Heading level for `title`. Pick the one that matches the surrounding outline. */
+  headingLevel?: 2 | 3 | 4 | 5 | 6;
+  class?: string;
+  [key: string]: unknown;
+}
+
+const {
+  as = "div",
+  href,
+  title,
+  subtitle,
+  size = "md",
+  raised = false,
+  flush = false,
+  interactive = false,
+  headingLevel = 3,
+  class: className,
+  ...rest
+} = Astro.props;
+
+const isLink = typeof href === "string";
+const Tag = isLink ? "a" : as;
+const Heading = `h${headingLevel}` as "h2" | "h3" | "h4" | "h5" | "h6";
+
+const SIZE_CLASS: Record<Size, string | null> = {
+  sm: "card--sm",
+  md: null,
+  lg: "card--lg",
+};
+
+const hasHeader = Astro.slots.has("header");
+const hasActions = Astro.slots.has("actions");
+const hasFooter = Astro.slots.has("footer");
+const showHead = Boolean(title) || hasHeader || hasActions;
+---
+
+<Tag
+  class:list={[
+    "card",
+    SIZE_CLASS[size],
+    raised && "card--raised",
+    flush && "card--flush",
+    /* global.css already gives a.card the hover affordance; --link is for the non-link case. */
+    !isLink && interactive && "card--link",
+    className,
+  ]}
+  href={isLink ? href : undefined}
+  {...rest}
+>
+  {
+    showHead && (
+      <div class="card__head">
+        <div>
+          {title && <Heading class="card__title">{title}</Heading>}
+          {subtitle && <span class="card__sub">{subtitle}</span>}
+          <slot name="header" />
+        </div>
+        {hasActions && (
+          <div class="card__actions">
+            <slot name="actions" />
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  <div class="card__body">
+    <slot />
+  </div>
+
+  {
+    hasFooter && (
+      <div class="card__foot">
+        <slot name="footer" />
+      </div>
+    )
+  }
+</Tag>

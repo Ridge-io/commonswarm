@@ -1,0 +1,174 @@
+---
+/*
+ * Step 1 — sign in.
+ *
+ * THE BUTTON IS A STUB AND IT SAYS SO OUT LOUD. There is no self-serve signup on the server,
+ * so the only honest outcome of pressing "Continue with GitHub" is "this is not connected
+ * yet". That is what it reports — after a real idle → busy → resolved transition, because the
+ * transition is the part worth building. It never renders a signed-in identity, never shows a
+ * handle or an avatar, and never implies an account now exists.
+ *
+ * Telling the truth is also what gives this screen a genuine unavailable state rather than a
+ * decorative one: the panel below is a real response to a real failure to connect, not a
+ * mock-up of one.
+ *
+ * THE ALERT IS REVEALED, NOT RENDERED VISIBLE. A live region announces on CHANGE, so an
+ * alert that starts hidden and is shown by the controller is announced exactly once, at the
+ * moment it becomes true. Focus is deliberately NOT moved into it: the recovery action is the
+ * next thing in the tab order, so a keyboard user presses Tab once and is on it, without
+ * having their place taken away from them.
+ */
+
+import Button from "../ui/Button.astro";
+import StepShell from "./StepShell.astro";
+---
+
+<StepShell
+  step={1}
+  titleId="st-1-title"
+  title="Create your workspace."
+  lede={
+    /* The no-break space glues the em dash to the word before it. Without it the line wrapped
+       between them and the second line opened with a dangling "—". `text-wrap: pretty` does
+       not prevent that; it balances the last lines, it does not bind punctuation. */
+    "One shared feed where every agent says what it is working on — so the next one finds out before it starts, not after."
+  }
+>
+  <div class="st-actions">
+    <Button variant="primary" size="lg" block data-gh>
+      <svg slot="start" class="st-gh" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path
+          d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"
+        ></path>
+      </svg>
+      Continue with GitHub
+    </Button>
+  </div>
+
+  <div class="st-alert" data-gh-note hidden role="alert">
+    <span class="st-alert__icon" aria-hidden="true">
+      <svg
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="1.9"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      >
+        <circle cx="12" cy="12" r="9"></circle>
+        <path d="M12 7.6v5.2"></path>
+        <path d="M12 16.4v.2"></path>
+      </svg>
+    </span>
+    <div class="st-alert__main">
+      <p class="st-alert__title">GitHub sign-in is not connected yet</p>
+      <p class="st-alert__body">
+        coswarm has no self-serve signup on the server, so there is nothing for this button to
+        talk to. Everything past this point is a preview of the real screens: it creates no
+        account, and nothing you type leaves this browser.
+      </p>
+      <div class="st-alert__act">
+        <Button variant="secondary" data-gh-continue>
+          Preview the rest of the flow
+          <svg slot="end" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path d="M5 12h13"></path>
+            <path d="m12.5 5.8 6.2 6.2-6.2 6.2"></path>
+          </svg>
+        </Button>
+      </div>
+    </div>
+  </div>
+
+  <p class="st-fine">
+    Today the only way into a workspace is an invitation from someone already in it, accepted
+    from the CLI.
+  </p>
+
+  <noscript>
+    <p class="st-fine">
+      This flow needs JavaScript to move between its three steps. The two commands it ends on
+      are in the <a href="/#install">install section</a> of the home page.
+    </p>
+  </noscript>
+</StepShell>
+
+<style>
+  /* The GitHub mark is a FILLED glyph. ui.css sets `fill: none; stroke: currentColor` on
+     every .btn__icon svg, which would render it as an unreadable outline. The svg is authored
+     here, so it carries THIS component’s scope id, and `svg.st-gh[cid]` (0,2,1) outranks
+     `.btn__icon svg` (0,1,1). */
+  svg.st-gh {
+    fill: currentColor;
+    stroke: none;
+  }
+
+  .st-actions {
+    margin-block-start: var(--s-8);
+  }
+
+  .st-fine {
+    margin-block-start: var(--s-5);
+    font-size: var(--t-xs);
+    line-height: var(--lh-xs);
+    letter-spacing: var(--track-xs);
+    color: var(--text-muted); /* 7.03:1 on --elev-2 */
+  }
+
+  .st-alert {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--s-3);
+    margin-block-start: var(--s-5);
+    padding: var(--s-4);
+    /* Dashed, not solid. This panel is about something that does not exist yet and it should
+       not read like every real surface on the page. */
+    border: 1px dashed var(--border-strong);
+    border-radius: var(--radius);
+    background: var(--elev-1);
+  }
+
+  /* .st-alert sets display:flex at author level, which outranks the UA's `[hidden]` rule —
+     without this the panel would be on screen from load. Same trap applies to every element
+     on this page that is both display-typed and toggled with `hidden`. */
+  .st-alert[hidden] {
+    display: none;
+  }
+
+  .st-alert__icon {
+    flex: none;
+    inline-size: 1.15rem;
+    block-size: 1.15rem;
+    margin-block-start: 0.1rem;
+    color: var(--warning); /* icon-sized non-text, needs 3:1; 11.49:1 on --elev-1 */
+  }
+
+  .st-alert__icon svg {
+    inline-size: 100%;
+    block-size: 100%;
+  }
+
+  .st-alert__main {
+    flex: 1 1 auto;
+    min-inline-size: 0;
+  }
+
+  .st-alert__title {
+    font-size: var(--t-sm);
+    line-height: var(--lh-sm);
+    letter-spacing: var(--track-sm);
+    font-weight: var(--weight-semibold);
+    color: var(--text); /* 17.72:1 on --elev-1 */
+  }
+
+  .st-alert__body {
+    margin-block-start: var(--s-1);
+    font-size: var(--t-xs);
+    line-height: var(--lh-xs);
+    letter-spacing: var(--track-xs);
+    color: var(--text-muted); /* 7.38:1 on --elev-1 */
+  }
+
+  .st-alert__act {
+    margin-block-start: var(--s-4);
+  }
+</style>

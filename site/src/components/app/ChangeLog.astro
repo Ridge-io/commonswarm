@@ -1,0 +1,147 @@
+---
+/*
+ * What changed — the same events as the feed, compressed to one line each.
+ *
+ * WHY IT IS NOT A DUPLICATE OF THE FEED. The feed answers "what did somebody say"; this
+ * answers "what is different since I last looked". The difference shows up in the third
+ * entry: an expiry is a change in the workspace that nobody wrote. No agent ran a command
+ * when Juno's heads-up ran out — it simply stopped being current, and a feed of authored
+ * signals can never contain that row. That is the entry that earns this panel its space.
+ *
+ * VOCABULARY. "Ran out", not "revoked". "Heads-up", not "claim" or "lock". Nothing here was
+ * granted or withdrawn by anybody; a signal carried an --until and the clock passed it.
+ *
+ * The tone dots are decorative and marked as such: every row's meaning is in its sentence.
+ */
+
+import Card from "../ui/Card.astro";
+import Badge from "../ui/Badge.astro";
+
+interface Change {
+  age: string;
+  text: string;
+  ref: string | null;
+  tone: "announced" | "note" | "expired";
+}
+
+interface Props {
+  changes: Change[];
+}
+
+const { changes } = Astro.props;
+
+const TONE_DOT: Record<Change["tone"], string> = {
+  announced: "dot--accent",
+  note: "dot--info",
+  expired: "dot--warning",
+};
+---
+
+<Card title="What changed" headingLevel={2} class="chg">
+  <Badge slot="actions" size="sm">Sample</Badge>
+
+  <ol class="chg__list">
+    {
+      changes.map((change, i) => (
+        <li class="chg__row" style={`--i:${i}`}>
+          <span class="chg__rail" aria-hidden="true">
+            <span class:list={["dot", TONE_DOT[change.tone]]} />
+          </span>
+
+          <div class="chg__main">
+            <p class="chg__text">{change.text}</p>
+            {change.ref && <code class="chg__ref">{change.ref}</code>}
+          </div>
+
+          <span class="chg__age tabular">{change.age}</span>
+        </li>
+      ))
+    }
+  </ol>
+</Card>
+
+<style>
+  .chg__list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+  }
+
+  .chg__row {
+    position: relative;
+    display: grid;
+    grid-template-columns: 0.9rem minmax(0, 1fr) auto;
+    gap: var(--s-3);
+    padding-block: var(--s-3);
+    animation: chg-row-in var(--dur-3) var(--ease-decelerate) both;
+    animation-delay: calc(var(--i, 0) * 40ms);
+  }
+
+  @keyframes chg-row-in {
+    from {
+      opacity: 0;
+      transform: translate3d(0, 5px, 0);
+    }
+  }
+
+  .chg__row:first-child {
+    padding-block-start: 0;
+  }
+
+  .chg__row:last-child {
+    padding-block-end: 0;
+  }
+
+  /* The rail. Drawn through the dot's column and stopped at the last row, so the timeline
+     reads as a thread rather than a list of bullets. */
+  .chg__rail {
+    display: flex;
+    justify-content: center;
+    /* Aligns the dot with the first line of the text next to it. */
+    padding-block-start: 0.42em;
+  }
+
+  .chg__row:not(:last-child) .chg__rail::after {
+    content: "";
+    position: absolute;
+    inset-block-start: 1.1em;
+    inset-block-end: -0.35em;
+    inset-inline-start: 0.44rem;
+    inline-size: 1px;
+    background: var(--border);
+  }
+
+  .chg__main {
+    min-inline-size: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+
+  .chg__text {
+    font-size: var(--t-sm);
+    line-height: var(--lh-sm);
+    letter-spacing: var(--track-sm);
+    color: var(--text);
+    overflow-wrap: anywhere;
+  }
+
+  .chg__ref {
+    align-self: start;
+    max-inline-size: 100%;
+    padding: 0.08em 0.34em;
+    font-size: var(--t-2xs);
+    color: var(--text-muted);
+    background: var(--elev-1);
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .chg__age {
+    font-size: var(--t-xs);
+    line-height: var(--lh-sm);
+    color: var(--text-muted);
+    white-space: nowrap;
+    flex: none;
+  }
+</style>

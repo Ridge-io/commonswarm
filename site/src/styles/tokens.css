@@ -1,101 +1,319 @@
 /* coswarm design tokens
  *
- * Deliberately NOT workbench.md's palette. They own warm orange on near-black. We take a
- * cooler, denser dark with a single indigo accent and a separate "verified" green, because
- * our pitch is authority and provenance rather than zero-friction warmth. Two accents, each
- * with one job: indigo = action, green = something the system has actually confirmed.
+ * A cool, dense near-black with a single indigo accent. Indigo = the thing you can act on.
+ * Green = a teammate has announced something and it landed. The palette stays quiet so the
+ * shared feed — names, commands, what changed — is the loudest thing on the page.
+ *
+ * CONTRAST: every ratio in this file was computed against the WCAG 2.1 formula, not guessed.
+ * The auditor composites translucent tints over their real backdrop before measuring. Numbers
+ * are stated as "X.XX:1" next to the token that owns them. If you change a colour, re-run the
+ * audit before you commit — several of these clear AA by less than a tenth of a point.
+ *
+ * NAMING: tokens added in this pass are semantic (--success, --danger, --elev-*). The older
+ * literal names (--verified, --warn) are kept as aliases because components outside this file
+ * already consume them; removing them would break files this stylesheet does not own.
  */
 
 :root {
-  /* Surfaces — a cool near-black, stepped so cards read without borders doing all the work */
-  --bg: #08090c;
-  --bg-raised: #0d0f14;
-  --surface: #12151c;
-  --surface-2: #171b24;
-  --border: #232837;
-  --border-strong: #313849;
+  /* ======================================================================
+     1. SURFACE ELEVATION
+     A five-step ladder. Each step is a real luminance increase, so a card on
+     a card on the page reads as three planes without borders doing the work.
+     Body text (--text) clears AA on all five; the ratio is noted per step.
+     ====================================================================== */
+  --elev-0: #08090c; /* page            --text 18.40:1  --text-muted 7.66:1 */
+  --elev-1: #0d0f14; /* raised/sunken   --text 17.72:1  --text-muted 7.38:1 */
+  --elev-2: #12151c; /* card            --text 16.88:1  --text-muted 7.03:1 */
+  --elev-3: #171b24; /* card-on-card    --text 15.93:1  --text-muted 6.63:1 */
+  --elev-4: #1e232f; /* popover/menu    --text 14.52:1  --text-muted 6.05:1 */
 
-  /* Ink */
-  --text: #f4f6fa;
-  --text-muted: #98a1b3;
-  --text-faint: #6b7488;
+  /* Existing names, kept as the public surface API. */
+  --bg: var(--elev-0);
+  --bg-raised: var(--elev-1);
+  --surface: var(--elev-2);
+  --surface-2: var(--elev-3);
+  --surface-3: var(--elev-4);
 
-  /* Accents */
-  --accent: #7c6cff;
-  --accent-bright: #9b8fff;
+  /* Hairlines. These are DECORATIVE: they separate planes that are already
+     distinguishable by luminance, so WCAG 1.4.11's 3:1 does not apply to them
+     (it applies to boundaries that are the ONLY way to identify a control).
+     --border-interactive is the one to use when a border IS the control edge,
+     e.g. an input or a checkbox — it is the only one that clears 3:1. */
+  --border: #232837; /* decorative — 1.36:1 on --bg, by design */
+  --border-strong: #313849; /* decorative — 1.70:1 on --bg, by design */
+  --border-interactive: #737d92; /* 4.81:1 on --bg, 4.42:1 on --elev-2 — control edges */
+
+  /* ======================================================================
+     2. INK
+     ====================================================================== */
+  --text: #f4f6fa; /* body. 18.40:1 on --bg, 14.52:1 on --elev-4 */
+  --text-muted: #98a1b3; /* secondary body. 7.66:1 on --bg, 6.05:1 on --elev-4 */
+
+  /* --text-faint IS TEXT. It used to be #6b7488 (4.25:1 on --bg, 3.35:1 on --elev-4) with a
+   * comment above it saying "LARGE TEXT / non-text only — never set body copy in it". A
+   * runtime audit — composite each element's real backdrop, then measure — found 28 SMALL-text
+   * elements failing AA on the landing page alone: .sig__role (11px), .sig__age (12px),
+   * .sig__exp (11px), .demo__flag, .demo__note, .demo__cmd-label, .callout__foot,
+   * .verbs__label-text, .verbs__foot, .invite__k, .hero__caption and .demo__disclaimer. Not
+   * one of them qualifies for the WCAG large-text exemption (24px, or 18.66px bold). The rule
+   * was written, ignored at scale, and the two honesty disclosures on the site —
+   * "Illustration. Sample data…" and "<host> is a placeholder…" — were the least legible copy
+   * on the page as a result.
+   *
+   * A rule that dozens of call sites break is not a rule, it is a note. So the token was
+   * moved to where it was actually being used rather than the call sites being moved to where
+   * the token said they should be. Measured (WCAG 2.1 formula, opaque backdrops):
+   *   --elev-0 6.47:1   --elev-1 6.23:1   --elev-2 5.93:1   --elev-3 5.60:1   --elev-4 5.10:1
+   * AA for normal text on all five, with the tightest step still 0.6 clear of the line.
+   *
+   * The cost, stated honestly: the ink ramp compresses. --text-muted to --text-faint used to be
+   * a 1.80x luminance step and is now 1.18x, so the two no longer separate on colour alone at a
+   * glance. Below tertiary, use size, weight or position to demote something — not a fourth,
+   * dimmer grey. There is deliberately no token for that. */
+  --text-faint: #8b93a6; /* tertiary body. 6.47:1 on --bg, 5.10:1 on --elev-4 */
+
+  /* THERE IS NO FOURTH GREY, AND THAT IS THE WHOLE RULE — see the paragraph above.
+   *
+   * The old faint value (#6b7488) survived this file's last pass as `--text-dim`, reserved by
+   * comment for "non-text only". It was deleted, because it had no job left. Checked, not
+   * assumed:
+   *   1. NO CALLERS. `grep -rn "var(--text-dim)" src/` returned zero hits — the token and its
+   *      own prefers-contrast override were the only two lines in the repo that mentioned it.
+   *   2. NOTHING TO MIGRATE TO IT. The five non-text uses of --text-faint in the codebase are
+   *      an input's hover edge (ui.css .ui-field__box:hover), a status dot (global.css .dot),
+   *      a code block's scrollbar thumb (NewWorkspace.astro), a demo hover border and an
+   *      avatar fallback fill. Every one of them has to be SEEN, and #6b7488 is dimmer than
+   *      what they use now — pointing them here would be a contrast regression, not a
+   *      migration. Non-text that must read as an edge already has --border-interactive
+   *      (4.81:1); non-text that is decorative already has --border / --border-strong.
+   *      --text-dim sat between the two with no case it was the right answer to.
+   *   3. IT CONTRADICTED THE PARAGRAPH IT SAT UNDER, which ends "Below tertiary, use size,
+   *      weight or position — not a fourth, dimmer grey. There is deliberately no token for
+   *      that." The next line then declared a fourth, dimmer grey.
+   * If you want something quieter than --text-faint: smaller, lighter, or further down the
+   * page. Not dimmer. */
+
+  /* ======================================================================
+     3. ACCENT
+     ====================================================================== */
+  --accent: #7c6cff; /* fills and strokes, not text on dark */
+  --accent-bright: #9b8fff; /* accent AS TEXT. 7.36:1 on --bg, 5.81:1 on --elev-4 */
   --accent-dim: rgba(124, 108, 255, 0.14);
-  --verified: #34d399;
-  --verified-dim: rgba(52, 211, 153, 0.13);
-  --warn: #fbbf24;
-  --danger: #f87171;
+  --accent-ink: #0a0b14; /* ink ON an accent fill. 5.09:1 on --accent, 7.25:1 on --accent-bright.
+                          * The obvious alternative fails: #ffffff on --accent 3.86:1 — under AA
+                          * for the button-sized text that actually sits there. */
 
-  /* Type — one variable family, self-hosted; mono for the many commands we show */
+  /* ======================================================================
+     4. SEMANTIC STATUS
+     Each has three parts: the colour AS TEXT on dark, a -dim tint to fill a
+     badge, and an -ink for text sitting ON the full-strength colour.
+     ====================================================================== */
+  --success: #34d399; /* as text: 10.36:1 on --bg, 8.17:1 on --elev-4 */
+  --success-dim: rgba(52, 211, 153, 0.13);
+  --success-ink: #04140d; /* on --success: 9.83:1 */
+
+  --warning: #fbbf24; /* as text: 11.93:1 on --bg, 9.41:1 on --elev-4 */
+  --warning-dim: rgba(251, 191, 36, 0.13);
+  --warning-ink: #1a1200; /* on --warning: 11.13:1 */
+
+  --danger: #f87171; /* as text: 7.20:1 on --bg, 5.68:1 on --elev-4 */
+  --danger-dim: rgba(248, 113, 113, 0.14);
+  --danger-ink: #1a0505; /* on --danger: 7.11:1 */
+
+  --info: #7dd3fc; /* as text: 11.94:1 on --bg, 9.42:1 on --elev-4 */
+  --info-dim: rgba(125, 211, 252, 0.13);
+  --info-ink: #04141c; /* on --info: 11.23:1 */
+
+  /* Aliases for components that predate the semantic names. Do not remove:
+     hero.css and the feed components consume these directly. */
+  --verified: var(--success);
+  --verified-dim: var(--success-dim);
+  --warn: var(--warning);
+
+  /* ======================================================================
+     5. FOCUS
+     A TWO-TONE ring. This is the fix for a real bug in the previous palette:
+     the single light ring was drawn straight onto accent and danger fills and
+     disappeared there — --focus on --accent 1.94:1, --focus on --danger 1.39:1,
+     both far under the 3:1 that WCAG 1.4.11 requires of a focus indicator. The
+     old comment claimed it "clears AA against every surface"; it did not.
+
+     The ring is now a dark halo hugging the element plus a light outer band,
+     so whichever surface it lands on, one of the two bands contrasts:
+       --focus-halo on --accent   5.25:1     --focus on --bg        10.02:1
+       --focus-halo on --success 10.54:1     --focus on --elev-4     7.91:1
+       --focus-halo on --warning 12.13:1     --focus on --elev-2     9.20:1
+       --focus-halo on --danger   7.32:1
+     ====================================================================== */
+  --focus: #a5b4ff;
+  --focus-halo: #05060a;
+  --focus-ring: 0 0 0 2px var(--focus-halo), 0 0 0 4px var(--focus);
+
+  /* ======================================================================
+     6. TYPE
+     ====================================================================== */
   --font-sans: "InterVariable", Inter, -apple-system, BlinkMacSystemFont, "Segoe UI",
     Roboto, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
 
-  /* Type scale — 1.25 minor third at the small end, widening through the display sizes.
-   * clamp() everywhere so the page never needs a mobile-specific scale. */
-  --t-xs: 0.75rem;
-  --t-sm: 0.875rem;
-  --t-base: 1rem;
-  --t-lg: 1.125rem;
+  /* A 1.25 minor third through the reading sizes, opening to ~1.45 across the
+     display sizes so headlines separate properly. clamp() on everything above
+     --t-lg, so there is no second mobile scale to keep in sync. */
+  --t-2xs: 0.6875rem; /* 11px — legal lines, table micro-labels */
+  --t-xs: 0.75rem; /* 12px */
+  --t-sm: 0.875rem; /* 14px */
+  --t-base: 1rem; /* 16px */
+  --t-lg: 1.125rem; /* 18px */
   --t-xl: clamp(1.25rem, 0.5vw + 1.1rem, 1.5rem);
   --t-2xl: clamp(1.6rem, 1.2vw + 1.3rem, 2.1rem);
   --t-3xl: clamp(2.1rem, 2.4vw + 1.5rem, 3.1rem);
-  --t-display: clamp(2.9rem, 6.2vw + 1rem, 5.6rem);
+  /* INTEGRATION — ONE DISPLAY SIZE FOR THE WHOLE SITE. This was
+     clamp(2.9rem, 6.2vw + 1rem, 5.6rem), which resolves to 89.6px at 1440 and 46.4px at 375.
+     The landing hero overrode it down to the ramp below because that size sets two words a
+     line in a two-column hero; /download did not override it. Measured side by side, the
+     result was that a secondary utility page's h1 rendered 38% LARGER than the front door's
+     (89.6px vs 64.8px) — the loudest type on the site was on the install page. The landing's
+     measured ramp is now the token, so .h-display is one size everywhere and the override it
+     replaced is deleted rather than duplicated. At 1440 this is 64.8px, at 375 it is 40px. */
+  --t-display: clamp(2.5rem, 4.4vw + 0.9rem, 4.05rem);
 
-  --lh-tight: 1.04;
-  --lh-snug: 1.22;
-  --lh-body: 1.62;
+  /* Line-height PER SIZE, not one global value. Small text needs air to stay
+     scannable; display text needs to close up or the lines drift apart. */
+  --lh-2xs: 1.45;
+  --lh-xs: 1.45;
+  --lh-sm: 1.55;
+  --lh-base: 1.62;
+  --lh-lg: 1.55;
+  --lh-xl: 1.45;
+  --lh-2xl: 1.28;
+  --lh-3xl: 1.16;
+  --lh-display: 1.04;
 
-  /* Optical letter-spacing: large type needs negative tracking, small caps need positive */
+  /* Legacy line-height names, still consumed by hero.css. */
+  --lh-tight: var(--lh-display);
+  --lh-snug: var(--lh-2xl);
+  --lh-body: var(--lh-base);
+
+  /* Optical tracking. Large type tightens, small uppercase opens up. The rule
+     is: tracking moves opposite to size. */
   --track-display: -0.035em;
+  --track-3xl: -0.028em;
   --track-head: -0.022em;
-  --track-eyebrow: 0.14em;
+  --track-xl: -0.014em;
+  --track-base: 0em;
+  --track-sm: 0.004em;
+  --track-xs: 0.01em;
+  --track-eyebrow: 0.14em; /* uppercase micro-labels */
 
-  /* Space — 4px base */
+  --weight-body: 400;
+  --weight-medium: 520;
+  --weight-semibold: 600;
+  --weight-head: 660;
+  --weight-display: 700;
+
+  /* ======================================================================
+     7. SPACE — one 4px rhythm; everything below is derived from it
+     ====================================================================== */
   --s-1: 0.25rem;
   --s-2: 0.5rem;
   --s-3: 0.75rem;
   --s-4: 1rem;
+  --s-5: 1.25rem;
   --s-6: 1.5rem;
   --s-8: 2rem;
+  --s-10: 2.5rem;
   --s-12: 3rem;
   --s-16: 4rem;
   --s-24: 6rem;
   --s-32: 8rem;
 
+  /* Derived rhythm. Components consume THESE, not raw steps, so that changing
+     the density of the product is one edit here instead of fifty in components. */
+  --pad-section: clamp(var(--s-16), 9vw, var(--s-32));
+  --pad-section-tight: clamp(var(--s-12), 6vw, var(--s-24));
+  --pad-card: var(--s-6);
+  --pad-card-lg: var(--s-8);
+  --pad-card-sm: var(--s-4);
+  --stack-xs: var(--s-2); /* label → control */
+  --stack-sm: var(--s-3); /* heading → its own paragraph */
+  --stack-md: var(--s-4); /* paragraph → paragraph */
+  --stack-lg: var(--s-6); /* block → block inside a card */
+  --stack-xl: var(--s-10); /* heading group → the content it introduces */
+  --gap-inline: var(--s-3); /* buttons in a row, chips in a row */
+  --gap-grid: var(--s-4); /* grid/flex card gutters */
+
   --radius-sm: 6px;
   --radius: 10px;
   --radius-lg: 16px;
   --radius-xl: 22px;
+  --radius-pill: 999px;
 
   --measure: 34rem;
-  --measure-wide: 44rem; /* ledes and intro paragraphs, which sit at a larger size than prose */
+  --measure-wide: 44rem;
   --page: 76rem;
 
-  /* Shell metrics. The gutter is a token because the header, the page container and any
-   * full-bleed section have to agree on it to the pixel or the left edge visibly drifts. */
+  /* Shell metrics. The gutter is a token because the header, the page container
+     and any full-bleed section must agree to the pixel or the left edge drifts. */
   --gutter: clamp(1.25rem, 4vw, 2.5rem);
   --header-h: 4rem;
 
-  /* Foreground for text sitting ON --accent. White on #7c6cff is only 3.86:1, which fails
-   * AA for button-sized text, so the accent surfaces take near-black ink instead (5.4:1). */
-  --accent-ink: #0a0b14;
-
-  /* Focus ring. Deliberately lighter than --accent-bright so it clears AA against every
-   * surface in the palette, including the accent button it may be drawn next to. */
-  --focus: #a5b4ff;
-
-  /* Depth — dark UI needs a light top edge more than it needs a drop shadow */
+  /* ======================================================================
+     8. DEPTH — dark UI needs a light top edge more than a drop shadow
+     ====================================================================== */
   --ring-top: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 8px 24px -12px rgba(0, 0, 0, 0.6);
   --shadow-lg: 0 24px 60px -18px rgba(0, 0, 0, 0.75);
   --shadow-glow: 0 0 0 1px rgba(124, 108, 255, 0.28), 0 18px 50px -14px rgba(124, 108, 255, 0.3);
 
+  /* ======================================================================
+     9. MOTION — full definitions and utilities live in motion.css
+     ====================================================================== */
+  --dur-1: 100ms; /* state flips: colour, opacity */
+  --dur-2: 150ms; /* hover, focus, press */
+  --dur-3: 250ms; /* entrances, small reveals */
+  --dur-4: 400ms; /* page-level or large-surface reveals */
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --ease-decelerate: cubic-bezier(0, 0, 0, 1);
+  --ease-accelerate: cubic-bezier(0.3, 0, 1, 1);
+  --ease-spring: cubic-bezier(0.22, 1.2, 0.36, 1);
+
+  /* Legacy motion names — hero.css and global.css transitions use these. */
   --ease: cubic-bezier(0.22, 1, 0.36, 1);
   --dur: 200ms;
 }
 
-/* The page commits to dark. A light theme is a real project, not a media query bolted on —
- * a half-done light mode would read worse than an intentional dark-only page. */
+/* NO prefers-contrast BLOCK IN THIS FILE. The whole ramp — --text-muted, --text-faint,
+   --border, --border-strong, --border-interactive and the 3px focus ring — lives in one place,
+   global.css:804, so there is exactly one list to keep in sync. This file used to carry a
+   second block overriding --text-dim, which nothing read; it went with the token. If you add a
+   contrast override, add it to the block in global.css rather than opening a second one here:
+   tokens.css is @imported at the top of global.css, so a collision would resolve silently in
+   global.css's favour and the loser would look like a colour that simply does not apply. */
+
+/* ==========================================================================
+   DARK / LIGHT — a deliberate commitment, not an oversight
+   ==========================================================================
+   The product is dark-only today and that is a decision, not a gap. Every
+   ratio above was computed against a dark backdrop, and the two visual devices
+   the page leans on — the light top edge (--ring-top) and the indigo glow
+   (--shadow-glow) — only read as depth on a dark surface. A half-done light
+   mode would look worse than an intentional dark one.
+
+   What adding light would actually cost, honestly:
+     1. Re-deriving the semantic ramp. --success/--warning/--info are tuned to
+        be light-on-dark; at 400-level they measure ~1.7:1 to 2.4:1 on white and
+        would every one of them fail. Light mode needs the 600/700 steps, which
+        is a second palette, not a filter.
+     2. Inverting the elevation model. Dark UI raises a surface by making it
+        lighter; light UI raises it with shadow. --elev-* and --ring-top both
+        stop meaning anything and have to be rebuilt.
+     3. --accent-ink flips from near-black to white, and the accent itself has
+        to darken to keep white legible on it.
+     4. A theme switch, its persistence, and the flash-of-wrong-theme problem.
+
+   Mechanically the file is ready: every colour is already a custom property on
+   :root, so light mode is a [data-theme="light"] block that re-declares them —
+   no component would need to change. The work is in the palette design, not
+   the plumbing. Until someone commits to doing (1) and (2) properly, the page
+   states color-scheme: dark and means it. */

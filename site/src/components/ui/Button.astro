@@ -1,0 +1,167 @@
+---
+/*
+ * Button — the one button in the product.
+ *
+ * Renders a real <button> or a real <a>; never a <div> with a click handler. The element is
+ * chosen by whether `href` is set, so a thing that navigates is a link and a thing that acts
+ * is a button, and both get their native keyboard behaviour for free.
+ *
+ * DISABLED LINKS. There is no disabled state for an <a> — the attribute does not exist and
+ * aria-disabled alone leaves it focusable and clickable. So a disabled or loading link is
+ * rendered WITHOUT href: that removes it from the tab order and makes activation impossible,
+ * while role="link" and aria-disabled keep it announced as an unavailable link rather than
+ * as plain text. This is the Spectrum/Primer resolution and it is the only one that actually
+ * stops the navigation.
+ *
+ * Do not "verify" that by reading the tabIndex property — an <a> with no href reports
+ * `tabIndex === 0` in Chrome while genuinely being skipped by Tab. Measured by walking the
+ * real tab order: focus moves from the preceding button straight past the disabled link to
+ * the next control, and a click on it does not change location.href.
+ *
+ * LOADING. The <button> is genuinely `disabled`, because aria-busy does not prevent a second
+ * click and a double-submitted form is the bug this state exists to avoid. The spinner takes
+ * the leading icon slot rather than replacing the label, so the button keeps its width and
+ * the layout does not jump under the pointer mid-click. global.css dims [aria-disabled] to
+ * 50%; ui.css puts a loading button back to full strength, because "busy" and "unavailable"
+ * should not look identical.
+ *
+ * ICON-ONLY buttons throw at BUILD time if they have no accessible name. A design system
+ * that lets an unlabelled icon button reach production has failed at the only job that
+ * matters here, and a build error is cheaper than an audit finding.
+ *
+ * CLASS NAMES ARE ONE CONVENTION. Every modifier is `--`: btn--primary, btn--secondary,
+ * btn--ghost, btn--danger, btn--sm, btn--lg, btn--icon, btn--block. This component used to
+ * emit `btn btn--lg btn-primary btn--block` — two BEM conventions inside one class list,
+ * visible in the shipped DOM — because global.css owned the single-dash halves. They were
+ * renamed rather than papered over; the maps below are now a straight `--` mapping and the
+ * grep that keeps it honest is `btn-[a-z]` against dist. See ui.css §1.
+ */
+
+import "../../styles/ui.css";
+
+type Variant = "primary" | "secondary" | "ghost" | "danger";
+type Size = "sm" | "md" | "lg";
+
+interface Props {
+  /** Visual weight. `primary` is the one action a screen is about. */
+  variant?: Variant;
+  /** `md` is 44px — the comfortable touch target. `sm` is given the height back on coarse pointers. */
+  size?: Size;
+  /** Present ⇒ renders an <a>. Absent ⇒ renders a <button>. */
+  href?: string;
+  /** <button> only. Defaults to "button" so a button inside a form never submits by accident. */
+  type?: "button" | "submit" | "reset";
+  disabled?: boolean;
+  /** Shows a spinner, marks the control busy, and blocks activation. */
+  loading?: boolean;
+  /** Square button whose only content is an icon. Requires `label`. */
+  iconOnly?: boolean;
+  /** Accessible name for an icon-only button. Ignored otherwise. */
+  label?: string;
+  /** Stretch to the width of the container. */
+  block?: boolean;
+  class?: string;
+  /** Anything else — data-*, aria-*, form, name, value — is forwarded to the element. */
+  [key: string]: unknown;
+}
+
+const {
+  variant = "primary",
+  size = "md",
+  href,
+  type = "button",
+  disabled = false,
+  loading = false,
+  iconOnly = false,
+  label,
+  block = false,
+  class: className,
+  ...rest
+} = Astro.props;
+
+const VARIANT_CLASS: Record<Variant, string> = {
+  primary: "btn--primary",
+  secondary: "btn--secondary",
+  ghost: "btn--ghost",
+  danger: "btn--danger",
+};
+
+const SIZE_CLASS: Record<Size, string | null> = {
+  sm: "btn--sm",
+  md: null, // the bare .btn
+  lg: "btn--lg",
+};
+
+const isLink = typeof href === "string";
+/* Loading is a form of unavailable: both must stop activation. */
+const inert = disabled || loading;
+
+const named = label ?? rest["aria-label"] ?? rest["aria-labelledby"];
+if (iconOnly && !named) {
+  throw new Error(
+    "ui/Button: an iconOnly button has no accessible name. Pass label=\"…\" (or aria-label / " +
+      "aria-labelledby). A square button containing only an <svg> is unlabelled to a screen " +
+      "reader, so this is a build error rather than something to find later."
+  );
+}
+
+const hasStart = Astro.slots.has("start");
+const hasEnd = Astro.slots.has("end");
+
+const Tag = isLink ? "a" : "button";
+
+const attrs: Record<string, unknown> = isLink
+  ? {
+      /* No href when inert — see the note above. This is what actually disables the link. */
+      href: inert ? undefined : href,
+      role: inert ? "link" : undefined,
+      "aria-disabled": inert ? "true" : undefined,
+    }
+  : {
+      type,
+      disabled: inert || undefined,
+    };
+---
+
+<Tag
+  class:list={[
+    "btn",
+    VARIANT_CLASS[variant],
+    SIZE_CLASS[size],
+    iconOnly && "btn--icon",
+    block && "btn--block",
+    loading && "is-loading",
+    className,
+  ]}
+  aria-busy={loading ? "true" : undefined}
+  aria-label={iconOnly ? label : undefined}
+  {...attrs}
+  {...rest}
+>
+  {loading && <span class="btn__spinner" aria-hidden="true"></span>}
+  {
+    !loading && hasStart && (
+      <span class="btn__icon" aria-hidden="true">
+        <slot name="start" />
+      </span>
+    )
+  }
+  {
+    iconOnly ? (
+      !loading && (
+        <span class="btn__icon" aria-hidden="true">
+          <slot />
+        </span>
+      )
+    ) : (
+      <slot />
+    )
+  }
+  {
+    hasEnd && (
+      <span class="btn__icon" aria-hidden="true">
+        <slot name="end" />
+      </span>
+    )
+  }
+</Tag>

@@ -1,0 +1,206 @@
+---
+/*
+ * Toast — the notification stack. Render this ONCE, near the end of a layout; it is the host
+ * for every toast on the page, not one toast.
+ *
+ *   import Toast from "../components/ui/Toast.astro";
+ *   <Toast />
+ *
+ *   window.uiToast({ title: "Copied the invite link", variant: "success" });
+ *   document.dispatchEvent(new CustomEvent("ui:toast", { detail: { title: "Saved" } }));
+ *
+ * The event form exists so a script that never imported anything — inline handlers, another
+ * island — can still raise one.
+ *
+ * WHY THE CONTAINER IS SERVER-RENDERED AND EMPTY. A live region has to be in the DOM and
+ * registered by the assistive tech BEFORE content is inserted into it. Creating the <ol> and
+ * the toast in the same tick is the classic bug: the region is brand new, nothing changed
+ * inside it as far as the screen reader is concerned, and nothing is announced. So the empty
+ * <ol aria-live="polite"> ships in the HTML and only its children are ever added.
+ *
+ * aria-live="polite", NOT "assertive". Assertive interrupts whatever is being read. A toast
+ * is by definition not urgent enough to justify that — anything that is should be an inline
+ * error next to the control, not a message in the corner that disappears.
+ *
+ * AUTO-DISMISS PAUSES on hover and on keyboard focus. A message that vanishes while it is
+ * being read, or while the reader is tabbing towards its dismiss button, is a trap; the timer
+ * is measured in remaining-time so pausing twice does not shorten it.
+ *
+ * DISMISSAL DOES NOT DEPEND ON transitionend. Under prefers-reduced-motion motion.css sets
+ * `transition: none !important`, so transitionend never fires and a toast wired to it would
+ * stay on screen forever. Removal is on a timer, and the reduced-motion case is removed
+ * immediately.
+ *
+ * Every style lives in ui.css §6, not in a scoped block here: toasts are built by script and
+ * never receive Astro's scope id, so a scoped rule would not reach a single one of them.
+ */
+
+import "../../styles/ui.css";
+
+interface Props {
+  /** Accessible name for the stack. */
+  label?: string;
+  /** Oldest toasts beyond this are removed, so the stack cannot cover the page. */
+  max?: number;
+  /** Default lifetime in ms. Pass 0 in a call to make that toast stay until dismissed. */
+  duration?: number;
+  /** Label for the per-toast dismiss button. */
+  dismissLabel?: string;
+}
+
+const {
+  label = "Notifications",
+  max = 4,
+  duration = 5000,
+  dismissLabel = "Dismiss",
+} = Astro.props;
+---
+
+<ol
+  class="ui-toasts"
+  id="ui-toasts"
+  aria-live="polite"
+  aria-atomic="false"
+  aria-label={label}
+  data-max={max}
+  data-duration={duration}
+  data-dismiss-label={dismissLabel}
+>
+</ol>
+
+<script>
+  // The toast runtime. Exposed as window.uiToast(...) and as the "ui:toast" document event.
+
+  type Variant = "neutral" | "success" | "warning" | "danger" | "info";
+
+  interface ToastOptions {
+    title: string;
+    /** Optional second line. */
+    body?: string;
+    variant?: Variant;
+    /** Lifetime in ms. 0 (or anything ≤ 0) means it stays until dismissed. */
+    duration?: number;
+  }
+
+  const ICONS: Record<Variant, string> = {
+    neutral: '<circle cx="12" cy="12" r="9"/><path d="M12 8.2v.2M12 11.5v4.3"/>',
+    success: '<circle cx="12" cy="12" r="9"/><path d="M8.2 12.3 11 15l4.8-5.4"/>',
+    warning: '<path d="M12 4.5 21 19.5H3z"/><path d="M12 10v4M12 17v.2"/>',
+    danger: '<circle cx="12" cy="12" r="9"/><path d="M15 9l-6 6M9 9l6 6"/>',
+    info: '<circle cx="12" cy="12" r="9"/><path d="M12 8.2v.2M12 11.5v4.3"/>',
+  };
+
+  const CLOSE_ICON = '<path d="M6 6l12 12M18 6L6 18"/>';
+
+  const svg = (paths: string) =>
+    `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">${paths}</svg>`;
+
+  const reduced = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  function host(): HTMLOListElement | null {
+    return document.getElementById("ui-toasts") as HTMLOListElement | null;
+  }
+
+  function dismiss(el: HTMLElement): void {
+    if (el.dataset.leaving) return;
+    el.dataset.leaving = "1";
+    el.classList.add("is-leaving");
+    // Never wait on transitionend: with prefers-reduced-motion the transition is switched
+    // off entirely and the event would never arrive, leaving the toast on screen forever.
+    window.setTimeout(() => el.remove(), reduced() ? 0 : 180);
+  }
+
+  function show(opts: ToastOptions): HTMLElement | null {
+    const stack = host();
+    if (!stack) return null;
+
+    const variant: Variant = opts.variant ?? "neutral";
+    const fallback = Number(stack.dataset.duration ?? 5000);
+    const life = opts.duration === undefined ? fallback : opts.duration;
+    const max = Number(stack.dataset.max ?? 4);
+
+    const el = document.createElement("li");
+    el.className = `ui-toast ui-toast--${variant}`;
+
+    const icon = document.createElement("span");
+    icon.className = "ui-toast__icon";
+    icon.innerHTML = svg(ICONS[variant]);
+
+    const main = document.createElement("div");
+    main.className = "ui-toast__main";
+
+    const title = document.createElement("p");
+    title.className = "ui-toast__title";
+    // textContent, never innerHTML: the caller's string is data, not markup.
+    title.textContent = opts.title;
+    main.appendChild(title);
+
+    if (opts.body) {
+      const body = document.createElement("p");
+      body.className = "ui-toast__body";
+      body.textContent = opts.body;
+      main.appendChild(body);
+    }
+
+    const close = document.createElement("button");
+    close.type = "button";
+    close.className = "btn btn--sm btn--icon btn--ghost ui-toast__close";
+    close.setAttribute("aria-label", stack.dataset.dismissLabel || "Dismiss");
+    close.innerHTML = `<span class="btn__icon" aria-hidden="true">${svg(CLOSE_ICON)}</span>`;
+    close.addEventListener("click", () => dismiss(el));
+
+    el.append(icon, main, close);
+    stack.appendChild(el);
+
+    // Cap the stack from the OLD end. Dropping the newest would throw away the message the
+    // user just triggered, which is the one they are waiting for.
+    while (stack.children.length > max && stack.firstElementChild) {
+      const oldest = stack.firstElementChild as HTMLElement;
+      if (oldest === el) break;
+      oldest.remove();
+    }
+
+    if (life > 0) {
+      // Remaining-time accounting rather than a fixed clearTimeout/setTimeout pair, so that
+      // hovering twice does not restart the clock and does not shorten it either.
+      let remaining = life;
+      let startedAt = Date.now();
+      let timer = window.setTimeout(() => dismiss(el), remaining);
+
+      const pause = () => {
+        window.clearTimeout(timer);
+        remaining -= Date.now() - startedAt;
+      };
+      const resume = () => {
+        if (remaining <= 0) return dismiss(el);
+        startedAt = Date.now();
+        timer = window.setTimeout(() => dismiss(el), remaining);
+      };
+
+      el.addEventListener("mouseenter", pause);
+      el.addEventListener("mouseleave", resume);
+      // Keyboard users need the same pause: the timer must not run out while someone is
+      // tabbing towards the dismiss button inside the toast.
+      el.addEventListener("focusin", pause);
+      el.addEventListener("focusout", (e) => {
+        if (!el.contains(e.relatedTarget as Node | null)) resume();
+      });
+    }
+
+    return el;
+  }
+
+  declare global {
+    interface Window {
+      uiToast: (opts: ToastOptions) => HTMLElement | null;
+    }
+  }
+
+  window.uiToast = show;
+
+  // Event form, for callers that cannot import this module.
+  document.addEventListener("ui:toast", (e) => {
+    const detail = (e as CustomEvent<ToastOptions>).detail;
+    if (detail?.title) show(detail);
+  });
+</script>

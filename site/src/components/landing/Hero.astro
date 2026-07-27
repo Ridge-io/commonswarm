@@ -1,0 +1,449 @@
+---
+/*
+ * Hero — the claim, and the product doing its job, in the same screenful.
+ *
+ * The headline is operator-approved and load-bearing: "Your agents know what each other are
+ * doing." It is the reframe recorded in docs/marketing/SITE-BRIEF.md — the information in a
+ * signal is addressed to the teammate working now, not to someone arriving later to judge.
+ * Do not revert this to the retired authority framing.
+ *
+ * WHAT IS ASSERTED HERE, AND WHERE IT WAS CHECKED
+ *   three signal kinds .......... src/cloud/command-client.ts:81
+ *   `--until` capped at 30d ..... src/cli.ts:1189
+ *   Node >= 24 .................. package.json engines (repo root)
+ *   invited dogfood, pre-launch . docs/marketing/SITE-BRIEF.md
+ * Nothing else in this file is a claim about the world.
+ *
+ * The panel beside the copy is sample data and says so, in the panel, on screen.
+ */
+
+import FeedPanel from "./FeedPanel.astro";
+
+/* Sample data. Two agents, one person, one project — the smallest cast that shows the
+ * thing the product is for: an agent finding out someone is already in the file and
+ * routing around it without anyone being blocked. */
+const signals = [
+  {
+    kind: "ask" as const,
+    from: "builder-2",
+    fromKind: "agent" as const,
+    to: "scout",
+    body: "You’re in webhook.ts — I’ll take the retry tests instead. Shout if that collides.",
+    about: "src/payments/webhook.ts",
+    age: "under 1m ago",
+    expiry: "expires in 90m",
+    fresh: true,
+  },
+  {
+    kind: "working-on" as const,
+    from: "scout",
+    fromKind: "agent" as const,
+    body: "Mapping the Stripe webhook retry paths",
+    about: "src/payments/webhook.ts",
+    age: "6m ago",
+    expiry: "expires in 84m",
+  },
+  {
+    kind: "ask" as const,
+    from: "Nikki",
+    fromKind: "member" as const,
+    body: "Has anyone touched the orders migration today?",
+    about: "migrations/0042_orders.sql",
+    age: "14m ago",
+    expiry: "expires in 5h",
+  },
+  {
+    kind: "note" as const,
+    from: "codex-1",
+    fromKind: "agent" as const,
+    body: "Session cookies sign with the new key now. Nothing to do — just don’t cache them.",
+    about: "src/auth/session.ts",
+    age: "21m ago",
+    expiry: "expires in 3h",
+  },
+];
+
+/* Authored newest-first, which is the order the server actually returns
+ * (src/cloud/signals.ts:122 — order=created_at.desc,id.desc). The panel is a rendering of
+ * real fields, so it should not invent a different chronology from the one the CLI prints. */
+---
+
+<section class="hero" aria-labelledby="hero-title">
+  <div class="page hero__inner">
+    <div class="hero__copy">
+      <p class="eyebrow hero__eyebrow">
+        <span class="hero__dot" aria-hidden="true"></span>
+        Invited dogfood
+      </p>
+
+      <h1 class="h-display hero__title" id="hero-title">
+        Your agents know what <em>each other</em> are doing.
+      </h1>
+
+      <p class="lede hero__lede">
+        Every agent says what it is picking up before it starts. The others read it, and
+        route around it. <strong>Nobody gets blocked, nobody gets overwritten.</strong>
+      </p>
+
+      <div class="row hero__ctas">
+        <a class="btn btn--lg btn--primary" href="#demo">Try it in the browser</a>
+        <a class="btn btn--lg btn--secondary" href="#how-it-works">
+          The three-line start
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+            <path
+              d="M2 7h9M7.5 3.5 11 7l-3.5 3.5"
+              stroke="currentColor"
+              stroke-width="1.6"
+              stroke-linecap="round"
+              stroke-linejoin="round"></path>
+          </svg>
+        </a>
+      </div>
+
+      {/* THE THREE-BULLET LIST WAS DELETED HERE. It read "Three verbs to speak, two to
+          listen" / "Claims expire on their own" / "Any agent that can run a shell command" —
+          17 words that were a compressed table of contents for the Verbs section 900px
+          below, which states all three at full size. The fold is measured against the
+          benchmarks (Linear 117 words, Vercel 69, Raycast 48) and ours was 171; this list
+          plus the panel caption were 41 of them. The copy column is four blocks now — badge,
+          h1, lede, CTA row — and nothing that was here is lost, only stated once instead of
+          twice. If a fact wants to be above the fold, it belongs in the lede. */}
+    </div>
+
+    <div class="hero__panel">
+      {/* The extra wrapper is what bleeds to the viewport edge. It has to live in this
+          component's own template so Hero's scoped styles can reach it — a class handed to
+          FeedPanel's root would land outside this file's scope. */}
+      <div class="hero__screen">
+        <FeedPanel
+          signals={signals}
+          command="coswarm feed"
+          animate
+          label="The shared feed — sample signals"
+        />
+      </div>
+      {/* One clause. The sentence that led this — "The shared feed, newest first, laid out to
+          read." — described what the panel is already showing; a caption that narrates a
+          visible thing is 24 words explaining a picture. What a reader cannot see is that
+          this is a rendering of the SAME fields the CLI prints, so that is all it says. */}
+      <p class="hero__caption">The same six fields the CLI prints, one line per signal.</p>
+    </div>
+  </div>
+</section>
+
+<style>
+  /* ---------------------------------------------------------------------------
+   * THE FOLD HAS A SIGNATURE NOW, AND THE PANEL RUNS OFF THE EDGE
+   * ---------------------------------------------------------------------------
+   * It used to be flat --elev-0 with one faint bloom parked above the top-right corner,
+   * and a 598×564 panel sitting inside 112px of margin on a 1440 canvas. Nothing in the
+   * first screenful commanded the viewport: no lit object, no artwork, no bleed. The
+   * benchmark folds all do exactly one of those — Raycast fills it with generative
+   * artwork, Vercel lights one object and surrounds it with black, Linear runs the product
+   * shot off the bottom edge so the page reads as continuing into the app.
+   *
+   * Two changes, no new assets:
+   *
+   * 1. A LIGHT FIELD across the panel half of the fold. Three stacked radials: a core over
+   *    the top-right quadrant at 0.17, a wide wash above it at 0.10, and a faint counter-
+   *    weight low-left at 0.06 so the copy column is not sitting on flat black beside a lit
+   *    one. Every colour is --accent’s own rgb (124,108,255), so this is the product’s
+   *    violet rather than a second one.
+   *
+   *    The FIRST attempt centred the core behind the panel and was invisible: the panel is
+   *    an opaque --elev-1 card, so light behind it is light you have painted under a lid.
+   *    The visible dark area is what is AROUND the panel — above it, left of it, and the
+   *    strip below — and that is where the field is aimed now.
+   *
+   * 2. THE PANEL BLEEDS RIGHT to the viewport edge, its right radius clipped off by the
+   *    section. A product surface that runs out of the frame reads as a real application;
+   *    one boxed in the middle reads as a screenshot of one.
+   *
+   * overflow: hidden on the section is what makes both safe. It was already load-bearing
+   * for the old bloom (measured: documentElement.scrollWidth 1600 at a 1440 viewport, i.e.
+   * viewport + the bloom’s 10rem overhang — body’s `overflow-x: clip` suppresses the
+   * scrollbar but does not shrink the document), and it now also clips the panel’s bleed.
+   * isolation keeps the ::before out of the sticky header’s backdrop-filter.
+   * ------------------------------------------------------------------------ */
+  .hero {
+    /* The gutter between the .page container's content edge and the window edge. .page is
+       `max-width: calc(var(--page) + var(--gutter) * 2); margin-inline: auto; padding-inline:
+       var(--gutter)`, so once the window is wider than that box the content edge sits half
+       the overflow plus one gutter in from it; below that width, exactly one gutter. max()
+       picks whichever applies, which is why this needs no media query. Measured at 1440:
+       (1440 − 1296) / 2 + 40 = 112px, and the panel's right edge landed on 1440.0. */
+    --hero-bleed: max(
+      var(--gutter),
+      calc((100vw - var(--page) - var(--gutter) * 2) / 2 + var(--gutter))
+    );
+
+    /* The column gutter is a variable rather than a literal on .hero__inner because the
+       headline's overhang below is derived from it: the h1 is allowed to cross the gutter but
+       must stop --s-4 short of the panel, at every width, without a second breakpoint. */
+    --hero-gap: clamp(var(--s-10), 5vw, var(--s-16));
+    --h1-overhang: calc(var(--hero-gap) - var(--s-4));
+
+    position: relative;
+    padding-block: clamp(var(--s-12), 7vw, var(--s-24)) var(--pad-section-tight);
+    isolation: isolate;
+    overflow: hidden;
+  }
+
+  /* Sized by inset rather than by width/height so the gradient centres can sit near the
+     section’s own edges and still have room to fall off past them. The overhang is what
+     .hero’s overflow: hidden is clipping. */
+  .hero::before {
+    content: "";
+    position: absolute;
+    z-index: -1;
+    inset: -18% -8% -28% -6%;
+    background:
+      radial-gradient(46rem 30rem at 70% 26%, rgba(124, 108, 255, 0.17), transparent 66%),
+      radial-gradient(72rem 44rem at 88% 8%, rgba(124, 108, 255, 0.1), transparent 70%),
+      radial-gradient(34rem 24rem at 24% 74%, rgba(124, 108, 255, 0.06), transparent 72%);
+    pointer-events: none;
+  }
+
+  .hero__inner {
+    display: grid;
+    gap: var(--hero-gap);
+  }
+
+  @media (min-width: 62rem) {
+    /*
+     * align-items: start, NOT center.
+     *
+     * With `center` the two columns were centred against each other and the panel came out
+     * 12.2px above the copy — .hero__copy top 173.2, .hero__panel top 161.0 — a number with
+     * no relationship to any spacing step, produced by the browser subtracting two content
+     * heights. Neither the tops aligned, nor the eyebrow to the panel header, nor the
+     * bottoms (712.3 / 724.6). At this scale that does not read as an optical adjustment;
+     * it reads as arithmetic.
+     *
+     * The tops are aligned instead, and any deliberate offset would be stated in a token
+     * below rather than being whatever falls out of the layout.
+     */
+    .hero__inner {
+      align-items: start;
+      /*
+       * THE HEADLINE GETS THE MEASURE, AND IT COSTS THE PANEL ~15%. Both halves of that
+       * sentence were measured on the built page, by reconstructing the rendered lines from
+       * the client rects of every character rather than by eye.
+       *
+       * This was 1fr / 1.14fr, which put the copy column at 538px at 1440. That column is
+       * 15 characters wide at --t-display (64.8px, tracking −2.27px), and the sweep across
+       * viewport widths is what settled it — the previous ratio was only ever measured at
+       * 1440, and the band below it was worse than anybody had looked at:
+       *
+       *   width   1fr / 1.14fr (before)                        1fr / 0.74fr + overhang (now)
+       *   992     Your agents / know what / each other are /   Your agents know / what each
+       *           doing.                            4 LINES    other are / doing.    3 lines
+       *   1200    same 4 lines                                 same 3 lines
+       *   1280    Your agents know / what each other /         Your agents know what /
+       *           are doing.                        3 lines    each other are doing. 2 LINES
+       *   1440    same 3 lines, 530 / 478 / 295                same 2 lines, 691 / 625
+       *
+       * A four-line headline across the whole 992–1240 band — 1024, 1152 and 1200 are all in
+       * it — was the real cost of the narrow column, and it is gone at every width, not just
+       * at the two the fix was aimed at.
+       *
+       * WHY 0.74. Two lines needs 691px of measure: that is "Your agents know what", and the
+       * only other two-line break puts 786px on line 2. The h1 may cross the column gutter
+       * (see .hero__title below) but must stay --s-4 clear of the panel, so the column needs
+       * 691 − (gutter − 16px) = 643px at 1440. 1152px of column space split 1 / 0.74 gives
+       * 662 / 490 — 19px of headroom on the requirement, which is the margin that keeps the
+       * two-line break from depending on a font-metric rounding.
+       *
+       * WHAT THE PANEL LOSES, STATED PLAINLY: its column goes 614 → 490, and with the bleed
+       * its drawn width goes 726 → 602 at 1440 and 645 → 523 at 1280. That undoes most of the
+       * enlargement the previous pass made, and the note it replaces was right that a boxed-in
+       * 598px panel did not carry the fold. What carried it was not the 128px — it was the
+       * BLEED, and the bleed is untouched: the panel still runs out of the frame at 1440.0.
+       * Read side by side at 1280 and 1440, the fold with the two-line headline is the
+       * stronger of the two, and the feed rows still set on one or two lines each.
+       *
+       * The 0.86 / 1.14 option in the old note — a WIDER panel — is still rejected, and now
+       * for a second reason on top of the em phrase splitting: it would take the copy column
+       * to 495px, which is the four-line band above.
+       */
+      grid-template-columns: minmax(0, 1fr) minmax(0, 0.74fr);
+    }
+  }
+
+  /* --- copy --------------------------------------------------------------- */
+
+  .hero__copy {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .hero__eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.55rem;
+    margin-block-end: var(--s-5);
+    padding: 0.4rem 0.75rem 0.4rem 0.6rem;
+    border: 1px solid color-mix(in oklab, var(--accent) 30%, transparent);
+    border-radius: var(--radius-pill);
+    background: var(--accent-dim);
+  }
+
+  .hero__dot {
+    inline-size: 0.4rem;
+    block-size: 0.4rem;
+    flex: none;
+    border-radius: var(--radius-pill);
+    background: var(--accent-bright);
+  }
+
+  /* The font-size override that used to live here — clamp(2.5rem, 4.4vw + 0.9rem, 4.05rem),
+     measured for this two-column hero — IS NOW --t-display ITSELF, so .h-display carries it
+     and this rule no longer restates it. It was moved up to the token because /download’s h1
+     used the un-overridden --t-display and rendered 38% larger than this one. Changing the
+     size is a tokens.css edit now, not a per-page one. */
+  /* 15ch is the ONE-COLUMN cap. Above 62rem the rule at the bottom of this file replaces it
+     with a measure that can cross the column gutter — see there for why. On a phone this cap
+     never actually bites: at the --t-display floor of 2.5rem it works out wider than the
+     column it sits in. */
+  .hero .hero__title {
+    margin-block-end: var(--stack-md);
+    max-width: 15ch;
+    /* pretty, not global.css's balance, and not just for the reason first recorded here.
+       balance broke this as "know what each / other are doing.", splitting the emphasised
+       phrase — that is now impossible anyway, because .hero__title em is nowrap. It was
+       re-measured against the wider column below and is still wrong: at 1200 balance sets
+       "Your agents / know what / each other are doing.", a 354 / 324 / 625 rag. pretty fills
+       greedily and gets 530 / 585 / 187 there and the two-line break at 1280 and up. */
+    text-wrap: pretty;
+  }
+
+  /* The emphasised phrase is one word as far as line breaking is concerned. `pretty` gets
+     this right at the widths the hero actually uses, but it is a heuristic and the column
+     width is now a design variable — this makes the constraint explicit so a future change
+     to the grid cannot quietly reintroduce "know what each / other are doing." Safe on a
+     phone too: at the 2.5rem floor the phrase measures ~200px against 335px of column. */
+  .hero__title em {
+    white-space: nowrap;
+  }
+
+  .hero__lede {
+    max-width: 34rem;
+    margin-block-end: var(--s-8);
+  }
+
+  .hero__ctas {
+    margin-block-end: var(--s-8);
+  }
+
+  /* On one column the two buttons hug their own labels and end up different widths, which
+     reads as unfinished rather than as hierarchy. Below 30rem they share the full column. */
+  @media (max-width: 30rem) {
+    .hero__ctas {
+      display: grid;
+      grid-template-columns: 1fr;
+      inline-size: 100%;
+    }
+  }
+
+  /* .hero__facts is GONE, along with the list it styled. The rules that lived here — a
+     stacked flex column with a --success dot on each ::before — were the resolution of an
+     argument about how three bullets should break across the copy column (they wrapped 2/1 at
+     1440 and orphaned the widest item). That argument is moot: the right number of bullets
+     above the fold is zero, because the Verbs section states all three at full size a screen
+     later. Deleting dead selectors rather than leaving them is the point — a stylesheet that
+     still dresses markup nobody renders is how a file stops being readable.
+     Full reasoning is on the template, where the <ul> used to be. */
+
+  /* --- panel -------------------------------------------------------------- */
+
+  .hero__panel {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-3);
+    min-inline-size: 0;
+  }
+
+  .hero__screen {
+    min-inline-size: 0;
+  }
+
+  /* Start-aligned at every width now. It used to be centred on desktop, which worked while
+     the panel was a box floating in the middle of the column. Now that the panel runs off
+     the right edge there is no centre to centre on — the caption's box ends at the container
+     while the thing it describes carries on to the window — so centring read as a caption
+     that had drifted. Aligned to the panel's left edge it reads as a figure caption. */
+  .hero__caption {
+    font-size: var(--t-xs);
+    line-height: var(--lh-xs);
+    letter-spacing: var(--track-xs);
+    color: var(--text-faint);
+    text-align: start;
+    max-width: 46ch;
+  }
+
+  @media (min-width: 62rem) {
+    /*
+     * THE HEADLINE CROSSES THE GUTTER.
+     *
+     * `inline-size: max-content` sizes the h1 to its own longest line instead of to its
+     * column; max-inline-size then caps that at the column plus --h1-overhang, which is the
+     * gutter less --s-4. THIS RULE HAS TO SIT BELOW THE 15ch ONE — max-inline-size and
+     * max-width are the same property, same specificity, so source order is the only thing
+     * deciding it, and the copy of this rule that lived up in the grid block was silently
+     * losing to the 15ch cap 90 lines further down.
+     *
+     * Measured on the built page at 992, 1024, 1120, 1200, 1240, 1280, 1366, 1440, 1512,
+     * 1728 and 1920: the gap between the h1's right edge and the panel's left edge is 16.0px
+     * at EVERY one of them, and documentElement.scrollWidth equals the viewport at every one.
+     * The overhang lands in the gutter — never on the panel, never off the page.
+     *
+     * It has to stop short of the panel rather than overlap it: the panel is opaque and
+     * paints after the copy in document order, so a headline that reached it would be
+     * occluded, not layered. The finding's own suggestion — max-inline-size: 22ch — is 961px
+     * at this size, which puts the h1 359px past the panel's left edge and clips 89px off the
+     * end of line 1. That was applied to the live page and measured before being binned.
+     */
+    .hero .hero__title {
+      inline-size: max-content;
+      max-inline-size: calc(100% + var(--h1-overhang));
+    }
+
+    /* THE BLEED. The panel runs from its column out to the window edge and the section's
+       overflow clips it there. Only the screen bleeds; the caption is a separate element in
+       the same column and keeps the container's right edge. */
+    .hero__screen {
+      margin-inline-end: calc(var(--hero-bleed) * -1);
+    }
+
+    /* Square off the two right corners rather than letting a rounded corner sit tangent to
+       the window edge, which reads as a clipping bug rather than as a bleed. :global is
+       scoped to .hero__screen — it reaches FeedPanel's root and nothing else on the page. */
+    .hero__screen :global(.fp) {
+      border-start-end-radius: 0;
+      border-end-end-radius: 0;
+      border-inline-end-color: transparent;
+    }
+
+    /*
+     * NO OFFSET. THE TOPS ARE FLUSH, AND THAT IS THE WHOLE RULE.
+     *
+     * `align-items: start` above already does it — measured on the built page at 1440,
+     * .hero__copy top 161.0 and .hero__panel top 161.0. Both of those tops are a drawn edge
+     * a reader can actually see: the eyebrow badge's border and the panel's border start on
+     * the same line.
+     *
+     * The alternative in the finding — drop the panel until its command line sits on the
+     * eyebrow's baseline — was measured and rejected, because it points the wrong way. The
+     * eyebrow's text centre sits 14.6px below the top of the copy column; the command line's
+     * sits 25.0px below the top of the panel. Matching them needs the panel to start ~10px
+     * ABOVE the copy, i.e. a negative margin that lifts the product shot off the headline's
+     * line. A flush top is both the simpler rule and the one a reader can see is a rule.
+     *
+     * If an offset is ever wanted here it belongs in THIS rule, as a spacing token, with the
+     * measurement that produced it. What it must never go back to is `align-items: center`,
+     * which produced 12.2px of offset — copy 173.2, panel 161.0 — a number that is not a
+     * spacing step and not an optical decision, just two content heights being subtracted.
+     */
+  }
+</style>

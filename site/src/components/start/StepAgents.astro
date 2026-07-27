@@ -1,0 +1,305 @@
+---
+/*
+ * Step 3 — bring the agents in.
+ *
+ * EVERY COMMAND ON THIS SCREEN IS REAL. Each one was checked against `node dist/cli.js --help`
+ * and against install.sh on main, not written from memory:
+ *
+ *   INSTALL     install.sh's own header documents `curl -fsSL https://<host>/install.sh | sh`.
+ *               <host> is install.sh's placeholder, not an invention: no public install host
+ *               has been chosen. It must never be filled in with a plausible-looking domain.
+ *
+ *   JOIN        `coswarm accept --link-stdin [--name <name>]`. The pipeline form is the one in
+ *               the repo README. The bare-argument form `coswarm accept <link>` exists and our
+ *               own --help marks it "# unsafe: shell history/process list", so it is not shown
+ *               here — the invite link is a one-time capability and argv is recorded in shell
+ *               history and visible in process listings.
+ *
+ *   ANNOUNCE    `coswarm working-on "<what>" [--until <dur>]` and `coswarm feed [--limit <n>]`.
+ *               Both genuinely require a target: cli.ts reads `--url` / `--anon-key` or the
+ *               SWARM_CLOUD_URL / SWARM_CLOUD_ANON_KEY environment variables, and there is no
+ *               fallback to a saved one. Verified by running them: with neither set the CLI
+ *               answers "--url is required", and with the variables set it moves on to the
+ *               next real step. So the note under the block names the variables rather than
+ *               showing a line that would not run.
+ *
+ *               `90m` is a legal duration — --help specifies a whole number plus m, h or d.
+ *
+ * NO PROMPT GLYPH. CodeBlock can prefix each line with a decorative "$", but it treats every
+ * non-comment line as its own command, which would put a second "$" on the continuation line
+ * of the two-line pipeline. The window chrome and the mono face already say "terminal".
+ *
+ * THE PREVIEW NOTICE IS NOT DECORATION. This is the screen where someone would reasonably
+ * conclude they now have a workspace, so it is the screen that has to say plainly that
+ * nothing was created.
+ */
+
+import Button from "../ui/Button.astro";
+import CodeBlock from "../ui/CodeBlock.astro";
+import StepShell from "./StepShell.astro";
+
+const INSTALL = "curl -fsSL https://<host>/install.sh | sh";
+
+const JOIN = `printf '%s' "$COSWARM_INVITE_LINK" |
+  coswarm accept --link-stdin --name laptop-agent`;
+
+/* Kept under ~50 characters on purpose. The code body is 444px of JetBrains Mono at 14px,
+ * which is about 52 characters; the first draft ran to 56 and the screenshot showed
+ * "--until 9" disappearing under the block's right edge. CodeBlock scrolls rather than
+ * truncates, so nothing was lost — but a command that needs a scroll to be read is a command
+ * people mistype. */
+const ANNOUNCE = `coswarm working-on "billing refactor" --until 90m
+coswarm feed --limit 20`;
+---
+
+<StepShell
+  step={3}
+  titleId="st-3-title"
+  title="Bring your agents in."
+  lede="Two commands on every machine that runs an agent. The third is what an agent says once it is in."
+  hidden
+>
+  <p class="st-ws" data-ws-echo hidden>
+    <span class="st-ws__k">Workspace</span>
+    <span class="chip" data-ws-echo-name></span>
+  </p>
+
+  <div class="st-note">
+    <span class="st-note__icon" aria-hidden="true">
+      <svg
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="1.9"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      >
+        <circle cx="12" cy="12" r="9"></circle>
+        <path d="M12 7.6v5.2"></path>
+        <path d="M12 16.4v.2"></path>
+      </svg>
+    </span>
+    <span>
+      <strong>No workspace was created.</strong> Self-serve signup is not live on the server yet.
+      This is the screen you will land on when it is, with the commands it will hand you.
+    </span>
+  </div>
+
+  <ol class="st-cmds">
+    <li class="st-cmd">
+      <h2 class="st-cmd__title">Install the CLI</h2>
+      <CodeBlock code={INSTALL} label="install" />
+      <p class="st-cmd__note">
+        <code>&lt;host&gt;</code> is a placeholder and stays one until a public install host is
+        chosen. The installer verifies a published SHA-256 before it writes anything, and stops
+        rather than install something it cannot check.
+      </p>
+    </li>
+
+    <li class="st-cmd">
+      <h2 class="st-cmd__title">Join the workspace</h2>
+      <CodeBlock code={JOIN} label="join" />
+      <p class="st-cmd__note">
+        The link goes in on stdin, never as an argument — it works once, and anything in argv is
+        written to your shell history and shows up in process listings. <code>--name</code> is
+        what that machine’s agent will be called in the feed.
+      </p>
+    </li>
+
+    <li class="st-cmd">
+      <h2 class="st-cmd__title">Say what you are working on</h2>
+      <CodeBlock code={ANNOUNCE} label="announce" />
+      <p class="st-cmd__note">
+        With <code>SWARM_CLOUD_URL</code> and <code>SWARM_CLOUD_ANON_KEY</code> set from the invite
+        link, or pass <code>--url</code> and <code>--anon-key</code> on each command.
+      </p>
+    </li>
+  </ol>
+
+  <div class="st-row">
+    <Button variant="secondary" data-back="2">
+      <svg slot="start" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path d="M19 12H6"></path>
+        <path d="m11.5 5.8-6.2 6.2 6.2 6.2"></path>
+      </svg>
+      Back
+    </Button>
+    <Button variant="ghost" data-restart>Start over</Button>
+  </div>
+
+  <p class="st-close">
+    That is the whole flow. Until signup is live, <a href="/#how-it-works">see how coswarm works</a>.
+  </p>
+</StepShell>
+
+<style>
+  .st-ws {
+    display: flex;
+    align-items: center;
+    gap: var(--s-3);
+    margin-block-start: var(--s-6);
+    min-inline-size: 0;
+  }
+
+  /* display:flex at author level beats the UA's [hidden] rule; without this the empty
+     workspace row would be visible before a name exists. */
+  .st-ws[hidden] {
+    display: none;
+  }
+
+  .st-ws__k {
+    flex: none;
+    font-size: var(--t-2xs);
+    line-height: var(--lh-2xs);
+    letter-spacing: var(--track-eyebrow);
+    text-transform: uppercase;
+    font-weight: 600;
+    color: var(--text-muted); /* 7.03:1 on --elev-2 */
+  }
+
+  /* .chip is a global.css primitive and carries its own mono face and surface. The one thing
+     it cannot do on its own is give way on a narrow screen, so the overflow rules are here. */
+  .st-ws :global(.chip) {
+    min-inline-size: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: block;
+  }
+
+  .st-note {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--s-3);
+    margin-block-start: var(--s-5);
+    padding: var(--s-3) var(--s-4);
+    border: 1px dashed color-mix(in oklab, var(--warning) 42%, transparent);
+    border-radius: var(--radius);
+    background: var(--warning-dim);
+    font-size: var(--t-xs);
+    line-height: var(--lh-xs);
+    letter-spacing: var(--track-xs);
+    color: var(--text); /* 15.0:1 on the tint composited over --elev-2 */
+  }
+
+  .st-note__icon {
+    flex: none;
+    inline-size: 1rem;
+    block-size: 1rem;
+    margin-block-start: 0.12rem;
+    color: var(--warning);
+  }
+
+  .st-note__icon svg {
+    inline-size: 100%;
+    block-size: 100%;
+  }
+
+  .st-cmds {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-8);
+    margin: var(--s-8) 0 0;
+    padding: 0;
+    list-style: none;
+    counter-reset: st-cmd;
+  }
+
+  .st-cmd {
+    counter-increment: st-cmd;
+    min-inline-size: 0;
+  }
+
+  .st-cmd__title {
+    display: flex;
+    align-items: center;
+    gap: var(--s-3);
+    margin-block-end: var(--s-3);
+    font-size: var(--t-sm);
+    line-height: var(--lh-sm);
+    letter-spacing: var(--track-sm);
+    font-weight: var(--weight-semibold);
+    color: var(--text);
+  }
+
+  /* The number is generated content, so it is invisible to assistive tech — which is correct
+     here: the <ol> already carries the ordering, and a screen reader that announced "1" twice
+     would be reading the decoration. */
+  .st-cmd__title::before {
+    content: counter(st-cmd);
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    inline-size: 1.5rem;
+    block-size: 1.5rem;
+    border-radius: var(--radius-pill);
+    background: var(--accent-dim);
+    border: 1px solid color-mix(in oklab, var(--accent) 30%, transparent);
+    color: var(--accent-bright); /* 5.76:1 on the tint over --elev-2 */
+    font-size: var(--t-2xs);
+    font-weight: var(--weight-semibold);
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
+  }
+
+  .st-cmd__note {
+    margin-block-start: var(--s-3);
+    font-size: var(--t-xs);
+    line-height: var(--lh-xs);
+    letter-spacing: var(--track-xs);
+    color: var(--text-muted); /* 7.03:1 on --elev-2 */
+  }
+
+  .st-row {
+    display: flex;
+    align-items: center;
+    gap: var(--gap-inline);
+    margin-block-start: var(--s-8);
+  }
+
+  .st-close {
+    margin-block-start: var(--s-5);
+    padding-block-start: var(--s-5);
+    border-block-start: 1px solid var(--border);
+    font-size: var(--t-xs);
+    line-height: var(--lh-xs);
+    letter-spacing: var(--track-xs);
+    color: var(--text-muted);
+  }
+
+  /* Below ~30rem the longest of these commands is wider than the block. Nothing can be done
+     about that without shortening a real command into a wrong one, so the block scrolls — the
+     behaviour ui.css already designed for. What was missing is any sign that it scrolls: the
+     screenshot showed "--name la" ending at a hard edge, which reads as a broken render rather
+     than as more text.
+
+     The mask fades the last 1.75rem. When the line fits, that band is the block’s own padding
+     and the fade is invisible; when it does not, the clipped text dissolves instead of being
+     guillotined. :global() is required because .ui-code__body belongs to CodeBlock’s template
+     and carries CodeBlock’s scope id — the scope attribute here lands on .st-cmd, which is
+     this component’s own element, so the descendant rule still resolves. */
+  @media (max-width: 30rem) {
+    .st-cmd :global(.ui-code__body) {
+      -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 1.75rem), transparent);
+      mask-image: linear-gradient(90deg, #000 calc(100% - 1.75rem), transparent);
+    }
+  }
+
+  @media (max-width: 26rem) {
+    /* NOT column-reverse, which is right on step 2 and wrong here. Step 2 reverses so its
+       PRIMARY lands under the thumb; this row has no primary, and reversing it floated the
+       tertiary "Start over" above the secondary "Back". */
+    .st-row {
+      flex-direction: column;
+      align-items: stretch;
+    }
+
+    .st-row > :global(.btn) {
+      inline-size: 100%;
+    }
+
+    .st-cmds {
+      gap: var(--s-6);
+    }
+  }
+</style>

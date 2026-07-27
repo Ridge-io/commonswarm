@@ -1,0 +1,131 @@
+---
+/*
+ * Skeleton — a loading placeholder.
+ *
+ * REUSES the .skeleton / .skeleton--text / .skeleton--circle classes that motion.css already
+ * owns, including its shimmer keyframes and its reduced-motion handling (the sweep becomes a
+ * static tint, so the block still reads as "loading" rather than as an empty box). This
+ * component only adds sizing and the multi-line arrangement. There is deliberately no
+ * prefers-reduced-motion block here — motion.css owns that, and a rule in a stylesheet loaded
+ * after it would win the !important tie and silently downgrade its kill switch.
+ *
+ * ALWAYS HIDDEN FROM ASSISTIVE TECH. A skeleton is a picture of content that does not exist
+ * yet; announcing its shape is noise. The `label` prop is the accessible counterpart — it
+ * renders a visually hidden status region so a screen reader hears "Loading the feed" once,
+ * instead of hearing nothing at all while the screen is visibly busy.
+ *
+ * Styles are scoped: no slots, no runtime DOM, so the scope id reaches everything.
+ */
+
+import "../../styles/ui.css";
+
+type Variant = "text" | "rect" | "circle";
+
+interface Props {
+  variant?: Variant;
+  /** `text` only. The last line is rendered short, the way a real paragraph ends. */
+  lines?: number;
+  /** Any CSS length. Defaults to filling the container. */
+  width?: string;
+  /** Any CSS length. `text` derives its own height from the type scale. */
+  height?: string;
+  /** Overrides the corner radius. `circle` is already fully round. */
+  radius?: string;
+  /** Announced once to screen readers, e.g. "Loading the shared feed". */
+  label?: string;
+  class?: string;
+  [key: string]: unknown;
+}
+
+const {
+  variant = "text",
+  lines = 3,
+  width,
+  height,
+  radius,
+  label,
+  class: className,
+  ...rest
+} = Astro.props;
+
+const count = variant === "text" ? Math.max(1, Math.floor(lines)) : 1;
+
+/* Set only the variables the caller actually supplied, so the CSS defaults survive. */
+const style = [
+  width ? `--sk-w:${width}` : null,
+  height ? `--sk-h:${height}` : null,
+  radius ? `--sk-r:${radius}` : null,
+]
+  .filter(Boolean)
+  .join(";");
+---
+
+{label && <span class="ui-sr" role="status">{label}</span>}
+
+{
+  variant === "text" ? (
+    <div class:list={["sk-lines", className]} aria-hidden="true" style={style} {...rest}>
+      {Array.from({ length: count }).map((_, i) => (
+        <span
+          class:list={["skeleton", "skeleton--text", "sk", i === count - 1 && count > 1 && "sk--last"]}
+        />
+      ))}
+    </div>
+  ) : (
+    <span
+      class:list={["skeleton", variant === "circle" && "skeleton--circle", "sk", "sk--block", className]}
+      aria-hidden="true"
+      style={style}
+      {...rest}
+    />
+  )
+}
+
+<style>
+  .sk-lines {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-2);
+    inline-size: var(--sk-w, 100%);
+  }
+
+  .sk {
+    display: block;
+    inline-size: var(--sk-w, 100%);
+    border-radius: var(--sk-r, var(--radius-sm));
+  }
+
+  /* Inside .sk-lines the width variable is already spent on the container; each bar fills it.
+     motion.css's .skeleton--text carries its own margin-block, which would stack on top of
+     the flex gap and space the lines almost twice as far apart as a real paragraph. The gap
+     is the single source of rhythm here, so the margin is zeroed. */
+  .sk-lines > .sk {
+    inline-size: 100%;
+    margin-block: 0;
+    block-size: 0.7rem;
+  }
+
+  /* A paragraph does not end flush with the margin, and a skeleton that does looks like a
+     table row rather than prose.
+     Written as a CHILD selector deliberately: `.sk--last` alone is one class deep and loses
+     to `.sk-lines > .sk` above, which sets inline-size: 100%. The screenshot caught this —
+     all three lines rendered the same length. */
+  .sk-lines > .sk--last {
+    inline-size: 62%;
+  }
+
+  .sk--block {
+    block-size: var(--sk-h, 1.5rem);
+  }
+
+  /* A circle takes its width from its height so a caller only has to give one number.
+     The radius has to be restated: motion.css's .skeleton--circle is one class deep, while
+     .sk above is scoped and therefore carries an extra attribute selector — it would win the
+     cascade and square the circle off. */
+  .skeleton--circle.sk--block {
+    inline-size: var(--sk-w, var(--sk-h, 2.25rem));
+    block-size: var(--sk-h, 2.25rem);
+    border-radius: var(--sk-r, var(--radius-pill));
+    flex: none;
+  }
+</style>

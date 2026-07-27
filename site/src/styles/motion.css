@@ -1,0 +1,293 @@
+/* coswarm motion
+ *
+ * Imported by global.css. Durations and easings are declared in tokens.css (§9); this file
+ * turns them into named utilities so no component invents its own timing.
+ *
+ * THE ONE RULE: motion is an accent, never a dependency. Nothing here is load-bearing —
+ * strip every animation out and the page still reads correctly, in the correct order, with
+ * every element visible. That is what makes the reduced-motion path below safe.
+ *
+ * REDUCED MOTION: animations are REMOVED, not shortened. The common trick of setting
+ * `animation-duration: 0.01ms !important` leaves the animation running, which means an element
+ * whose visible state is supplied by a keyframe (`from { opacity: 0 }` + `fill-mode: both`)
+ * can flash or, worse, stick at opacity 0. This file instead sets `animation: none` and then
+ * explicitly restores opacity/transform, so reduced-motion users land on the FINAL state
+ * rather than the initial one. See §7.
+ *
+ * NEVER-INVISIBLE INVARIANT: every reveal utility rests in its VISIBLE state. An element only
+ * becomes hidden inside a context that is guaranteed to bring it back — a scroll-driven
+ * timeline the browser has already confirmed it supports, or a JS hook that has announced
+ * itself by setting [data-motion-js] on <html>. If the animation never runs, or JS never
+ * loads, or the browser is old, the content is on screen. There is no configuration of this
+ * file in which content is permanently hidden.
+ *
+ * Timing vocabulary:
+ *   --dur-1 100ms  colour / opacity state flips
+ *   --dur-2 150ms  hover, focus, press — anything answering a pointer
+ *   --dur-3 250ms  entrances and small reveals
+ *   --dur-4 400ms  large surfaces, page-level reveals
+ *
+ *   --ease-standard    both ends eased — the default for state changes
+ *   --ease-decelerate  fast out, soft landing — for things ENTERING
+ *   --ease-accelerate  soft start, fast out — for things LEAVING
+ *   --ease-spring      slight overshoot — for a deliberate bit of life; use sparingly
+ */
+
+/* ==========================================================================
+   1. Keyframes
+   ========================================================================== */
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes fade-in-up {
+  from { opacity: 0; transform: translate3d(0, var(--motion-rise, 12px), 0); }
+  to   { opacity: 1; transform: none; }
+}
+
+@keyframes fade-in-scale {
+  from { opacity: 0; transform: scale(0.97); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* Travels 200% because the element is 200% wide — see .skeleton. */
+@keyframes shimmer {
+  from { transform: translate3d(-100%, 0, 0); }
+  to   { transform: translate3d(100%, 0, 0); }
+}
+
+@keyframes pulse-ring {
+  0%   { box-shadow: 0 0 0 0 var(--pulse-color, var(--success-dim)); }
+  70%  { box-shadow: 0 0 0 8px transparent; }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+
+/* ==========================================================================
+   2. Interaction — hover lift and press
+   These are transitions, not animations: they are reversible and interruptible,
+   which is what makes them feel responsive rather than scripted.
+   ========================================================================== */
+
+.motion-interactive {
+  transition:
+    transform var(--dur-2) var(--ease-standard),
+    box-shadow var(--dur-2) var(--ease-standard),
+    background-color var(--dur-2) var(--ease-standard),
+    border-color var(--dur-2) var(--ease-standard),
+    color var(--dur-1) var(--ease-standard);
+}
+
+/* Lift. translate3d keeps it on the compositor; `will-change` is deliberately NOT set —
+   promoting every card permanently costs more than the animation saves. */
+.motion-lift:hover,
+.motion-lift:focus-visible {
+  transform: translate3d(0, -2px, 0);
+}
+
+.motion-lift-lg:hover,
+.motion-lift-lg:focus-visible {
+  transform: translate3d(0, -3px, 0);
+  box-shadow: var(--shadow-lg);
+}
+
+/* Press. Snappier than the lift on purpose — a press must feel immediate, so it uses
+   --dur-1 and overrides the transition it inherits. */
+.motion-press:active {
+  transform: translate3d(0, 0, 0) scale(0.985);
+  transition-duration: var(--dur-1);
+}
+
+.motion-lift:active {
+  transform: translate3d(0, 0, 0);
+  transition-duration: var(--dur-1);
+}
+
+/* ==========================================================================
+   3. Focus ring transition
+   The ring's PRESENCE is never animated — only its offset and colour. A ring that
+   fades in reads as latency to a keyboard user, and an outline that animates from
+   0 width can be missed entirely.
+   ========================================================================== */
+
+.motion-focus {
+  transition:
+    outline-color var(--dur-1) var(--ease-standard),
+    outline-offset var(--dur-1) var(--ease-decelerate),
+    box-shadow var(--dur-1) var(--ease-standard);
+}
+
+/* ==========================================================================
+   4. Reveal on scroll — no JavaScript required
+   Uses scroll-driven animations (animation-timeline: view()). Gated behind @supports
+   so that a browser without them simply shows the content, and behind
+   prefers-reduced-motion: no-preference so the hidden start state is never even
+   declared for users who asked for less motion.
+   ========================================================================== */
+
+/* Resting state: fully visible. This declaration is the safety net — everything
+   below only ever *overrides* it inside a supported, motion-permitted context. */
+.reveal,
+.reveal-stagger > * {
+  opacity: 1;
+  transform: none;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  @supports (animation-timeline: view()) {
+    .reveal,
+    .reveal-stagger > * {
+      animation: fade-in-up var(--dur-4) var(--ease-decelerate) both;
+      animation-timeline: view();
+      /* Start as the element's top edge enters, finish well before centre, so the
+         content is settled by the time the reader's eye arrives. */
+      animation-range: entry 5% cover 26%;
+    }
+
+    /* Stagger. animation-delay does nothing on a view() timeline — progress is driven
+       by scroll position, not time — so children are staggered by pushing each one's
+       RANGE slightly later instead. Six steps, then it repeats; a stagger longer than
+       that stops reading as a group and starts reading as lag. */
+    .reveal-stagger > *:nth-child(6n + 2) { animation-range: entry 5% cover 30%; }
+    .reveal-stagger > *:nth-child(6n + 3) { animation-range: entry 5% cover 34%; }
+    .reveal-stagger > *:nth-child(6n + 4) { animation-range: entry 5% cover 38%; }
+    .reveal-stagger > *:nth-child(6n + 5) { animation-range: entry 5% cover 42%; }
+    .reveal-stagger > *:nth-child(6n + 6) { animation-range: entry 5% cover 46%; }
+
+    .reveal--fade { animation-name: fade-in; }
+    .reveal--scale { animation-name: fade-in-scale; }
+  }
+}
+
+/* ==========================================================================
+   5. Reveal via JavaScript — opt-in, for the group-at-once case
+   Only active once JS sets [data-motion-js] on <html>. If that attribute is never
+   set, these elements are governed by §4's resting state and stay visible.
+   Contract for the JS: set the attribute, observe .js-reveal, add .is-in on entry.
+   ========================================================================== */
+
+html[data-motion-js] .js-reveal {
+  opacity: 1;
+  transform: none;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  html[data-motion-js] .js-reveal {
+    opacity: 0;
+    transform: translate3d(0, var(--motion-rise, 12px), 0);
+    transition:
+      opacity var(--dur-4) var(--ease-decelerate),
+      transform var(--dur-4) var(--ease-decelerate);
+  }
+
+  html[data-motion-js] .js-reveal.is-in {
+    opacity: 1;
+    transform: none;
+  }
+
+  /* Time-based stagger is legitimate here: this path is driven by a class flip, not
+     by scroll progress, so animation/transition-delay behaves normally. */
+  html[data-motion-js] .js-reveal-stagger > * {
+    transition-delay: calc(var(--stagger-index, 0) * var(--stagger-step, 60ms));
+  }
+  html[data-motion-js] .js-reveal-stagger > *:nth-child(1) { --stagger-index: 0; }
+  html[data-motion-js] .js-reveal-stagger > *:nth-child(2) { --stagger-index: 1; }
+  html[data-motion-js] .js-reveal-stagger > *:nth-child(3) { --stagger-index: 2; }
+  html[data-motion-js] .js-reveal-stagger > *:nth-child(4) { --stagger-index: 3; }
+  html[data-motion-js] .js-reveal-stagger > *:nth-child(5) { --stagger-index: 4; }
+  html[data-motion-js] .js-reveal-stagger > *:nth-child(6) { --stagger-index: 5; }
+}
+
+/* ==========================================================================
+   6. Skeleton shimmer
+   The shimmer is a pseudo-element sliding under `overflow: hidden`, so it animates
+   `transform` only — no background-position animation, which cannot be composited
+   and repaints the whole element every frame.
+   ========================================================================== */
+
+.skeleton {
+  position: relative;
+  overflow: hidden;
+  background: var(--elev-3);
+  border-radius: var(--radius-sm);
+  /* Nothing inside a skeleton should be read aloud or selectable. */
+  user-select: none;
+  color: transparent;
+}
+
+.skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.055) 50%,
+    transparent 100%
+  );
+  animation: shimmer 1.4s var(--ease-standard) infinite;
+}
+
+.skeleton--text {
+  height: 0.75em;
+  margin-block: 0.25em;
+}
+
+.skeleton--circle {
+  border-radius: var(--radius-pill);
+}
+
+/* A quiet attention pulse, e.g. a live indicator on the feed. */
+.motion-pulse {
+  animation: pulse-ring 2.4s var(--ease-standard) infinite;
+}
+
+/* ==========================================================================
+   7. Reduced motion — removal, not compression
+   Ordered last so it wins on specificity ties. Two things happen:
+     a. every animation and transition is switched off outright, and
+     b. the properties those animations drive are reset to their FINAL values,
+        so nothing is left parked at opacity 0 or mid-transform.
+   ========================================================================== */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+
+  /* (b) — land on the end state, not the start state. */
+  .reveal,
+  .reveal-stagger > *,
+  .js-reveal,
+  html[data-motion-js] .js-reveal,
+  .js-reveal.is-in {
+    opacity: 1 !important;
+    transform: none !important;
+  }
+
+  /* Movement affordances are removed rather than made instant: an instantaneous
+     2px jump on hover is a flicker, which is worse than no feedback at all. */
+  .motion-lift:hover,
+  .motion-lift:focus-visible,
+  .motion-lift-lg:hover,
+  .motion-lift-lg:focus-visible,
+  .motion-press:active,
+  .motion-lift:active {
+    transform: none !important;
+  }
+
+  /* The skeleton still needs to read as "loading" without the sweep, so the
+     shimmer becomes a static tint rather than disappearing. */
+  .skeleton::after {
+    background: rgba(255, 255, 255, 0.045);
+  }
+
+  .motion-pulse {
+    box-shadow: 0 0 0 3px var(--pulse-color, var(--success-dim));
+  }
+}

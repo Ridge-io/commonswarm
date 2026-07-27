@@ -1,0 +1,189 @@
+---
+/*
+ * Tooltip — a short label attached to a control.
+ *
+ * WHAT A TOOLTIP MAY CONTAIN: a few words that supplement a control that already has an
+ * accessible name. Never the only copy of a piece of information, never anything
+ * interactive, and never something the reader must act on — tooltips are unreachable on
+ * touch, where there is no hover at all.
+ *
+ * WCAG 1.4.13 (content on hover or focus) has three requirements and this meets all three:
+ *   dismissable — Escape hides it without moving focus (the script below);
+ *   hoverable   — the bubble is inside the wrapper, so moving the pointer onto it keeps the
+ *                 wrapper hovered and the bubble open;
+ *   persistent  — it stays until the pointer or focus leaves, or Escape is pressed. Nothing
+ *                 times it out.
+ *
+ * WIRING aria-describedby FROM SCRIPT. The trigger arrives through <slot />, so it is
+ * authored in the parent and this component cannot add an attribute to it at build time.
+ * The script finds the first focusable descendant and points it at the bubble. If the script
+ * never runs, the bubble is still rendered, still has role="tooltip", and the CSS still shows
+ * it on hover and focus — the only thing lost is the programmatic association.
+ *
+ * OVERFLOW. The bubble is positioned inside the wrapper, so an ancestor with overflow:hidden
+ * will clip it. That is the price of not shipping a positioning library; use `placement` to
+ * point it into open space, and do not put a tooltip inside a scroll container.
+ *
+ * Styles are scoped: the wrapper and the bubble are both in this template, and :focus-within
+ * matches a slotted descendant regardless of whose scope id it carries.
+ */
+
+import "../../styles/ui.css";
+
+type Placement = "top" | "bottom" | "left" | "right";
+
+interface Props {
+  /** The tooltip copy. Keep it to a few words. */
+  text: string;
+  placement?: Placement;
+  /** Supply one to make the bubble id stable; otherwise one is generated. */
+  id?: string;
+  class?: string;
+  [key: string]: unknown;
+}
+
+const { text, placement = "top", id, class: className, ...rest } = Astro.props;
+const tipId = id ?? `ui-tip-${crypto.randomUUID().slice(0, 8)}`;
+---
+
+<span class:list={["tip", className]} data-ui-tip data-placement={placement} {...rest}>
+  <slot />
+  <span class="tip__bubble" role="tooltip" id={tipId}>{text}</span>
+</span>
+
+<style>
+  .tip {
+    position: relative;
+    display: inline-flex;
+    /* Not a positioned block: the wrapper must not change how the trigger lays out. */
+    vertical-align: middle;
+  }
+
+  .tip__bubble {
+    position: absolute;
+    z-index: 200;
+    /* visibility, not display, so the bubble has a box to transition and to measure. Both
+       opacity AND visibility are animated: opacity alone leaves an invisible bubble
+       intercepting the pointer over whatever is next to the control. */
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    inline-size: max-content;
+    max-inline-size: 15rem;
+    padding: 0.35rem 0.55rem;
+    background: var(--elev-4);
+    color: var(--text); /* 14.52:1 on --elev-4 */
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+    box-shadow: var(--shadow-md);
+    font-size: var(--t-xs);
+    line-height: var(--lh-xs);
+    letter-spacing: var(--track-xs);
+    font-weight: var(--weight-medium);
+    text-align: center;
+    white-space: normal;
+    transition:
+      opacity var(--dur-2) var(--ease-standard),
+      visibility var(--dur-2) var(--ease-standard);
+  }
+
+  .tip[data-placement="top"] .tip__bubble {
+    inset-block-end: calc(100% + var(--s-2));
+    inset-inline-start: 50%;
+    translate: -50% 0;
+  }
+
+  .tip[data-placement="bottom"] .tip__bubble {
+    inset-block-start: calc(100% + var(--s-2));
+    inset-inline-start: 50%;
+    translate: -50% 0;
+  }
+
+  .tip[data-placement="left"] .tip__bubble {
+    inset-inline-end: calc(100% + var(--s-2));
+    inset-block-start: 50%;
+    translate: 0 -50%;
+  }
+
+  .tip[data-placement="right"] .tip__bubble {
+    inset-inline-start: calc(100% + var(--s-2));
+    inset-block-start: 50%;
+    translate: 0 -50%;
+  }
+
+  /* :focus-within covers the keyboard path and matches the slotted trigger. pointer-events
+     comes back on so the bubble itself is hoverable — WCAG 1.4.13. */
+  .tip:hover .tip__bubble,
+  .tip:focus-within .tip__bubble {
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
+  }
+
+  /* Escape sets this and it beats both rules above. Cleared when the pointer or focus
+     genuinely leaves, so the tooltip is not dead for the rest of the session. */
+  .tip[data-dismissed] .tip__bubble {
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+  }
+
+  @media (max-width: 30rem) {
+    .tip__bubble {
+      max-inline-size: 11rem;
+    }
+  }
+</style>
+
+<script>
+  // Associates each tooltip with its trigger, and implements the Escape dismissal that
+  // WCAG 1.4.13 requires. Everything visual is CSS; this only adds what CSS cannot do.
+  const FOCUSABLE =
+    'a[href], button, input, select, textarea, summary, [tabindex]:not([tabindex="-1"])';
+
+  document.querySelectorAll<HTMLElement>("[data-ui-tip]").forEach((tip) => {
+    // Astro hoists this module once per page, but a component rendered many times must not
+    // be bound many times.
+    if (tip.dataset.tipBound) return;
+    tip.dataset.tipBound = "1";
+
+    const bubble = tip.querySelector<HTMLElement>('[role="tooltip"]');
+    if (!bubble) return;
+
+    // The trigger is slotted, so the association has to be made here rather than at build
+    // time. Append rather than overwrite: the trigger may already describe something else.
+    const trigger = tip.querySelector<HTMLElement>(FOCUSABLE);
+    if (trigger) {
+      const existing = trigger.getAttribute("aria-describedby");
+      if (!existing?.split(/\s+/).includes(bubble.id)) {
+        trigger.setAttribute("aria-describedby", existing ? `${existing} ${bubble.id}` : bubble.id);
+      }
+    }
+
+    const clear = () => delete tip.dataset.dismissed;
+    tip.addEventListener("mouseleave", clear);
+    tip.addEventListener("focusout", (e) => {
+      if (!tip.contains(e.relatedTarget as Node | null)) clear();
+    });
+    tip.addEventListener("mouseenter", clear);
+
+  });
+
+  // Escape has to be listened for on the DOCUMENT, not on the wrapper. A tooltip opened by
+  // HOVER has no focus inside it, so a keydown handler on the wrapper would never fire and
+  // the tooltip would be undismissable for exactly the interaction WCAG 1.4.13 is about.
+  // Focus is deliberately not moved: only the bubble goes away.
+  if (!document.documentElement.dataset.uiTipEsc) {
+    document.documentElement.dataset.uiTipEsc = "1";
+    document.addEventListener(
+      "keydown",
+      (e) => {
+        if (e.key !== "Escape") return;
+        document
+          .querySelectorAll<HTMLElement>("[data-ui-tip]")
+          .forEach((tip) => (tip.dataset.dismissed = "1"));
+      },
+      true
+    );
+  }
+</script>

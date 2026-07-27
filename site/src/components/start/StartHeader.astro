@@ -1,0 +1,31 @@
+---
+/*
+ * The bar above the onboarding column.
+ *
+ * /start renders Base with `bareHeader` AND `bareFooter`, so neither the site's sticky nav nor
+ * its footer is on this page. That is deliberate: both carry several ways out, and a signup
+ * flow that keeps offering them is a flow people leave. What stays is the one thing someone
+ * needs mid-signup — a way back to the site.
+ *
+ * THE MARK IS NO LONGER REDRAWN HERE. It used to be, with the brand colours written as raw
+ * hex (#7c6cff / #9b8fff / #34d399) because the original lived inside Base.astro's template,
+ * which that pass did not own. The three values happened to match --accent, --accent-bright
+ * and --success exactly, so nothing looked wrong — but the next edit to tokens.css would have
+ * recoloured the logo on three pages and left this one behind. It comes from the shared
+ * Wordmark component now, which also carries the type settings this file's copy restated.
+ */
+
+import Wordmark from "../Wordmark.astro";
+---
+
+<div class="sh">
+  <Wordmark href="/" />
+</div>
+
+<style>
+  .sh {
+    display: flex;
+    align-items: center;
+    min-block-size: 3rem;
+  }
+</style>

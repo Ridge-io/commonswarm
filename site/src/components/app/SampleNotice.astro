@@ -1,0 +1,88 @@
+---
+/*
+ * The honesty banner.
+ *
+ * This is the first thing in the page's content and it is not decoration. The repository is
+ * public and the product is pre-launch: there is no self-serve signup, no live backend, and
+ * nothing on this screen is connected to anything. A reader who screenshots this page and
+ * posts it must not be able to mistake it for a running system.
+ *
+ * WHY IT IS NOT DISMISSIBLE. A close button would make the claim temporary, and the page it
+ * qualifies never stops being a drawing. It also would have been the second write control on
+ * a screen that is supposed to have none.
+ *
+ * NOT role="alert". An alert interrupts a screen-reader user mid-sentence, which is for
+ * something that just went wrong. This is a standing caveat that is already the first thing
+ * in the reading order, so plain prose in a landmark-free <p> is louder in practice and
+ * ruder to nobody.
+ *
+ * The warning tint is doing the same job as the words, never instead of them — the sentence
+ * reads identically in greyscale.
+ *
+ * ONE SENTENCE, AND IT STAYS ONE. This used to be three: a design-preview framing, the
+ * made-up-data claim, and "coswarm has no self-serve signup yet". Every card below it also
+ * carries a "Sample" chip, so the fact was on screen six times before a reader had scrolled
+ * once. The chips are the ones worth keeping — they survive a cropped screenshot, which is
+ * the failure this banner exists to prevent — so the banner was cut to the single claim the
+ * chips cannot make: that nothing on the page is connected to anything. The signup fact is
+ * made where a reader could act on it, on / and on /start, not here.
+ */
+---
+
+<p class="notice">
+  <svg
+    class="notice__icon"
+    viewBox="0 0 20 20"
+    width="17"
+    height="17"
+    aria-hidden="true"
+    focusable="false"
+  >
+    <circle cx="10" cy="10" r="8.1" fill="none" stroke="currentColor" stroke-width="1.5" />
+    <path
+      d="M10 5.9v4.7"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="1.7"
+      stroke-linecap="round"
+    />
+    <circle cx="10" cy="13.7" r="1.02" fill="currentColor" />
+  </svg>
+
+  <span>
+    <strong>Sample data.</strong> Every agent, signal and timestamp below is made up, and this
+    page is not connected to a workspace.
+  </span>
+</p>
+
+<style>
+  .notice {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--s-3);
+    padding: var(--s-3) var(--s-4);
+    border: 1px solid color-mix(in oklab, var(--warning) 30%, transparent);
+    border-radius: var(--radius);
+    /* --warning-dim over --elev-0. Body ink on that composite measures 17.7:1; the strong
+       lead-in is --warning as text, 11.5:1 on the same composite. Both well clear of AA. */
+    background: var(--warning-dim);
+    color: var(--text);
+    font-size: var(--t-sm);
+    line-height: var(--lh-sm);
+    letter-spacing: var(--track-sm);
+    /* Keeps the sentence at a readable measure on a wide screen instead of one long line. */
+    text-wrap: pretty;
+  }
+
+  .notice strong {
+    color: var(--warning);
+    font-weight: var(--weight-semibold);
+  }
+
+  .notice__icon {
+    flex: none;
+    color: var(--warning);
+    /* Optically centres the glyph on the first line of text rather than the box. */
+    margin-block-start: 0.11em;
+  }
+</style>

@@ -1,0 +1,570 @@
+---
+/*
+ * /app — the dashboard humans read.
+ *
+ * READ-ONLY BY DESIGN. Creating a workspace is the only write in the entire web UI and it
+ * does not live here. There is not a single form, toggle or destructive control on this
+ * screen: everything is a view of what the agents have already announced. The one piece of
+ * interactivity is choosing WHICH view you are looking at, which changes nothing.
+ *
+ * ---------------------------------------------------------------------------------------
+ * WHY THE SAMPLE DATA LIVES IN THIS FILE
+ * ---------------------------------------------------------------------------------------
+ * One source of truth, on purpose. An earlier draft let each panel carry its own numbers and
+ * the two disagreed within a single screenful: the collision story said Atlas announced four
+ * minutes ago while the feed said twenty-six, which is exactly the kind of detail that tells
+ * a careful reader the screen is a drawing rather than a design. Every relative time, every
+ * count and every badge below is derived from the arrays in this frontmatter, so the panels
+ * cannot drift apart. `agents.length` is counted, never typed.
+ *
+ * ---------------------------------------------------------------------------------------
+ * THE SAMPLE DATA IS SHAPED LIKE THE REAL RECORD
+ * ---------------------------------------------------------------------------------------
+ * A signal in this product is, from src/cloud/signals.ts:
+ *   { id, workspace_id, from, from_kind: "user" | "agent", to, about, kind, body, until,
+ *     created_at }
+ * with kind limited to exactly "working-on" | "note" | "ask", body 1–2000 characters and
+ * about a string of at most 500 or null. The rows below carry the same fields under the same
+ * names and never invent one — no priorities, no severities, no statuses the server has no
+ * column for. Drawing a field that does not exist is the cheapest way to design a screen
+ * that can never be built.
+ *
+ * TIMES ARE RELATIVE STRINGS, NOT DATES. There is no <time datetime="..."> anywhere on this
+ * page and that is deliberate: an absolute timestamp baked in at build time is wrong by the
+ * time anyone reads it, and "25m ago" is true whenever the page is opened. Since "25m ago"
+ * is not a valid machine-readable datetime, the honest markup is a span, not a <time> with a
+ * fabricated attribute.
+ *
+ * ---------------------------------------------------------------------------------------
+ * WHY NO TIMESTAMP ON THIS PAGE IS --text-faint
+ * ---------------------------------------------------------------------------------------
+ * The first pass set every age, expiry, file-path chip and micro-label in --text-faint,
+ * because on a dashboard that is what "secondary" looks like. tokens.css says of that token,
+ * in the token's own comment: "LARGE TEXT / non-text only. 4.25:1 on --bg, 3.35:1 on
+ * --elev-4. Below 4.5:1 — never set body copy in it." A 12px timestamp is body copy. So
+ * every one of those moved to --text-muted, which is 7.03:1 on the card surface, and
+ * --text-faint survives on exactly two rules across all six components: the "·" between the
+ * header counts and the "$" prompt glyph, both aria-hidden decoration.
+ *
+ * The hierarchy that colour was carrying is now carried by size and weight instead, which is
+ * the more robust way to build it — it survives greyscale, dimmed screens and prefers-contrast.
+ *
+ * ---------------------------------------------------------------------------------------
+ * HONESTY
+ * ---------------------------------------------------------------------------------------
+ * Nothing here is connected to anything. Every panel carries its own "Sample" badge so a
+ * screenshot of any single card is still marked, one banner in the first screenful says the
+ * part a cropped card cannot say — that the page is connected to nothing — and the word
+ * "live" is never used to describe a connection. The banner is ONE sentence on purpose: said
+ * once beside four chips it is credible; said in three clauses above five more marks it reads
+ * as nerves. It used to also carry "coswarm has no self-serve signup yet", which is a fact
+ * about the product rather than about this drawing — it is made on / and on /start, where a
+ * reader could act on it.
+ *
+ * The CLI commands and the one
+ * block of CLI OUTPUT rendered in the collision story were checked against the real binary:
+ * `coswarm working-on`, `coswarm feed --about`, `coswarm note --to` all exist with those
+ * flags, and the output line matches renderSignals() in src/cloud/signals.ts — including
+ * "expires in 65m" rather than the "65m left" a designer would naturally write.
+ */
+
+import Base from "../layouts/Base.astro";
+import SampleNotice from "../components/app/SampleNotice.astro";
+import WorkspaceBar from "../components/app/WorkspaceBar.astro";
+import CollisionStory from "../components/app/CollisionStory.astro";
+import ActivityFeed from "../components/app/ActivityFeed.astro";
+import Roster from "../components/app/Roster.astro";
+import ChangeLog from "../components/app/ChangeLog.astro";
+import NewWorkspace from "../components/app/NewWorkspace.astro";
+import LoadingPanel from "../components/app/LoadingPanel.astro";
+
+/* Base.astro's DEFAULT title and description still carry the retired authority framing
+ * ("authorised", "governed authority core", "principals, scoped tokens"). That file belongs
+ * to another pass, so rather than edit it this page passes its own — otherwise every /app
+ * share card would ship vocabulary the operator explicitly dropped. */
+const title = "coswarm — see what every agent is working on";
+const description =
+  "The dashboard humans read: which agent announced what, what changed, and how one agent routed around another. Agents drive coswarm from the CLI.";
+
+const workspace = {
+  name: "payments-rebuild",
+  /* Shaped like a real workspace id — the CLI takes --workspace-id <uuid>. Valid per the
+   * UUID pattern signals.ts enforces (version nibble 4, variant nibble 9). */
+  id: "3f9c2a10-77b4-4e0d-9a6b-1d5e83c04f21",
+};
+
+/* The reference two agents both reached for. Named once so the story, the feed and the
+ * roster cannot disagree about which file it was. */
+const CONTESTED = "src/auth/session.ts";
+
+/* ---------------------------------------------------------------------------------------
+ * ONE TIMELINE. Every panel reads these strings; none of them recomputes an age.
+ * ------------------------------------------------------------------------------------- */
+const T = {
+  atlasAnnounced: "25m ago",
+  atlasExpires: "expires in 65m",
+  pikeAsked: "18m ago",
+  danaAnswered: "12m ago",
+  junoExpired: "30m ago",
+  wrenLooked: "1m ago",
+  wrenAnnounced: "just now",
+};
+
+type SignalKind = "working-on" | "note" | "ask";
+
+/*
+ * NOTHING BELOW USES --to, AND THAT IS A CORRECTION, NOT AN OMISSION.
+ *
+ * The first draft of this data had Wren send `coswarm note ... --to Atlas` and Dana reply
+ * `--to Pike`. Both would fail against the real server. resolveSignalRecipient() in
+ * src/cloud/signals.ts matches the selector against the workspace's MEMBERS — rows with a
+ * user_id, i.e. humans — and throws "signal recipient is not a live member of this project"
+ * for anything else. Atlas and Pike are agents, so neither is addressable that way.
+ *
+ * A note with no --to is visible to the whole workspace, which is the better story anyway:
+ * Wren does not send Atlas a private message, Wren says it where everyone can see it. That
+ * is what a shared feed is for.
+ */
+interface FeedSignal {
+  id: string;
+  kind: SignalKind;
+  author: string;
+  fromKind: "agent" | "user";
+  about: string | null;
+  body: string;
+  age: string;
+  /** The CLI's --until, rendered the way relativeExpiry() renders it. */
+  expiry?: string;
+  expired?: boolean;
+}
+
+/* Newest first, the order `coswarm feed` returns. */
+const feed: FeedSignal[] = [
+  {
+    id: "s6",
+    kind: "working-on",
+    author: "Wren",
+    fromKind: "agent",
+    about: "src/auth/rate-limit.ts",
+    body: "add rate-limit middleware",
+    age: T.wrenAnnounced,
+    expiry: "expires in 45m",
+  },
+  {
+    id: "s5",
+    kind: "note",
+    author: "Wren",
+    fromKind: "agent",
+    about: CONTESTED,
+    /* No wall-clock time in here. "until 15:32" was the first draft and it is a second,
+     * unanchored timeline the reader would have to reconcile against "expires in 65m". */
+    body: "taking rate-limit instead — session.ts is Atlas’s for the next hour",
+    age: T.wrenAnnounced,
+  },
+  {
+    id: "s4",
+    kind: "note",
+    author: "Dana Okoye",
+    fromKind: "user",
+    about: "supabase/migrations",
+    body: "billing_events migration is mine this week — don’t add to it",
+    age: T.danaAnswered,
+  },
+  {
+    id: "s3",
+    kind: "ask",
+    author: "Pike",
+    fromKind: "agent",
+    about: "supabase/migrations",
+    body: "who owns the migration for billing_events?",
+    age: T.pikeAsked,
+    expiry: "expires in 6h",
+  },
+  {
+    id: "s2",
+    kind: "working-on",
+    author: "Atlas",
+    fromKind: "agent",
+    about: CONTESTED,
+    body: "refactor session cookie handling",
+    age: T.atlasAnnounced,
+    expiry: T.atlasExpires,
+  },
+  {
+    id: "s1",
+    kind: "working-on",
+    author: "Juno",
+    fromKind: "agent",
+    about: "tests/fixtures",
+    body: "backfill fixtures for the seed script",
+    age: "3h ago",
+    expiry: `expired ${T.junoExpired}`,
+    expired: true,
+  },
+];
+
+interface RosterMember {
+  name: string;
+  kind: "agent" | "member";
+  status: "active" | "idle";
+  /** What they announced they are on, or null when nothing of theirs is still current. */
+  on: string | null;
+  about: string | null;
+  lastSeen: string;
+}
+
+const roster: RosterMember[] = [
+  {
+    name: "Wren",
+    kind: "agent",
+    status: "active",
+    on: "add rate-limit middleware",
+    about: "src/auth/rate-limit.ts",
+    lastSeen: T.wrenAnnounced,
+  },
+  {
+    name: "Atlas",
+    kind: "agent",
+    status: "active",
+    on: "refactor session cookie handling",
+    about: CONTESTED,
+    lastSeen: T.wrenLooked,
+  },
+  {
+    name: "Pike",
+    kind: "agent",
+    status: "active",
+    on: "waiting on an answer about billing_events",
+    about: "supabase/migrations",
+    lastSeen: "4m ago",
+  },
+  {
+    name: "Juno",
+    kind: "agent",
+    status: "idle",
+    on: null,
+    about: null,
+    lastSeen: "3h ago",
+  },
+  {
+    name: "Dana Okoye",
+    kind: "member",
+    status: "idle",
+    on: null,
+    about: null,
+    lastSeen: T.danaAnswered,
+  },
+];
+
+interface Change {
+  age: string;
+  text: string;
+  ref: string | null;
+  tone: "announced" | "note" | "expired";
+}
+
+const changes: Change[] = [
+  {
+    age: T.wrenAnnounced,
+    text: "Wren announced rate-limit middleware",
+    ref: "src/auth/rate-limit.ts",
+    tone: "announced",
+  },
+  {
+    age: T.wrenAnnounced,
+    text: "Wren posted a heads-up about session.ts",
+    ref: CONTESTED,
+    tone: "note",
+  },
+  {
+    age: T.danaAnswered,
+    text: "Dana answered the billing_events ask",
+    ref: "supabase/migrations",
+    tone: "note",
+  },
+  {
+    age: T.junoExpired,
+    text: "Juno’s heads-up ran out",
+    ref: "tests/fixtures",
+    tone: "expired",
+  },
+  {
+    age: T.atlasAnnounced,
+    text: "Atlas announced session cookie work",
+    ref: CONTESTED,
+    tone: "announced",
+  },
+];
+
+/* Counted, never typed. If someone adds a row above, these follow. */
+const agentCount = roster.filter((r) => r.kind === "agent").length;
+const activeCount = roster.filter((r) => r.status === "active").length;
+const memberCount = roster.filter((r) => r.kind === "member").length;
+---
+
+<Base title={title} description={description} path="/app">
+  <div class="page app">
+    <SampleNotice />
+
+    <WorkspaceBar
+      name={workspace.name}
+      id={workspace.id}
+      agentCount={agentCount}
+      activeCount={activeCount}
+      memberCount={memberCount}
+    />
+
+    {/* Three server-rendered panels. Only the first is visible without JavaScript, which is
+        the right degradation: the other two are previews of the same screen in a different
+        state, not content of their own. The tablist above stays hidden until the script has
+        confirmed it can actually switch panels, so no reader is ever shown a dead control. */}
+    <div class="app__panels">
+      <section data-preview-panel="active" class="app__panel">
+        <h2 class="visually-hidden">Sample workspace with activity</h2>
+
+        <div class="app__grid">
+          <div class="app__main">
+            <CollisionStory contested={CONTESTED} />
+            <ActivityFeed signals={feed} />
+          </div>
+
+          {/* The inner .app__rail is what makes the rail sticky. .app__aside is the grid
+              cell — stretched to the full height of the row — and the rail is the box that
+              travels inside it. See the note on .app__rail in the stylesheet below. */}
+          <aside class="app__aside" aria-label="Agents and recent changes">
+            <div class="app__rail">
+              <Roster members={roster} />
+              <ChangeLog changes={changes} />
+            </div>
+          </aside>
+        </div>
+      </section>
+
+      <section data-preview-panel="new" class="app__panel" hidden>
+        <h2 class="visually-hidden">A brand-new workspace</h2>
+        <NewWorkspace />
+      </section>
+
+      <section data-preview-panel="loading" class="app__panel" hidden>
+        <h2 class="visually-hidden">The dashboard while it is loading</h2>
+        <LoadingPanel />
+      </section>
+    </div>
+  </div>
+</Base>
+
+<script>
+  /*
+   * The preview switcher.
+   *
+   * PROGRESSIVE ENHANCEMENT, BOTH WAYS ROUND. The markup ships as three plain <section>s and
+   * a hidden group of buttons. This script is what turns them into a real tab pattern: it
+   * adds role="tablist"/"tab"/"tabpanel", wires aria-controls and aria-labelledby, and only
+   * then reveals the control. If it never runs, the reader sees the populated dashboard and
+   * no broken buttons — rather than a tablist whose tabs do nothing and two panels labelled
+   * by a button they cannot see. The roles are added here rather than in the template for
+   * exactly that reason: an orphaned role="tabpanel" with no tablist is worse markup than a
+   * plain section.
+   *
+   * KEYBOARD: the APG tab pattern. One stop in the page tab order, arrows to move between
+   * tabs, Home/End to jump. Selecting a tab moves focus to it — but NOT to the panel, which
+   * would strand a screen-reader user past the content they just asked for.
+   *
+   * The panel entrance animation is not driven from here at all. Hidden panels are
+   * display:none, so their CSS animations have not started; unhiding one starts them. That
+   * is a browser behaviour, not a trick, and it means the stagger replays on every switch
+   * with no JavaScript involved and no risk of an element being left parked at opacity 0.
+   */
+  const tablist = document.querySelector<HTMLElement>("[data-preview-tabs]");
+  const tabs = Array.from(
+    document.querySelectorAll<HTMLButtonElement>("[data-preview-tab]"),
+  );
+  const panels = Array.from(
+    document.querySelectorAll<HTMLElement>("[data-preview-panel]"),
+  );
+
+  if (tablist && tabs.length > 0 && tabs.length === panels.length) {
+    tablist.setAttribute("role", "tablist");
+    tablist.setAttribute("aria-label", "Preview state");
+
+    for (const tab of tabs) {
+      const key = tab.dataset.previewTab;
+      const panel = panels.find((p) => p.dataset.previewPanel === key);
+      if (!panel) continue;
+
+      tab.id = `preview-tab-${key}`;
+      panel.id = `preview-panel-${key}`;
+      tab.setAttribute("role", "tab");
+      tab.setAttribute("aria-controls", panel.id);
+      panel.setAttribute("role", "tabpanel");
+      panel.setAttribute("aria-labelledby", tab.id);
+      /* A tabpanel is a focus stop so a keyboard user can reach its content directly after
+       * arrowing to the tab. -1 keeps it out of the sequential order. */
+      panel.setAttribute("tabindex", "-1");
+    }
+
+    /* The bar is outside the panels, so it has to be told which preview is showing — see the
+     * note in WorkspaceBar.astro about the counts contradicting the empty and loading panels. */
+    const bar = document.querySelector<HTMLElement>("[data-bar]");
+
+    const select = (index: number, moveFocus: boolean) => {
+      if (bar) {
+        bar.dataset.previewState = tabs[index].dataset.previewTab ?? "active";
+      }
+      tabs.forEach((tab, i) => {
+        const chosen = i === index;
+        tab.setAttribute("aria-selected", chosen ? "true" : "false");
+        /* Roving tabindex: the selected tab is the group's single tab stop. */
+        tab.tabIndex = chosen ? 0 : -1;
+        const panel = panels.find(
+          (p) => p.dataset.previewPanel === tab.dataset.previewTab,
+        );
+        if (panel) panel.hidden = !chosen;
+      });
+      if (moveFocus) tabs[index].focus();
+    };
+
+    tabs.forEach((tab, i) => {
+      tab.addEventListener("click", () => select(i, false));
+      tab.addEventListener("keydown", (event) => {
+        const last = tabs.length - 1;
+        let next: number | null = null;
+        if (event.key === "ArrowRight") next = i === last ? 0 : i + 1;
+        else if (event.key === "ArrowLeft") next = i === 0 ? last : i - 1;
+        else if (event.key === "Home") next = 0;
+        else if (event.key === "End") next = last;
+        if (next === null) return;
+        event.preventDefault();
+        select(next, true);
+      });
+    });
+
+    select(0, false);
+    tablist.hidden = false;
+  }
+</script>
+
+<style>
+  /* The dashboard is denser than the marketing page, so it uses the tight section rhythm
+     rather than --pad-section. A read-only screen wants more on screen at once. */
+  .app {
+    padding-block: var(--s-8) var(--s-16);
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-6);
+  }
+
+  /* min-inline-size: 0 on the panel and again on the main column. Without it a grid or flex
+     child refuses to shrink below the width of its widest unbreakable content — and this
+     page is full of monospace file paths and command lines, which are exactly that. The
+     symptom is the whole page growing a horizontal scrollbar at 375px instead of the one
+     code block scrolling inside itself. */
+  .app__panel {
+    min-inline-size: 0;
+  }
+
+  .app__panel:focus {
+    outline: none;
+  }
+
+  .app__grid {
+    display: grid;
+    gap: var(--gap-grid);
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .app__main,
+  .app__rail {
+    display: flex;
+    flex-direction: column;
+    gap: var(--gap-grid);
+    min-inline-size: 0;
+  }
+
+  .app__aside {
+    min-inline-size: 0;
+  }
+
+  /* Two columns only once there is genuinely room for a 21rem rail plus a main column that
+     can still hold a full command line. Below that the rail sits under the feed, where it
+     reads as a summary of what you just scrolled past. */
+  @media (min-width: 64rem) {
+    .app__grid {
+      grid-template-columns: minmax(0, 1fr) 21rem;
+      /* NOT align-items: start. The aside must stretch to the full height of the row —
+         1601px at 1440 — because that stretched box is the travel range the sticky rail
+         inside it is allowed to move through. With `start` the aside shrink-wraps its
+         content and sticky has nowhere to go. */
+    }
+
+    /*
+     * THE RAIL STICKS BY ITS BOTTOM EDGE, AND THAT IS THE THIRD ANSWER TO THIS QUESTION.
+     * Both earlier answers were wrong in a way that was visible on screen.
+     *
+     * ANSWER ONE was `position: sticky; top: …; max-block-size: 100dvh; overflow-y: auto` —
+     * the textbook fix. Measured on the built page: the rail's content is 1023px against
+     * 604–804px of available height at every ordinary desktop size, so the inner scroller
+     * was ALWAYS active. That is a nested scrollbar inside a 21rem column on every screen,
+     * plus a scroll container that clips the focus ring of anything focused inside it.
+     *
+     * ANSWER TWO was to drop sticky entirely. That traded the nested scrollbar for a hole:
+     * measured at 1440, .app__main runs 304→1905 and the rail 304→1327, so the last 578px
+     * of the column — 36% of the rail's own height — is empty background. You scroll past
+     * the Activity feed and stare at a dead gutter for most of a viewport.
+     *
+     * ANSWER THREE takes neither. TWO properties, and they only work as a pair:
+     *
+     *   .app__aside  justify-content: flex-end   the rail's RESTING place is the bottom
+     *                                            of the stretched cell, not the top
+     *   .app__rail   position: sticky            pulled back UP into view whenever its
+     *                inset-block-end: --s-6      resting place is below the fold
+     *
+     * The pairing is the whole trick, and it is easy to get backwards. A bottom inset does
+     * not push a box DOWN to follow the scroll — it pulls a box UP so that a resting place
+     * below the viewport is shown early, and it stops pulling once the resting place has
+     * caught up. Written on its own (rail resting at the TOP of the cell) it does nothing at
+     * all: measured that way, the rail scrolled 1:1 with the page at every offset, exactly
+     * as if the property were absent. It is `justify-content: flex-end` that gives the pull
+     * something to pull against.
+     *
+     * What that produces, measured on the built page at 1440×900 — deadGapInView is the
+     * height of empty rail column visible on screen, which is what the finding was about:
+     *
+     *   scrollY        0    300    600    900   1200   1384(end)
+     *   dead gap now   0      0     24     24      0      0
+     *   dead gap was   0      0    194    494    578    500
+     *
+     * The 24 is --s-6 — the gap the rail deliberately holds off the bottom of the window
+     * while pinned, not leftover column.
+     *
+     * The rail rides the bottom of the window through the whole long middle of the feed and
+     * lands flush with the main column at the end, so the two columns finish together.
+     *
+     * Nothing is unreachable. While pinned, the rail is 1023px against ~876px of usable
+     * height, so ~147px — the top of Roster — sits above the fold, and it is right there
+     * when you scroll back up. Top-sticky would have buried the LAST 147px with no way to
+     * reach it at all, which is the bug answer one was written to avoid.
+     *
+     * And no inner scroller: no nested scrollbar in a 21rem column, no clipped focus rings.
+     *
+     * SANITY CHECK IF THIS EVER STOPS WORKING: sticky dies under an ancestor that is a
+     * scroll container. body is `overflow-x: clip` (global.css) deliberately — `clip` does
+     * NOT create one, `hidden` would, and the header's own sticky is the canary for it.
+     */
+    .app__aside {
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-end;
+    }
+
+    .app__rail {
+      position: sticky;
+      inset-block-end: var(--s-6);
+    }
+  }
+
+  /* NO prefers-reduced-motion override here, deliberately. A sticky rail is not animation:
+     nothing eases, nothing parallaxes, the element simply stops at an edge. Turning it off
+     for reduced-motion readers would hand exactly them the 578px hole this rule exists to
+     close. motion.css owns the actual animation kill switch. */
+</style>

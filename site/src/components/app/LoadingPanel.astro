@@ -1,0 +1,200 @@
+---
+/*
+ * The dashboard while it is still fetching.
+ *
+ * A SKELETON IS ONLY HONEST IF IT IS THE SHAPE OF WHAT ARRIVES. The point of a skeleton over
+ * a spinner is that the layout does not jump when the content lands, which only holds if the
+ * placeholder matches the real thing. So this panel reuses the same two-column grid, the same
+ * card headers, and the same row rhythm as the populated panel — four feed rows with an
+ * avatar and two lines, five roster rows, five change rows. If either panel's structure
+ * changes, this one has to change with it; that is the cost of a skeleton and it is worth it.
+ *
+ * ONE ANNOUNCEMENT, NOT TWELVE. Every Skeleton here is aria-hidden by the component's own
+ * design. If each of the fourteen blocks carried its own `label`, a screen-reader user would
+ * hear "Loading" fourteen times. Exactly one live region is rendered, at the top, so the
+ * screen announces itself once and then goes quiet.
+ *
+ * The shimmer and its reduced-motion fallback both belong to motion.css — under reduced
+ * motion the sweep becomes a static tint so the block still reads as "loading" rather than as
+ * an empty box. Nothing here re-declares that.
+ */
+
+import Card from "../ui/Card.astro";
+import Skeleton from "../ui/Skeleton.astro";
+
+const FEED_ROWS = 4;
+const ROSTER_ROWS = 5;
+const CHANGE_ROWS = 5;
+---
+
+<div class="load">
+  {/* The single announcement for the whole screen. */}
+  <span class="visually-hidden" role="status">Loading the workspace</span>
+
+  <div class="load__grid">
+    <div class="load__main">
+      <Card class="load__card" headingLevel={2}>
+        <div slot="header" class="load__head">
+          <Skeleton variant="rect" width="14rem" height="1.15rem" radius="6px" />
+        </div>
+
+        <div class="load__ref">
+          <Skeleton variant="rect" width="11rem" height="1.6rem" radius="6px" />
+        </div>
+
+        {
+          Array.from({ length: 3 }).map(() => (
+            <div class="load__step">
+              <Skeleton variant="circle" width="1.75rem" height="1.75rem" />
+              <div class="load__stepbody">
+                <Skeleton variant="rect" width="60%" height="0.85rem" radius="5px" />
+                <Skeleton variant="rect" height="3.2rem" radius="6px" />
+              </div>
+            </div>
+          ))
+        }
+      </Card>
+
+      <Card class="load__card" headingLevel={2}>
+        <div slot="header" class="load__head">
+          <Skeleton variant="rect" width="6rem" height="1.15rem" radius="6px" />
+        </div>
+
+        {
+          Array.from({ length: FEED_ROWS }).map(() => (
+            <div class="load__row">
+              <Skeleton variant="circle" width="1.875rem" height="1.875rem" />
+              <div class="load__rowbody">
+                <Skeleton variant="rect" width="45%" height="0.8rem" radius="5px" />
+                <Skeleton variant="text" lines={2} />
+              </div>
+            </div>
+          ))
+        }
+      </Card>
+    </div>
+
+    <div class="load__aside">
+      <Card class="load__card" headingLevel={2}>
+        <div slot="header" class="load__head">
+          <Skeleton variant="rect" width="5rem" height="1.15rem" radius="6px" />
+        </div>
+
+        {
+          Array.from({ length: ROSTER_ROWS }).map(() => (
+            <div class="load__row">
+              <Skeleton variant="circle" width="1.875rem" height="1.875rem" />
+              <div class="load__rowbody">
+                <Skeleton variant="rect" width="55%" height="0.8rem" radius="5px" />
+                <Skeleton variant="rect" width="80%" height="0.7rem" radius="5px" />
+              </div>
+            </div>
+          ))
+        }
+      </Card>
+
+      <Card class="load__card" headingLevel={2}>
+        <div slot="header" class="load__head">
+          <Skeleton variant="rect" width="7rem" height="1.15rem" radius="6px" />
+        </div>
+
+        {
+          Array.from({ length: CHANGE_ROWS }).map(() => (
+            <div class="load__chg">
+              <Skeleton variant="circle" width="0.5rem" height="0.5rem" />
+              <Skeleton variant="rect" height="0.8rem" radius="5px" />
+            </div>
+          ))
+        }
+      </Card>
+    </div>
+  </div>
+</div>
+
+<style>
+  .load__grid {
+    display: grid;
+    gap: var(--gap-grid);
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .load__main,
+  .load__aside {
+    display: flex;
+    flex-direction: column;
+    gap: var(--gap-grid);
+    min-inline-size: 0;
+  }
+
+  /* Matches the populated panel's breakpoint and rail width exactly. If these drift the
+     skeleton stops being a preview of the layout and starts being a different screen. */
+  @media (min-width: 64rem) {
+    .load__grid {
+      grid-template-columns: minmax(0, 1fr) 21rem;
+      align-items: start;
+    }
+  }
+
+  .load__head {
+    padding-block: 0.15rem;
+  }
+
+  .load__ref {
+    margin-block-end: var(--stack-lg);
+  }
+
+  .load__step {
+    display: grid;
+    grid-template-columns: 1.75rem minmax(0, 1fr);
+    gap: var(--s-3);
+  }
+
+  .load__step + .load__step {
+    margin-block-start: var(--s-5);
+  }
+
+  .load__stepbody {
+    min-inline-size: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-2);
+  }
+
+  .load__row {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: var(--s-3);
+    padding-block: var(--s-3);
+  }
+
+  .load__row:first-of-type {
+    padding-block-start: 0;
+  }
+
+  .load__row + .load__row {
+    border-block-start: 1px solid var(--border);
+  }
+
+  .load__rowbody {
+    min-inline-size: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+  }
+
+  .load__chg {
+    display: grid;
+    grid-template-columns: 0.5rem minmax(0, 1fr);
+    align-items: center;
+    gap: var(--s-3);
+    padding-block: var(--s-3);
+  }
+
+  .load__chg:first-of-type {
+    padding-block-start: 0;
+  }
+
+  .load__chg:last-of-type {
+    padding-block-end: 0;
+  }
+</style>

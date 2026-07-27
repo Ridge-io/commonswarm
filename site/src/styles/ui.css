@@ -1,0 +1,978 @@
+/* coswarm UI primitives
+ *
+ * The skin for site/src/components/ui/*.astro. Every value comes from tokens.css. If you
+ * need a colour or a size that is not in there, add it to tokens.css — never hard-code here.
+ *
+ * ---------------------------------------------------------------------------------------
+ * WHY THIS IS A GLOBAL STYLESHEET AND NOT SCOPED <style> BLOCKS
+ * ---------------------------------------------------------------------------------------
+ * Two hard constraints, not a preference:
+ *
+ *   1. SLOTTED CONTENT CARRIES THE PARENT'S SCOPE ID. Astro stamps data-astro-cid-<hash>
+ *      onto elements in a component's own template. Content passed through <slot /> is
+ *      authored in the PARENT, so it is stamped with the parent's hash. A rule written in
+ *      Button.astro compiles to `.btn__icon svg[data-astro-cid-button]` and therefore
+ *      cannot match the <svg> a caller slotted in. Every primitive here takes slots, so
+ *      their skins have to be global or they silently fail to style half their content.
+ *
+ *   2. RUNTIME-CREATED DOM HAS NO SCOPE ID AT ALL. Toasts are constructed by script and
+ *      appended to the live region; the copy-status region is created on demand. Neither
+ *      ever gets a scope hash, so a scoped rule would leave a "visually hidden" element
+ *      fully visible. (That failure mode already exists in this repo — see the note on
+ *      .ui-sr below.)
+ *
+ * Components whose styling touches neither slots nor runtime DOM keep their CSS scoped in
+ * the component file, as the house style prefers: Avatar, Skeleton and Tooltip.
+ *
+ * ---------------------------------------------------------------------------------------
+ * RELATIONSHIP TO global.css — THIS FILE EXTENDS, IT DOES NOT FORK
+ * ---------------------------------------------------------------------------------------
+ * global.css already owns .btn, .card, .badge, .dot and motion.css owns .skeleton. Those
+ * are consumed across the landing, download, app and start surfaces. (This line used to name
+ * hero.css too; that file was orphaned when the pre-rewrite landing components went, and it
+ * was deleted at integration — nothing imported it.)
+ * Redefining them would break those files, and shipping a parallel `.ui-button` next to
+ * `.btn` would leave the product with two button systems. So the primitives COMPOSE the
+ * existing classes and this file only adds what is genuinely missing:
+ *
+ *   existing (global.css)        added here
+ *   .btn .btn--lg                 .btn--sm  .btn--icon  .btn--block  .btn__icon
+ *   .btn--primary                 .btn--secondary  .btn--ghost  .btn--danger
+ *                                .btn.is-loading + .btn__spinner
+ *   .card .card--sm/lg/raised    .card__head .card__title .card__sub .card__actions
+ *        .card--flush/link       .card__body .card__foot
+ *   .badge .badge--*             .badge--sm
+ *   .skeleton .skeleton--*       (Skeleton.astro adds its own scoped sizing only)
+ *
+ * ONE MODIFIER CONVENTION, EVERYWHERE. Every button modifier is `--`: .btn--primary,
+ * .btn--secondary, .btn--ghost, .btn--danger, .btn--sm, .btn--lg, .btn--icon, .btn--block.
+ * It used to be mixed — global.css owned single-dash .btn-primary / .btn-lg while this file
+ * added double-dash .btn--sm / .btn--block — so a single live class list read
+ * `btn btn-lg btn-primary btn--block`, two conventions inside one attribute. That shipped to
+ * the DOM and it made the CSS un-greppable: `btn-` matched some modifiers and `btn--` matched
+ * the others. Renamed in one pass across global.css, ui.css and every call site.
+ *
+ * The check that keeps it that way: grep the BUILT output for `btn-[a-z]` (single dash) and
+ * require zero hits other than the `--btn-h` custom property.
+ *
+ * The names: `.btn--secondary` is surface-plus-border, `.btn--ghost` is transparent until
+ * touched. A single-dash `.btn-ghost` that was really a secondary button once sat beside
+ * `.btn--ghost`; it had zero callers and was deleted at integration.
+ *
+ * ---------------------------------------------------------------------------------------
+ * CONTRAST
+ * ---------------------------------------------------------------------------------------
+ * Every pairing introduced by this file was computed against the WCAG 2.1 formula with
+ * translucent tints composited over their real backdrop first — 46 pairings, 0 failures,
+ * checked alongside positive controls (white/black = 21.00, #777/white = 4.48 correctly
+ * classified as a failure at the 4.5 threshold). Ratios are stated next to the rule that
+ * owns them. Two are tight enough to constrain future edits and are flagged inline.
+ *
+ * MOTION: there is deliberately NO prefers-reduced-motion block in this file. motion.css
+ * owns that, and because @import places it earlier in the cascade, an !important rule here
+ * would win the tie and silently downgrade its `animation: none` kill switch. See the note
+ * at the top of global.css.
+ */
+
+/* ==========================================================================
+   0. Shared helpers
+   ========================================================================== */
+
+/* Visually hidden, own copy.
+ *
+ * global.css ships `.visually-hidden` and three landing-page components each ship their own
+ * SCOPED `.sr-only`. That scoped copy is a latent bug: Install.astro and HowItWorks.astro
+ * both do `el.className = "sr-only"` on an element built with document.createElement, which
+ * never receives a scope hash, so the rule does not apply and the status text renders
+ * visibly. It only looks fine today because HowItWorks also renders one in its template and
+ * happens to win the race. The primitives here create live regions at runtime, so they need
+ * a genuinely global class. This is it. */
+.ui-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+@keyframes ui-spin {
+  to {
+    transform: rotate(1turn);
+  }
+}
+
+/* ==========================================================================
+   1. BUTTON — extends .btn from global.css
+   ========================================================================== */
+
+/* --- sizes -------------------------------------------------------------- */
+
+/* `md` is the bare .btn (2.75rem / 44px) and `lg` is the existing .btn--lg. Only `sm` is new.
+ * 36px is under the 44px comfortable touch target, which is fine for a mouse and not fine
+ * for a thumb — so the size is given back on any coarse pointer rather than being denied to
+ * dense desktop UI. */
+.btn--sm {
+  --btn-h: 2.25rem;
+  padding-inline: 0.7rem;
+  font-size: var(--t-xs);
+  letter-spacing: var(--track-xs);
+  border-radius: var(--radius-sm);
+  gap: var(--s-1);
+}
+
+@media (pointer: coarse) {
+  .btn--sm {
+    --btn-h: 2.75rem;
+    padding-inline: 0.9rem;
+  }
+}
+
+/* Square. Height is the single source of width so the box stays a true square at every size. */
+.btn--icon {
+  padding-inline: 0;
+  inline-size: var(--btn-h);
+  min-inline-size: var(--btn-h);
+}
+
+.btn--block {
+  display: flex;
+  inline-size: 100%;
+}
+
+/* --- icon slots ---------------------------------------------------------
+ * A wrapper element that belongs to Button.astro's template, so this rule can reach the
+ * slotted <svg> inside it (see the scope-id note at the top). Deliberately NOT written as a
+ * bare `.btn svg` — that would resize the icons in the landing-page buttons this pass does
+ * not own. */
+.btn__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  /* Optical: an icon set to the cap height of the label reads as too small next to it. */
+  inline-size: 1.15em;
+  block-size: 1.15em;
+}
+
+.btn__icon svg,
+.btn__icon img {
+  inline-size: 100%;
+  block-size: 100%;
+  display: block;
+}
+
+/* Icons inherit the label's colour so no variant has to restate them. */
+.btn__icon svg {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.75;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* --- variants -----------------------------------------------------------
+ * .btn--primary lives in global.css and is reused as-is. The three below are new.
+ * Hover always moves the fill LIGHTER, never darker. That direction is safe by
+ * construction: the ink on these fills is near-black, so a lighter background can only
+ * raise the ratio, which is why the hover states do not each need their own audit. */
+
+/* Surface + border. This is the ONLY definition of that look now — global.css's
+   lookalike single-dash `.btn-ghost` was deleted at integration, unused. */
+.btn--secondary {
+  background: var(--surface);
+  color: var(--text); /* 16.88:1 on --elev-2 */
+  border-color: var(--border);
+  box-shadow: var(--ring-top);
+}
+
+.btn--secondary:hover {
+  color: var(--text); /* 15.93:1 on --elev-3 */
+  background: var(--surface-2);
+  border-color: var(--border-strong);
+  transform: translateY(-1px);
+}
+
+.btn--secondary:active {
+  transform: translateY(0);
+  background: var(--elev-2);
+}
+
+/* Genuinely transparent until touched — for toolbars and tertiary actions. */
+.btn--ghost {
+  background: transparent;
+  color: var(--text-muted);
+  border-color: transparent;
+}
+
+.btn--ghost:hover {
+  background: var(--surface); /* --text 16.88:1 */
+  color: var(--text);
+}
+
+.btn--ghost:active {
+  background: var(--surface-2);
+  transform: translateY(0);
+}
+
+/* Destructive. Flat rather than gradient: --danger has no audited bright twin to ramp from,
+ * and inventing one would put an unmeasured colour under near-black ink. */
+.btn--danger {
+  background: var(--danger);
+  color: var(--danger-ink); /* 7.11:1 */
+  border-color: color-mix(in oklab, var(--danger) 70%, white);
+  box-shadow: var(--ring-top), 0 8px 24px -12px rgba(248, 113, 113, 0.55);
+}
+
+.btn--danger:hover {
+  color: var(--danger-ink); /* 8.64:1 on the lighter hover fill */
+  background: #f98d8d;
+  transform: translateY(-1px);
+}
+
+.btn--danger:active {
+  transform: translateY(0);
+  box-shadow: var(--ring-top);
+}
+
+/* --- loading ------------------------------------------------------------
+ * The label stays put and the spinner takes the leading icon slot, so the button does not
+ * change width mid-click and shove the layout around. The <button> is also genuinely
+ * disabled, which is what actually prevents a double submit — aria-busy alone does not. */
+.btn.is-loading {
+  cursor: progress;
+}
+
+.btn__spinner {
+  display: inline-block;
+  flex: none;
+  inline-size: 1.05em;
+  block-size: 1.05em;
+  border-radius: var(--radius-pill);
+  /* A 3/4 arc in currentColor. Under prefers-reduced-motion the kill switch in motion.css
+   * freezes it, and a frozen arc still reads as a spinner — which is why it is an arc and
+   * not a rotating dot that would freeze into a meaningless blob. */
+  border: 2px solid color-mix(in oklab, currentColor 26%, transparent);
+  border-top-color: currentColor;
+  animation: ui-spin 620ms linear infinite;
+}
+
+/* The disabled rule in global.css sets opacity .5 on [aria-disabled="true"], which would
+ * also grey out a loading button. A loading button is busy, not unavailable — keep it at
+ * full strength so the spinner is legible. */
+.btn.is-loading[aria-disabled="true"],
+.btn.is-loading:disabled {
+  opacity: 1;
+}
+
+/* Re-declare the ring for the sizes that change radius, and restore the top edge the
+ * global :focus-visible box-shadow would otherwise replace. */
+.btn--sm:focus-visible {
+  border-radius: var(--radius-sm);
+  box-shadow: 0 0 0 2px var(--focus-halo), var(--ring-top);
+}
+
+.btn--icon:focus-visible {
+  border-radius: var(--radius);
+}
+
+/* ==========================================================================
+   2. CARD — extends .card from global.css
+   ========================================================================== */
+
+.card__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--gap-inline);
+  margin-block-end: var(--stack-sm);
+}
+
+/* Head and foot own the card's own padding when the card is --flush (padding: 0), so a
+ * flush card with a header still lines up with a padded one. */
+.card--flush > .card__head,
+.card--flush > .card__body,
+.card--flush > .card__foot {
+  padding-inline: var(--pad-card);
+}
+
+.card--flush > .card__head {
+  padding-block-start: var(--pad-card);
+}
+
+.card--flush > .card__foot {
+  padding-block-end: var(--pad-card);
+}
+
+.card__title {
+  font-size: var(--t-lg);
+  line-height: var(--lh-lg);
+  letter-spacing: var(--track-xl);
+  font-weight: var(--weight-semibold);
+  color: var(--text);
+}
+
+.card__sub {
+  display: block;
+  margin-block-start: var(--s-1);
+  font-size: var(--t-sm);
+  line-height: var(--lh-sm);
+  letter-spacing: var(--track-sm);
+  color: var(--text-muted);
+  font-weight: var(--weight-body);
+}
+
+.card__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  flex: none;
+}
+
+/* Deliberately sets no colour. Muting the body wholesale was the first attempt and it is
+ * wrong: it drags any heading, number or badge a caller puts in the default slot down to
+ * secondary ink. Callers reach for .muted or .prose from global.css when they want that. */
+.card__body {
+  min-inline-size: 0;
+}
+
+.card__foot {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--gap-inline);
+  margin-block-start: var(--stack-lg);
+  padding-block-start: var(--stack-sm);
+  border-block-start: 1px solid var(--border);
+}
+
+.card--flush > .card__foot {
+  margin-block-start: 0;
+}
+
+/* A card whose whole surface is the link needs the title to look like the target, while the
+ * <a> itself keeps text-decoration: none from global.css. */
+a.card:hover .card__title,
+.card--link:hover .card__title {
+  color: var(--accent-bright);
+}
+
+/* ==========================================================================
+   3. BADGE — extends .badge from global.css
+   ========================================================================== */
+
+/* The only new badge size. Colours are untouched: the tint/text pairings were already
+ * audited in global.css and are reused verbatim. Worst case across the set is
+ * .badge--danger on --elev-4 at 4.62:1 against a 4.5 requirement — re-verified at this size.
+ * CONSTRAINT: no -dim tint may be darkened and no surface added above --elev-4 without
+ * re-running that audit. */
+.badge--sm {
+  font-size: var(--t-2xs);
+  line-height: var(--lh-2xs);
+  padding: 0.15em 0.5em;
+  gap: var(--s-1);
+}
+
+.badge--sm .dot {
+  inline-size: 0.375rem;
+  block-size: 0.375rem;
+}
+
+/* ==========================================================================
+   4. INPUT / FIELD
+   ==========================================================================
+   Structure: .ui-field > label + .ui-field__box > (prefix, control, suffix) + message.
+   The BOX carries the border and the focus ring, not the control, so a field with a prefix
+   focuses as one object instead of drawing a ring around the bare text input inside it. */
+
+.ui-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--stack-xs);
+  min-inline-size: 0;
+}
+
+.ui-field__label {
+  font-size: var(--t-sm);
+  line-height: var(--lh-sm);
+  letter-spacing: var(--track-sm);
+  font-weight: var(--weight-medium);
+  color: var(--text); /* 18.40:1 */
+}
+
+/* Required is marked with a word for screen readers and a glyph for everyone else, because
+ * an asterisk alone is not a label. */
+.ui-field__req {
+  color: var(--danger);
+  margin-inline-start: 0.15em;
+}
+
+.ui-field__box {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-inline-size: 0;
+  padding-inline: 0.75rem;
+  background: var(--elev-1);
+  /* --border-interactive is the ONLY hairline in the palette that clears 1.4.11's 3:1 for a
+   * control edge: 4.63:1 on --elev-1. --border and --border-strong are decorative and would
+   * fail here at 1.36:1 and 1.70:1. */
+  border: 1px solid var(--border-interactive);
+  border-radius: var(--radius);
+  transition: border-color var(--dur-2) var(--ease-standard),
+    box-shadow var(--dur-2) var(--ease-standard);
+}
+
+.ui-field__box:hover {
+  border-color: var(--text-faint);
+}
+
+/* :focus-within, not :focus-visible on the control — the ring belongs to the whole box, and
+ * for a text field a mouse click and a Tab should look the same (the user needs to see
+ * where typing will land either way).
+ *
+ * `outline` carries the visible band rather than box-shadow, because outline survives
+ * Windows High Contrast / forced-colors mode where box-shadow is dropped entirely. Same
+ * two-band ring as global.css: near-black halo hugging the box (so it reads on a bright
+ * surface), light indigo band outside it (9.65:1 on --elev-1). */
+.ui-field__box:focus-within {
+  border-color: var(--accent);
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 2px var(--focus-halo);
+}
+
+.ui-field__control {
+  flex: 1 1 auto;
+  min-inline-size: 0;
+  /* The box owns the chrome; the control is a bare text surface inside it. */
+  background: none;
+  border: 0;
+  padding: 0;
+  block-size: 2.55rem;
+  color: var(--text); /* 17.72:1 on --elev-1 */
+  font-size: var(--t-sm);
+  line-height: var(--lh-sm);
+  letter-spacing: var(--track-sm);
+  width: 100%;
+}
+
+/* The ring is drawn by the box above; a second ring around the bare control would double it. */
+.ui-field__control:focus,
+.ui-field__control:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+
+.ui-field__control::placeholder {
+  color: var(--text-muted); /* 7.38:1 — deliberately NOT --text-faint, which measures
+                             * 4.15:1 here and would fail as small text. */
+  opacity: 1; /* Firefox dims placeholders by default; that would undo the ratio above. */
+}
+
+textarea.ui-field__control {
+  block-size: auto;
+  min-block-size: 5.5rem;
+  padding-block: 0.6rem;
+  resize: vertical;
+  line-height: var(--lh-base);
+}
+
+.ui-field--sm .ui-field__box {
+  padding-inline: 0.55rem;
+}
+
+.ui-field--sm .ui-field__control {
+  block-size: 2.05rem;
+  font-size: var(--t-xs);
+}
+
+.ui-field--lg .ui-field__control {
+  block-size: 3rem;
+  font-size: var(--t-base);
+}
+
+/* --- affixes ------------------------------------------------------------
+ * Slotted, so these rules must be global — see the scope-id note at the top. */
+.ui-field__affix {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1);
+  flex: none;
+  color: var(--text-muted); /* 7.38:1 on --elev-1 */
+  font-size: var(--t-sm);
+  line-height: 1;
+  white-space: nowrap;
+  /* An affix must never eat the click that should focus the control. */
+  pointer-events: none;
+}
+
+/* …unless it holds something interactive, e.g. a reveal-password button. */
+.ui-field__affix:has(button),
+.ui-field__affix:has(a),
+.ui-field__affix--interactive {
+  pointer-events: auto;
+}
+
+/* A hairline after a leading affix.
+ *
+ * The screenshot caught why this is needed: a field rendering "coswarm/" as a prefix next to
+ * the placeholder "workspace" read as the single string "coswarm/ workspace", because the
+ * affix and the placeholder are both --text-muted and nothing separated them. The rule is
+ * only on the PREFIX — a trailing icon needs no divider, and giving it one makes the field
+ * look like it has a button in it.
+ *
+ * Add .ui-field__affix--plain alongside it for a leading ICON, where the divider is too much. */
+.ui-field__affix--prefix {
+  padding-inline-end: var(--s-2);
+  border-inline-end: 1px solid var(--border-strong);
+}
+
+.ui-field__affix--plain {
+  padding-inline-end: 0;
+  border-inline-end: 0;
+}
+
+.ui-field__affix svg {
+  inline-size: 1.05em;
+  block-size: 1.05em;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.75;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* --- messages ----------------------------------------------------------- */
+
+.ui-field__msg {
+  font-size: var(--t-xs);
+  line-height: var(--lh-xs);
+  letter-spacing: var(--track-xs);
+  color: var(--text-muted); /* 7.66:1 */
+}
+
+.ui-field__msg--error {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-1);
+  color: var(--danger); /* 7.20:1 */
+}
+
+.ui-field__msg--error svg {
+  flex: none;
+  inline-size: 1em;
+  block-size: 1em;
+  margin-block-start: 0.15em;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+
+/* --- states -------------------------------------------------------------
+ * Error is never signalled by colour alone: the control also carries aria-invalid and the
+ * message is rendered as text with its own icon. */
+.ui-field--error .ui-field__box {
+  border-color: var(--danger); /* 7.20:1 as an edge, well over the 3:1 needed */
+}
+
+.ui-field--error .ui-field__box:focus-within {
+  border-color: var(--danger);
+}
+
+.ui-field--disabled .ui-field__box {
+  opacity: 0.55;
+  border-color: var(--border-strong);
+  background: var(--elev-0);
+}
+
+.ui-field--disabled .ui-field__control {
+  cursor: not-allowed;
+}
+
+/* ==========================================================================
+   5. CODE BLOCK
+   ========================================================================== */
+
+.ui-code {
+  margin: 0;
+  background: var(--elev-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--ring-top);
+  overflow: hidden;
+  min-inline-size: 0;
+}
+
+.ui-code__bar {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding: var(--s-2) var(--s-2) var(--s-2) var(--s-3);
+  background: var(--surface);
+  border-block-end: 1px solid var(--border);
+}
+
+/* Purely decorative window furniture — three dots, no meaning, so they are hidden from
+ * assistive tech at the element that draws them. */
+.ui-code__dots {
+  display: inline-flex;
+  gap: 0.3rem;
+  flex: none;
+}
+
+.ui-code__dots i {
+  inline-size: 0.55rem;
+  block-size: 0.55rem;
+  border-radius: var(--radius-pill);
+  background: var(--border-strong);
+}
+
+.ui-code__label {
+  flex: 1 1 auto;
+  min-inline-size: 0;
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
+  letter-spacing: var(--track-xs);
+  color: var(--text-muted); /* 7.03:1 on --elev-2 */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ui-code__body {
+  margin: 0;
+  padding: var(--s-4);
+  font-size: var(--t-sm);
+  line-height: 1.7;
+  color: var(--text); /* 17.72:1 on --elev-1 */
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.ui-code--wrap .ui-code__body {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  overflow-x: visible;
+}
+
+/* Deliberately NOT display:block. Inside a <pre> the line break is a real "\n" text node, so
+ * the text a reader selects with the mouse still has its newlines. Making the span a block as
+ * well would render that "\n" as a SECOND break and double-space the whole listing. */
+.ui-code__line {
+  display: inline;
+}
+
+/* The prompt is decoration. It is aria-hidden AND excluded from what the copy button puts on
+ * the clipboard — the clipboard always receives the exact `code` prop, never the rendered
+ * line with a "$ " glued to the front. */
+.ui-code__prompt {
+  color: var(--accent-bright); /* 7.09:1 on --elev-1 */
+  user-select: none;
+}
+
+.ui-code__line--comment {
+  color: var(--text-muted); /* 7.38:1 on --elev-1 */
+}
+
+/* --- copy button --------------------------------------------------------
+ * Composes .btn .btn--sm .btn--ghost; only the feedback colours are new. */
+.ui-code__copy {
+  flex: none;
+}
+
+.ui-code__copy.is-done {
+  color: var(--success); /* 9.50:1 on --elev-2 */
+}
+
+.ui-code__copy.is-done:hover {
+  color: var(--success);
+}
+
+/* A failed copy is not an error state to shout about — it means the clipboard API is
+ * unavailable, and the useful response is to tell the reader to select the text. */
+.ui-code__copy.is-fail {
+  color: var(--warning);
+}
+
+.ui-code__copy.is-fail:hover {
+  color: var(--warning);
+}
+
+/* Swap the glyph rather than the whole button, so its width barely moves. The FAILURE state
+ * deliberately keeps the clipboard glyph: there is no tick to show, and hiding both would
+ * leave an empty icon box next to the label. */
+.ui-code__copy .ui-code__tick,
+.ui-code__copy.is-done .ui-code__clip {
+  display: none;
+}
+
+.ui-code__copy.is-done .ui-code__tick {
+  display: block;
+}
+
+@media (max-width: 30rem) {
+  .ui-code__body {
+    padding: var(--s-3);
+    font-size: var(--t-xs);
+  }
+
+  /* Decoration yields to content at the narrowest widths. In a narrow card the bar is
+   * dots + label + Copy on one row, and the dots were winning: measured at 320px inside the
+   * /download cards the label had 75px for text that wanted 132px, so "choose a directory"
+   * rendered as "choose a …" — a caption that no longer says anything. The dots are pure
+   * window furniture (already aria-hidden), so they are the right thing to drop, and the
+   * tighter gap/padding hands the recovered space to the label.
+   *
+   * The Copy button's text is deliberately NOT hidden here. That span is what swaps to
+   * "Copied" / "Select it" after a click — it is the non-colour signal the component
+   * promises, so collapsing the button to an icon would take away the feedback. */
+  .ui-code__dots {
+    display: none;
+  }
+
+  .ui-code__bar {
+    gap: var(--s-2);
+    padding-inline: var(--s-2);
+  }
+
+  /* Tracking is a refinement for comfortable widths. At 320px the longest caption on the site
+   * ("choose a directory") measured 132px against 131px of room, and 0.01em over 18 monospace
+   * characters is worth ~2px — exactly the difference between the whole caption and an
+   * ellipsis. Normal tracking is the correct trade at this size. */
+  .ui-code__label {
+    letter-spacing: normal;
+  }
+}
+
+/* ==========================================================================
+   6. TOAST
+   ==========================================================================
+   The stack is a fixed-position live region rendered once per page. Toasts are built by
+   script and appended to it, so every rule below has to be global — a scoped rule would not
+   reach them at all. */
+
+.ui-toasts {
+  position: fixed;
+  z-index: 300;
+  inset-block-end: var(--s-4);
+  inset-inline-end: var(--s-4);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--s-2);
+  /* The region spans the corner but must not swallow clicks on the page behind it. */
+  pointer-events: none;
+  max-inline-size: min(24rem, calc(100vw - var(--s-8)));
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* At 375px a corner toast is just a narrow column — go full width instead. */
+@media (max-width: 30rem) {
+  .ui-toasts {
+    inset-inline: var(--s-3);
+    inset-block-end: var(--s-3);
+    align-items: stretch;
+    max-inline-size: none;
+  }
+}
+
+@keyframes ui-toast-in {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 12px, 0) scale(0.98);
+  }
+}
+
+.ui-toast {
+  /* Resting state is the VISIBLE state and the entrance only animates FROM hidden with no
+   * fill-mode, so if the animation never runs — reduced motion, old browser, JS-built node
+   * inserted before styles settle — the toast is on screen. Same never-invisible invariant
+   * motion.css sets out. */
+  pointer-events: auto;
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-3);
+  inline-size: 100%;
+  padding: var(--s-3) var(--s-3) var(--s-3) var(--s-4);
+  background: var(--elev-4);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-lg), var(--ring-top);
+  animation: ui-toast-in var(--dur-3) var(--ease-decelerate);
+  transition: opacity var(--dur-2) var(--ease-accelerate),
+    transform var(--dur-2) var(--ease-accelerate);
+}
+
+.ui-toast.is-leaving {
+  opacity: 0;
+  transform: translate3d(0, 6px, 0);
+}
+
+.ui-toast__icon {
+  flex: none;
+  inline-size: 1.15rem;
+  block-size: 1.15rem;
+  margin-block-start: 0.1rem;
+  color: var(--text-muted);
+}
+
+.ui-toast__icon svg {
+  inline-size: 100%;
+  block-size: 100%;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.9;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* Ratios on --elev-4, the toast's own surface. All are icon-sized non-text, needing 3:1. */
+.ui-toast--success .ui-toast__icon { color: var(--success); } /* 8.17:1 */
+.ui-toast--warning .ui-toast__icon { color: var(--warning); } /* 9.41:1 */
+.ui-toast--danger  .ui-toast__icon { color: var(--danger); }  /* 5.68:1 */
+.ui-toast--info    .ui-toast__icon { color: var(--info); }    /* 9.42:1 */
+
+.ui-toast__main {
+  flex: 1 1 auto;
+  min-inline-size: 0;
+}
+
+.ui-toast__title {
+  font-size: var(--t-sm);
+  line-height: var(--lh-sm);
+  letter-spacing: var(--track-sm);
+  font-weight: var(--weight-semibold);
+  color: var(--text); /* 14.52:1 on --elev-4 */
+}
+
+.ui-toast__body {
+  margin-block-start: 0.15rem;
+  font-size: var(--t-xs);
+  line-height: var(--lh-xs);
+  letter-spacing: var(--track-xs);
+  color: var(--text-muted); /* 6.05:1 on --elev-4 */
+}
+
+.ui-toast__close {
+  flex: none;
+  /* Composes .btn .btn--sm .btn--icon .btn--ghost; only the metrics shrink. */
+  --btn-h: 1.75rem;
+  margin-block-start: -0.1rem;
+  margin-inline-end: -0.15rem;
+  color: var(--text-muted); /* 6.05:1 on --elev-4 */
+}
+
+/* The close control is small by design, so give it back a real hit area rather than a
+ * bigger box. 44px minimum, centred, without disturbing the layout. */
+.ui-toast__close::after {
+  content: "";
+  position: absolute;
+  inset: 50% auto auto 50%;
+  inline-size: 2.75rem;
+  block-size: 2.75rem;
+  transform: translate(-50%, -50%);
+}
+
+.ui-toast__close {
+  position: relative;
+}
+
+/* ==========================================================================
+   7. EMPTY STATE
+   ========================================================================== */
+
+.ui-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: var(--stack-sm);
+  padding: var(--s-10) var(--s-4);
+}
+
+.ui-empty--sm {
+  padding: var(--s-6) var(--s-4);
+}
+
+.ui-empty__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  inline-size: 3rem;
+  block-size: 3rem;
+  margin-block-end: var(--s-1);
+  border-radius: var(--radius);
+  background: var(--accent-dim);
+  border: 1px solid color-mix(in oklab, var(--accent) 30%, transparent);
+  color: var(--accent-bright); /* 6.47:1 on the tint over --bg, 5.76:1 over --elev-2 */
+}
+
+.ui-empty__icon svg {
+  inline-size: 1.4rem;
+  block-size: 1.4rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.ui-empty__title {
+  font-size: var(--t-lg);
+  line-height: var(--lh-lg);
+  letter-spacing: var(--track-xl);
+  font-weight: var(--weight-semibold);
+  color: var(--text); /* 18.40:1 */
+}
+
+.ui-empty__body {
+  max-width: var(--measure);
+  font-size: var(--t-sm);
+  line-height: var(--lh-sm);
+  letter-spacing: var(--track-sm);
+  color: var(--text-muted); /* 7.66:1 */
+}
+
+.ui-empty__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--gap-inline);
+  margin-block-start: var(--s-2);
+}
+
+/* ==========================================================================
+   8. AVATAR GROUP
+   ==========================================================================
+   Avatar.astro keeps its own styles scoped — it has no slots and builds no DOM at runtime.
+   The group is here because it styles its CHILDREN, which are slotted into it. */
+
+.ui-avatars {
+  display: flex;
+  align-items: center;
+}
+
+.ui-avatars > * {
+  /* Proportional to the face, not a fixed offset, so a group of lg avatars overlaps by the
+     same fraction as a group of xs ones. --av-size is declared by Avatar.astro on the avatar
+     itself, so it resolves here. 16% was measured, not guessed: a flat -0.55rem clipped the
+     second initial of every face except the last one — the covering avatar's 2px ring reached
+     25px into a 36px circle whose initials end at 27px. At 16% the ring lands at 28px. */
+  margin-inline-start: calc(var(--av-size, 2.25rem) * -0.16);
+  /* The ring is what separates two overlapping faces. It has to match the surface the group
+   * is sitting on, so it reads as a cut-out rather than a stroke. --av-ring is the same
+   * variable Avatar.astro uses for its presence dot: set it once on the group and both the
+   * faces and the dots follow the card they are on. */
+  box-shadow: 0 0 0 2px var(--av-ring, var(--bg));
+}
+
+.ui-avatars > *:first-child {
+  margin-inline-start: 0;
+}
