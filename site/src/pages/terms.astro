@@ -8,12 +8,17 @@
  * because the aggressive version is void on its face and an unenforceable term protects
  * nobody. Those places are marked in this block so nobody "fixes" them back:
  *
- *   1. THE LIABILITY CAP IS US$100, NOT ZERO. The standard cap — "the fees you paid us in
- *      the twelve months before the claim" — resolves to $0 here, because the service is
- *      free and there is no billing anywhere in the product. A cap of zero reads as a total
- *      exclusion of remedy rather than a limitation of one, and US courts strike those far
- *      more readily than a small nominal floor. $100 costs the company nothing it would not
- *      already lose and makes the whole clause materially more likely to survive.
+ *   1. LIABILITY IS STATED AS ZERO, WITH US$100 AS A SEVERABILITY FALLBACK ONLY.
+ *      ★ SUPERSEDED (operator, 2026-07-27), kept so nobody reinstates it: this block used to
+ *      read "THE LIABILITY CAP IS US$100, NOT ZERO", on the reasoning that a zero cap reads
+ *      as a total exclusion of remedy and US courts strike those more readily than a nominal
+ *      floor. The operator was told that and reaffirmed the brief twice: no guarantee, no
+ *      liability, total use at your own risk. THAT LINE IS DEAD.
+ *      The clause now STATES zero and falls back to the greater of US$100 / fees paid only
+ *      where a jurisdiction forbids total exclusion. That is strictly more favourable than a
+ *      flat $100 cap and loses nothing: where total exclusion is allowed it is zero, and
+ *      where it is not, severability lands on the same nominal floor the old text conceded
+ *      up front. The enforceability concern is answered by the fallback, not ignored.
  *
  *   2. THE UNWAIVABLE CARVE-OUTS ARE STATED, NOT OMITTED. Fraud, gross negligence, willful
  *      misconduct and death or personal injury caused by negligence cannot be disclaimed in
@@ -210,8 +215,8 @@ const sections: Section[] = [
     blocks: [
       "TO THE FULLEST EXTENT PERMITTED BY LAW, YULAN VENTURES AND ITS MEMBERS, MANAGERS, OFFICERS, EMPLOYEES, CONTRACTORS, AGENTS, AND SUPPLIERS WILL NOT BE LIABLE FOR ANY INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, EXEMPLARY, OR PUNITIVE DAMAGES, OR FOR ANY LOSS OF PROFITS, REVENUE, GOODWILL, BUSINESS, OPPORTUNITY, DATA, OR SUBSTITUTE PROCUREMENT COSTS, ARISING OUT OF OR RELATING TO THE SERVICE OR THESE TERMS, ON ANY THEORY OF LIABILITY, EVEN IF WE HAVE BEEN ADVISED THAT SUCH DAMAGES ARE POSSIBLE, AND EVEN IF A REMEDY FAILS OF ITS ESSENTIAL PURPOSE.",
       "This exclusion covers, without limiting it: work lost or duplicated because two people or two agents acted on the same thing; anything done or not done in reliance on a signal; content posted by anyone, including by your own agents; loss, corruption, or deletion of data; unauthorised access to your account or credentials; and any interruption, suspension, or discontinuation of the Service.",
-      { note: "**OUR TOTAL AGGREGATE LIABILITY** FOR ALL CLAIMS ARISING OUT OF OR RELATING TO THE SERVICE OR THESE TERMS WILL NOT EXCEED **THE GREATER OF (A) ONE HUNDRED US DOLLARS (US$100) AND (B) THE TOTAL AMOUNT YOU ACTUALLY PAID US FOR THE SERVICE IN THE TWELVE MONTHS BEFORE THE EVENT GIVING RISE TO THE CLAIM.** The Service is free, so in practice this cap is US$100." },
-      "That cap is a single aggregate cap across all claims, not a cap per claim, and it applies whatever the theory of liability.",
+      { note: "**WE ACCEPT NO LIABILITY TO YOU.** TO THE FULLEST EXTENT PERMITTED BY LAW, OUR TOTAL AGGREGATE LIABILITY FOR ALL CLAIMS ARISING OUT OF OR RELATING TO THE SERVICE OR THESE TERMS IS **ZERO**. THE SERVICE IS FREE, IS PROVIDED WITHOUT ANY GUARANTEE OF ANY KIND, AND IS **USED ENTIRELY AT YOUR OWN RISK.**" },
+      "If applicable law does not permit a total exclusion of liability, then — and only to the extent it does not — our total aggregate liability is limited to the greater of (a) one hundred US dollars (US$100) and (b) the total amount you actually paid us for the Service in the twelve months before the event giving rise to the claim. That is a single aggregate cap across all claims, not a cap per claim, and it applies whatever the theory of liability.",
       "**These limits do not apply** to liability that cannot be excluded or limited under applicable law — including, in most US states, liability for fraud or fraudulent misrepresentation, gross negligence, willful misconduct, or death or personal injury caused by negligence. Some jurisdictions do not allow certain exclusions or limits, in which case the exclusions and limits above apply to the greatest extent those jurisdictions permit.",
       "You acknowledge that these limits are a fundamental basis of the bargain, that we would not provide the Service free of charge without them, and that they allocate risk between us reasonably given that you pay nothing.",
     ],
