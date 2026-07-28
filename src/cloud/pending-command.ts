@@ -146,9 +146,31 @@ export async function sendCapabilityWithPending(
     await clearPendingCommand(session.store, session.userId, pending.intent);
     return result;
   } catch (error) {
-    if (!(error instanceof CommandTransportError)) {
+    /* A 5xx IS AMBIGUOUS, AND TREATING IT AS FAILURE MINTS A SECOND LIVE CREDENTIAL.
+     *
+     * This used to clear the pending command_id on ANY non-transport error. The gateway
+     * can answer 502/503/504 AFTER the mint transaction has already committed a
+     * swarm.capability_urls row — so the link exists, the CLI reports "could not tell
+     * whether the link was created… run the same command again", and the retry then
+     * finds no pending id, generates a fresh one, misses the idempotency ledger, and
+     * issues a SECOND live anonymous-read credential for the same work item. The
+     * operator sees one link and two are live; the first was never printed, so in
+     * practice it cannot be revoked, and it serves that work item for up to 7 days.
+     *
+     * sendSignalWithPending already had this right. The capability copy dropped the
+     * status>=500 arm, which is the arm that makes the retry a REPLAY rather than a
+     * second mint. Preserving the id is what lets the server recognise the retry. */
+    const ambiguous = error instanceof CommandTransportError ||
+      (error instanceof CommandHttpError && error.status >= 500);
+    if (!ambiguous) {
       await clearPendingCommand(session.store, session.userId, pending.intent);
       throw error;
+    }
+    if (error instanceof CommandHttpError) {
+      throw new CommandHttpError(
+        error.status,
+        `${error.message}; retry the same command to resolve its pending outcome`,
+      );
     }
     throw new CommandTransportError(
       `${error.message}; retry the same command to resolve its pending outcome`,

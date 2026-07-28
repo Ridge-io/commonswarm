@@ -407,6 +407,14 @@ async function handle(request: Request): Promise<Response> {
   // and it reveals nothing, since it depends only on the verb and the Origin.
   if (request.method === "OPTIONS") return preflight(request);
 
+  // ★ THE GATE COMES FIRST, BEFORE ANY DATABASE WORK, AND THAT ORDERING IS THE FIX.
+  // It used to sit ~70 lines below, AFTER two rate-bucket upserts and after a method
+  // check that wrote an audit row. This function is registered with verify_jwt=false,
+  // so it is reachable from the open internet the moment it deploys — which meant that
+  // while the feature was DARK, an unauthenticated request still cost one rate_buckets
+  // row and one permanent swarm.audit_log row. A disabled feature must cost nothing.
+  if (!capabilityUrlsEnabled) return uniformFailure(request);
+
   const presented = bearer(request);
   const tokenWellFormed = presented !== null &&
     CAPABILITY_TOKEN_RE.test(presented);
@@ -418,11 +426,38 @@ async function handle(request: Request): Promise<Response> {
   // posture the table itself keeps.
   const bucketKey = `capability:read:${bytesToHex(tokenHash)}`;
 
+  // ★ THE BINDING LIMITER IS KEYED ON THE CALLER, NOT ON WHAT THE CALLER SENT.
+  // The token-hash bucket below is still useful — it caps abuse of one REAL link —
+  // but it cannot bind an attacker, because the attacker chooses the token. Rotating
+  // the bearer produced a fresh bucket at count=1 on every single request, so 429 was
+  // unreachable and the "limit" was decorative. The client address is the cheapest
+  // thing on this request an attacker cannot vary for free.
+  // `?? ""` on the index is required, not defensive: edge functions compile with
+  // noUncheckedIndexedAccess, so split()[0] is `string | undefined` here even though
+  // split always yields at least one element. tsc does not cover this tree.
+  const clientIp = ((request.headers.get("x-forwarded-for") ?? "").split(",")[0] ?? "")
+    .trim().slice(0, 45) || "unknown";
+  const originBucketKey = `capability:read:origin:${clientIp}`;
+
   const methodOk = request.method === "POST";
   const bodyEmpty = methodOk ? await bodyIsEmpty(request) : true;
 
   return await db.begin(async (tx) => {
     await setTransaction(tx);
+
+    // Caller-keyed first: this is the arm that actually refuses.
+    const origin = await incrementBucket(tx, originBucketKey, READ_LIMIT);
+    if (origin.count > READ_LIMIT) {
+      // Audit ONLY on the crossing, never per request — otherwise the refusal path
+      // is itself the unbounded-growth vector it exists to stop.
+      if (origin.count === READ_LIMIT + 1) {
+        await insertAlert(tx, "capability_read_origin_rate_limit", "capability", {
+          limit: READ_LIMIT,
+          resets_at: origin.resetsAt,
+        });
+      }
+      return json(request, 429, { error: "rate_limited" });
+    }
 
     // The bucket is keyed on the hash of whatever was PRESENTED, so an invalid
     // token and a valid one accumulate identically: the 429 discriminates request
@@ -455,17 +490,35 @@ async function handle(request: Request): Promise<Response> {
       });
     }
 
+    /* ★ REFUSALS AUDIT ONCE PER CALLER PER WINDOW, NOT ONCE PER REQUEST.
+     *
+     * swarm.audit_log is append-only — a trigger blocks DELETE — and unlike
+     * idempotency_keys and rate_buckets it has NO purge schedule. So on the only
+     * anonymous, internet-reachable surface in the product, a row per rejected request
+     * was permanent, unbounded growth that any stranger could drive: roughly 1-2 GB a
+     * day at 1k rps, filling the volume, taking the command function down with it, and
+     * burying every real security signal underneath.
+     *
+     * The refusal is still recorded — the FIRST one from a caller in each window, which
+     * is what an investigator actually needs — and the flood after it is already
+     * counted, because rate_buckets holds the exact request count for that key.
+     *
+     * The RESPONSE is unchanged and unconditional, so the uniform-failure rule is
+     * untouched: invalid, expired, revoked and never-existed remain indistinguishable.
+     * Only the server-side write is throttled, and a caller cannot observe it. */
     const deny = async (
       outcome: string,
       reason: string,
       response: Response,
     ): Promise<Response> => {
-      await insertAudit(tx, {
-        outcome,
-        reason,
-        capabilityId: null,
-        workspaceId: null,
-      });
+      if (origin.count === 1) {
+        await insertAudit(tx, {
+          outcome,
+          reason,
+          capabilityId: null,
+          workspaceId: null,
+        });
+      }
       return response;
     };
 
@@ -478,13 +531,9 @@ async function handle(request: Request): Promise<Response> {
       );
     }
 
-    if (!capabilityUrlsEnabled) {
-      return await deny(
-        "authz",
-        "capability_feature_disabled",
-        uniformFailure(request),
-      );
-    }
+    // The feature gate that used to live here has MOVED TO THE TOP OF handle(), above
+    // every database write. Reaching this point already implies it is enabled, so a
+    // second check here would be dead code that reads as defence.
 
     // The uniform failure, not a 400: a 400 here would give a prober a signal
     // that reacts to request shape while a valid token reacts differently.
