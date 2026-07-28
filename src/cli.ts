@@ -15,6 +15,7 @@ import {
 import {
   assertAgentToken,
   assertCapabilityToken,
+  assertHumanCapabilityCredential,
   assertInvitationToken,
   assertWorkspaceName,
   CAPABILITY_MAX_TTL_MS,
@@ -308,9 +309,14 @@ invited them, and how long the project has existed — and reaches nothing else,
 the member list, not the message feed, not another work item. The link is printed
 once and never again, because only its hash is stored; it lasts a day by default
 and at most 7 days, and cswarm link revoke --capability-id <uuid> withdraws it
-sooner. Only an owner or admin signed in as a human can create one; an agent
-credential never can. --site sets the page the link points at (default
-https://coswarm-site.vercel.app, or CSWARM_SITE_ORIGIN).
+sooner. Only an owner or admin signed in as a human can create or revoke one; an
+agent credential never can, and cswarm says so without contacting the server. The
+token rides in the link's # fragment, which browsers never send to any server.
+--site (or CSWARM_SITE_ORIGIN) chooses which CommonSwarm page the link points at
+and accepts only https://coswarm-site.vercel.app (the default),
+https://commonswarm.com, https://www.commonswarm.com, or a loopback host while
+that page is being developed — the link is a live credential, so it may not be
+aimed at anyone else's server.
 GitHub identities with the same verified email may resolve to one GoTrue user;
 a second human must log in with a distinct verified email before accepting.
 
@@ -1274,6 +1280,11 @@ async function runLinkNew(args: Arguments): Promise<void> {
     : undefined;
   const cloud = await target(args);
   const human = await humanCredential(args, cloud);
+  // §7 human-mint-only is enforced by the command function, which is the authority. This
+  // raises the same rule locally so the refusal names it: the server's answer is a uniform
+  // 403 shared with "not an owner" and "no such work item", and an agent credential that
+  // can never mint deserves to be told so without a round trip.
+  assertHumanCapabilityCredential(human.accessToken, "create");
   const workspace = await workspaceId(args, cloud, human);
   const response = acceptedConnect(
     "link new",
@@ -1337,6 +1348,9 @@ async function runLinkRevoke(args: Arguments): Promise<void> {
   }
   const cloud = await target(args);
   const human = await humanCredential(args, cloud);
+  // Revoke is human-only for the same reason and by the same server check
+  // (capability_revoke_credential_kind_forbidden); say so here rather than at the 403.
+  assertHumanCapabilityCredential(human.accessToken, "revoke");
   const workspace = await workspaceId(args, cloud, human);
   const response = acceptedConnect(
     "link revoke",

@@ -559,8 +559,68 @@ kbd {
 
 /* --- buttons ------------------------------------------------------------ */
 
+/* A BUTTON'S INK MUST CHANGE ON THE SAME CLOCK AS ITS FILL. --btn-ink-dur is that clock,
+   and .btn--primary overrides it to 0s. The rule is the fix; here is why it is needed.
+
+   Changing the OS colour scheme on an OPEN page changes --accent-ink (#ffffff <-> #0a0b14).
+   That is a style change, so it STARTS A TRANSITION on `color`. For a flat-filled button
+   the fill transitions too and the pair stays matched all the way across. For .btn--primary
+   it does not: its fill is a linear-gradient, and `background-image` between two gradients
+   is not interpolated here — measured, element.getAnimations() during a live flip lists
+   `color` and the four border-*-color longhands and nothing else. So the gradient snapped to
+   the NEW palette while the ink was still crossfading from the OLD one, and for one --dur-1
+   window the most important button on the site read 2.27:1 dark->light and 2.70:1
+   light->dark. Instrument controls returned 21.00 for black-on-white and 4.54 at the AA
+   boundary. Both steady states were always fine (6.11:1 light, 5.09:1 dark) — only the
+   crossfade failed, which is exactly why it survived every static audit.
+
+   Three things about this cost real time and are worth keeping written down:
+
+   1. IT IS INVISIBLE TO A FRESH PAGE LOAD. Loading already-emulated to either scheme gives
+      the correct ink. It appears only when the scheme changes on an ALREADY-RENDERED page —
+      which is what an accessibility probe does when it emulates prefers-color-scheme after
+      navigating. Four of five primary buttons failed; the fifth was correct only because it
+      sits inside a closed <dialog>, and a display:none element does not start transitions,
+      so its ink snapped instead of animating.
+
+   2. A RUNNING TRANSITION OUTRANKS AN INLINE STYLE. Transitions resolve in the animation
+      origin, above every declarative origin, so `el.style.color = "var(--accent-ink)"` still
+      read back the stale near-black. "An inline declaration only loses to !important" is
+      false, and it sent one investigation hunting for an !important that does not exist.
+
+   3. SNAPPING THE INK ON EVERY BUTTON IS THE WRONG FIX, AND WAS MEASURED TO BE WORSE. Set
+      this to 0s on .btn and the flat variants break instead: their fill still crossfades
+      while their ink jumps, so at the first frame .btn--secondary went 16.88:1 -> 1.01:1 and
+      .btn--danger 7.11:1 -> 2.77:1. Match the ink to the fill; do not freeze it everywhere. */
 .btn {
   --btn-h: 2.75rem; /* 44px — the minimum comfortable touch target */
+  /* Matches `background` below. Keep them equal: this read var(--dur-1) against a
+     var(--dur-2) background, so the two ramps ran at different speeds and came apart mid-flip.
+     Equalising them measurably helped — swept with Animation playbackRate 0 in 20ms steps,
+     .btn--danger's worst frame went 1.06 -> 1.90 and .btn--secondary 1.92 -> 2.45.
+
+     ★ IT DOES NOT FIX THE FLAT VARIANTS, AND "INK ON THE SAME CLOCK AS ITS FILL" IS NOT A
+     SUFFICIENT INVARIANT. Do not restate it as one. On a theme flip a flat button's ink and
+     its fill travel in OPPOSITE directions — light ink going dark, dark fill going light —
+     so however well matched the clocks are, they cross, and at the crossing the pair is
+     mid-grey on mid-grey. Measured worst frames after this change: secondary 2.45/2.17,
+     danger 1.90/1.61, ghost 2.40/2.75.
+
+     Both obvious repairs are already known to fail, so try neither:
+       - snap the ink for every button  -> new ink lands on the OLD fill. Measured: secondary
+                                          16.88 -> 1.01 at the flip frame. Worse.
+       - crossfade both, matched        -> this rule. Better, still crosses.
+     The only complete fix is to snap ink AND fill together, i.e. suppress the transition for
+     the duration of a scheme change. That needs a hook, and an OS-level
+     prefers-color-scheme change fires no event a stylesheet can catch — it would take a
+     matchMedia listener adding a no-transition class. That is a real change with a real
+     flash-of-unstyled risk, and this is a sub-300ms artefact during a theme switch that does
+     not affect either steady state. Recorded, deliberately not done here.
+
+     SCOPE, because the original report overstated it: page load is CORRECT in both modes.
+     Steady-state primary is 6.11 light / 5.09 dark. This whole class only appears when the
+     scheme changes on an already-rendered page. */
+  --btn-ink-dur: var(--dur-2);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -578,15 +638,21 @@ kbd {
   cursor: pointer;
   user-select: none;
   transition: background var(--dur-2) var(--ease-standard),
-    border-color var(--dur-2) var(--ease-standard), color var(--dur-1) var(--ease-standard),
+    border-color var(--dur-2) var(--ease-standard), color var(--btn-ink-dur) var(--ease-standard),
     transform var(--dur-2) var(--ease-standard), box-shadow var(--dur-2) var(--ease-standard),
     outline-color var(--dur-1) var(--ease-standard),
     outline-offset var(--dur-1) var(--ease-decelerate);
 }
 
-/* A press must feel immediate, so it outruns the hover it interrupts. */
+/* A press must feel immediate, so it outruns the hover it interrupts.
+   The list is per-property rather than one value, because ONE value is applied to every
+   entry in transition-property — including `color`, which would hand the ink transition
+   straight back while a button is held down. Order matches the transition-property list
+   above: background, border-color, color, transform, box-shadow, outline-color,
+   outline-offset. Add a property up there and add its duration here. */
 .btn:active {
-  transition-duration: var(--dur-1);
+  transition-duration: var(--dur-1), var(--dur-1), var(--btn-ink-dur), var(--dur-1),
+    var(--dur-1), var(--dur-1), var(--dur-1);
 }
 
 .btn:hover {
@@ -605,6 +671,9 @@ kbd {
 }
 
 .btn--primary {
+  /* The gradient fill cannot interpolate, so it snaps on a colour-scheme change; the ink has
+     to snap with it or the two disagree for --dur-1. See the note above `.btn`. */
+  --btn-ink-dur: 0s;
   background: linear-gradient(180deg, var(--accent-bright), var(--accent));
   color: var(--accent-ink);
   border-color: color-mix(in oklab, var(--accent-bright) 70%, transparent);

@@ -49,7 +49,36 @@ const MAX_BODY_BYTES = 1024;
 
 const READ_LIMIT = 120;
 const GLOBAL_READ_LIMIT = 20000;
-const GLOBAL_BUCKET_KEY = "capability:read:global";
+
+/* ★ THE ALERT-ONLY GLOBAL COUNTER IS SHARDED, AND THE SHARDING IS THE POINT.
+ *
+ * It used to be one bucket_key. Its INSERT ... ON CONFLICT DO UPDATE takes a
+ * row-exclusive lock on that single row and holds it until the transaction
+ * commits — and this transaction also runs the projection query and an audit
+ * INSERT. So EVERY concurrent request on the only anonymous, internet-reachable
+ * surface in the product queued behind one row, for the whole request, and the
+ * queue was longest during exactly the surge this counter exists to observe.
+ * A counter that never refuses had become a hard throughput ceiling, and worse,
+ * a lock-contention amplifier available to any stranger: 5s lock_timeout, then
+ * failures on a path whose stated design is "this one never refuses".
+ *
+ * Writes now land on one of GLOBAL_SHARDS rows chosen at random, so contention
+ * falls by that factor. Math.random is right here: nothing is being kept secret,
+ * the only requirement is even spread, and a hash-derived shard would pin one
+ * caller to one row and re-create a hot spot per attacker.
+ *
+ * The SIGNAL IS NOT WEAKENED. The window's true total is the sum of the shards,
+ * which is read — not locked — and only once a shard is past its own share, so
+ * the ordinary path never pays for it. The alert still fires on the true global
+ * count crossing GLOBAL_READ_LIMIT, and still exactly once per window.
+ */
+const GLOBAL_SHARDS = 16;
+const GLOBAL_BUCKET_KEYS = Array.from(
+  { length: GLOBAL_SHARDS },
+  (_unused, index) => `capability:read:global:${index}`,
+);
+const GLOBAL_SHARD_SHARE = Math.ceil(GLOBAL_READ_LIMIT / GLOBAL_SHARDS);
+const GLOBAL_ALERT_LATCH_KEY = "capability:read:global:alerted";
 
 // Hashed in place of an absent bearer so the SHA-256 is performed on every path
 // and a missing credential cannot short-circuit ahead of the database call.
@@ -90,8 +119,17 @@ const DEAD_STATUS_REASONS = new Map<string, { reason: string; outcome: string }>
 // the public one. Never "*".
 const DEFAULT_ALLOWED_ORIGIN = "https://coswarm-site.vercel.app";
 
-const CONTROL_GLOBAL_RE =
-  /[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g;
+// Character-for-character the command function's SIGNAL_UNSAFE_GLOBAL_RE. The
+// narrower set this replaced (C0/C1, \u202a-\u202e and \u2066-\u2069) let through the
+// zero-width space and joiners (\u200b-\u200f), ALM (\u061c), the line and paragraph
+// separators (\u2028-\u2029), the word joiner (\u2060), the BOM (\ufeff) and the whole
+// tags block (\u{e0000}-\u{e007f}) — the last of which is the standard way to
+// smuggle invisible text past a human reviewer. Every string this function
+// serves is untrusted swarm-originated data headed for a browser (§4), so it
+// gets the treatment signal text already gets rather than a weaker second copy.
+// These two definitions must change together; keep them identical.
+const UNSAFE_GLOBAL_RE =
+  /[\u0000-\u001f\u007f-\u009f\u061c\u200b-\u200f\u2028-\u202e\u2060\u2066-\u2069\ufeff\u{e0000}-\u{e007f}]/gu;
 const ANSI_ESCAPE_GLOBAL_RE = /\u001b\[[0-?]*[ -/]*[@-~]/g;
 
 const databaseUrl =
@@ -209,9 +247,16 @@ function preflight(request: Request): Response {
   return new Response(null, { status: 204, headers });
 }
 
+// RFC 7235 §2.1: the auth-scheme is case-INSENSITIVE and is followed by 1*SP.
+// A conforming client sending `bearer swm_cap_...` was read as presenting no
+// credential at all, so a valid link failed with the uniform 404 and an audit
+// row reading capability_token_absent — a real link, indistinguishable from a
+// forged one, and undiagnosable from the log.
+const BEARER_RE = /^Bearer +([^\s]+)$/i;
+
 function bearer(request: Request): string | null {
   const header = request.headers.get("authorization");
-  const match = header ? /^Bearer ([^\s]+)$/.exec(header) : null;
+  const match = header ? BEARER_RE.exec(header) : null;
   return match?.[1] ?? null;
 }
 
@@ -227,7 +272,7 @@ function bytesToHex(value: Uint8Array): string {
 
 function stripControls(value: string | null | undefined): string | null {
   if (value === null || value === undefined) return null;
-  return value.replace(CONTROL_GLOBAL_RE, "").slice(0, 2048);
+  return value.replace(UNSAFE_GLOBAL_RE, "").slice(0, 2048);
 }
 
 /**
@@ -375,6 +420,41 @@ async function insertAlert(
 }
 
 /**
+ * Fires the global-surge alert once per window on the shards' TRUE total, which
+ * is why sharding the counter costs no signal. Reached only from a shard that is
+ * already past its share, so the aggregate below is off the ordinary path.
+ */
+async function alertGlobalSurge(tx: Sql, resetsAt: string): Promise<void> {
+  const totals = await tx<{ total: string }[]>`
+    SELECT coalesce(sum(count), 0)::text AS total
+    FROM swarm.rate_buckets
+    WHERE bucket_key = ANY(${GLOBAL_BUCKET_KEYS}::text[])
+      AND window_start = date_trunc('hour', statement_timestamp())
+  `;
+  if (Number(totals[0]?.total ?? "0") <= GLOBAL_READ_LIMIT) return;
+  // DO NOTHING, never DO UPDATE: the latch must not reintroduce the hot row the
+  // shards exist to remove. A returned row means this transaction inserted it,
+  // so it is the first to cross in this window and owns the single alert. The
+  // row lives in rate_buckets so the two-hour purge resets the latch with the
+  // window, exactly like every other key here.
+  const latched = await tx<{ bucket_key: string }[]>`
+    INSERT INTO swarm.rate_buckets (bucket_key, window_start, count)
+    VALUES (
+      ${GLOBAL_ALERT_LATCH_KEY},
+      date_trunc('hour', statement_timestamp()),
+      1
+    )
+    ON CONFLICT (bucket_key, window_start) DO NOTHING
+    RETURNING bucket_key
+  `;
+  if (latched.length === 0) return;
+  await insertAlert(tx, "capability_read_global_surge", "global", {
+    limit: GLOBAL_READ_LIMIT,
+    resets_at: resetsAt,
+  });
+}
+
+/**
  * Builds the response object field by field from the §7 allowlist. It never
  * spreads a database row: the next column added to swarm.tasks must not appear
  * here by default, and the projection's capability_id/workspace_id exist for the
@@ -481,13 +561,14 @@ async function handle(request: Request): Promise<Response> {
 
     // §5: unauthenticated limits alert rather than hard-lock. A global hard cap
     // would let one attacker close the front door on every tenant, so this one
-    // never refuses.
-    const global = await incrementBucket(tx, GLOBAL_BUCKET_KEY, GLOBAL_READ_LIMIT);
-    if (global.count === GLOBAL_READ_LIMIT + 1) {
-      await insertAlert(tx, "capability_read_global_surge", "global", {
-        limit: GLOBAL_READ_LIMIT,
-        resets_at: global.resetsAt,
-      });
+    // never refuses. The shard limit passed here is the GLOBAL limit, not the
+    // per-shard share: incrementBucket clamps at limit + 2, and a shard that
+    // clamped at its share would make the sum below understate the truth.
+    const shardKey =
+      `capability:read:global:${Math.floor(Math.random() * GLOBAL_SHARDS)}`;
+    const shard = await incrementBucket(tx, shardKey, GLOBAL_READ_LIMIT);
+    if (shard.count >= GLOBAL_SHARD_SHARE) {
+      await alertGlobalSurge(tx, shard.resetsAt);
     }
 
     /* ★ REFUSALS AUDIT ONCE PER CALLER PER WINDOW, NOT ONCE PER REQUEST.

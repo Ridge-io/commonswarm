@@ -298,7 +298,7 @@ export function capabilityCommandError(
       "forbidden",
       verb === "mint"
         ? "CommonSwarm did not create the link. Links are minted by a project owner or admin signed in with a confirmed email, for a work item that exists in this project — and never by an agent credential. Nothing was created."
-        : "CommonSwarm did not revoke that link. Either it is not a live link in this project, or your account may not revoke links here. Nothing changed.",
+        : "CommonSwarm did not revoke that link. Either it is not a live link in this project, or your account may not revoke links here — and an agent credential may never revoke one. Nothing changed.",
     );
   }
   if (status === 429) {
@@ -395,6 +395,30 @@ export function assertCapabilityToken(value: string): void {
       "capability link credential must be swm_cap_ followed by 32 base64url-encoded random bytes",
     );
   }
+}
+
+// A human login is a GoTrue access token: three base64url segments separated by dots.
+// Checked positively rather than by denying swm_ prefixes, so a credential kind invented
+// tomorrow is refused here by default instead of being waved through.
+const HUMAN_ACCESS_TOKEN_RE = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/;
+
+/**
+ * Why it exists although the server already refuses: §7 is human-mint-only, and the
+ * server's 403 is deliberately uniform, so a caller holding an agent credential learns
+ * only that something was forbidden. This says which rule was hit, before the round trip.
+ * It reports the credential's kind and never its value, like the assertions above.
+ */
+export function assertHumanCapabilityCredential(
+  credential: string,
+  verb: "create" | "revoke",
+): void {
+  if (HUMAN_ACCESS_TOKEN_RE.test(credential)) return;
+  const agent = AGENT_TOKEN_RE.test(credential);
+  throw new Error(
+    `only a signed-in person can ${verb} a capability link, and this command was given ${
+      agent ? "an agent credential" : "a credential that is not a human login"
+    }. The link is minted by a project owner or admin whose email is confirmed; an agent credential can never mint or revoke one, so a compromised worker cannot hand out board state. Run cswarm login as that person, or ask an owner or admin to run this command.`,
+  );
 }
 
 function semver(value: string): [number, number, number] | null {

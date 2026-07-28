@@ -321,8 +321,6 @@ const SHA_RE = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i;
 const SEMVER_RE = /^(\d+)\.(\d+)\.(\d+)(?:-[0-9A-Za-z.-]+)?$/;
 const CONTROL_RE =
   /[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/;
-const CONTROL_GLOBAL_RE =
-  /[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g;
 const SIGNAL_UNSAFE_GLOBAL_RE =
   /[\u0000-\u001f\u007f-\u009f\u061c\u200b-\u200f\u2028-\u202e\u2060\u2066-\u2069\ufeff\u{e0000}-\u{e007f}]/gu;
 const SIGNAL_WHITESPACE_GLOBAL_RE = /[\t\n\v\f\r\u0085\u2028\u2029]+/gu;
@@ -635,9 +633,16 @@ function record(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
+/**
+ * One scrubbing set for this file, not two. This used to run a narrower
+ * CONTROL_GLOBAL_RE (C0/C1 plus \u202a-\u202e and \u2066-\u2069) that sat six lines
+ * away from SIGNAL_UNSAFE_GLOBAL_RE and let through zero-width joiners, the
+ * BOM, the word joiner and the entire tags block — so a label or an audit
+ * reason was held to a weaker standard than the signal text beside it.
+ */
 function stripControls(value: string | null | undefined): string | null {
   if (value === null || value === undefined) return null;
-  return value.replace(CONTROL_GLOBAL_RE, "").slice(0, 2048);
+  return value.replace(SIGNAL_UNSAFE_GLOBAL_RE, "").slice(0, 2048);
 }
 
 function sanitizeSignalText(value: string): string {
@@ -718,9 +723,15 @@ async function readBody(
   }
 }
 
+// RFC 7235 §2.1: the auth-scheme is case-INSENSITIVE and is followed by 1*SP,
+// so `bearer swm_agt_...` is a well-formed credential. Matching /^Bearer / with
+// no `i` rejected it as if no credential had been presented at all — a
+// conforming client would have been told its token was missing.
+const BEARER_RE = /^Bearer +([^\s]+)$/i;
+
 function bearer(request: Request): string | null {
   const header = request.headers.get("authorization");
-  const match = header ? /^Bearer ([^\s]+)$/.exec(header) : null;
+  const match = header ? BEARER_RE.exec(header) : null;
   return match?.[1] ?? null;
 }
 
@@ -2780,18 +2791,56 @@ async function mintCapabilityUrl(
     }, invalidRequest);
   }
 
-  // The stream is taken from the task's own row joined to the caller's
-  // workspace. "No such task" and "that task belongs to another tenant" are the
-  // same 403, so a member cannot probe another tenant's task ids.
+  // ★ RESOLVED BY THE FULL WORK-ITEM KEY, NOT BY task_id ALONE.
+  // swarm.tasks is PRIMARY KEY (stream_id, task_id) — task_id on its own is not
+  // unique — so `WHERE t.task_id = $1` names a *set*, and taking its first row
+  // binds a bearer credential to whichever member of that set the planner
+  // happened to return. That is the cross-tenant class §7 names. Three
+  // predicates close it, and none of them is redundant with the others:
+  //   * t.workspace_id pins the task row itself to the caller's tenant;
+  //   * the join carries the composite (stream_id, workspace_id) — the same
+  //     pairing swarm.capability_urls' FK enforces — so the stream this mint
+  //     writes cannot belong to a different tenant than the task;
+  //   * the repositories EXISTS re-applies resolveRoute's archived_at check,
+  //     which this lookup used to omit, so a link can no longer be minted
+  //     against an archived repository mapping. It is written as EXISTS rather
+  //     than a LEFT JOIN on purpose: a missing or foreign-tenant repository row
+  //     must refuse, and `r.archived_at IS NULL` over a LEFT JOIN would pass.
+  // LIMIT 2, not 1: two rows means one task_id under two streams, which this
+  // function must refuse rather than resolve arbitrarily.
+  // "No such task", "that task belongs to another tenant", "its repo mapping is
+  // archived" and "the id is ambiguous" are all the same 403 — only the audit
+  // reason distinguishes them — so a member cannot probe another tenant's ids.
   const taskRows = await tx<{ stream_id: string }[]>`
     SELECT t.stream_id
     FROM swarm.tasks t
     JOIN swarm.streams s
       ON s.stream_id = t.stream_id
-     AND s.workspace_id = ${workspaceId}::uuid
+     AND s.workspace_id = t.workspace_id
     WHERE t.task_id = ${taskId}::uuid
-    LIMIT 1
+      AND t.workspace_id = ${workspaceId}::uuid
+      AND s.workspace_id = ${workspaceId}::uuid
+      AND (
+        s.repo_mapping_id IS NULL
+        OR EXISTS (
+          SELECT 1
+          FROM swarm.repositories r
+          WHERE r.repo_mapping_id = s.repo_mapping_id
+            AND r.workspace_id = ${workspaceId}::uuid
+            AND r.archived_at IS NULL
+        )
+      )
+    ORDER BY t.stream_id
+    LIMIT 2
   `;
+  if (taskRows.length > 1) {
+    return await auditRefusal(tx, auth, MINT_CAPABILITY_KIND, {
+      outcome: "authz",
+      reason: "capability_mint_work_item_ambiguous",
+      detail: ignoredIdentity,
+      workspaceId,
+    }, { status: 403, body: { error: "forbidden" } });
+  }
   const streamId = taskRows[0]?.stream_id;
   if (!streamId) {
     return await auditRefusal(tx, auth, MINT_CAPABILITY_KIND, {

@@ -201,7 +201,18 @@
   background: var(--elev-2);
 }
 
-/* Genuinely transparent until touched — for toolbars and tertiary actions. */
+/* Genuinely transparent until touched — for toolbars and tertiary actions.
+ *
+ * KNOWN, UNFIXED, AND MEASURED — a ghost button's ink is mismatched for --dur-1 after a
+ * colour-scheme flip, the same shape of defect as the one described above `.btn` in
+ * global.css but with a different partner. A ghost button has no fill of its own, so its
+ * ink is read against the PAGE background, and the page background snaps (nothing
+ * transitions <body>) while `color` crossfades. Measured at the first frame of a live flip:
+ * 2.40:1 dark->light and 2.75:1 light->dark. It predates the .btn--primary fix and is
+ * unchanged by it — --btn-ink-dur is deliberately NOT overridden here, because 0s would fix
+ * the flip and break the hover fade that is the only reason this variant transitions colour
+ * at all (--text-muted -> --text). Fixing it properly means pairing the ink with the page
+ * background, not with the button, and that is a bigger change than this one. */
 .btn--ghost {
   background: transparent;
   color: var(--text-muted);

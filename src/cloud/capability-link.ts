@@ -8,6 +8,20 @@ import { assertCapabilityToken } from "./command-client.js";
 export const CAPABILITY_SITE_ORIGIN = "https://coswarm-site.vercel.app";
 
 /**
+ * The complete set of hosts a capability link may point at. An allowlist, not a syntax
+ * check: the printed link IS the credential, so accepting any well-formed https origin
+ * means one mistyped or attacker-supplied --site (or CSWARM_SITE_ORIGIN, which nothing
+ * about the CLI's own invocation reveals) sends the operator to paste a working token
+ * into a stranger's host, where it reads the work item and is then held indefinitely.
+ * `coswarm-site.vercel.app` is the Vercel project alias and stays until DNS moves.
+ */
+export const CAPABILITY_ALLOWED_HOSTS: readonly string[] = [
+  "commonswarm.com",
+  "www.commonswarm.com",
+  "coswarm-site.vercel.app",
+];
+
+/**
  * The browser page that trades the fragment for a read. The token rides in the fragment
  * and not the path or query because a fragment is never sent to any server, never lands
  * in an access log, and never appears in a Referer header (SWARM-CLOUD.md §7).
@@ -36,6 +50,10 @@ export function capabilitySiteOrigin(
   explicit: string | undefined,
   environmental: string | undefined,
 ): string {
+  // Named in every message below, because the dangerous case is the one the operator
+  // cannot see: CSWARM_SITE_ORIGIN is set somewhere else and appears nowhere in the
+  // command they typed. "--site is wrong" would send them looking at the wrong thing.
+  const source = explicit !== undefined ? "--site" : "CSWARM_SITE_ORIGIN";
   const raw = (explicit ?? environmental ?? CAPABILITY_SITE_ORIGIN).trim();
   if (!raw) {
     throw new Error(
@@ -47,12 +65,13 @@ export function capabilitySiteOrigin(
     parsed = new URL(raw);
   } catch {
     throw new Error(
-      "--site must be the site's base origin, for example https://coswarm-site.vercel.app",
+      `${source} must be the site's base origin, for example ${CAPABILITY_SITE_ORIGIN}`,
     );
   }
-  if (parsed.protocol !== "https:" && !(parsed.protocol === "http:" && loopbackOrigin(parsed))) {
+  const loopback = loopbackOrigin(parsed);
+  if (parsed.protocol !== "https:" && !(parsed.protocol === "http:" && loopback)) {
     throw new Error(
-      "--site must use https, because the link carries a credential; plain http is accepted only on localhost",
+      `${source} must use https, because the link carries a credential; plain http is accepted only on localhost`,
     );
   }
   if (
@@ -60,7 +79,24 @@ export function capabilitySiteOrigin(
     (parsed.pathname !== "/" && parsed.pathname !== "")
   ) {
     throw new Error(
-      "--site must be a bare origin with no path, query, fragment, or credentials",
+      `${source} must be a bare origin with no path, query, fragment, or credentials`,
+    );
+  }
+  // The host is checked against the allowlist, never merely parsed. https and a bare
+  // origin say only that the string is well formed — they say nothing about who receives
+  // the credential the operator is about to paste there.
+  if (!loopback && !CAPABILITY_ALLOWED_HOSTS.includes(parsed.hostname)) {
+    throw new Error(
+      `${source} must name a CommonSwarm page — ${
+        CAPABILITY_ALLOWED_HOSTS.map((host) => `https://${host}`).join(", ")
+      }, or http://localhost / http://127.0.0.1 while developing that page. The link this prints is a live credential for one work item, so it may only point somewhere CommonSwarm serves.`,
+    );
+  }
+  // A port would still be a CommonSwarm host, but nothing CommonSwarm serves listens on
+  // one, so it is a typo rather than a deployment.
+  if (!loopback && parsed.port !== "") {
+    throw new Error(
+      `${source} must not carry a port; a CommonSwarm page is served on the default https port`,
     );
   }
   return parsed.origin;

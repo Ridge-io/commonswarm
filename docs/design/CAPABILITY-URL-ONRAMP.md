@@ -36,8 +36,9 @@ enforced somewhere you can read:
 - It is minted only by a human. A compromised agent worker cannot mint one and walk off
   with board state (§2.3 agent-token denylist).
 - It is scoped by a **positive allowlist**, not a denylist. It serves an exact set of
-  fields for exactly one work item, and there is no SQL it can be made to run that
-  reaches anything else.
+  fields for exactly one work item, and the role that serves it can reach no tenant row
+  except through that one projection function. §3 gives the exact grant set, including the
+  one non-tenant table the role can read and why that grant exists.
 - It expires, it is revocable, and it is stored only as a hash.
 
 ---
@@ -80,10 +81,27 @@ fragment is never sent to any server, so it lands in no access log, no CDN log, 
 `Referer` header. The server never composes this URL and never learns the site origin; it
 returns a credential and the client decides where it is redeemed
 (`src/cloud/capability-link.ts` — `capabilityUrl`; and the comment on the mint response in
-`supabase/functions/command/index.ts`). `--site` (or `CSWARM_SITE_ORIGIN`) overrides the
-default `https://coswarm-site.vercel.app`; it must be `https`, a bare origin, with no
-path, query, or fragment — validated *before* the mint request, so a typo costs a line of
-output rather than a live credential that cannot be rendered.
+`supabase/functions/command/index.ts`). Verified against the code on 2026-07-28:
+`capabilityUrl()` returns `` `${origin}${CAPABILITY_PATH}#${token}` `` with
+`CAPABILITY_PATH = "/see"`, so the emitted link and this sentence agree, and the token is
+in the fragment and never in the query string. It is the only composition site — nothing
+else in `src/` builds a `/see` URL.
+
+**`--site` is an allowlist, not a syntax check** (`capabilitySiteOrigin` in
+`src/cloud/capability-link.ts`, `CAPABILITY_ALLOWED_HOSTS`). `--site` and
+`CSWARM_SITE_ORIGIN` may name only `coswarm-site.vercel.app` (the default),
+`commonswarm.com`, `www.commonswarm.com`, or a loopback host for developing the page; each
+must be `https` (loopback may be `http`), a bare origin, portless, with no path, query,
+fragment or userinfo, and the error names the permitted set. Validated *before* the mint
+request, so a wrong origin costs a line of output rather than a credential.
+
+★ **Changed 2026-07-28, and the reason is not tidiness.** The superseded rule — *"it must
+be `https`, a bare origin, with no path, query, or fragment"* — is **dead**: it accepted
+**any** https host. Since the printed string is a live credential and not an address, one
+mistyped or attacker-supplied origin — and `CSWARM_SITE_ORIGIN` is invisible in the
+command the operator types — sent the operator to paste a working capability token into a
+stranger's host, which could then read that work item for the life of the link. Syntax
+said the string was well formed; it said nothing about who received the credential.
 
 **Who may mint.** Three checks, in order, each with its own audit reason
 (`supabase/functions/command/index.ts` — `capabilityPreamble`):
@@ -96,6 +114,26 @@ output rather than a live credential that cannot be rendered.
 
 A non-member, and a member naming another tenant's `workspace_id`, take the same third
 branch — so the response is not a cross-tenant existence oracle.
+
+Revoke runs the same preamble with its own reasons (`capability_revoke_*`), so it is
+human-only for the same reason mint is.
+
+**Do not grep for those reason strings — none of them exists as a literal.** They are built
+as `` `${scope}_role_forbidden` `` with `scope` set to `capability_mint` or
+`capability_revoke`, so `grep capability_mint_role_forbidden` over
+`supabase/functions/command/index.ts` returns a confident **0** while the reason is
+emitted exactly as written here. Enumerate the `refuse(` call sites in `capabilityPreamble`
+instead; that is how this list was checked on 2026-07-28. Only
+`capability_feature_disabled` is a literal.
+
+**The CLI now states rule 1 locally, before the round trip**
+(`assertHumanCapabilityCredential` in `src/cloud/command-client.ts`, called by both
+`runLinkNew` and `runLinkRevoke`). The server remains the authority and nothing about this
+check is a substitute for it — but the server's 403 is deliberately uniform across "wrong
+credential kind", "not verified", "not an owner" and "no such work item", so a caller
+holding an agent credential otherwise learns only that something was forbidden. The local
+check requires a GoTrue access token by shape, names the agent case when it sees one, and
+never quotes the credential.
 
 **Ceilings** (`supabase/functions/command/index.ts`): 20 mints per identity per hour
 (`CAPABILITY_MINT_CREDENTIAL_LIMIT`), 60 per workspace per hour
@@ -121,13 +159,57 @@ Six leaves. Nothing else. This is the whole list.
 
 **The allowlist is a function signature, enforced by Postgres — not a filter in
 TypeScript.** `swarm.capability_projection(bytea)` is `SECURITY DEFINER` and owned by
-`swarm_admin`; the role that serves anonymous traffic, `swarm_capability`, holds
-`EXECUTE` on that one function and `SELECT` on **no table at all**. Its complete grant set
-in `supabase/migrations/20260727000001_capability_urls.sql` is: `USAGE` on the schema,
-`EXECUTE` on the projection, `INSERT` on `swarm.audit_log`, `INSERT` on
-`swarm.security_alerts`, and `SELECT/INSERT/UPDATE` on `swarm.rate_buckets`. There is
-therefore no query the capability function could be tricked into running that reaches
-tenant data outside those nine columns.
+`swarm_admin`. The complete grant set of the role that serves anonymous traffic,
+`swarm_capability`, enumerated 2026-07-28 across **both** migrations that touch it —
+`supabase/migrations/20260727000001_capability_urls.sql` and
+`…_20260727000002_capability_urls_hardening.sql`, the second of which was **untracked in
+git** when this was written (`git status` reported `??`), so it is neither committed nor
+applied — is:
+
+| Grant | Where |
+|---|---|
+| `USAGE` on schema `swarm` | 000001 |
+| `EXECUTE` on `swarm.capability_projection(bytea)` | 000001 |
+| `SELECT, INSERT, UPDATE` on `swarm.rate_buckets` | 000001, table-wide; 000002 narrows the RLS policy to `bucket_key LIKE 'capability:read:%'` |
+| `INSERT` on **14 named columns** of `swarm.audit_log` | 000001 granted it table-wide; 000002 revokes that and re-grants column-level, excluding `audit_id` and `occurred_at` |
+| `INSERT` on `(kind, subject, detail)` of `swarm.security_alerts` | same pattern, 000001 → 000002 |
+| `USAGE` on the two audit sequences | 000001 |
+
+Nothing else. 000001 then names the excluded tables one by one, so a later migration
+cannot add one absent-mindedly.
+
+★ **CORRECTED 2026-07-28.** The superseded sentence — *"the role that serves anonymous
+traffic, `swarm_capability`, holds `EXECUTE` on that one function and `SELECT` on no table
+at all"* — is **dead, and was false when it was written**. That role holds `SELECT` on
+`swarm.rate_buckets` (migration line 327), and the grant is load-bearing rather than an
+oversight: the fixed-window limiter runs `INSERT … ON CONFLICT (bucket_key, window_start)
+DO UPDATE SET count = LEAST(swarm.rate_buckets.count + 1, …) RETURNING count`, which both
+reads the existing counter and returns it, and PostgreSQL requires `SELECT` for each.
+`alertGlobalSurge` in `supabase/functions/capability/index.ts` then removes any doubt about
+the reading: it runs a plain `SELECT coalesce(sum(count), 0) FROM swarm.rate_buckets WHERE
+bucket_key = ANY(…)`. The document contradicted itself two sentences later: the grant list
+directly above named the grant correctly while the summary sentence denied it.
+
+What is true, written so it can be checked rather than believed: `swarm_capability` holds
+`SELECT` on **exactly one** table, `swarm.rate_buckets`, whose whole column list is
+`bucket_key`, `window_start`, `count` — no tenant identifier and no tenant content. It
+holds `SELECT` on no table containing tenant data, so the projection's nine columns are
+still the only path from this role to a tenant's rows. The residual is worth naming rather
+than rounding off: a bug that let this role run arbitrary SQL could read `rate_buckets`,
+disclosing client IP addresses and the SHA-256 digests of presented capability tokens, and
+answering "was this exact token presented in this window" — an oracle, though not tenant
+data. 000002's `USING (bucket_key LIKE 'capability:read:%')` policy confines that reach to
+the three keys this endpoint owns; it does not remove it, because those three keys are
+precisely the ones carrying the IPs and the digests.
+
+★ **The same retired claim is still written into five code comments, which this document
+cannot fix and which were not edited alongside it:**
+`20260727000001_capability_urls.sql` line 205 (the section-D header) and line 322 (the
+*"COMPLETE list of its privileges"* comment, which sits directly above the grant it
+denies); `20260727000002_capability_urls_hardening.sql` line 172, which repeats it as
+settled background while narrowing the write side; and
+`supabase/functions/capability/index.ts` at the file header and above the projection query.
+Read all five as the dead sentence above; they need the same correction at the source.
 
 The response body is then built **field by field** rather than by spreading a row
 (`projectionBody` in `supabase/functions/capability/index.ts`) — so a column added to
@@ -191,9 +273,40 @@ Not by policy, by construction. None of these is reachable from a capability lin
   malformed token — but the hit path performs joins the miss path does not, and no
   measurement or test asserts the delta.
 
-**Anonymous is read-only.** The capability endpoint has no mutation path of any kind; any
-write requires a verified identity through the command function. Anonymous mutation is
-impossible, not merely unauthorised.
+**Anonymous cannot change anything any tenant can see — but it does write.**
+
+★ **CORRECTED 2026-07-28.** The superseded sentences — *"The capability endpoint has no
+mutation path of any kind; any write requires a verified identity through the command
+function. Anonymous mutation is impossible, not merely unauthorised."* — are **dead and
+were false**. Measured against `supabase/functions/capability/index.ts` on 2026-07-28: every
+anonymous request that gets past the feature gate performs **three** `swarm.rate_buckets`
+upserts (caller IP, presented-token hash, and one randomly chosen shard of the global surge
+counter), and may additionally write a fourth `rate_buckets` row (the surge alert latch),
+one `swarm.audit_log` row, and one `swarm.security_alerts` row. Those are writes, driven by
+an unauthenticated caller, on the only internet-reachable surface in the product. The
+function's own star comment above `deny()` describes exactly these writes and calls the
+audit growth a denial-of-service vector it had to throttle — so this document asserted a
+property that the implementation it cites had already documented lacking.
+
+The property that actually holds, which is the one the envelope needs:
+
+- The three writable tables are `swarm.rate_buckets`, `swarm.audit_log` and
+  `swarm.security_alerts`: one counter and two append-only ledgers. `swarm_capability`
+  holds no `INSERT`, `UPDATE` or `DELETE` on any table carrying tenant state — including
+  `swarm.capability_urls` itself, on which it holds nothing at all. No anonymous request
+  can create, alter, revoke or delete a work item, a membership, a signal, an event, or a
+  link. Minting and revoking remain a verified human identity through the command
+  function.
+- None of the three is readable back through this endpoint. Its only read is the
+  projection, so a write is not a channel: an anonymous caller cannot observe what it
+  wrote, and cannot use one to make the projection say something different.
+- What this costs is capacity, not confidentiality or integrity, and it is deliberately
+  bounded: refusals audit once per caller per window rather than once per request, and the
+  number of rate-bucket rows a caller can create per hour is fixed.
+
+**Not established:** that `swarm.audit_log` growth on the *accepted* path is bounded. Every
+successful read still writes one row, `audit_log` has no purge schedule, and nothing here
+measures the resulting volume or tests the throttle.
 
 ---
 
@@ -270,6 +383,12 @@ There is no `cswarm link ls` yet — see §7.
   nothing was deployed and no hosted request was made. If it does, the page must send the
   public anon key as `apikey` alongside the `swm_cap_` bearer, and the function must never
   treat `apikey` as authorization.
+- **No test covers the client-side capability code.** Enumerated 2026-07-28:
+  `grep -rn "capabilitySiteOrigin\|capabilityUrl\|renderCapabilityMint" tests/` returns
+  **zero** lines, and no file under `tests/` references `src/cloud/capability-link.ts`.
+  The origin allowlist, the fragment composition, the once-only rendering and the
+  human-credential check are therefore asserted by reading, not by execution. The three
+  pure functions are the cheapest tests in this feature; they are simply absent.
 - **Not verified from this seat:** that the migration applies; that either edge function
   compiles under a Deno version other than the one checked here; that any of it behaves as
   described against a live database. No Supabase instance was started and the p1-server
