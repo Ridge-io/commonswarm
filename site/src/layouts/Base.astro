@@ -72,6 +72,38 @@ const FALLBACK_ORIGIN = "https://commonswarm.invalid";
 const THEME_COLOR_LIGHT = "#ffffff";
 const THEME_COLOR_DARK = "#08090c";
 
+/* WHICH BACKEND THIS BUILD TALKS TO — the two <meta> tags emitted below.
+ *
+ * src/lib/commonswarm.ts:53-54 resolves the deployment as
+ *   import.meta.env.PUBLIC_SUPABASE_URL      ?? meta("commonswarm:url")
+ *   import.meta.env.PUBLIC_SUPABASE_ANON_KEY ?? meta("commonswarm:anon-key")
+ * and returns null when either side is missing (commonswarm.ts:55). The tags exist so the
+ * second branch has something to read: a built bundle can be pointed at a Supabase project
+ * by editing the HTML, with no rebuild and no toolchain on the machine doing it.
+ *
+ * THEY ARE ALWAYS EMITTED, INCLUDING EMPTY. An empty tag is the editable slot — deleting it
+ * when unconfigured would mean an operator repointing a build has to inject a tag into every
+ * page instead of changing one attribute. Empty is read as absent, not as a value:
+ * commonswarm.ts:51 ends `?.content?.trim() || null`, so `content=""` yields null and
+ * `client()` returns null rather than constructing a client against "".
+ *
+ * THE PRECEDENCE IS THE TRAP. The env var WINS, and it is inlined into the JS bundle at
+ * build time, so a build made WITH PUBLIC_SUPABASE_URL set can NOT be repointed by editing
+ * these tags — the bundle no longer reads them. A bundle you intend to hand someone else to
+ * point at their own project must therefore be built with both env vars UNSET. Our own
+ * Vercel builds set them; that is the ordinary case and the tags are then only a record of
+ * what the bundle already contains.
+ *
+ * NO KEY IS WRITTEN HERE, EVER. Both values come from the environment. The anon key is a
+ * public identifier rather than a secret (see the header of src/lib/commonswarm.ts), but a
+ * key committed to the repo is a key that outlives the project it belongs to and gets
+ * rotated by hand; keep it in the deploy environment. A service-role key must never appear
+ * in any file under site/.
+ *
+ * Sequence, and what breaks if it is done out of order: docs/design/WEB-ONBOARDING.md. */
+const BACKEND_URL = import.meta.env.PUBLIC_SUPABASE_URL ?? "";
+const BACKEND_ANON_KEY = import.meta.env.PUBLIC_SUPABASE_ANON_KEY ?? "";
+
 /* THIS FILE'S `<meta name="color-scheme" content="light dark">` IS NOT SUFFICIENT ON ITS OWN.
  * The CSS `color-scheme` property beats the meta wherever both are present, and global.css
  * declares `color-scheme: dark` on `html`. Until that line becomes light-first too, this
@@ -172,6 +204,9 @@ const ogImageAlt =
       content={THEME_COLOR_DARK}
       media="(prefers-color-scheme: dark)"
     />
+
+    <meta name="commonswarm:url" content={BACKEND_URL} />
+    <meta name="commonswarm:anon-key" content={BACKEND_ANON_KEY} />
 
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />

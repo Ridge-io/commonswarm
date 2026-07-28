@@ -2425,12 +2425,47 @@ async function createSelfServeWorkspace(
   if (auth.credentialKind !== "user" || auth.actor.user === null) {
     return await forbid("credential_kind_forbidden");
   }
-  if (!auth.identityVerified) return await forbid("identity_not_verified");
+
+  /* ★ PAST THIS POINT THE REFUSAL IS ACTIONABLE, AND HIDING IT COSTS THE USER WITHOUT
+   * BUYING ANY SECRECY.
+   *
+   * These two used to answer with the same opaque `forbidden` as everything above. That was
+   * over-applying the uniform-response rule. Uniformity exists to stop a STRANGER learning
+   * about someone ELSE — whether an account exists, whether a workspace is real. Neither
+   * applies here: the feature gate has already passed, the caller holds a human interactive
+   * credential, and the only fact being disclosed is the state of THEIR OWN account, which
+   * they are authenticated as and could read from their profile anyway.
+   *
+   * What the silence actually produced was a dead end. Someone signs in with GitHub, presses
+   * the one button on the page, and gets "not allowed" with no way to tell whether the
+   * product is closed, their account is wrong, or they did something. The fix — confirm your
+   * email — is thirty seconds away and we were not telling them it existed.
+   *
+   * The audit reasons are unchanged, so nothing is lost for investigation; only the caller's
+   * copy improves. Ordering still matters: both remain BELOW the feature gate, so while
+   * self-serve is dark the response stays uniform and reveals nothing at all. */
+  if (!auth.identityVerified) {
+    await insertAudit(tx, {
+      auth,
+      commandKind: CREATE_WORKSPACE_KIND,
+      outcome: "authz",
+      reason: "identity_not_verified",
+      detail: ignoredIdentity,
+    });
+    return { status: 403, body: { error: "email_not_verified" } };
+  }
   // A speed bump, not a security control (see DISPOSABLE_EMAIL_DOMAINS). It
   // sits behind the verification gate so it can never be the only thing
   // standing between a stranger and a tenant.
   if (disposableEmailDomain(auth.email)) {
-    return await forbid("disposable_email_domain");
+    await insertAudit(tx, {
+      auth,
+      commandKind: CREATE_WORKSPACE_KIND,
+      outcome: "authz",
+      reason: "disposable_email_domain",
+      detail: ignoredIdentity,
+    });
+    return { status: 403, body: { error: "email_domain_not_accepted" } };
   }
 
   const command = record(body.command);

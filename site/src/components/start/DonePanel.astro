@@ -1,0 +1,78 @@
+---
+/*
+ * The workspace exists. What this panel does and, more usefully, what it does not.
+ *
+ * ---------------------------------------------------------------------------------------
+ * IT DOES NOT REDIRECT ON A TIMER
+ * ---------------------------------------------------------------------------------------
+ * The brief says to send them to /app, and the primary action here does exactly that — one
+ * press, first in the tab order, styled as the one action this screen is about. What it is
+ * NOT is an automatic navigation after n seconds. This is the only screen in the product
+ * where the workspace id appears, and it is where step three lives; a timer would take both
+ * away from a reader who was still looking at them, and it would race anyone using a screen
+ * reader or a keyboard. A link they press is the same destination without the ambush.
+ *
+ * ---------------------------------------------------------------------------------------
+ * IT MAKES NO CLAIM ABOUT WHAT IS ON /app
+ * ---------------------------------------------------------------------------------------
+ * Deliberate. /app is another change's file and is being worked on at the same time as this
+ * one, so any sentence here describing what a reader will find there is a guess with a short
+ * shelf life. The link is labelled with the destination and stops. /app carries its own
+ * notice about its own state, which is the right place for it.
+ *
+ * ---------------------------------------------------------------------------------------
+ * THE ID IS SHOWN BECAUSE IT IS THE ONE THING THEY NEED LATER
+ * ---------------------------------------------------------------------------------------
+ * `cswarm` addresses a workspace by id. This is the only place it is printed, so it is
+ * selectable text in a mono face rather than a decorated chip, and the <dd> wraps rather than
+ * truncating — a uuid with an ellipsis through it is a uuid you have to come back for.
+ *
+ * ---------------------------------------------------------------------------------------
+ * "CREATE ANOTHER" GOES BACK THROUGH THE NAMING PANEL, ON PURPOSE
+ * ---------------------------------------------------------------------------------------
+ * It does not create anything itself. It hands off to ReadyPanel so the second workspace gets
+ * its own name and its own freshly minted pair of ids — a NEW intent, minted by an explicit
+ * press. That is the one place in this flow where new ids are correct: every automatic retry
+ * reuses the ids it already has, and only a deliberate "I want another one" mints more. The
+ * free tier stops at three live workspaces, which the sentence beside the button states
+ * before it is pressed rather than after the server refuses.
+ */
+
+import "./panel.css";
+import Button from "../ui/Button.astro";
+import AgentConnectSlot from "./AgentConnectSlot.astro";
+---
+
+<section class="st-pn" data-panel="done" tabindex="-1" aria-labelledby="pn-done-t" hidden>
+  <h2 class="st-pn__t" id="pn-done-t">Your workspace is ready</h2>
+  <p class="st-pn__p">
+    It is yours and you own it. Agents you connect to it will announce what they are working
+    on, and everyone in the workspace reads the same feed.
+  </p>
+
+  <dl class="st-pn__meta">
+    <dt>Name</dt>
+    <dd data-ws-name></dd>
+    <dt>Workspace id</dt>
+    <dd class="st-pn__id" data-ws-id></dd>
+  </dl>
+
+  <div class="st-pn__act">
+    <Button href="/app" size="lg">Open the dashboard</Button>
+  </div>
+
+  <AgentConnectSlot />
+
+  <p class="st-pn__note">
+    Free plan: three live workspaces per verified identity, no card. Archiving one frees its
+    slot. <button class="st-pn__linkbtn" type="button" data-create-another>
+      Create another workspace</button
+    >.
+  </p>
+
+  <p class="st-pn__who">
+    Signed in as <strong data-who>your GitHub account</strong>. Not you?
+    <button class="st-pn__linkbtn" type="button" data-signout>Sign out</button> — the
+    workspace above stays where it is.
+  </p>
+</section>

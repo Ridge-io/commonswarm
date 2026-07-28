@@ -1,0 +1,81 @@
+---
+/*
+ * Step one, and the only thing on the page a signed-out reader can do.
+ *
+ * ---------------------------------------------------------------------------------------
+ * THIS BUTTON IS NOT THE OLD STUB, AND THE DIFFERENCE IS WORTH STATING
+ * ---------------------------------------------------------------------------------------
+ * /start used to open with "Continue with GitHub", whose entire behaviour was to reveal a
+ * panel explaining that it was not connected to anything. It was deleted for that reason.
+ * The button below calls signInWithGitHub() from src/lib/commonswarm.ts, which is
+ * supabase-js's signInWithOAuth with provider=github — the same provider the CLI uses
+ * (src/cloud/auth.ts). It really navigates to GitHub, and the session really comes back
+ * here, because the client is created with detectSessionInUrl: true.
+ *
+ * WHAT IT STILL CANNOT DO is create a workspace on production, because that is gated
+ * server-side on SWARM_SELF_SERVE, which is unset there. That refusal is rendered as its own
+ * state AFTER the press, by the page's script — it is not pre-empted here. A button that
+ * refuses to run because of a condition it has not tested is guessing, and it would guess
+ * wrong the moment an operator flips the flag or somebody points this same static bundle at
+ * their own Supabase project.
+ *
+ * ---------------------------------------------------------------------------------------
+ * THE PANEL SHIPS HIDDEN
+ * ---------------------------------------------------------------------------------------
+ * Every panel in the stage ships `hidden` and the page's script reveals exactly one. Without
+ * JavaScript nothing in the stage appears, and the <noscript> block in start.astro is what a
+ * reader gets instead. That is deliberate: sign-in is a client-side call, so a button shown
+ * without the script that powers it would be the old stub with better manners.
+ *
+ * ---------------------------------------------------------------------------------------
+ * THE ASSENT LINE
+ * ---------------------------------------------------------------------------------------
+ * It has come back to where it began — directly under the press it belongs to. It sat under a
+ * "Create workspace" button originally, moved to the foot of the page when the wizard was
+ * deleted and there was no press left to attach it to, and moves back now that pressing this
+ * is the act that creates an account. Both links are underlined rather than merely tinted:
+ * this is the one sentence on the page where a reader has to be able to find the documents
+ * they are agreeing to. /terms and /privacy are both real routes in src/pages.
+ *
+ * The GitHub mark is drawn with fill="currentColor" and no colour of its own, so it themes
+ * with the button rather than being a second thing to update when the palette moves.
+ */
+
+import "./panel.css";
+import Button from "../ui/Button.astro";
+---
+
+<section class="st-pn" data-panel="signed-out" tabindex="-1" aria-labelledby="pn-in-t" hidden>
+  <h2 class="st-pn__t" id="pn-in-t">Sign in with GitHub</h2>
+  <p class="st-pn__p">
+    One press. You come straight back here, CommonSwarm sets up your workspace, and then you
+    hand the CLI to your agent.
+  </p>
+
+  <div class="st-pn__act">
+    <Button data-signin size="lg" block>
+      <svg
+        slot="start"
+        viewBox="0 0 16 16"
+        width="16"
+        height="16"
+        fill="currentColor"
+        aria-hidden="true"
+      >
+        <path
+          d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"
+        ></path>
+      </svg>
+      Sign in with GitHub
+    </Button>
+  </div>
+
+  <p class="st-pn__assent">
+    Signing in means you accept the <a href="/terms">Terms</a> and the
+    <a href="/privacy">Privacy Policy</a>.
+  </p>
+
+  <p class="st-pn__fine">
+    Free: three live workspaces per verified identity, and no card at any point.
+  </p>
+</section>

@@ -1,0 +1,1197 @@
+---
+/*
+ * The dashboard is deliberately rendered by the browser script below. Astro's static HTML
+ * contains only a loading state, so a build can never bake sample workspaces or signals into
+ * the page. Dynamic strings are assigned with textContent rather than parsed as markup.
+ */
+---
+
+<div class="dashboard" data-dashboard>
+  <div class="dashboard__wash" aria-hidden="true"></div>
+  <section
+    class="dashboard__root"
+    data-dashboard-root
+    aria-live="polite"
+    aria-busy="true"
+  >
+    <div class="dashboard__loading" role="status">
+      <span class="dashboard__spinner" aria-hidden="true"></span>
+      <span>Loading dashboard…</span>
+    </div>
+  </section>
+</div>
+
+<script>
+  import {
+    NoDeployment,
+    client,
+    currentSession,
+    feed,
+    myWorkspaces,
+    signInWithGitHub,
+    signOut,
+  } from "../../lib/commonswarm.ts";
+
+  type Workspace = Awaited<ReturnType<typeof myWorkspaces>>[number];
+  type FeedSignal = Awaited<ReturnType<typeof feed>>[number];
+
+  const root = document.querySelector<HTMLElement>("[data-dashboard-root]");
+
+  let workspaces: Workspace[] = [];
+  let activeWorkspaceId: string | null = null;
+  let requestVersion = 0;
+
+  function element<K extends keyof HTMLElementTagNameMap>(
+    tag: K,
+    className?: string,
+    text?: string,
+  ): HTMLElementTagNameMap[K] {
+    const node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text !== undefined) node.textContent = text;
+    return node;
+  }
+
+  function icon(name: "github" | "refresh" | "signout" | "arrow"): SVGSVGElement {
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("viewBox", "0 0 24 24");
+    svg.setAttribute("width", "18");
+    svg.setAttribute("height", "18");
+    svg.setAttribute("aria-hidden", "true");
+    svg.setAttribute("fill", name === "github" ? "currentColor" : "none");
+    svg.setAttribute("stroke", "currentColor");
+    svg.setAttribute("stroke-width", "1.8");
+    svg.setAttribute("stroke-linecap", "round");
+    svg.setAttribute("stroke-linejoin", "round");
+
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    const paths: Record<typeof name, string> = {
+      github:
+        "M12 2a10 10 0 0 0-3.16 19.49c.5.09.68-.22.68-.48v-1.87c-2.78.6-3.37-1.18-3.37-1.18-.45-1.16-1.11-1.47-1.11-1.47-.91-.62.07-.61.07-.61 1 .07 1.53 1.03 1.53 1.03.9 1.53 2.35 1.09 2.92.83.09-.65.35-1.09.64-1.34-2.22-.25-4.56-1.11-4.56-4.94 0-1.09.39-1.98 1.03-2.68-.1-.25-.45-1.27.1-2.64 0 0 .84-.27 2.75 1.02A9.6 9.6 0 0 1 12 6.82a9.6 9.6 0 0 1 2.5.34c1.91-1.29 2.75-1.02 2.75-1.02.55 1.37.2 2.39.1 2.64.64.7 1.03 1.59 1.03 2.68 0 3.84-2.34 4.68-4.57 4.93.36.31.68.92.68 1.85v2.77c0 .27.18.58.69.48A10 10 0 0 0 12 2Z",
+      refresh:
+        "M20 6v5h-5M4 18v-5h5M6.1 9a7 7 0 0 1 11.7-2.6L20 8.5M4 15.5l2.2 2.1A7 7 0 0 0 17.9 15",
+      signout: "M10 5H5v14h5M14 8l4 4-4 4M18 12H9",
+      arrow: "M5 12h14M14 7l5 5-5 5",
+    };
+    path.setAttribute("d", paths[name]);
+    if (name === "github") path.removeAttribute("stroke");
+    svg.append(path);
+    return svg;
+  }
+
+  function button(
+    label: string,
+    variant: "primary" | "secondary" | "quiet",
+    iconName?: "github" | "refresh" | "signout",
+  ): HTMLButtonElement {
+    const control = element("button", `dashboard__button dashboard__button--${variant}`);
+    control.type = "button";
+    if (iconName) control.append(icon(iconName));
+    control.append(document.createTextNode(label));
+    return control;
+  }
+
+  function linkButton(label: string, href: string): HTMLAnchorElement {
+    const control = element("a", "dashboard__button dashboard__button--primary");
+    control.href = href;
+    control.append(document.createTextNode(label), icon("arrow"));
+    return control;
+  }
+
+  function replaceRoot(node: HTMLElement, busy = false): void {
+    if (!root) return;
+    root.replaceChildren(node);
+    root.setAttribute("aria-busy", busy ? "true" : "false");
+  }
+
+  function loading(label = "Loading dashboard…"): void {
+    const wrap = element("div", "dashboard__loading");
+    wrap.setAttribute("role", "status");
+    wrap.append(
+      element("span", "dashboard__spinner"),
+      element("span", undefined, label),
+    );
+    wrap.firstElementChild?.setAttribute("aria-hidden", "true");
+    replaceRoot(wrap, true);
+  }
+
+  function statePanel(
+    eyebrow: string,
+    title: string,
+    body: string,
+    actions: HTMLElement[] = [],
+  ): HTMLElement {
+    const panel = element("div", "dashboard__state");
+    const copy = element("div", "dashboard__state-copy");
+    copy.append(
+      element("p", "dashboard__eyebrow", eyebrow),
+      element("h1", "dashboard__state-title", title),
+      element("p", "dashboard__state-body", body),
+    );
+    panel.append(copy);
+    if (actions.length > 0) {
+      const controls = element("div", "dashboard__state-actions");
+      controls.append(...actions);
+      panel.append(controls);
+    }
+    return panel;
+  }
+
+  function readableError(error: unknown): string {
+    if (error instanceof Error && error.message.trim()) return error.message;
+    return "CommonSwarm could not load this view.";
+  }
+
+  function renderNoDeployment(): void {
+    replaceRoot(
+      statePanel(
+        "No backend configured",
+        "This build is not connected to CommonSwarm.",
+        "Add a CommonSwarm deployment URL and public anonymous key to this build, then reload the page.",
+      ),
+    );
+  }
+
+  function renderSignedOut(): void {
+    const signIn = button("Sign in with GitHub", "primary", "github");
+    const wrap = element("div", "dashboard__signin");
+    const status = element("p", "dashboard__signin-error");
+    status.setAttribute("role", "alert");
+    status.hidden = true;
+
+    signIn.addEventListener("click", async () => {
+      signIn.disabled = true;
+      signIn.setAttribute("aria-busy", "true");
+      status.hidden = true;
+      try {
+        await signInWithGitHub(new URL("/app", window.location.origin).href);
+      } catch (error) {
+        if (error instanceof NoDeployment) {
+          renderNoDeployment();
+          return;
+        }
+        status.textContent = readableError(error);
+        status.hidden = false;
+        signIn.disabled = false;
+        signIn.removeAttribute("aria-busy");
+      }
+    });
+
+    wrap.append(signIn, status);
+    replaceRoot(wrap);
+  }
+
+  function makeSignOutButton(): HTMLButtonElement {
+    const control = button("Sign out", "quiet", "signout");
+    control.addEventListener("click", async () => {
+      control.disabled = true;
+      await signOut();
+      workspaces = [];
+      activeWorkspaceId = null;
+      requestVersion += 1;
+      renderSignedOut();
+    });
+    return control;
+  }
+
+  function renderNoWorkspaces(): void {
+    replaceRoot(
+      statePanel(
+        "No workspaces",
+        "There is no workspace to show yet.",
+        "You’re signed in, but this account is not a member of a CommonSwarm workspace. Workspace access and invite instructions are at /start.",
+        [linkButton("Go to /start", "/start"), makeSignOutButton()],
+      ),
+    );
+  }
+
+  function renderLoadError(error: unknown, retry: () => void): void {
+    if (error instanceof NoDeployment) {
+      renderNoDeployment();
+      return;
+    }
+    const retryButton = button("Try again", "primary", "refresh");
+    retryButton.addEventListener("click", retry);
+    replaceRoot(
+      statePanel(
+        "Could not load",
+        "The dashboard did not receive a response.",
+        readableError(error),
+        [retryButton, makeSignOutButton()],
+      ),
+    );
+  }
+
+  function formatDate(value: string): {
+    relative: string;
+    absolute: string;
+    valid: boolean;
+  } {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+      return { relative: "Time unavailable", absolute: "", valid: false };
+    }
+
+    const deltaSeconds = Math.round((date.getTime() - Date.now()) / 1000);
+    const ranges: Array<[number, Intl.RelativeTimeFormatUnit]> = [
+      [60, "second"],
+      [60, "minute"],
+      [24, "hour"],
+      [7, "day"],
+      [4.345, "week"],
+      [12, "month"],
+      [Number.POSITIVE_INFINITY, "year"],
+    ];
+    let valueForUnit = deltaSeconds;
+    let unit: Intl.RelativeTimeFormatUnit = "second";
+    for (const [range, nextUnit] of ranges) {
+      unit = nextUnit;
+      if (Math.abs(valueForUnit) < range) break;
+      valueForUnit /= range;
+    }
+
+    const relative = new Intl.RelativeTimeFormat(undefined, {
+      numeric: "auto",
+    }).format(Math.round(valueForUnit), unit);
+    const absolute = new Intl.DateTimeFormat(undefined, {
+      dateStyle: "medium",
+      timeStyle: "short",
+    }).format(date);
+    return { relative, absolute, valid: true };
+  }
+
+  function signalBadge(kind: string): HTMLElement {
+    const normalized = kind.toLowerCase();
+    const known =
+      normalized === "working-on" || normalized === "note" || normalized === "ask";
+    const badge = element(
+      "span",
+      `dashboard__kind dashboard__kind--${known ? normalized : "unknown"}`,
+      known ? normalized : kind || "unknown",
+    );
+    return badge;
+  }
+
+  function signalRow(signal: FeedSignal, index: number): HTMLLIElement {
+    const row = element("li", "dashboard__signal");
+    row.style.setProperty("--signal-index", String(Math.min(index, 10)));
+
+    const rail = element("div", "dashboard__signal-rail");
+    const mark = element("span", "dashboard__author-mark");
+    mark.textContent = signal.from.trim().charAt(0).toUpperCase() || "·";
+    mark.setAttribute("aria-hidden", "true");
+    rail.append(mark, element("span", "dashboard__rail-line"));
+
+    const content = element("article", "dashboard__signal-content");
+    const meta = element("div", "dashboard__signal-meta");
+    const authorGroup = element("div", "dashboard__author-group");
+    const author = element(
+      "span",
+      "dashboard__author",
+      signal.from.trim() || "Unknown author",
+    );
+    const authorKind = signal.fromKind.toLowerCase() === "agent" ? "agent" : "person";
+    authorGroup.append(
+      author,
+      element("span", "dashboard__author-kind", authorKind),
+      signalBadge(signal.kind),
+    );
+
+    const when = formatDate(signal.createdAt);
+    const time = element("time", "dashboard__time", when.relative);
+    if (when.valid) {
+      time.dateTime = signal.createdAt;
+      time.title = when.absolute;
+      time.setAttribute("aria-label", when.absolute);
+    }
+    meta.append(authorGroup, time);
+
+    const body = element("p", "dashboard__signal-body", signal.body);
+    content.append(meta, body);
+
+    const details = element("div", "dashboard__signal-details");
+    if (signal.about) {
+      const about = element("p", "dashboard__about");
+      about.append(
+        element("span", "dashboard__detail-label", "About"),
+        element("code", undefined, signal.about),
+      );
+      details.append(about);
+    }
+    if (signal.until) {
+      const until = formatDate(signal.until);
+      const expiry = element("p", "dashboard__until");
+      expiry.append(element("span", "dashboard__detail-label", "Until"));
+      const expiryTime = element("time", undefined, until.relative);
+      if (until.valid) {
+        expiryTime.dateTime = signal.until;
+        expiryTime.title = until.absolute;
+        expiryTime.setAttribute("aria-label", until.absolute);
+      }
+      expiry.append(expiryTime);
+      details.append(expiry);
+    }
+    if (details.childElementCount > 0) content.append(details);
+
+    row.append(rail, content);
+    return row;
+  }
+
+  function workspaceHeader(selected: Workspace): {
+    header: HTMLElement;
+    refreshButton: HTMLButtonElement;
+  } {
+    const header = element("header", "dashboard__header");
+    const identity = element("div", "dashboard__identity");
+    const brand = element("a", "dashboard__brand", "CommonSwarm");
+    brand.href = "/";
+    brand.setAttribute("aria-label", "CommonSwarm home");
+
+    const workspaceCopy = element("div", "dashboard__workspace-copy");
+    workspaceCopy.append(
+      element("span", "dashboard__workspace-label", "Workspace"),
+      element("h1", "dashboard__workspace-name", selected.name),
+    );
+    identity.append(brand, workspaceCopy);
+
+    const controls = element("div", "dashboard__header-controls");
+    if (workspaces.length > 1) {
+      const field = element("label", "dashboard__select-field");
+      field.append(element("span", "dashboard__select-label", "Switch workspace"));
+      const select = element("select", "dashboard__select");
+      select.setAttribute("aria-label", "Switch workspace");
+      for (const workspace of workspaces) {
+        const option = element("option", undefined, workspace.name);
+        option.value = workspace.id;
+        option.selected = workspace.id === selected.id;
+        select.append(option);
+      }
+      select.addEventListener("change", () => {
+        void openWorkspace(select.value);
+      });
+      field.append(select);
+      controls.append(field);
+    }
+
+    const refreshButton = button("Refresh", "secondary", "refresh");
+    refreshButton.addEventListener("click", () => {
+      void openWorkspace(selected.id);
+    });
+    controls.append(refreshButton, makeSignOutButton());
+    header.append(identity, controls);
+    return { header, refreshButton };
+  }
+
+  function renderWorkspace(
+    selected: Workspace,
+    signals: FeedSignal[] | null,
+    error: unknown = null,
+  ): void {
+    const shell = element("div", "dashboard__shell");
+    const { header, refreshButton } = workspaceHeader(selected);
+    const feedPanel = element("section", "dashboard__feed");
+    feedPanel.setAttribute("aria-labelledby", "signal-feed-title");
+
+    const feedHeader = element("div", "dashboard__feed-header");
+    const feedTitleGroup = element("div");
+    const feedTitle = element("h2", "dashboard__feed-title", "Signal feed");
+    feedTitle.id = "signal-feed-title";
+    feedTitleGroup.append(
+      feedTitle,
+      element(
+        "p",
+        "dashboard__feed-subtitle",
+        "Announcements from people and agents, newest first.",
+      ),
+    );
+    feedHeader.append(feedTitleGroup);
+
+    if (signals && !error) {
+      const count = element(
+        "span",
+        "dashboard__count",
+        `${signals.length} ${signals.length === 1 ? "signal" : "signals"}`,
+      );
+      feedHeader.append(count);
+    }
+    feedPanel.append(feedHeader);
+
+    if (error) {
+      const errorPanel = element("div", "dashboard__feed-state");
+      errorPanel.append(
+        element("h3", "dashboard__feed-state-title", "The signal feed could not load."),
+        element("p", "dashboard__feed-state-body", readableError(error)),
+      );
+      const retry = button("Try again", "primary", "refresh");
+      retry.addEventListener("click", () => void openWorkspace(selected.id));
+      errorPanel.append(retry);
+      feedPanel.append(errorPanel);
+    } else if (signals === null) {
+      refreshButton.disabled = true;
+      refreshButton.setAttribute("aria-busy", "true");
+      const loadingPanel = element("div", "dashboard__feed-state");
+      const spinner = element("span", "dashboard__spinner");
+      spinner.setAttribute("aria-hidden", "true");
+      loadingPanel.append(
+        spinner,
+        element("p", "dashboard__feed-state-body", "Reading the latest signals…"),
+      );
+      feedPanel.append(loadingPanel);
+    } else if (signals.length === 0) {
+      const empty = element("div", "dashboard__feed-state dashboard__feed-state--empty");
+      empty.append(
+        element("span", "dashboard__empty-mark", "0"),
+        element("h3", "dashboard__feed-state-title", "No signals yet."),
+        element(
+          "p",
+          "dashboard__feed-state-body",
+          "This workspace’s feed is empty. Announcements will appear here after someone posts one.",
+        ),
+      );
+      feedPanel.append(empty);
+    } else {
+      const list = element("ol", "dashboard__signal-list");
+      list.append(...signals.map(signalRow));
+      feedPanel.append(list);
+    }
+
+    shell.append(header, feedPanel);
+    replaceRoot(shell, signals === null && !error);
+  }
+
+  async function openWorkspace(workspaceId: string): Promise<void> {
+    const selected = workspaces.find((workspace) => workspace.id === workspaceId);
+    if (!selected) return;
+    activeWorkspaceId = selected.id;
+    const version = ++requestVersion;
+    renderWorkspace(selected, null);
+
+    try {
+      const signals = await feed(selected.id, 50);
+      if (version !== requestVersion || activeWorkspaceId !== selected.id) return;
+      renderWorkspace(selected, signals);
+    } catch (error) {
+      if (version !== requestVersion || activeWorkspaceId !== selected.id) return;
+      if (error instanceof NoDeployment) {
+        renderNoDeployment();
+        return;
+      }
+      renderWorkspace(selected, [], error);
+    }
+  }
+
+  async function loadDashboard(): Promise<void> {
+    const version = ++requestVersion;
+    loading();
+
+    if (!client()) {
+      renderNoDeployment();
+      return;
+    }
+
+    try {
+      const session = await currentSession();
+      if (version !== requestVersion) return;
+      if (!session) {
+        renderSignedOut();
+        return;
+      }
+
+      workspaces = await myWorkspaces();
+      if (version !== requestVersion) return;
+      if (workspaces.length === 0) {
+        activeWorkspaceId = null;
+        renderNoWorkspaces();
+        return;
+      }
+
+      const selected =
+        workspaces.find((workspace) => workspace.id === activeWorkspaceId) ?? workspaces[0];
+      await openWorkspace(selected.id);
+    } catch (error) {
+      if (version !== requestVersion) return;
+      renderLoadError(error, () => void loadDashboard());
+    }
+  }
+
+  const configuredClient = client();
+  configuredClient?.auth.onAuthStateChange((event) => {
+    if (event !== "SIGNED_IN" && event !== "SIGNED_OUT" && event !== "USER_UPDATED") {
+      return;
+    }
+    queueMicrotask(() => void loadDashboard());
+  });
+
+  void loadDashboard();
+</script>
+
+<style is:global>
+  .dashboard {
+    position: relative;
+    min-block-size: 100svh;
+    color: var(--text);
+    isolation: isolate;
+  }
+
+  .dashboard__wash {
+    position: fixed;
+    z-index: -1;
+    inset: 0;
+    pointer-events: none;
+    background:
+      radial-gradient(
+        52rem 30rem at 8% -4%,
+        color-mix(in oklab, var(--accent) 12%, transparent),
+        transparent 72%
+      ),
+      linear-gradient(
+        90deg,
+        transparent 0,
+        transparent calc(50% - 1px),
+        color-mix(in oklab, var(--border) 35%, transparent) 50%,
+        transparent calc(50% + 1px)
+      );
+    background-size: auto, 5rem 100%;
+    mask-image: linear-gradient(to bottom, black, transparent 70%);
+  }
+
+  .dashboard__root {
+    display: grid;
+    min-block-size: 100svh;
+  }
+
+  .dashboard__loading,
+  .dashboard__signin {
+    place-self: center;
+  }
+
+  .dashboard__loading {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s-3);
+    padding: var(--s-4) var(--s-5);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-pill);
+    background: var(--elev-1);
+    box-shadow: var(--ring-top);
+    color: var(--text-muted);
+    font-size: var(--t-sm);
+    line-height: var(--lh-sm);
+  }
+
+  .dashboard__spinner {
+    display: inline-block;
+    inline-size: 1rem;
+    block-size: 1rem;
+    flex: none;
+    border: 2px solid var(--border-strong);
+    border-block-start-color: var(--accent);
+    border-radius: 50%;
+    animation: dashboard-spin 700ms linear infinite;
+  }
+
+  @keyframes dashboard-spin {
+    to {
+      transform: rotate(1turn);
+    }
+  }
+
+  .dashboard__signin {
+    display: grid;
+    justify-items: center;
+    gap: var(--s-4);
+  }
+
+  .dashboard__signin-error {
+    max-inline-size: 32rem;
+    margin: 0;
+    color: var(--danger);
+    font-size: var(--t-sm);
+    line-height: var(--lh-sm);
+    text-align: center;
+  }
+
+  .dashboard__button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--s-2);
+    min-block-size: 2.75rem;
+    padding-inline: var(--s-4);
+    border: 1px solid transparent;
+    border-radius: var(--radius);
+    font: inherit;
+    font-size: var(--t-sm);
+    font-weight: var(--weight-semibold);
+    line-height: 1;
+    text-decoration: none;
+    white-space: nowrap;
+    cursor: pointer;
+    transition:
+      transform var(--dur-2) var(--ease-standard),
+      background var(--dur-2) var(--ease-standard),
+      border-color var(--dur-2) var(--ease-standard),
+      box-shadow var(--dur-2) var(--ease-standard);
+  }
+
+  .dashboard__button:hover {
+    text-decoration: none;
+    transform: translateY(-1px);
+  }
+
+  .dashboard__button:active {
+    transform: translateY(0);
+  }
+
+  .dashboard__button:focus-visible,
+  .dashboard__select:focus-visible {
+    outline: none;
+    box-shadow: var(--focus-ring);
+  }
+
+  .dashboard__button:disabled {
+    opacity: 0.55;
+    pointer-events: none;
+  }
+
+  .dashboard__button--primary {
+    color: var(--accent-ink);
+    background: linear-gradient(180deg, var(--accent-bright), var(--accent));
+    border-color: color-mix(in oklab, var(--accent-bright) 65%, transparent);
+    box-shadow: var(--shadow-glow);
+  }
+
+  .dashboard__button--secondary {
+    color: var(--text);
+    background: var(--elev-1);
+    border-color: var(--border-interactive);
+    box-shadow: var(--ring-top);
+  }
+
+  .dashboard__button--secondary:hover {
+    background: var(--elev-3);
+  }
+
+  .dashboard__button--quiet {
+    color: var(--text-muted);
+    background: transparent;
+    border-color: transparent;
+  }
+
+  .dashboard__button--quiet:hover {
+    color: var(--text);
+    background: var(--elev-3);
+  }
+
+  .dashboard__state {
+    place-self: center;
+    display: grid;
+    gap: var(--s-8);
+    inline-size: min(100% - var(--gutter) * 2, 42rem);
+    padding: clamp(var(--s-8), 7vw, var(--s-12));
+    border: 1px solid var(--border);
+    border-radius: var(--radius-xl);
+    background: var(--elev-1);
+    box-shadow: var(--ring-top), var(--shadow-lg);
+  }
+
+  .dashboard__state-copy {
+    display: grid;
+    gap: var(--s-3);
+  }
+
+  .dashboard__eyebrow,
+  .dashboard__state-title,
+  .dashboard__state-body {
+    margin: 0;
+  }
+
+  .dashboard__eyebrow {
+    color: var(--accent-bright);
+    font-size: var(--t-xs);
+    line-height: var(--lh-xs);
+    font-weight: var(--weight-semibold);
+    letter-spacing: var(--track-eyebrow);
+    text-transform: uppercase;
+  }
+
+  .dashboard__state-title {
+    max-inline-size: 18ch;
+    font-size: var(--t-2xl);
+    line-height: var(--lh-2xl);
+    letter-spacing: var(--track-head);
+    font-weight: var(--weight-head);
+    text-wrap: balance;
+  }
+
+  .dashboard__state-body {
+    max-inline-size: 56ch;
+    color: var(--text-muted);
+    font-size: var(--t-base);
+    line-height: var(--lh-base);
+    text-wrap: pretty;
+  }
+
+  .dashboard__state-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s-3);
+  }
+
+  .dashboard__shell {
+    inline-size: min(100%, 78rem);
+    margin-inline: auto;
+    padding: var(--s-6) var(--gutter) var(--s-16);
+  }
+
+  .dashboard__header {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: var(--s-6);
+    padding-block: var(--s-5) var(--s-8);
+  }
+
+  .dashboard__identity {
+    display: flex;
+    align-items: center;
+    gap: var(--s-5);
+    min-inline-size: 0;
+  }
+
+  .dashboard__brand {
+    color: var(--text);
+    font-size: var(--t-base);
+    line-height: 1;
+    font-weight: var(--weight-head);
+    letter-spacing: var(--track-head);
+    text-decoration: none;
+    white-space: nowrap;
+  }
+
+  .dashboard__brand::after {
+    content: "";
+    display: block;
+    inline-size: 1.45rem;
+    block-size: 3px;
+    margin-block-start: var(--s-2);
+    border-radius: var(--radius-pill);
+    background: var(--accent);
+  }
+
+  .dashboard__workspace-copy {
+    min-inline-size: 0;
+    padding-inline-start: var(--s-5);
+    border-inline-start: 1px solid var(--border-strong);
+  }
+
+  .dashboard__workspace-label,
+  .dashboard__select-label {
+    display: block;
+    color: var(--text-muted);
+    font-size: var(--t-2xs);
+    line-height: var(--lh-2xs);
+    font-weight: var(--weight-semibold);
+    letter-spacing: var(--track-eyebrow);
+    text-transform: uppercase;
+  }
+
+  .dashboard__workspace-name {
+    margin: var(--s-1) 0 0;
+    overflow: hidden;
+    color: var(--text);
+    font-size: var(--t-xl);
+    line-height: var(--lh-xl);
+    letter-spacing: var(--track-xl);
+    font-weight: var(--weight-head);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .dashboard__header-controls {
+    display: flex;
+    align-items: flex-end;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+    gap: var(--s-2);
+  }
+
+  .dashboard__select-field {
+    display: grid;
+    gap: var(--s-1);
+    margin-inline-end: var(--s-2);
+  }
+
+  .dashboard__select {
+    min-block-size: 2.75rem;
+    max-inline-size: 18rem;
+    padding: 0 var(--s-10) 0 var(--s-3);
+    border: 1px solid var(--border-interactive);
+    border-radius: var(--radius);
+    color: var(--text);
+    background-color: var(--elev-1);
+    font: inherit;
+    font-size: var(--t-sm);
+    line-height: 1;
+  }
+
+  .dashboard__feed {
+    overflow: hidden;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-xl);
+    background: var(--elev-1);
+    box-shadow: var(--ring-top), var(--shadow-md);
+  }
+
+  .dashboard__feed-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--s-4);
+    padding: var(--s-6) var(--s-8);
+    border-block-end: 1px solid var(--border);
+  }
+
+  .dashboard__feed-title,
+  .dashboard__feed-subtitle {
+    margin: 0;
+  }
+
+  .dashboard__feed-title {
+    font-size: var(--t-xl);
+    line-height: var(--lh-xl);
+    letter-spacing: var(--track-xl);
+    font-weight: var(--weight-head);
+  }
+
+  .dashboard__feed-subtitle {
+    margin-block-start: var(--s-1);
+    color: var(--text-muted);
+    font-size: var(--t-sm);
+    line-height: var(--lh-sm);
+  }
+
+  .dashboard__count {
+    flex: none;
+    padding: var(--s-1) var(--s-3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-pill);
+    color: var(--text-muted);
+    background: var(--elev-3);
+    font-size: var(--t-xs);
+    line-height: var(--lh-xs);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .dashboard__signal-list {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .dashboard__signal {
+    display: grid;
+    grid-template-columns: 2rem minmax(0, 1fr);
+    gap: var(--s-4);
+    padding: var(--s-6) var(--s-8) 0;
+    animation: dashboard-row-in var(--dur-3) var(--ease-decelerate) both;
+    animation-delay: calc(var(--signal-index, 0) * 35ms);
+  }
+
+  @keyframes dashboard-row-in {
+    from {
+      opacity: 0;
+      transform: translateY(5px);
+    }
+  }
+
+  .dashboard__signal-rail {
+    display: grid;
+    grid-template-rows: 2rem 1fr;
+    justify-items: center;
+    min-block-size: 100%;
+  }
+
+  .dashboard__author-mark {
+    display: grid;
+    place-items: center;
+    inline-size: 2rem;
+    block-size: 2rem;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
+    color: var(--accent-bright);
+    background: var(--accent-dim);
+    font-size: var(--t-xs);
+    line-height: 1;
+    font-weight: var(--weight-head);
+    text-transform: uppercase;
+  }
+
+  .dashboard__rail-line {
+    inline-size: 1px;
+    block-size: 100%;
+    background: var(--border);
+  }
+
+  .dashboard__signal:last-child .dashboard__rail-line {
+    background: transparent;
+  }
+
+  .dashboard__signal-content {
+    min-inline-size: 0;
+    padding-block-end: var(--s-6);
+    border-block-end: 1px solid var(--border);
+  }
+
+  .dashboard__signal:last-child .dashboard__signal-content {
+    border-block-end: 0;
+  }
+
+  .dashboard__signal-meta,
+  .dashboard__author-group,
+  .dashboard__signal-details,
+  .dashboard__about,
+  .dashboard__until {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+
+  .dashboard__signal-meta {
+    justify-content: space-between;
+    gap: var(--s-2) var(--s-4);
+  }
+
+  .dashboard__author-group {
+    gap: var(--s-2);
+    min-inline-size: 0;
+  }
+
+  .dashboard__author {
+    overflow: hidden;
+    max-inline-size: 22rem;
+    color: var(--text);
+    font-size: var(--t-sm);
+    line-height: var(--lh-sm);
+    font-weight: var(--weight-semibold);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .dashboard__author-kind {
+    color: var(--text-muted);
+    font-size: var(--t-2xs);
+    line-height: var(--lh-2xs);
+    font-weight: var(--weight-semibold);
+    letter-spacing: var(--track-eyebrow);
+    text-transform: uppercase;
+  }
+
+  .dashboard__kind {
+    display: inline-flex;
+    align-items: center;
+    min-block-size: 1.5rem;
+    padding-inline: var(--s-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-pill);
+    color: var(--text-muted);
+    background: var(--elev-3);
+    font-family: var(--font-mono);
+    font-size: var(--t-2xs);
+    line-height: 1;
+    font-weight: var(--weight-medium);
+  }
+
+  .dashboard__kind--working-on {
+    color: var(--accent-bright);
+    background: var(--accent-dim);
+    border-color: color-mix(in oklab, var(--accent) 35%, var(--border));
+  }
+
+  .dashboard__kind--ask {
+    color: var(--info);
+    background: var(--info-dim);
+    border-color: color-mix(in oklab, var(--info) 32%, var(--border));
+  }
+
+  .dashboard__time {
+    flex: none;
+    color: var(--text-muted);
+    font-size: var(--t-xs);
+    line-height: var(--lh-xs);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  .dashboard__signal-body {
+    max-inline-size: 68ch;
+    margin: var(--s-3) 0 0;
+    color: var(--text);
+    font-size: var(--t-base);
+    line-height: var(--lh-base);
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+  }
+
+  .dashboard__signal-details {
+    gap: var(--s-2) var(--s-5);
+    margin-block-start: var(--s-3);
+  }
+
+  .dashboard__about,
+  .dashboard__until {
+    gap: var(--s-2);
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--t-xs);
+    line-height: var(--lh-xs);
+  }
+
+  .dashboard__about code {
+    max-inline-size: min(64ch, 100%);
+    padding: var(--s-1) var(--s-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+    background: var(--elev-3);
+    font-size: var(--t-xs);
+    overflow-wrap: anywhere;
+    white-space: normal;
+  }
+
+  .dashboard__detail-label {
+    font-weight: var(--weight-semibold);
+  }
+
+  .dashboard__feed-state {
+    display: grid;
+    justify-items: start;
+    gap: var(--s-3);
+    min-block-size: 18rem;
+    align-content: center;
+    padding: var(--s-8);
+  }
+
+  .dashboard__feed-state--empty {
+    justify-items: center;
+    text-align: center;
+  }
+
+  .dashboard__empty-mark {
+    display: grid;
+    place-items: center;
+    inline-size: 3.5rem;
+    block-size: 3.5rem;
+    margin-block-end: var(--s-2);
+    border: 1px solid var(--border-strong);
+    border-radius: 50%;
+    color: var(--text-muted);
+    background: var(--elev-3);
+    font-family: var(--font-mono);
+    font-size: var(--t-sm);
+  }
+
+  .dashboard__feed-state-title,
+  .dashboard__feed-state-body {
+    margin: 0;
+  }
+
+  .dashboard__feed-state-title {
+    color: var(--text);
+    font-size: var(--t-lg);
+    line-height: var(--lh-lg);
+    font-weight: var(--weight-semibold);
+  }
+
+  .dashboard__feed-state-body {
+    max-inline-size: 50ch;
+    color: var(--text-muted);
+    font-size: var(--t-sm);
+    line-height: var(--lh-sm);
+  }
+
+  @media (max-width: 48rem) {
+    .dashboard__shell {
+      padding-block-start: var(--s-3);
+    }
+
+    .dashboard__header {
+      align-items: stretch;
+      flex-direction: column;
+      padding-block-end: var(--s-6);
+    }
+
+    .dashboard__header-controls {
+      justify-content: flex-start;
+    }
+
+    .dashboard__select-field {
+      flex: 1 1 100%;
+      margin: 0 0 var(--s-2);
+    }
+
+    .dashboard__select {
+      inline-size: 100%;
+      max-inline-size: none;
+    }
+
+    .dashboard__feed-header,
+    .dashboard__signal {
+      padding-inline: var(--s-5);
+    }
+  }
+
+  @media (max-width: 30rem) {
+    .dashboard__identity {
+      align-items: flex-start;
+      flex-direction: column;
+      gap: var(--s-4);
+    }
+
+    .dashboard__workspace-copy {
+      inline-size: 100%;
+      padding: var(--s-3) 0 0;
+      border-inline-start: 0;
+      border-block-start: 1px solid var(--border);
+    }
+
+    .dashboard__header-controls .dashboard__button {
+      flex: 1 1 auto;
+    }
+
+    .dashboard__feed-header {
+      align-items: flex-start;
+      flex-direction: column;
+    }
+
+    .dashboard__signal {
+      grid-template-columns: 1.75rem minmax(0, 1fr);
+      gap: var(--s-3);
+      padding-inline: var(--s-4);
+    }
+
+    .dashboard__author-mark {
+      inline-size: 1.75rem;
+      block-size: 1.75rem;
+    }
+
+    .dashboard__signal-meta {
+      align-items: flex-start;
+      flex-direction: column;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .dashboard__spinner {
+      animation-duration: 1.4s;
+    }
+
+    .dashboard__signal {
+      animation: none;
+    }
+
+    .dashboard__button {
+      transition: none;
+    }
+  }
+</style>

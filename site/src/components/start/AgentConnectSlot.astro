@@ -1,0 +1,155 @@
+---
+/*
+ * Step three: connecting an agent to the workspace that now exists.
+ *
+ * =======================================================================================
+ * THIS IS A SLOT. THE COMPONENT THAT FILLS IT IS SOMEBODY ELSE'S, AND IT IS BEING WRITTEN.
+ * =======================================================================================
+ * The brief for this pass says to surface the agent-connect step and to leave a marked slot
+ * rather than invent one, because another change owns that component. So this file draws the
+ * step, states what is settled, marks the hole, and stops.
+ *
+ * WHERE THE REAL ONE IS LANDING: src/components/connect/AgentConnect.astro, untracked in the
+ * working tree as this is written. THE FILENAME HERE IS `AgentConnectSlot.astro` FOR THAT
+ * REASON — it was `AgentConnect.astro`, which would have left two components with the same
+ * basename and an integrator one autocomplete away from importing the placeholder.
+ *
+ * TO INTEGRATE: import that component in DonePanel.astro in place of this one, and delete
+ * this file. Nothing else in the flow needs to change — the workspace id it needs is already
+ * rendered into [data-ws-id] by the page's script.
+ *
+ * WHAT IS SETTLED, read out of the handler rather than assumed:
+ *
+ *   THE 200 BODY OF create_workspace CONTAINS NO AGENT CREDENTIAL. It is
+ *   `{ status, ok, event_ids, workspace_id, stream_id, min_client_version }` —
+ *   supabase/functions/command/index.ts, the return at the end of createSelfServeWorkspace.
+ *   src/lib/commonswarm.ts reads workspace_id and stream_id off it and nothing else. So
+ *   creating a workspace does not by itself produce anything to hand an agent, which is why
+ *   connecting one is a step of its own rather than a line in the panel above.
+ *
+ *   THE CLI FINDS A WORKSPACE THROUGH --url / SWARM_CLOUD_URL. src/cli.ts's target resolver
+ *   reads the flag and the environment variable and nothing on disk (recorded in
+ *   landing/Start.astro, carried into Steps.astro). That is why the workspace id is printed
+ *   above this component and not explained away.
+ *
+ * ★ CORRECTED IN PLACE. This block used to end: "WHAT IS NOT ESTABLISHED, and must not be
+ *   filled in by guessing: how a human hands an agent a credential for a workspace they made
+ *   in a browser." That was true when this file was written and it is now WRONG in a way that
+ *   would mislead: the mechanism is `create_agent_principal` + `mint_agent_token`, both of
+ *   which are in HUMAN_ONLY_COMMANDS (src/protocol/workspace-commands.ts) so an agent
+ *   credential can never mint another. The connect component named above is built on it.
+ *
+ *   The rest of that note stands and is the part that still matters: `mint_capability_url` is
+ *   NOT the answer. It is gated behind SWARM_CAPABILITY_URLS, which is off, and ships dark on
+ *   purpose (§7 is a P5 surface). There is no zero-install read path today. Do not describe
+ *   one here, and do not let this slot's replacement imply one either.
+ *
+ * =======================================================================================
+ * THE INSTALL LINK CARRIES ITS OWN WARNING
+ * =======================================================================================
+ * /download is a real route and it is where the install command lives. The command on it
+ * points at `<host>`, install.sh's own documented placeholder, because no public install host
+ * has been chosen — and install.sh's default release repo (Ridge-io/coswarm-dist) does not
+ * exist, so a reader who substituted a host and ran it would get a 404. That is said below in
+ * one clause rather than left for them to discover, and it is why the link is worded as
+ * "how installing works" and not "install it now".
+ */
+
+import "./panel.css";
+---
+
+<section class="ac" aria-labelledby="ac-t">
+  <h3 class="ac__t" id="ac-t">Connect an agent</h3>
+  <p class="ac__p">
+    Your agents talk to this workspace through the <span class="mono">cswarm</span> CLI, and
+    they find it by its address — <span class="mono">--url</span>, or
+    <span class="mono">SWARM_CLOUD_URL</span> in the agent's environment. The workspace id
+    above is the other half.
+  </p>
+
+  <div class="ac__slot" data-slot="agent-connect">
+    <p class="ac__slot-t">This step isn’t on the page yet</p>
+    <p class="ac__slot-p">
+      Nothing here hands your agent its way in yet, and nothing here is pretending to. The
+      part that does is being built and drops into this space; until it does, the workspace
+      above exists and is yours, and this is the step that is missing.
+    </p>
+  </div>
+
+  <p class="ac__p ac__p--last">
+    In the meantime: <a href="/download">how installing the CLI works</a>. The command on that
+    page points at a placeholder host — no public install host has been chosen, so it is the
+    shape of the command rather than something to paste today.
+  </p>
+</section>
+
+<style>
+  .ac {
+    margin-block-start: var(--s-8);
+    padding-block-start: var(--s-6);
+    border-block-start: 1px solid var(--border);
+  }
+
+  .ac__t {
+    margin: 0;
+    font-size: var(--t-base);
+    line-height: var(--lh-base);
+    letter-spacing: var(--track-head);
+    font-weight: var(--weight-semibold);
+    color: var(--text);
+  }
+
+  .ac__p {
+    margin: var(--s-3) 0 0;
+    font-size: var(--t-sm);
+    line-height: var(--lh-sm);
+    letter-spacing: var(--track-sm);
+    color: var(--text-muted);
+    text-wrap: pretty;
+  }
+
+  .ac__p--last {
+    margin-block-start: var(--s-4);
+  }
+
+  .ac__p a {
+    color: var(--text);
+    text-decoration: underline;
+    text-decoration-color: var(--border-strong);
+    text-underline-offset: 3px;
+    transition: text-decoration-color var(--dur-2) var(--ease-standard);
+  }
+
+  .ac__p a:hover {
+    text-decoration-color: currentColor;
+  }
+
+  /* A DASHED border, which is the one place on this site that draws a hole rather than a
+     surface. It is not decoration: the panel is deliberately empty, and a solid card would
+     read as a finished component whose content failed to load. Dashed says "reserved". */
+  .ac__slot {
+    margin-block-start: var(--s-5);
+    padding: var(--s-5);
+    border: 1px dashed var(--border-strong);
+    border-radius: var(--radius);
+    background: var(--elev-0);
+  }
+
+  .ac__slot-t {
+    margin: 0;
+    font-size: var(--t-xs);
+    line-height: var(--lh-xs);
+    letter-spacing: var(--track-xs);
+    font-weight: var(--weight-semibold);
+    color: var(--text);
+  }
+
+  .ac__slot-p {
+    margin: var(--s-2) 0 0;
+    font-size: var(--t-xs);
+    line-height: var(--lh-xs);
+    letter-spacing: var(--track-xs);
+    color: var(--text-muted);
+    text-wrap: pretty;
+  }
+</style>

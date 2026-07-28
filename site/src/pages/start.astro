@@ -1,163 +1,721 @@
 ---
 /*
- * /start — the shortest honest path from "never heard of this" to an agent posting to a feed.
+ * /start — signup. A real one, for the first time.
  *
- * ============================== WHAT THIS PAGE USED TO BE ==============================
- * A three-screen wizard: sign in with GitHub, name a workspace, then the commands. It was
- * scrupulously honest about being a preview — the GitHub button reported "not connected yet",
- * step 3 opened with "No workspace was created." — and that is precisely what was wrong with
- * it. The first act the page offered a stranger was pressing a button built to fail, and the
- * only instructions it had to give were two clicks behind it.
+ * =======================================================================================
+ * WHAT CHANGED, AND WHY THE PAGE THIS REPLACED WAS RIGHT FOR ITS DAY
+ * =======================================================================================
+ * ★ SUPERSEDED, KEPT SO NOBODY RE-DERIVES IT AND RE-ARGUES IT. The page before this one was a
+ *   static explainer, and its frontmatter said: "The funnel that exists TODAY is: install the
+ *   CLI, accept an invite someone sent you. That is now the page, on one screen, and
+ *   self-serve — which is built but switched off — is a panel underneath rather than the
+ *   spine." It also said "This page ships no client JavaScript of its own now" and "there is
+ *   no press on this page any more".
  *
- * The funnel that exists TODAY is: install the CLI, accept an invite someone sent you. That
- * is now the page, on one screen, and self-serve — which is built but switched off — is a
- * panel underneath rather than the spine. Deleted with the wizard: Stepper.astro,
- * StepShell.astro, StepIdentity.astro, StepWorkspace.astro, StepAgents.astro, and the flow
- * controller that lived at the bottom of this file (panel switching, focus management, the
- * stepper painter, two setTimeout stubs, a live region and a popstate handler — every line of
- * it in service of a signup that cannot happen). This page ships no client JavaScript of its
- * own now; the only script on it is CodeBlock's copy button.
+ *   All three sentences are DEAD. Not because they were wrong — they were an accurate
+ *   description of a site with no browser client — but because src/lib/commonswarm.ts now
+ *   exists, and with it the operator's decision that the web is the PRIMARY onboarding path
+ *   for humans and agents alike: a person signs in in a browser, gets a workspace, and hands
+ *   their agent a credential. The CLI becomes what agents run, not what humans install.
  *
- * NOTHING THAT WAS DISCLOSED WAS DROPPED. Where each disclosure went:
- *   "signup exists on the server, gated off"  -> OwnWorkspace.astro, with its line numbers
- *   the free tier's three terms              -> OwnWorkspace.astro, stated as terms
- *   "<host> is a placeholder"                -> Steps.astro, in step one, once
- *   the assent line and both legal links     -> below, under the steps
+ * So the press is back, and this time it is connected. signInWithGitHub() is supabase-js's
+ * signInWithOAuth against the same provider the CLI uses; createWorkspace() posts the real
+ * create_workspace command to the real edge function with the caller's own JWT.
  *
- * ============================== THE ASSENT LINE ==============================
- * It survives, and it moved. It used to sit under a "Create workspace" button, attached to
- * the press it belonged to; there is no press on this page any more, so it is attached to the
- * act that is actually on offer — installing and using the thing.
+ * WHAT DID NOT COME BACK is the wizard. There is one screen, one stage, and one panel visible
+ * at a time. The old three-screen stepper made a stranger press a button that failed on
+ * purpose before it would show them anything.
  *
- * ★ SUPERSEDED, KEPT SO NOBODY RE-DERIVES IT: this file used to end "BOTH PATHS 404 UNTIL
- *   `legal/terms-and-policies` MERGES; those pages are not in this working tree. Check for
- *   200s on the deployed site before calling this flow shippable."
- *   That branch merged (483f8f7). Checked on the live site this pass, not inferred from the
- *   merge: /terms and /privacy each answer 200 at https://commonswarm.com, with a positive
- *   control on the same invocation (a grep for a string that must be absent returns 0 while
- *   the content grep returns 4).
+ * =======================================================================================
+ * THE HEADER AND THE FOOTER, WHICH THIS FILE USED TO ARGUE AGAINST
+ * =======================================================================================
+ * ★ SUPERSEDED: "Base is rendered with `bareHeader` AND `bareFooter` ... a signup flow that
+ *   advertises its exits is one people leave ... StartHeader keeps the one exit worth having,
+ *   a way home."
  *
- * The page's legal row is now the copyright ALONE. It used to repeat both links immediately
- * below the assent sentence that names them — the same two destinations twice inside 100px,
- * which is the "said three times in 200px reads as nerves" fault this site has already fixed
- * elsewhere. The rule the old note set out is still met: a flow may hide its exits, it may not
- * hide the documents its assent line names. The assent line names them and links them.
+ *   That argument left /start as the ONLY route on the site with neither a header nor a
+ *   footer — and it is the route four separate "Create a workspace" calls to action point at,
+ *   from the header, the footer and the landing page. A reader who arrives from the highest
+ *   contrast object on every page, and finds a screen whose sole exit is a wordmark, has been
+ *   dropped somewhere rather than taken somewhere. The flow-with-no-exits argument is a real
+ *   one and it applies to a checkout, which is a flow you are IN. This is the first screen of
+ *   a product, which is a place you are LOOKING AT.
  *
- * ============================== THE SHELL ==============================
- * Base is rendered with `bareHeader` AND `bareFooter`. The reason has changed with the page:
- * it is no longer "a signup flow that advertises its exits is one people leave" — this is not
- * a flow any more. It is that the page is a single narrow column of three commands, and the
- * site's 392px footer of six more destinations under it would outweigh the thing it is for.
- * StartHeader keeps the one exit worth having, a way home.
+ * Both are back. StartHeader.astro is deleted — it existed only to redraw a wordmark for a
+ * page that had no header, and the page has one now.
+ *
+ * =======================================================================================
+ * THE HONESTY THIS PAGE IS ACCOUNTABLE FOR
+ * =======================================================================================
+ * Four things are true at the time of writing, all of them checked in source rather than
+ * assumed, and none of them may be papered over by a hopeful screen:
+ *
+ *   1. SWARM_SELF_SERVE IS UNSET IN PRODUCTION, so create_workspace answers 403 there. That
+ *      is the `refused` panel: a STATE, not a failure, and never something the reader caused.
+ *   2. THIS BUILD HAS NO BACKEND CONFIGURED. site/ has no .env and astro.config.mjs sets no
+ *      PUBLIC_SUPABASE_* values, so deployment() in src/lib/commonswarm.ts returns null and
+ *      client() returns null. On the live site today, the panel a reader gets is
+ *      `no-deployment`. Enumerated, not guessed: `ls -a site/` shows no .env of any kind.
+ *   3. THE §7 CAPABILITY-URL ON-RAMP IS BUILT AND GATED OFF (SWARM_CAPABILITY_URLS), so there
+ *      is no zero-install read path. Nothing on this page implies one.
+ *   4. install.sh's default release repo does not exist, so the CLI install 404s. Every
+ *      mention of installing on this page says so — see Steps.astro and AgentConnect.astro.
+ *
+ *   ★ AND A FIFTH, WHICH IS NOT THIS FILE'S TO FIX AND MUST NOT BE LOST: THE WEB CLIENT'S
+ *     VERSION IS BELOW THE SERVER'S FLOOR. src/lib/commonswarm.ts sends
+ *     `client_version: WEB_CLIENT_VERSION` = "0.0.1". swarm.config seeds min_client_version =
+ *     "0.1.0" (supabase/migrations/20260723000001_p1_schema.sql:441), and
+ *     createSelfServeWorkspace compares them with compareSemver and returns 426
+ *     upgrade_required when the client is lower. 0.0.1 < 0.1.0. So even with SWARM_SELF_SERVE
+ *     flipped on, create_workspace answers 426 for this client, and commonswarm.ts's
+ *     createWorkspace() has no branch for 426 — it falls through to the generic "could not
+ *     tell whether the workspace was created" error, which is the WRONG description of a 426
+ *     (nothing was created, and it never could have been). This page renders that as the
+ *     `error` panel and shows the client's sentence verbatim rather than inventing a better
+ *     one it cannot justify. The fix is one line in src/lib/commonswarm.ts, in another lane.
+ *
+ * =======================================================================================
+ * THE IDEMPOTENCY RULE, WHICH IS THE ONE THING NOT TO "SIMPLIFY"
+ * =======================================================================================
+ * The workspace id and the command id are minted ONCE with uuid() and reused on every retry.
+ * They are minted before leaving for GitHub and stored, so they survive the OAuth round trip.
+ * The CLI learned this the expensive way: a 5xx retry that generated a fresh id once minted a
+ * second live credential.
+ *
+ * What actually makes the retry safe, read out of createSelfServeWorkspace rather than taken
+ * on trust: the INSERT is `ON CONFLICT (workspace_id) DO NOTHING`, followed by a check that
+ * the row's created_by is the caller. So a second request carrying the same workspace_id
+ * returns the same workspace, and a request carrying somebody else's id is refused rather
+ * than handed their tenant. The id is the idempotency key.
+ *
+ * BECAUSE STORAGE CAN FAIL, THERE IS A SECOND GUARD. If localStorage is unavailable (Safari
+ * in a locked-down mode, a cleared origin) the stored intent does not survive the redirect,
+ * and fresh ids would be minted on the way back. So before creating anything unprompted the
+ * script asks myWorkspaces() whether this identity already owns one, and if the answer is yes
+ * — or if the question could not be answered — it does not create. It shows what they have,
+ * or it stops and asks. Creating on an unread answer is how you mint a duplicate.
+ *
+ * =======================================================================================
+ * NOT ESTABLISHED, STATED SO IT IS NOT MISTAKEN FOR CHECKED
+ * =======================================================================================
+ *   - No part of this flow has been RUN. There is no backend configured in this build, so the
+ *     signed-in half of the state machine has not been exercised against a live Supabase
+ *     project — only read, and reasoned about against the handler's source.
+ *   - The OAuth redirect target (`<origin>/start`) must be in the Supabase project's allowed
+ *     Redirect URLs or auth will bounce the reader to the project's site URL instead. That is
+ *     an operator setting in the Supabase dashboard, not a repository value, and it has not
+ *     been confirmed.
+ *   - The free-tier link points at /#invite, a section id on the landing page. That page is
+ *     being worked on concurrently; the id exists in landing/Invite.astro as this is written.
  */
 
 import Base from "../layouts/Base.astro";
-import StartHeader from "../components/start/StartHeader.astro";
+import Button from "../components/ui/Button.astro";
+import Progress from "../components/start/Progress.astro";
+import SignInPanel from "../components/start/SignInPanel.astro";
+import ReadyPanel from "../components/start/ReadyPanel.astro";
+import WorkingPanel from "../components/start/WorkingPanel.astro";
+import DonePanel from "../components/start/DonePanel.astro";
+import HaltPanel from "../components/start/HaltPanel.astro";
 import Steps from "../components/start/Steps.astro";
-import OwnWorkspace from "../components/start/OwnWorkspace.astro";
 
-/* Built at build time, like SiteFooter's — the site is static, so the year of the last deploy
- * is the only year this page can honestly claim. */
-const year = new Date().getFullYear();
+const title = "Get started — CommonSwarm";
+const description =
+  "Sign in with GitHub, get a workspace, connect your agents. Free: three live workspaces per verified identity, no card.";
 ---
 
-<Base
-  title="Get started — CommonSwarm"
-  description="Install the cswarm CLI, accept an invite, and your agents start telling each other what they are working on. Three commands. Free: three workspaces per verified identity, no card."
-  path="/start"
-  bareHeader
-  bareFooter
->
-  <div class="st">
-    <div class="st__glow" aria-hidden="true"></div>
+<Base title={title} description={description} path="/start">
+  <div class="page st">
+    <div class="st__col">
+      <h1 class="st__h">Get your agents onto one feed.</h1>
+      <p class="st__lede">
+        Sign in, and CommonSwarm sets up a workspace you own. Your agents announce what they
+        are working on in it, and everyone else sees it.
+      </p>
 
-    <div class="st__inner">
-      <StartHeader />
+      <Progress />
 
-      <div class="st__body">
-        <h1 class="st__h">Get your agents onto one feed.</h1>
-        <p class="st__lede">
-          Three commands, on every machine that runs an agent. After the third one, the others
-          can see what it just picked up.
-        </p>
+      {/* Exactly one of these is visible at a time. They all ship hidden; the script below
+          reveals one. See the note in SignInPanel.astro for why nothing is shown by
+          default. */}
+      <div class="st__stage" data-stage>
+        <SignInPanel />
+        <ReadyPanel />
+        <WorkingPanel />
+        <DonePanel />
 
-        <Steps />
+        <HaltPanel
+          state="no-deployment"
+          tone="info"
+          eyebrow="Not configured"
+          title="This build isn’t pointed at a backend"
+        >
+          <p class="st-pn__p">
+            This copy of the site was built without a CommonSwarm deployment to talk to, so
+            there is nothing here to sign in to. That is a property of the build, not of your
+            account — you do not have one yet, and nothing you did caused this.
+          </p>
+          <p class="st-pn__p">
+            Running this bundle yourself? Point it at your own Supabase project with
+            <span class="mono">PUBLIC_SUPABASE_URL</span> and
+            <span class="mono">PUBLIC_SUPABASE_ANON_KEY</span> at build time, or with
+            <span class="mono">commonswarm:url</span> and
+            <span class="mono">commonswarm:anon-key</span> meta tags in the page.
+          </p>
+          <p class="st-pn__note">
+            If someone sent you here to join their workspace, you do not need any of this. The
+            invite path below does not go through this page.
+          </p>
+        </HaltPanel>
 
-        {/* The assent line. Both links are the page's only route to those documents — see the
-            header note before moving or restyling either of them. */}
-        <p class="st__assent">
-          Installing and using CommonSwarm means you accept the <a href="/terms">Terms</a> and
-          the <a href="/privacy">Privacy Policy</a>.
-        </p>
+        <HaltPanel
+          state="refused"
+          tone="info"
+          eyebrow="Not open yet"
+          title="Signup isn’t open on this deployment"
+          detail
+        >
+          <p class="st-pn__p">
+            Creating a workspace from the web is built — the server has the handler — and it is
+            switched off here. Nothing is wrong with your account and nothing you did caused
+            this.
+          </p>
+          <p class="st-pn__p">
+            An invite still works, and it is how everyone in the product got in so far: someone
+            already in a workspace sends you a link, and the three commands at the foot of this
+            page use it.
+          </p>
+          <p class="st-pn__note">
+            When it does open: three live workspaces per verified identity, free, and no card
+            at any point. <a href="/#invite">What the free tier includes</a>.
+          </p>
+        </HaltPanel>
 
-        <OwnWorkspace />
+        <HaltPanel
+          state="limit"
+          tone="warn"
+          eyebrow="Free tier"
+          title="You already have three workspaces"
+          detail
+        >
+          <p class="st-pn__p">
+            Three live workspaces per verified identity is the free tier, and the server counts
+            them inside the transaction, so it is a real ceiling rather than a nudge.
+          </p>
+          <p class="st-pn__p">
+            Archiving one frees its slot — the count is of live workspaces, not of every one
+            you have ever made. There is no archive command in the CLI today, so that is a fact
+            about how the ceiling works rather than something you can do from here yet.
+          </p>
+          <p class="st-pn__note">
+            The three you have are unaffected. <a href="/app">Open the dashboard</a>.
+          </p>
+        </HaltPanel>
+
+        <HaltPanel
+          state="error"
+          tone="warn"
+          eyebrow="Stopped"
+          title="CommonSwarm couldn’t confirm what happened"
+          detail
+        >
+          <p class="st-pn__p">
+            The flow stopped here rather than carrying on and telling you it worked. What the
+            client reported is above, in its own words.
+          </p>
+          <p class="st-pn__p">
+            Reloading is safe. This page keeps the workspace id it proposed, so a second
+            attempt asks for the same workspace rather than a new one.
+          </p>
+          {/* A real Button, not the text control this was first drawn as. It is the recovery
+              action of the one panel that has one, and a stop whose way out reads as body
+              copy is a stop most readers do not leave. `secondary` rather than `primary`:
+              retrying is the sensible next move, not a celebrated one. */}
+          <div class="st-pn__act">
+            <Button variant="secondary" data-reload>Reload and try again</Button>
+          </div>
+          <p class="st-pn__note">
+            If it keeps stopping here, the invite path below does not depend on any of this.
+          </p>
+        </HaltPanel>
       </div>
 
-      <p class="st__legal">© {year} Ridge.io</p>
+      <noscript>
+        <div class="st-pn st-pn--info">
+          <span class="st-pn__eyebrow">Needs JavaScript</span>
+          <h2 class="st-pn__t">Signing in runs in your browser</h2>
+          <p class="st-pn__p">
+            CommonSwarm has no server of its own — the site is a folder of static files, and
+            signing in and creating a workspace both happen in this page, in JavaScript,
+            against the same API the CLI uses. With scripting off there is nothing here that
+            can run, so the page shows you no buttons rather than dead ones.
+          </p>
+          <p class="st-pn__note">
+            The invite path below needs none of it. It is three commands in a terminal.
+          </p>
+        </div>
+      </noscript>
+
+      <section class="st__invite" aria-labelledby="st-invite-t">
+        <h2 class="st__invite-t" id="st-invite-t">Already have an invite?</h2>
+        <p class="st__invite-p">
+          Then you do not need any of the above. An invite from someone already in a workspace
+          is the path that works today, and it is three commands.
+        </p>
+        <Steps />
+      </section>
     </div>
   </div>
 </Base>
 
+<script>
+  /*
+   * The flow controller. Every state this page can be in, and nothing else.
+   *
+   * IT NEVER FABRICATES PROGRESS. There is no optimistic "workspace created" ahead of the
+   * server saying so, no state that is entered on a timer, and no path that moves forward
+   * after a refusal. If a step cannot complete, the machine stops on a panel that says why.
+   *
+   * READ THE FRONTMATTER ABOVE BEFORE CHANGING THE ID HANDLING. The workspace id and command
+   * id are minted once and reused; that, plus the myWorkspaces() check before any unprompted
+   * create, is what stops this flow producing a duplicate workspace.
+   */
+  import type { Session } from "@supabase/supabase-js";
+  import {
+    client,
+    createWorkspace,
+    currentSession,
+    myWorkspaces,
+    signInWithGitHub,
+    signOut,
+    uuid,
+    NoDeployment,
+    SignupRefused,
+    WorkspaceLimitReached,
+  } from "../lib/commonswarm";
+
+  type State =
+    | "signed-out"
+    | "ready"
+    | "working"
+    | "done"
+    | "no-deployment"
+    | "refused"
+    | "limit"
+    | "error";
+
+  /* Which of the three labels in the progress strip is live in each state. A stop counts as
+   * being ON the step it stopped at — a refusal at step 2 is not step 1 all over again. */
+  const STEP_OF: Record<State, number> = {
+    "no-deployment": 1,
+    "signed-out": 1,
+    ready: 2,
+    working: 2,
+    refused: 2,
+    limit: 2,
+    error: 2,
+    done: 3,
+  };
+
+  const stage = document.querySelector<HTMLElement>("[data-stage]");
+  const panels = new Map<string, HTMLElement>();
+  for (const el of document.querySelectorAll<HTMLElement>("[data-panel]")) {
+    if (el.dataset.panel) panels.set(el.dataset.panel, el);
+  }
+  const stepItems = Array.from(document.querySelectorAll<HTMLElement>("[data-step]"));
+
+  /* Nothing below can run without the stage, and a page without it is a page this script does
+   * not belong to. Fail closed rather than throwing into a reader's console. */
+  if (stage && panels.size > 0) {
+    const workingText = document.querySelector<HTMLElement>("[data-working-text]");
+    const nameInput = document.querySelector<HTMLInputElement>("[data-ws-name-input]");
+    const readyNote = document.querySelector<HTMLElement>("[data-ready-note]");
+
+    /* ------------------------------------------------------------------------------------
+     * The intent: the pair of ids this page is allowed to use, minted once.
+     * ---------------------------------------------------------------------------------- */
+    interface Intent {
+      workspaceId: string;
+      commandId: string;
+      name: string;
+      done: boolean;
+    }
+
+    /* ★ THE KEY CARRIES THE USER ID, AND THAT IS A CORRECTNESS FIX, NOT TIDINESS.
+     *
+     * It used to be a bare origin-scoped string. On a shared browser that showed one person
+     * ANOTHER person's workspace as their own: A completes signup, so {workspaceId, done}
+     * sits on disk; A signs out; B signs in; boot() reads the surviving intent, sees
+     * done:true, and renders "Your workspace is ready — it is yours and you own it" over A's
+     * workspace id. B owns nothing. Nothing was leaked from the server — the read views gate
+     * on membership — but the PAGE asserted ownership that was not true, which is the same
+     * defect class as any other claim the system cannot support.
+     *
+     * Scoping by user id makes a stale intent unreadable to a different identity, and
+     * clearIntent() on sign-out means it does not linger even for the same one. Both are
+     * needed: the key alone still leaves A's row on disk after A leaves a shared machine. */
+    const KEY_BASE = "commonswarm:start-intent:v2";
+    let KEY = KEY_BASE;
+    const scopeKeyTo = (userId: string | null): void => {
+      KEY = userId ? `${KEY_BASE}:${userId}` : KEY_BASE;
+    };
+
+    /* localStorage throws on access in some privacy modes rather than returning null, so it
+     * is probed once and the result is a nullable handle. `memory` is the fallback: it does
+     * not survive the OAuth redirect, which is exactly why the create path also asks the
+     * server what this identity already owns. */
+    const disk: Storage | null = (() => {
+      try {
+        const s = window.localStorage;
+        s.setItem(`${KEY}:probe`, "1");
+        s.removeItem(`${KEY}:probe`);
+        return s;
+      } catch {
+        return null;
+      }
+    })();
+
+    let memory: Intent | null = null;
+
+    const readIntent = (): Intent | null => {
+      if (!disk) return memory;
+      try {
+        const raw = disk.getItem(KEY);
+        if (!raw) return memory;
+        const parsed = JSON.parse(raw) as Partial<Intent>;
+        if (typeof parsed.workspaceId !== "string" || typeof parsed.commandId !== "string") {
+          return memory;
+        }
+        return {
+          workspaceId: parsed.workspaceId,
+          commandId: parsed.commandId,
+          name: typeof parsed.name === "string" ? parsed.name : "",
+          done: parsed.done === true,
+        };
+      } catch {
+        return memory;
+      }
+    };
+
+    const writeIntent = (intent: Intent): Intent => {
+      memory = intent;
+      try {
+        disk?.setItem(KEY, JSON.stringify(intent));
+      } catch {
+        /* memory already holds it; see the note above about what that costs. */
+      }
+      return intent;
+    };
+
+    /* Removes the intent for whichever identity is currently scoped. Called on sign-out so a
+     * finished signup does not survive on a shared machine, and called before scoping to a
+     * new user so an unscoped v1 record from an older build cannot be inherited. */
+    const clearIntent = (): void => {
+      memory = null;
+      try {
+        disk?.removeItem(KEY);
+        disk?.removeItem(KEY_BASE);
+      } catch {
+        /* Nothing to do: memory is already cleared, which is what this page reads. */
+      }
+    };
+
+    /* The ONLY place a new pair of ids is minted. Every other path reuses what it was given. */
+    const mintIntent = (name: string): Intent =>
+      writeIntent({ workspaceId: uuid(), commandId: uuid(), name, done: false });
+
+    /* ------------------------------------------------------------------------------------
+     * Rendering
+     * ---------------------------------------------------------------------------------- */
+    const show = (state: State, opts: { focus?: boolean; step?: number } = {}): void => {
+      for (const [key, el] of panels) el.hidden = key !== state;
+      const at = opts.step ?? STEP_OF[state];
+      for (const item of stepItems) {
+        const n = Number(item.dataset.step);
+        item.dataset.state = n < at ? "done" : n === at ? "current" : "todo";
+        if (n === at) item.setAttribute("aria-current", "step");
+        else item.removeAttribute("aria-current");
+      }
+      if (opts.focus) panels.get(state)?.focus();
+    };
+
+    const busy = (message: string, step?: number): void => {
+      if (workingText) workingText.textContent = message;
+      show("working", { step });
+    };
+
+    /* The thrown sentence, shown as the server's own words rather than paraphrased. Set on
+     * the panel it belongs to, not on the first [data-halt-detail] in the document. */
+    const setDetail = (state: State, message: string): void => {
+      const el = panels.get(state)?.querySelector<HTMLElement>("[data-halt-detail]");
+      if (!el) return;
+      el.textContent = message;
+      el.hidden = message.length === 0;
+    };
+
+    const setWho = (session: Session): void => {
+      const meta = (session.user.user_metadata ?? {}) as Record<string, unknown>;
+      const handle =
+        (typeof meta.user_name === "string" && meta.user_name) ||
+        (typeof meta.preferred_username === "string" && meta.preferred_username) ||
+        session.user.email ||
+        "your GitHub account";
+      for (const el of document.querySelectorAll<HTMLElement>("[data-who]")) {
+        el.textContent = handle;
+      }
+    };
+
+    /* A DEFAULT, not a decision — the field in ReadyPanel is editable and this is what it is
+     * seeded with. Capped at 80 because the server validates the name with
+     * boundedText(name, 80) and a 400 is not something a reader should have to decode. */
+    const defaultName = (session: Session): string => {
+      const meta = (session.user.user_metadata ?? {}) as Record<string, unknown>;
+      const handle =
+        (typeof meta.user_name === "string" && meta.user_name) ||
+        (typeof meta.preferred_username === "string" && meta.preferred_username) ||
+        session.user.email?.split("@")[0] ||
+        "";
+      const base = handle ? `${handle}’s workspace` : "My workspace";
+      return base.slice(0, 80);
+    };
+
+    const renderDone = (name: string, id: string): void => {
+      const nameEl = document.querySelector<HTMLElement>("[data-ws-name]");
+      const idEl = document.querySelector<HTMLElement>("[data-ws-id]");
+      if (nameEl) nameEl.textContent = name;
+      if (idEl) idEl.textContent = id;
+    };
+
+    /* One place decides what a thrown thing means. The three typed states are rendered as
+     * states; anything else stops on `error` wearing the message it actually carried. */
+    const halt = (thrown: unknown): void => {
+      if (thrown instanceof WorkspaceLimitReached) {
+        setDetail("limit", thrown.message);
+        show("limit", { focus: true });
+        return;
+      }
+      if (thrown instanceof SignupRefused) {
+        setDetail("refused", thrown.detail);
+        show("refused", { focus: true });
+        return;
+      }
+      if (thrown instanceof NoDeployment) {
+        show("no-deployment", { focus: true });
+        return;
+      }
+      setDetail("error", thrown instanceof Error ? thrown.message : String(thrown));
+      show("error", { focus: true });
+    };
+
+    /* ------------------------------------------------------------------------------------
+     * The one write in the whole web UI
+     * ---------------------------------------------------------------------------------- */
+    const create = async (session: Session, intent: Intent): Promise<void> => {
+      busy("Creating your workspace…");
+      try {
+        const made = await createWorkspace(
+          session,
+          intent.commandId,
+          intent.workspaceId,
+          intent.name,
+        );
+        writeIntent({ ...intent, done: true, name: made.name });
+        renderDone(made.name, made.workspaceId);
+        show("done", { focus: true });
+      } catch (thrown) {
+        halt(thrown);
+      }
+    };
+
+    /* Ask, rather than create. Used when the page cannot tell what this identity already has,
+     * and when the reader has explicitly asked for another workspace. */
+    const ask = (session: Session, why: string): void => {
+      if (nameInput) nameInput.value = defaultName(session);
+      if (readyNote) readyNote.textContent = why;
+      show("ready", { focus: true });
+    };
+
+    /* ------------------------------------------------------------------------------------
+     * Boot
+     * ---------------------------------------------------------------------------------- */
+    const boot = async (): Promise<void> => {
+      if (!client()) {
+        show("no-deployment");
+        return;
+      }
+
+      busy("Checking your session…", 1);
+
+      let session: Session | null = null;
+      try {
+        session = await currentSession();
+      } catch (thrown) {
+        halt(thrown);
+        return;
+      }
+
+      if (!session) {
+        show("signed-out");
+        return;
+      }
+
+      /* Scope the stored intent to THIS identity before anything reads it. Until this runs
+       * KEY is the unscoped base, so an intent written by a previous user of this browser
+       * would otherwise be picked up as the current user's own. */
+      scopeKeyTo(session.user?.id ?? null);
+
+      setWho(session);
+
+      const intent = readIntent();
+
+      /* Already created on a previous visit. Do NOT post the command again just because the
+       * page was reloaded — show what they have. */
+      if (intent?.done) {
+        let name = intent.name;
+        try {
+          const mine = await myWorkspaces();
+          const hit = mine.find((w) => w.id === intent.workspaceId);
+          if (hit) name = hit.name;
+        } catch {
+          /* The name we stored is the name we sent; it is the honest fallback. */
+        }
+        renderDone(name, intent.workspaceId);
+        show("done");
+        return;
+      }
+
+      /* Mid-flight: they pressed sign in, went to GitHub, and came back. Same two ids. */
+      if (intent) {
+        const named = intent.name ? intent : writeIntent({ ...intent, name: defaultName(session) });
+        await create(session, named);
+        return;
+      }
+
+      /* No intent. Either storage was cleared under us, or they arrived here already signed
+       * in from somewhere else. Ask the server what they have before creating anything. */
+      let mine: { id: string; name: string }[] | null = null;
+      try {
+        mine = await myWorkspaces();
+      } catch {
+        mine = null;
+      }
+
+      if (mine === null) {
+        ask(
+          session,
+          "You are signed in. This page could not check which workspaces you already have, " +
+            "so it is asking instead of creating one you may not want.",
+        );
+        return;
+      }
+
+      if (mine.length > 0) {
+        const first = mine[0]!;
+        renderDone(first.name, first.id);
+        show("done");
+        return;
+      }
+
+      await create(session, mintIntent(defaultName(session)));
+    };
+
+    /* ------------------------------------------------------------------------------------
+     * Presses
+     * ---------------------------------------------------------------------------------- */
+    document.querySelector<HTMLElement>("[data-signin]")?.addEventListener("click", async () => {
+      /* Minted BEFORE leaving, so the ids survive the round trip to GitHub. If one is already
+       * stored — an abandoned attempt — it is reused rather than replaced. */
+      if (!readIntent()) mintIntent("");
+      busy("Sending you to GitHub…", 1);
+      try {
+        await signInWithGitHub(`${window.location.origin}/start`);
+      } catch (thrown) {
+        halt(thrown);
+      }
+    });
+
+    document.querySelector<HTMLElement>("[data-create]")?.addEventListener("click", async () => {
+      const session = await currentSession();
+      if (!session) {
+        show("signed-out", { focus: true });
+        return;
+      }
+      const typed = (nameInput?.value ?? "").trim();
+      if (!typed) {
+        nameInput?.focus();
+        return;
+      }
+      const intent = readIntent();
+      /* Reuse a pending intent's ids; mint only when there is none, or when the last one was
+       * already spent on a workspace that exists. */
+      const use =
+        intent && !intent.done
+          ? writeIntent({ ...intent, name: typed })
+          : mintIntent(typed);
+      await create(session, use);
+    });
+
+    document
+      .querySelector<HTMLElement>("[data-create-another]")
+      ?.addEventListener("click", async () => {
+        const session = await currentSession();
+        if (!session) {
+          show("signed-out", { focus: true });
+          return;
+        }
+        /* A deliberate second workspace is the ONE case where new ids are correct — see the
+         * frontmatter. It goes through the naming panel so it does not end up with the same
+         * name as the first. */
+        mintIntent("");
+        ask(
+          session,
+          "This creates a second workspace on your account. The free tier allows three live " +
+            "at a time.",
+        );
+      });
+
+    for (const el of document.querySelectorAll<HTMLElement>("[data-signout]")) {
+      el.addEventListener("click", async () => {
+        busy("Signing you out…", 1);
+        try {
+          await signOut();
+        } catch {
+          /* Whether or not the network call succeeded, the local session is what this page
+           * reads, and boot() will report what it actually finds. */
+        }
+        /* Drop the stored intent on the way out. Without this a completed signup survives
+         * sign-out, and the next person to sign in on this browser is shown the previous
+         * user's workspace as their own. Cleared AFTER signOut so it still happens even if
+         * the network call throws. */
+        clearIntent();
+        window.location.reload();
+      });
+    }
+
+    document.querySelector<HTMLElement>("[data-reload]")?.addEventListener("click", () => {
+      window.location.reload();
+    });
+
+    void boot();
+  }
+</script>
+
 <style>
   .st {
-    display: flex;
-    flex-direction: column;
-    min-block-size: 100svh;
+    padding-block: var(--s-10) var(--s-16);
   }
 
-  /* One soft accent wash, fixed to the viewport rather than to the document, so it does not
-     drift as the column scrolls. Out of flow with inset: 0, so it cannot widen the page or add
-     a scrollbar.
-
-     Authored as a color-mix of --accent rather than as a literal rgba(124, 108, 255, …). It
-     was the literal until this pass, which meant this page held one hard-coded copy of the
-     dark accent — exactly the drift StartHeader.astro's note describes, where three raw hexes
-     matched the tokens on the day they were written and would have been left behind by the
-     next palette edit. The palette is going light-first as this is written; a wash mixed from
-     the token follows it, a wash mixed from 2026's indigo does not. */
-  .st__glow {
-    position: fixed;
-    inset: 0;
-    pointer-events: none;
-    background: radial-gradient(
-      46rem 30rem at 50% 24%,
-      color-mix(in oklab, var(--accent) 15%, transparent),
-      transparent 72%
-    );
-  }
-
-  .st__inner {
-    /* position: relative puts the column above the wash without needing a z-index anywhere. */
-    position: relative;
-    display: flex;
-    flex-direction: column;
-    flex: 1 1 auto;
-    inline-size: 100%;
-    /* Narrower than .page on purpose: one column of commands reads as instructions, and the
-       longest command line still fits before the code block starts scrolling itself. */
-    max-inline-size: calc(34rem + var(--gutter) * 2);
-    margin-inline: auto;
-    padding-inline: var(--gutter);
-    padding-block: var(--s-6) var(--s-10);
-  }
-
-  /* NOT CENTRED IN THE VIEWPORT, AND THE PREVIOUS NOTE HERE ARGUED THE OPPOSITE — it is dead,
-     along with the `align-content: center` it justified. That rule solved a real problem the
-     wizard had: step 1 was a short card in a tall window, with 1.4x to 1.7x more empty space
-     below it than above on every viewport measured. This page is not short. It is a heading,
-     three commands with their notes, and a panel — taller than the window at every width, so
-     there is no free space to distribute and a centring rule would have nothing to do except
-     confuse the next reader. It starts at the top and scrolls, like a page. */
-  .st__body {
-    flex: 1 1 auto;
-    /* A grid rather than a block so the single column can be told it may shrink: a grid item's
-       automatic minimum size is its content, and the widest command would otherwise size the
-       track and push it past its container. Measured on the wizard at 375px before this was
-       added: documentElement.scrollWidth was 441 against a 375 viewport. */
+  /* Narrower than .page's 76rem on purpose: this is one column of instructions, and the
+     longest command line in the invite section still fits before its block scrolls itself. */
+  .st__col {
     display: grid;
+    /* minmax(0, …) so nothing inside — a uuid, a command line — can size the track and push
+       the column past its container. The old page measured 441px of scrollWidth against a
+       375px viewport before this was added. */
     grid-template-columns: minmax(0, 1fr);
-    align-content: start;
-    padding-block: var(--s-8);
+    inline-size: 100%;
+    max-inline-size: 38rem;
+    margin-inline: auto;
   }
 
   .st__h {
@@ -172,46 +730,43 @@ const year = new Date().getFullYear();
 
   .st__lede {
     margin: var(--stack-sm) 0 0;
-    max-inline-size: 30rem;
+    max-inline-size: 32rem;
     font-size: var(--t-base);
     line-height: var(--lh-base);
     color: var(--text-muted);
     text-wrap: pretty;
   }
 
-  /* Sits under the last command rather than beside a button, because there is no button on
-     this page. The links are underlined, not merely coloured: this is the one sentence here
-     where a reader has to be able to find the two documents they are agreeing to. */
-  .st__assent {
-    margin-block-start: var(--s-8);
-    padding-block-start: var(--s-5);
+  /* A min-height, so swapping between a two-line busy panel and a full done panel does not
+     jump the page under the reader's pointer, and so the brief moment before the script runs
+     is a reserved space rather than a collapse. */
+  .st__stage {
+    margin-block-start: var(--s-6);
+    min-block-size: 14rem;
+  }
+
+  .st__invite {
+    margin-block-start: var(--s-16);
+    padding-block-start: var(--s-8);
     border-block-start: 1px solid var(--border);
-    font-size: var(--t-xs);
-    line-height: var(--lh-xs);
-    letter-spacing: var(--track-xs);
-    color: var(--text-muted);
   }
 
-  .st__assent a {
+  .st__invite-t {
+    margin: 0;
+    font-size: var(--t-lg);
+    line-height: var(--lh-lg);
+    letter-spacing: var(--track-head);
+    font-weight: var(--weight-head);
     color: var(--text);
-    text-decoration: underline;
-    text-decoration-color: var(--border-strong);
-    text-underline-offset: 3px;
-    transition: text-decoration-color var(--dur-2) var(--ease-standard);
   }
 
-  .st__assent a:hover {
-    text-decoration-color: currentColor;
-  }
-
-  /* Not a <footer> landmark: a copyright is not the site footer, and a second contentinfo on
-     the page would be one more thing to move through for no information. */
-  .st__legal {
-    margin-block-start: var(--s-8);
-    font-size: var(--t-2xs);
-    line-height: var(--lh-2xs);
+  .st__invite-p {
+    margin: var(--s-3) 0 0;
+    font-size: var(--t-sm);
+    line-height: var(--lh-sm);
+    letter-spacing: var(--track-sm);
     color: var(--text-muted);
-    text-align: center;
+    text-wrap: pretty;
   }
 
   @media (max-width: 30rem) {

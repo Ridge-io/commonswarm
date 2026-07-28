@@ -2185,8 +2185,16 @@ test("self-serve refuses throwaway domains and caps creations per rolling day", 
       randomUUID(),
       "throwaway",
     );
+    /* ACTIONABLE REFUSALS ARE NAMED; UNIFORM ONES STAY UNIFORM.
+     * This asserted `forbidden` when every create_workspace refusal was opaque. That was
+     * over-applying the uniform-response rule: uniformity exists to stop a STRANGER learning
+     * about someone else, and by this point the caller has passed the feature gate and is
+     * authenticated as themselves, so the only fact disclosed is the state of their own
+     * account. Hiding it produced a dead end — sign in, press the one button, get "not
+     * allowed", with no way to know the fix was to use a different address.
+     * The audit reason is unchanged, which the assertion below still checks. */
     assert.equal(refused.status, 403);
-    assert.deepEqual(refused.body, { error: "forbidden" });
+    assert.deepEqual(refused.body, { error: "email_domain_not_accepted" });
     const throwawayAudit = await sql<{ outcome: string; reason: string }[]>`
       SELECT outcome, reason
       FROM swarm.audit_log

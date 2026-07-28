@@ -9,6 +9,18 @@ import { defineConfig } from "astro/config";
 // absolute URLs. It is a placeholder until the real domain is decided; the CTA install URL
 // is likewise not live yet (there is no public dist repo). Both are tracked as launch
 // blockers rather than quietly invented.
+// WHERE THE BACKEND POINTER COMES FROM, AND WHY THERE IS NO `env:` BLOCK BELOW.
+// The web app reads PUBLIC_SUPABASE_URL and PUBLIC_SUPABASE_ANON_KEY (site/src/lib/
+// commonswarm.ts:53-54). Vite exposes any PUBLIC_-prefixed variable to client code without
+// being declared anywhere, so nothing has to be listed here for that to work.
+//
+// No `env: { schema: ... }` is declared ON PURPOSE. This build must succeed with neither
+// variable set — that is the honest "not pointed at a backend" build, which renders the
+// whole site and lets the app route say so (commonswarm.ts:55 returns null, and the UI
+// treats null as a state, not an error). Declaring them as required config would move that
+// decision from runtime to build time and turn a documented state into a broken build.
+// If you ever add a schema here, make both entries optional, or read WEB-ONBOARDING.md
+// first and change your mind.
 export default defineConfig({
   // DO NOT put a plausible-sounding domain here. "coswarm.dev" was used as a placeholder and
   // it is a REAL, UNRELATED SHIPPING PRODUCT (a self-hosted Docker Swarm PaaS) whose

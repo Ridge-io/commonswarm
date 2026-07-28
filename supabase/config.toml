@@ -147,6 +147,20 @@ max_indexes = 5
 # Vector Buckets is available to Supabase Pro plan.
 # [storage.vector.buckets.documents-openai]
 
+# THIS BLOCK CONFIGURES LOCAL SUPABASE ONLY. The hosted project's auth settings live in the
+# Supabase dashboard and are NOT read from this file, so nothing here opens or closes
+# anything in production.
+#
+# Two consequences worth knowing before you try the web sign-in:
+#  - There is no [auth.external.github] block anywhere in this file (enumerated: `github`
+#    appears only in the provider-list comment at line 329, and in this note). The CLI signs in with
+#    provider=github (src/cloud/auth.ts:213) and so does the browser client
+#    (site/src/lib/commonswarm.ts:88), so GitHub sign-in cannot be exercised against a plain
+#    `supabase start` until a block with real OAuth credentials is added here.
+#  - site_url / additional_redirect_urls below are the LOCAL allow-list. The browser client
+#    asks to return to <origin>/app (site/src/components/app/LiveDashboard.astro:167); for
+#    the hosted project that URL has to be added to the dashboard's redirect allow-list, or
+#    Supabase silently returns the user to the project's Site URL instead.
 [auth]
 enabled = true
 # The base URL of your website. Used as an allow-list for redirects and for constructing URLs used
@@ -407,6 +421,18 @@ s3_secret_key = "env(S3_SECRET_KEY)"
 # JSON string passed through to pg-delta SQL formatting.
 # format_options = "{\"keywordCase\":\"upper\",\"indent\":2,\"maxWidth\":80,\"commaStyle\":\"trailing\"}"
 
+# verify_jwt = false ON `command` AND `read` IS DELIBERATE AND LOAD-BEARING. DO NOT "FIX" IT.
+# It does not mean these endpoints are open. It means the GATEWAY does not pre-judge the
+# bearer, because for these two the bearer is often not a Supabase JWT at all: an agent
+# presents `swm_agt_...` (src/cloud/command-client.ts:16,499 and src/cloud/signals.ts:153),
+# which a JWT-verifying gateway would reject with 401 before the function ran — every agent
+# in the product, offline.
+#
+# The function does the authentication itself, first thing and unconditionally:
+# functions/command/index.ts:4516 rejects a missing bearer with 401; :4529 routes a
+# `swm_agt_` credential through AGENT_TOKEN_RE and a hash lookup; :4541 requires
+# `auth.getUser(credential)` to succeed for anything else, 401 otherwise. Turning verify_jwt
+# on would break agents and add nothing a human caller is not already subject to.
 [functions.command]
 enabled = true
 verify_jwt = false

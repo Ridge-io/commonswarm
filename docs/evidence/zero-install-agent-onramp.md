@@ -194,6 +194,17 @@ Stated so a later reader does not mistake this for a tested claim:
   `verify_jwt = false` for both. Every CLI call site sends `apikey` anyway, so the
   documents tell callers to send it. Whether the hosted gateway would route a request
   *without* it was not tested.
+
+  ★ **MEASURED 2026-07-28 — the last sentence above is now answered, and the answer is that
+  the gateway DOES route it.** The same `POST /functions/v1/command` against the production
+  project, once with `apikey` and once without, both returned `401 {"error":"unauthenticated"}`
+  — the *function's* body shape. The discriminating control on the same invocation was a POST
+  to `/functions/v1/capability` and to a deliberately nonexistent function name, both of which
+  returned the *gateway's* shape, `404 {"code":"NOT_FOUND","message":…}`; so the instrument
+  separates "gateway refused" from "function refused", and neither `command` arm was refused by
+  the gateway. Still unchanged: clients should keep sending `apikey`, and this says nothing
+  about a browser holding no Supabase JWT calling `capability`, which is not deployed.
+  Recorded in `docs/design/WEB-ONBOARDING.md`.
 - **The published URLs do not exist yet.** `https://coswarm-site.vercel.app/llms.txt`
   returned `404` when checked on 2026-07-27, as expected — nothing has been deployed.
   The three cross-links inside these files are therefore *predicted*, not verified,

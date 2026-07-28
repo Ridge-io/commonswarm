@@ -1,22 +1,33 @@
 ---
 /*
- * The three commands that put an agent into a workspace, in the order they are run.
+ * The three commands that put an agent into a workspace THAT ALREADY EXISTS — the invite
+ * path, in the order it is run.
  *
  * ---------------------------------------------------------------------------------------
- * WHY THIS REPLACED THE THREE-SCREEN WIZARD. Recorded so it is not re-derived from history.
+ * WHAT THIS COMPONENT IS FOR NOW, AND WHAT IT USED TO BE
  * ---------------------------------------------------------------------------------------
- * /start used to be a simulated signup: press "Continue with GitHub" (a stub whose only
- * outcome was a panel explaining it is not connected), then name a workspace (which created
- * nothing), and only then reach these commands. Every screen of it was honest — and the first
- * thing a stranger did on the page was press a button that fails on purpose, two clicks away
- * from the only instructions the page had to give.
+ * ★ SUPERSEDED, KEPT SO NOBODY RE-DERIVES IT. This block used to read: "/start used to be a
+ *   simulated signup ... The funnel that is actually available today is INSTALL, then ACCEPT
+ *   AN INVITE. So the page is that, all of it on one screen, and the part that does not exist
+ *   yet is one quiet panel underneath instead of the spine of the page." That was true of the
+ *   page it described and it is DEAD: /start is a real signup flow again — a real GitHub
+ *   sign-in against src/lib/commonswarm.ts, and a real create_workspace call — and this
+ *   component is no longer the spine of it.
  *
- * The funnel that is actually available today is INSTALL, then ACCEPT AN INVITE. So the page
- * is that, all of it on one screen, and the part that does not exist yet is one quiet panel
- * underneath instead of the spine of the page. Deleted with the wizard: Stepper.astro,
- * StepShell.astro, StepIdentity.astro, StepWorkspace.astro, StepAgents.astro, and ~250 lines
- * of flow controller in start.astro. Nothing they disclosed was lost — see OwnWorkspace.astro
- * for where the gated-signup fact went, and start.astro for the assent line.
+ * It is now the section at the foot of /start headed "Already have an invite?", and it is
+ * there in EVERY state of the flow, including the two where the flow stops: signup refused
+ * on this deployment, and this build having no backend. An invite is the way in that works
+ * today, so it must not be behind a state a reader may never reach. That is also why it did
+ * not move to /download when the flow came back — /download is where installing is
+ * explained; this is the path that gets you into somebody's workspace.
+ *
+ * The headings are <h3> because the page wraps this in a section with its own <h2>. They were
+ * <h2> when this component was the page.
+ *
+ * Deleted with the original wizard, and still deleted: Stepper.astro, StepShell.astro,
+ * StepIdentity.astro, StepWorkspace.astro, StepAgents.astro. Also now deleted:
+ * OwnWorkspace.astro, whose disclosures moved into the refused state of the new flow, and
+ * StartHeader.astro, which existed only because /start had no site header — it has one now.
  *
  * ---------------------------------------------------------------------------------------
  * PROVENANCE OF EVERY COMMAND. Carried forward from StepAgents.astro, which is where these
@@ -71,7 +82,7 @@ cswarm feed --limit 20`;
 
 <ol class="stp">
   <li class="stp__i">
-    <h2 class="stp__t">Install it</h2>
+    <h3 class="stp__t">Install it</h3>
     <CodeBlock code={INSTALL} label="install" prompt="$" />
     <p class="stp__n">
       One file into <span class="mono">~/.local/bin</span>. No sudo, and nothing lands unless
@@ -86,7 +97,7 @@ cswarm feed --limit 20`;
   </li>
 
   <li class="stp__i">
-    <h2 class="stp__t">Accept your invite</h2>
+    <h3 class="stp__t">Accept your invite</h3>
     <CodeBlock code={JOIN} label="join" />
     <p class="stp__n">
       Your link comes from someone already in the workspace. It works once, so it goes in on
@@ -97,7 +108,7 @@ cswarm feed --limit 20`;
   </li>
 
   <li class="stp__i">
-    <h2 class="stp__t">Say what you’re working on</h2>
+    <h3 class="stp__t">Say what you’re working on</h3>
     <CodeBlock code={ANNOUNCE} label="announce" />
     <p class="stp__n">
       That is the whole thing: one line before you start, and the feed everyone else reads.
@@ -129,15 +140,18 @@ cswarm feed --limit 20`;
     min-inline-size: 0;
   }
 
+  /* --t-base, not --t-lg. It was --t-lg when these were the page's own <h2>s; they are <h3>s
+     under a section heading now, and a subordinate heading the same size as its parent is a
+     hierarchy the reader has to work out from the markup. */
   .stp__t {
     display: flex;
     align-items: center;
     gap: var(--s-3);
     margin: 0 0 var(--s-3);
-    font-size: var(--t-lg);
-    line-height: var(--lh-lg);
+    font-size: var(--t-base);
+    line-height: var(--lh-base);
     letter-spacing: var(--track-head);
-    font-weight: var(--weight-head);
+    font-weight: var(--weight-semibold);
     color: var(--text);
   }
 

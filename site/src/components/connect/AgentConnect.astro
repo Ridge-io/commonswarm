@@ -1,0 +1,972 @@
+---
+/*
+ * THE MOMENT A PERSON TURNS THEIR OWN AGENT INTO A PARTICIPANT.
+ *
+ * Everything before this screen is setup — sign in, have a workspace. This is the step that
+ * changes what the product is for the reader, and it is the one screen where getting the
+ * shape wrong is expensive: the output is a live credential that is shown exactly once.
+ *
+ * THE HUMAN MINTS, THE AGENT RECEIVES. `create_agent_principal` and `mint_agent_token` are in
+ * HUMAN_ONLY_COMMANDS (src/protocol/workspace-commands.ts:106-116), so an agent credential can
+ * never produce another one. That was a security rule first, and it is also why this belongs
+ * in a browser rather than in the CLI: the person is already signed in here, and handing over
+ * a block of text is something a person does well.
+ *
+ * WHAT THE READER COPIES IS A PROMPT, NOT A COMMAND. The reference products that feel
+ * effortless hand you something you paste into the agent you already run, and the agent does
+ * the rest. So the output is addressed to a model — what is true, what the secret is, what to
+ * do with it — with one worked invocation inside it rather than a wall of flags. The text is
+ * built by agentPrompt() in ../../lib/agent-connect so it can be read and changed in one place.
+ *
+ * THE HONEST GAP IS IN THE OUTPUT, NOT IN A FOOTNOTE. An agent holding that block still needs
+ * the cswarm CLI, and install.sh points at Ridge-io/coswarm-dist, which does not exist — 404,
+ * probed against a control repository that answers 302 for the same asset path. The prompt
+ * says so in its own words so the agent stops rather than improvising, and the panel under the
+ * block says so to the human. There is no zero-install path today; the §7 capability URL is
+ * built but not deployed and this component does not hint otherwise.
+ *
+ * NO SSR AND NO STATE IN THE MARKUP. Every state this element can be in is rendered here at
+ * build time and switched with `data-state` on the host, because Astro scopes styles to
+ * elements present in this template — markup created later by script would render unstyled.
+ * The only thing the script writes into the DOM is text.
+ */
+
+interface Props {
+  /** Optional: the host page may pin the workspace. Left off, the element finds one itself. */
+  workspaceId?: string;
+  workspaceName?: string;
+  /**
+   * The micro-label above the title. A prop and not a literal because where this sits in an
+   * onboarding flow is the host page's decision, and a hardcoded "Step 3" is wrong the moment
+   * somebody drops this on a settings screen.
+   */
+  eyebrow?: string;
+  class?: string;
+}
+
+const {
+  workspaceId,
+  workspaceName,
+  eyebrow = "Agent access",
+  class: className,
+} = Astro.props;
+---
+
+<agent-connect
+  class:list={["ac", className]}
+  data-state="loading"
+  workspace-id={workspaceId}
+  workspace-name={workspaceName}
+>
+  <header class="ac__head">
+    {eyebrow && <p class="ac__eyebrow">{eyebrow}</p>}
+    <h2 class="ac__title">Connect your agent</h2>
+    <p class="ac__lead">
+      Give your agent an identity in <span class="ac__ws" data-slot="workspace-name">this workspace</span>
+      and a credential to speak with. You do this here, in the browser, because only a
+      signed-in person can issue one — an agent can never issue itself another.
+    </p>
+  </header>
+
+  <div class="ac__panel" data-panel="loading">
+    <p class="ac__muted">Checking your session…</p>
+  </div>
+
+  <div class="ac__panel ac__panel--state" data-panel="state">
+    <h3 class="ac__state-title" data-slot="state-title">Not available</h3>
+    <p class="ac__state-body" data-slot="state-body"></p>
+    <button class="ac__btn ac__btn--quiet" type="button" data-action="retry" hidden>
+      Try again
+    </button>
+  </div>
+
+  <form class="ac__panel ac__form" data-panel="form" data-has-agents="no">
+    <div class="ac__field" data-field-wrap="identity">
+      <label class="ac__label" for="ac-identity">Agent identity</label>
+      <select class="ac__control" id="ac-identity" data-field="identity">
+        <option value="">Create a new agent identity</option>
+      </select>
+      <p class="ac__hint">
+        Reusing an identity keeps one agent's history together. A credential lasts hours, so
+        re-issuing for the same identity is the normal case.
+      </p>
+    </div>
+
+    <div class="ac__field" data-field-wrap="name">
+      <label class="ac__label" for="ac-name">Name it</label>
+      <input
+        class="ac__control"
+        id="ac-name"
+        data-field="name"
+        type="text"
+        maxlength="80"
+        autocomplete="off"
+        spellcheck="false"
+        placeholder="claude-code"
+      />
+      <p class="ac__hint">
+        Whatever you'd call this agent out loud. It's how collaborators will see its signals.
+      </p>
+    </div>
+
+    <div class="ac__field" data-field-wrap="ttl">
+      <label class="ac__label" for="ac-ttl">Credential lifetime</label>
+      <select class="ac__control" id="ac-ttl" data-field="ttl">
+        <option value="3600000" selected>1 hour</option>
+        <option value="14400000">4 hours</option>
+        <option value="28800000">8 hours (the maximum)</option>
+      </select>
+      <p class="ac__hint">Eight hours is the ceiling the protocol allows. Come back for another.</p>
+    </div>
+
+    <p class="ac__warn" role="note">
+      <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+        <path
+          d="M12 8.4v4.4M12 16.2h.01M10.3 4.2 2.9 17.4a1.9 1.9 0 0 0 1.7 2.9h14.8a1.9 1.9 0 0 0 1.7-2.9L13.7 4.2a1.9 1.9 0 0 0-3.4 0Z"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.6"
+          stroke-linecap="round"
+          stroke-linejoin="round"></path>
+      </svg>
+      <span>
+        The credential appears once, on this screen. It is not stored here and cannot be shown
+        again — copy it before you leave. If you lose it, issue another.
+      </span>
+    </p>
+
+    <p class="ac__form-error" data-slot="form-error" role="alert" hidden></p>
+
+    <button class="ac__btn ac__btn--primary" type="submit" data-action="mint">
+      Issue a credential
+    </button>
+  </form>
+
+  <div class="ac__panel" data-panel="working">
+    <ol class="ac__steps" data-slot="steps">
+      <li class="ac__step" data-step="register-device">
+        <span class="ac__dot" aria-hidden="true"></span>Registering this browser
+      </li>
+      <li class="ac__step" data-step="create-identity">
+        <span class="ac__dot" aria-hidden="true"></span>Creating the agent identity<span
+          class="ac__step-note"
+          data-slot="identity-note"></span>
+      </li>
+      <li class="ac__step" data-step="mint-credential">
+        <span class="ac__dot" aria-hidden="true"></span>Issuing the credential
+      </li>
+    </ol>
+  </div>
+
+  <div class="ac__panel ac__result" data-panel="result">
+    <div class="ac__facts">
+      <p class="ac__fact"><span class="ac__fact-k">Agent</span><span data-slot="result-agent"></span></p>
+      <p class="ac__fact"><span class="ac__fact-k">Expires</span><span data-slot="result-expiry"></span></p>
+    </div>
+
+    <p class="ac__warn ac__warn--live" role="note">
+      <span>
+        Below is a live credential, shown for the only time. Paste it into the agent you
+        already run. Don't commit it, don't log it, don't put it in a URL.
+      </span>
+    </p>
+
+    <div class="ac__block">
+      <div class="ac__block-bar">
+        <span class="ac__block-label">Give this to your agent</span>
+        <button class="ac__btn ac__btn--copy" type="button" data-action="copy">
+          <span data-slot="copy-label">Copy</span>
+        </button>
+      </div>
+      <pre class="ac__pre" data-slot="prompt" tabindex="0" aria-label="The block to give your agent"></pre>
+    </div>
+
+    <p class="ac__status" role="status" aria-live="polite" data-slot="copy-status"></p>
+
+    <p class="ac__gap">
+      <strong>What your agent still needs.</strong> It has to run the <code>cswarm</code> CLI to
+      use this, and the published installer downloads from a release repository that does not
+      exist yet — so <code>curl … install.sh | sh</code> returns 404 today. There is no
+      install-free path for an agent yet either. The block above tells your agent this, so it
+      asks you instead of improvising.
+    </p>
+
+    <div class="ac__result-actions">
+      <button class="ac__btn ac__btn--quiet" type="button" data-action="clear">
+        Clear it from this screen
+      </button>
+      <button class="ac__btn ac__btn--quiet" type="button" data-action="again">
+        Issue another
+      </button>
+    </div>
+  </div>
+</agent-connect>
+
+<script>
+  import {
+    AGENT_TOKEN_DEFAULT_TTL_MS,
+    AGENT_TOKEN_MAX_TTL_MS,
+    AgentConnectRefused,
+    AgentNameTaken,
+    ClientTooOld,
+    CredentialNotShown,
+    MintOutcomeUnknown,
+    agentPrompt,
+    createAgentIdentity,
+    ensureBrowserDevice,
+    mintAgentCredential,
+    myAgents,
+    type AgentIdentity,
+  } from "../../lib/agent-connect";
+  import { NoDeployment, currentSession, deployment, myWorkspaces, uuid } from "../../lib/commonswarm";
+
+  /*
+   * A custom element rather than a page script, so the host page can drop <AgentConnect /> in
+   * and optionally pin a workspace with an attribute, without this file knowing anything about
+   * the page it lands on. Pages that own the workspace choice set workspace-id; pages that
+   * don't let the element find one.
+   */
+  class AgentConnectElement extends HTMLElement {
+    static observedAttributes = ["workspace-id", "workspace-name"];
+
+    /** Held only between the mint returning and the reader clearing the screen. */
+    #prompt: string | null = null;
+    #workspaceId = "";
+    #workspaceName = "";
+    #agents: AgentIdentity[] = [];
+    #busy = false;
+    #copyTimer: number | undefined;
+    /* Attributes present in the markup fire attributeChangedCallback during upgrade, BEFORE
+       connectedCallback — so without this the element would load twice on every page. */
+    #ready = false;
+
+    connectedCallback() {
+      if (this.#ready) return;
+      this.#wire();
+      this.#ready = true;
+      void this.#load();
+    }
+
+    attributeChangedCallback() {
+      if (this.#ready && this.isConnected && !this.#busy) void this.#load();
+    }
+
+    #q<T extends Element>(selector: string): T | null {
+      return this.querySelector<T>(selector);
+    }
+
+    #text(slot: string, value: string) {
+      const node = this.#q<HTMLElement>(`[data-slot="${slot}"]`);
+      if (node) node.textContent = value;
+    }
+
+    #state(value: string) {
+      this.dataset.state = value;
+    }
+
+    #blocked(title: string, body: string, retry = false) {
+      this.#text("state-title", title);
+      this.#text("state-body", body);
+      const button = this.#q<HTMLButtonElement>('[data-action="retry"]');
+      if (button) button.hidden = !retry;
+      this.#state("blocked");
+    }
+
+    #wire() {
+      this.#q<HTMLFormElement>('[data-panel="form"]')?.addEventListener("submit", (event) => {
+        event.preventDefault();
+        void this.#mint();
+      });
+      this.#q<HTMLSelectElement>('[data-field="identity"]')?.addEventListener("change", () => {
+        this.#syncNameField();
+      });
+      this.#q<HTMLButtonElement>('[data-action="retry"]')?.addEventListener("click", () => {
+        void this.#load();
+      });
+      this.#q<HTMLButtonElement>('[data-action="copy"]')?.addEventListener("click", () => {
+        void this.#copy();
+      });
+      this.#q<HTMLButtonElement>('[data-action="clear"]')?.addEventListener("click", () => {
+        this.#forget();
+        this.#state("ready");
+      });
+      this.#q<HTMLButtonElement>('[data-action="again"]')?.addEventListener("click", () => {
+        this.#forget();
+        void this.#load();
+      });
+    }
+
+    /*
+     * The credential leaves this page when the reader says so. The <pre> is the only place it
+     * was ever written, so emptying that node and dropping the reference is the whole of it —
+     * there is no cache, no localStorage entry, and no history entry to clean up.
+     */
+    #forget() {
+      this.#prompt = null;
+      this.#text("prompt", "");
+      this.#text("copy-status", "");
+      this.#resetCopyLabel();
+    }
+
+    async #load() {
+      this.#state("loading");
+      if (!deployment()) {
+        this.#blocked(
+          "This build isn't pointed at a deployment",
+          "The page was built without a CommonSwarm backend configured, so there is nothing " +
+            "to issue a credential against. Nothing is wrong with your account.",
+        );
+        return;
+      }
+
+      const session = await currentSession();
+      if (!session) {
+        this.#blocked(
+          "Sign in first",
+          "Issuing an agent credential is something only a signed-in person can do. Sign in, " +
+            "and this step will be waiting.",
+        );
+        return;
+      }
+
+      const pinned = this.getAttribute("workspace-id")?.trim() ?? "";
+      const pinnedName = this.getAttribute("workspace-name")?.trim() ?? "";
+      try {
+        if (pinned) {
+          this.#workspaceId = pinned;
+          this.#workspaceName = pinnedName || pinned;
+        } else {
+          const workspaces = await myWorkspaces();
+          const first = workspaces[0];
+          if (!first) {
+            this.#blocked(
+              "You're not in a workspace yet",
+              "An agent identity lives inside a workspace, so there's nothing to connect an " +
+                "agent to yet. Creating your own workspace is not open on this deployment " +
+                "yet; an invite from someone who has one is the other way in.",
+            );
+            return;
+          }
+          this.#workspaceId = first.id;
+          this.#workspaceName = first.name;
+        }
+        this.#text("workspace-name", this.#workspaceName);
+        this.#agents = await myAgents(session, this.#workspaceId);
+      } catch (error) {
+        this.#blocked(
+          "Couldn't read this workspace",
+          error instanceof NoDeployment
+            ? error.message
+            : "The deployment didn't answer with your workspace's agents, so this step can't " +
+              "tell you what already exists. Nothing was created.",
+          true,
+        );
+        return;
+      }
+
+      this.#fillIdentities();
+      this.#state("ready");
+    }
+
+    #fillIdentities() {
+      const select = this.#q<HTMLSelectElement>('[data-field="identity"]');
+      const form = this.#q<HTMLElement>('[data-panel="form"]');
+      if (!select || !form) return;
+      while (select.options.length > 1) select.remove(1);
+      for (const agent of this.#agents) {
+        const option = document.createElement("option");
+        option.value = agent.principalId;
+        option.textContent = agent.name;
+        select.append(option);
+      }
+      form.dataset.hasAgents = this.#agents.length > 0 ? "yes" : "no";
+      select.value = "";
+      this.#syncNameField();
+    }
+
+    /** The name field is only meaningful when a new identity is being created. */
+    #syncNameField() {
+      const select = this.#q<HTMLSelectElement>('[data-field="identity"]');
+      const wrap = this.#q<HTMLElement>('[data-field-wrap="name"]');
+      if (!select || !wrap) return;
+      wrap.hidden = select.value !== "";
+    }
+
+    #formError(message: string | null) {
+      const node = this.#q<HTMLElement>('[data-slot="form-error"]');
+      if (!node) return;
+      node.textContent = message ?? "";
+      node.hidden = message === null;
+    }
+
+    #step(step: string, status: "doing" | "done" | "skipped") {
+      const node = this.#q<HTMLElement>(`[data-step="${step}"]`);
+      if (node) node.dataset.status = status;
+    }
+
+    #resetSteps() {
+      for (const node of this.querySelectorAll<HTMLElement>("[data-step]")) {
+        delete node.dataset.status;
+      }
+    }
+
+    async #mint() {
+      /* ★ THE GUARD IS SET HERE, NOT 30 LINES DOWN, AND THE GAP WAS A DOUBLE-MINT.
+         `#busy` used to be checked here and assigned only after `await currentSession()`
+         and the validation below. Two submits inside that window — a double-click, or
+         Enter held on the form — both passed the check while it was still false, and both
+         went on to mint. That is TWO live agent credentials for one press, of which the UI
+         shows one; the other is unrevocable in practice because its id was never displayed.
+         A re-entrancy guard has to be set in the same synchronous turn it is tested in;
+         anything else is a race with a comment on it. The finally below is what makes
+         setting it this early safe — every early return still clears it. */
+      if (this.#busy) return;
+      this.#busy = true;
+      try {
+        await this.#mintGuarded();
+      } finally {
+        this.#busy = false;
+      }
+    }
+
+    async #mintGuarded() {
+      this.#formError(null);
+
+      const session = await currentSession();
+      if (!session) {
+        this.#blocked(
+          "Your sign-in expired",
+          "Nothing was issued. Sign in again and come back to this step.",
+        );
+        return;
+      }
+
+      const select = this.#q<HTMLSelectElement>('[data-field="identity"]');
+      const nameField = this.#q<HTMLInputElement>('[data-field="name"]');
+      const ttlField = this.#q<HTMLSelectElement>('[data-field="ttl"]');
+      const existingId = select?.value ?? "";
+      const name = (nameField?.value ?? "").trim();
+      if (!existingId && name.length === 0) {
+        this.#formError("Give the agent a name first — it's how collaborators will see it.");
+        nameField?.focus();
+        return;
+      }
+
+      const parsedTtl = Number(ttlField?.value ?? AGENT_TOKEN_DEFAULT_TTL_MS);
+      const ttlMs =
+        Number.isFinite(parsedTtl) && parsedTtl > 0 && parsedTtl <= AGENT_TOKEN_MAX_TTL_MS
+          ? parsedTtl
+          : AGENT_TOKEN_DEFAULT_TTL_MS;
+
+      /* #busy is owned by #mint()'s wrapper now — it is set before the first await and
+         cleared in a finally there, so assigning it again here would be a second source of
+         truth for one flag. */
+      this.#resetSteps();
+      this.#state("working");
+
+      /*
+       * ONE COMMAND ID PER INTENT, GENERATED HERE. The server replays a repeated id instead of
+       * acting twice, which is what makes a network retry safe — and generating a fresh id
+       * inside a retry is what once minted a second live credential. Nothing below retries by
+       * itself; a failure is reported and the reader decides.
+       */
+      const identityCommandId = `web_${uuid()}`;
+      const mintCommandId = `web_${uuid()}`;
+
+      try {
+        // The three steps are the three commands, in the order they are actually sent — the
+        // device has to exist before the mint will be accepted at all.
+        this.#step("register-device", "doing");
+        const deviceId = await ensureBrowserDevice(session);
+        this.#step("register-device", "done");
+
+        let identity: AgentIdentity;
+        if (existingId) {
+          identity = {
+            principalId: existingId,
+            name: this.#agents.find((a) => a.principalId === existingId)?.name ?? "your agent",
+          };
+          this.#text("identity-note", " — reusing the one you already have");
+          this.#step("create-identity", "skipped");
+        } else {
+          this.#text("identity-note", "");
+          this.#step("create-identity", "doing");
+          identity = await createAgentIdentity(
+            session,
+            identityCommandId,
+            this.#workspaceId,
+            name,
+          );
+          this.#step("create-identity", "done");
+        }
+
+        this.#step("mint-credential", "doing");
+        const credential = await mintAgentCredential(
+          session,
+          mintCommandId,
+          this.#workspaceId,
+          identity,
+          deviceId,
+          ttlMs,
+        );
+        this.#step("mint-credential", "done");
+
+        const target = deployment();
+        if (!target) throw new NoDeployment();
+
+        this.#prompt = agentPrompt({
+          credential,
+          workspaceId: this.#workspaceId,
+          workspaceName: this.#workspaceName,
+          deploymentUrl: target.url,
+          anonKey: target.anonKey,
+        });
+        this.#text("prompt", this.#prompt);
+        this.#text("result-agent", credential.principalName);
+        this.#text(
+          "result-expiry",
+          credential.expiresAt === null
+            ? "within hours — the deployment didn't say exactly when"
+            : new Date(credential.expiresAt).toLocaleString(),
+        );
+        this.#text("copy-status", "");
+        this.#resetCopyLabel();
+        this.#state("done");
+      } catch (error) {
+        this.#state("ready");
+        this.#formError(this.#explain(error));
+      }
+      /* No `finally { #busy = false }` here: #mint()'s wrapper clears it, and clearing it
+         twice would let a second submit through while this call was still unwinding. */
+    }
+
+    /*
+     * Every branch here names what is now true. A refusal says nothing was created; an unknown
+     * outcome says nobody knows, and does not invite a retry that could double-issue.
+     */
+    #explain(error: unknown): string {
+      if (error instanceof AgentNameTaken) {
+        return `${error.message} Pick another name, or choose that identity from the list and issue a credential for it.`;
+      }
+      if (error instanceof CredentialNotShown) return error.message;
+      if (error instanceof ClientTooOld) return error.message;
+      if (error instanceof AgentConnectRefused) return error.message;
+      if (error instanceof MintOutcomeUnknown) return error.message;
+      if (error instanceof NoDeployment) return error.message;
+      return "Something went wrong before a credential was issued. Nothing was created.";
+    }
+
+    #resetCopyLabel() {
+      this.#text("copy-label", "Copy");
+      const button = this.#q<HTMLButtonElement>('[data-action="copy"]');
+      button?.removeAttribute("data-copied");
+    }
+
+    /*
+     * A copy button with no confirmation is a button people press twice. The label changes,
+     * the button holds a copied state for a moment, and the live region says it out loud for
+     * anyone not watching the button.
+     */
+    async #copy() {
+      if (!this.#prompt) return;
+      const button = this.#q<HTMLButtonElement>('[data-action="copy"]');
+      try {
+        await navigator.clipboard.writeText(this.#prompt);
+      } catch {
+        // Clipboard access can be refused outright (permissions, or a non-secure origin). The
+        // honest fallback is to select the text so the reader's own copy shortcut works.
+        const pre = this.#q<HTMLElement>('[data-slot="prompt"]');
+        if (pre) {
+          const range = document.createRange();
+          range.selectNodeContents(pre);
+          const selection = window.getSelection();
+          selection?.removeAllRanges();
+          selection?.addRange(range);
+        }
+        this.#text("copy-status", "Your browser wouldn't let the page copy. It's selected — press ⌘C or Ctrl+C.");
+        return;
+      }
+      this.#text("copy-label", "Copied");
+      button?.setAttribute("data-copied", "");
+      this.#text("copy-status", "Copied. Paste it into your agent — it isn't shown again.");
+      window.clearTimeout(this.#copyTimer);
+      this.#copyTimer = window.setTimeout(() => this.#resetCopyLabel(), 2400);
+    }
+  }
+
+  if (!customElements.get("agent-connect")) {
+    customElements.define("agent-connect", AgentConnectElement);
+  }
+</script>
+
+<style>
+  /* One card. The step is a single decision followed by a single artifact, and splitting it
+     across two surfaces would make the credential look like a separate screen you could
+     navigate back to — which is exactly what it is not. */
+  .ac {
+    display: block;
+    padding: var(--pad-card-lg);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--ring-top), var(--shadow-md);
+    max-inline-size: var(--measure-wide);
+  }
+
+  .ac__head {
+    display: flex;
+    flex-direction: column;
+    gap: var(--stack-sm);
+    margin-block-end: var(--stack-xl);
+  }
+
+  .ac__eyebrow {
+    font-size: var(--t-2xs);
+    line-height: var(--lh-2xs);
+    letter-spacing: var(--track-eyebrow);
+    text-transform: uppercase;
+    font-weight: var(--weight-semibold);
+    color: var(--accent-bright);
+  }
+
+  .ac__title {
+    font-size: var(--t-2xl);
+    line-height: var(--lh-2xl);
+    letter-spacing: var(--track-head);
+    font-weight: var(--weight-head);
+    color: var(--text);
+  }
+
+  .ac__lead {
+    font-size: var(--t-base);
+    line-height: var(--lh-base);
+    color: var(--text-muted);
+  }
+
+  .ac__ws {
+    color: var(--text);
+    font-weight: var(--weight-medium);
+  }
+
+  .ac__muted {
+    font-size: var(--t-sm);
+    line-height: var(--lh-sm);
+    color: var(--text-muted);
+  }
+
+  /* Every panel is in the DOM at build time and switched by data-state on the host, so Astro's
+     scoping attribute is on all of them. Nothing here is created by script. */
+  .ac__panel {
+    display: none;
+    flex-direction: column;
+    gap: var(--stack-lg);
+  }
+
+  .ac[data-state="loading"] [data-panel="loading"],
+  .ac[data-state="blocked"] [data-panel="state"],
+  .ac[data-state="ready"] [data-panel="form"],
+  .ac[data-state="working"] [data-panel="working"],
+  .ac[data-state="done"] [data-panel="result"] {
+    display: flex;
+  }
+
+  .ac__panel--state {
+    gap: var(--stack-sm);
+    align-items: flex-start;
+  }
+
+  .ac__state-title {
+    font-size: var(--t-lg);
+    line-height: var(--lh-lg);
+    font-weight: var(--weight-semibold);
+    color: var(--text);
+  }
+
+  .ac__state-body {
+    font-size: var(--t-sm);
+    line-height: var(--lh-sm);
+    color: var(--text-muted);
+  }
+
+  .ac__field {
+    display: flex;
+    flex-direction: column;
+    gap: var(--stack-xs);
+  }
+
+  /* An author `display` beats the UA's `[hidden] { display: none }`, so hiding this field from
+     script silently does nothing without this line. The name field is hidden whenever an
+     existing identity is selected, so "silently does nothing" would mean asking for a name the
+     command never sends. */
+  .ac__field[hidden] {
+    display: none;
+  }
+
+  /* With no existing identities there is nothing to choose between, so the select is a control
+     with one option — noise in front of the only field that matters. */
+  .ac__form[data-has-agents="no"] [data-field-wrap="identity"] {
+    display: none;
+  }
+
+  .ac__label {
+    font-size: var(--t-sm);
+    line-height: var(--lh-sm);
+    font-weight: var(--weight-medium);
+    color: var(--text);
+  }
+
+  .ac__control {
+    inline-size: 100%;
+    padding: var(--s-3) var(--s-4);
+    font-family: inherit;
+    font-size: var(--t-base);
+    line-height: var(--lh-base);
+    color: var(--text);
+    background: var(--elev-1);
+    /* --border-interactive is the only hairline that clears 1.4.11's 3:1, and a form control's
+       edge is the case that rule is actually about. */
+    border: 1px solid var(--border-interactive);
+    border-radius: var(--radius);
+    transition: box-shadow var(--dur-2) var(--ease-standard);
+  }
+
+  .ac__control:focus-visible {
+    outline: none;
+    box-shadow: var(--focus-ring);
+  }
+
+  .ac__hint {
+    font-size: var(--t-xs);
+    line-height: var(--lh-xs);
+    color: var(--text-faint);
+  }
+
+  .ac__warn {
+    display: flex;
+    gap: var(--s-3);
+    align-items: flex-start;
+    padding: var(--pad-card-sm);
+    font-size: var(--t-sm);
+    line-height: var(--lh-sm);
+    color: var(--text);
+    background: var(--warning-dim);
+    border: 1px solid var(--warning-dim);
+    border-radius: var(--radius);
+  }
+
+  .ac__warn svg {
+    flex: none;
+    margin-block-start: 0.15em;
+    color: var(--warning);
+  }
+
+  .ac__warn--live {
+    background: var(--danger-dim);
+    border-color: var(--danger-dim);
+  }
+
+  .ac__form-error {
+    padding: var(--pad-card-sm);
+    font-size: var(--t-sm);
+    line-height: var(--lh-sm);
+    color: var(--text);
+    background: var(--danger-dim);
+    border-radius: var(--radius);
+  }
+
+  .ac__btn {
+    align-self: flex-start;
+    padding: var(--s-3) var(--s-5);
+    font-family: inherit;
+    font-size: var(--t-sm);
+    line-height: var(--lh-sm);
+    font-weight: var(--weight-semibold);
+    color: var(--text);
+    background: var(--elev-1);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
+    cursor: pointer;
+    transition:
+      background var(--dur-2) var(--ease-standard),
+      transform var(--dur-1) var(--ease-standard);
+  }
+
+  .ac__btn:focus-visible {
+    outline: none;
+    box-shadow: var(--focus-ring);
+  }
+
+  .ac__btn:active {
+    transform: translateY(1px);
+  }
+
+  .ac__btn--primary {
+    color: var(--accent-ink);
+    background: linear-gradient(180deg, var(--accent-bright), var(--accent));
+    border-color: transparent;
+    box-shadow: var(--ring-top);
+  }
+
+  .ac__btn--quiet {
+    background: transparent;
+    font-weight: var(--weight-medium);
+    color: var(--text-muted);
+  }
+
+  .ac__steps {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-3);
+    list-style: none;
+  }
+
+  .ac__step {
+    display: flex;
+    align-items: center;
+    gap: var(--s-3);
+    font-size: var(--t-sm);
+    line-height: var(--lh-sm);
+    color: var(--text-faint);
+  }
+
+  .ac__step[data-status] {
+    color: var(--text);
+  }
+
+  .ac__dot {
+    inline-size: 0.55rem;
+    block-size: 0.55rem;
+    flex: none;
+    border-radius: var(--radius-pill);
+    background: var(--border-strong);
+  }
+
+  .ac__step[data-status="doing"] .ac__dot {
+    background: var(--accent);
+  }
+
+  .ac__step[data-status="done"] .ac__dot {
+    background: var(--success);
+  }
+
+  /* A step that did not need to run is not a step that succeeded, and it should not wear the
+     same green as one that did. */
+  .ac__step[data-status="skipped"] {
+    color: var(--text-faint);
+  }
+
+  .ac__step-note {
+    color: var(--text-faint);
+  }
+
+  .ac__facts {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s-2) var(--s-6);
+  }
+
+  .ac__fact {
+    display: flex;
+    gap: var(--s-2);
+    font-size: var(--t-sm);
+    line-height: var(--lh-sm);
+    color: var(--text);
+  }
+
+  .ac__fact-k {
+    color: var(--text-muted);
+  }
+
+  .ac__block {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--elev-3);
+    overflow: hidden;
+  }
+
+  .ac__block-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--gap-inline);
+    padding: var(--s-2) var(--s-2) var(--s-2) var(--s-4);
+    border-block-end: 1px solid var(--border);
+  }
+
+  .ac__block-label {
+    font-size: var(--t-xs);
+    line-height: var(--lh-xs);
+    letter-spacing: var(--track-xs);
+    color: var(--text-muted);
+  }
+
+  .ac__btn--copy {
+    align-self: auto;
+    padding: var(--s-2) var(--s-4);
+  }
+
+  .ac__btn--copy[data-copied] {
+    color: var(--success);
+    border-color: var(--success);
+  }
+
+  /* The block scrolls inside its own box rather than wrapping: this text is going to an agent
+     verbatim, and a soft-wrapped continuation of a flag reads as a different flag. */
+  .ac__pre {
+    max-block-size: 22rem;
+    padding: var(--s-4);
+    overflow: auto;
+    font-family: var(--font-mono);
+    font-size: var(--t-xs);
+    line-height: 1.7;
+    color: var(--text);
+    white-space: pre;
+    tab-size: 2;
+  }
+
+  .ac__pre:focus-visible {
+    outline: 2px solid var(--focus);
+    outline-offset: -2px;
+  }
+
+  .ac__status {
+    font-size: var(--t-xs);
+    line-height: var(--lh-xs);
+    color: var(--text-muted);
+    min-block-size: 1.2em;
+  }
+
+  .ac__gap {
+    font-size: var(--t-xs);
+    line-height: var(--lh-xs);
+    color: var(--text-muted);
+  }
+
+  .ac__gap strong {
+    color: var(--text);
+    font-weight: var(--weight-semibold);
+  }
+
+  .ac__gap code {
+    font-family: var(--font-mono);
+    font-size: 0.95em;
+    white-space: nowrap;
+  }
+
+  .ac__result-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--gap-inline);
+  }
+
+  @media (max-width: 30rem) {
+    .ac {
+      padding: var(--pad-card);
+    }
+
+    .ac__btn {
+      align-self: stretch;
+      text-align: center;
+    }
+  }
+</style>
