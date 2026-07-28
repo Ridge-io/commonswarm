@@ -36,13 +36,49 @@ import SiteFooter from "../components/SiteFooter.astro";
 // Do NOT put coswarm.dev here -- that warning outlives the rename, because the hazard is
 // somebody else's live host, not our old name.
 //
-// THE DOMAIN IS NOW DECIDED AND STILL NOT USABLE. commonswarm.com is the chosen name; DNS is
-// parked and nothing serves it. So it does NOT go here yet -- a canonical URL pointing at a
-// host that does not answer is worse than one pointing nowhere by construction. .invalid is
-// reserved by RFC 2606 and can never resolve, which is the point. Swap this for
-// https://commonswarm.com (or better, set `site:` in astro.config.mjs and delete this) on the
-// day the domain actually serves the site. The live URL today is coswarm-site.vercel.app.
+// ★ SUPERSEDED, KEPT SO THE REASONING IS STILL READABLE -- do not act on it:
+//   "THE DOMAIN IS NOW DECIDED AND STILL NOT USABLE. commonswarm.com is the chosen name; DNS
+//    is parked and nothing serves it. So it does NOT go here yet ... Swap this for
+//    https://commonswarm.com (or better, set `site:` in astro.config.mjs and delete this) on
+//    the day the domain actually serves the site."
+// That day came. astro.config.mjs now sets `site: "https://commonswarm.com"`, which means
+// Astro.site is always defined and THIS CONSTANT IS UNREACHABLE -- the `??` below never takes
+// its right-hand branch. It is left in place as the guard rail the warning above describes,
+// not because anything reads it. Checked, not assumed: `site:` is set in astro.config.mjs.
 const FALLBACK_ORIGIN = "https://commonswarm.invalid";
+
+/* THEME-COLOR: THE ONE PLACE IN THE SITE A TOKEN VALUE IS WRITTEN TWICE, AND IT CANNOT BE
+ * AVOIDED. `content` on a <meta> is an HTML attribute, not CSS, so it cannot hold
+ * `var(--elev-0)`; the browser chrome colour has to be a literal. Everything else in this
+ * shell resolves through tokens.css.
+ *
+ * Two entries, each media-gated, because the page is no longer dark-only. A single literal
+ * here is the bug the theme work exists to remove: dark browser chrome sitting on top of a
+ * light page, so the phone's status bar and URL bar fight the document they frame. The
+ * browser picks the FIRST entry whose media matches, so both must carry a media attribute --
+ * an unqualified fallback placed first would always match and win, silently disabling the
+ * pair.
+ *
+ * THE SYNC OBLIGATION, stated so the next person does not have to infer it: each value must
+ * equal --elev-0 as tokens.css resolves it in that mode, because --elev-0 is the page plane
+ * and the chrome is meant to disappear into it.
+ *   - DARK (#08090c) is verified: it is --elev-0's current value in tokens.css.
+ *   - LIGHT (#ffffff) is NOT verified. The light palette is being written concurrently and
+ *     does not exist yet at the time of this edit, so this is the conventional white page
+ *     rather than a value read off the token. If the light --elev-0 lands as a tinted
+ *     off-white, this line is wrong by exactly that tint and must be updated to match.
+ * Check it with `grep -n 'elev-0' src/styles/tokens.css` -- not by eye against a screenshot,
+ * which cannot distinguish #ffffff from #fcfcfd. */
+const THEME_COLOR_LIGHT = "#ffffff";
+const THEME_COLOR_DARK = "#08090c";
+
+/* THIS FILE'S `<meta name="color-scheme" content="light dark">` IS NOT SUFFICIENT ON ITS OWN.
+ * The CSS `color-scheme` property beats the meta wherever both are present, and global.css
+ * declares `color-scheme: dark` on `html`. Until that line becomes light-first too, this
+ * shell advertises support for both modes while the stylesheet pins the UA to dark -- form
+ * controls, scrollbars and the canvas would stay dark under a light palette. global.css is
+ * not this file's to edit; it is named here so the gap is visible rather than assumed
+ * closed. Verified by reading global.css, not by inference. */
 
 interface Props {
   /** Full <title>. Defaults to the site-wide title. */
@@ -102,7 +138,13 @@ const ogImageUrl = new URL(ogImage, origin).href;
  * accept --link-stdin" — not inferred from the byte count changing. Only then were the two
  * lines below rewritten. The rule stands for next time: never edit this string alone, because
  * alt text that describes a picture which does not exist is the one thing alt text must never
- * do. */
+ * do.
+ *
+ * OPEN AND UNFIXED, FLAGGED HERE BECAUSE IT IS NOT THIS FILE'S TO FIX: the card is dark, and
+ * the site is going light-first. The word "dark" below is still an accurate description of
+ * public/og.png, so it stays — but once the page is light, every link preview shows a dark
+ * card for a light site. The fix is scripts/og-card.mjs, then a regenerated PNG, then this
+ * string, in that order; none of the three is in this lane. */
 const ogImageAlt =
   "CommonSwarm — a dark title card headed “Your agents know what each other are doing.”, " +
   "under the label “Multi-agent coordination”, above the command “cswarm accept " +
@@ -119,8 +161,17 @@ const ogImageAlt =
     <meta name="description" content={description} />
     <link rel="canonical" href={canonical} />
 
-    <meta name="theme-color" content="#08090c" />
-    <meta name="color-scheme" content="dark" />
+    <meta name="color-scheme" content="light dark" />
+    <meta
+      name="theme-color"
+      content={THEME_COLOR_LIGHT}
+      media="(prefers-color-scheme: light)"
+    />
+    <meta
+      name="theme-color"
+      content={THEME_COLOR_DARK}
+      media="(prefers-color-scheme: dark)"
+    />
 
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />

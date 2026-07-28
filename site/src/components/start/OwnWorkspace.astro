@@ -1,0 +1,105 @@
+---
+/*
+ * The one thing this page cannot give you yet, said once, under the three things it can.
+ *
+ * WHAT IS TRUE, AND WHERE IT WAS CHECKED. Every line number below was RE-READ on this pass
+ * against supabase/functions/command/index.ts, not carried over — and every one of them had
+ * drifted from the figures the retired /start components cited, which is the argument for
+ * re-reading them. The dead numbers are named so a future reader can tell drift from a
+ * different claim: the gate was cited at :2182 and is at :2250; the credential and
+ * verification gates at :2183-2186 are at :2251-2254; the live-workspace count at :2245-2251
+ * is at :2320-2325; identityVerified at :3205 is at :3477.
+ *
+ *   the handler EXISTS ..... `create_workspace` is served by createSelfServeWorkspace()
+ *                            (:2231), dispatched at :2780 ahead of route resolution because a
+ *                            brand-new caller has no membership to resolve against.
+ *   and it is GATED ........ `const selfServeEnabled = Deno.env.get("SWARM_SELF_SERVE") ===
+ *                            "1"` (:323), and the handler's FIRST line is
+ *                            `if (!selfServeEnabled) return await forbid(...)` (:2250) —
+ *                            a 403, before anything else is looked at. Production does not
+ *                            set the variable.
+ *   3 live workspaces ...... FREE_TIER_WORKSPACE_LIMIT = 3 (:330), compared against a count
+ *                            with `AND archived_at IS NULL` (:2323) — archiving one frees the
+ *                            slot, which is why this says "live" and not just "three".
+ *   verified identity ...... a non-human credential is refused (:2251), then an unverified
+ *                            one (:2254); identityVerified is email_confirmed_at (:3477).
+ *   no card ................ no billing surface exists in this repo. Re-enumerated with a
+ *                            control on this pass: stripe|billing|payment|subscription|
+ *                            invoice|\bprice\b over src/, supabase/functions/,
+ *                            supabase/migrations/ and package.json is 0 matching lines,
+ *                            against 684 for "workspace" over the same paths — so the grep
+ *                            runs and the zero is a zero. (The earlier note recorded 1002 for
+ *                            the control; the difference is that count and this one were
+ *                            taken with different flags, not that the tree shrank. What both
+ *                            establish is the same thing: the instrument fires.)
+ *
+ * TWO SENTENCES THAT MUST NOT BE COLLAPSED INTO ONE. "There is no self-serve signup" is DEAD
+ * and false — the handler is there. "Signup is open" is also false — the gate is off. The
+ * panel says built AND not switched on, in that order, because that pair survives launch day:
+ * when SWARM_SELF_SERVE flips, only the second half is edited.
+ *
+ * WHY THE LINK GOES TO THE PRICING CARD AND IS NOT LABELLED "ASK FOR AN INVITE". The home
+ * page's #invite section carries an email field whose own hint reads "Nothing is sent. There
+ * is no service behind this button yet." Sending someone there under a call to action that
+ * implies a request reaches somebody would be this site's worst habit, committed by a link
+ * label. The link names what is actually at the other end: the terms of the free tier.
+ *
+ * NO STUB CONTROL ON THIS PAGE. The wizard this panel replaced had a GitHub button that
+ * existed to fail and a form that created nothing. A disabled button captioned "coming soon"
+ * would be the same idea with worse manners; a sentence is enough.
+ */
+---
+
+<aside class="own" aria-labelledby="own-t">
+  <h2 class="own__t" id="own-t">No invite yet?</h2>
+  <p class="own__p">
+    Today the way in is an invitation from someone already in a workspace — that is the link
+    step two accepts. Starting your own is built and isn’t switched on here yet, so there’s
+    nothing on this page that would do it.
+  </p>
+  <p class="own__p">
+    When it opens: three live workspaces per verified identity, free, and no card at any
+    point. <a href="/#invite">What the free tier includes</a>.
+  </p>
+</aside>
+
+<style>
+  .own {
+    margin-block-start: var(--s-10);
+    padding: var(--pad-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--bg-raised);
+  }
+
+  /* Deliberately a step DOWN from the step headings above it: this is the aside, and the
+     three commands are the page. Same reason it has no button. */
+  .own__t {
+    margin: 0;
+    font-size: var(--t-base);
+    line-height: var(--lh-base);
+    letter-spacing: var(--track-head);
+    font-weight: var(--weight-semibold);
+    color: var(--text);
+  }
+
+  .own__p {
+    margin: var(--s-2) 0 0;
+    font-size: var(--t-sm);
+    line-height: var(--lh-sm);
+    letter-spacing: var(--track-sm);
+    color: var(--text-muted);
+  }
+
+  .own__p a {
+    color: var(--text);
+    text-decoration: underline;
+    text-decoration-color: var(--border-strong);
+    text-underline-offset: 3px;
+    transition: text-decoration-color var(--dur-2) var(--ease-standard);
+  }
+
+  .own__p a:hover {
+    text-decoration-color: currentColor;
+  }
+</style>

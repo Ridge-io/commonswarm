@@ -14,6 +14,24 @@ capability-URL on-ramp*
 > confident zero. The **past measurements** are left exactly as taken: the npm probe row
 > below still reads `npm view coswarm version → E404, 2026-07-27`, which is what was run.
 
+> **Amended 2026-07-27 (capability URLs were built).** Every "not applicable — no
+> capability URL was built" row in the §7 table below, and the surrounding paragraph
+> stating "there is no capability-URL endpoint, no capability principal, no
+> token-exchange path", were **true when written and are now superseded**. A capability
+> URL, its anonymous read endpoint, its mint/revoke commands, and the CLI verbs
+> `cswarm link new` / `cswarm link revoke` were built later the same day; see
+> `docs/design/CAPABILITY-URL-ONRAMP.md`. The superseded lines are left in place, marked
+> dead by this banner, because they are the record of what was measured then. The
+> token-exchange rung and the `/see` page are still not built.
+>
+> **This makes the three shipped `site/public/` assets stale**, and this seat could not
+> fix them (the sprint's lane excluded `site/`). Concretely: `site/public/api.md` still
+> says "There is no anonymous access to any endpoint", its Endpoints table omits
+> `POST /functions/v1/capability`, and its Limits section still says the capability-URL
+> preview "is specified but **not implemented** — there is no endpoint that serves it
+> today". `site/public/llms.txt` and `site/public/skills/cswarm/SKILL.md` do not mention
+> capability URLs at all. All three need updating before the next site deploy.
+
 Three files ship. All three are static assets under `site/public/`, so they are
 committed to the repo *and* fetchable at a stable URL after the next site deploy —
 which is the whole point: an agent with no repo access and no CLI can `curl` them.

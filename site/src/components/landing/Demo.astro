@@ -5,6 +5,17 @@
  * IT TEACHES ONE IDEA: you say what you are about to touch, and you immediately find out
  * whether a teammate is already there. Everything else in the widget is in service of that.
  *
+ * IT IS ALSO WHERE THE PAGE'S ONE FRAMING SENTENCE STOPS BEING A CLAIM AND BECOMES A DEMO.
+ * Hero says "A signal announces. It never locks."; here the reader picks the file someone is
+ * already on, presses the button, and WATCHES IT GO THROUGH. That is the whole reason outcome
+ * A is not an error state and has no red in it. The foot of that outcome says it in words —
+ * "Nothing stopped you" — because the thing being proved is a negative, and a negative has to
+ * be pointed at or a reader will not notice it did not happen.
+ *
+ * THE WORD "claim" IS GONE FROM THIS FILE. It read as a thing held against someone, which is
+ * the retired framing (docs/marketing/SITE-BRIEF.md's vocabulary table) creeping back in a
+ * friendlier word. A signal is said, not held. Hero.astro's header carries the full note.
+ *
  * IT IS AN ILLUSTRATION AND IT SAYS SO — twice: a badge on the panel and a line under the
  * widget. It makes no network calls, it holds no state anywhere, and the three outcomes are
  * server-rendered into the page and toggled. Nothing here pretends to reach a server.
@@ -22,11 +33,44 @@
  * the field and the command stays something you could paste.
  *
  * VERIFIED against the shipped CLI:
- *   the flag set  `working-on "<what>" --url <url> --anon-key <key> [--about <ref>]
- *                 [--until <dur>]`  — node dist/cli.js --help
- *   `--until` takes a whole number plus m/h/d and is capped at 30d — src/cli.ts:1180,1189
- *   --url / --anon-key are ALWAYS required: target() reads only the flag and SWARM_CLOUD_URL
- *   (src/cli.ts:295-299), so a flagless command on this page would not run. See SITE-BRIEF.
+ *   the signature  `working-on "<what>" [--url <url> --anon-key <key>] [--workspace-id <uuid>]
+ *                  [--about <ref>] [--until <dur>] [--json]`  — src/cli.ts:257, usage block
+ *   `--until` takes a whole number plus m/h/d and is capped at 30d — src/cli.ts:283, :1360
+ *
+ * ---------------------------------------------------------------------------------------
+ * `--url` / `--anon-key` CAME OFF THIS COMMAND, AND THE OLD REASON THEY WERE ON IT IS DEAD.
+ * ---------------------------------------------------------------------------------------
+ * The superseded note, kept so nobody re-derives it: "--url / --anon-key are ALWAYS required:
+ * target() reads only the flag and SWARM_CLOUD_URL (src/cli.ts:295-299), so a flagless command
+ * on this page would not run."
+ *
+ * That was true and is now false. docs/marketing/SITE-BRIEF.md sets the gate for moving to the
+ * bare form and Quill's target persistence has landed through it. Four independent lines,
+ * because the negative was originally established on one:
+ *
+ *   1. resolveCloudTarget (src/cloud/current-target.ts:252-283) resolves flag ?? env ??
+ *      STORED. `mode === "human" && needsStored` is what reads the stored target — the third
+ *      source that did not exist when the note above was written.
+ *   2. `cswarm accept` writes it (src/cli.ts:981); so do `login` (:1827) and `target set` (:744).
+ *   3. `cswarm --help` states the precedence out loud (src/cli.ts:293-295): "flags take
+ *      precedence over environment, which takes precedence over the saved target."
+ *   4. tests/p1-cli/current-target.test.ts:225 — "target set/show/clear is explicit and bare
+ *      human commands use it" — asserts a BARE `cswarm status` after `target set` fails with
+ *      "not logged in" and specifically NOT "no Cloud target is selected". That is the gate
+ *      as an executable statement: target resolution succeeded with no flags.
+ *
+ * NOT ESTABLISHED, STATED PLAINLY: nobody has run `cswarm working-on` bare against a live
+ * deployment after a real `accept`. No build was run here and there is no invite link to
+ * accept. The evidence is a source trace, the shipped help text, and a passing test — which
+ * is strictly more than the source trace alone that established the negative, but it is not
+ * an execution. If a bare run ever prints `--url is required`, this block and Start.astro's
+ * heading move back TOGETHER; SITE-BRIEF is explicit that they are one decision.
+ *
+ * WHY IT WAS WORTH MOVING, beyond accuracy: `--url https://<ref>.supabase.co --anon-key <key>`
+ * was the most jargon-dense string on the landing page, sitting inside its single most
+ * prominent piece of proof. A reader who has never met Supabase met it here, in the command
+ * the page is asking them to imagine typing.
+ * ---------------------------------------------------------------------------------------
  */
 
 import FeedPanel from "./FeedPanel.astro";
@@ -42,9 +86,9 @@ const REFS = [
 
 const DURATIONS = ["90m", "4h", "24h"];
 
-/* The two signals already in this sample project. One is a live claim, one is a note —
- * and the difference between them is a thing worth teaching, so the outcomes below say
- * so in different words. */
+/* The two signals already in this sample project. One is live, one is a note — and the
+ * difference between them is a thing worth teaching, so the outcomes below say so in
+ * different words. */
 const existing = [
   {
     kind: "working-on" as const,
@@ -88,9 +132,8 @@ const DEFAULT_TEXT = "wiring the payments webhook";
       <p class="eyebrow">Try it</p>
       <h2 class="h-section" id="demo-title">Find out who’s already there.</h2>
       <p class="lede">
-        Say what you’re about to touch, the way an agent would. The command assembles as
-        you type — it is the real one — and the panel shows what the rest of the
-        project sees.
+        Say what you’re about to touch, the way an agent would. The command builds as you
+        type — it’s the real one — and the panel shows what everyone else sees.
       </p>
     </div>
 
@@ -171,15 +214,15 @@ const DEFAULT_TEXT = "wiring the payments webhook";
             }
           </div>
           <p class="demo__note">
-            A claim lets go of itself when the time is up. Nobody has to remember to release
-            it. Anything up to 30&nbsp;days.
+            Your signal expires on its own. Nobody has to remember to take it down. Anything
+            up to 30&nbsp;days.
           </p>
         </fieldset>
 
         <div class="demo__cmd">
           <span class="demo__cmd-label">The command</span>
           <pre class="demo__cmd-body"><code id="demo-command">{
-            `cswarm working-on "${DEFAULT_TEXT}" \\\n  --about ${REFS[0].ref} --until ${DURATIONS[0]} \\\n  --url https://<ref>.supabase.co --anon-key <key>`
+            `cswarm working-on "${DEFAULT_TEXT}" \\\n  --about ${REFS[0].ref} --until ${DURATIONS[0]}`
           }</code></pre>
         </div>
 
@@ -248,13 +291,13 @@ const DEFAULT_TEXT = "wiring the payments webhook";
             </p>
             <p class="callout__body">
               <b>scout</b> announced <code>src/payments/webhook.ts</code> six minutes ago:
-              &ldquo;Mapping the Stripe webhook retry paths&rdquo;. That claim has 84 minutes
+              &ldquo;Mapping the Stripe webhook retry paths&rdquo;. That signal has 84 minutes
               left on it.
             </p>
             <p class="callout__foot">
-              Nothing stopped you, and your signal went out anyway. You both just found out —
-              which is the whole trick. One of you takes the retries, the other takes the
-              tests.
+              <b>Nothing stopped you.</b> A signal announces; it never locks — so yours went
+              out too, and you both just found out. One of you takes the retries, the other
+              takes the tests.
             </p>
           </div>
 
@@ -267,15 +310,14 @@ const DEFAULT_TEXT = "wiring the payments webhook";
                   <path d="M4 12.5 9.5 18 20 6.5"></path>
                 </svg>
               </span>
-              Nobody’s in it
+              Nobody’s on it
             </p>
             <p class="callout__body">
-              No live claim on <code>src/auth/session.ts</code>. It is yours.
+              Nobody has announced <code>src/auth/session.ts</code>. Go ahead.
             </p>
             <p class="callout__foot">
               Worth reading first, though: <b>codex-1</b> left a note on this file 21 minutes
-              ago. A note is not a claim — it does not hold anything, it just saves you the
-              hour.
+              ago. A note holds nothing and asks nothing of you — it just saves you the hour.
             </p>
           </div>
 
@@ -288,11 +330,10 @@ const DEFAULT_TEXT = "wiring the payments webhook";
                   <path d="M4 12.5 9.5 18 20 6.5"></path>
                 </svg>
               </span>
-              Nobody’s in it
+              Nobody’s on it
             </p>
             <p class="callout__body">
-              No live claim and no notes on <code>migrations/0042_orders.sql</code>. It is
-              yours.
+              Nothing at all on <code>migrations/0042_orders.sql</code>. Go ahead.
             </p>
             <p class="callout__foot">
               Every agent in the project sees your line the next time it reads the feed —
@@ -359,10 +400,11 @@ const DEFAULT_TEXT = "wiring the payments webhook";
       const text = field.value.trim() || field.placeholder || "";
       const ref = checked(refInputs).value;
       const until = checked(untilInputs).value;
+      /* Must stay character-for-character the same shape as the server-rendered command in
+         the template above, or the block changes on the reader's first keystroke. */
       return (
         `cswarm working-on ${shQuote(text)} \\\n` +
-        `  --about ${ref} --until ${until} \\\n` +
-        `  --url https://<ref>.supabase.co --anon-key <key>`
+        `  --about ${ref} --until ${until}`
       );
     };
 
@@ -448,10 +490,12 @@ const DEFAULT_TEXT = "wiring the payments webhook";
       emptyEl.hidden = true;
       outEl.hidden = false;
 
+      /* Kept word-for-word in step with the visible callouts above. A screen-reader outcome
+         that says something the sighted outcome does not is two different products. */
       verdictEl.textContent =
         outcome === "webhook"
-          ? `Someone’s already there. scout announced ${ref.value} six minutes ago, with 84 minutes left on the claim. Your signal went out as well.`
-          : `Nobody has a live claim on ${ref.value}. Your signal is in the shared feed.`;
+          ? `Someone’s already there. scout announced ${ref.value} six minutes ago, with 84 minutes left on that signal. Nothing stopped you — your signal went out as well.`
+          : `Nobody has announced ${ref.value}. Your signal is in the shared feed.`;
 
       announced = true;
       if (confirmed) resolveButton();
@@ -715,8 +759,11 @@ const DEFAULT_TEXT = "wiring the payments webhook";
    * does not change the conclusion.)
    *
    * `pre-wrap` keeps the authored newlines and the leading indent on the continuation lines,
-   * so the shape of the command survives; `anywhere` lets the long --url token break rather
-   * than push the line wide again. Desktop is unchanged — the command already fits there, and
+   * so the shape of the command survives; `anywhere` lets a long unbroken token break rather
+   * than push the line wide again. That was written for `--url https://<ref>.supabase.co`,
+   * which is no longer on this command (see the header) — it still earns its place, because
+   * the `--about` path is reader-selected and `migrations/0042_orders.sql` is the same shape
+   * of problem. Desktop is unchanged — the command already fits there, and
    * a rule that only bites when the text is too wide cannot alter the case where it isn't.
    *
    * This also puts the block in line with every other listing on the site: CodeBlock's

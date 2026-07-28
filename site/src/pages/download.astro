@@ -19,6 +19,28 @@
  * /download. That reason is gone: SiteFooter's Product column is now real routes, so the
  * page passes no footer at all and takes Base's default. PageFoot is deleted — it also
  * claimed the repository is "private during dogfood", which is no longer true.
+ *
+ * ============================ THE SECTION ORDER IS THE FUNNEL ============================
+ * It changed this pass, and the old one is worth naming because it looked reasonable:
+ *
+ *     install  ->  what happens on your machine  ->  other ways in  ->  once it's installed
+ *
+ * That put both of the page's reference sections — 6 walkthrough steps and 4 alternative
+ * install routes, roughly two screens — BETWEEN the command someone just copied and the
+ * command they run next. Someone who has installed the thing and is looking for step two
+ * scrolls past the transparency argument they no longer need and a card explaining that
+ * there is no npm package. The one section that moves a reader FORWARD was last on the page.
+ *
+ *     install  ->  once it's installed  ->  what happens on your machine  ->  other ways in
+ *
+ * The funnel is now complete in the first two sections — copy the command, then the two
+ * commands that follow it — and the reference material sits under it for the two readers who
+ * want it: the one who has not pasted yet and wants to know what the script does, and the one
+ * who does not want a one-liner at all. Neither of them is mid-install.
+ *
+ * The suspicious reader is not left unserved by the demotion: the install card itself says
+ * <host> is a placeholder, and the "what happens" section is one anchor away — see the link
+ * under the copy button in InstallPanel.astro, which is what pays for this order.
  */
 
 import Base from "../layouts/Base.astro";
@@ -30,14 +52,14 @@ import AfterInstall from "../components/download/AfterInstall.astro";
 /* The single source of truth for the install command, character for character. */
 const INSTALL_CMD = "curl -fsSL https://<host>/install.sh | sh";
 
-const title = "Install CommonSwarm — one file, no sudo";
+const title = "Install CommonSwarm — one command, one file";
 const description =
-  "Install the cswarm CLI: one command, one file in ~/.local/bin, checked against a published SHA-256 before it lands. Node 24 or newer, macOS or Linux.";
+  "Install the cswarm CLI: one command, one file in ~/.local/bin, checked against a published SHA-256 before it lands. No sudo. Node 24 or newer, macOS or Linux.";
 ---
 
 <Base title={title} description={description} path="/download">
   <InstallPanel cmd={INSTALL_CMD} />
+  <AfterInstall />
   <WhatHappens />
   <OtherWays cmd={INSTALL_CMD} />
-  <AfterInstall />
 </Base>

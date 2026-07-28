@@ -4,6 +4,8 @@ import {
   CommandHttpError,
   CommandTransportError,
   newCommandId,
+  type CapabilityCommand,
+  type CapabilityCommandResult,
   type ConnectCommand,
   type ConnectCommandResult,
   type PostSignalCommand,
@@ -21,7 +23,7 @@ export const SIGNAL_PENDING_RECOVERY_MS = 60 * 60 * 1000;
 
 function intentHash(
   workspace: string | undefined,
-  command: ConnectCommand,
+  command: ConnectCommand | CapabilityCommand,
 ): string {
   return createHash("sha256")
     .update(canonicalJson({ workspace_id: workspace ?? null, command }))
@@ -32,7 +34,7 @@ async function pendingCommandId(
   credentials: CredentialStore,
   userId: string,
   workspace: string | undefined,
-  command: ConnectCommand,
+  command: ConnectCommand | CapabilityCommand,
 ): Promise<{ intent: string; commandId: string }> {
   const intent = intentHash(workspace, command);
   return await credentials.withLock(async () => {
@@ -96,6 +98,47 @@ export async function sendConnectWithPending(
   try {
     const result = await client.sendConnect({
       ...(workspace === undefined ? {} : { workspaceId: workspace }),
+      command,
+      credential: session.accessToken,
+      commandId: pending.commandId,
+    });
+    await clearPendingCommand(session.store, session.userId, pending.intent);
+    return result;
+  } catch (error) {
+    if (!(error instanceof CommandTransportError)) {
+      await clearPendingCommand(session.store, session.userId, pending.intent);
+      throw error;
+    }
+    throw new CommandTransportError(
+      `${error.message}; retry the same command to resolve its pending outcome`,
+    );
+  }
+}
+
+/**
+ * Same pending-id discipline as a connect command, so an interrupted mint resolves as a
+ * replay rather than issuing a second live credential. A replay deliberately returns no
+ * token — the caller reports that and mints afresh rather than pretending it has one.
+ */
+export async function sendCapabilityWithPending(
+  client: ThinCommandClient,
+  session: {
+    accessToken: string;
+    userId: string;
+    store: CredentialStore;
+  },
+  workspace: string,
+  command: CapabilityCommand,
+): Promise<CapabilityCommandResult> {
+  const pending = await pendingCommandId(
+    session.store,
+    session.userId,
+    workspace,
+    command,
+  );
+  try {
+    const result = await client.sendCapability({
+      workspaceId: workspace,
       command,
       credential: session.accessToken,
       commandId: pending.commandId,

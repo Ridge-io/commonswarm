@@ -14,8 +14,11 @@ import {
 } from "./cloud/auth.js";
 import {
   assertAgentToken,
+  assertCapabilityToken,
   assertInvitationToken,
   assertWorkspaceName,
+  CAPABILITY_MAX_TTL_MS,
+  CAPABILITY_MIN_TTL_MS,
   CommandTransportError,
   ThinCommandClient,
   type CommandResult,
@@ -44,6 +47,7 @@ import {
   type CredentialStore,
 } from "./cloud/storage.js";
 import {
+  sendCapabilityWithPending,
   sendConnectWithPending,
   sendSignalWithPending,
 } from "./cloud/pending-command.js";
@@ -65,6 +69,14 @@ import {
   sanitizeDisplayLabel,
   type InviteLinkPayload,
 } from "./cloud/invite-link.js";
+import {
+  capabilitySiteOrigin,
+  capabilityTimestamp,
+  capabilityUrl,
+  CAPABILITY_DISCLOSURE,
+  renderCapabilityMint,
+  renderCapabilityRevoke,
+} from "./cloud/capability-link.js";
 import {
   clearWorkspaceDefault,
   cloudWorkspaceDirectory,
@@ -270,6 +282,8 @@ Usage:
   cswarm accept <invitation-token> [--url <url> --anon-key <key>]  # unsafe: shell history/process list
   cswarm principal create [--url <url> --anon-key <key>] [--workspace-id <uuid>] --name <name>
   cswarm token mint [--url <url> --anon-key <key>] [--workspace-id <uuid>] --principal-id <uuid> --run-id <uuid> --task-id <uuid> --epoch <n> [--ttl-ms <ms>]
+  cswarm link new [--url <url> --anon-key <key>] [--workspace-id <uuid>] --task-id <uuid> [--ttl-ms <ms>] [--site <origin>] [--json]
+  cswarm link revoke [--url <url> --anon-key <key>] [--workspace-id <uuid>] --capability-id <uuid> [--json]
   cswarm command <kind> [--url <url> --anon-key <key>] [--workspace-id <uuid>] [command fields]
   cswarm dogfood [--url <url> --anon-key <key>] [--workspace-id <uuid>] --slug <slug> --branch <branch> --head-sha <sha> --evidence <ref>
   cswarm seed-fixture --uid <auth-user-uuid> [--device-id <uuid>] [--workspace-id <uuid>]
@@ -283,10 +297,20 @@ never opens a browser or infers a human's saved project. Durations use a whole
 number plus m, h, or d (for example 90m, 24h, or 7d) and are capped at 30d.
 Place -- before signal text that itself begins with -- to stop option parsing.
 
-Invite, legacy token accept, principal create, token mint, and new require a
+Invite, legacy token accept, principal create, token mint, link, and new require a
 stored human login. Invite-link accept signs in when needed, then accepts and
-registers one principal. Invitation links and agent credentials appear only in fresh
-success responses.
+registers one principal. Invitation links, agent credentials, and capability links
+appear only in fresh success responses.
+
+cswarm link new hands someone a browser link to ONE work item before they install
+anything. It shows that item's name and state, the repository it belongs to, who
+invited them, and how long the project has existed — and reaches nothing else, not
+the member list, not the message feed, not another work item. The link is printed
+once and never again, because only its hash is stored; it lasts a day by default
+and at most 7 days, and cswarm link revoke --capability-id <uuid> withdraws it
+sooner. Only an owner or admin signed in as a human can create one; an agent
+credential never can. --site sets the page the link points at (default
+https://coswarm-site.vercel.app, or CSWARM_SITE_ORIGIN).
 GitHub identities with the same verified email may resolve to one GoTrue user;
 a second human must log in with a distinct verified email before accepting.
 
@@ -565,7 +589,7 @@ function uuid(value: string | undefined, field: string): string {
 
 function acceptedConnect(
   label: string,
-  result: ConnectCommandResult,
+  result: { response: ConnectCommandResult["response"] },
 ): ConnectCommandResult["response"] {
   if (result.response.status !== "accepted") {
     throw new Error(
@@ -1197,6 +1221,145 @@ async function runToken(args: Arguments): Promise<void> {
     runId: uuid(response.run_id, "run_id"),
     token: response.agent_token,
   }));
+}
+
+/**
+ * The six leaves a link holder can read, named here so --json states the allowlist
+ * rather than leaving the person sharing a credential to infer it.
+ */
+const CAPABILITY_DISCLOSED_FIELDS = [
+  "work_item.slug",
+  "work_item.lifecycle",
+  "repo.full_name",
+  "inviter.display_name",
+  "workspace.age_days",
+  "expires_at",
+] as const;
+
+async function runLink(args: Arguments): Promise<void> {
+  const subcommand = args.positionals[1];
+  if (subcommand === "new") {
+    await runLinkNew(args);
+    return;
+  }
+  if (subcommand === "revoke") {
+    await runLinkRevoke(args);
+    return;
+  }
+  throw new UsageError(`unknown link command: ${subcommand ?? "(missing)"}`);
+}
+
+async function runLinkNew(args: Arguments): Promise<void> {
+  args.assertShape(
+    [...TARGET_FLAGS, "workspace-id", "task-id", "ttl-ms", "site", "json"],
+    2,
+  );
+  const taskId = args.required("task-id");
+  if (!UUID_RE.test(taskId)) {
+    throw new Error("--task-id must be the work item's UUID");
+  }
+  // Resolved before the request, not after: a mistyped origin must cost a line of
+  // output, never a live credential we then cannot render as a usable link.
+  const site = capabilitySiteOrigin(
+    args.optional("site"),
+    process.env.CSWARM_SITE_ORIGIN,
+  );
+  // Bounded here rather than at the call site, so every local objection to the command
+  // is raised before any credential work happens.
+  const ttl = args.has("ttl-ms")
+    ? integer(args, "ttl-ms", {
+      minimum: CAPABILITY_MIN_TTL_MS,
+      maximum: CAPABILITY_MAX_TTL_MS,
+    })
+    : undefined;
+  const cloud = await target(args);
+  const human = await humanCredential(args, cloud);
+  const workspace = await workspaceId(args, cloud, human);
+  const response = acceptedConnect(
+    "link new",
+    await sendCapabilityWithPending(
+      new ThinCommandClient(cloud),
+      human,
+      workspace,
+      {
+        kind: "mint_capability_url",
+        task_id: taskId,
+        ...(ttl === undefined ? {} : { ttl_ms: ttl }),
+      },
+    ),
+  );
+  if (response.capability_token === undefined) {
+    // A replayed mint returns the id but never the credential — the server stores only
+    // a hash. Naming the id here is what keeps the unseeable link revocable rather than
+    // stranding it live until its TTL runs out; an id is a handle, not a credential.
+    throw new Error(
+      `this link was created on a prior attempt, and its credential is shown only in a fresh response — the server keeps just a hash, so it cannot be shown again; run cswarm link new to issue another, then run cswarm link revoke --capability-id ${
+        uuid(response.capability_id, "capability_id")
+      } to withdraw the one you cannot see`,
+    );
+  }
+  assertCapabilityToken(response.capability_token);
+  const capabilityId = uuid(response.capability_id, "capability_id");
+  const expiresAt = capabilityTimestamp(response.expires_at, "expires_at");
+  // The credential enters a string here and is written out once, immediately below.
+  // It is never stored, never re-read, and never interpolated into an Error.
+  const url = capabilityUrl(site, response.capability_token);
+  if (args.has("json")) {
+    printJson({
+      message:
+        `Capability link created. It is shown once and is never recoverable. ${CAPABILITY_DISCLOSURE}`,
+      status: response.status,
+      capability_id: capabilityId,
+      capability_url: url,
+      expires_at: expiresAt,
+      shown_once: true,
+      discloses: [...CAPABILITY_DISCLOSED_FIELDS],
+    });
+    return;
+  }
+  process.stdout.write(
+    `${
+      renderCapabilityMint({ url, taskId, capabilityId, expiresAt })
+    }\n`,
+  );
+}
+
+async function runLinkRevoke(args: Arguments): Promise<void> {
+  args.assertShape(
+    [...TARGET_FLAGS, "workspace-id", "capability-id", "json"],
+    2,
+  );
+  const capabilityId = args.required("capability-id");
+  if (!UUID_RE.test(capabilityId)) {
+    throw new Error(
+      "--capability-id must be the id printed when the link was created",
+    );
+  }
+  const cloud = await target(args);
+  const human = await humanCredential(args, cloud);
+  const workspace = await workspaceId(args, cloud, human);
+  const response = acceptedConnect(
+    "link revoke",
+    await sendCapabilityWithPending(
+      new ThinCommandClient(cloud),
+      human,
+      workspace,
+      { kind: "revoke_capability_url", capability_id: capabilityId },
+    ),
+  );
+  const revoked = uuid(response.capability_id, "capability_id");
+  const revokedAt = capabilityTimestamp(response.revoked_at, "revoked_at");
+  const message = renderCapabilityRevoke(revoked, revokedAt);
+  if (args.has("json")) {
+    printJson({
+      message,
+      status: response.status,
+      capability_id: revoked,
+      revoked_at: revokedAt,
+    });
+    return;
+  }
+  process.stdout.write(`${message}\n`);
 }
 
 function command(args: Arguments, kind: string): Command {
@@ -1900,6 +2063,10 @@ async function main(): Promise<void> {
   }
   if (verb === "token") {
     await runToken(args);
+    return;
+  }
+  if (verb === "link") {
+    await runLink(args);
     return;
   }
   if (verb === "command") {

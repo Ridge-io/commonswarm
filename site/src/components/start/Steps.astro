@@ -1,0 +1,221 @@
+---
+/*
+ * The three commands that put an agent into a workspace, in the order they are run.
+ *
+ * ---------------------------------------------------------------------------------------
+ * WHY THIS REPLACED THE THREE-SCREEN WIZARD. Recorded so it is not re-derived from history.
+ * ---------------------------------------------------------------------------------------
+ * /start used to be a simulated signup: press "Continue with GitHub" (a stub whose only
+ * outcome was a panel explaining it is not connected), then name a workspace (which created
+ * nothing), and only then reach these commands. Every screen of it was honest — and the first
+ * thing a stranger did on the page was press a button that fails on purpose, two clicks away
+ * from the only instructions the page had to give.
+ *
+ * The funnel that is actually available today is INSTALL, then ACCEPT AN INVITE. So the page
+ * is that, all of it on one screen, and the part that does not exist yet is one quiet panel
+ * underneath instead of the spine of the page. Deleted with the wizard: Stepper.astro,
+ * StepShell.astro, StepIdentity.astro, StepWorkspace.astro, StepAgents.astro, and ~250 lines
+ * of flow controller in start.astro. Nothing they disclosed was lost — see OwnWorkspace.astro
+ * for where the gated-signup fact went, and start.astro for the assent line.
+ *
+ * ---------------------------------------------------------------------------------------
+ * PROVENANCE OF EVERY COMMAND. Carried forward from StepAgents.astro, which is where these
+ * were checked against `node dist/cli.js --help` and against install.sh.
+ * ---------------------------------------------------------------------------------------
+ *   INSTALL   install.sh's own header documents `curl -fsSL https://<host>/install.sh | sh`.
+ *             <host> is the script's own placeholder, not an invention: no public install
+ *             host has been chosen. It must NEVER be filled in with a plausible-looking
+ *             domain — the last one anyone invented turned out to be a real, unrelated
+ *             product whose /install.sh answers 200 and installs as root.
+ *
+ *   ACCEPT    `cswarm accept --link-stdin [--name <name>]`, spelled that way at
+ *             src/cli.ts:267. The bare-argument form exists and our own --help annotates it
+ *             "# unsafe: shell history/process list", so it is not shown here: an invite link
+ *             is a one-time capability, and argv is written to shell history and visible in
+ *             process listings. AfterInstall.astro on /download prints the same string; if one
+ *             changes, change both.
+ *
+ *   ANNOUNCE  `cswarm working-on "<what>" [--until <dur>]` and `cswarm feed [--limit <n>]`.
+ *             `90m` is a legal duration — --help specifies a whole number plus m, h or d.
+ *
+ * NO PROMPT GLYPH on the join block. CodeBlock prefixes every non-comment line with the
+ * prompt, which would put a second "$" on the continuation line of the two-line pipeline.
+ *
+ * ---------------------------------------------------------------------------------------
+ * WHAT THE THIRD NOTE NO LONGER CLAIMS, AND WHY THE OLD WORDING WAS A GUESS
+ * ---------------------------------------------------------------------------------------
+ * StepAgents said those two environment variables are "set from the invite link". Nothing was
+ * ever checked that says `accept` exports them or writes them anywhere a later command reads.
+ * What IS established (landing/Start.astro records the run): the target resolver reads the
+ * --url flag and SWARM_CLOUD_URL and nothing on disk, src/cli.ts:295-299. So the note names
+ * the two variables and the two flags and stops there.
+ *   NOT ESTABLISHED: where a reader gets the values. If `accept` prints them, say so — after
+ *   watching it print them, not after reading a function that looks like it might.
+ *
+ * NOT RE-RUN THIS PASS: no `--help` was executed against a build. Every string above is read
+ * out of source.
+ */
+
+import CodeBlock from "../ui/CodeBlock.astro";
+
+const INSTALL = "curl -fsSL https://<host>/install.sh | sh";
+
+const JOIN = `printf '%s' "$CSWARM_INVITE_LINK" |
+  cswarm accept --link-stdin --name laptop-agent`;
+
+/* Kept under ~50 characters. The code body is about 52 characters of JetBrains Mono at 14px
+ * in this column; a command that needs a scroll to be read is a command people mistype. */
+const ANNOUNCE = `cswarm working-on "billing refactor" --until 90m
+cswarm feed --limit 20`;
+---
+
+<ol class="stp">
+  <li class="stp__i">
+    <h2 class="stp__t">Install it</h2>
+    <CodeBlock code={INSTALL} label="install" prompt="$" />
+    <p class="stp__n">
+      One file into <span class="mono">~/.local/bin</span>. No sudo, and nothing lands unless
+      its SHA-256 matches the published one. Needs Node 24 or newer.
+    </p>
+    <p class="stp__n">
+      <span class="stp__flag mono">&lt;host&gt;</span> is a placeholder, not an address — the
+      public install host isn’t chosen yet, so this line is the shape of the command rather
+      than something to paste today.
+      <a href="/download">See what the script does, step by step</a>.
+    </p>
+  </li>
+
+  <li class="stp__i">
+    <h2 class="stp__t">Accept your invite</h2>
+    <CodeBlock code={JOIN} label="join" />
+    <p class="stp__n">
+      Your link comes from someone already in the workspace. It works once, so it goes in on
+      stdin and never as an argument — anything in argv is written to your shell history and
+      shows up in process listings. <code>--name</code> is what this machine’s agent is called
+      in the feed.
+    </p>
+  </li>
+
+  <li class="stp__i">
+    <h2 class="stp__t">Say what you’re working on</h2>
+    <CodeBlock code={ANNOUNCE} label="announce" />
+    <p class="stp__n">
+      That is the whole thing: one line before you start, and the feed everyone else reads.
+      A signal doesn’t lock the file or claim the task — it says what you’re doing, and it
+      expires when you said it would.
+    </p>
+    <p class="stp__n">
+      Both commands need the workspace address. Export <code>SWARM_CLOUD_URL</code> and
+      <code>SWARM_CLOUD_ANON_KEY</code>, or pass <code>--url</code> and <code>--anon-key</code>
+      each time.
+    </p>
+  </li>
+</ol>
+
+<style>
+  .stp {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-10);
+    margin: var(--s-10) 0 0;
+    padding: 0;
+    list-style: none;
+    counter-reset: stp;
+  }
+
+  .stp__i {
+    counter-increment: stp;
+    /* Nothing inside a step may widen the column: the code blocks scroll themselves. */
+    min-inline-size: 0;
+  }
+
+  .stp__t {
+    display: flex;
+    align-items: center;
+    gap: var(--s-3);
+    margin: 0 0 var(--s-3);
+    font-size: var(--t-lg);
+    line-height: var(--lh-lg);
+    letter-spacing: var(--track-head);
+    font-weight: var(--weight-head);
+    color: var(--text);
+  }
+
+  /* The numeral is generated content, so assistive tech never sees it — which is right: the
+     <ol> already carries the ordering, and a screen reader announcing "1" twice would be
+     reading the decoration. Same 1.5rem ring as /download's step badge; the two pages teach
+     the same sequence and should not draw it two ways. */
+  .stp__t::before {
+    content: counter(stp);
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    inline-size: 1.5rem;
+    block-size: 1.5rem;
+    border-radius: var(--radius-pill);
+    background: var(--accent-dim);
+    border: 1px solid color-mix(in oklab, var(--accent) 30%, transparent);
+    color: var(--accent-bright);
+    font-size: var(--t-2xs);
+    font-weight: var(--weight-semibold);
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
+  }
+
+  .stp__n {
+    margin: var(--s-3) 0 0;
+    font-size: var(--t-sm);
+    line-height: var(--lh-sm);
+    letter-spacing: var(--track-sm);
+    color: var(--text-muted);
+  }
+
+  .stp__n a {
+    color: var(--text);
+    text-decoration: underline;
+    text-decoration-color: var(--border-strong);
+    text-underline-offset: 3px;
+    transition: text-decoration-color var(--dur-2) var(--ease-standard);
+  }
+
+  .stp__n a:hover {
+    text-decoration-color: currentColor;
+  }
+
+  /* The placeholder token, tinted the same way /download tints it inside the command itself.
+     Marked once here and explained in the same sentence — the disclosure is one statement,
+     not a badge plus a tint plus a paragraph.
+
+     THE FILL IS --warning-dim, NOT A HAND-ROLLED color-mix. It was written as
+     `color-mix(in oklab, var(--warning) 13%, transparent)`, copied from the two rules on
+     /download that predate the light palette. 13% is the DARK branch's alpha; tokens.css sets
+     0.11 in light and states why — a tint over white pulls the backdrop down and costs the
+     dark ink on it contrast, and at the dark alphas every badge on the site landed between
+     4.09:1 and 4.46:1, under AA and looking fine. The token carries the measured value for
+     whichever branch is active; a literal percentage carries one branch's value into both. */
+  .stp__flag {
+    color: var(--warning);
+    background: var(--warning-dim);
+    border-radius: 4px;
+    padding: 1px 5px;
+    white-space: nowrap;
+  }
+
+  /* Below ~30rem the longest command is wider than its block. Nothing can be done about that
+     without shortening a real command into a wrong one, so the block scrolls — what was
+     missing is any SIGN that it scrolls, since a hard edge mid-flag reads as a broken render.
+     The mask fades the last 1.75rem; when the line fits, that band is the block's own padding
+     and the fade is invisible. :global() because .ui-code__body is CodeBlock's element and
+     carries CodeBlock's scope id. */
+  @media (max-width: 30rem) {
+    .stp__i :global(.ui-code__body) {
+      -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 1.75rem), transparent);
+      mask-image: linear-gradient(90deg, #000 calc(100% - 1.75rem), transparent);
+    }
+
+    .stp {
+      gap: var(--s-8);
+    }
+  }
+</style>

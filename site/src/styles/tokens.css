@@ -1,156 +1,253 @@
 /* CommonSwarm design tokens
  *
- * A cool, dense near-black with a single indigo accent. Indigo = the thing you can act on.
- * Green = a teammate has announced something and it landed. The palette stays quiet so the
- * shared feed — names, commands, what changed — is the loudest thing on the page.
+ * LIGHT BY DEFAULT. Dark is an opt-in, not the baseline. The page is a soft cool white,
+ * cards are pure white, and a single indigo accent marks the thing you can act on. Green
+ * = a teammate announced something and it landed. The palette stays quiet so the shared
+ * feed — names, commands, what changed — is the loudest thing on the page.
  *
- * CONTRAST: every ratio in this file was computed against the WCAG 2.1 formula, not guessed.
- * The auditor composites translucent tints over their real backdrop before measuring. Numbers
- * are stated as "X.XX:1" next to the token that owns them. If you change a colour, re-run the
- * audit before you commit — several of these clear AA by less than a tenth of a point.
+ * WHY THE FLIP: dark reads as infrastructure. A tool that people are meant to pick up
+ * without a procurement conversation should not open looking like a terminal. The
+ * superseded line at the foot of this file — "The product is dark-only today and that is a
+ * decision, not a gap" — is DEAD. It is kept, marked dead, in section 11.
  *
- * NAMING: tokens added in this pass are semantic (--success, --danger, --elev-*). The older
- * literal names (--verified, --warn) are kept as aliases because components outside this file
- * already consume them; removing them would break files this stylesheet does not own.
+ * STRUCTURE — three blocks, and only three:
+ *   :root                                    the light palette. This is the product.
+ *   @media (prefers-color-scheme: dark)      dark, when the OS asks and nothing overrides.
+ *   [data-theme="dark"]                      dark, when a control asks.
+ * A future toggle can force EITHER direction: [data-theme="light"] on the root suppresses
+ * the media query (the media block is scoped :root:not([data-theme="light"])), and
+ * [data-theme="dark"] turns dark on under a light OS. Nothing here reads `color-scheme`,
+ * so the theme cannot be silently decided by a stylesheet this file does not own.
+ *
+ * Every dark VALUE is written exactly once, as a `--d-*` property in section 10. The two
+ * dark branches are pure mappings (`--x: var(--d-x)`) so the two lists can only ever drift
+ * by a MISSING LINE, which is visible, rather than by two hexes quietly diverging, which is
+ * not. Do not consume a `--d-*` token from a component; they are the parked set, not the
+ * live one.
+ *
+ * TOKEN NAMES ARE FROZEN. Components across site/src/ reference these and are owned by
+ * other files. Where a name stopped describing its light-mode job — --ring-top is the
+ * obvious one, see section 8 — the name is KEPT and given a mode-appropriate value. Nothing
+ * was renamed or deleted in this pass.
+ *
+ * CONTRAST — METHOD, so the numbers can be re-derived rather than believed:
+ *   1. WCAG 2.1 relative luminance, sRGB, 8-bit channels: linearise each channel
+ *      (c/12.92 below 0.04045, else ((c+0.055)/1.055)^2.4), then L = 0.2126R+0.7152G+0.0722B.
+ *      Ratio = (Lhi+0.05)/(Llo+0.05).
+ *   2. Translucent tints are COMPOSITED over their real opaque backdrop before measuring —
+ *      a badge's text is measured against the tint-over-surface, never against the surface.
+ *   3. The instrument was checked against known values on the same run (#000/#fff = 21.00,
+ *      #777/#fff = 4.48, #767676/#fff = 4.54, #00f/#fff = 8.59) AND against a discrimination
+ *      arm, because a calculator that returns one number for every pair passes any single
+ *      assertion. It then reproduced 12 of the 12 dark-mode ratios this file already
+ *      claimed, to the stated hundredth — so the light numbers below come from the same
+ *      instrument that agrees with the previous audit.
+ *   4. Light mode's WORST-CASE backdrop is the DARKEST surface, which is --elev-3 (#eef1f7),
+ *      not --elev-0. That inverts from dark mode and it is the single easiest thing to get
+ *      wrong here: for dark ink, contrast RISES as the surface gets lighter. Every ink
+ *      ratio below is stated as its minimum across all five surfaces.
+ * Pale grey on white is the most common consumer-site accessibility failure there is. If
+ * you change a colour, re-run the audit. "It looks fine" is not a measurement.
  */
 
 :root {
   /* ======================================================================
-     1. SURFACE ELEVATION
-     A five-step ladder. Each step is a real luminance increase, so a card on
-     a card on the page reads as three planes without borders doing the work.
-     Body text (--text) clears AA on all five; the ratio is noted per step.
-     ====================================================================== */
-  --elev-0: #08090c; /* page            --text 18.40:1  --text-muted 7.66:1 */
-  --elev-1: #0d0f14; /* raised/sunken   --text 17.72:1  --text-muted 7.38:1 */
-  --elev-2: #12151c; /* card            --text 16.88:1  --text-muted 7.03:1 */
-  --elev-3: #171b24; /* card-on-card    --text 15.93:1  --text-muted 6.63:1 */
-  --elev-4: #1e232f; /* popover/menu    --text 14.52:1  --text-muted 6.05:1 */
+     1. SURFACE ELEVATION (LIGHT)
+     The dark ladder raised a plane by making it lighter. Light mode cannot do
+     that — there is nothing above white — so the ladder is rebuilt around what
+     a plane is FOR rather than around monotonic luminance:
 
-  /* Existing names, kept as the public surface API. */
+       --elev-0  the page canvas, the only tinted surface
+       --elev-1  a panel that lifts off the canvas          -> white
+       --elev-2  a card                                     -> white
+       --elev-3  a plane INSIDE a white card: nested panel, chip fill, row
+                 hover. In light UI this is a tint, not a highlight.
+       --elev-4  popover / menu / toast — white, floating on --shadow-lg
+
+     So --elev-3 is DARKER than --elev-2, deliberately. It is the one step that
+     had to invert: .feed__row:hover and .sig__kind both paint --elev-3 on top of
+     a white card, and a lighter-than-white value would have made them vanish.
+     --elev-4 is white again because a popover floats, and its separation comes
+     from shadow and border, not from luminance. That is the whole light depth
+     model; see section 8.
+
+     Separation, measured: --elev-0 vs --elev-2 is 1.08:1 and --elev-2 vs
+     --elev-3 is 1.13:1. Both are far too weak to carry a plane on their own,
+     which is exactly why light mode needs --border and the shadows to do work
+     that dark mode could hand to luminance.
+     ====================================================================== */
+  --elev-0: #f4f6fa; /* page           --text 16.80:1  --text-muted 6.69:1  --text-faint 5.26:1 */
+  --elev-1: #ffffff; /* raised panel   --text 18.17:1  --text-muted 7.24:1  --text-faint 5.69:1 */
+  --elev-2: #ffffff; /* card           --text 18.17:1  --text-muted 7.24:1  --text-faint 5.69:1 */
+  --elev-3: #eef1f7; /* inside a card  --text 16.06:1  --text-muted 6.40:1  --text-faint 5.03:1  <- worst case */
+  --elev-4: #ffffff; /* popover        --text 18.17:1  --text-muted 7.24:1  --text-faint 5.69:1 */
+
+  /* Existing names, kept as the public surface API. These are aliases, so they
+     follow whichever branch is active and never need remapping. */
   --bg: var(--elev-0);
   --bg-raised: var(--elev-1);
   --surface: var(--elev-2);
   --surface-2: var(--elev-3);
   --surface-3: var(--elev-4);
 
-  /* Hairlines. These are DECORATIVE: they separate planes that are already
-     distinguishable by luminance, so WCAG 1.4.11's 3:1 does not apply to them
-     (it applies to boundaries that are the ONLY way to identify a control).
+  /* Hairlines. In dark these were DECORATIVE — the planes were already separable
+     by luminance. In light they are load-bearing: at 1.08:1 between page and
+     card, the border is frequently the only thing saying where the card ends.
+     They are still not CONTROL edges, so WCAG 1.4.11's 3:1 does not bind them
+     (that applies to a boundary which is the only way to identify a control) —
+     but they are set heavier than a straight inversion of the dark values would
+     give, because they now have a job.
      --border-interactive is the one to use when a border IS the control edge,
      e.g. an input or a checkbox — it is the only one that clears 3:1. */
-  --border: #232837; /* decorative — 1.36:1 on --bg, by design */
-  --border-strong: #313849; /* decorative — 1.70:1 on --bg, by design */
-  --border-interactive: #737d92; /* 4.81:1 on --bg, 4.42:1 on --elev-2 — control edges */
+  --border: #dde3ec; /* structural hairline — 1.29:1 on white, 1.19:1 on --elev-0 */
+  --border-strong: #c6cfdc; /* emphasis edge — 1.57:1 on white, 1.45:1 on --elev-0 */
+  --border-interactive: #7c8697; /* control edges — 3.68:1 on white, 3.25:1 on --elev-3 (worst). Clears 1.4.11 on all five. */
 
   /* ======================================================================
-     2. INK
+     2. INK (LIGHT)
+     Ratios are the MINIMUM across all five surfaces, which for dark ink on
+     light means the value measured on --elev-3. AA body text is 4.5:1.
      ====================================================================== */
-  --text: #f4f6fa; /* body. 18.40:1 on --bg, 14.52:1 on --elev-4 */
-  --text-muted: #98a1b3; /* secondary body. 7.66:1 on --bg, 6.05:1 on --elev-4 */
+  --text: #10142a; /* body.      min 16.06:1 (on --elev-3), 18.17:1 on white */
+  --text-muted: #4f5769; /* secondary. min  6.40:1 (on --elev-3),  7.24:1 on white */
 
-  /* --text-faint IS TEXT. It used to be #6b7488 (4.25:1 on --bg, 3.35:1 on --elev-4) with a
-   * comment above it saying "LARGE TEXT / non-text only — never set body copy in it". A
-   * runtime audit — composite each element's real backdrop, then measure — found 28 SMALL-text
-   * elements failing AA on the landing page alone: .sig__role (11px), .sig__age (12px),
-   * .sig__exp (11px), .demo__flag, .demo__note, .demo__cmd-label, .callout__foot,
-   * .verbs__label-text, .verbs__foot, .invite__k, .hero__caption and .demo__disclaimer. Not
-   * one of them qualifies for the WCAG large-text exemption (24px, or 18.66px bold). The rule
-   * was written, ignored at scale, and the two honesty disclosures on the site —
-   * "Illustration. Sample data…" and "<host> is a placeholder…" — were the least legible copy
-   * on the page as a result.
+  /* --text-faint IS TEXT, and that rule survives the flip unchanged. It was established by
+   * a runtime audit of the dark palette — composite each element's real backdrop, then
+   * measure — which found 28 SMALL-text elements failing AA on the landing page alone:
+   * .sig__role (11px), .sig__age (12px), .sig__exp (11px), .demo__flag, .demo__note,
+   * .demo__cmd-label, .callout__foot, .verbs__label-text, .verbs__foot, .invite__k,
+   * .hero__caption and .demo__disclaimer. Not one of them qualifies for the WCAG large-text
+   * exemption (24px, or 18.66px bold). The rule "large text only" was written, ignored at
+   * scale, and the two honesty disclosures on the site — "Illustration. Sample data…" and
+   * "<host> is a placeholder…" — were the least legible copy on the page as a result.
    *
-   * A rule that dozens of call sites break is not a rule, it is a note. So the token was
-   * moved to where it was actually being used rather than the call sites being moved to where
-   * the token said they should be. Measured (WCAG 2.1 formula, opaque backdrops):
-   *   --elev-0 6.47:1   --elev-1 6.23:1   --elev-2 5.93:1   --elev-3 5.60:1   --elev-4 5.10:1
-   * AA for normal text on all five, with the tightest step still 0.6 clear of the line.
+   * A rule that dozens of call sites break is not a rule, it is a note. So the token is set
+   * where it is actually used. Light values, measured on every surface:
+   *   --elev-3 5.03   --elev-0 5.26   --elev-1/2/4 5.69
+   * AA for normal text on all five, with the tightest step 0.53 clear of the line — which is
+   * a wider margin than the dark branch carries (0.60 at its tightest, and several other
+   * tokens in that branch clear by under a tenth).
    *
-   * The cost, stated honestly: the ink ramp compresses. --text-muted to --text-faint used to be
-   * a 1.80x luminance step and is now 1.18x, so the two no longer separate on colour alone at a
-   * glance. Below tertiary, use size, weight or position to demote something — not a fourth,
-   * dimmer grey. There is deliberately no token for that. */
-  --text-faint: #8b93a6; /* tertiary body. 6.47:1 on --bg, 5.10:1 on --elev-4 */
+   * The cost, stated honestly and unchanged in light: the ink ramp compresses. --text-muted
+   * to --text-faint is a small step, so the two do not separate on colour alone at a glance.
+   * Below tertiary, use size, weight or position to demote something — not a fourth, paler
+   * grey. There is deliberately no token for that. */
+  --text-faint: #5e6779; /* tertiary.  min  5.03:1 (on --elev-3),  5.69:1 on white */
 
   /* THERE IS NO FOURTH GREY, AND THAT IS THE WHOLE RULE — see the paragraph above.
    *
-   * The old faint value (#6b7488) survived this file's last pass as `--text-dim`, reserved by
-   * comment for "non-text only". It was deleted, because it had no job left. Checked, not
-   * assumed:
-   *   1. NO CALLERS. `grep -rn "var(--text-dim)" src/` returned zero hits — the token and its
-   *      own prefers-contrast override were the only two lines in the repo that mentioned it.
-   *   2. NOTHING TO MIGRATE TO IT. The five non-text uses of --text-faint in the codebase are
-   *      an input's hover edge (ui.css .ui-field__box:hover), a status dot (global.css .dot),
-   *      a code block's scrollbar thumb (NewWorkspace.astro), a demo hover border and an
-   *      avatar fallback fill. Every one of them has to be SEEN, and #6b7488 is dimmer than
-   *      what they use now — pointing them here would be a contrast regression, not a
-   *      migration. Non-text that must read as an edge already has --border-interactive
-   *      (4.81:1); non-text that is decorative already has --border / --border-strong.
-   *      --text-dim sat between the two with no case it was the right answer to.
-   *   3. IT CONTRADICTED THE PARAGRAPH IT SAT UNDER, which ends "Below tertiary, use size,
-   *      weight or position — not a fourth, dimmer grey. There is deliberately no token for
-   *      that." The next line then declared a fourth, dimmer grey.
+   * A `--text-dim` token was deleted in an earlier pass and is NOT being reintroduced for
+   * light mode, for the same three reasons, all of which still hold:
+   *   1. NO CALLERS. `grep -rn "var(--text-dim)" src/` returns zero hits today — re-checked
+   *      on this pass; the only remaining mention in the repo is this comment.
+   *   2. NOTHING TO MIGRATE TO IT. The five non-text uses of --text-faint are an input's
+   *      hover edge (ui.css .ui-field__box:hover), a status dot (global.css .dot), a code
+   *      block's scrollbar thumb (NewWorkspace.astro), a demo hover border and an avatar
+   *      fallback fill. Every one of them has to be SEEN. Non-text that must read as an edge
+   *      already has --border-interactive (3.68:1 on white); non-text that is decorative
+   *      already has --border / --border-strong.
+   *   3. IT CONTRADICTED THE PARAGRAPH IT SAT UNDER.
    * If you want something quieter than --text-faint: smaller, lighter, or further down the
-   * page. Not dimmer. */
+   * page. Not paler. On white, "paler" reaches invisible much faster than "dimmer" reached
+   * invisible on black. */
 
   /* ======================================================================
-     3. ACCENT
+     3. ACCENT (LIGHT)
+     Same hue family — the brand does not change — re-tuned for a white
+     backdrop. #7c6cff was built to sit on near-black; on white it measures
+     3.86:1 and fails AA as text, so the whole triad moves darker. Hue is held
+     in the indigo/violet band (~250-256deg); only lightness and chroma move.
+
+     WHICH IS DARKER MATTERS. .btn--primary paints
+     `linear-gradient(180deg, var(--accent-bright), var(--accent))`, so
+     --accent-bright is the TOP stop. It is kept the LIGHTER of the two here so
+     the button still reads lit from above, while still being dark enough to
+     serve its other job — it is the accent AS TEXT in ~40 call sites and must
+     clear 4.5:1 on white on its own. That double duty is what fixes its value:
+     as light as the gradient wants, no lighter than AA allows.
+
+     --accent is also used as `color:` in two components (Install.astro:248,
+     HowItWorks.astro:323). In dark that was off-label — the old comment said
+     "not text on dark". In light it is legitimate: 7.65:1 at worst.
      ====================================================================== */
-  --accent: #7c6cff; /* fills and strokes, not text on dark */
-  --accent-bright: #9b8fff; /* accent AS TEXT. 7.36:1 on --bg, 5.81:1 on --elev-4 */
-  --accent-dim: rgba(124, 108, 255, 0.14);
-  --accent-ink: #0a0b14; /* ink ON an accent fill. 5.09:1 on --accent, 7.25:1 on --accent-bright.
-                          * The obvious alternative fails: #ffffff on --accent 3.86:1 — under AA
-                          * for the button-sized text that actually sits there. */
+  --accent: #4633b8; /* fills, strokes, and legible as text: min 7.65:1 (on --elev-3), 8.66:1 on white */
+  --accent-bright: #5b4ada; /* accent AS TEXT + gradient top stop: min 5.40:1, 6.11:1 on white */
+  --accent-dim: rgba(70, 51, 184, 0.08); /* badge fill. --accent-bright on it: min 4.75:1 — see section 4 note */
+  --accent-ink: #ffffff; /* ink ON an accent fill. 8.66:1 on --accent, 6.11:1 on --accent-bright.
+                          * This is the flip the old file predicted: near-black ink on the dark
+                          * accent, white ink on the light one. Near-black on --accent would be
+                          * 2.42:1 here, so there is no reusing the dark value. */
 
   /* ======================================================================
-     4. SEMANTIC STATUS
-     Each has three parts: the colour AS TEXT on dark, a -dim tint to fill a
+     4. SEMANTIC STATUS (LIGHT)
+     Each has three parts: the colour AS TEXT on light, a -dim tint to fill a
      badge, and an -ink for text sitting ON the full-strength colour.
+
+     These are a SECOND PALETTE, not a filter over the dark one. The dark values
+     are 400-level (light-on-dark) and measure roughly 1.7:1 to 2.4:1 on white —
+     every one of them fails. Light needs the 600/700 steps, which is what these
+     are. Two consequences worth stating plainly rather than discovering later:
+       - --warning cannot stay yellow. No amber light enough to read as "amber"
+         clears 4.5:1 on white; #fbbf24 is 1.63:1 there. It is used as `color:`
+         in 15 places, so it has to be a deep ochre. That is a real loss of hue
+         legibility and it is the price of the token being legible at all.
+       - --success loses its mint brightness for the same reason.
+
+     BADGE MATH. The -dim alphas are LOWER than the dark branch's (0.08-0.11 vs
+     0.13-0.14). A tint over white pulls the backdrop DOWN, which costs contrast
+     for the dark ink sitting on it; over near-black it pulled the backdrop UP,
+     which also cost contrast, but the dark inks had far more headroom. At the
+     dark alphas every badge landed between 4.09:1 and 4.46:1 — under AA, and
+     the sort of failure that reads as "looks fine". Composited and measured, the
+     ratio quoted per token is the minimum across all five surfaces.
      ====================================================================== */
-  --success: #34d399; /* as text: 10.36:1 on --bg, 8.17:1 on --elev-4 */
-  --success-dim: rgba(52, 211, 153, 0.13);
-  --success-ink: #04140d; /* on --success: 9.83:1 */
+  --success: #056f52; /* as text: min 5.46:1 (on --elev-3), 6.17:1 on white */
+  --success-dim: rgba(5, 111, 82, 0.1); /* --success on it: min 4.74:1 */
+  --success-ink: #ffffff; /* on --success: 6.17:1 */
 
-  --warning: #fbbf24; /* as text: 11.93:1 on --bg, 9.41:1 on --elev-4 */
-  --warning-dim: rgba(251, 191, 36, 0.13);
-  --warning-ink: #1a1200; /* on --warning: 11.13:1 */
+  --warning: #8f5406; /* as text: min 5.40:1 (on --elev-3), 6.11:1 on white */
+  --warning-dim: rgba(143, 84, 6, 0.11); /* --warning on it: min 4.64:1 */
+  --warning-ink: #ffffff; /* on --warning: 6.11:1 */
 
-  --danger: #f87171; /* as text: 7.20:1 on --bg, 5.68:1 on --elev-4 */
-  --danger-dim: rgba(248, 113, 113, 0.14);
-  --danger-ink: #1a0505; /* on --danger: 7.11:1 */
+  --danger: #bf1f1f; /* as text: min 5.41:1 (on --elev-3), 6.12:1 on white */
+  --danger-dim: rgba(191, 31, 31, 0.09); /* --danger on it: min 4.68:1 */
+  --danger-ink: #ffffff; /* on --danger: 6.12:1 */
 
-  --info: #7dd3fc; /* as text: 11.94:1 on --bg, 9.42:1 on --elev-4 */
-  --info-dim: rgba(125, 211, 252, 0.13);
-  --info-ink: #04141c; /* on --info: 11.23:1 */
+  --info: #0369a1; /* as text: min 5.24:1 (on --elev-3), 5.93:1 on white */
+  --info-dim: rgba(3, 105, 161, 0.09); /* --info on it: min 4.63:1 */
+  --info-ink: #ffffff; /* on --info: 5.93:1 */
 
   /* Aliases for components that predate the semantic names. Do not remove:
-     hero.css and the feed components consume these directly. */
+     hero.css and the feed components consume these directly. Aliases follow the
+     active branch automatically and are never remapped in section 10. */
   --verified: var(--success);
   --verified-dim: var(--success-dim);
   --warn: var(--warning);
 
   /* ======================================================================
-     5. FOCUS
-     A TWO-TONE ring. This is the fix for a real bug in the previous palette:
-     the single light ring was drawn straight onto accent and danger fills and
-     disappeared there — --focus on --accent 1.94:1, --focus on --danger 1.39:1,
-     both far under the 3:1 that WCAG 1.4.11 requires of a focus indicator. The
-     old comment claimed it "clears AA against every surface"; it did not.
+     5. FOCUS (LIGHT)
+     The TWO-TONE ring survives the flip intact; only the polarity of the halo
+     inverts. The model exists because a single-tone ring drawn onto a coloured
+     fill disappears there — in the pre-token palette, the ring measured 1.94:1
+     on the accent and 1.39:1 on danger, both far under 1.4.11's 3:1.
 
-     The ring is now a dark halo hugging the element plus a light outer band,
-     so whichever surface it lands on, one of the two bands contrasts:
-       --focus-halo on --accent   5.25:1     --focus on --bg        10.02:1
-       --focus-halo on --success 10.54:1     --focus on --elev-4     7.91:1
-       --focus-halo on --warning 12.13:1     --focus on --elev-2     9.20:1
-       --focus-halo on --danger   7.32:1
+     Light mode: a WHITE halo hugs the element and a strong indigo band sits
+     outside it. On a white card the halo is invisible and the indigo band does
+     the work; on an accent or danger fill the halo is what separates the ring
+     from the button. Same argument as dark, mirrored.
+       --focus on --elev-2  8.89:1     --focus-halo on --accent   8.66:1
+       --focus on --elev-0  8.22:1     --focus-halo on --success  6.17:1
+       --focus on --elev-3  7.86:1     --focus-halo on --warning  6.11:1
+                                       --focus-halo on --danger   6.12:1
+                                       --focus-halo on --info     5.93:1
+     Worst case across the whole light palette is 5.93:1, against 1.4.11's 3:1.
      ====================================================================== */
-  --focus: #a5b4ff;
-  --focus-halo: #05060a;
+  --focus: #3f2fbe;
+  --focus-halo: #ffffff;
   --focus-ring: 0 0 0 2px var(--focus-halo), 0 0 0 4px var(--focus);
 
   /* ======================================================================
-     6. TYPE
+     6. TYPE — mode-independent, unchanged by this pass
      ====================================================================== */
   --font-sans: "InterVariable", Inter, -apple-system, BlinkMacSystemFont, "Segoe UI",
     Roboto, sans-serif;
@@ -258,13 +355,39 @@
   --header-h: 4rem;
 
   /* ======================================================================
-     8. DEPTH — dark UI needs a light top edge more than a drop shadow
+     8. DEPTH — light UI raises a surface with a shadow BELOW it
+     ======================================================================
+     The dark model was "a light top edge beats a drop shadow", built on an inset
+     white hairline plus an indigo glow. It does not invert. A glowing top edge on
+     a white card does not read as depth — it reads as a rendering artefact, a
+     seam, or a mis-set border. And a coloured glow on white reads as a selection
+     state, not as elevation. So depth here is: a shadow below, a hairline border,
+     and nothing else. No inset highlights. No glow.
+
+     --ring-top KEEPS ITS NAME AND STOPS BEING A TOP EDGE. It is consumed in 23
+     places across files this pass does not own — often as the ONLY box-shadow on
+     an element (`box-shadow: var(--ring-top)` on .ui-code, .btn, chips, panels)
+     and often composed (`var(--ring-top), var(--shadow-lg)`). Deleting it would
+     silently flatten all 23. Renaming it would break them outright. So in light it
+     is the smallest real elevation step — a 1px contact shadow — which is what
+     those call sites were reaching for. It must stay composable, so it is a
+     non-inset shadow that stacks cleanly in front of --shadow-lg. The name is now
+     wrong and is kept anyway; that is the deliberate trade.
+
+     Shadow colour is a desaturated navy rather than pure black. Black shadows on
+     a cool white page go grey and muddy; tinting toward the page's own hue keeps
+     them reading as shadow.
+
+     --shadow-glow keeps its name too and stops glowing: it is now a hairline
+     indigo ring plus a lifted shadow, which is what its two call sites
+     (global.css .btn--primary-ish, hero.css:135) actually want — "this is the
+     accent surface, and it is raised".
      ====================================================================== */
-  --ring-top: inset 0 1px 0 rgba(255, 255, 255, 0.06);
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
-  --shadow-md: 0 8px 24px -12px rgba(0, 0, 0, 0.6);
-  --shadow-lg: 0 24px 60px -18px rgba(0, 0, 0, 0.75);
-  --shadow-glow: 0 0 0 1px rgba(124, 108, 255, 0.28), 0 18px 50px -14px rgba(124, 108, 255, 0.3);
+  --ring-top: 0 1px 2px rgba(16, 22, 48, 0.07), 0 1px 1px rgba(16, 22, 48, 0.04);
+  --shadow-sm: 0 1px 2px rgba(16, 22, 48, 0.08);
+  --shadow-md: 0 10px 24px -14px rgba(16, 22, 48, 0.26), 0 2px 6px -2px rgba(16, 22, 48, 0.07);
+  --shadow-lg: 0 24px 56px -24px rgba(16, 22, 48, 0.3), 0 6px 16px -8px rgba(16, 22, 48, 0.1);
+  --shadow-glow: 0 0 0 1px rgba(70, 51, 184, 0.2), 0 20px 44px -20px rgba(70, 51, 184, 0.28);
 
   /* ======================================================================
      9. MOTION — full definitions and utilities live in motion.css
@@ -281,39 +404,262 @@
   /* Legacy motion names — hero.css and global.css transitions use these. */
   --ease: cubic-bezier(0.22, 1, 0.36, 1);
   --dur: 200ms;
+
+  /* ======================================================================
+     10. THE PARKED DARK PALETTE
+     ======================================================================
+     Declared here, applied nowhere until one of the two branches below turns it
+     on. These are the file's previous values, preserved verbatim along with the
+     ratios that were measured against them — none of that work is discarded, it
+     is demoted from default to opt-in. The ratios quoted here are against the
+     DARK surfaces (--d-elev-*), and were re-verified on this pass: 12 of 12
+     reproduced to the stated hundredth.
+
+     DO NOT CONSUME A --d-* TOKEN FROM A COMPONENT. Read --text, not --d-text;
+     a component that reads --d-text is dark in light mode and cannot be themed.
+     Only the two mapping blocks below may reference them.
+
+     Only tokens whose VALUE differs between modes are parked. Aliases (--bg,
+     --surface-2, --verified, --focus-ring …) resolve through whichever branch is
+     active on their own, and adding them here would create a second, silent
+     source of truth. Type, space and motion are mode-independent. */
+  --d-elev-0: #08090c; /* page            --text 18.40:1  --text-muted 7.66:1 */
+  --d-elev-1: #0d0f14; /* raised/sunken   --text 17.72:1  --text-muted 7.38:1 */
+  --d-elev-2: #12151c; /* card            --text 16.88:1  --text-muted 7.03:1 */
+  --d-elev-3: #171b24; /* card-on-card    --text 15.93:1  --text-muted 6.63:1 */
+  --d-elev-4: #1e232f; /* popover/menu    --text 14.52:1  --text-muted 6.05:1 */
+
+  --d-border: #232837; /* decorative — 1.36:1 on --d-elev-0, by design */
+  --d-border-strong: #313849; /* decorative — 1.70:1 on --d-elev-0, by design */
+  --d-border-interactive: #737d92; /* 4.81:1 on --d-elev-0, 4.42:1 on --d-elev-2 */
+
+  --d-text: #f4f6fa; /* 18.40:1 on --d-elev-0, 14.52:1 on --d-elev-4 */
+  --d-text-muted: #98a1b3; /* 7.66:1 on --d-elev-0, 6.05:1 on --d-elev-4 */
+  --d-text-faint: #8b93a6; /* 6.47:1 on --d-elev-0, 5.10:1 on --d-elev-4 — AA on all five */
+
+  --d-accent: #7c6cff; /* fills and strokes, not text on dark — 3.86:1 on white, which is why light retunes it */
+  --d-accent-bright: #9b8fff; /* accent AS TEXT. 7.36:1 on --d-elev-0, 5.81:1 on --d-elev-4 */
+  --d-accent-dim: rgba(124, 108, 255, 0.14);
+  --d-accent-ink: #0a0b14; /* 5.09:1 on --d-accent, 7.25:1 on --d-accent-bright.
+                            * #ffffff on --d-accent is 3.86:1 — under AA, which is why the
+                            * dark branch cannot simply reuse the light --accent-ink. */
+
+  --d-success: #34d399; /* as text: 10.36:1 on --d-elev-0, 8.17:1 on --d-elev-4 */
+  --d-success-dim: rgba(52, 211, 153, 0.13);
+  --d-success-ink: #04140d; /* on --d-success: 9.83:1 */
+
+  --d-warning: #fbbf24; /* as text: 11.93:1 on --d-elev-0, 9.41:1 on --d-elev-4 */
+  --d-warning-dim: rgba(251, 191, 36, 0.13);
+  --d-warning-ink: #1a1200; /* on --d-warning: 11.13:1 */
+
+  --d-danger: #f87171; /* as text: 7.20:1 on --d-elev-0, 5.68:1 on --d-elev-4 */
+  --d-danger-dim: rgba(248, 113, 113, 0.14);
+  --d-danger-ink: #1a0505; /* on --d-danger: 7.11:1 */
+
+  --d-info: #7dd3fc; /* as text: 11.94:1 on --d-elev-0, 9.42:1 on --d-elev-4 */
+  --d-info-dim: rgba(125, 211, 252, 0.13);
+  --d-info-ink: #04141c; /* on --d-info: 11.23:1 */
+
+  /* Two-tone focus, dark polarity: dark halo hugging the element, light outer band.
+       --d-focus-halo on --d-accent   5.25:1     --d-focus on --d-elev-0  10.02:1
+       --d-focus-halo on --d-success 10.54:1     --d-focus on --d-elev-4   7.91:1
+       --d-focus-halo on --d-warning 12.13:1     --d-focus on --d-elev-2   9.20:1
+       --d-focus-halo on --d-danger   7.32:1 */
+  --d-focus: #a5b4ff;
+  --d-focus-halo: #05060a;
+
+  /* Dark depth: a light top edge and an indigo glow — the model section 8
+     explains cannot be carried over to light. */
+  --d-ring-top: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  --d-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --d-shadow-md: 0 8px 24px -12px rgba(0, 0, 0, 0.6);
+  --d-shadow-lg: 0 24px 60px -18px rgba(0, 0, 0, 0.75);
+  --d-shadow-glow: 0 0 0 1px rgba(124, 108, 255, 0.28), 0 18px 50px -14px rgba(124, 108, 255, 0.3);
 }
 
-/* NO prefers-contrast BLOCK IN THIS FILE. The whole ramp — --text-muted, --text-faint,
-   --border, --border-strong, --border-interactive and the 3px focus ring — lives in one place,
-   global.css:804, so there is exactly one list to keep in sync. This file used to carry a
-   second block overriding --text-dim, which nothing read; it went with the token. If you add a
-   contrast override, add it to the block in global.css rather than opening a second one here:
-   tokens.css is @imported at the top of global.css, so a collision would resolve silently in
-   global.css's favour and the loser would look like a colour that simply does not apply. */
+/* ==========================================================================
+   DARK BRANCH 1 — the OS asked, and nothing on the root overrides it
+   ==========================================================================
+   Scoped :root:not([data-theme="light"]) so a toggle can pin light on a dark
+   OS. That is a (0,2,0) selector, above the plain [data-theme="dark"] below —
+   which is correct: if both matched they would set identical values anyway. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --elev-0: var(--d-elev-0);
+    --elev-1: var(--d-elev-1);
+    --elev-2: var(--d-elev-2);
+    --elev-3: var(--d-elev-3);
+    --elev-4: var(--d-elev-4);
+    --border: var(--d-border);
+    --border-strong: var(--d-border-strong);
+    --border-interactive: var(--d-border-interactive);
+    --text: var(--d-text);
+    --text-muted: var(--d-text-muted);
+    --text-faint: var(--d-text-faint);
+    --accent: var(--d-accent);
+    --accent-bright: var(--d-accent-bright);
+    --accent-dim: var(--d-accent-dim);
+    --accent-ink: var(--d-accent-ink);
+    --success: var(--d-success);
+    --success-dim: var(--d-success-dim);
+    --success-ink: var(--d-success-ink);
+    --warning: var(--d-warning);
+    --warning-dim: var(--d-warning-dim);
+    --warning-ink: var(--d-warning-ink);
+    --danger: var(--d-danger);
+    --danger-dim: var(--d-danger-dim);
+    --danger-ink: var(--d-danger-ink);
+    --info: var(--d-info);
+    --info-dim: var(--d-info-dim);
+    --info-ink: var(--d-info-ink);
+    --focus: var(--d-focus);
+    --focus-halo: var(--d-focus-halo);
+    --ring-top: var(--d-ring-top);
+    --shadow-sm: var(--d-shadow-sm);
+    --shadow-md: var(--d-shadow-md);
+    --shadow-lg: var(--d-shadow-lg);
+    --shadow-glow: var(--d-shadow-glow);
+  }
+}
 
 /* ==========================================================================
-   DARK / LIGHT — a deliberate commitment, not an oversight
+   DARK BRANCH 2 — a control asked, whatever the OS says
    ==========================================================================
-   The product is dark-only today and that is a decision, not a gap. Every
-   ratio above was computed against a dark backdrop, and the two visual devices
-   the page leans on — the light top edge (--ring-top) and the indigo glow
-   (--shadow-glow) — only read as depth on a dark surface. A half-done light
-   mode would look worse than an intentional dark one.
+   Identical mapping to branch 1, and it MUST STAY IDENTICAL — 34 lines, same
+   order. `diff <(sed -n '/BRANCH 1/,/^}/p' …) …` if you touch either. This is
+   the one place in the file where two lists have to agree; it is a mapping
+   rather than a second copy of the values precisely so that the failure mode is
+   a missing line rather than two hexes drifting apart unseen. */
+[data-theme="dark"] {
+  --elev-0: var(--d-elev-0);
+  --elev-1: var(--d-elev-1);
+  --elev-2: var(--d-elev-2);
+  --elev-3: var(--d-elev-3);
+  --elev-4: var(--d-elev-4);
+  --border: var(--d-border);
+  --border-strong: var(--d-border-strong);
+  --border-interactive: var(--d-border-interactive);
+  --text: var(--d-text);
+  --text-muted: var(--d-text-muted);
+  --text-faint: var(--d-text-faint);
+  --accent: var(--d-accent);
+  --accent-bright: var(--d-accent-bright);
+  --accent-dim: var(--d-accent-dim);
+  --accent-ink: var(--d-accent-ink);
+  --success: var(--d-success);
+  --success-dim: var(--d-success-dim);
+  --success-ink: var(--d-success-ink);
+  --warning: var(--d-warning);
+  --warning-dim: var(--d-warning-dim);
+  --warning-ink: var(--d-warning-ink);
+  --danger: var(--d-danger);
+  --danger-dim: var(--d-danger-dim);
+  --danger-ink: var(--d-danger-ink);
+  --info: var(--d-info);
+  --info-dim: var(--d-info-dim);
+  --info-ink: var(--d-info-ink);
+  --focus: var(--d-focus);
+  --focus-halo: var(--d-focus-halo);
+  --ring-top: var(--d-ring-top);
+  --shadow-sm: var(--d-shadow-sm);
+  --shadow-md: var(--d-shadow-md);
+  --shadow-lg: var(--d-shadow-lg);
+  --shadow-glow: var(--d-shadow-glow);
+}
 
-   What adding light would actually cost, honestly:
-     1. Re-deriving the semantic ramp. --success/--warning/--info are tuned to
-        be light-on-dark; at 400-level they measure ~1.7:1 to 2.4:1 on white and
-        would every one of them fail. Light mode needs the 600/700 steps, which
-        is a second palette, not a filter.
-     2. Inverting the elevation model. Dark UI raises a surface by making it
-        lighter; light UI raises it with shadow. --elev-* and --ring-top both
-        stop meaning anything and have to be rebuilt.
-     3. --accent-ink flips from near-black to white, and the accent itself has
-        to darken to keep white legible on it.
-     4. A theme switch, its persistence, and the flash-of-wrong-theme problem.
+/* ==========================================================================
+   11. WHAT IS NOT DONE — read this before believing the site is light
+   ==========================================================================
+   Nothing below is fixable from this file. Each one is in a file this pass does
+   not own, and each will visibly fight the light palette until its owner acts.
+   Stated here rather than in a message, because a correction that lives in chat
+   never reaches whoever opens this file next.
 
-   Mechanically the file is ready: every colour is already a custom property on
-   :root, so light mode is a [data-theme="light"] block that re-declares them —
-   no component would need to change. The work is in the palette design, not
-   the plumbing. Until someone commits to doing (1) and (2) properly, the page
-   states color-scheme: dark and means it. */
+   1. `color-scheme` STILL SAYS DARK, IN TWO PLACES: global.css:92
+      (`html { color-scheme: dark }`) and Base.astro:123
+      (`<meta name="color-scheme" content="dark">`). Until both say
+      `light dark`, the UA keeps painting form controls, native scrollbars, and
+      the pre-paint canvas dark on a light page. This file deliberately does NOT
+      override it: `:root` (0,1,0) would silently outrank `html` (0,0,1) and win
+      a fight the owning file does not know it is in — exactly the collision the
+      note under section 12 warns about. It is a one-line change in each, and it
+      belongs to whoever owns those files.
+
+   2. THE prefers-contrast BLOCK IS NOW BACKWARDS. global.css:804 raises
+      --text-muted to #c2c9d6 and --text-faint to #97a0b2. Those are pale greys
+      chosen to LIGHTEN against near-black. On white they measure about 1.4:1 and
+      1.9:1 — so the users who explicitly asked for MORE contrast are the only
+      ones who get an unreadable page. This is the most serious defect the flip
+      introduces and it needs the same treatment applied here: a light default
+      plus the existing values moved under the dark branches.
+
+   3. HARDCODED COLOURS THAT ASSUME A DARK BACKDROP. The three that carry text
+      are contrast failures in light, measured, not guessed — each is quoted
+      light-first, then the dark figure it was chosen for:
+        global.css:606  .btn--primary:hover -> linear-gradient(180deg, #b0a6ff, …).
+                        White --accent-ink on that lavender is 2.16:1 (it was
+                        9.10:1 with the dark ink). Worst of the set: it is the
+                        primary call to action, in its hover state.
+        ui.css:232      .btn--danger hover fill #f98d8d. White --danger-ink on it
+                        is 2.28:1 (was 8.64:1). The comment at ui.css:231 vouches
+                        for the old figure by name.
+        global.css:399  linear-gradient(178deg, var(--text) 34%, #b7bfd3 100%) —
+                        heading text fading out. The end stop is 1.84:1 on white
+                        (it was 10.81:1 on --elev-0), so the bottom of the
+                        headline is unreadable rather than merely soft.
+      And three that are merely invisible rather than illegible:
+        hero.css:46-47  grid lines at rgba(255,255,255,0.028) — gone on white.
+        motion.css:226  shimmer at rgba(255,255,255,0.055) — gone on white.
+        motion.css:287  rgba(255,255,255,0.045) — same.
+        Base.astro:122  <meta name="theme-color" content="#08090c">.
+      (The #000 values in NewWorkspace.astro are mask-image stops, not colours.
+      They are correct as they are.)
+
+   4. 75 RATIO COMMENTS IN 11 OTHER FILES NOW QUOTE DARK NUMBERS. Enumerated, not
+      sampled: styles/global.css, styles/ui.css, components/SiteHeader.astro,
+      components/SiteFooter.astro, components/ui/{Avatar,Badge,Tooltip}.astro,
+      components/app/SampleNotice.astro, components/landing/Demo.astro,
+      components/download/InstallPanel.astro, pages/app.astro.
+      Two different things are true of them and they should not be conflated:
+        - The NUMBERS are stale. They are still correct for the dark branch and
+          wrong for the default. e.g. ui.css:471 vouches that --text-faint
+          "measures 4.15:1 here and would fail as small text"; in light the same
+          pair is 5.69:1, so the figure is wrong even though nothing is broken.
+        - The DECISIONS those numbers justified are still AA-safe, checked rather
+          than assumed. Every one of them resolved to a MORE contrasty token
+          (--text-muted over --text-faint, --danger-ink over --danger), and each
+          of those tokens clears AA on all five light surfaces per sections 2-4.
+      So this is a documentation defect, not a live accessibility defect — with
+      the exception of ui.css:231, which is item 3. Their owners should re-measure.
+      A component deleted mid-pass cannot be cited: an earlier draft of this note
+      pointed at StepAgents.astro and Stepper.astro, both of which another agent
+      removed from the tree while this was being written. The list above was
+      re-enumerated against the files actually on disk.
+
+   5. NO TOGGLE EXISTS. This file makes one possible — set data-theme on the
+      root — but no control, no persistence, and no anti-flash script has been
+      written, and none of that is in this file's lane.
+
+   ── SUPERSEDED, KEPT DEAD ──────────────────────────────────────────────────
+   The block that stood here read: "DARK / LIGHT — a deliberate commitment, not
+   an oversight. The product is dark-only today and that is a decision, not a
+   gap … A half-done light mode would look worse than an intentional dark one."
+   It is DEAD as of this pass. Its closing prediction was right, though, and is
+   what this pass actually did: it listed the real costs as (1) re-deriving the
+   semantic ramp, because the 400-level colours measure 1.7-2.4:1 on white,
+   (2) inverting the elevation model, because --elev-* and --ring-top stop
+   meaning anything, (3) flipping --accent-ink to white and darkening the accent
+   under it, and (4) a theme switch with its persistence and flash problem.
+   Items 1-3 are done and measured above. Item 4 is item 5 of the list above and
+   is not done.
+
+   ==========================================================================
+   12. NO prefers-contrast BLOCK IN THIS FILE
+   ==========================================================================
+   The whole ramp — --text-muted, --text-faint, --border, --border-strong,
+   --border-interactive and the 3px focus ring — lives in one place,
+   global.css:804, so there is exactly one list to keep in sync. If you add a
+   contrast override, add it there rather than opening a second one here:
+   tokens.css is @imported at the top of global.css, so a collision resolves
+   silently in global.css's favour and the loser looks like a colour that simply
+   does not apply. That rule is why item 2 above is a report and not a patch. */

@@ -9,10 +9,17 @@
  *
  * THE MARK IS NO LONGER REDRAWN HERE. It used to be, with the brand colours written as raw
  * hex (#7c6cff / #9b8fff / #34d399) because the original lived inside Base.astro's template,
- * which that pass did not own. The three values happened to match --accent, --accent-bright
- * and --success exactly, so nothing looked wrong — but the next edit to tokens.css would have
- * recoloured the logo on three pages and left this one behind. It comes from the shared
- * Wordmark component now, which also carries the type settings this file's copy restated.
+ * which that pass did not own. The three values matched --accent, --accent-bright and
+ * --success exactly at the time, so nothing looked wrong — but the next edit to tokens.css
+ * would have recoloured the logo on three pages and left this one behind. It comes from the
+ * shared Wordmark component now, which also carries the type settings this file's copy
+ * restated.
+ *
+ * THE PREDICTED EDIT HAS LANDED. The palette is going light-first, so those three hexes are
+ * now stale as well as duplicated — had they stayed, /start would be the one page still
+ * wearing the dark-mode logo. They are quoted above only as a record of what was deleted.
+ * This file holds no colour of its own and should acquire none: everything visible here is
+ * either the Wordmark component or layout, so it themes for free.
  */
 
 import Wordmark from "../Wordmark.astro";

@@ -37,14 +37,14 @@
  * shell history and visible to anyone who can run ps. This card used to print the annotated-
  * unsafe form while /start taught the safe one two pages away, on a site whose /download
  * thesis is "Piping a script into a shell deserves the suspicion it gets". The string here is
- * the one StepAgents.astro already ships; if one changes, change both.
+ * the one Steps.astro already ships; if one changes, change both.
  *
  * FIXED UPSTREAM — THE OLD NOTE HERE IS DEAD AND IS KEPT ONLY SO IT IS NOT RE-DERIVED. It
  * read: "STILL UNFIXED UPSTREAM … install.sh l.142 itself prints 'Next: accept your invite.
  * \n\n  coswarm accept <invite-link>'. Fix the script, then that note." The script was
  * rewritten with the rename and now prints `cswarm accept --link-stdin` at l.151, with the
  * stdin rationale spelled out at l.152-153. The positional form is gone from the installer.
- * Page, script and StepAgents.astro now teach one form; do not reintroduce the caveat.
+ * Page, script and Steps.astro now teach one form; do not reintroduce the caveat.
  *
  * The troubleshooting entries are the failure paths install.sh handles by name, phrased as
  * the message a reader would actually see. The zsh PATH line is the exact string install.sh
@@ -56,7 +56,7 @@
  * "one dot Check it landed" and which draws no badge at all where the other two pages draw
  * one. The badge is aria-hidden because the heading text is the whole accessible name and the
  * order is already carried by the reading order. Skin matches /start's step marker
- * (StepAgents.astro .st-cmd__title::before) — same 1.5rem violet ring at the same heading
+ * (Steps.astro .stp__t::before) — same 1.5rem violet ring at the same heading
  * scale; the landing's larger 2.25rem numeral belongs to a heading two sizes up.
  */
 
@@ -64,7 +64,7 @@ import CodeBlock from "../ui/CodeBlock.astro";
 
 const versionCmd = "cswarm --version";
 const versionOut = "cswarm 0.0.1 (protocol 0.1.0)";
-/* The safe form, broken at the pipe exactly as StepAgents.astro breaks it on /start.
+/* The safe form, broken at the pipe exactly as Steps.astro breaks it on /start.
    BROKEN BY HAND, AND WITH NO PROMPT GLYPH, FOR ONE MEASURED REASON. Written as a single
    line with prompt="$" it does not fit this card: at 14px JetBrains Mono the command was 64
    characters and ~594px against a 584px column, and `wrap` broke it INSIDE the flag — the block
@@ -73,7 +73,7 @@ const versionOut = "cswarm 0.0.1 (protocol 0.1.0)";
    continuation, so what lands on the clipboard still runs verbatim.
    The prompt is dropped rather than kept because CodeBlock prefixes EVERY non-comment line
    with it (CodeBlock.astro:108), which would draw a second "$" on the continuation and make
-   it read as a second command. StepAgents made the same trade for the same reason; the
+   it read as a second command. Steps.astro makes the same trade for the same reason; the
    window chrome and the mono face already say "terminal".
    The rename shortens this line to 62 characters (~576px), which is INSIDE the 584px column
    by about eight pixels. That is not enough margin to undo the hand break: eight pixels is
@@ -154,17 +154,19 @@ const faqCols = [faqs.slice(0, 2), faqs.slice(2)];
           </div>
           <CodeBlock code={acceptCmd} label="join a workspace" wrap />
           <p class="ai__p">
-            <strong>This is the one command that needs no configuration.</strong> An invite
-            link carries its own target, so it takes no
-            <span class="mono">--url</span> and no <span class="mono">--anon-key</span> —
-            every other command does. Put the link you were sent in
-            <span class="mono">CSWARM_INVITE_LINK</span> and it goes in on stdin, never as an
-            argument: a link works once, and anything in argv is written to your shell history
-            and shows up in process listings. There is no invite link on this page and there
-            never will be: a link is issued to one person and works once, so it comes from
-            someone already in the workspace. Starting your own without an invite is not
-            open on this deployment yet — <a href="/start">/start</a> shows what it will
-            look like.
+            <strong>The one command that needs no configuration.</strong> An invite link
+            carries its own target, so it takes no <span class="mono">--url</span> and no
+            <span class="mono">--anon-key</span> — every other command does. Put the link you
+            were sent in <span class="mono">CSWARM_INVITE_LINK</span>; it goes in on stdin and
+            never as an argument, because a link works once and anything in argv is written to
+            your shell history and shows up in process listings.
+          </p>
+          <p class="ai__p">
+            There is no invite link on this page and there never will be — one is issued to a
+            single person, so it comes from someone already in the workspace. Starting your own
+            is built and isn’t switched on here yet;
+            <a href="/start">/start</a> has the whole path in one place, and says what the free
+            tier includes when it opens.
           </p>
           <p class="ai__p ai__p--last">
             After that, <span class="mono">cswarm --help</span> lists the rest: announce what
