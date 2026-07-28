@@ -159,10 +159,28 @@ false claim today — the copyright section says only where to send a notice and
 remove material and terminate repeat infringers, all of which is true regardless. **Do not
 add language asserting §512 protection until the registration is confirmed.**
 
-**The designated agent must be registered with the US Copyright Office.** An address on a
-web page does not create the DMCA safe harbour. Registration is a filing with a fee and a
-renewal cycle, done outside this repository. Until it is filed, do not describe the safe
-harbour as available.
+### How to confirm it is actually done — do not take "I filed it" for it
+
+The Copyright Office publishes a **public, searchable directory of designated agents**.
+That makes this one of the few items here a stranger can verify independently, so verify
+it that way rather than by anyone's say-so:
+
+1. Search the public DMCA designated-agent directory for **Yulan Ventures, LLC**.
+2. Confirm the listed agent name and address match what `terms.astro` prints. If the
+   document and the registry disagree, the registry is what a court reads and the document
+   is what a complainant reads — a mismatch is worse than either alone.
+3. Record the **registration date** and the resulting **expiry date** in this file.
+
+### ★ THE RENEWAL IS THE PART THAT WILL BE MISSED
+
+Registration **lapses after three years** and a lapsed registration is legally identical to
+never having filed. Nothing in this repository can fire in three years — a TODO is not a
+reminder, and whoever reads this file next will most likely be reading it about something
+else. **Put the expiry in a calendar the company actually watches, not here.** This
+paragraph exists to say that the file cannot do that job, not to do it.
+
+When the filing is confirmed, this item does not get deleted: strike it, record the dates,
+and leave the renewal note standing.
 
 ---
 
@@ -262,17 +280,27 @@ path was attempted instead of a re-login. Neither was.
 
 ## Summary of who is blocked on what
 
-| # | Item | Kind | Unblocks |
-|---|---|---|---|
-| 1 | DNS parked, mailboxes missing, no USPTO check | Operator actions | 12 contact-email sites, security contact, canonical URL |
-| 2 | Release repo (`-dist` vs public `cloud-swarm`) | Decision | `curl \| sh` install actually working |
-| 3 | State of formation | Fact to confirm | Correctness of terms + governing law |
-| 4 | DMCA agent registration | External filing | Safe harbour |
-| 5 | Supabase hosting region | Fact from dashboard | Privacy policy |
-| 6 | `SWARM_SELF_SERVE=1` | Deferred on purpose | Public signup (also needs a CLI verb) |
-| 7 | Attorney review | External review | Publishing legal docs as in-force |
-| 8 | One re-login per dogfood machine | Human action | Dogfood continuing to work after the rename |
+Rewritten 2026-07-28. Four rows that were open when this table was first written are now
+closed, and leaving them listed would have made the table lie about the state of the work.
 
-Items 1, 3, 4, 5, and 7 all gate the same thing: taking the legal branch off draft and
-merging it. Item 2 gates distribution independently. Item 6 gates the product being
-self-serve at all. Item 8 blocks nothing else but will look like a bug if nobody is warned.
+| # | Item | Kind | State | Unblocks |
+|---|---|---|---|---|
+| 1 | Name and domain | Operator actions | ✅ **DONE** — commonswarm.com live, apex + www, certs issued | canonical URL, contact addresses |
+| 2 | Release repo (`-dist` vs public `cloud-swarm`) | Decision | ⬜ **OPEN** — with Forge; needs the operator's A/B answer | `curl \| sh` installing at all |
+| 3 | State of formation | Fact to confirm | ✅ **DONE** — WA-formed LLC, TX office, venue kept | correctness of the terms |
+| 4 | DMCA agent | External filing | ◐ **HALF** — named in the document, **not registered** | the §512 safe harbour |
+| 5 | Supabase hosting region | Fact from dashboard | ✅ **DONE** — East US (North Virginia) | the privacy policy |
+| 6 | `SWARM_SELF_SERVE=1` | Deferred on purpose | ⬜ **OPEN** — also needs the spend circuit breaker | public signup |
+| 7 | Attorney review | External review | ⬜ **OPEN** | publishing the legal docs as in-force |
+| 8 | One re-login per dogfood machine | Human action | ⬜ **OPEN** | dogfood surviving the rename |
+| 9 | `legal@commonswarm.com` delivers | Test to run | ⬜ **OPEN** — never confirmed | every document that names it |
+| 10 | USPTO check on "CommonSwarm" | Research | ⬜ **OPEN** — prompt written for an agent | launching under a name nobody has cleared |
+
+**THE LEGAL DOCUMENTS ARE NOW GATED ON THREE THINGS, NONE OF THEM TEXT IN THIS REPO:**
+items **4** (the filing), **9** (does the mailbox actually deliver) and **7** (attorney
+review). Every `[[placeholder]]` is filled — the writing is finished. What is left is a
+filing, a test, and a review, and all three happen outside version control. That is why the
+draft banner is still up and why no amount of further editing will lift it.
+
+Item **2** gates distribution on its own: everything else could be perfect and a stranger
+still could not install. Item **6** gates the product being self-serve at all.
