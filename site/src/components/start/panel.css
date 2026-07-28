@@ -60,7 +60,55 @@
 }
 
 .st-pn__act {
+  display: grid;
+  gap: var(--s-3);
   margin-block-start: var(--s-6);
+}
+
+/* THE DISABLED PROVIDER. Styled to read as a real option that is not ready yet, rather than
+   as a broken control — same height and shape as the live button so the pair reads as a
+   list of ways in, but with no fill, muted ink, and `cursor: not-allowed` so a pointer says
+   so before a click does. It carries `disabled`, so it is unreachable by keyboard and
+   announced as unavailable; the styling only has to agree with what the attribute already
+   guarantees.
+
+   Contrast is deliberately kept above the 4.5:1 body threshold rather than dimmed to the
+   usual disabled grey: this element's whole job is to be READ. A control nobody can make
+   out communicates nothing, which would waste the one thing it exists to do. */
+.st-pn__soon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s-2);
+  min-height: var(--btn-h, 2.75rem);
+  padding-inline: 1.05rem;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius);
+  background: none;
+  color: var(--text-muted);
+  font-size: var(--t-sm);
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--track-sm);
+  cursor: not-allowed;
+}
+
+.st-pn__badge {
+  padding: 0.1em 0.5em;
+  border-radius: var(--radius-sm);
+  background: var(--accent-dim);
+  color: var(--accent-bright);
+  font-size: var(--t-2xs);
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--track-xs);
+  text-transform: uppercase;
+}
+
+.st-pn__soon-note {
+  margin: var(--s-3) 0 0;
+  font-size: var(--t-xs);
+  line-height: var(--lh-xs);
+  letter-spacing: var(--track-xs);
+  color: var(--text-faint);
 }
 
 /* The one sentence on the page a reader has to be able to act on: the links are underlined,

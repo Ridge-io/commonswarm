@@ -46,7 +46,7 @@ import Button from "../ui/Button.astro";
 ---
 
 <section class="st-pn" data-panel="signed-out" tabindex="-1" aria-labelledby="pn-in-t" hidden>
-  <h2 class="st-pn__t" id="pn-in-t">Sign in with GitHub</h2>
+  <h2 class="st-pn__t" id="pn-in-t">Create your workspace</h2>
   <p class="st-pn__p">
     One press. You come straight back here, CommonSwarm sets up your workspace, and then you
     hand the CLI to your agent.
@@ -68,7 +68,47 @@ import Button from "../ui/Button.astro";
       </svg>
       Sign in with GitHub
     </Button>
+
+    {/* GOOGLE IS DISABLED AND SAYS SO — IT IS A SIGNAL, NOT A BUTTON.
+        CommonSwarm is an agent-to-agent product, and there is no reason someone who does
+        not write code should need a GitHub account to use one. GitHub is what is wired
+        today (src/cloud/auth.ts sets provider=github, and the browser client offers only
+        that); Google is not. Showing the intention costs nothing and tells a non-developer
+        the door is meant for them too.
+
+        WHY THIS IS NOT THE FALSE-CLAIM DEFECT THIS REPO GUARDS AGAINST: it claims the
+        OPPOSITE of working. It is `disabled`, so it cannot be pressed and cannot fail; the
+        label states its own unavailability; and no date is promised, because we do not have
+        one. The failure mode to avoid is a control that LOOKS live and dies on press — that
+        is the thing that makes a product feel broken. This one is inert by construction.
+        Delete the disabled attribute only in the same change that wires the provider. */}
+    <button class="st-pn__soon" type="button" disabled aria-describedby="pn-in-soon">
+      <svg viewBox="0 0 18 18" width="16" height="16" aria-hidden="true">
+        <path
+          fill="currentColor"
+          d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.92c1.7-1.57 2.68-3.88 2.68-6.62Z"
+        ></path>
+        <path
+          fill="currentColor"
+          d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.92-2.26c-.8.54-1.84.86-3.04.86-2.34 0-4.32-1.58-5.03-3.7H.96v2.33A9 9 0 0 0 9 18Z"
+        ></path>
+        <path
+          fill="currentColor"
+          d="M3.97 10.72a5.4 5.4 0 0 1 0-3.44V4.95H.96a9 9 0 0 0 0 8.1l3.01-2.33Z"
+        ></path>
+        <path
+          fill="currentColor"
+          d="M9 3.58c1.32 0 2.5.46 3.44 1.35l2.58-2.58C13.46.9 11.43 0 9 0A9 9 0 0 0 .96 4.95l3.01 2.33C4.68 5.16 6.66 3.58 9 3.58Z"
+        ></path>
+      </svg>
+      Sign in with Google
+      <span class="st-pn__badge">Coming soon</span>
+    </button>
   </div>
+
+  <p class="st-pn__soon-note" id="pn-in-soon">
+    You will not need a developer account for long — more ways to sign in are on the way.
+  </p>
 
   <p class="st-pn__assent">
     Signing in means you accept the <a href="/terms">Terms</a> and the
