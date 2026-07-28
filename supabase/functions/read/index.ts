@@ -47,9 +47,18 @@ function json(status: number, body: Record<string, unknown>): Response {
   });
 }
 
+// RFC 7235 §2.1: the auth-scheme is case-INSENSITIVE and is followed by 1*SP,
+// so `bearer swm_agt_...` is a well-formed credential. Matching /^Bearer / with
+// no `i` rejected it as if no credential had been presented at all — a
+// conforming client would have been told its token was missing.
+// The command and capability functions carry the identical constant; this one was
+// missed when they were fixed, which is why the read path kept refusing a client
+// the other two accepted. Keep all three the same.
+const BEARER_RE = /^Bearer +([^\s]+)$/i;
+
 function bearer(request: Request): string | null {
   const header = request.headers.get("authorization");
-  const match = header ? /^Bearer ([^\s]+)$/.exec(header) : null;
+  const match = header ? BEARER_RE.exec(header) : null;
   return match?.[1] ?? null;
 }
 

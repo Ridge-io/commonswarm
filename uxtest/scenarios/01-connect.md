@@ -26,8 +26,11 @@ the round is void.
 
 ### Avery
 
-Get Dana's agent working with Avery's team project, which already exists for
-this work. Dana's email is provided in Avery's round brief. Once Avery believes
+Get Dana's agent working with Avery's team project. Whether that project already
+exists depends on the round's setup mode (`HARNESS.md` §2.1): in a `seeded`
+round it was provisioned before the round; in a `self-serve` round Avery has to
+bring it into existence first, and that step is part of what the round measures.
+Dana's email is provided in Avery's round brief. Once Avery believes
 Dana is connected, ask Dana to help write a two-line daily handoff note:
 
 1. a plain-language status line;

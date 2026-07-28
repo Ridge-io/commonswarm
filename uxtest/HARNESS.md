@@ -157,18 +157,56 @@ launch Human1 → run → collect → report**.
 uxtest/scripts/sync-machine2.sh      # rsync repo + npm install + npm run build on the laptop
 uxtest/scripts/preflight.sh <n>      # fails early with exact GUI-bootstrap remedy if absent
 uxtest/scripts/launcher-channel-up.sh # verifies GUI Dana; starts/registers mini UxDriver
-uxtest/scripts/reset-round.sh <n>    # FRESH workspace; Human2 reset delegated to GUI Dana
+uxtest/scripts/reset-round.sh <n>    # seeded: FRESH workspace / self-serve: none (§2.1);
+                                     #   Human2 reset delegated to GUI Dana either way
 uxtest/scripts/launch-human2.sh <n>  # persistent GUI tab spawns fresh Dana-r<n>; evidence-gated
 uxtest/scripts/channel-up.sh <n>     # asks GUI Dana to serve Dana-r<n>; verifies both directions
 uxtest/scripts/launch-human1.sh <n>  # fresh cmux persona tab here
 uxtest/scripts/collect-round.sh <n>  # gather transcripts, feedback, metrics into rounds/<n>/
 ```
 
+### 2.1 Setup mode — `seeded` or `self-serve`
+
+A round is set up in one of two modes, chosen with `UXTEST_SETUP_MODE` before `reset-round.sh`
+and then **fixed**: reset records it in `rounds/<n>/setup.json` as `setup_mode`, that record is
+the authority afterwards, and re-running reset with a different mode is refused rather than
+producing a `setup.json` describing two different rounds. Every later script reads the record,
+not the export.
+
+| | `seeded` (default) | `self-serve` |
+|---|---|---|
+| Who creates the project | `reset-round.sh`, before the round, via the privileged `seed-fixture` bridge | **Human1, during the round, with `cswarm new "<name>"`** |
+| Needs `DATABASE_URL` in reset | Yes | No (preflight still reads it for the membership snapshot) |
+| `workspace_id` at reset | a real UUID | `null` until the persona creates one |
+| `seed_sha` | the seed source hash | `null` |
+| Golden path scored against | `login → invite → accept` | `login → new → invite → accept` |
+| Front door under test | **No** — creation happens beside the round | **Yes** — creation is the first thing measured |
+
+**Which one works today: `seeded`, and only `seeded`.** The server implements `create_workspace`,
+but the edge function serves it only when `SWARM_SELF_SERVE=1` is set in the target deployment's
+edge-function environment, and production does not set it — so against production a self-serve
+round gets a `403` and stops at the first step. That is a legitimate thing to measure once, and
+it is **not** a measurement of the front door's usability. Two consequences, both load-bearing:
+
+- **The harness does not gate on it, because it cannot.** The server returns the same `403` for
+  "self-serve disabled" and "not permitted", so no client-side probe can tell them apart. Reset
+  prints the limit and continues; the round's `REPORT.md` must say which of the two it observed
+  rather than reporting a refusal as a usability finding.
+- **`seeded` is not deprecated and must not be deleted.** It is the only mode that reaches the
+  connect scenario end to end while the flag is off.
+
+Neither mode changes the isolation rules in §0. The persona is never told which mode they are in
+and never told the verb; the brief states only where the project stands (§7.9).
+
 ### Reset policy — additive, never destructive
 
-`create_workspace` is not wired yet, so a round's workspace is seeded with a privileged
-`DATABASE_URL` (the `seed-fixture` path). **Each round seeds a NEW workspace** rather than
-deleting last round's rows.
+**Each round seeds a NEW workspace** rather than deleting last round's rows. (In `self-serve`
+mode nothing is seeded at all — the persona creates it, additively, under the same naming rule.)
+
+★ The superseded line — *"`create_workspace` is not wired yet, so a round's workspace is seeded
+with a privileged `DATABASE_URL`"* — is **dead** as a statement about the product: the command
+is wired and `cswarm new "<name>"` calls it. What is still true is narrower, and is the reason
+`seeded` remains the default: it is gated off in production (§2.1).
 
 **This is deliberate: prefer additive setup over destructive cleanup near a real hosted
 database.** Dead test workspaces accumulate harmlessly; a buggy delete script does not.
@@ -266,7 +304,8 @@ uxtest/scripts/sync-machine2.sh
 UXTEST_HOME_ROOT=/Users/tom/uxtest \
   /Users/tom/Developer/Ridge.io/cloud-swarm/uxtest/scripts/serve-human2-gui.sh launcher
 
-# each round
+# each round — the mode is chosen once, before reset, and is fixed from there
+export UXTEST_SETUP_MODE=seeded          # or self-serve; see §2.1
 uxtest/scripts/preflight.sh 1
 uxtest/scripts/launcher-channel-up.sh
 uxtest/scripts/reset-round.sh 1
@@ -405,10 +444,15 @@ theater. Protocol, in preference order:
   deterministic workspace list and guidance, while `cswarm workspaces` and
   `cswarm use <full-id|exact-name>` expose the recovery path. The harness therefore records
   projected multi-membership instead of refusing the round.
-- **Workspace creation is not under test.** Each round uses the privileged, fixture-only
-  `seed-fixture` bridge because governed `create_workspace` is not wired yet. No report may
-  claim to test real workspace creation. Migrate the harness to the governed command when it
-  lands so the setup path does not permanently diverge from the product.
+- **Workspace creation is under test only in `self-serve` mode (§2.1).** ★ The superseded
+  line — *"Each round uses the privileged, fixture-only `seed-fixture` bridge because governed
+  `create_workspace` is not wired yet. No report may claim to test real workspace creation."* —
+  is **dead** in its premise: the command is wired, and `UXTEST_SETUP_MODE=self-serve` runs the
+  round against it. Its conclusion still binds for every `seeded` round, which is still the
+  default and still the only mode that completes end to end. The rule now: a report may claim to
+  test creation **only** when `metrics.json` records `setup_mode: self-serve` **and**
+  `workspace_created_by_persona: true` — the second is read from the observed command log, so
+  a self-serve round that got a `403` proves the gate is on, not that creation works.
 
 ### 7.6 `metrics.json` schema (script-collected, never self-reported)
 
@@ -422,6 +466,7 @@ command_sequence[], golden_path_distance,
 used_link_stdin, used_positional_link, link_inspected,
 task_completed, gave_up, gave_up_reason,
 coswarm_sha_mini, coswarm_sha_laptop, workspace_id, seed_sha,
+setup_mode, workspace_created_by_persona,
 oauth_consent, carryover,
 multi_project_path, current_live_memberships, projected_live_memberships,
 join_latency_ms, join_attempts, isolation_void
@@ -449,6 +494,8 @@ if the partner pasted the answer.
 - Partner-rescued steps: [quotes]
 - Version under test: mini <sha> / laptop <sha>  (must match)
 - OAuth consent: first / returning
+- Setup mode: seeded (project provisioned beside the round — front door NOT exercised)
+  / self-serve (Human1 created it; observed creation: true/false)
 ```
 
 Findings are ranked **only** if isolation is clean, and every finding **quotes the exact CLI
@@ -461,6 +508,8 @@ line** the persona saw.
 | Run R1 as a pilot? | **Yes** — after §7.2 items 2–3 (copied binary + swept trusted cwd), §7.7 header, and §7.9 |
 | Trust R1 as product truth? | Only for the §7.1 "Yes" rows; the operator's drive still decides |
 | Run R2+ as regression? | **No** until §7.4 is implemented and `carryover` is recorded |
+| Run a round in `self-serve` mode? | **Yes**, but expect it to stop at a `403` wherever `SWARM_SELF_SERVE=1` is not set — which is production (§2.1) |
+| Trust a `self-serve` round as evidence about the front door? | Only when `metrics.json` has `setup_mode: self-serve` **and** `workspace_created_by_persona: true`; otherwise it is evidence about the gate |
 
 ### 7.9 BRIEF generator contract + mechanical enforcement
 
@@ -468,18 +517,32 @@ The generated per-round `BRIEF.md` is the **highest-leakage artifact in the harn
 one document the persona is told to read. Prose rules are not enough here; a single wrong noun
 burns the round. So the contract is enforced by a lint, not by care.
 
-**Goal framing (the fixture problem).** `reset-round.sh` seeds Avery a workspace and then logs
-both users out, so a brief saying "your **new** project workspace" sends her hunting for a
-create/init command **that does not exist** — a burned round producing a finding about a known
-unwired gap rather than about P2-1. Frame it as already-existing, without teaching the missing
-command:
+**Goal framing (the fixture problem) — and it now flips with the mode.** The brief states *where
+the project stands* and nothing about how to act on it. Which of those two states is true is
+decided by §2.1, and a brief that states the wrong one burns the round in one direction or the
+other. `launch-human1.sh` selects the framing from the recorded `setup_mode`; do not hand-edit
+one in.
+
+*Seeded rounds.* `reset-round.sh` seeds Avery a workspace and then logs both users out, so a
+brief saying "your **new** project workspace" sends her hunting for a create step she does not
+need — a burned round producing a finding about the fixture rather than about connecting. Frame
+it as already-existing:
 
 > Goal: get `<partner>`'s agent working with you on **your team's project** (it already exists
 > for this work). Signing in and connecting are part of what you need to figure out; the study
 > will not teach you the steps.
 
-**Never** write "you don't need to create one" (teaches `create`), "workspace id", or
-"provisioned by the harness".
+*Self-serve rounds.* Nothing is provisioned, so the opposite lie is the risk: telling Avery the
+project is "already set up" and then watching her fail to find something that does not exist
+produces a finding about the brief. Frame it as absent — a state, still not a verb:
+
+> Your team does not have its project set up here yet, and getting it going is part of what you
+> have to work out. Your team calls the project `<name>`. Goal: get `<partner>`'s agent working
+> with you on it.
+
+**Never**, in either mode, write the verb (`new`, `create`, `init`), "you don't need to create
+one", "workspace id", "self-serve", or "provisioned by the harness". Naming the project is
+allowed and is goal-level context a real user has; naming what to type is not.
 
 **Vocabulary.** Prefer "project" / "team project" / "shared project". Reserve "workspace" for
 when the *product itself* prints it and the persona quotes it — priming the noun helps a `--help`
@@ -497,8 +560,13 @@ Naming `cswarm` **is** allowed and necessary (they must know which CLI exists), 
 matches:
 
 ```
-(invite|accept|login|principal|swm_|--link|workspace-id|opaque item)
+(invite|accept|login|principal|swm_|--link|workspace-id|opaque item|\bnew\b|\bcreate\b|\binit\b)
 ```
+
+The last three were added with `self-serve` mode: a brief that must say the project is absent is
+one careless verb away from saying how to make one. They are word-bounded, so "renewal" and
+"creative" do not fire, and both rendered briefs are clean of all three today — a hit means
+someone just wrote the mechanism into a brief.
 
 **Audit.** Dump every rendered brief to `rounds/<n>/briefs/` — operator-visible, **never** inside
 a persona cwd.

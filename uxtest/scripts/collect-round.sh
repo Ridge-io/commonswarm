@@ -72,6 +72,8 @@ node -e '
     "gave_up_reason",
     "coswarm_sha_mini",
     "coswarm_sha_laptop",
+    "setup_mode",
+    "workspace_created_by_persona",
     "workspace_id",
     "seed_sha",
     "oauth_consent",

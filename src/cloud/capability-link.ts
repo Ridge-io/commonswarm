@@ -56,8 +56,15 @@ export function capabilitySiteOrigin(
   const source = explicit !== undefined ? "--site" : "CSWARM_SITE_ORIGIN";
   const raw = (explicit ?? environmental ?? CAPABILITY_SITE_ORIGIN).trim();
   if (!raw) {
+    // `source`, not a hardcoded name. `--site ""` and `--site "  "` reach this line with
+    // explicit === "" — the CLI's parser hands an empty flag value through verbatim — and
+    // the message here used to say "--site is required when CSWARM_SITE_ORIGIN is set to
+    // an empty value" in that case too, sending an operator who had just typed --site off
+    // to inspect an environment variable that was not involved. It is dead.
     throw new Error(
-      "--site is required when CSWARM_SITE_ORIGIN is set to an empty value",
+      `${source} is empty; it must be the site's base origin, for example ${CAPABILITY_SITE_ORIGIN}${
+        explicit === undefined ? ", or unset it to use the default" : ""
+      }`,
     );
   }
   let parsed: URL;

@@ -14,6 +14,10 @@ setup="$(round_setup_path "$round")"
 [ "$(json_field "$setup" reset_complete)" = "true" ] ||
   die "round $round reset did not complete"
 
+setup_mode="$(round_setup_mode "$round")"
+validate_setup_mode "$setup_mode"
+workspace_name="$(json_field "$setup" workspace_name)"
+
 swarm_name="$(round_swarm "$round")"
 human1="$(human1_name "$round")"
 human2="$(human2_name "$round")"
@@ -32,19 +36,30 @@ cleanup_brief() {
 trap cleanup_brief EXIT
 
 node - "$brief_file" "$round" "$swarm_name" "$human1" "$human2" \
-  "$UXTEST_HUMAN2_EMAIL" <<'NODE'
+  "$UXTEST_HUMAN2_EMAIL" "$setup_mode" "$workspace_name" <<'NODE'
 const fs = require("node:fs");
-const [path, round, swarmName, human1, human2, email] = process.argv.slice(2);
+const [path, round, swarmName, human1, human2, email, setupMode, projectName] =
+  process.argv.slice(2);
+// §7.9: both framings state where the project stands and nothing about how to
+// act on it. Seeded rounds must not send the persona hunting for a project that
+// is already there; self-serve rounds must not tell them one exists when it does
+// not — a brief that lies produces feedback about the lie. Neither names a verb.
+const situation = setupMode === "self-serve"
+  ? `Your team does not have its project set up here yet, and getting it going
+is part of what you have to work out. Your team calls the project
+\`${projectName}\`. Goal: get ${human2}'s agent working with you on it.`
+  : `Your team's project is already set up for you. Goal: get ${human2}'s agent
+working with you on it.`;
 const brief = `# Round ${round} brief
 
 You are ${human1}. Your colleague is ${human2}; their GitHub email is ${email}.
 Your chat channel is the local swarm named \`${swarmName}\`. Send short colleague
 messages with \`swarm send ${human2} "<message>" --swarm ${swarmName}\`.
 
-Your team's project is already set up for you. Goal: get ${human2}'s agent
-working with you on it. Start with only the product CLI \`cswarm\`, what it
-prints, and its help if you genuinely need it. The study driver will not teach
-the mechanism.
+${situation}
+
+Start with only the product CLI \`cswarm\`, what it prints, and its help if you
+genuinely need it. The study driver will not teach the mechanism.
 
 After you believe the agents are working together, ask ${human2} to help agree
 on an exact two-line daily handoff:
@@ -80,7 +95,7 @@ if [ -n "$(json_field "$setup" human1_joined_at || true)" ] &&
   exit 0
 fi
 
-say "Launching fresh Human1 persona $human1 from swept trusted cwd $cwd."
+say "Launching fresh Human1 persona $human1 ($setup_mode round) from swept trusted cwd $cwd."
 PATH="$UXTEST_MINI_HOME_ROOT/bin:$PATH" \
   UXTEST_HOME_ROOT="$UXTEST_MINI_HOME_ROOT" \
   UXTEST_ROLE=human1 \

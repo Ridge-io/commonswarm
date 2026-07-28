@@ -395,6 +395,115 @@ const INVITE_IDENTITY_DAILY_LIMIT = 10;
 const FREE_TIER_MEMBER_LIMIT = 25;
 const FREE_TIER_PRINCIPAL_LIMIT = 50;
 
+/* ★ THE GLOBAL SPEND CIRCUIT BREAKER — §8's abuse taxonomy, launch-blocking in
+ * §9 P5 ("a global spend circuit breaker caps aggregate Supabase/function/email
+ * budget and trips to a degraded, signup-paused mode before a bill runs away";
+ * §10: bounded, "not merely alerted").
+ *
+ * THERE IS NO DOLLAR FIGURE HERE AND NONE MAY BE ADDED. Nothing in this system
+ * talks to a billing API or receives cost telemetry — §8 defers billing
+ * infrastructure entirely — so a threshold written in dollars would be a number
+ * nobody measured wearing the costume of a budget. What the database does hold
+ * is the COUNT of the operations that spend money, so those are what the
+ * ceilings are set on. Crossing one means "cost is being generated at a rate
+ * nobody planned for", which is the question this control exists to answer. It
+ * does not mean, and must never be reported as, "the bill reached $N".
+ *
+ * The five proxies, and what each one is a proxy FOR:
+ *   workspace_create   a whole tenant substrate — rows, streams, retention
+ *   invite_send        the invitation §8 costs as transactional email. NOTE:
+ *                      nothing in this repo sends mail today — invite_member
+ *                      returns a token to the caller — so this counts
+ *                      invitations ISSUED, not messages delivered. Wired now
+ *                      because the day mail is added is the day it costs money.
+ *   signal_post        row writes plus Realtime fan-out
+ *   agent_token_mint   credentials, each of which becomes invocation volume
+ *
+ * capability_read WAS a fifth proxy and was REMOVED as a denial-of-service hole:
+ * its buckets are incremented before the bearer is resolved, so an unauthenticated
+ * caller could latch a platform-wide signup pause. EVERY PROXY HERE MUST BE AN
+ * AUTHENTICATED, ACCEPTED ACTION, or the ceiling becomes a lever for someone
+ * holding no credential at all. Do not add one that is not.
+ *
+ * WHAT TRIPPING DOES, AND DELIBERATELY DOES NOT DO. It pauses SIGNUP: a crossed
+ * ceiling refuses create_workspace and nothing else. Existing workspaces keep
+ * working — signals, invites, tokens, reads all continue. A breaker that takes
+ * the product down for every tenant because one attacker found the cheap verb
+ * is a worse outcome than the bill it was avoiding, and it would hand any
+ * stranger an outage button.
+ *
+ * The ceilings are set from the per-tenant limits above and the current tenant
+ * count (invited dogfood, single digits), NOT from a measured bill — they are
+ * an order-of-magnitude guess, generous enough that honest traffic never sees
+ * them and small enough to catch a runaway inside one hour. When real metering
+ * exists, these become numbers derived from it and this paragraph goes away.
+ */
+type SpendProxy =
+  | "workspace_create"
+  | "invite_send"
+  | "signal_post"
+  | "agent_token_mint";
+
+const SPEND_CEILINGS: Record<SpendProxy, number> = {
+  workspace_create: 100,
+  invite_send: 400,
+  signal_post: 20000,
+  agent_token_mint: 1000,
+};
+
+/* The counter is SHARDED, and that is not an optimisation — it is the fix for a
+ * bug this codebase already shipped once. A single global bucket_key means every
+ * request on the metered path serialises behind one row-exclusive lock held for
+ * the whole transaction, so the counter that exists to observe a surge becomes a
+ * throughput ceiling that is worst exactly during one. It was found and removed
+ * on the capability read path (see the sharding note in
+ * supabase/functions/capability/index.ts); reintroducing it here would be the
+ * same defect in a new file.
+ *
+ * Math.random is the right shard chooser: nothing is secret, the only
+ * requirement is even spread, and a hash of the caller would pin one caller to
+ * one row and rebuild the hot spot per attacker. The signal is not weakened —
+ * the window's TRUE total is the sum of the shards, read without locking and
+ * only once a shard is past its own share, so the ordinary path never pays for
+ * it and the trip still fires on the real global count.
+ */
+const SPEND_SHARDS = 8;
+const SPEND_BUCKET_KEYS: Record<SpendProxy, string[]> = Object.fromEntries(
+  (Object.keys(SPEND_CEILINGS) as SpendProxy[]).map((proxy) => [
+    proxy,
+    Array.from(
+      { length: SPEND_SHARDS },
+      (_unused, index) => `spend:${proxy}:${index}`,
+    ),
+  ]),
+) as Record<SpendProxy, string[]>;
+
+/**
+ * The commands charged from the shared routed path. post_signal and
+ * create_workspace are charged at their own handlers because neither reaches
+ * this table.
+ */
+const SPEND_PROXY_BY_COMMAND: Record<string, SpendProxy> = {
+  invite_member: "invite_send",
+  mint_agent_token: "agent_token_mint",
+};
+
+/* ★ THE CAPABILITY-READ KEY MIRROR WAS DELETED WITH THE PROXY IT FED.
+ *
+ * It read the capability function's sharded global counter across this file
+ * boundary. The reasoning written here was that duplicating the key layout was
+ * "safe in the direction that matters" because drift could only UNDERCOUNT, and
+ * "undercounting can only fail to trip — it can never manufacture a pause."
+ *
+ * That was true and it was the wrong risk to be watching. The danger was never
+ * miscounting; it was WHAT WAS BEING COUNTED. Those buckets increment before the
+ * capability function resolves the bearer, so refused anonymous requests — absent,
+ * malformed, unknown, revoked, expired — all landed in them. An attacker with no
+ * credential could therefore drive a platform-wide signup pause, which no amount
+ * of counting accuracy would have prevented. The careful note reasoned hard about
+ * the safe axis while the unsafe one went unmentioned.
+ */
+
 /**
  * A speed bump, and honestly nothing more: it turns away the laziest throwaway
  * inbox and anyone determined registers a domain in a minute. It is not a
@@ -2379,6 +2488,12 @@ async function createSelfServeWorkspace(
   const workspaceId = command!.workspace_id as string;
   const name = command!.name as string;
 
+  // §8's degraded mode. Refused here — with its own audit reason, never a
+  // per-identity one — because the caller has done nothing wrong and their own
+  // budget is untouched: the service is paused, and the log must say so.
+  const breaker = await enforceSpendBreaker(tx, auth, ignoredIdentity);
+  if (breaker !== null) return breaker;
+
   // Counted inside the transaction and against created_by, so two concurrent
   // requests cannot both read limit-1. Archived workspaces free their slot.
   const countRows = await tx<{ live: string }[]>`
@@ -2487,6 +2602,10 @@ async function createSelfServeWorkspace(
   const streamId = streams[0]?.stream_id;
   if (!streamId) throw new Error("workspace stream creation failed");
 
+  // Charged after the tenant exists, so the count is of substrate actually
+  // created rather than of attempts.
+  await chargeSpend(tx, "workspace_create");
+
   await insertAudit(tx, {
     auth,
     commandKind: CREATE_WORKSPACE_KIND,
@@ -2515,7 +2634,13 @@ interface SignalRateLimit {
   resetsAt: string;
 }
 
-async function incrementSignalBucket(
+/**
+ * The one fixed-window counter in this function: an atomic upsert into
+ * swarm.rate_buckets on the hour boundary, clamped so a flood cannot grow the
+ * integer without bound. Shared by the signal limits and the §8 spend proxies —
+ * a second mechanism would be a second set of edge cases for no gain.
+ */
+async function incrementRateBucket(
   tx: Sql,
   bucketKey: string,
   limit: number,
@@ -2550,7 +2675,7 @@ async function enforceSignalRate(
   if (credentialIdentity === null) {
     throw new Error("authenticated signal credential has no stable identity");
   }
-  const credential = await incrementSignalBucket(
+  const credential = await incrementRateBucket(
     tx,
     `signal:credential:${auth.credentialKind}:${credentialIdentity}`,
     SIGNAL_CREDENTIAL_LIMIT,
@@ -2562,7 +2687,7 @@ async function enforceSignalRate(
       resetsAt: credential.resetsAt,
     };
   }
-  const workspace = await incrementSignalBucket(
+  const workspace = await incrementRateBucket(
     tx,
     `signal:workspace:${workspaceId}`,
     SIGNAL_WORKSPACE_LIMIT,
@@ -2575,6 +2700,192 @@ async function enforceSignalRate(
     };
   }
   return null;
+}
+
+/** Sums a set of shard keys over the CURRENT window without locking any of them. */
+async function windowTotal(tx: Sql, bucketKeys: string[]): Promise<number> {
+  const rows = await tx<{ total: string }[]>`
+    SELECT coalesce(sum(count), 0)::text AS total
+    FROM swarm.rate_buckets
+    WHERE bucket_key = ANY(${bucketKeys}::text[])
+      AND window_start = date_trunc('hour', statement_timestamp())
+  `;
+  return Number(rows[0]?.total ?? "0");
+}
+
+/**
+ * Latches the breaker open and alerts, both exactly once per trip.
+ *
+ * The partial unique index in migration 20260728000001 permits a single open
+ * trip, so INSERT ... ON CONFLICT DO NOTHING *is* the protocol: the first
+ * transaction to cross owns the row and therefore owns the alert, and every
+ * concurrent crosser is a no-op that returns no row. DO NOTHING, never DO
+ * UPDATE — an update would reintroduce the hot row the shards exist to remove.
+ */
+async function tripSpendBreaker(
+  tx: Sql,
+  proxy: SpendProxy,
+  observed: number,
+): Promise<void> {
+  const ceiling = SPEND_CEILINGS[proxy];
+  const tripped = await tx<{ trip_id: string }[]>`
+    INSERT INTO swarm.spend_breaker (
+      tripped_by, proxy, observed, ceiling, window_start
+    ) VALUES (
+      'automatic',
+      ${proxy},
+      ${observed},
+      ${ceiling},
+      date_trunc('hour', statement_timestamp())
+    )
+    ON CONFLICT DO NOTHING
+    RETURNING trip_id::text AS trip_id
+  `;
+  if (tripped.length === 0) return;
+  await tx`
+    INSERT INTO swarm.security_alerts (kind, subject, detail)
+    VALUES (
+      'spend_breaker_tripped',
+      'global',
+      ${tx.json({
+        proxy,
+        observed,
+        ceiling,
+        window: "hour",
+        effect: "self_serve_workspace_creation_paused",
+        cleared_by: "swarm.reset_spend_breaker(who, why)",
+      })}::jsonb
+    )
+  `;
+}
+
+/**
+ * Charges one unit of a cost proxy, and trips the breaker if the window's true
+ * global total has crossed the ceiling.
+ *
+ * Called only on ACCEPTED commands: a refused command spent nothing worth
+ * metering, and charging refusals would let a caller who is not entitled to do
+ * anything at all drive the platform into signup-paused.
+ *
+ * The clamp handed to incrementRateBucket is the GLOBAL ceiling rather than the
+ * shard's share, deliberately: a shard that clamped at its own share would make
+ * the sum below understate the truth and the breaker would never trip under a
+ * flood concentrated on one shard.
+ */
+async function chargeSpend(tx: Sql, proxy: SpendProxy): Promise<void> {
+  const ceiling = SPEND_CEILINGS[proxy];
+  const shard = await incrementRateBucket(
+    tx,
+    `spend:${proxy}:${Math.floor(Math.random() * SPEND_SHARDS)}`,
+    ceiling,
+  );
+  // The aggregate is off the ordinary path: it runs only from a shard already
+  // past its share, so honest traffic pays for one upsert and nothing else.
+  if (shard.count < Math.ceil(ceiling / SPEND_SHARDS)) return;
+  const total = await windowTotal(tx, SPEND_BUCKET_KEYS[proxy]);
+  if (total <= ceiling) return;
+  await tripSpendBreaker(tx, proxy, total);
+}
+
+interface SpendTrip {
+  proxy: string;
+  trippedAt: string;
+  observed: number | null;
+  ceiling: number | null;
+}
+
+/** The open trip, if the breaker is currently holding signup shut. */
+async function openSpendTrip(tx: Sql): Promise<SpendTrip | null> {
+  const rows = await tx<{
+    proxy: string;
+    tripped_at: Date;
+    observed: string | null;
+    ceiling: string | null;
+  }[]>`
+    SELECT proxy, tripped_at, observed::text AS observed, ceiling::text AS ceiling
+    FROM swarm.spend_breaker
+    WHERE cleared_at IS NULL
+    ORDER BY tripped_at DESC
+    LIMIT 1
+  `;
+  const row = rows[0];
+  if (!row) return null;
+  return {
+    proxy: row.proxy,
+    trippedAt: row.tripped_at.toISOString(),
+    observed: row.observed === null ? null : Number(row.observed),
+    ceiling: row.ceiling === null ? null : Number(row.ceiling),
+  };
+}
+
+/**
+ * §8's degraded mode: while the breaker is open, self-serve workspace creation
+ * is the ONE thing that stops. Every existing workspace keeps working.
+ *
+ * Ordering inside createSelfServeWorkspace matters twice. It sits AFTER the
+ * feature gate and the identity gates, so an unverified stranger cannot use the
+ * response to probe aggregate platform load. It sits BEFORE the per-identity
+ * counts, because when the platform is paused an individual caller's remaining
+ * budget is not the reason they are being refused and the audit row should not
+ * say it was.
+ *
+ * ★ THE capability_read ARM IS DELETED, AND IT WAS A DENIAL-OF-SERVICE HOLE.
+ *
+ * It used to sum CAPABILITY_READ_BUCKET_KEYS here and trip the breaker on the
+ * total. Those buckets are incremented by the capability edge function BEFORE the
+ * bearer is resolved — the shard increment happens ~90 lines ahead of the
+ * projection query — so an absent, malformed, unknown, revoked or expired token
+ * all counted. Which means a caller holding NO CREDENTIAL OF ANY KIND could send
+ * ~40k requests with random bearers in one window and latch a platform-wide
+ * signup pause on every tenant, with no automatic recovery: it stayed shut until
+ * a human with swarm_admin ran reset_spend_breaker() by hand.
+ *
+ * That is precisely what this function's own docstring above says the design
+ * avoids — "charging refusals would let a caller who is not entitled to do
+ * anything at all drive the platform into signup-paused" — and it is the same
+ * rule the capability function states at its own global counter: "§5:
+ * unauthenticated limits alert rather than hard-lock. A global hard cap would let
+ * one attacker close the front door on every tenant, so this one never refuses."
+ * Two files asserted the rule and the code between them broke it.
+ *
+ * The remaining four proxies are all AUTHENTICATED, ACCEPTED actions — a
+ * workspace created, an invite sent, a signal posted, a token minted. Each costs
+ * real money and each requires a credential, so the ceiling cannot be driven by
+ * someone with nothing. Anonymous read volume is still bounded, still alerts, and
+ * still refuses per-caller inside the capability function; it simply no longer
+ * gets a lever on anyone else's signup.
+ */
+async function enforceSpendBreaker(
+  tx: Sql,
+  auth: AuthContext,
+  ignoredIdentity: string | null,
+): Promise<HttpResult | null> {
+  const trip = await openSpendTrip(tx);
+  if (trip === null) return null;
+
+  const measured = trip.observed === null || trip.ceiling === null
+    ? "paused by an operator"
+    : `${trip.proxy} observed ${trip.observed} against a ceiling of ${trip.ceiling}/hour`;
+  await insertAudit(tx, {
+    auth,
+    commandKind: CREATE_WORKSPACE_KIND,
+    outcome: "quota",
+    reason: "spend_breaker_signup_paused",
+    detail: [
+      ignoredIdentity,
+      `spend breaker open since ${trip.trippedAt}: ${measured}`,
+    ].filter(Boolean).join("; "),
+  });
+  return {
+    status: 503,
+    body: {
+      error: "signup_paused",
+      message:
+        "New workspaces are paused while an operator reviews unusual load across the service. " +
+        "Existing workspaces are unaffected — signals, invites and agent tokens keep working. " +
+        "Try again later.",
+    },
+  };
 }
 
 interface CapabilityRequest {
@@ -2895,7 +3206,7 @@ async function mintCapabilityUrl(
   // Hourly windows on purpose: purge_expired_rate_buckets sweeps this table of
   // anything older than two hours, so a daily window stored here would silently
   // reset (the reasoning is written out at enforceFreeTierBudget).
-  const credentialBucket = await incrementSignalBucket(
+  const credentialBucket = await incrementRateBucket(
     tx,
     `capability:mint:user:${userId}`,
     CAPABILITY_MINT_CREDENTIAL_LIMIT,
@@ -2909,7 +3220,7 @@ async function mintCapabilityUrl(
       credentialBucket.resetsAt,
     );
   }
-  const workspaceBucket = await incrementSignalBucket(
+  const workspaceBucket = await incrementRateBucket(
     tx,
     `capability:mint:workspace:${workspaceId}`,
     CAPABILITY_MINT_WORKSPACE_LIMIT,
@@ -3800,6 +4111,7 @@ async function handleTransaction(
         detail: ignoredIdentity,
         hash,
       });
+      await chargeSpend(tx, "signal_post");
       return {
         status: 200,
         body: {
@@ -4045,6 +4357,14 @@ async function handleTransaction(
       ].filter(Boolean).join("; "),
       hash,
     });
+
+    // §8 spend proxies, charged on the accepted path only. A command the
+    // reducer refused created no cost, and metering refusals would let a caller
+    // with no entitlement at all drive the platform into signup-paused.
+    const spendProxy = SPEND_PROXY_BY_COMMAND[command.kind];
+    if (outcome.decision.ok && spendProxy !== undefined) {
+      await chargeSpend(tx, spendProxy);
+    }
     await afterStep(14);
 
     await beforeStep(15);

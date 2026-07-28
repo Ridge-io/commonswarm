@@ -68,18 +68,74 @@ const GLOBAL_READ_LIMIT = 20000;
  * the only requirement is even spread, and a hash-derived shard would pin one
  * caller to one row and re-create a hot spot per attacker.
  *
- * The SIGNAL IS NOT WEAKENED. The window's true total is the sum of the shards,
- * which is read — not locked — and only once a shard is past its own share, so
- * the ordinary path never pays for it. The alert still fires on the true global
- * count crossing GLOBAL_READ_LIMIT, and still exactly once per window.
+ * ★ WHAT THE SHARDING COSTS, CORRECTED 2026-07-28. The superseded sentence —
+ * *"The SIGNAL IS NOT WEAKENED … the alert still fires on the true global count
+ * crossing GLOBAL_READ_LIMIT, and still exactly once per window"* — is **dead**:
+ * it overstated by one word, "still", and this repo ranks a comment asserting
+ * what the control flow does not do above a bug. What holds exactly:
+ *
+ *   - AT MOST ONE alert per window. GLOBAL_ALERT_LATCH_KEY is inserted ON
+ *     CONFLICT DO NOTHING, so only the transaction that created the latch row
+ *     alerts.
+ *   - It never fires below the limit: the sum of the shard rows really did cross
+ *     GLOBAL_READ_LIMIT, and it is read — not locked — so the ordinary path
+ *     never pays for it.
+ *
+ * What does NOT hold is "on the crossing":
+ *
+ *   - The aggregate runs only when THIS request's shard is already past its own
+ *     share, so the request that takes the true total past the limit triggers
+ *     nothing if it landed on a light shard. Pigeonhole says some shard is at or
+ *     past GLOBAL_SHARD_SHARE whenever the total is over (16 × 1249 = 19984 <
+ *     20001), so the alert lands on the next request that hits such a shard —
+ *     in a real surge, within a handful of requests. If traffic stops dead at
+ *     the crossing, the window can end with no alert at all.
+ *   - The sum is of COMMITTED shard rows at READ COMMITTED, so it lags whatever
+ *     concurrent transactions have incremented but not yet committed.
+ *
+ * For a surge alarm on a 20000/hour threshold that lag is the intended trade.
+ * It is a prompt alert on a true crossing, not an exact one.
  */
 const GLOBAL_SHARDS = 16;
+
+/**
+ * The ONE place a global shard key is spelled. Both sides derive from it — the
+ * write path picks one index, `GLOBAL_BUCKET_KEYS` enumerates all of them for the
+ * sum — so the two cannot silently disagree about which keys exist. Built the
+ * shard key twice, independently, and a change to the format on one side turns
+ * the alert off with no error anywhere.
+ */
+function globalShardKey(index: number): string {
+  return `capability:read:global:${index}`;
+}
+
 const GLOBAL_BUCKET_KEYS = Array.from(
   { length: GLOBAL_SHARDS },
-  (_unused, index) => `capability:read:global:${index}`,
+  (_unused, index) => globalShardKey(index),
 );
 const GLOBAL_SHARD_SHARE = Math.ceil(GLOBAL_READ_LIMIT / GLOBAL_SHARDS);
 const GLOBAL_ALERT_LATCH_KEY = "capability:read:global:alerted";
+
+/* ★ EVERY rate_buckets KEY THIS FUNCTION TOUCHES, ENUMERATED — because the count is
+ * not three, and a comment saying it is three is still in the tree.
+ * `supabase/migrations/20260727000002_capability_urls_hardening.sql`, above the
+ * `swarm_capability_all` policy, reads *"The capability function only ever touches
+ * three keys … (the per-token bucket, the per-origin bucket and the global surge
+ * bucket)"*. That sentence is **dead**: the global surge bucket is GLOBAL_SHARDS (16)
+ * rows rather than one, and two further constant keys exist. The complete set:
+ *
+ *   capability:read:<sha256 hex of the presented bearer>  one per digest
+ *   capability:read:origin:<client ip hint>               one per caller hint
+ *   capability:read:global:0 … :15                        GLOBAL_SHARDS fixed keys
+ *   capability:read:global:alerted                        the surge alert latch
+ *   capability:read:auditbudget                           the refusal audit budget
+ *
+ * The policy's RULE is unaffected and stays correct — every key above is
+ * `capability:read:`-prefixed, so `USING (bucket_key LIKE 'capability:read:%')` covers
+ * exactly this set and nothing else. Only its arithmetic is wrong. Correcting the SQL
+ * comment needs a new migration (the two capability migrations are committed and must
+ * not be edited in place), so this is the accurate enumeration until one is written.
+ */
 
 /* The ceiling on permanent audit rows this endpoint can create per window, keyed on a
  * CONSTANT so no choice of forged header, token or address can raise it. swarm.audit_log is
@@ -438,9 +494,11 @@ async function insertAlert(
 }
 
 /**
- * Fires the global-surge alert once per window on the shards' TRUE total, which
- * is why sharding the counter costs no signal. Reached only from a shard that is
- * already past its share, so the aggregate below is off the ordinary path.
+ * Fires the global-surge alert at most once per window, on the committed sum of
+ * the shards rather than on any one shard. Reached only from a shard already past
+ * its share, so the aggregate below is off the ordinary path — and so the alert
+ * can trail the crossing by a few requests; see the star comment on GLOBAL_SHARDS
+ * for exactly what that costs.
  */
 async function alertGlobalSurge(tx: Sql, resetsAt: string): Promise<void> {
   const totals = await tx<{ total: string }[]>`
@@ -596,8 +654,10 @@ async function handle(request: Request): Promise<Response> {
     // never refuses. The shard limit passed here is the GLOBAL limit, not the
     // per-shard share: incrementBucket clamps at limit + 2, and a shard that
     // clamped at its share would make the sum below understate the truth.
-    const shardKey =
-      `capability:read:global:${Math.floor(Math.random() * GLOBAL_SHARDS)}`;
+    // globalShardKey, not a second copy of the format string: the sum in
+    // alertGlobalSurge enumerates GLOBAL_BUCKET_KEYS, and a key written here that the
+    // sum does not enumerate would disable the alert without failing anything.
+    const shardKey = globalShardKey(Math.floor(Math.random() * GLOBAL_SHARDS));
     const shard = await incrementBucket(tx, shardKey, GLOBAL_READ_LIMIT);
     if (shard.count >= GLOBAL_SHARD_SHARE) {
       await alertGlobalSurge(tx, shard.resetsAt);

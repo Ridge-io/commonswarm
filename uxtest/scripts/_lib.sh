@@ -21,6 +21,11 @@ UXTEST_LAUNCHER_NAME="${UXTEST_LAUNCHER_NAME:-Dana}"
 UXTEST_DRIVER_NAME="${UXTEST_DRIVER_NAME:-UxDriver}"
 UXTEST_LAUNCHER_LAPTOP_PORT="${UXTEST_LAUNCHER_LAPTOP_PORT:-18791}"
 UXTEST_LAUNCHER_MINI_PORT="${UXTEST_LAUNCHER_MINI_PORT:-18792}"
+# seeded  — reset-round.sh provisions Human1's project through the privileged
+#           seed-fixture bridge. The only mode that completes end to end today.
+# self-serve — nothing is provisioned; Human1 creates the project with the CLI,
+#           so the round measures the actual front door. Gated server-side.
+UXTEST_SETUP_MODE="${UXTEST_SETUP_MODE:-seeded}"
 
 say() {
   printf '[uxtest] %s\n' "$*"
@@ -49,6 +54,31 @@ validate_round() {
 
 round_swarm() {
   printf 'uxtest-r%s' "$1"
+}
+
+validate_setup_mode() {
+  case "${1:-}" in
+    seeded|self-serve) ;;
+    *) die "setup mode must be 'seeded' or 'self-serve', not '${1:-}'" ;;
+  esac
+}
+
+# The round's own setup.json is the authority for which mode it ran in; the env
+# var only decides a round that has not been reset yet. Reading the export after
+# the fact would report the shell's intent, not the round that happened.
+round_setup_mode() {
+  local round="$1"
+  local setup
+  setup="$(round_setup_path "$round")"
+  if [ -f "$setup" ]; then
+    local recorded
+    recorded="$(json_field "$setup" setup_mode 2>/dev/null || true)"
+    # setup.json written before this field existed can only have been seeded:
+    # nothing else was implemented then.
+    printf '%s' "${recorded:-seeded}"
+    return 0
+  fi
+  printf '%s' "$UXTEST_SETUP_MODE"
 }
 
 human1_name() {
@@ -258,7 +288,11 @@ assert_setup_exists() {
 
 lint_brief() {
   local path="$1"
-  local banned='(invite|accept|login|principal|swm_|--link|workspace-id|opaque item)'
+  # \bnew\b|\bcreate\b|\binit\b close the self-serve hole: a brief that has to say
+  # the project is absent is one careless verb away from saying how to make one.
+  # Word-bounded so "renewal" and "creative" do not fire; both briefs are clean of
+  # all three today, so a hit means someone just wrote the mechanism in.
+  local banned='(invite|accept|login|principal|swm_|--link|workspace-id|opaque item|\bnew\b|\bcreate\b|\binit\b)'
   if LC_ALL=C grep -Eiq "$banned" "$path"; then
     die "rendered BRIEF.md violates the §7.9 leakage lint"
   fi

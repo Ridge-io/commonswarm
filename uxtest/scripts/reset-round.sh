@@ -7,8 +7,6 @@ source "$(cd "$(dirname "$0")" && pwd -P)/_lib.sh"
 round="${1:-}"
 validate_round "$round"
 load_cloud_env
-require_env DATABASE_URL
-require_env UXTEST_HUMAN1_UID
 require_env UXTEST_OAUTH_CONSENT
 require_command uuidgen
 require_command git
@@ -25,22 +23,60 @@ setup="$(round_setup_path "$round")"
 swarm_name="$(round_swarm "$round")"
 mkdir -p "$output_dir"
 
+# A round has exactly one mode, and setup.json is where it is recorded. Requesting
+# a different mode against an existing record would produce a setup.json whose
+# fields describe two different rounds.
+setup_mode="$(round_setup_mode "$round")"
+validate_setup_mode "$setup_mode"
+if [ -f "$setup" ] && [ "$setup_mode" != "$UXTEST_SETUP_MODE" ]; then
+  die "round $round was already reset in '$setup_mode' mode but UXTEST_SETUP_MODE is '$UXTEST_SETUP_MODE'; use a new round number rather than changing a round's mode"
+fi
+
+if [ "$setup_mode" = "seeded" ]; then
+  # Only the seeded path writes to the hosted database, so only it needs the
+  # privileged credential here. (preflight.sh still takes its read-only
+  # membership snapshot with DATABASE_URL in both modes — this narrows reset,
+  # it does not make a round credential-free.)
+  require_env DATABASE_URL
+  require_env UXTEST_HUMAN1_UID
+else
+  say "Setup mode: self-serve. No project is provisioned; Human1 must create one with the product CLI, which is the thing under test."
+  say "HONEST LIMIT: create_workspace is served only when SWARM_SELF_SERVE=1 in the target deployment's edge-function environment, and production does not set it. Against production this round measures the refusal, not a working front door. There is no probe that can tell 'self-serve disabled' from 'not permitted' — the server returns the same 403 — so this warning is not a gate and the report must say which of the two it observed."
+fi
+
 if [ -f "$output_dir/transcript.md" ] || [ -f "$output_dir/REPORT.md" ]; then
   die "round $round already has collected artifacts; use a new round number"
 fi
 assert_launcher_channel
 
 if [ -f "$setup" ]; then
-  workspace_id="$(json_field "$setup" workspace_id)"
   workspace_name="$(json_field "$setup" workspace_name)"
+  if [ "$setup_mode" = "seeded" ]; then
+    # Still strict: a seeded re-reset with no recorded id must stop, not seed
+    # against an empty one.
+    workspace_id="$(json_field "$setup" workspace_id)"
+  else
+    # In self-serve mode there is no id to carry: only the persona can mint one,
+    # and if a prior attempt did, the harness never learned it. The name — which
+    # the brief hands them — is the only thing that carries across a re-reset.
+    workspace_id=""
+  fi
   say "Reusing round $round's existing additive workspace identity."
 else
-  workspace_id="$(uuidgen | tr '[:upper:]' '[:lower:]')"
   short_random="$(uuidgen | tr '[:upper:]' '[:lower:]' | cut -c1-8)"
   workspace_name="uxtest-r${round}-${short_random}"
+  if [ "$setup_mode" = "seeded" ]; then
+    workspace_id="$(uuidgen | tr '[:upper:]' '[:lower:]')"
+  else
+    workspace_id=""
+  fi
 fi
 
-seed_sha="$(git -C "$UXTEST_REPO" hash-object src/cloud/seed.ts)"
+if [ "$setup_mode" = "seeded" ]; then
+  seed_sha="$(git -C "$UXTEST_REPO" hash-object src/cloud/seed.ts)"
+else
+  seed_sha=""
+fi
 coswarm_sha="$(<"$UXTEST_MINI_HOME_ROOT/product/SOURCE_SHA")"
 laptop_coswarm_sha="$(
   remote_zsh "cat '$UXTEST_REMOTE_HOME_ROOT/product/SOURCE_SHA'"
@@ -50,11 +86,11 @@ laptop_coswarm_sha="$(
 
 node - "$setup" "$round" "$swarm_name" "$workspace_id" "$workspace_name" \
   "$seed_sha" "$coswarm_sha" "$laptop_coswarm_sha" \
-  "$UXTEST_OAUTH_CONSENT" <<'NODE'
+  "$UXTEST_OAUTH_CONSENT" "$setup_mode" <<'NODE'
 const fs = require("node:fs");
 const [
   path, round, swarmName, workspaceId, workspaceName, seedSha, coswarmSha,
-  laptopCoswarmSha, oauthConsent,
+  laptopCoswarmSha, oauthConsent, setupMode,
 ] = process.argv.slice(2);
 const current = fs.existsSync(path)
   ? JSON.parse(fs.readFileSync(path, "utf8"))
@@ -62,10 +98,13 @@ const current = fs.existsSync(path)
 const value = {
   ...current,
   round: Number(round),
+  setup_mode: setupMode,
   swarm_name: swarmName,
-  workspace_id: workspaceId,
+  // null, not "", so a reader cannot mistake "the persona has not created it yet"
+  // for "here is the id".
+  workspace_id: workspaceId === "" ? null : workspaceId,
   workspace_name: workspaceName,
-  seed_sha: seedSha,
+  seed_sha: seedSha === "" ? null : seedSha,
   coswarm_sha_mini: coswarmSha,
   coswarm_sha_laptop: laptopCoswarmSha,
   oauth_consent: oauthConsent,
@@ -90,42 +129,50 @@ const value = {
 fs.writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
 NODE
 
-say "Seeding fresh fixture workspace '$workspace_name' (additive; no deletes)."
-token_dir="$(mktemp -d "${TMPDIR:-/tmp}/uxtest-seed.XXXXXX")"
-token_path="$token_dir/agent-token"
-cleanup_seed_dir() {
-  rm -rf "$token_dir"
-}
-trap cleanup_seed_dir EXIT
-
 mini_node="$(<"$UXTEST_MINI_HOME_ROOT/product/NODE_BIN")"
-seed_json="$(
-  DATABASE_URL="$DATABASE_URL" \
-    SEED_TOKEN_OUT="$token_path" \
-    "$mini_node" "$UXTEST_MINI_HOME_ROOT/product/dist/cli.js" \
-      seed-fixture \
-      --uid "$UXTEST_HUMAN1_UID" \
-      --workspace-id "$workspace_id" \
-      --workspace-name "$workspace_name" \
-      --display-name "UX Test Human 1" \
-      --agent-name "uxtest-fixture-r$round"
-)"
-printf '%s\n' "$seed_json" |
-  node -e '
-    let raw = "";
-    process.stdin.on("data", chunk => raw += chunk);
-    process.stdin.on("end", () => {
-      const value = JSON.parse(raw);
-      if (value.workspaceId !== process.argv[1]) {
-        throw new Error("seed returned a different workspace_id");
-      }
-      if (value.workspaceName !== process.argv[2]) {
-        throw new Error("seed returned a different workspace name");
-      }
-    });
-  ' "$workspace_id" "$workspace_name"
-rm -f "$token_path"
-say "Fixture seed verified; its one-time agent credential was destroyed."
+
+if [ "$setup_mode" = "seeded" ]; then
+  say "Seeding fresh fixture workspace '$workspace_name' (additive; no deletes)."
+  token_dir="$(mktemp -d "${TMPDIR:-/tmp}/uxtest-seed.XXXXXX")"
+  token_path="$token_dir/agent-token"
+  cleanup_seed_dir() {
+    rm -rf "$token_dir"
+  }
+  trap cleanup_seed_dir EXIT
+
+  seed_json="$(
+    DATABASE_URL="$DATABASE_URL" \
+      SEED_TOKEN_OUT="$token_path" \
+      "$mini_node" "$UXTEST_MINI_HOME_ROOT/product/dist/cli.js" \
+        seed-fixture \
+        --uid "$UXTEST_HUMAN1_UID" \
+        --workspace-id "$workspace_id" \
+        --workspace-name "$workspace_name" \
+        --display-name "UX Test Human 1" \
+        --agent-name "uxtest-fixture-r$round"
+  )"
+  printf '%s\n' "$seed_json" |
+    node -e '
+      let raw = "";
+      process.stdin.on("data", chunk => raw += chunk);
+      process.stdin.on("end", () => {
+        const value = JSON.parse(raw);
+        if (value.workspaceId !== process.argv[1]) {
+          throw new Error("seed returned a different workspace_id");
+        }
+        if (value.workspaceName !== process.argv[2]) {
+          throw new Error("seed returned a different workspace name");
+        }
+      });
+    ' "$workspace_id" "$workspace_name"
+  rm -f "$token_path"
+  say "Fixture seed verified; its one-time agent credential was destroyed."
+else
+  # Nothing is provisioned here on purpose. The name is reserved for the brief so
+  # the round's rows stay identifiable as test data; the project itself only
+  # exists if the persona succeeds in creating it.
+  say "No fixture seeded. Round $round expects Human1 to create '$workspace_name' themselves; whether that happened is read back from the observed command log at collect, never assumed here."
+fi
 
 profile="$(profile_id)"
 mini_profile="$HOME/.cswarm/credentials.d/$profile.profile.json"
@@ -311,4 +358,8 @@ value.reset_completed_at = new Date().toISOString();
 fs.writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
 NODE
 
-say "Round $round reset verified: cold clients, swept trusted persona directories, clean chat, fresh workspace $workspace_id."
+if [ "$setup_mode" = "seeded" ]; then
+  say "Round $round reset verified (seeded): cold clients, swept trusted persona directories, clean chat, fresh workspace $workspace_id."
+else
+  say "Round $round reset verified (self-serve): cold clients, swept trusted persona directories, clean chat, and no project — Human1 creates '$workspace_name' or the round stops there."
+fi

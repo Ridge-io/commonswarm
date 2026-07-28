@@ -36,6 +36,13 @@ if (
 ) {
   throw new Error("preflight membership snapshot is invalid or inconsistent");
 }
+// A round recorded before setup_mode existed can only have been seeded; nothing
+// else was implemented then. An unknown value is refused rather than defaulted,
+// because every claim below about what the round tested keys off this.
+const setupMode = setup.setup_mode ?? "seeded";
+if (setupMode !== "seeded" && setupMode !== "self-serve") {
+  throw new Error(`setup.json records an unknown setup_mode: ${setupMode}`);
+}
 const localCwd = join(miniRoot, "human1", "workspace");
 
 const read = (path) => existsSync(path) ? readFileSync(path, "utf8") : null;
@@ -252,7 +259,19 @@ const nonzeroExits = commands.filter((event) => event.exit_code !== 0).length;
 const commandSequence = commands.map(
   (event) => `${event.role}:${event.command}`,
 );
-const golden = ["human1:login", "human1:invite", "human2:accept"];
+// The shortest sequence that reaches the round's goal, which differs by mode:
+// a self-serve round has to bring the project into existence first, so scoring
+// it against the seeded path would penalise it for doing the thing under test.
+const golden = setupMode === "self-serve"
+  ? ["human1:login", "human1:new", "human1:invite", "human2:accept"]
+  : ["human1:login", "human1:invite", "human2:accept"];
+// Observed, never assumed: the wrapper logs every command with its exit code, so
+// "the persona created the project" is a reading of the log, not an inference
+// from the round having been set up in self-serve mode.
+const workspaceCreatedByPersona = commands.some(
+  (event) =>
+    event.role === "human1" && event.command === "new" && event.exit_code === 0,
+);
 
 function editDistance(left, right) {
   const rows = Array.from({ length: left.length + 1 }, () =>
@@ -342,8 +361,10 @@ const metrics = {
   uninterpretable_outputs: uninterpretable,
   coswarm_sha_mini: setup.coswarm_sha_mini,
   coswarm_sha_laptop: setup.coswarm_sha_laptop,
-  workspace_id: setup.workspace_id,
-  seed_sha: setup.seed_sha,
+  setup_mode: setupMode,
+  workspace_created_by_persona: workspaceCreatedByPersona,
+  workspace_id: setup.workspace_id ?? null,
+  seed_sha: setup.seed_sha ?? null,
   oauth_consent: setup.oauth_consent,
   carryover: setup.carryover ?? true,
   multi_project_path: preflight.multi_project_path,
@@ -427,6 +448,9 @@ const report = `# UX test round ${round}
 - Partner-rescued steps: ${partnerRescued.length > 0 ? JSON.stringify(partnerRescued) : "[]"}
 - Version under test: mini ${setup.coswarm_sha_mini} / laptop ${setup.coswarm_sha_laptop}  (must match)
 - OAuth consent: ${setup.oauth_consent}
+- Setup mode: ${setupMode === "self-serve"
+  ? `self-serve — nothing was provisioned; Human1 was expected to create the project with the CLI. Observed creation (a human1 command exiting 0): ${workspaceCreatedByPersona}`
+  : "seeded — the project was provisioned by privileged test setup before the round, so the front door was not exercised"}
 - Membership path: ${metrics.multi_project_path
   ? `multi-project resolution (preflight current=${metrics.current_live_memberships}, projected=${metrics.projected_live_memberships}; measures workspaces -> use -> invite, not the sole-membership shortcut)`
   : `sole-membership shortcut (preflight current=${metrics.current_live_memberships}, projected=${metrics.projected_live_memberships})`}
@@ -455,8 +479,19 @@ ${isolationVoid
 
 ## What this round did not test
 
-Workspace creation was fixture-seeded through privileged test setup. This round
-does not test governed product workspace creation. The operator's own drive
-remains the final word for the failure classes marked No or Weak.
+${setupMode === "self-serve"
+  ? `Human1 was left to create the project through the product itself, so project
+creation is inside this round rather than beside it. Two limits stand anyway.
+Creation is served only where \`SWARM_SELF_SERVE=1\` is set in the target
+deployment's edge-function environment; where it is not, a refusal here is the
+gate answering, not a usability finding, and the two cannot be told apart from
+the client because the server returns the same 403 for both. And a round with
+\`workspace_created_by_persona: ${workspaceCreatedByPersona}\` supports claims
+only about what that value says happened.`
+  : `Workspace creation was fixture-seeded through privileged test setup. This round
+does not test governed product workspace creation — for that, reset the round with
+\`UXTEST_SETUP_MODE=self-serve\`.`}
+The operator's own drive remains the final word for the failure classes marked
+No or Weak.
 `;
 safeWrite(join(outputDir, "REPORT.md"), report);

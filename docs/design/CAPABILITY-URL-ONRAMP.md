@@ -93,7 +93,13 @@ else in `src/` builds a `/see` URL.
 `commonswarm.com`, `www.commonswarm.com`, or a loopback host for developing the page; each
 must be `https` (loopback may be `http`), a bare origin, portless, with no path, query,
 fragment or userinfo, and the error names the permitted set. Validated *before* the mint
-request, so a wrong origin costs a line of output rather than a credential.
+request, so a wrong origin costs a line of output rather than a credential. Every one of
+those errors names **the input the operator actually supplied** — `--site` when the flag was
+passed, `CSWARM_SITE_ORIGIN` otherwise. That includes the empty case: `--site ""` reaches
+the same branch an empty `CSWARM_SITE_ORIGIN` does (the CLI's parser passes an empty flag
+value through verbatim), and until 2026-07-28 it named the environment variable in both,
+sending an operator who had just typed the flag off to inspect something that was not
+involved.
 
 ★ **Changed 2026-07-28, and the reason is not tidiness.** The superseded rule — *"it must
 be `https`, a bare origin, with no path, query, or fragment"* — is **dead**: it accepted
@@ -199,17 +205,63 @@ than rounding off: a bug that let this role run arbitrary SQL could read `rate_b
 disclosing client IP addresses and the SHA-256 digests of presented capability tokens, and
 answering "was this exact token presented in this window" — an oracle, though not tenant
 data. 000002's `USING (bucket_key LIKE 'capability:read:%')` policy confines that reach to
-the three keys this endpoint owns; it does not remove it, because those three keys are
+the keys this endpoint owns; it does not remove it, because two of those keys are
 precisely the ones carrying the IPs and the digests.
 
-★ **The same retired claim is still written into five code comments, which this document
-cannot fix and which were not edited alongside it:**
-`20260727000001_capability_urls.sql` line 205 (the section-D header) and line 322 (the
-*"COMPLETE list of its privileges"* comment, which sits directly above the grant it
-denies); `20260727000002_capability_urls_hardening.sql` line 172, which repeats it as
-settled background while narrowing the write side; and
-`supabase/functions/capability/index.ts` at the file header and above the projection query.
-Read all five as the dead sentence above; they need the same correction at the source.
+★ **CORRECTED 2026-07-28: it is not "three keys".** The superseded phrasing — *"confines
+that reach to the three keys this endpoint owns … because those three keys are precisely
+the ones carrying the IPs and the digests"* — is **dead**. It undercounted, and the same
+sentence is still in the SQL: `20260727000002_capability_urls_hardening.sql`, above the
+`swarm_capability_all` policy, reads *"The capability function only ever touches three
+keys … (the per-token bucket, the per-origin bucket and the global surge bucket)"*.
+Enumerated against `supabase/functions/capability/index.ts` on 2026-07-28, the complete
+set of `bucket_key`s this endpoint writes is:
+
+| Key | How many | Carries |
+|---|---|---|
+| `capability:read:<sha256 hex of presented bearer>` | one per digest seen | the token digest |
+| `capability:read:origin:<client ip hint>` | one per caller hint | the IP hint |
+| `capability:read:global:0` … `:15` | `GLOBAL_SHARDS` = 16, fixed | nothing but a count |
+| `capability:read:global:alerted` | 1, fixed — the surge alert latch | nothing but a count |
+| `capability:read:auditbudget` | 1, fixed — the refusal audit budget | nothing but a count |
+
+So: two unbounded per-caller families plus **eighteen** constant keys, not three. The
+global surge counter became sixteen rows when it was sharded to stop a single hot row
+serialising the whole anonymous surface; the latch and the audit budget were added with
+the alert and the refusal-audit cap. **The policy's rule is unaffected and remains
+correct** — every key above is `capability:read:`-prefixed, so `LIKE 'capability:read:%'`
+still covers exactly this set and nothing else. Only the count is wrong, and only the
+last three rows of the table are new information for the oracle question: they carry no
+IP and no digest, so the residual described above is unchanged. The accurate enumeration
+now sits beside the constants in `supabase/functions/capability/index.ts`; the SQL comment
+still reads "three" and needs a **new** migration to correct, since 000001 and 000002 are
+committed and are not edited in place.
+
+★ **Where that retired claim still lives — re-enumerated 2026-07-28, and the earlier count
+of five was wrong.** The superseded sentence here — *"The same retired claim is still
+written into five code comments … `20260727000002` line 172, which repeats it as settled
+background … and `supabase/functions/capability/index.ts` at the file header and above the
+projection query"* — is **dead**. Read against the tree rather than from memory, the five
+split three ways:
+
+- **Still carrying the dead claim — two, both in `20260727000001_capability_urls.sql`:**
+  line 205 (the section-D header, *"SELECT on NO table"*) and line 322 (the *"COMPLETE
+  list of its privileges"* comment, *"It has SELECT on no table whatsoever"*, sitting four
+  lines above `GRANT SELECT, INSERT, UPDATE ON swarm.rate_buckets`). These are the ones
+  that need correcting, and correcting them takes a **new** migration.
+- **Already correct — one:** `20260727000002_capability_urls_hardening.sql` line 172 does
+  not repeat the claim as background. It states the opposite in full, names the grant, the
+  line number and the RLS confinement, and records that *"the earlier phrasing 'SELECT on
+  no table' was flatly wrong and a cross-model reviewer caught it against this very
+  file"*.
+- **Already correct — two:** `supabase/functions/capability/index.ts` says *"SELECT on no
+  table carrying tenant data"* in the file header and *"holds SELECT on no TENANT table"*
+  above the projection query. Both are true as written; neither is the dead sentence.
+
+The lesson this file keeps re-learning is in the counting, not the claim: a list of
+locations written once and never re-run goes stale the moment somebody fixes one of them,
+and then the document is wrong in the *other* direction — asserting a defect that is no
+longer there.
 
 The response body is then built **field by field** rather than by spreading a row
 (`projectionBody` in `supabase/functions/capability/index.ts`) — so a column added to
@@ -278,15 +330,33 @@ Not by policy, by construction. None of these is reachable from a capability lin
 ★ **CORRECTED 2026-07-28.** The superseded sentences — *"The capability endpoint has no
 mutation path of any kind; any write requires a verified identity through the command
 function. Anonymous mutation is impossible, not merely unauthorised."* — are **dead and
-were false**. Measured against `supabase/functions/capability/index.ts` on 2026-07-28: every
-anonymous request that gets past the feature gate performs **three** `swarm.rate_buckets`
-upserts (caller IP, presented-token hash, and one randomly chosen shard of the global surge
-counter), and may additionally write a fourth `rate_buckets` row (the surge alert latch),
-one `swarm.audit_log` row, and one `swarm.security_alerts` row. Those are writes, driven by
-an unauthenticated caller, on the only internet-reachable surface in the product. The
-function's own star comment above `deny()` describes exactly these writes and calls the
-audit growth a denial-of-service vector it had to throttle — so this document asserted a
-property that the implementation it cites had already documented lacking.
+were false**. Measured against `supabase/functions/capability/index.ts`, re-checked
+2026-07-28: an anonymous request that gets past the feature gate performs **one to three**
+`swarm.rate_buckets` upserts — caller-IP bucket first (a request refused there returns 429
+having done exactly one), then the presented-token-hash bucket, then one randomly chosen
+shard of the global surge counter — and may write **up to two more** `rate_buckets` rows on
+top: the surge alert latch, and the refusal-audit budget counter, which is itself an upsert
+performed before any refusal audit row. It may then write one `swarm.audit_log` row and one
+`swarm.security_alerts` row (at most one of each: every branch that writes an alert returns
+immediately after). Those are writes, driven by an unauthenticated caller, on the only
+internet-reachable surface in the product. The function's own star comment above `deny()`
+describes exactly these writes and calls the audit growth a denial-of-service vector it had
+to throttle — so this document asserted a property that the implementation it cites had
+already documented lacking.
+
+★ **The governing spec still states the retired claim, and this file does not get to
+overrule it.** `docs/design/SWARM-CLOUD.md` §7 (line 342) ends its *"Anonymous = read-only;
+writes need a verified identity"* bullet with the words *"anonymous mutation is
+impossible"*, unqualified — as does the archived `SWARM-CLOUD-V1.md` line 314. This
+document opens by saying the spec wins on conflict, so a reader who checks will find the
+correction above apparently overruled by the spec. It is not a conflict about the design,
+only about scope of wording: the spec bullet is about **tenant** state, and on tenant state
+it is exactly right — no anonymous request can create, alter, revoke or delete a work item,
+a membership, a signal, an event or a link, and `swarm_capability` holds no write privilege
+on any table carrying tenant state. What it is not is a statement about the endpoint's
+counters and ledgers, which do take anonymous writes by design. **Amending the spec line to
+say so is a spec edit and is not made here**; until it is made, read §7 line 342 as scoped
+to tenant state.
 
 The property that actually holds, which is the one the envelope needs:
 

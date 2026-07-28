@@ -81,8 +81,17 @@ if [ -f "$setup" ]; then
   )"
 fi
 
+setup_mode="$(round_setup_mode "$round")"
+validate_setup_mode "$setup_mode"
+say "Setup mode for round $round: $setup_mode."
+
+# The projection is "what identity A will hold once this round has its project".
+# Seeded rounds gain that membership at reset, so a completed reset is already
+# counted. Self-serve rounds gain it mid-round if the persona succeeds, so the
+# projection stands after reset too — and stays a projection, never a claim that
+# the project exists.
 projected_membership_count="$membership_count"
-if [ "$reset_complete" != "true" ]; then
+if [ "$reset_complete" != "true" ] || [ "$setup_mode" = "self-serve" ]; then
   projected_membership_count=$((membership_count + 1))
 fi
 
