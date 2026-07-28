@@ -10,7 +10,8 @@
  * ever serving. An anonymous branch inside that file would be one mis-ordered
  * early-return away from serving them. This function instead runs as
  * SET LOCAL ROLE swarm_capability, which holds EXECUTE on one projection
- * function and SELECT on no table at all: the field allowlist is enforced by
+ * function, and SELECT on no table carrying tenant data: the field allowlist is
+ * enforced by
  * PostgreSQL, not by this file's discipline.
  *
  * Do not add a capability branch to `functions/read/index.ts`, and do not grant
@@ -79,6 +80,14 @@ const GLOBAL_BUCKET_KEYS = Array.from(
 );
 const GLOBAL_SHARD_SHARE = Math.ceil(GLOBAL_READ_LIMIT / GLOBAL_SHARDS);
 const GLOBAL_ALERT_LATCH_KEY = "capability:read:global:alerted";
+
+/* The ceiling on permanent audit rows this endpoint can create per window, keyed on a
+ * CONSTANT so no choice of forged header, token or address can raise it. swarm.audit_log is
+ * append-only and, unlike idempotency_keys and rate_buckets, has no purge schedule, so a
+ * row written here is forever. 500/hour is far above any honest refusal volume — refusals
+ * on a link people were handed are rare — and far below anything that threatens the volume. */
+const REFUSAL_AUDIT_BUDGET = 500;
+const REFUSAL_AUDIT_BUDGET_KEY = "capability:read:auditbudget";
 
 // Hashed in place of an absent bearer so the SHA-256 is performed on every path
 // and a missing credential cannot short-circuit ahead of the database call.
@@ -379,7 +388,16 @@ async function incrementBucket(
 }
 
 /**
- * Exactly one audit row per request. request_hash stays NULL: the only hash this
+ * AT MOST one audit row per request, and often none.
+ *
+ * The old text here read "Exactly one audit row per request" and it was false in three
+ * directions, all found by cross-model review: the dark-feature gate returns before any
+ * write, a refusal from a caller already seen this window is throttled to zero, and a
+ * refusal past REFUSAL_AUDIT_BUDGET is dropped. Callers cannot observe any of it — the
+ * response is identical either way — but the comment claimed a cardinality the control
+ * flow does not implement, which is the defect class this repo ranks above bugs.
+ *
+ * request_hash stays NULL: the only hash this
  * function holds is the digest of a live credential, and §7 rule 5 redacts the
  * credential from audit rows. capability_id is the safe correlation handle.
  */
@@ -506,17 +524,31 @@ async function handle(request: Request): Promise<Response> {
   // posture the table itself keeps.
   const bucketKey = `capability:read:${bytesToHex(tokenHash)}`;
 
-  // ★ THE BINDING LIMITER IS KEYED ON THE CALLER, NOT ON WHAT THE CALLER SENT.
-  // The token-hash bucket below is still useful — it caps abuse of one REAL link —
-  // but it cannot bind an attacker, because the attacker chooses the token. Rotating
-  // the bearer produced a fresh bucket at count=1 on every single request, so 429 was
-  // unreachable and the "limit" was decorative. The client address is the cheapest
-  // thing on this request an attacker cannot vary for free.
-  // `?? ""` on the index is required, not defensive: edge functions compile with
-  // noUncheckedIndexedAccess, so split()[0] is `string | undefined` here even though
-  // split always yields at least one element. tsc does not cover this tree.
-  const clientIp = ((request.headers.get("x-forwarded-for") ?? "").split(",")[0] ?? "")
-    .trim().slice(0, 45) || "unknown";
+  /* ★ EVERY PER-CALLER KEY ON THIS REQUEST IS FORGEABLE, SO THE BOUND CANNOT REST ON ONE.
+   *
+   * Two rounds of cross-model review caught the same mistake twice. Round one: the limiter
+   * was keyed on sha256 of the attacker-supplied BEARER, so rotating the token gave a fresh
+   * bucket and 429 was unreachable. The "fix" re-keyed it on the LEFTMOST x-forwarded-for
+   * entry — which the caller also supplies, for free, on every request. Two independent
+   * non-Claude reviewers found it, and one quoted the comment that used to sit here ("the
+   * cheapest thing on this request an attacker cannot vary for free") back as the defect.
+   * Replacing attacker-controlled input with different attacker-controlled input, and
+   * asserting in a comment that I had not, is the whole failure.
+   *
+   * So the key is improved AND stops being load-bearing:
+   *   - RIGHTMOST, not leftmost. A caller can prepend entries to x-forwarded-for; the
+   *     trailing entry is the one the trusted proxy in front of us appended. A forged
+   *     prefix no longer changes the key.
+   *   - Whether that proxy exists at all is UNVERIFIED here — nobody has confirmed what
+   *     Supabase's edge does to this header — so the value is treated as a hint, not a
+   *     guarantee, and the hard bound below does not depend on it being honest.
+   *
+   * `?? ""` on the index is required, not defensive: edge functions compile with
+   * noUncheckedIndexedAccess, so an index read is `string | undefined`. tsc does not
+   * cover this tree. */
+  const forwarded = (request.headers.get("x-forwarded-for") ?? "")
+    .split(",").map((part) => part.trim()).filter((part) => part.length > 0);
+  const clientIp = (forwarded[forwarded.length - 1] ?? "").slice(0, 45) || "unknown";
   const originBucketKey = `capability:read:origin:${clientIp}`;
 
   const methodOk = request.method === "POST";
@@ -587,18 +619,41 @@ async function handle(request: Request): Promise<Response> {
      * The RESPONSE is unchanged and unconditional, so the uniform-failure rule is
      * untouched: invalid, expired, revoked and never-existed remain indistinguishable.
      * Only the server-side write is throttled, and a caller cannot observe it. */
+    /* ★ THE HARD BOUND. Every per-caller key on this request is forgeable, so throttling
+     * per key cannot bound anything — an attacker just picks a new key. This budget is
+     * keyed on a CONSTANT, so the number of permanent audit rows an unauthenticated
+     * population can create in a window is capped outright, whatever they send.
+     *
+     * It is deliberately generous: real refusals are rare, so REFUSAL_AUDIT_BUDGET is far
+     * above honest traffic and only bites under the flood it exists to survive. Losing
+     * refusal rows past the cap is the correct trade — the alert still fires, and
+     * rate_buckets still holds exact counts, so nothing that matters for investigation is
+     * lost. An audit log that fills the volume protects nobody.
+     *
+     * The response is unchanged and unconditional either way, so the uniform-failure rule
+     * is untouched and no caller can observe whether their refusal was recorded. */
+    const auditRefusal = async (
+      outcome: string,
+      reason: string,
+      capabilityId: string | null,
+      workspaceId: string | null,
+    ): Promise<void> => {
+      const budget = await incrementBucket(
+        tx,
+        REFUSAL_AUDIT_BUDGET_KEY,
+        REFUSAL_AUDIT_BUDGET,
+      );
+      if (budget.count > REFUSAL_AUDIT_BUDGET) return;
+      await insertAudit(tx, { outcome, reason, capabilityId, workspaceId });
+    };
+
     const deny = async (
       outcome: string,
       reason: string,
       response: Response,
     ): Promise<Response> => {
       if (origin.count === 1) {
-        await insertAudit(tx, {
-          outcome,
-          reason,
-          capabilityId: null,
-          workspaceId: null,
-        });
+        await auditRefusal(outcome, reason, null, null);
       }
       return response;
     };
@@ -628,7 +683,7 @@ async function handle(request: Request): Promise<Response> {
 
     // Exactly one query, on every path, malformed token included. The RETURNS
     // TABLE signature of this function IS the field allowlist, and
-    // swarm_capability holds SELECT on no table, so there is no SQL here that
+    // swarm_capability holds SELECT on no TENANT table, so there is no SQL here that
     // could reach the roster, the message stream, or the event ledger.
     const rows = await tx<ProjectionRow[]>`
       SELECT
@@ -656,14 +711,26 @@ async function handle(request: Request): Promise<Response> {
       return await deny("authz", reason, uniformFailure(request));
     }
 
+    /* THIS PATH USED TO AUDIT UNCONDITIONALLY, AND THAT WAS TWO DEFECTS AT ONCE.
+     * Both non-Claude reviewers found it. A holder of ONE revoked or expired link could
+     * spam it for a permanent audit row every request — the per-caller throttle above
+     * guarded only deny(), not this branch, so the "refusals are throttled" property was
+     * false for exactly the case where the caller has a real token. Worse, the asymmetry
+     * was observable: a never-issued token skipped the write and a dead-but-known token
+     * performed it, so the extra round trip is a repeatable latency oracle separating
+     * "existed once" from "never existed" — which is the enumeration the uniform response
+     * exists to prevent. Same budget as every other refusal now, so the two paths cost
+     * the same and neither is unbounded. */
     if (row.status !== "ok") {
       const dead = DEAD_STATUS_REASONS.get(row.status);
-      await insertAudit(tx, {
-        outcome: dead?.outcome ?? "validation",
-        reason: dead?.reason ?? "capability_status_unrecognized",
-        capabilityId: row.capability_id,
-        workspaceId: row.workspace_id,
-      });
+      if (origin.count === 1) {
+        await auditRefusal(
+          dead?.outcome ?? "validation",
+          dead?.reason ?? "capability_status_unrecognized",
+          row.capability_id,
+          row.workspace_id,
+        );
+      }
       return uniformFailure(request);
     }
 

@@ -169,7 +169,11 @@ $$;
 
 -- swarm_capability is reachable from the open internet (the capability function
 -- is registered verify_jwt=false). Its READ side was already positively scoped -
--- SELECT on no table, EXECUTE on one projection - but its WRITE side was not:
+-- EXECUTE on one projection function, and SELECT on NO TABLE CARRYING TENANT DATA
+-- (it does hold SELECT/INSERT/UPDATE on swarm.rate_buckets, granted at
+-- 20260727000001:327 and confined by RLS to keys matching 'capability:read:%' -
+-- the earlier phrasing "SELECT on no table" was flatly wrong and a cross-model
+-- reviewer caught it against this very file) - but its WRITE side was not:
 -- table-wide INSERT plus a WITH CHECK (true) policy let it write ANY audit row,
 -- which is the one table whose integrity the whole anonymous surface depends on.
 -- Forging a row attributed to a human, or flooding rows with a different
