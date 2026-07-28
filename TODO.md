@@ -135,9 +135,29 @@ If the OFFICE moves, revisit the venue. If the FORMATION STATE changes, do not.
 
 ---
 
-## 4. DMCA designated agent — must be registered, not just printed
+## 4. DMCA designated agent — **named in the document; NOT yet registered**
 
-`terms.astro` carries `[[DMCA AGENT NAME AND ADDRESS]]`. Filling it in is not sufficient.
+★ HALF DONE, and the half that is done is the half that does not create the safe harbour.
+
+Filled 2026-07-28 (operator): **Thomas Langridge, Yulan Ventures, LLC, 1200 W 6th St,
+Ste 600-188, Austin, TX 78703, legal@commonswarm.com**. That was the last placeholder
+anywhere on the legal surface — `[[...]]` now matches 0 times across all three documents
+and `SECURITY.md`.
+
+**WHAT REMAINS IS THE FILING, AND IT IS THE PART THAT MATTERS.** The designated agent must
+be registered with the **US Copyright Office** through its online directory. Two practical
+notes for whoever does it:
+
+- The registration asks for a **telephone number**, which nothing in this repo has. The
+  document does not print one and does not need to, but the filing will not submit without
+  one.
+- Registration carries a fee and a **renewal cycle** (every three years). A lapsed
+  registration is the same as none.
+
+Until it is filed, the safe harbour does not exist. The Terms are written so this is not a
+false claim today — the copyright section says only where to send a notice and that we may
+remove material and terminate repeat infringers, all of which is true regardless. **Do not
+add language asserting §512 protection until the registration is confirmed.**
 
 **The designated agent must be registered with the US Copyright Office.** An address on a
 web page does not create the DMCA safe harbour. Registration is a filing with a fee and a
