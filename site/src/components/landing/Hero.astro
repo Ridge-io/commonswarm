@@ -36,8 +36,8 @@
  *   early access ................ self-serve workspace creation exists but is gated:
  *                                 createSelfServeWorkspace() in supabase/functions/command/
  *                                 index.ts runs only when SWARM_SELF_SERVE === "1" (:323,
- *                                 :2182), which production does not set. So: not invite-only
- *                                 any more, not open either. The badge says neither.
+ *                                 :2182), which production does not set. So access for a
+ *                                 stranger is invitation-gated today. The badge says neither.
  * Nothing else in this file is a claim about the world.
  *
  * The panel beside the copy is sample data and says so, in the panel, on screen.
@@ -110,7 +110,7 @@ const signals = [
       </p>
 
       <h1 class="h-display hero__title" id="hero-title">
-        Your agents know what <em>each other</em> are doing.
+        Your agents <em>know what</em> each other are doing.
       </h1>
 
       <p class="lede hero__lede">
@@ -119,7 +119,7 @@ const signals = [
       </p>
 
       <div class="row hero__ctas">
-        <a class="btn btn--lg btn--primary" href="#demo">Try it in the browser</a>
+        <a class="btn btn--lg btn--primary" href="#demo">See what a signal looks like</a>
         <a class="btn btn--lg btn--secondary" href="#how-it-works">
           The three-line start
           <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
@@ -133,14 +133,19 @@ const signals = [
         </a>
       </div>
 
+      <p class="hero__availability">
+        Invite-only today — free for up to three workspaces, with no card.
+      </p>
+
       {/* THE THREE-BULLET LIST WAS DELETED HERE. It read "Three verbs to speak, two to
           listen" / "Claims expire on their own" / "Any agent that can run a shell command" —
           17 words that were a compressed table of contents for the Verbs section 900px
           below, which states all three at full size. The fold is measured against the
           benchmarks (Linear 117 words, Vercel 69, Raycast 48) and ours was 171; this list
-          plus the panel caption were 41 of them. The copy column is four blocks now — badge,
-          h1, lede, CTA row — and nothing that was here is lost, only stated once instead of
-          twice. If a fact wants to be above the fold, it belongs in the lede. */}
+          plus the panel caption were 41 of them. The copy column is five blocks now — badge,
+          h1, lede, CTA row, and the availability line — and nothing that was here is lost,
+          only stated once instead of twice. If a fact wants to be above the fold, it belongs
+          in the lede or the availability line. */}
     </div>
 
     <div class="hero__panel">
@@ -217,7 +222,9 @@ const signals = [
     --h1-overhang: calc(var(--hero-gap) - var(--s-4));
 
     position: relative;
-    padding-block: clamp(var(--s-12), 7vw, var(--s-24)) var(--pad-section-tight);
+    padding-block:
+      clamp(var(--s-10), 5vw, var(--s-16))
+      clamp(var(--s-8), 3.5vw, var(--s-12));
     isolation: isolate;
     overflow: hidden;
   }
@@ -342,20 +349,20 @@ const signals = [
   .hero .hero__title {
     margin-block-end: var(--stack-md);
     max-width: 15ch;
+    background: none;
+    -webkit-text-fill-color: currentColor;
     /* pretty, not global.css's balance, and not just for the reason first recorded here.
-       balance broke this as "know what each / other are doing.", splitting the emphasised
-       phrase — that is now impossible anyway, because .hero__title em is nowrap. It was
-       re-measured against the wider column below and is still wrong: at 1200 balance sets
-       "Your agents / know what / each other are doing.", a 354 / 324 / 625 rag. pretty fills
-       greedily and gets 530 / 585 / 187 there and the two-line break at 1280 and up. */
+       balance broke this as "know what each / other are doing." It was re-measured against
+       the wider column below and is still wrong: at 1200 balance sets "Your agents / know
+       what / each other are doing.", a 354 / 324 / 625 rag. pretty fills greedily and gets
+       530 / 585 / 187 there and the two-line break at 1280 and up. */
     text-wrap: pretty;
   }
 
-  /* The emphasised phrase is one word as far as line breaking is concerned. `pretty` gets
+  /* The emphasised phrase is one unit as far as line breaking is concerned. `pretty` gets
      this right at the widths the hero actually uses, but it is a heuristic and the column
-     width is now a design variable — this makes the constraint explicit so a future change
-     to the grid cannot quietly reintroduce "know what each / other are doing." Safe on a
-     phone too: at the 2.5rem floor the phrase measures ~200px against 335px of column. */
+     width is now a design variable. Safe on a phone too: "know what" is comfortably shorter
+     than the column at the display-size floor. */
   .hero__title em {
     white-space: nowrap;
   }
@@ -369,13 +376,38 @@ const signals = [
     margin-block-end: var(--s-8);
   }
 
+  .hero__availability {
+    max-width: 48ch;
+    font-size: var(--t-sm);
+    line-height: var(--lh-sm);
+    color: var(--text-muted);
+  }
+
   /* On one column the two buttons hug their own labels and end up different widths, which
      reads as unfinished rather than as hierarchy. Below 30rem they share the full column. */
   @media (max-width: 30rem) {
+    .hero {
+      --hero-gap: var(--s-4);
+      padding-block: var(--s-4) var(--s-6);
+    }
+
+    .hero__eyebrow {
+      margin-block-end: var(--s-2);
+    }
+
+    .hero .hero__title {
+      margin-block-end: var(--s-2);
+    }
+
+    .hero__lede {
+      margin-block-end: var(--s-3);
+    }
+
     .hero__ctas {
       display: grid;
       grid-template-columns: 1fr;
       inline-size: 100%;
+      margin-block-end: var(--s-2);
     }
   }
 

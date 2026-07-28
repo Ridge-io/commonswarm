@@ -113,6 +113,10 @@ import Button from "../ui/Button.astro";
 </section>
 
 <style>
+  .invite {
+    padding-block: clamp(var(--s-8), 3.5vw, var(--s-12));
+  }
+
   /* One column, and centred. The card was a two-column grid because it held a facts list and
      a form; with both gone, a 1.15fr / 1fr split would be a layout with nothing to lay out.
      Everything here is one short column of copy ending in the page's last two buttons, so it
@@ -148,7 +152,7 @@ import Button from "../ui/Button.astro";
   }
 
   .invite__ctas {
-    margin-block-start: var(--s-8);
+    margin-block-start: var(--s-6);
     justify-content: center;
   }
 
@@ -164,7 +168,7 @@ import Button from "../ui/Button.astro";
   }
 
   .invite__meta {
-    margin-block-start: var(--s-6);
+    margin-block-start: var(--s-4);
     font-size: var(--t-xs);
     line-height: var(--lh-xs);
     color: var(--text-faint);

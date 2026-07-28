@@ -127,6 +127,10 @@ const listen = [
 </section>
 
 <style>
+  .verbs {
+    padding-block: clamp(var(--s-8), 3.5vw, var(--s-12));
+  }
+
   /* The break belongs at the full stop, and neither wrapping mode put it there on its own:
      balance dangled "to" at the end of line one, and pretty pulled "Two" up onto it. Both
      were measured, not guessed — at 1440 the two candidate first lines render 525px
@@ -144,11 +148,11 @@ const listen = [
     flex-direction: column;
     gap: var(--stack-sm);
     max-width: var(--measure-wide);
-    margin-block-end: var(--stack-xl);
+    margin-block-end: var(--s-6);
   }
 
   .verbs__group + .verbs__group {
-    margin-block-start: var(--s-10);
+    margin-block-start: var(--s-6);
   }
 
   .verbs__label {

@@ -157,18 +157,22 @@ const STEPS = [
 </section>
 
 <style>
+  .start {
+    padding-block: clamp(var(--s-8), 3.5vw, var(--s-12));
+  }
+
   .start__head {
     display: flex;
     flex-direction: column;
     gap: var(--stack-sm);
     max-width: var(--measure-wide);
-    margin-block-end: var(--stack-xl);
+    margin-block-end: var(--s-6);
   }
 
   .start__steps {
     display: flex;
     flex-direction: column;
-    gap: var(--s-6);
+    gap: var(--s-4);
     list-style: none;
     margin: 0;
     padding: 0;
@@ -182,7 +186,7 @@ const STEPS = [
     grid-template-areas:
       "n text"
       ". code";
-    padding-block-end: var(--s-6);
+    padding-block-end: var(--s-4);
     border-block-end: 1px solid var(--border);
   }
 

@@ -541,12 +541,16 @@ const DEFAULT_TEXT = "wiring the payments webhook";
     display: none !important;
   }
 
+  .demo {
+    padding-block: clamp(var(--s-8), 3.5vw, var(--s-12));
+  }
+
   .demo__head {
     display: flex;
     flex-direction: column;
     gap: var(--stack-sm);
     max-width: var(--measure-wide);
-    margin-block-end: var(--stack-xl);
+    margin-block-end: var(--s-6);
   }
 
   .demo__head .eyebrow {
