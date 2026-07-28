@@ -169,14 +169,27 @@ is **dead**: the name is now CommonSwarm and the domain is decided too.
 
 ```sh
 cd site && rm -rf dist && npm run build          # rm -rf is load-bearing, see below
-vercel deploy dist --prod --yes --name coswarm-site --scope ridgedotio
+cp -r .vercel dist/.vercel                       # load-bearing, see trap 5
+vercel deploy dist --prod --yes --scope ridgedotio
 ```
 
 `--scope ridgedotio` is required; without it the CLI stops and asks. `vercel link
 --project coswarm-site --scope ridgedotio --yes` is needed before any `vercel project`
 subcommand.
 
-**Four traps, each of which cost a deploy:**
+**Five traps, each of which cost a deploy. Trap 5 is the newest and the nastiest:**
+
+5. **`--name` IS DEPRECATED, AND DROPPING IT SILENTLY DEPLOYS TO A NEW PROJECT.** The
+   command here used to end `--name coswarm-site`. Newer Vercel CLIs ignore that flag with a
+   deprecation warning, and then infer the project **from the deployed directory's name** —
+   so `vercel deploy dist` created and deployed to a brand-new project called **`dist`**,
+   reported "Production" and "Aliased" in green, and exited 0. `commonswarm.com` kept
+   serving the OLD build. Nothing failed; the deploy simply went somewhere else.
+   The fix is the `cp -r .vercel dist/.vercel` above: `site/.vercel` is linked to
+   `coswarm-site`, but `rm -rf dist` destroys the copy inside `dist/` on every build, so it
+   has to be restored before every deploy. **This is exactly why the "verify the DEPLOYED
+   page" rule below exists** — a green deploy log proved nothing, and only fetching
+   commonswarm.com and grepping for a string from the new build caught it.
 
 1. **`rm -rf dist` before building.** Astro does not clean `dist/`, so stale files survive and
    get deployed. A grep of `dist/` can report content that is no longer in `src/`.
