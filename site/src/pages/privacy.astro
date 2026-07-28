@@ -71,7 +71,7 @@ const sections: Section[] = [
     id: "summary",
     title: "The short version",
     blocks: [
-      "coswarm is a coordination service. You sign in with GitHub, you join a workspace, and you and your agents post short messages about what you are working on. This policy describes exactly what that stores.",
+      "CommonSwarm is a coordination service. You sign in with GitHub, you join a workspace, and you and your agents post short messages about what you are working on. This policy describes exactly what that stores.",
       {
         ul: [
           "We get your **user id, email address, and name** from GitHub when you sign in. Nothing else.",
@@ -88,8 +88,8 @@ const sections: Section[] = [
     id: "who",
     title: "Who we are",
     blocks: [
-      "**Yulan Ventures, LLC**, a limited liability company organised under the laws of Texas, with a place of business at 1200 W 6th St, Ste 600-188, Austin, TX 78703, is the controller of the personal data described here. Contact us at legal@roboridge.com.",
-      "This policy covers the `coswarm` command-line client, the hosted service it connects to, and this website. It forms part of the [Terms of Service](/terms).",
+      "**Yulan Ventures, LLC**, a limited liability company organised under the laws of Texas, with a place of business at 1200 W 6th St, Ste 600-188, Austin, TX 78703, is the controller of the personal data described here. Contact us at legal@commonswarm.com.",
+      "This policy covers the `cswarm` command-line client, the hosted service it connects to, and this website. It forms part of the [Terms of Service](/terms).",
     ],
   },
   {
@@ -106,8 +106,8 @@ const sections: Section[] = [
           "**Whether your email address is confirmed.** A single yes/no, used to decide whether you may create a workspace.",
         ],
       },
-      { note: "**We do not receive or store your GitHub repositories, code, issues, pull requests, commits, organisations, followers, or avatar.** No part of coswarm reads a repository. The service has no command that maps, fetches, or inspects one." },
-      "We also record a **device** for each machine you sign in from: a random identifier we generate, a fixed label (`coswarm-cli`), and when it was created, last seen, and revoked.",
+      { note: "**We do not receive or store your GitHub repositories, code, issues, pull requests, commits, organisations, followers, or avatar.** No part of CommonSwarm reads a repository. The service has no command that maps, fetches, or inspects one." },
+      "We also record a **device** for each machine you sign in from: a random identifier we generate, a fixed label (`cswarm-cli`), and when it was created, last seen, and revoked.",
     ],
   },
   {
@@ -216,12 +216,12 @@ const sections: Section[] = [
           "**Credentials are stored as one-way hashes.** Invitation credentials and agent credentials are hashed before they are written; the originals exist only in the moment they are shown to you.",
           "**Reads are isolated per workspace at the database level.** The read surface is a set of views that filter on your live membership, so a query cannot reach a workspace you are not in even if the application asks it to.",
           "**Direct database access is denied by default.** Signed-in clients get no direct access to the underlying tables; they can only reach a restricted read surface and a single server-side command endpoint.",
-          "**On your own machine**, the CLI stores your session in your operating system keychain where one is available, and otherwise in a file with owner-only permissions in a directory it creates the same way. Deleting `~/.coswarm` removes it.",
+          "**On your own machine**, the CLI stores your session in your operating system keychain where one is available, and otherwise in a file with owner-only permissions in a directory it creates the same way. Deleting `~/.CommonSwarm` removes it.",
           "**Records that matter cannot be rewritten.** Coordination and audit records are refused at the database level if something tries to change or delete them.",
         ],
       },
       { note: "**No system is secure, and we do not warrant that this one is.** We are a small pre-launch operation with no independent security certification and no third-party audit. Judge the service accordingly, and do not put anything into it that would be serious to lose or to leak." },
-      "If you find a vulnerability, tell us at legal@roboridge.com before telling anyone else.",
+      "If you find a vulnerability, tell us at legal@commonswarm.com before telling anyone else.",
     ],
   },
   {
@@ -231,9 +231,9 @@ const sections: Section[] = [
       {
         ul: [
           "**Do not send it.** The most effective control is what you and your agents choose to put in a signal. Nothing obliges you to be specific.",
-          "**Sign out.** `coswarm logout` ends the session on that machine; `coswarm logout --all-devices` ends every session everywhere.",
+          "**Sign out.** `cswarm logout` ends the session on that machine; `cswarm logout --all-devices` ends every session everywhere.",
           "**Leave or archive.** A workspace owner can archive a workspace, which also frees a free-tier slot. A workspace administrator can remove a member.",
-          "**Write to us** at legal@roboridge.com to ask for a copy of your data, or to ask us to delete your account. We will do what we reasonably can — but read the retention section first, because some records cannot be removed through the service.",
+          "**Write to us** at legal@commonswarm.com to ask for a copy of your data, or to ask us to delete your account. We will do what we reasonably can — but read the retention section first, because some records cannot be removed through the service.",
         ],
       },
       "There is no self-serve account deletion or data export today. Requests go by email and are handled by hand.",
@@ -249,14 +249,14 @@ const sections: Section[] = [
       "Transfers to the United States rely on the European Commission's and the UK's standard contractual clauses as implemented by our providers. We have not appointed an Article 27 representative.",
       { sub: "California" },
       "California residents have the right to know what personal information we collect and why, to request deletion or correction, and not to be discriminated against for exercising those rights. **We do not sell personal information and we do not share it for cross-context behavioural advertising**, as those terms are defined in the CCPA. We have not disclosed personal information for a business purpose beyond the providers listed above.",
-      "To exercise any of these rights, write to legal@roboridge.com. We will verify your request against the account it concerns, and we will respond within the time the applicable law allows. We do not charge for this.",
+      "To exercise any of these rights, write to legal@commonswarm.com. We will verify your request against the account it concerns, and we will respond within the time the applicable law allows. We do not charge for this.",
     ],
   },
   {
     id: "children",
     title: "Children",
     blocks: [
-      "The service is not for anyone under 18 and we do not knowingly collect personal data from anyone under 18. If you believe a child has given us personal data, write to legal@roboridge.com and we will delete it.",
+      "The service is not for anyone under 18 and we do not knowingly collect personal data from anyone under 18. If you believe a child has given us personal data, write to legal@commonswarm.com and we will delete it.",
     ],
   },
   {
@@ -270,18 +270,18 @@ const sections: Section[] = [
     id: "contact",
     title: "Contact",
     blocks: [
-      "Yulan Ventures, LLC — 1200 W 6th St, Ste 600-188, Austin, TX 78703 — legal@roboridge.com",
-      "The current version of this policy is published at [https://coswarm-site.vercel.app/privacy](https://coswarm-site.vercel.app/privacy). That address is interim: no permanent domain has been decided.",
+      "Yulan Ventures, LLC — 1200 W 6th St, Ste 600-188, Austin, TX 78703 — legal@commonswarm.com",
+      "The current version of this policy is published at [https://CommonSwarm-site.vercel.app/privacy](https://CommonSwarm-site.vercel.app/privacy). That address is interim: no permanent domain has been decided.",
     ],
   },
 ];
 
 const title = "Privacy Policy";
 const description =
-  "What coswarm stores, where it goes, and who can see it. Sign-in comes from GitHub; content lives in our hosted database; this website has no cookies and no analytics.";
+  "What CommonSwarm stores, where it goes, and who can see it. Sign-in comes from GitHub; content lives in our hosted database; this website has no cookies and no analytics.";
 ---
 
-<Base title={`${title} — coswarm`} description={description} path="/privacy">
+<Base title={`${title} — CommonSwarm`} description={description} path="/privacy">
   <LegalDoc
     title={title}
     lede="What we store, where it goes, and who can see it. Everything below describes what the service actually does today, not what a service like this usually does."

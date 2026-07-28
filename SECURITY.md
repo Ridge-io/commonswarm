@@ -1,12 +1,12 @@
 # Security
 
-This repository is public and coswarm handles sign-in credentials, invitation
+This repository is public and CommonSwarm handles sign-in credentials, invitation
 capabilities, and agent tokens. If you find a problem, we want to hear about it before
 anyone else does.
 
 ## Reporting a vulnerability
 
-Email **security@roboridge.com**. Include what you found, how to reproduce it, and
+Email **security@commonswarm.com**. Include what you found, how to reproduce it, and
 what an attacker could do with it. Please do not open a public issue or a pull request
 for a security problem — an issue is a disclosure.
 
@@ -26,7 +26,7 @@ Acting within those lines, we will not pursue you for a good-faith report.
 
 ## Scope
 
-**In scope:** the `coswarm` CLI in this repository, the Supabase edge functions under
+**In scope:** the `cswarm` CLI in this repository, the Supabase edge functions under
 `supabase/functions/`, the database schema and its row-level security under
 `supabase/migrations/`, and the marketing site under `site/`.
 
@@ -58,9 +58,9 @@ are supported; there are no security backports to older tags.
 
 ## Related
 
-- [Terms of Service](https://coswarm-site.vercel.app/terms)
-- [Privacy Policy](https://coswarm-site.vercel.app/privacy)
-- [Acceptable Use Policy](https://coswarm-site.vercel.app/acceptable-use)
+- [Terms of Service](https://CommonSwarm-site.vercel.app/terms)
+- [Privacy Policy](https://CommonSwarm-site.vercel.app/privacy)
+- [Acceptable Use Policy](https://CommonSwarm-site.vercel.app/acceptable-use)
 
 Those URLs are interim. No permanent domain has been decided, and all three documents
 are drafts until the operator fills in their remaining placeholders.
