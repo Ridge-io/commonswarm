@@ -6,6 +6,16 @@ Durable artifacts backing evidence-gated phase completions. These live in the re
 evidence no longer existed. A completion claim whose evidence cannot be re-read is
 not evidence-gated.
 
+**Naming, and why these files were not rewritten.** The product was renamed to
+**CommonSwarm** with binary **`cswarm`** on 2026-07-27. Evidence written before that date
+still says `coswarm`, and it stays that way: these files record what was run and what it
+printed on a given day, and editing a past measurement to match a present name destroys
+the only thing they are for. Read any `coswarm` here as the old name of the same product.
+The one exception is `zero-install-agent-onramp.md`, whose *forward-looking* install and
+post-deploy-verification commands were updated — a stale command there is not a record,
+it is a trap that produces a copied 404 and a grep that manufactures a confident zero.
+That file carries its own amendment note saying which parts moved and which did not.
+
 | File | What it is |
 |---|---|
 | `kimi-p1-spec.log` | Kimi K3 dispatch 1 — P1 spec §0–§4 (truncated mid-§4) |

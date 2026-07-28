@@ -38,7 +38,7 @@
  * SUPERSEDED, KEPT SO NOBODY RE-DERIVES IT — this line rendered on every page:
  *
  *     "Pre-launch. Access is by invitation while we run coswarm on our own work — there
- *      is nothing to sign up for yet."
+ *      is nothing to sign up for yet."   (quoted verbatim; the product is CommonSwarm now)
  *
  * The last clause is DEAD. Self-serve workspace creation exists on the server: the
  * `create_workspace` command is handled by createSelfServeWorkspace() in
@@ -88,13 +88,25 @@ const REPO = "https://github.com/Ridge-io/cloud-swarm";
  * fact a footer on a pre-launch developer tool has earned the right to state, and the only
  * honest way to state it is to derive it.
  *
- *   coswarm 0.0.1  <- package.json "version" at the repo root, which is what
+ *   cswarm 0.0.1   <- package.json "version" at the repo root, which is what
  *                     packageVersion() feeds CLI_BUILD_VERSION (src/cli.ts:140)
  *   protocol 0.1.0 <- CLIENT_PROTOCOL_VERSION (src/cloud/config.ts:3)
  *
  * Rendered in the same shape the binary prints for `--version` (src/cli.ts:246 and :1737):
- * `coswarm <v> (protocol <p>)`. Checked against the built CLI on the day this was written:
+ * `cswarm <v> (protocol <p>)`. Checked against the built CLI on the day this was written:
  *   $ node dist/cli.js --version   ->  coswarm 0.0.1 (protocol 0.1.0)
+ *
+ * NOTE THE MISMATCH ON THE LINE ABOVE, IT IS DELIBERATE. That is the output as measured, under
+ * the old binary name; nobody has re-run `--version` on a renamed build. The literal prefix in
+ * `versionLine` below reads `cswarm`, and that was not assumed from the rename — it was read
+ * off the two places the binary composes the string, which have MOVED since this note was
+ * written: src/cli.ts:248 and :1804 (the note's old :246 and :1737 are stale line numbers for
+ * the same two sites). Both now build `cswarm ${CLI_BUILD_VERSION} (protocol
+ * ${CLIENT_PROTOCOL_VERSION})`, so the shape below still matches the binary's.
+ *
+ * Only the prefix is a literal here; both NUMBERS stay derived at build time from
+ * package.json and config.ts, and both still throw if they read empty — so the part that
+ * could silently go stale did not change.
  *
  * Both reads throw at BUILD time if they come back empty, so this can never silently ship a
  * blank or a stale version. A hard-coded string would have gone stale on the next bump; a
@@ -119,7 +131,7 @@ if (!protocolVersion) {
   );
 }
 
-const versionLine = `coswarm ${cliVersion} (protocol ${protocolVersion})`;
+const versionLine = `cswarm ${cliVersion} (protocol ${protocolVersion})`;
 
 const COLUMNS = [
   {
@@ -203,8 +215,8 @@ const year = new Date().getFullYear();
       <p class="ft__status">
         <span class="ft__pip" aria-hidden="true"></span>
         <span>
-          <strong>Early access.</strong> Access is by invitation while we run coswarm on our
-          own work. Self-serve signup is built but is not open on this deployment yet.
+          <strong>Early access.</strong> Access is by invitation while we run CommonSwarm on
+          our own work. Self-serve signup is built but is not open on this deployment yet.
         </span>
       </p>
       <p class="ft__legal">© {year} Ridge.io · MIT · no tracking on this page</p>

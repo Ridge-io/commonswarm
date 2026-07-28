@@ -174,12 +174,12 @@ export function encodeInviteLink(payload: InviteLinkPayload): string {
   if (Buffer.byteLength(JSON.stringify(validated), "utf8") > MAX_LINK_PAYLOAD_BYTES) {
     throw new Error("invite link payload is too large");
   }
-  return `coswarm://accept/${encoded}`;
+  return `cswarm://accept/${encoded}`;
 }
 
 export function decodeInviteLink(value: string): InviteLinkPayload {
-  const encoded = value.startsWith("coswarm://accept/")
-    ? value.slice("coswarm://accept/".length)
+  const encoded = value.startsWith("cswarm://accept/")
+    ? value.slice("cswarm://accept/".length)
     : value;
   return validatedPayload(strictDecodedPayload(encoded));
 }
@@ -188,7 +188,7 @@ export function parseAcceptPositional(value: string): ParsedAcceptInput {
   if (INVITATION_TOKEN_RE.test(value)) {
     return { mode: "token", token: value };
   }
-  if (value.startsWith("coswarm://accept/")) {
+  if (value.startsWith("cswarm://accept/")) {
     return { mode: "link", payload: decodeInviteLink(value) };
   }
   if (STRICT_BASE64URL_RE.test(value)) {
@@ -199,7 +199,7 @@ export function parseAcceptPositional(value: string): ParsedAcceptInput {
     }
   }
   throw new Error(
-    "accept expects a swm_inv_ invitation capability or coswarm://accept/<invite-link>; use --link-stdin for the safe link form",
+    "accept expects a swm_inv_ invitation capability or cswarm://accept/<invite-link>; use --link-stdin for the safe link form",
   );
 }
 
@@ -216,7 +216,7 @@ function devOrigins(value: string | undefined): Set<string> {
     try {
       origins.add(cloudTarget(trimmed, "dev-only-placeholder").url);
     } catch {
-      throw new Error("COSWARM_DEV_ALLOWED_ORIGINS contains an invalid origin");
+      throw new Error("CSWARM_DEV_ALLOWED_ORIGINS contains an invalid origin");
     }
   }
   return origins;

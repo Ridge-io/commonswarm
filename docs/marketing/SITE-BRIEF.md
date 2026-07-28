@@ -1,4 +1,4 @@
-# coswarm marketing site — shared brief
+# CommonSwarm marketing site — shared brief
 
 Every agent working on the site reads this first. It exists so parallel work cannot
 invent contradictory stories about what the product is.
@@ -56,10 +56,16 @@ What it implies, in order:
 4. **Copy: less is more.** Short lines. No jargon. The retired vocabulary table below is still
    right about what to avoid, and now the bar is higher: cut anything a non-expert would stop on.
 
-**Name: `coswarm`, decided.** **Domain: UNDECIDED** — a candidate is not a decision, and
-nothing is wired. Interim hosting will be a Vercel URL. `coswarm.dev` belongs to a live,
-unrelated product and must not be referenced until it is actually ours; see the hazard note
-in `site/astro.config.mjs`.
+**Name: CommonSwarm, decided (operator, 2026-07-27).** The binary and every typed command
+are `cswarm`. This replaces the earlier `coswarm`, which collided with a competitor in the
+same space — that is the whole reason for the change, and it is not open for relitigation.
+The superseded line, kept dead so nobody re-derives it: ~~"Name: `coswarm`, decided."~~
+
+**Domain: `commonswarm.com`, decided — but NOT WIRED.** DNS is parked and nothing serves
+it. Do not write copy claiming the site is live there. The live URL today is
+`https://coswarm-site.vercel.app` and it stays live until the operator repoints DNS.
+`coswarm.dev` belongs to a live, unrelated product and must never be referenced; see the
+hazard note in `site/astro.config.mjs`.
 
 Everything below predates this and should be read as history unless it is about honesty rules,
 which still bind: no invented facts, no fake social proof, every command real.
@@ -83,22 +89,22 @@ good and we are being judged against it in a **blind side-by-side**. What it doe
 To beat it we cannot ship static marketing copy. We need equal typographic confidence
 and at least one genuinely interactive demo of *our* product's actual behaviour.
 
-## What coswarm actually is — GROUND TRUTH, DO NOT EMBELLISH
+## What CommonSwarm actually is — GROUND TRUTH, DO NOT EMBELLISH
 
 Multi-human, multi-agent **coordination cloud service**. The cloud evolution of the
 local `swarm` CLI. It is a **CLI plus a hosted service**. There is **no web UI**.
 
 Status: **P3-1, invited dogfood.** Pre-launch. Not self-serve yet.
 
-Real, shipped surface (from `coswarm --help`, verified):
+Real, shipped surface (from `cswarm --help`, verified):
 
 - Auth: `login` / `logout` — GitHub OAuth with PKCE.
-- Membership: `invite --email`, `accept <coswarm://accept/...>`, `workspaces`, `use`.
+- Membership: `invite --email`, `accept <cswarm://accept/...>`, `workspaces`, `use`.
 - Signals (intention sharing): `working-on`, `note`, `ask`, `feed`, `inbox`.
   These take `--about <ref>`, `--to <member>`, `--until <dur>` (capped 30d).
 - Authority core: `principal create`, `token mint` (bound to principal + run + task +
   epoch, with a TTL), `command <kind>`, `dogfood`.
-- Install: `curl -fsSL <url>/install.sh | sh` → `~/.local/bin/coswarm`, checksum
+- Install: `curl -fsSL <url>/install.sh | sh` → `~/.local/bin/cswarm`, checksum
   verified, no sudo. Requires Node >= 24.
 
 ### ⚠ THE DIFFERENTIATOR WAS WRONG. THIS SUPERSEDES IT. (2026-07-26)
@@ -161,14 +167,14 @@ well-intentioned; if an act is reversible, it should not be gated. Simpler is be
 
 ### The onboarding story — lead with this, it is genuinely clean
 
-Every other verb needs `--url` and `--anon-key`. **`coswarm accept <link>` does not.**
+Every other verb needs `--url` and `--anon-key`. **`cswarm accept <link>` does not.**
 That single exception is the entire first-run narrative and the installer already
 points at it:
 
 ```
 curl -fsSL <url>/install.sh | sh
-coswarm accept <invite-link>
-coswarm working-on "wiring the payments webhook"
+cswarm accept <invite-link>
+cswarm working-on "wiring the payments webhook"
 ```
 
 Three lines, no configuration. That is our "one link".
@@ -184,6 +190,8 @@ Two seats established this independently, by different methods, and they agree:
   equals the profile filename exactly. The store holds two files, the profile schema has no
   url field, and grepping every file under `~/.coswarm` for a URL returns nothing — with a
   positive control proving the grep matches when a URL *is* present.
+  (That measurement was taken before the rename; the config directory is now `~/.cswarm`.
+  The path measured is left as written because that is what was measured.)
 
 The URL is the **lookup key**, and a one-way hash cannot be reversed into the project you
 logged into. The CLI must be told the URL every time **by construction, not by omission**.
@@ -199,7 +207,7 @@ that does not run.
 The honest third line exists and is simply longer. Use this form on the site:
 
 ```
-coswarm working-on "wiring the payments webhook" \
+cswarm working-on "wiring the payments webhook" \
   --url https://<ref>.supabase.co --anon-key <key>
 ```
 
@@ -243,7 +251,7 @@ Consequences, and they bind:
 4. Pre-launch status is stated honestly. "Invited dogfood" is a *scarcity* asset, not
    an embarrassment — an invite-only developer tool is a legitimate and appealing frame.
 5. Every command shown on the site must be copy-pasteable and real. If you show it, a
-   reader must be able to run it. Verify against `coswarm --help`.
+   reader must be able to run it. Verify against `cswarm --help`.
 6. Accessibility is part of AAA: real contrast ratios, keyboard focus states, reduced
    motion honoured, semantic landmarks, alt text.
 
@@ -276,7 +284,7 @@ that feeds both display and clipboard — if the heading sits outside that block
 Run, with a stored login and no flags:
 
 ```
-coswarm working-on "x"
+cswarm working-on "x"
 ```
 
 - **prints `--url is required`** → keep the flag-carrying command *and* the "once you're

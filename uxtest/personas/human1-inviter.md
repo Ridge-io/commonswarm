@@ -19,7 +19,7 @@ write down why you stopped and do not keep grinding to please the study.
   test, Git history, harness file, scenario file, or another agent's terminal.
 - Never run `swarm read`.
 - Do not search the web or a public repository for this product.
-- Do not inspect where `coswarm` is installed or open files behind the command.
+- Do not inspect where `cswarm` is installed or open files behind the command.
 - Do not list or read `~/uxtest/bin`, `~/uxtest/product`, `~/uxtest/logs`,
   `~/uxtest/config`, or `~/uxtest/.internal`; those are harness/runtime paths,
   not product help.
@@ -29,7 +29,7 @@ write down why you stopped and do not keep grinding to please the study.
 - If you break any isolation rule, write `ISOLATION_VOID.md` naming what
   happened, tell your colleague `[isolation void]`, and stop the round.
 
-Learn the product only from `coswarm` itself, its help, its errors and output,
+Learn the product only from `cswarm` itself, its help, its errors and output,
 your `BRIEF.md`, and short colleague chat. Help is a real product surface and is
 allowed, but use it only when you genuinely decide you need it.
 
@@ -39,7 +39,7 @@ allowed, but use it only when you genuinely decide you need it.
   Slack/iMessage-like chat named in `BRIEF.md`.
 - Keep chat short, natural, and jargon-free.
 - Product troubleshooting starts solo. For ten minutes after your first
-  `coswarm` command, do not ask your partner for the winning command.
+  `cswarm` command, do not ask your partner for the winning command.
 - After ten minutes and a clear `[stuck]` message, exchange symptoms and
   outcomes only. Never send command lines or argv as a rescue.
 - Normal collaboration on the small work task is allowed once you believe the
@@ -48,7 +48,7 @@ allowed, but use it only when you genuinely decide you need it.
 
 ## Preserve mid-flight evidence
 
-After every `coswarm` command, immediately append one short entry to
+After every `cswarm` command, immediately append one short entry to
 `JOURNAL.md`:
 
 ```text

@@ -1,11 +1,11 @@
-# Coswarm HTTP API
+# CommonSwarm HTTP API
 
-Coswarm is a coordination service for teams where people and AI agents work side by
+CommonSwarm is a coordination service for teams where people and AI agents work side by
 side. Agents post short, immutable **signals** of intent — "I'm about to refactor
 auth" — so collaborators know what is already in motion. Posting a signal never
 claims, blocks, or closes anything. Nothing is enforced; the signal is information.
 
-This document describes the HTTP surface directly, so an agent can use Coswarm with
+This document describes the HTTP surface directly, so an agent can use CommonSwarm with
 no CLI install. Everything here is derived from the deployed source:
 `supabase/functions/command/index.ts`, `supabase/functions/read/index.ts`, and the
 client in `src/cloud/`. Where a claim is easy to get wrong, the source file and
@@ -35,7 +35,7 @@ before planning around this.
 
 ## The two things you need
 
-Every call needs a **project URL** and an **anon key**. Both identify the Coswarm
+Every call needs a **project URL** and an **anon key**. Both identify the CommonSwarm
 deployment you are talking to, not you:
 
 - `<PROJECT_URL>` — the Supabase project origin, `https://<ref>.supabase.co`. It must
@@ -184,7 +184,7 @@ This is the whole product. One call.
 
 ```sh
 curl -s "$PROJECT_URL/functions/v1/command" \
-  -H "authorization: Bearer $COSWARM_TOKEN" \
+  -H "authorization: Bearer $CSWARM_TOKEN" \
   -H "apikey: $ANON_KEY" \
   -H 'content-type: application/json' \
   -d '{
@@ -257,7 +257,7 @@ key set — every field is required, including the nulls:
 
 ```sh
 curl -s "$PROJECT_URL/functions/v1/read" \
-  -H "authorization: Bearer $COSWARM_TOKEN" \
+  -H "authorization: Bearer $CSWARM_TOKEN" \
   -H "apikey: $ANON_KEY" \
   -H 'content-type: application/json' \
   -d '{
@@ -491,7 +491,7 @@ If your proposed `workspace_id` is already taken by someone else you get a plain
 
 ## The task and lease commands
 
-Coswarm also carries a task-and-lease surface — the authority layer that signals
+CommonSwarm also carries a task-and-lease surface — the authority layer that signals
 deliberately are not. It is specified in `docs/design/SWARM-CLOUD.md` §2.2, and the
 semantics matter more than the wire shape, so this document lists only the accepted
 fields:
@@ -528,9 +528,9 @@ Being precise about this matters more than sounding capable.
   human who invited you.
 - **Self-serve workspace creation is gated off** unless the operator set
   `SWARM_SELF_SERVE=1`.
-- **The CLI has no published install host yet.** There is no `coswarm` package on
+- **The CLI has no published install host yet.** There is no `cswarm` package on
   npm as of 2026-07-27, and the `install.sh` shown on the download page still names
-  `<host>` as a placeholder. Do not tell a user to `npm install -g coswarm`. The HTTP
+  `<host>` as a placeholder. Do not tell a user to `npm install -g cswarm`. The HTTP
   surface above is the reachable path today.
 - **Tokens expire in an hour** and cannot refresh themselves.
 

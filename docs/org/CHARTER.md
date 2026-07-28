@@ -1,7 +1,7 @@
-# The coswarm org — charter
+# The CommonSwarm org — charter
 
 **Operator directive, 2026-07-25:** stand up a standing organisation across tabs and workspaces —
-product, research, marketing, testing, development, infrastructure, operations — to drive coswarm to
+product, research, marketing, testing, development, infrastructure, operations — to drive CommonSwarm to
 launchable **continuously**. Hunt errors, architectural bugs, poor design, technical debt, marketing
 debt. Clean up, test, validate, optimise for performance and cost. **Ship, and ship frequently.**
 
@@ -127,7 +127,7 @@ Never spawn into pressure; a swapping fleet is slower than a smaller one.
 
 | repo | remote | what it is |
 |---|---|---|
-| `cloud-swarm` | `Ridge-io/cloud-swarm` | the product: protocol, hosted edge functions, `coswarm` CLI |
+| `cloud-swarm` | `Ridge-io/cloud-swarm` | the product (CommonSwarm): protocol, hosted edge functions, `cswarm` CLI |
 | `swarm` | `Ridgeio/swarm` | the local coordination CLI this fleet runs on — **and it ships defects** |
 
 Everything else under `Ridge.io/` belongs to other products and is **out of scope**.
@@ -265,22 +265,24 @@ on the same channel, or the recipient is right to refuse.**
 ## 6. LAUNCHABLE — the bar   *(§6 — this section. The label is here so grepping for it finds it.)*
 
 Not "the tests pass." A stranger, on their own machine, can:
-1. Install `coswarm` and authenticate without being walked through it **— blocked today: THERE IS
+1. Install `cswarm` and authenticate without being walked through it **— blocked today: THERE IS
    NO INSTALLER.** Distribution was ruled on 2026-07-25 (operator: signed installer, source stays
    private, npm unpublished, `54795ec`) and the guard is measured — **but a ruling is not a
    deliverable and nobody built it.** `prepare`+`files` closed 1(c): install-from-git now yields a
    working binary. **1(a) is DECIDED, NOT BUILT.**
 2. Create their own workspace **— blocked today: `operatorAllowed` ships as a constant `false`**
 3. Invite a collaborator who accepts without a terminal ritual **— blocked today: BY ITEM 1, and
-   this is the non-obvious one.** The invite path itself is sound and `coswarm accept <link>` is
-   the only first-contact verb needing no `--url`. **But an invitee has no `coswarm` to run
+   this is the non-obvious one.** The invite path itself is sound and `cswarm accept <link>` is
+   the only first-contact verb needing no `--url`. **But an invitee has no `cswarm` to run
    either** (Pitch), so the installer gates the invite path as surely as it gates the installer's
    own item. **Do not schedule 3 as independent work.**
 4. Post and read signals from **both** machines **— blocked today: BY ITEM 1.** ★ An earlier version
    of this line said *"the CLI is not on the second machine at all"* and **that is FALSE** (Vane;
    re-measured 2026-07-26 **UTC** = 2026-07-25 ~21:30 local — **the launch audit dates the same
    probe by local clock; there is ONE measurement, not two**): `zsh -lc 'command -v coswarm'` on the laptop returns
-   `/opt/homebrew/bin/coswarm`. **It is there — hand-installed by `npm link` into a shared
+   `/opt/homebrew/bin/coswarm` — measured before the 2026-07-27 rename, so the binary name in that
+   reading is the old one; the binary is now `cswarm` and the probe must be re-run against that name.
+   **It is there — hand-installed by `npm link` into a shared
    checkout, which is exactly what a stranger cannot do.** The blocker is the missing installer,
    not absence. ★★ **Measuring this took three attempts and the first two were FALSE NEGATIVES:**
    non-login `ssh` has no homebrew on PATH (measured: 0 occurrences), and `bash -lc` is the wrong

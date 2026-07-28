@@ -63,7 +63,7 @@ else
   say "Tom's existing source changes match the prior/current harness sync; preserving idempotent ownership."
 fi
 
-say "Installing dependencies and building coswarm on the mini."
+say "Installing dependencies and building cswarm on the mini."
 (cd "$UXTEST_REPO" && npm install && npm run build)
 
 say "Copying the exact source tree to Tom's clean repository."
@@ -83,7 +83,7 @@ remote_zsh "
   chmod 600 '$sync_marker'
 "
 
-say "Installing dependencies and rebuilding Tom's existing coswarm target."
+say "Installing dependencies and rebuilding Tom's existing cswarm target."
 remote_zsh "cd '$UXTEST_REMOTE_REPO' && npm install && npm run build"
 
 install_local_copy() {
@@ -101,7 +101,7 @@ install_local_copy() {
     cd "$home_root/product"
     npm install --omit=dev --ignore-scripts
   )
-  install -m 700 "$UXTEST_DIR/scripts/coswarm-wrapper.sh" "$home_root/bin/coswarm"
+  install -m 700 "$UXTEST_DIR/scripts/cswarm-wrapper.sh" "$home_root/bin/cswarm"
   for tool in base64 node python python3 jq openssl perl ruby; do
     real_tool="$(command -v "$tool" 2>/dev/null || true)"
     [ -n "$real_tool" ] || continue
@@ -142,7 +142,7 @@ remote_zsh "
   install -m 600 \"\$repo/package-lock.json\" \"\$root/product/package-lock.json\"
   cd \"\$root/product\"
   npm install --omit=dev --ignore-scripts
-  install -m 700 \"\$repo/uxtest/scripts/coswarm-wrapper.sh\" \"\$root/bin/coswarm\"
+  install -m 700 \"\$repo/uxtest/scripts/cswarm-wrapper.sh\" \"\$root/bin/cswarm\"
   for tool in base64 node python python3 jq openssl perl ruby; do
     real_tool=\$(command -v \"\$tool\" 2>/dev/null || true)
     [ -n \"\$real_tool\" ] || continue
@@ -177,7 +177,7 @@ remote_zsh "chmod 600 '$UXTEST_REMOTE_HOME_ROOT/config/cloud.env'"
 mini_sha="$(<"$UXTEST_MINI_HOME_ROOT/product/SOURCE_SHA")"
 laptop_sha="$(remote_zsh "cat '$UXTEST_REMOTE_HOME_ROOT/product/SOURCE_SHA'")"
 [ "$mini_sha" = "$laptop_sha" ] ||
-  die "copied coswarm bundle hashes differ after sync"
+  die "copied cswarm bundle hashes differ after sync"
 
 mini_node="$(<"$UXTEST_MINI_HOME_ROOT/product/NODE_BIN")"
 mini_help="$("$mini_node" "$UXTEST_MINI_HOME_ROOT/product/dist/cli.js" --help |
@@ -188,9 +188,9 @@ laptop_help="$(
     \"\$node_bin\" '$UXTEST_REMOTE_HOME_ROOT/product/dist/cli.js' --help | head -n 1
   "
 )"
-printf '%s\n' "$mini_help" | grep -Eq '^coswarm [0-9]' ||
-  die "mini copied coswarm --help lacks the version line"
-printf '%s\n' "$laptop_help" | grep -Eq '^coswarm [0-9]' ||
-  die "laptop copied coswarm --help lacks the version line"
+printf '%s\n' "$mini_help" | grep -Eq '^cswarm [0-9]' ||
+  die "mini copied cswarm --help lacks the version line"
+printf '%s\n' "$laptop_help" | grep -Eq '^cswarm [0-9]' ||
+  die "laptop copied cswarm --help lacks the version line"
 
 say "Sync verified: both copied builds are $mini_sha ($mini_help)."

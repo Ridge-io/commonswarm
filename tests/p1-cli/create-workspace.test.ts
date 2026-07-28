@@ -184,7 +184,7 @@ test("a closed front door says signup is not open, not forbidden", () => {
   assert.equal(closed.code, "forbidden");
   assert.match(closed.message, /not open on this deployment yet/);
   assert.match(closed.message, /confirmed email address/);
-  assert.match(closed.message, /coswarm accept --link-stdin/);
+  assert.match(closed.message, /cswarm accept --link-stdin/);
   assert.doesNotMatch(closed.message, /403/);
   // The server sends the same body for a disabled feature gate and for an
   // unverified identity, so one sentence has to name both.
@@ -198,7 +198,7 @@ test("the remaining refusals each say what to do next", () => {
   const malformed = createWorkspaceError(400, { error: "invalid_request" });
   assert.equal(malformed.code, "invalid_request");
   assert.match(malformed.message, /Nothing was created/);
-  assert.match(malformed.message, /coswarm --version/);
+  assert.match(malformed.message, /cswarm --version/);
 
   const upgrade = createWorkspaceError(426, {
     error: "upgrade_required",
@@ -206,16 +206,16 @@ test("the remaining refusals each say what to do next", () => {
   });
   assert.equal(upgrade.code, "upgrade_required");
   assert.match(upgrade.message, /minimum 9\.9\.9/);
-  assert.match(upgrade.message, /Update coswarm/);
+  assert.match(upgrade.message, /Update cswarm/);
 
   const signedOut = createWorkspaceError(401, { error: "unauthorized" });
   assert.equal(signedOut.code, "unauthenticated");
-  assert.match(signedOut.message, /coswarm login/);
+  assert.match(signedOut.message, /cswarm login/);
 
   // An unknown outcome must not be reported as a refusal: the project may exist.
   const unknown = createWorkspaceError(502, null);
   assert.match(unknown.message, /could not tell whether the project was created/);
-  assert.match(unknown.message, /coswarm workspaces/);
+  assert.match(unknown.message, /cswarm workspaces/);
 });
 
 test("new validates its arguments before asking for a credential", async () => {
@@ -252,7 +252,7 @@ test("new validates its arguments before asking for a credential", async () => {
 test("new is discoverable in the usage block", async () => {
   const help = await cli(["help"]);
   assert.equal(help.code, 0);
-  assert.match(help.stdout, /coswarm new "<project name>"/);
-  assert.match(help.stdout, /coswarm new --name "<project name>"/);
-  assert.match(help.stdout, /coswarm new starts a project of your own/);
+  assert.match(help.stdout, /cswarm new "<project name>"/);
+  assert.match(help.stdout, /cswarm new --name "<project name>"/);
+  assert.match(help.stdout, /cswarm new starts a project of your own/);
 });

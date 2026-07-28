@@ -1,6 +1,6 @@
 ---
 /*
- * Wordmark — the coswarm mark and word, in one place.
+ * Wordmark — the CommonSwarm mark and word, in one place.
  *
  * WHY THIS EXISTS. Integration found the same mark drawn three times, in SiteHeader,
  * SiteFooter and start/StartHeader, and the three copies did not agree:
@@ -18,7 +18,13 @@
  *
  * `href` is optional: pass it for a link (every current caller does, all to "/"), omit it for
  * a plain label. The <svg> is aria-hidden and the word is real text, so the accessible name
- * is just "coswarm" — no alt, no duplicate announcement.
+ * is just "CommonSwarm" — no alt, no duplicate announcement.
+ *
+ * THE WORD GOT LONGER. The rename from "coswarm" (7 glyphs) to "CommonSwarm" (11) widens this
+ * box by roughly two thirds at the same size, and every caller puts it in a flex row that has
+ * other things to fit. Two rules below exist only because of that: `white-space: nowrap` on
+ * the word, so a squeezed row can never break the brand across two lines, and a second
+ * font-size step at 22rem. Neither was needed at the old length.
  */
 
 interface Props {
@@ -58,7 +64,7 @@ const Tag = href ? "a" : "span";
     <circle cx="22.8" cy="22" r="3.5" fill="var(--accent-bright)"></circle>
     <circle cx="16" cy="10.2" r="4" fill="var(--success)"></circle>
   </svg>
-  <span class="wm__word">coswarm</span>
+  <span class="wm__word">CommonSwarm</span>
 </Tag>
 
 <style>
@@ -88,6 +94,13 @@ const Tag = href ? "a" : "span";
     flex: none;
   }
 
+  /* The brand is one word and must render as one line. At the old 7-glyph length it never
+     came close to wrapping; at 11 it is wide enough that a flex parent under pressure can
+     hand this span a box narrower than the text, and "Common" over "Swarm" is not the mark. */
+  .wm__word {
+    white-space: nowrap;
+  }
+
   /* SiteHeader used to carry this step as `@media (max-width: 26rem) { .hdr__brand }`.
      When the brand became a component, that rule SILENTLY STOPPED APPLYING: Astro scopes a
      parent's styles with the parent's cid attribute, and the class passed down lands on this
@@ -97,6 +110,49 @@ const Tag = href ? "a" : "span";
   @media (max-width: 26rem) {
     .wm {
       font-size: 1rem;
+    }
+  }
+
+  /* A second step the 7-glyph word did not need. Below 22rem the header bar is wordmark +
+     burger + the filled CTA, and at 1rem the longer word leaves the CTA nothing to sit in.
+     The gap closes with it — at this size the mark and the word read as one lockup anyway. */
+  @media (max-width: 22rem) {
+    .wm {
+      font-size: 0.9375rem;
+      gap: 0.45rem;
+    }
+  }
+
+  /* BELOW 24rem THE WORD IS DROPPED AND THE MARK CARRIES THE BRAND ALONE.
+     Measured on the deployed font, not reasoned: at a 320px viewport the header lockup
+     forced document.scrollWidth to 362px — 42px of page-level horizontal scroll — and
+     clipped "Create a workspace" off the right edge. 360px overflowed by 11px; 375px fit
+     by 4px, which is less than one glyph and not margin.
+
+     The cause is structural, so no font step fixes it. "CommonSwarm" is ~48px wider than
+     the 7-glyph name it replaced, `.wm` is `flex: none` so the brand cannot be squeezed,
+     and the `white-space: nowrap` above guarantees it cannot reflow — every pixel of the
+     extra width becomes page scroll. Closing 48px by shrinking type would take the mark
+     under 11px, which is not a brand, it is a defect.
+
+     Hidden VISUALLY ONLY. The span is the link's entire accessible name, so display:none
+     would leave a nav link that screen readers announce as nothing. This is the
+     global.css .visually-hidden recipe, inlined because the class sits on a component
+     root this file does not own. */
+  @media (max-width: 24rem) {
+    .wm__word {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      margin: -1px;
+      padding: 0;
+      overflow: hidden;
+      clip-path: inset(50%);
+      border: 0;
+    }
+
+    .wm {
+      gap: 0;
     }
   }
 </style>

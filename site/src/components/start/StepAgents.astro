@@ -3,19 +3,26 @@
  * Step 3 — bring the agents in.
  *
  * EVERY COMMAND ON THIS SCREEN IS REAL. Each one was checked against `node dist/cli.js --help`
- * and against install.sh on main, not written from memory:
+ * and against install.sh on main, not written from memory.
+ *
+ * SCOPE OF THAT CHECK AFTER THE RENAME. The verbs, flags and requirements are what the run
+ * established and none of them changed. The binary name went from `coswarm` to `cswarm`, and
+ * that half was re-checked against the source rather than assumed: package.json declares bin
+ * as {"cswarm": "dist/cli.js"}, and src/cli.ts:267 spells the JOIN line
+ * `cswarm accept --link-stdin [--name <name>]` verbatim. What has NOT happened is a fresh
+ * `--help` run against a renamed BUILD — this is read from source, not observed from output.
  *
  *   INSTALL     install.sh's own header documents `curl -fsSL https://<host>/install.sh | sh`.
  *               <host> is install.sh's placeholder, not an invention: no public install host
  *               has been chosen. It must never be filled in with a plausible-looking domain.
  *
- *   JOIN        `coswarm accept --link-stdin [--name <name>]`. The pipeline form is the one in
- *               the repo README. The bare-argument form `coswarm accept <link>` exists and our
+ *   JOIN        `cswarm accept --link-stdin [--name <name>]`. The pipeline form is the one in
+ *               the repo README. The bare-argument form `cswarm accept <link>` exists and our
  *               own --help marks it "# unsafe: shell history/process list", so it is not shown
  *               here — the invite link is a one-time capability and argv is recorded in shell
  *               history and visible in process listings.
  *
- *   ANNOUNCE    `coswarm working-on "<what>" [--until <dur>]` and `coswarm feed [--limit <n>]`.
+ *   ANNOUNCE    `cswarm working-on "<what>" [--until <dur>]` and `cswarm feed [--limit <n>]`.
  *               Both genuinely require a target: cli.ts reads `--url` / `--anon-key` or the
  *               SWARM_CLOUD_URL / SWARM_CLOUD_ANON_KEY environment variables, and there is no
  *               fallback to a saved one. Verified by running them: with neither set the CLI
@@ -40,16 +47,17 @@ import StepShell from "./StepShell.astro";
 
 const INSTALL = "curl -fsSL https://<host>/install.sh | sh";
 
-const JOIN = `printf '%s' "$COSWARM_INVITE_LINK" |
-  coswarm accept --link-stdin --name laptop-agent`;
+const JOIN = `printf '%s' "$CSWARM_INVITE_LINK" |
+  cswarm accept --link-stdin --name laptop-agent`;
 
 /* Kept under ~50 characters on purpose. The code body is 444px of JetBrains Mono at 14px,
  * which is about 52 characters; the first draft ran to 56 and the screenshot showed
  * "--until 9" disappearing under the block's right edge. CodeBlock scrolls rather than
  * truncates, so nothing was lost — but a command that needs a scroll to be read is a command
- * people mistype. */
-const ANNOUNCE = `coswarm working-on "billing refactor" --until 90m
-coswarm feed --limit 20`;
+ * people mistype. The rename shortened the longest line here by one character (`coswarm` ->
+ * `cswarm`), so it moved further inside the budget, not closer to it. */
+const ANNOUNCE = `cswarm working-on "billing refactor" --until 90m
+cswarm feed --limit 20`;
 ---
 
 <StepShell
@@ -129,7 +137,7 @@ coswarm feed --limit 20`;
   </div>
 
   <p class="st-close">
-    That is the whole flow. <a href="/#how-it-works">See how coswarm works</a>.
+    That is the whole flow. <a href="/#how-it-works">See how CommonSwarm works</a>.
   </p>
 </StepShell>
 

@@ -66,11 +66,11 @@ export interface WorkspaceWarning {
 export const DEFAULT_MEMBERSHIP_REVOKED: WorkspaceWarning = {
   code: "default_membership_revoked",
   message:
-    "Your previously selected project is no longer available to this account. Coswarm cleared that saved selection.",
+    "Your previously selected project is no longer available to this account. CommonSwarm cleared that saved selection.",
 };
 
 const PROJECT_NOT_AVAILABLE =
-  "That project is not available to this account. Run coswarm workspaces to see projects you can select.";
+  "That project is not available to this account. Run cswarm workspaces to see projects you can select.";
 
 function compareText(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
@@ -100,8 +100,8 @@ export class WorkspaceResolutionError extends WorkspaceCliError {
     const none = sorted.length === 0;
     super(
       none
-        ? "You're not in any projects yet. Ask a colleague to send you an invitation link, then accept it with coswarm accept --link-stdin."
-        : "More than one project is available and none is selected. Run coswarm workspaces, then coswarm use <full-id|exact-name>.",
+        ? "You're not in any projects yet. Ask a colleague to send you an invitation link, then accept it with cswarm accept --link-stdin."
+        : "More than one project is available and none is selected. Run cswarm workspaces, then cswarm use <full-id|exact-name>.",
     );
     this.name = "WorkspaceResolutionError";
     this.code = none
@@ -142,7 +142,7 @@ export class WorkspaceAmbiguousNameError extends WorkspaceCliError {
 
   constructor(workspaces: readonly WorkspaceSummary[]) {
     super(
-      "That project name matches more than one project. Choose one by full id with coswarm use <full-id>.",
+      "That project name matches more than one project. Choose one by full id with cswarm use <full-id>.",
     );
     this.name = "WorkspaceAmbiguousNameError";
     this.workspaces = sortWorkspaces(workspaces);
@@ -670,7 +670,7 @@ export function renderWorkspaces(
   if (workspaces.length === 0) {
     return [
       "You're not in any projects yet.",
-      "Ask a colleague to send you an invitation link, then accept it with coswarm accept --link-stdin.",
+      "Ask a colleague to send you an invitation link, then accept it with cswarm accept --link-stdin.",
     ].join("\n");
   }
   const lines = ["Projects:"];
@@ -687,7 +687,7 @@ export function renderWorkspaces(
     (workspace) => workspace.workspace_id === currentWorkspaceId,
   )) {
     lines.push(
-      "No project is selected. Run coswarm use <full-id|exact-name>.",
+      "No project is selected. Run cswarm use <full-id|exact-name>.",
     );
   }
   lines.push(
@@ -746,7 +746,7 @@ export function renderStatus(options: RenderStatusOptions): string {
   lines.push("", "Tasks:");
   if (options.status.tasks.length === 0) {
     lines.push(
-      "No work yet — create a task with coswarm command create --task-id <uuid> --slug <slug>.",
+      "No work yet — create a task with cswarm command create --task-id <uuid> --slug <slug>.",
     );
   } else {
     for (const task of options.status.tasks) {

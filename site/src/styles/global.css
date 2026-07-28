@@ -1,7 +1,7 @@
 @import "./tokens.css";
 @import "./motion.css";
 
-/* coswarm — global stylesheet
+/* CommonSwarm — global stylesheet
  *
  * Layers, in order:
  *   1. @font-face      self-hosted variable Inter + JetBrains Mono, zero third-party requests
@@ -456,7 +456,7 @@ kbd {
   letter-spacing: -0.01em;
 }
 
-/* A small mono chip for naming a real command or tool inline, e.g. `coswarm accept`. */
+/* A small mono chip for naming a real command or tool inline, e.g. `cswarm accept`. */
 .chip {
   display: inline-flex;
   align-items: center;

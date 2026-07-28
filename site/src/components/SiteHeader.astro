@@ -570,8 +570,11 @@ const isCurrent = (href: string) => !href.includes("#") && href === path;
 
     /* --- the no-JS collapse ladder ---------------------------------------
        Everything above assumes the burger exists. When it does not, the bar still has to
-       fit, and it cannot: wordmark + two links + icon + CTA is about 450px of content in
-       335px of usable width at 375. The nav is the only flexible item, so it shrinks below
+       fit, and it cannot: wordmark + two links + icon + CTA is around 450px of content in
+       335px of usable width at 375 — and the "CommonSwarm" rename added roughly 45px more
+       wordmark to that, so the ladder is under MORE pressure now, not less. (The 450 was
+       measured against the old 7-glyph word and has not been re-measured since; treat it as
+       a floor.) The nav is the only flexible item, so it shrinks below
        its content and its nowrap children spill straight over the CTA — the links and the
        button render on top of each other, unreadable.
 

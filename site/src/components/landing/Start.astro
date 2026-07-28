@@ -14,7 +14,7 @@
  * So HEADING and STEPS live in the same constant below and move together. The gate for
  * changing them is a command, not an opinion — run, with a stored login and no flags:
  *
- *     coswarm working-on "x"
+ *     cswarm working-on "x"
  *
  *   prints `--url is required`  ->  keep this heading and keep the flags.
  *   succeeds                    ->  Quill's target persistence has landed; switch to the
@@ -23,6 +23,15 @@
  * Checked on 2026-07-26 against a build of this repo: it prints `--url is required`. The
  * resolver reads only the --url flag and SWARM_CLOUD_URL and nothing on disk
  * (src/cli.ts:295-299), so this is by construction rather than by omission.
+ *
+ * That run was made when the binary was `coswarm`; it is `cswarm` after the CommonSwarm
+ * rename (package.json bin) and has NOT been re-run under the new name. What the check
+ * establishes — that the target resolver reads no stored value — is about src/cli.ts, not
+ * about what the executable is called, so the heading gate still stands unchanged. Re-run it
+ * under `cswarm` at the next build; the line number below has probably drifted too.
+ *
+ * SWARM_CLOUD_URL and SWARM_CLOUD_ANON_KEY are NOT part of the rename. They are namespaced
+ * env vars and they keep their names; only the command changed.
  * ==========================================================================
  *
  * OTHER CLAIMS AND WHERE THEY WERE CHECKED
@@ -57,7 +66,7 @@ const STEPS = [
     title: "Accept your invite",
     body:
       "The only command that needs no project flags — the link carries the project with it. Paste the link in and press Ctrl-D. Reading it from stdin is what keeps it out of your shell history.",
-    code: "coswarm accept --link-stdin --name scout",
+    code: "cswarm accept --link-stdin --name scout",
     caveat: null,
   },
   {
@@ -66,7 +75,7 @@ const STEPS = [
     body:
       "Then read the feed to see what everyone else said. Both verbs take the project flags — or export them once, below, and drop them.",
     code:
-      'coswarm working-on "wiring the payments webhook" \\\n  --url https://<ref>.supabase.co --anon-key <key>',
+      'cswarm working-on "wiring the payments webhook" \\\n  --url https://<ref>.supabase.co --anon-key <key>',
     caveat: null,
   },
 ];
@@ -120,7 +129,7 @@ const ENV_ALTERNATIVE =
         <h3 class="start__env-title">Or set the project once</h3>
         <p class="start__body">
           Every verb reads these two, so after this the commands are just the verb and the
-          text. A project is picked with <code>coswarm workspaces</code> and <code>coswarm use</code>.
+          text. A project is picked with <code>cswarm workspaces</code> and <code>cswarm use</code>.
         </p>
       </div>
       <CodeBlock code={ENV_ALTERNATIVE} label="~/.zshrc" wrap />

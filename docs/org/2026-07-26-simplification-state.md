@@ -28,7 +28,7 @@ See that file for the retired framing (kept and marked) and the vocabulary table
 
 ## Specced, NOT implemented — and the order is binding
 
-Target: first use goes from two commands and seven flags to `coswarm token mint --scope <scope>`.
+Target: first use goes from two commands and seven flags to `cswarm token mint --scope <scope>`.
 
 **Artifact of record for this friction work** (Lead6 #14973): Vane's files, not any Lead
 broadcast. A Lead's ruling is a *decision*; the file is the *specification*.
@@ -196,6 +196,10 @@ still built on the retired authority framing. See the vocabulary table in
 - **`Ridge-io/coswarm-dist` does not exist**, so `install.sh`'s default target 404s.
   `COSWARM_BASE_URL` overrides it, which unblocks gate 5 without any publish decision.
 - **The name `coswarm` collides** with a shipping self-hosted PaaS that owns `coswarm.dev`.
+  **RESOLVED 2026-07-27:** the operator renamed the product to **CommonSwarm**, the binary
+  to **`cswarm`**, and the domain to `commonswarm.com` (parked, not yet serving). The
+  finding is kept because it is the reason the rename happened; `coswarm.dev` is still
+  someone else's and still must never be referenced.
 - **`/docs` and the GitHub nav link 404.** The repo is private.
 
 ## ⚠ THREE WORDS, NOT TWO — read before using the branch table below
@@ -501,7 +505,7 @@ typecheck coverage exists. ~~*exactKeys residual STILL RED*~~ — **CLOSED at `2
 `runLinkAccept` wires loginSession→login (when needed), acceptInviteLink, writeCurrentTarget.
 Three-line quickstart is **supported by the call chain** for a fresh reader. Still **not
 an end-to-end run** (two-identity / operator — Ferry: Human2 harness exists but is
-unmeasured + GUI-gated). Accept line must be `coswarm accept --link-stdin`.
+unmeasured + GUI-gated). Accept line must be `cswarm accept --link-stdin`.
 ~~*Site line 3 still ships flags*~~ — **closed** with §4; bare `working-on` is on main.
 
 10. **Never predict a merge from a diff. Run `git merge-tree --write-tree`.**

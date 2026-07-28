@@ -1,4 +1,4 @@
-# P2-2 design brief: `coswarm status` + workspace visibility & selection
+# P2-2 design brief: `cswarm status` + workspace visibility & selection
 
 **Status:** v1.1 — CLEARED FOR IMPLEMENTATION after Sable review (v1 → CONDITIONAL GO; both
 BLOCKING items folded). Mason implements this document.
@@ -19,7 +19,7 @@ Two forces converge here.
 
 **The felt feedback (§1c).** The operator drove the two-human connect and said *"I didn't
 really know what I was doing or why."* They flew blind: there was no way to see members,
-agents, tasks, or leases. `coswarm status` is the direct answer — comprehension requires
+agents, tasks, or leases. `cswarm status` is the direct answer — comprehension requires
 visibility.
 
 **A MAJOR product bug the UX harness found before it ever ran.** `src/cloud/auth.ts:410` —
@@ -35,7 +35,7 @@ only way a multi-workspace human discovers what to pass. So P2-2 is one coherent
 
 ## 1. Deliverables
 
-### 1.1 `coswarm status` — one screen, plain words
+### 1.1 `cswarm status` — one screen, plain words
 
 Answers, in this order, for the currently selected project: **who is here, what their agents
 are, what work exists, and who holds it.**
@@ -53,12 +53,12 @@ Plain language over domain vocabulary throughout: "project" not "workspace" in p
 not "principal", "holding" not "lease epoch". Where a raw id is needed for copy-paste, show it
 **next to** the human label, never instead of it.
 
-### 1.2 `coswarm workspaces` — the list that unblocks selection
+### 1.2 `cswarm workspaces` — the list that unblocks selection
 
 Every row shows **name AND full id** — never name-only — plus role and a marker for the current
 selection. This is the unambiguous copy-paste target that makes §1.3 safe.
 
-### 1.3 `coswarm use <id|name>` — explicit, inspectable selection
+### 1.3 `cswarm use <id|name>` — explicit, inspectable selection
 
 Writes the selected project to the profile default. **Selection contract (pinned):**
 
@@ -99,7 +99,7 @@ practice.
 discipline applies): never block on a TTY prompt when stdin is not a TTY, `--json` is set, or the
 process is otherwise non-interactive. The failure body — and `--json` stdout — carries a
 deterministic machine-readable list of `{workspace_id, name, role}` plus one plain-language line
-pointing at `coswarm workspaces` / `coswarm use <id|name>`. No hang, no half-rendered prompt.
+pointing at `cswarm workspaces` / `cswarm use <id|name>`. No hang, no half-rendered prompt.
 
 **Agents select out-of-band:** list → `use` → invite. **Do not** invent a second silent env
 default; `use` is the explicit, inspectable selector.
@@ -172,9 +172,9 @@ limiting; revoke wiring; the T-sweep.
 ## 5. Resolved decisions (were open questions in v1)
 
 - **Q1 — `status` shows a COUNT, not every project name.** One line: *"You're in 3 projects
-  (selected: Launch redesign)."* or *"…(none selected). Run `coswarm workspaces`, then `coswarm
+  (selected: Launch redesign)."* or *"…(none selected). Run `cswarm workspaces`, then `cswarm
   use …`."* The count is `distinct workspace_id` over the caller's live memberships — already
-  permitted, no cross-tenant aggregation. Names stay behind `coswarm workspaces` so `status`
+  permitted, no cross-tenant aggregation. Names stay behind `cswarm workspaces` so `status`
   doesn't become the switcher and doesn't turn into noise.
 - **Q2 — a revoked default is announced once, then cleared.** Silence risks the user believing
   their invites and tasks still land in a project they've been removed from. Warn plainly, **clear

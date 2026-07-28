@@ -181,7 +181,7 @@ export function createWorkspaceError(
     return new CreateWorkspaceError(
       status,
       "forbidden",
-      "Coswarm did not create the project. Creating your own project is not open on this deployment yet, and it also needs a confirmed email address on your account. If someone has already invited you, coswarm accept --link-stdin joins their project.",
+      "CommonSwarm did not create the project. Creating your own project is not open on this deployment yet, and it also needs a confirmed email address on your account. If someone has already invited you, cswarm accept --link-stdin joins their project.",
     );
   }
   if (status === 426) {
@@ -191,29 +191,29 @@ export function createWorkspaceError(
     return new CreateWorkspaceError(
       status,
       "upgrade_required",
-      `This copy of coswarm is older than the deployment accepts${
+      `This copy of cswarm is older than the deployment accepts${
         minimum === null ? "" : ` (minimum ${minimum})`
-      }. Update coswarm, then run the same command again.`,
+      }. Update cswarm, then run the same command again.`,
     );
   }
   if (status === 400) {
     return new CreateWorkspaceError(
       status,
       code === "unknown" ? "invalid_request" : code,
-      "The deployment did not accept the request. Nothing was created. Check coswarm --version against the deployment before trying again.",
+      "The deployment did not accept the request. Nothing was created. Check cswarm --version against the deployment before trying again.",
     );
   }
   if (status === 401) {
     return new CreateWorkspaceError(
       status,
       "unauthenticated",
-      "Your sign-in is no longer valid for this deployment. Run coswarm login, then run the same command again.",
+      "Your sign-in is no longer valid for this deployment. Run cswarm login, then run the same command again.",
     );
   }
   return new CreateWorkspaceError(
     status,
     code,
-    `Coswarm could not tell whether the project was created (HTTP ${status}). Run coswarm workspaces to see whether it exists before trying again.`,
+    `CommonSwarm could not tell whether the project was created (HTTP ${status}). Run cswarm workspaces to see whether it exists before trying again.`,
   );
 }
 

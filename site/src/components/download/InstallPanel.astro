@@ -118,7 +118,7 @@ const PLATFORMS = [
         destination should not answer to four names. The route stays /download; only the
         visible label is normalised. */}
     <p class="eyebrow">Install</p>
-    <h1 class="h-display dl-hero__h" id="dl-title">Install coswarm.</h1>
+    <h1 class="h-display dl-hero__h" id="dl-title">Install CommonSwarm.</h1>
     {/* Two elements, not one. As a single 146-character sentence this ran to five lines at
         375px with a rag that swung 70px, and the fifth line existed only to carry "256" —
         the browser broke "SHA-256" at its hyphen, which is a break that changes what the word
@@ -192,7 +192,8 @@ const PLATFORMS = [
         </ul>
 
         {/* The trailing clause here read "coswarm is pre-launch and invite-only; there's no
-            self-serve signup." Both halves are now wrong — self-serve workspace creation
+            self-serve signup" — quoted under the name it shipped with, now CommonSwarm.
+            Both halves are now wrong — self-serve workspace creation
             exists on the server (createSelfServeWorkspace(), supabase/functions/command/
             index.ts), gated on SWARM_SELF_SERVE rather than absent. It is deleted rather
             than reworded: this paragraph is about the install host, the signup fact belongs
@@ -911,7 +912,7 @@ const PLATFORMS = [
         if (/iphone|ipad|ipod|android/.test(hay)) {
           /* Honest rather than helpful-looking: you cannot install a CLI here. */
           detect.textContent =
-            "coswarm is a command-line tool — you’ll want a Mac or Linux machine to install it.";
+            "CommonSwarm is a command-line tool — you’ll want a Mac or Linux machine to install it.";
           detect.dataset.mode = "device";
           detect.hidden = false;
         } else {

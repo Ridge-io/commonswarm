@@ -5,7 +5,7 @@
   "description": "SWARM-CLOUD \u2014 multi-human, multi-agent coordination cloud service (authority core). Forked from swarm (local CLI) to keep the in-use local tool stable.",
   "type": "module",
   "bin": {
-    "coswarm": "dist/cli.js"
+    "cswarm": "dist/cli.js"
   },
   "files": [
     "dist"

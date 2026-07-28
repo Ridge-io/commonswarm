@@ -46,7 +46,7 @@ laptop_coswarm_sha="$(
   remote_zsh "cat '$UXTEST_REMOTE_HOME_ROOT/product/SOURCE_SHA'"
 )"
 [ "$coswarm_sha" = "$laptop_coswarm_sha" ] ||
-  die "FAIL CLOSED: mini/laptop copied coswarm hashes differ before reset"
+  die "FAIL CLOSED: mini/laptop copied cswarm hashes differ before reset"
 
 node - "$setup" "$round" "$swarm_name" "$workspace_id" "$workspace_name" \
   "$seed_sha" "$coswarm_sha" "$laptop_coswarm_sha" \
@@ -128,7 +128,7 @@ rm -f "$token_path"
 say "Fixture seed verified; its one-time agent credential was destroyed."
 
 profile="$(profile_id)"
-mini_profile="$HOME/.coswarm/credentials.d/$profile.profile.json"
+mini_profile="$HOME/.cswarm/credentials.d/$profile.profile.json"
 remote_reset_state="$UXTEST_REMOTE_HOME_ROOT/human2/reset-state/r$round.json"
 
 say "Logging Human1 out locally and removing only this target's profile sidecar."

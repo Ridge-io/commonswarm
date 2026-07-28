@@ -42,7 +42,7 @@ Your chat channel is the local swarm named \`${swarmName}\`. Send short colleagu
 messages with \`swarm send ${human2} "<message>" --swarm ${swarmName}\`.
 
 Your team's project is already set up for you. Goal: get ${human2}'s agent
-working with you on it. Start with only the product CLI \`coswarm\`, what it
+working with you on it. Start with only the product CLI \`cswarm\`, what it
 prints, and its help if you genuinely need it. The study driver will not teach
 the mechanism.
 

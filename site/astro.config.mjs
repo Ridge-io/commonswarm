@@ -17,7 +17,7 @@ export default defineConfig({
   // NO DOMAIN IS DECIDED. .invalid is reserved by RFC 2606 and can never resolve, which is the
   // point: a placeholder must not be a real host. Do NOT put coswarm.dev here -- it is a live,
   // unrelated product whose /install.sh returns 200 and runs as root.
-  site: "https://coswarm.invalid",
+  site: "https://commonswarm.com",
   output: "static",
   build: {
     inlineStylesheets: "auto",

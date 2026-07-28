@@ -179,7 +179,7 @@ const DEFAULT_TEXT = "wiring the payments webhook";
         <div class="demo__cmd">
           <span class="demo__cmd-label">The command</span>
           <pre class="demo__cmd-body"><code id="demo-command">{
-            `coswarm working-on "${DEFAULT_TEXT}" \\\n  --about ${REFS[0].ref} --until ${DURATIONS[0]} \\\n  --url https://<ref>.supabase.co --anon-key <key>`
+            `cswarm working-on "${DEFAULT_TEXT}" \\\n  --about ${REFS[0].ref} --until ${DURATIONS[0]} \\\n  --url https://<ref>.supabase.co --anon-key <key>`
           }</code></pre>
         </div>
 
@@ -302,7 +302,7 @@ const DEFAULT_TEXT = "wiring the payments webhook";
 
           <FeedPanel
             signals={[yours, ...existing]}
-            command="coswarm feed"
+            command="cswarm feed"
             label="The shared feed after your signal — sample data"
           />
         </div>
@@ -360,7 +360,7 @@ const DEFAULT_TEXT = "wiring the payments webhook";
       const ref = checked(refInputs).value;
       const until = checked(untilInputs).value;
       return (
-        `coswarm working-on ${shQuote(text)} \\\n` +
+        `cswarm working-on ${shQuote(text)} \\\n` +
         `  --about ${ref} --until ${until} \\\n` +
         `  --url https://<ref>.supabase.co --anon-key <key>`
       );
@@ -710,7 +710,9 @@ const DEFAULT_TEXT = "wiring the payments webhook";
   /* WRAPS, not scrolls. This block was `white-space: pre; overflow-x: auto`, which on a phone
    * showed 180px of a 360px command and cut it mid-character at the card edge — with no
    * scrollbar, no fade, nothing saying there was more. Measured at 320px: the reader saw
-   * `coswarm working-on "wiring the pa` and that was the whole hero demo.
+   * `coswarm working-on "wiring the pa` and that was the whole hero demo. (Quoted as measured,
+   * under the old binary name; the command is `cswarm` now, which is one character shorter and
+   * does not change the conclusion.)
    *
    * `pre-wrap` keeps the authored newlines and the leading indent on the continuation lines,
    * so the shape of the command survives; `anywhere` lets the long --url token break rather

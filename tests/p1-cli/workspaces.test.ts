@@ -212,7 +212,7 @@ test("agent credentials never infer a human project and existing commands reject
   const noOverride = await runCli(base, token);
   assert.equal(noOverride.code, 1);
   assert.equal(noOverride.stdout, "");
-  assert.match(noOverride.stderr, /^coswarm: not logged in;/);
+  assert.match(noOverride.stderr, /^cswarm: not logged in;/);
   assert.doesNotMatch(noOverride.stderr, /ECONNREFUSED|session refresh/);
 
   const json = await runCli([...base, "--json"], token);

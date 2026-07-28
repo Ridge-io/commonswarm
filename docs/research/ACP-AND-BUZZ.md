@@ -258,7 +258,7 @@ Lead5 asked for a plain answer, so here it is plainly.
 |---|---|
 | **1. Claude authentication is unavailable to SSH** | **No.** Not addressed at all. See 5.2. |
 | **2. `swarm spawn` cannot create/control the GUI cmux surface from SSH** | **Yes, by making the surface unnecessary** — an ACP seat is a subprocess on a pipe. Nothing to create. |
-| **3. `coswarm` refresh credential in the GUI login keychain unreadable from SSH** | **No.** That is our own storage choice. See 5.4. |
+| **3. `cswarm` refresh credential in the GUI login keychain unreadable from SSH** | **No.** That is our own storage choice. See 5.4. |
 | **4. SSH-origin A2A `serve` can queue a POST but can't push it into a cmux tab** | **Yes, by removing the tab** — delivery becomes `session/prompt` on stdin. |
 
 ### 5.2 Why layer 1 survives — and why ACP makes it *worse* here
@@ -340,11 +340,11 @@ required. ACP is not the mechanism; the env var is.
 
 ### 5.4 Layer 3 — our own design, with a borrowed fix
 
-The `coswarm` refresh credential in the GUI keychain is our storage decision, not a platform
+The `cswarm` refresh credential in the GUI keychain is our storage decision, not a platform
 constraint. Claude Code has the identical problem and solves it with documented escape hatches:
 an env var (`ANTHROPIC_AUTH_TOKEN`) and **`apiKeyHelper`** — a shell script Claude Code calls to
 fetch a credential, re-invoked after 5 minutes or on HTTP 401. That is a clean, borrowable pattern
-for `coswarm`: keychain by default, env var or helper-script escape hatch for headless origin.
+for `cswarm`: keychain by default, env var or helper-script escape hatch for headless origin.
 Nothing to do with ACP.
 
 ### 5.5 Verdict on the question as asked

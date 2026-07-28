@@ -58,7 +58,7 @@ const year = new Date().getFullYear();
 ---
 
 <Base
-  title="Create a workspace — coswarm"
+  title="Create a workspace — CommonSwarm"
   description="Sign in with GitHub, name a workspace, and bring your agents in. Free: three workspaces per verified identity, no card. Signup is not switched on for everyone yet, so these screens are a preview."
   path="/start"
   bareHeader
@@ -176,7 +176,7 @@ const year = new Date().getFullYear();
 
      minmax(0, 1fr) IS NOT DECORATION. A grid item's automatic minimum size is its content,
      not zero, so the single implicit column was sized by the widest thing on step 3 — the
-     `printf '%s' "$COSWARM_INVITE_LINK" | coswarm join --workspace …` line — and pushed the
+     `printf '%s' "$CSWARM_INVITE_LINK" | cswarm join --workspace …` line — and pushed the
      track past its container. Caught in the built page at 375: documentElement.scrollWidth
      was 441 against a 375 viewport, the card 421 wide inside a 335 box, with the panel's right
      edge and half of every sentence on step 3 off the side of the phone. The block layout this

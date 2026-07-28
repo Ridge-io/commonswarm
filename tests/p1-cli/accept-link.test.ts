@@ -217,7 +217,7 @@ async function run(
 test("invite link codec round-trips and positional token precedence is exact", () => {
   const original = payload();
   const link = encodeInviteLink(original);
-  assert.match(link, /^coswarm:\/\/accept\/[A-Za-z0-9_-]+$/);
+  assert.match(link, /^cswarm:\/\/accept\/[A-Za-z0-9_-]+$/);
   assert.deepEqual(decodeInviteLink(link), original);
   assert.deepEqual(decodeInviteLink(link.split("/").at(-1)!), original);
 
@@ -229,7 +229,7 @@ test("invite link codec round-trips and positional token precedence is exact", (
   assert.equal(parseAcceptPositional(link).mode, "link");
   assert.throws(
     () => parseAcceptPositional("not-a-token-or-link"),
-    /swm_inv_|coswarm:\/\/accept/,
+    /swm_inv_|cswarm:\/\/accept/,
   );
 });
 
@@ -623,7 +623,7 @@ test("JSON progress is machine-readable on stdout with human narration on stderr
   assert.equal(machine.type, "progress");
   assert.equal(machine.step, "ready");
   assert.match(stderr, /Connected/);
-  assert.doesNotMatch(stdout + stderr, /swm_inv_|coswarm:\/\/accept\//);
+  assert.doesNotMatch(stdout + stderr, /swm_inv_|cswarm:\/\/accept\//);
 });
 
 async function cli(

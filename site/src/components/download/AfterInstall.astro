@@ -1,15 +1,25 @@
 ---
 /*
  * AfterInstall — what to run once the file is on disk, and the four ways this actually goes
- * wrong. Every command and every printed line here was run today against a build of the CLI
- * on this branch:
+ * wrong. Every command and every printed line here was run against a build of the CLI on this
+ * branch:
  *
- *   coswarm --version   -> "coswarm 0.0.1 (protocol 0.1.0)", exit 0. (`-v` prints the same.)
+ *   cswarm --version    -> "cswarm 0.0.1 (protocol 0.1.0)", exit 0. (`-v` prints the same.)
  *                          Worth knowing: this only became true recently — the parser used to
  *                          treat --version as a flag expecting a value and answered
  *                          "--version requires a value" on the single most-typed diagnostic
  *                          there is. src/cli.ts checks it against raw argv now.
- *   coswarm --help      -> the full command list, exit 0.
+ *   cswarm --help       -> the full command list, exit 0.
+ *
+ * THE RENAME, AND WHAT WAS RE-CHECKED FOR IT. That run predates the CommonSwarm rename and
+ * printed "coswarm 0.0.1". Rather than assume the new string, the three parts of it were read
+ * back out of the source on this pass:
+ *   the literal prefix .......... src/cli.ts:248 and :1804 build `cswarm ${…} (protocol ${…})`
+ *   the version ................. package.json "version" is 0.0.1, and bin is {"cswarm": …}
+ *   the protocol ................ CLIENT_PROTOCOL_VERSION = "0.1.0" (src/cloud/config.ts:3)
+ * which composes to exactly the string rendered below. NOT re-run end to end: nobody executed
+ * `--version` on a built binary from this pass, so this is verified by construction from the
+ * sources the binary uses, not by observation of its output.
  *
  * `accept` is the ONE first-contact verb that needs no --url and no --anon-key, because the
  * link carries its own target (see the help text: "An invite link supplies its whole target
@@ -18,22 +28,27 @@
  * run — SITE-BRIEF is explicit that the flagless third line is false today.
  *
  * THE FORM SHOWN IS --link-stdin, AND THAT IS NOT A STYLE CHOICE. `node dist/cli.js --help`
- * lists `coswarm accept --link-stdin [--name <name>]` first and annotates the positional form
- * on the very next line: "coswarm accept <coswarm://accept/...> ... # unsafe: shell
- * history/process list". An invite link is a one-time capability, and argv is written to your
+ * lists `cswarm accept --link-stdin [--name <name>]` first and annotates the positional form
+ * on the very next line: "cswarm accept <cswarm://accept/...> ... # unsafe: shell
+ * history/process list". Both strings re-read verbatim off src/cli.ts:267-268 after the
+ * rename, and the scheme itself is src/cloud/invite-link.ts:177, which builds
+ * `cswarm://accept/${encoded}`. An invite link is a one-time capability, and argv
+ * is written to your
  * shell history and visible to anyone who can run ps. This card used to print the annotated-
  * unsafe form while /start taught the safe one two pages away, on a site whose /download
  * thesis is "Piping a script into a shell deserves the suspicion it gets". The string here is
  * the one StepAgents.astro already ships; if one changes, change both.
  *
- * STILL UNFIXED UPSTREAM, DELIBERATELY NOT PAPERED OVER HERE: install.sh l.142 itself prints
- * "Next: accept your invite.\n\n  coswarm accept <invite-link>". The script is the wrong
- * place for this page to fix, and WhatHappens.astro's step 10 still records what the script
- * actually prints rather than what we wish it printed. Fix the script, then that note.
+ * FIXED UPSTREAM — THE OLD NOTE HERE IS DEAD AND IS KEPT ONLY SO IT IS NOT RE-DERIVED. It
+ * read: "STILL UNFIXED UPSTREAM … install.sh l.142 itself prints 'Next: accept your invite.
+ * \n\n  coswarm accept <invite-link>'. Fix the script, then that note." The script was
+ * rewritten with the rename and now prints `cswarm accept --link-stdin` at l.151, with the
+ * stdin rationale spelled out at l.152-153. The positional form is gone from the installer.
+ * Page, script and StepAgents.astro now teach one form; do not reintroduce the caveat.
  *
  * The troubleshooting entries are the failure paths install.sh handles by name, phrased as
  * the message a reader would actually see. The zsh PATH line is the exact string install.sh
- * prints (l.131).
+ * prints (l.131 — re-checked against the rewritten script, still l.131).
  *
  * STEP NUMBERING. The numeral is a badge element beside the heading, never characters inside
  * it. The landing Start section and /start both do it that way, and this page used to be the
@@ -47,21 +62,25 @@
 
 import CodeBlock from "../ui/CodeBlock.astro";
 
-const versionCmd = "coswarm --version";
-const versionOut = "coswarm 0.0.1 (protocol 0.1.0)";
+const versionCmd = "cswarm --version";
+const versionOut = "cswarm 0.0.1 (protocol 0.1.0)";
 /* The safe form, broken at the pipe exactly as StepAgents.astro breaks it on /start.
    BROKEN BY HAND, AND WITH NO PROMPT GLYPH, FOR ONE MEASURED REASON. Written as a single
-   line with prompt="$" it does not fit this card: at 14px JetBrains Mono the 64-character
-   command is ~594px against a 584px column, and `wrap` broke it INSIDE the flag — the block
+   line with prompt="$" it does not fit this card: at 14px JetBrains Mono the command was 64
+   characters and ~594px against a 584px column, and `wrap` broke it INSIDE the flag — the block
    rendered "--link-" then "stdin" on the next line, which is a flag a reader can mistype and
    a hyphen that is not in the command. Breaking after the trailing `|` is a real shell line
    continuation, so what lands on the clipboard still runs verbatim.
    The prompt is dropped rather than kept because CodeBlock prefixes EVERY non-comment line
    with it (CodeBlock.astro:108), which would draw a second "$" on the continuation and make
    it read as a second command. StepAgents made the same trade for the same reason; the
-   window chrome and the mono face already say "terminal". */
-const acceptCmd = `printf '%s' "$COSWARM_INVITE_LINK" |
-  coswarm accept --link-stdin`;
+   window chrome and the mono face already say "terminal".
+   The rename shortens this line to 62 characters (~576px), which is INSIDE the 584px column
+   by about eight pixels. That is not enough margin to undo the hand break: eight pixels is
+   less than one glyph, the measurement was taken at one viewport, and the failure mode it
+   avoids is a mistyped flag. Leave the break. */
+const acceptCmd = `printf '%s' "$CSWARM_INVITE_LINK" |
+  cswarm accept --link-stdin`;
 
 /* `text` with `backticks` becomes inline code — paths and flags read as what they are. */
 const seg = (s: string) =>
@@ -78,7 +97,7 @@ const faqs = [
     label: "login shell",
   },
   {
-    q: "It installed, but my shell can’t find coswarm",
+    q: "It installed, but my shell can’t find cswarm",
     a: "`~/.local/bin` isn’t on your PATH. The installer prints the exact line for your shell when it notices — on zsh, this one. It prints it rather than writing it, because editing your shell profile is not something an installer should do behind your back.",
     cmd: "echo 'export PATH=\"$HOME/.local/bin:$PATH\"' >> ~/.zprofile && exec zsh -l",
     label: "zsh",
@@ -91,8 +110,8 @@ const faqs = [
   },
   {
     q: "require is not defined in ES module scope",
-    a: "You shouldn’t see this — the installer checks for it. It means coswarm ended up under a directory whose package.json declares `\"type\": \"module\"`, so Node loaded a CommonJS bundle as ESM. Install it outside that tree instead:",
-    cmd: 'curl -fsSL https://<host>/install.sh | COSWARM_INSTALL_DIR="$HOME/bin" sh',
+    a: "You shouldn’t see this — the installer checks for it. It means cswarm ended up under a directory whose package.json declares `\"type\": \"module\"`, so Node loaded a CommonJS bundle as ESM. Install it outside that tree instead:",
+    cmd: 'curl -fsSL https://<host>/install.sh | CSWARM_INSTALL_DIR="$HOME/bin" sh',
     label: "elsewhere",
   },
 ];
@@ -139,7 +158,7 @@ const faqCols = [faqs.slice(0, 2), faqs.slice(2)];
             link carries its own target, so it takes no
             <span class="mono">--url</span> and no <span class="mono">--anon-key</span> —
             every other command does. Put the link you were sent in
-            <span class="mono">COSWARM_INVITE_LINK</span> and it goes in on stdin, never as an
+            <span class="mono">CSWARM_INVITE_LINK</span> and it goes in on stdin, never as an
             argument: a link works once, and anything in argv is written to your shell history
             and shows up in process listings. There is no invite link on this page and there
             never will be: a link is issued to one person and works once, so it comes from
@@ -148,7 +167,7 @@ const faqCols = [faqs.slice(0, 2), faqs.slice(2)];
             look like.
           </p>
           <p class="ai__p ai__p--last">
-            After that, <span class="mono">coswarm --help</span> lists the rest: announce what
+            After that, <span class="mono">cswarm --help</span> lists the rest: announce what
             you’re working on, read the shared feed, check your inbox.
           </p>
         </div>

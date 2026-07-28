@@ -20,10 +20,17 @@
  * EVERY COMMAND AND THE OUTPUT ARE REAL
  * ---------------------------------------------------------------------------------------
  * Checked against `node dist/cli.js --help` and src/cloud/signals.ts:
- *   coswarm working-on "<what>" [--about <ref>] [--until <dur>]     ✓ both flags exist
- *   coswarm feed [--about <ref>]                                    ✓
- *   coswarm note "<text>" [--about <ref>]                           ✓
+ *   cswarm working-on "<what>" [--about <ref>] [--until <dur>]     ✓ both flags exist
+ *   cswarm feed [--about <ref>]                                    ✓
+ *   cswarm note "<text>" [--about <ref>]                           ✓
  * Durations are "a whole number plus m, h, or d", so 90m and 45m are valid.
+ *
+ * WHAT THE ✓ COVERS AFTER THE RENAME: the verbs, the flags and the durations, all unchanged.
+ * The binary was `coswarm` when --help was read and is `cswarm` now; that half was re-read
+ * from source (package.json bin, and the `cswarm <verb>` usage lines in src/cli.ts) rather
+ * than assumed, but no --help has been run under the new name. The output block below is the
+ * real renderSignals() shape and does not contain the binary's name at all, so the rename
+ * does not touch it.
  *
  * ONE FLAG PER CONTINUATION LINE, which is the shape NewWorkspace and /start already use.
  * `--about <ref> --until <dur>` used to share a line, and at 375px that line soft-wrapped —
@@ -90,7 +97,7 @@ const steps: Step[] = [
     headline: "Atlas said what it was about to touch",
     age: "25m ago",
     commands: [
-      `coswarm working-on "refactor session cookie handling" \\\n  --about ${contested} \\\n  --until 90m`,
+      `cswarm working-on "refactor session cookie handling" \\\n  --about ${contested} \\\n  --until 90m`,
     ],
   },
   {
@@ -98,7 +105,7 @@ const steps: Step[] = [
     who: "Wren",
     headline: "Wren looked before starting",
     age: "1m ago",
-    commands: [`coswarm feed --about ${contested}`],
+    commands: [`cswarm feed --about ${contested}`],
     output: `Recent signals:
 - [working-on] agent Atlas (${ATLAS_ID}) — 25m ago — expires in 65m about ${JSON.stringify(
       contested,
@@ -112,7 +119,7 @@ const steps: Step[] = [
     headline: "Wren picked up something else",
     age: "just now",
     commands: [
-      `coswarm working-on "add rate-limit middleware" \\\n  --about src/auth/rate-limit.ts \\\n  --until 45m`,
+      `cswarm working-on "add rate-limit middleware" \\\n  --about src/auth/rate-limit.ts \\\n  --until 45m`,
       /* The curly apostrophe in "Atlas’s" is deliberate and is NOT the usual "smart quotes in
        * a code block" bug. It is inside a double-quoted shell argument, so it is literal text
        * the shell passes through untouched — like the em dash already in the same string —
@@ -120,7 +127,7 @@ const steps: Step[] = [
        * sentence is echoed as prose in the feed on the same page (the s5 signal in
        * app.astro): the same words rendered two ways in one screenful is the drift a reader
        * notices. The QUOTING characters stay straight, always. */
-      `coswarm note "taking rate-limit instead — session.ts is Atlas’s for the next hour" \\\n  --about ${contested}`,
+      `cswarm note "taking rate-limit instead — session.ts is Atlas’s for the next hour" \\\n  --about ${contested}`,
     ],
   },
 ];
@@ -447,6 +454,8 @@ const steps: Step[] = [
      *     session cookie handling" \
      *       --about src/auth/session.ts
      *     --until 90m
+     * (quoted at the wrap points it actually broke at, under the old 7-character binary name;
+     * `cswarm` is one character shorter, which moves the breaks but not the failure)
      * — every soft-wrapped continuation restarting at column 0, and the last of them,
      * `--until 90m`, sitting flush left directly under a line that ends in a backslash. A
      * reader scanning that sees two commands, and the second one is not a command at all.

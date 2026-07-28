@@ -1,4 +1,4 @@
-/* coswarm UI primitives
+/* CommonSwarm UI primitives
  *
  * The skin for site/src/components/ui/*.astro. Every value comes from tokens.css. If you
  * need a colour or a size that is not in there, add it to tokens.css — never hard-code here.
@@ -520,7 +520,8 @@ textarea.ui-field__control {
 /* A hairline after a leading affix.
  *
  * The screenshot caught why this is needed: a field rendering "coswarm/" as a prefix next to
- * the placeholder "workspace" read as the single string "coswarm/ workspace", because the
+ * the placeholder "workspace" read as the single string "coswarm/ workspace" — quoted from
+ * the screenshot, so it keeps the old brand string; no field passes that prefix today. The
  * affix and the placeholder are both --text-muted and nothing separated them. The rule is
  * only on the PREFIX — a trailing icon needs no divider, and giving it one makes the field
  * look like it has a button in it.

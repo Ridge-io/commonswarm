@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="coswarm">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="CommonSwarm">
   <rect width="32" height="32" rx="8" fill="#0d0f14"/>
   <rect x="0.5" y="0.5" width="31" height="31" rx="7.5" fill="none" stroke="#252b3b"/>
   <g stroke="#7c6cff" stroke-width="2" stroke-linecap="round" opacity="0.62">

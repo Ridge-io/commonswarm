@@ -10,6 +10,20 @@
 >
 > **Operator gate:** nothing is provisioned until the owner reviews this document — the bill of materials (§8) and the phased plan (§9). Each phase ships behind its own launch-blocking tests (§10).
 
+**Naming (operator, 2026-07-27) — read before quoting any command below.** The product is
+**CommonSwarm**. The cloud CLI binary and every command a user types is **`cswarm`** (`cswarm login`,
+`cswarm accept <link>`, `cswarm working-on "…"`). The domain is `commonswarm.com`, which is **decided
+but not wired** — DNS is parked and nothing serves it; the live site is `coswarm-site.vercel.app`
+until the operator repoints it. An interim name `coswarm` was used between this document and the
+rename; it collided with a competitor and is dead — treat any `coswarm` you find as superseded.
+
+This document is older than both names and was written when the cloud service was an evolution of the
+single-machine `swarm` CLI, so its examples read `swarm cloud accept`, `swarm join`, `swarm spawn`.
+**Those spellings are left exactly as written**: the local `swarm` CLI is a different, still-live tool,
+the `swarm.` Postgres schema and the `SWARM_*` environment variables are unrelated namespaces, and
+renaming inside a spec risks changing a design decision by accident. Read `swarm <cloud verb>` here as
+`cswarm <verb>`; the design decisions are unaffected either way.
+
 ---
 
 # Part I — Cloud service specification

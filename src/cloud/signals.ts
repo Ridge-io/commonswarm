@@ -398,7 +398,7 @@ export function renderSignalStatus(
     ? "No asks are waiting in your inbox."
     : `${waitingAsks}${waitingAsks === 100 ? "+" : ""} ask${
       waitingAsks === 1 ? " is" : "s are"
-    } waiting — run coswarm inbox.`;
+    } waiting — run cswarm inbox.`;
   return `${renderSignals(recent, {
     inbox: false,
     includeStale: false,

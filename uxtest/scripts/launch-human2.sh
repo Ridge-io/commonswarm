@@ -46,7 +46,7 @@ Your chat channel is the local swarm named \`${swarmName}\`. Reply with
 \`swarm send ${human1} "<message>" --swarm ${swarmName}\`.
 
 Goal: respond naturally when ${human1} tries to get your agent working with
-their project. Use only what ${human1} sends and what \`coswarm\` itself says.
+their project. Use only what ${human1} sends and what \`cswarm\` itself says.
 Prefer the obvious action or a short colleague question over reading a long
 help page.
 

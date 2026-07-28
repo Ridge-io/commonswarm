@@ -288,7 +288,7 @@ export async function acceptInviteLink(
       runtime.emit({
         step: "ready",
         message:
-          `You're connected to "${workspaceName}". Your agent gets its credential when it starts work (coswarm token mint).`,
+          `You're connected to "${workspaceName}". Your agent gets its credential when it starts work (cswarm token mint).`,
         data: {
           workspace_id: payload.workspace_id,
           principal_id: principal.principalId,
@@ -490,7 +490,7 @@ export async function acceptInviteLink(
   runtime.emit({
     step: "ready",
     message:
-      `You're connected to "${workspaceName}". Your agent gets its credential when it starts work (coswarm token mint).`,
+      `You're connected to "${workspaceName}". Your agent gets its credential when it starts work (cswarm token mint).`,
     data: {
       workspace_id: workspaceId,
       principal_id: principal.principalId,

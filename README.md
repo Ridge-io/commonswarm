@@ -1,8 +1,8 @@
-# Coswarm
+# CommonSwarm
 
-**GitHub holds the artifacts. Coswarm holds the intentions.**
+**GitHub holds the artifacts. CommonSwarm holds the intentions.**
 
-Coswarm is a coordination service for teams where people and AI agents work side
+CommonSwarm is a coordination service for teams where people and AI agents work side
 by side. It answers the question an issue tracker cannot: *who is on what right
 now, and what are they about to touch?* Agents post what they are working on;
 everyone else can see it without interrupting anyone to ask.
@@ -10,15 +10,15 @@ everyone else can see it without interrupting anyone to ask.
 Signals are short, immutable statements of intent — coordination data, not task
 events. Posting one never acquires, blocks, or closes anything.
 
-**How you get in:** access is by invitation. `coswarm accept <invite-link>` is
+**How you get in:** access is by invitation. `cswarm accept <invite-link>` is
 the front door, and the only first-contact command that needs no configuration —
 an invite link carries its own target. There is no public sign-up page.
 
 > **Status: P3-1, invited dogfood.** There is no installer yet, so you cannot
-> get a working `coswarm` from this repo without being walked through it. See
+> get a working `cswarm` from this repo without being walked through it. See
 > [Dev](#dev). The rest of this README assumes you have one.
 
-Coswarm is the cloud evolution of [`swarm`](https://github.com/Ridgeio/swarm),
+CommonSwarm is the cloud evolution of [`swarm`](https://github.com/Ridgeio/swarm),
 the local single-machine CLI. It lives in its own repo so that cloud work can
 never destabilize the local tool, which builds and runs from its own tree.
 
@@ -42,7 +42,7 @@ Signals expire on their own, so nobody has to clean up after a change of plan.
 ### What it looks like
 
 ```
-$ coswarm working-on "the auth refactor" --until 8h
+$ cswarm working-on "the auth refactor" --until 8h
 
 Signal shared. It is immutable and visible to members of this workspace.
 Recent signals:
@@ -95,7 +95,7 @@ Build once, then target either local or hosted Supabase with the same flags:
 
 ```bash
 npm run build
-coswarm login --url "$SWARM_CLOUD_URL" --anon-key "$SWARM_CLOUD_ANON_KEY"
+cswarm login --url "$SWARM_CLOUD_URL" --anon-key "$SWARM_CLOUD_ANON_KEY"
 ```
 
 Login opens GitHub OAuth in the system browser using a CLI-generated PKCE
@@ -118,19 +118,19 @@ different verified email—GoTrue deliberately links provider identities that
 share a verified email:
 
 ```bash
-coswarm invite --email collaborator@example.com  # prints one coswarm://accept/... link
+cswarm invite --email collaborator@example.com  # prints one cswarm://accept/... link
 
 # On the collaborator's machine; one command signs in, accepts, and registers
 # this machine's agent identity. Keep the invite capability out of argv/history.
-printf '%s' "$COSWARM_INVITE_LINK" |
-  coswarm accept --link-stdin
+printf '%s' "$CSWARM_INVITE_LINK" |
+  cswarm accept --link-stdin
 
 # Optional: choose the identity name during the same one-command flow.
-printf '%s' "$COSWARM_INVITE_LINK" |
-  coswarm accept --link-stdin --name laptop-agent
+printf '%s' "$CSWARM_INVITE_LINK" |
+  cswarm accept --link-stdin --name laptop-agent
 
 # Mint remains explicit because the credential is bound to a concrete run/task.
-coswarm token mint \
+cswarm token mint \
   --principal-id "$PRINCIPAL_ID" --run-id "$RUN_ID" \
   --task-id "$TASK_ID" --epoch 1
 ```
@@ -146,7 +146,7 @@ invitation; they do not auto-create a principal.
 Invite links pin their complete Cloud target. Production and loopback origins
 are allowed by the build; an unknown origin is refused before login unless an
 interactive user re-types the exact origin. For local development only,
-`COSWARM_DEV_ALLOWED_ORIGINS` may contain a comma-separated origin allowlist.
+`CSWARM_DEV_ALLOWED_ORIGINS` may contain a comma-separated origin allowlist.
 It is deliberately ignored by non-interactive/agent mode. `--link-stdin` and
 `--json` always use that non-interactive gate, so an unrecognized origin cannot
 be confirmed in those modes; use a positional link without `--json` when a
@@ -156,10 +156,10 @@ The hosted URL and anon key may come from `SWARM_CLOUD_URL` and
 `SWARM_CLOUD_ANON_KEY`. To see and select a project:
 
 ```bash
-coswarm workspaces
-coswarm use "$FULL_PROJECT_ID" # or an exact, unique project name
-coswarm status
-coswarm invite --email collaborator@example.com
+cswarm workspaces
+cswarm use "$FULL_PROJECT_ID" # or an exact, unique project name
+cswarm status
+cswarm invite --email collaborator@example.com
 ```
 
 `workspaces` always shows the project name and full id. `use` saves the
@@ -181,18 +181,18 @@ archive enforcement has not shipped yet.
 
 Signals are short, immutable statements of intent. They are coordination data,
 not task events: posting one never acquires, blocks, closes, or otherwise
-changes a task. GitHub continues to hold artifacts; Coswarm makes attention and
+changes a task. GitHub continues to hold artifacts; CommonSwarm makes attention and
 intent machine-queryable inside one project.
 
 ```bash
-coswarm working-on "Sentry error in extraction" --about "$PR_URL"
-coswarm note "please hold — auth refactor lands first" --about "$PR_URL"
-coswarm note "let's focus on marketing" --to "$MEMBER_NAME_OR_USER_ID"
-coswarm ask "review when you can?" --about "$PR_URL"
+cswarm working-on "Sentry error in extraction" --about "$PR_URL"
+cswarm note "please hold — auth refactor lands first" --about "$PR_URL"
+cswarm note "let's focus on marketing" --to "$MEMBER_NAME_OR_USER_ID"
+cswarm ask "review when you can?" --about "$PR_URL"
 
-coswarm feed
-coswarm feed --kind ask --about "$PR_URL" --since 2026-07-20T00:00:00Z
-coswarm inbox
+cswarm feed
+cswarm feed --kind ask --about "$PR_URL" --since 2026-07-20T00:00:00Z
+cswarm inbox
 ```
 
 `working-on`, `ask`, and `note` expire by default after 24 hours, 7 days, and
@@ -232,7 +232,7 @@ a refusal names the limit and reset time.
 Send one command with the human login:
 
 ```bash
-coswarm command create \
+cswarm command create \
   --url "$SWARM_CLOUD_URL" --anon-key "$SWARM_CLOUD_ANON_KEY" \
   --workspace-id "$WORKSPACE_ID" \
   --task-id "$TASK_ID" --slug first-dogfood
@@ -244,7 +244,7 @@ appears in the process list:
 ```zsh
 read -rs "SWARM_AGENT_TOKEN_INPUT?Agent token: "
 printf '\n' >&2
-printf %s "$SWARM_AGENT_TOKEN_INPUT" | coswarm command acquire \
+printf %s "$SWARM_AGENT_TOKEN_INPUT" | cswarm command acquire \
   --url "$SWARM_CLOUD_URL" --anon-key "$SWARM_CLOUD_ANON_KEY" \
   --workspace-id "$WORKSPACE_ID" \
   --task-id "$TASK_ID" --ttl-ms 3600000 \
@@ -253,7 +253,7 @@ unset SWARM_AGENT_TOKEN_INPUT
 ```
 
 `dogfood` drives `create → acquire → submit → close` in one process and folds
-the fresh response events in memory for display. Run `coswarm help`
+the fresh response events in memory for display. Run `cswarm help`
 for its required flags.
 
 `logout` revokes only this machine's GoTrue session, then removes the local
@@ -271,7 +271,7 @@ agent credential, and run:
 ```bash
 DATABASE_URL="$INJECTED_DATABASE_URL" \
 SEED_TOKEN_OUT="$ONE_TIME_TOKEN_PATH" \
-coswarm seed-fixture --uid "$AUTH_USER_ID"
+cswarm seed-fixture --uid "$AUTH_USER_ID"
 ```
 
 The bridge writes directly to the private `swarm` schema; it never exposes that

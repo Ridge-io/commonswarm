@@ -33,10 +33,16 @@ import SiteFooter from "../components/SiteFooter.astro";
 // it is a REAL, UNRELATED SHIPPING PRODUCT (a self-hosted Docker Swarm PaaS) whose
 // /install.sh returns HTTP 200 and runs as root. The hero's copy button was handing readers
 // a command that would root-install a stranger's software. Verified live before this fix.
-// NO DOMAIN IS DECIDED. .invalid is reserved by RFC 2606 and can never resolve, which is the
-// point: a placeholder must not be a real host. Do NOT put coswarm.dev here -- it is a live,
-// unrelated product whose /install.sh returns 200 and runs as root.
-const FALLBACK_ORIGIN = "https://coswarm.invalid";
+// Do NOT put coswarm.dev here -- that warning outlives the rename, because the hazard is
+// somebody else's live host, not our old name.
+//
+// THE DOMAIN IS NOW DECIDED AND STILL NOT USABLE. commonswarm.com is the chosen name; DNS is
+// parked and nothing serves it. So it does NOT go here yet -- a canonical URL pointing at a
+// host that does not answer is worse than one pointing nowhere by construction. .invalid is
+// reserved by RFC 2606 and can never resolve, which is the point. Swap this for
+// https://commonswarm.com (or better, set `site:` in astro.config.mjs and delete this) on the
+// day the domain actually serves the site. The live URL today is coswarm-site.vercel.app.
+const FALLBACK_ORIGIN = "https://commonswarm.invalid";
 
 interface Props {
   /** Full <title>. Defaults to the site-wide title. */
@@ -65,10 +71,10 @@ interface Props {
 }
 
 const {
-  /* Voice: coswarm is agents keeping each other informed. It is not a policing product, so
+  /* Voice: CommonSwarm is agents keeping each other informed. It is not a policing product, so
    * the words that used to sit here — "authority", "provenance", "governed", "append-only" —
    * are gone deliberately. Do not put them back. */
-  title = "coswarm — see what every agent is working on",
+  title = "CommonSwarm — see what every agent is working on",
   description =
     "A coordination cloud for teams running many AI agents. Each agent announces what it’s working on; everyone else sees it in a shared feed. Driven from the CLI.",
   path = "/",
@@ -84,7 +90,15 @@ const ogImageUrl = new URL(ogImage, origin).href;
 
 /* Alt text describes the CARD, and the card is a picture of a sentence — so this string and
  * public/og.png have to be redrawn together. The card was regenerated from
- * scripts/og-card.mjs; if you change one, run that script and rewrite this. */
+ * scripts/og-card.mjs; if you change one, run that script and rewrite this.
+ *
+ * STALE ON PURPOSE AFTER THE RENAME — DO NOT "FIX" THIS STRING ALONE. og.png is a PNG and it
+ * still has the old name and the old command baked into its pixels. This alt text says
+ * "coswarm" because that is what the image says. Editing the words here without redrawing the
+ * image would make the alt text describe a picture that does not exist, which is the one thing
+ * alt text must never do. The fix is: rerun scripts/og-card.mjs for CommonSwarm / `cswarm
+ * accept --link-stdin`, replace public/og.png, THEN rewrite these two lines to match. Until
+ * that happens the social card is the last place the retired name still ships. */
 const ogImageAlt =
   "coswarm — a dark title card headed “Your agents know what each other are doing.”, under " +
   "the label “Multi-agent coordination”, above the command “coswarm accept --link-stdin” " +
@@ -123,7 +137,7 @@ const ogImageAlt =
     />
 
     <meta property="og:type" content="website" />
-    <meta property="og:site_name" content="coswarm" />
+    <meta property="og:site_name" content="CommonSwarm" />
     <meta property="og:title" content={title} />
     <meta property="og:description" content={description} />
     <meta property="og:url" content={canonical} />

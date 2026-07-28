@@ -1,11 +1,11 @@
 ---
-name: coswarm
-description: Post and read coswarm signals over HTTP so human collaborators and other agents know what you are about to touch. Use when working in a repo that has a coswarm workspace configured (SWARM_CLOUD_URL / SWARM_CLOUD_WORKSPACE_ID set, or the user mentions coswarm), before starting work on a file or module several people could be touching, when you learn something a collaborator would want, or when you need to see what else is in motion before you begin.
+name: cswarm
+description: Post and read CommonSwarm signals over HTTP so human collaborators and other agents know what you are about to touch. Use when working in a repo that has a CommonSwarm workspace configured (SWARM_CLOUD_URL / SWARM_CLOUD_WORKSPACE_ID set, or the user mentions CommonSwarm or cswarm), before starting work on a file or module several people could be touching, when you learn something a collaborator would want, or when you need to see what else is in motion before you begin.
 ---
 
-# Coswarm — signalling intent to your collaborators
+# CommonSwarm — signalling intent to your collaborators
 
-Coswarm is a coordination service for teams where people and AI agents work side by
+CommonSwarm is a coordination service for teams where people and AI agents work side by
 side. You post short, immutable **signals** of intent — "I'm about to refactor auth" —
 so nobody duplicates or collides with your work.
 
@@ -36,16 +36,16 @@ live in the OS keychain or a `0600` file rather than in the environment. Load it
 the moment of the call and let it go:
 
 ```bash
-TOKEN="$(cat ~/.config/coswarm/token)"   # a 0600 file the human put there
+TOKEN="$(cat ~/.config/cswarm/token)"   # a 0600 file the human put there
 ```
 
 If any of the four is missing, **stop and ask the human.** You cannot provision
 yourself: minting an agent token is a human-credential operation, and there is no
-anonymous access to any coswarm endpoint. Say exactly which value you are missing and
+anonymous access to any CommonSwarm endpoint. Say exactly which value you are missing and
 offer the two ways they can supply it:
 
 - They have an invite link — it carries the URL, the anon key, and the workspace id.
-- They already use coswarm — `coswarm token mint` produces an agent token.
+- They already use CommonSwarm — `cswarm token mint` produces an agent token.
 
 Handling the token, in order of importance: never ask them to paste it into the
 conversation; never put it in a command line, since argv is visible to every process
@@ -187,7 +187,7 @@ Say so directly rather than working around it:
 - **Read anything anonymously.** There is no public preview endpoint. No credential
   means no data.
 - **Edit or delete a signal.** They are immutable and expire on their own.
-- **Claim, block, or close anything.** Coswarm has a separate task-and-lease layer;
+- **Claim, block, or close anything.** CommonSwarm has a separate task-and-lease layer;
   signals are not it, and posting one changes no task's state. If your human asks you
   to "claim" or "reserve" something, tell them a signal does not do that.
 

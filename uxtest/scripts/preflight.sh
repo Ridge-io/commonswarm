@@ -107,7 +107,7 @@ remote_zsh "
   command -v screen >/dev/null
   test -d /Applications/cmux.app
   test -x '$UXTEST_REMOTE_SWARM_BIN'
-  test -x /opt/homebrew/bin/coswarm
+  test -x /opt/homebrew/bin/cswarm
 " >/dev/null
 say "Laptop prerequisites verified; cmux.app was checked by its app path, not PATH."
 
@@ -119,15 +119,15 @@ say "Persistent laptop launcher $UXTEST_LAUNCHER_NAME is present in the base $UX
 assert_gui_launcher_server
 say "GUI-origin launcher endpoint verified before product or hosted round work."
 
-mini_bin="$UXTEST_MINI_HOME_ROOT/bin/coswarm"
-laptop_bin="$UXTEST_REMOTE_HOME_ROOT/bin/coswarm"
+mini_bin="$UXTEST_MINI_HOME_ROOT/bin/cswarm"
+laptop_bin="$UXTEST_REMOTE_HOME_ROOT/bin/cswarm"
 [ -x "$mini_bin" ] || die "mini persona copy is missing; run sync-machine2.sh"
-[ ! -L "$mini_bin" ] || die "mini persona coswarm must not be a symlink"
-mini_resolved="$(PATH="$UXTEST_MINI_HOME_ROOT/bin:$PATH" command -v coswarm)"
+[ ! -L "$mini_bin" ] || die "mini persona cswarm must not be a symlink"
+mini_resolved="$(PATH="$UXTEST_MINI_HOME_ROOT/bin:$PATH" command -v cswarm)"
 [ "$mini_resolved" = "$mini_bin" ] ||
   die "mini persona PATH does not resolve to the isolated launcher"
 case "$(cd "$(dirname "$mini_resolved")" && pwd -P)/$(basename "$mini_resolved")" in
-  "$UXTEST_REPO"/*) die "mini persona coswarm resolves inside the product repository" ;;
+  "$UXTEST_REPO"/*) die "mini persona cswarm resolves inside the product repository" ;;
 esac
 
 remote_zsh "
@@ -135,7 +135,7 @@ remote_zsh "
   bin='$laptop_bin'
   test -x \"\$bin\"
   test ! -L \"\$bin\"
-  resolved=\$(PATH='$UXTEST_REMOTE_HOME_ROOT/bin':\$PATH command -v coswarm)
+  resolved=\$(PATH='$UXTEST_REMOTE_HOME_ROOT/bin':\$PATH command -v cswarm)
   test \"\$resolved\" = \"\$bin\"
   case \"\$resolved\" in '$UXTEST_REMOTE_REPO'/*) exit 31 ;; esac
 " >/dev/null || die "laptop persona PATH is not an isolated non-repo copy"
@@ -152,7 +152,7 @@ remote_dist_sha="$(remote_zsh "
     awk '{print \$1}'
 ")"
 [ "$mini_sha" = "$laptop_sha" ] ||
-  die "FAIL CLOSED: mini/laptop persona coswarm hashes differ"
+  die "FAIL CLOSED: mini/laptop persona cswarm hashes differ"
 [ "$mini_sha" = "$repo_dist_sha" ] ||
   die "mini persona copy is not the currently built repository output"
 [ "$mini_sha" = "$remote_dist_sha" ] ||
@@ -165,13 +165,13 @@ laptop_version="$(remote_zsh "
   node_bin=\$(cat '$UXTEST_REMOTE_HOME_ROOT/product/NODE_BIN')
   \"\$node_bin\" '$UXTEST_REMOTE_HOME_ROOT/product/dist/cli.js' --help | head -n 1
 ")"
-printf '%s\n' "$mini_version" | grep -Eq '^coswarm [0-9]' ||
-  die "mini copied --help lacks the coswarm version line"
+printf '%s\n' "$mini_version" | grep -Eq '^cswarm [0-9]' ||
+  die "mini copied --help lacks the cswarm version line"
 [ "$mini_version" = "$laptop_version" ] ||
   die "FAIL CLOSED: mini/laptop version lines differ"
-remote_global_version="$(remote_zsh "/opt/homebrew/bin/coswarm --help | head -n 1")"
+remote_global_version="$(remote_zsh "/opt/homebrew/bin/cswarm --help | head -n 1")"
 [ "$remote_global_version" = "$laptop_version" ] ||
-  die "Tom's linked coswarm still serves a different build"
+  die "Tom's linked cswarm still serves a different build"
 say "Version skew gate passed: $mini_sha ($mini_version)."
 
 existing_18790="$(
@@ -195,13 +195,13 @@ fi
 
 if [ -f "$setup" ]; then
   profile="$(profile_id)"
-  [ ! -e "$HOME/.coswarm/credentials.d/$profile.profile.json" ] ||
+  [ ! -e "$HOME/.cswarm/credentials.d/$profile.profile.json" ] ||
     die "mini profile sidecar is warm after reset"
-  remote_zsh "test ! -e '$UXTEST_REMOTE_HOME_ROOT/../.coswarm/credentials.d/$profile.profile.json'" ||
+  remote_zsh "test ! -e '$UXTEST_REMOTE_HOME_ROOT/../.cswarm/credentials.d/$profile.profile.json'" ||
     die "laptop profile sidecar is warm after reset"
   if security find-generic-password -a "refresh:$profile" \
-    -s io.ridge.coswarm >/dev/null 2>&1; then
-    die "mini keychain still holds a warm coswarm login after reset"
+    -s com.commonswarm.cli >/dev/null 2>&1; then
+    die "mini keychain still holds a warm cswarm login after reset"
   fi
   [ "$(json_field "$setup" human2_reset_via)" = "dana-a2a-gui" ] ||
     die "Human2 cold-client reset lacks GUI-session verification"

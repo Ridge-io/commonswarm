@@ -208,7 +208,7 @@ minutes after that published a taxonomy whose first category the refutation had 
 careless — the CLI acked on its behalf, and the store recorded the strongest receipt it has for a
 message the model had not yet acted on.
 
-**Why it matters here rather than as a footnote:** coswarm's proposition is that intentions
+**Why it matters here rather than as a footnote:** CommonSwarm's proposition is that intentions
 propagate between agents. Every receipt in the schema measures transport or process, none measures
 reception. Any feature that reasons from `acked` — redelivery, escalation, "did they see it" —
 is reasoning about a query, not a reader.

@@ -6,6 +6,14 @@ include instructions in the link/prompt/llms.txt/skill file"
 **Governing spec:** `docs/design/SWARM-CLOUD.md` §7, *Zero-install first touch — the
 capability-URL on-ramp*
 
+> **Amended 2026-07-27 (rename).** The product is now **CommonSwarm** and the binary is
+> **`cswarm`**; the skill directory moved `site/public/skills/coswarm/` →
+> `site/public/skills/cswarm/`. The **forward-looking instructions** below — the install
+> one-liner and the post-deploy verification block — have been updated to the new names,
+> because a stale command there produces a copied 404 and a grep that manufactures a
+> confident zero. The **past measurements** are left exactly as taken: the npm probe row
+> below still reads `npm view coswarm version → E404, 2026-07-27`, which is what was run.
+
 Three files ship. All three are static assets under `site/public/`, so they are
 committed to the repo *and* fetchable at a stable URL after the next site deploy —
 which is the whole point: an agent with no repo access and no CLI can `curl` them.
@@ -13,7 +21,7 @@ which is the whole point: an agent with no repo access and no CLI can `curl` the
 | Artifact | Path | URL after deploy |
 |---|---|---|
 | llms.txt | `site/public/llms.txt` | `https://coswarm-site.vercel.app/llms.txt` |
-| Agent skill | `site/public/skills/coswarm/SKILL.md` | `.../skills/coswarm/SKILL.md` |
+| Agent skill | `site/public/skills/cswarm/SKILL.md` | `.../skills/cswarm/SKILL.md` |
 | HTTP API reference | `site/public/api.md` | `.../api.md` |
 
 Nothing under `site/src/` was touched, so no page renders these; they are addressable
@@ -30,19 +38,19 @@ directory.
 So the published path mirrors the install path one-for-one:
 
 ```
-site/public/skills/coswarm/SKILL.md   ->   ~/.claude/skills/coswarm/SKILL.md
+site/public/skills/cswarm/SKILL.md   ->   ~/.claude/skills/cswarm/SKILL.md
 ```
 
 which makes the install a single command with no rename step:
 
 ```sh
-mkdir -p ~/.claude/skills/coswarm && \
-  curl -fsSL https://coswarm-site.vercel.app/skills/coswarm/SKILL.md \
-    -o ~/.claude/skills/coswarm/SKILL.md
+mkdir -p ~/.claude/skills/cswarm && \
+  curl -fsSL https://coswarm-site.vercel.app/skills/cswarm/SKILL.md \
+    -o ~/.claude/skills/cswarm/SKILL.md
 ```
 
 Note that `~/.claude/skills/swarm` is the **local** `swarm` CLI's skill — a different,
-older product. The new skill is named `coswarm`, matching the `bin` entry in
+older product. The new skill is named `cswarm`, matching the `bin` entry in
 `package.json`, so the two coexist without shadowing.
 
 ## §7 conformance
@@ -132,6 +140,7 @@ marketing site. Spot-check anchors:
 | Task command field lists and `ttl_ms` ≤ 4h, slug/SHA regexes | `validateCommand`; `MAX_TTL_MS`, `SLUG_RE`, `SHA_RE` |
 | Env var names `SWARM_CLOUD_URL`, `SWARM_CLOUD_ANON_KEY`, `SWARM_CLOUD_WORKSPACE_ID` | enumerated from `src/cli.ts` and `src/cloud/*.ts`; those three are the complete set, and there is deliberately **no** env var for the token (§2.3 keeps it in the keychain or a `0600` file) |
 | No `coswarm` package on npm | `npm view coswarm version` → `E404`, 2026-07-27 |
+| No `cswarm` package on npm either | `npm view cswarm version` → `E404`, 2026-07-27, re-run after the rename so `api.md`'s "no `cswarm` package on npm" line is measured and not inherited |
 | `install.sh` still names `<host>` as a placeholder | `install.sh`; `site/src/pages/download.astro` frontmatter comment |
 
 ## The source moved while this was being written
@@ -188,8 +197,9 @@ U=https://coswarm-site.vercel.app
 curl -s -o /dev/null -w '%{http_code}\n' "$U/llms.txt"                 # 200, not 302/404
 curl -s "$U/llms.txt"          | grep -c 'never claims'                # positive control, >0
 curl -s "$U/api.md"            | grep -c 'swm_agt_'                    # positive control, >0
-curl -s "$U/skills/coswarm/SKILL.md" | grep -c '^name: coswarm$'       # exactly 1
-curl -s "$U/api.md"            | grep -c 'npm install -g coswarm'      # must be 0 outside the "do not" line
+curl -s "$U/skills/cswarm/SKILL.md"  | grep -c '^name: cswarm$'        # exactly 1
+curl -s "$U/api.md"            | grep -c 'npm install -g cswarm'       # must be 0 outside the "do not" line
+curl -s "$U/api.md"            | grep -c 'coswarm'                     # 0 — the old name must be gone
 ```
 
 The last one is a trap check, not a pass: the phrase appears once inside a *"do not

@@ -7,11 +7,11 @@ real_cli="$root/product/dist/cli.js"
 node_bin="$root/product/NODE_BIN"
 
 [ -x "$real_cli" ] || {
-  printf 'uxtest launcher: copied coswarm build is missing: %s\n' "$real_cli" >&2
+  printf 'uxtest launcher: copied cswarm build is missing: %s\n' "$real_cli" >&2
   exit 127
 }
 [ -f "$node_bin" ] || {
-  printf 'uxtest launcher: copied coswarm Node path is missing\n' >&2
+  printf 'uxtest launcher: copied cswarm Node path is missing\n' >&2
   exit 127
 }
 node_path="$(<"$node_bin")"
@@ -80,7 +80,9 @@ for arg in "$@"; do
   case "$arg" in
     --help|-h|help) help=true ;;
     --link-stdin) used_link_stdin=true ;;
-    coswarm://accept/*) used_positional_link=true ;;
+    # Both schemes: the product moved from coswarm:// to cswarm://, and a round
+    # replayed against an older build must still be counted, not silently missed.
+    cswarm://accept/*|coswarm://accept/*) used_positional_link=true ;;
   esac
 done
 [ "$first" = "accept" ] && accept_attempt=true

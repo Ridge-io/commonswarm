@@ -10,34 +10,71 @@ on 2026-07-27.
 
 ---
 
-## 1. Domain not chosen — blocks the widest set of things
+## 1. Name and domain are DECIDED — three operator actions still block them
 
-**Decision needed:** the public domain for coswarm. Candidates floated: `coswarm.dev`,
-`coswarm.ai`, `coswarm.app`.
+★ SUPERSEDED, kept so nobody re-derives it: this item used to read *"Domain not chosen"*
+and floated `coswarm.dev` / `coswarm.ai` / `coswarm.app`, with a warning that
+**`coswarm.dev` is a real, live, unrelated shipping product** (a self-hosted PaaS serving
+its own root `/install.sh`) and was once used here as a placeholder that pointed real users
+at a stranger's installer. **That whole decision is dead.** It is superseded by the rename:
 
-⚠ **`coswarm.dev` is not available.** It is a real, live, unrelated shipping product (a
-self-hosted PaaS) that already serves a root `/install.sh`. Four files under `site/` warn
-about it explicitly — `astro.config.mjs`, `src/layouts/Base.astro`,
-`src/pages/download.astro`, and `README.md` — because it was once used as a placeholder
-and pointed real users at a stranger's installer. Treat it as ruled out, not as a
-candidate.
-
-The name `coswarm` is decided. The domain is not.
-
-**Blocked on this:**
-
-| Blocked thing | Where |
+| | decided value |
 |---|---|
-| Legal contact email — **12 `[[CONTACT EMAIL]]` sites** | branch `legal/terms-and-policies`: `site/src/pages/terms.astro` (5), `privacy.astro` (6), `acceptable-use.astro` (1) |
-| Security contact — `[[SECURITY CONTACT EMAIL]]` | branch `legal/terms-and-policies`: `SECURITY.md` |
-| Canonical URL for the marketing site | `site/astro.config.mjs` — `site: "https://coswarm.invalid"`, a deliberately unresolvable placeholder |
+| product name (prose) | **CommonSwarm** |
+| binary / command | **`cswarm`** |
+| domain | **`commonswarm.com`** |
+| legal contact | **legal@commonswarm.com** |
+| security contact | **security@commonswarm.com** |
+
+The old name `coswarm` collided with a competitor in the same space. Keep the `coswarm.dev`
+warning in mind only as history — nothing should point at it either way.
+
+**What is blocked now is execution, not choice. Three things, all outside this repo:**
+
+1. ~~**DNS is parked.**~~ ★ **DONE, 2026-07-28.** Kept and struck rather than deleted so
+   nobody re-derives it. The superseded text read *"`commonswarm.com` points at nothing; it
+   is not pointed at Vercel and no certificate exists"* — **that is dead.** The operator
+   repointed `A @` and `A www` to `76.76.21.21`, removed the parking page and the redirect,
+   and left the `eforward*` MX and SPF records untouched. Both names were added to the
+   Vercel project `coswarm-site`; the apex certificate did **not** auto-issue and needed an
+   explicit `vercel certs issue commonswarm.com --scope ridgedotio`.
+
+   Verified: `https://commonswarm.com` and `https://www.commonswarm.com` both return **200**
+   with 17 content markers and a control string at 0; apex cert `CN=commonswarm.com` valid
+   to 26 Oct 2026; `https://coswarm-site.vercel.app` still 200, so nothing broke.
+   `site/astro.config.mjs` now sets `site: "https://commonswarm.com"` — the deliberately
+   unresolvable `coswarm.invalid` placeholder is gone.
+
+   Still open here: the Vercel **project** is still named `coswarm-site`. Renaming it moves
+   the deployment URL and is an operator action; the custom domain makes it cosmetic.
+2. **The mailboxes do not exist.** `legal@commonswarm.com` and `security@commonswarm.com`
+   must actually **receive mail** before the legal documents publish. A terms page naming an
+   address that bounces is worse than a placeholder: it is a stated channel that silently
+   discards notice, including security reports and legal service.
+3. **No USPTO check has been done on "CommonSwarm."** The rename happened because the old
+   name collided with a competitor; nobody has searched TESS or checked common-law use for
+   the new one. Do this **before** any public announcement or domain launch, not after.
+
+**Fills that unblock once (2) lands:**
+
+| Blocked thing | Where | Fill with |
+|---|---|---|
+| Legal contact email — **12 `[[CONTACT EMAIL]]` sites** | branch `legal/terms-and-policies`: `site/src/pages/terms.astro` (5), `privacy.astro` (6), `acceptable-use.astro` (1) | `legal@commonswarm.com` |
+| Security contact — `[[SECURITY CONTACT EMAIL]]` | branch `legal/terms-and-policies`: `SECURITY.md` | `security@commonswarm.com` |
+| Canonical URL for the marketing site | `site/astro.config.mjs` — `site: "https://coswarm.invalid"`, a deliberately unresolvable placeholder | `https://commonswarm.com`, but **only after (1)** |
+
+Those counts were verified earlier on `legal/terms-and-policies` and were **not** re-checked
+during the rename — that branch is not checked out here. `SECURITY.md` does not exist on
+`l6/self-serve-front-door` at all; it lives on the legal branch.
 
 All three legal pages currently pass `draft={true}`, which renders the **"Draft — not yet
 in force"** band. The legal branch is **not merged** — verified:
 `git branch --merged main` does not list `legal/terms-and-policies`, and it holds 4
 commits not on `main`. Nothing above is live today.
 
-Interim hosting stays the Vercel alias `https://coswarm-site.vercel.app`.
+Interim hosting stays the Vercel alias `https://coswarm-site.vercel.app`. The Vercel
+project keeps its `coswarm-site` name; renaming it is a separate operator action that would
+move the URL, so it is deliberately untouched by the rename.
 
 ---
 
@@ -45,7 +82,7 @@ Interim hosting stays the Vercel alias `https://coswarm-site.vercel.app`.
 
 **Decision needed:** where published releases live.
 
-`install.sh` defaults to `REPO="${COSWARM_REPO:-Ridge-io/coswarm-dist}"`. **That repository
+`install.sh` defaults to `REPO="${CSWARM_REPO:-Ridge-io/coswarm-dist}"`. **That repository
 does not exist.** Verified with a positive control on the same invocation: an
 authenticated `gh` token that lists **17** repos in the `Ridge-io` org, and resolves
 `Ridge-io/cloud-swarm` fine, returns *"Could not resolve to a Repository with the name
@@ -56,11 +93,16 @@ is already **public** (verified: `visibility: PUBLIC`). The only reason for a se
 `-dist` repo was a "source stays private" ruling that no longer holds.
 
 **This is a decision, not a build.** The artifact is ready: `scripts/build-release.sh`
-produces `dist-release/coswarm` + `dist-release/coswarm.sha256`, and self-tests by copying
+produces `dist-release/cswarm` + `dist-release/cswarm.sha256`, and self-tests by copying
 the binary to a temp directory with no `node_modules` and requiring it to report the
-injected version. Both files are present in `dist-release/` now.
+injected version.
 
-Do not change `REPO`'s default until this is decided — the value encodes the answer.
+The artifact was **renamed** with the product (`coswarm` → `cswarm`) in both
+`scripts/build-release.sh` and `install.sh`. Anything already sitting in `dist-release/` or
+published anywhere under the old name is stale and does not match what the installer now
+downloads — rebuild before publishing. The default `REPO` value still names
+`Ridge-io/coswarm-dist` on purpose: it encodes this undecided answer, so do not "fix" it
+as part of the rename.
 
 ---
 
@@ -123,7 +165,7 @@ have, so it is a real gap, not an oversight.
 
 ★ SUPERSEDED, kept so nobody re-derives it: this section used to say there is "no CLI verb
 that calls `create_workspace`" and that reaching it "requires a hand-rolled request."
-**That is dead.** `coswarm new "<name>"` exists in `src/cli.ts` and posts the command.
+**That is dead.** `cswarm new "<name>"` exists in `src/cli.ts` and posts the command.
 
 **THE ORDERING CONSTRAINT THAT MATTERS MOST HERE.** The marketing site and the edge
 function deploy **independently** — `cd site && vercel deploy` is not coupled to a Supabase
@@ -166,18 +208,39 @@ one-word edit. **Sequence attorney review before that flip**, not after.
 
 ---
 
+## 8. Both dogfood machines need one re-login after the rename
+
+The rename changed the **keychain service id** from `io.ridge.coswarm` to
+`com.commonswarm.cli`, and the **config directory** from `~/.coswarm` to `~/.cswarm`.
+
+A stored credential is looked up under the service id, so a renamed build **does not find
+the old entry**. Nothing is lost or corrupted — the old keychain item and the old directory
+simply stop being read. Each dogfood machine has to run `cswarm login` once (or
+`cswarm accept --link-stdin` for the invitee) to write a credential under the new id.
+
+This is a one-time human action per machine, which is why it is here and not in the code.
+Tell both dogfood users **before** they upgrade, so a login prompt on a working setup reads
+as expected rather than as a regression. The stale `~/.coswarm` directory and the old
+keychain item can be removed by hand afterwards; nothing does it automatically.
+
+Not verified here: whether either machine has actually been told, and whether any migration
+path was attempted instead of a re-login. Neither was.
+
+---
+
 ## Summary of who is blocked on what
 
 | # | Item | Kind | Unblocks |
 |---|---|---|---|
-| 1 | Domain choice (not `coswarm.dev`) | Decision | 12 contact-email sites, security contact, canonical URL |
+| 1 | DNS parked, mailboxes missing, no USPTO check | Operator actions | 12 contact-email sites, security contact, canonical URL |
 | 2 | Release repo (`-dist` vs public `cloud-swarm`) | Decision | `curl \| sh` install actually working |
 | 3 | State of formation | Fact to confirm | Correctness of terms + governing law |
 | 4 | DMCA agent registration | External filing | Safe harbour |
 | 5 | Supabase hosting region | Fact from dashboard | Privacy policy |
 | 6 | `SWARM_SELF_SERVE=1` | Deferred on purpose | Public signup (also needs a CLI verb) |
 | 7 | Attorney review | External review | Publishing legal docs as in-force |
+| 8 | One re-login per dogfood machine | Human action | Dogfood continuing to work after the rename |
 
 Items 1, 3, 4, 5, and 7 all gate the same thing: taking the legal branch off draft and
 merging it. Item 2 gates distribution independently. Item 6 gates the product being
-self-serve at all.
+self-serve at all. Item 8 blocks nothing else but will look like a bug if nobody is warned.

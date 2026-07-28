@@ -1,4 +1,4 @@
-# P2-connect-UX — sub-slice 1 design brief: `coswarm accept <invite-link>`
+# P2-connect-UX — sub-slice 1 design brief: `cswarm accept <invite-link>`
 
 **Status:** v2.1 — CLEARED FOR IMPLEMENTATION. Two adversarial rounds by Sable[grok]:
 v1 → NO-GO (BLOCKING 1–3, MAJOR 4–8, NIT 13); v2 → CONDITIONAL GO pending R1–R4 + O1–O3,
@@ -19,7 +19,7 @@ feedback.
 > revoked-held name (R2); ordered positional grammar with legacy-token precedence (R3);
 > default-workspace policy split into two non-contradictory cases (R4); confirm requires
 > re-typing the host and target composition is never mixed (O1–O3); profile schema
-> extension, email fallback, and `coswarm status` forward-reference fixed (minors).
+> extension, email fallback, and `cswarm status` forward-reference fixed (minors).
 
 ## 0. Governing feedback (from SUCCESSION-PLAN §1c)
 
@@ -35,7 +35,7 @@ user-facing step. This brief eliminates steps where possible and narrates the re
 
 ## 0b. Decision #82 — the verb is `accept`, not `join` (BLOCKING 3)
 
-The baton (§1c NEXT PHASE item 1) wrote this as `coswarm join <invite-link>`. **That verb
+The baton (§1c NEXT PHASE item 1) wrote this as `cswarm join <invite-link>`. **That verb
 is not available.** `SWARM-CLOUD.md:696` locks the vocabulary — *"a **member** is a human…
 an **agent** is a registered AI process… Members **accept invites**; agents **join
 swarms** — the verbs are never interchanged"* — and §7 (`:322`) hardened this exact
@@ -43,11 +43,11 @@ swarms** — the verbs are never interchanged"* — and §7 (`:322`) hardened th
 registers on the roster*. Overloading `join` for human onboarding reopens the precise
 confusion the spec closed.
 
-**Ruling:** the human one-command verb is **`coswarm accept <invite-link>`**. It extends
-the existing `coswarm accept` (which already consumes an invitation) rather than adding a
+**Ruling:** the human one-command verb is **`cswarm accept <invite-link>`**. It extends
+the existing `cswarm accept` (which already consumes an invitation) rather than adding a
 verb — so this is a *widening of an existing spec-correct verb*, not new vocabulary. The
 operator's "join" in §1c was colloquial for "one command"; the intent (collapse the steps)
-is fully preserved. Backward compatibility: `coswarm accept --invitation-token-stdin`
+is fully preserved. Backward compatibility: `cswarm accept --invitation-token-stdin`
 keeps working unchanged (§3.3).
 
 ## 1. The pain, concretely (today's invitee path)
@@ -55,16 +55,16 @@ keeps working unchanged (§3.3).
 Four commands + five concepts the invitee should never have to hold:
 
 ```
-coswarm login --url … --anon-key …            # concept: PKCE, anon key, url
-printf %s "$INVITATION_TOKEN" | coswarm accept --invitation-token-stdin   # concept: capability token, stdin safety
-coswarm principal create --name laptop-agent   # concept: "principal"
-coswarm token mint --principal-id … --run-id … --task-id … --epoch 1      # concept: run, task, epoch binding
+cswarm login --url … --anon-key …            # concept: PKCE, anon key, url
+printf %s "$INVITATION_TOKEN" | cswarm accept --invitation-token-stdin   # concept: capability token, stdin safety
+cswarm principal create --name laptop-agent   # concept: "principal"
+cswarm token mint --principal-id … --run-id … --task-id … --epoch 1      # concept: run, task, epoch binding
 ```
 
 ## 2. The target: ONE command
 
 ```
-coswarm accept <invite-link>          # or: coswarm accept --link-stdin
+cswarm accept <invite-link>          # or: cswarm accept --link-stdin
 ```
 
 collapses **login → accept-invitation → principal (auto-named) → ready**, narrating each
@@ -72,16 +72,16 @@ internal step in one plain-language line. The human states intent; the CLI does 
 
 **Mint is explicitly OUT of this command** (correcting v1's wording — NIT 13): decision #80
 says the `agent_runs` row is created *server-side at mint time*; **mint itself is still an
-explicit client command** (`coswarm token mint`). There is no auto-mint today and this
+explicit client command** (`cswarm token mint`). There is no auto-mint today and this
 sub-slice does not add one. Accept leaves a *mintable* state (persisted `workspace_id` +
 `principal_id`), and the closing narration tells the user what comes next.
 
 ### 2.1 The invite link
 
-`coswarm invite` emits a single opaque link carrying everything the invitee needs:
+`cswarm invite` emits a single opaque link carrying everything the invitee needs:
 
 ```
-coswarm://accept/<base64url(payload)>
+cswarm://accept/<base64url(payload)>
 payload = {
   v: 1,
   url,                      # Supabase project base URL (origin-pinned at parse — §2.5)
@@ -124,7 +124,7 @@ Each line is what the user SEES — plain language, no jargon, one per internal 
 3. **Principal** (reuse-or-create, auto-named — §2.8): *"Registered this machine's agent
    identity: <name>."* / *"This machine already has an agent identity: <name>."*
 4. **Ready**: *"You're connected to "<workspace_name>". Your agent gets its credential when
-   it starts work (`coswarm token mint`)."* Do **not** point at `coswarm status` — it does
+   it starts work (`cswarm token mint`)."* Do **not** point at `cswarm status` — it does
    not exist until P2-2 (minor); either omit it or mark it explicitly as coming soon. Never
    send the user to a command that will 404 them.
 
@@ -151,8 +151,8 @@ switch," which cannot both hold. The rule is:
   pre-consumption window — the OAuth round-trip is up to `CALLBACK_TIMEOUT_MS` (5m) wide,
   and history/scrollback retain the payload forever.
 - **Never log or echo the raw link or token** — not on success, not in errors, not in
-  `--json`. Redact to `coswarm://accept/<redacted>` in any diagnostic.
-- Existing `coswarm accept --invitation-token-stdin` (bare token, `--workspace-id`
+  `--json`. Redact to `cswarm://accept/<redacted>` in any diagnostic.
+- Existing `cswarm accept --invitation-token-stdin` (bare token, `--workspace-id`
   resolution) keeps working unchanged. Link mode and token mode are mutually exclusive
   inputs; supplying both is a validation error.
 
@@ -325,12 +325,12 @@ verbatim.
 ### 2.8a Decision #83 — optional `--name` for link mode
 
 §2.10's suffix cap has to fail *somewhere*, and it must not fail into a second command:
-sending the user to `coswarm principal create --name …` would re-introduce the exact
+sending the user to `cswarm principal create --name …` would re-introduce the exact
 multi-step friction §1c objects to, and it would do so **after membership is already
 committed** — stranding them mid-state, told to run something else. So the one-command
 promise needs a one-command escape.
 
-**Ruling:** `coswarm accept` gains an optional **`--name <name>`** that names this machine's
+**Ruling:** `cswarm accept` gains an optional **`--name <name>`** that names this machine's
 agent identity, **link mode only**. Legacy token mode (`--invitation-token-stdin` / bare
 `swm_inv_` positional) stays *unchanged* and creates no principal, so `--name` does not apply
 there — supplying it with a legacy form is a validation error.
@@ -426,26 +426,26 @@ build this speculatively.
 
 ## 3. Scope boundaries
 
-**IN:** `coswarm accept <link>` orchestration + narration; link format + `coswarm invite`
+**IN:** `cswarm accept <link>` orchestration + narration; link format + `cswarm invite`
 emitting it; invite-response label/workspace_id adjunct (server); `--link-stdin` /
 `--no-browser` / `--json`; origin allowlist + confirm gate; recovery state machine
 (membership probe, principal read-reuse, profile checkpoint); label sanitization both sides;
 same-identity guard; default-workspace narration; auto-name; tests; README rewrite of the
 invitee flow to the one-command form.
 
-**OUT:** `coswarm status` (P2-2); agent-skill layer (P2-3); hosted invite *page* and the
+**OUT:** `cswarm status` (P2-2); agent-skill layer (P2-3); hosted invite *page* and the
 `https://` link form (P2-4); auto-mint (does not exist; stays out); rate limiting; revoke
 wiring; T-sweep.
 
 ### 3.3 Parse grammar (Q5, MINOR 10, R3) — strict, ordered, no sniffing
 
-The single positional on `coswarm accept` must serve BOTH the legacy bare token and the new
+The single positional on `cswarm accept` must serve BOTH the legacy bare token and the new
 link, so precedence is explicit — a bare `swm_inv_` token must never reach a base64url
 decoder (R3):
 
 1. Matches `INVITATION_TOKEN_RE` (`/^swm_inv_[A-Za-z0-9_-]{43}$/`, `command-client.ts:17`)
    → **legacy token mode**, unchanged: existing FIX-3 warning, target flags required as today.
-2. Else exact `coswarm://accept/<base64url>` → **link mode**.
+2. Else exact `cswarm://accept/<base64url>` → **link mode**.
 3. Else strict base64url **whose decoded JSON has `v:1` plus all required keys** → link mode.
 4. Else **refuse with teach-by-refusal** naming both accepted forms.
 5. No `https://` sniffing until P2-4.
@@ -455,7 +455,7 @@ together is a validation error.
 
 Reject: wrong/missing `v`, oversize payloads (cap bytes), non-strict base64url (padding
 tricks), malformed UUIDs, and any `url` failing `cloudTarget()` or the §2.5 origin pin.
-`coswarm://` is copy-paste only — no OS deep-link handler is registered or assumed (NIT 14).
+`cswarm://` is copy-paste only — no OS deep-link handler is registered or assumed (NIT 14).
 
 ## 4. Acceptance (evidence-gated)
 
