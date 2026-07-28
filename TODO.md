@@ -106,20 +106,32 @@ as part of the rename.
 
 ---
 
-## 3. State of formation for Yulan Ventures, LLC — **inferred, not supplied**
+## 3. ~~State of formation~~ — **RESOLVED 2026-07-28, and the inference was wrong**
 
-The legal documents state that Yulan Ventures, LLC is *"a limited liability company
-organised under the laws of Texas"*. **Texas was inferred from the Austin principal place
-of business (1200 W 6th St, Ste 600-188, Austin, TX 78703), not supplied by the operator.**
-The commit that filled it (`59e5371`) flags this explicitly.
+★ SUPERSEDED, kept so nobody re-derives it. This item read: *"The legal documents state
+that Yulan Ventures, LLC is a limited liability company organised under the laws of
+Texas. Texas was inferred from the Austin principal place of business, not supplied."*
+**The inference was WRONG.** Operator-confirmed:
 
-This is a fact about the entity, not a preference. If it is wrong, the terms misidentify
-their own party. Confirm against the **certificate of formation**.
+| | |
+|---|---|
+| entity type | **LLC** — not a corporation. "Yulan Ventures, LLC" was already correct in all 5 sites. |
+| state of formation | **Washington** |
+| place of business | Austin, TX (unchanged) |
+| governing law / venue | **Texas law, Travis County — deliberately kept** |
 
-If the entity was organised in Delaware or elsewhere, it is wrong in two files
-(`terms.astro`, `privacy.astro`) and the **governing-law and venue choice should be
-revisited with it** — the documents currently select Texas law and exclusive venue in
-Travis County, Texas, which was chosen on the assumption of a Texas home forum.
+Corrected in `terms.astro` and `privacy.astro`; "organised under the laws of Texas" now
+appears 0 times in the built output.
+
+**Why the venue did NOT move with the formation state**, since the old text said it
+should: venue belongs where the company would actually appear, which is Austin. Selecting
+Washington would mean litigating in a state holding a filing and no people. There is also
+no conflict to resolve — Washington law governs the LLC's *internal* affairs (member
+rights, manager duties) under the internal-affairs doctrine whatever these Terms say,
+while these Terms govern the *user* relationship, which a contract may assign to Texas.
+The reasoning is restated in `terms.astro`'s header so it is not mistaken for a leftover.
+
+If the OFFICE moves, revisit the venue. If the FORMATION STATE changes, do not.
 
 ---
 
