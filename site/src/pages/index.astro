@@ -2,11 +2,23 @@
 /*
  * The landing page.
  *
- * ORDER IS AN ARGUMENT, and this one runs: here is the promise (hero) -> prove it by letting
- * me do it (demo) -> here is everything there is to learn (verbs) -> here is how I get in
- * (start) -> here is what it costs and how you actually get in today (invite). Each section
- * is eyebrow -> headline -> one-sentence lede -> the proof, so the rhythm repeats without the
- * layout repeating.
+ * ORDER IS AN ARGUMENT, and it now runs: promise (hero) -> prove it by letting me do it
+ * (demo) -> HERE IS HOW YOU GET IN (start) -> here is the whole vocabulary if you want it
+ * (verbs) -> what it costs and the one ask (invite). Each section is eyebrow -> headline ->
+ * one-sentence lede -> the proof, so the rhythm repeats without the layout repeating.
+ *
+ * ★ START AND VERBS WERE SWAPPED, AND THE OLD ORDER IS THE THING THAT WAS WRONG.
+ * It read "...-> here is everything there is to learn (verbs) -> here is how I get in
+ * (start)", which is teaching before doing: a reader had to pass a five-command vocabulary
+ * reference BEFORE the page told them how to begin. Measured on the built page, "how do I
+ * start" was the FOURTH heading a reader met, behind a demo, an explainer and a reference.
+ *
+ * The reference this page is being held to (workbench.md, named by the operator three times)
+ * inverts that: hero, proof, then the action, and its getting-started is a short numbered
+ * list near the top. Nothing about the vocabulary is deleted — a reader who wants the whole
+ * surface still gets it, one screen later, as DEPTH rather than as a gate. The rule this
+ * encodes, and the one to keep if these sections change again: a landing page earns the
+ * right to teach only after it has told the reader how to act.
  *
  * ---------------------------------------------------------------------------------------
  * ONE SENTENCE CARRIES THE WHOLE PAGE: "A SIGNAL ANNOUNCES. IT NEVER LOCKS."
@@ -143,7 +155,7 @@ const description =
 
   <Hero />
   <Demo />
-  <Verbs />
   <Start />
+  <Verbs />
   <Invite />
 </Base>
