@@ -228,7 +228,7 @@ function missingTargetError(mode: "human" | "agent"): Error {
     );
   }
   return new Error(
-    "no Cloud target is selected: start with coswarm accept --link-stdin because invite links carry the Cloud target and save its Supabase project base URL, or run coswarm target set --url https://<ref>.supabase.co --anon-key <key> using values from the deployment operator who invited you; scripts and CI may instead pass --url and --anon-key or set SWARM_CLOUD_URL and SWARM_CLOUD_ANON_KEY",
+    "no Cloud target is selected: start with cswarm accept --link-stdin because invite links carry the Cloud target and save its Supabase project base URL, or run cswarm target set --url https://<ref>.supabase.co --anon-key <key> using values from the deployment operator who invited you; scripts and CI may instead pass --url and --anon-key or set SWARM_CLOUD_URL and SWARM_CLOUD_ANON_KEY",
   );
 }
 
@@ -241,11 +241,11 @@ function missingAnonKeyError(
   }
   if (mismatchedStoredTarget) {
     return new Error(
-      "the selected Cloud URL differs from the stored current target; pass its matching --anon-key, set SWARM_CLOUD_ANON_KEY, or run coswarm target set with the complete target",
+      "the selected Cloud URL differs from the stored current target; pass its matching --anon-key, set SWARM_CLOUD_ANON_KEY, or run cswarm target set with the complete target",
     );
   }
   return new Error(
-    "no Cloud anon key is selected: pass --anon-key, set SWARM_CLOUD_ANON_KEY, or run coswarm target set with the complete target",
+    "no Cloud anon key is selected: pass --anon-key, set SWARM_CLOUD_ANON_KEY, or run cswarm target set with the complete target",
   );
 }
 

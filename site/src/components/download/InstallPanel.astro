@@ -118,7 +118,7 @@ const PLATFORMS = [
         destination should not answer to four names. The route stays /download; only the
         visible label is normalised. */}
     <p class="eyebrow">Install</p>
-    <h1 class="h-display dl-hero__h" id="dl-title">Install coswarm.</h1>
+    <h1 class="h-display dl-hero__h" id="dl-title">Install CommonSwarm.</h1>
     {/* Two elements, not one. As a single 146-character sentence this ran to five lines at
         375px with a rag that swung 70px, and the fifth line existed only to carry "256" —
         the browser broke "SHA-256" at its hyphen, which is a break that changes what the word
@@ -191,11 +191,32 @@ const PLATFORMS = [
           <li class="dl-meta__i">No sudo</li>
         </ul>
 
+        {/* The two ways out of this card, and they are the two questions a reader has at the
+            moment they finish copying: what do I run next, and what is that script going to
+            do. The first is what pays for the section reorder in download.astro — "once it's
+            installed" is now the very next section, so this link is a scroll and not a
+            journey. Kept OUT of .dl-go__hint on purpose: the copy script captures that
+            element's textContent and writes it back after 2.6s, so any markup inside it would
+            survive one copy and then be flattened into plain text. */}
+        <p class="dl-next">
+          <a href="#after">Then: the two commands you run after this</a>
+          <span aria-hidden="true">·</span>
+          <a href="#what-happens">What the script does, step by step</a>
+        </p>
+
+        {/* The trailing clause here read "coswarm is pre-launch and invite-only; there's no
+            self-serve signup" — quoted under the name it shipped with, now CommonSwarm.
+            Both halves are now wrong — self-serve workspace creation
+            exists on the server (createSelfServeWorkspace(), supabase/functions/command/
+            index.ts), gated on SWARM_SELF_SERVE rather than absent. It is deleted rather
+            than reworded: this paragraph is about the install host, the signup fact belongs
+            where a reader can act on it (/ and /start), and this panel's own header note
+            says a fact restated three times in 200px reads as nerves. */}
         <p class="dl-placeholder">
           <span class="dl-placeholder__flag mono">&lt;host&gt;</span>
           is a placeholder, not an address. The public install host isn’t decided yet, so this
           command won’t resolve as written — it’s here so you can read exactly what installing
-          would do. coswarm is pre-launch and invite-only; there’s no self-serve signup.
+          would do.
         </p>
       </div>
 
@@ -388,6 +409,14 @@ const PLATFORMS = [
   }
 
   /* ----------------------------------------------------------- command --- */
+  /* --bg IS CORRECT IN BOTH THEMES, and this note exists because it was briefly changed to
+     --elev-1 on the reasoning that "the page colour reads as sunken only on a dark palette".
+     That reasoning was wrong, and the token file said so: the light ramp is --elev-0 #f4f6fa
+     for the page and --elev-1/--elev-2 #ffffff for raised surfaces and cards. So --bg is a
+     step DOWN from the card in light (#f4f6fa under #ffffff) exactly as it is in dark
+     (#08090c under #12151c), while --elev-1 would have made this strip the same white as the
+     card it sits in and left it identifiable only by its hairline. Checked against
+     tokens.css, not assumed from the direction of the redesign. */
   .dl-cmd {
     background: var(--bg);
     border: 1px solid var(--border);
@@ -419,9 +448,15 @@ const PLATFORMS = [
     user-select: none;
   }
 
+  /* --warning-dim, not `color-mix(in oklab, var(--warning) 13%, transparent)`, which is what
+     this and .dl-placeholder__flag below both used. 13% is the DARK branch's badge alpha;
+     tokens.css sets 0.11 for light and records the measurement behind it — at the dark alphas
+     every tinted badge on the site came out between 4.09:1 and 4.46:1 on a light backdrop,
+     under AA while looking perfectly fine. A literal percentage cannot follow a theme; the
+     token is measured per branch. */
   .dl-cmd__host {
     color: var(--warning);
-    background: color-mix(in oklab, var(--warning) 13%, transparent);
+    background: var(--warning-dim);
     border-radius: 4px;
     padding: 1px 4px;
   }
@@ -512,6 +547,30 @@ const PLATFORMS = [
     flex: none;
   }
 
+  .dl-next {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    align-items: baseline;
+    gap: var(--s-2) var(--s-3);
+    margin: var(--s-5) 0 0;
+    font-size: var(--t-sm);
+    line-height: var(--lh-sm);
+    color: var(--text-muted);
+  }
+
+  .dl-next a {
+    color: var(--text);
+    text-decoration: underline;
+    text-decoration-color: var(--border-strong);
+    text-underline-offset: 3px;
+    transition: text-decoration-color var(--dur-2) var(--ease-standard);
+  }
+
+  .dl-next a:hover {
+    text-decoration-color: currentColor;
+  }
+
   .dl-placeholder {
     margin: var(--s-6) 0 0;
     padding-top: var(--s-5);
@@ -523,7 +582,7 @@ const PLATFORMS = [
 
   .dl-placeholder__flag {
     color: var(--warning);
-    background: color-mix(in oklab, var(--warning) 13%, transparent);
+    background: var(--warning-dim);
     border-radius: 4px;
     padding: 1px 5px;
     white-space: nowrap;
@@ -904,7 +963,7 @@ const PLATFORMS = [
         if (/iphone|ipad|ipod|android/.test(hay)) {
           /* Honest rather than helpful-looking: you cannot install a CLI here. */
           detect.textContent =
-            "coswarm is a command-line tool — you’ll want a Mac or Linux machine to install it.";
+            "CommonSwarm is a command-line tool — you’ll want a Mac or Linux machine to install it.";
           detect.dataset.mode = "device";
           detect.hidden = false;
         } else {

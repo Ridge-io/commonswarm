@@ -152,7 +152,7 @@ async function callbackReceiver(expectedState: string): Promise<CallbackReceiver
         "cache-control": "no-store",
         "content-security-policy": "default-src 'none'",
       });
-      response.end("Coswarm login complete. You can return to the terminal.\n");
+      response.end("CommonSwarm login complete. You can return to the terminal.\n");
       if (!settled) {
         settled = true;
         resolveCode(code);
@@ -357,7 +357,7 @@ async function registerLoginDevice(
       command: {
         kind: "register_device",
         device_id: deviceId,
-        label: "coswarm-cli",
+        label: "cswarm-cli",
       },
     }),
   });
@@ -535,7 +535,7 @@ export async function refreshedCredential(
   return await store.withLock(async () => {
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const before = await store.read();
-      if (!before) throw new Error("not logged in; run coswarm login");
+      if (!before) throw new Error("not logged in; run cswarm login");
       const memory = new MemoryStorage();
       const client = authClient(target, memory);
       const refreshed = await client.auth.refreshSession({

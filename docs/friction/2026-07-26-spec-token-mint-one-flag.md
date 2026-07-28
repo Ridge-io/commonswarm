@@ -1,4 +1,4 @@
-# Spec change — `coswarm token mint --scope <scope>`
+# Spec change — `cswarm token mint --scope <scope>`
 
 **Status: SPEC ONLY. Do not implement.** Lead6 is sequencing this behind Quill's target-persistence
 work so the two do not collide.
@@ -33,12 +33,12 @@ command and one flag**.
 
 ```
 # today
-coswarm principal create --url <url> --anon-key <key> --name <name>
-coswarm token mint --url <url> --anon-key <key> \
+cswarm principal create --url <url> --anon-key <key> --name <name>
+cswarm token mint --url <url> --anon-key <key> \
   --principal-id <uuid> --run-id <uuid> --task-id <uuid> --epoch <n> [--ttl-ms <ms>]
 
 # proposed (with Quill's persistence removing --url/--anon-key)
-coswarm token mint --scope <scope>
+cswarm token mint --scope <scope>
 ```
 
 Evidence for each verdict is in `2026-07-26-ceremony-before-first-work.md`; this document is the

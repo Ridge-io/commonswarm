@@ -17,7 +17,10 @@ import { spawn } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
 import type { CloudTarget } from "./config.js";
 
-const KEYCHAIN_SERVICE = "io.ridge.coswarm";
+// Renamed from "io.ridge.coswarm" with the CommonSwarm rename. An install that predates
+// the rename keeps its old keychain record; nothing reads it, so that install reports
+// "not logged in" until `cswarm login` runs once. No migration is attempted on purpose.
+const KEYCHAIN_SERVICE = "com.commonswarm.cli";
 const LOCK_STALE_MS = 60_000;
 const LOCK_TIMEOUT_MS = 30_000;
 const MAX_KEYCHAIN_RECORD_BYTES = 126;
@@ -85,7 +88,8 @@ interface ProcessResult {
 }
 
 export function defaultCredentialStateDirectory(): string {
-  return join(homedir(), ".coswarm", "credentials.d");
+  // Renamed from ~/.coswarm with the CommonSwarm rename; the old directory is not read.
+  return join(homedir(), ".cswarm", "credentials.d");
 }
 
 function mode(statMode: number): number {
@@ -593,8 +597,8 @@ export async function agentSignalPendingStore(options: {
   const configured = options.stateDirectory ??
     process.env.SWARM_AGENT_STATE_DIR ??
     (process.env.XDG_STATE_HOME
-      ? join(process.env.XDG_STATE_HOME, "coswarm", "agent-pending")
-      : join(homedir(), ".coswarm", "agent-state"));
+      ? join(process.env.XDG_STATE_HOME, "cswarm", "agent-pending")
+      : join(homedir(), ".cswarm", "agent-state"));
   if (!isAbsolute(configured)) {
     throw new Error("agent pending state directory must be an absolute path");
   }

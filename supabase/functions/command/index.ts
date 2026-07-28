@@ -203,6 +203,15 @@ interface StoredResponse {
   token_id?: string;
   run_id?: string;
   workspace_id?: string;
+  /**
+   * Capability-URL replay fields. The raw swm_cap_ token is deliberately absent:
+   * the ledger is readable by swarm_command, so storing it there would persist a
+   * live credential in plaintext. A replay identifies the link and its expiry;
+   * only the fresh response ever carries the secret.
+   */
+  capability_id?: string;
+  expires_at?: string;
+  revoked_at?: string;
   signal?: SignalRecord;
 }
 
@@ -299,6 +308,12 @@ const SIGNAL_WORKSPACE_LIMIT = 1000;
 const COMMAND_ID_RE = /^[A-Za-z0-9_-]{8,72}$/;
 const AGENT_TOKEN_RE = /^swm_agt_[A-Za-z0-9_-]{43}$/;
 const INVITATION_TOKEN_RE = /^swm_inv_[A-Za-z0-9_-]{43}$/;
+/**
+ * The shape the anonymous capability endpoint will require of a presented
+ * credential. Asserted against every token this file mints, so a change to
+ * opaqueToken cannot silently issue links the read path would reject.
+ */
+const CAPABILITY_TOKEN_RE = /^swm_cap_[A-Za-z0-9_-]{43}$/;
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SLUG_RE = /^[a-z0-9][a-z0-9_-]{0,62}$/;
@@ -306,13 +321,102 @@ const SHA_RE = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i;
 const SEMVER_RE = /^(\d+)\.(\d+)\.(\d+)(?:-[0-9A-Za-z.-]+)?$/;
 const CONTROL_RE =
   /[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/;
-const CONTROL_GLOBAL_RE =
-  /[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g;
 const SIGNAL_UNSAFE_GLOBAL_RE =
   /[\u0000-\u001f\u007f-\u009f\u061c\u200b-\u200f\u2028-\u202e\u2060\u2066-\u2069\ufeff\u{e0000}-\u{e007f}]/gu;
 const SIGNAL_WHITESPACE_GLOBAL_RE = /[\t\n\v\f\r\u0085\u2028\u2029]+/gu;
 const ANSI_ESCAPE_GLOBAL_RE = /\u001b\[[0-?]*[ -/]*[@-~]/g;
 const REGISTER_DEVICE_KIND = "register_device";
+const CREATE_WORKSPACE_KIND = "create_workspace";
+const MINT_CAPABILITY_KIND = "mint_capability_url";
+const REVOKE_CAPABILITY_KIND = "revoke_capability_url";
+
+/**
+ * §7's zero-install on-ramp is a P5 public surface while the mechanism itself
+ * is P2, so it ships dark. Evaluated before every other check in both capability
+ * handlers: while the feature is off the response cannot be used to probe
+ * whether an identity is verified or a workspace exists.
+ */
+const capabilityUrlsEnabled = Deno.env.get("SWARM_CAPABILITY_URLS") === "1";
+
+/**
+ * §7: a capability URL is a bearer credential, so its TTL ceiling is 7 days.
+ * The database repeats the ceiling as a CHECK — this constant refuses early and
+ * with a distinct audit reason; the constraint is what makes an 8-day link
+ * impossible even if this branch is wrong.
+ */
+const CAPABILITY_TTL_MS = 24 * 60 * 60 * 1000;
+const CAPABILITY_MAX_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const CAPABILITY_MIN_TTL_MS = 60 * 1000;
+
+/**
+ * §5's no-teammate-DoS rule: (a) is per-issuing-identity and re-mintable after
+ * the window, (b) is a resource-creation ceiling on the tenant doing the
+ * issuing, and (c) bounds how many live disclosure credentials a tenant can
+ * have outstanding at once. None of the three can be spent by a victim.
+ */
+const CAPABILITY_MINT_CREDENTIAL_LIMIT = 20;
+const CAPABILITY_MINT_WORKSPACE_LIMIT = 60;
+const CAPABILITY_LIVE_LIMIT = 200;
+
+/**
+ * Self-serve workspace creation is the public front door (§9 P5). It ships
+ * dark: until the free-tier abuse controls land, an operator must opt in.
+ * Absent or any value other than "1", a stranger gets the same 403 as before.
+ */
+const selfServeEnabled = Deno.env.get("SWARM_SELF_SERVE") === "1";
+
+/**
+ * §9 P5 caps free-tier workspaces per *verified* identity so one attacker
+ * cannot mint tenants at zero marginal cost. Counts only live workspaces, so
+ * archiving frees a slot.
+ */
+const FREE_TIER_WORKSPACE_LIMIT = 3;
+
+/**
+ * §9 P5 again: the same identity archiving and recreating in a loop would slip
+ * the live cap above, so creations themselves are capped over a rolling day.
+ * Deliberately larger than FREE_TIER_WORKSPACE_LIMIT — a user who archives a
+ * mistake and starts over must not be locked out for a day.
+ */
+const SELF_SERVE_CREATE_DAILY_LIMIT = 6;
+
+/**
+ * §8: free self-serve plus transactional email is a branded-phishing vector,
+ * so outbound invites are capped per verified identity per rolling day.
+ */
+const INVITE_IDENTITY_DAILY_LIMIT = 10;
+
+/**
+ * §10's per-tenant caps. Seats count live members plus invitations still
+ * outstanding, so an attacker cannot park unbounded pending invites in one
+ * workspace; principals bound the agent identities a free tenant can hold.
+ * These are free-tier resource ceilings, not authority boundaries.
+ */
+const FREE_TIER_MEMBER_LIMIT = 25;
+const FREE_TIER_PRINCIPAL_LIMIT = 50;
+
+/**
+ * A speed bump, and honestly nothing more: it turns away the laziest throwaway
+ * inbox and anyone determined registers a domain in a minute. It is not a
+ * security control and nothing downstream may treat it as one — identity
+ * verification is what the abuse posture actually rests on. Kept short and
+ * obvious on purpose; a long list belongs in data, not in this file.
+ */
+const DISPOSABLE_EMAIL_DOMAINS = [
+  "10minutemail.com",
+  "dispostable.com",
+  "fakeinbox.com",
+  "getnada.com",
+  "guerrillamail.com",
+  "mailinator.com",
+  "maildrop.cc",
+  "sharklasers.com",
+  "temp-mail.org",
+  "tempmail.com",
+  "throwaway.email",
+  "trashmail.com",
+  "yopmail.com",
+] as const;
 const COMMAND_KINDS = [
   "create",
   "acquire",
@@ -407,6 +511,8 @@ interface AuthContext {
   actor: Actor;
   agent: AgentAuthRow | null;
   identityVerified: boolean;
+  /** Bookkeeping for the §8 disposable-domain speed bump; never authorization. */
+  email: string | null;
 }
 
 interface Route {
@@ -527,9 +633,16 @@ function record(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
+/**
+ * One scrubbing set for this file, not two. This used to run a narrower
+ * CONTROL_GLOBAL_RE (C0/C1 plus \u202a-\u202e and \u2066-\u2069) that sat six lines
+ * away from SIGNAL_UNSAFE_GLOBAL_RE and let through zero-width joiners, the
+ * BOM, the word joiner and the entire tags block — so a label or an audit
+ * reason was held to a weaker standard than the signal text beside it.
+ */
 function stripControls(value: string | null | undefined): string | null {
   if (value === null || value === undefined) return null;
-  return value.replace(CONTROL_GLOBAL_RE, "").slice(0, 2048);
+  return value.replace(SIGNAL_UNSAFE_GLOBAL_RE, "").slice(0, 2048);
 }
 
 function sanitizeSignalText(value: string): string {
@@ -610,9 +723,15 @@ async function readBody(
   }
 }
 
+// RFC 7235 §2.1: the auth-scheme is case-INSENSITIVE and is followed by 1*SP,
+// so `bearer swm_agt_...` is a well-formed credential. Matching /^Bearer / with
+// no `i` rejected it as if no credential had been presented at all — a
+// conforming client would have been told its token was missing.
+const BEARER_RE = /^Bearer +([^\s]+)$/i;
+
 function bearer(request: Request): string | null {
   const header = request.headers.get("authorization");
-  const match = header ? /^Bearer ([^\s]+)$/.exec(header) : null;
+  const match = header ? BEARER_RE.exec(header) : null;
   return match?.[1] ?? null;
 }
 
@@ -633,7 +752,7 @@ function hexToBytes(value: string): Uint8Array {
   );
 }
 
-function opaqueToken(prefix: "swm_inv_" | "swm_agt_"): string {
+function opaqueToken(prefix: "swm_inv_" | "swm_agt_" | "swm_cap_"): string {
   const bytes = new Uint8Array(32);
   crypto.getRandomValues(bytes);
   const binary = String.fromCharCode(...bytes);
@@ -735,6 +854,24 @@ function normalizedEmail(value: unknown): string | null {
   ) return null;
   const email = value.trim().toLowerCase();
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(email) ? email : null;
+}
+
+/**
+ * True only when the address sits on a domain we recognise as throwaway. An
+ * address we cannot parse is NOT treated as disposable: the speed bump exists
+ * to turn away the obvious case, and guessing would refuse honest signups on
+ * no evidence. Subdomains of a listed domain count (mail.mailinator.com).
+ */
+function disposableEmailDomain(value: string | null): boolean {
+  if (value === null) return false;
+  const at = value.lastIndexOf("@");
+  if (at < 0) return false;
+  const domain = value.slice(at + 1).trim().toLowerCase();
+  if (domain.length === 0) return false;
+  for (const listed of DISPOSABLE_EMAIL_DOMAINS) {
+    if (domain === listed || domain.endsWith(`.${listed}`)) return true;
+  }
+  return false;
 }
 
 function nullableUuid(value: unknown): value is string | null {
@@ -1067,6 +1204,15 @@ function storedResponse(value: unknown): StoredResponse {
     ...(typeof response.workspace_id === "string"
       ? { workspace_id: response.workspace_id }
       : {}),
+    ...(typeof response.capability_id === "string"
+      ? { capability_id: response.capability_id }
+      : {}),
+    ...(typeof response.expires_at === "string"
+      ? { expires_at: response.expires_at }
+      : {}),
+    ...(typeof response.revoked_at === "string"
+      ? { revoked_at: response.revoked_at }
+      : {}),
     ...(record(response.signal) === null
       ? {}
       : { signal: response.signal as unknown as SignalRecord }),
@@ -1110,6 +1256,7 @@ async function authenticateAgent(
     },
     agent,
     identityVerified: false,
+    email: null,
   };
 }
 
@@ -1117,7 +1264,7 @@ async function authenticateHuman(
   tx: Sql,
   verified: VerifiedHuman,
 ): Promise<AuthContext | null> {
-  const rows = await tx<{ user_id: string }[]>`
+  const rows = await tx<{ user_id: string; email: string | null }[]>`
     INSERT INTO swarm.users (user_id, display_name, email)
     VALUES (
       ${verified.userId}::uuid,
@@ -1127,7 +1274,7 @@ async function authenticateHuman(
     ON CONFLICT (user_id) DO UPDATE SET
       display_name = EXCLUDED.display_name,
       email = coalesce(EXCLUDED.email, swarm.users.email)
-    RETURNING user_id
+    RETURNING user_id, email
   `;
   if (!rows[0]) return null;
   return {
@@ -1137,6 +1284,7 @@ async function authenticateHuman(
     actor: { user: rows[0].user_id, agent_principal: null, run: null },
     agent: null,
     identityVerified: verified.identityVerified,
+    email: verified.email ?? rows[0].email,
   };
 }
 
@@ -2133,6 +2281,234 @@ async function registerLoginDevice(
   };
 }
 
+/**
+ * Creates a workspace for a caller who belongs to nothing yet — the one command
+ * that cannot resolve a route, because the tenant it addresses does not exist.
+ * That is why it short-circuits ahead of resolveRoute, exactly as
+ * registerLoginDevice does, rather than threading through the routed path whose
+ * idempotency key is itself (workspace_id, stream_id).
+ *
+ * It deliberately appends NO WorkspaceCreated event. seedDogfood has never
+ * written one, so every workspace in production today starts at head_seq 0 with
+ * an empty stream; emitting one here would give self-serve tenants a different
+ * shape from every tenant that already exists.
+ */
+async function createSelfServeWorkspace(
+  tx: Sql,
+  body: RequestBody,
+  auth: AuthContext,
+  ignoredIdentity: string | null,
+): Promise<HttpResult> {
+  const forbid = async (reason: string): Promise<HttpResult> => {
+    await insertAudit(tx, {
+      auth,
+      commandKind: CREATE_WORKSPACE_KIND,
+      outcome: "authz",
+      reason,
+      detail: ignoredIdentity,
+    });
+    return { status: 403, body: { error: "forbidden" } };
+  };
+
+  // Order matters: the feature gate answers first, so that while self-serve is
+  // dark the response cannot be used to probe whether an identity is verified.
+  if (!selfServeEnabled) return await forbid("self_serve_disabled");
+  if (auth.credentialKind !== "user" || auth.actor.user === null) {
+    return await forbid("credential_kind_forbidden");
+  }
+  if (!auth.identityVerified) return await forbid("identity_not_verified");
+  // A speed bump, not a security control (see DISPOSABLE_EMAIL_DOMAINS). It
+  // sits behind the verification gate so it can never be the only thing
+  // standing between a stranger and a tenant.
+  if (disposableEmailDomain(auth.email)) {
+    return await forbid("disposable_email_domain");
+  }
+
+  const command = record(body.command);
+  const valid = body.workspace_id === undefined &&
+    body.stream === undefined &&
+    typeof body.client_version === "string" &&
+    command !== null &&
+    exactKeys(command, ["kind", "workspace_id", "name"]) &&
+    command.kind === CREATE_WORKSPACE_KIND &&
+    typeof command.workspace_id === "string" &&
+    UUID_RE.test(command.workspace_id) &&
+    boundedText(command.name, 80);
+  if (!valid) {
+    await insertAudit(tx, {
+      auth,
+      commandKind: CREATE_WORKSPACE_KIND,
+      outcome: "validation",
+      reason: "invalid_request",
+      detail: ignoredIdentity,
+    });
+    return { status: 400, body: { error: "invalid_request" } };
+  }
+
+  const configRows = await tx<{ value: unknown }[]>`
+    SELECT value FROM swarm.config WHERE key = 'min_client_version' LIMIT 1
+  `;
+  const minClientVersion = configRows[0]?.value;
+  if (
+    typeof minClientVersion !== "string" ||
+    compareSemver(body.client_version as string, minClientVersion) === null
+  ) {
+    await insertAudit(tx, {
+      auth,
+      commandKind: CREATE_WORKSPACE_KIND,
+      outcome: "validation",
+      reason: "invalid client_version",
+      detail: ignoredIdentity,
+    });
+    return { status: 400, body: { error: "invalid_request" } };
+  }
+  if (compareSemver(body.client_version as string, minClientVersion)! < 0) {
+    await insertAudit(tx, {
+      auth,
+      commandKind: CREATE_WORKSPACE_KIND,
+      outcome: "validation",
+      reason: "client_unsupported",
+      detail: ignoredIdentity,
+    });
+    return {
+      status: 426,
+      body: { error: "upgrade_required", min_client_version: minClientVersion },
+    };
+  }
+
+  const workspaceId = command!.workspace_id as string;
+  const name = command!.name as string;
+
+  // Counted inside the transaction and against created_by, so two concurrent
+  // requests cannot both read limit-1. Archived workspaces free their slot.
+  const countRows = await tx<{ live: string }[]>`
+    SELECT count(*)::text AS live
+    FROM swarm.workspaces
+    WHERE created_by = ${auth.actor.user}::uuid
+      AND archived_at IS NULL
+  `;
+  if (Number(countRows[0]?.live ?? "0") >= FREE_TIER_WORKSPACE_LIMIT) {
+    await insertAudit(tx, {
+      auth,
+      commandKind: CREATE_WORKSPACE_KIND,
+      outcome: "authz",
+      reason: "workspace_limit_reached",
+      detail: ignoredIdentity,
+    });
+    return {
+      status: 403,
+      body: {
+        error: "workspace_limit_reached",
+        limit: FREE_TIER_WORKSPACE_LIMIT,
+      },
+    };
+  }
+
+  // The live cap above counts tenants that exist now; this counts creations,
+  // so archive-and-recreate churn is bounded too. Counted from the workspaces
+  // rows themselves rather than swarm.rate_buckets — see enforceFreeTierBudget
+  // for why a daily window cannot live in that table.
+  const madeRows = await tx<{ made: string; resets_at: Date | null }[]>`
+    SELECT
+      count(*)::text AS made,
+      min(created_at) + interval '24 hours' AS resets_at
+    FROM swarm.workspaces
+    WHERE created_by = ${auth.actor.user}::uuid
+      AND created_at > statement_timestamp() - interval '24 hours'
+  `;
+  if (Number(madeRows[0]?.made ?? "0") >= SELF_SERVE_CREATE_DAILY_LIMIT) {
+    const resetsAt = (madeRows[0]?.resets_at ?? new Date()).toISOString();
+    const detail =
+      `identity limit ${SELF_SERVE_CREATE_DAILY_LIMIT} workspaces/day; resets at ${resetsAt}`;
+    await insertAudit(tx, {
+      auth,
+      commandKind: CREATE_WORKSPACE_KIND,
+      outcome: "rate_limit",
+      reason: "workspace_create_rate_limited",
+      detail,
+    });
+    await tx`
+      INSERT INTO swarm.security_alerts (kind, subject, detail)
+      VALUES (
+        'workspace_create_rate_limit',
+        'identity',
+        ${tx.json({
+          user_id: auth.actor.user,
+          limit: SELF_SERVE_CREATE_DAILY_LIMIT,
+          resets_at: resetsAt,
+        })}::jsonb
+      )
+    `;
+    return {
+      status: 429,
+      body: {
+        error: "rate_limited",
+        message: `Workspace creation refused: ${detail}.`,
+        limit: SELF_SERVE_CREATE_DAILY_LIMIT,
+        resets_at: resetsAt,
+      },
+    };
+  }
+
+  await tx`
+    INSERT INTO swarm.workspaces (workspace_id, name, created_by)
+    VALUES (${workspaceId}::uuid, ${name}, ${auth.actor.user}::uuid)
+    ON CONFLICT (workspace_id) DO NOTHING
+  `;
+  // A client-proposed id that is already taken must not silently hand the
+  // caller someone else's tenant — the same guard seedDogfood applies.
+  const owned = await tx<{ created_by: string }[]>`
+    SELECT created_by
+    FROM swarm.workspaces
+    WHERE workspace_id = ${workspaceId}::uuid
+  `;
+  if (owned[0]?.created_by !== auth.actor.user) {
+    return await forbid("workspace_id_taken");
+  }
+  await tx`
+    INSERT INTO swarm.memberships (workspace_id, user_id, role, revoked_at)
+    VALUES (${workspaceId}::uuid, ${auth.actor.user}::uuid, 'owner', NULL)
+    ON CONFLICT (workspace_id, user_id) DO UPDATE SET
+      role = 'owner',
+      revoked_at = NULL
+  `;
+  await tx`
+    INSERT INTO swarm.streams (stream_id, workspace_id, kind, repo_mapping_id)
+    VALUES (${crypto.randomUUID()}::uuid, ${workspaceId}::uuid, 'workspace', NULL)
+    ON CONFLICT DO NOTHING
+  `;
+  const streams = await tx<{ stream_id: string }[]>`
+    SELECT stream_id
+    FROM swarm.streams
+    WHERE workspace_id = ${workspaceId}::uuid
+      AND kind = 'workspace'
+    LIMIT 1
+  `;
+  const streamId = streams[0]?.stream_id;
+  if (!streamId) throw new Error("workspace stream creation failed");
+
+  await insertAudit(tx, {
+    auth,
+    commandKind: CREATE_WORKSPACE_KIND,
+    workspaceId,
+    streamId,
+    outcome: "accepted",
+    reason: null,
+    detail: ignoredIdentity,
+  });
+  return {
+    status: 200,
+    body: {
+      status: "accepted",
+      ok: true,
+      event_ids: [],
+      workspace_id: workspaceId,
+      stream_id: streamId,
+      min_client_version: minClientVersion,
+    },
+  };
+}
+
 interface SignalRateLimit {
   bucket: "credential" | "workspace";
   limit: number;
@@ -2198,6 +2574,808 @@ async function enforceSignalRate(
       resetsAt: workspace.resetsAt,
     };
   }
+  return null;
+}
+
+interface CapabilityRequest {
+  userId: string;
+  workspaceId: string;
+  command: Record<string, unknown>;
+  minClientVersion: string;
+}
+
+type CapabilityPreamble =
+  | { ok: true; request: CapabilityRequest }
+  | { ok: false; result: HttpResult };
+
+/** Write the audit row a refusal owes before returning its HTTP body. */
+async function auditRefusal(
+  tx: Sql,
+  auth: AuthContext,
+  kind: string,
+  entry: {
+    outcome: string;
+    reason: string;
+    detail?: string | null;
+    workspaceId?: string | null;
+    streamId?: string | null;
+  },
+  result: HttpResult,
+): Promise<HttpResult> {
+  await insertAudit(tx, {
+    auth,
+    commandKind: kind,
+    workspaceId: entry.workspaceId ?? null,
+    streamId: entry.streamId ?? null,
+    outcome: entry.outcome,
+    reason: entry.reason,
+    detail: entry.detail ?? null,
+  });
+  return result;
+}
+
+/**
+ * The checks mint and revoke share, in the order §7 requires. The feature gate
+ * answers first so that while the on-ramp is dark the response cannot be used to
+ * probe whether an identity is verified or a workspace exists; the credential
+ * check that follows is this file's §2.3 agent-token denylist entry, written out
+ * explicitly because a capability command deliberately never reaches the
+ * reducer's HUMAN_ONLY_COMMANDS gate. Every refusal carries its own reason so a
+ * failure is diagnosable from swarm.audit_log alone.
+ */
+async function capabilityPreamble(
+  tx: Sql,
+  body: RequestBody,
+  auth: AuthContext,
+  ignoredIdentity: string | null,
+  kind: string,
+  commandKeySets: readonly (readonly string[])[],
+): Promise<CapabilityPreamble> {
+  const scope = kind === MINT_CAPABILITY_KIND
+    ? "capability_mint"
+    : "capability_revoke";
+  const forbidden: HttpResult = { status: 403, body: { error: "forbidden" } };
+  const invalid: HttpResult = { status: 400, body: { error: "invalid_request" } };
+  // Recorded on refusals that happen before the caller's membership is known,
+  // the same way handleTransaction's own forbidden path does it: it is the
+  // tenant the caller *claimed*, never an authorization input, and it is what
+  // makes a probing campaign visible in the audit log.
+  const claimedWorkspace =
+    typeof body.workspace_id === "string" && UUID_RE.test(body.workspace_id)
+      ? body.workspace_id
+      : null;
+  const refuse = async (
+    outcome: string,
+    reason: string,
+    result: HttpResult,
+    workspaceId: string | null = claimedWorkspace,
+  ): Promise<CapabilityPreamble> => ({
+    ok: false,
+    result: await auditRefusal(tx, auth, kind, {
+      outcome,
+      reason,
+      detail: ignoredIdentity,
+      workspaceId,
+    }, result),
+  });
+
+  if (!capabilityUrlsEnabled) {
+    return await refuse("authz", "capability_feature_disabled", forbidden);
+  }
+  // §7 human-mint-only: a swm_agt_ bearer can never reach the line below this
+  // one, so a compromised worker cannot mint a link and exfiltrate board state.
+  if (auth.credentialKind !== "user" || auth.actor.user === null) {
+    return await refuse("authz", `${scope}_credential_kind_forbidden`, forbidden);
+  }
+  const userId = auth.actor.user;
+  if (!auth.identityVerified) {
+    return await refuse("authz", `${scope}_identity_not_verified`, forbidden);
+  }
+  // The stream is derived server-side from the named work item. Nothing about
+  // the target is client-selectable beyond the id inside `command`.
+  if (Object.hasOwn(body, "stream")) {
+    return await refuse("validation", `${scope}_stream_field_forbidden`, invalid);
+  }
+
+  const command = record(body.command);
+  const shapeOk = exactKeys(body, [
+    "command_id",
+    "client_version",
+    "workspace_id",
+    "command",
+  ]) &&
+    typeof body.workspace_id === "string" &&
+    UUID_RE.test(body.workspace_id) &&
+    typeof body.client_version === "string" &&
+    command !== null &&
+    command.kind === kind &&
+    commandKeySets.some((keys) => exactKeys(command, keys));
+  if (command === null || !shapeOk) {
+    return await refuse("validation", `${scope}_invalid_request`, invalid);
+  }
+  const workspaceId = body.workspace_id as string;
+  const clientVersion = body.client_version as string;
+
+  const configRows = await tx<{ value: unknown }[]>`
+    SELECT value FROM swarm.config WHERE key = 'min_client_version' LIMIT 1
+  `;
+  const minClientVersion = configRows[0]?.value;
+  if (
+    typeof minClientVersion !== "string" ||
+    compareSemver(clientVersion, minClientVersion) === null
+  ) {
+    return await refuse(
+      "validation",
+      `${scope}_invalid_client_version`,
+      invalid,
+      workspaceId,
+    );
+  }
+  if (compareSemver(clientVersion, minClientVersion)! < 0) {
+    return await refuse("validation", `${scope}_client_unsupported`, {
+      status: 426,
+      body: { error: "upgrade_required", min_client_version: minClientVersion },
+    }, workspaceId);
+  }
+
+  // Issuing a credential that discloses tenant data is at least as privileged as
+  // issuing an invite, which §2.6 gates on Owner/Admin. A non-member and a
+  // wrong-tenant workspace_id take this same branch, so the response is never an
+  // existence oracle for another tenant.
+  const memberships = await tx<{ role: string }[]>`
+    SELECT role
+    FROM swarm.memberships
+    WHERE workspace_id = ${workspaceId}::uuid
+      AND user_id = ${userId}::uuid
+      AND revoked_at IS NULL
+    LIMIT 1
+  `;
+  const role = memberships[0]?.role ?? null;
+  if (role !== "owner" && role !== "admin") {
+    return await refuse("authz", `${scope}_role_forbidden`, forbidden, workspaceId);
+  }
+
+  return {
+    ok: true,
+    request: { userId, workspaceId, command, minClientVersion },
+  };
+}
+
+/**
+ * Mint one capability URL (§7 zero-install on-ramp). Dispatched ahead of
+ * resolveRoute for the same reason createSelfServeWorkspace is: it is
+ * self-contained — its own validation, its own ceilings, its own audit rows —
+ * and it emits no protocol event, so it stays out of the shared reducer path.
+ *
+ * The raw token exists in this function and in the fresh HTTP response, nowhere
+ * else: only its SHA-256 digest is stored, and neither the token nor any prefix
+ * of it reaches swarm.audit_log or swarm.idempotency_keys.
+ */
+async function mintCapabilityUrl(
+  tx: Sql,
+  body: RequestBody,
+  auth: AuthContext,
+  ignoredIdentity: string | null,
+): Promise<HttpResult> {
+  const preamble = await capabilityPreamble(
+    tx,
+    body,
+    auth,
+    ignoredIdentity,
+    MINT_CAPABILITY_KIND,
+    [["kind", "task_id"], ["kind", "task_id", "ttl_ms"]],
+  );
+  if (!preamble.ok) return preamble.result;
+  const { userId, workspaceId, command, minClientVersion } = preamble.request;
+  const commandId = String(body.command_id);
+  const invalidRequest = { status: 400, body: { error: "invalid_request" } };
+
+  const taskId = command.task_id;
+  if (typeof taskId !== "string" || !UUID_RE.test(taskId)) {
+    return await auditRefusal(tx, auth, MINT_CAPABILITY_KIND, {
+      outcome: "validation",
+      reason: "capability_mint_invalid_request",
+      detail: ignoredIdentity,
+      workspaceId,
+    }, invalidRequest);
+  }
+  const ttlMs = command.ttl_ms === undefined
+    ? CAPABILITY_TTL_MS
+    : command.ttl_ms;
+  if (!integer(ttlMs, CAPABILITY_MIN_TTL_MS) || ttlMs > CAPABILITY_MAX_TTL_MS) {
+    return await auditRefusal(tx, auth, MINT_CAPABILITY_KIND, {
+      outcome: "validation",
+      reason: "capability_mint_invalid_ttl",
+      detail: ignoredIdentity,
+      workspaceId,
+    }, invalidRequest);
+  }
+
+  // ★ RESOLVED BY THE FULL WORK-ITEM KEY, NOT BY task_id ALONE.
+  // swarm.tasks is PRIMARY KEY (stream_id, task_id) — task_id on its own is not
+  // unique — so `WHERE t.task_id = $1` names a *set*, and taking its first row
+  // binds a bearer credential to whichever member of that set the planner
+  // happened to return. That is the cross-tenant class §7 names. Three
+  // predicates close it, and none of them is redundant with the others:
+  //   * t.workspace_id pins the task row itself to the caller's tenant;
+  //   * the join carries the composite (stream_id, workspace_id) — the same
+  //     pairing swarm.capability_urls' FK enforces — so the stream this mint
+  //     writes cannot belong to a different tenant than the task;
+  //   * the repositories EXISTS re-applies resolveRoute's archived_at check,
+  //     which this lookup used to omit, so a link can no longer be minted
+  //     against an archived repository mapping. It is written as EXISTS rather
+  //     than a LEFT JOIN on purpose: a missing or foreign-tenant repository row
+  //     must refuse, and `r.archived_at IS NULL` over a LEFT JOIN would pass.
+  // LIMIT 2, not 1: two rows means one task_id under two streams, which this
+  // function must refuse rather than resolve arbitrarily.
+  // "No such task", "that task belongs to another tenant", "its repo mapping is
+  // archived" and "the id is ambiguous" are all the same 403 — only the audit
+  // reason distinguishes them — so a member cannot probe another tenant's ids.
+  const taskRows = await tx<{ stream_id: string }[]>`
+    SELECT t.stream_id
+    FROM swarm.tasks t
+    JOIN swarm.streams s
+      ON s.stream_id = t.stream_id
+     AND s.workspace_id = t.workspace_id
+    WHERE t.task_id = ${taskId}::uuid
+      AND t.workspace_id = ${workspaceId}::uuid
+      AND s.workspace_id = ${workspaceId}::uuid
+      AND (
+        s.repo_mapping_id IS NULL
+        OR EXISTS (
+          SELECT 1
+          FROM swarm.repositories r
+          WHERE r.repo_mapping_id = s.repo_mapping_id
+            AND r.workspace_id = ${workspaceId}::uuid
+            AND r.archived_at IS NULL
+        )
+      )
+    ORDER BY t.stream_id
+    LIMIT 2
+  `;
+  if (taskRows.length > 1) {
+    return await auditRefusal(tx, auth, MINT_CAPABILITY_KIND, {
+      outcome: "authz",
+      reason: "capability_mint_work_item_ambiguous",
+      detail: ignoredIdentity,
+      workspaceId,
+    }, { status: 403, body: { error: "forbidden" } });
+  }
+  const streamId = taskRows[0]?.stream_id;
+  if (!streamId) {
+    return await auditRefusal(tx, auth, MINT_CAPABILITY_KIND, {
+      outcome: "authz",
+      reason: "capability_mint_work_item_not_found",
+      detail: ignoredIdentity,
+      workspaceId,
+    }, { status: 403, body: { error: "forbidden" } });
+  }
+
+  const rateLimited = async (
+    subject: "identity" | "workspace",
+    alertSubject: "user" | "workspace",
+    reason: string,
+    limit: number,
+    resetsAt: string,
+  ): Promise<HttpResult> => {
+    const detail = `${subject} limit ${limit} links/hour; resets at ${resetsAt}`;
+    await insertAudit(tx, {
+      auth,
+      commandKind: MINT_CAPABILITY_KIND,
+      workspaceId,
+      streamId,
+      outcome: "rate_limit",
+      reason,
+      detail,
+    });
+    await tx`
+      INSERT INTO swarm.security_alerts (kind, subject, detail)
+      VALUES (
+        'capability_mint_rate_limit',
+        ${alertSubject},
+        ${tx.json({
+      workspace_id: workspaceId,
+      user_id: userId,
+      limit,
+      resets_at: resetsAt,
+    })}::jsonb
+      )
+    `;
+    return {
+      status: 429,
+      body: {
+        error: "rate_limited",
+        message: `Capability link refused: ${detail}.`,
+        limit,
+        resets_at: resetsAt,
+      },
+    };
+  };
+
+  // Hourly windows on purpose: purge_expired_rate_buckets sweeps this table of
+  // anything older than two hours, so a daily window stored here would silently
+  // reset (the reasoning is written out at enforceFreeTierBudget).
+  const credentialBucket = await incrementSignalBucket(
+    tx,
+    `capability:mint:user:${userId}`,
+    CAPABILITY_MINT_CREDENTIAL_LIMIT,
+  );
+  if (credentialBucket.count > CAPABILITY_MINT_CREDENTIAL_LIMIT) {
+    return await rateLimited(
+      "identity",
+      "user",
+      "capability_mint_rate_limited_credential",
+      CAPABILITY_MINT_CREDENTIAL_LIMIT,
+      credentialBucket.resetsAt,
+    );
+  }
+  const workspaceBucket = await incrementSignalBucket(
+    tx,
+    `capability:mint:workspace:${workspaceId}`,
+    CAPABILITY_MINT_WORKSPACE_LIMIT,
+  );
+  if (workspaceBucket.count > CAPABILITY_MINT_WORKSPACE_LIMIT) {
+    return await rateLimited(
+      "workspace",
+      "workspace",
+      "capability_mint_rate_limited_workspace",
+      CAPABILITY_MINT_WORKSPACE_LIMIT,
+      workspaceBucket.resetsAt,
+    );
+  }
+
+  // Counted from the table rather than a bucket: this is a ceiling on live
+  // credentials, so the artifact itself is the only honest measurement.
+  const liveRows = await tx<{ live: string }[]>`
+    SELECT count(*)::text AS live
+    FROM swarm.capability_urls
+    WHERE workspace_id = ${workspaceId}::uuid
+      AND revoked_at IS NULL
+      AND expires_at > statement_timestamp()
+  `;
+  if (Number(liveRows[0]?.live ?? "0") >= CAPABILITY_LIVE_LIMIT) {
+    return await auditRefusal(tx, auth, MINT_CAPABILITY_KIND, {
+      outcome: "quota",
+      reason: "capability_live_limit_reached",
+      detail: ignoredIdentity,
+      workspaceId,
+      streamId,
+    }, {
+      status: 403,
+      body: { error: "capability_limit_reached", limit: CAPABILITY_LIVE_LIMIT },
+    });
+  }
+
+  // A retried mint must not silently issue a second live credential.
+  const hash = requestHash(auth.actor, command);
+  const existingRows = await tx<
+    {
+      workspace_id: string;
+      stream_id: string;
+      request_hash: string;
+      response: unknown;
+    }[]
+  >`
+    SELECT workspace_id, stream_id, request_hash, response
+    FROM swarm.idempotency_keys
+    WHERE principal_kind = ${auth.credentialKind}
+      AND principal_id = ${canonicalPrincipal(auth.actor)}
+      AND command_id = ${commandId}
+    LIMIT 1
+  `;
+  const existing = existingRows[0];
+  if (existing) {
+    const matches = existing.request_hash === hash &&
+      existing.workspace_id === workspaceId &&
+      existing.stream_id === streamId;
+    await insertAudit(tx, {
+      auth,
+      commandKind: MINT_CAPABILITY_KIND,
+      workspaceId,
+      streamId,
+      outcome: matches ? "replayed" : "conflict",
+      reason: matches ? null : "capability_mint_command_id_conflict",
+      detail: ignoredIdentity,
+      hash,
+    });
+    // A replay identifies the link; it never re-serves the credential.
+    return matches
+      ? replayResult(storedResponse(existing.response), MINT_CAPABILITY_KIND)
+      : { status: 409, body: { error: "command_id_conflict" } };
+  }
+
+  const token = opaqueToken("swm_cap_");
+  if (!CAPABILITY_TOKEN_RE.test(token)) {
+    throw new Error("minted capability token does not match the presented-credential shape");
+  }
+  const tokenHash = await sha256(token);
+  const capabilityId = crypto.randomUUID();
+  const issued = await tx<{ expires_at: Date }[]>`
+    INSERT INTO swarm.capability_urls (
+      capability_id, workspace_id, stream_id, task_id,
+      token_hash, created_by, mint_command_id, expires_at
+    ) VALUES (
+      ${capabilityId}::uuid,
+      ${workspaceId}::uuid,
+      ${streamId}::uuid,
+      ${taskId}::uuid,
+      ${tokenHash},
+      ${userId}::uuid,
+      ${commandId},
+      statement_timestamp() + interval '1 millisecond' * ${ttlMs}::double precision
+    )
+    RETURNING expires_at
+  `;
+  const expiresAt = issued[0]?.expires_at;
+  if (!expiresAt) throw new Error("capability url insert returned no row");
+  const expiresAtIso = expiresAt.toISOString();
+
+  // The ledger stores what a replay may re-serve. The token is deliberately
+  // absent: swarm_command can read this table, and a live credential in
+  // plaintext here would outlive the response that carried it.
+  const response: StoredResponse = {
+    ok: true,
+    event_ids: [],
+    capability_id: capabilityId,
+    expires_at: expiresAtIso,
+  };
+  const ledgered = await tx<{ command_id: string }[]>`
+    INSERT INTO swarm.idempotency_keys (
+      principal_kind, principal_id, command_id,
+      workspace_id, stream_id, request_hash, response
+    ) VALUES (
+      ${auth.credentialKind},
+      ${canonicalPrincipal(auth.actor)},
+      ${commandId},
+      ${workspaceId}::uuid,
+      ${streamId}::uuid,
+      ${hash},
+      ${tx.json(response as unknown as postgres.JSONValue)}::jsonb
+    )
+    ON CONFLICT (principal_kind, principal_id, command_id) DO NOTHING
+    RETURNING command_id
+  `;
+  if (ledgered.length === 0) {
+    throw new LedgerRace(
+      auth,
+      commandId,
+      MINT_CAPABILITY_KIND,
+      workspaceId,
+      streamId,
+      hash,
+    );
+  }
+
+  await insertAudit(tx, {
+    auth,
+    commandKind: MINT_CAPABILITY_KIND,
+    workspaceId,
+    streamId,
+    outcome: "accepted",
+    reason: null,
+    detail: [ignoredIdentity, `capability_id=${capabilityId}`]
+      .filter(Boolean).join("; "),
+    hash,
+  });
+  return {
+    status: 200,
+    body: {
+      status: "accepted",
+      ...response,
+      // The only time this string is ever served. The server does not compose a
+      // URL and never learns the site origin; the client builds
+      // https://<site>/see#<token> so the secret rides in the fragment.
+      capability_token: token,
+      min_client_version: minClientVersion,
+    },
+  };
+}
+
+/**
+ * Revoke one capability URL. Ships with minting because §7's "expiring and
+ * revocable" is not satisfied by a TTL alone; the tombstone keeps capability
+ * revocation inside the same three-layer revocation surface every other
+ * credential uses.
+ */
+async function revokeCapabilityUrl(
+  tx: Sql,
+  body: RequestBody,
+  auth: AuthContext,
+  ignoredIdentity: string | null,
+): Promise<HttpResult> {
+  const preamble = await capabilityPreamble(
+    tx,
+    body,
+    auth,
+    ignoredIdentity,
+    REVOKE_CAPABILITY_KIND,
+    [["kind", "capability_id"]],
+  );
+  if (!preamble.ok) return preamble.result;
+  const { userId, workspaceId, command, minClientVersion } = preamble.request;
+  const commandId = String(body.command_id);
+
+  const capabilityId = command.capability_id;
+  if (typeof capabilityId !== "string" || !UUID_RE.test(capabilityId)) {
+    return await auditRefusal(tx, auth, REVOKE_CAPABILITY_KIND, {
+      outcome: "validation",
+      reason: "capability_revoke_invalid_request",
+      detail: ignoredIdentity,
+      workspaceId,
+    }, { status: 400, body: { error: "invalid_request" } });
+  }
+
+  const notFound = async (streamId: string | null): Promise<HttpResult> =>
+    await auditRefusal(tx, auth, REVOKE_CAPABILITY_KIND, {
+      outcome: "authz",
+      // One reason string covers unknown id, foreign tenant, and already
+      // revoked: distinguishing them is an existence oracle across tenants. The
+      // operator sees their live set through their own workspace listing.
+      reason: "capability_revoke_not_found",
+      detail: ignoredIdentity,
+      workspaceId,
+      streamId,
+    }, { status: 403, body: { error: "forbidden" } });
+
+  // Read before update: the ledger row needs the link's stream_id, and a replay
+  // of an already-revoked link must return its stored response rather than the
+  // refusal a second revocation would earn.
+  const rows = await tx<{ stream_id: string }[]>`
+    SELECT stream_id
+    FROM swarm.capability_urls
+    WHERE capability_id = ${capabilityId}::uuid
+      AND workspace_id = ${workspaceId}::uuid
+    LIMIT 1
+  `;
+  const streamId = rows[0]?.stream_id;
+  if (!streamId) return await notFound(null);
+
+  const hash = requestHash(auth.actor, command);
+  const existingRows = await tx<
+    {
+      workspace_id: string;
+      stream_id: string;
+      request_hash: string;
+      response: unknown;
+    }[]
+  >`
+    SELECT workspace_id, stream_id, request_hash, response
+    FROM swarm.idempotency_keys
+    WHERE principal_kind = ${auth.credentialKind}
+      AND principal_id = ${canonicalPrincipal(auth.actor)}
+      AND command_id = ${commandId}
+    LIMIT 1
+  `;
+  const existing = existingRows[0];
+  if (existing) {
+    const matches = existing.request_hash === hash &&
+      existing.workspace_id === workspaceId &&
+      existing.stream_id === streamId;
+    await insertAudit(tx, {
+      auth,
+      commandKind: REVOKE_CAPABILITY_KIND,
+      workspaceId,
+      streamId,
+      outcome: matches ? "replayed" : "conflict",
+      reason: matches ? null : "capability_revoke_command_id_conflict",
+      detail: ignoredIdentity,
+      hash,
+    });
+    return matches
+      ? replayResult(storedResponse(existing.response), REVOKE_CAPABILITY_KIND)
+      : { status: 409, body: { error: "command_id_conflict" } };
+  }
+
+  // Legal under the revoke-only trigger: revoked_at and revoked_by are the only
+  // columns that change.
+  const revoked = await tx<{ revoked_at: Date }[]>`
+    UPDATE swarm.capability_urls
+    SET revoked_at = statement_timestamp(), revoked_by = ${userId}::uuid
+    WHERE capability_id = ${capabilityId}::uuid
+      AND workspace_id = ${workspaceId}::uuid
+      AND revoked_at IS NULL
+    RETURNING revoked_at
+  `;
+  const revokedAt = revoked[0]?.revoked_at;
+  if (!revokedAt) return await notFound(streamId);
+  await tx`
+    INSERT INTO swarm.revocation_tombstones (kind, target_id, created_by)
+    VALUES ('capability_url', ${capabilityId}::uuid, ${userId}::uuid)
+  `;
+
+  const response: StoredResponse = {
+    ok: true,
+    event_ids: [],
+    capability_id: capabilityId,
+    revoked_at: revokedAt.toISOString(),
+  };
+  const ledgered = await tx<{ command_id: string }[]>`
+    INSERT INTO swarm.idempotency_keys (
+      principal_kind, principal_id, command_id,
+      workspace_id, stream_id, request_hash, response
+    ) VALUES (
+      ${auth.credentialKind},
+      ${canonicalPrincipal(auth.actor)},
+      ${commandId},
+      ${workspaceId}::uuid,
+      ${streamId}::uuid,
+      ${hash},
+      ${tx.json(response as unknown as postgres.JSONValue)}::jsonb
+    )
+    ON CONFLICT (principal_kind, principal_id, command_id) DO NOTHING
+    RETURNING command_id
+  `;
+  if (ledgered.length === 0) {
+    throw new LedgerRace(
+      auth,
+      commandId,
+      REVOKE_CAPABILITY_KIND,
+      workspaceId,
+      streamId,
+      hash,
+    );
+  }
+
+  await insertAudit(tx, {
+    auth,
+    commandKind: REVOKE_CAPABILITY_KIND,
+    workspaceId,
+    streamId,
+    outcome: "accepted",
+    reason: null,
+    detail: [ignoredIdentity, `capability_id=${capabilityId}`]
+      .filter(Boolean).join("; "),
+    hash,
+  });
+  return {
+    status: 200,
+    body: {
+      status: "accepted",
+      ...response,
+      min_client_version: minClientVersion,
+    },
+  };
+}
+
+/**
+ * The free-tier ceilings §9 P5 makes launch-blocking, for commands that spend a
+ * shared resource: outbound invites (transactional email, hence a branded
+ * phishing vector), workspace seats, and agent principals.
+ *
+ * Why these counts are not swarm.rate_buckets, unlike enforceSignalRate: that
+ * table is swept hourly of every row whose window_start is older than two hours
+ * (migration 20260723000001_p1_schema.sql, purge_expired_rate_buckets), so a
+ * *daily* window stored there would silently reset every couple of hours — a
+ * cap that reads as enforced and is not. Counting the invitations, memberships,
+ * and principals themselves also measures the artifact instead of a proxy for
+ * it.
+ *
+ * The counts are exact rather than best-effort under concurrency: the workspace
+ * stream is already locked FOR UPDATE by the caller, so commands into one
+ * workspace serialize, and invite_member/create_agent_principal are
+ * human-credential-only (§2.3), so the caller also holds the row lock
+ * authenticateHuman's upsert took on its own swarm.users row.
+ */
+async function enforceFreeTierBudget(
+  tx: Sql,
+  auth: AuthContext,
+  route: Route,
+  command: ValidatedCommand,
+  hash: string,
+): Promise<HttpResult | null> {
+  const refuse = async (
+    reason: string,
+    detail: string,
+    result: HttpResult,
+  ): Promise<HttpResult> => {
+    await insertAudit(tx, {
+      auth,
+      commandKind: command.kind,
+      workspaceId: route.workspaceId,
+      streamId: route.streamId,
+      outcome: result.status === 429 ? "rate_limit" : "quota",
+      reason,
+      detail,
+      hash,
+    });
+    return result;
+  };
+
+  if (command.kind === "invite_member") {
+    const sentRows = await tx<{ sent: string; resets_at: Date | null }[]>`
+      SELECT
+        count(*)::text AS sent,
+        min(created_at) + interval '24 hours' AS resets_at
+      FROM swarm.invitations
+      WHERE created_by = ${auth.actor.user}::uuid
+        AND created_at > statement_timestamp() - interval '24 hours'
+    `;
+    if (Number(sentRows[0]?.sent ?? "0") >= INVITE_IDENTITY_DAILY_LIMIT) {
+      const resetsAt = (sentRows[0]?.resets_at ?? new Date()).toISOString();
+      const detail =
+        `identity limit ${INVITE_IDENTITY_DAILY_LIMIT} invites/day; resets at ${resetsAt}`;
+      await tx`
+        INSERT INTO swarm.security_alerts (kind, subject, detail)
+        VALUES (
+          'invite_rate_limit',
+          'identity',
+          ${tx.json({
+            workspace_id: route.workspaceId,
+            user_id: auth.actor.user,
+            limit: INVITE_IDENTITY_DAILY_LIMIT,
+            resets_at: resetsAt,
+          })}::jsonb
+        )
+      `;
+      return await refuse("invite_rate_limited", detail, {
+        status: 429,
+        body: {
+          error: "rate_limited",
+          message: `Invite refused: ${detail}.`,
+          limit: INVITE_IDENTITY_DAILY_LIMIT,
+          resets_at: resetsAt,
+        },
+      });
+    }
+
+    // Seats in use, not members: an outstanding invitation is a seat someone
+    // can still walk through, so parking pending invites cannot evade the cap.
+    const seatRows = await tx<{ used: string }[]>`
+      SELECT (
+        (
+          SELECT count(*)
+          FROM swarm.memberships
+          WHERE workspace_id = ${route.workspaceId}::uuid
+            AND revoked_at IS NULL
+        ) + (
+          SELECT count(*)
+          FROM swarm.invitations
+          WHERE workspace_id = ${route.workspaceId}::uuid
+            AND consumed_at IS NULL
+            AND revoked_at IS NULL
+            AND expires_at > statement_timestamp()
+        )
+      )::text AS used
+    `;
+    const used = Number(seatRows[0]?.used ?? "0");
+    if (used >= FREE_TIER_MEMBER_LIMIT) {
+      return await refuse(
+        "workspace_member_limit_reached",
+        `seats in use: ${used}`,
+        {
+          status: 403,
+          body: {
+            error: "member_limit_reached",
+            limit: FREE_TIER_MEMBER_LIMIT,
+          },
+        },
+      );
+    }
+  }
+
+  if (command.kind === "create_agent_principal") {
+    const principalRows = await tx<{ live: string }[]>`
+      SELECT count(*)::text AS live
+      FROM swarm.agent_principals
+      WHERE workspace_id = ${route.workspaceId}::uuid
+        AND revoked_at IS NULL
+    `;
+    const live = Number(principalRows[0]?.live ?? "0");
+    if (live >= FREE_TIER_PRINCIPAL_LIMIT) {
+      return await refuse(
+        "workspace_principal_limit_reached",
+        `live principals: ${live}`,
+        {
+          status: 403,
+          body: {
+            error: "principal_limit_reached",
+            limit: FREE_TIER_PRINCIPAL_LIMIT,
+          },
+        },
+      );
+    }
+  }
+
   return null;
 }
 
@@ -2319,6 +3497,23 @@ async function handleTransaction(
 
     if (kind === REGISTER_DEVICE_KIND) {
       return await registerLoginDevice(tx, body, auth, ignoredIdentity);
+    }
+
+    // Must precede resolveRoute: the caller has no membership anywhere yet, so
+    // route resolution would reject them before the command could be read.
+    if (kind === CREATE_WORKSPACE_KIND) {
+      return await createSelfServeWorkspace(tx, body, auth, ignoredIdentity);
+    }
+
+    // Also pre-route (§7): a capability command scopes a task that may live on a
+    // repo stream, so it cannot travel the CONNECT_COMMAND_KINDS path, which
+    // forces stream.kind === "workspace". Both handlers are self-contained and
+    // emit no protocol event.
+    if (kind === MINT_CAPABILITY_KIND) {
+      return await mintCapabilityUrl(tx, body, auth, ignoredIdentity);
+    }
+    if (kind === REVOKE_CAPABILITY_KIND) {
+      return await revokeCapabilityUrl(tx, body, auth, ignoredIdentity);
     }
 
     await beforeStep(5);
@@ -2766,6 +3961,16 @@ async function handleTransaction(
         hash,
       });
       return { status: 403, body: { error: "forbidden" } };
+    }
+
+    // Free-tier ceilings are charged only against a command that would
+    // otherwise be accepted: a caller who is not entitled to invite is refused
+    // above and never learns anything about the workspace's remaining budget.
+    // Nothing is appended or ledgered when a ceiling refuses, so a retry after
+    // the window rolls over is the same fresh command.
+    if (outcome.decision.ok) {
+      const budget = await enforceFreeTierBudget(tx, auth, route, command, hash);
+      if (budget !== null) return budget;
     }
 
     await beforeStep(11);

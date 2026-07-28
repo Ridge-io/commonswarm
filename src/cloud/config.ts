@@ -11,7 +11,7 @@ export interface CloudTarget {
 export function cloudTarget(url: string, anonKey: string): CloudTarget {
   if (!url.trim()) {
     throw new Error(
-      "--url is required: use the Supabase project base URL (https://<ref>.supabase.co) from the deployment operator who invited you, or start with coswarm accept --link-stdin because invite links carry the Cloud target; if you already have a project, pass --url and --anon-key or set SWARM_CLOUD_URL and SWARM_CLOUD_ANON_KEY.",
+      "--url is required: use the Supabase project base URL (https://<ref>.supabase.co) from the deployment operator who invited you, or start with cswarm accept --link-stdin because invite links carry the Cloud target; if you already have a project, pass --url and --anon-key or set SWARM_CLOUD_URL and SWARM_CLOUD_ANON_KEY.",
     );
   }
   const parsed = new URL(url);
@@ -42,5 +42,5 @@ export function readEndpoint(target: CloudTarget): string {
 }
 
 export function authStorageKey(target: CloudTarget): string {
-  return `coswarm-${target.profileId}-auth`;
+  return `cswarm-${target.profileId}-auth`;
 }

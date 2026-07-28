@@ -15,6 +15,12 @@ import {
 
 const AGENT_TOKEN_RE = /^swm_agt_[A-Za-z0-9_-]{43}$/;
 export const INVITATION_TOKEN_RE = /^swm_inv_[A-Za-z0-9_-]{43}$/;
+export const CAPABILITY_TOKEN_RE = /^swm_cap_[A-Za-z0-9_-]{43}$/;
+const CONTROL_RE =
+  /[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/;
+
+/** Mirrors the bound the command function enforces, so a typo fails before the round trip. */
+export const WORKSPACE_NAME_MAX_LENGTH = 80;
 
 export type StreamRoute =
   | { kind: "workspace" }
@@ -42,7 +48,16 @@ export interface CommandHttpResponse extends StoredResponse {
   run_id?: string;
   agent_token?: string;
   workspace_id?: string;
+  stream_id?: string;
   signal?: SignalRecord;
+  capability_id?: string;
+  /**
+   * Fresh-response-only. A replayed mint deliberately omits it: the raw credential is
+   * never persisted in the server's idempotency ledger, so there is nothing to replay.
+   */
+  capability_token?: string;
+  expires_at?: string;
+  revoked_at?: string;
 }
 
 export interface CommandResult {
@@ -54,6 +69,7 @@ export interface CommandResult {
 export type ConnectCommand =
   | { kind: "invite_member"; email: string; ttl_ms?: number }
   | { kind: "accept_invitation"; token: string }
+  | { kind: "create_workspace"; workspace_id: string; name: string }
   | { kind: "create_agent_principal"; name: string }
   | {
     kind: "mint_agent_token";
@@ -77,6 +93,32 @@ export interface ConnectCommandResult {
   httpStatus: number;
   response: CommandHttpResponse;
 }
+
+/**
+ * Capability-URL commands are human-interactive-credential operations (SWARM-CLOUD.md
+ * §7, "Human-mint-only") and are deliberately NOT ConnectCommands: the command function
+ * reads them ahead of route resolution and refuses a request that pins a stream, because
+ * the stream is derived server-side from (workspace_id, task_id) and is not selectable.
+ */
+export type CapabilityCommand =
+  | { kind: "mint_capability_url"; task_id: string; ttl_ms?: number }
+  | { kind: "revoke_capability_url"; capability_id: string };
+
+export interface CapabilityCommandRequest {
+  workspaceId: string;
+  command: CapabilityCommand;
+  credential: string;
+  commandId?: string;
+}
+
+export interface CapabilityCommandResult {
+  httpStatus: number;
+  response: CommandHttpResponse;
+}
+
+/** Bounds the server's own TTL window locally, so a typo fails before a credential exists. */
+export const CAPABILITY_MIN_TTL_MS = 60_000;
+export const CAPABILITY_MAX_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 export type SignalKind = "working-on" | "note" | "ask";
 
@@ -131,6 +173,197 @@ export class CommandHttpError extends Error {
   }
 }
 
+/**
+ * Creating a project is the one refusal a stranger meets before they have any
+ * context, so it carries a sentence instead of a status code.
+ */
+export class CreateWorkspaceError extends Error {
+  constructor(
+    readonly status: number,
+    readonly code: string,
+    message: string,
+  ) {
+    super(message);
+    this.name = "CreateWorkspaceError";
+  }
+}
+
+/**
+ * Turns a refused create_workspace response into something the person who typed
+ * the command can act on, rather than a raw HTTP status.
+ */
+export function createWorkspaceError(
+  status: number,
+  body: unknown,
+): CreateWorkspaceError {
+  const record = body && typeof body === "object" && !Array.isArray(body)
+    ? body as Record<string, unknown>
+    : {};
+  const code = typeof record.error === "string" ? record.error : "unknown";
+  if (status === 403 && code === "workspace_limit_reached") {
+    const limit = typeof record.limit === "number" ? record.limit : null;
+    return new CreateWorkspaceError(
+      status,
+      code,
+      `${
+        limit === null
+          ? "You have already created as many projects as this account allows."
+          : `You have already created ${limit} projects, which is the limit for one account.`
+      } Archiving a project frees its slot; the CLI cannot archive one yet, so ask whoever operates this deployment. Projects you were invited to do not count against the limit.`,
+    );
+  }
+  if (status === 403) {
+    return new CreateWorkspaceError(
+      status,
+      "forbidden",
+      "CommonSwarm did not create the project. Creating your own project is not open on this deployment yet, and it also needs a confirmed email address on your account. If someone has already invited you, cswarm accept --link-stdin joins their project.",
+    );
+  }
+  if (status === 426) {
+    const minimum = typeof record.min_client_version === "string"
+      ? record.min_client_version
+      : null;
+    return new CreateWorkspaceError(
+      status,
+      "upgrade_required",
+      `This copy of cswarm is older than the deployment accepts${
+        minimum === null ? "" : ` (minimum ${minimum})`
+      }. Update cswarm, then run the same command again.`,
+    );
+  }
+  if (status === 400) {
+    return new CreateWorkspaceError(
+      status,
+      code === "unknown" ? "invalid_request" : code,
+      "The deployment did not accept the request. Nothing was created. Check cswarm --version against the deployment before trying again.",
+    );
+  }
+  if (status === 401) {
+    return new CreateWorkspaceError(
+      status,
+      "unauthenticated",
+      "Your sign-in is no longer valid for this deployment. Run cswarm login, then run the same command again.",
+    );
+  }
+  return new CreateWorkspaceError(
+    status,
+    code,
+    `CommonSwarm could not tell whether the project was created (HTTP ${status}). Run cswarm workspaces to see whether it exists before trying again.`,
+  );
+}
+
+/**
+ * A refused capability-link command. Separate from CommandHttpError because two of its
+ * refusals are recoverable by the person who typed the command (the live-link ceiling and
+ * the hourly rate limit) and deserve a sentence rather than a status code.
+ */
+export class CapabilityCommandError extends Error {
+  constructor(
+    readonly status: number,
+    readonly code: string,
+    message: string,
+  ) {
+    super(message);
+    this.name = "CapabilityCommandError";
+  }
+}
+
+/**
+ * Turns a refused capability command into something actionable. It never carries a
+ * credential: the raw swm_cap_ token exists only in a fresh 200 body, so no failure path
+ * has one to leak into a message.
+ */
+export function capabilityCommandError(
+  status: number,
+  body: unknown,
+  verb: "mint" | "revoke",
+): CapabilityCommandError {
+  const record = body && typeof body === "object" && !Array.isArray(body)
+    ? body as Record<string, unknown>
+    : {};
+  const code = typeof record.error === "string" ? record.error : "unknown";
+  if (status === 403 && code === "capability_limit_reached") {
+    const limit = typeof record.limit === "number" ? record.limit : null;
+    return new CapabilityCommandError(
+      status,
+      code,
+      `This project already has ${
+        limit === null ? "as many live links as it allows" : `${limit} live links`
+      }. Revoke one you no longer need with cswarm link revoke --capability-id <uuid>, or wait for some to expire.`,
+    );
+  }
+  if (status === 403) {
+    return new CapabilityCommandError(
+      status,
+      "forbidden",
+      verb === "mint"
+        ? "CommonSwarm did not create the link. Links are minted by a project owner or admin signed in with a confirmed email, for a work item that exists in this project — and never by an agent credential. Nothing was created."
+        : "CommonSwarm did not revoke that link. Either it is not a live link in this project, or your account may not revoke links here — and an agent credential may never revoke one. Nothing changed.",
+    );
+  }
+  if (status === 429) {
+    const message = typeof record.message === "string"
+      ? record.message.slice(0, 400)
+      : "Too many link requests in the last hour. Try again shortly.";
+    return new CapabilityCommandError(status, "rate_limited", message);
+  }
+  if (status === 426) {
+    const minimum = typeof record.min_client_version === "string"
+      ? record.min_client_version
+      : null;
+    return new CapabilityCommandError(
+      status,
+      "upgrade_required",
+      `This copy of cswarm is older than the deployment accepts${
+        minimum === null ? "" : ` (minimum ${minimum})`
+      }. Update cswarm, then run the same command again.`,
+    );
+  }
+  if (status === 409) {
+    return new CapabilityCommandError(
+      status,
+      "command_id_conflict",
+      "A different command already used this request id. Run the command again to issue a fresh one.",
+    );
+  }
+  if (status === 400) {
+    return new CapabilityCommandError(
+      status,
+      code === "unknown" ? "invalid_request" : code,
+      "The deployment did not accept the request. Nothing changed. Check cswarm --version against the deployment before trying again.",
+    );
+  }
+  if (status === 401) {
+    return new CapabilityCommandError(
+      status,
+      "unauthenticated",
+      "Your sign-in is no longer valid for this deployment. Run cswarm login, then run the same command again.",
+    );
+  }
+  return new CapabilityCommandError(
+    status,
+    code,
+    `CommonSwarm could not tell whether the link ${
+      verb === "mint" ? "was created" : "was revoked"
+    } (HTTP ${status}). Run the same command again to resolve its outcome.`,
+  );
+}
+
+/** Bounds the name here so a typo is answered locally, in the same words the server uses. */
+export function assertWorkspaceName(value: string): void {
+  if (value.length === 0) {
+    throw new Error("a project name is required");
+  }
+  if (value.length > WORKSPACE_NAME_MAX_LENGTH) {
+    throw new Error(
+      `a project name may be at most ${WORKSPACE_NAME_MAX_LENGTH} characters; this one is ${value.length}`,
+    );
+  }
+  if (CONTROL_RE.test(value)) {
+    throw new Error("a project name may not contain control characters");
+  }
+}
+
 export function newCommandId(): string {
   return `cmd_${randomBytes(18).toString("base64url")}`;
 }
@@ -149,6 +382,43 @@ export function assertInvitationToken(value: string): void {
       "invitation capability must be swm_inv_ followed by 32 base64url-encoded random bytes",
     );
   }
+}
+
+/**
+ * Why it exists separately from the message it guards: a capability credential must be
+ * proven well-formed without ever being quoted, so this reports the shape and never the
+ * value. Nothing else in the CLI may put a swm_cap_ string into an Error.
+ */
+export function assertCapabilityToken(value: string): void {
+  if (!CAPABILITY_TOKEN_RE.test(value)) {
+    throw new Error(
+      "capability link credential must be swm_cap_ followed by 32 base64url-encoded random bytes",
+    );
+  }
+}
+
+// A human login is a GoTrue access token: three base64url segments separated by dots.
+// Checked positively rather than by denying swm_ prefixes, so a credential kind invented
+// tomorrow is refused here by default instead of being waved through.
+const HUMAN_ACCESS_TOKEN_RE = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/;
+
+/**
+ * Why it exists although the server already refuses: §7 is human-mint-only, and the
+ * server's 403 is deliberately uniform, so a caller holding an agent credential learns
+ * only that something was forbidden. This says which rule was hit, before the round trip.
+ * It reports the credential's kind and never its value, like the assertions above.
+ */
+export function assertHumanCapabilityCredential(
+  credential: string,
+  verb: "create" | "revoke",
+): void {
+  if (HUMAN_ACCESS_TOKEN_RE.test(credential)) return;
+  const agent = AGENT_TOKEN_RE.test(credential);
+  throw new Error(
+    `only a signed-in person can ${verb} a capability link, and this command was given ${
+      agent ? "an agent credential" : "a credential that is not a human login"
+    }. The link is minted by a project owner or admin whose email is confirmed; an agent credential can never mint or revoke one, so a compromised worker cannot hand out board state. Run cswarm login as that person, or ask an owner or admin to run this command.`,
+  );
 }
 
 function semver(value: string): [number, number, number] | null {
@@ -298,12 +568,23 @@ export class ThinCommandClient {
 
   async sendConnect(request: ConnectCommandRequest): Promise<ConnectCommandResult> {
     const command = request.command;
-    const accepting = command.kind === "accept_invitation";
+    const creating = command.kind === "create_workspace";
+    // Both of these run before the caller has a tenancy to route to, so neither
+    // may carry workspace_id or stream: the command function reads them ahead of
+    // route resolution and rejects a request that pins a route it cannot check.
+    const untenanted = command.kind === "accept_invitation" || creating;
     if (command.kind === "accept_invitation") {
       if (request.workspaceId !== undefined) {
         throw new Error("accept_invitation tenancy is derived from its capability");
       }
       assertInvitationToken(command.token);
+    } else if (creating) {
+      if (request.workspaceId !== undefined) {
+        throw new Error(
+          "create_workspace carries its own client-generated workspace_id and cannot be routed to an existing one",
+        );
+      }
+      assertWorkspaceName(command.name);
     } else if (!request.workspaceId) {
       throw new Error("workspaceId is required for this command");
     }
@@ -322,7 +603,7 @@ export class ThinCommandClient {
         body: JSON.stringify({
           command_id: commandId,
           client_version: CLIENT_PROTOCOL_VERSION,
-          ...(accepting
+          ...(untenanted
             ? {}
             : {
               workspace_id: request.workspaceId,
@@ -341,6 +622,18 @@ export class ThinCommandClient {
       clearTimeout(timer);
     }
 
+    if (creating && !response.ok) {
+      // The one connect command whose refusals do differ for the caller: the
+      // limit is recoverable, a closed front door is not. Read the body once.
+      let body: unknown = null;
+      try {
+        body = await parsedJson(response);
+      } catch (error) {
+        // A body that never arrived is a transport fact, not a refusal.
+        if (error instanceof CommandTransportError) throw error;
+      }
+      throw createWorkspaceError(response.status, body);
+    }
     if (response.status === 403) {
       // Invitation failures are deliberately byte-identical. Do not decode or
       // branch on their body; recovery is membership-side.
@@ -361,6 +654,89 @@ export class ThinCommandClient {
     const body = responseBody(raw);
     if (body.min_client_version !== undefined) {
       const order = compareVersion(CLIENT_PROTOCOL_VERSION, body.min_client_version);
+      if (order === null) {
+        throw new Error("server returned a malformed min_client_version");
+      }
+      if (order < 0) {
+        throw new Error(
+          `client upgrade required (minimum ${body.min_client_version})`,
+        );
+      }
+    }
+    return { httpStatus: response.status, response: body };
+  }
+
+  /**
+   * Capability-link mint/revoke. The body carries no `stream` key at all — the command
+   * function refuses one, because the only thing a caller may name about the target is
+   * the task id; its stream and tenant are resolved server-side and FK-pinned.
+   */
+  async sendCapability(
+    request: CapabilityCommandRequest,
+  ): Promise<CapabilityCommandResult> {
+    const command = request.command;
+    if (!request.workspaceId) {
+      throw new Error("workspaceId is required for a capability link command");
+    }
+    if (
+      command.kind === "mint_capability_url" &&
+      command.ttl_ms !== undefined &&
+      (!Number.isSafeInteger(command.ttl_ms) ||
+        command.ttl_ms < CAPABILITY_MIN_TTL_MS ||
+        command.ttl_ms > CAPABILITY_MAX_TTL_MS)
+    ) {
+      throw new Error(
+        `a capability link lifetime must be between ${CAPABILITY_MIN_TTL_MS} and ${CAPABILITY_MAX_TTL_MS} milliseconds (7 days)`,
+      );
+    }
+    const commandId = request.commandId ?? newCommandId();
+    const verb = command.kind === "mint_capability_url" ? "mint" : "revoke";
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 30_000);
+    let response: Response;
+    try {
+      response = await this.fetcher(commandEndpoint(this.target), {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${request.credential}`,
+          apikey: this.target.anonKey,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          command_id: commandId,
+          client_version: CLIENT_PROTOCOL_VERSION,
+          workspace_id: request.workspaceId,
+          command,
+        }),
+        signal: controller.signal,
+      });
+    } catch (error) {
+      if ((error as Error).name === "AbortError") {
+        throw new CommandTransportError("capability link request timed out");
+      }
+      throw new CommandTransportError(
+        "capability link request failed before a response",
+      );
+    } finally {
+      clearTimeout(timer);
+    }
+
+    if (!response.ok) {
+      let body: unknown = null;
+      try {
+        body = await parsedJson(response);
+      } catch (error) {
+        // A body that never arrived is a transport fact, not a refusal.
+        if (error instanceof CommandTransportError) throw error;
+      }
+      throw capabilityCommandError(response.status, body, verb);
+    }
+    const body = responseBody(await parsedJson(response));
+    if (body.min_client_version !== undefined) {
+      const order = compareVersion(
+        CLIENT_PROTOCOL_VERSION,
+        body.min_client_version,
+      );
       if (order === null) {
         throw new Error("server returned a malformed min_client_version");
       }

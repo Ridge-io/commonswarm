@@ -1,12 +1,36 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="coswarm">
-  <rect width="32" height="32" rx="8" fill="#0d0f14"/>
-  <rect x="0.5" y="0.5" width="31" height="31" rx="7.5" fill="none" stroke="#252b3b"/>
-  <g stroke="#7c6cff" stroke-width="2" stroke-linecap="round" opacity="0.62">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="CommonSwarm">
+  <title>CommonSwarm</title>
+  <style>
+    /* A favicon is drawn against BROWSER CHROME, not against the page, so it has to survive
+       both themes — the site going light-first does not make the tab bar light. The tile is
+       therefore the brand indigo rather than a near-black surface: measured against the two
+       chromes it actually sits on, #6d5cf0 is 4.73:1 on white and 3.45:1 on Chrome's dark bar
+       (#202124). The near-black tile it replaced was 1.1:1 on that dark bar — the tile
+       vanished and three loose dots were left floating.
+
+       The media query is the refinement, not the fix: the presentation attributes below carry
+       the light values, so an engine that ignores CSS in an icon still gets a tile that works.
+       Where it is honoured, the dark-chrome tile lifts to #8b7cff (4.99:1 on #202124) so the
+       mark holds the same weight in both bars. */
+    .tile { fill: #6d5cf0; }
+    .edge { stroke: #5b4bd6; }
+    .link { stroke: #ffffff; }
+    .node { fill: #ffffff; }
+    .apex { fill: #86efc4; }
+
+    @media (prefers-color-scheme: dark) {
+      .tile { fill: #8b7cff; }
+      .edge { stroke: #a094ff; }
+    }
+  </style>
+  <rect class="tile" width="32" height="32" rx="8" fill="#6d5cf0"/>
+  <rect class="edge" x="0.5" y="0.5" width="31" height="31" rx="7.5" fill="none" stroke="#5b4bd6"/>
+  <g class="link" stroke="#ffffff" stroke-width="2" stroke-linecap="round" opacity="0.78">
     <path d="M16 10.2 9.2 22"/>
     <path d="M16 10.2 22.8 22"/>
     <path d="M9.2 22h13.6"/>
   </g>
-  <circle cx="9.2" cy="22" r="3.5" fill="#9b8fff"/>
-  <circle cx="22.8" cy="22" r="3.5" fill="#9b8fff"/>
-  <circle cx="16" cy="10.2" r="4" fill="#34d399"/>
+  <circle class="node" cx="9.2" cy="22" r="3.5" fill="#ffffff"/>
+  <circle class="node" cx="22.8" cy="22" r="3.5" fill="#ffffff"/>
+  <circle class="apex" cx="16" cy="10.2" r="4" fill="#86efc4"/>
 </svg>

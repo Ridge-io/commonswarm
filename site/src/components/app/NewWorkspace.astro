@@ -13,10 +13,12 @@
  * second write operation in a web UI that is specified to have exactly one, and that one is
  * not here.
  *
- * THE COMMAND IS REAL, AND IT IS THE SHORT FORM. `coswarm working-on "<what>" --about <ref>
- * --until <dur>` is verbatim from the CLI's usage text; --url and --anon-key (or their
- * environment variables) are also required on a real invocation and the line under the block
- * says so rather than letting the reader find out from an error.
+ * THE COMMAND IS REAL, AND IT IS THE SHORT FORM. `cswarm working-on "<what>" --about <ref>
+ * --until <dur>` is verbatim from the CLI's usage text; the binary's name went from `coswarm`
+ * to `cswarm` with the CommonSwarm rename and src/cli.ts now writes its usage lines that way.
+ * --url and --anon-key (or their environment variables) are also required on a real
+ * invocation and the line under the block says so rather than letting the reader find out
+ * from an error.
  *
  * `until` is capped at 30d by the CLI, so 90m is comfortably valid.
  */
@@ -33,7 +35,8 @@ import CodeBlock from "../ui/CodeBlock.astro";
  * single most important line on a brand-new workspace rendered as
  *     $ coswarm working-on "refactor session cookie handling" --a
  * and stopped mid-flag. macOS draws overlay scrollbars, so nothing on screen said there was
- * more.
+ * more. (Quoted at the truncation point it was measured at, under the old binary name. The
+ * rename takes one character off, which is not a fix — 95 characters overflow 510px too.)
  *
  * The earlier note against continuations was right about the mechanism and wrong about the
  * conclusion. CodeBlock does prefix its prompt to EVERY line that is not blank and not a
@@ -51,7 +54,7 @@ import CodeBlock from "../ui/CodeBlock.astro";
  * and the visible track that the one-line version never had.
  */
 const FIRST_SIGNAL = [
-  'coswarm working-on "refactor session cookie handling" \\',
+  'cswarm working-on "refactor session cookie handling" \\',
   "  --about src/auth/session.ts \\",
   "  --until 90m",
 ].join("\n");

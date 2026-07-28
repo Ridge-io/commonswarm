@@ -416,3 +416,10 @@ entrypoint = "./functions/command/index.ts"
 enabled = true
 verify_jwt = false
 entrypoint = "./functions/read/index.ts"
+
+# The anonymous capability-URL read (§7). verify_jwt = false because the caller
+# has no Supabase session at all: it presents a swm_cap_ bearer and nothing else.
+[functions.capability]
+enabled = true
+verify_jwt = false
+entrypoint = "./functions/capability/index.ts"

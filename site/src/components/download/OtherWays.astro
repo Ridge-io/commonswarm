@@ -4,23 +4,37 @@
  *
  * THE ENV-VAR FORM ON THIS PAGE IS DELIBERATELY NOT THE ONE install.sh PRINTS.
  * install.sh's header and two of its error messages suggest
- *     COSWARM_INSTALL_DIR=$HOME/.local/bin curl -fsSL <url>/install.sh | sh
+ *     CSWARM_INSTALL_DIR=$HOME/.local/bin curl -fsSL <url>/install.sh | sh
  * and that does not work: a variable assignment prefixed to a command exports it into THAT
  * command's environment — curl's — and the `sh` on the other side of the pipe is a separate
  * process that never sees it. The assignment has to prefix `sh`. The working form is what is
  * shown here; the script itself is worth fixing separately (reported, not silently papered
  * over — the page must not print a command that doesn't do what it says).
  *
- * npm: there is NO published package. Checked against the registry today —
- * registry.npmjs.org/coswarm and /cloud-swarm both answer 404. So this card carries a status
- * and no command, because an `npm i -g` line here would be an instruction to install nothing,
- * or worse, whatever appears at that name later.
+ * THE TWO INSTALLER VARIABLES ARE RENAMED, AND THE SCRIPT WAS READ TO CONFIRM IT.
+ * CommonSwarm's rename turns COSWARM_VERSION / COSWARM_INSTALL_DIR into CSWARM_VERSION /
+ * CSWARM_INSTALL_DIR, and install.sh reads exactly those two names at l.13 and l.14. This
+ * mattered enough to check rather than assume: a variable the script does not read is not an
+ * error, it is silence — the installer would fall through to its defaults and the reader
+ * would never learn the flag did nothing. (SWARM_CLOUD_URL and SWARM_CLOUD_ANON_KEY are a
+ * different family and keep their names; so does SWARM_SELF_SERVE.)
  *
- * From source: verified by doing it. `npm run build` is `tsc` (package.json), the bin entry
- * is dist/cli.js, and `node dist/cli.js --version` prints "coswarm 0.0.1 (protocol 0.1.0)".
+ * npm: there is NO published package. registry.npmjs.org/coswarm and /cloud-swarm were both
+ * checked and both answer 404 — but that was the OLD name. `cswarm` has NOT been checked
+ * against the registry by this pass, so the card no longer names which strings 404; it says
+ * only that no package is published, which is a fact about our own release process rather
+ * than about a namespace nobody measured. Do not put a name back into that copy without
+ * curling the registry for it first — the whole risk is that someone else already holds it.
+ *
+ * From source: verified by doing it. `npm run build` is `tsc` (package.json) and the bin entry
+ * is dist/cli.js — package.json now declares bin as {"cswarm": "dist/cli.js"}, so the command
+ * name the reader ends up with is the renamed one. `node dist/cli.js --version` printed
+ * "coswarm 0.0.1 (protocol 0.1.0)" when it was last actually run, i.e. before the rename;
+ * src/cli.ts:248 now composes that line with a `cswarm` prefix. Not re-run here.
  *
  * THE REPOSITORY IS PUBLIC. This card used to say it was "private while coswarm is in invited
- * dogfood", which was false and was the last place on the site still saying it — SiteFooter,
+ * dogfood" (the product's name at the time; it is CommonSwarm now), which was false and was
+ * the last place on the site still saying it — SiteFooter,
  * index, download and Invite had all already been corrected. Checked on this invocation:
  * `curl -s https://api.github.com/repos/Ridge-io/cloud-swarm` answers `"private": false,
  * "visibility": "public"`, and an anonymous GET of the HTML page answers 200 (GitHub answers
@@ -28,8 +42,12 @@
  * this card's own code block, the header's GitHub icon and the footer's PROJECT column all
  * already pointed at it. Do not reintroduce the private claim without re-running that curl.
  *
- * install.sh is 142 lines (`wc -l`). Stated because "you can read it in a couple of minutes"
- * is a claim a reader can check.
+ * install.sh is 156 lines (`wc -l`). Stated because "you can read it in a couple of minutes"
+ * is a claim a reader can check — which is also why it has to be re-counted rather than
+ * carried forward. It said 142 until this pass; the rename rewrote the script and it grew by
+ * 14 lines. WhatHappens.astro states the same number and they must move together. The script
+ * was still uncommitted in another lane when this was counted, so count it again before the
+ * next deploy rather than trusting this line.
  */
 
 import Card from "../ui/Card.astro";
@@ -46,8 +64,8 @@ const { cmd } = Astro.props;
 /* Derived from the one command, so a change at the top of the page cannot leave this
    variant behind pointing at a different host. */
 const readCmd = cmd.replace(/\|\s*sh$/, "| less");
-const pinCmd = "curl -fsSL https://<host>/install.sh | COSWARM_VERSION=0.0.1 sh";
-const dirCmd = 'curl -fsSL https://<host>/install.sh | COSWARM_INSTALL_DIR="$HOME/bin" sh';
+const pinCmd = "curl -fsSL https://<host>/install.sh | CSWARM_VERSION=0.0.1 sh";
+const dirCmd = 'curl -fsSL https://<host>/install.sh | CSWARM_INSTALL_DIR="$HOME/bin" sh';
 const sourceCmd = `git clone https://github.com/Ridge-io/cloud-swarm.git
 cd cloud-swarm
 npm install
@@ -65,7 +83,7 @@ node dist/cli.js --version`;
     <div class="ow__grid reveal-stagger">
       <Card as="article" title="Read it first" headingLevel={3} class="ow__card">
         <p class="ow__p">
-          The installer is 142 lines of POSIX sh with comments explaining each decision.
+          The installer is 156 lines of POSIX sh with comments explaining each decision.
           Nothing in it is minified and nothing is fetched from a second host.
         </p>
         <CodeBlock code={readCmd} label="read" prompt="$" wrap />
@@ -76,19 +94,17 @@ node dist/cli.js --version`;
           <Badge variant="neutral" size="sm">Not published</Badge>
         </div>
         <p class="ow__p ow__p--last">
-          There is no npm package yet — both <span class="mono">coswarm</span> and
-          <span class="mono">cloud-swarm</span> return 404 from the registry, so there is no
-          command to give you here. Publishing one is a decision that hasn’t been made. Until
-          it is, the installer and the source tree are the two real paths, and this card would
-          rather say so than print an <span class="mono">npm i -g</span> line that installs
-          nothing.
+          There is no npm package yet, so there is no command to give you here. Publishing one
+          is a decision that hasn’t been made. Until it is, the installer and the source tree
+          are the two real paths, and this card would rather say so than print an
+          <span class="mono">npm i -g</span> line that installs nothing.
         </p>
       </Card>
 
       <Card as="article" title="Pin a version, or pick the directory" headingLevel={3} class="ow__card">
         <p class="ow__p">
-          <span class="mono">COSWARM_VERSION</span> installs a specific release instead of the
-          latest. <span class="mono">COSWARM_INSTALL_DIR</span> puts the file somewhere other
+          <span class="mono">CSWARM_VERSION</span> installs a specific release instead of the
+          latest. <span class="mono">CSWARM_INSTALL_DIR</span> puts the file somewhere other
           than <span class="mono">~/.local/bin</span>. The assignment goes on
           <span class="mono">sh</span>, not on <span class="mono">curl</span> — the two sides
           of a pipe are separate processes.

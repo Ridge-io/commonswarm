@@ -7,11 +7,37 @@
  * signal is addressed to the teammate working now, not to someone arriving later to judge.
  * Do not revert this to the retired authority framing.
  *
+ * IT WAS RE-JUDGED, NOT INHERITED. The test applied was the one the benchmark passes: is the
+ * headline a PROMISE ABOUT THE READER'S OWN AGENTS, or a description of a service? This one
+ * is the former — subject "your agents", seven words, no product noun, no jargon, and nothing
+ * a non-expert stops on. The alternatives drafted against it were all problem-framed ("Your
+ * agents stop stepping on each other"), which names the pain instead of the promise. KEPT
+ * DELIBERATELY. Changing it needs a better answer to that test, not a fresh opinion.
+ *
+ * THE ONE FRAMING SENTENCE — "A signal announces. It never locks." It is in the lede here and
+ * is repeated, in the same words, in Verbs and in the demo's outcome copy. It is the sentence
+ * that has to carry the whole product, so it is stated four times on the page and never
+ * paraphrased into something weaker. It is also the one thing about this system a reader is
+ * most likely to get wrong: every neighbouring product in this space is a lock.
+ *   IT IS LITERALLY TRUE, NOT A POSITION. `working-on` writes a signal row and nothing else —
+ *   src/cloud/signals.ts has no acquire/release path, and the CLI's five signal verbs
+ *   (src/cli.ts:257-261) take no target to hold. The lease in docs/design/SWARM-CLOUD.md §2.2
+ *   is a DIFFERENT object, in the task-authority layer, and it is not on this page at all.
+ *   §2.2 says it in the spec's own words: "an authority token, not a file lock".
+ *
+ * WHY "claim" IS NO LONGER USED ANYWHERE IN THIS DIRECTORY. It was the old vocabulary and it
+ * quietly reintroduces the retired framing: a claim is a thing you hold against someone. A
+ * signal is a thing you say. If the word comes back, so does the friction story.
+ *
  * WHAT IS ASSERTED HERE, AND WHERE IT WAS CHECKED
  *   three signal kinds .......... src/cloud/command-client.ts:81
  *   `--until` capped at 30d ..... src/cli.ts:1189
  *   Node >= 24 .................. package.json engines (repo root)
- *   invited dogfood, pre-launch . docs/marketing/SITE-BRIEF.md
+ *   early access ................ self-serve workspace creation exists but is gated:
+ *                                 createSelfServeWorkspace() in supabase/functions/command/
+ *                                 index.ts runs only when SWARM_SELF_SERVE === "1" (:323,
+ *                                 :2182), which production does not set. So: not invite-only
+ *                                 any more, not open either. The badge says neither.
  * Nothing else in this file is a claim about the world.
  *
  * The panel beside the copy is sample data and says so, in the panel, on screen.
@@ -71,9 +97,16 @@ const signals = [
 <section class="hero" aria-labelledby="hero-title">
   <div class="page hero__inner">
     <div class="hero__copy">
+      {/* "Invited dogfood" was here. Two reasons it went, and neither is that it was false:
+          the page's closing card now states the free tier's terms, and a badge saying you
+          cannot get in sits badly above it; and "dogfood" is industry slang in the first
+          three words on the site, which the operator's consumer-shape instruction rules out
+          (docs/marketing/SITE-BRIEF.md, "cut anything a non-expert would stop on"). "Early
+          access" is true today and still true the day self-serve opens, so it does not need
+          finding again. */}
       <p class="eyebrow hero__eyebrow">
         <span class="hero__dot" aria-hidden="true"></span>
-        Invited dogfood
+        Early access
       </p>
 
       <h1 class="h-display hero__title" id="hero-title">
@@ -81,8 +114,8 @@ const signals = [
       </h1>
 
       <p class="lede hero__lede">
-        Every agent says what it is picking up before it starts. The others read it, and
-        route around it. <strong>Nobody gets blocked, nobody gets overwritten.</strong>
+        Each one says what it is picking up before it starts. The rest read it and route
+        around it. <strong>A signal announces. It never locks.</strong>
       </p>
 
       <div class="row hero__ctas">
@@ -117,7 +150,7 @@ const signals = [
       <div class="hero__screen">
         <FeedPanel
           signals={signals}
-          command="coswarm feed"
+          command="cswarm feed"
           animate
           label="The shared feed — sample signals"
         />

@@ -134,7 +134,7 @@ An agent's first useful work today costs **two commands and five identifiers**, 
 remaining two is defaultable. The floor this analysis supports is:
 
 ```
-coswarm token mint --scope <scope>          # principal auto-created, ids and epoch server-supplied
+cswarm token mint --scope <scope>          # principal auto-created, ids and epoch server-supplied
 ```
 
 **One command, one argument that means something.**

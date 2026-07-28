@@ -1,11 +1,25 @@
 # AGENTS.md — cloud-swarm
 
-Coordination service for teams where people and AI agents work side by side. A CLI
-(`coswarm`) plus a hosted Supabase backend; **there is no web UI**. Agents post short,
-immutable *signals* of intent ("I'm about to refactor auth") so collaborators don't step
-on each other. Posting a signal never claims, blocks, or closes a task.
+**CommonSwarm** — coordination service for teams where people and AI agents work side by
+side. A CLI (`cswarm`) plus a hosted Supabase backend; **there is no web UI**. Agents post
+short, immutable *signals* of intent ("I'm about to refactor auth") so collaborators don't
+step on each other. Posting a signal never claims, blocks, or closes a task.
 
 Status: **P3-1, invited dogfood** — pre-launch, invite-only, not self-serve. Node >= 24.
+
+**The product was renamed from `coswarm` to CommonSwarm / `cswarm` (2026-07-27)** because
+the old name collided with a competitor. Prose says CommonSwarm; anything a user types says
+`cswarm`. Four things still legitimately read `coswarm` and must not be "fixed":
+
+- the release repo default `Ridge-io/coswarm-dist` in `install.sh` — pending operator decision;
+- the Vercel project and live URL `coswarm-site` / `coswarm-site.vercel.app` — still the
+  deployed site, see the deploy section below;
+- the esbuild define `__COSWARM_VERSION__` — a build-time identifier shared between
+  `scripts/build-release.sh` and `src/cli.ts`; both sides must change together;
+- the git repo `cloud-swarm` and the GitHub org `Ridge-io` — operator actions.
+
+Also unaffected, and different things entirely: the PostgreSQL schema `swarm.`, every
+`SWARM_*` env var, and the separate local `swarm` CLI the agent fleet runs.
 
 ## Commands
 
@@ -21,6 +35,7 @@ All verified working from a clean `npm install` on this repo.
 | `npm run test:uxtest` | 6 tests, the cross-machine UX harness. |
 | `npm run db:start` / `db:stop` / `db:reset` / `db:status` | Local Supabase lifecycle. |
 | `npm run build:command-core` | Regenerates the edge-function protocol bundle. |
+| `npm run check:edge` | `deno check` over both edge functions. Needs `brew install deno`. |
 
 Anything touching the database needs local Supabase up (`npm run db:start`, needs Docker).
 
@@ -35,7 +50,7 @@ The marketing site is a separate npm project: `cd site && npm install && npm run
 ```
 src/protocol/   pure authority core — reducer, events, commands. No I/O.
 src/cloud/      client side: auth, signals, workspaces, transport.
-src/cli.ts      the coswarm CLI surface.
+src/cli.ts      the cswarm CLI surface.
 supabase/       migrations + Deno edge functions (command, read).
 tests/          protocol tests; tests/p1-cli/ and tests/p1-server/ are separate suites.
 scripts/        verification helpers (see below).
@@ -55,10 +70,25 @@ file leaves the count at 66; the same file runs when named. If you add a root-le
 add it to the `test` script. (`test:p1-cli` and `test:p1-server` do glob their
 directories, so files added there are picked up.)
 
-**Edge functions are outside every typechecker here.** `tsconfig.json` sets
-`include: ["src/**/*.ts"]`, so nothing under `supabase/functions/` is checked by `tsc`.
-They are Deno, and Deno is not necessarily installed. `npm run build` passing tells you
+**Edge functions are outside `tsc`.** `tsconfig.json` sets `include: ["src/**/*.ts"]`, so
+nothing under `supabase/functions/` is checked by it. `npm run build` passing tells you
 **nothing** about whether an edge function compiles.
+
+★ **They are no longer unchecked, though — use `npm run check:edge`** (added 2026-07-27).
+It runs `deno check` over both functions and needs Deno (`brew install deno`). Measured on
+the tree at `ab9babb`: both functions pass, and a deliberately broken copy exits 1 with
+TS2322, so the check discriminates. The superseded line — *"Deno is not necessarily
+installed, so edge functions cannot be checked here"* — is **dead**: install it and check.
+Two caveats that still stand: the checker is not run by any other script, and
+`_shared/protocol.js` is generated, so a stale bundle typechecks fine while being wrong.
+
+**`supabase functions serve` does NOT inherit the parent environment.** The runtime gets
+only what `--env-file` holds. `tests/p1-server` passed `--env-file /dev/null` for a long
+time, which means the function ran with an **empty** environment and every env-gated branch
+was silently untestable — the `SWARM_ENV=test` in the spawn's `env:` never reached
+`Deno.env.get`. It only went unnoticed because the guard it protects also depends on env
+vars that never arrived. The suite now writes a real temp env file. If you add an env-gated
+branch, add it there or your test asserts against the default, not your feature.
 
 **`supabase/functions/_shared/protocol.js` is generated — do not hand-edit.** It is built
 from `src/protocol/index.ts` by `build:command-core`, which runs automatically as
@@ -129,7 +159,13 @@ check that list before removing a check.
 ## Deploying the marketing site
 
 Live: **https://coswarm-site.vercel.app** (Vercel project `coswarm-site`, scope `ridgedotio`).
-No custom domain yet — the name `coswarm` is decided, the domain is not.
+The project keeps its old name — renaming it is an operator action and would move the URL.
+
+No custom domain yet. `commonswarm.com` is the decided domain, but DNS is **parked and
+points at nothing** — do not write copy claiming the site is live there.
+`coswarm-site.vercel.app` is still the only public URL and stays live until the operator
+repoints DNS. The superseded line — *"the name `coswarm` is decided, the domain is not"* —
+is **dead**: the name is now CommonSwarm and the domain is decided too.
 
 ```sh
 cd site && rm -rf dist && npm run build          # rm -rf is load-bearing, see below

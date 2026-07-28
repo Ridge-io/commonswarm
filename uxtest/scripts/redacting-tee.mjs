@@ -41,7 +41,7 @@ function isInvitePayload(value) {
 function redact(value) {
   let redacted = value
     .replace(
-      /coswarm:\/\/accept\/([A-Za-z0-9_-]+)/g,
+      /\b(?:cswarm|coswarm):\/\/accept\/([A-Za-z0-9_-]+)/g,
       "[INVITE LINK REDACTED]",
     )
     .replace(

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import { chmod, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough, Writable } from "node:stream";
 import { test } from "node:test";
@@ -22,7 +22,18 @@ import {
   credentialStore,
   type CredentialRecord,
   type CredentialStore,
+  defaultCredentialStateDirectory,
 } from "../../src/cloud/storage.js";
+
+// The config directory moved from ~/.coswarm to ~/.cswarm with the CommonSwarm rename,
+// and nothing else in the suite pins it. A half-reverted rename would otherwise only
+// show up as an install that has silently forgotten its login.
+test("default credential state is ~/.cswarm/credentials.d, not the pre-rename path", () => {
+  assert.equal(
+    defaultCredentialStateDirectory(),
+    join(homedir(), ".cswarm", "credentials.d"),
+  );
+});
 
 class MemoryCredentialStore implements CredentialStore {
   readonly kind = "keychain" as const;
@@ -349,7 +360,7 @@ test("no-browser path prints the OAuth URL and verifies pasted callback state", 
 test("refresh rotates under generation control and logout revokes then wipes", async () => {
   const server = await refreshServer();
   const targetStateDirectory = await mkdtemp(
-    join(tmpdir(), "coswarm-logout-target-"),
+    join(tmpdir(), "cswarm-logout-target-"),
   );
   const credentials = new MemoryCredentialStore();
   credentials.record = {

@@ -318,7 +318,7 @@ It may not fall back to a global user lookup or `service_role`.
 
 `swarm.inbox_deliveries` is a P1 substrate with delivery and ack timestamps
 (`supabase/migrations/20260723000001_p1_schema.sql:423-432`). P3-1 v1 does not
-write it. `coswarm inbox` is a query over `swarm_read.signals`; there is no
+write it. `cswarm inbox` is a query over `swarm_read.signals`; there is no
 push, delivery queue, or ack state. This is a deliberate poll-first product
 choice, not an overlooked empty table. Push may later dual-write or add a
 transport layer without changing immutable signal rows.

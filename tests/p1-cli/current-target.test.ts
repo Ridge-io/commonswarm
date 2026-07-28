@@ -22,7 +22,7 @@ import {
 } from "../../src/cloud/current-target.js";
 
 test("current target persists atomically below 0700/0600 state", async () => {
-  const parent = await mkdtemp(join(tmpdir(), "coswarm-current-target-"));
+  const parent = await mkdtemp(join(tmpdir(), "cswarm-current-target-"));
   const stateDirectory = join(parent, "state");
   const target = cloudTarget(
     "https://current.example.test/",
@@ -52,7 +52,7 @@ test("current target persists atomically below 0700/0600 state", async () => {
 });
 
 test("target resolution is flag then environment then matching stored target", async () => {
-  const parent = await mkdtemp(join(tmpdir(), "coswarm-target-order-"));
+  const parent = await mkdtemp(join(tmpdir(), "cswarm-target-order-"));
   const stateDirectory = join(parent, "state");
   const stored = cloudTarget(
     "https://stored.example.test",
@@ -106,7 +106,7 @@ test("target resolution is flag then environment then matching stored target", a
 });
 
 test("agent mode never reads a human current target", async () => {
-  const parent = await mkdtemp(join(tmpdir(), "coswarm-agent-target-"));
+  const parent = await mkdtemp(join(tmpdir(), "cswarm-agent-target-"));
   const stateDirectory = join(parent, "state");
   try {
     await writeCurrentTarget(
@@ -131,7 +131,7 @@ test("agent mode never reads a human current target", async () => {
 });
 
 test("malformed, traversable, and symlinked current-target state hard-fails safely", async () => {
-  const parent = await mkdtemp(join(tmpdir(), "coswarm-bad-target-"));
+  const parent = await mkdtemp(join(tmpdir(), "cswarm-bad-target-"));
   const stateDirectory = join(parent, "state");
   const path = currentTargetPath({ stateDirectory });
   const secret = "must-never-appear";
@@ -223,7 +223,7 @@ async function cli(
 }
 
 test("target set/show/clear is explicit and bare human commands use it", async () => {
-  const home = await mkdtemp(join(tmpdir(), "coswarm-target-cli-"));
+  const home = await mkdtemp(join(tmpdir(), "cswarm-target-cli-"));
   const anonKey = "cli-anon-key-must-not-be-printed";
   try {
     const set = await cli(home, [

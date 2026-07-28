@@ -3,9 +3,14 @@
  * The honesty banner.
  *
  * This is the first thing in the page's content and it is not decoration. The repository is
- * public and the product is pre-launch: there is no self-serve signup, no live backend, and
- * nothing on this screen is connected to anything. A reader who screenshots this page and
- * posts it must not be able to mistake it for a running system.
+ * public, the product is pre-launch, and this page has no backend behind it: nothing on this
+ * screen is connected to anything. A reader who screenshots this page and posts it must not
+ * be able to mistake it for a running system.
+ *
+ * The clause "there is no self-serve signup" used to be in that sentence. It is DEAD — the
+ * server has createSelfServeWorkspace() (supabase/functions/command/index.ts), gated on
+ * SWARM_SELF_SERVE rather than absent. It changes nothing about this banner, which is about
+ * this page being a drawing, but it must not be re-derived from here.
  *
  * WHY IT IS NOT DISMISSIBLE. A close button would make the claim temporary, and the page it
  * qualifies never stops being a drawing. It also would have been the second write control on
@@ -20,7 +25,8 @@
  * reads identically in greyscale.
  *
  * ONE SENTENCE, AND IT STAYS ONE. This used to be three: a design-preview framing, the
- * made-up-data claim, and "coswarm has no self-serve signup yet". Every card below it also
+ * made-up-data claim, and "coswarm has no self-serve signup yet" — quoted as it shipped,
+ * under the name the product had before it became CommonSwarm. Every card below it also
  * carries a "Sample" chip, so the fact was on screen six times before a reader had scrolled
  * once. The chips are the ones worth keeping — they survive a cropped screenshot, which is
  * the failure this banner exists to prevent — so the banner was cut to the single claim the

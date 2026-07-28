@@ -6,7 +6,7 @@
  *
  * EVERY CLAIM AND EVERY LINK WAS CHECKED, logged out, on the day this was written:
  *   github.com/Ridge-io/cloud-swarm            HTTP 200   (public)
- *   .../cloud-swarm/blob/main/LICENSE          HTTP 200   (MIT, © 2026 Ridge.io)
+ *   .../cloud-swarm/blob/main/LICENSE          HTTP 200   (MIT, © 2026 Yulan Ventures, LLC)
  *   github.com/Ridge-io/coswarm-dist           HTTP 404   -> deliberately NOT linked
  *   controls: a made-up repo and a made-up blob path both returned 404, so the 200s above
  *   are a real signal and not a GitHub soft-200.
@@ -31,6 +31,43 @@
  *
  * The hash anchor points at a section id that exists on the landing page today, prefixed
  * with "/" so it still resolves from a route that is not "/". The rest are real routes.
+ *
+ * ---------------------------------------------------------------------------------------
+ * THE STATUS LINE WAS FALSE-IN-WAITING AND HAS BEEN REPLACED
+ * ---------------------------------------------------------------------------------------
+ * SUPERSEDED, KEPT SO NOBODY RE-DERIVES IT — this line rendered on every page:
+ *
+ *     "Pre-launch. Access is by invitation while we run coswarm on our own work — there
+ *      is nothing to sign up for yet."   (quoted verbatim; the product is CommonSwarm now)
+ *
+ * The last clause is DEAD. Self-serve workspace creation exists on the server: the
+ * `create_workspace` command is handled by createSelfServeWorkspace() in
+ * supabase/functions/command/index.ts, dispatched ahead of route resolution because a new
+ * caller has no membership yet. There IS something to sign up for; it is gated, not absent.
+ *
+ * WHAT THE LINE SAYS NOW, AND WHERE EACH PART WAS CHECKED IN THAT FILE:
+ *   three workspaces ........ FREE_TIER_WORKSPACE_LIMIT = 3 (:330), compared against a
+ *                             count of rows with archived_at IS NULL (:2245-2251) — so it
+ *                             is three LIVE workspaces and archiving one frees a slot.
+ *   per verified identity ... the handler refuses a non-human credential and then refuses
+ *                             an unverified one (:2183-2186); identityVerified is Supabase's
+ *                             email_confirmed_at (:3205).
+ *   no card ................. there is no billing surface in this repo. Enumerated, not
+ *                             assumed: a case-insensitive grep for stripe|billing|payment|
+ *                             subscription|invoice|\bprice\b over src/, supabase/functions/,
+ *                             supabase/migrations/ and package.json returns 0 hits, and the
+ *                             SAME grep for "workspace" over the SAME paths returns 1002 —
+ *                             so the zero is a measurement and not a broken instrument.
+ *
+ * IT DOES NOT SAY SIGN-UP IS OPEN, because it is not: the handler's first gate is
+ * `SWARM_SELF_SERVE === "1"` (:323, :2182) and that variable is not set in production, so a
+ * real attempt today gets 403. Every sentence here is chosen to be true both today and on
+ * the day that flag flips — a footer that has to be rewritten on launch day gets forgotten.
+ *
+ * THE LEGAL COLUMN LINKS PAGES THAT DO NOT EXIST IN THIS BRANCH. /terms and /privacy are
+ * built on `legal/terms-and-policies` and merge later; until that merge both links 404. They
+ * are here because /start now carries an assent line pointing at the same two paths, and an
+ * assent line whose targets are unreachable from anywhere else is worse than a pending merge.
  */
 
 /* `?raw` rather than fs.readFileSync: Vite resolves these at compile time, relative to THIS
@@ -51,13 +88,25 @@ const REPO = "https://github.com/Ridge-io/cloud-swarm";
  * fact a footer on a pre-launch developer tool has earned the right to state, and the only
  * honest way to state it is to derive it.
  *
- *   coswarm 0.0.1  <- package.json "version" at the repo root, which is what
+ *   cswarm 0.0.1   <- package.json "version" at the repo root, which is what
  *                     packageVersion() feeds CLI_BUILD_VERSION (src/cli.ts:140)
  *   protocol 0.1.0 <- CLIENT_PROTOCOL_VERSION (src/cloud/config.ts:3)
  *
  * Rendered in the same shape the binary prints for `--version` (src/cli.ts:246 and :1737):
- * `coswarm <v> (protocol <p>)`. Checked against the built CLI on the day this was written:
+ * `cswarm <v> (protocol <p>)`. Checked against the built CLI on the day this was written:
  *   $ node dist/cli.js --version   ->  coswarm 0.0.1 (protocol 0.1.0)
+ *
+ * NOTE THE MISMATCH ON THE LINE ABOVE, IT IS DELIBERATE. That is the output as measured, under
+ * the old binary name; nobody has re-run `--version` on a renamed build. The literal prefix in
+ * `versionLine` below reads `cswarm`, and that was not assumed from the rename — it was read
+ * off the two places the binary composes the string, which have MOVED since this note was
+ * written: src/cli.ts:248 and :1804 (the note's old :246 and :1737 are stale line numbers for
+ * the same two sites). Both now build `cswarm ${CLI_BUILD_VERSION} (protocol
+ * ${CLIENT_PROTOCOL_VERSION})`, so the shape below still matches the binary's.
+ *
+ * Only the prefix is a literal here; both NUMBERS stay derived at build time from
+ * package.json and config.ts, and both still throw if they read empty — so the part that
+ * could silently go stale did not change.
  *
  * Both reads throw at BUILD time if they come back empty, so this can never silently ship a
  * blank or a stale version. A hard-coded string would have gone stale on the next bump; a
@@ -82,7 +131,7 @@ if (!protocolVersion) {
   );
 }
 
-const versionLine = `coswarm ${cliVersion} (protocol ${protocolVersion})`;
+const versionLine = `cswarm ${cliVersion} (protocol ${protocolVersion})`;
 
 const COLUMNS = [
   {
@@ -102,6 +151,29 @@ const COLUMNS = [
     links: [
       { href: REPO, label: "GitHub", external: true },
       { href: `${REPO}/blob/main/LICENSE`, label: "MIT license", external: true },
+    ],
+  },
+  /* Legal. Added when the three documents landed, EXTENDING this list rather than forking
+   * it — the note at the top of this file records what forking the footer cost last time.
+   *
+   * A third column and not a row of small print in .ft__bar: the bottom bar is already a
+   * status sentence plus the copyright line, and three more links there would push the
+   * legal line to a second row at every width below ~72rem. It also puts these where a
+   * reader looks for them, which is a footer column headed "Legal".
+   *
+   * These are real routes — site/src/pages/terms.astro, privacy.astro and
+   * acceptable-use.astro — not hashes, so they resolve from all seven routes. Every one of
+   * them renders a draft banner today; they are written and they are not yet in force.
+   *
+   * The "MIT license" link one column left is about the SOURCE CODE. /terms governs the
+   * HOSTED SERVICE, and says so out loud in its "Our software and your licence to use it"
+   * section, because a reader who finds MIT first will otherwise assume it covers both. */
+  {
+    title: "Legal",
+    links: [
+      { href: "/terms", label: "Terms of Service" },
+      { href: "/privacy", label: "Privacy" },
+      { href: "/acceptable-use", label: "Acceptable use" },
     ],
   },
 ];
@@ -158,11 +230,13 @@ const year = new Date().getFullYear();
       <p class="ft__status">
         <span class="ft__pip" aria-hidden="true"></span>
         <span>
-          <strong>Pre-launch.</strong> Access is by invitation while we run coswarm on our
-          own work — there is nothing to sign up for yet.
+          <strong>Early access.</strong> Access is by invitation while we run CommonSwarm on
+          our own work. Self-serve signup is built but is not open on this deployment yet.
         </span>
       </p>
-      <p class="ft__legal">© {year} Ridge.io · MIT · no tracking on this page</p>
+      <p class="ft__legal">
+        © {year} Yulan Ventures, LLC · MIT · no tracking on this page
+      </p>
     </div>
   </div>
 </footer>

@@ -57,15 +57,21 @@
  * part a cropped card cannot say — that the page is connected to nothing — and the word
  * "live" is never used to describe a connection. The banner is ONE sentence on purpose: said
  * once beside four chips it is credible; said in three clauses above five more marks it reads
- * as nerves. It used to also carry "coswarm has no self-serve signup yet", which is a fact
+ * as nerves. It used to also carry "coswarm has no self-serve signup yet" — quoted with the
+ * name it shipped under, since the product is CommonSwarm now — which is a fact
  * about the product rather than about this drawing — it is made on / and on /start, where a
  * reader could act on it.
  *
  * The CLI commands and the one
  * block of CLI OUTPUT rendered in the collision story were checked against the real binary:
- * `coswarm working-on`, `coswarm feed --about`, `coswarm note --to` all exist with those
+ * `cswarm working-on`, `cswarm feed --about`, `cswarm note --to` all exist with those
  * flags, and the output line matches renderSignals() in src/cloud/signals.ts — including
  * "expires in 65m" rather than the "65m left" a designer would naturally write.
+ *
+ * That check was made when the binary was called `coswarm`. The verbs and flags are what was
+ * verified and they did not change. The name did, and it was re-read from source rather than
+ * assumed: package.json's bin is {"cswarm": "dist/cli.js"} and src/cli.ts spells the verbs
+ * with a `cswarm` prefix throughout. No `--help` has been run against a renamed build.
  */
 
 import Base from "../layouts/Base.astro";
@@ -82,9 +88,9 @@ import LoadingPanel from "../components/app/LoadingPanel.astro";
  * ("authorised", "governed authority core", "principals, scoped tokens"). That file belongs
  * to another pass, so rather than edit it this page passes its own — otherwise every /app
  * share card would ship vocabulary the operator explicitly dropped. */
-const title = "coswarm — see what every agent is working on";
+const title = "CommonSwarm — see what every agent is working on";
 const description =
-  "The dashboard humans read: which agent announced what, what changed, and how one agent routed around another. Agents drive coswarm from the CLI.";
+  "The dashboard humans read: which agent announced what, what changed, and how one agent routed around another. Agents drive CommonSwarm from the CLI.";
 
 const workspace = {
   name: "payments-rebuild",
@@ -115,7 +121,7 @@ type SignalKind = "working-on" | "note" | "ask";
 /*
  * NOTHING BELOW USES --to, AND THAT IS A CORRECTION, NOT AN OMISSION.
  *
- * The first draft of this data had Wren send `coswarm note ... --to Atlas` and Dana reply
+ * The first draft of this data had Wren send `cswarm note ... --to Atlas` and Dana reply
  * `--to Pike`. Both would fail against the real server. resolveSignalRecipient() in
  * src/cloud/signals.ts matches the selector against the workspace's MEMBERS — rows with a
  * user_id, i.e. humans — and throws "signal recipient is not a live member of this project"
@@ -138,7 +144,7 @@ interface FeedSignal {
   expired?: boolean;
 }
 
-/* Newest first, the order `coswarm feed` returns. */
+/* Newest first, the order `cswarm feed` returns. */
 const feed: FeedSignal[] = [
   {
     id: "s6",

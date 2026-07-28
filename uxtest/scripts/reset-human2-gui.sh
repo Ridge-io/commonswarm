@@ -25,11 +25,11 @@ profile="$(profile_id)"
   die "Human2 reset profile does not match the requested cloud target"
 
 state="$UXTEST_HOME_ROOT/human2/reset-state/r$round.json"
-profile_path="$UXTEST_HOME_ROOT/../.coswarm/credentials.d/$profile.profile.json"
+profile_path="$UXTEST_HOME_ROOT/../.cswarm/credentials.d/$profile.profile.json"
 node_file="$UXTEST_HOME_ROOT/product/NODE_BIN"
 cli="$UXTEST_HOME_ROOT/product/dist/cli.js"
 [ -f "$node_file" ] || die "Human2 copied Node path is missing"
-[ -f "$cli" ] || die "Human2 copied coswarm build is missing"
+[ -f "$cli" ] || die "Human2 copied cswarm build is missing"
 node_bin="$(<"$node_file")"
 [ -x "$node_bin" ] || die "Human2 copied Node binary is unavailable"
 
@@ -75,7 +75,7 @@ rm -f "$profile_path"
   fail_reset "Human2 profile sidecar survived GUI-session reset"
 if "$UXTEST_SECURITY_BIN" find-generic-password \
   -a "refresh:$profile" \
-  -s io.ridge.coswarm >/dev/null 2>&1; then
+  -s com.commonswarm.cli >/dev/null 2>&1; then
   fail_reset "Human2 keychain credential survived GUI-session reset"
 fi
 

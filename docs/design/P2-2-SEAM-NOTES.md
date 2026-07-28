@@ -42,7 +42,7 @@ This is the center of the slice.
   or TTY branch at all; that makes the TTY/non-TTY/no-hang contract structural.
 - Update login copy in `main()`: “accept an invitation to choose one” is false
   for an already-member multi-project user. Point a null selection to
-  `coswarm workspaces` then `coswarm use …`.
+  `cswarm workspaces` then `cswarm use …`.
 
 ### `src/cloud/auth.ts`
 
@@ -75,8 +75,8 @@ This is the center of the slice.
 ### `README.md`
 
 - Replace the current default-workspace paragraph with the full human flow:
-  `coswarm workspaces` → `coswarm use <full-id|exact-unique-name>` →
-  `coswarm invite`.
+  `cswarm workspaces` → `cswarm use <full-id|exact-unique-name>` →
+  `cswarm invite`.
 - Keep `SWARM_CLOUD_WORKSPACE_ID` documented as the existing power-user
   override, with flag > env > saved-default precedence. Do not present it as
   the normal recovery path and do not suggest the uxtest harness set it.
@@ -157,7 +157,7 @@ Unknown holders should remain the full id, never an invented label.
   writer, retaining today's convenience.
 - Multi-project failure needs one deterministic sort (safe name, then full id),
   structured `{workspace_id, name, role}` rows, and copy that teaches:
-  `coswarm workspaces` → `coswarm use <full-id|exact-name>`.
+  `cswarm workspaces` → `cswarm use <full-id|exact-name>`.
 - `use` should fetch only caller-visible live projects. A syntactically valid
   foreign id and a syntactically valid unknown id are therefore both simply
   absent; route both through one constant error object/message and do not echo

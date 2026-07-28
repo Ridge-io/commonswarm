@@ -88,10 +88,10 @@ function parseInvitePayload(value) {
 
 function capabilityForms(value) {
   const forms = [];
-  if (/coswarm:\/\/accept\/[A-Za-z0-9_-]+/.test(value)) forms.push("uri");
+  if (/\b(?:cswarm|coswarm):\/\/accept\/[A-Za-z0-9_-]+/.test(value)) forms.push("uri");
   if (/\bswm_inv_[A-Za-z0-9_-]{43}\b/.test(value)) forms.push("token");
   const withoutUris = value.replace(
-    /coswarm:\/\/accept\/[A-Za-z0-9_-]+/g,
+    /\b(?:cswarm|coswarm):\/\/accept\/[A-Za-z0-9_-]+/g,
     " ",
   );
   for (const candidate of withoutUris.match(/\b[A-Za-z0-9_-]{20,16384}\b/g) ?? []) {
@@ -104,7 +104,7 @@ function redact(value) {
   if (value === null || value === undefined) return value;
   let redacted = String(value)
     .replace(
-      /coswarm:\/\/accept\/[A-Za-z0-9_-]+/g,
+      /\b(?:cswarm|coswarm):\/\/accept\/[A-Za-z0-9_-]+/g,
       "[INVITE LINK REDACTED]",
     )
     .replace(

@@ -1,4 +1,4 @@
-/* coswarm UI primitives
+/* CommonSwarm UI primitives
  *
  * The skin for site/src/components/ui/*.astro. Every value comes from tokens.css. If you
  * need a colour or a size that is not in there, add it to tokens.css — never hard-code here.
@@ -201,7 +201,18 @@
   background: var(--elev-2);
 }
 
-/* Genuinely transparent until touched — for toolbars and tertiary actions. */
+/* Genuinely transparent until touched — for toolbars and tertiary actions.
+ *
+ * KNOWN, UNFIXED, AND MEASURED — a ghost button's ink is mismatched for --dur-1 after a
+ * colour-scheme flip, the same shape of defect as the one described above `.btn` in
+ * global.css but with a different partner. A ghost button has no fill of its own, so its
+ * ink is read against the PAGE background, and the page background snaps (nothing
+ * transitions <body>) while `color` crossfades. Measured at the first frame of a live flip:
+ * 2.40:1 dark->light and 2.75:1 light->dark. It predates the .btn--primary fix and is
+ * unchanged by it — --btn-ink-dur is deliberately NOT overridden here, because 0s would fix
+ * the flip and break the hover fade that is the only reason this variant transitions colour
+ * at all (--text-muted -> --text). Fixing it properly means pairing the ink with the page
+ * background, not with the button, and that is a bigger change than this one. */
 .btn--ghost {
   background: transparent;
   color: var(--text-muted);
@@ -224,12 +235,20 @@
   background: var(--danger);
   color: var(--danger-ink); /* 7.11:1 */
   border-color: color-mix(in oklab, var(--danger) 70%, white);
-  box-shadow: var(--ring-top), 0 8px 24px -12px rgba(248, 113, 113, 0.55);
+  /* rgba(248,113,113) was the DARK danger token frozen into a literal; derived now so the
+     lift under the button tracks whichever palette is live. */
+  box-shadow: var(--ring-top), 0 8px 24px -12px
+    color-mix(in oklab, var(--danger) 55%, transparent);
 }
 
+/* Same defect and same fix as .btn--primary:hover in global.css. The literal #f98d8d is a
+   pale red picked to lighten against near-black; on a light page it measured 2.28:1 against
+   its own --danger-ink, and the stale comment beside it still claimed 8.64:1. Mixing toward
+   --text darkens the fill in light mode and lightens it in dark, so the ink stays legible
+   either way and the number in a comment can no longer drift from the colour it describes. */
 .btn--danger:hover {
-  color: var(--danger-ink); /* 8.64:1 on the lighter hover fill */
-  background: #f98d8d;
+  color: var(--danger-ink);
+  background: color-mix(in oklab, var(--danger) 80%, var(--text) 20%);
   transform: translateY(-1px);
 }
 
@@ -520,7 +539,8 @@ textarea.ui-field__control {
 /* A hairline after a leading affix.
  *
  * The screenshot caught why this is needed: a field rendering "coswarm/" as a prefix next to
- * the placeholder "workspace" read as the single string "coswarm/ workspace", because the
+ * the placeholder "workspace" read as the single string "coswarm/ workspace" — quoted from
+ * the screenshot, so it keeps the old brand string; no field passes that prefix today. The
  * affix and the placeholder are both --text-muted and nothing separated them. The rule is
  * only on the PREFIX — a trailing icon needs no divider, and giving it one makes the field
  * look like it has a button in it.

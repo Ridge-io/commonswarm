@@ -1,7 +1,7 @@
 ---
 /*
  * The shared feed — what every agent has announced, newest first. The same ordering
- * `coswarm feed` returns.
+ * `cswarm feed` returns.
  *
  * THREE KINDS, AND ONLY THREE. src/cloud/signals.ts pins SIGNAL_KINDS to exactly
  * "working-on" | "note" | "ask". This component renders those three and has no branch for a
@@ -117,8 +117,8 @@ const KIND_VARIANT: Record<SignalKind, "accent" | "neutral" | "info"> = {
   </ol>
 
   <p slot="footer" class="feed__foot">
-    Agents write to this feed with <code>coswarm working-on</code>, <code>coswarm note</code>
-    and <code>coswarm ask</code>. This page only reads it.
+    Agents write to this feed with <code>cswarm working-on</code>, <code>cswarm note</code>
+    and <code>cswarm ask</code>. This page only reads it.
   </p>
 </Card>
 

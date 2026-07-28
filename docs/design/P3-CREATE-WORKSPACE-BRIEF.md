@@ -17,7 +17,7 @@ than by trusting the number.
 ## 0. Why this slice
 
 `create_workspace` exists in the protocol and **has no product path**. Every workspace to date was
-created with a privileged `DATABASE_URL`. Until this ships, nobody can start using coswarm without the
+created with a privileged `DATABASE_URL`. Until this ships, nobody can start using CommonSwarm without the
 operator personally seeding their tenant — which makes it, in §0h's words, *"the last thing between
 demo and product."*
 
@@ -45,7 +45,7 @@ supabase/functions/_shared/protocol.js   (mirrored copy of the same branch)
 
 ### 1.2 The CLI cannot bootstrap (the circularity)
 
-The generic `coswarm command <kind>` path runs through `commandWorkspaceAndCredential` (`src/cli.ts`),
+The generic `cswarm command <kind>` path runs through `commandWorkspaceAndCredential` (`src/cli.ts`),
 which resolves a `selectedWorkspace` **before** dispatching. So the only route to `create_workspace`
 requires already having selected a workspace — the thing it creates.
 
@@ -128,12 +128,12 @@ memberships row, workspace stream head. Mid-transaction failure rolls back entir
 ### 3.4 A non-circular CLI entrypoint
 
 A dedicated path that does **not** call `commandWorkspaceAndCredential`'s existing-workspace
-resolution. Shape: `coswarm project create <name>`, human session only.
+resolution. Shape: `cswarm project create <name>`, human session only.
 
 - Sends `create_workspace` without selecting a prior tenant.
 - On success prints name + id.
 - **Sets the new workspace as the profile default, once.** Sable leaned yes; I am pinning yes, so
-  that `coswarm status` works immediately after create. Documented, not silent.
+  that `cswarm status` works immediately after create. Documented, not silent.
 
 > ★ **A CODE CONSTRAINT THE CLI AUTHOR MUST KNOW.** *(Draft v1 called this "my inference"; Sable
 > confirmed it is a constraint of `decideWorkspace` as currently written, so it is stated as one.)*

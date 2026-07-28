@@ -1,22 +1,22 @@
 #!/bin/sh
-# coswarm installer.  Usage:
+# CommonSwarm installer.  Usage:
 #
 #   curl -fsSL https://<host>/install.sh | sh
 #
-# Installs a single file to ~/.local/bin/coswarm (no sudo, no node_modules).
-# Override with COSWARM_INSTALL_DIR=/usr/local/bin, or COSWARM_VERSION=x.y.z.
+# Installs a single file to ~/.local/bin/cswarm (no sudo, no node_modules).
+# Override with CSWARM_INSTALL_DIR=/usr/local/bin, or CSWARM_VERSION=x.y.z.
 #
 # POSIX sh on purpose: this runs before we know anything about the machine.
 set -eu
 
-REPO="${COSWARM_REPO:-Ridge-io/coswarm-dist}"
-VERSION="${COSWARM_VERSION:-latest}"
-INSTALL_DIR="${COSWARM_INSTALL_DIR:-$HOME/.local/bin}"
+REPO="${CSWARM_REPO:-Ridge-io/coswarm-dist}"
+VERSION="${CSWARM_VERSION:-latest}"
+INSTALL_DIR="${CSWARM_INSTALL_DIR:-$HOME/.local/bin}"
 
-die() { printf '\ncoswarm install failed: %s\n\n' "$1" >&2; exit 1; }
+die() { printf '\nCommonSwarm install failed: %s\n\n' "$1" >&2; exit 1; }
 
 # --- Node check first. -------------------------------------------------------
-# coswarm ships JavaScript, not a native binary. Checking here means the failure
+# CommonSwarm ships JavaScript, not a native binary. Checking here means the failure
 # is one clear sentence instead of "node: command not found" from a shebang later.
 # A bare `command -v node` is correct but its ADVICE is wrong for a large share of users.
 # Version managers (nvm, fnm, asdf) put node on PATH from a shell init file, so node is
@@ -24,7 +24,7 @@ die() { printf '\ncoswarm install failed: %s\n\n' "$1" >&2; exit 1; }
 # process. Telling someone who already runs v24 under nvm to "brew install node" is a false
 # statement on the very first thing they see. So we say WHERE we looked, and name the case.
 command -v node >/dev/null 2>&1 || die \
-"coswarm needs Node.js 24 or newer, and node was not found on this PATH:
+"CommonSwarm needs Node.js 24 or newer, and node was not found on this PATH:
 
   $PATH
 
@@ -41,17 +41,17 @@ If you genuinely do not have Node yet:
 
 NODE_MAJOR="$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)"
 [ "$NODE_MAJOR" -ge 24 ] 2>/dev/null || die \
-"coswarm needs Node.js 24 or newer. You have $(node -v 2>/dev/null || echo 'an unknown version').
+"CommonSwarm needs Node.js 24 or newer. You have $(node -v 2>/dev/null || echo 'an unknown version').
 
   macOS:  brew upgrade node
   other:  https://nodejs.org/en/download"
 
 # --- Resolve the download URL. -----------------------------------------------
-# COSWARM_BASE_URL exists so this installer can be TESTED against a local server
+# CSWARM_BASE_URL exists so this installer can be TESTED against a local server
 # before it is published. An installer nobody has run is the same class of defect as
 # a check that cannot fail.
-if [ -n "${COSWARM_BASE_URL:-}" ]; then
-  BASE="$COSWARM_BASE_URL"
+if [ -n "${CSWARM_BASE_URL:-}" ]; then
+  BASE="$CSWARM_BASE_URL"
 elif [ "$VERSION" = "latest" ]; then
   BASE="https://github.com/$REPO/releases/latest/download"
 else
@@ -61,21 +61,21 @@ fi
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT INT TERM
 
-printf 'Downloading coswarm (%s)...\n' "$VERSION"
-curl -fsSL "$BASE/coswarm"        -o "$TMP/coswarm" \
-  || die "could not download $BASE/coswarm
+printf 'Downloading cswarm (%s)...\n' "$VERSION"
+curl -fsSL "$BASE/cswarm"        -o "$TMP/cswarm" \
+  || die "could not download $BASE/cswarm
 If this is a private release you will need access; ask whoever invited you."
-curl -fsSL "$BASE/coswarm.sha256" -o "$TMP/coswarm.sha256" \
+curl -fsSL "$BASE/cswarm.sha256" -o "$TMP/cswarm.sha256" \
   || die "downloaded the binary but not its checksum from $BASE — refusing to install unverified."
 
 # --- Verify before installing. -----------------------------------------------
 # A curl|sh installer that does not check its own download is the thing people are
 # right to be afraid of. This is not optional and there is no flag to skip it.
-EXPECTED="$(cut -d' ' -f1 < "$TMP/coswarm.sha256")"
+EXPECTED="$(cut -d' ' -f1 < "$TMP/cswarm.sha256")"
 if command -v shasum >/dev/null 2>&1; then
-  ACTUAL="$(shasum -a 256 "$TMP/coswarm" | cut -d' ' -f1)"
+  ACTUAL="$(shasum -a 256 "$TMP/cswarm" | cut -d' ' -f1)"
 elif command -v sha256sum >/dev/null 2>&1; then
-  ACTUAL="$(sha256sum "$TMP/coswarm" | cut -d' ' -f1)"
+  ACTUAL="$(sha256sum "$TMP/cswarm" | cut -d' ' -f1)"
 else
   die "no shasum or sha256sum available to verify the download — refusing to install."
 fi
@@ -88,7 +88,7 @@ Nothing was installed."
 # --- Install. ----------------------------------------------------------------
 mkdir -p "$INSTALL_DIR" || die "could not create $INSTALL_DIR"
 
-# coswarm ships as a CommonJS bundle in a file with no extension. Node decides
+# cswarm ships as a CommonJS bundle in a file with no extension. Node decides
 # CJS-vs-ESM from the NEAREST package.json, so installing under a directory tree that
 # contains one with "type":"module" makes node load it as ESM and die with
 # `require is not defined in ES module scope` — a baffling error for an install that
@@ -98,25 +98,25 @@ _d="$INSTALL_DIR"
 while [ "$_d" != "/" ] && [ -n "$_d" ]; do
   if [ -f "$_d/package.json" ] && grep -q '"type"[[:space:]]*:[[:space:]]*"module"' "$_d/package.json" 2>/dev/null; then
     die "$INSTALL_DIR sits under $_d, whose package.json declares \"type\": \"module\".
-Node would load coswarm as an ES module and it would fail with a confusing error.
+Node would load cswarm as an ES module and it would fail with a confusing error.
 
 Install somewhere outside that tree, e.g.:
-  COSWARM_INSTALL_DIR=\$HOME/.local/bin curl -fsSL <url>/install.sh | sh"
+  CSWARM_INSTALL_DIR=\$HOME/.local/bin curl -fsSL <url>/install.sh | sh"
   fi
   _d="$(dirname "$_d")"
 done
-chmod +x "$TMP/coswarm"
-mv "$TMP/coswarm" "$INSTALL_DIR/coswarm" || die "could not write to $INSTALL_DIR
-Try:  COSWARM_INSTALL_DIR=/usr/local/bin curl -fsSL <url>/install.sh | sudo sh"
+chmod +x "$TMP/cswarm"
+mv "$TMP/cswarm" "$INSTALL_DIR/cswarm" || die "could not write to $INSTALL_DIR
+Try:  CSWARM_INSTALL_DIR=/usr/local/bin curl -fsSL <url>/install.sh | sudo sh"
 
 # Read the version back OUT OF THE INSTALLED FILE rather than echoing what we meant to
-# install. `--version` already prints "coswarm X.Y.Z (protocol A.B.C)", so print that line
-# as-is instead of prefixing it — an earlier draft produced "Installed coswarm coswarm 0.0.1".
-INSTALLED_VERSION="$("$INSTALL_DIR/coswarm" --version 2>/dev/null | head -1 || true)"
+# install. `--version` already prints "cswarm X.Y.Z (protocol A.B.C)", so print that line
+# as-is instead of prefixing it — an earlier draft produced "Installed cswarm cswarm 0.0.1".
+INSTALLED_VERSION="$("$INSTALL_DIR/cswarm" --version 2>/dev/null | head -1 || true)"
 if [ -n "$INSTALLED_VERSION" ]; then
-  printf '\nInstalled %s\n  -> %s\n' "$INSTALLED_VERSION" "$INSTALL_DIR/coswarm"
+  printf '\nInstalled %s\n  -> %s\n' "$INSTALLED_VERSION" "$INSTALL_DIR/cswarm"
 else
-  printf '\nInstalled coswarm to %s\n' "$INSTALL_DIR/coswarm"
+  printf '\nInstalled cswarm to %s\n' "$INSTALL_DIR/cswarm"
   printf '  (warning: the installed binary did not report a version)\n'
 fi
 
@@ -136,8 +136,21 @@ case ":$PATH:" in
 esac
 
 # --- What to do next. --------------------------------------------------------
-# Access is by invitation and `accept` is the only first-contact verb that needs no
-# --url, because an invite link carries its own target. Sending someone to `login`
-# would send them looking for a project URL that has no page to come from.
-printf '\nNext: accept your invite. Paste the link when prompted -- passing it as an
-argument would leave a live capability in your shell history.\n\n  coswarm accept --link-stdin\n\n'
+# Two kinds of people reach this line and only one of them was invited. An earlier draft
+# said only "accept your invite", which is a dead end for anyone who arrived cold.
+#
+# WITH a link: `accept` is the only first-contact verb that needs no --url, because the
+# link carries its own target. Sending someone to `login` would send them looking for a
+# project URL that has no page to come from.
+#
+# WITHOUT one: do NOT invite them to sign up. `cswarm new` DOES exist and does call the
+# server -- but the edge function keeps create_workspace behind SWARM_SELF_SERVE, which is
+# unset in production, so a stranger still gets 403 and `cswarm new` prints "not open on
+# this deployment yet". Promising a signup the very next command cannot deliver is worse
+# than saying "not yet". Revisit this text when SWARM_SELF_SERVE is turned on.
+printf '\nNext, if you have an invite link:\n\n  cswarm accept --link-stdin\n\n'
+printf 'Paste the link when prompted -- passing it as an argument would leave a live\n'
+printf 'capability in your shell history.\n'
+printf '\nNo invite? CommonSwarm is invite-only today; creating your own workspace is not open\n'
+printf 'yet. Ask whoever runs the workspace you want to join for a link. Meanwhile this\n'
+printf 'works with no account and no network:\n\n  cswarm --help\n\n'

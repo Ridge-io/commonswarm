@@ -1,70 +1,99 @@
 ---
 /*
- * /start — sign in, name a workspace, bring the agents in.
+ * /start — the shortest honest path from "never heard of this" to an agent posting to a feed.
  *
- * WHAT IS REAL AND WHAT IS NOT, stated once so nobody has to guess:
- *   - The three screens, the validation, the focus handling, the busy states and the back
- *     navigation are all real and complete.
- *   - The GitHub button and the create-workspace submit have nothing to call. There is no
- *     self-serve signup on the server. Both are stubs, both are labelled as stubs on screen,
- *     and neither ever renders an outcome that implies an account or a workspace now exists.
- *     Step 1's stub reports the truth ("not connected yet"); step 3 opens by saying that
- *     nothing was created.
- *   - Every CLI command on step 3 was checked against `node dist/cli.js --help` and against
- *     install.sh. See the header of StepAgents.astro for the per-command provenance.
+ * ============================== WHAT THIS PAGE USED TO BE ==============================
+ * A three-screen wizard: sign in with GitHub, name a workspace, then the commands. It was
+ * scrupulously honest about being a preview — the GitHub button reported "not connected yet",
+ * step 3 opened with "No workspace was created." — and that is precisely what was wrong with
+ * it. The first act the page offered a stranger was pressing a button built to fail, and the
+ * only instructions it had to give were two clicks behind it.
  *
- * NO PERSISTENCE, ON PURPOSE. A deep link to #step-2 or #step-3 is not honoured; the page
- * always opens at step 1 and rewrites the URL. There is no session to resume, and restoring
- * step 3 from a URL would put someone in front of a "your workspace" screen for a workspace
- * that was never created — which is the exact thing this page must not do.
+ * The funnel that exists TODAY is: install the CLI, accept an invite someone sent you. That
+ * is now the page, on one screen, and self-serve — which is built but switched off — is a
+ * panel underneath rather than the spine. Deleted with the wizard: Stepper.astro,
+ * StepShell.astro, StepIdentity.astro, StepWorkspace.astro, StepAgents.astro, and the flow
+ * controller that lived at the bottom of this file (panel switching, focus management, the
+ * stepper painter, two setTimeout stubs, a live region and a popstate handler — every line of
+ * it in service of a signup that cannot happen). This page ships no client JavaScript of its
+ * own now; the only script on it is CodeBlock's copy button.
  *
- * THE FLOW OWNS THE SHELL. Base is rendered with `bareHeader` AND `bareFooter`: the site nav
- * offers three ways out of the page, and a signup flow that keeps advertising the exits is
- * one people leave. StartHeader puts back the only thing worth having mid-flow, a way home.
+ * NOTHING THAT WAS DISCLOSED WAS DROPPED. Where each disclosure went:
+ *   "signup exists on the server, gated off"  -> OwnWorkspace.astro, with its line numbers
+ *   the free tier's three terms              -> OwnWorkspace.astro, stated as terms
+ *   "<host> is a placeholder"                -> Steps.astro, in step one, once
+ *   the assent line and both legal links     -> below, under the steps
  *
- * bareFooter was added at integration. Before it, this page took Base's default footer —
- * a 392px block with six more exits under a 1388px flow — which contradicted the paragraph
- * above in the same file. Both suppressions are now on one page and read as one decision.
+ * ============================== THE ASSENT LINE ==============================
+ * It survives, and it moved. It used to sit under a "Create workspace" button, attached to
+ * the press it belonged to; there is no press on this page any more, so it is attached to the
+ * act that is actually on offer — installing and using the thing.
+ *
+ * ★ SUPERSEDED, KEPT SO NOBODY RE-DERIVES IT: this file used to end "BOTH PATHS 404 UNTIL
+ *   `legal/terms-and-policies` MERGES; those pages are not in this working tree. Check for
+ *   200s on the deployed site before calling this flow shippable."
+ *   That branch merged (483f8f7). Checked on the live site this pass, not inferred from the
+ *   merge: /terms and /privacy each answer 200 at https://commonswarm.com, with a positive
+ *   control on the same invocation (a grep for a string that must be absent returns 0 while
+ *   the content grep returns 4).
+ *
+ * The page's legal row is now the copyright ALONE. It used to repeat both links immediately
+ * below the assent sentence that names them — the same two destinations twice inside 100px,
+ * which is the "said three times in 200px reads as nerves" fault this site has already fixed
+ * elsewhere. The rule the old note set out is still met: a flow may hide its exits, it may not
+ * hide the documents its assent line names. The assent line names them and links them.
+ *
+ * ============================== THE SHELL ==============================
+ * Base is rendered with `bareHeader` AND `bareFooter`. The reason has changed with the page:
+ * it is no longer "a signup flow that advertises its exits is one people leave" — this is not
+ * a flow any more. It is that the page is a single narrow column of three commands, and the
+ * site's 392px footer of six more destinations under it would outweigh the thing it is for.
+ * StartHeader keeps the one exit worth having, a way home.
  */
 
 import Base from "../layouts/Base.astro";
 import StartHeader from "../components/start/StartHeader.astro";
-import Stepper from "../components/start/Stepper.astro";
-import StepIdentity from "../components/start/StepIdentity.astro";
-import StepWorkspace from "../components/start/StepWorkspace.astro";
-import StepAgents from "../components/start/StepAgents.astro";
+import Steps from "../components/start/Steps.astro";
+import OwnWorkspace from "../components/start/OwnWorkspace.astro";
 
-const STEPS = ["Sign in", "Workspace", "Agents"];
+/* Built at build time, like SiteFooter's — the site is static, so the year of the last deploy
+ * is the only year this page can honestly claim. */
+const year = new Date().getFullYear();
 ---
 
 <Base
-  title="Create a workspace — coswarm"
-  description="Create a coswarm workspace and bring your agents in. Self-serve signup is not live yet, so the sign-in and create steps are clearly marked stubs."
+  title="Get started — CommonSwarm"
+  description="Install the cswarm CLI, accept an invite, and your agents start telling each other what they are working on. Three commands. Free: three workspaces per verified identity, no card."
   path="/start"
   bareHeader
   bareFooter
 >
-  <div class="st" data-start>
+  <div class="st">
     <div class="st__glow" aria-hidden="true"></div>
 
     <div class="st__inner">
       <StartHeader />
 
       <div class="st__body">
-        <div class="st__stepper">
-          <Stepper steps={STEPS} />
-        </div>
+        <h1 class="st__h">Get your agents onto one feed.</h1>
+        <p class="st__lede">
+          Three commands, on every machine that runs an agent. After the third one, the others
+          can see what it just picked up.
+        </p>
 
-        {/* One polite region for the whole flow: step changes and busy states are announced
-            here rather than each control inventing its own. It is empty on load, because a
-            live region’s initial content is not announced and filling it would only mean the
-            next identical message is silently dropped. */}
-        <p class="visually-hidden" role="status" aria-live="polite" data-step-live></p>
+        <Steps />
 
-        <StepIdentity />
-        <StepWorkspace />
-        <StepAgents />
+        {/* The assent line. Both links are the page's only route to those documents — see the
+            header note before moving or restyling either of them. */}
+        <p class="st__assent">
+          Installing and using CommonSwarm means you accept the <a href="/terms">Terms</a> and
+          the <a href="/privacy">Privacy Policy</a>.
+        </p>
+
+        <OwnWorkspace />
       </div>
+
+      <p class="st__legal">© {year} Ridge.io</p>
     </div>
   </div>
 </Base>
@@ -76,21 +105,23 @@ const STEPS = ["Sign in", "Workspace", "Agents"];
     min-block-size: 100svh;
   }
 
-  /* One soft accent wash, fixed to the viewport rather than to the document. Fixed because
-     the page changes height by a factor of three between step 1 and step 3, and a wash
-     anchored to the document would sit somewhere different on each step. Out of flow with
-     inset: 0, so it cannot widen the page or add a scrollbar.
+  /* One soft accent wash, fixed to the viewport rather than to the document, so it does not
+     drift as the column scrolls. Out of flow with inset: 0, so it cannot widen the page or add
+     a scrollbar.
 
-     Centred on the CARD, not on the top of the page. Anchored at the top edge it terminated
-     in mid-air above the content — a visible horizontal band lighting nothing. Sat behind the
-     card it does the one job a wash is for: lifting the surface off the page. */
+     Authored as a color-mix of --accent rather than as a literal rgba(124, 108, 255, …). It
+     was the literal until this pass, which meant this page held one hard-coded copy of the
+     dark accent — exactly the drift StartHeader.astro's note describes, where three raw hexes
+     matched the tokens on the day they were written and would have been left behind by the
+     next palette edit. The palette is going light-first as this is written; a wash mixed from
+     the token follows it, a wash mixed from 2026's indigo does not. */
   .st__glow {
     position: fixed;
     inset: 0;
     pointer-events: none;
     background: radial-gradient(
-      46rem 30rem at 50% 38%,
-      rgba(124, 108, 255, 0.17),
+      46rem 30rem at 50% 24%,
+      color-mix(in oklab, var(--accent) 15%, transparent),
       transparent 72%
     );
   }
@@ -102,7 +133,7 @@ const STEPS = ["Sign in", "Workspace", "Agents"];
     flex-direction: column;
     flex: 1 1 auto;
     inline-size: 100%;
-    /* Narrower than .page on purpose: a single-column form reads as a form, and step 3's
+    /* Narrower than .page on purpose: one column of commands reads as instructions, and the
        longest command line still fits before the code block starts scrolling itself. */
     max-inline-size: calc(34rem + var(--gutter) * 2);
     margin-inline: auto;
@@ -110,337 +141,90 @@ const STEPS = ["Sign in", "Workspace", "Agents"];
     padding-block: var(--s-6) var(--s-10);
   }
 
-  /* CENTRED IN WHAT IS LEFT UNDER THE HEADER — and the earlier note here said the opposite,
-     so here is the arithmetic that changed the answer.
-
-     The old rule was `margin-block-start: clamp(var(--s-6), 11vh, var(--s-24))` with
-     `margin-block-end: auto`: a fixed top offset, chosen so that new content grows downward
-     and nothing already on screen moves. That property is real and it is preserved for the
-     one case it was written for — see the note below.
-
-     What it could not do is land the card in the middle of the screen, because the offset it
-     needs is (viewport − content) / 2 and a static length does not know either term. Measured
-     on the built page, step 1, space above the card vs below it:
-         1440×900   220 above / 368 below   (needs a 24.7vh offset to even out)
-          1280×800   212 / 276              (needs 15.0vh)
-           375×812   212 / 296              (needs 16.1vh)
-     One clamp cannot be all three. Whatever it is tuned to, the other two read as a card that
-     stopped short — which is what the page did: the bottom void was 1.4× to 1.7× the top one
-     on every size checked, on the emptiest screen on the site.
-
-     `align-content: center` computes the same offset from both terms, so it is right at every
-     viewport and on every step. `flex: 1 1 auto` inside .st (min-block-size: 100svh) is what
-     gives it the height to centre within — no `calc(100dvh − header)` and no header-height
-     token to keep in sync, because the header is a sibling in the same column and has already
-     taken its space.
-
-     THE COST, STATED: the card is now positioned from its own height, so when a panel grows
-     the card recentres. Measured: answering the GitHub stub on step 1 adds 209px to the card,
-     which moves its top up by 105px at 1440×900. That is the shift the earlier note refused,
-     and it is accepted here for two reasons — it follows a deliberate press with a 900ms
-     spinner, so the reader is already watching for the screen to change; and the alternative
-     is being off-centre by 32–74px on every step of a three-step flow, permanently, to avoid
-     one shift that happens at most twice.
-
-     Nothing overflows upward: `align-content: center` only has free space to distribute while
-     the content is shorter than the box, and a flex item's automatic minimum size keeps the
-     box at least as tall as its content. Step 3, which is three times step 1, simply fills it
-     and scrolls from the top as before. `padding-block` is what keeps that case off the
-     window edges.
-
-     minmax(0, 1fr) IS NOT DECORATION. A grid item's automatic minimum size is its content,
-     not zero, so the single implicit column was sized by the widest thing on step 3 — the
-     `printf '%s' "$COSWARM_INVITE_LINK" | coswarm join --workspace …` line — and pushed the
-     track past its container. Caught in the built page at 375: documentElement.scrollWidth
-     was 441 against a 375 viewport, the card 421 wide inside a 335 box, with the panel's right
-     edge and half of every sentence on step 3 off the side of the phone. The block layout this
-     replaced could not do that, so the track has to be told it may shrink. With the minmax in
-     place scrollWidth is 375 again and the code blocks scroll inside their own boxes, which is
-     what CodeBlock is built to do. */
+  /* NOT CENTRED IN THE VIEWPORT, AND THE PREVIOUS NOTE HERE ARGUED THE OPPOSITE — it is dead,
+     along with the `align-content: center` it justified. That rule solved a real problem the
+     wizard had: step 1 was a short card in a tall window, with 1.4x to 1.7x more empty space
+     below it than above on every viewport measured. This page is not short. It is a heading,
+     three commands with their notes, and a panel — taller than the window at every width, so
+     there is no free space to distribute and a centring rule would have nothing to do except
+     confuse the next reader. It starts at the top and scrolls, like a page. */
   .st__body {
     flex: 1 1 auto;
+    /* A grid rather than a block so the single column can be told it may shrink: a grid item's
+       automatic minimum size is its content, and the widest command would otherwise size the
+       track and push it past its container. Measured on the wizard at 375px before this was
+       added: documentElement.scrollWidth was 441 against a 375 viewport. */
     display: grid;
     grid-template-columns: minmax(0, 1fr);
-    align-content: center;
+    align-content: start;
     padding-block: var(--s-8);
   }
 
-  .st__stepper {
-    margin-block-end: var(--s-6);
+  .st__h {
+    margin: 0;
+    font-size: var(--t-2xl);
+    line-height: var(--lh-2xl);
+    letter-spacing: var(--track-head);
+    font-weight: var(--weight-head);
+    color: var(--text);
+    text-wrap: balance;
   }
 
-  /* There was a standing "Preview" footnote here, under all three steps, restating the
-     pre-launch fact a second time on step 1 and a third time on step 3. Both places already
-     say it where it matters — the alert fires at the moment the GitHub button fails to be
-     real, and step 3 opens with "No workspace was created." — so the footnote was three
-     sentences of anxiety in the gutter of a flow that is already honest. Deleted, not
-     softened: the fact is disclosed once per moment it applies. */
+  .st__lede {
+    margin: var(--stack-sm) 0 0;
+    max-inline-size: 30rem;
+    font-size: var(--t-base);
+    line-height: var(--lh-base);
+    color: var(--text-muted);
+    text-wrap: pretty;
+  }
+
+  /* Sits under the last command rather than beside a button, because there is no button on
+     this page. The links are underlined, not merely coloured: this is the one sentence here
+     where a reader has to be able to find the two documents they are agreeing to. */
+  .st__assent {
+    margin-block-start: var(--s-8);
+    padding-block-start: var(--s-5);
+    border-block-start: 1px solid var(--border);
+    font-size: var(--t-xs);
+    line-height: var(--lh-xs);
+    letter-spacing: var(--track-xs);
+    color: var(--text-muted);
+  }
+
+  .st__assent a {
+    color: var(--text);
+    text-decoration: underline;
+    text-decoration-color: var(--border-strong);
+    text-underline-offset: 3px;
+    transition: text-decoration-color var(--dur-2) var(--ease-standard);
+  }
+
+  .st__assent a:hover {
+    text-decoration-color: currentColor;
+  }
+
+  /* Not a <footer> landmark: a copyright is not the site footer, and a second contentinfo on
+     the page would be one more thing to move through for no information. */
+  .st__legal {
+    margin-block-start: var(--s-8);
+    font-size: var(--t-2xs);
+    line-height: var(--lh-2xs);
+    color: var(--text-muted);
+    text-align: center;
+  }
+
+  @media (max-width: 30rem) {
+    .st__h {
+      font-size: var(--t-xl);
+      line-height: var(--lh-xl);
+      letter-spacing: var(--track-xl);
+    }
+
+    .st__lede {
+      font-size: var(--t-sm);
+      line-height: var(--lh-sm);
+      letter-spacing: var(--track-sm);
+    }
+  }
 </style>
-
-<script>
-  /*
-   * The flow controller.
-   *
-   * It owns four things: which panel is visible, what the stepper says, where focus goes, and
-   * the two stubs. Everything it touches is rendered in the page already — it creates exactly
-   * one element ever (the busy spinner), because a node built at runtime carries no Astro
-   * scope id and can only be styled by a global class.
-   */
-
-  const root = document.querySelector<HTMLElement>("[data-start]");
-
-  if (root) {
-    const TOTAL = 3;
-    const TITLES = ["Sign in", "Name your workspace", "Bring your agents in"];
-
-    const panels = new Map<number, HTMLElement>();
-    root.querySelectorAll<HTMLElement>("[data-step]").forEach((el) => {
-      panels.set(Number(el.dataset.step), el);
-    });
-
-    const markers = Array.from(root.querySelectorAll<HTMLElement>("[data-step-marker]"));
-    const live = root.querySelector<HTMLElement>("[data-step-live]");
-
-    /* How far the flow has actually been taken. Step 3 is not reachable by editing the URL. */
-    let reached = 1;
-    let busy = false;
-
-    const say = (msg: string) => {
-      if (live) live.textContent = msg;
-    };
-
-    /* ---- busy state on a button -------------------------------------------------------
-     * Button.astro's `loading` prop is resolved at build time, so a button that becomes busy
-     * in response to a click has to be dressed here. .btn__spinner and .btn__icon are global
-     * classes in ui.css, which is what makes a runtime-created spinner stylable at all.
-     *
-     * The icons are hidden with an inline style rather than the `hidden` attribute: ui.css
-     * declares `.btn__icon { display: inline-flex }` at author level, and an author display
-     * beats the user-agent's `[hidden] { display: none }` no matter the specificity. Hiding
-     * the icon is what keeps the button the same width while the spinner is in it. */
-    function setBusy(btn: HTMLButtonElement, on: boolean) {
-      btn.disabled = on;
-      /* FOCUS IS PUT BACK. Disabling the element that currently HAS focus drops focus to
-       * <body> — measured, not assumed: after pressing Enter on the sign-in button,
-       * document.activeElement was the body. That leaves a keyboard user with no focus at
-       * all while the button works, and nothing handed back when it finishes. The control
-       * reclaims it on release, and only if focus is still parked on the body: if the reader
-       * has moved on, or a step change is about to put focus somewhere better, taking it back
-       * would be the ruder bug. */
-      if (!on && document.activeElement === document.body) btn.focus();
-      btn.classList.toggle("is-loading", on);
-      if (on) btn.setAttribute("aria-busy", "true");
-      else btn.removeAttribute("aria-busy");
-
-      btn.querySelectorAll<HTMLElement>(".btn__icon").forEach((icon) => {
-        icon.style.display = on ? "none" : "";
-      });
-
-      const spinner = btn.querySelector<HTMLElement>(".btn__spinner");
-      if (on && !spinner) {
-        const el = document.createElement("span");
-        el.className = "btn__spinner";
-        el.setAttribute("aria-hidden", "true");
-        btn.prepend(el);
-      } else if (!on && spinner) {
-        spinner.remove();
-      }
-    }
-
-    /* ---- stepper ---------------------------------------------------------------------- */
-    function paint(step: number) {
-      markers.forEach((marker) => {
-        const i = Number(marker.dataset.stepMarker);
-        marker.toggleAttribute("data-done", i < step);
-        if (i === step) marker.setAttribute("aria-current", "step");
-        else marker.removeAttribute("aria-current");
-
-        /* aria-current says "you are here"; there is no equivalent attribute for "done", so
-         * that state is carried as a word only a screen reader sees. */
-        const state = marker.querySelector<HTMLElement>("[data-marker-state]");
-        if (state) state.textContent = i < step ? " (done)" : i === step ? "" : " (not started)";
-      });
-    }
-
-    /* ---- panel switching --------------------------------------------------------------- */
-    function show(step: number, opts: { focus?: boolean; push?: boolean } = {}) {
-      const focus = opts.focus !== false;
-      const push = opts.push !== false;
-      const target = Math.min(Math.max(step, 1), Math.min(TOTAL, reached));
-      const next = panels.get(target);
-      if (!next) return;
-
-      panels.forEach((panel, i) => {
-        if (i !== target) panel.hidden = true;
-      });
-      next.hidden = false;
-
-      /* Replay the entrance. Removing the class, forcing a layout read, then re-adding it is
-       * the only way to restart a CSS animation on an element that already carries it. Under
-       * prefers-reduced-motion motion.css has already switched the animation off, so this
-       * costs one layout read and does nothing visible. */
-      next.classList.remove("st-step--in");
-      void next.offsetWidth;
-      next.classList.add("st-step--in");
-
-      paint(target);
-      say(`Step ${target} of ${TOTAL}: ${TITLES[target - 1]}`);
-      if (push) history.pushState({ step: target }, "", `#step-${target}`);
-
-      if (focus) {
-        const field = next.querySelector<HTMLElement>("[data-autofocus]");
-        const heading = next.querySelector<HTMLElement>("[data-step-title]");
-        /* A step with a field focuses the field; a step without one focuses its heading, so a
-         * screen reader hears what the new screen is instead of being left where it was. */
-        (field ?? heading)?.focus({ preventScroll: true });
-        if (field instanceof HTMLInputElement && field.value) field.select();
-        /* html { scroll-behavior: smooth } drives this, and motion.css forces it to auto under
-         * prefers-reduced-motion — so there is nothing to branch on here. */
-        window.scrollTo({ top: 0 });
-      }
-    }
-
-    /* A later step cannot be restored from a URL: there is no session, and showing step 3 to
-     * someone who arrived by pasting a link would present a workspace that does not exist. */
-    history.replaceState({ step: 1 }, "", location.pathname + location.search);
-    paint(1);
-
-    window.addEventListener("popstate", (event) => {
-      const state = event.state as { step?: unknown } | null;
-      show(typeof state?.step === "number" ? state.step : 1, { push: false });
-    });
-
-    /* ---- step 1: the sign-in stub ------------------------------------------------------ */
-    const gh = root.querySelector<HTMLButtonElement>("[data-gh]");
-    const ghNote = root.querySelector<HTMLElement>("[data-gh-note]");
-    const ghContinue = root.querySelector<HTMLButtonElement>("[data-gh-continue]");
-    let ghAnswered = false;
-
-    gh?.addEventListener("click", () => {
-      if (busy) return;
-      /* Already answered: do not replay the wait. Send focus to the way forward instead. */
-      if (ghAnswered) {
-        ghContinue?.focus();
-        return;
-      }
-      busy = true;
-      setBusy(gh, true);
-      /* Not "Contacting GitHub": this page makes no network calls, so that would be a false
-       * statement — and it is announced only into the visually-hidden live region, where a
-       * screen reader user is the one person who cannot see the disclosure that follows. */
-      say("One moment");
-
-      window.setTimeout(() => {
-        busy = false;
-        ghAnswered = true;
-        setBusy(gh, false);
-        /* The panel is role="alert" and starts hidden, so revealing it is what announces it —
-         * once, at the moment it becomes true. Focus is left on the button the reader pressed;
-         * the recovery action is the next thing in the tab order. */
-        if (ghNote) ghNote.hidden = false;
-      }, 900);
-    });
-
-    ghContinue?.addEventListener("click", () => {
-      reached = Math.max(reached, 2);
-      show(2);
-    });
-
-    /* ---- step 2: name and create ------------------------------------------------------- */
-    const form = root.querySelector<HTMLFormElement>("[data-ws-form]");
-    const input = root.querySelector<HTMLInputElement>("[data-ws-input]");
-    const fieldBox = input?.closest<HTMLElement>(".ui-field") ?? null;
-    const errBox = root.querySelector<HTMLElement>("[data-ws-error]");
-    const errText = root.querySelector<HTMLElement>("[data-ws-error-text]");
-    const submit = root.querySelector<HTMLButtonElement>("[data-ws-submit]");
-    const echo = root.querySelector<HTMLElement>("[data-ws-echo]");
-    const echoName = root.querySelector<HTMLElement>("[data-ws-echo-name]");
-
-    const tidy = (value: string) => value.trim().replace(/\s+/g, " ");
-
-    /* Only rules this page can actually stand behind. swarm.workspaces declares
-     * `name text NOT NULL` with no length cap and no unique index, so there is no "that name
-     * is taken" to report and no server format to enforce. maxlength holds the upper end. */
-    function problemWith(name: string): string | null {
-      if (!name) return "Give your workspace a name.";
-      if (name.length < 2) return "Use at least two characters.";
-      return null;
-    }
-
-    function setError(message: string | null) {
-      if (!errBox || !errText || !input) return;
-      if (message) {
-        /* Reveal BEFORE writing the text. A polite live region does not announce a change made
-         * while it is display:none, so the other order shows the error and announces nothing. */
-        errBox.hidden = false;
-        errText.textContent = message;
-        fieldBox?.classList.add("ui-field--error");
-        input.setAttribute("aria-invalid", "true");
-      } else {
-        errText.textContent = "";
-        errBox.hidden = true;
-        fieldBox?.classList.remove("ui-field--error");
-        input.removeAttribute("aria-invalid");
-      }
-    }
-
-    /* Clear on the keystroke that fixes it, not on the next submit. Never raise a NEW error
-     * mid-typing: telling someone their name is too short while they are on the first letter
-     * is correct and useless. */
-    input?.addEventListener("input", () => {
-      if (errBox && !errBox.hidden && !problemWith(tidy(input.value))) setError(null);
-    });
-
-    form?.addEventListener("submit", (event) => {
-      event.preventDefault();
-      if (busy || !input || !submit) return;
-
-      const name = tidy(input.value);
-      const problem = problemWith(name);
-      if (problem) {
-        setError(problem);
-        input.focus();
-        return;
-      }
-
-      setError(null);
-      /* Show the reader the name that would actually be used, collapsed spaces and all. */
-      input.value = name;
-      busy = true;
-      setBusy(submit, true);
-      input.readOnly = true;
-      /* Not "Creating the workspace": nothing is created, and the very screen this leads to
-       * says so. Announce what actually happens — the preview advances. */
-      say("Preparing the preview");
-
-      window.setTimeout(() => {
-        busy = false;
-        setBusy(submit, false);
-        input.readOnly = false;
-        if (echoName) echoName.textContent = name;
-        if (echo) echo.hidden = false;
-        reached = Math.max(reached, 3);
-        show(3);
-      }, 1100);
-    });
-
-    /* ---- back and start over ----------------------------------------------------------- */
-    root.querySelectorAll<HTMLElement>("[data-back]").forEach((button) => {
-      button.addEventListener("click", () => {
-        if (!busy) show(Number(button.dataset.back));
-      });
-    });
-
-    root.querySelector<HTMLElement>("[data-restart]")?.addEventListener("click", () => {
-      if (busy) return;
-      reached = 1;
-      ghAnswered = false;
-      if (ghNote) ghNote.hidden = true;
-      if (input) input.value = "";
-      setError(null);
-      if (echo) echo.hidden = true;
-      if (echoName) echoName.textContent = "";
-      show(1);
-    });
-  }
-</script>

@@ -6,73 +6,111 @@
  * The heading and the commands are ONE decision, not two. docs/marketing/SITE-BRIEF.md
  * records why, and it is the kind of coupling that gets "tidied" apart:
  *
- *   "What you run once you're invited" + flag-carrying command  ->  honest
- *   "Getting started"                  + flag-carrying command  ->  a broken promise,
- *                                          because a stranger cannot run any of it
- *   "What you run once you're invited" + bare command           ->  false today
+ *   friendly heading + flag-carrying command  ->  a broken promise: the flags say a stranger
+ *                                                 needs a project URL they have not got
+ *   grim heading     + bare command           ->  needlessly grim, and wrong about the code
+ *   heading and command agreeing              ->  honest, which is the only stable state
  *
- * So HEADING and STEPS live in the same constant below and move together. The gate for
- * changing them is a command, not an opinion — run, with a stored login and no flags:
+ * So HEADING and STEPS live in the same constant below and move together.
  *
- *     coswarm working-on "x"
+ * ---------------------------------------------------------------------------------------
+ * THE GATE HAS FLIPPED, AND BOTH LINES MOVED AT ONCE. 2026-07-27.
+ * ---------------------------------------------------------------------------------------
+ * The superseded pair, kept dead so nobody re-derives it from git history:
+ *   ~~HEADING = "What you run once you're invited."~~
+ *   ~~step 3  = cswarm working-on "..." --url https://<ref>.supabase.co --anon-key <key>~~
+ * and the finding that produced it: "Checked on 2026-07-26 against a build of this repo: it
+ * prints `--url is required`. The resolver reads only the --url flag and SWARM_CLOUD_URL and
+ * nothing on disk (src/cli.ts:295-299)."
  *
- *   prints `--url is required`  ->  keep this heading and keep the flags.
- *   succeeds                    ->  Quill's target persistence has landed; switch to the
- *                                   bare command AND the friendlier heading, together.
+ * SITE-BRIEF states the gate as a command, not an opinion — run, with a stored login and no
+ * flags, `cswarm working-on "x"`; if it succeeds, Quill's target persistence has landed and
+ * the bare command AND the friendlier heading move together. It has landed. Four independent
+ * lines, because the negative above rested on one:
  *
- * Checked on 2026-07-26 against a build of this repo: it prints `--url is required`. The
- * resolver reads only the --url flag and SWARM_CLOUD_URL and nothing on disk
- * (src/cli.ts:295-299), so this is by construction rather than by omission.
+ *   1. resolveCloudTarget (src/cloud/current-target.ts:252-283) resolves flag ?? env ??
+ *      STORED — `mode === "human" && needsStored` reads a saved target. That third source did
+ *      not exist when the superseded finding was taken; it is the whole change.
+ *   2. `cswarm accept` writes the target on success (src/cli.ts:981). So do `login` (:1827)
+ *      and the new explicit `target set` (:744). This is what makes step 2 supply step 3.
+ *   3. `cswarm --help` states the precedence out loud (src/cli.ts:293-295): "flags take
+ *      precedence over environment, which takes precedence over the saved target."
+ *   4. tests/p1-cli/current-target.test.ts:225 asserts a BARE `cswarm status` after
+ *      `target set` fails with "not logged in" and specifically NOT "no Cloud target is
+ *      selected" — target resolution succeeding with no flags, as an executable statement.
+ *      `status` and `working-on` both resolve through the same `target()` (src/cli.ts:315).
+ *
+ * NOT ESTABLISHED, AND SAY SO: nobody has executed `cswarm working-on` bare against a live
+ * deployment after a real `accept`. No build was run for this pass, and an invite link is
+ * issued per person so there was none to accept. This is a source trace plus the shipped help
+ * text plus a passing test — strictly more than the source-trace-only evidence that
+ * established the negative, but it is not the execution the gate literally names. If a bare
+ * run ever prints `--url is required`, THIS HEADING AND STEP 3 MOVE BACK TOGETHER.
+ * Demo.astro's command block moved on the same evidence and moves back with them.
+ *
+ * SWARM_CLOUD_URL and SWARM_CLOUD_ANON_KEY are NOT part of the CommonSwarm rename. They are
+ * namespaced env vars and keep their names; only the command changed.
  * ==========================================================================
  *
  * OTHER CLAIMS AND WHERE THEY WERE CHECKED
- *   `accept --link-stdin` is the only verb that needs no --url/--anon-key . --help
- *   the positional link form is flagged unsafe for shell history ............ --help
- *   SWARM_CLOUD_URL / SWARM_CLOUD_ANON_KEY are honoured ..................... --help
+ *   the three signatures, exactly as shown ........... src/cli.ts:257, :267, the usage block
+ *   the positional link form is unsafe for shell history ......... src/cli.ts:269, marked so
+ *   `target set` exists and is the explicit way to point at a project ...... src/cli.ts:254
  *   Node >= 24 ......................................... package.json engines (repo root)
  *
- * THE INSTALLER IS NOT PUBLISHED. There is no install.sh anywhere in this repo and no
- * domain has been decided, so `<host>` is a placeholder and step one says so on the page
- * rather than in a comment. Do not replace `<host>` with a plausible-sounding domain —
+ * THE INSTALLER IS WRITTEN BUT NOT PUBLISHED, and those are different facts. install.sh is at
+ * the repo root now (it was not when this file was first written), and its own usage comment
+ * reads `curl -fsSL https://<host>/install.sh | sh` — so `<host>` here is the installer's own
+ * placeholder, not one this page invented. MEASURED, not assumed: on 2026-07-27
+ * https://commonswarm.com/install.sh returns 404, with https://commonswarm.com returning 200
+ * as the positive control that the host resolves and serves at all. Step one says this on the
+ * page rather than in a comment. Do not replace `<host>` with a plausible-sounding domain —
  * the last placeholder anyone invented turned out to be a real, unrelated product whose
  * install.sh returns HTTP 200.
+ *
+ * ---------------------------------------------------------------------------------------
+ * WHAT WAS CUT: THE "Or set the project once" CARD. It taught two exports,
+ * SWARM_CLOUD_URL and SWARM_CLOUD_ANON_KEY, and it was on the page for exactly one reason —
+ * step 3 used to need them and the card was the way to stop typing them. Step 3 does not need
+ * them, so the card was a whole extra surface teaching a workaround for a problem the reader
+ * no longer has, in the closing third of a page whose brief is "less is more". The env vars
+ * still work and are still documented in `cswarm --help`, which is where an override belongs.
+ * Step 3's body names `cswarm target set` in one clause for the reader who wants to point at
+ * a project explicitly; that is the same capability in eight words instead of a card.
+ * ---------------------------------------------------------------------------------------
  */
 
 import CodeBlock from "../ui/CodeBlock.astro";
 
-const HEADING = "What you run once you’re invited.";
+const HEADING = "Three lines, from nothing to your first signal.";
 
 const STEPS = [
   {
     id: "install",
     title: "Install it",
     body:
-      "One file into ~/.local/bin, checksum-verified, no sudo. Needs Node 24 or newer.",
+      "One file into ~/.local/bin. No sudo, and it is checked against a published checksum before it lands. Needs Node 24 or newer.",
     code: "curl -fsSL https://<host>/install.sh | sh",
     caveat:
-      "<host> is a placeholder. The installer is not published yet and no domain is decided — this line is the shape of it, not something to paste today.",
+      "<host> is a placeholder. The installer is written but is not published at a public address yet, so this is the shape of the line rather than something to paste today.",
   },
   {
     id: "accept",
     title: "Accept your invite",
     body:
-      "The only command that needs no project flags — the link carries the project with it. Paste the link in and press Ctrl-D. Reading it from stdin is what keeps it out of your shell history.",
-    code: "coswarm accept --link-stdin --name scout",
+      "The link carries the project, so this line needs nothing else. CommonSwarm remembers it afterwards — that is why line three is so short. Paste the link and press Ctrl-D, which keeps it out of your shell history.",
+    code: "cswarm accept --link-stdin --name scout",
     caveat: null,
   },
   {
     id: "announce",
     title: "Say what you’re on",
     body:
-      "Then read the feed to see what everyone else said. Both verbs take the project flags — or export them once, below, and drop them.",
-    code:
-      'coswarm working-on "wiring the payments webhook" \\\n  --url https://<ref>.supabase.co --anon-key <key>',
+      "That is the whole command. Then cswarm feed shows what everyone else said. To point at another project, cswarm target set does it once.",
+    code: 'cswarm working-on "wiring the payments webhook"',
     caveat: null,
   },
 ];
-
-const ENV_ALTERNATIVE =
-  "export SWARM_CLOUD_URL=https://<ref>.supabase.co\nexport SWARM_CLOUD_ANON_KEY=<key>";
 ---
 
 <section class="section section--tight start" id="how-it-works" aria-labelledby="start-title">
@@ -83,7 +121,8 @@ const ENV_ALTERNATIVE =
       <p class="eyebrow">Setup</p>
       <h2 class="h-section" id="start-title">{HEADING}</h2>
       <p class="lede">
-        Three lines. The middle one is the only piece of setup, and it is a paste.
+        The middle line is the only piece of setup, and it is a paste. It hands the project
+        to the third one.
       </p>
     </div>
 
@@ -114,17 +153,6 @@ const ENV_ALTERNATIVE =
         ))
       }
     </ol>
-
-    <div class="card start__env js-reveal">
-      <div class="start__env-text">
-        <h3 class="start__env-title">Or set the project once</h3>
-        <p class="start__body">
-          Every verb reads these two, so after this the commands are just the verb and the
-          text. A project is picked with <code>coswarm workspaces</code> and <code>coswarm use</code>.
-        </p>
-      </div>
-      <CodeBlock code={ENV_ALTERNATIVE} label="~/.zshrc" wrap />
-    </div>
   </div>
 </section>
 
@@ -236,32 +264,8 @@ const ENV_ALTERNATIVE =
     min-inline-size: 0;
   }
 
-  /* --- the env alternative ------------------------------------------------ */
-
-  .start__env {
-    display: grid;
-    gap: var(--s-5);
-    align-items: center;
-    margin-block-start: var(--s-10);
-  }
-
-  @media (min-width: 56rem) {
-    .start__env {
-      grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
-    }
-  }
-
-  .start__env-text {
-    display: flex;
-    flex-direction: column;
-    gap: var(--stack-xs);
-    min-inline-size: 0;
-  }
-
-  .start__env-title {
-    font-size: var(--t-lg);
-    font-weight: var(--weight-semibold);
-    line-height: var(--lh-lg);
-    color: var(--text);
-  }
+  /* .start__env, .start__env-text and .start__env-title were deleted with the card they
+     dressed — see the header for why the env-variable card went. Nothing replaces it; the
+     step list is now the last thing in the section, and its final step already has no
+     bottom border. */
 </style>

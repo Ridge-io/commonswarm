@@ -1,8 +1,14 @@
 ---
 /*
  * WhatHappens — the honest walkthrough. Trust is the product on this page, so every claim
- * below is read straight out of install.sh (repo root; 142 lines of POSIX sh) and is stated
+ * below is read straight out of install.sh (repo root; 156 lines of POSIX sh) and is stated
  * in the order the script actually does it. Line references are to that file:
+ *
+ * RE-READ AGAINST install.sh BEFORE THE NEXT DEPLOY. The script was rewritten for the
+ * CommonSwarm rename in a different lane while this page was being edited, and it was still
+ * uncommitted when these numbers were taken. Every reference below was re-checked against it
+ * at that moment — the step boundaries survived the rewrite unchanged — but the file grew
+ * from 142 lines to 156, which is exactly the kind of number that goes stale silently.
  *
  *   1. node check BEFORE any download, with the searched PATH printed  -> `command -v node` +
  *      the die() message that prints "$PATH" and names version managers (l.26-40)
@@ -17,35 +23,43 @@
  *   8. reads --version back OUT OF the installed file                  -> l.115-121
  *   9. PATH advice printed, per $SHELL. It prints the line; it does
  *      not edit any file.                                             -> l.126-136
- *  10. ends by pointing at `coswarm accept <invite-link>`              -> l.142
+ *  10. ends by pointing at `cswarm accept --link-stdin`                -> l.151
  *
- * ABOUT THAT LAST ONE. `coswarm accept <invite-link>` is the positional form, and our own
- * `--help` annotates it "# unsafe: shell history/process list" — an invite link is a one-time
- * capability and argv is recorded. The line above is NOT an endorsement: it is a record of the
- * string install.sh actually prints at l.142, and it must not be edited to the safe form until
- * the script is. Nothing rendered on this page names a command — step 10's copy says "the one
- * command to run next" — and the card that does name one, AfterInstall.astro, teaches
- * `printf '%s' "$COSWARM_INVITE_LINK" | coswarm accept --link-stdin`, the form --help lists
- * first. Fix install.sh l.142, then fix this note.
+ * ABOUT THAT LAST ONE — THE OLD WARNING HERE IS NOW DEAD, KEPT SO IT IS NOT RE-DERIVED.
+ * This note used to read: the script ends on `coswarm accept <invite-link>`, the POSITIONAL
+ * form, which our own --help annotates "# unsafe: shell history/process list"; the note
+ * recorded what the script printed rather than what we wished it printed, and told the reader
+ * to fix the script first. THE SCRIPT IS FIXED. l.151-153 now print `cswarm accept
+ * --link-stdin` followed by "Paste the link when prompted -- passing it as an argument would
+ * leave a live capability in your shell history." The positional form is gone from the
+ * installer entirely. So the script, this page and AfterInstall.astro finally agree, and
+ * AfterInstall's matching "still unfixed upstream" note went with it.
+ *
+ * The name and the identifiers below were checked against the rewritten script, not assumed:
+ * it installs `cswarm` (l.65, l.109), verifies `cswarm.sha256` (l.68, l.74), and reads
+ * CSWARM_INSTALL_DIR and CSWARM_VERSION (l.13-14). ~/.cswarm is storage.ts:92 and :601.
  *
  * "Two network requests" is the two curl calls at l.65 and l.68 — the only network calls in
  * the file. Do not soften that into "minimal network activity"; the number is checkable and
- * the number is the point.
+ * the number is the point. Still two after the rewrite.
  *
- * ~/.coswarm is where the CLI keeps sign-in state, NOT something the installer creates:
- * src/cloud/storage.ts:88 (credentials.d) and :597 (agent-state), created 0700 with 0600
- * files (storage.ts:116, :365). Stated here because "what is on my machine afterwards" is
- * the question a reader is actually asking.
+ * ~/.cswarm is where the CLI keeps sign-in state, NOT something the installer creates:
+ * src/cloud/storage.ts:92 (credentials.d) and :601 (agent-state), created 0700 with 0600
+ * files. Stated here because "what is on my machine afterwards" is the question a reader is
+ * actually asking. The directory was `~/.coswarm` before the rename; storage.ts now joins
+ * homedir() with ".cswarm" at both sites, and carries its own note saying the old directory
+ * is deliberately not read. The 0700/0600 line numbers were not re-taken after that file
+ * moved and may have drifted; the modes themselves were not re-checked here.
  */
 
 const steps = [
   {
     t: "It checks Node before downloading anything",
-    d: "coswarm ships JavaScript, not a native binary, so it needs Node 24 or newer. If node isn’t there, the script prints the PATH it searched and names the likely cause — nvm, fnm and asdf set up node from your shell’s startup files, so it’s invisible to a non-interactive shell. Telling someone already running v24 to install Node would be a false statement on the very first thing they see.",
+    d: "CommonSwarm ships JavaScript, not a native binary, so it needs Node 24 or newer. If node isn’t there, the script prints the PATH it searched and names the likely cause — nvm, fnm and asdf set up node from your shell’s startup files, so it’s invisible to a non-interactive shell. Telling someone already running v24 to install Node would be a false statement on the very first thing they see.",
   },
   {
     t: "It downloads two files into a temp directory",
-    d: "The coswarm executable and its published coswarm.sha256. Those are the only two network requests the script makes. The temp directory is deleted when the script exits, whichever way it exits.",
+    d: "The cswarm executable and its published cswarm.sha256. Those are the only two network requests the script makes. The temp directory is deleted when the script exits, whichever way it exits.",
   },
   {
     t: "It computes the checksum itself and compares",
@@ -57,7 +71,7 @@ const steps = [
   },
   {
     t: "It moves one file into place",
-    d: "~/.local/bin/coswarm, marked executable. No sudo. Nothing outside your home directory, no node_modules tree, no background service, and nothing added to your login items. Set COSWARM_INSTALL_DIR to send it elsewhere, or COSWARM_VERSION to pin a release.",
+    d: "~/.local/bin/cswarm, marked executable. No sudo. Nothing outside your home directory, no node_modules tree, no background service, and nothing added to your login items. Set CSWARM_INSTALL_DIR to send it elsewhere, or CSWARM_VERSION to pin a release.",
   },
   {
     t: "It reads the version back off disk, then gets out of the way",
@@ -127,10 +141,10 @@ const nots = [
       </ul>
       <p class="wh__uninstall">
         <strong>Removing it is one file.</strong> Delete
-        <span class="mono">~/.local/bin/coswarm</span> and it’s gone. If you get as far as
-        signing in, the CLI keeps that in <span class="mono">~/.coswarm</span> — a directory
+        <span class="mono">~/.local/bin/cswarm</span> and it’s gone. If you get as far as
+        signing in, the CLI keeps that in <span class="mono">~/.cswarm</span> — a directory
         it creates at 0700 with 0600 files — so
-        <span class="mono">rm -rf ~/.coswarm</span> clears the rest.
+        <span class="mono">rm -rf ~/.cswarm</span> clears the rest.
       </p>
     </div>
   </div>

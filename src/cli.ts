@@ -14,7 +14,13 @@ import {
 } from "./cloud/auth.js";
 import {
   assertAgentToken,
+  assertCapabilityToken,
+  assertHumanCapabilityCredential,
   assertInvitationToken,
+  assertWorkspaceName,
+  CAPABILITY_MAX_TTL_MS,
+  CAPABILITY_MIN_TTL_MS,
+  CommandTransportError,
   ThinCommandClient,
   type CommandResult,
   type ConnectCommandResult,
@@ -42,6 +48,7 @@ import {
   type CredentialStore,
 } from "./cloud/storage.js";
 import {
+  sendCapabilityWithPending,
   sendConnectWithPending,
   sendSignalWithPending,
 } from "./cloud/pending-command.js";
@@ -63,6 +70,14 @@ import {
   sanitizeDisplayLabel,
   type InviteLinkPayload,
 } from "./cloud/invite-link.js";
+import {
+  capabilitySiteOrigin,
+  capabilityTimestamp,
+  capabilityUrl,
+  CAPABILITY_DISCLOSURE,
+  renderCapabilityMint,
+  renderCapabilityRevoke,
+} from "./cloud/capability-link.js";
 import {
   clearWorkspaceDefault,
   cloudWorkspaceDirectory,
@@ -243,32 +258,36 @@ const TASK_FLAGS = [
 class UsageError extends Error {}
 
 function usage(): string {
-  return `coswarm ${CLI_BUILD_VERSION} (protocol ${CLIENT_PROTOCOL_VERSION})
+  return `cswarm ${CLI_BUILD_VERSION} (protocol ${CLIENT_PROTOCOL_VERSION})
 
 Usage:
-  coswarm login [--url <project-url> --anon-key <key>] [--no-browser]
-  coswarm logout [--url <project-url> --anon-key <key>] [--all-devices]
-  coswarm target [show] [--json]
-  coswarm target set --url <project-url> --anon-key <key> [--json]
-  coswarm target clear [--json]
-  coswarm status [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--json]
-  coswarm working-on "<what>" [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--about <ref>] [--until <dur>] [--json]
-  coswarm note "<text>" [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--to <member>] [--about <ref>] [--until <dur>] [--json]
-  coswarm ask "<text>" [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--to <member>] [--about <ref>] [--until <dur>] [--json]
-  coswarm feed [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--about <ref>] [--kind <kind>] [--since <timestamp>] [--limit <n>] [--include-stale] [--json]
-  coswarm inbox [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--since <timestamp>] [--limit <n>] [--include-stale] [--json]
-  coswarm workspaces [--url <url> --anon-key <key>] [--json]
-  coswarm use <full-id|exact-name> [--url <url> --anon-key <key>] [--json]
-  coswarm invite [--url <url> --anon-key <key>] [--workspace-id <uuid>] --email <email>
-  coswarm accept --link-stdin [--name <name>] [--no-browser] [--json]
-  coswarm accept <coswarm://accept/...> [--name <name>] [--no-browser] [--json]  # unsafe: shell history/process list
-  coswarm accept --invitation-token-stdin [--url <url> --anon-key <key>]
-  coswarm accept <invitation-token> [--url <url> --anon-key <key>]  # unsafe: shell history/process list
-  coswarm principal create [--url <url> --anon-key <key>] [--workspace-id <uuid>] --name <name>
-  coswarm token mint [--url <url> --anon-key <key>] [--workspace-id <uuid>] --principal-id <uuid> --run-id <uuid> --task-id <uuid> --epoch <n> [--ttl-ms <ms>]
-  coswarm command <kind> [--url <url> --anon-key <key>] [--workspace-id <uuid>] [command fields]
-  coswarm dogfood [--url <url> --anon-key <key>] [--workspace-id <uuid>] --slug <slug> --branch <branch> --head-sha <sha> --evidence <ref>
-  coswarm seed-fixture --uid <auth-user-uuid> [--device-id <uuid>] [--workspace-id <uuid>]
+  cswarm login [--url <project-url> --anon-key <key>] [--no-browser]
+  cswarm logout [--url <project-url> --anon-key <key>] [--all-devices]
+  cswarm target [show] [--json]
+  cswarm target set --url <project-url> --anon-key <key> [--json]
+  cswarm target clear [--json]
+  cswarm status [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--json]
+  cswarm working-on "<what>" [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--about <ref>] [--until <dur>] [--json]
+  cswarm note "<text>" [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--to <member>] [--about <ref>] [--until <dur>] [--json]
+  cswarm ask "<text>" [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--to <member>] [--about <ref>] [--until <dur>] [--json]
+  cswarm feed [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--about <ref>] [--kind <kind>] [--since <timestamp>] [--limit <n>] [--include-stale] [--json]
+  cswarm inbox [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--since <timestamp>] [--limit <n>] [--include-stale] [--json]
+  cswarm new "<project name>" [--url <url> --anon-key <key>] [--json]
+  cswarm new --name "<project name>" [--url <url> --anon-key <key>] [--json]
+  cswarm workspaces [--url <url> --anon-key <key>] [--json]
+  cswarm use <full-id|exact-name> [--url <url> --anon-key <key>] [--json]
+  cswarm invite [--url <url> --anon-key <key>] [--workspace-id <uuid>] --email <email>
+  cswarm accept --link-stdin [--name <name>] [--no-browser] [--json]
+  cswarm accept <cswarm://accept/...> [--name <name>] [--no-browser] [--json]  # unsafe: shell history/process list
+  cswarm accept --invitation-token-stdin [--url <url> --anon-key <key>]
+  cswarm accept <invitation-token> [--url <url> --anon-key <key>]  # unsafe: shell history/process list
+  cswarm principal create [--url <url> --anon-key <key>] [--workspace-id <uuid>] --name <name>
+  cswarm token mint [--url <url> --anon-key <key>] [--workspace-id <uuid>] --principal-id <uuid> --run-id <uuid> --task-id <uuid> --epoch <n> [--ttl-ms <ms>]
+  cswarm link new [--url <url> --anon-key <key>] [--workspace-id <uuid>] --task-id <uuid> [--ttl-ms <ms>] [--site <origin>] [--json]
+  cswarm link revoke [--url <url> --anon-key <key>] [--workspace-id <uuid>] --capability-id <uuid> [--json]
+  cswarm command <kind> [--url <url> --anon-key <key>] [--workspace-id <uuid>] [command fields]
+  cswarm dogfood [--url <url> --anon-key <key>] [--workspace-id <uuid>] --slug <slug> --branch <branch> --head-sha <sha> --evidence <ref>
+  cswarm seed-fixture --uid <auth-user-uuid> [--device-id <uuid>] [--workspace-id <uuid>]
 
 Credential selection for command/dogfood:
   default                 refresh the human login from secure storage
@@ -279,10 +298,25 @@ never opens a browser or infers a human's saved project. Durations use a whole
 number plus m, h, or d (for example 90m, 24h, or 7d) and are capped at 30d.
 Place -- before signal text that itself begins with -- to stop option parsing.
 
-Invite, legacy token accept, principal create, and token mint require a stored
-human login. Invite-link accept signs in when needed, then accepts and registers
-one principal. Invitation links and agent credentials appear only in fresh
-success responses.
+Invite, legacy token accept, principal create, token mint, link, and new require a
+stored human login. Invite-link accept signs in when needed, then accepts and
+registers one principal. Invitation links, agent credentials, and capability links
+appear only in fresh success responses.
+
+cswarm link new hands someone a browser link to ONE work item before they install
+anything. It shows that item's name and state, the repository it belongs to, who
+invited them, and how long the project has existed — and reaches nothing else, not
+the member list, not the message feed, not another work item. The link is printed
+once and never again, because only its hash is stored; it lasts a day by default
+and at most 7 days, and cswarm link revoke --capability-id <uuid> withdraws it
+sooner. Only an owner or admin signed in as a human can create or revoke one; an
+agent credential never can, and cswarm says so without contacting the server. The
+token rides in the link's # fragment, which browsers never send to any server.
+--site (or CSWARM_SITE_ORIGIN) chooses which CommonSwarm page the link points at
+and accepts only https://coswarm-site.vercel.app (the default),
+https://commonswarm.com, https://www.commonswarm.com, or a loopback host while
+that page is being developed — the link is a live credential, so it may not be
+aimed at anyone else's server.
 GitHub identities with the same verified email may resolve to one GoTrue user;
 a second human must log in with a distinct verified email before accepting.
 
@@ -290,9 +324,12 @@ Successful login and invite acceptance save the current Cloud target. Override i
 per command with --url/--anon-key or SWARM_CLOUD_URL/SWARM_CLOUD_ANON_KEY;
 flags take precedence over environment, which takes precedence over the saved target.
 Agent credentials never inherit a human's saved target. Workspace flags may also
-be set with SWARM_CLOUD_WORKSPACE_ID. Normal project selection is:
-coswarm workspaces, then coswarm use <full-id|exact-name>. A sole accepted
-project is saved automatically; ambiguous names require the full id and Coswarm
+be set with SWARM_CLOUD_WORKSPACE_ID. cswarm new starts a project of your own
+(a name of 1 to 80 characters) and selects it; whether a deployment accepts that
+is a setting on the deployment, and an invite link is the other way in.
+Normal project selection is:
+cswarm workspaces, then cswarm use <full-id|exact-name>. A sole accepted
+project is saved automatically; ambiguous names require the full id and CommonSwarm
 never guesses. The workspace-id environment variable is a power-user override,
 with --workspace-id taking precedence. An invite link supplies its whole target
 and cannot be combined with --url or --anon-key.
@@ -514,7 +551,7 @@ async function humanCredential(
 }
 
 function writeWorkspaceWarning(warning: WorkspaceWarning): void {
-  process.stderr.write(`coswarm: ${warning.message}\n`);
+  process.stderr.write(`cswarm: ${warning.message}\n`);
   process.stderr.write(`${JSON.stringify(warning)}\n`);
 }
 
@@ -558,7 +595,7 @@ function uuid(value: string | undefined, field: string): string {
 
 function acceptedConnect(
   label: string,
-  result: ConnectCommandResult,
+  result: { response: ConnectCommandResult["response"] },
 ): ConnectCommandResult["response"] {
   if (result.response.status !== "accepted") {
     throw new Error(
@@ -645,6 +682,66 @@ async function runUse(args: Arguments): Promise<void> {
   process.stdout.write(`${message}\n`);
 }
 
+async function runNew(args: Arguments): Promise<void> {
+  const named = args.has("name");
+  if (named && args.positionals.length > 1) {
+    throw new Error(
+      "give the project name once: as a positional or as --name, not both",
+    );
+  }
+  args.assertShape([...TARGET_FLAGS, "name", "json"], named ? 1 : 2);
+  // Validated before any credential or network work, so a typo costs one line.
+  const name = (named ? args.required("name") : args.positionals[1]!).trim();
+  assertWorkspaceName(name);
+  const cloud = await target(args);
+  const human = await humanCredential(args, cloud);
+  // The id is ours: the project has no route to be addressed by until it exists,
+  // so the server takes the one we propose rather than handing one back.
+  const proposedId = randomUUID();
+  let result: ConnectCommandResult;
+  try {
+    result = await new ThinCommandClient(cloud).sendConnect({
+      command: { kind: "create_workspace", workspace_id: proposedId, name },
+      credential: human.accessToken,
+    });
+  } catch (error) {
+    if (error instanceof CommandTransportError) {
+      throw new CommandTransportError(
+        `${error.message}; run cswarm workspaces to see whether the project exists before creating it again`,
+      );
+    }
+    throw error;
+  }
+  const response = acceptedConnect("project creation", result);
+  const created = uuid(response.workspace_id, "workspace_id");
+  if (created !== proposedId) {
+    throw new Error(
+      "the server confirmed a different project than this command created; run cswarm workspaces before doing anything else",
+    );
+  }
+  await writeWorkspaceDefault(human.store, human.userId, created);
+  const message =
+    `Created project ${name} (${created}). It is now your selected project, so later commands will use it unless --workspace-id or SWARM_CLOUD_WORKSPACE_ID overrides it.`;
+  const next =
+    `Next: cswarm invite --email <address> brings someone in, and cswarm working-on "<what>" tells them what you have started.`;
+  if (args.has("json")) {
+    printJson({
+      code: "project_created",
+      message: `${message} ${next}`,
+      project: {
+        workspace_id: created,
+        name,
+        stream_id: typeof response.stream_id === "string" &&
+            UUID_RE.test(response.stream_id)
+          ? response.stream_id
+          : null,
+      },
+    });
+    return;
+  }
+  process.stdout.write(`${message}\n${next}\n`);
+}
+
 async function runTarget(args: Arguments): Promise<void> {
   const action = args.positionals[1] ?? "show";
   if (action === "show") {
@@ -658,7 +755,7 @@ async function runTarget(args: Arguments): Promise<void> {
     }
     if (saved === null) {
       process.stdout.write(
-        "No current Cloud target is saved. Start with coswarm accept --link-stdin, or run coswarm target set --url <project-url> --anon-key <key>.\n",
+        "No current Cloud target is saved. Start with cswarm accept --link-stdin, or run cswarm target set --url <project-url> --anon-key <key>.\n",
       );
       return;
     }
@@ -733,7 +830,7 @@ async function runStatus(args: Arguments): Promise<void> {
       if (!args.has("json")) writeWorkspaceWarning(warnings[0]!);
     }
     const message =
-      "You're not in any projects yet. Ask a colleague to send you an invitation link, then accept it with coswarm accept --link-stdin.";
+      "You're not in any projects yet. Ask a colleague to send you an invitation link, then accept it with cswarm accept --link-stdin.";
     if (args.has("json")) {
       printJson({
         identity: {
@@ -752,7 +849,7 @@ async function runStatus(args: Arguments): Promise<void> {
       return;
     }
     process.stdout.write(
-      `You: ${identityLabel} (${human.userId})\nYou're not in any projects yet.\nAsk a colleague to send you an invitation link, then accept it with coswarm accept --link-stdin.\n`,
+      `You: ${identityLabel} (${human.userId})\nYou're not in any projects yet.\nAsk a colleague to send you an invitation link, then accept it with cswarm accept --link-stdin.\n`,
     );
     return;
   }
@@ -914,7 +1011,7 @@ async function runLegacyAccept(args: Arguments): Promise<void> {
   await writeCurrentTarget(cloud);
   printJson({
     message:
-      "Invitation accepted. Coswarm saved the workspace as your default so later commands need fewer flags.",
+      "Invitation accepted. CommonSwarm saved the workspace as your default so later commands need fewer flags.",
     status: response.status,
     workspace_id: acceptedWorkspace,
   });
@@ -953,7 +1050,7 @@ async function runLinkAccept(
       readConfirmation: process.stdin.isTTY
         ? async () => await confirmationLine("")
         : undefined,
-      devAllowedOrigins: process.env.COSWARM_DEV_ALLOWED_ORIGINS,
+      devAllowedOrigins: process.env.CSWARM_DEV_ALLOWED_ORIGINS,
     }),
     async currentSession(
       selected: CloudTarget,
@@ -1027,7 +1124,7 @@ async function runAccept(args: Arguments): Promise<void> {
   }
   if (args.positionals.length !== 2) {
     throw new Error(
-      "accept expects one swm_inv_ capability or coswarm://accept/<invite-link>",
+      "accept expects one swm_inv_ capability or cswarm://accept/<invite-link>",
     );
   }
   const parsed = parseAcceptPositional(args.positionals[1]!);
@@ -1130,6 +1227,153 @@ async function runToken(args: Arguments): Promise<void> {
     runId: uuid(response.run_id, "run_id"),
     token: response.agent_token,
   }));
+}
+
+/**
+ * The six leaves a link holder can read, named here so --json states the allowlist
+ * rather than leaving the person sharing a credential to infer it.
+ */
+const CAPABILITY_DISCLOSED_FIELDS = [
+  "work_item.slug",
+  "work_item.lifecycle",
+  "repo.full_name",
+  "inviter.display_name",
+  "workspace.age_days",
+  "expires_at",
+] as const;
+
+async function runLink(args: Arguments): Promise<void> {
+  const subcommand = args.positionals[1];
+  if (subcommand === "new") {
+    await runLinkNew(args);
+    return;
+  }
+  if (subcommand === "revoke") {
+    await runLinkRevoke(args);
+    return;
+  }
+  throw new UsageError(`unknown link command: ${subcommand ?? "(missing)"}`);
+}
+
+async function runLinkNew(args: Arguments): Promise<void> {
+  args.assertShape(
+    [...TARGET_FLAGS, "workspace-id", "task-id", "ttl-ms", "site", "json"],
+    2,
+  );
+  const taskId = args.required("task-id");
+  if (!UUID_RE.test(taskId)) {
+    throw new Error("--task-id must be the work item's UUID");
+  }
+  // Resolved before the request, not after: a mistyped origin must cost a line of
+  // output, never a live credential we then cannot render as a usable link.
+  const site = capabilitySiteOrigin(
+    args.optional("site"),
+    process.env.CSWARM_SITE_ORIGIN,
+  );
+  // Bounded here rather than at the call site, so every local objection to the command
+  // is raised before any credential work happens.
+  const ttl = args.has("ttl-ms")
+    ? integer(args, "ttl-ms", {
+      minimum: CAPABILITY_MIN_TTL_MS,
+      maximum: CAPABILITY_MAX_TTL_MS,
+    })
+    : undefined;
+  const cloud = await target(args);
+  const human = await humanCredential(args, cloud);
+  // §7 human-mint-only is enforced by the command function, which is the authority. This
+  // raises the same rule locally so the refusal names it: the server's answer is a uniform
+  // 403 shared with "not an owner" and "no such work item", and an agent credential that
+  // can never mint deserves to be told so without a round trip.
+  assertHumanCapabilityCredential(human.accessToken, "create");
+  const workspace = await workspaceId(args, cloud, human);
+  const response = acceptedConnect(
+    "link new",
+    await sendCapabilityWithPending(
+      new ThinCommandClient(cloud),
+      human,
+      workspace,
+      {
+        kind: "mint_capability_url",
+        task_id: taskId,
+        ...(ttl === undefined ? {} : { ttl_ms: ttl }),
+      },
+    ),
+  );
+  if (response.capability_token === undefined) {
+    // A replayed mint returns the id but never the credential — the server stores only
+    // a hash. Naming the id here is what keeps the unseeable link revocable rather than
+    // stranding it live until its TTL runs out; an id is a handle, not a credential.
+    throw new Error(
+      `this link was created on a prior attempt, and its credential is shown only in a fresh response — the server keeps just a hash, so it cannot be shown again; run cswarm link new to issue another, then run cswarm link revoke --capability-id ${
+        uuid(response.capability_id, "capability_id")
+      } to withdraw the one you cannot see`,
+    );
+  }
+  assertCapabilityToken(response.capability_token);
+  const capabilityId = uuid(response.capability_id, "capability_id");
+  const expiresAt = capabilityTimestamp(response.expires_at, "expires_at");
+  // The credential enters a string here and is written out once, immediately below.
+  // It is never stored, never re-read, and never interpolated into an Error.
+  const url = capabilityUrl(site, response.capability_token);
+  if (args.has("json")) {
+    printJson({
+      message:
+        `Capability link created. It is shown once and is never recoverable. ${CAPABILITY_DISCLOSURE}`,
+      status: response.status,
+      capability_id: capabilityId,
+      capability_url: url,
+      expires_at: expiresAt,
+      shown_once: true,
+      discloses: [...CAPABILITY_DISCLOSED_FIELDS],
+    });
+    return;
+  }
+  process.stdout.write(
+    `${
+      renderCapabilityMint({ url, taskId, capabilityId, expiresAt })
+    }\n`,
+  );
+}
+
+async function runLinkRevoke(args: Arguments): Promise<void> {
+  args.assertShape(
+    [...TARGET_FLAGS, "workspace-id", "capability-id", "json"],
+    2,
+  );
+  const capabilityId = args.required("capability-id");
+  if (!UUID_RE.test(capabilityId)) {
+    throw new Error(
+      "--capability-id must be the id printed when the link was created",
+    );
+  }
+  const cloud = await target(args);
+  const human = await humanCredential(args, cloud);
+  // Revoke is human-only for the same reason and by the same server check
+  // (capability_revoke_credential_kind_forbidden); say so here rather than at the 403.
+  assertHumanCapabilityCredential(human.accessToken, "revoke");
+  const workspace = await workspaceId(args, cloud, human);
+  const response = acceptedConnect(
+    "link revoke",
+    await sendCapabilityWithPending(
+      new ThinCommandClient(cloud),
+      human,
+      workspace,
+      { kind: "revoke_capability_url", capability_id: capabilityId },
+    ),
+  );
+  const revoked = uuid(response.capability_id, "capability_id");
+  const revokedAt = capabilityTimestamp(response.revoked_at, "revoked_at");
+  const message = renderCapabilityRevoke(revoked, revokedAt);
+  if (args.has("json")) {
+    printJson({
+      message,
+      status: response.status,
+      capability_id: revoked,
+      revoked_at: revokedAt,
+    });
+    return;
+  }
+  process.stdout.write(`${message}\n`);
 }
 
 function command(args: Arguments, kind: string): Command {
@@ -1436,12 +1680,12 @@ async function runPostSignal(
         });
       } catch {
         process.stderr.write(
-          "coswarm: durable agent signal recovery state is unavailable; this post uses an ephemeral command ID and an ambiguous retry may create a visible duplicate.\n",
+          "cswarm: durable agent signal recovery state is unavailable; this post uses an ephemeral command ID and an ambiguous retry may create a visible duplicate.\n",
         );
       }
     } else {
       process.stderr.write(
-        "coswarm: bare agent credentials post with ephemeral command IDs; pipe the JSON from coswarm token mint for durable retry recovery.\n",
+        "cswarm: bare agent credentials post with ephemeral command IDs; pipe the JSON from cswarm token mint for durable retry recovery.\n",
       );
     }
     result = pendingStore === null
@@ -1723,7 +1967,7 @@ async function runSeed(args: Arguments): Promise<void> {
 
 async function main(): Promise<void> {
   // `--version` is checked against RAW ARGV before parsing, because the parser treats an
-  // unknown `--flag` as one requiring a value — so `coswarm --version` failed with
+  // unknown `--flag` as one requiring a value — so `cswarm --version` failed with
   // "--version requires a value", on the single most-typed diagnostic a user has.
   // Found while writing the installer, which could not read back what it had installed.
   //
@@ -1734,7 +1978,7 @@ async function main(): Promise<void> {
   const firstArg = process.argv[2];
   if (firstArg === "--version" || firstArg === "-v") {
     process.stdout.write(
-      `coswarm ${CLI_BUILD_VERSION} (protocol ${CLIENT_PROTOCOL_VERSION})\n`,
+      `cswarm ${CLI_BUILD_VERSION} (protocol ${CLIENT_PROTOCOL_VERSION})\n`,
     );
     return;
   }
@@ -1762,7 +2006,7 @@ async function main(): Promise<void> {
       `Login complete for ${result.userId}. This device (${result.deviceId}) is registered so its agent credentials can be governed independently; refresh credential: ${result.storage}; ${
         result.workspaceId
           ? `project ${result.workspaceId} is now selected`
-          : "no project is selected yet—run coswarm workspaces, then coswarm use <full-id|exact-name>"
+          : "no project is selected yet—run cswarm workspaces, then cswarm use <full-id|exact-name>"
       }.\n`,
     );
     return;
@@ -1819,6 +2063,10 @@ async function main(): Promise<void> {
     await runUse(args);
     return;
   }
+  if (verb === "new") {
+    await runNew(args);
+    return;
+  }
   if (verb === "accept") {
     await runAccept(args);
     return;
@@ -1829,6 +2077,10 @@ async function main(): Promise<void> {
   }
   if (verb === "token") {
     await runToken(args);
+    return;
+  }
+  if (verb === "link") {
+    await runLink(args);
     return;
   }
   if (verb === "command") {
@@ -1872,7 +2124,7 @@ main().catch((error) => {
     if (json) {
       process.stdout.write(`${JSON.stringify(structured, null, 2)}\n`);
     } else {
-      process.stderr.write(`coswarm: ${error.message}\n`);
+      process.stderr.write(`cswarm: ${error.message}\n`);
       const projects = structured.projects;
       if (Array.isArray(projects) && projects.length > 0) {
         process.stderr.write("Available projects:\n");
@@ -1890,10 +2142,10 @@ main().catch((error) => {
     return;
   }
   if (error instanceof UsageError) {
-    process.stderr.write(`coswarm: ${safeError(error)}\n${usage()}\n`);
+    process.stderr.write(`cswarm: ${safeError(error)}\n${usage()}\n`);
     process.exitCode = 1;
     return;
   }
-  process.stderr.write(`coswarm: ${safeError(error)}\n`);
+  process.stderr.write(`cswarm: ${safeError(error)}\n`);
   process.exitCode = 1;
 });

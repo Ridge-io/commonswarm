@@ -1,6 +1,6 @@
 # Cross-machine UX test harness (`uxtest`)
 
-**Purpose:** run repeatable, end-to-end onboarding tests of coswarm with **two role-playing
+**Purpose:** run repeatable, end-to-end onboarding tests of CommonSwarm with **two role-playing
 human operators on two real machines** — real distinct GitHub identities, real authenticated
 browsers, genuinely different system configs — and collect honest, human-like UX feedback.
 
@@ -46,7 +46,7 @@ salvaging it.
 | **Human2** (invitee, non-technical) | `toms-m1-max-mbp` `100.95.177.37` | `tom` | GitHub identity **B** (distinct verified email — field lesson #5) | **persistent cmux tab agent, started once in the laptop's GUI session** (see §1.1) |
 
 **The chat channel ("Slack/iMessage")** is the *local* `swarm` CLI over Tailscale —
-deliberately a **different system** from the coswarm product under test, so the thing being
+deliberately a **different system** from the CommonSwarm product under test, so the thing being
 tested is never also the transport. Personas exchange short, human, jargon-free messages.
 
 - The persistent launcher control plane is separate from each round's persona channel:
@@ -65,6 +65,12 @@ tested is never also the transport. Personas exchange short, human, jargon-free 
 - `coswarm` is `/opt/homebrew/bin/coswarm` → symlink to
   `~/Developer/Ridge.io/cloud-swarm/dist/cli.js`, so **rebuilding `dist` updates the binary;
   no relink needed**.
+  ★ **Superseded by the rename (2026-07-27), and not re-probed since.** The probe above is
+  what was on the laptop that day. `package.json` now declares the bin as `cswarm`, so the
+  global link must be re-created (`npm link` in the repo) to get
+  `/opt/homebrew/bin/cswarm`; `preflight.sh` requires that path and will fail closed until
+  it exists. The old `coswarm` symlink is not removed by anything here — delete it by hand
+  so a stale name cannot serve a build nobody is measuring.
 - The laptop's Git `HEAD` is **not** a version signal for this harness: exact source content is
   rsynced from the mini while Git history may intentionally lag. The order-stable SHA-256
   manifest of every file in the built `dist/` tree is the sole version authority.
@@ -86,7 +92,7 @@ session.** Four observed layers share that one root cause:
 
 1. Claude authentication is unavailable to SSH.
 2. `swarm spawn` cannot create/control the GUI cmux surface from SSH.
-3. The `coswarm` refresh credential in the GUI login keychain cannot be read from SSH.
+3. The `cswarm` refresh credential in the GUI login keychain cannot be read from SSH.
 4. An A2A `swarm serve` process started over SSH can accept and queue a POST, but cannot push
    it into a cmux tab.
 
@@ -168,7 +174,7 @@ deleting last round's rows.
 database.** Dead test workspaces accumulate harmlessly; a buggy delete script does not.
 Name them `uxtest-r<n>-<short-random>` so they are obviously test data.
 
-Per-round client-side reset (both machines): `coswarm logout`, then remove the local profile
+Per-round client-side reset (both machines): `cswarm logout`, then remove the local profile
 sidecar so no default workspace / principal checkpoint leaks between rounds. Human2's logout
 and keychain postcondition run inside Dana's GUI session and return a state artifact; SSH cannot
 make that assertion. A round that starts with a warm login is testing the wrong thing.
@@ -179,7 +185,7 @@ make that assertion. A round that starts with a warm login is testing the wrong 
 
 **Objective (collected by the scripts, not self-reported):**
 - wall-clock from "human2 receives the link" to "human2's agent is connected"
-- count of `coswarm` invocations per persona, and how many exited non-zero
+- count of `cswarm` invocations per persona, and how many exited non-zero
 - how many times each persona ran `--help` or otherwise hunted for the command
 - how many times a persona asked their partner for help / said they were stuck
 - did they complete the shared work task
@@ -221,8 +227,8 @@ to avoid the conflict.
 Redaction requirements:
 
 1. **Mirror the §3.3 parse grammar, not just the pretty prefix.** A prefix match on
-   `coswarm://accept/` misses the other valid forms. Redact all three: the
-   `coswarm://accept/<base64url>` form, a **bare base64url payload** (valid per the grammar), and
+   `cswarm://accept/` misses the other valid forms. Redact all three: the
+   `cswarm://accept/<base64url>` form, a **bare base64url payload** (valid per the grammar), and
    a raw `swm_inv_…` token. Replace with `[INVITE LINK REDACTED]` / `[INVITE TOKEN REDACTED]`.
 2. **Redact in-flight; never write the raw material to disk.** Do not write a raw transcript and
    then rewrite it — that leaves the payload on disk and stageable, which is the thing we are
@@ -309,13 +315,13 @@ spend their attention.
 
 ### 7.2 Leakage channels — closed (each was a real hole in v1)
 
-1. **The invite link is base64url.** An LLM will decode `coswarm://accept/<payload>` and learn
+1. **The invite link is base64url.** An LLM will decode `cswarm://accept/<payload>` and learn
    the project URL, anon key, `workspace_id`, `inviter_user_id`, and labels — collapsing
    "discover by using the product" into "read the credential." **Personas are forbidden to
    decode, print, or inspect link contents**; they may only paste it into a command the CLI
    documents. Metric: `link_inspected`. Violation → **round void**.
-2. **`which coswarm` → symlink → the repo.** Personas get a **copied** binary at
-   `~/uxtest/bin/coswarm` on their PATH — never a symlink into the repo. Preflight asserts the
+2. **`which cswarm` → symlink → the repo.** Personas get a **copied** binary at
+   `~/uxtest/bin/cswarm` on their PATH — never a symlink into the repo. Preflight asserts the
    persona's PATH resolves to the non-repo copy. Personas may not inspect installation paths or
    open files behind the command.
 3. **Working tree leakage.** Each persona has one trusted cwd,
@@ -331,7 +337,7 @@ spend their attention.
 6. **The brief itself.** Human1's brief states the **goal** ("get Dana's agent working with you
    on this project"), never the **mechanism**. If a brief contains the word `invite` as a
    command, the discovery test is already burned. Same for the driver: it injects goals and
-   constraints, **never step lists**. Any "now run `coswarm accept`" from the driver voids the
+   constraints, **never step lists**. Any "now run `cswarm accept`" from the driver voids the
    round.
 7. **Partner as solution bus.** Human1 will otherwise paste the winning command. Realistic, but
    it masks the gap. Rule: **10 minutes of solo struggle before partner help is allowed**
@@ -351,7 +357,7 @@ Both briefs state it plainly:
 > down why you stopped.
 
 The driver **must not nag** "try again" after a give-up declaration; a give-up triggers collect.
-Personas also keep a **mid-flight journal** — one line after every `coswarm` command: what I
+Personas also keep a **mid-flight journal** — one line after every `cswarm` command: what I
 expected / what happened / how I feel. End-only feedback gets retroactively rationalised;
 mid-flight notes do not.
 
@@ -381,7 +387,7 @@ theater. Protocol, in preference order:
   they differ.** (The laptop was stale by an entire slice — §1.1.)
 - **Warm login.** Both machines log out and drop the profile sidecar per round.
 - **Keychain error ambiguity (product finding, do not normalize in the harness).** The exact
-  message `coswarm: unable to read the refresh credential from macOS Keychain` means either
+  message `cswarm: unable to read the refresh credential from macOS Keychain` means either
   the GUI login keychain is inaccessible/locked **or** no refresh credential is stored (not
   logged in). A human and a script see the same text and cannot tell which state occurred; the
   field run required manual keychain/profile inspection to disambiguate. This is a §1c output
@@ -396,8 +402,8 @@ theater. Protocol, in preference order:
   hidden workspace ID, reuse an existing fixture, or pre-select the new workspace: discovering
   selection is now a legitimate part of the §1c flow.
 - **P2-2 removed the old multi-membership blocker.** Resolution now fails closed with a
-  deterministic workspace list and guidance, while `coswarm workspaces` and
-  `coswarm use <full-id|exact-name>` expose the recovery path. The harness therefore records
+  deterministic workspace list and guidance, while `cswarm workspaces` and
+  `cswarm use <full-id|exact-name>` expose the recovery path. The harness therefore records
   projected multi-membership instead of refusing the round.
 - **Workspace creation is not under test.** Each round uses the privileged, fixture-only
   `seed-fixture` bridge because governed `create_workspace` is not wired yet. No report may
@@ -420,6 +426,14 @@ oauth_consent, carryover,
 multi_project_path, current_live_memberships, projected_live_memberships,
 join_latency_ms, join_attempts, isolation_void
 ```
+
+**The `coswarm_*` / `time_to_first_coswarm` key names are deliberately NOT renamed.** They
+are a recorded data schema, not product copy: `rounds/1/setup.json` already holds
+`coswarm_sha_mini` / `coswarm_sha_laptop`, `reset-round.sh` writes them, `collect-round.sh`
+requires them, and `tests/uxtest-harness.test.ts` asserts on them. Renaming the keys would
+make round 1's record unreadable by the collector that produced it — a silent break for no
+user-visible gain, since nobody types a metric key. Rename them only as one deliberate
+change across all four places, with a migration for existing rounds.
 
 Two traps, stated so nobody misreads the numbers: **wall-clock alone is confounded** by partner
 latency, OAuth, and model speed — read the interval timeline; and **zero errors is not good UX**
@@ -473,10 +487,10 @@ search that a real user would not run. Do not stack it ("cloud workspace", "work
 
 Also banned: **"opaque item"** and similar — describing the thing Avery sends as an opaque
 item/link/token primes a capability mental model *before the product introduces one*. Say "use
-only what `<partner>` sends you and what `coswarm` itself says." Opacity is already covered by
+only what `<partner>` sends you and what `cswarm` itself says." Opacity is already covered by
 the isolation rules.
 
-Naming `coswarm` **is** allowed and necessary (they must know which CLI exists), as is the
+Naming `cswarm` **is** allowed and necessary (they must know which CLI exists), as is the
 `swarm send` chat recipe (a different system, required to talk at all).
 
 **The lint (fails the launch, not the round).** Refuse to launch if a rendered `BRIEF.md`

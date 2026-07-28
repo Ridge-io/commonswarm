@@ -2,20 +2,67 @@
 /*
  * The landing page.
  *
- * ORDER IS AN ARGUMENT, and this one runs: here is the claim (hero) -> prove it by letting
- * me do it (demo) -> here is everything there is to learn (verbs) -> here is how I get in
- * (start) -> here is honestly where you are (invite). Each section is eyebrow -> headline ->
+ * ORDER IS AN ARGUMENT, and it now runs: promise (hero) -> prove it by letting me do it
+ * (demo) -> HERE IS HOW YOU GET IN (start) -> here is the whole vocabulary if you want it
+ * (verbs) -> what it costs and the one ask (invite). Each section is eyebrow -> headline ->
  * one-sentence lede -> the proof, so the rhythm repeats without the layout repeating.
  *
+ * ★ START AND VERBS WERE SWAPPED, AND THE OLD ORDER IS THE THING THAT WAS WRONG.
+ * It read "...-> here is everything there is to learn (verbs) -> here is how I get in
+ * (start)", which is teaching before doing: a reader had to pass a five-command vocabulary
+ * reference BEFORE the page told them how to begin. Measured on the built page, "how do I
+ * start" was the FOURTH heading a reader met, behind a demo, an explainer and a reference.
+ *
+ * The reference this page is being held to (workbench.md, named by the operator three times)
+ * inverts that: hero, proof, then the action, and its getting-started is a short numbered
+ * list near the top. Nothing about the vocabulary is deleted — a reader who wants the whole
+ * surface still gets it, one screen later, as DEPTH rather than as a gate. The rule this
+ * encodes, and the one to keep if these sections change again: a landing page earns the
+ * right to teach only after it has told the reader how to act.
+ *
+ * ---------------------------------------------------------------------------------------
+ * ONE SENTENCE CARRIES THE WHOLE PAGE: "A SIGNAL ANNOUNCES. IT NEVER LOCKS."
+ * ---------------------------------------------------------------------------------------
+ * It is stated four times, in the same words, and never paraphrased into something weaker:
+ *   Hero .... the lede, in bold, as the second half of the promise
+ *   Verbs ... "Every one of them announces. None of them lock." — the same claim, narrowed
+ *             to the five commands
+ *   Demo .... the outcome copy, where the reader presses the button on a file someone else
+ *             is already on and watches it go through. "Nothing stopped you."
+ *   (and the demo's screen-reader verdict, which says it in the same words)
+ *
+ * WHY THIS SENTENCE AND NOT ANOTHER. It is the one thing about this product a reader is most
+ * likely to get wrong, because every neighbouring tool in the category is a lock, and getting
+ * it wrong turns the whole thing back into the friction story the operator retired. It is
+ * also literally true rather than a positioning choice — Hero.astro's header carries the
+ * source trace, and the word "claim" was removed from this whole directory in the same pass
+ * because it quietly smuggles the old framing back in a friendlier word.
+ *
+ * THE HEADLINE WAS RE-JUDGED AND KEPT. "Your agents know what each other are doing." was
+ * tested against the bar it has to clear — is it a promise about the reader's own agents, or
+ * a description of a service? — and it is the former. See Hero.astro. Do not churn it.
+ *
  * WHAT WAS CUT, and why, because "less is more" is only real if something goes:
- *   - the separate "why coswarm" essay section. The demo argues it better, in one click.
- *   - a features grid. Five commands is not a feature grid, it is a vocabulary.
+ *   - the separate "why CommonSwarm" essay section. The demo argues it better, in one click.
+ *   - a features grid. Five commands is not a feature grid, it is a vocabulary — and the
+ *     eleven flag chips that had grown onto those five cards WERE one, so they went too,
+ *     along with the footnote whose only job was to apologise for them (Verbs.astro).
+ *   - the "Or set the project once" env-variable card (Start.astro). It taught a workaround
+ *     for a problem the reader no longer has, now that `accept` saves the project.
+ *   - the six-row facts table AND the email form in the closing card (Invite.astro). A spec
+ *     sheet and a button that cannot act, in the last screenful, where the page should be
+ *     asking for one thing. The close points at /download and /start instead.
  *   - the ethos line as a hero pull-quote. "Friction is justified only by irreversibility"
  *     is a builder's rule; in the largest type on the page it makes friction the subject,
  *     which is precisely the framing the operator retired. It stays in the spec.
  *   - the install one-liner as the hero CTA. The installer is not published and the host is
  *     undecided, so it would be a placeholder in the most prominent position on the site.
  *     It lives in step one of "how it works", with its caveat attached to it.
+ *
+ * WHAT THIS PAGE DELIBERATELY DOES NOT HAVE, and each absence is a decision, not an
+ * oversight: no pricing table, no feature grid, no testimonials, no logo wall, no comparison
+ * table, no FAQ, no metrics. We have no customers yet and inventing any of it is the one
+ * defect this repo treats as more serious than a bug.
  *
  * ---------------------------------------------------------------------------------------
  * HEADING PUNCTUATION — ONE RULE, WHOLE SITE
@@ -50,9 +97,11 @@ import Verbs from "../components/landing/Verbs.astro";
 import Start from "../components/landing/Start.astro";
 import Invite from "../components/landing/Invite.astro";
 
-const title = "coswarm — your agents know what each other are doing";
+const title = "CommonSwarm — your agents know what each other are doing";
+/* Carries the page's one framing sentence, because this is the copy a stranger reads before
+ * they ever reach the page — in a search result, in a link preview, in a shared message. */
 const description =
-  "Every agent announces what it is picking up, and the others read it before they start. A shared feed for teams running many agents, driven from the CLI.";
+  "Each agent says what it is picking up before it starts, and the rest read it and route around it. A signal announces; it never locks. Five commands, driven from the CLI.";
 ---
 
 <Base title={title} description={description} path="/">
@@ -106,7 +155,7 @@ const description =
 
   <Hero />
   <Demo />
-  <Verbs />
   <Start />
+  <Verbs />
   <Invite />
 </Base>

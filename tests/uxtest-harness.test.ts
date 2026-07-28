@@ -57,7 +57,7 @@ function invitation() {
     workspace_name: "Synthetic Test",
     inviter_display_name: "Avery",
   })).toString("base64url");
-  return { token, payload, uri: `coswarm://accept/${payload}` };
+  return { token, payload, uri: `cswarm://accept/${payload}` };
 }
 
 test("stream capture redacts URI, bare payload, and token before disk", () => {
@@ -507,7 +507,7 @@ test("GUI-origin guard fails with the exact laptop remedy before a round", () =>
   const preflight = readFileSync(PREFLIGHT, "utf8");
   assert.ok(
     preflight.indexOf("assert_gui_launcher_server") <
-      preflight.indexOf('mini_bin="$UXTEST_MINI_HOME_ROOT/bin/coswarm"'),
+      preflight.indexOf('mini_bin="$UXTEST_MINI_HOME_ROOT/bin/cswarm"'),
     "GUI-origin gate must run before product/version round checks",
   );
 

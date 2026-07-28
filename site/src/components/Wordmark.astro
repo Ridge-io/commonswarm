@@ -1,16 +1,49 @@
 ---
 /*
- * Wordmark — the coswarm mark and word, in one place.
+ * Wordmark — the CommonSwarm mark and word, in one place.
  *
  * WHY THIS EXISTS. Integration found the same mark drawn three times, in SiteHeader,
  * SiteFooter and start/StartHeader, and the three copies did not agree:
  *
  *   - StartHeader hard-coded the brand colours as hex — #7c6cff, #9b8fff, #34d399. They
- *     happen to equal --accent, --accent-bright and --success TODAY, so the drift was
+ *     equalled --accent, --accent-bright and --success AT THAT MOMENT, so the drift was
  *     invisible; the next edit to tokens.css would have changed the logo on three pages and
  *     not on /start. That is precisely the failure tokens.css exists to prevent, and the
  *     comment above it named the reason: the mark lived inside a file that pass did not own.
  *     It is owned here now.
+ *
+ *     THAT EDIT HAS NOW ARRIVED, which retires the "so the drift was invisible" clause: the
+ *     palette is being taken light-first, and those three literals are no longer equal to the
+ *     tokens they were copied from. The three hexes above survive as a record of what was
+ *     removed. They are dead values. Do not paste them back into a template.
+ *
+ * THE MARK IS TOKEN-DRIVEN IN BOTH MODES, AND NO COLOUR HERE TAKES A BRAND-LITERAL
+ * EXEMPTION. The tempting exemption — "the brand is the brand, pin it" — is the wrong call
+ * for this mark, and each of the three is worth stating separately:
+ *
+ *   - The trusses use var(--accent). The token's job is fills and strokes, which is exactly
+ *     what they are. Pinning it would be actively wrong in light mode: tokens.css records
+ *     that the accent has to darken for light, and a stroke frozen at the dark-mode value
+ *     would sit on a pale page as the faintest thing in the header.
+ *   - The two base nodes use var(--accent-bright). That token means "the accent at the
+ *     weight that reads as foreground", so it tracks whichever direction the page moves.
+ *     Frozen, it is the worst case in the set: the dark-mode value of this token is the
+ *     LIGHTEST colour in the mark, and on a light page it would very nearly vanish.
+ *   - The apex node uses var(--success). It is the node that has landed, which is what the
+ *     token means everywhere else on the site; the mark and the feed should not disagree
+ *     about what green signifies.
+ *
+ * So the mark rides the palette. What makes it the same brand in both modes is the geometry
+ * and the two-hue relationship (indigo structure, one green apex), not a frozen sRGB triple.
+ * A future light palette must keep --accent-bright and --success legible as FOREGROUND
+ * colours; if that stops being true the mark degrades, and the fix belongs in tokens.css
+ * rather than in a literal here.
+ *
+ * The stroke group's opacity="0.6" was reviewed in this pass and deliberately kept. It is
+ * hierarchy, not a dark-mode depth trick: it pushes the edges behind the nodes by the same
+ * proportion whichever way the background goes. NOT MEASURED against a light palette, which
+ * does not exist yet — if the trusses read as too faint on white, lift this number, do not
+ * swap the token.
  *   - SiteFooter set the word at --t-base (16px) / -0.024em / 0.5rem gap while both header
  *     copies set 17px / -0.028em / 0.55rem. The same wordmark rendered two ways on one page.
  *
@@ -18,7 +51,13 @@
  *
  * `href` is optional: pass it for a link (every current caller does, all to "/"), omit it for
  * a plain label. The <svg> is aria-hidden and the word is real text, so the accessible name
- * is just "coswarm" — no alt, no duplicate announcement.
+ * is just "CommonSwarm" — no alt, no duplicate announcement.
+ *
+ * THE WORD GOT LONGER. The rename from "coswarm" (7 glyphs) to "CommonSwarm" (11) widens this
+ * box by roughly two thirds at the same size, and every caller puts it in a flex row that has
+ * other things to fit. Two rules below exist only because of that: `white-space: nowrap` on
+ * the word, so a squeezed row can never break the brand across two lines, and a second
+ * font-size step at 22rem. Neither was needed at the old length.
  */
 
 interface Props {
@@ -58,7 +97,7 @@ const Tag = href ? "a" : "span";
     <circle cx="22.8" cy="22" r="3.5" fill="var(--accent-bright)"></circle>
     <circle cx="16" cy="10.2" r="4" fill="var(--success)"></circle>
   </svg>
-  <span class="wm__word">coswarm</span>
+  <span class="wm__word">CommonSwarm</span>
 </Tag>
 
 <style>
@@ -88,6 +127,13 @@ const Tag = href ? "a" : "span";
     flex: none;
   }
 
+  /* The brand is one word and must render as one line. At the old 7-glyph length it never
+     came close to wrapping; at 11 it is wide enough that a flex parent under pressure can
+     hand this span a box narrower than the text, and "Common" over "Swarm" is not the mark. */
+  .wm__word {
+    white-space: nowrap;
+  }
+
   /* SiteHeader used to carry this step as `@media (max-width: 26rem) { .hdr__brand }`.
      When the brand became a component, that rule SILENTLY STOPPED APPLYING: Astro scopes a
      parent's styles with the parent's cid attribute, and the class passed down lands on this
@@ -97,6 +143,49 @@ const Tag = href ? "a" : "span";
   @media (max-width: 26rem) {
     .wm {
       font-size: 1rem;
+    }
+  }
+
+  /* A second step the 7-glyph word did not need. Below 22rem the header bar is wordmark +
+     burger + the filled CTA, and at 1rem the longer word leaves the CTA nothing to sit in.
+     The gap closes with it — at this size the mark and the word read as one lockup anyway. */
+  @media (max-width: 22rem) {
+    .wm {
+      font-size: 0.9375rem;
+      gap: 0.45rem;
+    }
+  }
+
+  /* BELOW 24rem THE WORD IS DROPPED AND THE MARK CARRIES THE BRAND ALONE.
+     Measured on the deployed font, not reasoned: at a 320px viewport the header lockup
+     forced document.scrollWidth to 362px — 42px of page-level horizontal scroll — and
+     clipped "Create a workspace" off the right edge. 360px overflowed by 11px; 375px fit
+     by 4px, which is less than one glyph and not margin.
+
+     The cause is structural, so no font step fixes it. "CommonSwarm" is ~48px wider than
+     the 7-glyph name it replaced, `.wm` is `flex: none` so the brand cannot be squeezed,
+     and the `white-space: nowrap` above guarantees it cannot reflow — every pixel of the
+     extra width becomes page scroll. Closing 48px by shrinking type would take the mark
+     under 11px, which is not a brand, it is a defect.
+
+     Hidden VISUALLY ONLY. The span is the link's entire accessible name, so display:none
+     would leave a nav link that screen readers announce as nothing. This is the
+     global.css .visually-hidden recipe, inlined because the class sits on a component
+     root this file does not own. */
+  @media (max-width: 24rem) {
+    .wm__word {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      margin: -1px;
+      padding: 0;
+      overflow: hidden;
+      clip-path: inset(50%);
+      border: 0;
+    }
+
+    .wm {
+      gap: 0;
     }
   }
 </style>

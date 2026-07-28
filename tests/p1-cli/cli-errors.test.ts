@@ -42,7 +42,7 @@ test("missing cloud URL names invite acceptance as the real front door", async (
   assert.match(result.stderr, /https:\/\/<ref>\.supabase\.co/);
   assert.match(result.stderr, /deployment operator who invited you/);
   assert.match(result.stderr, /invite/);
-  assert.match(result.stderr, /coswarm accept --link-stdin/);
+  assert.match(result.stderr, /cswarm accept --link-stdin/);
   assert.match(result.stderr, /invite links carry the Cloud target/);
   assert.match(result.stderr, /SWARM_CLOUD_URL/);
   assert.match(result.stderr, /SWARM_CLOUD_ANON_KEY/);
@@ -71,6 +71,6 @@ test("shared positional-count errors distinguish too few, too many, and exact", 
 
   const exact = await cli(["help"]);
   assert.equal(exact.code, 0);
-  assert.match(exact.stdout, /^coswarm /);
+  assert.match(exact.stdout, /^cswarm /);
   assert.equal(exact.stderr, "");
 });
