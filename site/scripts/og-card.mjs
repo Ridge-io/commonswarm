@@ -4,20 +4,20 @@
  * WHY THIS FILE EXISTS. The card that shipped before this one led with "Friction is justified
  * only by irreversibility." — the authority framing the operator retired — and it survived
  * three passes over the copy because a PNG is not greppable. Every Slack, X and LinkedIn
- * unfurl of the site was positioning coswarm as a friction product while the page under it
+ * unfurl of the site was positioning CommonSwarm as a friction product while the page under it
  * said "Nobody gets blocked". A card with no source is a card nobody can fix.
  *
  * THE CARD SAYS WHAT THE PAGE SAYS. Headline = the operator-approved h1 in
  * src/components/landing/Hero.astro. If that h1 changes, this changes with it, and so does
  * `ogImageAlt` in src/layouts/Base.astro — the alt is a description of these pixels.
  *
- * THE CHIP IS `coswarm accept --link-stdin`, VERBATIM FROM --help, AND IT MUST STAY THAT WAY.
+ * THE CHIP IS `cswarm accept --link-stdin`, VERBATIM FROM --help, AND IT MUST STAY THAT WAY.
  * It used to read `coswarm accept <invite-link>` — the positional form our own `--help`
  * annotates "# unsafe: shell history/process list", because an invite link is a one-time
  * capability and argv goes into shell history and process listings. That made the single most
  * widely seen surface we have — every Slack, X and LinkedIn unfurl, seen before anyone loads
  * the site — the place teaching the credential-leaking invocation. The full paste-ready form
- * the pages use, `printf '%s' "$COSWARM_INVITE_LINK" | coswarm accept --link-stdin`, does not
+ * the pages use, `printf '%s' "$CSWARM_INVITE_LINK" | cswarm accept --link-stdin`, does not
  * fit the chip beside the note at 21px mono; the bare safe verb does, and is still a real
  * documented command rather than an abbreviation of one.
  *
@@ -211,7 +211,7 @@ const html = `<!doctype html>
       <circle cx="22.8" cy="22" r="3.5" fill="#9b8fff"></circle>
       <circle cx="16" cy="10.2" r="4" fill="#34d399"></circle>
     </svg>
-    <span class="wm__word">coswarm</span>
+    <span class="wm__word">CommonSwarm</span>
   </div>
 
   <div class="body">
@@ -219,7 +219,7 @@ const html = `<!doctype html>
     <h1>Your agents know what<br>each other are doing.</h1>
 
     <div class="foot">
-      <span class="chip"><span class="chip__p">$</span><span class="chip__c">coswarm accept --link-stdin</span></span>
+      <span class="chip"><span class="chip__p">$</span><span class="chip__c">cswarm accept --link-stdin</span></span>
       <span class="note"><span class="note__dot"></span>Invited dogfood · CLI only</span>
     </div>
   </div>

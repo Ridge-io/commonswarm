@@ -6,7 +6,7 @@
  *
  * EVERY CLAIM AND EVERY LINK WAS CHECKED, logged out, on the day this was written:
  *   github.com/Ridge-io/cloud-swarm            HTTP 200   (public)
- *   .../cloud-swarm/blob/main/LICENSE          HTTP 200   (MIT, © 2026 Ridge.io)
+ *   .../cloud-swarm/blob/main/LICENSE          HTTP 200   (MIT, © 2026 Yulan Ventures, LLC)
  *   github.com/Ridge-io/coswarm-dist           HTTP 404   -> deliberately NOT linked
  *   controls: a made-up repo and a made-up blob path both returned 404, so the 200s above
  *   are a real signal and not a GitHub soft-200.
@@ -153,12 +153,27 @@ const COLUMNS = [
       { href: `${REPO}/blob/main/LICENSE`, label: "MIT license", external: true },
     ],
   },
-  /* Both of these 404 until legal/terms-and-policies merges — see the note in the header. */
+  /* Legal. Added when the three documents landed, EXTENDING this list rather than forking
+   * it — the note at the top of this file records what forking the footer cost last time.
+   *
+   * A third column and not a row of small print in .ft__bar: the bottom bar is already a
+   * status sentence plus the copyright line, and three more links there would push the
+   * legal line to a second row at every width below ~72rem. It also puts these where a
+   * reader looks for them, which is a footer column headed "Legal".
+   *
+   * These are real routes — site/src/pages/terms.astro, privacy.astro and
+   * acceptable-use.astro — not hashes, so they resolve from all seven routes. Every one of
+   * them renders a draft banner today; they are written and they are not yet in force.
+   *
+   * The "MIT license" link one column left is about the SOURCE CODE. /terms governs the
+   * HOSTED SERVICE, and says so out loud in its "Our software and your licence to use it"
+   * section, because a reader who finds MIT first will otherwise assume it covers both. */
   {
     title: "Legal",
     links: [
-      { href: "/terms", label: "Terms" },
-      { href: "/privacy", label: "Privacy Policy" },
+      { href: "/terms", label: "Terms of Service" },
+      { href: "/privacy", label: "Privacy" },
+      { href: "/acceptable-use", label: "Acceptable use" },
     ],
   },
 ];
@@ -219,7 +234,9 @@ const year = new Date().getFullYear();
           our own work. Self-serve signup is built but is not open on this deployment yet.
         </span>
       </p>
-      <p class="ft__legal">© {year} Ridge.io · MIT · no tracking on this page</p>
+      <p class="ft__legal">
+        © {year} Yulan Ventures, LLC · MIT · no tracking on this page
+      </p>
     </div>
   </div>
 </footer>

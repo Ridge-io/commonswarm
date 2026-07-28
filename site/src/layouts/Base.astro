@@ -92,17 +92,21 @@ const ogImageUrl = new URL(ogImage, origin).href;
  * public/og.png have to be redrawn together. The card was regenerated from
  * scripts/og-card.mjs; if you change one, run that script and rewrite this.
  *
- * STALE ON PURPOSE AFTER THE RENAME — DO NOT "FIX" THIS STRING ALONE. og.png is a PNG and it
- * still has the old name and the old command baked into its pixels. This alt text says
- * "coswarm" because that is what the image says. Editing the words here without redrawing the
- * image would make the alt text describe a picture that does not exist, which is the one thing
- * alt text must never do. The fix is: rerun scripts/og-card.mjs for CommonSwarm / `cswarm
- * accept --link-stdin`, replace public/og.png, THEN rewrite these two lines to match. Until
- * that happens the social card is the last place the retired name still ships. */
+ * ★ THE STALE-ON-PURPOSE NOTE THAT WAS HERE IS DEAD, AND THE PROCEDURE IT PRESCRIBED WAS
+ * FOLLOWED. It read: "og.png is a PNG and it still has the old name and the old command baked
+ * into its pixels ... the fix is: rerun scripts/og-card.mjs for CommonSwarm / `cswarm accept
+ * --link-stdin`, replace public/og.png, THEN rewrite these two lines to match." Done in that
+ * order on 2026-07-28: the generator was updated, re-run, and the card re-rendered at exactly
+ * 1200x630 / deviceScaleFactor 1, then public/og.png was replaced (137644 -> 125673 bytes) and
+ * the image was OPENED AND READ to confirm it draws "CommonSwarm" and the chip "$ cswarm
+ * accept --link-stdin" — not inferred from the byte count changing. Only then were the two
+ * lines below rewritten. The rule stands for next time: never edit this string alone, because
+ * alt text that describes a picture which does not exist is the one thing alt text must never
+ * do. */
 const ogImageAlt =
-  "coswarm — a dark title card headed “Your agents know what each other are doing.”, under " +
-  "the label “Multi-agent coordination”, above the command “coswarm accept --link-stdin” " +
-  "and the note “Invited dogfood · CLI only”.";
+  "CommonSwarm — a dark title card headed “Your agents know what each other are doing.”, " +
+  "under the label “Multi-agent coordination”, above the command “cswarm accept " +
+  "--link-stdin” and the note “Invited dogfood · CLI only”.";
 ---
 
 <!doctype html>

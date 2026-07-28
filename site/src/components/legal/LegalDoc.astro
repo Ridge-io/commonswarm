@@ -1,0 +1,237 @@
+---
+/*
+ * LegalDoc — the shell all three legal documents render into (/terms, /privacy,
+ * /acceptable-use).
+ *
+ * ONE ARRAY, TWO CONSUMERS. The `sections` prop feeds BOTH the contents rail and the
+ * document body. /download's frontmatter states the same rule for its install command and
+ * calls it load-bearing: a table of contents and the headings it points at drift apart the
+ * moment they are two lists. Here they cannot — the rail's numbers, labels and anchors are
+ * read from the same objects that render the headings, so a section cannot be renamed,
+ * renumbered or removed in one place only. There is no hand-written <a href="#..."> anywhere
+ * in the three pages.
+ *
+ * Numbering is positional, not typed. Sections are numbered by their index at render time,
+ * so inserting a clause renumbers the rail, the headings and the cross-references' anchors
+ * together. Nothing in the prose refers to a section by number for the same reason — the
+ * cross-references are by name and link ("see [Acceptable use](/acceptable-use)"), which
+ * survives an insert.
+ *
+ * NOTES GO IN THIS BLOCK, NEVER IN THE MARKUP. Astro ships <!-- HTML comments --> to the
+ * browser verbatim; only frontmatter comments like this one are compiled away. AGENTS.md
+ * lists this as one of the four traps that have each cost a deploy — a retired headline
+ * sitting in an HTML comment went live on a public page.
+ *
+ * WHY THE SKIN IS IN legal.css AND NOT A SCOPED <style> HERE: slotted content and set:html
+ * output carry no scope hash of this file's, so a scoped rule would style roughly half of
+ * each document and silently miss the rest. ui.css documents the same constraint at length.
+ */
+
+import "../../styles/legal.css";
+
+/** A run of body copy. A bare string is a paragraph; the object forms are the other four. */
+export type Block =
+  | string
+  | { sub: string }
+  | { ul: string[] }
+  | { ol: string[] }
+  | { note: string };
+
+export interface Section {
+  /** URL fragment. Stable — it is a public deep link the moment this ships. */
+  id: string;
+  title: string;
+  blocks: Block[];
+}
+
+interface Props {
+  /** Document name. Rendered as the h1 and expected to match the page <title>. */
+  title: string;
+  /** One plain sentence saying what this document is, before anyone reads a clause. */
+  lede: string;
+  /** Human-readable, e.g. "27 July 2026". */
+  effective: string;
+  /** Human-readable. Equal to `effective` on a first issue. */
+  updated: string;
+  sections: Section[];
+  /**
+   * True while the document still carries [[PLACEHOLDER]] markers. Renders the draft band
+   * and switches off the build-time guard below. Flip to false only once every placeholder
+   * is filled — the guard then enforces that it stays true.
+   */
+  draft?: boolean;
+}
+
+const { title, lede, effective, updated, sections, draft = false } = Astro.props;
+
+const PLACEHOLDER_RE = /\[\[([^\]]+)\]\]/g;
+
+/**
+ * Escape first, then mark up. The strings are ours, not user input, but set:html on
+ * un-escaped content is a habit that survives the file it was safe in.
+ */
+function escapeHtml(raw: string): string {
+  return raw
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+/**
+ * The four inline forms these documents need, and no more. A legal page that needed a
+ * fifth would be a page that should have been prose.
+ *
+ *   [[NEEDS A DECISION]]   -> a highlighted, unmissable placeholder
+ *   `cswarm login`        -> inline code
+ *   **must**               -> emphasis
+ *   [label](/href)         -> a link
+ *
+ * Placeholders are substituted BEFORE links, because [[X]] would otherwise be read as a
+ * link label wrapped in brackets.
+ */
+function inline(raw: string): string {
+  return escapeHtml(raw)
+    .replace(PLACEHOLDER_RE, '<mark class="lgl__ph">$1</mark>')
+    .replace(/`([^`]+)`/g, "<code>$1</code>")
+    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+    .replace(
+      /\[([^\]]+)\]\(([^)\s]+)\)/g,
+      '<a href="$2">$1</a>',
+    );
+}
+
+/*
+ * BUILD-TIME GUARD, in the shape SiteFooter.astro uses for the version line: a build error
+ * is cheaper than a page that lies. A document declared final while it still contains
+ * [[PLACEHOLDER]] markers is a document that will be read as a contract with a blank in it,
+ * so the build stops and names every marker it found rather than shipping them.
+ *
+ * This cannot fire while a document is draft={true}, which all three are today. It exists
+ * for the day one of them is flipped.
+ */
+if (!draft) {
+  const found = new Set<string>();
+  for (const section of sections) {
+    for (const block of section.blocks) {
+      const text = typeof block === "string"
+        ? block
+        : "sub" in block
+        ? block.sub
+        : "note" in block
+        ? block.note
+        : "ul" in block
+        ? block.ul.join(" ")
+        : block.ol.join(" ");
+      for (const match of text.matchAll(PLACEHOLDER_RE)) found.add(match[1]!);
+    }
+  }
+  if (found.size > 0) {
+    throw new Error(
+      `LegalDoc: "${title}" is marked final (draft={false}) but still contains ` +
+        `${found.size} unresolved placeholder(s): ${[...found].join(", ")}. ` +
+        "Fill them in, or set draft={true} until they are decided.",
+    );
+  }
+}
+
+/* The other two documents, for the foot of each page. Derived from the page's own title so
+ * a document never links to itself. */
+const PEERS = [
+  { href: "/terms", label: "Terms of Service" },
+  { href: "/privacy", label: "Privacy Policy" },
+  { href: "/acceptable-use", label: "Acceptable Use Policy" },
+];
+const peers = PEERS.filter((peer) => peer.label !== title);
+---
+
+<div class="lgl">
+  <div class="page">
+    <header class="lgl__head">
+      <p class="eyebrow">Legal</p>
+      <h1 class="h-section lgl__title">{title}</h1>
+      <p class="lede lgl__lede">{lede}</p>
+
+      <p class="lgl__dates">
+        <span>Effective <span class="mono lgl__date-val">{effective}</span></span>
+        <span>Last updated <span class="mono lgl__date-val">{updated}</span></span>
+      </p>
+    </header>
+
+    {
+      draft && (
+        <p class="lgl__draft">
+          <span class="lgl__draft-dot" aria-hidden="true" />
+          <span>
+            <strong>Draft — not yet in force.</strong> The highlighted fields below are
+            decisions the operator has not made yet. This document does not bind anyone
+            until they are filled in and it is published with a real effective date.
+          </span>
+        </p>
+      )
+    }
+
+    <div class="lgl__grid">
+      <nav class="lgl__toc" aria-label={`${title} contents`}>
+        <h2 class="lgl__toc-h">Contents</h2>
+        <ol class="lgl__toc-list">
+          {
+            sections.map((section, i) => (
+              <li>
+                <a class="lgl__toc-link" href={`#${section.id}`}>
+                  <span class="lgl__toc-n" aria-hidden="true">
+                    {String(i + 1).padStart(2, "0")}
+                  </span>
+                  <span>{section.title}</span>
+                </a>
+              </li>
+            ))
+          }
+        </ol>
+      </nav>
+
+      <article class="lgl__doc">
+        {
+          sections.map((section, i) => (
+            <section class="lgl__sec" id={section.id} aria-labelledby={`${section.id}-h`}>
+              <h2 class="lgl__sec-h" id={`${section.id}-h`}>
+                <span class="lgl__sec-n" aria-hidden="true">
+                  {String(i + 1).padStart(2, "0")}
+                </span>
+                <span>{section.title}</span>
+              </h2>
+
+              {section.blocks.map((block) =>
+                typeof block === "string" ? (
+                  <p class="lgl__p" set:html={inline(block)} />
+                ) : "sub" in block ? (
+                  <h3 class="lgl__sub" set:html={inline(block.sub)} />
+                ) : "note" in block ? (
+                  <p class="lgl__note" set:html={inline(block.note)} />
+                ) : "ul" in block ? (
+                  <ul class="lgl__list">
+                    {block.ul.map((item) => (
+                      <li set:html={inline(item)} />
+                    ))}
+                  </ul>
+                ) : (
+                  <ol class="lgl__list">
+                    {block.ol.map((item) => (
+                      <li set:html={inline(item)} />
+                    ))}
+                  </ol>
+                )
+              )}
+            </section>
+          ))
+        }
+
+        <footer class="lgl__foot">
+          <slot />
+          <p class="lgl__peers">
+            {peers.map((peer) => <a href={peer.href}>{peer.label}</a>)}
+          </p>
+        </footer>
+      </article>
+    </div>
+  </div>
+</div>
