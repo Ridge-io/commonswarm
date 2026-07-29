@@ -9,7 +9,11 @@
 # POSIX sh on purpose: this runs before we know anything about the machine.
 set -eu
 
-REPO="${CSWARM_REPO:-Ridge-io/coswarm-dist}"
+# Releases live beside their source, on the public repo. The old default was
+# Ridge-io/coswarm-dist — a repo that CARRIED THE RETIRED PRODUCT NAME AND NEVER EXISTED, so
+# this installer 404'd for every stranger who ran it. The separate -dist repo was specified
+# back when source was going to stay private; source is public now, so the reason is gone.
+REPO="${CSWARM_REPO:-Ridge-io/cloud-swarm}"
 VERSION="${CSWARM_VERSION:-latest}"
 INSTALL_DIR="${CSWARM_INSTALL_DIR:-$HOME/.local/bin}"
 
