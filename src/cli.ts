@@ -1220,53 +1220,30 @@ async function runPrincipal(args: Arguments): Promise<void> {
 }
 
 /**
- * Creates the bounded renewal grant that lets the credential minted next renew itself
- * (§2.3, "authorized only by a bounded renewal grant created at human `join`/`spawn`").
+ * ★ THE GRANT IS NOT CREATED FROM HERE ANY MORE, AND THIS FUNCTION IS GONE.
  *
- * IT RUNS BEFORE THE MINT AND NEVER FAILS THE MINT. Before, because the token has to have
- * a grant to be bound to. Never fatal, because a deployment that has not shipped the
- * successor endpoint yet still mints perfectly good credentials — they just have to be
- * re-issued by hand, which is exactly the behaviour that existed before this. Trading a
- * working mint for a renewal that deployment cannot do anyway would be a bad bargain.
+ * It used to send a `create_renewal_grant` command before minting. THE REDUCER NEVER
+ * IMPLEMENTED THAT KIND — `git grep create_renewal_grant src/protocol` returns nothing — so
+ * the command was refused as `invalid_request` on every deployment that has ever existed.
+ * The failure was caught and reported as advice:
  *
- * Returns whether the window exists, so the caller can say which of the two things it just
- * handed the operator.
+ *   "this deployment did not open a renewal window ... The credential below still works,
+ *    but it will not renew itself — re-issue one by hand when it expires."
+ *
+ * That sentence was FALSE, and it was printed on every single mint. The server creates the
+ * grant atomically inside the mint transaction (supabase/functions/command/index.ts, "THE
+ * RENEWAL GRANT IS CREATED HERE, IN THE SAME TRANSACTION AS THE TOKEN"), precisely because
+ * an earlier version had this same split and shipped root tokens with renewal_grant_id NULL.
+ * So the grant existed, renewal worked, and the CLI told every operator it did not — which
+ * is worse than saying nothing, because the remedy it recommends is hand-rotation.
+ *
+ * Measured in production on 2026-07-29, not inferred: a minted credential printed the
+ * warning above, and the very next agent call renewed against a grant the server had already
+ * created. Two builds of the same feature disagreeing about whose job it was is what this
+ * removal ends.
+ *
+ * There is nothing to put in its place. "Mint one, get one, atomically" is the whole design.
  */
-async function createRenewalGrant(
-  cloud: CloudTarget,
-  human: HumanSession,
-  workspace: string,
-  principalId: string,
-  runId: string,
-  horizonMs: number,
-): Promise<boolean> {
-  try {
-    acceptedConnect(
-      "renewal grant",
-      await sendConnectWithPending(
-        new ThinCommandClient(cloud),
-        human,
-        workspace,
-        {
-          kind: "create_renewal_grant",
-          renewal_grant_id: randomUUID(),
-          principal_id: principalId,
-          run_id: runId,
-          horizon_ms: horizonMs,
-          max_successors: RENEWAL_MAX_SUCCESSORS_DEFAULT,
-        },
-      ),
-    );
-    return true;
-  } catch (error) {
-    process.stderr.write(
-      `cswarm: this deployment did not open a renewal window (${
-        safeError(error)
-      }). The credential below still works, but it will not renew itself — re-issue one by hand when it expires.\n`,
-    );
-    return false;
-  }
-}
 
 async function runToken(args: Arguments): Promise<void> {
   args.assertShape(
@@ -1299,14 +1276,11 @@ async function runToken(args: Arguments): Promise<void> {
       minimum: 1,
       maximum: Math.floor(RENEWAL_HORIZON_MAX_MS / 86_400_000),
     }) * 86_400_000;
-  const renewing = await createRenewalGrant(
-    cloud,
-    human,
-    workspace,
-    principalId,
-    runId,
-    horizonMs,
-  );
+  /* No separate grant call. The server creates the renewal grant in the same transaction
+     as the token, so a successful mint IS a grant — see the removed createRenewalGrant
+     above for why this used to be its own request and why that was wrong. The horizon is
+     still read from the flag because it is reported to the operator below; the server
+     applies its own default and ceiling regardless of what is asked for here. */
   const response = acceptedConnect(
     "token mint",
     await sendConnectWithPending(
@@ -1338,11 +1312,13 @@ async function runToken(args: Arguments): Promise<void> {
   }
   assertAgentToken(response.agent_token);
   const expiresAt = mintedExpiry(response);
-  // Both conditions, not just the grant: the CLI schedules renewal off the stated expiry
-  // and will not renew a credential whose deadline it does not know, so a window without
-  // an expiry renews nothing and saying otherwise would be a false promise.
+  /* The stated expiry is now the ONLY condition, and it is the honest one: the CLI schedules
+     renewal off that deadline and refuses to renew a credential whose deadline it does not
+     know (src/cloud/renewal.ts `due()`), so an artifact without an expiry renews nothing no
+     matter what the server can do. The grant is no longer part of this test because it is no
+     longer a separate thing that can fail — a mint that returned a token created one. */
   process.stderr.write(
-    renewing && expiresAt !== null
+    expiresAt !== null
       ? `This credential renews itself, so the agent keeps working without anyone re-issuing it. A person is asked to authorise it again in ${
         Math.round(horizonMs / 86_400_000)
       } days.\n`
