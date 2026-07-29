@@ -6,8 +6,13 @@ evidence, and every closed entry names the artefact that proves it closed.
 
 Adopted 2026-07-29 alongside the Advisor → Operator → Executor model (`docs/org/OPERATING-MODEL.md`).
 
-**Status values:** `OPEN` · `IN REVIEW` (bound to a SHA) · `FIXED` (merged, evidence attached)
-· `WONTFIX` (with the ruling) · `DISPROVEN` (the finding was wrong — kept, not deleted).
+**Status values:** `OPEN` · `IN REVIEW` (bound to a SHA) · `FIXED` (**merged to `main`**, evidence
+attached) · `DEFERRED` (a ruling was made to not act yet, with the reason) · `WONTFIX` (with the
+ruling) · `DISPROVEN` (the finding was wrong — kept, not deleted).
+
+Parenthetical qualifiers — `(tooling)`, `(pattern)` — describe the KIND of entry and never the
+status. `FIXED` means merged to `main` and nothing else; a fix that exists only on a branch is
+`IN REVIEW`, however finished it looks.
 
 ---
 
@@ -64,13 +69,18 @@ against a grant the server had already created.
 3. Nothing searched the database for the raw successor credential; the only guard was an HTTP
    assertion that the replay body omits `agent_token`.
 
-**Status:** branch `l6/renewal-test-gaps`, SHA `505eee8cbcf26c1b9363edd8ff180e66e1189cde`,
-pushed and confirmed with `git ls-remote`. Awaiting cross-family (codex) verdict bound to that
-SHA. **Not merged.** A new commit voids the verdict and requires rebinding.
+**Status: STALLED, not in flight.** Branch `l6/renewal-test-gaps`, SHA
+`505eee8cbcf26c1b9363edd8ff180e66e1189cde`, pushed and confirmed with `git ls-remote`. **Not
+merged.**
+
+★ The reviewer assigned to it **died** — see D-014: a `codex exec` one-shot that produced zero
+bytes over 40 minutes at 0.07s CPU, killed. This entry read as awaiting a verdict for some time
+after the reviewer no longer existed. No reviewer is currently assigned; the reroute to grok was
+stated as an intention and never dispatched. Whoever picks this up must re-dispatch, not wait.
 
 ---
 
-## D-004 — Expired agent credential is reported as revoked · OPEN
+## D-004 — Expired agent credential is reported as revoked · FIXED
 
 **Found:** 2026-07-29, while testing renewal.
 
@@ -90,7 +100,11 @@ predicate. At the 401/403 branch, if the credential is past its own expiry, repo
 rather than revocation. Do not guess when `expiresAt` is null — the generic message is correct
 there.
 
-**Status: REQUEST CHANGES at `8ca72df`** (Cinder authored, Mica reviewed 2026-07-29).
+**Closed by `ebedf997ded5f63a105a2578aa4c0a5dde62f3ed`, merged to `main` 2026-07-29** — the
+first change through the full model. History below is kept because the review round is the
+evidence.
+
+**First verdict: REQUEST CHANGES at `8ca72df`** (Cinder authored, Mica reviewed 2026-07-29).
 
 Fix and wording approved. Rejected on the observer: all 7 tests call `requestSuccessor`
 directly and never construct an `AgentCredentialSession`, so the `expiresAt` handoff at
@@ -121,7 +135,7 @@ delete the :788 handoff, show that observer red, restore, show green.
 
 ---
 
-## D-005 — `SWARM_CAPABILITY_URLS` cannot be verified from outside · OPEN (by design)
+## D-005 — `SWARM_CAPABILITY_URLS` cannot be verified from outside · DEFERRED
 
 The §7 capability endpoint answers `404` both when the feature is off and when a presented
 token is bad — the no-enumeration rule working as intended. Flipping the gate therefore
@@ -142,12 +156,24 @@ states *"project archive enforcement is not available yet; archived projects rem
 while your membership is live."* Both are honest, and both mean a real user's workspace list
 accumulates things they cannot get rid of.
 
-**Not yet triaged.** Needs a ruling on whether archive enforcement is P3 scope before anyone
-writes code.
+**RULED 2026-07-29, and the entry's original premise was wrong.** It conflated two unrelated
+defects:
+
+- **The archive notice is wording** — split out, ruled, and landed by Cinder at `a66c4cc`
+  (awaiting review). The CLI explained the system's state to someone asking about their own
+  list and gave them no action.
+- **The list accumulating is a MISSING SURFACE, not archiving.** `remove_member` exists as a
+  protocol command kind (`src/protocol/workspace-commands.ts`) and is **not exposed in the
+  CLI** — `grep remove_member src/cli.ts` returns nothing. That is almost certainly the real
+  complaint: no surface can prune a membership.
+
+As originally written this entry would send someone to fix archiving when the actual complaint
+is membership. The archive-enforcement half moved to **D-016**, and its priority went DOWN
+rather than up once Cinder found that nothing anywhere sets `archived_at`.
 
 ---
 
-## D-007 — Namecheap dropped the root SPF while adding unrelated TXT records · OPEN
+## D-007 — Namecheap dropped the root SPF while adding unrelated TXT records · FIXED
 
 **Found:** 2026-07-29 by Forge, adding the three Resend records at Namecheap. Forge stopped
 rather than continuing, which is the correct behaviour and is why this was caught at all.
@@ -177,7 +203,16 @@ records triggered a zone rebuild that did not re-emit it.
 So: a real regression on addresses named in the published Terms and Privacy Policy, worth
 fixing promptly, but not an outage and not blocking anything.
 
-**Required shape of fix:** re-add ONE TXT record on host `@` with exactly
+★ **SUPERSEDED — DO NOT EDIT NAMECHEAP.** `commonswarm.com` is now authoritative at Cloudflare
+(`dig +short NS commonswarm.com` → `chelsea.ns.cloudflare.com`, `ezra.ns.cloudflare.com`), per
+the D-008 option-B migration. Editing a Namecheap record would change nothing and would read as
+a completed fix — the exact failure this register keeps recording. **This defect was closed by
+the migration**, which put the SPF back as a Cloudflare-managed record:
+`v=spf1 include:_spf.mx.cloudflare.net ~all`, verified serving from both authoritative
+nameservers. The instruction below is retained only as the record of what the fix WAS while the
+zone was still at Namecheap.
+
+**Superseded required shape of fix:** re-add ONE TXT record on host `@` with exactly
 `v=spf1 include:spf.efwd.registrar-servers.com ~all`. Adding it explicitly makes it a user row
 rather than a generated one, which should survive the next rebuild. Do **not** add
 `include:amazonses.com` to it — Resend sends from the `send` subdomain, which carries its own
@@ -256,8 +291,11 @@ The flags exist and are documented in the source (`--agent <claude|codex>` / `--
 `--split`, `--new-workspace`), but there is no argument-less help path.
 
 **Operating rule:** read spawn flags from `src/index.ts`, never by invoking the command to see
-what it says. Also recorded because the resulting seat then produced two genuine findings
-(D-009 and the Atlas orphan), which is luck, not vindication.
+what it says.
+
+(An earlier version of this entry tallied what the accidental seat went on to find. The tally
+is removed: a count that needs maintenance is a liability, and the seat's later output has no
+bearing on whether spawning it was a mistake. It was.)
 
 ---
 
@@ -279,16 +317,18 @@ than quietly tolerating the family.
 thing — the deployment refused and will not say why. Say that. Name neither cause. The remedy
 is identical either way, so honesty costs nothing.
 
-**Status:** `cinder/d011-unexplained-refusal` @ `003d565f197df6fa26d222d44b16fc1d60fc4c78`,
-parent `8ca72df` (stacked on D-004 deliberately — it edits code that only exists there).
-Verified by the advisor in an isolated worktree: baseline 10/10, one-line mutation with tsc
-clean 6 pass / 4 fail, restored 10/10. `KNOWN_UNMEASURED` goes 2 → 0, so the class assertion
-now covers the whole branch. Two regression pins added for the cases where a cause IS
-measured. **Not merged**; awaits Mica.
+**Status:** `cinder/d011-unexplained-refusal` @ `2a032b09d3759dfbf6727748e031a00a8b2f74b8`,
+rebased onto `main` after D-004 landed. **Not merged**; awaits Mica.
+
+The earlier heads (`003d565`, then `5857dce`) are orphaned. Mica's P1 against the middle one
+became **D-017** — the class test could not detect an asserted cause — and the fix for that is
+carried here. Advisor-verified at the current head: baseline 15/15; a prose mutation and a
+structural mutation each turn exactly one test red, and they are **different** tests; restored
+15/15 with an empty diff.
 
 ---
 
-## D-012 — `src/cloud/renewal.ts` had zero client-side tests · FIXED (by D-004/D-011)
+## D-012 — `src/cloud/renewal.ts` had zero client-side tests · FIXED (by D-004)
 
 **Found:** 2026-07-29 by Cinder, incidentally, and it is worth more than the defect it was
 found under.
@@ -305,6 +345,10 @@ branch that only runs when something has gone wrong.
 **The lesson is about the claim, not the code:** *"proven in production"* and *"tested"* are
 different statements, and the advisor conflated them. `tests/p1-cli/renewal-refusal-cause.test.ts`
 is the file's first client-side test.
+
+**Closed by D-004's merge (`ebedf99`) alone.** The citation previously read "by D-004/D-011",
+which credited an unmerged branch — the same error as D-017's premature FIXED, one entry apart.
+D-011 deepens this coverage; it did not close it.
 
 ---
 
@@ -417,7 +461,7 @@ should write code against either until it is made.
 
 ---
 
-## D-017 — A measurement-shaped thing that measured nothing · FIXED
+## D-017 — A measurement-shaped thing that measured nothing · IN REVIEW
 
 **Found:** 2026-07-29 by Mica, reviewing D-011. The sharpest instance of this register's
 recurring pattern, because it was inside the guard built against that pattern.
@@ -442,7 +486,24 @@ no regex over English decides the question.
 weakest joint twice and still shipped them as the load-bearing check; flagging a risk is not
 the same as not taking it."*
 
-**Fix, all three parts, verified by the advisor at `5857dce`:**
+★ **THE DEFECT IS ON `main` RIGHT NOW.** Measured 2026-07-29 after this entry was first
+written as FIXED — which it was not:
+
+```
+git show origin/main:tests/p1-cli/renewal-refusal-cause.test.ts | grep -c CAUSE_BY_CODE  -> 0
+git show origin/main:tests/p1-cli/renewal-refusal-cause.test.ts | grep -c assertedCauses -> 2
+```
+
+`main` carries the broken regex classifier. The structural fix exists only on
+`cinder/d011-unexplained-refusal` and is unmerged. Marking this FIXED was itself an unmeasured
+claim, in the entry whose whole subject is unmeasured claims — caught by Cinder auditing the
+register, not by me.
+
+**Status: IN REVIEW, bound to `2a032b09d3759dfbf6727748e031a00a8b2f74b8`.** It becomes FIXED
+when D-011 merges and not before. (An earlier version of this entry cited `5857dce`, now
+orphaned by the rebase onto `main` that D-004's landing forced.)
+
+**Fix, all three parts, verified by the advisor:**
 
 - **Structural.** The invariant now reads `RenewalRevoked.code` — a closed set the client itself
   chooses — mapped to the cause each code stands for. An *unrecognised* code is a violation
