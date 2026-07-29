@@ -572,6 +572,12 @@ of the four the *name of the test* was the strongest evidence offered that the p
 chose**, rather than against the path production takes. A test that constructs its own inputs
 and calls its own entry point is testing a model of the system, and a model agrees with itself.
 
+**The author's reframing, which is sharper than mine and worth using instead:** in all four,
+what went unobserved was *the seam between the change and the surface someone else reads*. The
+question to ask before writing a test is therefore not "does my change work" but **"what
+carries it to a consumer, and does anything watch that."** D-004's seam was the session handoff;
+D-011's was prose reaching an operator; D-006(b)'s was the JSON payload reaching a script.
+
 **The rule, added to `OPERATING-MODEL.md` §4:**
 
 > A test is not evidence for a property until a mutation **of the production call site** — not
@@ -636,4 +642,34 @@ tests/p1-cli/workspaces.test.ts:101,409         TS2322, TS2790
 currently mid-review on two branches. Landing a gate that reddens someone else's in-flight work
 is how a good change becomes a bad afternoon. It goes in once the review queue drains, with the
 7 fixed in the branches that own those files.
+
+---
+
+## D-020 — An unidentified intermittent failure in the suite every merge rests on · OPEN
+
+**Found:** 2026-07-29 by Cinder, reported without a reproduction and without being asked.
+
+One run of `npm run test:p1-cli` returned **105/106** with a single failure that was not
+captured before the output was lost. Four subsequent full runs returned 106/106. So there is a
+flake that has been seen once and cannot be named.
+
+**Why this is in the register despite having no reproduction.** `test:p1-cli` is the evidence
+base for every merge decision made today, including two branches in cross-family review and one
+already on `main`. A suite that fails once in five without explanation weakens every "green"
+cited above it. Recording it late, after a second sighting, would mean every merge in between
+had rested on an instrument with a known and unlogged defect.
+
+**Consequence for claims already made:** every "106/106" and "green" in this register and in
+today's commit messages should be read as *"green on the run I looked at"*. That is what a
+suite with an unidentified intermittent can support. It does not invalidate the mutation
+proofs — those turn specific tests red and green on demand, which a flake cannot fake in both
+directions — but it does weaken any claim resting on a whole-suite pass alone.
+
+**Being hunted:** eight consecutive runs, capturing full output on any non-zero exit rather
+than only the summary line. If it does not reproduce, the entry stays OPEN with that stated —
+"did not reproduce in 8" is a measurement, not a closure.
+
+**The reporting is the point.** An agent noticed a one-in-five anomaly it could not explain, in
+its own favour to ignore, and wrote it down. That is the behaviour that makes the rest of this
+register trustworthy.
 
