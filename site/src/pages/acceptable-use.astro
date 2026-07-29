@@ -23,16 +23,16 @@
  *
  * THE NUMBERS ARE READ OUT OF THE CODE, NOT ASSUMED:
  *   3 live workspaces per verified identity -> FREE_TIER_WORKSPACE_LIMIT,
- *                                              supabase/functions/command/index.ts:330
+ *                                              supabase/functions/command/index.ts:423
  *                                              (the query excludes archived_at rows, but
  *                                              no product command archives a workspace)
- *   120 signals / credential / hour         -> SIGNAL_CREDENTIAL_LIMIT, :297
- *   1000 signals / workspace / hour         -> SIGNAL_WORKSPACE_LIMIT, :298
- *   hourly window, not rolling              -> incrementSignalBucket, :2342 uses
+ *   120 signals / credential / hour         -> SIGNAL_CREDENTIAL_LIMIT, :341
+ *   1000 signals / workspace / hour         -> SIGNAL_WORKSPACE_LIMIT, :342
+ *   hourly window, not rolling              -> incrementRateBucket, :3347 uses
  *                                              date_trunc('hour', ...)
  *   body 1-2000, about <= 500, until <= 30d -> migrations/20260724000003_signals.sql:9-15
- *   invitation TTL <= 7 days                -> INVITATION_MAX_TTL_MS, :289
- *   agent credential TTL <= 8 hours         -> AGENT_TOKEN_MAX_TTL_MS, :290
+ *   invitation TTL <= 7 days                -> INVITATION_MAX_TTL_MS, :333
+ *   agent credential TTL <= 8 hours         -> AGENT_TOKEN_MAX_TTL_MS, :334
  * If any of these change in the code, they change here. A published cap that no longer
  * matches the enforced one is worse than no published cap.
  *
