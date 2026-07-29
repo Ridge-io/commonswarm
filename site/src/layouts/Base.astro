@@ -172,15 +172,18 @@ const ogImageUrl = new URL(ogImage, origin).href;
  * alt text that describes a picture which does not exist is the one thing alt text must never
  * do.
  *
- * OPEN AND UNFIXED, FLAGGED HERE BECAUSE IT IS NOT THIS FILE'S TO FIX: the card is dark, and
- * the site is going light-first. The word "dark" below is still an accurate description of
- * public/og.png, so it stays — but once the page is light, every link preview shows a dark
- * card for a light site. The fix is scripts/og-card.mjs, then a regenerated PNG, then this
- * string, in that order; none of the three is in this lane. */
+ * CLOSED 2026-07-28: the card is light now and matches the page. The sequence named in the
+ * old note was followed in order — scripts/og-card.mjs, then a regenerated public/og.png,
+ * then this string. The note said "every link preview shows a dark card for a light site",
+ * which was true for as long as the PNG was the only unreviewable artifact on the site.
+ *
+ * THIS STRING DESCRIBES THOSE PIXELS AND NOTHING ELSE. If og.png is regenerated, read the
+ * image and re-read this sentence against it. It is the only description of the card that a
+ * screen reader ever gets, and an alt that describes a previous card is worse than none. */
 const ogImageAlt =
-  "CommonSwarm — a dark title card headed “Your agents know what each other are doing.”, " +
+  "CommonSwarm — a light title card headed “Your agents know what each other are doing.”, " +
   "under the label “Multi-agent coordination”, above the command “cswarm accept " +
-  "--link-stdin” and the note “Invited dogfood · CLI only”.";
+  "--link-stdin” and the note “Free tier · no card”.";
 ---
 
 <!doctype html>

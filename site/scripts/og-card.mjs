@@ -21,16 +21,17 @@
  * fit the chip beside the note at 21px mono; the bare safe verb does, and is still a real
  * documented command rather than an abbreviation of one.
  *
- * THE CARD IS LIGHT NOW, AND THE PNG IN public/ IS NOT. Running this file writes HTML; it
- * cannot write the PNG. So after this change public/og.png is STALE — it is still the
- * near-black card — and it stays stale until someone re-renders it with the recipe below.
- * Two things must move with it, and neither is in this file:
- *   1. `ogImageAlt` in src/layouts/Base.astro opens "a dark title card". After the re-render
- *      that sentence describes a picture that does not exist, which is the one thing alt text
- *      must never do. It is the only word that changes: "a light title card".
- *   2. Nothing else. The words drawn on the card are unchanged by this pass, deliberately —
- *      the headline, the eyebrow, the chip and the note are all byte-identical to the version
- *      the current alt text was written against.
+ * THE PNG IS REGENERATED AND CURRENT as of 2026-07-28. It is light, matching the site, and
+ * its note reads "Free tier · no card". It previously read "Invited dogfood · CLI only",
+ * which stopped being true the moment SWARM_SELF_SERVE was switched on in production — a
+ * claim on the most-seen surface the project has, invalidated by an environment variable
+ * somewhere else entirely, with nothing in this repo changing to mark it.
+ *
+ * RUNNING THIS FILE WRITES HTML; IT CANNOT WRITE THE PNG. Any future edit here leaves
+ * public/og.png stale until someone runs the recipe above and LOOKS at the result. One thing
+ * must move with it and it is not in this file: `ogImageAlt` in src/layouts/Base.astro is a
+ * description of these exact pixels, and an alt describing a previous card is worse than no
+ * alt at all.
  *
  * WHY LIGHT. The site's palette is going light-first because the dark one reads as developer
  * infrastructure rather than as a product. The social card is the surface seen MOST and seen
@@ -59,10 +60,29 @@
  * then render that file at exactly 1200x630 CSS px, deviceScaleFactor 1, and write the PNG to
  * public/og.png. With browser-harness:
  *   new_tab("file:///tmp/og-card.html"); wait_for_load()
+ *   wid = cdp("Browser.getWindowForTarget")
+ *   cdp("Browser.setWindowBounds", windowId=wid["windowId"],
+ *       bounds={"left":0,"top":0,"width":1360,"height":900,"windowState":"normal"})
  *   cdp("Emulation.setDeviceMetricsOverride", width=1200, height=630, deviceScaleFactor=1,
  *       mobile=False)
  *   cdp("Page.captureScreenshot", format="png",
- *       clip={"x":0,"y":0,"width":1200,"height":630,"scale":1}, captureBeyondViewport=True)
+ *       clip={"x":0,"y":0,"width":1200,"height":630,"scale":1})
+ *
+ * ★ THE setWindowBounds LINE IS LOAD-BEARING AND WAS NOT IN THE FIRST VERSION OF THIS RECIPE.
+ * setDeviceMetricsOverride changes LAYOUT, not the browser window. If the real window is
+ * narrower than 1200 CSS px, the capture composites the window's surface and TILES it to fill
+ * the clip: you get a correct-looking card whose right-hand strip is the beginning of a second
+ * copy of itself. It is a valid 1200x630 PNG, so every check short of looking at the image
+ * passes — dimensions, byte size, file type. Measured: a 1109px window produced a seam at
+ * x=1109, which is how the cause was found.
+ *
+ * captureBeyondViewport was also dropped. The decorative SVG overhangs to scrollWidth 1278, so
+ * beyond-viewport capture re-lays-out to 1278 and rescales. The clip is inside the viewport
+ * anyway, so the flag only ever added a way to be wrong.
+ *
+ * ALWAYS LOOK AT THE RESULTING IMAGE. This card is the single most widely seen surface the
+ * project has, and it is the one artifact where every automated check can pass on a broken
+ * result.
  *
  * The fonts are inlined as data URIs, not linked: the render must not depend on a running dev
  * server, and a card set in a fallback face is a card in the wrong typeface for ever.
@@ -266,7 +286,7 @@ const html = `<!doctype html>
 
     <div class="foot">
       <span class="chip"><span class="chip__p">$</span><span class="chip__c">cswarm accept --link-stdin</span></span>
-      <span class="note"><span class="note__dot"></span>Invited dogfood · CLI only</span>
+      <span class="note"><span class="note__dot"></span>Free tier · no card</span>
     </div>
   </div>
 </div>

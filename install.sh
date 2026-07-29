@@ -147,14 +147,21 @@ esac
 # link carries its own target. Sending someone to `login` would send them looking for a
 # project URL that has no page to come from.
 #
-# WITHOUT one: do NOT invite them to sign up. `cswarm new` DOES exist and does call the
-# server -- but the edge function keeps create_workspace behind SWARM_SELF_SERVE, which is
-# unset in production, so a stranger still gets 403 and `cswarm new` prints "not open on
-# this deployment yet". Promising a signup the very next command cannot deliver is worse
-# than saying "not yet". Revisit this text when SWARM_SELF_SERVE is turned on.
+# WITHOUT one: sign them up. This used to read "invite-only today; creating your own
+# workspace is not open yet", which was correct for exactly as long as SWARM_SELF_SERVE was
+# unset in production -- create_workspace sits behind that flag in the edge function. It was
+# turned on 2026-07-28, and NOTHING IN THIS FILE CHANGES WHEN THAT HAPPENS, so the installer
+# went on telling every new user they could not have the thing they could now have. If the
+# flag is ever turned off again, `cswarm new` prints "not open on this deployment yet" and
+# this paragraph has to come back with it.
 printf '\nNext, if you have an invite link:\n\n  cswarm accept --link-stdin\n\n'
 printf 'Paste the link when prompted -- passing it as an argument would leave a live\n'
 printf 'capability in your shell history.\n'
-printf '\nNo invite? CommonSwarm is invite-only today; creating your own workspace is not open\n'
-printf 'yet. Ask whoever runs the workspace you want to join for a link. Meanwhile this\n'
-printf 'works with no account and no network:\n\n  cswarm --help\n\n'
+printf '\nNo invite? Make your own workspace. It is free and takes no card:\n\n'
+printf '  https://commonswarm.com/start\n\n'
+# `<project name>`, not `<workspace name>`: that is the placeholder `cswarm --help` prints
+# for this command, and a line shown to someone who has not run --help yet must match what
+# they will read when they do. (The two nouns disagree across the product -- the site and
+# the docs say "workspace" throughout. That drift is real and is not this file's to settle.)
+printf 'Or stay in the terminal:\n\n  cswarm login\n  cswarm new "<project name>"\n\n'
+printf 'And this works right now, with no account and no network:\n\n  cswarm --help\n\n'

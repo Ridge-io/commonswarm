@@ -133,8 +133,14 @@ const signals = [
         </a>
       </div>
 
+      {/* "Invite-only today" stood here until self-serve signup was switched on in
+          production (SWARM_SELF_SERVE=1, 2026-07-28). It was true when written and became
+          false the moment a switch moved somewhere else entirely — which is the whole
+          hazard with availability copy: nothing in this repo changes when the deployment
+          does, so the page goes on confidently telling strangers they cannot have the
+          thing they can now have. If signup is ever closed again, this line comes back. */}
       <p class="hero__availability">
-        Invite-only today — free for up to three workspaces, with no card.
+        Free for up to three workspaces, with no card.
       </p>
 
       {/* THE THREE-BULLET LIST WAS DELETED HERE. It read "Three verbs to speak, two to
