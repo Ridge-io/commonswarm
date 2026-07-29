@@ -487,7 +487,7 @@ should write code against either until it is made.
 
 ---
 
-## D-017 — A measurement-shaped thing that measured nothing · IN REVIEW
+## D-017 — A measurement-shaped thing that measured nothing · FIXED
 
 **Found:** 2026-07-29 by Mica, reviewing D-011. The sharpest instance of this register's
 recurring pattern, because it was inside the guard built against that pattern.
@@ -512,7 +512,14 @@ no regex over English decides the question.
 weakest joint twice and still shipped them as the load-bearing check; flagging a risk is not
 the same as not taking it."*
 
-★ **THE DEFECT IS ON `main` RIGHT NOW.** Measured 2026-07-29 after this entry was first
+**Closed by `7f34523`, merged to `main` 2026-07-29.** Verified after the merge:
+`grep -c assertedCauses` on main → **0**; `grep -c CAUSE_BY_CODE` → **4**. The regex classifier
+is gone from the shipped tree, not merely from a branch.
+
+The paragraph below is kept, marked dead, because it was true for several hours and the entry
+that recorded it was itself the register's live untruth.
+
+★ **(WAS TRUE UNTIL `7f34523`) THE DEFECT WAS ON `main`.** Measured 2026-07-29 after this entry was first
 written as FIXED — which it was not:
 
 ```
@@ -525,8 +532,17 @@ git show origin/main:tests/p1-cli/renewal-refusal-cause.test.ts | grep -c assert
 claim, in the entry whose whole subject is unmeasured claims — caught by Cinder auditing the
 register, not by me.
 
-**Status: IN REVIEW, bound to `2a032b09d3759dfbf6727748e031a00a8b2f74b8`.** It becomes FIXED
-when D-011 merges and not before. (An earlier version of this entry cited `5857dce`, now
+**Status: FIXED.** It became FIXED when D-011 merged, as this line required, and not before.
+Final SHA `7f34523` after two further review rounds — Mica broke the hand-kept mirror by adding
+a sixth production reason (15/15 green, nothing presented it), and then required a doc-only
+amend because `src/` still claimed compile-time enforcement that D-019 proved inert.
+
+**Acceptance criterion, re-executed by the advisor at the merged SHA:** add a production reason
+to `REVOCATION_REASONS_LIST`, touch no test file → `14/15`, with the class test naming it:
+*"unclassified refusal code `credential_disabled` — add it to CAUSE_BY_CODE and say which cause
+it asserts"*. Restored → 15/15. The input space is genuinely derived
+(`REVOCATION_REASONS_LIST.flatMap` in the test); the only occurrence of the probe reason in the
+test file is a comment recording Mica's finding. (An earlier version of this entry cited `5857dce`, now
 orphaned by the rebase onto `main` that D-004's landing forced.)
 
 **Fix, all three parts, verified by the advisor:**
@@ -699,4 +715,45 @@ unnamed intermittent it started as.
 **The reporting is the point.** An agent noticed a one-in-five anomaly it could not explain, in
 its own favour to ignore, and wrote it down. That is the behaviour that makes the rest of this
 register trustworthy.
+
+---
+
+## D-021 — A reviewer's precondition can be satisfied by a stronger proof than it names · RULING
+
+**Raised:** 2026-07-29 by Cinder, against its own interest, at the last merge of the day.
+
+Mica approved D-011 with a stated precondition: *"origin/main has advanced from `d190f1e` to
+`34d47e3` in DEFECT-REGISTER docs only; a byte-identical base move preserves verdict."*
+
+By the time the merge came round, **that precondition was false** — D-006(b) had landed,
+advancing `main` with code (`src/cli.ts`, `src/cloud/workspaces.ts`, and a test file). Cinder
+noticed, proved the underlying property held anyway, and **refused to resolve it**: *"that
+distinction is yours to rule on rather than mine to quietly resolve in my own favour — I am the
+interested party."*
+
+**Verified by the advisor rather than taken:**
+
+```
+literal precondition   docs-only advance?      FALSE — three code files moved
+the property it stood for:
+  git diff d190f1e e66be08   vs   git diff f6a87e1 7f34523   ->  byte-identical
+  patch-id both sides                                        ->  e979b4ed…
+  files touched by D-006(b) ∩ files touched by D-011         ->  empty
+```
+
+**RULING: a precondition stated as a cheap proxy is satisfied by a strictly stronger proof of
+the same property.** "Docs only" was Mica's inexpensive way of asserting *no reviewed content
+moved*. Diff-of-diffs byte-identity, identical patch-ids and disjoint file sets prove that
+directly. Accepting the stronger evidence is not weakening the rule; requiring the weaker
+evidence specifically would be cargo-culting its wording over its purpose.
+
+**The limit, so this is not a loophole.** The stronger proof must establish *the same property*,
+must be run by someone who is **not the interested party**, and the reviewer must be told the
+proxy failed so it can object. All three happened here. If the file sets had intersected — if
+any content had genuinely moved — no amount of proof would substitute and it goes back for
+re-review.
+
+**The behaviour is the finding.** An agent with three branches waiting, at the last merge of a
+long queue, stopped to say the reviewer's stated condition no longer held and handed the call
+upward. That is worth more than the ruling.
 
