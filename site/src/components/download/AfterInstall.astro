@@ -61,6 +61,7 @@
  */
 
 import CodeBlock from "../ui/CodeBlock.astro";
+import { INSTALL_CMD_LOGIN_SHELL, INSTALL_CMD_DIR } from "../../lib/install.ts";
 
 const versionCmd = "cswarm --version";
 const versionOut = "cswarm 0.0.1 (protocol 0.1.0)";
@@ -93,7 +94,7 @@ const faqs = [
   {
     q: "It said node wasn’t found — but I have Node",
     a: "Almost always a version manager. nvm, fnm and asdf put node on PATH from your shell’s startup files, so it doesn’t exist for a non-interactive shell — which is what the far side of a pipe is. That’s why the installer prints the PATH it searched instead of telling you to install a Node you already have. Run it from a normal terminal window, or push it through a login shell:",
-    cmd: "zsh -lic 'curl -fsSL https://<host>/install.sh | sh'",
+    cmd: INSTALL_CMD_LOGIN_SHELL,
     label: "login shell",
   },
   {
@@ -111,7 +112,7 @@ const faqs = [
   {
     q: "require is not defined in ES module scope",
     a: "You shouldn’t see this — the installer checks for it. It means cswarm ended up under a directory whose package.json declares `\"type\": \"module\"`, so Node loaded a CommonJS bundle as ESM. Install it outside that tree instead:",
-    cmd: 'curl -fsSL https://<host>/install.sh | CSWARM_INSTALL_DIR="$HOME/bin" sh',
+    cmd: INSTALL_CMD_DIR,
     label: "elsewhere",
   },
 ];

@@ -33,8 +33,8 @@
  * PROVENANCE OF EVERY COMMAND. Carried forward from StepAgents.astro, which is where these
  * were checked against `node dist/cli.js --help` and against install.sh.
  * ---------------------------------------------------------------------------------------
- *   INSTALL   install.sh's own header documents `curl -fsSL https://<host>/install.sh | sh`.
- *             <host> is the script's own placeholder, not an invention: no public install
+ *   INSTALL   taken from src/lib/install.ts, which is the only place the host is spelled.
+ *             It was the literal placeholder `<host>` until install.sh was published; the
  *             host has been chosen. It must NEVER be filled in with a plausible-looking
  *             domain — the last one anyone invented turned out to be a real, unrelated
  *             product whose /install.sh answers 200 and installs as root.
@@ -68,8 +68,9 @@
  */
 
 import CodeBlock from "../ui/CodeBlock.astro";
+import { INSTALL_CMD } from "../../lib/install.ts";
 
-const INSTALL = "curl -fsSL https://<host>/install.sh | sh";
+const INSTALL = INSTALL_CMD;
 
 const JOIN = `printf '%s' "$CSWARM_INVITE_LINK" |
   cswarm accept --link-stdin --name laptop-agent`;

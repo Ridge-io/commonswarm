@@ -7,12 +7,16 @@
  * calls this out as load-bearing: a command block and the promise around it drift apart the
  * moment they live in two files.
  *
- * THE HOST IS A PLACEHOLDER AND THE PAGE SAYS SO OUT LOUD. There is no decided install host.
- * "<host>" is install.sh's own documented placeholder (its usage comment reads
- * `curl -fsSL https://<host>/install.sh | sh`), so this page shows the same thing rather than
- * inventing a domain. Do not replace it with anything that resolves — an earlier draft of this
- * site used coswarm.dev, which is a REAL, UNRELATED shipping product whose /install.sh answers
- * 200 and installs as root.
+ * THE HOST IS REAL AND THE COMMAND RESOLVES. It did not always: this page shipped showing
+ * install.sh's own documentation placeholder, `curl -fsSL https://<host>/install.sh | sh`,
+ * which is not a command a stranger can run. The host now comes from src/lib/install.ts and
+ * install.sh is copied into public/ by the site build, so the address serves the same file
+ * the repo reviews.
+ *
+ * THE OLD WARNING STILL APPLIES TO ANY FUTURE EDIT: do not hand-write a host here. An earlier
+ * draft invented coswarm.dev, which is a REAL, UNRELATED shipping product whose /install.sh
+ * answers 200 and installs as root. One constant, one place, verified against the deployed
+ * site.
  *
  * FOOTER. This page used to ship its own (PageFoot.astro), written to avoid the then-shared
  * Footer.astro whose nav was a list of landing-page hashes that pointed at nothing from
@@ -38,9 +42,9 @@
  * want it: the one who has not pasted yet and wants to know what the script does, and the one
  * who does not want a one-liner at all. Neither of them is mid-install.
  *
- * The suspicious reader is not left unserved by the demotion: the install card itself says
- * <host> is a placeholder, and the "what happens" section is one anchor away — see the link
- * under the copy button in InstallPanel.astro, which is what pays for this order.
+ * The suspicious reader is not left unserved by the demotion: the "what happens" section is
+ * one anchor away — see the link under the copy button in InstallPanel.astro, which is what
+ * pays for this order.
  */
 
 import Base from "../layouts/Base.astro";
@@ -48,9 +52,12 @@ import InstallPanel from "../components/download/InstallPanel.astro";
 import WhatHappens from "../components/download/WhatHappens.astro";
 import OtherWays from "../components/download/OtherWays.astro";
 import AfterInstall from "../components/download/AfterInstall.astro";
+import { INSTALL_CMD } from "../lib/install.ts";
 
-/* The single source of truth for the install command, character for character. */
-const INSTALL_CMD = "curl -fsSL https://<host>/install.sh | sh";
+/* The single source of truth for the install command, character for character.
+   It lives in src/lib/install.ts because six files used to spell the host out
+   themselves and the site shipped with `<host>` in the one command a stranger
+   was invited to run. */
 
 const title = "Install CommonSwarm — one command, one file";
 const description =

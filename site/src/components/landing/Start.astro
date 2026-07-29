@@ -58,15 +58,16 @@
  *   `target set` exists and is the explicit way to point at a project ...... src/cli.ts:254
  *   Node >= 24 ......................................... package.json engines (repo root)
  *
- * THE INSTALLER IS WRITTEN BUT NOT PUBLISHED, and those are different facts. install.sh is at
- * the repo root now (it was not when this file was first written), and its own usage comment
- * reads `curl -fsSL https://<host>/install.sh | sh` — so `<host>` here is the installer's own
- * placeholder, not one this page invented. MEASURED, not assumed: on 2026-07-27
- * https://commonswarm.com/install.sh returns 404, with https://commonswarm.com returning 200
- * as the positive control that the host resolves and serves at all. Step one says this on the
- * page rather than in a comment. Do not replace `<host>` with a plausible-sounding domain —
- * the last placeholder anyone invented turned out to be a real, unrelated product whose
- * install.sh returns HTTP 200.
+ * THE INSTALLER IS WRITTEN AND NOW PUBLISHED, which were two different facts for longer than
+ * they should have been. On 2026-07-27 https://commonswarm.com/install.sh returned 404 while
+ * https://commonswarm.com returned 200 — the positive control proving the host resolved and
+ * simply did not serve the file — and this step carried a caveat saying the line was a shape
+ * rather than something to paste. site/package.json now copies the repo-root install.sh into
+ * public/ on every build, so the address serves it, and the caveat is deleted rather than
+ * softened.
+ *
+ * Do not hand-write a host here; take it from src/lib/install.ts. The last placeholder anyone
+ * invented turned out to be a real, unrelated product whose install.sh returns HTTP 200.
  *
  * ---------------------------------------------------------------------------------------
  * WHAT WAS CUT: THE "Or set the project once" CARD. It taught two exports,
@@ -81,6 +82,7 @@
  */
 
 import CodeBlock from "../ui/CodeBlock.astro";
+import { INSTALL_CMD } from "../../lib/install.ts";
 
 const HEADING = "Three lines, from nothing to your first signal.";
 
@@ -90,9 +92,7 @@ const STEPS = [
     title: "Install it",
     body:
       "One file into ~/.local/bin. No sudo, and it is checked against a published checksum before it lands. Needs Node 24 or newer.",
-    code: "curl -fsSL https://<host>/install.sh | sh",
-    caveat:
-      "<host> is a placeholder. The installer is written but is not published at a public address yet, so this is the shape of the line rather than something to paste today.",
+    code: INSTALL_CMD,
   },
   {
     id: "accept",

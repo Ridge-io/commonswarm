@@ -7,14 +7,13 @@
  * the same characters that are in the string — the display is a re-render of the prop, not a
  * second copy of it. Verified by spying on the clipboard write, not by reading the markup.
  *
- * THE COMMAND DOES NOT RUN YET AND THE PAGE SAYS SO — ONCE. <host> is a placeholder: no
- * public install host has been decided. It is marked TWO ways, which is one statement and its
- * explanation: the token is tinted inside the command, and the sentence under the card says
- * what the tint means. A reader who copies this and gets "could not resolve host" without
- * warning has been lied to by omission, so the disclosure is not optional — but it was
- * previously made THREE times in this one panel (a warning badge on the card bar as well),
- * and a fact restated three times in 200px reads as nerves, not candour. Do not add the badge
- * back; if the tint or the sentence goes, that is the regression to fix.
+ * THE COMMAND RUNS. It did not always: the host was the literal placeholder `<host>`, and
+ * this panel carried a sentence explaining that the command would not resolve as written.
+ * The host is real now (src/lib/install.ts), install.sh is published at it by the site build,
+ * and that disclosure has been DELETED rather than softened — a page that hedges about a
+ * command that works teaches the reader to distrust the next thing it says. The host is
+ * still tinted, but the tint now means "this is the part that names us", not "this is fake".
+ * If the command ever stops resolving, the fix is to make it resolve, not to re-add prose.
  *
  * PLATFORM TABS ARE PROGRESSIVE ENHANCEMENT, NOT A JS-ONLY UI. The HTML ships all three
  * platform panels, stacked and each under its own heading, so a reader with no JS gets every
@@ -39,13 +38,21 @@ interface Props {
   cmd: string;
 }
 
+import { INSTALL_HOST } from "../../lib/install.ts";
+
 const { cmd } = Astro.props;
 
-/* Everything before / after the placeholder, so the token can be tinted without the
-   displayed text and the copied text ever being authored twice. */
-const HOST_TOKEN = "<host>";
-const cmdHead = cmd.slice(0, cmd.indexOf(HOST_TOKEN));
-const cmdTail = cmd.slice(cmd.indexOf(HOST_TOKEN) + HOST_TOKEN.length);
+/* Everything before / after the host, so the host can be tinted without the displayed
+   text and the copied text ever being authored twice. The token used to be the literal
+   string "<host>" and the tint meant "this is not real yet"; the host is real now, so the
+   tint means "this is the part that identifies us" and the disclosure below it is gone.
+   indexOf is not assumed to succeed: if the command ever stops containing the host, head
+   is the whole string and tail is empty, so the command still renders and still copies
+   correctly rather than silently losing its tail. */
+const HOST_TOKEN = INSTALL_HOST;
+const hostAt = cmd.indexOf(HOST_TOKEN);
+const cmdHead = hostAt === -1 ? cmd : cmd.slice(0, hostAt);
+const cmdTail = hostAt === -1 ? "" : cmd.slice(hostAt + HOST_TOKEN.length);
 
 /* `text` with `backticks` becomes inline code. Saves authoring markup in three data tables. */
 const seg = (s: string) =>
@@ -212,12 +219,6 @@ const PLATFORMS = [
             than reworded: this paragraph is about the install host, the signup fact belongs
             where a reader can act on it (/ and /start), and this panel's own header note
             says a fact restated three times in 200px reads as nerves. */}
-        <p class="dl-placeholder">
-          <span class="dl-placeholder__flag mono">&lt;host&gt;</span>
-          is a placeholder, not an address. The public install host isn’t decided yet, so this
-          command won’t resolve as written — it’s here so you can read exactly what installing
-          would do.
-        </p>
       </div>
 
       <div class="dl-plat" data-dl-plat>
@@ -393,10 +394,10 @@ const PLATFORMS = [
   }
 
   /* There was a warning "Placeholder host" badge to the right of this label, which is why the
-     label used to carry `margin-inline-end: auto`. It was the FIRST of three statements of the
-     same fact inside one panel — the amber <host> in the command and the paragraph under it
-     are the other two — and it said the least of the three while shouting the loudest. The
-     badge is gone; the highlight and the paragraph carry it. */
+     label used to carry `margin-inline-end: auto`. It was one of three statements of the same
+     fact inside one panel, and it said the least of the three while shouting the loudest.
+     All three are gone now: the host is real, so there is no caveat left to state. The
+     highlight on the host survives, meaning "this is the part that names us". */
   .dl-card__label {
     font-size: var(--t-xs);
     letter-spacing: 0.1em;
@@ -879,11 +880,11 @@ const PLATFORMS = [
       if (txt) txt.textContent = ok ? "Copied" : "Couldn’t copy";
       if (hint) {
         hint.textContent = ok
-          ? "Copied. Replace <host> with a real address before you run it."
+          ? "Copied."
           : "Select the command above and press Command-C or Control-C.";
       }
       status.textContent = ok
-        ? "Install command copied to clipboard. It contains the placeholder <host>, which must be replaced before the command will run."
+        ? "Install command copied to clipboard."
         : "Copy is unavailable here — select the command and press Command-C or Control-C.";
 
       timer = window.setTimeout(() => {

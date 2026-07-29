@@ -6,8 +6,9 @@
     "node": ">=22.12.0"
   },
   "scripts": {
-    "dev": "astro dev",
-    "build": "astro build",
+    "dev": "npm run sync:installer && astro dev",
+    "build": "npm run sync:installer && astro build",
+    "sync:installer": "cp ../install.sh public/install.sh",
     "preview": "astro preview",
     "astro": "astro"
   },

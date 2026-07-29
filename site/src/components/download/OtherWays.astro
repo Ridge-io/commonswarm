@@ -53,6 +53,7 @@
 import Card from "../ui/Card.astro";
 import CodeBlock from "../ui/CodeBlock.astro";
 import Badge from "../ui/Badge.astro";
+import { INSTALL_CMD_PINNED, INSTALL_CMD_DIR } from "../../lib/install.ts";
 
 interface Props {
   /** The same install command shown at the top of the page. */
@@ -64,8 +65,8 @@ const { cmd } = Astro.props;
 /* Derived from the one command, so a change at the top of the page cannot leave this
    variant behind pointing at a different host. */
 const readCmd = cmd.replace(/\|\s*sh$/, "| less");
-const pinCmd = "curl -fsSL https://<host>/install.sh | CSWARM_VERSION=0.0.1 sh";
-const dirCmd = 'curl -fsSL https://<host>/install.sh | CSWARM_INSTALL_DIR="$HOME/bin" sh';
+const pinCmd = INSTALL_CMD_PINNED;
+const dirCmd = INSTALL_CMD_DIR;
 const sourceCmd = `git clone https://github.com/Ridge-io/cloud-swarm.git
 cd cloud-swarm
 npm install
