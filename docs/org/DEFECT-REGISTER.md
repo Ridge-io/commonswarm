@@ -232,3 +232,93 @@ The flags exist and are documented in the source (`--agent <claude|codex>` / `--
 what it says. Also recorded because the resulting seat then produced two genuine findings
 (D-009 and the Atlas orphan), which is luck, not vindication.
 
+---
+
+## D-011 — The 401/403 fallback asserted revocation in every unmeasured case · IN REVIEW
+
+**Found:** 2026-07-29 by Cinder's own class test, while fixing D-004 — the test went red naming
+a deviation Cinder had not predicted.
+
+D-004 fixed the case where a credential was measurably past its expiry. The class test then
+showed the defect was wider: the generic fallback asserted revocation whenever **nothing was
+named and expiry was not measured-past** — so `expiry=future` and `expiry=null` both claimed a
+cause the client never established. Same shape as D-004, different input.
+
+Cinder correctly did **not** fix it inside D-004: out of scope, and the wording was an advisor
+ruling. It recorded the two cases as known deviations so the test would fail on a third rather
+than quietly tolerating the family.
+
+**Ruling given:** at 401/403 with no reason sent and no expiry measured, the client knows one
+thing — the deployment refused and will not say why. Say that. Name neither cause. The remedy
+is identical either way, so honesty costs nothing.
+
+**Status:** `cinder/d011-unexplained-refusal` @ `003d565f197df6fa26d222d44b16fc1d60fc4c78`,
+parent `8ca72df` (stacked on D-004 deliberately — it edits code that only exists there).
+Verified by the advisor in an isolated worktree: baseline 10/10, one-line mutation with tsc
+clean 6 pass / 4 fail, restored 10/10. `KNOWN_UNMEASURED` goes 2 → 0, so the class assertion
+now covers the whole branch. Two regression pins added for the cases where a cause IS
+measured. **Not merged**; awaits Mica.
+
+---
+
+## D-012 — `src/cloud/renewal.ts` had zero client-side tests · FIXED (by D-004/D-011)
+
+**Found:** 2026-07-29 by Cinder, incidentally, and it is worth more than the defect it was
+found under.
+
+856 lines. Called **"PROVEN in production"** in a status report by the advisor — truthfully:
+it was exercised end to end against real infrastructure, and a credential renewed itself and
+answered a call after its predecessor had expired. And it had **no unit tests at all**. Only
+`tests/p1-server/command.test.ts` mentioned renewal, and that exercises the server.
+
+That gap is why nobody noticed the 401 branch was lying about the cause of a refusal for as
+long as it existed. An end-to-end proof exercises the happy path; it says nothing about the
+branch that only runs when something has gone wrong.
+
+**The lesson is about the claim, not the code:** *"proven in production"* and *"tested"* are
+different statements, and the advisor conflated them. `tests/p1-cli/renewal-refusal-cause.test.ts`
+is the file's first client-side test.
+
+---
+
+## D-013 — Success lines not bound to what actually happened · OPEN (pattern)
+
+**Found:** 2026-07-29, four independent instances in one session. Recorded as a pattern
+because the individual cases are unremarkable and the family is not.
+
+| Tool | Said | Did |
+|---|---|---|
+| `cmux close-surface` | `OK surface:120` | closed surface:61 |
+| `sed` mutation (advisor) | tests went red | red from a **compile error**, not a behaviour change |
+| `git checkout <branch>` | names the branch you asked for | silent about whose branch you just left |
+| `git checkout <file>` | restores the file | silently destroys uncommitted work in it |
+
+Every one reports success against something other than what it acted on, and every one is
+survivable alone. Together they are the mechanism by which a wrong action reads as a clean
+one — which is the same failure as a green check against the wrong target, arriving through
+tooling instead of through tests.
+
+**Operating rule:** a tool's own success line is not evidence. Verify against the state it
+claims to have changed — tree, process table, file content — before recording an outcome.
+Both agents hit this today; two of the four are the advisor's.
+
+---
+
+## D-014 — A wedged reviewer is indistinguishable from a thinking one · OPEN (tooling)
+
+**Found:** 2026-07-29. A `codex exec` one-shot dispatched to review `505eee8` ran for **40
+minutes and produced zero bytes** at **0.07 seconds of CPU**. Not slow — wedged. It was killed
+and the review rerouted.
+
+The operating model already names narration-only output as a failure mode. This is worse:
+there was no narration at all, so nothing distinguished "still reasoning at high effort" from
+"stopped" except sampling CPU time, which nobody does by default.
+
+**Operating rule:** a dispatched reviewer that has produced **no bytes** must have its CPU time
+sampled before it is waited on further. Flat CPU across two samples is a dead process wearing
+the costume of a thoughtful one. Reroute to another family rather than extending the wait.
+
+**Consequence recorded:** with that one-shot dead, Mica is the swarm's only working non-Claude
+reviewer, so both of Cinder's branches queue behind a single seat. Named so the queue is a
+known constraint rather than a surprise.
+
