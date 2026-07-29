@@ -117,3 +117,70 @@ accumulates things they cannot get rid of.
 
 **Not yet triaged.** Needs a ruling on whether archive enforcement is P3 scope before anyone
 writes code.
+
+---
+
+## D-007 — Namecheap dropped the root SPF while adding unrelated TXT records · OPEN
+
+**Found:** 2026-07-29 by Forge, adding the three Resend records at Namecheap. Forge stopped
+rather than continuing, which is the correct behaviour and is why this was caught at all.
+
+Two of the three records were added successfully (`resend._domainkey` DKIM, `send` SPF).
+Neither touches the root host. **After the zone rebuilt, the root SPF was gone.**
+
+`v=spf1 include:spf.efwd.registrar-servers.com ~all` had been on the root host. It is now
+absent from every resolver tested — `1.1.1.1`, `8.8.8.8`, `9.9.9.9`, and both authoritative
+nameservers `dns1`/`dns2.registrar-servers.com`. Independently re-measured by the advisor
+before acting on the report; not a caching artefact.
+
+**Nobody edited it.** Forge's report and the advisor's re-measurement agree that no existing
+row was modified or removed. The likely mechanism is that Namecheap AUTO-GENERATES that SPF as
+part of the Email Forwarding feature rather than storing it as a user row, so adding TXT
+records triggered a zone rebuild that did not re-emit it.
+
+**Impact, stated precisely because the scary reading is the wrong one:**
+
+- Inbound forwarding is NOT broken. The root MX is fully intact (all five `eforward` hosts),
+  and MX governs receiving. `legal@commonswarm.com` and `security@commonswarm.com` still
+  reach their destination.
+- What was lost is outbound AUTHORISATION. The SPF authorised Namecheap's servers to re-send
+  mail as `commonswarm.com` when forwarding. Receivers now see SPF **`none`** — which is
+  neutral, not a failure. Forwarded mail is likelier to be filtered as spam.
+
+So: a real regression on addresses named in the published Terms and Privacy Policy, worth
+fixing promptly, but not an outage and not blocking anything.
+
+**Required shape of fix:** re-add ONE TXT record on host `@` with exactly
+`v=spf1 include:spf.efwd.registrar-servers.com ~all`. Adding it explicitly makes it a user row
+rather than a generated one, which should survive the next rebuild. Do **not** add
+`include:amazonses.com` to it — Resend sends from the `send` subdomain, which carries its own
+SPF, and a second SPF record on one host is invalid and would break both.
+
+---
+
+## D-008 — Namecheap cannot host the Resend return-path MX alongside Email Forwarding · OPEN
+
+**Found:** same session as D-007.
+
+Namecheap does not offer the MX type in Host Records while Mail Settings is set to Email
+Forwarding. Its documented path is Mail Settings → Custom MX, which replaces the forwarding
+configuration wholesale. Forge declined to take it, correctly: that would have traded the
+legal contact addresses for a mail-sending feature.
+
+Resend reports all three records `pending` and the domain unverified, so the missing
+return-path MX blocks magic-link email at scale. Nothing else is blocked — GitHub sign-in
+works, and email sign-in still functions at the built-in 2/hour cap.
+
+**Two candidate resolutions, needing an operator ruling rather than an agent's judgement:**
+
+- **A — Custom MX on Namecheap.** Re-add the five `eforward` MX rows manually plus the `send`
+  MX. **Unresolved risk:** the forwarding RULES (`legal@` → a real inbox) are configured in the
+  Email Forwarding section, and it is not established whether they keep working once Mail
+  Settings is switched to Custom MX, even with identical MX targets. If they do not, this
+  trades a legal-surface address for a convenience feature.
+- **B — Move DNS to Cloudflare.** Free, full record control, and Email Routing replaces the
+  forwarding cleanly. Removes this class of problem permanently. Larger change that also
+  touches the live site's records, so it wants a deliberate window.
+
+**Advisor recommendation:** B, and not urgently. Restore the root SPF (D-007) first. Do not
+attempt A without first establishing what happens to the forwarding rules.
