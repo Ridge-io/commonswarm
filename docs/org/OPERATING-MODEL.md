@@ -83,6 +83,11 @@ models take mechanical work; max-effort models take anything with judgement in i
 
 - **Mutation proof per fix:** revert the fix → observe the verbatim red → restore exactly →
   observe green. A test never seen red proves nothing.
+- ★ **The mutation must be applied at the PRODUCTION CALL SITE**, not to a constant and not to
+  the test's own fixture. Four tests in one day passed full suites while checking nothing they
+  were named for (D-018), and every one of them *had* a mutation proof — applied where the test
+  was already looking. If the only mutation that reddens a test is one its author chose, the
+  test observes the author's model of the system, and a model agrees with itself.
 - **"What test fails if someone deletes this call?"** must have a named answer.
 - **Every sentence in a commit message is a measurement that was run**, or is explicitly marked
   as an assumption. Corrections go in the tree, not only in the message.

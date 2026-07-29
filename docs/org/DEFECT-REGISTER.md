@@ -549,3 +549,43 @@ in a commit message as the reason to trust the change. The rule is not "distrust
 that an invariant must be checked against **structure the code commits to**, never against
 prose a human wrote and a pattern happened to match.
 
+---
+
+## D-018 — Four tests in one day asserted against the test's own choices, not production · OPEN (pattern)
+
+**Found:** 2026-07-29. Four separate REQUEST CHANGES verdicts from the same cross-family
+reviewer, on three branches, from one author. Each individual fix was correct. Treating them as
+four defects is the mistake — they are one root, and naming it is worth more than any of the
+fixes.
+
+| # | Branch | The test claimed | What it actually checked |
+|---|---|---|---|
+| 1 | D-004 | the fix reaches production | `requestSuccessor` called directly; the session handoff at `:788` never executed |
+| 2 | D-011 | the client asserts no unmeasured cause | two regexes over English prose |
+| 3 | D-011 | unrecognised codes are caught | a hardcoded input space that never emits one |
+| 4 | D-006(b) | printed text and JSON never drift | never exercised the JSON path at all |
+
+Every one passed a full suite. Every one was named for the property it did not check. In three
+of the four the *name of the test* was the strongest evidence offered that the property held.
+
+**The root, in one sentence:** each test asserted against a value or path **the test itself
+chose**, rather than against the path production takes. A test that constructs its own inputs
+and calls its own entry point is testing a model of the system, and a model agrees with itself.
+
+**The rule, added to `OPERATING-MODEL.md` §4:**
+
+> A test is not evidence for a property until a mutation **of the production call site** — not
+> of a constant, not of the test's own fixture — turns it red. If the only mutation that
+> reddens it is one the test author chose, the test observes the author's model, not the system.
+
+**Why the existing mutation-proof rule did not catch it.** It required a mutation and got one
+every time. What it did not require was that the mutation be applied where production actually
+runs. Instances 1 and 4 were reddened by mutating things the tests already watched; nobody
+asked whether the watched thing was on the executed path.
+
+**Not a competence finding.** The author flagged its own weakest joint twice in writing,
+reproduced every verdict before fixing it, and found the fourth-round hole in its own work. The
+advisor missed instance 1 while believing it had verified it, and approved instance 2's test on
+the strength of its description. The reviewer caught all four because it was standing somewhere
+neither of them was — which is the argument for §2, not against anyone.
+
