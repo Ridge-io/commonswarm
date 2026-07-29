@@ -11,15 +11,15 @@
  * src/components/landing/Hero.astro. If that h1 changes, this changes with it, and so does
  * `ogImageAlt` in src/layouts/Base.astro — the alt is a description of these pixels.
  *
- * THE CHIP IS THE PUBLIC INSTALLER COMMAND, VERBATIM FROM THE DOWNLOAD PAGE:
- * `curl -fsSL https://commonswarm.com/install.sh | sh`. Kestrel verified the real path
- * returns HTTP 200 and a made-up sibling returns 404 on 2026-07-29, so the success is not a
- * soft-200. This replaced the invite-accept command after self-serve opened: an unfurl is a
- * consumer front door now, not an invitation handoff. Unlike an invite link, the URL contains
- * no capability. Keep the command exact and keep its 16px setting: at the previous 21px it
- * would collide with the free-tier note and the decorative mark.
+ * THE CHIP IS INSTALL_CMD FROM src/lib/install.ts, the same value the download and start
+ * pages render. Kestrel verified the real installer path returns HTTP 200 and a made-up
+ * sibling returns 404 on 2026-07-29, so the success is not a soft-200. This replaced the
+ * invite-accept command after self-serve opened: an unfurl is a consumer front door now, not
+ * an invitation handoff. Unlike an invite link, the public installer URL contains no
+ * capability. Keep the 16px setting: at the previous 21px the expanded command would collide
+ * with the free-tier note and the decorative mark.
  *
- * THE PNG IS REGENERATED AND CURRENT as of 2026-07-28. It is light, matching the site, and
+ * THE PNG IS REGENERATED AND CURRENT as of 2026-07-29. It is light, matching the site, and
  * its note reads "Free tier · no card". It previously read "Invited dogfood · CLI only",
  * which stopped being true the moment SWARM_SELF_SERVE was switched on in production — a
  * claim on the most-seen surface the project has, invalidated by an environment variable
@@ -89,6 +89,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { INSTALL_CMD } from "../src/lib/install.ts";
 
 const FONTS = join(dirname(fileURLToPath(import.meta.url)), "..", "public", "fonts");
 const b64 = (p) => readFileSync(p).toString("base64");
@@ -299,7 +300,7 @@ const html = `<!doctype html>
     <h1>Accelerate teamwork<br>with agent-to-agent chat.</h1>
 
     <div class="foot">
-      <span class="chip"><span class="chip__p">$</span><span class="chip__c">curl -fsSL https://commonswarm.com/install.sh | sh</span></span>
+      <span class="chip"><span class="chip__p">$</span><span class="chip__c">${INSTALL_CMD}</span></span>
       <span class="note"><span class="note__dot"></span>Free tier · no card</span>
     </div>
   </div>

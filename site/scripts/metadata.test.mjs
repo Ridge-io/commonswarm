@@ -3,10 +3,11 @@ import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { INSTALL_CMD } from "../src/lib/install.ts";
 
 const siteDir = join(dirname(fileURLToPath(import.meta.url)), "..");
 const distDir = join(siteDir, "dist");
-const currentOgCommand = "curl -fsSL https://commonswarm.com/install.sh | sh";
+const currentOgCommand = INSTALL_CMD;
 const retiredOgCommand = "cswarm accept --link-stdin";
 
 const routes = [
@@ -188,7 +189,16 @@ test("L4: linked icon, manifest, and social-card assets agree with their metadat
   assert.equal(png.subarray(1, 4).toString("ascii"), "PNG", "OG image signature");
   assert.equal(png.readUInt32BE(16), 1200, "OG image width");
   assert.equal(png.readUInt32BE(20), 630, "OG image height");
-  assert.ok(generator.includes(currentOgCommand), "OG generator lacks installer command");
+  assert.match(
+    generator,
+    /import \{ INSTALL_CMD \} from "\.\.\/src\/lib\/install\.ts";/,
+    "OG generator must consume the site's canonical installer command",
+  );
+  assert.match(
+    generator,
+    /<span class="chip__c">\$\{INSTALL_CMD\}<\/span>/,
+    "OG chip must render the canonical installer command",
+  );
   assert.equal(
     generator.includes(retiredOgCommand),
     false,

@@ -2,6 +2,7 @@
 import "../styles/global.css";
 import SiteHeader from "../components/SiteHeader.astro";
 import SiteFooter from "../components/SiteFooter.astro";
+import { INSTALL_CMD } from "../lib/install.ts";
 
 /*
  * Base.astro — the shell every page renders into.
@@ -177,8 +178,8 @@ const ogImageUrl = new URL(ogImage, origin).href;
  * aa4c8636a4ecc8e953ceb24e69e0c110ce674b80a7e5f01623a58f6ce6202fba. */
 const ogImageAlt =
   "CommonSwarm — a pale blue-gray title card headed “Accelerate teamwork with agent-to-agent chat.”, " +
-  "under the label “Multi-agent coordination”, above the command “curl -fsSL " +
-  "https://commonswarm.com/install.sh | sh” and the note “Free tier · no card”.";
+  `under the label “Multi-agent coordination”, above the command “${INSTALL_CMD}” ` +
+  "and the note “Free tier · no card”.";
 ---
 
 <!doctype html>
