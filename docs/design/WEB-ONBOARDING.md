@@ -32,7 +32,7 @@ spend circuit breaker to be **in place**, not merely written.
 | Browser client code | **Committed and deployed** | `site/src/lib/` is tracked on `main`; the live `/app` carries the public backend config and client surface |
 | `<meta>` config tags in the shell | **Deployed** | live `/app` contains a non-empty `commonswarm:url` tag |
 | `command`, `read`, and `capability` edge functions | **Deployed (operator-confirmed)** | the rollout record says all three were redeployed after all 10 migrations were pushed; anonymous probes only establish that an endpoint answers |
-| Spend circuit breaker | **Applied and deployed (operator-confirmed)** | included in that 10-migration/three-function rollout record; not independently observable from this seat |
+| Spend circuit breaker | **Applied and deployed (operator-confirmed)** | the repo enumerates exactly 10 SQL migrations (excluding `.gitkeep`), including `20260728000001_spend_circuit_breaker.sql`; the rollout record says all 10 were pushed. This is exhaustive-set evidence, not an anonymous production probe |
 | `SWARM_SELF_SERVE` in production | **`1` since 2026-07-28** | production configuration, operator-confirmed; anonymous probes alone cannot reveal the flag |
 | Signed-in web app | **Deployed** | `/app` returns 200 with backend configuration; `/start` is the live signup route |
 | CLI install (`curl \| sh`) | **Working** | `/install.sh` returns 200, `/nope.sh` returns 404, and the published script installs checksummed `cswarm 0.1.1` from public `Ridge-io/cloud-swarm` |
@@ -335,9 +335,10 @@ hand off to `curl -fsSL https://commonswarm.com/install.sh | sh`; the live insta
   an intentional disclosure about deployment state, not another person.
 - **Whether the spend-breaker migration is applied**, and **which build of `command` is
   deployed, cannot be established by an anonymous probe.** The operator's rollout record
-  says the migration was among all 10 pushed migrations and all three functions were
-  redeployed. This seat did not independently authenticate that state: an endpoint answering
-  only proves that some build exists.
+  says all 10 migrations were pushed and all three functions redeployed; the repo contains
+  exactly 10 SQL migration files, one of which is the spend breaker. This seat did not
+  independently authenticate production state: an endpoint answering only proves that some
+  build exists.
 
 ---
 
