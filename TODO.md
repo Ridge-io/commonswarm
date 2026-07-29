@@ -286,11 +286,11 @@ closed, and leaving them listed would have made the table lie about the state of
 | # | Item | Kind | State | Unblocks |
 |---|---|---|---|---|
 | 1 | Name and domain | Operator actions | ✅ **DONE** — commonswarm.com live, apex + www, certs issued | canonical URL, contact addresses |
-| 2 | Release repo (`-dist` vs public `cloud-swarm`) | Decision | ⬜ **OPEN** — with Forge; needs the operator's A/B answer | `curl \| sh` installing at all |
+| 2 | Release repo + published installer | Decision + deploy | ✅ **DONE** — repo is public, release `v0.0.1` carries `cswarm` + `cswarm.sha256`, and `commonswarm.com/install.sh` serves the repo's installer (verified end to end: a clean `curl \| sh` installed a working `cswarm 0.0.1`) | `curl \| sh` installing at all |
 | 3 | State of formation | Fact to confirm | ✅ **DONE** — WA-formed LLC, TX office, venue kept | correctness of the terms |
 | 4 | DMCA agent | External filing | ◐ **HALF** — named in the document, **not registered** | the §512 safe harbour |
 | 5 | Supabase hosting region | Fact from dashboard | ✅ **DONE** — East US (North Virginia) | the privacy policy |
-| 6 | `SWARM_SELF_SERVE=1` | Deferred on purpose | ⬜ **OPEN** — also needs the spend circuit breaker | public signup |
+| 6 | `SWARM_SELF_SERVE=1` | Deferred on purpose | ✅ **DONE** — set on the production project 2026-07-28, after all 10 migrations were pushed and the three edge functions redeployed. The web app is now wired to the backend too (`PUBLIC_SUPABASE_URL` / anon key at build time) and GitHub OAuth answers 302 to github.com with a real client id | public signup |
 | 7 | Attorney review | External review | ⬜ **OPEN** | publishing the legal docs as in-force |
 | 8 | One re-login per dogfood machine | Human action | ⬜ **OPEN** | dogfood surviving the rename |
 | 9 | `legal@commonswarm.com` delivers | Test to run | ⬜ **OPEN** — never confirmed | every document that names it |
@@ -302,8 +302,17 @@ review). Every `[[placeholder]]` is filled — the writing is finished. What is 
 filing, a test, and a review, and all three happen outside version control. That is why the
 draft banner is still up and why no amount of further editing will lift it.
 
-Item **2** gates distribution on its own: everything else could be perfect and a stranger
-still could not install. Item **6** gates the product being self-serve at all.
+Item **2** is closed: a stranger can install. What remains between a stranger and a working
+workspace is item **8** (someone has to complete one GitHub sign-in against production —
+nothing in this repo can prove that leg works) and the legal items.
+
+**`SWARM_CAPABILITY_URLS` is deliberately still dark.** The §7 zero-install on-ramp is built
+and its two DoS blockers are fixed, but the capability endpoint answers `404` both when the
+feature is off AND when a presented token is bad — that uniformity is the no-enumeration rule
+working as designed, and it means flipping the gate produces NO externally observable change.
+Turning on a switch whose effect cannot be measured from outside is the "green check against
+the wrong target" failure. It should be flipped during dogfood, when a real session can mint a
+capability URL and fetch it, and the flip verified rather than assumed. Item **6** gates the product being self-serve at all.
 
 ---
 

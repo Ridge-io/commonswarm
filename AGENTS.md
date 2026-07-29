@@ -173,6 +173,24 @@ cp -r .vercel dist/.vercel                       # load-bearing, see trap 5
 vercel deploy dist --prod --yes --scope ridgedotio
 ```
 
+**`site/.env` is required and is NOT in the repo.** It is gitignored on purpose — Base.astro
+states the standing rule that no key is committed, because a committed key outlives the
+project and gets rotated by hand. Without it the build SUCCEEDS and silently produces a site
+whose `/start` and `/app` have no backend and whose GitHub sign-in does nothing. That shipped.
+
+```
+PUBLIC_SUPABASE_URL=https://<ref>.supabase.co
+PUBLIC_SUPABASE_ANON_KEY=<the anon key, from `supabase projects api-keys`>
+```
+
+The anon key is a public identifier protected by RLS, not a secret. **A service-role key must
+never appear in any file under `site/`** — `supabase projects api-keys` prints it two rows
+below the one you want.
+
+The site build also copies the repo-root `install.sh` into `public/` (`npm run
+sync:installer`, wired into `build`). The repo-root file is the single source of truth; the
+copy is gitignored so the two cannot drift.
+
 `--scope ridgedotio` is required; without it the CLI stops and asks. `vercel link
 --project coswarm-site --scope ridgedotio --yes` is needed before any `vercel project`
 subcommand.
@@ -205,11 +223,22 @@ subcommand.
    fix and were only caught by curling production.
 
 ```sh
-U=https://coswarm-site.vercel.app
+U=https://commonswarm.com
 curl -s -o /dev/null -w '%{http_code}\n' "$U"        # 200, not 302
 curl -s "$U" | grep -c '<some string that MUST be there>'   # positive control
 curl -s "$U" | grep -c '<the thing that must be GONE>'      # must be 0
+
+# The two checks that would have caught what actually shipped broken:
+curl -s -o /dev/null -w '%{http_code}\n' "$U/install.sh"           # 200 -- the installer
+curl -s -o /dev/null -w '%{http_code}\n' "$U/nope.sh"              # 404 -- control for it
+curl -s "$U/start" | grep -o 'commonswarm:url" content="[^"]*"'    # MUST be non-empty
+curl -s "$U/start" | grep -c 'InNlcnZpY2Vfcm9sZSI'                 # 0 -- no service_role JWT
 ```
+
+Both failures were invisible in the source and in the build log. The install command read
+`curl -fsSL https://<host>/install.sh | sh` on the live front page, and the backend meta tags
+rendered as `content=""`. Grep the DEPLOYED page, and pair every "must be absent" grep with a
+"must be present" one on the same invocation.
 
 There is no CI. Deploys are manual and are the Lead's call; nothing deploys on push.
 
