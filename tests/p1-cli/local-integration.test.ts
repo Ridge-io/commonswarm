@@ -19,7 +19,7 @@ import {
   ThinCommandClient,
 } from "../../src/cloud/command-client.js";
 import { cloudTarget } from "../../src/cloud/config.js";
-import { awaitFunctionRunning } from "./edge-readiness.js";
+import { awaitFunctionRunning } from "../support/edge-readiness.js";
 import {
   decodeInviteLink,
   encodeInviteLink,

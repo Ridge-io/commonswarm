@@ -43,10 +43,11 @@ All verified working from a clean `npm install` on this repo.
 |---|---|
 | `npm install` | Deps. No postinstall surprises. |
 | `npm run build` | `tsc` → `dist/`. Wipes `dist/` first, `chmod 755 dist/cli.js` after. |
-| `npm test` | 79 tests — every PURE unit suite: protocol reducer plus pure harness observers (e.g. `tests/support/`). Touches no network and no database. **Read the trap below.** |
-| `npm run test:p1-cli` | 77 tests. 74 are pure; `local-integration.test.ts` (3) needs local Supabase. |
-| `npm run test:p1-server` | 17 tests. **Requires local Supabase running** (Docker). ~30s. |
-| `npm run test:uxtest` | 6 tests, the cross-machine UX harness. |
+| `npm test` | The pure gate: protocol reducer plus every file NAMED in the `test` script. No network, no database. **Read the trap below.** |
+| `npm run test:p1-cli` | Globs `tests/p1-cli/**`. **Needs an exclusive DB slot** — `local-integration.test.ts` serves edge functions and writes local Postgres, so the whole script is stack-touching even though most of its tests are pure. |
+| `npm run test:p1-server` | Globs `tests/p1-server/**`. **Requires local Supabase** (Docker) and an exclusive DB slot. |
+| `npm run test:uxtest` | The cross-machine UX harness. |
+| `npm run check:tests` | Typechecks `tests/` as well as `src/`. Nothing else does — see below. |
 | `npm run db:start` / `db:stop` / `db:reset` / `db:status` | Local Supabase lifecycle. |
 | `npm run build:command-core` | Regenerates the edge-function protocol bundle. |
 | `npm run check:edge` | `deno check` over both edge functions. Needs `brew install deno`. |
@@ -77,17 +78,22 @@ docs/evidence/  durable artifacts backing completion claims. Committed on purpos
 
 These have each cost someone real time. They are not theoretical.
 
-**`npm test` names its test files explicitly.** The `test` script in `package.json` is a
-literal file list, not a glob — **`package.json` is the source of truth for what runs.** A
-new file anywhere outside the globbed suites is silently *not run*: that includes the repo
-root, `tests/`, and `tests/support/`. Verified: an unregistered test file leaves the count
-unchanged; the same file runs when named. Any new PURE test outside `tests/p1-cli/` and
-`tests/p1-server/` must be added to the `test` script in the same commit. (`test:p1-cli`
-and `test:p1-server` glob their directories, so files added there are picked up — but note
-`test:p1-cli` is NOT pure: `local-integration.test.ts` inside it touches the local stack,
-so it needs a DB slot like `test:p1-server` and `db:*`. See D-030.) An earlier version of
-this trap quoted a two-file invocation and said only "root-level" tests need registration
-— superseded 2026-07-29 when the pure observer suites joined the list (66 → 79 tests).
+**A test file runs only if some script's path or glob reaches it. `package.json` is the
+source of truth — read the scripts, do not assume.** `npm test` names its files as a
+LITERAL LIST; `test:p1-cli` and `test:p1-server` glob their own directories, and
+**nothing globs anything else**. So a new file under `tests/support/`, or any directory
+that is not one of those two, is silently *not run* — it will typecheck under
+`check:tests` and pass by hand, which is not a gate.
+
+This is not hypothetical and the counts in the table above are deliberately absent
+because they rot: an earlier version of this section said "the count stays at 66", and
+six observers for D-025 were written into `tests/support/` where no script reached them.
+`npm run test:p1-cli | grep -c "D-025:"` returned **0**. They proved nothing until they
+were named in the `test` script.
+
+If you add a test, check which script picks it up and say so in the change. Prefer the
+pure `npm test` gate for anything that needs no database: `test:p1-cli` requires an
+exclusive DB slot, and **a gate you must queue for is a gate that gets skipped**.
 
 **Edge functions are outside `tsc`.** `tsconfig.json` sets `include: ["src/**/*.ts"]`, so
 nothing under `supabase/functions/` is checked by it. `npm run build` passing tells you

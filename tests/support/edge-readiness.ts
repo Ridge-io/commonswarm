@@ -160,3 +160,112 @@ export async function awaitFunctionRunning(options: ReadinessOptions): Promise<v
     }`,
   );
 }
+
+/* ------------------------------------------------------------------------- *
+ * D-025 — a cold-start retry that reports exhaustion instead of hiding it.
+ * ------------------------------------------------------------------------- */
+
+/**
+ * ★ WHAT THIS REPLACES, AND WHY IT IS THE D-024 FAMILY.
+ *
+ * `tests/p1-server/command.test.ts` retried a 502 up to ten times and then did this:
+ *
+ *     return response!;
+ *
+ * It handed the LAST 502 back as though it were an ordinary answer. So a runtime that never
+ * came up did not surface as "the runtime never came up" — it surfaced as whatever assertion
+ * happened to run next, usually a status or body comparison, in a test that has nothing to do
+ * with process startup. The honest answer was available and got converted into a confusing
+ * one, which is exactly D-024's shape: the information existed and the code threw it away.
+ *
+ * Retrying a 502 is right. A cold Deno module really does answer 502 and really does become
+ * healthy. What is wrong is being quiet when the retries run out, because at that moment the
+ * function knows something no caller can reconstruct: how many attempts, over how long, ending
+ * in what status.
+ */
+export class ColdStartExhausted extends Error {
+  override name = "ColdStartExhausted";
+  constructor(
+    readonly attempts: number,
+    readonly elapsedMs: number,
+    readonly lastStatus: number,
+    readonly lastBody: string,
+  ) {
+    super(
+      `the edge runtime never became healthy: ${attempts} attempts over ${elapsedMs}ms, ` +
+        `last HTTP ${lastStatus}: ${lastBody.slice(0, 200)}. ` +
+        `This is a runtime that did not boot, not a failure of whatever assertion follows.`,
+    );
+  }
+}
+
+export interface ColdStartRetryOptions {
+  /** Performs one attempt. Kept generic so the caller owns url, headers and body. */
+  attempt: () => Promise<Response>;
+  /** How many times to try before reporting exhaustion. */
+  attempts: number;
+  sleep: (ms: number) => Promise<void>;
+  now: () => number;
+  /** Milliseconds between attempts. */
+  intervalMs?: number;
+  /**
+   * Names this call site in the cold-start trace. Present so an attribution question can be
+   * answered in ONE run: without it, "did this test spend time in the retry loop?" needs a
+   * second run with instrumentation added, and the two runs may not fail the same way.
+   */
+  label?: string;
+  /** Where a trace line goes. Defaults to stderr, so it survives a failing test's output. */
+  trace?: (line: string) => void;
+}
+
+/**
+ * Return the first response that is not a cold-start 502, or throw naming what was seen.
+ *
+ * ONLY 502 is retried. Every other status — including 500, 403 and any 2xx — is a decided
+ * answer and is returned to the caller untouched on the first attempt, so this can never
+ * swallow a real result. That is the same allowlist reasoning as the readiness gate above:
+ * an unanticipated status returns immediately rather than being waited on.
+ */
+export async function postThroughColdStart(
+  options: ColdStartRetryOptions,
+): Promise<Response> {
+  const started = options.now();
+  const trace = options.trace ??
+    ((line: string) => process.stderr.write(`${line}\n`));
+  const label = options.label ?? "unlabelled";
+  let lastStatus = 0;
+  let lastBody = "";
+  for (let attempt = 1; attempt <= options.attempts; attempt += 1) {
+    const response = await options.attempt();
+    if (response.status !== 502) {
+      /* Traced only when the loop actually spun. A silent first-attempt success is the
+       * common case and logging it would bury the interesting lines. A call site that never
+       * appears here never waited — which is exactly how "was this test slow because of the
+       * retry budget?" gets answered without guessing. */
+      if (attempt > 1) {
+        trace(
+          `[cold-start] ${label}: cleared after ${attempt} attempts, ${
+            options.now() - started
+          }ms`,
+        );
+      }
+      return response;
+    }
+    lastStatus = response.status;
+    // Draining keeps the connection reusable; the body is kept for the failure message
+    // rather than discarded, because "last HTTP 502: <what it said>" is the diagnosable part.
+    lastBody = await response.text().catch(() => "");
+    if (attempt < options.attempts) await options.sleep(options.intervalMs ?? 100);
+  }
+  trace(
+    `[cold-start] ${label}: EXHAUSTED after ${options.attempts} attempts, ${
+      options.now() - started
+    }ms, last HTTP ${lastStatus}`,
+  );
+  throw new ColdStartExhausted(
+    options.attempts,
+    options.now() - started,
+    lastStatus,
+    lastBody,
+  );
+}

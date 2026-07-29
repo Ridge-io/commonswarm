@@ -9,6 +9,10 @@ import { setTimeout as delay } from "node:timers/promises";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import postgres from "postgres";
 import {
+  awaitFunctionRunning,
+  postThroughColdStart,
+} from "../support/edge-readiness.js";
+import {
   AGENT_TOKEN_DEFAULT_TTL_MS,
   AGENT_TOKEN_MAX_TTL_MS,
   reduceTask,
@@ -107,25 +111,26 @@ function localEnvironment(): LocalEnvironment {
   return parsed as LocalEnvironment;
 }
 
+/**
+ * D-025 / D-020: wait for both functions to be RUNNING, not merely reachable.
+ *
+ * This used to return as soon as `command` and `read` each answered any 401. The local
+ * gateway answers a 401 before either module is loaded, so the gate cleared while the runtime
+ * was still cold — the same defect measured at 1-in-8 in the p1-cli suite (D-020), sitting
+ * unnoticed in this harness too. Both functions answer an unauthenticated probe with their
+ * own `{"error":"unauthenticated"}`, which is what the shared predicate requires.
+ */
 async function waitForFunction(): Promise<void> {
-  const deadline = Date.now() + 30_000;
-  while (Date.now() < deadline) {
-    try {
-      const response = await fetch(`${local.API_URL}/functions/v1/command`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ command_id: "healthcheck" }),
-      });
-      const read = await fetch(`${local.API_URL}/functions/v1/read`, {
-        method: "POST",
-      });
-      if (response.status === 401 && read.status === 401) return;
-    } catch {
-      // The runtime is still booting.
-    }
-    await delay(200);
+  for (const fn of ["command", "read"]) {
+    await awaitFunctionRunning({
+      url: `${local.API_URL}/functions/v1/${fn}`,
+      fetcher: fetch,
+      timeoutMs: 30_000,
+      sleep: (ms) => delay(ms),
+      now: () => Date.now(),
+      diagnostics: () => `${fn} function logs:\n${functionLogs.slice(-4000)}`,
+    });
   }
-  throw new Error(`command function did not become ready:\n${functionLogs.slice(-4000)}`);
 }
 
 before(async () => {
@@ -821,18 +826,29 @@ test("pre-principal failures never write audit rows while authenticated validati
     headers: Record<string, string>,
     body: Record<string, unknown>,
   ): Promise<Response> => {
-    let response: Response | null = null;
-    for (let attempt = 0; attempt < 10; attempt += 1) {
-      response = await fetch(`${local.API_URL}/functions/v1/command`, {
-        method: "POST",
-        headers,
-        body: JSON.stringify(body),
-      });
-      if (response.status !== 502) return response;
-      await response.arrayBuffer();
-      await delay(100);
-    }
-    return response!;
+    /* D-025: this loop used to end with `return response!`, handing back the last 502 as
+       though it were an ordinary answer — so a runtime that never booted surfaced as
+       whatever assertion ran next. It now throws, naming attempts, elapsed and last status. */
+    return await postThroughColdStart({
+      attempt: () =>
+        fetch(`${local.API_URL}/functions/v1/command`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify(body),
+        }),
+      /* ★ THE BUDGET WAS ALWAYS TOO SMALL, AND THE SWALLOW IS WHAT HID THAT.
+         10 attempts x 100ms is a one-second ceiling. Once exhaustion started throwing, a
+         real run reported "10 attempts over 1226ms, last HTTP 502" — the runtime was still
+         cold and the old code had been handing that 502 back as an answer, so nobody could
+         see the budget was short. It is now the same 30s this harness already allows the
+         runtime at startup, which is the number the suite already treats as "long enough
+         for this runtime to boot" rather than one tuned until the failure stopped. */
+      label: "p1-server postCommand",
+      attempts: 120,
+      sleep: (ms) => delay(ms),
+      now: () => Date.now(),
+      intervalMs: 250,
+    });
   };
   const commandKind = "security_preauth_probe";
   const unknownAgentToken = `swm_agt_${"A".repeat(43)}`;

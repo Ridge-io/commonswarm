@@ -24,7 +24,7 @@ import {
   awaitFunctionRunning,
   readinessVerdict,
   ReadinessRefused,
-} from "./edge-readiness.js";
+} from "../support/edge-readiness.js";
 
 /** The command function's own answer to an unauthenticated probe. */
 const FUNCTION_401 = JSON.stringify({ error: "unauthenticated" });
