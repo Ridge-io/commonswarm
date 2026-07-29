@@ -295,7 +295,7 @@ closed, and leaving them listed would have made the table lie about the state of
 | 8 | One re-login per dogfood machine | Human action | ⬜ **OPEN** | dogfood surviving the rename |
 | 9 | `legal@commonswarm.com` delivers | Test to run | ⬜ **OPEN** — never confirmed | every document that names it |
 | 10 | USPTO check on "CommonSwarm" | Research | ⬜ **OPEN** — prompt written for an agent | launching under a name nobody has cleared |
-| 11 | **Custom SMTP for magic-link sign-in** | External account + DNS | ⬜ **OPEN — now the top blocker for non-developer signup** | email sign-in working for more than 2 people an hour |
+| 11 | **Custom SMTP for magic-link sign-in** | External account + DNS | ◐ **IN FLIGHT** — no new account needed: `commonswarm.com` added to the EXISTING Resend account beside `ridgehq.com` and `prompteden.com` (domain id `6dd49fe3-fe28-46ce-8fd9-49cde8d15195`, us-east-1). Blocked on three DNS records at Namecheap, delegated to Anvil | email sign-in working for more than 2 people an hour |
 
 ### Item 11 in full — what magic-link sign-in still needs
 
@@ -318,17 +318,37 @@ So the third stranger to try email in any given hour is refused through no fault
 own. The page handles that honestly — it says the limit is ours, not their address, and
 points at GitHub — but honest degradation is not the same as working.
 
-**To close it** (all three steps are outside version control):
+**Step 1 is done and cost nothing.** Resend scopes by DOMAIN, not by project or account, so
+`commonswarm.com` was added to the account that already holds `ridgehq.com` and
+`prompteden.com` — no second subscription, no second bill, and the existing full-access API
+key in `ridgehq/marketing/.env` was enough to do it.
 
-1. Open an account with a transactional email provider — Resend, Postmark, SendGrid or SES.
-   Resend's free tier is 3,000/month and is the least setup.
-2. Verify `commonswarm.com` as a sending domain. This means adding **DKIM/SPF DNS records**
-   at the registrar — the same place the Vercel records went. Without domain verification the
-   mail sends from the provider's shared domain and lands in spam, which is indistinguishable
-   from not sending at all.
-3. Put the SMTP credentials into the Supabase project (Dashboard → Authentication → SMTP
-   Settings, or `PATCH /config/auth` with the five `SMTP_*` fields), then raise
-   `rate_limit_email_sent`.
+**Step 2 is the blocker: three DNS records at Namecheap** (delegated to Anvil, who has the
+credentials). All three sit on SUBDOMAINS:
+
+| Type | Host | Value |
+|---|---|---|
+| TXT | `resend._domainkey` | `p=MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDDHAv5/O9Nu3IwwfMiAEnZXQ8GXNQ48fhp0aH7bd9fvcVYVfKpw2EugxPKEIFN5EcQbJ3r+X8TJYhnYO5suh77/0yShPxKIfWFFMYnFXoPhhvo2dr85z2jX9zsuZQJiKnLVWSHTuMk9UVAvNFlYnVW39AhMzQYlvb0mqfeI9OQLQIDAQAB` |
+| MX | `send` (priority 10) | `feedback-smtp.us-east-1.amazonses.com` |
+| TXT | `send` | `v=spf1 include:amazonses.com ~all` |
+
+★ **THE TRAP, WRITTEN DOWN BEFORE SOMEBODY HITS IT.** `commonswarm.com` ALREADY has, on the
+ROOT host, an MX set pointing at `eforward1..5.registrar-servers.com` and a TXT reading
+`v=spf1 include:spf.efwd.registrar-servers.com ~all`. That pair is what makes
+`legal@commonswarm.com` and `security@commonswarm.com` forward to the operator's real inbox —
+i.e. it is item 9. Resend's records go on subdomains precisely so they do not collide. But a
+domain may hold only ONE SPF record per host: anybody who "tidies up" by moving Resend's SPF
+onto the root ends up with two, which is invalid, and breaks BOTH the forwarding and the
+sending at once. **Add, never replace.** Same for the Vercel A/CNAME records — the site is
+live on them.
+
+**Step 3, once DNS resolves:** trigger verification (`POST /domains/<id>/verify`), create a
+Resend API key scoped to this project rather than reusing RidgeHQ's, put the SMTP credentials
+into Supabase, and only then raise `rate_limit_email_sent`.
+
+**Order matters and the wrong order is worse than waiting.** Configuring Supabase SMTP BEFORE
+the domain verifies replaces a sender that works-but-is-capped with one that fails outright.
+Today magic links do send, just 2 per hour.
 
 **Then verify it end to end rather than assuming**: request a link at
 https://commonswarm.com/start with a real address, confirm the mail arrives, and confirm the
