@@ -57,7 +57,9 @@ const required = {
     "Connect your AI assistant",
     "Create a temporary key for the assistant you already use.",
     "Before you paste it.",
-    "Clear this key now.",
+    "The download is ready.",
+    "it takes about a minute",
+    "Then paste this block into your AI assistant.",
     "The installer is published at the address above.",
   ],
 };
