@@ -303,7 +303,8 @@ const PLATFORMS = [
      title that measures the same as the section titles under it gives the outline no visible
      top. --t-display already clamps down to 2.9rem, so it does not run away at 375px. */
   .dl-hero__h {
-    margin: var(--s-4) 0 0;
+    /* Bottom margin cancels .h-display's descender padding — see global.css. */
+    margin: var(--s-4) 0 calc(-1 * var(--descender-pad, 0px));
   }
 
   .dl-hero__lede {

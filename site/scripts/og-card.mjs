@@ -213,6 +213,17 @@ const html = `<!doctype html>
     -webkit-background-clip: text;
     background-clip: text;
     color: transparent;
+    /* ★ DESCENDERS, and this is the card where the bug was SEEN. background-clip: text paints
+       the gradient only inside the padding box, and line-height 1.03 makes the line box
+       shorter than the font's ascent+descent (58+14 = 1.2em at this weight), so the tails of
+       the g's on the last line were cut clean off. Measured here: 4.05px of ink below the
+       box at 60px. The padding gives the gradient somewhere to be; the negative margin hands
+       the space back so .foot's 44px gap is unchanged.
+       The site has the identical defect for the identical reason — .h-display in
+       src/styles/global.css — and is fixed in the same pass. If one is ever changed, check
+       the other: they are two copies of one construction, not one shared rule. */
+    padding-bottom: 0.1em;
+    margin-bottom: -0.1em;
   }
 
   .foot {

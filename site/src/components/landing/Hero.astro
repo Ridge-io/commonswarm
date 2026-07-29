@@ -379,6 +379,16 @@ const signals = [
     max-width: 15ch;
     background: none;
     -webkit-text-fill-color: currentColor;
+    /* The gradient is off here, so the descender padding global.css adds for it must go too.
+       That padding exists ONLY to give `background-clip: text` somewhere to paint the tails
+       of g/y/p, which fall outside a line box tighter than the font's own ascent+descent. A
+       solid fill paints the whole glyph regardless, so with the gradient off the padding buys
+       nothing and just pushes the lede down.
+       Zeroing the CUSTOM PROPERTY rather than the padding is deliberate: global.css derives
+       both the padding and its cancelling negative margin from this one value, so setting it
+       to 0 removes the pair together. Overriding `padding-bottom` alone would leave the
+       negative margin behind and pull the lede UP by 6px. */
+    --descender-pad: 0px;
     /* pretty, not global.css's balance, and not just for the reason first recorded here.
        balance broke this as "know what each / other are doing." It was re-measured against
        the wider column below and is still wrong: at 1200 balance sets "Your agents / know

@@ -410,6 +410,22 @@ kbd {
   -webkit-background-clip: text;
   background-clip: text;
   -webkit-text-fill-color: transparent;
+  /* ★ DESCENDERS. `background-clip: text` paints the gradient only where the element's
+     PADDING BOX is, and --lh-display makes the line box SHORTER than the font's own
+     ascent+descent — so the bottom of every g, y, p and j on the last line falls outside the
+     box and is simply not painted. It does not look like a bug in the CSS; it looks like the
+     typeface has clipped descenders, which is why it survived until someone looked closely at
+     a social card.
+     MEASURED on the live hero, not estimated: at 64.8px with line-height 67.392px, the font
+     box is ascent 58 + descent 14 = 1.2em against a 1.04em line box, leaving 3.79px of ink
+     below the element. 0.1em (6.5px there) covers it with room to spare.
+     The negative margin gives the space straight back, so adding this moves nothing on the
+     page. It is a custom property because two companion rules set `margin` as a SHORTHAND
+     and would otherwise silently reset the compensation while keeping the padding — which
+     would shift every display heading down by 6px instead of fixing anything. */
+  --descender-pad: 0.1em;
+  padding-bottom: var(--descender-pad);
+  margin-bottom: calc(-1 * var(--descender-pad));
 }
 
 /* Escape hatches: -webkit-text-fill-color inherits, so a highlighted word inside a
