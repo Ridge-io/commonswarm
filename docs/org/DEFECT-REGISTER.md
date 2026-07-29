@@ -159,8 +159,11 @@ accumulates things they cannot get rid of.
 **RULED 2026-07-29, and the entry's original premise was wrong.** It conflated two unrelated
 defects:
 
-- **The archive notice is wording** — split out, ruled, and landed by Cinder at `a66c4cc`
-  (awaiting review). The CLI explained the system's state to someone asking about their own
+- **The archive notice is wording** — split out, ruled, and **MERGED to `main` at `8da566f`**
+  after a REQUEST CHANGES round (the drift test observed the renderer, never either JSON
+  payload — D-018 instance 4). Advisor-verified: drifting the builder's message turns exactly
+  the two payload observers red, 11 → 9/11, restored 11/11. Patch-id `848c177d…` identical
+  across Cinder's head, Mica's approved SHA and the merged commit. The CLI explained the system's state to someone asking about their own
   list and gave them no action.
 - **The list accumulating is a MISSING SURFACE, not archiving.** `remove_member` exists as a
   protocol command kind (`src/protocol/workspace-commands.ts`) and is **not exposed in the
