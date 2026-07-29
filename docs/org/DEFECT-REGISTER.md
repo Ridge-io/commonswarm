@@ -90,7 +90,34 @@ predicate. At the 401/403 branch, if the credential is past its own expiry, repo
 rather than revocation. Do not guess when `expiresAt` is null — the generic message is correct
 there.
 
-**Not yet assigned.**
+**Status: REQUEST CHANGES at `8ca72df`** (Cinder authored, Mica reviewed 2026-07-29).
+
+Fix and wording approved. Rejected on the observer: all 7 tests call `requestSuccessor`
+directly and never construct an `AgentCredentialSession`, so the `expiresAt` handoff at
+`src/cloud/renewal.ts:788` — the line that connects the fix to production — is unobserved.
+
+**Verified by the advisor rather than relayed.** Isolated worktree at `8ca72df`, deleted line
+788 only, `tsc` clean:
+
+```
+mutated (handoff deleted)   ->  tests 7, pass 7, fail 0
+grep 'AgentCredentialSession|bearer(' in the test file  ->  0
+```
+
+So the entire fix can be disconnected from production and the suite stays green.
+
+★ **THIS IS THE FIRST FINDING THE OPERATING MODEL PAID FOR, AND IT CAUGHT THE ADVISOR.** I
+re-executed Cinder's mutation independently, got 4-of-7 red, and recorded "verified". But I
+mutated the MESSAGE CONSTANT — the thing the tests already cover. I proved the observer works
+for what it observes and never asked whether it observes the production path. Claude verifying
+Claude, missing it; codex catching it. That is §2 of `OPERATING-MODEL.md` doing exactly the job
+it was adopted for, one day after adoption, and it is worth more as evidence than the defect
+it found.
+
+**Prescription (binding):** a session-level observer — `AgentCredentialSession.bearer()` with
+an expired presented credential, a writable stub store, and a 401/403 fetcher — asserting
+`predecessor_expired_local` and the expiry wording. Acceptance is the mutation, not the pass:
+delete the :788 handoff, show that observer red, restore, show green.
 
 ---
 
