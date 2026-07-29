@@ -613,6 +613,32 @@ tree. **A mutation that did not run is indistinguishable from a mutation the tes
 the failure mode is green, which is the direction nobody rechecks. Print the diff, or assert the
 edit landed, before running anything.
 
+**The concrete form, contributed by Cinder and better than the discipline it replaces** — every
+mutation Cinder ran today used this, and it caught a stale anchor on D-011 that would otherwise
+have been recorded as "the mutation survived":
+
+```python
+old = '...'
+assert s.count(old) == 1, s.count(old)   # raises loudly on 0 (no match) or 2 (double edit)
+open(p, 'w').write(s.replace(old, new, 1))
+print('mutation applied')
+```
+
+It **cannot proceed**, rather than relying on someone reading and correctly interpreting a diff —
+a mechanism, not a convention, which is the same distinction that took apart the D-017 class test.
+The `== 1` matters as much as the match: it also catches an anchor appearing twice and being
+silently edited in both places, or a declaration edited instead of the use site — exactly the
+global-`sed` trap the advisor hit on `LOCALLY_EXPIRED_MESSAGE`.
+
+**Its honest limit, stated by its author:** it guarantees the TEXT changed, not that the change was
+semantically the mutation intended. It would not catch editing the right line to something
+harmless. `sed` line addresses and regexes remain strictly worse, because they fail **silently**
+and this fails loudly.
+
+★ **It caught the advisor within minutes of being adopted** — while writing this very paragraph,
+the assert fired on a line-wrapped anchor and refused to write. Under the old convention that
+would have been a silent no-op edit followed by a confident commit message.
+
 **Why the existing mutation-proof rule did not catch it.** It required a mutation and got one
 every time. What it did not require was that the mutation be applied where production actually
 runs. Instances 1 and 4 were reddened by mutating things the tests already watched; nobody
@@ -846,4 +872,46 @@ of anyone who reads it, including our own tooling.
 **The standing rule this earns:** when a deployment gate flips, grep every surface for copy that
 asserts the old state — site, CLI, installer, email templates, OG description — before the flip is
 called done. That check has now been skipped twice.
+
+---
+
+## D-024 — A test's name, its comment, and its assertion all contradicted each other · IN REVIEW
+
+**Found:** 2026-07-29 by Nori (codex) on its first review, against `cinder/d020-edge-cold-start`
+@ `642ca46`. The sharpest self-contradiction recorded, and it defeated the advisor's own binding
+constraint.
+
+The constraint on D-020 was explicit: *"the observer must prove the retry masks ONLY transport
+failures and never a real refusal."* Cinder built a gate rather than a retry specifically to make
+that structural, and wrote a test for it. Then:
+
+```ts
+test("D-020: the gate never treats a real refusal as a reason to keep waiting", () => {
+  // A 403 is a decided refusal. If the gate retried on it, a genuinely forbidden probe would
+  // spin until timeout and be reported as a cold runtime — a real answer hidden by the gate.
+  assert.equal(readinessVerdict(403, JSON.stringify({ error: "forbidden" })), "not-yet");
+```
+
+- The **name** says a real refusal is never a reason to keep waiting.
+- The **comment** explains precisely why retrying on a 403 would be harmful.
+- The **assertion** requires `403 → "not-yet"` — and `"not-yet"` **is** the keep-waiting value.
+
+`readinessVerdict` opens `if (status !== 401) return "not-yet"`, so every non-401 — including a
+decided 403 — is indistinguishable from "the runtime is still cold". Nori demonstrated the
+consequence: a scripted 403 followed by the function's own 401 **resolves successfully in two
+calls**, erasing the refusal.
+
+The test asserts the exact behaviour its own comment identifies as the harm. All three layers
+disagree, and the comment is the most damning, because it proves the author understood the risk
+while encoding its opposite.
+
+*Advisor's limit on this verification, stated rather than glossed:* the source is unambiguous and
+I concluded from reading it. **My attempt to execute Nori's scenario failed twice** on module
+resolution and produced no evidence either way — so the runtime demonstration is Nori's, not
+independently reproduced by me.
+
+**Prescription (binding):** the verdict must be at least tri-state. Retry only explicitly
+identified cold-start/gateway responses. Any decided refusal or unexpected non-transient status
+must fail **immediately**, retain its status and body, and never be erasable by a later readiness
+response. Plus an observer proving 403-then-401 rejects after one call.
 
