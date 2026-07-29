@@ -220,7 +220,7 @@ SPF, and a second SPF record on one host is invalid and would break both.
 
 ---
 
-## D-008 — Namecheap cannot host the Resend return-path MX alongside Email Forwarding · OPEN
+## D-008 — Namecheap cannot host the Resend return-path MX alongside Email Forwarding · FIXED
 
 **Found:** same session as D-007.
 
@@ -244,8 +244,31 @@ works, and email sign-in still functions at the built-in 2/hour cap.
   forwarding cleanly. Removes this class of problem permanently. Larger change that also
   touches the live site's records, so it wants a deliberate window.
 
-**Advisor recommendation:** B, and not urgently. Restore the root SPF (D-007) first. Do not
-attempt A without first establishing what happens to the forwarding rules.
+**Advisor recommendation was B**, and the operator chose B. **Executed and complete
+2026-07-29** by Mica via browser-harness, under
+`docs/org/charters/2026-07-29-dns-to-cloudflare.md`.
+
+`commonswarm.com` is now authoritative at `chelsea.ns.cloudflare.com` /
+`ezra.ns.cloudflare.com`. Ten records, Email Routing Enabled, DNS Locked. D-007's missing root
+SPF came back as a Cloudflare-managed record in the same move.
+
+**The charter's ordering turned out to be impossible and that is worth keeping.** It said build
+the zone fully, then switch nameservers. Cloudflare will not create Email Routing records until
+the zone is ACTIVE, and a zone only becomes active once nameservers already point at it —
+a circular dependency. Mica stopped rather than working around it. The resolution was to create
+the five Cloudflare-managed records **manually**, using values Cloudflare itself proposed, so no
+window existed in which the domain had no MX.
+
+**ACCEPTANCE, and it is the only evidence that counts:** a real email sent from
+`tlangridge@gmail.com` to `legal@commonswarm.com` **arrived in the `<employer-b-address REDACTED 2026-08-10>`
+inbox** at 11:57 CDT, marked External. Mailbox arrival, not DNS inference.
+
+*Advisor's limit on that claim, stated because it matters:* DNS, HTTP and record state were
+verified independently by me from authoritative nameservers. **Mailbox arrival was not** — I
+have no access to that inbox and no outside mail account. That leg rests on Mica's report, and
+the operator can confirm it in one glance. An earlier SMTP probe I attempted was rejected as
+`550 Sender IP reverse lookup rejected` — a judgement about my host, not the recipient, so it
+proved nothing in either direction.
 
 ---
 
