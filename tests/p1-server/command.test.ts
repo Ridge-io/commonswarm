@@ -9,7 +9,12 @@ import { setTimeout as delay } from "node:timers/promises";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import postgres from "postgres";
 import {
+  AGENT_TOKEN_DEFAULT_TTL_MS,
+  AGENT_TOKEN_MAX_TTL_MS,
   reduceTask,
+  RENEWAL_HORIZON_DEFAULT_MS,
+  RENEWAL_HORIZON_MAX_MS,
+  RENEWAL_MAX_SUCCESSORS_DEFAULT,
   requestHash,
   upcastEnvelope,
   WORKSPACE_EVENT_TYPES,
@@ -59,7 +64,8 @@ type ConnectCommand =
     device_id: string;
     ttl_ms?: number;
     scopes?: string[];
-  };
+  }
+  | { kind: "renew_agent_token" };
 
 type WireCommand = Command | ConnectCommand;
 type SignalCommand = {
@@ -2858,5 +2864,509 @@ test("HTTP-only custom scope input is governed by the pure denylist", async () =
     });
     assert.equal(revokedDevice.status, 403);
     assert.deepEqual(revokedDevice.body, { error: "forbidden" });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// §2.3 worker-token renewal — the fenced successor endpoint.
+//
+// The problem these cover: an agent worksession lasts days or weeks, a token
+// lasts one hour, and the 8h maximum used to be a WALL with nothing behind it.
+// The fix is not a longer token. Several assertions below are written so that
+// "solving" long sessions by lengthening a TTL fails them.
+//
+// These run against 20260728000002, which puts the fence in PostgreSQL: the
+// successor trigger re-derives every field from the predecessor row, spends the
+// grant slot itself, and a partial UNIQUE index on predecessor_token_id is the
+// CAS. Seeding therefore has to respect real constraints — a grant's horizon
+// and budget are immutable after insert, grants cannot be deleted, and revoking
+// one cascades to its tokens. Where a refusal is now unreachable over HTTP
+// because the database refuses to create the bad state at all, the test asserts
+// the stronger fact instead of faking the weaker one.
+// ---------------------------------------------------------------------------
+
+interface Predecessor {
+  tokenId: string;
+  token: string;
+  lineageId: string;
+  taskId: string;
+  epoch: number;
+  scopes: string[];
+  grantId: string | null;
+}
+
+function registerAgentCredential(f: Fixture, token: string): void {
+  f.credentials.set(token, {
+    kind: "agent",
+    id: f.agentPrincipal,
+    actor: {
+      user: f.ua,
+      agent_principal: f.agentPrincipal,
+      run: f.agentRun,
+    },
+  });
+}
+
+/**
+ * One bounded renewal grant for the fixture's (principal, run). Real grants are
+ * created by a human at join/spawn; this seeds the row directly so the
+ * successor endpoint can be exercised without that lane's code.
+ */
+async function seedRenewalGrant(
+  f: Fixture,
+  options: { horizonMs?: number; maxSuccessors?: number } = {},
+): Promise<string> {
+  const horizonMs = options.horizonMs ?? RENEWAL_HORIZON_DEFAULT_MS;
+  assert.ok(
+    horizonMs > 0 && horizonMs <= RENEWAL_HORIZON_MAX_MS,
+    "seeded horizon must be inside the 90-day ceiling the database enforces",
+  );
+  const grantId = randomUUID();
+  await sql`
+    INSERT INTO swarm.renewal_grants (
+      renewal_grant_id, workspace_id, principal_id, run_id,
+      max_successors, successors_used, horizon_expires_at, created_by
+    ) VALUES (
+      ${grantId}::uuid,
+      ${f.workspaceA}::uuid,
+      ${f.agentPrincipal}::uuid,
+      ${f.agentRun}::uuid,
+      ${options.maxSuccessors ?? RENEWAL_MAX_SUCCESSORS_DEFAULT},
+      0,
+      statement_timestamp() + ${`${horizonMs} milliseconds`}::interval,
+      ${f.ua}::uuid
+    )
+  `;
+  return grantId;
+}
+
+/**
+ * A task/epoch-bound worker token on its own lineage. The fixture's own agent
+ * token is deliberately unbound, so it cannot stand in here: a successor has
+ * nothing to inherit from an unbound predecessor.
+ */
+async function seedPredecessor(
+  f: Fixture,
+  options: {
+    grantId?: string | null;
+    scopes?: string[];
+    lineageId?: string;
+    taskId?: string;
+    epoch?: number;
+    ttlMs?: number;
+  } = {},
+): Promise<Predecessor> {
+  const tokenId = randomUUID();
+  const lineageId = options.lineageId ?? randomUUID();
+  const taskId = options.taskId ?? randomUUID();
+  const epoch = options.epoch ?? 1;
+  const grantId = options.grantId ?? null;
+  const scopes = options.scopes ?? ["create", "acquire", "submit", "post_signal"];
+  const token = `swm_agt_${randomBytes(32).toString("base64url")}`;
+  const tokenHash = createHash("sha256").update(token).digest();
+  await sql`
+    INSERT INTO swarm.agent_tokens (
+      token_id, principal_id, run_id, task_id, epoch,
+      scopes, token_hash, expires_at, lineage_id, renewal_grant_id
+    ) VALUES (
+      ${tokenId}::uuid,
+      ${f.agentPrincipal}::uuid,
+      ${f.agentRun}::uuid,
+      ${taskId}::uuid,
+      ${epoch},
+      ${sql.json(scopes)}::jsonb,
+      ${tokenHash},
+      statement_timestamp() + ${`${options.ttlMs ?? 3_600_000} milliseconds`}::interval,
+      ${lineageId}::uuid,
+      ${grantId}::uuid
+    )
+  `;
+  registerAgentCredential(f, token);
+  return { tokenId, token, lineageId, taskId, epoch, scopes, grantId };
+}
+
+async function issueRenewal(
+  f: Fixture,
+  token: string,
+  id = commandId("renew_agent_token"),
+  command: Record<string, unknown> = { kind: "renew_agent_token" },
+  workspaceId: string = f.workspaceA,
+): Promise<CommandResponse> {
+  const credential = f.credentials.get(token);
+  assert.ok(credential, "test credential is registered");
+  const ledgerKey = `${credential.kind}:${credential.id}:${id}`;
+  if (!f.firstRequests.has(ledgerKey)) {
+    f.firstRequests.set(ledgerKey, command as unknown as WireCommandWithSignal);
+  }
+  const response = await fetch(`${local.API_URL}/functions/v1/command`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${token}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      command_id: id,
+      client_version: "0.1.0",
+      workspace_id: workspaceId,
+      stream: { kind: "workspace" },
+      command,
+    }),
+  });
+  const text = await response.text();
+  return {
+    status: response.status,
+    text,
+    body: JSON.parse(text) as Record<string, unknown>,
+  };
+}
+
+async function lineageTokenCount(lineageId: string): Promise<number> {
+  const [row] = await sql<{ count: string | number }[]>`
+    SELECT count(*) AS count
+    FROM swarm.agent_tokens
+    WHERE lineage_id = ${lineageId}::uuid
+  `;
+  return Number(row?.count ?? -1);
+}
+
+async function successorsUsed(grantId: string): Promise<number> {
+  const [row] = await sql<{ successors_used: number }[]>`
+    SELECT successors_used
+    FROM swarm.renewal_grants
+    WHERE renewal_grant_id = ${grantId}::uuid
+  `;
+  return Number(row?.successors_used ?? -1);
+}
+
+test("§2.3 renewal issues an equal-scoped successor and accepts no caller-selected target", async () => {
+  await scenario(async (f) => {
+    const grantId = await seedRenewalGrant(f);
+    const predecessor = await seedPredecessor(f, {
+      grantId,
+      scopes: ["create", "acquire", "submit"],
+    });
+
+    // No caller-selected target field is accepted, and that is enforced at the
+    // wire before authorization runs. Widening is not "refused later" — the
+    // field cannot be spoken. Each of these is a different escalation attempt.
+    const forbiddenBodies: Record<string, unknown>[] = [
+      { kind: "renew_agent_token", scopes: ["create", "acquire", "submit", "close"] },
+      { kind: "renew_agent_token", principal_id: f.agentPrincipal },
+      { kind: "renew_agent_token", run_id: randomUUID() },
+      { kind: "renew_agent_token", task_id: randomUUID() },
+      { kind: "renew_agent_token", epoch: 99 },
+      { kind: "renew_agent_token", ttl_ms: 30 * 24 * 60 * 60 * 1000 },
+      { kind: "renew_agent_token", token_id: randomUUID() },
+      { kind: "renew_agent_token", renewal_grant_id: grantId },
+    ];
+    for (const body of forbiddenBodies) {
+      const refused = await issueRenewal(
+        f,
+        predecessor.token,
+        commandId("renewtarget"),
+        body,
+      );
+      assert.equal(refused.status, 400, JSON.stringify(body));
+      assert.deepEqual(
+        refused.body,
+        { error: "invalid_request" },
+        JSON.stringify(body),
+      );
+    }
+    assert.equal(
+      await lineageTokenCount(predecessor.lineageId),
+      1,
+      "no successor was issued by any target-selecting body",
+    );
+    assert.equal(await successorsUsed(grantId), 0, "no grant slot was consumed");
+
+    const renewed = await issueRenewal(f, predecessor.token);
+    assert.equal(renewed.status, 200, renewed.text);
+    assert.equal(renewed.body.status, "accepted", renewed.text);
+    const successorToken = String(renewed.body.agent_token);
+    assert.match(successorToken, /^swm_agt_[A-Za-z0-9_-]{43}$/);
+    assert.notEqual(successorToken, predecessor.token);
+    const successorId = String(renewed.body.token_id);
+
+    const [successor] = await sql<Record<string, unknown>[]>`
+      SELECT
+        principal_id, run_id, task_id, epoch, scopes, lineage_id,
+        predecessor_token_id, renewal_grant_id, issued_at, expires_at, revoked_at
+      FROM swarm.agent_tokens
+      WHERE token_id = ${successorId}::uuid
+    `;
+    assert.ok(successor, "successor row exists");
+    // Server-derived from the PREDECESSOR row, field by field.
+    assert.deepEqual(successor.scopes, predecessor.scopes, "scopes are identical");
+    assert.equal(String(successor.principal_id), f.agentPrincipal);
+    assert.equal(String(successor.run_id), f.agentRun);
+    assert.equal(String(successor.task_id), predecessor.taskId);
+    assert.equal(Number(successor.epoch), predecessor.epoch);
+    assert.equal(String(successor.lineage_id), predecessor.lineageId);
+    assert.equal(String(successor.predecessor_token_id), predecessor.tokenId);
+    assert.equal(String(successor.renewal_grant_id), grantId);
+    assert.equal(successor.revoked_at, null);
+
+    // THE POINT OF THE WHOLE ENDPOINT: the successor is still short-lived.
+    // If someone "fixes" long worksessions by lengthening the token instead,
+    // this is the assertion that fails.
+    const issuedAt = (successor.issued_at as Date).getTime();
+    const expiresAt = (successor.expires_at as Date).getTime();
+    const ttl = expiresAt - issuedAt;
+    assert.ok(ttl > 0, "successor TTL is positive");
+    assert.ok(
+      ttl <= AGENT_TOKEN_MAX_TTL_MS,
+      `successor TTL ${ttl} exceeds the 8h maximum`,
+    );
+    assert.ok(
+      Math.abs(ttl - AGENT_TOKEN_DEFAULT_TTL_MS) < 10_000,
+      `successor TTL ${ttl} is not the 1h default`,
+    );
+
+    assert.equal(await successorsUsed(grantId), 1, "exactly one slot consumed");
+    assert.equal(await lineageTokenCount(predecessor.lineageId), 2);
+
+    // The predecessor is superseded: it can no longer act and cannot renew again.
+    const stale = await issue(f, predecessor.token, {
+      kind: "create",
+      task_id: randomUUID(),
+      slug: `stale-${randomBytes(4).toString("hex")}`,
+    });
+    assert.equal(stale.status, 401, stale.text);
+    const secondRenewal = await issueRenewal(f, predecessor.token);
+    assert.equal(secondRenewal.status, 401, secondRenewal.text);
+    assert.equal(await lineageTokenCount(predecessor.lineageId), 2);
+    assert.equal(await successorsUsed(grantId), 1);
+
+    // The successor carries exactly the predecessor's authority — no more.
+    registerAgentCredential(f, successorToken);
+    const created = await issue(f, successorToken, {
+      kind: "create",
+      task_id: randomUUID(),
+      slug: `succ-${randomBytes(4).toString("hex")}`,
+    });
+    assert.equal(created.status, 200, created.text);
+    assert.equal(created.body.status, "accepted");
+    // "close" was never in the predecessor's scopes, and the widening attempt
+    // above did not put it there.
+    const outOfScope = await issue(f, successorToken, {
+      kind: "close",
+      task_id: randomUUID(),
+      epoch: 1,
+      disposition: "archive",
+      grant_id: null,
+    });
+    assert.equal(outOfScope.status, 403, outOfScope.text);
+
+    // A renewal chain is a chain: the successor renews in turn, which is what
+    // carries a worksession past hour one without a longer token anywhere.
+    const third = await issueRenewal(f, successorToken);
+    assert.equal(third.body.status, "accepted", third.text);
+    assert.equal(await successorsUsed(grantId), 2);
+    assert.equal(await lineageTokenCount(predecessor.lineageId), 3);
+  });
+});
+
+test("§2.3 renewal revocation is fail-closed and lineage-wide", async () => {
+  await scenario(async (f) => {
+    const grantId = await seedRenewalGrant(f);
+
+    // An individually revoked predecessor cannot renew itself.
+    const revokedPredecessor = await seedPredecessor(f, { grantId });
+    await sql`
+      UPDATE swarm.agent_tokens
+      SET revoked_at = statement_timestamp()
+      WHERE token_id = ${revokedPredecessor.tokenId}::uuid
+    `;
+    const refused = await issueRenewal(f, revokedPredecessor.token);
+    assert.equal(refused.status, 403, refused.text);
+    assert.deepEqual(refused.body, { error: "forbidden" });
+    assert.equal(await lineageTokenCount(revokedPredecessor.lineageId), 1);
+    assert.equal(await successorsUsed(grantId), 0);
+
+    // A live predecessor renews once, and the descendant is genuinely alive.
+    const predecessor = await seedPredecessor(f, { grantId });
+    const renewed = await issueRenewal(f, predecessor.token);
+    assert.equal(renewed.body.status, "accepted", renewed.text);
+    const descendant = String(renewed.body.agent_token);
+    registerAgentCredential(f, descendant);
+    const alive = await issue(f, descendant, {
+      kind: "create",
+      task_id: randomUUID(),
+      slug: `alive-${randomBytes(4).toString("hex")}`,
+    });
+    assert.equal(alive.status, 200, alive.text);
+
+    // Now revoke the PREDECESSOR. Revocation reaches its descendants: the
+    // descendant cannot extend the lineage any further.
+    await sql`
+      UPDATE swarm.agent_tokens
+      SET revoked_at = statement_timestamp()
+      WHERE token_id = ${predecessor.tokenId}::uuid
+    `;
+    const descendantRenewal = await issueRenewal(f, descendant);
+    assert.equal(descendantRenewal.status, 200, descendantRenewal.text);
+    assert.equal(descendantRenewal.body.status, "rejected", descendantRenewal.text);
+    assert.equal(descendantRenewal.body.class, "domain");
+    assert.equal(descendantRenewal.body.reason, "renewal_lineage_revoked");
+    assert.equal(await lineageTokenCount(predecessor.lineageId), 2);
+
+    // A lineage tombstone additionally cuts the descendant's ordinary commands,
+    // and it can never be resurrected by renewal afterwards.
+    await sql`
+      INSERT INTO swarm.revocation_tombstones (kind, target_id)
+      VALUES ('lineage', ${predecessor.lineageId}::uuid)
+      ON CONFLICT (kind, target_id) DO NOTHING
+    `;
+    const tombstoned = await issue(f, descendant, {
+      kind: "create",
+      task_id: randomUUID(),
+      slug: `dead-${randomBytes(4).toString("hex")}`,
+    });
+    assert.equal(tombstoned.status, 403, tombstoned.text);
+    const resurrection = await issueRenewal(f, descendant);
+    assert.equal(resurrection.status, 403, resurrection.text);
+    assert.deepEqual(resurrection.body, { error: "forbidden" });
+    assert.equal(await lineageTokenCount(predecessor.lineageId), 2);
+  });
+});
+
+test("§2.3 renewal stops at the horizon, at a revoked grant, and at the successor budget", async () => {
+  await scenario(async (f) => {
+    // THE HORIZON. A grant whose horizon has passed is the periodic human
+    // checkpoint firing — the thing that stops silent renewal becoming an
+    // unbounded deputy. The horizon is immutable after insert (the database
+    // refuses to push it out), so this seeds a deliberately short one and waits
+    // for it rather than editing it afterwards.
+    const shortGrant = await seedRenewalGrant(f, { horizonMs: 1_200 });
+    const atHorizon = await seedPredecessor(f, { grantId: shortGrant });
+    await delay(1_600);
+    const past = await issueRenewal(f, atHorizon.token);
+    assert.equal(past.status, 200, past.text);
+    assert.equal(past.body.status, "rejected", past.text);
+    assert.equal(past.body.reason, "renewal_horizon_reached");
+    assert.equal(await lineageTokenCount(atHorizon.lineageId), 1);
+    assert.equal(await successorsUsed(shortGrant), 0);
+
+    // THE BUDGET. max_successors is immutable too, so the budget is expressed
+    // by creating a grant that allows exactly one successor.
+    const budgetGrant = await seedRenewalGrant(f, { maxSuccessors: 1 });
+    const bounded = await seedPredecessor(f, { grantId: budgetGrant });
+    const first = await issueRenewal(f, bounded.token);
+    assert.equal(first.body.status, "accepted", first.text);
+    const successor = String(first.body.agent_token);
+    registerAgentCredential(f, successor);
+    assert.equal(await successorsUsed(budgetGrant), 1);
+
+    const exhausted = await issueRenewal(f, successor);
+    assert.equal(exhausted.status, 200, exhausted.text);
+    assert.equal(exhausted.body.status, "rejected", exhausted.text);
+    assert.equal(exhausted.body.reason, "renewal_successors_exhausted");
+    assert.equal(
+      await lineageTokenCount(bounded.lineageId),
+      2,
+      "the budget bounds the lineage, not just the counter",
+    );
+    assert.equal(
+      await successorsUsed(budgetGrant),
+      1,
+      "a refused renewal consumes nothing",
+    );
+
+    // A REVOKED GRANT. Revoking a grant is lineage-wide by construction: the
+    // cascade tombstones the grant and revokes every token issued under it, so
+    // the whole chain stops at the next command as well as at the next renewal.
+    const revocableGrant = await seedRenewalGrant(f);
+    const underGrant = await seedPredecessor(f, { grantId: revocableGrant });
+    await sql`
+      UPDATE swarm.renewal_grants
+      SET revoked_at = statement_timestamp(), revoked_by = ${f.ua}::uuid
+      WHERE renewal_grant_id = ${revocableGrant}::uuid
+    `;
+    const afterRevoke = await issueRenewal(f, underGrant.token);
+    assert.equal(afterRevoke.status, 403, afterRevoke.text);
+    assert.deepEqual(afterRevoke.body, { error: "forbidden" });
+    assert.equal(await lineageTokenCount(underGrant.lineageId), 1);
+    assert.equal(await successorsUsed(revocableGrant), 0);
+    const [cascaded] = await sql<{ revoked_at: Date | null }[]>`
+      SELECT revoked_at
+      FROM swarm.agent_tokens
+      WHERE token_id = ${underGrant.tokenId}::uuid
+    `;
+    assert.notEqual(cascaded?.revoked_at, null, "grant revocation reached its token");
+  });
+});
+
+test("§2.3 renewal is grant-authorised, agent-only, and has exactly one winner under concurrency", async () => {
+  await scenario(async (f) => {
+    // A predecessor that names no grant cannot renew at all: renewal is
+    // authorised by the bounded grant created at human join/spawn, never by
+    // merely holding a token.
+    const ungrantedToken = await seedPredecessor(f, { grantId: null });
+    const ungranted = await issueRenewal(f, ungrantedToken.token);
+    assert.equal(ungranted.status, 200, ungranted.text);
+    assert.equal(ungranted.body.status, "rejected", ungranted.text);
+    assert.equal(ungranted.body.reason, "renewal_grant_not_found");
+    assert.equal(await lineageTokenCount(ungrantedToken.lineageId), 1);
+
+    // A human credential cannot present renewal, and the refusal is audited
+    // under its own reason rather than a generic "forbidden".
+    const asHuman = await issueRenewal(f, f.uaJwt, commandId("renewhuman"));
+    assert.equal(asHuman.status, 403, asHuman.text);
+    assert.deepEqual(asHuman.body, { error: "forbidden" });
+    const [audited] = await sql<{ reason: string | null }[]>`
+      SELECT reason
+      FROM swarm.audit_log
+      WHERE command_kind = 'renew_agent_token'
+        AND credential_kind = 'user'
+        AND actor_user = ${f.ua}::uuid
+      ORDER BY occurred_at DESC
+      LIMIT 1
+    `;
+    assert.equal(audited?.reason, "renewal_requires_agent_credential");
+
+    // And renewal is not reachable through the generic mint: an agent
+    // credential presenting mint_agent_token is still refused outright.
+    const viaMint = await issueConnect(f, ungrantedToken.token, {
+      kind: "mint_agent_token",
+      principal_id: f.agentPrincipal,
+      run_id: f.agentRun,
+      task_id: randomUUID(),
+      epoch: 1,
+      device_id: randomUUID(),
+    });
+    assert.equal(viaMint.status, 403, viaMint.text);
+    assert.deepEqual(viaMint.body, { error: "forbidden" });
+
+    // Two concurrent renewals of the same predecessor: one successor, one slot.
+    // A lineage fork here would double the live credentials for one worker
+    // while spending a single slot.
+    const grantId = await seedRenewalGrant(f, { maxSuccessors: 10 });
+    const predecessor = await seedPredecessor(f, { grantId });
+    const results = await Promise.all([
+      issueRenewal(f, predecessor.token, commandId("renewrace1")),
+      issueRenewal(f, predecessor.token, commandId("renewrace2")),
+    ]);
+    const accepted = results.filter((result) =>
+      result.status === 200 && result.body.status === "accepted"
+    );
+    assert.equal(accepted.length, 1, results.map((r) => r.text).join("\n"));
+    const loser = results.find((result) => result !== accepted[0])!;
+    // The loser either lost the row lock (superseded) or arrived after the
+    // predecessor had already been ended (401). Both are correct; issuing a
+    // second live successor, or consuming a second slot, is not.
+    assert.ok(
+      loser.status === 401 ||
+        (loser.status === 200 &&
+          loser.body.status === "rejected" &&
+          loser.body.reason === "predecessor_superseded"),
+      `unexpected loser: ${loser.status} ${loser.text}`,
+    );
+    assert.equal(
+      await lineageTokenCount(predecessor.lineageId),
+      2,
+      "exactly one live successor was issued",
+    );
+    assert.equal(await successorsUsed(grantId), 1, "exactly one slot consumed");
   });
 });

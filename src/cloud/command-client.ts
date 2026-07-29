@@ -79,6 +79,25 @@ export type ConnectCommand =
     epoch: number;
     device_id: string;
     ttl_ms?: number;
+  }
+  /**
+   * The bounded renewal grant §2.3 requires to be "created at human `join`/`spawn`". It is
+   * a human-credential command like the mint beside it, and it is issued BEFORE the mint so
+   * the token has a grant to be bound to; the server pairs them by (principal_id, run_id)
+   * rather than accepting a grant id on the mint, which would be a caller-selected field on
+   * the very path that must not have one.
+   *
+   * Without one, a credential is exactly what it was before renewal existed: usable for at
+   * most eight hours and then re-issued by hand. So a failure to create it is worth a
+   * warning and never worth failing the mint over.
+   */
+  | {
+    kind: "create_renewal_grant";
+    renewal_grant_id: string;
+    principal_id: string;
+    run_id: string;
+    horizon_ms?: number;
+    max_successors?: number;
   };
 
 export interface ConnectCommandRequest {

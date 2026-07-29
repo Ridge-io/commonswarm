@@ -43,6 +43,18 @@ import {
 } from "./cloud/current-target.js";
 import { seedDogfood } from "./cloud/seed.js";
 import {
+  agentCredentialStore,
+  credentialLineageKey,
+} from "./cloud/agent-credential.js";
+import {
+  AgentCredentialSession,
+  RENEWAL_HORIZON_DEFAULT_MS,
+  RENEWAL_HORIZON_MAX_MS,
+  RENEWAL_MAX_SUCCESSORS_DEFAULT,
+  RenewalReauthorisationRequired,
+  RenewalRevoked,
+} from "./cloud/renewal.js";
+import {
   agentSignalPendingStore,
   credentialStore,
   type CredentialStore,
@@ -392,14 +404,28 @@ interface AgentCredentialInput {
   principalId: string | null;
   tokenId: string | null;
   runId: string | null;
+  /** Epoch ms, when the artifact stated one. Null for a bare or pre-renewal artifact. */
+  expiresAt: number | null;
   durable: boolean;
 }
 
+/**
+ * `expires_at` is OPTIONAL, and both halves of that matter.
+ *
+ * Optional because artifacts already in circulation have six keys and must keep working —
+ * the reader below accepts either shape. Present, from now on, because renewal needs it:
+ * without a stated expiry the CLI cannot tell whether a credential handed to it on stdin
+ * has fifty-nine minutes left or one, and the only alternatives are to renew eagerly on
+ * every first use — which SUPERSEDES a perfectly good credential and spends a successor to
+ * learn a number the issuer already knew — or to renew on a 401, which means the person
+ * watching sees a failure first. Stating it costs one field and removes both.
+ */
 function agentCredentialArtifact(input: {
   principalId: string;
   tokenId: string;
   runId: string;
   token: string;
+  expiresAt?: number | null;
 }): Record<string, unknown> {
   return {
     message: AGENT_CREDENTIAL_MESSAGE,
@@ -408,6 +434,9 @@ function agentCredentialArtifact(input: {
     token_id: input.tokenId,
     run_id: input.runId,
     agent_token: input.token,
+    ...(input.expiresAt === undefined || input.expiresAt === null
+      ? {}
+      : { expires_at: new Date(input.expiresAt).toISOString() }),
   };
 }
 
@@ -419,6 +448,7 @@ function parsedAgentCredential(value: string): AgentCredentialInput {
       principalId: null,
       tokenId: null,
       runId: null,
+      expiresAt: null,
       durable: false,
     };
   }
@@ -427,7 +457,10 @@ function parsedAgentCredential(value: string): AgentCredentialInput {
     throw new Error("agent credential JSON is malformed");
   }
   const artifact = parsed as Record<string, unknown>;
-  const expectedKeys = [
+  // Still a closed key set, still exact — there are now two accepted shapes rather than
+  // one. `expires_at` is the only addition, and an artifact carrying anything else is as
+  // malformed as it ever was.
+  const requiredKeys = [
     "agent_token",
     "message",
     "principal_id",
@@ -435,10 +468,14 @@ function parsedAgentCredential(value: string): AgentCredentialInput {
     "status",
     "token_id",
   ];
+  const withExpiry = [...requiredKeys, "expires_at"].sort();
   const actualKeys = Object.keys(artifact).sort();
+  const shape = actualKeys.length === requiredKeys.length
+    ? requiredKeys
+    : withExpiry;
   if (
-    actualKeys.length !== expectedKeys.length ||
-    !actualKeys.every((key, index) => key === expectedKeys[index]) ||
+    actualKeys.length !== shape.length ||
+    !actualKeys.every((key, index) => key === shape[index]) ||
     artifact.message !== AGENT_CREDENTIAL_MESSAGE ||
     artifact.status !== "accepted" ||
     typeof artifact.principal_id !== "string" ||
@@ -451,12 +488,24 @@ function parsedAgentCredential(value: string): AgentCredentialInput {
   ) {
     throw new Error("agent credential JSON is malformed");
   }
+  let expiresAt: number | null = null;
+  if (artifact.expires_at !== undefined) {
+    if (typeof artifact.expires_at !== "string") {
+      throw new Error("agent credential JSON is malformed");
+    }
+    const parsedExpiry = Date.parse(artifact.expires_at);
+    if (Number.isNaN(parsedExpiry)) {
+      throw new Error("agent credential JSON is malformed");
+    }
+    expiresAt = parsedExpiry;
+  }
   assertAgentToken(artifact.agent_token);
   return {
     token: artifact.agent_token,
     principalId: artifact.principal_id.toLowerCase(),
     tokenId: artifact.token_id.toLowerCase(),
     runId: artifact.run_id.toLowerCase(),
+    expiresAt,
     durable: true,
   };
 }
@@ -1170,6 +1219,55 @@ async function runPrincipal(args: Arguments): Promise<void> {
   });
 }
 
+/**
+ * Creates the bounded renewal grant that lets the credential minted next renew itself
+ * (§2.3, "authorized only by a bounded renewal grant created at human `join`/`spawn`").
+ *
+ * IT RUNS BEFORE THE MINT AND NEVER FAILS THE MINT. Before, because the token has to have
+ * a grant to be bound to. Never fatal, because a deployment that has not shipped the
+ * successor endpoint yet still mints perfectly good credentials — they just have to be
+ * re-issued by hand, which is exactly the behaviour that existed before this. Trading a
+ * working mint for a renewal that deployment cannot do anyway would be a bad bargain.
+ *
+ * Returns whether the window exists, so the caller can say which of the two things it just
+ * handed the operator.
+ */
+async function createRenewalGrant(
+  cloud: CloudTarget,
+  human: HumanSession,
+  workspace: string,
+  principalId: string,
+  runId: string,
+  horizonMs: number,
+): Promise<boolean> {
+  try {
+    acceptedConnect(
+      "renewal grant",
+      await sendConnectWithPending(
+        new ThinCommandClient(cloud),
+        human,
+        workspace,
+        {
+          kind: "create_renewal_grant",
+          renewal_grant_id: randomUUID(),
+          principal_id: principalId,
+          run_id: runId,
+          horizon_ms: horizonMs,
+          max_successors: RENEWAL_MAX_SUCCESSORS_DEFAULT,
+        },
+      ),
+    );
+    return true;
+  } catch (error) {
+    process.stderr.write(
+      `cswarm: this deployment did not open a renewal window (${
+        safeError(error)
+      }). The credential below still works, but it will not renew itself — re-issue one by hand when it expires.\n`,
+    );
+    return false;
+  }
+}
+
 async function runToken(args: Arguments): Promise<void> {
   args.assertShape(
     [
@@ -1180,6 +1278,7 @@ async function runToken(args: Arguments): Promise<void> {
       "task-id",
       "epoch",
       "ttl-ms",
+      "renewal-horizon-days",
     ],
     2,
   );
@@ -1191,6 +1290,23 @@ async function runToken(args: Arguments): Promise<void> {
   const workspace = await workspaceId(args, cloud, human);
   const ttl = args.optional("ttl-ms");
   const principalId = args.required("principal-id");
+  const runId = args.required("run-id");
+  // Days, not milliseconds: this is the one renewal number a person chooses, and the
+  // honest unit for "how long before I am asked again" is days.
+  const horizonMs = args.optional("renewal-horizon-days") === undefined
+    ? RENEWAL_HORIZON_DEFAULT_MS
+    : integer(args, "renewal-horizon-days", {
+      minimum: 1,
+      maximum: Math.floor(RENEWAL_HORIZON_MAX_MS / 86_400_000),
+    }) * 86_400_000;
+  const renewing = await createRenewalGrant(
+    cloud,
+    human,
+    workspace,
+    principalId,
+    runId,
+    horizonMs,
+  );
   const response = acceptedConnect(
     "token mint",
     await sendConnectWithPending(
@@ -1200,7 +1316,7 @@ async function runToken(args: Arguments): Promise<void> {
       {
         kind: "mint_agent_token",
         principal_id: principalId,
-        run_id: args.required("run-id"),
+        run_id: runId,
         task_id: args.required("task-id"),
         epoch: integer(args, "epoch"),
         device_id: human.deviceId,
@@ -1221,12 +1337,47 @@ async function runToken(args: Arguments): Promise<void> {
     );
   }
   assertAgentToken(response.agent_token);
+  const expiresAt = mintedExpiry(response);
+  // Both conditions, not just the grant: the CLI schedules renewal off the stated expiry
+  // and will not renew a credential whose deadline it does not know, so a window without
+  // an expiry renews nothing and saying otherwise would be a false promise.
+  process.stderr.write(
+    renewing && expiresAt !== null
+      ? `This credential renews itself, so the agent keeps working without anyone re-issuing it. A person is asked to authorise it again in ${
+        Math.round(horizonMs / 86_400_000)
+      } days.\n`
+      : "This credential does not renew itself; re-issue one by hand when it expires.\n",
+  );
   printJson(agentCredentialArtifact({
     principalId,
     tokenId: uuid(response.token_id, "token_id"),
     runId: uuid(response.run_id, "run_id"),
     token: response.agent_token,
+    expiresAt,
   }));
+}
+
+/**
+ * The expiry the mint just recorded, so the artifact can state it and the agent's CLI can
+ * renew on time instead of guessing. Read from the AgentTokenMinted event rather than a
+ * top-level field, because that is where the reducer puts it; the top-level string is
+ * accepted too since the renewal reply uses that shape.
+ */
+function mintedExpiry(
+  response: ConnectCommandResult["response"],
+): number | null {
+  for (const raw of response.events ?? []) {
+    const event = raw as unknown as Record<string, unknown>;
+    if (event.type !== "AgentTokenMinted") continue;
+    const payload = event.payload as Record<string, unknown> | undefined;
+    const expires = payload?.expires_at;
+    if (typeof expires === "number" && Number.isFinite(expires)) return expires;
+  }
+  if (typeof response.expires_at === "string") {
+    const parsed = Date.parse(response.expires_at);
+    if (!Number.isNaN(parsed)) return parsed;
+  }
+  return null;
 }
 
 /**
@@ -1472,6 +1623,54 @@ function accepted(label: string, result: CommandResult): void {
   }
 }
 
+/**
+ * Opens the renewing session for a credential that arrived on stdin (§2.3).
+ *
+ * The lineage key is derived from the credential the caller presented, so the successor
+ * this run obtains is found again by the next run — which is the whole point: a one-shot
+ * CLI that forgot its successor would be back to an eight-hour wall. When the store cannot
+ * be opened (a read-only home directory, a hostile umask) renewal still happens, it just
+ * does not outlive the process, and the caller is told so rather than left to find out in
+ * eight hours.
+ */
+async function agentSession(
+  cloud: CloudTarget,
+  workspaceId: string,
+  agent: AgentCredentialInput,
+): Promise<AgentCredentialSession> {
+  let store: Awaited<ReturnType<typeof agentCredentialStore>> | null = null;
+  try {
+    const candidate = await agentCredentialStore({
+      target: cloud,
+      lineageKey: credentialLineageKey(agent.token),
+    });
+    // Proved usable before it is trusted, the way agentSignalPendingStore proves its own:
+    // the directory checks (owned by this user, 0700, not a symlink) only run on first
+    // touch, and a path that fails them must degrade to "no renewal" rather than abort a
+    // command that would otherwise have worked.
+    await candidate.withLock(async () => {
+      await candidate.read().catch(() => null);
+    });
+    store = candidate;
+  } catch {
+    process.stderr.write(
+      "cswarm: this machine has nowhere safe to keep a renewed credential, so this credential will not renew itself and has to be re-issued by hand when it expires.\n",
+    );
+  }
+  return await AgentCredentialSession.open({
+    target: cloud,
+    workspaceId,
+    presented: {
+      token: agent.token,
+      tokenId: agent.tokenId,
+      principalId: agent.principalId,
+      runId: agent.runId,
+      expiresAt: agent.expiresAt,
+    },
+    store,
+  });
+}
+
 async function commandWorkspaceAndCredential(
   args: Arguments,
   cloud: CloudTarget,
@@ -1483,6 +1682,7 @@ async function commandWorkspaceAndCredential(
   kind: "human" | "agent";
   human?: HumanSession;
   agent?: AgentCredentialInput;
+  session?: AgentCredentialSession;
 }> {
   const override = workspaceOverride(
     args.optional("workspace-id"),
@@ -1495,11 +1695,17 @@ async function commandWorkspaceAndCredential(
       );
     }
     const agent = await stdinCredential();
+    // Renewal is resolved HERE, before the first request rather than after a 401, so a
+    // credential that is about to expire is replaced without the person watching ever
+    // seeing a failure. Every caller below reads `bearer` as a plain string; the session
+    // is what decided which string that is.
+    const session = await agentSession(cloud, override, agent);
     return {
       selectedWorkspace: override,
-      bearer: agent.token,
+      bearer: await session.bearer(),
       kind: "agent",
       agent,
+      session,
     };
   }
   const human = await humanCredential(args, cloud);
@@ -2106,7 +2312,31 @@ function safeError(error: unknown): string {
     .slice(0, 1000);
 }
 
+/**
+ * Keeps the line breaks a multi-line explanation needs while still stripping anything a
+ * server-supplied string could use to redraw the terminal. safeError() collapses newlines,
+ * which is right for a one-line failure and wrong for the reauthorisation notice — that
+ * one is a short set of instructions and reads as noise on a single line.
+ */
+function safeParagraph(message: string): string {
+  return message
+    .replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, "")
+    .replace(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g, " ")
+    .slice(0, 2000);
+}
+
 main().catch((error) => {
+  // The renewal horizon is not a malfunction; it is the periodic human checkpoint §2.3
+  // asks for, arriving on time. Printing it as `cswarm: <flattened 403>` would tell a
+  // person their agent broke. It says instead what happened and what to run.
+  if (
+    error instanceof RenewalReauthorisationRequired ||
+    error instanceof RenewalRevoked
+  ) {
+    process.stderr.write(`${safeParagraph(error.message)}\n`);
+    process.exitCode = 1;
+    return;
+  }
   if (error instanceof WorkspaceCliError) {
     const structured = error.structured();
     const verb = process.argv[2];

@@ -15,6 +15,8 @@ import {
   DISPOSITIONS,
   reduceTask,
   reduceWorkspace,
+  RENEWAL_HORIZON_DEFAULT_MS,
+  RENEWAL_MAX_SUCCESSORS_DEFAULT,
   requestHash,
 } from "../_shared/protocol.js";
 
@@ -71,7 +73,11 @@ type ConnectCommand =
     ttl_ms?: number;
     device_id: string;
     scopes?: string[];
-  };
+  }
+  // §2.3 successor endpoint. It has no fields on purpose: the presented
+  // predecessor credential IS the request, and accepting any target field here
+  // is exactly the escalation the fence exists to stop.
+  | { kind: "renew_agent_token" };
 
 type SignalKind = "working-on" | "note" | "ask";
 
@@ -169,7 +175,27 @@ type WorkspaceCommand =
     epoch: number;
     scopes: string[];
     ttl_ms?: number;
+  }
+  | {
+    kind: "renew_agent_token";
+    successor_token_id: string;
+    scopes: string[];
   };
+
+interface RenewalGrantFacts {
+  renewal_grant_id: string;
+  max_successors: number;
+  successors_used: number;
+  horizon_expires_at: number;
+  revoked_at: number | null;
+}
+
+interface RenewalFacts {
+  grant: RenewalGrantFacts | null;
+  grant_mismatch: boolean;
+  superseded: boolean;
+  lineage_revoked: boolean;
+}
 
 interface WorkspaceDecideCtx {
   now: number;
@@ -188,6 +214,7 @@ interface WorkspaceDecideCtx {
     target_user_id: string,
     successor_user_id: string | null,
   ): boolean;
+  renewalFacts?(predecessor_token_id: string): RenewalFacts;
   nextSeq(): number;
   nextEventId(): string;
 }
@@ -327,6 +354,7 @@ const SIGNAL_WHITESPACE_GLOBAL_RE = /[\t\n\v\f\r\u0085\u2028\u2029]+/gu;
 const ANSI_ESCAPE_GLOBAL_RE = /\u001b\[[0-?]*[ -/]*[@-~]/g;
 const REGISTER_DEVICE_KIND = "register_device";
 const CREATE_WORKSPACE_KIND = "create_workspace";
+const RENEW_AGENT_TOKEN_KIND = "renew_agent_token";
 const MINT_CAPABILITY_KIND = "mint_capability_url";
 const REVOKE_CAPABILITY_KIND = "revoke_capability_url";
 
@@ -487,6 +515,12 @@ const SPEND_PROXY_BY_COMMAND: Record<string, SpendProxy> = {
   invite_member: "invite_send",
   mint_agent_token: "agent_token_mint",
 };
+/* renew_agent_token is deliberately NOT metered here. The breaker exists to
+ * pause growth — signups, invites, new tenants — before a bill runs away. A
+ * renewal is not growth: it is an already-authorised run staying alive, and
+ * charging it would let a tripped breaker silently strand every running fleet's
+ * credentials, which is the 8h wall this endpoint was built to remove. The
+ * §2.3 bound on renewal volume is the grant's max_successors, not spend. */
 
 /* ★ THE CAPABILITY-READ KEY MIRROR WAS DELETED WITH THE PROXY IT FED.
  *
@@ -539,6 +573,7 @@ const COMMAND_KINDS = [
   "accept_invitation",
   "create_agent_principal",
   "mint_agent_token",
+  "renew_agent_token",
   "post_signal",
 ] as const;
 const TASK_COMMAND_KINDS = [
@@ -551,11 +586,28 @@ const TASK_COMMAND_KINDS = [
   "close",
   "reopen",
 ] as const;
+/**
+ * Human-credential connect commands. An agent presenting any of these is
+ * refused before the reducer runs; renewal is NOT one of them (see
+ * WORKSPACE_COMMAND_KINDS).
+ */
 const CONNECT_COMMAND_KINDS = [
   "invite_member",
   "accept_invitation",
   "create_agent_principal",
   "mint_agent_token",
+] as const;
+/**
+ * Everything that travels the workspace-stream path. `renew_agent_token` routes
+ * here — it is a workspace-authority command decided by `decideWorkspace` — but
+ * it is deliberately outside CONNECT_COMMAND_KINDS, because §2.3 renewal is
+ * presented BY the agent credential being renewed. It is authorised by the
+ * run's bounded renewal grant, never by a scope: `renew_agent_token` tokenises
+ * to token+renew and so is permanently denylisted as a scope by design.
+ */
+const WORKSPACE_COMMAND_KINDS = [
+  ...CONNECT_COMMAND_KINDS,
+  RENEW_AGENT_TOKEN_KIND,
 ] as const;
 const P0_AGENT_SCOPES = [
   "create",
@@ -648,6 +700,9 @@ interface PreparedWorkspace {
   agentToken: string | null;
   agentTokenHash: Uint8Array | null;
   lineageId: string | null;
+  /** Renewal only: the presenting predecessor and the facts read for it. */
+  predecessorTokenId: string | null;
+  renewalFacts: RenewalFacts | null;
 }
 
 interface HttpResult {
@@ -669,6 +724,13 @@ interface Audit {
 class TestRollback extends Error {
   constructor(readonly step: number) {
     super(`test rollback before step ${step}`);
+  }
+}
+
+/** Internal signal: the renewal fence lost a race and rolled back its savepoint. */
+class RenewalFenceLost extends Error {
+  constructor() {
+    super("renewal fence lost a concurrent race");
   }
 }
 
@@ -1065,6 +1127,20 @@ function validateCommand(
         ok: false,
         status: 400,
         reason: "signal fields are malformed or over their limits",
+      };
+  }
+
+  // §2.3: the successor endpoint accepts NO caller-selected fields. A body that
+  // names a principal, run, task, epoch, scope, or TTL is a request to choose a
+  // renewal target and is refused at the wire, before authorization runs — the
+  // presented predecessor credential is the entire input.
+  if (cmd.kind === RENEW_AGENT_TOKEN_KIND) {
+    return exactKeys(cmd, ["kind"])
+      ? { ok: true, command: { kind: "renew_agent_token" } }
+      : {
+        ok: false,
+        status: 400,
+        reason: "renew_agent_token accepts no caller-selected fields",
       };
   }
 
@@ -1827,6 +1903,8 @@ async function prepareWorkspaceCommand(
   let agentToken: string | null = null;
   let agentTokenHash: Uint8Array | null = null;
   let lineageId: string | null = null;
+  let predecessorTokenId: string | null = null;
+  let renewalFacts: RenewalFacts | null = null;
   let command: WorkspaceCommand;
 
   if (wire.kind === "invite_member") {
@@ -1851,6 +1929,26 @@ async function prepareWorkspaceCommand(
       kind: "create_agent_principal",
       principal_id: crypto.randomUUID(),
       name: wire.name,
+    };
+  } else if (wire.kind === RENEW_AGENT_TOKEN_KIND) {
+    // Every field below is read from the authenticated predecessor row or from
+    // the server. `wire` contributes nothing but its kind.
+    predecessorTokenId = auth.agent?.token_id ?? null;
+    const predecessor = predecessorTokenId === null
+      ? undefined
+      : state.tokens[predecessorTokenId];
+    renewalFacts = predecessorTokenId === null
+      ? null
+      : await loadRenewalFacts(tx, predecessorTokenId);
+    agentToken = opaqueToken("swm_agt_");
+    agentTokenHash = await sha256(agentToken);
+    // The successor stays in the predecessor's lineage: that is what makes a
+    // lineage revocation reach every descendant.
+    lineageId = auth.agent?.lineage_id ?? null;
+    command = {
+      kind: "renew_agent_token",
+      successor_token_id: crypto.randomUUID(),
+      scopes: [...(predecessor?.scopes ?? [])],
     };
   } else {
     agentToken = opaqueToken("swm_agt_");
@@ -1906,6 +2004,10 @@ async function prepareWorkspaceCommand(
       userId === auth.actor.user && auth.identityVerified,
     humanRights: () => [...P0_AGENT_SCOPES],
     landingAuthorityChangeResolved: () => true,
+    // Present only for a renewal that resolved a predecessor. Left undefined
+    // otherwise so the reducer refuses `renewal_unsupported` instead of
+    // deciding against a fabricated fact.
+    ...(renewalFacts === null ? {} : { renewalFacts: () => renewalFacts! }),
     nextSeq: () => ++nextSeq,
     nextEventId: () => crypto.randomUUID(),
   };
@@ -1919,7 +2021,219 @@ async function prepareWorkspaceCommand(
     agentToken,
     agentTokenHash,
     lineageId,
+    predecessorTokenId,
+    renewalFacts,
   };
+}
+
+/**
+ * Reads the §2.3 renewal facts for a predecessor token. Everything the fence
+ * needs is derived from the predecessor ROW — principal and run come off the
+ * token, never off the request — so a compromised worker cannot point renewal
+ * at another run's grant.
+ */
+async function loadRenewalFacts(
+  tx: Sql,
+  predecessorTokenId: string,
+): Promise<RenewalFacts | null> {
+  const rows = await tx<{
+    renewal_grant_id: string | null;
+    max_successors: number | null;
+    successors_used: number | null;
+    horizon_expires_at: Date | null;
+    grant_revoked_at: Date | null;
+    grant_bound_to_token: boolean | null;
+    superseded: boolean;
+    lineage_revoked: boolean;
+  }[]>`
+    SELECT
+      g.renewal_grant_id,
+      g.max_successors,
+      g.successors_used,
+      g.horizon_expires_at,
+      g.revoked_at AS grant_revoked_at,
+      (
+        g.principal_id = t.principal_id
+        AND g.run_id = t.run_id
+      ) AS grant_bound_to_token,
+      EXISTS (
+        SELECT 1
+        FROM swarm.agent_tokens AS s
+        WHERE s.predecessor_token_id = t.token_id
+      ) AS superseded,
+      (
+        EXISTS (
+          SELECT 1
+          FROM swarm.agent_tokens AS l
+          WHERE l.lineage_id = t.lineage_id
+            AND l.revoked_at IS NOT NULL
+        )
+        OR EXISTS (
+          SELECT 1
+          FROM swarm.revocation_tombstones AS r
+          WHERE r.target_id = t.lineage_id
+            AND r.kind IN ('lineage', 'family')
+        )
+        OR EXISTS (
+          -- The grant tombstone kind the renewal migration introduced.
+          -- agent-auth does not probe it per command, so if it is not probed
+          -- here the reducer would accept a renewal the database fence then
+          -- refuses, and the two would disagree.
+          SELECT 1
+          FROM swarm.revocation_tombstones AS rg
+          WHERE rg.kind = 'renewal_grant'
+            AND rg.target_id = t.renewal_grant_id
+        )
+      ) AS lineage_revoked
+    FROM swarm.agent_tokens AS t
+    LEFT JOIN swarm.renewal_grants AS g
+      ON g.renewal_grant_id = t.renewal_grant_id
+    WHERE t.token_id = ${predecessorTokenId}::uuid
+    LIMIT 1
+  `;
+  const row = rows[0];
+  if (!row) return null;
+  // The grant is the one the PREDECESSOR ROW names, not one found by searching
+  // for the run's most generous. A predecessor that names no grant has none:
+  // renewal is authorised at join/spawn or not at all.
+  const grant = row.renewal_grant_id === null ||
+      row.max_successors === null ||
+      row.successors_used === null ||
+      row.horizon_expires_at === null
+    ? null
+    : {
+      renewal_grant_id: row.renewal_grant_id,
+      max_successors: Number(row.max_successors),
+      successors_used: Number(row.successors_used),
+      horizon_expires_at: millis(row.horizon_expires_at) ?? 0,
+      revoked_at: millis(row.grant_revoked_at),
+    };
+  return {
+    grant,
+    // A grant bound to a different principal or run cannot authorise this
+    // token, however it came to be named on the row.
+    grant_mismatch: grant !== null && row.grant_bound_to_token !== true,
+    superseded: row.superseded,
+    lineage_revoked: row.lineage_revoked,
+  };
+}
+
+/**
+ * Ledgered fields for an accepted renewal. The raw successor credential is
+ * deliberately absent for the same reason capability tokens are: the ledger is
+ * readable by swarm_command, so a replay identifies the successor and its
+ * expiry but never re-issues the secret.
+ */
+function renewalReplayFields(
+  prepared: PreparedWorkspace,
+  events: readonly EventEnvelope[],
+): Record<string, string> {
+  const payload = record(events[0]?.payload) ?? {};
+  return {
+    ...(prepared.command.kind === RENEW_AGENT_TOKEN_KIND
+      ? { token_id: prepared.command.successor_token_id }
+      : {}),
+    ...(typeof payload.principal_id === "string"
+      ? { principal_id: payload.principal_id }
+      : {}),
+    ...(typeof payload.run_id === "string" ? { run_id: payload.run_id } : {}),
+    ...(typeof payload.expires_at === "number"
+      ? { expires_at: new Date(payload.expires_at).toISOString() }
+      : {}),
+  };
+}
+
+/**
+ * The atomic half of §2.3 renewal: supersede the predecessor and consume one
+ * grant slot, or do neither. Both run inside a savepoint, so a lost race leaves
+ * no partial effect — without it a failed slot CAS would still have killed the
+ * predecessor, taking a live worker down while issuing nothing.
+ *
+ * The guarded UPDATE takes a row lock on the predecessor, which is what
+ * serialises two concurrent renewals of the same token: the loser sees an
+ * already-ended predecessor and is refused `predecessor_superseded` rather than
+ * consuming a second slot or issuing a second live successor.
+ */
+async function fenceRenewal(
+  tx: Sql,
+  prepared: PreparedWorkspace,
+  events: readonly EventEnvelope[],
+  now: number,
+): Promise<boolean> {
+  if (prepared.command.kind !== "renew_agent_token") return true;
+  const grant = prepared.renewalFacts?.grant ?? null;
+  const predecessorTokenId = prepared.predecessorTokenId;
+  const payload = record(events[0]?.payload);
+  // The reducer already refused, so there is nothing to fence.
+  if (
+    grant === null ||
+    predecessorTokenId === null ||
+    prepared.agentTokenHash === null ||
+    prepared.lineageId === null ||
+    payload === null
+  ) return true;
+  const successorId = prepared.command.successor_token_id;
+  const expiresAt = typeof payload.expires_at === "number"
+    ? new Date(payload.expires_at)
+    : null;
+  if (expiresAt === null) throw new Error("renewal event carries no expiry");
+
+  try {
+    return await tx.savepoint(async (sp) => {
+      // Not "insert a token": this statement IS the fence. Everything the
+      // reducer just checked is re-checked by agent_tokens_successor_fence()
+      // against the predecessor ROW, and the grant slot is spent by that same
+      // trigger — deliberately NOT here, because an issued-but-uncounted
+      // successor would be one lost transaction away. The partial UNIQUE index
+      // on predecessor_token_id is the CAS: a concurrent second renewal of the
+      // same predecessor fails 23505 rather than forking the lineage.
+      await sp`
+        INSERT INTO swarm.agent_tokens (
+          token_id, principal_id, run_id, task_id, epoch,
+          scopes, token_hash, expires_at, lineage_id,
+          predecessor_token_id, renewal_grant_id
+        ) VALUES (
+          ${successorId}::uuid,
+          ${String(payload.principal_id)}::uuid,
+          ${String(payload.run_id)}::uuid,
+          ${String(payload.task_id)}::uuid,
+          ${Number(payload.epoch)},
+          ${tx.json((payload.scopes ?? []) as postgres.JSONValue)}::jsonb,
+          ${prepared.agentTokenHash},
+          ${expiresAt},
+          ${prepared.lineageId}::uuid,
+          ${predecessorTokenId}::uuid,
+          ${grant.renewal_grant_id}::uuid
+        )
+      `;
+      // Supersede the predecessor. It must happen AFTER the insert: the fence
+      // refuses an expired predecessor, so ending it first would refuse the
+      // very successor it is being ended for. Ending it is what stops two live
+      // credentials existing for one worker — a successor without this is a
+      // duplication, not a renewal.
+      const superseded = await sp<{ token_id: string }[]>`
+        UPDATE swarm.agent_tokens
+        SET expires_at = ${new Date(now)}
+        WHERE token_id = ${predecessorTokenId}::uuid
+          AND revoked_at IS NULL
+        RETURNING token_id
+      `;
+      if (superseded.length !== 1) throw new RenewalFenceLost();
+      return true;
+    });
+  } catch (error) {
+    // 23505 is the lineage-fork CAS losing; 55000 is any named refusal raised
+    // by the successor fence; 40P01 is the documented renewal-vs-revocation
+    // deadlock, which the migration says must resolve toward refusal. All three
+    // roll back to the savepoint, leaving the transaction usable so the caller
+    // can re-read state and turn the race into a named domain refusal.
+    const code = dbCode(error);
+    if (
+      error instanceof RenewalFenceLost ||
+      code === "23505" || code === "55000" || code === "40P01"
+    ) return false;
+    throw error;
+  }
 }
 
 async function appendEvents(
@@ -2158,6 +2472,18 @@ async function updateWorkspaceProjection(
           NULL
         )
       `;
+    } else if (
+      event.type === "AgentTokenMinted" &&
+      prepared.wire.kind === RENEW_AGENT_TOKEN_KIND
+    ) {
+      // The successor ROW was already written by fenceRenewal, which had to run
+      // before the decision was final so a lost race could become a named
+      // refusal instead of a 500. Writing it again here would be a second
+      // insert of the same token; the fold above is all that is left to do.
+      const token = projection.tokens[String(payload.token_id)];
+      if (!token || token.task_id === null || token.epoch === null) {
+        throw new Error("folded successor projection missing narrow binding");
+      }
     } else if (event.type === "AgentTokenMinted") {
       if (
         prepared.wire.kind !== "mint_agent_token" ||
@@ -2208,10 +2534,60 @@ async function updateWorkspaceProjection(
       ) {
         throw new Error("agent run binding changed during mint");
       }
+
+      /* ★ THE RENEWAL GRANT IS CREATED HERE, IN THE SAME TRANSACTION AS THE TOKEN, AND THAT
+       * PLACEMENT IS THE WHOLE FIX.
+       *
+       * §2.3 says renewal is "authorized only by a bounded renewal grant created at human
+       * join/spawn". A first pass implemented that as a SEPARATE create_renewal_grant
+       * command the client sent before minting — and the server never implemented it. The
+       * type existed only in src/cloud/command-client.ts, the client treated refusal as
+       * "never worth failing the mint over", so it failed silently, every root token got
+       * renewal_grant_id NULL, and the successor fence refuses exactly that. The entire
+       * renewal path was built, tested, and unreachable.
+       *
+       * That is the SECOND time this codebase has shipped a gate on a door with no corridor
+       * — create_workspace lived in the reducer with no wire kind for the same reason. The
+       * structural answer is not another command to remember: a token that cannot renew is
+       * useless for a session lasting days, so the grant is not optional and is therefore
+       * not a separate step. Mint one, get one, atomically. There is nothing left to forget.
+       *
+       * created_by is the HUMAN who minted — minting is human-interactive-credential-only,
+       * so this is the "authorising human" the grant column means, and it is what a later
+       * human reauthorisation at the horizon is measured against. */
+      const grantId = crypto.randomUUID();
+      /* Measured from the token's own issued_at rather than a wall clock read here, so the
+         grant and the credential it authorises start from the same instant — a horizon that
+         drifts from its token by even a few milliseconds is a boundary two clocks disagree
+         about, and this one decides when a human is asked to reauthorise. */
+      const horizonExpiresAt = new Date(
+        token.issued_at + RENEWAL_HORIZON_DEFAULT_MS,
+      ).toISOString();
+      await tx`
+        INSERT INTO swarm.renewal_grants (
+          renewal_grant_id, workspace_id, principal_id, run_id,
+          max_successors, successors_used, horizon_expires_at, created_by
+        ) VALUES (
+          ${grantId}::uuid,
+          ${route.workspaceId}::uuid,
+          ${token.principal_id}::uuid,
+          ${token.run_id}::uuid,
+          ${RENEWAL_MAX_SUCCESSORS_DEFAULT},
+          0,
+          ${horizonExpiresAt},
+          (
+            SELECT p.owner_user_id
+            FROM swarm.agent_principals AS p
+            WHERE p.principal_id = ${token.principal_id}::uuid
+          )
+        )
+      `;
+
       await tx`
         INSERT INTO swarm.agent_tokens (
           token_id, principal_id, run_id, task_id, epoch,
-          scopes, token_hash, issued_at, expires_at, lineage_id
+          scopes, token_hash, issued_at, expires_at, lineage_id,
+          renewal_grant_id
         ) VALUES (
           ${token.token_id}::uuid,
           ${token.principal_id}::uuid,
@@ -2222,7 +2598,8 @@ async function updateWorkspaceProjection(
           ${prepared.agentTokenHash},
           ${new Date(token.issued_at)},
           ${new Date(token.expires_at)},
-          ${prepared.lineageId}::uuid
+          ${prepared.lineageId}::uuid,
+          ${grantId}::uuid
         )
       `;
     }
@@ -3875,7 +4252,7 @@ async function handleTransaction(
         : await resolveInvitationRoute(tx, body, auth, invitationRouteHash)
       : await resolveRoute(tx, body, auth);
     const workspaceCommandRouteOk =
-      !(CONNECT_COMMAND_KINDS as readonly string[]).includes(kind) ||
+      !(WORKSPACE_COMMAND_KINDS as readonly string[]).includes(kind) ||
       kind === "accept_invitation" ||
       record(body.stream)?.kind === "workspace";
     if (!route || !workspaceCommandRouteOk) {
@@ -3974,8 +4351,27 @@ async function handleTransaction(
         body: { error: "upgrade_required", min_client_version: minClientVersion },
       };
     }
+    // §2.3 renewal is the one command an agent presents that is NOT authorised
+    // by a scope — a "renew token" scope is intrinsically denylisted, so no
+    // worker can ever hold one. It is authorised by the run's bounded renewal
+    // grant instead, checked in the reducer and fenced in the transaction. The
+    // scope gate below is therefore skipped for it, and only for it.
+    const isRenewal = validation.command.kind === RENEW_AGENT_TOKEN_KIND;
+    if (isRenewal && auth.agent === null) {
+      await insertAudit(tx, {
+        auth,
+        commandKind: kind,
+        workspaceId: route.workspaceId,
+        streamId: route.streamId,
+        outcome: "authz",
+        reason: "renewal_requires_agent_credential",
+        detail: ignoredIdentity,
+      });
+      return { status: 403, body: { error: "forbidden" } };
+    }
     if (
       auth.agent !== null &&
+      !isRenewal &&
       (
         (CONNECT_COMMAND_KINDS as readonly string[]).includes(
           validation.command.kind,
@@ -4176,7 +4572,7 @@ async function handleTransaction(
     `;
     let now = Number(timeRows[0]?.now_ms);
     const workspaceWire =
-      (CONNECT_COMMAND_KINDS as readonly string[]).includes(command.kind)
+      (WORKSPACE_COMMAND_KINDS as readonly string[]).includes(command.kind)
         ? command as ConnectCommand
         : null;
     let prepared: PreparedWorkspace | null = null;
@@ -4254,6 +4650,36 @@ async function handleTransaction(
           throw new Error("invitation atomic consumption lost without a domain state change");
         }
       }
+      // Same shape as the invitation consumption above: the fence is the
+      // authority on who won, so a loser re-reads state and re-decides, which
+      // turns the race into a named domain refusal instead of a 500.
+      if (
+        decision.ok &&
+        prepared.command.kind === RENEW_AGENT_TOKEN_KIND &&
+        !await fenceRenewal(tx, prepared, decision.events, now)
+      ) {
+        const retryTime = await tx<{ now_ms: string | number }[]>`
+          SELECT floor(extract(epoch FROM statement_timestamp()) * 1000)::bigint AS now_ms
+        `;
+        now = Number(retryTime[0]?.now_ms);
+        prepared = await prepareWorkspaceCommand(
+          tx,
+          route,
+          auth,
+          workspaceWire!,
+          commandId,
+          headSeq,
+          now,
+        );
+        decision = decideWorkspace(
+          prepared.state,
+          prepared.command,
+          prepared.ctx,
+        ) as Decision;
+        if (decision.ok) {
+          throw new Error("renewal fence lost without a domain state change");
+        }
+      }
       const response: StoredResponse = decision.ok
         ? {
           ok: true,
@@ -4268,6 +4694,8 @@ async function handleTransaction(
               principal_id: prepared.command.principal_id,
               run_id: prepared.command.run_id,
             }
+            : prepared.command.kind === RENEW_AGENT_TOKEN_KIND
+            ? renewalReplayFields(prepared, decision.events)
             : { workspace_id: route.workspaceId }),
         }
         : {
@@ -4422,7 +4850,10 @@ async function handleTransaction(
         "the inviter",
       );
       freshOnly.inviter_user_id = auth.actor.user;
-    } else if (prepared?.command.kind === "mint_agent_token") {
+    } else if (
+      prepared?.command.kind === "mint_agent_token" ||
+      prepared?.command.kind === RENEW_AGENT_TOKEN_KIND
+    ) {
       freshOnly.agent_token = prepared.agentToken;
     }
     const result: HttpResult =

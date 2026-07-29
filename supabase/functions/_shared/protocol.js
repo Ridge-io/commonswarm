@@ -699,6 +699,9 @@ function reduceWorkspaceStream(events) {
 var INVITATION_MAX_TTL_MS = 7 * 24 * 60 * 60 * 1e3;
 var AGENT_TOKEN_DEFAULT_TTL_MS = 60 * 60 * 1e3;
 var AGENT_TOKEN_MAX_TTL_MS = 8 * 60 * 60 * 1e3;
+var RENEWAL_HORIZON_DEFAULT_MS = 30 * 24 * 60 * 60 * 1e3;
+var RENEWAL_HORIZON_MAX_MS = 90 * 24 * 60 * 60 * 1e3;
+var RENEWAL_MAX_SUCCESSORS_DEFAULT = 800;
 var HUMAN_ONLY_COMMANDS = /* @__PURE__ */ new Set([
   "create_workspace",
   "invite_member",
@@ -1078,6 +1081,167 @@ function decideWorkspace(state, cmd, ctx) {
         })
       ]);
     }
+    // §2.3 worker-token renewal: a fenced SUCCESSOR operation, never a mint.
+    // The successor inherits principal, run, task, epoch and scopes from the
+    // predecessor row in state; nothing here is read from the command except
+    // the adapter-minted successor id and the scopes it claims to have copied,
+    // and those scopes are checked back against the predecessor below.
+    case "renew_agent_token": {
+      if (ctx.credential_kind !== "agent") {
+        return authz2(
+          "renewal_requires_agent_credential",
+          "renewal is presented by the worker credential being renewed; a human re-authorises by minting"
+        );
+      }
+      if (ctx.presenting_token_id === null || ctx.actor.agent_principal === null) {
+        return authz2(
+          "predecessor_not_presented",
+          "renewal requires the presenting agent token to be resolved"
+        );
+      }
+      const predecessor = state.tokens[ctx.presenting_token_id];
+      if (!predecessor) {
+        return domain2(
+          ctx,
+          cmd.kind,
+          "predecessor_not_found",
+          "presenting token is not a token of this workspace"
+        );
+      }
+      if (!ctx.renewalFacts) {
+        return authz2(
+          "renewal_unsupported",
+          "no renewal oracle is wired; renewal fails closed rather than defaulting"
+        );
+      }
+      if (predecessor.principal_id !== ctx.actor.agent_principal) {
+        return authz2(
+          "predecessor_not_owned",
+          "presenting token does not belong to the acting principal"
+        );
+      }
+      const principal = state.principals[predecessor.principal_id];
+      if (!principal || principal.revoked_at !== null) {
+        return domain2(
+          ctx,
+          cmd.kind,
+          "principal_revoked",
+          "the predecessor principal is missing or revoked"
+        );
+      }
+      if (predecessor.revoked_at !== null) {
+        return domain2(ctx, cmd.kind, "predecessor_revoked", "predecessor token is revoked");
+      }
+      const facts = ctx.renewalFacts(predecessor.token_id);
+      if (facts.superseded) {
+        return domain2(
+          ctx,
+          cmd.kind,
+          "predecessor_superseded",
+          "predecessor has already issued a successor; use it rather than renewing again"
+        );
+      }
+      if (predecessor.expires_at <= ctx.now) {
+        return domain2(ctx, cmd.kind, "predecessor_expired", "predecessor token has expired");
+      }
+      if (predecessor.task_id === null || predecessor.epoch === null) {
+        return domain2(
+          ctx,
+          cmd.kind,
+          "renewal_binding_incomplete",
+          "predecessor carries no task/epoch binding for the successor to inherit"
+        );
+      }
+      if (facts.lineage_revoked) {
+        return domain2(
+          ctx,
+          cmd.kind,
+          "renewal_lineage_revoked",
+          "the renewal lineage carries a revocation"
+        );
+      }
+      if (facts.grant_mismatch) {
+        return domain2(
+          ctx,
+          cmd.kind,
+          "renewal_grant_mismatch",
+          "the named grant is bound to a different principal or run"
+        );
+      }
+      const grant = facts.grant;
+      if (!grant) {
+        return domain2(
+          ctx,
+          cmd.kind,
+          "renewal_grant_not_found",
+          "no renewal grant was created for this run at join/spawn"
+        );
+      }
+      if (grant.revoked_at !== null) {
+        return domain2(ctx, cmd.kind, "renewal_grant_revoked", "renewal grant is revoked");
+      }
+      if (!Number.isFinite(grant.horizon_expires_at) || grant.horizon_expires_at - ctx.now > RENEWAL_HORIZON_MAX_MS) {
+        return domain2(
+          ctx,
+          cmd.kind,
+          "renewal_horizon_invalid",
+          "renewal horizon exceeds the 90-day maximum"
+        );
+      }
+      if (grant.horizon_expires_at <= ctx.now) {
+        return domain2(
+          ctx,
+          cmd.kind,
+          "renewal_horizon_reached",
+          "the continuous-renewal horizon has passed; a human must reauthorise this run"
+        );
+      }
+      if (!Number.isInteger(grant.max_successors) || !Number.isInteger(grant.successors_used) || grant.successors_used >= grant.max_successors) {
+        return domain2(
+          ctx,
+          cmd.kind,
+          "renewal_successors_exhausted",
+          "renewal grant has no successors left"
+        );
+      }
+      const inherited = new Set(predecessor.scopes);
+      if (cmd.scopes.length === 0 || cmd.scopes.some((scope) => !inherited.has(scope))) {
+        return domain2(
+          ctx,
+          cmd.kind,
+          "renewal_scope_widened",
+          "successor scopes must be equal to or narrower than the predecessor"
+        );
+      }
+      if (cmd.scopes.some(isAgentScopeDenylisted)) {
+        return domain2(ctx, cmd.kind, "scope_denylisted", "one or more scopes are human-credential-only");
+      }
+      if (state.tokens[cmd.successor_token_id]) {
+        return domain2(ctx, cmd.kind, "bad_state", "successor token id already exists");
+      }
+      const expires_at = Math.min(
+        ctx.now + AGENT_TOKEN_DEFAULT_TTL_MS,
+        grant.horizon_expires_at
+      );
+      return accept2([
+        env2(ctx, "AgentTokenMinted", {
+          token_id: cmd.successor_token_id,
+          principal_id: predecessor.principal_id,
+          run_id: predecessor.run_id,
+          task_id: predecessor.task_id,
+          epoch: predecessor.epoch,
+          scopes: [...cmd.scopes],
+          issued_at: ctx.now,
+          expires_at,
+          // Lineage marks, carried as extra payload fields. A dedicated
+          // AgentTokenRenewed type would have to be added to
+          // workspace-events.ts; the reducer folds the required AgentTokenMinted
+          // fields and ignores the rest.
+          predecessor_token_id: predecessor.token_id,
+          renewal_grant_id: grant.renewal_grant_id
+        })
+      ]);
+    }
     case "revoke_agent_token": {
       if (ctx.credential_kind === "agent") {
         if (ctx.presenting_token_id !== cmd.token_id || ctx.actor.agent_principal === null) {
@@ -1120,6 +1284,9 @@ export {
   DISPOSITIONS,
   EVENT_TYPES,
   INVITATION_MAX_TTL_MS,
+  RENEWAL_HORIZON_DEFAULT_MS,
+  RENEWAL_HORIZON_MAX_MS,
+  RENEWAL_MAX_SUCCESSORS_DEFAULT,
   SCHEMA_VERSION,
   StreamIntegrityError,
   UnknownEventTypeError,

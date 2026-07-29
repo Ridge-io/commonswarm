@@ -17,6 +17,16 @@ export const INVITATION_MAX_TTL_MS = 7 * 24 * 60 * 60 * 1_000;
 export const AGENT_TOKEN_DEFAULT_TTL_MS = 60 * 60 * 1_000;
 export const AGENT_TOKEN_MAX_TTL_MS = 8 * 60 * 60 * 1_000;
 
+// §2.3 continuous-renewal horizon. A worksession that runs for weeks must not
+// be paid for by lengthening the bearer token: the TTL constants above stay
+// where they are, and the successor endpoint below carries the run instead.
+// The horizon is the periodic human reauthorisation that stops silent renewal
+// becoming an unbounded ambient-authority deputy.
+export const RENEWAL_HORIZON_DEFAULT_MS = 30 * 24 * 60 * 60 * 1_000;
+export const RENEWAL_HORIZON_MAX_MS = 90 * 24 * 60 * 60 * 1_000;
+/** ~1 successor/hour across the default horizon, with restart headroom. */
+export const RENEWAL_MAX_SUCCESSORS_DEFAULT = 800;
+
 export type WorkspaceCommand =
   | { kind: 'create_workspace'; workspace_id: string; name: string }
   | {
@@ -52,7 +62,48 @@ export type WorkspaceCommand =
       scopes: string[];
       ttl_ms?: number;
     }
-  | { kind: 'revoke_agent_token'; token_id: string };
+  | { kind: 'revoke_agent_token'; token_id: string }
+  | {
+      /**
+       * §2.3 fenced successor — never the generic mint. The presented
+       * predecessor credential is the whole caller input: `ctx` carries it as
+       * `presenting_token_id`, and principal, run, task and epoch are not
+       * fields at all because the reducer reads them off the predecessor row.
+       *
+       * The two fields present are adapter-derived, not caller-selected.
+       * `successor_token_id` is minted by the adapter; `scopes` are the ones
+       * the adapter read FROM THE PREDECESSOR, restated here only so the
+       * reducer can re-check attenuation against the predecessor rather than
+       * trust the adapter. An adapter wiring mistake therefore cannot widen a
+       * successor, which is the entire point of §2.3's "attenuation vs the
+       * predecessor, NOT the human's broader rights".
+       */
+      kind: 'renew_agent_token';
+      successor_token_id: string;
+      scopes: string[];
+    };
+
+/** Bounded renewal grant created at human `join`/`spawn` (§2.3). */
+export interface RenewalGrantFacts {
+  renewal_grant_id: string;
+  max_successors: number;
+  successors_used: number;
+  /** Hard continuous-renewal horizon; past it a human must reauthorise. */
+  horizon_expires_at: number;
+  revoked_at: number | null;
+}
+
+/** Transaction-time renewal facts, all read from server state (§2.3). */
+export interface RenewalFacts {
+  /** Live grant for the predecessor's (principal, run); null when absent. */
+  grant: RenewalGrantFacts | null;
+  /** The predecessor row names a grant other than the run's live grant. */
+  grant_mismatch: boolean;
+  /** A successor for this exact predecessor already exists. */
+  superseded: boolean;
+  /** Any token in the lineage is revoked, or the lineage carries a tombstone. */
+  lineage_revoked: boolean;
+}
 
 export interface DecideWorkspaceCtx {
   now: number;
@@ -82,10 +133,49 @@ export interface DecideWorkspaceCtx {
     target_user_id: string,
     successor_user_id: string | null,
   ): boolean;
+  /**
+   * Renewal facts for the presenting predecessor (§2.3). Optional so an
+   * adapter that has not wired renewal fails closed — `renewal_unsupported` —
+   * instead of renewing against permissive defaults.
+   */
+  renewalFacts?(predecessor_token_id: string): RenewalFacts;
 
   nextSeq(): number;
   nextEventId(): string;
 }
+
+/**
+ * §2.3 successor refusals. Each is its own string so an audit row names the
+ * exact fence that fired: "renewal refused" without the cause is unactionable
+ * for the operator who has to decide between reauthorising and revoking.
+ */
+export type RenewalRejectionReason =
+  | 'renewal_unsupported'
+  | 'renewal_requires_agent_credential'
+  | 'predecessor_not_presented'
+  | 'predecessor_not_found'
+  | 'predecessor_not_owned'
+  | 'predecessor_revoked'
+  | 'predecessor_expired'
+  | 'predecessor_superseded'
+  | 'renewal_binding_incomplete'
+  | 'renewal_lineage_revoked'
+  | 'renewal_grant_not_found'
+  | 'renewal_grant_mismatch'
+  | 'renewal_grant_revoked'
+  | 'renewal_horizon_reached'
+  | 'renewal_horizon_invalid'
+  | 'renewal_successors_exhausted'
+  | 'renewal_scope_widened';
+
+/**
+ * Renewal reasons live here rather than in the shared event vocabulary so the
+ * successor endpoint can name each fence without widening `WorkspaceRejectionReason`,
+ * which other streams also consume.
+ */
+export type WorkspaceCommandRejectionReason =
+  | WorkspaceRejectionReason
+  | RenewalRejectionReason;
 
 export interface WorkspaceDecisionAccepted {
   ok: true;
@@ -95,7 +185,7 @@ export interface WorkspaceDecisionAccepted {
 export interface WorkspaceDecisionRejected {
   ok: false;
   class: 'authz' | 'domain';
-  reason: WorkspaceRejectionReason;
+  reason: WorkspaceCommandRejectionReason;
   detail: string;
   /** Empty for authz; exactly one CommandRejected for domain refusal. */
   events: WorkspaceEventEnvelope[];
@@ -103,6 +193,19 @@ export interface WorkspaceDecisionRejected {
 
 export type WorkspaceDecision = WorkspaceDecisionAccepted | WorkspaceDecisionRejected;
 
+/**
+ * READ THIS BEFORE "FIXING" THE OMISSION BELOW.
+ *
+ * `renew_agent_token` is deliberately absent from this set, and that is not an
+ * oversight. §2.3 renewal is presented BY the worker credential being renewed,
+ * so requiring a human credential would make the endpoint unreachable and put
+ * us back on the 8h wall. It is the single exception, and it is fenced rather
+ * than trusted: the `renew_agent_token` case refuses a human credential too,
+ * accepts no caller-selected target fields, and re-applies
+ * `isAgentScopeDenylisted` to the inherited scopes. Every OTHER command an
+ * agent may not issue is still listed here — adding renewal to the list, or
+ * removing anything else from it, both break §2.3.
+ */
 const HUMAN_ONLY_COMMANDS = new Set<WorkspaceCommand['kind']>([
   'create_workspace',
   'invite_member',
@@ -199,7 +302,7 @@ function accept(events: WorkspaceEventEnvelope[]): WorkspaceDecisionAccepted {
 }
 
 function authz(
-  reason: WorkspaceRejectionReason,
+  reason: WorkspaceCommandRejectionReason,
   detail: string,
 ): WorkspaceDecisionRejected {
   return { ok: false, class: 'authz', reason, detail, events: [] };
@@ -208,7 +311,7 @@ function authz(
 function domain(
   ctx: DecideWorkspaceCtx,
   command: WorkspaceCommand['kind'],
-  reason: WorkspaceRejectionReason,
+  reason: WorkspaceCommandRejectionReason,
   detail: string,
 ): WorkspaceDecisionRejected {
   return {
@@ -546,6 +649,202 @@ export function decideWorkspace(
           scopes: [...cmd.scopes],
           issued_at: ctx.now,
           expires_at: ctx.now + ttl,
+        }),
+      ]);
+    }
+
+    // §2.3 worker-token renewal: a fenced SUCCESSOR operation, never a mint.
+    // The successor inherits principal, run, task, epoch and scopes from the
+    // predecessor row in state; nothing here is read from the command except
+    // the adapter-minted successor id and the scopes it claims to have copied,
+    // and those scopes are checked back against the predecessor below.
+    case 'renew_agent_token': {
+      if (ctx.credential_kind !== 'agent') {
+        return authz(
+          'renewal_requires_agent_credential',
+          'renewal is presented by the worker credential being renewed; a human re-authorises by minting',
+        );
+      }
+      if (ctx.presenting_token_id === null || ctx.actor.agent_principal === null) {
+        return authz(
+          'predecessor_not_presented',
+          'renewal requires the presenting agent token to be resolved',
+        );
+      }
+      const predecessor = state.tokens[ctx.presenting_token_id];
+      if (!predecessor) {
+        return domain(
+          ctx,
+          cmd.kind,
+          'predecessor_not_found',
+          'presenting token is not a token of this workspace',
+        );
+      }
+      if (!ctx.renewalFacts) {
+        return authz(
+          'renewal_unsupported',
+          'no renewal oracle is wired; renewal fails closed rather than defaulting',
+        );
+      }
+      if (predecessor.principal_id !== ctx.actor.agent_principal) {
+        return authz(
+          'predecessor_not_owned',
+          'presenting token does not belong to the acting principal',
+        );
+      }
+      const principal = state.principals[predecessor.principal_id];
+      if (!principal || principal.revoked_at !== null) {
+        return domain(
+          ctx,
+          cmd.kind,
+          'principal_revoked',
+          'the predecessor principal is missing or revoked',
+        );
+      }
+      if (predecessor.revoked_at !== null) {
+        return domain(ctx, cmd.kind, 'predecessor_revoked', 'predecessor token is revoked');
+      }
+      /* ★ SUPERSESSION IS CHECKED BEFORE EXPIRY, AND THE ORDER IS THE WHOLE POINT.
+       *
+       * Superseding a predecessor is implemented as setting expires_at = now, so a
+       * superseded token IS an expired token and the expiry branch would always answer
+       * first. That made 'predecessor_superseded' unreachable — a named reason that could
+       * never fire, which reads as a distinction the system draws and does not.
+       *
+       * It matters beyond tidiness because these two say opposite things to whoever is
+       * holding the credential. 'expired' means time passed and you should have renewed
+       * sooner. 'superseded' means A SUCCESSOR ALREADY EXISTS — you renewed twice, or you
+       * lost a concurrency race, and there is a live credential you should be using instead.
+       * Told the wrong one, an agent retries the renewal that just lost and loses again.
+       *
+       * Measured: the concurrent-double-renewal test had exactly one winner (correct) while
+       * the loser was told 'predecessor_expired' (misleading), which is how this surfaced. */
+      const facts = ctx.renewalFacts(predecessor.token_id);
+      if (facts.superseded) {
+        return domain(
+          ctx,
+          cmd.kind,
+          'predecessor_superseded',
+          'predecessor has already issued a successor; use it rather than renewing again',
+        );
+      }
+      if (predecessor.expires_at <= ctx.now) {
+        return domain(ctx, cmd.kind, 'predecessor_expired', 'predecessor token has expired');
+      }
+      if (predecessor.task_id === null || predecessor.epoch === null) {
+        return domain(
+          ctx,
+          cmd.kind,
+          'renewal_binding_incomplete',
+          'predecessor carries no task/epoch binding for the successor to inherit',
+        );
+      }
+      // Fail-closed and lineage-wide: revoking any token in the lineage stops
+      // every descendant renewing, so an individually-revoked worker can never
+      // be resurrected through its children.
+      if (facts.lineage_revoked) {
+        return domain(
+          ctx,
+          cmd.kind,
+          'renewal_lineage_revoked',
+          'the renewal lineage carries a revocation',
+        );
+      }
+      if (facts.grant_mismatch) {
+        return domain(
+          ctx,
+          cmd.kind,
+          'renewal_grant_mismatch',
+          'the named grant is bound to a different principal or run',
+        );
+      }
+      const grant = facts.grant;
+      if (!grant) {
+        return domain(
+          ctx,
+          cmd.kind,
+          'renewal_grant_not_found',
+          'no renewal grant was created for this run at join/spawn',
+        );
+      }
+      if (grant.revoked_at !== null) {
+        return domain(ctx, cmd.kind, 'renewal_grant_revoked', 'renewal grant is revoked');
+      }
+      // A grant row whose horizon exceeds the maximum is refused rather than
+      // honoured: the cap has to hold even against a corrupted or hostile row.
+      if (
+        !Number.isFinite(grant.horizon_expires_at)
+        || grant.horizon_expires_at - ctx.now > RENEWAL_HORIZON_MAX_MS
+      ) {
+        return domain(
+          ctx,
+          cmd.kind,
+          'renewal_horizon_invalid',
+          'renewal horizon exceeds the 90-day maximum',
+        );
+      }
+      if (grant.horizon_expires_at <= ctx.now) {
+        return domain(
+          ctx,
+          cmd.kind,
+          'renewal_horizon_reached',
+          'the continuous-renewal horizon has passed; a human must reauthorise this run',
+        );
+      }
+      if (
+        !Number.isInteger(grant.max_successors)
+        || !Number.isInteger(grant.successors_used)
+        || grant.successors_used >= grant.max_successors
+      ) {
+        return domain(
+          ctx,
+          cmd.kind,
+          'renewal_successors_exhausted',
+          'renewal grant has no successors left',
+        );
+      }
+      // Attenuation is measured against the PREDECESSOR, not against the
+      // owning human's broader rights. Equal-or-narrower only.
+      const inherited = new Set(predecessor.scopes);
+      if (
+        cmd.scopes.length === 0
+        || cmd.scopes.some((scope) => !inherited.has(scope))
+      ) {
+        return domain(
+          ctx,
+          cmd.kind,
+          'renewal_scope_widened',
+          'successor scopes must be equal to or narrower than the predecessor',
+        );
+      }
+      if (cmd.scopes.some(isAgentScopeDenylisted)) {
+        return domain(ctx, cmd.kind, 'scope_denylisted', 'one or more scopes are human-credential-only');
+      }
+      if (state.tokens[cmd.successor_token_id]) {
+        return domain(ctx, cmd.kind, 'bad_state', 'successor token id already exists');
+      }
+      // The successor never outlives the horizon: the last renewal before it
+      // is short, not a free hour on the far side of the checkpoint.
+      const expires_at = Math.min(
+        ctx.now + AGENT_TOKEN_DEFAULT_TTL_MS,
+        grant.horizon_expires_at,
+      );
+      return accept([
+        env(ctx, 'AgentTokenMinted', {
+          token_id: cmd.successor_token_id,
+          principal_id: predecessor.principal_id,
+          run_id: predecessor.run_id,
+          task_id: predecessor.task_id,
+          epoch: predecessor.epoch,
+          scopes: [...cmd.scopes],
+          issued_at: ctx.now,
+          expires_at,
+          // Lineage marks, carried as extra payload fields. A dedicated
+          // AgentTokenRenewed type would have to be added to
+          // workspace-events.ts; the reducer folds the required AgentTokenMinted
+          // fields and ignores the rest.
+          predecessor_token_id: predecessor.token_id,
+          renewal_grant_id: grant.renewal_grant_id,
         }),
       ]);
     }

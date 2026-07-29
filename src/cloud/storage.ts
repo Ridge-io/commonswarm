@@ -283,6 +283,111 @@ function parseProfile(raw: string): CredentialProfile {
   return value as CredentialProfile;
 }
 
+/**
+ * One writer per (state directory, name) across processes. Extracted from the credential
+ * store because the agent successor record (§2.3 renewal) has to take the same lock: two
+ * CLI invocations renewing the same lineage concurrently is exactly the read-rotate-write
+ * race that once produced two live credentials.
+ */
+export async function withFileLock<T>(
+  stateDirectory: string,
+  lockName: string,
+  work: () => Promise<T>,
+): Promise<T> {
+  await secureDirectory(stateDirectory);
+  const lockPath = join(stateDirectory, `${lockName}.lock`);
+  const deadline = Date.now() + LOCK_TIMEOUT_MS;
+  let handle: Awaited<ReturnType<typeof open>> | null = null;
+
+  while (handle === null) {
+    try {
+      handle = await open(lockPath, "wx", 0o600);
+      await handle.writeFile(
+        JSON.stringify({ pid: process.pid, createdAt: Date.now() }),
+        "utf8",
+      );
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      const lockInfo = await stat(lockPath).catch(() => null);
+      if (lockInfo && Date.now() - lockInfo.mtimeMs > LOCK_STALE_MS) {
+        await unlink(lockPath).catch(() => undefined);
+        continue;
+      }
+      if (Date.now() >= deadline) {
+        throw new Error("timed out waiting for the credential refresh lock");
+      }
+      await delay(25 + randomBytes(1)[0]! % 75);
+    }
+  }
+
+  try {
+    return await work();
+  } finally {
+    await handle.close();
+    await unlink(lockPath).catch(() => undefined);
+  }
+}
+
+/**
+ * Atomic 0600 replace. It guarantees no torn reader, not mutual exclusion — callers that
+ * read-then-write must hold withFileLock around both halves.
+ */
+export async function writeSecureJsonFile(
+  path: string,
+  serialized: string,
+): Promise<void> {
+  await secureDirectory(dirname(path));
+  try {
+    await secureCredentialFile(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+  const temporary = `${path}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`;
+  const handle = await open(temporary, "wx", 0o600);
+  try {
+    await handle.writeFile(serialized, "utf8");
+    await handle.sync();
+    await handle.close();
+    await rename(temporary, path);
+  } catch (error) {
+    await handle.close().catch(() => undefined);
+    await unlink(temporary).catch(() => undefined);
+    throw error;
+  }
+  await chmod(path, 0o600);
+  await secureCredentialFile(path);
+}
+
+/** Reads a 0600-verified JSON file, or null when it has never been written. */
+export async function readSecureJsonFile(
+  path: string,
+  maxBytes: number,
+): Promise<string | null> {
+  await secureDirectory(dirname(path));
+  try {
+    await secureCredentialFile(path);
+    const raw = await readFile(path, "utf8");
+    if (Buffer.byteLength(raw, "utf8") > maxBytes) {
+      throw new Error("stored record is larger than this store accepts");
+    }
+    return raw;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+}
+
+/** Removes a secure JSON file, tolerating one that was never written. */
+export async function deleteSecureJsonFile(path: string): Promise<void> {
+  await secureDirectory(dirname(path));
+  try {
+    await secureCredentialFile(path);
+    await unlink(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+}
+
 async function run(
   executable: string,
   args: string[],
@@ -337,83 +442,28 @@ abstract class LockedCredentialStore implements CredentialStore {
   }
 
   async readProfile(): Promise<CredentialProfile> {
-    await secureDirectory(this.stateDirectory);
+    let raw: string | null;
     try {
-      await secureCredentialFile(this.profilePath);
-      const raw = await readFile(this.profilePath, "utf8");
-      if (Buffer.byteLength(raw, "utf8") > MAX_PROFILE_BYTES) {
-        throw new Error("stored credential profile is malformed");
-      }
-      return parseProfile(raw);
+      raw = await readSecureJsonFile(this.profilePath, MAX_PROFILE_BYTES);
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-        return emptyProfile();
+      if ((error as Error).message.startsWith("stored record is larger")) {
+        throw new Error("stored credential profile is malformed");
       }
       throw error;
     }
+    return raw === null ? emptyProfile() : parseProfile(raw);
   }
 
   async writeProfile(profile: CredentialProfile): Promise<void> {
-    await secureDirectory(this.stateDirectory);
     const serialized = JSON.stringify(parseProfile(JSON.stringify(profile)));
     if (Buffer.byteLength(serialized, "utf8") > MAX_PROFILE_BYTES) {
       throw new Error("stored credential profile is too large");
     }
-    try {
-      await secureCredentialFile(this.profilePath);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-    }
-    const temporary =
-      `${this.profilePath}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`;
-    const handle = await open(temporary, "wx", 0o600);
-    try {
-      await handle.writeFile(serialized, "utf8");
-      await handle.sync();
-      await handle.close();
-      await rename(temporary, this.profilePath);
-    } catch (error) {
-      await handle.close().catch(() => undefined);
-      await unlink(temporary).catch(() => undefined);
-      throw error;
-    }
-    await chmod(this.profilePath, 0o600);
-    await secureCredentialFile(this.profilePath);
+    await writeSecureJsonFile(this.profilePath, serialized);
   }
 
   async withLock<T>(work: () => Promise<T>): Promise<T> {
-    await secureDirectory(this.stateDirectory);
-    const lockPath = join(this.stateDirectory, `${this.lockName}.lock`);
-    const deadline = Date.now() + LOCK_TIMEOUT_MS;
-    let handle: Awaited<ReturnType<typeof open>> | null = null;
-
-    while (handle === null) {
-      try {
-        handle = await open(lockPath, "wx", 0o600);
-        await handle.writeFile(
-          JSON.stringify({ pid: process.pid, createdAt: Date.now() }),
-          "utf8",
-        );
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-        const lockInfo = await stat(lockPath).catch(() => null);
-        if (lockInfo && Date.now() - lockInfo.mtimeMs > LOCK_STALE_MS) {
-          await unlink(lockPath).catch(() => undefined);
-          continue;
-        }
-        if (Date.now() >= deadline) {
-          throw new Error("timed out waiting for the credential refresh lock");
-        }
-        await delay(25 + randomBytes(1)[0]! % 75);
-      }
-    }
-
-    try {
-      return await work();
-    } finally {
-      await handle.close();
-      await unlink(lockPath).catch(() => undefined);
-    }
+    return await withFileLock(this.stateDirectory, this.lockName, work);
   }
 }
 
@@ -504,49 +554,18 @@ class SecureFileStore extends LockedCredentialStore {
 
   async read(): Promise<CredentialRecord | null> {
     this.warning();
-    await secureDirectory(dirname(this.location));
-    try {
-      await secureCredentialFile(this.location);
-      return parseRecord(await readFile(this.location, "utf8"));
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
-      throw error;
-    }
+    const raw = await readSecureJsonFile(this.location, MAX_PROFILE_BYTES);
+    return raw === null ? null : parseRecord(raw);
   }
 
   async write(record: CredentialRecord): Promise<void> {
     this.warning();
-    await secureDirectory(dirname(this.location));
-    try {
-      await secureCredentialFile(this.location);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-    }
-    const temporary = `${this.location}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`;
-    const handle = await open(temporary, "wx", 0o600);
-    try {
-      await handle.writeFile(JSON.stringify(record), "utf8");
-      await handle.sync();
-      await handle.close();
-      await rename(temporary, this.location);
-    } catch (error) {
-      await handle.close().catch(() => undefined);
-      await unlink(temporary).catch(() => undefined);
-      throw error;
-    }
-    await chmod(this.location, 0o600);
-    await secureCredentialFile(this.location);
+    await writeSecureJsonFile(this.location, JSON.stringify(record));
   }
 
   async delete(): Promise<void> {
     this.warning();
-    await secureDirectory(dirname(this.location));
-    try {
-      await secureCredentialFile(this.location);
-      await unlink(this.location);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-    }
+    await deleteSecureJsonFile(this.location);
   }
 }
 
