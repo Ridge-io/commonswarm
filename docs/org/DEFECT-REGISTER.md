@@ -1070,3 +1070,54 @@ What survived the contamination, recorded because it answered a standing questio
 `pretest:p1-server` regeneration, confirmed independently in Cinder's window. The AGENTS.md
 caveat "a stale bundle typechecks fine while being wrong" now has its first positive measurement
 on the other side.
+
+---
+
+## D-029 — three merges satisfied the inversion rule only in the Lead's imagination
+
+**Owner of the error:** Lead6 · **Severity:** process, P1
+**Surfaced by:** Nori's own identity correction: *"Nori is a codex/openai seat, not Claude."*
+
+I assigned Nori as reviewer for Cinder's work all day believing Nori was claude-family. Nobody
+told me that; I never checked. Nori is codex. Consequence: **D-019, D-020, and D-003 all merged
+to main carrying only codex-family verdicts on codex-authored work** — Mica and Nori are
+independent instances, but independence within a family is not inversion, and the charter says
+so explicitly: *"self-family review satisfies nothing."*
+
+Mitigations that were real: all three changes had execution evidence (mutation proofs, exclusive
+suite runs), two independent same-family reviewers, and repeated informal claude-side
+verification by me during the day — but no claude or grok verdict was ever **bound to the merged
+SHAs**. The remediation is a retroactive cross-family review of all three merged diffs, recorded
+in this register when complete.
+
+**The rule:** a review only counts toward inversion when the reviewer's **family is verified,
+not assumed** — and the DONE/verdict message must state it. The seat registry as of now:
+Lead6 = claude; Mica, Cinder, Kestrel, Juniper, Lumen, Nori = codex/openai; grok = via
+subagent CLI only. The operator's standing rule (claude+grok self-review before DONE) closes
+this gap structurally for future work, which is exactly why it was the right rule.
+
+---
+
+## D-030 — 43 pure tests are gated behind a stack-touching glob
+
+**Found by:** Cinder, falling out of Nori's mid-flight reversal on D-025 observer placement
+**Severity:** structural, P2
+
+`test:p1-cli` globs `tests/p1-cli/**`, and ONE file in that directory —
+`local-integration.test.ts` — spawns `supabase functions serve`, creates auth users, and writes
+Postgres. Everything else (43 tests: edge-readiness, archive-notice, renewal-refusal-cause, and
+now the moved cold-start observers) is pure. Consequence: every pure observer filed there can
+only be run by whoever holds the exclusive DB slot.
+
+Nori's principle, worth the entry on its own: **a gate you must queue for is a gate that gets
+skipped.** Nori had first prescribed moving the D-025 observers INTO that directory, then
+reversed after Cinder's warning — the reversal is the finding.
+
+Also recorded: the slot protocol now covers `test:p1-cli` alongside `test:p1-server` and `db:*`
+(Cinder ran it three times during Lumen's slot before anyone realised it touches the stack —
+same D-028 class, self-caught, broadcast).
+
+**Prescription (chartered to Cinder, after the D-025 chain):** split `local-integration.test.ts`
+into its own script (`test:p1-local` or similar) so `test:p1-cli` becomes genuinely pure and
+slot-free. Small and mechanical; the payoff repeats on every pure observer for the life of the
+project.
