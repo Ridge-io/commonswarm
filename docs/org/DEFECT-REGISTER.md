@@ -605,6 +605,14 @@ D-011's was prose reaching an operator; D-006(b)'s was the JSON payload reaching
 > of a constant, not of the test's own fixture — turns it red. If the only mutation that
 > reddens it is one the test author chose, the test observes the author's model, not the system.
 
+**★ ADDENDUM, added 2026-07-29 after the advisor did this four times in one session: VERIFY THAT
+THE MUTATION APPLIED BEFORE READING THE RESULT.** Four separate mutation attempts by the advisor
+silently changed nothing — a `python` substring lookup that raised, a regex that did not match, a
+`sed` line address that missed — and each time the suite came back green against an unmutated
+tree. **A mutation that did not run is indistinguishable from a mutation the test survived**, and
+the failure mode is green, which is the direction nobody rechecks. Print the diff, or assert the
+edit landed, before running anything.
+
 **Why the existing mutation-proof rule did not catch it.** It required a mutation and got one
 every time. What it did not require was that the mutation be applied where production actually
 runs. Instances 1 and 4 were reddened by mutating things the tests already watched; nobody
