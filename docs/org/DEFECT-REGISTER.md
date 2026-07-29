@@ -349,3 +349,35 @@ the costume of a thoughtful one. Reroute to another family rather than extending
 reviewer, so both of Cinder's branches queue behind a single seat. Named so the queue is a
 known constraint rather than a surprise.
 
+---
+
+## D-015 — A wrong rebase base presents as a content conflict · OPEN (tooling)
+
+**Found:** 2026-07-29 by Cinder, rebasing D-011 after D-004 was amended.
+
+Amending D-004 orphaned `8ca72df`. A plain `git rebase cinder/d004-expiry-not-revocation`
+from D-011 then tried to replay **both** the orphaned D-004 commit and D-011 onto the new
+head, and produced an add/add conflict in the test file with D-004's session observer on one
+side.
+
+**Taking that conflict at face value would have produced a D-011 branch containing a
+duplicated, half-merged D-004** — and it would have looked like ordinary conflict resolution
+while doing it.
+
+The correct form replays only what is *after* the old base:
+
+```sh
+git rebase --onto cinder/d004-expiry-not-revocation 8ca72df cinder/d011-unexplained-refusal
+```
+
+Clean, no conflict. Verified by the advisor at the resulting head: D-004's session observer
+appears **exactly once**, history is linear (`6e34b88` → `406a96a` → `main`), 12/12 green.
+
+**Same family as D-013.** The conflict presented itself as a content disagreement for a human
+to resolve, when the actual fact was that git had been given the wrong base and had no way to
+say so. A prompt for judgement is not evidence that judgement is what is needed.
+
+**Operating rule:** after an amend or force-push that orphans a base, rebase dependent
+branches with explicit `--onto <newbase> <oldbase>`. If a rebase you did not expect to conflict
+conflicts, suspect the base before resolving the content.
+
