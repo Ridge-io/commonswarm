@@ -1184,3 +1184,43 @@ codex=timeout, claude=timeout, grok=a two-sentence preamble with no verdict. No 
 Per the corrected ledger no remediation was required, so the thread is closed rather than
 re-run; the three merges stand on their original (valid) cross-family reviews. Silence is not
 agreement, and an empty panel is not a review — recorded so nobody later cites this run as one.
+
+### D-031 CORRECTION (Cinder, same hour) — the measurement was real, the mechanism was not
+
+The entry above infers *"a rolling-day cap blown by 1,540 accumulated workspaces."* **That
+mechanism is dead.** Both per-identity caps key on `created_by` (`FREE_TIER_WORKSPACE_LIMIT = 3`
+live; `SELF_SERVE_CREATE_DAILY_LIMIT = 6` per 24h), and the fixture mints a fresh identity per
+test via `randomUUID` — a per-identity cap on a brand-new identity cannot accumulate across
+runs. The 1,540 never enters either predicate. In Cinder's words, kept because the register is
+for exactly this sentence: **"I reasoned from a number I had measured to a mechanism I had
+not."**
+
+**The actual cause, measured:** the failures are `503 !== 200`, and `swarm.spend_breaker` holds
+`trip_id 1, proxy workspace_create, observed 102, ceiling 100, tripped_at 22:31:49, cleared_at
+NULL, tripped_by automatic`. The suite tripped the **global, hourly, latching spend breaker**
+(`SPEND_CEILINGS.workspace_create = 100/hour`), after which the command function answers
+`503 signup_paused` for every create — on parent and branch alike — until a human with
+`swarm_admin` runs `swarm.reset_spend_breaker(who, why)`.
+
+**The breaker is working as designed.** Its migration comment
+(`20260728000001_spend_circuit_breaker.sql:260`) is explicit: trips are counted on operation
+proxies, only self-serve creation pauses, rows persist as the record, latch clears manually.
+The defect is the SUITE's: it consumes ~30+ creations per run against a 100/hour global ceiling
+and neither clears the latch in its fixture nor uses a test-scoped ceiling. Fresh-identity-per-run
+— the fix the dead mechanism implied — would have fixed nothing.
+
+**Wider caveat, sharpened from the entry above:** every create-path suite result taken after
+22:31:49 today measured a service in `signup_paused`, not the code under test. Re-take rather
+than trust.
+
+**Operator-visible implication (flagged, deliberately NOT changed):** production runs the same
+latch. A launch spike exceeding 100 workspace creations per hour pauses self-serve signup
+globally until someone runs `swarm.reset_spend_breaker` — by design, protecting spend over
+growth. The launch checklist should carry the reset procedure and, ideally, an alert on
+`spend_breaker` rows with `cleared_at IS NULL`. Changing the ceiling or the latch semantics is
+an operator product ruling, not a fleet fix.
+
+**Prescription (unchanged owner, corrected direction):** the fixture clears or scopes the
+breaker in the TEST environment only — never in any production path — with an observer proving
+a tripped-then-cleared local breaker lets the suite run green, and a mutation proving the
+fixture reset cannot fire outside the test environment.

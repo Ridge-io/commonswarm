@@ -6,9 +6,11 @@ import { defineConfig } from "astro/config";
 // the fastest thing to serve and the cheapest thing to host.
 //
 // `site` is required for canonical URLs and the OG tags in Base.astro to resolve to
-// absolute URLs. It is a placeholder until the real domain is decided; the CTA install URL
-// is likewise not live yet (there is no public dist repo). Both are tracked as launch
-// blockers rather than quietly invented.
+// absolute URLs. It is the real, live domain: commonswarm.com serves this site through
+// Cloudflare DNS, and the install URL (commonswarm.com/install.sh) is live and installs
+// cswarm from the public Ridge-io/cloud-swarm releases. The superseded note here — "a
+// placeholder until the real domain is decided; the CTA install URL is likewise not live
+// yet" — is dead (2026-07-29); both launch blockers it tracked are resolved.
 // WHERE THE BACKEND POINTER COMES FROM, AND WHY THERE IS NO `env:` BLOCK BELOW.
 // The web app reads PUBLIC_SUPABASE_URL and PUBLIC_SUPABASE_ANON_KEY (site/src/lib/
 // commonswarm.ts:53-54). Vite exposes any PUBLIC_-prefixed variable to client code without

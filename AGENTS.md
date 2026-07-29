@@ -43,7 +43,7 @@ All verified working from a clean `npm install` on this repo.
 |---|---|
 | `npm install` | Deps. No postinstall surprises. |
 | `npm run build` | `tsc` → `dist/`. Wipes `dist/` first, `chmod 755 dist/cli.js` after. |
-| `npm test` | 66 tests — protocol reducer only. **Read the trap below.** |
+| `npm test` | 79 tests — every PURE unit suite: protocol reducer plus pure harness observers (e.g. `tests/support/`). Touches no network and no database. **Read the trap below.** |
 | `npm run test:p1-cli` | 77 tests. 74 are pure; `local-integration.test.ts` (3) needs local Supabase. |
 | `npm run test:p1-server` | 17 tests. **Requires local Supabase running** (Docker). ~30s. |
 | `npm run test:uxtest` | 6 tests, the cross-machine UX harness. |
@@ -77,12 +77,17 @@ docs/evidence/  durable artifacts backing completion claims. Committed on purpos
 
 These have each cost someone real time. They are not theoretical.
 
-**`npm test` names its test files explicitly.** The script is
-`node --test tests/protocol-next.test.ts tests/protocol-workspace.test.ts` — a literal
-list, not a glob. A new file in `tests/` is silently *not run*. Verified: adding a test
-file leaves the count at 66; the same file runs when named. If you add a root-level test,
-add it to the `test` script. (`test:p1-cli` and `test:p1-server` do glob their
-directories, so files added there are picked up.)
+**`npm test` names its test files explicitly.** The `test` script in `package.json` is a
+literal file list, not a glob — **`package.json` is the source of truth for what runs.** A
+new file anywhere outside the globbed suites is silently *not run*: that includes the repo
+root, `tests/`, and `tests/support/`. Verified: an unregistered test file leaves the count
+unchanged; the same file runs when named. Any new PURE test outside `tests/p1-cli/` and
+`tests/p1-server/` must be added to the `test` script in the same commit. (`test:p1-cli`
+and `test:p1-server` glob their directories, so files added there are picked up — but note
+`test:p1-cli` is NOT pure: `local-integration.test.ts` inside it touches the local stack,
+so it needs a DB slot like `test:p1-server` and `db:*`. See D-030.) An earlier version of
+this trap quoted a two-file invocation and said only "root-level" tests need registration
+— superseded 2026-07-29 when the pure observer suites joined the list (66 → 79 tests).
 
 **Edge functions are outside `tsc`.** `tsconfig.json` sets `include: ["src/**/*.ts"]`, so
 nothing under `supabase/functions/` is checked by it. `npm run build` passing tells you
