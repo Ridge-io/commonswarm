@@ -113,7 +113,7 @@ test("uniform 403 connect failures are never decoded", async () => {
         decoded = true;
         throw new Error("403 body must remain opaque");
       },
-    } as Response)) as typeof fetch,
+    } as unknown as Response)) as typeof fetch,
   );
   await assert.rejects(
     client.sendConnect({

@@ -98,9 +98,10 @@ function directory(
   onList: () => void = () => undefined,
 ): WorkspaceDirectory {
   return {
-    async list() {
+    async list(): Promise<WorkspaceSummary[]> {
       onList();
-      return structuredClone(projects);
+      // structuredClone gives a fresh mutable array; the readonly is on the parameter.
+      return structuredClone(projects) as WorkspaceSummary[];
     },
     async status() {
       return { members: [], agents: [], tasks: [] };
@@ -406,7 +407,7 @@ test("TTY-marked multi-project resolution fails before a prompt can block", asyn
     if (descriptor) {
       Object.defineProperty(process.stdin, "isTTY", descriptor);
     } else {
-      delete (process.stdin as NodeJS.ReadStream & { isTTY?: boolean }).isTTY;
+      delete (process.stdin as unknown as { isTTY?: boolean }).isTTY;
     }
   }
 });

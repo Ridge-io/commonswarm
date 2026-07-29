@@ -1,0 +1,18 @@
+{
+  // Typechecks tests/ as well as src/. The base config deliberately does not: `build` emits
+  // dist/ from src/ only, so tests were never type-checked by anything (D-019) — a blatant
+  // type error in a test passed tsc, build, AND the test run, because tsx strips types
+  // without checking them.
+  //
+  // `rootDir` MUST be widened to the repo root. Inheriting "src" while including tests/
+  // produces a wall of TS6059 "not under rootDir" errors that look like real findings and
+  // are purely an artefact of this file.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "noEmit": true,
+    "declaration": false,
+    "sourceMap": false
+  },
+  "include": ["src/**/*.ts", "tests/**/*.ts"]
+}
