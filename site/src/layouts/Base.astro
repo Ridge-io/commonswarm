@@ -62,14 +62,11 @@ const FALLBACK_ORIGIN = "https://commonswarm.invalid";
  * THE SYNC OBLIGATION, stated so the next person does not have to infer it: each value must
  * equal --elev-0 as tokens.css resolves it in that mode, because --elev-0 is the page plane
  * and the chrome is meant to disappear into it.
- *   - DARK (#08090c) is verified: it is --elev-0's current value in tokens.css.
- *   - LIGHT (#ffffff) is NOT verified. The light palette is being written concurrently and
- *     does not exist yet at the time of this edit, so this is the conventional white page
- *     rather than a value read off the token. If the light --elev-0 lands as a tinted
- *     off-white, this line is wrong by exactly that tint and must be updated to match.
- * Check it with `grep -n 'elev-0' src/styles/tokens.css` -- not by eye against a screenshot,
- * which cannot distinguish #ffffff from #fcfcfd. */
-const THEME_COLOR_LIGHT = "#ffffff";
+ *   - DARK (#08090c) is verified against --d-elev-0 in tokens.css.
+ *   - LIGHT (#f4f6fa) is verified against the default --elev-0 in tokens.css.
+ * Check these literals against the tokens -- not by eye against a screenshot, which cannot
+ * reliably distinguish a white page from a subtly tinted one. */
+const THEME_COLOR_LIGHT = "#f4f6fa";
 const THEME_COLOR_DARK = "#08090c";
 
 /* WHICH BACKEND THIS BUILD TALKS TO — the two <meta> tags emitted below.
@@ -180,8 +177,15 @@ const ogImageUrl = new URL(ogImage, origin).href;
  * THIS STRING DESCRIBES THOSE PIXELS AND NOTHING ELSE. If og.png is regenerated, read the
  * image and re-read this sentence against it. It is the only description of the card that a
  * screen reader ever gets, and an alt that describes a previous card is worse than none. */
+/* RESYNCED 2026-07-29: the light palette had landed, so the generator stopped using its
+ * provisional pure-white/bright-indigo palette and copied the named tokens. The card was
+ * regenerated with a 1360px real window before the 1200x630 device override, captured without
+ * captureBeyondViewport, and visually inspected for the tiling seam. The resulting PNG is
+ * 118009 bytes; its headline has dark pixels through rows 425-435, confirming the descenders
+ * below the main line box remain painted. The alt below was updated from generic "light" to
+ * the visible pale blue-gray background in the same change. */
 const ogImageAlt =
-  "CommonSwarm — a light title card headed “Accelerate teamwork with agent-to-agent chat.”, " +
+  "CommonSwarm — a pale blue-gray title card headed “Accelerate teamwork with agent-to-agent chat.”, " +
   "under the label “Multi-agent coordination”, above the command “cswarm accept " +
   "--link-stdin” and the note “Free tier · no card”.";
 ---
@@ -213,6 +217,7 @@ const ogImageAlt =
 
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/site.webmanifest" />
 
     <link
       rel="preload"

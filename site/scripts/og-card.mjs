@@ -40,20 +40,20 @@
  * different product. A PNG cannot answer prefers-color-scheme; there is one card and it has
  * to pick a side. It picks the side the site is on.
  *
- * THE COLOURS BELOW ARE PROVISIONAL AND SAY SO. Every other colour on this site resolves
- * through tokens.css, and this file cannot: it renders to a PNG with no stylesheet. It used
- * to restate the dark tokens literally, name by name. The LIGHT palette does not exist in
- * tokens.css yet — it is being written in another lane as this is edited — so these values
- * are not copies of anything. They are chosen here and measured here (WCAG 2.1, against the
- * white page):
- *     --text        #0d1020   18.7:1
- *     --text-muted  #5a6275    6.1:1
- *     --accent      #5b4bd6    6.1:1   (the eyebrow is 16px text; the dark #7c6cff is 3.9:1
- *                                       on white and would fail AA outright)
- *     --success     #0b7a55    5.3:1 on the page, 5.0:1 on the chip fill
- * When tokens.css lands its light values, RE-SYNC these against it and re-render — a card
- * whose indigo is a different indigo from the page's is the drift this comment exists to
- * make visible.
+ * THE COLOURS BELOW MIRROR THE LANDED LIGHT PALETTE. This file cannot consume tokens.css:
+ * it renders to a standalone PNG with no stylesheet, so every value is necessarily copied.
+ * The sync obligation is explicit and mechanical:
+ *     --bg          #f4f6fa   tokens.css --elev-0
+ *     --surface     #eef1f7   tokens.css --elev-3
+ *     --border      #dde3ec   tokens.css --border
+ *     --text        #10142a   tokens.css --text
+ *     --text-muted  #4f5769   tokens.css --text-muted
+ *     --accent      #4633b8   tokens.css --accent
+ *     --accent-ink  #5b4ada   tokens.css --accent-bright (accent used as text)
+ *     --success     #056f52   tokens.css --success
+ * The previous card called its colors provisional after the light palette had landed and
+ * drifted to a different indigo and a pure-white page. Re-check this list whenever the
+ * tokens change, then regenerate and inspect the PNG.
  *
  * TO REGENERATE:
  *   node scripts/og-card.mjs /tmp/og-card.html
@@ -97,9 +97,7 @@ const b64 = (p) => readFileSync(p).toString("base64");
 const inter = b64(`${FONTS}/inter-latin.woff2`);
 const mono = b64(`${FONTS}/jetbrains-mono-latin.woff2`);
 
-/* Every colour below is a light-palette value chosen and measured in this file — NOT a copy
- * of a token, because the light tokens do not exist yet. See the header. Each carries the
- * token name it is standing in for, so the re-sync is a diff rather than a hunt. */
+/* These literals copy the named light-palette tokens listed in the header. */
 const html = `<!doctype html>
 <meta charset="utf-8">
 <style>
@@ -115,14 +113,14 @@ const html = `<!doctype html>
   }
 
   :root {
-    --bg: #ffffff;          /* --elev-0, light. Same white Base.astro's light theme-color uses */
-    --surface: #f5f6fb;     /* --elev-2, light — the chip fill */
-    --border: #e2e5f0;      /* --border, light */
-    --text: #0d1020;        /* --text, light        18.7:1 on --bg */
-    --text-muted: #5a6275;  /* --text-muted, light   6.1:1 on --bg */
-    --accent: #6d5cf0;      /* --accent, light — fills and strokes, not text */
-    --accent-ink: #5b4bd6;  /* --accent AS TEXT      6.1:1 on --bg */
-    --success: #0b7a55;     /* --success, light      5.3:1 on --bg, 5.0:1 on --surface */
+    --bg: #f4f6fa;          /* --elev-0 */
+    --surface: #eef1f7;     /* --elev-3 — the chip fill */
+    --border: #dde3ec;      /* --border */
+    --text: #10142a;        /* --text */
+    --text-muted: #4f5769;  /* --text-muted */
+    --accent: #4633b8;      /* --accent — fills and strokes */
+    --accent-ink: #5b4ada;  /* --accent-bright — accent used as text */
+    --success: #056f52;     /* --success */
   }
 
   * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -209,7 +207,7 @@ const html = `<!doctype html>
        tinted near-black, so the largest type is not a flat fill. The dark card ran white ->
        lavender; running that direction here would fade the headline INTO the page. The palest
        stop (#2a2550) is 14.2:1 on white, so the gradient never costs legibility. */
-    background: linear-gradient(178deg, #0d1020 8%, #171a2e 46%, #2a2550 100%);
+    background: linear-gradient(178deg, var(--text) 8%, #171a2e 46%, #2a2550 100%);
     -webkit-background-clip: text;
     background-clip: text;
     color: transparent;
@@ -284,14 +282,14 @@ const html = `<!doctype html>
 <div class="stage">
   <div class="wm">
     <svg width="28" height="28" viewBox="0 0 32 32" aria-hidden="true">
-      <g stroke="#6d5cf0" stroke-width="2" stroke-linecap="round" opacity="0.72" fill="none">
+      <g stroke="#4633b8" stroke-width="2" stroke-linecap="round" opacity="0.72" fill="none">
         <path d="M16 10.2 9.2 22"></path>
         <path d="M16 10.2 22.8 22"></path>
         <path d="M9.2 22h13.6"></path>
       </g>
-      <circle cx="9.2" cy="22" r="3.5" fill="#6d5cf0"></circle>
-      <circle cx="22.8" cy="22" r="3.5" fill="#6d5cf0"></circle>
-      <circle cx="16" cy="10.2" r="4" fill="#0b7a55"></circle>
+      <circle cx="9.2" cy="22" r="3.5" fill="#4633b8"></circle>
+      <circle cx="22.8" cy="22" r="3.5" fill="#4633b8"></circle>
+      <circle cx="16" cy="10.2" r="4" fill="#056f52"></circle>
     </svg>
     <span class="wm__word">CommonSwarm</span>
   </div>

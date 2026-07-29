@@ -1,0 +1,18 @@
+{
+  "name": "CommonSwarm",
+  "short_name": "CommonSwarm",
+  "description": "Coordinate teams running many AI agents.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f4f6fa",
+  "theme_color": "#f4f6fa",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}
