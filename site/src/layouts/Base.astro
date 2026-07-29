@@ -154,40 +154,31 @@ const canonical = new URL(path, origin).href;
 const ogImageUrl = new URL(ogImage, origin).href;
 
 /* Alt text describes the CARD, and the card is a picture of a sentence — so this string and
- * public/og.png have to be redrawn together. The card was regenerated from
- * scripts/og-card.mjs; if you change one, run that script and rewrite this.
+ * public/og.png have to be redrawn together. The card is generated from scripts/og-card.mjs;
+ * if either its visible text or palette changes, regenerate the PNG, inspect the pixels, and
+ * update this string in the same commit. An alt describing a previous card is worse than none.
  *
- * ★ THE STALE-ON-PURPOSE NOTE THAT WAS HERE IS DEAD, AND THE PROCEDURE IT PRESCRIBED WAS
- * FOLLOWED. It read: "og.png is a PNG and it still has the old name and the old command baked
- * into its pixels ... the fix is: rerun scripts/og-card.mjs for CommonSwarm / `cswarm accept
- * --link-stdin`, replace public/og.png, THEN rewrite these two lines to match." Done in that
- * order on 2026-07-28: the generator was updated, re-run, and the card re-rendered at exactly
- * 1200x630 / deviceScaleFactor 1, then public/og.png was replaced (137644 -> 125673 bytes) and
- * the image was OPENED AND READ to confirm it draws "CommonSwarm" and the chip "$ cswarm
- * accept --link-stdin" — not inferred from the byte count changing. Only then were the two
- * lines below rewritten. The rule stands for next time: never edit this string alone, because
- * alt text that describes a picture which does not exist is the one thing alt text must never
- * do.
- *
- * CLOSED 2026-07-28: the card is light now and matches the page. The sequence named in the
- * old note was followed in order — scripts/og-card.mjs, then a regenerated public/og.png,
- * then this string. The note said "every link preview shows a dark card for a light site",
- * which was true for as long as the PNG was the only unreviewable artifact on the site.
- *
- * THIS STRING DESCRIBES THOSE PIXELS AND NOTHING ELSE. If og.png is regenerated, read the
- * image and re-read this sentence against it. It is the only description of the card that a
- * screen reader ever gets, and an alt that describes a previous card is worse than none. */
+ * The chip moved from an invite-accept verb to the public installer on 2026-07-29, after
+ * self-serve opened. Do not preserve invitation-era commands here as plausible examples:
+ * frontmatter is stripped from HTML, but stale operational prose still steers the next edit. */
 /* RESYNCED 2026-07-29: the light palette had landed, so the generator stopped using its
  * provisional pure-white/bright-indigo palette and copied the named tokens. The card was
  * regenerated with a 1360px real window before the 1200x630 device override, captured without
  * captureBeyondViewport, and visually inspected for the tiling seam. The resulting PNG is
- * 118009 bytes; its headline has dark pixels through rows 425-435, confirming the descenders
+ * 118009 bytes before the installer-command update; its headline had dark pixels through rows
+ * 425-435, confirming the descenders
  * below the main line box remain painted. The alt below was updated from generic "light" to
- * the visible pale blue-gray background in the same change. */
+ * the visible pale blue-gray background in the same change.
+ *
+ * INSTALLER UPDATE 2026-07-29: regenerated to 119154 bytes after replacing the invitation-era
+ * verb. The chip ends at x=605.47 and the note at x=785.22, both clear of the decorative mark;
+ * the 1200x630 PNG was visually inspected for clipping and tiling, and the descender band still
+ * carries dark pixels through row 435. SHA-256:
+ * aa4c8636a4ecc8e953ceb24e69e0c110ce674b80a7e5f01623a58f6ce6202fba. */
 const ogImageAlt =
   "CommonSwarm — a pale blue-gray title card headed “Accelerate teamwork with agent-to-agent chat.”, " +
-  "under the label “Multi-agent coordination”, above the command “cswarm accept " +
-  "--link-stdin” and the note “Free tier · no card”.";
+  "under the label “Multi-agent coordination”, above the command “curl -fsSL " +
+  "https://commonswarm.com/install.sh | sh” and the note “Free tier · no card”.";
 ---
 
 <!doctype html>

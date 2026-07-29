@@ -6,6 +6,8 @@ import { fileURLToPath } from "node:url";
 
 const siteDir = join(dirname(fileURLToPath(import.meta.url)), "..");
 const distDir = join(siteDir, "dist");
+const currentOgCommand = "curl -fsSL https://commonswarm.com/install.sh | sh";
+const retiredOgCommand = "cswarm accept --link-stdin";
 
 const routes = [
   { name: "home", path: "/", file: "index.html" },
@@ -88,7 +90,16 @@ test("L4: every built route publishes coherent, route-specific social metadata",
     assert.equal(meta("property", "og:image:type"), "image/png");
     assert.equal(meta("property", "og:image:width"), "1200");
     assert.equal(meta("property", "og:image:height"), "630");
-    assert.ok(meta("property", "og:image:alt").length > 40, `${route.name}: og alt`);
+    const ogImageAlt = meta("property", "og:image:alt");
+    assert.ok(
+      ogImageAlt.includes(currentOgCommand),
+      `${route.name}: OG alt does not describe the current installer command`,
+    );
+    assert.equal(
+      ogImageAlt.includes(retiredOgCommand),
+      false,
+      `${route.name}: OG alt still describes the invite-era command`,
+    );
 
     assert.equal(meta("name", "twitter:card"), "summary_large_image");
     assert.equal(meta("name", "twitter:title"), title, `${route.name}: twitter:title`);
@@ -146,11 +157,12 @@ test("L4: every built route publishes coherent, route-specific social metadata",
 });
 
 test("L4: linked icon, manifest, and social-card assets agree with their metadata", async () => {
-  const [manifestText, favicon, apple, png] = await Promise.all([
+  const [manifestText, favicon, apple, png, generator] = await Promise.all([
     readFile(join(distDir, "site.webmanifest"), "utf8"),
     readFile(join(distDir, "favicon.svg"), "utf8"),
     readFile(join(distDir, "apple-touch-icon.png")),
     readFile(join(distDir, "og.png")),
+    readFile(join(siteDir, "scripts/og-card.mjs"), "utf8"),
   ]);
   const manifest = JSON.parse(manifestText);
 
@@ -176,4 +188,10 @@ test("L4: linked icon, manifest, and social-card assets agree with their metadat
   assert.equal(png.subarray(1, 4).toString("ascii"), "PNG", "OG image signature");
   assert.equal(png.readUInt32BE(16), 1200, "OG image width");
   assert.equal(png.readUInt32BE(20), 630, "OG image height");
+  assert.ok(generator.includes(currentOgCommand), "OG generator lacks installer command");
+  assert.equal(
+    generator.includes(retiredOgCommand),
+    false,
+    "OG generator still contains invite-era command",
+  );
 });

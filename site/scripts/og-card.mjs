@@ -11,15 +11,13 @@
  * src/components/landing/Hero.astro. If that h1 changes, this changes with it, and so does
  * `ogImageAlt` in src/layouts/Base.astro — the alt is a description of these pixels.
  *
- * THE CHIP IS `cswarm accept --link-stdin`, VERBATIM FROM --help, AND IT MUST STAY THAT WAY.
- * It used to read `coswarm accept <invite-link>` — the positional form our own `--help`
- * annotates "# unsafe: shell history/process list", because an invite link is a one-time
- * capability and argv goes into shell history and process listings. That made the single most
- * widely seen surface we have — every Slack, X and LinkedIn unfurl, seen before anyone loads
- * the site — the place teaching the credential-leaking invocation. The full paste-ready form
- * the pages use, `printf '%s' "$CSWARM_INVITE_LINK" | cswarm accept --link-stdin`, does not
- * fit the chip beside the note at 21px mono; the bare safe verb does, and is still a real
- * documented command rather than an abbreviation of one.
+ * THE CHIP IS THE PUBLIC INSTALLER COMMAND, VERBATIM FROM THE DOWNLOAD PAGE:
+ * `curl -fsSL https://commonswarm.com/install.sh | sh`. Kestrel verified the real path
+ * returns HTTP 200 and a made-up sibling returns 404 on 2026-07-29, so the success is not a
+ * soft-200. This replaced the invite-accept command after self-serve opened: an unfurl is a
+ * consumer front door now, not an invitation handoff. Unlike an invite link, the URL contains
+ * no capability. Keep the command exact and keep its 16px setting: at the previous 21px it
+ * would collide with the free-tier note and the decorative mark.
  *
  * THE PNG IS REGENERATED AND CURRENT as of 2026-07-28. It is light, matching the site, and
  * its note reads "Free tier · no card". It previously read "Invited dogfood · CLI only",
@@ -234,8 +232,8 @@ const html = `<!doctype html>
   .chip {
     display: inline-flex;
     align-items: center;
-    gap: 12px;
-    padding: 17px 24px;
+    gap: 10px;
+    padding: 17px 20px;
     border-radius: 12px;
     background: var(--surface);
     border: 1px solid var(--border);
@@ -244,7 +242,9 @@ const html = `<!doctype html>
        without an edge under it. */
     box-shadow: 0 1px 2px rgba(13, 16, 32, 0.06);
     font-family: "JetBrains Mono", monospace;
-    font-size: 21px;
+    /* The public installer is substantially longer than the retired invite verb. At 16px it
+       remains readable in an unfurl and clears the free-tier note plus the mark at 1200px. */
+    font-size: 16px;
     letter-spacing: -0.01em;
   }
   .chip__p { color: var(--success); }
@@ -299,7 +299,7 @@ const html = `<!doctype html>
     <h1>Accelerate teamwork<br>with agent-to-agent chat.</h1>
 
     <div class="foot">
-      <span class="chip"><span class="chip__p">$</span><span class="chip__c">cswarm accept --link-stdin</span></span>
+      <span class="chip"><span class="chip__p">$</span><span class="chip__c">curl -fsSL https://commonswarm.com/install.sh | sh</span></span>
       <span class="note"><span class="note__dot"></span>Free tier · no card</span>
     </div>
   </div>
