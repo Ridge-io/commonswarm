@@ -61,9 +61,12 @@ are `cswarm`. This replaces the earlier `coswarm`, which collided with a competi
 same space — that is the whole reason for the change, and it is not open for relitigation.
 The superseded line, kept dead so nobody re-derives it: ~~"Name: `coswarm`, decided."~~
 
-**Domain: `commonswarm.com`, decided — but NOT WIRED.** DNS is parked and nothing serves
-it. Do not write copy claiming the site is live there. The live URL today is
-`https://coswarm-site.vercel.app` and it stays live until the operator repoints DNS.
+**Domain: `commonswarm.com`, decided AND LIVE** (2026-07-29): Cloudflare DNS, apex + www
+answer 200, mail delivers. Write copy against it; it is the public URL.
+The superseded ruling, kept dead: ~~"NOT WIRED. DNS is parked and nothing serves it. Do
+not write copy claiming the site is live there. The live URL today is
+`https://coswarm-site.vercel.app`."~~ — dead since the repoint; the sweep caught this line
+still forbidding the true claim.
 `coswarm.dev` belongs to a live, unrelated product and must never be referenced; see the
 hazard note in `site/astro.config.mjs`.
 
@@ -92,9 +95,14 @@ and at least one genuinely interactive demo of *our* product's actual behaviour.
 ## What CommonSwarm actually is — GROUND TRUTH, DO NOT EMBELLISH
 
 Multi-human, multi-agent **coordination cloud service**. The cloud evolution of the
-local `swarm` CLI. It is a **CLI plus a hosted service**. There is **no web UI**.
+local `swarm` CLI. It is a **CLI plus a hosted service plus a web front door** —
+self-serve signup at `/start`, a dashboard at `/app` (workspace-first redesign chartered
+2026-07-29). Two superseded claims, kept dead: ~~"There is no web UI."~~ and
+~~"Status: P3-1, invited dogfood. Pre-launch. Not self-serve yet."~~
 
-Status: **P3-1, invited dogfood.** Pre-launch. Not self-serve yet.
+Status: **P3-1, open free tier.** Self-serve signup is LIVE (`SWARM_SELF_SERVE=1` in
+production since 2026-07-28): a stranger creates their own workspace at
+commonswarm.com/start — free, three workspaces, no card, no invitation.
 
 Real, shipped surface (from `cswarm --help`, verified):
 
@@ -234,9 +242,12 @@ Consequences, and they bind:
 
 - **Do not put line 3 on the site until someone runs it after a real `accept`.** If it
   turns out to need `--url`, the honest quickstart is two lines, not three.
-- **There is no working paste we can give a stranger today.** An invite link is per-person,
-  so it cannot come off a web page. Any command block on the site either carries its own
-  exports/flags inline, or it is presented as *what you run once you are in* — not as
+- ~~**There is no working paste we can give a stranger today.**~~ — **dead** (2026-07-29):
+  `curl -fsSL https://commonswarm.com/install.sh | sh` works for any stranger, and
+  commonswarm.com/start needs no per-person link. What survives of the old rule: an invite
+  link is still per-person and still cannot come off a web page. Any command block on the
+  site either carries its own exports/flags inline, or it is presented as *what you run
+  once you are in* — not as
   something the reader can run right now.
 - This is Charter §6 item 1 wearing marketing clothes. It is a product gap, not a
   copywriting problem, and copy must not paper over it.
@@ -247,9 +258,14 @@ Consequences, and they bind:
    metrics, no "trusted by N teams", no made-up benchmarks. We have no customers yet.
    A marketing site that lies is worse than no site.
 2. **No fake social proof of any kind**, including invented GitHub stars or user counts.
-3. Do not claim a web UI, a free self-serve tier, or SOC2. None exist.
-4. Pre-launch status is stated honestly. "Invited dogfood" is a *scarcity* asset, not
-   an embarrassment — an invite-only developer tool is a legitimate and appealing frame.
+3. Do not claim SOC2 — it does not exist. The wider superseded rule — ~~"Do not claim a
+   web UI, a free self-serve tier, or SOC2. None exist."~~ — is **dead** (2026-07-29): the
+   web UI and the free self-serve tier both exist and are live, and this line spent a day
+   actively blocking the D-023 fix. Claim them; they are true.
+4. Availability is stated honestly, and today that means OPEN: signup is live, free,
+   three workspaces, no card. The superseded framing — ~~"'Invited dogfood' is a
+   *scarcity* asset"~~ — is **dead**: the product is not invite-only, and the codex
+   consumer critique showed where that frame leads once it stops being true (D-023).
 5. Every command shown on the site must be copy-pasteable and real. If you show it, a
    reader must be able to run it. Verify against `cswarm --help`.
 6. Accessibility is part of AAA: real contrast ratios, keyboard focus states, reduced

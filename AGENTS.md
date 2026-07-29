@@ -1,7 +1,11 @@
 # AGENTS.md — cloud-swarm
 
 **CommonSwarm** — coordination service for teams where people and AI agents work side by
-side. A CLI (`cswarm`) plus a hosted Supabase backend; **there is no web UI**. Agents post
+side. A CLI (`cswarm`), a hosted Supabase backend, and a web front door at
+https://commonswarm.com — four Astro routes including self-serve signup (`/start`) and a
+dashboard (`/app`), with a workspace-first redesign chartered in
+`docs/design/2026-07-29-WORKSPACE-FIRST-DASHBOARD.md`. The superseded phrase — *"there is
+no web UI"* — is **dead** (2026-07-29): it predates the deployed routes. Agents post
 short, immutable *signals* of intent ("I'm about to refactor auth") so collaborators don't
 step on each other. Posting a signal never claims, blocks, or closes a task.
 
@@ -19,7 +23,9 @@ when the deployment moves — grep every surface when a gate flips.**
 the old name collided with a competitor. Prose says CommonSwarm; anything a user types says
 `cswarm`. Four things still legitimately read `coswarm` and must not be "fixed":
 
-- the release repo default `Ridge-io/coswarm-dist` in `install.sh` — pending operator decision;
+- ~~the release repo default `Ridge-io/coswarm-dist` in `install.sh`~~ — **dead**
+  (2026-07-29): the decision landed; `install.sh:16` now defaults to `Ridge-io/cloud-swarm`
+  (public), and the published installer at commonswarm.com/install.sh installs cswarm 0.1.1;
 - the Vercel project and live URL `coswarm-site` / `coswarm-site.vercel.app` — still the
   deployed site, see the deploy section below;
 - the esbuild define `__COSWARM_VERSION__` — a build-time identifier shared between
@@ -166,14 +172,19 @@ check that list before removing a check.
 
 ## Deploying the marketing site
 
-Live: **https://coswarm-site.vercel.app** (Vercel project `coswarm-site`, scope `ridgedotio`).
-The project keeps its old name — renaming it is an operator action and would move the URL.
+Live: **https://commonswarm.com** (Vercel project `coswarm-site`, scope `ridgedotio`;
+`coswarm-site.vercel.app` is the project alias and also serves). The project keeps its old
+name — renaming it is an operator action and would move the alias URL.
 
-No custom domain yet. `commonswarm.com` is the decided domain, but DNS is **parked and
-points at nothing** — do not write copy claiming the site is live there.
-`coswarm-site.vercel.app` is still the only public URL and stays live until the operator
-repoints DNS. The superseded line — *"the name `coswarm` is decided, the domain is not"* —
-is **dead**: the name is now CommonSwarm and the domain is decided too.
+**`commonswarm.com` is LIVE** (2026-07-29): DNS is on Cloudflare, apex + www answer 200,
+the cert is valid to 26 Oct 2026, and `legal@`/`security@commonswarm.com` deliver
+(verified end to end — D-007/D-008). It is the public URL; write copy against it.
+`coswarm-site.vercel.app` remains the Vercel project alias underneath and still serves.
+Two superseded lines, both **dead**: *"the name `coswarm` is decided, the domain is not"*
+(the name is CommonSwarm and the domain is decided), and *"DNS is parked and points at
+nothing — `coswarm-site.vercel.app` is still the only public URL"* (the repoint happened
+2026-07-28/29; the sweep found this very line still instructing agents to write the old
+state, which is how D-023 propagated).
 
 ```sh
 cd site && rm -rf dist && npm run build          # rm -rf is load-bearing, see below

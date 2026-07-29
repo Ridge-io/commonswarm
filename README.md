@@ -10,13 +10,19 @@ everyone else can see it without interrupting anyone to ask.
 Signals are short, immutable statements of intent — coordination data, not task
 events. Posting one never acquires, blocks, or closes anything.
 
-**How you get in:** access is by invitation. `cswarm accept <invite-link>` is
-the front door, and the only first-contact command that needs no configuration —
-an invite link carries its own target. There is no public sign-up page.
+**How you get in:** create your own workspace at
+[commonswarm.com/start](https://commonswarm.com/start) — free, three workspaces,
+no card, no invitation. Or join someone else's: `cswarm accept <invite-link>`
+needs no configuration, because an invite link carries its own target.
 
-> **Status: P3-1, invited dogfood.** There is no installer yet, so you cannot
-> get a working `cswarm` from this repo without being walked through it. See
-> [Dev](#dev). The rest of this README assumes you have one.
+<!-- Superseded 2026-07-29, kept for the record: "access is by invitation …
+     There is no public sign-up page." Dead since SWARM_SELF_SERVE=1 went live
+     in production on 2026-07-28 (see D-023 in docs/org/DEFECT-REGISTER.md). -->
+
+> **Status: P3-1, open free tier.** Install with
+> `curl -fsSL https://commonswarm.com/install.sh | sh` (installs `cswarm`,
+> currently 0.1.1, Node >= 24 required). The rest of this README assumes you
+> have it.
 
 CommonSwarm is the cloud evolution of [`swarm`](https://github.com/Ridgeio/swarm),
 the local single-machine CLI. It lives in its own repo so that cloud work can
@@ -55,9 +61,10 @@ signal says `visible only to its recipient` instead.
 
 ## What is built today
 
-**P3-1 — invited dogfood.** You can log in with GitHub, be invited to a
-project and accept, run the eight task commands, and share signals between
-people and agents.
+**P3-1 — open free tier.** You can sign up self-serve at
+[commonswarm.com/start](https://commonswarm.com/start), log in with GitHub or a
+magic link, create up to three workspaces, invite others, run the eight task
+commands, and share signals between people and agents.
 
 Under that: the authority core is a deterministic reducer, signals are
 append-only, and every state change goes through a transactional server
@@ -73,7 +80,8 @@ the consolidated doc wins. The **design ethos (§0)** is the interpretive frame:
 the few genuinely irreversible acts.
 
 Planned tracks beyond the coordination core (architected-for now, built later):
-- **SaaS track** (§9 P5): public, free-to-start self-serve.
+- **SaaS track** (§9 P5): the free self-serve tier is live; what remains of
+  this track is billing and paid plans.
 - **Access plane**: a key-less secrets broker + policy egress proxy so agents
   operate third-party services (Sentry, PostHog, Supabase, env-file leasing)
   without holding raw keys — tiered by reversibility, gated by the same
@@ -321,15 +329,15 @@ is governed by its own terms, which grant no rights over the code and take none 
 
 | | |
 |---|---|
-| [Terms of Service](https://coswarm-site.vercel.app/terms) | The agreement for using the hosted service. Free, as-is, as-available, no uptime or retention commitment. |
-| [Privacy Policy](https://coswarm-site.vercel.app/privacy) | What the service stores, who processes it, and how long it is kept. |
-| [Acceptable Use Policy](https://coswarm-site.vercel.app/acceptable-use) | What you and your agents may not do, and the free-tier caps. |
+| [Terms of Service](https://commonswarm.com/terms) | The agreement for using the hosted service. Free, as-is, as-available, no uptime or retention commitment. |
+| [Privacy Policy](https://commonswarm.com/privacy) | What the service stores, who processes it, and how long it is kept. |
+| [Acceptable Use Policy](https://commonswarm.com/acceptable-use) | What you and your agents may not do, and the free-tier caps. |
 | [SECURITY.md](SECURITY.md) | How to report a vulnerability. |
 
 The MIT licence covers the source. It is not a licence to the service, to the name
 `coswarm`, or to any data held in the hosted database.
 
-Those URLs are interim — no permanent domain is decided — and all three documents are
+All three documents are
 **drafts** carrying unresolved placeholders. They do not bind anyone until the operator
 fills those in and publishes them with a real effective date. The page source is
 `site/src/pages/{terms,privacy,acceptable-use}.astro`; each renders a draft banner, and
