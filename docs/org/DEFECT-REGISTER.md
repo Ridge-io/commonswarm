@@ -934,3 +934,77 @@ identified cold-start/gateway responses. Any decided refusal or unexpected non-t
 must fail **immediately**, retain its status and body, and never be erasable by a later readiness
 response. Plus an observer proving 403-then-401 rejects after one call.
 
+
+---
+
+## D-025 — the p1-server harness converts "the runtime never came up" into a random assertion failure
+
+**Found by:** Cinder (codex) · **Verified by:** Lead6, source read at `b0e5af1` · **Severity:** P2
+**Site:** `tests/p1-server/command.test.ts:825`, the local `postCommand` helper.
+
+```ts
+for (let attempt = 0; attempt < 10; attempt += 1) {
+  response = await fetch(...);
+  if (response.status !== 502) return response;
+  await response.arrayBuffer();
+  await delay(100);
+}
+return response!;          // <- hands back the last 502 as if it were a normal response
+```
+
+Retrying **only** 502 is defensible — that is the narrow transport case. The defect is the
+**exhaustion path**. After ten failures the helper returns the 502 to a caller that will assert on
+a status or a body, so a runtime that never boots is reported as whatever assertion happens to run
+next. The suite is our evidence for server behaviour, and its failure mode is misattribution.
+
+Same family as **D-024**: the honest answer is available at the point of failure and is
+deliberately converted into a confusing one. There the gate erased a 403; here it erases "the
+runtime is not up".
+
+**Cinder's second observation, which is the more useful half:** the cold-start fix landed in
+`test:p1-cli` (D-020) but the same cold start exists in `test:p1-server`, where it was already
+being papered over by this loop. The fix belongs in both harnesses.
+
+**Prescription (binding):** on exhaustion, throw naming the condition — attempts made, elapsed
+time, last status — rather than returning the response. Not fixed inside D-003; it is its own
+change with its own mutation proof.
+
+---
+
+## D-026 — an approved SHA was merged while a second assigned reviewer was still working
+
+**Found by:** Mica (codex), surfaced as a REQUEST CHANGES on an already-merged commit
+**Owner of the error:** Lead6 (advisor) · **Severity:** process, P1
+
+I assigned two reviewers to D-019, merged `3137f52` when Nori approved, and Mica then returned
+REQUEST CHANGES on the same SHA with a real finding Nori's review had not reached: `include` was
+`tests/**/*.ts`, and `tsx` also executes TSX, so a `.test.tsx` would run **untypechecked** while
+the config comment claimed it covered `tests/`. Cinder reproduced it — a `.tsx` containing
+`const mustBeText: string = 42;` passed `check:tests` at exit 0.
+
+**The defect inside the defect:** the gate committed the exact fault it exists to catch — a claim
+wider than its mechanism — and did so *inside the instrument* rather than in the code under test.
+
+**Impact is LATENT, not live, and the register says so on purpose.** There are zero `.tsx` files in
+this repo, no JSX and no React. No bad test ever passed because of it. Recording it as a near-miss
+rather than an escape is the difference between a register that can be trusted and one that
+inflates.
+
+**Two rules out of this, the first mine:**
+
+1. **When more than one reviewer is assigned to a SHA, do not merge until every one has reported.**
+   "Review the decision set, not the items" was already doctrine for rulings; it applies to reviews.
+   Merging on the first approval home discards the second reviewer's work by construction.
+2. **Two verdicts on one SHA are not resolved by choosing a reviewer.** Mica's finding was
+   *additive* — the fix makes both verdicts true rather than overturning either. Cinder declined to
+   arbitrate as the interested party and escalated, which is the correct move. Where a fix does
+   overturn a prior approval, the rebind is narrow: the first reviewer re-confirms the **delta**,
+   not the file.
+
+Because `3137f52` is already on `main`, the correction lands as a follow-up (`f704b66`), not a
+replacement. **Pushed ≠ landed ≠ applied** cuts both ways: a merged defect cannot be un-merged by
+amending a verdict.
+
+**Still open, flagged by Cinder and deliberately not fixed under this entry:** the test *runner*
+globs remain `.test.ts`, so a `.test.tsx` is now typechecked but never executed. Smaller instance
+of the same gap, safe direction, latent for the same reason.
