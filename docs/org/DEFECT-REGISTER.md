@@ -1227,7 +1227,7 @@ fixture reset cannot fire outside the test environment.
 
 ---
 
-## D-032 — the inversion gate named two families where the principle requires one
+## D-032 — the inversion gate named two families where the principle requires one · SUPERSEDED
 
 **Ruled by:** Lead6, 2026-07-29, immediately before handing the Lead role to a codex seat
 **Severity:** process ruling, unblocks two frozen branches
@@ -1263,3 +1263,58 @@ narrower than the claim it serves, which then fails closed on something irreleva
 branches — the workspace-first dashboard the operator personally asked for, and the internal-docs
 root-cause fix — would sit frozen behind a billing condition that has nothing to do with their
 correctness. Blocked is an honest state; blocked on the wrong thing is a defect in the rule.
+
+### D-032 SUPERSEDED before either frozen branch merged
+
+The Grok-alone exception above is **dead for work not already merged**. The operator issued a
+new first-order ruling after Lead7 accepted the handoff: every swarm mate now runs adversarial /
+model-inversion reviews with **both Grok and AGY/Gemini instead of Claude**. D-033 is the live
+rule. Different-family review remains necessary but is **not sufficient**; the operator has
+replaced it as a passing gate with the named two-family mechanism.
+
+---
+
+## D-033 — Grok + AGY/Gemini replace Claude for every swarm mate · RULING
+
+**Ruled by:** operator, 2026-07-29, before either D-032-frozen branch merged
+**Applied by:** Lead7 · **Severity:** process ruling, first order of business
+
+The operator removed Claude from the required review path after the headless/shared-account
+path hit its token limit. Effective immediately:
+
+1. Every swarm mate obtains **both** an xAI/Grok verdict and a Google Gemini verdict through
+   `agy`, instead of a Claude verdict.
+2. Both verdicts bind to the exact SHA. If either review produces changes, the replacement SHA
+   gets both reviews again.
+3. Reports name each actual reviewer family and verdict honestly. They do not wait for, imply,
+   or claim a Claude verdict.
+4. Mutation proof at a production call site, real gate counts, argued rejections, and
+   `NOT ESTABLISHED` remain required.
+5. D-032's Grok-alone exception is superseded for all work that had not already merged. At the
+   moment of this ruling, L7A `fd7b7733f3126483eb97cc717dde85899828a992` and L6
+   `eae52d5fbf01f265500b9e6708c553cfaa1da56c` were both still unmerged, so each requires the
+   AGY/Gemini arm before merge.
+
+A single different-family verdict does **not** pass D-033. Grok alone, Gemini alone, and Codex
+review are each insufficient. The current fleet has no xAI- or Google-family authoring seat;
+if that changes, the Lead must obtain an operator ruling before assigning that lane because
+self-family review still counts as no review.
+
+Each required arm returns substantive findings or reasoning; an empty `PASS` is not a review.
+An optional Claude read does not replace either arm. **Do not widen the capacity observation:**
+Lead6 and local headless `claude -p` were spend-limited, while Quarry's interactive Claude seat
+remained live and proved it by continuing to send messages and run work. The operator's choice
+of Grok + AGY/Gemini is the gate regardless; it is not evidence that every Claude invocation
+is unavailable.
+
+**Measured availability, not inferred:** `/opt/homebrew/bin/grok` and
+`/Users/yulanbot/.local/bin/agy` both resolve. `agy --help` exposes non-interactive `--print`;
+`agy models` enumerates Google models including `gemini-3.1-pro-high`. The old durable claim
+that Gemini was not installed is marked dead in `OPERATING-MODEL.md` and the active consumer
+charter.
+
+**Instruction-surface sweep:** an exhaustive repository `rg` for Grok-alone, Claude+Grok,
+Gemini-not-installed, no-Google-voice, and Claude-reviewer variants found the current
+instruction surfaces corrected above. Remaining matches are historical defect evidence,
+superseded text retained and marked dead, product examples naming supported agent brands, or
+source comments describing past reviewer identity; none is an alternate live review gate.

@@ -23,9 +23,11 @@ renewal was unavailable while it was working (D-002). Neither is visible in sour
 
 ## 2. Model-inversion review — the control that pays for everything
 
-**The reviewer of any change must be a different model family than its author. Self-family
+**A reviewer of a change must be a different model family than its author. Self-family
 review does not count as review** — a codex subagent reviewing codex work satisfies nothing,
-whatever the prompt, session or persona.
+whatever the prompt, session or persona. That is the necessary baseline, not the current
+passing gate. Under D-033 the operative gate requires **both Grok and AGY/Gemini**; one
+different-family verdict is not sufficient.
 
 Corollaries that have each already cost something here:
 
@@ -44,18 +46,31 @@ Measured, not assumed (`alloy doctor`, and `command -v`):
 
 | Family | CLI | Role here |
 |---|---|---|
-| Claude | `claude` | **Advisor.** Also reviewer-of-last-resort for codex-authored work. |
-| OpenAI | `codex` | **Operator** at `model_reasoning_effort=xhigh`; reviewer for Claude-authored work. |
-| xAI | `grok` | Executor; second reviewer when codex is the author. |
-| Google | `gemini` | **Not installed.** Do not plan work that assumes it. |
+| Claude | `claude` | Not a required reviewer under D-033. Headless/shared-account review is spend-limited; the interactive Quarry seat remains live. |
+| OpenAI | `codex` | **Operator/author**, not a substitute for either required review arm. |
+| xAI | `grok` | Required adversarial reviewer for every swarm mate's change. |
+| Google | `agy` → Gemini | Required adversarial reviewer for every swarm mate's change. |
 
-`opencode`, `cursor-agent` and `antigravity` are installed but have **no read-only mode**, so
-`alloy` skips them. Do not enable `ALLOY_ALLOW_UNSANDBOXED` to press them into service.
+**Operator ruling, 2026-07-29:** every swarm mate must obtain exact-SHA verdicts from
+**both Grok and AGY/Gemini instead of Claude**. A different-family verdict remains
+necessary but is **not sufficient**: Grok alone, Gemini alone, and Codex review do not
+pass this gate; an optional Claude read does not replace either arm. Each arm must return
+substantive findings or reasoning — an empty PASS is not a review. A changed SHA voids
+both verdicts and requires both reviews to rerun.
 
-★ The local swarm's `members` output says *"cross-family review is NOT available in this
-swarm"*. That is true of the **swarm seats** (all Claude or UNKNOWN) and false of the
-**machine** — `codex` and `grok` are on PATH and non-interactive. Do not read that banner as
-permission to self-review.
+~~Google | `gemini` | Not installed. Do not plan work that assumes it.~~ **Dead as of
+2026-07-29:** `/Users/yulanbot/.local/bin/agy` is installed, supports non-interactive
+`--print`, and enumerates Google Gemini models including `gemini-3.1-pro-high`.
+
+`opencode`, `cursor-agent` and `antigravity` remain excluded from this review path. `agy`
+is the measured Google-family path; do not substitute an unmeasured CLI or enable
+`ALLOY_ALLOW_UNSANDBOXED`.
+
+~~The local swarm's `members` output says *"cross-family review is NOT available in this
+swarm"*, and all swarm seats are Claude or UNKNOWN.~~ **Dead:** the current roster includes
+OpenAI, Claude, and UNKNOWN seats, while reviewer CLIs are a separate machine capability.
+`command -v` plus substantive probe output established `grok` and `agy`; roster family labels
+do not establish or negate those CLI paths.
 
 ---
 

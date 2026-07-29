@@ -149,6 +149,16 @@ The distilled operative rules. Full doctrine, with the incidents that produced i
   unsafe in combination.
 - **Corrections go in the artifact, not in a message.** A correction in chat never reaches
   whoever pulls the repo tomorrow. Keep the superseded line, marked dead.
+- **Current model-inversion gate (operator ruling, 2026-07-29): every swarm mate runs
+  BOTH Grok and Google Gemini via `agy` on the exact SHA, instead of Claude.** The
+  operator removed Claude from the required review path after the headless/shared-account
+  path hit its token limit; Quarry's interactive Claude seat remains live, so do not widen
+  that measured condition into "all Claude is unavailable." Do not wait for or claim a
+  Claude verdict. If either required review changes the SHA, both rerun on the replacement
+  SHA. D-032's Grok-alone exception is **dead for work not already merged**; see D-033.
+  A different-family verdict is necessary but no longer sufficient: neither Grok alone,
+  Gemini alone, Codex, nor an optional Claude read substitutes for the required pair. Each
+  arm must return substantive findings or reasoning; an empty PASS is not a review.
 
 State what you did **not** establish alongside what you did.
 

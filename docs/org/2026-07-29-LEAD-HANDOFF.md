@@ -61,10 +61,13 @@ currently the tightest limit on a stranger signing up. See §4 item 1.
 ## 3. Two branches are frozen and should merge FIRST
 
 Both are complete, green, grok-approved, and were held only because their authors could not obtain
-a claude verdict. **I ruled that unnecessary in D-032 (`abf3de7`): a grok verdict alone satisfies
+a claude verdict. ~~**I ruled that unnecessary in D-032 (`abf3de7`): a grok verdict alone satisfies
 inversion for codex-authored work**, because the principle is *different family*, not *those two
 families*. Conditions: the DONE says grok-alone and why; everything else unchanged; retroactive
-claude read when capacity returns.
+claude read when capacity returns.~~ **Dead before either branch merged. Operator ruling D-033
+supersedes it: every swarm mate now runs BOTH Grok and AGY/Gemini exact-SHA reviews instead of
+Claude.** The existing Grok verdict is one arm; each frozen branch needs an AGY/Gemini verdict
+before merge. A changed SHA voids both arms.
 
 1. **L7A — the workspace-first dashboard** (Lumen), `fd7b7733f3126483eb97cc717dde85899828a992`.
    This is the operator's personally-requested redesign. Grok PASS after four adversarial rounds.
@@ -119,7 +122,9 @@ vercel deploy dist --prod --yes --scope ridgedotio
 4. **Dana's cold-browser stranger walkthrough** was dispatched against the freshly deployed site and
    has not reported. Chase it — fresh-eyes QA on the real flow is the closest thing to the operator's
    own test.
-5. **Retroactive claude reads** on today's merges once capacity returns (D-032 condition 3).
+5. ~~**Retroactive claude reads** on today's merges once capacity returns (D-032 condition 3).~~
+   **Dead under D-033.** Claude is replaced by the Grok + AGY/Gemini pair; do not wait for or
+   claim a Claude verdict.
 
 ---
 

@@ -168,16 +168,23 @@ before changing anything.
 
 ## 5. Review — and who may review whom
 
-**Model inversion is not optional.** From `OPERATING-MODEL.md` §2: the reviewer must be a
-different family from the author, and self-family review satisfies nothing.
+**Model inversion is not optional.** From `OPERATING-MODEL.md` §2: a reviewer must be a
+different family from the author, and self-family review satisfies nothing. That baseline
+is necessary but **not sufficient** under D-033: the operative gate is the named pair,
+Grok plus AGY/Gemini.
 
-Available families, **measured today, not assumed**: `codex` (OpenAI) and `grok` (xAI) are on
-PATH and invocable. **`gemini` is not installed. `antigravity` is not on PATH.** There is no
-Google voice available in this wave — do not write reports implying one reviewed anything.
-`opencode` is excluded: it ran 2h6m with zero output earlier in this session.
+Measured today, not assumed: `codex` (OpenAI) is the author/operator CLI; it does **not**
+replace either review arm. `grok` (xAI) and `agy` (Google Gemini) are on PATH and
+invocable as the two required reviewers. ~~**`gemini` is not installed.
+`antigravity` is not on PATH. There is no Google voice available in this wave**~~ is **dead
+as of the operator's D-033 ruling**: `/Users/yulanbot/.local/bin/agy` is installed and
+enumerates Gemini models.
 
-So: codex-authored lanes are reviewed by **grok** or by **Lead6 (claude)**. Verdicts bind to an
-exact SHA; a new commit voids the verdict and requires rebinding.
+So: every swarm mate's lane is reviewed by **BOTH Grok and AGY/Gemini instead of Claude**.
+Verdicts bind to an exact SHA; a new commit voids both verdicts and requires both to rerun.
+Do not wait for or claim a Claude verdict. Neither single arm nor Codex is a substitute.
+Each arm must return substantive findings or reasoning; an empty PASS is not a review.
+`opencode` remains excluded: it ran 2h6m with zero output earlier in this session.
 
 **Design critique is separate from code review** and runs on the **deployed** pages, not the
 source. Each critic works independently and blind to the others. The brief is deliberately
