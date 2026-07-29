@@ -5028,6 +5028,36 @@ async function handleTransaction(
               token_id: prepared.command.token_id,
               principal_id: prepared.command.principal_id,
               run_id: prepared.command.run_id,
+              /* ★ expires_at IS WHAT MAKES THE CREDENTIAL RENEWABLE, AND IT WAS MISSING.
+               *
+               * Without it, the whole of §2.3 is unreachable through the documented way of
+               * giving an agent a credential. src/cloud/renewal.ts `due()` returns false the
+               * moment `expiresAt === null` — deliberately, because renewing on an unknown
+               * deadline would supersede a predecessor that might have had fifty-nine good
+               * minutes left. So a minted credential never renewed proactively, ran to its
+               * TTL, and the agent stopped. That is the exact failure renewal exists to
+               * prevent, reached through the front door.
+               *
+               * FOUND BY DOGFOODING, not by a test: a 120s credential was minted, used at
+               * 105s, and no successor was ever written to the agent credential store. The
+               * suites never caught it because they drive renewal by constructing the
+               * artifact themselves rather than by taking what mint actually returns.
+               *
+               * `renewal.ts`'s own comment asserted the opposite — "cswarm token mint and the
+               * connect page both state the expiry now" — which is how it stayed invisible.
+               * A comment claiming a field exists is not the field existing.
+               *
+               * Read off the EVENT payload, the same source renewalReplayFields uses, rather
+               * than recomputed from ttl_ms here: two derivations of one instant drift, and
+               * the event is what the database actually stored. The client's artifact parser
+               * already accepts this shape — it has exactly two, with and without this key. */
+              ...(typeof record(decision.events[0]?.payload)?.expires_at === "number"
+                ? {
+                  expires_at: new Date(
+                    record(decision.events[0]?.payload)!.expires_at as number,
+                  ).toISOString(),
+                }
+                : {}),
             }
             : prepared.command.kind === RENEW_AGENT_TOKEN_KIND
             ? renewalReplayFields(prepared, decision.events)
