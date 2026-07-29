@@ -1176,3 +1176,11 @@ remove_member):** make the cap assertions hermetic — fresh identity per run wh
 per-identity, window reset in the fixture where it is not, and the fix must state which caps are
 per-identity and which are global **as measured**, since that distinction decides the design.
 With the usual observer + mutation discipline.
+
+### D-029 second addendum — the "extra voice" panel produced nothing usable
+
+For the record, since the correction above mentions it: the retroactive review panel came back
+codex=timeout, claude=timeout, grok=a two-sentence preamble with no verdict. No usable output.
+Per the corrected ledger no remediation was required, so the thread is closed rather than
+re-run; the three merges stand on their original (valid) cross-family reviews. Silence is not
+agreement, and an empty panel is not a review — recorded so nobody later cites this run as one.
