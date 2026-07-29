@@ -815,3 +815,35 @@ class forever. Lumen's observer reads the DOM text node; mine read the file.
 actively editing that file and a shared-checkout collision (D-013) is worse than the extra
 minutes. Fix + markup-stripping observer + mutation at line 150.
 
+---
+
+## D-023 — The home page tells every visitor signup is switched off. It is on. · OPEN
+
+**Found:** 2026-07-29 by the codex consumer critique; verified against production by the advisor.
+
+Live on `https://commonswarm.com`:
+
+> "Free — three workspaces, no card. **Signup is not switched on for everyone yet, so the flow is
+> a preview.**"
+
+`SWARM_SELF_SERVE=1` was set on the production project on 2026-07-28. Self-serve creation works —
+it created the workspace this fleet coordinates in. **The front page has been telling every
+visitor they cannot have the thing they can have.**
+
+**This is D-002 recurring on the marketing surface.** Same mechanism: availability copy asserts
+deployment state, lives in git, and nothing fails when the deployment moves. D-002 was the CLI
+telling operators renewal was unavailable while it worked; this is the website telling strangers
+signup is unavailable while it works. The register entry for the first one is four hours old.
+
+★ **It also corrupted the review.** The critic, told by the page that signup was off, prescribed
+retreating to invitation-only language and a waiting list across three pages. Those prescriptions
+were rejected — but a stale claim did not merely misinform a visitor, **it misled a reviewer into
+recommending we build the false state for real.** A lie on a surface propagates into the judgement
+of anyone who reads it, including our own tooling.
+
+**Assigned:** L2 (Juniper). Delete the claim; state what is true and make it the primary action.
+
+**The standing rule this earns:** when a deployment gate flips, grep every surface for copy that
+asserts the old state — site, CLI, installer, email templates, OG description — before the flip is
+called done. That check has now been skipped twice.
+
