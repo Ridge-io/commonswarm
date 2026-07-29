@@ -295,6 +295,47 @@ closed, and leaving them listed would have made the table lie about the state of
 | 8 | One re-login per dogfood machine | Human action | ⬜ **OPEN** | dogfood surviving the rename |
 | 9 | `legal@commonswarm.com` delivers | Test to run | ⬜ **OPEN** — never confirmed | every document that names it |
 | 10 | USPTO check on "CommonSwarm" | Research | ⬜ **OPEN** — prompt written for an agent | launching under a name nobody has cleared |
+| 11 | **Custom SMTP for magic-link sign-in** | External account + DNS | ⬜ **OPEN — now the top blocker for non-developer signup** | email sign-in working for more than 2 people an hour |
+
+### Item 11 in full — what magic-link sign-in still needs
+
+Email sign-in is **built, deployed and working** on https://commonswarm.com/start: a real
+`<form>`, `signInWithOtp`, a "link is on its way" state that echoes the address back, and
+typed handling for the two ways it fails. It is above the GitHub button on purpose — a
+GitHub-only door tells a non-developer the product is not for them.
+
+**What it cannot do is scale, and the cap is not ours to raise from code.** With no custom
+SMTP configured, Supabase's built-in sender allows **2 emails per hour for the entire
+project**. Measured, not assumed — the Management API refuses the change outright:
+
+```
+PATCH /v1/projects/<ref>/config/auth  {"rate_limit_email_sent": 30}
+401  {"message":"Custom SMTP required to configure SMTP_SENDER_NAME or RATE_LIMIT_EMAIL_SENT.
+      Missing SMTP_ADMIN_EMAIL, SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS fields."}
+```
+
+So the third stranger to try email in any given hour is refused through no fault of their
+own. The page handles that honestly — it says the limit is ours, not their address, and
+points at GitHub — but honest degradation is not the same as working.
+
+**To close it** (all three steps are outside version control):
+
+1. Open an account with a transactional email provider — Resend, Postmark, SendGrid or SES.
+   Resend's free tier is 3,000/month and is the least setup.
+2. Verify `commonswarm.com` as a sending domain. This means adding **DKIM/SPF DNS records**
+   at the registrar — the same place the Vercel records went. Without domain verification the
+   mail sends from the provider's shared domain and lands in spam, which is indistinguishable
+   from not sending at all.
+3. Put the SMTP credentials into the Supabase project (Dashboard → Authentication → SMTP
+   Settings, or `PATCH /config/auth` with the five `SMTP_*` fields), then raise
+   `rate_limit_email_sent`.
+
+**Then verify it end to end rather than assuming**: request a link at
+https://commonswarm.com/start with a real address, confirm the mail arrives, and confirm the
+link returns you to `/start` signed in. The return leg is the half that was silently broken
+before — `site_url` and the redirect allow-list both pointed at `localhost` in production
+until 2026-07-28, so every OAuth callback would have bounced a real user to a dead address
+while the outbound redirect looked perfect.
 
 **THE LEGAL DOCUMENTS ARE NOW GATED ON THREE THINGS, NONE OF THEM TEXT IN THIS REPO:**
 items **4** (the filing), **9** (does the mailbox actually deliver) and **7** (attorney

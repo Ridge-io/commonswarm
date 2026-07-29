@@ -113,6 +113,7 @@ import Base from "../layouts/Base.astro";
 import Button from "../components/ui/Button.astro";
 import Progress from "../components/start/Progress.astro";
 import SignInPanel from "../components/start/SignInPanel.astro";
+import EmailSentPanel from "../components/start/EmailSentPanel.astro";
 import ReadyPanel from "../components/start/ReadyPanel.astro";
 import WorkingPanel from "../components/start/WorkingPanel.astro";
 import DonePanel from "../components/start/DonePanel.astro";
@@ -140,6 +141,7 @@ const description =
           default. */}
       <div class="st__stage" data-stage>
         <SignInPanel />
+        <EmailSentPanel />
         <ReadyPanel />
         <WorkingPanel />
         <DonePanel />
@@ -287,15 +289,19 @@ const description =
     currentSession,
     myWorkspaces,
     signInWithGitHub,
+    signInWithEmail,
     signOut,
     uuid,
     NoDeployment,
     SignupRefused,
     WorkspaceLimitReached,
+    EmailRateLimited,
+    EmailAddressRejected,
   } from "../lib/commonswarm";
 
   type State =
     | "signed-out"
+    | "email-sent"
     | "ready"
     | "working"
     | "done"
@@ -309,6 +315,10 @@ const description =
   const STEP_OF: Record<State, number> = {
     "no-deployment": 1,
     "signed-out": 1,
+    /* Still step ONE. The link has been sent but nobody is signed in yet, and the strip must
+       not advance on an action the user has not completed — that would tell them they are
+       further along than they are, and the next thing they do is leave for their inbox. */
+    "email-sent": 1,
     ready: 2,
     working: 2,
     refused: 2,
@@ -632,6 +642,88 @@ const description =
       } catch (thrown) {
         halt(thrown);
       }
+    });
+
+    /* THE EMAIL DOOR.
+     *
+     * Same intent-minting as the GitHub press above: the ids are stored BEFORE the round trip,
+     * because the user leaves this page entirely (to their inbox, then back through a link)
+     * and the tab that returns may not be the tab that left.
+     *
+     * THE SUCCESS STATE DOES NOT CLAIM DELIVERY. It says a link was sent, not that it
+     * arrived — we get an accepted POST from GoTrue and nothing else. Saying "check your
+     * inbox" when the mail is queued behind a rate limit would be the same class of false
+     * claim as the install command that could not run.
+     *
+     * IT ALSO DOES NOT SAY WHETHER THE ADDRESS WAS ALREADY REGISTERED. The response is
+     * identical either way by design (see signInWithEmail), and surfacing the difference here
+     * would turn this form into an account-enumeration oracle. */
+    const emailForm = document.querySelector<HTMLFormElement>("[data-email-form]");
+    const emailError = document.querySelector<HTMLElement>("[data-email-error]");
+    const emailSubmit = document.querySelector<HTMLButtonElement>("[data-email-submit]");
+
+    const showEmailError = (text: string) => {
+      if (!emailError) return;
+      emailError.textContent = text;
+      emailError.hidden = false;
+    };
+    const clearEmailError = () => {
+      if (!emailError) return;
+      emailError.hidden = true;
+      emailError.textContent = "";
+    };
+
+    emailForm?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      clearEmailError();
+      const field = emailForm.querySelector<HTMLInputElement>("input[name=email]");
+      const address = (field?.value ?? "").trim();
+      /* checkValidity() rather than a hand-rolled regex: the browser's type="email" rule is
+       * the one the user's autofill and their other forms already agree with, and every
+       * address regex anyone writes rejects something deliverable. */
+      if (!address || !field?.checkValidity()) {
+        showEmailError("Enter an email address you can open right now.");
+        field?.focus();
+        return;
+      }
+      if (!readIntent()) mintIntent("");
+      if (emailSubmit) emailSubmit.disabled = true;
+      try {
+        await signInWithEmail(address, `${window.location.origin}/start`);
+        show("email-sent", { focus: true });
+        const target = document.querySelector<HTMLElement>("[data-email-sent-address]");
+        if (target) target.textContent = address;
+      } catch (thrown) {
+        if (thrown instanceof EmailRateLimited) {
+          /* THE CAP IS OURS, NOT THEIRS, AND THE MESSAGE SAYS SO. Until custom SMTP is
+             configured, Supabase's built-in sender allows 2 emails per hour ACROSS THE WHOLE
+             PROJECT — the Management API refuses to raise rate_limit_email_sent without it
+             ("Custom SMTP required..."). So a visitor can be rate limited by a stranger who
+             signed up ten minutes earlier, having done nothing wrong at all. Telling them to
+             "wait a minute" would be advice that does not work; pointing at the door that has
+             no such limit does. */
+          showEmailError(
+            "Our email sender is busy — that is a limit on our side, not a problem with your address. Sign in with GitHub below, or try again in a few minutes.",
+          );
+        } else if (thrown instanceof EmailAddressRejected) {
+          showEmailError("That address was refused. Check it for a typo and try again.");
+        } else if (thrown instanceof NoDeployment) {
+          halt(thrown);
+        } else {
+          showEmailError(
+            thrown instanceof Error && thrown.message
+              ? thrown.message
+              : "Could not send the link. Try again in a moment.",
+          );
+        }
+      } finally {
+        if (emailSubmit) emailSubmit.disabled = false;
+      }
+    });
+
+    document.querySelector<HTMLElement>("[data-resend]")?.addEventListener("click", () => {
+      show("signed-out", { focus: true });
+      document.querySelector<HTMLInputElement>("input[name=email]")?.focus();
     });
 
     document.querySelector<HTMLElement>("[data-create]")?.addEventListener("click", async () => {

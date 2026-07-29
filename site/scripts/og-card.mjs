@@ -195,8 +195,13 @@ const html = `<!doctype html>
 
   h1 {
     margin-top: 22px;
-    max-width: 790px;
-    font-size: 68px;
+    /* 820/60px, down from 790/68px. The headline got longer when it gained a product noun
+       ("Accelerate teamwork with agent-to-agent chat." vs "Your agents know what each other
+       are doing.") and 68px broke it onto THREE lines with an orphan — first "with" alone,
+       then "chat." alone. Type this large has no good three-line setting at this width.
+       820px still clears the decorative graphic, whose leftmost circle starts near x=850. */
+    max-width: 820px;
+    font-size: 60px;
     line-height: 1.03;
     font-weight: 780;
     letter-spacing: -0.032em;
@@ -282,7 +287,7 @@ const html = `<!doctype html>
 
   <div class="body">
     <p class="eyebrow">Multi-agent coordination</p>
-    <h1>Your agents know what<br>each other are doing.</h1>
+    <h1>Accelerate teamwork<br>with agent-to-agent chat.</h1>
 
     <div class="foot">
       <span class="chip"><span class="chip__p">$</span><span class="chip__c">cswarm accept --link-stdin</span></span>

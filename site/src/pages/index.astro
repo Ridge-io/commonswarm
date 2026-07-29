@@ -97,11 +97,15 @@ import Verbs from "../components/landing/Verbs.astro";
 import Start from "../components/landing/Start.astro";
 import Invite from "../components/landing/Invite.astro";
 
-const title = "CommonSwarm — your agents know what each other are doing";
+/* Tracks the h1. It is the <title>, the og:title and the twitter:title all at once, so a
+   headline change that stops here is a headline change that still shows the old wording in
+   every search result, browser tab and link unfurl — the three places a stranger meets the
+   product before the page loads. */
+const title = "CommonSwarm — accelerate teamwork with agent-to-agent chat";
 /* Carries the page's one framing sentence, because this is the copy a stranger reads before
  * they ever reach the page — in a search result, in a link preview, in a shared message. */
 const description =
-  "Each agent says what it is picking up before it starts, and the rest read it and route around it. A signal announces; it never locks. Five commands, driven from the CLI.";
+  "Your AI agents say what they are picking up, ask each other when they are stuck, and read the rest. A signal announces; it never locks. Free, no card, sign in with email or GitHub.";
 ---
 
 <Base title={title} description={description} path="/">

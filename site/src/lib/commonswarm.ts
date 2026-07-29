@@ -87,9 +87,9 @@ export async function currentSession(): Promise<Session | null> {
 }
 
 /**
- * GitHub is the only provider, matching the CLI (src/cloud/auth.ts sets provider=github).
- * Adding a second one here without adding it there would give the two surfaces different
- * identity sets for the same account.
+ * GitHub matches the CLI (src/cloud/auth.ts sets provider=github), so the two surfaces
+ * resolve the same account for the same person. See signInWithEmail below for the door that
+ * does not require a developer account at all.
  */
 export async function signInWithGitHub(redirectTo: string): Promise<void> {
   const c = client();
@@ -99,6 +99,79 @@ export async function signInWithGitHub(redirectTo: string): Promise<void> {
     options: { redirectTo },
   });
   if (error) throw new Error(error.message);
+}
+
+/**
+ * Too many links asked for too quickly — the address is fine, the pace is not.
+ *
+ * ★ TODAY THIS IS ALMOST ALWAYS OUR FAULT RATHER THAN THE CALLER'S. With no custom SMTP
+ * configured, the built-in sender permits 2 emails per hour for the ENTIRE PROJECT, and the
+ * Management API refuses to raise the limit without SMTP credentials. A first-time visitor
+ * can therefore be rate limited by somebody else's signup. Whatever message is shown for this
+ * must not imply the user did anything, and must offer the other door.
+ */
+export class EmailRateLimited extends Error {
+  readonly retryAfterSeconds: number | null;
+  constructor(message: string, retryAfterSeconds: number | null = null) {
+    super(message);
+    this.name = "EmailRateLimited";
+    this.retryAfterSeconds = retryAfterSeconds;
+  }
+}
+
+/** The address was refused as unroutable or malformed before anything was sent. */
+export class EmailAddressRejected extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "EmailAddressRejected";
+  }
+}
+
+/**
+ * Sign in with a link sent to an email address — no password, no developer account.
+ *
+ * WHY THIS EXISTS ALONGSIDE GITHUB. CommonSwarm is a product about agents talking to each
+ * other, and requiring a GitHub account to use one excludes exactly the people the consumer
+ * shape is for. GitHub stays because it is what the CLI uses and it is one press for the
+ * people who have it; this is the door for everyone else.
+ *
+ * ONE CALL, TWO MEANINGS, AND THAT IS THE POINT. `signInWithOtp` creates the user if the
+ * address is new and signs them in if it is not, so the page never has to ask "do you already
+ * have an account?" — a question a first-time visitor cannot answer and should not be asked.
+ * `shouldCreateUser` is left at its default of true deliberately: passing false makes an
+ * unknown address fail with `otp_disabled` / "Signups not allowed for otp", which reads like
+ * the FEATURE is off rather than like the user is new. That exact response sent one
+ * investigation down the wrong path.
+ *
+ * NO ENUMERATION SIGNAL. Whether the address was already registered is never returned, and
+ * the caller must not infer it: the response is the same either way, which is what stops this
+ * form becoming a way to test which addresses have accounts.
+ *
+ * `emailRedirectTo` must be inside the project's redirect allow-list or GoTrue silently sends
+ * the user to the project's Site URL instead. Both were pointed at localhost in production
+ * until 2026-07-28, which broke the RETURN leg of every sign-in while the outbound redirect
+ * looked perfect.
+ */
+export async function signInWithEmail(
+  email: string,
+  redirectTo: string,
+): Promise<void> {
+  const c = client();
+  if (!c) throw new NoDeployment();
+  const { error } = await c.auth.signInWithOtp({
+    email,
+    options: { emailRedirectTo: redirectTo },
+  });
+  if (!error) return;
+  const status = (error as { status?: number }).status ?? 0;
+  const code = (error as { code?: string }).code ?? "";
+  if (status === 429 || code === "over_email_send_rate_limit") {
+    throw new EmailRateLimited(error.message);
+  }
+  if (status === 400 || status === 422) {
+    throw new EmailAddressRejected(error.message);
+  }
+  throw new Error(error.message);
 }
 
 export async function signOut(): Promise<void> {

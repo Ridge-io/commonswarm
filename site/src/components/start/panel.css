@@ -338,3 +338,109 @@
   outline-offset: 2px;
   border-color: var(--focus);
 }
+
+/* ---------------------------------------------------------------------------------------
+ * THE EMAIL DOOR
+ * ---------------------------------------------------------------------------------------
+ * Sits ABOVE the provider buttons on purpose. A non-developer arriving at an agent product
+ * should meet a field they can use, not a wall of developer accounts. See the comment in
+ * SignInPanel.astro for the reasoning; this file only has to agree with it visually.
+ *
+ * The input uses --border-interactive rather than --border because it IS the control edge:
+ * 3.68:1 on white, which clears WCAG 1.4.11 for non-text contrast. --border (1.29:1) is a
+ * structural hairline and would fail as the boundary of something you are meant to type in.
+ */
+.st-pn__email {
+  display: grid;
+  gap: var(--s-2);
+  margin-block-start: var(--s-6);
+}
+
+.st-pn__label {
+  font-size: var(--t-xs);
+  line-height: var(--lh-xs);
+  letter-spacing: var(--track-xs);
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.st-pn__input {
+  inline-size: 100%;
+  min-block-size: 44px; /* the comfortable touch target, matching Button's md */
+  padding: 0 var(--s-3);
+  font: inherit;
+  font-size: var(--t-base);
+  color: var(--text);
+  background: var(--elev-0);
+  border: 1px solid var(--border-interactive);
+  border-radius: var(--radius);
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.st-pn__input::placeholder {
+  color: var(--text-faint);
+}
+
+.st-pn__input:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--focus-halo);
+}
+
+/* Only after the browser has decided the value is invalid AND the user has left the field.
+   :invalid alone paints an empty required field red before anything has been typed, which
+   is scolding someone for not yet having done the thing they just arrived to do. */
+.st-pn__input:user-invalid {
+  border-color: var(--danger);
+}
+
+.st-pn__note {
+  margin: 0;
+  font-size: var(--t-xs);
+  line-height: var(--lh-xs);
+  letter-spacing: var(--track-xs);
+  color: var(--text-faint);
+}
+
+/* role="alert", so it is announced when it is unhidden. It carries `hidden` in the markup
+   and the script clears the attribute; an empty alert region is not announced. */
+.st-pn__err {
+  margin: 0;
+  padding: var(--s-2) var(--s-3);
+  font-size: var(--t-sm);
+  line-height: var(--lh-sm);
+  color: var(--danger);
+  background: var(--danger-dim);
+  border-radius: var(--radius);
+}
+
+.st-pn__err[hidden] {
+  display: none;
+}
+
+/* The rule-with-a-word divider. aria-hidden on the element, because "or" read aloud between
+   two labelled controls adds nothing a screen reader user needs. */
+.st-pn__or {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: var(--s-3);
+  margin-block-start: var(--s-5);
+  font-size: var(--t-xs);
+  letter-spacing: var(--track-xs);
+  color: var(--text-faint);
+}
+
+.st-pn__or::before,
+.st-pn__or::after {
+  content: "";
+  block-size: 1px;
+  background: var(--border);
+}
+
+/* The echoed-back address. `overflow-wrap: anywhere` because an email address is one
+   unbreakable token as far as the line breaker is concerned, and a long one otherwise pushes
+   the panel wider than the viewport on a phone. */
+.st-pn__addr {
+  overflow-wrap: anywhere;
+}
