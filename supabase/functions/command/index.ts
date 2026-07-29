@@ -2206,11 +2206,35 @@ async function fenceRenewal(
           ${grant.renewal_grant_id}::uuid
         )
       `;
-      // Supersede the predecessor. It must happen AFTER the insert: the fence
-      // refuses an expired predecessor, so ending it first would refuse the
-      // very successor it is being ended for. Ending it is what stops two live
-      // credentials existing for one worker — a successor without this is a
-      // duplication, not a renewal.
+      /* Supersede the predecessor. It must happen AFTER the insert: the fence
+         refuses an expired predecessor, so ending it first would refuse the
+         very successor it is being ended for. Ending it is what stops two live
+         credentials existing for one worker — a successor without this is a
+         duplication, not a renewal.
+
+         ★ KNOWN DEFECT, FOUND BY CROSS-MODEL REVIEW, NOT YET FIXED — READ BEFORE TOUCHING
+         THIS. A renewal that COMMITS and then loses its HTTP response (a dropped connection,
+         or a post-commit 5xx) strands the worker permanently. The successor exists here, the
+         predecessor is ended on this line, and the slot is spent — but the raw successor
+         credential lives ONLY in the fresh response body. The idempotency replay deliberately
+         stores ids and expiry and never the secret (renewalReplayFields), so a retry with the
+         same command_id returns a body with no agent_token, and the client correctly refuses
+         to invent one. Net: a live successor nobody can reach, an agent that stops, and a
+         human reauthorisation triggered by a transient network blip — which is the exact
+         failure this whole feature exists to remove.
+
+         The two reviewers split on it and BOTH were reading the same code: one called it
+         "fails closed, correct", the other called it an attacker-triggerable renewal DoS.
+         Both descriptions are accurate. Fail-closed is the right SAFETY behaviour and the
+         wrong AVAILABILITY outcome, and here availability is the point of the feature.
+
+         DO NOT fix it by storing the raw successor in the idempotency row — that puts a live
+         credential at rest in a table read on every replay, trading a bounded outage for an
+         unbounded exposure. The directions worth exploring: leave the predecessor to expire
+         naturally (it has <= 1h left; costs a bounded overlap of two live credentials, and
+         the unique index still guarantees one successor), or make supersession happen on the
+         successor's FIRST USE rather than at issue. Both need their own review pass; neither
+         is a change to make in passing. */
       const superseded = await sp<{ token_id: string }[]>`
         UPDATE swarm.agent_tokens
         SET expires_at = ${new Date(now)}

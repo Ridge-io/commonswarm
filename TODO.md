@@ -304,3 +304,39 @@ draft banner is still up and why no amount of further editing will lift it.
 
 Item **2** gates distribution on its own: everything else could be perfect and a stranger
 still could not install. Item **6** gates the product being self-serve at all.
+
+---
+
+## 11. Renewal loses the successor if its HTTP response is lost — **known, unfixed**
+
+Found by cross-model review (codex BLOCK / grok SHIP — they split on the same code, and
+that disagreement is the interesting part rather than a tie to break).
+
+**The failure:** a renewal that COMMITS and then loses its response — dropped connection, or
+a 5xx raised after commit — strands the worker permanently. Server-side the successor exists,
+the predecessor is superseded, and a successor slot is spent. But the raw credential lives
+only in the fresh response body: `renewalReplayFields` deliberately stores ids and expiry and
+never the secret, so replaying the same `command_id` returns a body with no `agent_token`,
+and the client correctly refuses to invent one.
+
+Net result: a live successor nobody can reach, an agent that stops working, and a human
+reauthorisation triggered by a network blip — **the exact failure this feature was built to
+remove.** It is attacker-triggerable to the extent anyone can disrupt one response.
+
+**Why the reviewers split, and why both are right.** grok read it as fail-closed and correct;
+codex read it as a denial of service. Both describe the same mechanism accurately.
+Fail-closed is the right SAFETY behaviour and the wrong AVAILABILITY outcome — and for this
+feature availability *is* the point, so it counts as a defect.
+
+**Do NOT fix it by storing the raw successor in the idempotency row.** That places a live
+credential at rest in a table read on every replay, trading a bounded outage for an unbounded
+exposure.
+
+Two directions worth a proper pass, neither safe to do in passing:
+- Let the predecessor expire naturally instead of superseding it at issue. It has ≤ 1 hour
+  left, so the cost is a bounded overlap of two live credentials, and the partial unique index
+  on `predecessor_token_id` still guarantees exactly one successor.
+- Supersede on the successor's FIRST USE rather than at issue.
+
+Recorded in `supabase/functions/command/index.ts` at the supersession site as well, so someone
+editing that line meets it there rather than only here.
