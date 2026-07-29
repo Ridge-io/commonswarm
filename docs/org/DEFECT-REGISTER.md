@@ -325,7 +325,7 @@ bearing on whether spawning it was a mistake. It was.)
 
 ---
 
-## D-011 — The 401/403 fallback asserted revocation in every unmeasured case · IN REVIEW
+## D-011 — The 401/403 fallback asserted revocation in every unmeasured case · FIXED
 
 **Found:** 2026-07-29 by Cinder's own class test, while fixing D-004 — the test went red naming
 a deviation Cinder had not predicted.
@@ -343,8 +343,10 @@ than quietly tolerating the family.
 thing — the deployment refused and will not say why. Say that. Name neither cause. The remedy
 is identical either way, so honesty costs nothing.
 
-**Status:** `cinder/d011-unexplained-refusal` @ `2a032b09d3759dfbf6727748e031a00a8b2f74b8`,
-rebased onto `main` after D-004 landed. **Not merged**; awaits Mica.
+**Closed by `7f34523`, merged to `main` 2026-07-29**, after three review rounds — each of
+which found a real hole (see D-017, D-018). Advisor-verified at the merged SHA against the
+acceptance criterion: add a production reason, touch no test file → 14/15 with the class test
+naming the unclassified code; restored 15/15.
 
 The earlier heads (`003d565`, then `5857dce`) are orphaned. Mica's P1 against the middle one
 became **D-017** — the class test could not detect an asserted cause — and the fix for that is
