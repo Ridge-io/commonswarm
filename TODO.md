@@ -49,11 +49,14 @@ warning in mind only as history — nothing should point at it either way.
    Still open here: the Vercel **project** is still named `coswarm-site`. Renaming it moves
    the deployment URL and is an operator action; the custom domain makes it cosmetic.
 2. ~~**The mailboxes do not exist.**~~ ★ **DONE, 2026-07-29.** The superseded sentence is
-   **dead**: `legal@commonswarm.com` and `security@commonswarm.com` were verified end to end.
-   Root MX and SPF now use Cloudflare Email Routing.
+   **dead**: the operator reports `legal@commonswarm.com` and
+   `security@commonswarm.com` verified end to end (D-007/D-008). This seat independently
+   verified that root MX and SPF now use Cloudflare Email Routing; DNS alone would not prove
+   delivery.
 3. **No USPTO check has been done on "CommonSwarm."** The rename happened because the old
    name collided with a competitor; nobody has searched TESS or checked common-law use for
-   the new one. Do this **before** any public announcement or domain launch, not after.
+   the new one. The domain is already live; do this **before any further public
+   announcement**, not after.
 
 <details>
 <summary>★ SUPERSEDED pre-merge fill snapshot — DEAD as current status</summary>
@@ -312,7 +315,7 @@ closed, and leaving them listed would have made the table lie about the state of
 | 6 | `SWARM_SELF_SERVE=1` | Deferred on purpose | ✅ **DONE** — set on the production project 2026-07-28, after all 10 migrations were pushed and the three edge functions redeployed. The web app is now wired to the backend too (`PUBLIC_SUPABASE_URL` / anon key at build time) and GitHub OAuth answers 302 to github.com with a real client id | public signup |
 | 7 | Attorney review | External review | ⬜ **OPEN** | publishing the legal docs as in-force |
 | 8 | One re-login per dogfood machine | Human action | ✅ **DONE 2026-07-29** — mini logged in as GitHub `Ridgeio`, laptop as `tlangridge`, both live in project `CommonSwarm Build`. First real two-machine, two-identity dogfood run; see `docs/evidence/2026-07-29-first-real-dogfood.md` | dogfood surviving the rename |
-| 9 | `legal@commonswarm.com` delivers | Test to run | ✅ **DONE 2026-07-29** — `legal@` and `security@` verified end to end through Cloudflare Email Routing | every document that names it |
+| 9 | `legal@commonswarm.com` delivers | Test to run | ✅ **DONE 2026-07-29** — operator-confirmed end-to-end delivery for `legal@` and `security@` (D-007/D-008); this seat independently verified the Cloudflare Email Routing DNS | every document that names it |
 | 10 | USPTO check on "CommonSwarm" | Research | ⬜ **OPEN** — prompt written for an agent | launching under a name nobody has cleared |
 | 11 | **Custom SMTP for magic-link sign-in** | External account + DNS | ◐ **IN FLIGHT** — the three Resend DNS records now resolve on Cloudflare; Resend verification and Supabase custom-SMTP activation are not established here | email sign-in working for more than 2 people an hour |
 

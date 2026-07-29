@@ -31,13 +31,13 @@ spend circuit breaker to be **in place**, not merely written.
 |---|---|---|
 | Browser client code | **Committed and deployed** | `site/src/lib/` is tracked on `main`; the live `/app` carries the public backend config and client surface |
 | `<meta>` config tags in the shell | **Deployed** | live `/app` contains a non-empty `commonswarm:url` tag |
-| `command`, `read`, and `capability` edge functions | **Deployed** | all three were redeployed after all 10 migrations were pushed |
-| Spend circuit breaker | **Applied and deployed** | included in the 10 pushed migrations and the redeployed `command` function |
+| `command`, `read`, and `capability` edge functions | **Deployed (operator-confirmed)** | the rollout record says all three were redeployed after all 10 migrations were pushed; anonymous probes only establish that an endpoint answers |
+| Spend circuit breaker | **Applied and deployed (operator-confirmed)** | included in that 10-migration/three-function rollout record; not independently observable from this seat |
 | `SWARM_SELF_SERVE` in production | **`1` since 2026-07-28** | production configuration, operator-confirmed; anonymous probes alone cannot reveal the flag |
 | Signed-in web app | **Deployed** | `/app` returns 200 with backend configuration; `/start` is the live signup route |
 | CLI install (`curl \| sh`) | **Working** | `/install.sh` returns 200, `/nope.sh` returns 404, and the published script installs checksummed `cswarm 0.1.1` from public `Ridge-io/cloud-swarm` |
 | Public web front door | **Serving on Cloudflare** | `/`, `/start`, `/app`, and `/download` return 200; a nonexistent route returns 404 |
-| Auth email templates | **13 branded templates in production** | the local template manifest enumerates 13 bodies; the production configuration was applied and verified |
+| Auth email templates | **13 branded templates in production (operator-confirmed)** | the local template manifest independently enumerates 13 bodies; the production application is the operator's measured state |
 
 Signup is open and free: a verified identity may hold three live workspaces and no card is
 required. This table records deployment state, not a claim that every human journey has
@@ -334,8 +334,10 @@ hand off to `curl -fsSL https://commonswarm.com/install.sh | sh`; the live insta
   states. A verified signed-in caller can distinguish a disabled deployment gate, which is
   an intentional disclosure about deployment state, not another person.
 - **Whether the spend-breaker migration is applied**, and **which build of `command` is
-  deployed**. Both need credentials this seat does not hold. The deployed function answered
-  requests; that says it exists, not what is in it.
+  deployed, cannot be established by an anonymous probe.** The operator's rollout record
+  says the migration was among all 10 pushed migrations and all three functions were
+  redeployed. This seat did not independently authenticate that state: an endpoint answering
+  only proves that some build exists.
 
 ---
 
