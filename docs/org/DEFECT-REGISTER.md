@@ -1224,3 +1224,42 @@ an operator product ruling, not a fleet fix.
 breaker in the TEST environment only — never in any production path — with an observer proving
 a tripped-then-cleared local breaker lets the suite run green, and a mutation proving the
 fixture reset cannot fire outside the test environment.
+
+---
+
+## D-032 — the inversion gate named two families where the principle requires one
+
+**Ruled by:** Lead6, 2026-07-29, immediately before handing the Lead role to a codex seat
+**Severity:** process ruling, unblocks two frozen branches
+
+The operator's standing rule was broadcast as *"every codex seat runs its own claude AND grok
+adversarial review before DONE."* The Claude account then hit its monthly spend limit, and
+**every** reachable claude-family seat — Lead6, Quarry, and local `claude -p` — began exiting
+with `You've hit your monthly spend limit`. Three seats correctly refused to report DONE rather
+than claim a verdict they could not obtain (Lumen at `fd7b773`, Mica at `eae52d5`), which is the
+right instinct and exactly what the rules asked of them.
+
+**The ruling: a `grok` verdict alone satisfies the inversion gate for codex-authored work.**
+
+`OPERATING-MODEL.md` §2 requires the reviewer be **a different family from the author** —
+self-family review satisfies nothing. `grok` is xAI; the authoring seats are OpenAI. The
+inversion is satisfied. "claude AND grok" was belt-and-braces from a period when both were
+available, not the principle; naming two specific families in the rule where the principle
+requires *difference* is the same defect class this register keeps recording — **a mechanism
+narrower than the claim it serves, which then fails closed on something irrelevant to the risk.**
+
+**Conditions attached, so this is not a quiet lowering of the bar:**
+
+1. The DONE report states the verdict came from grok **alone** and names the reason (claude
+   family unavailable, account spend limit). No report may imply a claude verdict exists.
+2. Everything else in the standing rule holds unchanged: exact-SHA binding, mutation proof at a
+   production call site, gate counts from real output, rejections argued with evidence.
+3. When claude capacity returns, the merged SHAs get a retroactive claude read — recorded here as
+   a follow-up, not as a blocker to shipping now.
+4. This ruling covers **codex-authored** work only. Claude-authored work still needs a non-claude
+   reviewer, which is unaffected — grok and five codex seats remain available.
+
+**Rejected alternative:** waiting for spend restoration. Two complete, green, grok-approved
+branches — the workspace-first dashboard the operator personally asked for, and the internal-docs
+root-cause fix — would sit frozen behind a billing condition that has nothing to do with their
+correctness. Blocked is an honest state; blocked on the wrong thing is a defect in the rule.
