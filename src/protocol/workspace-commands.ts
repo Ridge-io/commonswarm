@@ -88,6 +88,18 @@ export interface RenewalGrantFacts {
   renewal_grant_id: string;
   max_successors: number;
   successors_used: number;
+  /**
+   * Successors this grant issued that were never used, because the response
+   * carrying the raw credential was lost. Subtracted from `successors_used` to
+   * give the effective spend the ceiling is measured against: an attempt that
+   * reached nobody must not cost budget, or a flaky network becomes the human
+   * reauthorisation renewal exists to avoid.
+   *
+   * A separate monotone counter rather than a decrement of `successors_used`:
+   * the database refuses to lower either number, so "credit" can only ever be
+   * a record of something that happened, never an unwinding.
+   */
+  successors_stranded: number;
   /** Hard continuous-renewal horizon; past it a human must reauthorise. */
   horizon_expires_at: number;
   revoked_at: number | null;
@@ -99,8 +111,28 @@ export interface RenewalFacts {
   grant: RenewalGrantFacts | null;
   /** The predecessor row names a grant other than the run's live grant. */
   grant_mismatch: boolean;
-  /** A successor for this exact predecessor already exists. */
+  /**
+   * An UNREVOKED successor for this exact predecessor already exists.
+   *
+   * "Unrevoked", not "exists": a revoked successor frees the one-successor slot
+   * on purpose, and this flag has to say the same thing the partial unique index
+   * says or the reducer and the database disagree about who may renew.
+   */
   superseded: boolean;
+  /**
+   * That successor has never authenticated — PENDING — so by definition nobody
+   * holds a working copy of it and it is disposable. Meaningful only when
+   * `superseded`; false when no successor exists.
+   */
+  successor_pending: boolean;
+  /** The existing successor's id, so an adapter can replace a pending one. */
+  successor_token_id: string | null;
+  /**
+   * The PRESENTING predecessor had itself never authenticated before this
+   * request, read BEFORE this request's own first-use stamp. See the refusal
+   * below for why a token in that state may not renew.
+   */
+  predecessor_pending: boolean;
   /** Any token in the lineage is revoked, or the lineage carries a tombstone. */
   lineage_revoked: boolean;
 }
@@ -158,6 +190,7 @@ export type RenewalRejectionReason =
   | 'predecessor_revoked'
   | 'predecessor_expired'
   | 'predecessor_superseded'
+  | 'predecessor_pending_first_use'
   | 'renewal_binding_incomplete'
   | 'renewal_lineage_revoked'
   | 'renewal_grant_not_found'
@@ -704,12 +737,18 @@ export function decideWorkspace(
       if (predecessor.revoked_at !== null) {
         return domain(ctx, cmd.kind, 'predecessor_revoked', 'predecessor token is revoked');
       }
+      const facts = ctx.renewalFacts(predecessor.token_id);
       /* ★ SUPERSESSION IS CHECKED BEFORE EXPIRY, AND THE ORDER IS THE WHOLE POINT.
        *
        * Superseding a predecessor is implemented as setting expires_at = now, so a
        * superseded token IS an expired token and the expiry branch would always answer
        * first. That made 'predecessor_superseded' unreachable — a named reason that could
        * never fire, which reads as a distinction the system draws and does not.
+       *
+       * (Supersession now happens at the successor's FIRST USE rather than at issue, so
+       * the two are no longer simultaneous — but the ordering still matters, because by
+       * the time a second renewal is attempted the successor has usually been used and the
+       * predecessor has therefore been ended. Nothing below relies on the old timing.)
        *
        * It matters beyond tidiness because these two say opposite things to whoever is
        * holding the credential. 'expired' means time passed and you should have renewed
@@ -718,9 +757,18 @@ export function decideWorkspace(
        * Told the wrong one, an agent retries the renewal that just lost and loses again.
        *
        * Measured: the concurrent-double-renewal test had exactly one winner (correct) while
-       * the loser was told 'predecessor_expired' (misleading), which is how this surfaced. */
-      const facts = ctx.renewalFacts(predecessor.token_id);
-      if (facts.superseded) {
+       * the loser was told 'predecessor_expired' (misleading), which is how this surfaced.
+       *
+       * ★ `&& !facts.successor_pending` IS THE SELF-HEALING CLAUSE, NOT A LOOSENING.
+       * A successor that has never authenticated reached nobody: the only copy of its raw
+       * credential was in a response body, and if the presenter is back here asking again
+       * then that body did not arrive. Refusing it 'predecessor_superseded' is what stranded
+       * the worker permanently — a live successor nobody can reach, and a human
+       * reauthorisation caused by a dropped connection. So a PENDING successor falls through
+       * to be discarded and replaced by the adapter (which revokes it, recording that it was
+       * stranded), while a USED successor still refuses here: that agent HAS a working
+       * credential and must use it rather than renewing again. */
+      if (facts.superseded && !facts.successor_pending) {
         return domain(
           ctx,
           cmd.kind,
@@ -791,10 +839,76 @@ export function decideWorkspace(
           'the continuous-renewal horizon has passed; a human must reauthorise this run',
         );
       }
+      /* ★ A PENDING CREDENTIAL MAY NOT RENEW. This is the bound on the overlap window
+       * that first-use supersession deliberately creates.
+       *
+       * ★ IT IS DECIDED LAST, AFTER REVOCATION, GRANT AND HORIZON, AND THAT PLACEMENT IS
+       * LOAD-BEARING. This refusal says "retry, you have not used this yet" — a transient
+       * hint the client treats as a warning and retries past. Every check above it says
+       * something a person has to act on: your lineage was revoked, your grant was
+       * revoked, your horizon has passed. Decided first, this one MASKS all of them, and
+       * an operator's revocation gets reported to the fleet as a retry hint.
+       *
+       * That is not hypothetical. The migration that added `first_used_at` does not
+       * backfill it, so at the moment it applies EVERY token in the field is pending. Had
+       * this check stayed at the top, the first renewal of every live agent — including
+       * every agent an operator had just revoked — would have answered with it.
+       *
+       * The file argues at length a few lines below that telling an agent the wrong one
+       * of two reasons makes it "retry the renewal that just lost and lose again". Same
+       * rule, four more reasons.
+       *
+       * Between issue and first use a successor and its predecessor are both live. That
+       * overlap is the price of recoverability — it is what lets a renewal whose response
+       * was lost be retried instead of stranding the worker — and it is bounded by the
+       * predecessor's remaining TTL (<= 1h). It must not be EXTENDABLE: if a token that
+       * had never been used could itself issue a successor, an agent could chain unused
+       * tokens and hold an ever-growing set of live credentials, none of which was ever
+       * proven to have reached anybody.
+       *
+       * `predecessor_pending` is read BEFORE this request's own first-use stamp, which is
+       * what makes the check mean something: authenticating to renew is itself a use, so
+       * measured after the stamp no token is ever pending and the rule would be vacuous.
+       *
+       * Consequence worth stating plainly: an agent whose very first act with a fresh
+       * successor is another renewal is refused exactly once. The refused request still
+       * authenticated, so the stamp landed and the immediate retry succeeds. The cost is
+       * one round trip; the alternative is an unbounded chain of unheld credentials. */
+      if (facts.predecessor_pending) {
+        return domain(
+          ctx,
+          cmd.kind,
+          'predecessor_pending_first_use',
+          'this credential has not been used yet; a successor is issued only from a credential already in use',
+        );
+      }
+      /* ★ THE CEILING IS MEASURED ON EFFECTIVE SPEND, AND THIS ARITHMETIC IS MIRRORED
+       * EXACTLY BY THE DATABASE. Keep the two identical or the fence and the reducer
+       * will disagree about who is out of budget — which does not fail safe, it fails
+       * CONFUSINGLY: the reducer authorises, `agent_tokens_successor_fence()` refuses
+       * with SWARM_RENEWAL_GRANT_EXHAUSTED, the command function reads that as a lost
+       * race and re-decides into `predecessor_superseded`, and the agent is told a cause
+       * that is not what happened. That exact disagreement shipped once, from a version
+       * of this block that subtracted one here and had no counterpart in SQL.
+       *
+       * Effective spend is `successors_used - successors_stranded`. A stranded successor
+       * is one that was issued and never used because its response was lost; it reached
+       * nobody, so it must not cost budget, or a run of dropped connections burns the
+       * whole grant and forces the human reauthorisation renewal exists to avoid.
+       *
+       * The extra `- 1` when replacing is not a second discount. It is this request's own
+       * credit, applied here because the adapter has not written it yet: replacing
+       * increments BOTH counters (stranded for the discard, used for the replacement), so
+       * effective spend is unchanged, whereas a fresh renewal increments only `used`. The
+       * fence sees the credit already written and so tests the same number this does. */
+      const replacing = facts.superseded && facts.successor_pending;
+      const effectiveUsed = grant.successors_used - grant.successors_stranded;
+      const successorsUsed = replacing ? effectiveUsed - 1 : effectiveUsed;
       if (
         !Number.isInteger(grant.max_successors)
         || !Number.isInteger(grant.successors_used)
-        || grant.successors_used >= grant.max_successors
+        || !Number.isInteger(grant.successors_stranded)
+        || successorsUsed >= grant.max_successors
       ) {
         return domain(
           ctx,

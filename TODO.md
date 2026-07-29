@@ -307,10 +307,62 @@ still could not install. Item **6** gates the product being self-serve at all.
 
 ---
 
-## 11. Renewal loses the successor if its HTTP response is lost — **known, unfixed**
+## 11. Renewal loses the successor if its HTTP response is lost — **FIXED**
 
 Found by cross-model review (codex BLOCK / grok SHIP — they split on the same code, and
-that disagreement is the interesting part rather than a tie to break).
+that disagreement is the interesting part rather than a tie to break). Closed on
+2026-07-28; the original statement of the defect is kept below the fix because the
+reasoning is what constrains anyone editing this path next.
+
+**The fix, in one sentence:** a successor is PENDING until something authenticates with
+it, supersession of the predecessor moves to that moment, and the caller who never got an
+answer — identified by its own `command_id` — may retry and be issued a fresh one.
+
+Four parts, each of which had to be there:
+
+1. `swarm.agent_tokens.first_used_at` (migration `20260728000003`). NULL means PENDING.
+   The one-successor CAS index is narrowed to `revoked_at IS NULL` so a discarded
+   successor releases the slot.
+2. The stamp lives in `loadAgentCredential` (`_shared/agent-auth.ts`), so EVERY edge
+   function that authenticates an agent records the use. It was briefly in the command
+   function only, which meant an agent polling `read` stayed PENDING for ever and had its
+   live credential revoked by the next renewal.
+3. Recovery is scoped to the retry, not to any renewal. `selfHealStranded` defaults to
+   **false** and is set true in exactly one place: the idempotency replay path, when the
+   successor the stored response names is still live and unused. A concurrent sibling or a
+   second process carries a different `command_id` and is refused `predecessor_superseded`.
+4. Stranded slots are credited, not refunded (migration `20260728000004`). Effective spend
+   is `successors_used - successors_stranded`; both counters are monotone, so no code path
+   anywhere lowers a number on that table.
+
+**Three blockers were found and fixed between the first build and this entry**, all by
+adversarial review rather than by the build lanes:
+
+- The refund was `successors_used - 1`, which the counter guard refuses unconditionally —
+  so it failed on 100% of invocations, was swallowed as best-effort, and every stranded
+  retry permanently burned a slot. The 800-successor budget was drainable inside one
+  predecessor TTL.
+- The reducer subtracted one from the ceiling while the database fence did not, so at the
+  boundary they disagreed and the caller got a 500 or a refusal naming the wrong cause.
+- "Pending" was read as "nobody holds it". It is not: three concurrent renewals each found
+  the previous winner's successor still pending, each discarded it, and all three were
+  accepted — two callers holding credentials revoked microseconds later. This is what
+  item 3 above exists to prevent, and the concurrency test now asserts it directly.
+
+**Still true, and still the rule:** do NOT fix anything here by storing the raw successor
+in the idempotency row, the audit detail, or any other table. That places a live credential
+at rest in a table read on every replay, trading a bounded outage for an unbounded exposure.
+The secret exists in exactly one response body and nowhere else.
+
+**The cost that was accepted:** between issue and first use, predecessor and successor are
+both live — bounded by the predecessor's remaining TTL (≤ 1h) and kept from extending by
+`predecessor_pending_first_use`, which refuses a renewal from a credential that has never
+been used. A consequence worth knowing: `first_used_at` is not backfilled, so at the moment
+the migration applies every token in the field is PENDING and each one's first renewal is
+refused exactly once before succeeding.
+
+<details>
+<summary>The original defect report, kept because it is what the fix is answering</summary>
 
 **The failure:** a renewal that COMMITS and then loses its response — dropped connection, or
 a 5xx raised after commit — strands the worker permanently. Server-side the successor exists,
@@ -328,15 +380,4 @@ codex read it as a denial of service. Both describe the same mechanism accuratel
 Fail-closed is the right SAFETY behaviour and the wrong AVAILABILITY outcome — and for this
 feature availability *is* the point, so it counts as a defect.
 
-**Do NOT fix it by storing the raw successor in the idempotency row.** That places a live
-credential at rest in a table read on every replay, trading a bounded outage for an unbounded
-exposure.
-
-Two directions worth a proper pass, neither safe to do in passing:
-- Let the predecessor expire naturally instead of superseding it at issue. It has ≤ 1 hour
-  left, so the cost is a bounded overlap of two live credentials, and the partial unique index
-  on `predecessor_token_id` still guarantees exactly one successor.
-- Supersede on the successor's FIRST USE rather than at issue.
-
-Recorded in `supabase/functions/command/index.ts` at the supersession site as well, so someone
-editing that line meets it there rather than only here.
+</details>

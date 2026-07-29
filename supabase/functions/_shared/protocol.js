@@ -1133,7 +1133,7 @@ function decideWorkspace(state, cmd, ctx) {
         return domain2(ctx, cmd.kind, "predecessor_revoked", "predecessor token is revoked");
       }
       const facts = ctx.renewalFacts(predecessor.token_id);
-      if (facts.superseded) {
+      if (facts.superseded && !facts.successor_pending) {
         return domain2(
           ctx,
           cmd.kind,
@@ -1196,7 +1196,18 @@ function decideWorkspace(state, cmd, ctx) {
           "the continuous-renewal horizon has passed; a human must reauthorise this run"
         );
       }
-      if (!Number.isInteger(grant.max_successors) || !Number.isInteger(grant.successors_used) || grant.successors_used >= grant.max_successors) {
+      if (facts.predecessor_pending) {
+        return domain2(
+          ctx,
+          cmd.kind,
+          "predecessor_pending_first_use",
+          "this credential has not been used yet; a successor is issued only from a credential already in use"
+        );
+      }
+      const replacing = facts.superseded && facts.successor_pending;
+      const effectiveUsed = grant.successors_used - grant.successors_stranded;
+      const successorsUsed = replacing ? effectiveUsed - 1 : effectiveUsed;
+      if (!Number.isInteger(grant.max_successors) || !Number.isInteger(grant.successors_used) || !Number.isInteger(grant.successors_stranded) || successorsUsed >= grant.max_successors) {
         return domain2(
           ctx,
           cmd.kind,

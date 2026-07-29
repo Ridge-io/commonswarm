@@ -2954,6 +2954,8 @@ async function seedPredecessor(
     taskId?: string;
     epoch?: number;
     ttlMs?: number;
+    /** Leave the token PENDING — never authenticated with. Renewal refuses it. */
+    pending?: boolean;
   } = {},
 ): Promise<Predecessor> {
   const tokenId = randomUUID();
@@ -2981,6 +2983,25 @@ async function seedPredecessor(
       ${grantId}::uuid
     )
   `;
+  /* A real predecessor has been working for the best part of an hour before it
+     renews. A fixture token whose FIRST authentication is a renewal is PENDING,
+     and §2.3 refuses that with its own reason — a pending credential may not
+     renew, which is what stops the issue-to-first-use overlap being stacked.
+     That rule has its own test; every other renewal test would otherwise be
+     measuring it by accident.
+
+     `first_used_at` cannot be set at INSERT (20260728000003 refuses a token
+     born used) and is write-once afterwards, so the fixture stamps it in a
+     second statement, which is exactly the transition the authentication path
+     performs. */
+  if (options.pending !== true) {
+    await sql`
+      UPDATE swarm.agent_tokens
+      SET first_used_at = statement_timestamp()
+      WHERE token_id = ${tokenId}::uuid
+        AND first_used_at IS NULL
+    `;
+  }
   registerAgentCredential(f, token);
   return { tokenId, token, lineageId, taskId, epoch, scopes, grantId };
 }
@@ -3036,6 +3057,29 @@ async function successorsUsed(grantId: string): Promise<number> {
     WHERE renewal_grant_id = ${grantId}::uuid
   `;
   return Number(row?.successors_used ?? -1);
+}
+
+/**
+ * What the grant ceiling is actually measured against.
+ *
+ * `successors_used` alone is the wrong number to assert a budget against: both
+ * it and `successors_stranded` are monotone (the database refuses to lower
+ * either), so a successor that was issued and never delivered raises the raw
+ * counter and is then credited back by raising the other. Effective spend is the
+ * difference, and it is what `agent_tokens_successor_fence()` and the reducer
+ * both test. A test that asserted the raw counter would fail the moment a
+ * recovery happened while the system was behaving exactly as designed.
+ */
+async function effectiveSpend(grantId: string): Promise<number> {
+  const [row] = await sql<
+    { successors_used: number; successors_stranded: number }[]
+  >`
+    SELECT successors_used, successors_stranded
+    FROM swarm.renewal_grants
+    WHERE renewal_grant_id = ${grantId}::uuid
+  `;
+  if (!row) return -1;
+  return Number(row.successors_used) - Number(row.successors_stranded);
 }
 
 test("§2.3 renewal issues an equal-scoped successor and accepts no caller-selected target", async () => {
@@ -3126,7 +3170,23 @@ test("§2.3 renewal issues an equal-scoped successor and accepts no caller-selec
     assert.equal(await successorsUsed(grantId), 1, "exactly one slot consumed");
     assert.equal(await lineageTokenCount(predecessor.lineageId), 2);
 
-    // The predecessor is superseded: it can no longer act and cannot renew again.
+    // The successor carries exactly the predecessor's authority — no more —
+    // and USING IT is what completes the handover. Supersession happens at the
+    // successor's FIRST USE, not at issue: at issue there is no evidence the
+    // credential ever reached anybody, and ending the predecessor on that
+    // assumption is what used to strand a worker whose response was lost. The
+    // recovery tests at the end of this file are that fix's own coverage.
+    registerAgentCredential(f, successorToken);
+    const created = await issue(f, successorToken, {
+      kind: "create",
+      task_id: randomUUID(),
+      slug: `succ-${randomBytes(4).toString("hex")}`,
+    });
+    assert.equal(created.status, 200, created.text);
+    assert.equal(created.body.status, "accepted");
+
+    // NOW the predecessor is superseded: it can no longer act and cannot renew
+    // again.
     const stale = await issue(f, predecessor.token, {
       kind: "create",
       task_id: randomUUID(),
@@ -3137,16 +3197,6 @@ test("§2.3 renewal issues an equal-scoped successor and accepts no caller-selec
     assert.equal(secondRenewal.status, 401, secondRenewal.text);
     assert.equal(await lineageTokenCount(predecessor.lineageId), 2);
     assert.equal(await successorsUsed(grantId), 1);
-
-    // The successor carries exactly the predecessor's authority — no more.
-    registerAgentCredential(f, successorToken);
-    const created = await issue(f, successorToken, {
-      kind: "create",
-      task_id: randomUUID(),
-      slug: `succ-${randomBytes(4).toString("hex")}`,
-    });
-    assert.equal(created.status, 200, created.text);
-    assert.equal(created.body.status, "accepted");
     // "close" was never in the predecessor's scopes, and the widening attempt
     // above did not put it there.
     const outOfScope = await issue(f, successorToken, {
@@ -3258,6 +3308,17 @@ test("§2.3 renewal stops at the horizon, at a revoked grant, and at the success
     registerAgentCredential(f, successor);
     assert.equal(await successorsUsed(budgetGrant), 1);
 
+    // One ordinary use first, which is what completes the handover. A successor
+    // that has never authenticated is PENDING and is refused its own renewal
+    // for a different reason entirely; this assertion is about the budget, and
+    // it would be measuring the wrong fence without this line.
+    const inUse = await issue(f, successor, {
+      kind: "create",
+      task_id: randomUUID(),
+      slug: `bounded-${randomBytes(4).toString("hex")}`,
+    });
+    assert.equal(inUse.status, 200, inUse.text);
+
     const exhausted = await issueRenewal(f, successor);
     assert.equal(exhausted.status, 200, exhausted.text);
     assert.equal(exhausted.body.status, "rejected", exhausted.text);
@@ -3368,5 +3429,678 @@ test("§2.3 renewal is grant-authorised, agent-only, and has exactly one winner 
       "exactly one live successor was issued",
     );
     assert.equal(await successorsUsed(grantId), 1, "exactly one slot consumed");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// §2.3 renewal recovery — a successor is PENDING until its first use.
+//
+// THE DEFECT THESE EXIST FOR. Renewal used to supersede the predecessor in the
+// same transaction that issued the successor. The raw successor credential
+// lives in exactly one place — the response body — because `renewalReplayFields`
+// deliberately stores ids and expiry and never the secret. So a renewal that
+// COMMITTED and then lost its response (a dropped connection, a post-commit
+// 5xx) left: a live successor nobody could reach, a predecessor already ended,
+// a grant slot spent, and a replay that correctly refused to invent a token.
+// The agent stopped, and a human had to reauthorise because of a network blip —
+// the exact failure renewal exists to remove. Two reviewers split on it and both
+// were right: fail-closed is the correct SAFETY behaviour and the wrong
+// AVAILABILITY outcome, and here availability is the point.
+//
+// THE FIX, WHICH THESE TESTS PIN. Supersession moved from issue time to FIRST
+// USE. A successor with `first_used_at IS NULL` is PENDING: by definition
+// nobody holds it, so it is disposable, and a later renewal from the same
+// predecessor discards it and issues a fresh one WITHOUT charging a second
+// grant slot. What is deliberately NOT the fix — and what these tests also
+// guard — is storing the raw successor anywhere at rest: the replay below must
+// still come back without a credential.
+//
+// The cost is a bounded overlap: between issue and first use, predecessor and
+// successor are both live. It is bounded by the predecessor's own remaining TTL
+// (<= 1h) and must not be extendable, so a pending successor may not renew.
+// ---------------------------------------------------------------------------
+
+/** The three timestamps that decide whether a token is pending, live or dead. */
+async function tokenLifecycle(tokenId: string): Promise<{
+  firstUsedAt: Date | null;
+  revokedAt: Date | null;
+  expiresAt: Date;
+}> {
+  const [row] = await sql<{
+    first_used_at: Date | null;
+    revoked_at: Date | null;
+    expires_at: Date;
+  }[]>`
+    SELECT first_used_at, revoked_at, expires_at
+    FROM swarm.agent_tokens
+    WHERE token_id = ${tokenId}::uuid
+  `;
+  assert.ok(row, `token ${tokenId} exists`);
+  return {
+    firstUsedAt: row.first_used_at,
+    revokedAt: row.revoked_at,
+    expiresAt: row.expires_at,
+  };
+}
+
+/**
+ * Every successor ever written for one predecessor, discarded ones included.
+ * Counting only the live ones would hide exactly the row these tests are about.
+ */
+async function successorsOf(predecessorTokenId: string): Promise<{
+  tokenId: string;
+  firstUsedAt: Date | null;
+  revokedAt: Date | null;
+}[]> {
+  const rows = await sql<{
+    token_id: string;
+    first_used_at: Date | null;
+    revoked_at: Date | null;
+  }[]>`
+    SELECT token_id, first_used_at, revoked_at
+    FROM swarm.agent_tokens
+    WHERE predecessor_token_id = ${predecessorTokenId}::uuid
+    ORDER BY issued_at, token_id
+  `;
+  return rows.map((row) => ({
+    tokenId: String(row.token_id),
+    firstUsedAt: row.first_used_at,
+    revokedAt: row.revoked_at,
+  }));
+}
+
+/**
+ * The cheapest way to make a token authenticate for real. `first_used_at` is
+ * set by AUTHENTICATION, so an accepted command IS a first use. Every assertion
+ * about the handover goes through this rather than through an UPDATE, so what
+ * is measured is the server's stamp and not the fixture's. (`seedPredecessor`
+ * does stamp by hand, and says why; it is simulating the hour of work that
+ * precedes a renewal, never the handover under test.)
+ */
+async function useToken(f: Fixture, token: string): Promise<CommandResponse> {
+  return await issue(f, token, {
+    kind: "create",
+    task_id: randomUUID(),
+    slug: `use-${randomBytes(4).toString("hex")}`,
+  });
+}
+
+async function latestAuditId(): Promise<string> {
+  const [row] = await sql<{ audit_id: string }[]>`
+    SELECT COALESCE(max(audit_id), 0)::text AS audit_id
+    FROM swarm.audit_log
+  `;
+  return row?.audit_id ?? "0";
+}
+
+/**
+ * Everything durable that could carry the discard's reason, as one blob of
+ * text. The design requires a stranded successor to be revoked "with a distinct
+ * reason recording that it was stranded"; which artifact holds that reason is
+ * the implementing lane's call, so this reads the token row, any tombstone
+ * aimed at it, and every renewal audit row since the watermark, rather than
+ * pinning one column and reporting a confident zero if it moved.
+ */
+async function discardEvidence(
+  tokenId: string,
+  auditFloor: string,
+): Promise<string> {
+  const token = await sql<{ row: unknown }[]>`
+    SELECT to_jsonb(t) AS row
+    FROM swarm.agent_tokens AS t
+    WHERE t.token_id = ${tokenId}::uuid
+  `;
+  const tombstones = await sql<{ row: unknown }[]>`
+    SELECT to_jsonb(r) AS row
+    FROM swarm.revocation_tombstones AS r
+    WHERE r.target_id = ${tokenId}::uuid
+  `;
+  const audits = await sql<{ row: unknown }[]>`
+    SELECT to_jsonb(a) AS row
+    FROM swarm.audit_log AS a
+    WHERE a.audit_id > ${auditFloor}::bigint
+      AND a.command_kind = 'renew_agent_token'
+    ORDER BY a.audit_id
+  `;
+  return JSON.stringify({
+    token: token[0]?.row ?? null,
+    tombstones: tombstones.map((entry) => entry.row),
+    audits: audits.map((entry) => entry.row),
+  });
+}
+
+function sqlstate(error: unknown): string | null {
+  const code = (error as { code?: unknown })?.code;
+  return typeof code === "string" ? code : null;
+}
+
+test("§2.3 a renewal whose response is lost is recoverable, and the stranded successor costs one slot, not two", async () => {
+  await scenario(async (f) => {
+    // max_successors: 1 is load-bearing rather than tidy. If the stranded
+    // attempt were charged again, the recovery renewal below would be refused
+    // `renewal_successors_exhausted` — a transient network blip would have spent
+    // the run's entire renewal budget, and repeated blips would exhaust any
+    // budget however large.
+    const grantId = await seedRenewalGrant(f, { maxSuccessors: 1 });
+    const predecessor = await seedPredecessor(f, { grantId });
+    const issued = await tokenLifecycle(predecessor.tokenId);
+    const auditFloor = await latestAuditId();
+
+    const lostCommandId = commandId("renewlost");
+    const lost = await issueRenewal(f, predecessor.token, lostCommandId);
+    assert.equal(lost.status, 200, lost.text);
+    assert.equal(lost.body.status, "accepted", lost.text);
+    const strandedId = String(lost.body.token_id);
+    const strandedToken = String(lost.body.agent_token);
+    registerAgentCredential(f, strandedToken);
+    assert.equal(await successorsUsed(grantId), 1, "the first attempt spends one slot");
+    assert.equal(
+      (await tokenLifecycle(strandedId)).firstUsedAt,
+      null,
+      "a freshly issued successor is PENDING",
+    );
+
+    // The predecessor is STILL LIVE, and that is the whole change: supersession
+    // has moved to the successor's first use, and nobody used this one. Under
+    // the old behaviour the predecessor was already ended here and the run was
+    // finished until a human intervened.
+    const beforeRecovery = await tokenLifecycle(predecessor.tokenId);
+    assert.equal(beforeRecovery.revokedAt, null);
+    assert.equal(
+      beforeRecovery.expiresAt.getTime(),
+      issued.expiresAt.getTime(),
+      "issuing a successor neither ends nor extends the predecessor",
+    );
+
+    /* ★ A DIFFERENT COMMAND ID MAY NOT RECOVER. Asserted BEFORE the recovery that
+       works, because it is the assertion that stops the recovery path being widened
+       into a credential-destroying one.
+
+       The server cannot tell "the response was lost" from "the response arrived and
+       has not been used yet" — nothing acknowledges delivery. If ANY renewal could
+       discard a pending successor, then a concurrent sibling, a second process, or
+       the same agent on another machine would revoke a credential that had in fact
+       been delivered microseconds earlier. That is not hypothetical: an earlier build
+       did exactly this, and three concurrent renewals were all accepted, two of them
+       handing back credentials that were revoked immediately afterwards.
+
+       The command id is what disambiguates. A caller whose outcome is UNKNOWN reuses
+       its id (src/cloud/renewal.ts); anyone else carries a fresh one and is told
+       `predecessor_superseded`, which is true — a successor does exist. */
+    const stranger = await issueRenewal(f, predecessor.token, commandId("renewstranger"));
+    assert.equal(stranger.status, 200, stranger.text);
+    assert.equal(stranger.body.status, "rejected", stranger.text);
+    assert.equal(stranger.body.reason, "predecessor_superseded", stranger.text);
+    assert.equal(
+      (await tokenLifecycle(strandedId)).revokedAt,
+      null,
+      "a renewal under a different command id must not touch the pending successor",
+    );
+    assert.equal(await effectiveSpend(grantId), 1, "a refused renewal spends nothing");
+
+    /* THE LOST RESPONSE, RETRIED. The original body was the only place the raw
+       successor ever existed, and the worker never received it. The replay
+       deliberately cannot hand the secret back — storing it would trade a bounded
+       outage for a live credential at rest in a table read on every replay — so
+       replaying the ids would leave the agent with a credential it cannot use, which
+       is precisely the dead end (`successor_not_recoverable`) this feature exists to
+       remove. Because the successor it names is still live and still UNUSED, nobody
+       received it, and the honest answer is a fresh one. */
+    const recovery = await issueRenewal(f, predecessor.token, lostCommandId);
+    assert.equal(recovery.status, 200, recovery.text);
+    assert.equal(recovery.body.status, "accepted", recovery.text);
+    const freshId = String(recovery.body.token_id);
+    const freshToken = String(recovery.body.agent_token);
+    assert.notEqual(freshId, strandedId, "recovery issues a new successor, not the old one");
+    assert.ok(
+      typeof recovery.body.agent_token === "string" &&
+        recovery.body.agent_token.startsWith("swm_agt_"),
+      "recovery serves a usable credential, which is the entire point",
+    );
+    registerAgentCredential(f, freshToken);
+
+    // CHARGED ONCE. The stranded attempt already spent the slot; charging the
+    // replacement again is what would turn network flakiness into a budget leak.
+    // Measured on EFFECTIVE spend: the raw counter is monotone and has legitimately
+    // gone to 2, with the credit recorded alongside it.
+    assert.equal(
+      await effectiveSpend(grantId),
+      1,
+      "the discarded attempt is not charged a second time",
+    );
+    assert.equal(
+      await successorsUsed(grantId),
+      2,
+      "and it is credited back, not unwound — both counters only ever rise",
+    );
+
+    // The stranded successor is DISCARDED, not left live. A revoked row also
+    // frees the one-successor-per-predecessor slot, which is what let the
+    // recovery insert happen at all.
+    const stranded = await tokenLifecycle(strandedId);
+    assert.equal(stranded.firstUsedAt, null, "the stranded successor was never used");
+    assert.notEqual(stranded.revokedAt, null, "the stranded successor is revoked");
+    const strandedUse = await useToken(f, strandedToken);
+    assert.equal(strandedUse.status, 403, strandedUse.text);
+    assert.deepEqual(strandedUse.body, { error: "forbidden" });
+
+    const successors = await successorsOf(predecessor.tokenId);
+    assert.equal(successors.length, 2, JSON.stringify(successors));
+    assert.deepEqual(
+      successors.filter((row) => row.revokedAt === null).map((row) => row.tokenId),
+      [freshId],
+      "exactly one live successor, and it is the one the caller was handed",
+    );
+
+    // The discard is recorded durably and says WHY. An operator reading this
+    // lineage later must be able to tell a stranded handover from a revocation
+    // somebody performed on purpose.
+    const evidence = await discardEvidence(strandedId, auditFloor);
+    assert.match(
+      evidence,
+      /strand/i,
+      `the discard records no reason naming it stranded: ${evidence}`,
+    );
+
+    // THE POINT: the recovered credential actually works — no human was needed.
+    const working = await useToken(f, freshToken);
+    assert.equal(working.status, 200, working.text);
+    assert.equal(working.body.status, "accepted", working.text);
+
+    // ... and using it is what closes the overlap.
+    const superseded = await tokenLifecycle(predecessor.tokenId);
+    assert.ok(
+      superseded.expiresAt.getTime() < issued.expiresAt.getTime(),
+      "first use supersedes the predecessor",
+    );
+    const afterHandover = await useToken(f, predecessor.token);
+    assert.equal(afterHandover.status, 401, afterHandover.text);
+
+    // The budget is still a budget. Self-healing is not a way around it: this
+    // grant allowed one successor, that successor is now in use, and the next
+    // genuine renewal has nothing left to spend.
+    const exhausted = await issueRenewal(f, freshToken, commandId("renewspent"));
+    assert.equal(exhausted.status, 200, exhausted.text);
+    assert.equal(exhausted.body.status, "rejected", exhausted.text);
+    assert.equal(exhausted.body.reason, "renewal_successors_exhausted", exhausted.text);
+    assert.equal(await effectiveSpend(grantId), 1, "a refused renewal spends nothing");
+  });
+});
+
+test("§2.3 a successor that has been used blocks renewal and is never discarded underneath its holder", async () => {
+  await scenario(async (f) => {
+    const grantId = await seedRenewalGrant(f, { maxSuccessors: 5 });
+
+    // (1) THE NATURAL SHAPE: the handover completed. The successor's first use
+    // ended the predecessor, so the predecessor cannot even authenticate to ask
+    // for another one. Nothing about self-healing weakens that.
+    const handedOver = await seedPredecessor(f, { grantId });
+    const renewed = await issueRenewal(f, handedOver.token, commandId("renewused"));
+    assert.equal(renewed.body.status, "accepted", renewed.text);
+    const successorId = String(renewed.body.token_id);
+    const successorToken = String(renewed.body.agent_token);
+    registerAgentCredential(f, successorToken);
+    const firstUse = await useToken(f, successorToken);
+    assert.equal(firstUse.status, 200, firstUse.text);
+
+    const afterHandover = await issueRenewal(f, handedOver.token, commandId("renewafter"));
+    assert.equal(afterHandover.status, 401, afterHandover.text);
+    const held = await tokenLifecycle(successorId);
+    assert.notEqual(held.firstUsedAt, null, "the successor is used");
+    assert.equal(held.revokedAt, null, "a used successor is never discarded");
+    assert.equal(await successorsUsed(grantId), 1);
+    assert.deepEqual(
+      (await successorsOf(handedOver.tokenId)).map((row) => row.tokenId),
+      [successorId],
+      "no replacement was issued for a successor somebody is holding",
+    );
+
+    // (2) THE SAME RULE WHERE THE REDUCER CAN BE SEEN ANSWERING IT. Marking the
+    // successor used while the predecessor is still inside its own TTL is the
+    // only way to reach the domain branch over HTTP — in the natural shape
+    // above, first use has already ended the predecessor and authentication
+    // answers first. This is the branch that must NOT self-heal: the agent HAS
+    // a working credential and must use it rather than renew again.
+    const live = await seedPredecessor(f, { grantId });
+    const second = await issueRenewal(f, live.token, commandId("renewheld"));
+    assert.equal(second.body.status, "accepted", second.text);
+    const heldId = String(second.body.token_id);
+    const heldToken = String(second.body.agent_token);
+    registerAgentCredential(f, heldToken);
+    await sql`
+      UPDATE swarm.agent_tokens
+      SET first_used_at = statement_timestamp()
+      WHERE token_id = ${heldId}::uuid
+        AND first_used_at IS NULL
+    `;
+    assert.notEqual(
+      (await tokenLifecycle(heldId)).firstUsedAt,
+      null,
+      "the fixture marked the successor used",
+    );
+
+    const refused = await issueRenewal(f, live.token, commandId("renewblocked"));
+    assert.equal(refused.status, 200, refused.text);
+    assert.equal(refused.body.status, "rejected", refused.text);
+    assert.equal(refused.body.class, "domain", refused.text);
+    assert.equal(refused.body.reason, "predecessor_superseded", refused.text);
+    assert.equal(await successorsUsed(grantId), 2, "a refused renewal spends nothing");
+    assert.deepEqual(
+      (await successorsOf(live.tokenId)).map((row) => row.tokenId),
+      [heldId],
+      "no second successor was issued",
+    );
+    assert.equal(
+      (await tokenLifecycle(heldId)).revokedAt,
+      null,
+      "the credential its holder is using stays live",
+    );
+    const stillWorks = await useToken(f, heldToken);
+    assert.equal(stillWorks.status, 200, stillWorks.text);
+  });
+});
+
+test("§2.3 the handover completes at first use, and first_used_at is stamped once", async () => {
+  await scenario(async (f) => {
+    const grantId = await seedRenewalGrant(f, { maxSuccessors: 5 });
+    const predecessor = await seedPredecessor(f, { grantId });
+    const issued = await tokenLifecycle(predecessor.tokenId);
+
+    const renewed = await issueRenewal(f, predecessor.token, commandId("renewhand"));
+    assert.equal(renewed.body.status, "accepted", renewed.text);
+    const successorId = String(renewed.body.token_id);
+    const successorToken = String(renewed.body.agent_token);
+    registerAgentCredential(f, successorToken);
+
+    const pending = await tokenLifecycle(successorId);
+    assert.equal(pending.firstUsedAt, null, "issued but never authenticated with = PENDING");
+    assert.equal(pending.revokedAt, null);
+
+    // THE OVERLAP IS DELIBERATE, AND BOUNDED. Both are live here, which is the
+    // price of recoverability. The bound is the predecessor's own remaining
+    // TTL, and renewal does not touch it — renewing is not a way to extend the
+    // predecessor by an hour at a time.
+    const beforeFirstUse = await useToken(f, predecessor.token);
+    assert.equal(beforeFirstUse.status, 200, beforeFirstUse.text);
+    assert.equal(
+      (await tokenLifecycle(predecessor.tokenId)).expiresAt.getTime(),
+      issued.expiresAt.getTime(),
+      "the predecessor's expiry is unchanged while its successor is pending",
+    );
+
+    // FIRST USE IS THE HANDOVER: the one moment the system knows a successor
+    // reached somebody. Supersession happens there, in the same statement.
+    const firstUse = await useToken(f, successorToken);
+    assert.equal(firstUse.status, 200, firstUse.text);
+    const stamped = await tokenLifecycle(successorId);
+    assert.notEqual(stamped.firstUsedAt, null, "first use stamps first_used_at");
+    const superseded = await tokenLifecycle(predecessor.tokenId);
+    assert.ok(
+      superseded.expiresAt.getTime() < issued.expiresAt.getTime(),
+      "first use supersedes the predecessor",
+    );
+    const afterHandover = await useToken(f, predecessor.token);
+    assert.equal(afterHandover.status, 401, afterHandover.text);
+
+    // STAMPED ONCE. first_used_at records when the handover completed, not
+    // "last seen": rewriting it would move the instant the overlap is measured
+    // from, and re-superseding would keep rewriting an already-dead
+    // predecessor's expiry. The delay makes a rewrite visible rather than
+    // hiding inside the same millisecond.
+    await delay(250);
+    const secondUse = await useToken(f, successorToken);
+    assert.equal(secondUse.status, 200, secondUse.text);
+    const restamped = await tokenLifecycle(successorId);
+    assert.equal(
+      restamped.firstUsedAt?.getTime(),
+      stamped.firstUsedAt?.getTime(),
+      "first_used_at is written once and never rewritten",
+    );
+    assert.equal(
+      (await tokenLifecycle(predecessor.tokenId)).expiresAt.getTime(),
+      superseded.expiresAt.getTime(),
+      "later uses do not re-supersede the predecessor",
+    );
+  });
+});
+
+test("§2.3 self-healing renewal keeps exactly one live successor per predecessor under concurrency", async () => {
+  await scenario(async (f) => {
+    const grantId = await seedRenewalGrant(f, { maxSuccessors: 5 });
+    const predecessor = await seedPredecessor(f, { grantId });
+
+    // Strand one successor first. The interesting race is not "two renewals" —
+    // §2.3 already covers that — but several renewals that each find a
+    // DISCARDABLE pending successor. Two self-heals that each revoke the
+    // other's fresh successor would hand a worker a credential and kill it
+    // milliseconds later: the same defect wearing a different hat.
+    const strandCommandId = commandId("renewstrand");
+    const stranded = await issueRenewal(f, predecessor.token, strandCommandId);
+    assert.equal(stranded.body.status, "accepted", stranded.text);
+    const strandedId = String(stranded.body.token_id);
+    assert.equal(await effectiveSpend(grantId), 1);
+
+    /* PART A — CONCURRENT RENEWALS UNDER DISTINCT COMMAND IDS MAY NOT HEAL ANYTHING.
+       Each of these three finds a live PENDING successor. Under a design where any
+       renewal could discard a pending successor, all three were accepted and two
+       callers walked away holding credentials a sibling revoked microseconds later —
+       the original stranding defect with the arrow reversed. Measured, not feared:
+       this exact assertion caught it.
+
+       A distinct command id means a distinct caller, and the server has no evidence
+       that caller's response was lost. So every one of these must refuse, and the
+       pending successor — which may well be in the real holder's hands already — must
+       come through untouched. */
+    const results = await Promise.all([
+      issueRenewal(f, predecessor.token, commandId("renewheal1")),
+      issueRenewal(f, predecessor.token, commandId("renewheal2")),
+      issueRenewal(f, predecessor.token, commandId("renewheal3")),
+    ]);
+    const transcript = results.map((result) => `${result.status} ${result.text}`).join("\n");
+    const accepted = results.filter((result) =>
+      result.status === 200 && result.body.status === "accepted"
+    );
+    assert.equal(accepted.length, 0, `no stranger may heal:\n${transcript}`);
+    for (const result of results) {
+      // A refusal is a named domain reason, never a 5xx: the race resolves to a
+      // sentence the agent can act on.
+      assert.equal(result.status, 200, transcript);
+      assert.equal(result.body.class, "domain", transcript);
+      assert.equal(result.body.reason, "predecessor_superseded", transcript);
+    }
+    assert.equal(
+      (await tokenLifecycle(strandedId)).revokedAt,
+      null,
+      "the pending successor survives every renewal that is not its own retry",
+    );
+    assert.equal(
+      await effectiveSpend(grantId),
+      1,
+      "three refused renewals spend nothing",
+    );
+
+    /* PART B — THE RETRY RACE, WHICH IS THE ONE THAT MAY HEAL. Three concurrent
+       requests carrying the SAME command id: this is one caller retrying, possibly
+       from a client that fired before an earlier attempt's socket closed. At most one
+       may be handed a fresh credential, and exactly one successor may be live
+       afterwards — otherwise the recovery path has itself forked the lineage. */
+    const retries = await Promise.all([
+      issueRenewal(f, predecessor.token, strandCommandId),
+      issueRenewal(f, predecessor.token, strandCommandId),
+      issueRenewal(f, predecessor.token, strandCommandId),
+    ]);
+    const retryTranscript = retries.map((r) => `${r.status} ${r.text}`).join("\n");
+    for (const result of retries) {
+      assert.equal(result.status, 200, retryTranscript);
+    }
+    const served = retries.filter((result) =>
+      typeof result.body.agent_token === "string"
+    );
+    /* NOT "at most one is served". Each retry under the caller's own id is a fresh
+       statement that the previous answer never arrived, so each may legitimately
+       replace the pending successor again — three retries can serve three
+       credentials, the first two immediately superseded. That is the honest
+       semantic, and asserting otherwise would be asserting a guarantee the design
+       does not make.
+       What must hold is that the outcome is never AMBIGUOUS: exactly one of them is
+       live, and every other one fails closed. Two usable credentials for one worker
+       is a lineage fork; a served credential that is neither live nor cleanly
+       refused is an agent that cannot tell whether it is authorised. */
+    assert.ok(served.length >= 1, `the retry must recover:\n${retryTranscript}`);
+
+    // The invariants that must hold whatever the interleaving was.
+    const successors = await successorsOf(predecessor.tokenId);
+    const liveIds = successors
+      .filter((row) => row.revokedAt === null)
+      .map((row) => row.tokenId);
+    assert.equal(
+      liveIds.length,
+      1,
+      `exactly one LIVE successor per predecessor: ${JSON.stringify(successors)}`,
+    );
+    assert.equal(
+      await effectiveSpend(grantId),
+      1,
+      "no interleaving charges a second slot for a replaced pending successor",
+    );
+
+    // Fail-closed, not fail-confusing: a credential a caller was actually handed
+    // must be the live one and must work. Handing back a credential that is
+    // already revoked would be two live credentials for one worker, or none.
+    let workable = 0;
+    for (const result of served) {
+      const token = String(result.body.agent_token);
+      registerAgentCredential(f, token);
+      const used = await useToken(f, token);
+      if (String(result.body.token_id) === liveIds[0]) {
+        assert.equal(used.status, 200, used.text);
+        workable += 1;
+      } else {
+        // Superseded by a later retry: refused, not silently half-working.
+        assert.equal(used.status, 403, used.text);
+      }
+    }
+    assert.equal(
+      workable,
+      1,
+      `exactly one served credential works:\n${retryTranscript}`,
+    );
+
+    // AND THE GUARANTEE IS THE DATABASE'S, not the command function's. A second
+    // LIVE successor is refused for a statement that never goes near Deno —
+    // 23505 is the partial CAS index, 55000 is the successor fence naming the
+    // refusal itself; either is the database refusing, and neither leaves a
+    // spent slot behind.
+    const guardGrant = await seedRenewalGrant(f, { maxSuccessors: 5 });
+    const guarded = await seedPredecessor(f, { grantId: guardGrant });
+    const only = await issueRenewal(f, guarded.token, commandId("renewguard"));
+    assert.equal(only.body.status, "accepted", only.text);
+    assert.equal(await successorsUsed(guardGrant), 1);
+    await assert.rejects(
+      async () => {
+        await sql`
+          INSERT INTO swarm.agent_tokens (
+            token_id, principal_id, run_id, task_id, epoch,
+            scopes, token_hash, expires_at, lineage_id,
+            predecessor_token_id, renewal_grant_id
+          ) VALUES (
+            ${randomUUID()}::uuid,
+            ${f.agentPrincipal}::uuid,
+            ${f.agentRun}::uuid,
+            ${guarded.taskId}::uuid,
+            ${guarded.epoch},
+            ${sql.json(guarded.scopes)}::jsonb,
+            ${createHash("sha256").update(randomUUID()).digest()},
+            statement_timestamp() + interval '10 minutes',
+            ${guarded.lineageId}::uuid,
+            ${guarded.tokenId}::uuid,
+            ${guardGrant}::uuid
+          )
+        `;
+      },
+      (error: unknown) => {
+        const code = sqlstate(error);
+        assert.ok(
+          code === "23505" || code === "55000",
+          `a second live successor must be refused by the database, got ${code}: ${String(error)}`,
+        );
+        return true;
+      },
+    );
+    assert.equal(
+      (await successorsOf(guarded.tokenId)).length,
+      1,
+      "the refused insert left no row",
+    );
+    assert.equal(
+      await successorsUsed(guardGrant),
+      1,
+      "a refused insert spends no slot",
+    );
+  });
+});
+
+test("§2.3 a pending successor cannot renew: the overlap window cannot be stacked", async () => {
+  await scenario(async (f) => {
+    const grantId = await seedRenewalGrant(f, { maxSuccessors: 5 });
+    const predecessor = await seedPredecessor(f, { grantId });
+    const renewed = await issueRenewal(f, predecessor.token, commandId("renewstack0"));
+    assert.equal(renewed.body.status, "accepted", renewed.text);
+    const successorId = String(renewed.body.token_id);
+    const successorToken = String(renewed.body.agent_token);
+    registerAgentCredential(f, successorToken);
+    assert.equal((await tokenLifecycle(successorId)).firstUsedAt, null, "successor is pending");
+
+    // A pending successor renewing would EXTEND the overlap instead of closing
+    // it: predecessor, successor and grandchild all live at once, and an agent
+    // could stack a chain of credentials none of which it has ever used. The
+    // window is at most one predecessor TTL, and this refusal is what keeps it
+    // that way.
+    const stacked = await issueRenewal(f, successorToken, commandId("renewstack1"));
+    assert.notEqual(stacked.body.status, "accepted", stacked.text);
+    assert.equal(stacked.body.agent_token, undefined, stacked.text);
+    assert.equal(
+      (await successorsOf(successorId)).length,
+      0,
+      "a pending successor issues no successor of its own",
+    );
+    assert.equal(await successorsUsed(grantId), 1, "the refusal spends nothing");
+    const stackedReason = stacked.status === 200
+      ? String(stacked.body.reason)
+      : `http_${stacked.status}`;
+    // A DISTINCT reason. "you have not used this credential yet" and "the
+    // credential you were issued has already been used" ask for opposite next
+    // actions, and an agent told the wrong one retries the thing that cannot
+    // work. The exact string is the implementing lane's to choose; that it is
+    // not one of the reasons describing a different fence is not.
+    assert.ok(
+      stackedReason.length > 0 &&
+        ![
+          "predecessor_superseded",
+          "predecessor_expired",
+          "predecessor_revoked",
+          "renewal_grant_not_found",
+          "renewal_successors_exhausted",
+          "renewal_lineage_revoked",
+        ].includes(stackedReason),
+      `a pending predecessor needs its own reason, got ${stackedReason}: ${stacked.text}`,
+    );
+
+    // POSITIVE CONTROL, on the same token. The refusal above is about PENDING,
+    // not a blanket ban on renewing a successor — without this arm, a build
+    // that refused every renewal from a successor would pass the assertions
+    // above and look correct.
+    const firstUse = await useToken(f, successorToken);
+    assert.equal(firstUse.status, 200, firstUse.text);
+    assert.notEqual((await tokenLifecycle(successorId)).firstUsedAt, null);
+    const allowed = await issueRenewal(f, successorToken, commandId("renewstack2"));
+    assert.equal(allowed.status, 200, allowed.text);
+    assert.equal(allowed.body.status, "accepted", allowed.text);
+    assert.equal(await successorsUsed(grantId), 2, "the used successor renews for real");
+    assert.equal(
+      (await successorsOf(successorId)).length,
+      1,
+      "the chain advances only once the previous handover completed",
+    );
   });
 });

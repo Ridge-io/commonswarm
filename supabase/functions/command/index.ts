@@ -186,6 +186,8 @@ interface RenewalGrantFacts {
   renewal_grant_id: string;
   max_successors: number;
   successors_used: number;
+  /** Issued but never delivered; subtracted from `successors_used` for the ceiling. */
+  successors_stranded: number;
   horizon_expires_at: number;
   revoked_at: number | null;
 }
@@ -193,7 +195,13 @@ interface RenewalGrantFacts {
 interface RenewalFacts {
   grant: RenewalGrantFacts | null;
   grant_mismatch: boolean;
+  /** An UNREVOKED successor exists; a revoked one frees the slot on purpose. */
   superseded: boolean;
+  /** That successor has never authenticated, so nobody holds it. */
+  successor_pending: boolean;
+  successor_token_id: string | null;
+  /** The presenting predecessor's own first-use state, read before this request. */
+  predecessor_pending: boolean;
   lineage_revoked: boolean;
 }
 
@@ -357,6 +365,20 @@ const CREATE_WORKSPACE_KIND = "create_workspace";
 const RENEW_AGENT_TOKEN_KIND = "renew_agent_token";
 const MINT_CAPABILITY_KIND = "mint_capability_url";
 const REVOKE_CAPABILITY_KIND = "revoke_capability_url";
+
+/**
+ * Tombstone kind for the ONE revocation this service performs on its own
+ * initiative: discarding a successor that was issued but never reached anybody
+ * (§2.3 first-use supersession). It records WHY that token died, which is the
+ * difference between "the service tidied up after a dropped connection" and
+ * "an operator revoked this worker" — and those two must not be read the same
+ * way, because the second stops the whole lineage renewing and the first must
+ * not. Deliberately NOT one of the kinds agent-auth or the successor fence
+ * probe ('token', 'lineage', 'family', 'principal', 'run', 'device',
+ * 'membership', 'renewal_grant'): this marks a cause, it is not a revocation of
+ * anything still reachable.
+ */
+const STRANDED_SUCCESSOR_TOMBSTONE = "stranded_successor";
 
 /**
  * §7's zero-install on-ramp is a P5 public surface while the mechanism itself
@@ -671,6 +693,12 @@ interface AuthContext {
   deviceId: string | null;
   actor: Actor;
   agent: AgentAuthRow | null;
+  /**
+   * True when this request is the presented agent credential's FIRST successful
+   * authentication — read from the row as it stood before this request stamped
+   * it. Always false for a human credential. §2.3 first-use supersession.
+   */
+  agentFirstUse: boolean;
   identityVerified: boolean;
   /** Bookkeeping for the §8 disposable-domain speed bump; never authorization. */
   email: string | null;
@@ -1424,6 +1452,17 @@ function dbCode(error: unknown): string | null {
   return record(error)?.code as string | null ?? null;
 }
 
+/**
+ * Resolves the presented agent credential for the command function.
+ *
+ * The identification, the first-use stamp and the predecessor handover all live
+ * in `loadAgentCredential` (_shared/agent-auth.ts) so that EVERY edge function
+ * that authenticates an agent records the use. An earlier version of this file
+ * carried its own copy of the query with the stamp folded in, which left `read`
+ * authenticating without stamping — and a credential used only for reads then
+ * stayed PENDING for ever and was revoked underneath its holder by the next
+ * renewal. One authentication path, one definition of "used".
+ */
 async function authenticateAgent(
   tx: Sql,
   tokenHash: Uint8Array,
@@ -1440,6 +1479,7 @@ async function authenticateAgent(
       run: agent.run_id,
     },
     agent,
+    agentFirstUse: agent.first_use === true,
     identityVerified: false,
     email: null,
   };
@@ -1468,6 +1508,7 @@ async function authenticateHuman(
     deviceId: null,
     actor: { user: rows[0].user_id, agent_principal: null, run: null },
     agent: null,
+    agentFirstUse: false,
     identityVerified: verified.identityVerified,
     email: verified.email ?? rows[0].email,
   };
@@ -1896,6 +1937,32 @@ async function prepareWorkspaceCommand(
   commandId: string,
   headSeq: number,
   now: number,
+  /**
+   * ★ DEFAULT FALSE, AND THE DEFAULT IS THE SAFETY PROPERTY. Only a RETRY OF THE
+   * COMMAND THAT CREATED IT may discard a pending successor.
+   *
+   * It is tempting to let any renewal heal any pending successor — the reasoning
+   * being "if the presenter is back asking again, the response did not arrive".
+   * That inference is false, and shipping it broke the one-live-successor
+   * invariant in a test that had passed for weeks: three concurrent renewals of
+   * one predecessor each found the previous winner's successor still PENDING,
+   * each discarded it, and all three were accepted. Two callers walked away
+   * holding credentials that had been revoked microseconds later. The server
+   * cannot distinguish "response lost" from "response delivered, not yet
+   * presented", and resolving that ambiguity by destroying the credential is the
+   * wrong direction.
+   *
+   * The command id resolves it exactly. A caller whose renewal outcome is
+   * UNKNOWN reuses its command id (src/cloud/renewal.ts: `replayable ?
+   * this.pending.commandId : newRenewalCommandId()`), so a repeat under the same
+   * id is that same caller saying "I never got an answer". A concurrent sibling,
+   * a second process or another machine carries a DIFFERENT id and is refused
+   * `predecessor_superseded`, leaving the real holder's credential alone.
+   *
+   * So this is set true in exactly one place: the idempotency replay path, when
+   * the successor the stored response names is still live and still unused.
+   */
+  selfHealStranded = false,
 ): Promise<PreparedWorkspace> {
   const state = await loadWorkspaceState(tx, route);
   let invitationToken: string | null = null;
@@ -1939,7 +2006,10 @@ async function prepareWorkspaceCommand(
       : state.tokens[predecessorTokenId];
     renewalFacts = predecessorTokenId === null
       ? null
-      : await loadRenewalFacts(tx, predecessorTokenId);
+      : await loadRenewalFacts(tx, predecessorTokenId, auth.agentFirstUse);
+    if (renewalFacts !== null && !selfHealStranded) {
+      renewalFacts = { ...renewalFacts, successor_pending: false };
+    }
     agentToken = opaqueToken("swm_agt_");
     agentTokenHash = await sha256(agentToken);
     // The successor stays in the predecessor's lineage: that is what makes a
@@ -2035,38 +2105,68 @@ async function prepareWorkspaceCommand(
 async function loadRenewalFacts(
   tx: Sql,
   predecessorTokenId: string,
+  predecessorPending: boolean,
 ): Promise<RenewalFacts | null> {
   const rows = await tx<{
     renewal_grant_id: string | null;
     max_successors: number | null;
     successors_used: number | null;
+    successors_stranded: number | null;
     horizon_expires_at: Date | null;
     grant_revoked_at: Date | null;
     grant_bound_to_token: boolean | null;
-    superseded: boolean;
+    successor_token_id: string | null;
+    successor_pending: boolean | null;
     lineage_revoked: boolean;
   }[]>`
     SELECT
       g.renewal_grant_id,
       g.max_successors,
       g.successors_used,
+      g.successors_stranded,
       g.horizon_expires_at,
       g.revoked_at AS grant_revoked_at,
       (
         g.principal_id = t.principal_id
         AND g.run_id = t.run_id
       ) AS grant_bound_to_token,
-      EXISTS (
-        SELECT 1
+      -- The LIVE successor, if any. Revoked successors are excluded to match
+      -- agent_tokens_one_successor_per_predecessor, which is partial on
+      -- revoked_at IS NULL: a revoked successor gives the slot back, so it must
+      -- not go on reading as a supersession here either.
+      (
+        SELECT s.token_id
         FROM swarm.agent_tokens AS s
         WHERE s.predecessor_token_id = t.token_id
-      ) AS superseded,
+          AND s.revoked_at IS NULL
+        LIMIT 1
+      ) AS successor_token_id,
+      (
+        SELECT s.first_used_at IS NULL
+        FROM swarm.agent_tokens AS s
+        WHERE s.predecessor_token_id = t.token_id
+          AND s.revoked_at IS NULL
+        LIMIT 1
+      ) AS successor_pending,
       (
         EXISTS (
           SELECT 1
           FROM swarm.agent_tokens AS l
           WHERE l.lineage_id = t.lineage_id
             AND l.revoked_at IS NOT NULL
+            -- ...except one this service revoked ITSELF, as housekeeping, for a
+            -- successor that never reached anybody. Without this exclusion the
+            -- self-healing replacement would poison its own lineage: the first
+            -- stranded successor would make every later renewal in the chain
+            -- refuse renewal_lineage_revoked, turning the fix into a slower
+            -- version of the bug. A revocation an OPERATOR performed carries no
+            -- such tombstone and still stops the whole lineage renewing.
+            AND NOT EXISTS (
+              SELECT 1
+              FROM swarm.revocation_tombstones AS sr
+              WHERE sr.kind = ${STRANDED_SUCCESSOR_TOMBSTONE}
+                AND sr.target_id = l.token_id
+            )
         )
         OR EXISTS (
           SELECT 1
@@ -2099,12 +2199,14 @@ async function loadRenewalFacts(
   const grant = row.renewal_grant_id === null ||
       row.max_successors === null ||
       row.successors_used === null ||
+      row.successors_stranded === null ||
       row.horizon_expires_at === null
     ? null
     : {
       renewal_grant_id: row.renewal_grant_id,
       max_successors: Number(row.max_successors),
       successors_used: Number(row.successors_used),
+      successors_stranded: Number(row.successors_stranded),
       horizon_expires_at: millis(row.horizon_expires_at) ?? 0,
       revoked_at: millis(row.grant_revoked_at),
     };
@@ -2113,7 +2215,10 @@ async function loadRenewalFacts(
     // A grant bound to a different principal or run cannot authorise this
     // token, however it came to be named on the row.
     grant_mismatch: grant !== null && row.grant_bound_to_token !== true,
-    superseded: row.superseded,
+    superseded: row.successor_token_id !== null,
+    successor_token_id: row.successor_token_id,
+    successor_pending: row.successor_pending === true,
+    predecessor_pending: predecessorPending,
     lineage_revoked: row.lineage_revoked,
   };
 }
@@ -2144,19 +2249,164 @@ function renewalReplayFields(
 }
 
 /**
- * The atomic half of §2.3 renewal: supersede the predecessor and consume one
- * grant slot, or do neither. Both run inside a savepoint, so a lost race leaves
- * no partial effect — without it a failed slot CAS would still have killed the
- * predecessor, taking a live worker down while issuing nothing.
+ * The successor a stored renewal response names, IF it was never delivered.
  *
- * The guarded UPDATE takes a row lock on the predecessor, which is what
- * serialises two concurrent renewals of the same token: the loser sees an
- * already-ended predecessor and is refused `predecessor_superseded` rather than
- * consuming a second slot or issuing a second live successor.
+ * "Never delivered" is read as live-and-unused: `revoked_at IS NULL AND
+ * first_used_at IS NULL`. Nothing acknowledges delivery, so unused is the only
+ * evidence available — which is exactly why the answer is not enough on its own
+ * to discard anything, and why the caller pairs it with a matching command id
+ * before acting on it. See `selfHealStranded`.
+ *
+ * Returns null when the response names no token, when the token has been used,
+ * or when it is already revoked — all of which mean there is nothing to recover
+ * and the ordinary replay is the right answer.
+ */
+async function strandedSuccessorOf(
+  tx: Sql,
+  response: unknown,
+): Promise<string | null> {
+  const tokenId = record(response)?.token_id;
+  if (typeof tokenId !== "string" || !UUID_RE.test(tokenId)) return null;
+  const rows = await tx<{ token_id: string }[]>`
+    SELECT token_id
+    FROM swarm.agent_tokens
+    WHERE token_id = ${tokenId}::uuid
+      AND revoked_at IS NULL
+      AND first_used_at IS NULL
+      AND predecessor_token_id IS NOT NULL
+  `;
+  return rows[0]?.token_id ?? null;
+}
+
+/**
+ * Credits back the grant slot a stranded successor spent, so its replacement is
+ * not charged twice. Repeated dropped connections must not be able to eat a
+ * run's renewal budget — that would turn a network problem into the human
+ * reauthorisation this feature exists to remove.
+ *
+ * ★ THIS INCREMENTS A SECOND COUNTER; IT DOES NOT DECREMENT THE FIRST. An
+ * earlier version ran `successors_used = successors_used - 1` and treated a
+ * refusal as best-effort. That decrement CANNOT SUCCEED — swarm
+ * .renewal_grants_spend_or_revoke_only() raises SWARM_RENEWAL_COUNTER_REWOUND
+ * on any decrement, with no carve-out — so the refund failed on 100% of real
+ * invocations, was swallowed, and every stranded retry permanently burned a
+ * slot. The default 800-successor budget was drainable inside one predecessor
+ * TTL by a worker that simply kept losing responses, which is the exact failure
+ * the feature exists to remove. Two independent reviewers found it; it is not a
+ * theoretical objection.
+ *
+ * The fix keeps both counters monotone rather than carving an exemption into
+ * the guard. Effective spend is `successors_used - successors_stranded`, and a
+ * credit is recorded as something that HAPPENED rather than as an unwinding of
+ * something that did not — so there is still no code path anywhere that lowers
+ * a number on this table, which is what made the guard worth trusting.
+ *
+ * NOT best-effort any more, and deliberately so: this must be part of the same
+ * atomic outcome as the discard and the replacement. If it could silently fail
+ * the accounting would drift from `agent_tokens_successor_fence()`'s ceiling
+ * test, and the reducer and the database would once again disagree about who is
+ * out of budget. A throw here unwinds the whole renewal savepoint, which is the
+ * correct trade: refusing a renewal is recoverable, mis-billing it is not.
+ */
+async function creditStrandedSlot(
+  tx: Sql,
+  renewalGrantId: string,
+): Promise<void> {
+  const credited = await tx<{ renewal_grant_id: string }[]>`
+    UPDATE swarm.renewal_grants
+    SET successors_stranded = successors_stranded + 1
+    WHERE renewal_grant_id = ${renewalGrantId}::uuid
+    RETURNING renewal_grant_id
+  `;
+  // Checking the rowcount, not merely the absence of an exception. The previous
+  // version returned `true` whenever no row matched — so its one "success"
+  // return was the case where it had changed nothing, and the audit line it
+  // produced asserted a refund that never happened.
+  if (credited.length !== 1) throw new RenewalFenceLost();
+}
+
+/**
+ * Discards a successor that was issued but never reached anybody, so the
+ * predecessor can be given a fresh one.
+ *
+ * A pending successor is one with no `first_used_at`: nothing has ever
+ * authenticated with it, so the only copy of its raw credential was the
+ * response body that never arrived. Revoking it costs nobody anything, and
+ * revoking it is what frees the one-successor slot — the unique index is
+ * partial on `revoked_at IS NULL`.
+ *
+ * The tombstone is the durable record of WHY it died. Without a distinct cause
+ * this revocation would be indistinguishable from an operator revoking the
+ * worker, and `lineage_revoked` would then stop the whole chain renewing.
+ *
+ * Throws `RenewalFenceLost` when the row is no longer discardable — it was used
+ * between the fact read and here, or another transaction got there first. The
+ * caller's savepoint unwinds and the race becomes a named refusal, rather than
+ * this pressing on into a lineage fork.
+ */
+async function discardStrandedSuccessor(
+  tx: Sql,
+  auth: AuthContext,
+  prepared: PreparedWorkspace,
+  successorTokenId: string,
+  predecessorTokenId: string,
+  renewalGrantId: string,
+  now: number,
+): Promise<void> {
+  const discarded = await tx<{ token_id: string }[]>`
+    UPDATE swarm.agent_tokens
+    SET revoked_at = ${new Date(now)}
+    WHERE token_id = ${successorTokenId}::uuid
+      AND predecessor_token_id = ${predecessorTokenId}::uuid
+      AND revoked_at IS NULL
+      AND first_used_at IS NULL
+    RETURNING token_id
+  `;
+  // Re-checking `first_used_at IS NULL` in the UPDATE, not trusting the fact
+  // read earlier in the transaction: between that read and here the successor
+  // may have authenticated somewhere else, at which point somebody DOES hold it
+  // and discarding it would take a working agent down.
+  if (discarded.length !== 1) throw new RenewalFenceLost();
+  await tx`
+    INSERT INTO swarm.revocation_tombstones (kind, target_id, created_by)
+    VALUES (
+      ${STRANDED_SUCCESSOR_TOMBSTONE},
+      ${successorTokenId}::uuid,
+      ${auth.actor.user}::uuid
+    )
+    ON CONFLICT (kind, target_id) DO NOTHING
+  `;
+  await creditStrandedSlot(tx, renewalGrantId);
+  await insertAudit(tx, {
+    auth,
+    commandKind: RENEW_AGENT_TOKEN_KIND,
+    workspaceId: prepared.ctx.workspace_id,
+    streamId: prepared.ctx.stream_id,
+    outcome: "self_healed",
+    reason: "stranded_successor_discarded",
+    // No conditional "was the slot refunded" clause any more. The credit either
+    // happened or this function threw, so a detail line that hedged about it
+    // would be describing a state that cannot reach here. The token id is what
+    // makes this row correlatable to the tombstone.
+    detail:
+      `successor ${successorTokenId} was issued but never used; discarded and replaced, grant slot credited back`,
+  });
+}
+
+/**
+ * The atomic half of §2.3 renewal: issue the successor and consume one grant
+ * slot, or do neither. It runs inside a savepoint, so a lost race leaves no
+ * partial effect — without it a failed slot CAS would still have discarded a
+ * stranded successor while issuing nothing in its place.
+ *
+ * Two concurrent renewals of the same predecessor are serialised by the partial
+ * UNIQUE index on `predecessor_token_id`: the loser fails 23505, re-reads state
+ * and is refused `predecessor_superseded` rather than forking the lineage.
  */
 async function fenceRenewal(
   tx: Sql,
   prepared: PreparedWorkspace,
+  auth: AuthContext,
   events: readonly EventEnvelope[],
   now: number,
 ): Promise<boolean> {
@@ -2178,8 +2428,27 @@ async function fenceRenewal(
     : null;
   if (expiresAt === null) throw new Error("renewal event carries no expiry");
 
+  // A live successor that has never been used is the stranded one this renewal
+  // exists to replace: the reducer only reached `accept` because of that. It
+  // must go before the insert — it holds the one-successor slot until it is
+  // revoked.
+  const strandedSuccessorId = prepared.renewalFacts?.successor_pending === true
+    ? prepared.renewalFacts.successor_token_id
+    : null;
+
   try {
     return await tx.savepoint(async (sp) => {
+      if (strandedSuccessorId !== null) {
+        await discardStrandedSuccessor(
+          sp,
+          auth,
+          prepared,
+          strandedSuccessorId,
+          predecessorTokenId,
+          grant.renewal_grant_id,
+          now,
+        );
+      }
       // Not "insert a token": this statement IS the fence. Everything the
       // reducer just checked is re-checked by agent_tokens_successor_fence()
       // against the predecessor ROW, and the grant slot is spent by that same
@@ -2206,43 +2475,42 @@ async function fenceRenewal(
           ${grant.renewal_grant_id}::uuid
         )
       `;
-      /* Supersede the predecessor. It must happen AFTER the insert: the fence
-         refuses an expired predecessor, so ending it first would refuse the
-         very successor it is being ended for. Ending it is what stops two live
-         credentials existing for one worker — a successor without this is a
-         duplication, not a renewal.
+      /* ★ THE PREDECESSOR IS NOT SUPERSEDED HERE ANY MORE. IT MOVED; IT WAS NOT DROPPED.
+         Do not restore this as an obvious omission — the omission is the fix.
 
-         ★ KNOWN DEFECT, FOUND BY CROSS-MODEL REVIEW, NOT YET FIXED — READ BEFORE TOUCHING
-         THIS. A renewal that COMMITS and then loses its HTTP response (a dropped connection,
-         or a post-commit 5xx) strands the worker permanently. The successor exists here, the
-         predecessor is ended on this line, and the slot is spent — but the raw successor
-         credential lives ONLY in the fresh response body. The idempotency replay deliberately
-         stores ids and expiry and never the secret (renewalReplayFields), so a retry with the
-         same command_id returns a body with no agent_token, and the client correctly refuses
-         to invent one. Net: a live successor nobody can reach, an agent that stops, and a
-         human reauthorisation triggered by a transient network blip — which is the exact
-         failure this whole feature exists to remove.
+         What used to be on this line: `UPDATE agent_tokens SET expires_at = now WHERE
+         token_id = predecessor`, with a comment explaining it had to come AFTER the insert
+         because the database fence refuses an expired predecessor, so ending it first would
+         refuse the very successor it was being ended for. THAT ORDERING ARGUMENT IS STILL
+         TRUE and still constrains anyone who moves supersession back to issue time. It is
+         simply no longer the shape of the code, because supersession now happens at the
+         successor's FIRST USE (authenticateAgent, in the same statement that stamps
+         first_used_at).
 
-         The two reviewers split on it and BOTH were reading the same code: one called it
-         "fails closed, correct", the other called it an attacker-triggerable renewal DoS.
-         Both descriptions are accurate. Fail-closed is the right SAFETY behaviour and the
-         wrong AVAILABILITY outcome, and here availability is the point of the feature.
+         WHY IT MOVED. Superseding at issue time strands the worker permanently whenever a
+         renewal COMMITS and then loses its HTTP response — a dropped connection, or a 5xx
+         after commit. The successor row existed, the predecessor was already ended, a grant
+         slot was spent, and the raw successor credential lived ONLY in the response body
+         that never arrived. The idempotency replay deliberately stores ids and expiry and
+         never the secret (renewalReplayFields), so replaying the same command_id returned a
+         body with no agent_token and the client correctly refused to invent one. Net: a
+         live successor nobody could reach, an agent that stops, and a human
+         reauthorisation caused by a network blip — the exact failure renewal exists to
+         remove. Two reviewers split on it and both were reading the code correctly:
+         fail-closed is the right SAFETY behaviour and the wrong AVAILABILITY outcome, and
+         here availability is the point.
 
-         DO NOT fix it by storing the raw successor in the idempotency row — that puts a live
-         credential at rest in a table read on every replay, trading a bounded outage for an
-         unbounded exposure. The directions worth exploring: leave the predecessor to expire
-         naturally (it has <= 1h left; costs a bounded overlap of two live credentials, and
-         the unique index still guarantees one successor), or make supersession happen on the
-         successor's FIRST USE rather than at issue. Both need their own review pass; neither
-         is a change to make in passing. */
-      const superseded = await sp<{ token_id: string }[]>`
-        UPDATE swarm.agent_tokens
-        SET expires_at = ${new Date(now)}
-        WHERE token_id = ${predecessorTokenId}::uuid
-          AND revoked_at IS NULL
-        RETURNING token_id
-      `;
-      if (superseded.length !== 1) throw new RenewalFenceLost();
+         The fix is NOT to store the raw successor anywhere at rest. It stays in exactly one
+         response and nowhere else. Instead a successor is PENDING until something
+         authenticates with it; a pending successor is held by nobody and is therefore
+         disposable, so a renewal that finds one discards it and issues a fresh one
+         (discardStrandedSuccessor, above). The predecessor stays live until the handover is
+         KNOWN to have completed, which is what makes the lost response recoverable.
+
+         The cost is a deliberate, bounded overlap: between issue and first use both
+         credentials are live, for at most the predecessor's remaining TTL (<= 1h). It is
+         kept from extending by `predecessor_pending_first_use` in the reducer — a token
+         that has never been used may not itself renew, so unused tokens cannot chain. */
       return true;
     });
   } catch (error) {
@@ -4432,6 +4700,15 @@ async function handleTransaction(
     const hash = requestHash(auth.actor, command);
     await afterStep(6);
 
+    /**
+     * Set only when this request is the SAME caller retrying a renewal whose
+     * successor was never delivered. It unlocks two things that are otherwise
+     * refused: discarding that pending successor, and overwriting this command
+     * id's stored response with the new one. Both are safe only together and
+     * only here — see `selfHealStranded`.
+     */
+    let renewalRecovery = false;
+
     await beforeStep(7);
     const existingRows = await tx<
       {
@@ -4453,19 +4730,51 @@ async function handleTransaction(
       const matches = existing.request_hash === hash &&
         existing.workspace_id === route.workspaceId &&
         existing.stream_id === route.streamId;
+      /* ★ THE ONE REPLAY THAT MUST NOT REPLAY. A renewal stores ids and expiry and
+         NEVER the successor's secret (renewalReplayFields), because a live credential
+         at rest in a table read on every replay is a worse trade than any outage. So
+         replaying a renewal whose response was lost hands back a body with no
+         credential, and the client correctly refuses to invent one — it raises
+         `successor_not_recoverable` and tells a human to issue a new credential. An
+         agent dying because one HTTP response was dropped is the exact failure §2.3
+         renewal exists to prevent.
+
+         When the successor that reply names is still LIVE and still UNUSED, nobody
+         ever received it — that is what unused means — so the honest answer is not to
+         re-send an answer we cannot re-send, but to discard that successor and issue a
+         fresh one. Falling through to re-execute is what does that; `selfHealStranded`
+         is true only here, so only the caller that created the stranded successor can
+         cause it to be discarded. The audit row says `renewal_recovered` rather than
+         `replayed` because this is not a replay: a different credential comes back. */
+      const recovering = matches &&
+        kind === RENEW_AGENT_TOKEN_KIND &&
+        await strandedSuccessorOf(tx, existing.response) !== null;
+      if (!recovering) {
+        await insertAudit(tx, {
+          auth,
+          commandKind: kind,
+          workspaceId: route.workspaceId,
+          streamId: route.streamId,
+          outcome: matches ? "replayed" : "conflict",
+          reason: matches ? null : "command_id_conflict",
+          detail: ignoredIdentity,
+          hash,
+        });
+        return matches
+          ? replayResult(storedResponse(existing.response), kind)
+          : { status: 409, body: { error: "command_id_conflict" } };
+      }
+      renewalRecovery = true;
       await insertAudit(tx, {
         auth,
         commandKind: kind,
         workspaceId: route.workspaceId,
         streamId: route.streamId,
-        outcome: matches ? "replayed" : "conflict",
-        reason: matches ? null : "command_id_conflict",
+        outcome: "renewal_recovered",
+        reason: "successor_never_delivered",
         detail: ignoredIdentity,
         hash,
       });
-      return matches
-        ? replayResult(storedResponse(existing.response), kind)
-        : { status: 409, body: { error: "command_id_conflict" } };
     }
     await afterStep(7);
 
@@ -4612,6 +4921,7 @@ async function handleTransaction(
         commandId,
         headSeq,
         now,
+        renewalRecovery,
       );
     } else {
       const taskCommand = command as Command;
@@ -4680,7 +4990,7 @@ async function handleTransaction(
       if (
         decision.ok &&
         prepared.command.kind === RENEW_AGENT_TOKEN_KIND &&
-        !await fenceRenewal(tx, prepared, decision.events, now)
+        !await fenceRenewal(tx, prepared, auth, decision.events, now)
       ) {
         const retryTime = await tx<{ now_ms: string | number }[]>`
           SELECT floor(extract(epoch FROM statement_timestamp()) * 1000)::bigint AS now_ms
@@ -4694,6 +5004,7 @@ async function handleTransaction(
           commandId,
           headSeq,
           now,
+          false,
         );
         decision = decideWorkspace(
           prepared.state,
@@ -4818,7 +5129,16 @@ async function handleTransaction(
         ${hash},
         ${tx.json(outcome.response as unknown as postgres.JSONValue)}::jsonb
       )
-      ON CONFLICT (principal_kind, principal_id, command_id) DO NOTHING
+      -- The conflict target already exists in exactly one legitimate case: a
+      -- renewal recovery, where this command id's stored response named a
+      -- successor that was never delivered and has just been replaced. Its
+      -- response must be overwritten or the NEXT retry would replay the dead
+      -- successor's ids for ever. Every other conflict is a concurrent writer
+      -- and must still lose: with the flag false the WHERE excludes the row,
+      -- nothing is returned, and LedgerRace is raised exactly as before.
+      ON CONFLICT (principal_kind, principal_id, command_id) DO UPDATE
+        SET response = EXCLUDED.response
+        WHERE ${renewalRecovery}
       RETURNING command_id
     `;
     if (inserted.length === 0) {
