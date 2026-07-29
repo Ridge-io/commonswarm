@@ -1008,3 +1008,65 @@ amending a verdict.
 **Still open, flagged by Cinder and deliberately not fixed under this entry:** the test *runner*
 globs remain `.test.ts`, so a `.test.tsx` is now typechecked but never executed. Smaller instance
 of the same gap, safe direction, latent for the same reason.
+
+---
+
+## D-027 — published legal documents promised remedies the product cannot perform
+
+**Found by:** surface sweep (archiving) + Kestrel's retro claude review (member removal)
+**Verified by:** Lead6 with positive controls · **Severity:** P1 — capability claims in contracts
+
+Two capability claims shipped in the live Terms, Privacy Policy, and Acceptable Use Policy:
+
+1. **"Archiving a workspace frees its slot"** — in all three documents, and offered beside the
+   free-tier cap as its escape hatch. Nothing writes `archived_at`; the code convicts itself at
+   `src/cloud/workspaces.ts:742`: *"no command sets archived_at; only tests do."* Positive
+   control: the same grep shape finds 7 write sites for `first_used_at`.
+2. **"A workspace administrator can remove a member"** — in Privacy's "Your choices" section.
+   `remove_member` exists only in the protocol; the hosted command function and the CLI have
+   **zero** exposure of it. Nothing but the INSERT ever writes `swarm.memberships.revoked_at`.
+
+The Privacy instances are the worst of the class: both were published as **controls the reader
+has over their own data**. A data right that cannot be exercised is a false statement in a
+document that exists to be relied on.
+
+**Ruling (applied):** delete the claim, do not build the feature to save the sentence. Archiving
+semantics stay deferred behind D-016's operator ruling; the archiving copy is gone from all
+three documents (merged `d0fb1ce`) and from DonePanel (Juniper's L2). Member-removal copy is in
+Kestrel's follow-up. **Hosted `remove_member` exposure is chartered separately as real
+functionality** (Cinder, after D-025) — the Slack-channel model needs it, but it lands as code
+with its own observer, not as a paragraph.
+
+**The class rule:** a legal document is a deployment-state surface like any other. When a
+capability gate flips — or turns out never to have been open — grep the legal pages with the
+same discipline as the marketing pages. They are the pages with consequences.
+
+---
+
+## D-028 — the Lead ran the shared suite inside another agent's exclusive window
+
+**Owner of the error:** Lead6 · **Severity:** process, P2 · **Cost:** three contaminated
+measurements and ~20 minutes of a seat chasing failures that were me.
+
+After merging D-003 locally I ran `test:p1-server` twice (a full run scoring 32/33, then a full
+re-run to capture failure detail) and one isolated single-test run — without announcing a slot,
+while Cinder had announced one. Two suites against one local stack share rate limits, audit-row
+counts, and signal caps in both directions. My 32/33, Cinder's "3 failures", and the control run
+Cinder started were all suspect; Cinder's subsequent exclusive runs came back green twice, which
+is strong evidence the reds were the collision.
+
+I had granted exclusive windows all day and enforced them on others. **The window protocol binds
+the Lead.** Merging is not a licence to measure outside a slot.
+
+Two rules:
+
+1. **Announce a slot before any `test:p1-server` or `db:*`, whoever you are.** The grant list
+   has no Lead exception.
+2. **A slot release must carry its measurement.** "DB SLOT FINISHED" with no counts is a window
+   paid for and returned empty; the numbers travel with the release message.
+
+What survived the contamination, recorded because it answered a standing question: the committed
+`supabase/functions/_shared/protocol.js` is **current** — clean before the run and clean after
+`pretest:p1-server` regeneration, confirmed independently in Cinder's window. The AGENTS.md
+caveat "a stale bundle typechecks fine while being wrong" now has its first positive measurement
+on the other side.
