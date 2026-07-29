@@ -12,18 +12,9 @@
  * in a browser rather than in the CLI: the person is already signed in here, and handing over
  * a block of text is something a person does well.
  *
- * WHAT THE READER COPIES IS A PROMPT, NOT A COMMAND. The reference products that feel
- * effortless hand you something you paste into the agent you already run, and the agent does
- * the rest. So the output is addressed to a model — what is true, what the secret is, what to
- * do with it — with one worked invocation inside it rather than a wall of flags. The text is
- * built by agentPrompt() in ../../lib/agent-connect so it can be read and changed in one place.
- *
- * THE HONEST GAP IS IN THE OUTPUT, NOT IN A FOOTNOTE. An agent holding that block still needs
- * the cswarm CLI, and install.sh points at Ridge-io/coswarm-dist, which does not exist — 404,
- * probed against a control repository that answers 302 for the same asset path. The prompt
- * says so in its own words so the agent stops rather than improvising, and the panel under the
- * block says so to the human. There is no zero-install path today; the §7 capability URL is
- * built but not deployed and this component does not hint otherwise.
+ * WHAT THE READER COPIES IS A PROMPT, NOT A COMMAND. It is addressed to the agent and includes
+ * the live installer, workspace, connection details, one credential, and the rule not to echo
+ * that credential back. The person does one thing with the result: Copy, paste, done.
  *
  * NO SSR AND NO STATE IN THE MARKUP. Every state this element can be in is rendered here at
  * build time and switched with `data-state` on the host, because Astro scopes styles to
@@ -60,11 +51,11 @@ const {
 >
   <header class="ac__head">
     {eyebrow && <p class="ac__eyebrow">{eyebrow}</p>}
-    <h2 class="ac__title">Connect your AI assistant</h2>
+    <h2 class="ac__title">Add an agent</h2>
     <p class="ac__lead">
-      Create a temporary key for the assistant you already use. The key connects it to
-      <span class="ac__ws" data-slot="workspace-name">this workspace</span>. You paste it into
-      the assistant once, and only a signed-in person can make one.
+      Name the AI assistant you already use. CommonSwarm creates one complete prompt for
+      <span class="ac__ws" data-slot="workspace-name">this workspace</span>. Copy it, paste it
+      into the assistant, and the agent handles the setup.
     </p>
   </header>
 
@@ -109,16 +100,6 @@ const {
       </p>
     </div>
 
-    <div class="ac__field" data-field-wrap="ttl">
-      <label class="ac__label" for="ac-ttl">How long the key works</label>
-      <select class="ac__control" id="ac-ttl" data-field="ttl">
-        <option value="3600000" selected>1 hour</option>
-        <option value="14400000">4 hours</option>
-        <option value="28800000">8 hours (the maximum)</option>
-      </select>
-      <p class="ac__hint">Eight hours is the ceiling the protocol allows. Come back for another.</p>
-    </div>
-
     <p class="ac__warn" role="note">
       <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
         <path
@@ -138,7 +119,7 @@ const {
     <p class="ac__form-error" data-slot="form-error" role="alert" hidden></p>
 
     <button class="ac__btn ac__btn--primary" type="submit" data-action="mint">
-      Create the key
+      Create the copy-paste prompt
     </button>
   </form>
 
@@ -159,23 +140,20 @@ const {
   </div>
 
   <div class="ac__panel ac__result" data-panel="result">
-    <div class="ac__facts">
-      <p class="ac__fact"><span class="ac__fact-k">AI assistant</span><span data-slot="result-agent"></span></p>
-      <p class="ac__fact"><span class="ac__fact-k">Expires</span><span data-slot="result-expiry"></span></p>
+    <div class="ac__result-copy">
+      <p class="ac__eyebrow">Ready to hand off</p>
+      <h3 class="ac__result-title">Copy this entire prompt.</h3>
+      <p class="ac__result-lead">
+        Paste it into your AI assistant as one message. The live key appears inside it once
+        and cannot be shown again after you clear this screen.
+      </p>
     </div>
-
-    <p class="ac__warn ac__warn--live" role="note">
-      <span>
-        Below is a live key, shown for the only time. Paste it into the assistant you already
-        use. Keep it private: do not save it in source code, logs, or a link.
-      </span>
-    </p>
 
     <div class="ac__block">
       <div class="ac__block-bar">
-        <span class="ac__block-label">Give this to your AI assistant</span>
+        <span class="ac__block-label">Prompt for your AI agent</span>
         <button class="ac__btn ac__btn--copy" type="button" data-action="copy">
-          <span data-slot="copy-label">Copy</span>
+          <span data-slot="copy-label">Copy prompt</span>
         </button>
       </div>
       <pre class="ac__pre" data-slot="prompt" tabindex="0" aria-label="The block to give your agent"></pre>
@@ -183,18 +161,9 @@ const {
 
     <p class="ac__status" role="status" aria-live="polite" data-slot="copy-status"></p>
 
-    <p class="ac__gap">
-      <strong>Before you paste it.</strong> The download is ready. Open
-      <a href="/download">the download page</a> and install CommonSwarm — it takes about a
-      minute. Then paste this block into your AI assistant.
-    </p>
-
     <div class="ac__result-actions">
       <button class="ac__btn ac__btn--quiet" type="button" data-action="clear">
-        Clear it from this screen
-      </button>
-      <button class="ac__btn ac__btn--quiet" type="button" data-action="again">
-        Issue another
+        Clear this prompt
       </button>
     </div>
   </div>
@@ -203,13 +172,11 @@ const {
 <script>
   import {
     AGENT_TOKEN_DEFAULT_TTL_MS,
-    AGENT_TOKEN_MAX_TTL_MS,
     AgentConnectRefused,
     AgentNameTaken,
     ClientTooOld,
     CredentialNotShown,
     MintOutcomeUnknown,
-    agentPrompt,
     createAgentIdentity,
     ensureBrowserDevice,
     mintAgentCredential,
@@ -217,6 +184,7 @@ const {
     type AgentIdentity,
   } from "../../lib/agent-connect";
   import { NoDeployment, currentSession, deployment, myWorkspaces, uuid } from "../../lib/commonswarm";
+  import { dashboardAgentPrompt } from "./agent-prompt";
 
   /*
    * A custom element rather than a page script, so the host page can drop <AgentConnect /> in
@@ -234,6 +202,7 @@ const {
     #agents: AgentIdentity[] = [];
     #busy = false;
     #copyTimer: number | undefined;
+    #loadQueued = false;
     /* Attributes present in the markup fire attributeChangedCallback during upgrade, BEFORE
        connectedCallback — so without this the element would load twice on every page. */
     #ready = false;
@@ -246,7 +215,12 @@ const {
     }
 
     attributeChangedCallback() {
-      if (this.#ready && this.isConnected && !this.#busy) void this.#load();
+      if (!this.#ready || !this.isConnected || this.#busy || this.#loadQueued) return;
+      this.#loadQueued = true;
+      queueMicrotask(() => {
+        this.#loadQueued = false;
+        if (this.isConnected && !this.#busy) void this.#load();
+      });
     }
 
     #q<T extends Element>(selector: string): T | null {
@@ -287,10 +261,6 @@ const {
       this.#q<HTMLButtonElement>('[data-action="clear"]')?.addEventListener("click", () => {
         this.#forget();
         this.#state("ready");
-      });
-      this.#q<HTMLButtonElement>('[data-action="again"]')?.addEventListener("click", () => {
-        this.#forget();
-        void this.#load();
       });
     }
 
@@ -440,7 +410,6 @@ const {
 
       const select = this.#q<HTMLSelectElement>('[data-field="identity"]');
       const nameField = this.#q<HTMLInputElement>('[data-field="name"]');
-      const ttlField = this.#q<HTMLSelectElement>('[data-field="ttl"]');
       const existingId = select?.value ?? "";
       const name = (nameField?.value ?? "").trim();
       if (!existingId && name.length === 0) {
@@ -448,12 +417,6 @@ const {
         nameField?.focus();
         return;
       }
-
-      const parsedTtl = Number(ttlField?.value ?? AGENT_TOKEN_DEFAULT_TTL_MS);
-      const ttlMs =
-        Number.isFinite(parsedTtl) && parsedTtl > 0 && parsedTtl <= AGENT_TOKEN_MAX_TTL_MS
-          ? parsedTtl
-          : AGENT_TOKEN_DEFAULT_TTL_MS;
 
       /* #busy is owned by #mint()'s wrapper now — it is set before the first await and
          cleared in a finally there, so assigning it again here would be a second source of
@@ -504,14 +467,14 @@ const {
           this.#workspaceId,
           identity,
           deviceId,
-          ttlMs,
+          AGENT_TOKEN_DEFAULT_TTL_MS,
         );
         this.#step("mint-credential", "done");
 
         const target = deployment();
         if (!target) throw new NoDeployment();
 
-        this.#prompt = agentPrompt({
+        this.#prompt = dashboardAgentPrompt({
           credential,
           workspaceId: this.#workspaceId,
           workspaceName: this.#workspaceName,
@@ -519,16 +482,18 @@ const {
           anonKey: target.anonKey,
         });
         this.#text("prompt", this.#prompt);
-        this.#text("result-agent", credential.principalName);
-        this.#text(
-          "result-expiry",
-          credential.expiresAt === null
-            ? "within hours — the deployment didn't say exactly when"
-            : new Date(credential.expiresAt).toLocaleString(),
-        );
         this.#text("copy-status", "");
         this.#resetCopyLabel();
         this.#state("done");
+        this.dispatchEvent(
+          new CustomEvent("commonswarm:agent-connected", {
+            bubbles: true,
+            detail: {
+              principalId: credential.principalId,
+              name: credential.principalName,
+            },
+          }),
+        );
       } catch (error) {
         this.#state("ready");
         this.#formError(this.#explain(error));
@@ -564,7 +529,7 @@ const {
     }
 
     #resetCopyLabel() {
-      this.#text("copy-label", "Copy");
+      this.#text("copy-label", "Copy prompt");
       const button = this.#q<HTMLButtonElement>('[data-action="copy"]');
       button?.removeAttribute("data-copied");
     }
@@ -595,7 +560,7 @@ const {
       }
       this.#text("copy-label", "Copied");
       button?.setAttribute("data-copied", "");
-      this.#text("copy-status", "Copied. Paste it into your AI assistant — it isn't shown again.");
+      this.#text("copy-status", "Copied. Paste the whole prompt into your AI assistant.");
       window.clearTimeout(this.#copyTimer);
       this.#copyTimer = window.setTimeout(() => this.#resetCopyLabel(), 2400);
     }
@@ -767,11 +732,6 @@ const {
     color: var(--warning);
   }
 
-  .ac__warn--live {
-    background: var(--danger-dim);
-    border-color: var(--danger-dim);
-  }
-
   .ac__form-error {
     padding: var(--pad-card-sm);
     font-size: var(--t-sm);
@@ -866,22 +826,26 @@ const {
     color: var(--text-faint);
   }
 
-  .ac__facts {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--s-2) var(--s-6);
+  .ac__result-copy {
+    display: grid;
+    gap: var(--s-2);
   }
 
-  .ac__fact {
-    display: flex;
-    gap: var(--s-2);
+  .ac__result-title {
+    margin: 0;
+    color: var(--text);
+    font-size: var(--t-xl);
+    line-height: var(--lh-xl);
+    letter-spacing: var(--track-head);
+    font-weight: var(--weight-head);
+  }
+
+  .ac__result-lead {
+    max-inline-size: 58ch;
+    margin: 0;
+    color: var(--text-muted);
     font-size: var(--t-sm);
     line-height: var(--lh-sm);
-    color: var(--text);
-  }
-
-  .ac__fact-k {
-    color: var(--text-muted);
   }
 
   .ac__block {
@@ -941,23 +905,6 @@ const {
     line-height: var(--lh-xs);
     color: var(--text-muted);
     min-block-size: 1.2em;
-  }
-
-  .ac__gap {
-    font-size: var(--t-xs);
-    line-height: var(--lh-xs);
-    color: var(--text-muted);
-  }
-
-  .ac__gap strong {
-    color: var(--text);
-    font-weight: var(--weight-semibold);
-  }
-
-  .ac__gap code {
-    font-family: var(--font-mono);
-    font-size: 0.95em;
-    white-space: nowrap;
   }
 
   .ac__result-actions {
