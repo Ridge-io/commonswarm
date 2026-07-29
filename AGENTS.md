@@ -5,7 +5,15 @@ side. A CLI (`cswarm`) plus a hosted Supabase backend; **there is no web UI**. A
 short, immutable *signals* of intent ("I'm about to refactor auth") so collaborators don't
 step on each other. Posting a signal never claims, blocks, or closes a task.
 
-Status: **P3-1, invited dogfood** — pre-launch, invite-only, not self-serve. Node >= 24.
+Status: **P3-1, open free tier** — self-serve signup is LIVE. Node >= 24.
+
+★ **`SWARM_SELF_SERVE=1` has been set on the production project since 2026-07-28.** A stranger can
+create their own workspace at https://commonswarm.com/start with no invitation. The superseded line
+— *"invited dogfood — pre-launch, invite-only, not self-serve"* — is **dead**, and it did real
+damage before it was caught: a cross-family consumer reviewer read the matching claim on the live
+home page, concluded signup was unavailable, and prescribed rebuilding the site around a waiting
+list. See D-023. **Availability copy asserts deployment state and lives in git, so nothing fails
+when the deployment moves — grep every surface when a gate flips.**
 
 **The product was renamed from `coswarm` to CommonSwarm / `cswarm` (2026-07-27)** because
 the old name collided with a competitor. Prose says CommonSwarm; anything a user types says

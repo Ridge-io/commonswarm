@@ -869,6 +869,14 @@ of anyone who reads it, including our own tooling.
 
 **Assigned:** L2 (Juniper). Delete the claim; state what is true and make it the primary action.
 
+★ **THE ROOT WAS OUR OWN PROJECT DOC, found by Juniper and fixed by the advisor.** `AGENTS.md`
+line 8 read *"Status: P3-1, invited dogfood — pre-launch, invite-only, not self-serve."* That file
+is the brief every agent reads first. So the stale marketing copy was not an oversight in one
+component — **it was downstream of the canonical status line being wrong**, and any agent writing
+new copy would have reproduced it faithfully. Juniper found it, correctly refused to edit it as
+outside its lane, and reported it instead. Corrected on `main` with the superseded line kept and
+marked dead.
+
 **The standing rule this earns:** when a deployment gate flips, grep every surface for copy that
 asserts the old state — site, CLI, installer, email templates, OG description — before the flip is
 called done. That check has now been skipped twice.
