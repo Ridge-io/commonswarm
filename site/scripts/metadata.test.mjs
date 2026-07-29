@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { INSTALL_CMD } from "../src/lib/install.ts";
+import { INSTALL_CMD } from "./install-command.mjs";
 
 const siteDir = join(dirname(fileURLToPath(import.meta.url)), "..");
 const distDir = join(siteDir, "dist");
@@ -191,7 +191,7 @@ test("L4: linked icon, manifest, and social-card assets agree with their metadat
   assert.equal(png.readUInt32BE(20), 630, "OG image height");
   assert.match(
     generator,
-    /import \{ INSTALL_CMD \} from "\.\.\/src\/lib\/install\.ts";/,
+    /import \{ INSTALL_CMD \} from "\.\/install-command\.mjs";/,
     "OG generator must consume the site's canonical installer command",
   );
   assert.match(

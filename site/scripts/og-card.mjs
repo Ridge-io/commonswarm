@@ -89,7 +89,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { INSTALL_CMD } from "../src/lib/install.ts";
+import { INSTALL_CMD } from "./install-command.mjs";
 
 const FONTS = join(dirname(fileURLToPath(import.meta.url)), "..", "public", "fonts");
 const b64 = (p) => readFileSync(p).toString("base64");
