@@ -19,6 +19,7 @@ import {
   ThinCommandClient,
 } from "../../src/cloud/command-client.js";
 import { cloudTarget } from "../../src/cloud/config.js";
+import { awaitFunctionRunning } from "./edge-readiness.js";
 import {
   decodeInviteLink,
   encodeInviteLink,
@@ -96,22 +97,24 @@ function environment(): LocalEnvironment {
   return parsed as LocalEnvironment;
 }
 
+/**
+ * D-020: wait for the command function to be RUNNING, not merely reachable.
+ *
+ * This used to return on any 401, which the local gateway answers before the function module
+ * has loaded — so the gate cleared while the runtime was cold and the first real command came
+ * back `502 unknown_error`, roughly 1 run in 8. The predicate now requires the function's own
+ * `{ "error": "unauthenticated" }` body, which only its code produces. See edge-readiness.ts
+ * for why this is a gate rather than a retry around the failing command.
+ */
 async function ready(): Promise<void> {
-  const deadline = Date.now() + 30_000;
-  while (Date.now() < deadline) {
-    try {
-      const response = await fetch(`${local.API_URL}/functions/v1/command`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ command_id: "healthcheck" }),
-      });
-      if (response.status === 401) return;
-    } catch {
-      // Runtime is still starting.
-    }
-    await delay(200);
-  }
-  throw new Error(`command function failed to start:\n${functionLogs.slice(-4000)}`);
+  await awaitFunctionRunning({
+    url: `${local.API_URL}/functions/v1/command`,
+    fetcher: fetch,
+    timeoutMs: 30_000,
+    sleep: (ms) => delay(ms),
+    now: () => Date.now(),
+    diagnostics: () => functionLogs.slice(-4000),
+  });
 }
 
 async function runDogfoodCli(
