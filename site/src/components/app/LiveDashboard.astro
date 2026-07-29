@@ -851,8 +851,9 @@ import SampleNotice from "./SampleNotice.astro";
       const connect = one<SecretHoldingAgentConnect>("agent-connect");
       const promptWorkspaceId = connect?.getAttribute("workspace-id") ?? "";
       const connectState = connect?.dataset.state ?? "";
+      const mintBusy = connect?.hasAttribute("data-mint-busy") ?? false;
       if (
-        (connectState === "working" || connectState === "done") &&
+        (mintBusy || connectState === "working" || connectState === "done") &&
         promptWorkspaceId.length > 0 &&
         promptWorkspaceId !== workspaceId
       ) {

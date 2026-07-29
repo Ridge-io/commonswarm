@@ -403,10 +403,12 @@ const {
          setting it this early safe — every early return still clears it. */
       if (this.#busy) return;
       this.#busy = true;
+      this.toggleAttribute("data-mint-busy", true);
       try {
         await this.#mintGuarded();
       } finally {
         this.#busy = false;
+        this.toggleAttribute("data-mint-busy", false);
       }
     }
 
