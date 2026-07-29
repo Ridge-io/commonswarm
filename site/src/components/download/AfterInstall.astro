@@ -1,87 +1,27 @@
 ---
 /*
- * AfterInstall — what to run once the file is on disk, and the four ways this actually goes
- * wrong. Every command and every printed line here was run against a build of the CLI on this
- * branch:
+ * AfterInstall mirrors the choices install.sh prints after a successful install:
+ * accept an invitation through stdin, create a workspace in the browser, or stay in the
+ * terminal with `cswarm login` and `cswarm new`. Keep those choices in that order when the
+ * installer changes; this page describes observed behavior, not an idealized quickstart.
  *
- *   cswarm --version    -> "cswarm 0.0.1 (protocol 0.1.0)", exit 0. (`-v` prints the same.)
- *                          Worth knowing: this only became true recently — the parser used to
- *                          treat --version as a flag expecting a value and answered
- *                          "--version requires a value" on the single most-typed diagnostic
- *                          there is. src/cli.ts checks it against raw argv now.
- *   cswarm --help       -> the full command list, exit 0.
- *
- * THE RENAME, AND WHAT WAS RE-CHECKED FOR IT. That run predates the CommonSwarm rename and
- * printed "coswarm 0.0.1". Rather than assume the new string, the three parts of it were read
- * back out of the source on this pass:
- *   the literal prefix .......... src/cli.ts:248 and :1804 build `cswarm ${…} (protocol ${…})`
- *   the version ................. package.json "version" is 0.0.1, and bin is {"cswarm": …}
- *   the protocol ................ CLIENT_PROTOCOL_VERSION = "0.1.0" (src/cloud/config.ts:3)
- * which composes to exactly the string rendered below. NOT re-run end to end: nobody executed
- * `--version` on a built binary from this pass, so this is verified by construction from the
- * sources the binary uses, not by observation of its output.
- *
- * `accept` is the ONE first-contact verb that needs no --url and no --anon-key, because the
- * link carries its own target (see the help text: "An invite link supplies its whole target
- * and cannot be combined with --url or --anon-key"). Every other verb needs both flags. That
- * is why this page stops at `accept` and does not print a quickstart a stranger could not
- * run — SITE-BRIEF is explicit that the flagless third line is false today.
- *
- * THE FORM SHOWN IS --link-stdin, AND THAT IS NOT A STYLE CHOICE. `node dist/cli.js --help`
- * lists `cswarm accept --link-stdin [--name <name>]` first and annotates the positional form
- * on the very next line: "cswarm accept <cswarm://accept/...> ... # unsafe: shell
- * history/process list". Both strings re-read verbatim off src/cli.ts:267-268 after the
- * rename, and the scheme itself is src/cloud/invite-link.ts:177, which builds
- * `cswarm://accept/${encoded}`. An invite link is a one-time capability, and argv
- * is written to your
- * shell history and visible to anyone who can run ps. This card used to print the annotated-
- * unsafe form while /start taught the safe one two pages away, on a site whose /download
- * thesis is "Piping a script into a shell deserves the suspicion it gets". The string here is
- * the one Steps.astro already ships; if one changes, change both.
- *
- * FIXED UPSTREAM — THE OLD NOTE HERE IS DEAD AND IS KEPT ONLY SO IT IS NOT RE-DERIVED. It
- * read: "STILL UNFIXED UPSTREAM … install.sh l.142 itself prints 'Next: accept your invite.
- * \n\n  coswarm accept <invite-link>'. Fix the script, then that note." The script was
- * rewritten with the rename and now prints `cswarm accept --link-stdin` at l.151, with the
- * stdin rationale spelled out at l.152-153. The positional form is gone from the installer.
- * Page, script and Steps.astro now teach one form; do not reintroduce the caveat.
- *
- * The troubleshooting entries are the failure paths install.sh handles by name, phrased as
- * the message a reader would actually see. The zsh PATH line is the exact string install.sh
- * prints (l.131 — re-checked against the rewritten script, still l.131).
- *
- * STEP NUMBERING. The numeral is a badge element beside the heading, never characters inside
- * it. The landing Start section and /start both do it that way, and this page used to be the
- * one that did not: it shipped `<h3>1. Check it landed</h3>`, which a screen reader says as
- * "one dot Check it landed" and which draws no badge at all where the other two pages draw
- * one. The badge is aria-hidden because the heading text is the whole accessible name and the
- * order is already carried by the reading order. Skin matches /start's step marker
- * (Steps.astro .stp__t::before) — same 1.5rem violet ring at the same heading
- * scale; the landing's larger 2.25rem numeral belongs to a heading two sizes up.
+ * The version line is the built CLI's public output. The invitation command deliberately
+ * prompts for the link so a one-time capability never appears in shell history or a process
+ * listing. Troubleshooting entries below correspond to named install.sh failure paths and
+ * each one gives a next action.
  */
 
 import CodeBlock from "../ui/CodeBlock.astro";
+import Button from "../ui/Button.astro";
 import { INSTALL_CMD_LOGIN_SHELL, INSTALL_CMD_DIR } from "../../lib/install.ts";
 
 const versionCmd = "cswarm --version";
-const versionOut = "cswarm 0.0.1 (protocol 0.1.0)";
-/* The safe form, broken at the pipe exactly as Steps.astro breaks it on /start.
-   BROKEN BY HAND, AND WITH NO PROMPT GLYPH, FOR ONE MEASURED REASON. Written as a single
-   line with prompt="$" it does not fit this card: at 14px JetBrains Mono the command was 64
-   characters and ~594px against a 584px column, and `wrap` broke it INSIDE the flag — the block
-   rendered "--link-" then "stdin" on the next line, which is a flag a reader can mistype and
-   a hyphen that is not in the command. Breaking after the trailing `|` is a real shell line
-   continuation, so what lands on the clipboard still runs verbatim.
-   The prompt is dropped rather than kept because CodeBlock prefixes EVERY non-comment line
-   with it (CodeBlock.astro:108), which would draw a second "$" on the continuation and make
-   it read as a second command. Steps.astro makes the same trade for the same reason; the
-   window chrome and the mono face already say "terminal".
-   The rename shortens this line to 62 characters (~576px), which is INSIDE the 584px column
-   by about eight pixels. That is not enough margin to undo the hand break: eight pixels is
-   less than one glyph, the measurement was taken at one viewport, and the failure mode it
-   avoids is a mistyped flag. Leave the break. */
-const acceptCmd = `printf '%s' "$CSWARM_INVITE_LINK" |
-  cswarm accept --link-stdin`;
+const versionOut = "cswarm 0.1.1 (protocol 0.1.0)";
+/* This is the exact command install.sh prints. It prompts for the link so a one-time
+   invitation never has to appear in shell history or the process list. */
+const acceptCmd = "cswarm accept --link-stdin";
+const createCmd = `cswarm login
+cswarm new "<project name>"`;
 
 /* `text` with `backticks` becomes inline code — paths and flags read as what they are. */
 const seg = (s: string) =>
@@ -130,49 +70,54 @@ const faqCols = [faqs.slice(0, 2), faqs.slice(2)];
   <div class="page">
     <div class="ai__head">
       <p class="eyebrow">Once it’s installed</p>
-      <h2 class="h-section" id="ai-title">Two commands, then you’re in.</h2>
+      <h2 class="h-section" id="ai-title">Choose what happens next.</h2>
     </div>
 
     <div class="ai__grid">
       <div class="ai__steps">
         <div class="ai__step">
           <div class="ai__sh">
-            <span class="ai__n" aria-hidden="true">1</span>
-            <h3 class="ai__t">Check it landed</h3>
+            <h3 class="ai__t">Make sure it works</h3>
           </div>
           <CodeBlock code={versionCmd} label="verify" prompt="$" />
           <CodeBlock code={versionOut} label="output" copy={false} chrome={false} class="ai__out" />
           <p class="ai__p">
-            The installer prints this same line for you, read back out of the file it just
-            wrote rather than out of what it intended to write.
+            The installer already prints this line. Run it again only if you want to check:
+            seeing a version means the install finished.
           </p>
         </div>
 
         <div class="ai__step">
           <div class="ai__sh">
-            <span class="ai__n" aria-hidden="true">2</span>
-            <h3 class="ai__t">Accept your invite</h3>
+            <h3 class="ai__t">If someone invited you</h3>
           </div>
-          <CodeBlock code={acceptCmd} label="join a workspace" wrap />
+          <CodeBlock code={acceptCmd} label="accept an invite" prompt="$" wrap />
           <p class="ai__p">
-            <strong>The one command that needs no configuration.</strong> An invite link
-            carries its own target, so it takes no <span class="mono">--url</span> and no
-            <span class="mono">--anon-key</span> — every other command does. Put the link you
-            were sent in <span class="mono">CSWARM_INVITE_LINK</span>; it goes in on stdin and
-            never as an argument, because a link works once and anything in argv is written to
-            your shell history and shows up in process listings.
-          </p>
-          <p class="ai__p">
-            There is no invite link on this page and there never will be — one is issued to a
-            single person, so it comes from someone already in the workspace. Starting your own
-            is built and isn’t switched on here yet;
-            <a href="/start">/start</a> has the whole path in one place, and says what the free
-            tier includes when it opens.
+            Run this, then paste the invitation link when CommonSwarm asks for it. The link
+            works once, so the command keeps it out of your terminal history.
           </p>
           <p class="ai__p ai__p--last">
-            After that, <span class="mono">cswarm --help</span> lists the rest: announce what
-            you’re working on, read the shared feed, check your inbox.
+            After you join, <span class="mono">cswarm --help</span> shows how to post an update,
+            read the shared feed, and check your inbox.
           </p>
+        </div>
+
+        <div class="ai__step">
+          <div class="ai__sh">
+            <h3 class="ai__t">If you do not have an invite</h3>
+          </div>
+          <p class="ai__p ai__p--first">
+            Make your own workspace in the browser. It is free, takes no card, and you can
+            come back to the terminal after it is ready.
+          </p>
+          <Button href="/start" variant="primary" size="md" class="ai__start">
+            Create a workspace
+          </Button>
+          <details class="ai__terminal">
+            <summary>Prefer to stay in the terminal?</summary>
+            <p>Sign in, then name the workspace you want to create.</p>
+            <CodeBlock code={createCmd} label="terminal setup" prompt="$" wrap />
+          </details>
         </div>
       </div>
 
@@ -238,9 +183,7 @@ const faqCols = [faqs.slice(0, 2), faqs.slice(2)];
      every other section end on the site sits on 86.4px. Now .section--tight on both edges;
      the override is gone. See the matching note in WhatHappens.astro. */
 
-  /* Two steps across the top, troubleshooting as a full-width band under them. The earlier
-     arrangement — steps left, FAQ right — left the bottom-right quarter of the section empty
-     because the FAQ is half the height of the steps. */
+  /* Three next-step choices across the top, with troubleshooting as a full-width band. */
   .ai__grid {
     display: grid;
     gap: var(--s-16);
@@ -249,8 +192,8 @@ const faqCols = [faqs.slice(0, 2), faqs.slice(2)];
 
   .ai__steps {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: var(--s-12);
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: var(--s-10);
     align-items: start;
   }
 
@@ -262,23 +205,6 @@ const faqCols = [faqs.slice(0, 2), faqs.slice(2)];
     align-items: center;
     gap: var(--s-3);
     margin: 0 0 var(--s-4);
-  }
-
-  .ai__n {
-    flex: none;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    inline-size: 1.5rem;
-    block-size: 1.5rem;
-    border-radius: var(--radius-pill);
-    background: var(--accent-dim);
-    border: 1px solid color-mix(in oklab, var(--accent) 30%, transparent);
-    color: var(--accent-bright);
-    font-size: var(--t-2xs);
-    font-weight: var(--weight-semibold);
-    font-variant-numeric: tabular-nums;
-    line-height: 1;
   }
 
   .ai__t {
@@ -302,6 +228,41 @@ const faqCols = [faqs.slice(0, 2), faqs.slice(2)];
 
   .ai__p--last {
     margin-top: var(--s-3);
+  }
+
+  .ai__p--first {
+    margin-top: 0;
+  }
+
+  .ai__start {
+    margin-top: var(--s-5);
+  }
+
+  .ai__terminal {
+    margin-top: var(--s-5);
+    padding-top: var(--s-4);
+    border-top: 1px solid var(--border);
+    color: var(--text-muted);
+    font-size: var(--t-sm);
+    line-height: var(--lh-sm);
+  }
+
+  .ai__terminal summary {
+    display: flex;
+    align-items: center;
+    min-block-size: 2.75rem;
+    color: var(--text);
+    font-weight: var(--weight-semibold);
+    cursor: pointer;
+  }
+
+  .ai__terminal summary:hover {
+    text-decoration: underline;
+    text-underline-offset: 3px;
+  }
+
+  .ai__terminal p {
+    margin: var(--s-3) 0;
   }
 
   /* ------------------------------------------------------------- faq ----- */

@@ -65,16 +65,16 @@ const PLATFORMS = [
     heading: "On macOS",
     notes: [
       {
-        k: "Node 24 or newer",
-        v: "`brew install node`, or the installer from nodejs.org. The script checks this before it downloads anything.",
+        k: "Open Terminal",
+        v: "Press Command-Space, type `Terminal`, then press Return. This is the app where you paste the commands on this page.",
       },
       {
-        k: "Nothing else to install",
-        v: "`shasum` and `curl` already ship with macOS, so the checksum step has what it needs.",
+        k: "Check Node.js before installing",
+        v: "Run `node -v`. If the first number is 24 or higher — for example, `v24…` or `v25…` — you’re ready. If it says the command was not found or shows an older number, use the Node.js download link above.",
       },
       {
-        k: "If the shell can’t find it afterwards",
-        v: "The installer prints the exact PATH line for your shell — on a stock Mac that’s zsh and `~/.zprofile`. It prints it; it never edits the file for you.",
+        k: "Keep that window open",
+        v: "Use the install command on this page, paste it into the same Terminal window, and press Return. The installer checks Node.js again before it downloads anything.",
       },
     ],
   },
@@ -84,16 +84,16 @@ const PLATFORMS = [
     heading: "On Linux",
     notes: [
       {
-        k: "Node 24 or newer",
-        v: "Check with `node -v` first — distro packages are often several majors behind. nodejs.org or a version manager will be newer.",
+        k: "Open Terminal",
+        v: "Open your app menu and search for `Terminal`. This is the app where you paste the commands on this page.",
       },
       {
-        k: "Nothing else to install",
-        v: "`sha256sum` comes with coreutils; the script takes that or `shasum`, whichever it finds.",
+        k: "Check Node.js before installing",
+        v: "Run `node -v`. If the first number is 24 or higher — for example, `v24…` or `v25…` — you’re ready. Linux package managers can carry older releases, so check the number rather than assuming.",
       },
       {
-        k: "If the shell can’t find it afterwards",
-        v: "The installer prints the exact PATH line for your shell — for bash that’s `~/.bash_profile`. It prints it; it never edits the file for you.",
+        k: "Keep that window open",
+        v: "Use the install command on this page, paste it into the same Terminal window, and press Enter. The installer checks Node.js again before it downloads anything.",
       },
     ],
   },
@@ -103,16 +103,16 @@ const PLATFORMS = [
     heading: "On Windows, via WSL",
     notes: [
       {
-        k: "Run it inside WSL",
-        v: "The installer is POSIX sh. There is no PowerShell path and no .exe — open a WSL shell with `wsl`, then run the command above in there.",
+        k: "Open WSL, not PowerShell",
+        v: "Open Start and choose your Linux app, such as Ubuntu. If you do not have one yet, use Microsoft’s WSL setup guide linked above.",
       },
       {
-        k: "Node 24 or newer, inside WSL",
-        v: "A Node installed on Windows is not on WSL’s PATH. Install it in the Linux environment the script will actually run in.",
+        k: "Check Node.js inside WSL",
+        v: "Run `node -v` there. A Node.js copy installed only on Windows does not count; CommonSwarm needs version 24 or newer inside WSL.",
       },
       {
-        k: "Where it lands",
-        v: "`~/.local/bin` inside your WSL home directory — nothing is written to a Windows drive.",
+        k: "Keep that window open",
+        v: "Use the install command on this page, paste it into that same WSL window, and press Enter. The file stays inside your WSL home folder.",
       },
     ],
   },
@@ -126,17 +126,12 @@ const PLATFORMS = [
         visible label is normalised. */}
     <p class="eyebrow">Install</p>
     <h1 class="h-display dl-hero__h" id="dl-title">Install CommonSwarm.</h1>
-    {/* Two elements, not one. As a single 146-character sentence this ran to five lines at
-        375px with a rag that swung 70px, and the fifth line existed only to carry "256" —
-        the browser broke "SHA-256" at its hyphen, which is a break that changes what the word
-        says. The promise ("one command, one file, here") is the lede; the three caveats are
-        support, and they get the size that says so. Not one word was cut. */}
     <p class="lede dl-hero__lede">
-      One command. One file in <span class="mono">~/.local/bin</span>.
+      A guided setup for Mac, Linux, and Windows with WSL.
     </p>
     <p class="dl-hero__sub">
-      No sudo, no <span class="mono">node_modules</span>, and nothing lands on your machine
-      unless its <span class="dl-nb">SHA-256</span> matches the published one.
+      You need Node.js 24 or newer before you install. If you have never opened a terminal,
+      start here — every step is spelled out.
     </p>
 
     <div class="dl-card">
@@ -146,8 +141,34 @@ const PLATFORMS = [
       </div>
 
       <div class="dl-card__body">
+        <div class="dl-ready" aria-labelledby="dl-ready-title">
+          <p class="dl-ready__step">Before you paste anything</p>
+          <h2 class="dl-ready__title" id="dl-ready-title">Get Node.js 24 ready.</h2>
+          <p class="dl-ready__body">
+            Node.js is the software CommonSwarm runs on. Open the terminal app for your
+            computer, enter <code>node -v</code>, and press Return or Enter. Continue if the
+            first number is 24 or higher — for example, <code>v24…</code> or <code>v25…</code>.
+          </p>
+          <div class="dl-ready__actions">
+            <a href="#dl-plat-label">Show me how to open a terminal</a>
+            <a href="https://nodejs.org/en/download">Download Node.js 24</a>
+            <a href="https://learn.microsoft.com/en-us/windows/wsl/install">
+              Set up WSL on Windows
+            </a>
+          </div>
+        </div>
+
+        <div class="dl-install-head">
+          <p class="dl-ready__step">When Node.js is ready</p>
+          <h2 class="dl-ready__title">Install CommonSwarm.</h2>
+          <p class="dl-ready__body">
+            Copy this line, paste it into the same terminal window, and press Return or Enter.
+            Nothing runs when you press the copy button.
+          </p>
+        </div>
+
         <div class="dl-cmd">
-          <pre class="dl-cmd__pre mono"><code><span class="dl-cmd__prompt" aria-hidden="true">$ </span>{cmdHead}<span class="dl-cmd__host">&lt;host&gt;</span>{cmdTail}</code></pre>
+          <pre class="dl-cmd__pre mono"><code><span class="dl-cmd__prompt" aria-hidden="true">$ </span>{cmdHead}<span class="dl-cmd__host">{HOST_TOKEN}</span>{cmdTail}</code></pre>
         </div>
 
         <div class="dl-go" data-dl-go>
@@ -188,12 +209,12 @@ const PLATFORMS = [
           </Button>
 
           <p class="dl-go__hint" id="dl-go-hint" data-dl-hint>
-            Paste it into a terminal. Nothing runs on this page.
+            Paste it into the same terminal window and press Return or Enter.
           </p>
         </div>
 
         <ul class="dl-meta">
-          <li class="dl-meta__i">Node 24 or newer</li>
+          <li class="dl-meta__i">One file in your home folder</li>
           <li class="dl-meta__i">macOS · Linux · WSL</li>
           <li class="dl-meta__i">No sudo</li>
         </ul>
@@ -206,7 +227,7 @@ const PLATFORMS = [
             element's textContent and writes it back after 2.6s, so any markup inside it would
             survive one copy and then be flattened into plain text. */}
         <p class="dl-next">
-          <a href="#after">Then: the two commands you run after this</a>
+          <a href="#after">Then: choose how you continue</a>
           <span aria-hidden="true">·</span>
           <a href="#what-happens">What the script does, step by step</a>
         </p>
@@ -310,15 +331,6 @@ const PLATFORMS = [
   .dl-hero__lede {
     margin: var(--stack-sm) 0 0;
     max-width: 40rem;
-    /* NO text-wrap: balance here, deliberately — .lede's inherited `pretty` is the right one,
-       and this was measured both ways at 375px rather than reasoned about:
-         balance  "One command. One"        183px / "file in ~/.local/bin."  189px
-         pretty   "One command. One file in" 239px / "~/.local/bin."          135px
-       balance wins on evenness and loses on sense: it strands "One" at the end of a line where
-       the eye tries to bind it to "command." above it, and splits "One file in" mid-phrase.
-       pretty breaks at the phrase instead and gives the path a line of its own, which is the
-       one thing on this page a reader is looking for. An uneven rag over two lines is a shape;
-       a dangling "One" is a stumble. */
   }
 
   /* The caveats. A size step, not a colour step: both this and the lede are --text-muted, so
@@ -331,33 +343,6 @@ const PLATFORMS = [
     line-height: var(--lh-base);
     color: var(--text-muted);
     text-wrap: pretty;
-  }
-
-  /* "SHA-256" is one token. A hyphen is its own soft-wrap opportunity in UAX #14, so Chrome
-     broke it as "SHA-" / "256" at 375px — a line break that changes what the word says, on a
-     page whose entire claim is that it tells you exactly what will run. Same class of bug as
-     the "--until" break already documented in CollisionStory, same fix. */
-  .dl-nb {
-    white-space: nowrap;
-  }
-
-  /*
-   * MONO INSIDE THE LEDE IS SET SMALLER THAN THE SANS AROUND IT.
-   *
-   * JetBrains Mono has a larger x-height and a much wider advance than Inter at the same
-   * nominal size, so `~/.local/bin` at 1em did not read as a path inside a sentence — it read
-   * as emphasis. At 375px it took most of a line on its own and the paragraph looked like it
-   * was shouting two words in the middle of a calm sentence.
-   *
-   * 0.9em is the optical match, and it is the same correction global.css already applies to
-   * inline <code> (`:not(pre) > code { font-size: 0.88em }`) — the .mono spans here simply
-   * were not getting it, because .mono sets a family and no size. The negative tracking takes
-   * back the small extra the smaller size gives to mono's already-loose default fit.
-   */
-  .dl-hero__lede .mono,
-  .dl-hero__sub .mono {
-    font-size: 0.9em;
-    letter-spacing: -0.005em;
   }
 
   /* ------------------------------------------------------------ the card -- */
@@ -408,6 +393,67 @@ const PLATFORMS = [
 
   .dl-card__body {
     padding: var(--pad-card-lg);
+  }
+
+  /* ------------------------------------------------------- guided setup -- */
+  .dl-ready {
+    padding-bottom: var(--s-6);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .dl-ready__step {
+    margin: 0 0 var(--s-2);
+    color: var(--accent-bright);
+    font-size: var(--t-xs);
+    line-height: var(--lh-xs);
+    font-weight: var(--weight-semibold);
+    letter-spacing: var(--track-eyebrow);
+    text-transform: uppercase;
+  }
+
+  .dl-ready__title {
+    margin: 0;
+    color: var(--text);
+    font-size: var(--t-xl);
+    line-height: var(--lh-xl);
+    letter-spacing: var(--track-head);
+    font-weight: var(--weight-head);
+    text-wrap: balance;
+  }
+
+  .dl-ready__body {
+    max-inline-size: 60ch;
+    margin: var(--s-3) 0 0;
+    color: var(--text-muted);
+    font-size: var(--t-base);
+    line-height: var(--lh-base);
+    text-wrap: pretty;
+  }
+
+  .dl-ready__body code {
+    white-space: nowrap;
+  }
+
+  .dl-ready__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s-2) var(--s-5);
+    margin-top: var(--s-4);
+    font-size: var(--t-sm);
+    line-height: var(--lh-sm);
+  }
+
+  .dl-ready__actions a {
+    display: inline-flex;
+    align-items: center;
+    min-block-size: 2.75rem;
+    color: var(--text);
+    font-weight: var(--weight-semibold);
+    text-underline-offset: 3px;
+  }
+
+  .dl-install-head {
+    margin: var(--s-6) 0 var(--s-4);
   }
 
   /* ----------------------------------------------------------- command --- */

@@ -42,18 +42,15 @@
  * this card's own code block, the header's GitHub icon and the footer's PROJECT column all
  * already pointed at it. Do not reintroduce the private claim without re-running that curl.
  *
- * install.sh is 156 lines (`wc -l`). Stated because "you can read it in a couple of minutes"
- * is a claim a reader can check — which is also why it has to be re-counted rather than
- * carried forward. It said 142 until this pass; the rename rewrote the script and it grew by
- * 14 lines. WhatHappens.astro states the same number and they must move together. The script
- * was still uncommitted in another lane when this was counted, so count it again before the
- * next deploy rather than trusting this line.
+ * Do not put a line count in visible copy. The installer grew while this page was being
+ * written, and a precise count turned into a false promise without changing the behavior a
+ * reader cares about. It remains short, commented POSIX sh and can be read before it runs.
  */
 
 import Card from "../ui/Card.astro";
 import CodeBlock from "../ui/CodeBlock.astro";
 import Badge from "../ui/Badge.astro";
-import { INSTALL_CMD_PINNED, INSTALL_CMD_DIR } from "../../lib/install.ts";
+import { INSTALL_CMD_DIR } from "../../lib/install.ts";
 
 interface Props {
   /** The same install command shown at the top of the page. */
@@ -65,7 +62,7 @@ const { cmd } = Astro.props;
 /* Derived from the one command, so a change at the top of the page cannot leave this
    variant behind pointing at a different host. */
 const readCmd = cmd.replace(/\|\s*sh$/, "| less");
-const pinCmd = INSTALL_CMD_PINNED;
+const pinCmd = cmd.replace(/\|\s*sh$/, "| CSWARM_VERSION=0.1.1 sh");
 const dirCmd = INSTALL_CMD_DIR;
 const sourceCmd = `git clone https://github.com/Ridge-io/cloud-swarm.git
 cd cloud-swarm
@@ -84,8 +81,8 @@ node dist/cli.js --version`;
     <div class="ow__grid reveal-stagger">
       <Card as="article" title="Read it first" headingLevel={3} class="ow__card">
         <p class="ow__p">
-          The installer is 156 lines of POSIX sh with comments explaining each decision.
-          Nothing in it is minified and nothing is fetched from a second host.
+          The installer is short, commented POSIX sh with each decision explained. Nothing in
+          it is minified and nothing is fetched from a second host.
         </p>
         <CodeBlock code={readCmd} label="read" prompt="$" wrap />
       </Card>

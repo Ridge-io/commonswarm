@@ -16,7 +16,7 @@
   >
     <div class="dashboard__loading" role="status">
       <span class="dashboard__spinner" aria-hidden="true"></span>
-      <span>Loading dashboard…</span>
+      <span>Opening your workspaces…</span>
     </div>
   </section>
 </div>
@@ -91,10 +91,15 @@
     return control;
   }
 
-  function linkButton(label: string, href: string): HTMLAnchorElement {
-    const control = element("a", "dashboard__button dashboard__button--primary");
+  function linkButton(
+    label: string,
+    href: string,
+    variant: "primary" | "secondary" | "quiet" = "primary",
+  ): HTMLAnchorElement {
+    const control = element("a", `dashboard__button dashboard__button--${variant}`);
     control.href = href;
-    control.append(document.createTextNode(label), icon("arrow"));
+    control.append(document.createTextNode(label));
+    if (variant === "primary") control.append(icon("arrow"));
     return control;
   }
 
@@ -104,7 +109,7 @@
     root.setAttribute("aria-busy", busy ? "true" : "false");
   }
 
-  function loading(label = "Loading dashboard…"): void {
+  function loading(label = "Opening your workspaces…"): void {
     const wrap = element("div", "dashboard__loading");
     wrap.setAttribute("role", "status");
     wrap.append(
@@ -122,13 +127,16 @@
     actions: HTMLElement[] = [],
   ): HTMLElement {
     const panel = element("div", "dashboard__state");
+    const brand = element("a", "dashboard__brand", "CommonSwarm");
+    brand.href = "/";
+    brand.setAttribute("aria-label", "CommonSwarm home");
     const copy = element("div", "dashboard__state-copy");
     copy.append(
       element("p", "dashboard__eyebrow", eyebrow),
       element("h1", "dashboard__state-title", title),
       element("p", "dashboard__state-body", body),
     );
-    panel.append(copy);
+    panel.append(brand, copy);
     if (actions.length > 0) {
       const controls = element("div", "dashboard__state-actions");
       controls.append(...actions);
@@ -138,23 +146,29 @@
   }
 
   function readableError(error: unknown): string {
-    if (error instanceof Error && error.message.trim()) return error.message;
-    return "CommonSwarm could not load this view.";
+    if (
+      error instanceof Error &&
+      /network|fetch|offline|connection/i.test(error.message)
+    ) {
+      return "Check your internet connection, then try again.";
+    }
+    return "CommonSwarm could not complete that request. Try again in a moment.";
   }
 
   function renderNoDeployment(): void {
     replaceRoot(
       statePanel(
-        "No backend configured",
-        "This build is not connected to CommonSwarm.",
-        "Add a CommonSwarm deployment URL and public anonymous key to this build, then reload the page.",
+        "Dashboard unavailable",
+        "This page is not connected yet.",
+        "The dashboard was published without the settings it needs. Nothing you did caused this. Return to the CommonSwarm home page and try again later.",
+        [linkButton("Back to CommonSwarm", "/")],
       ),
     );
   }
 
   function renderSignedOut(): void {
     const signIn = button("Sign in with GitHub", "primary", "github");
-    const wrap = element("div", "dashboard__signin");
+    const emailSignIn = linkButton("Use email instead", "/start", "secondary");
     const status = element("p", "dashboard__signin-error");
     status.setAttribute("role", "alert");
     status.hidden = true;
@@ -177,8 +191,14 @@
       }
     });
 
-    wrap.append(signIn, status);
-    replaceRoot(wrap);
+    const panel = statePanel(
+      "Your shared workspace",
+      "See what everyone is working on.",
+      "Sign in to open the workspaces you belong to and read updates from people and AI agents. CommonSwarm only shows you workspaces where you are a member.",
+      [signIn, emailSignIn],
+    );
+    panel.append(status);
+    replaceRoot(panel);
   }
 
   function makeSignOutButton(): HTMLButtonElement {
@@ -197,10 +217,10 @@
   function renderNoWorkspaces(): void {
     replaceRoot(
       statePanel(
-        "No workspaces",
-        "There is no workspace to show yet.",
-        "You’re signed in, but this account is not a member of a CommonSwarm workspace. Workspace access and invite instructions are at /start.",
-        [linkButton("Go to /start", "/start"), makeSignOutButton()],
+        "You’re signed in",
+        "Create or join your first workspace.",
+        "Start a free workspace of your own, or use an invitation from someone else. The next page walks you through either path.",
+        [linkButton("Choose how to join", "/start"), makeSignOutButton()],
       ),
     );
   }
@@ -214,9 +234,9 @@
     retryButton.addEventListener("click", retry);
     replaceRoot(
       statePanel(
-        "Could not load",
-        "The dashboard did not receive a response.",
-        readableError(error),
+        "Could not open your workspaces",
+        "The dashboard needs another try.",
+        `${readableError(error)} Nothing was changed.`,
         [retryButton, makeSignOutButton()],
       ),
     );
@@ -262,12 +282,16 @@
 
   function signalBadge(kind: string): HTMLElement {
     const normalized = kind.toLowerCase();
-    const known =
-      normalized === "working-on" || normalized === "note" || normalized === "ask";
+    const labels: Record<string, string> = {
+      "working-on": "Working on",
+      note: "Note",
+      ask: "Question",
+    };
+    const label = labels[normalized];
     const badge = element(
       "span",
-      `dashboard__kind dashboard__kind--${known ? normalized : "unknown"}`,
-      known ? normalized : kind || "unknown",
+      `dashboard__kind dashboard__kind--${label ? normalized : "unknown"}`,
+      label ?? (kind || "Update"),
     );
     return badge;
   }
@@ -290,7 +314,8 @@
       "dashboard__author",
       signal.from.trim() || "Unknown author",
     );
-    const authorKind = signal.fromKind.toLowerCase() === "agent" ? "agent" : "person";
+    const authorKind =
+      signal.fromKind.toLowerCase() === "agent" ? "AI agent" : "Person";
     authorGroup.append(
       author,
       element("span", "dashboard__author-kind", authorKind),
@@ -394,14 +419,14 @@
 
     const feedHeader = element("div", "dashboard__feed-header");
     const feedTitleGroup = element("div");
-    const feedTitle = element("h2", "dashboard__feed-title", "Signal feed");
+    const feedTitle = element("h2", "dashboard__feed-title", "What everyone is working on");
     feedTitle.id = "signal-feed-title";
     feedTitleGroup.append(
       feedTitle,
       element(
         "p",
         "dashboard__feed-subtitle",
-        "Announcements from people and agents, newest first.",
+        "Updates from people and AI agents, newest first.",
       ),
     );
     feedHeader.append(feedTitleGroup);
@@ -410,7 +435,7 @@
       const count = element(
         "span",
         "dashboard__count",
-        `${signals.length} ${signals.length === 1 ? "signal" : "signals"}`,
+        `${signals.length} ${signals.length === 1 ? "update" : "updates"}`,
       );
       feedHeader.append(count);
     }
@@ -419,8 +444,12 @@
     if (error) {
       const errorPanel = element("div", "dashboard__feed-state");
       errorPanel.append(
-        element("h3", "dashboard__feed-state-title", "The signal feed could not load."),
-        element("p", "dashboard__feed-state-body", readableError(error)),
+        element("h3", "dashboard__feed-state-title", "The latest updates could not load."),
+        element(
+          "p",
+          "dashboard__feed-state-body",
+          `${readableError(error)} Your workspace is still here.`,
+        ),
       );
       const retry = button("Try again", "primary", "refresh");
       retry.addEventListener("click", () => void openWorkspace(selected.id));
@@ -434,19 +463,22 @@
       spinner.setAttribute("aria-hidden", "true");
       loadingPanel.append(
         spinner,
-        element("p", "dashboard__feed-state-body", "Reading the latest signals…"),
+        element("p", "dashboard__feed-state-body", "Loading the latest updates…"),
       );
       feedPanel.append(loadingPanel);
     } else if (signals.length === 0) {
       const empty = element("div", "dashboard__feed-state dashboard__feed-state--empty");
+      const emptyActions = element("div", "dashboard__state-actions");
+      emptyActions.append(linkButton("Set up CommonSwarm", "/download", "secondary"));
       empty.append(
         element("span", "dashboard__empty-mark", "0"),
-        element("h3", "dashboard__feed-state-title", "No signals yet."),
+        element("h3", "dashboard__feed-state-title", "No updates yet."),
         element(
           "p",
           "dashboard__feed-state-body",
-          "This workspace’s feed is empty. Announcements will appear here after someone posts one.",
+          "You can post the first one. Use the guided setup, sign in from your terminal, then run cswarm working-on \"what I’m doing\". Come back here and press Refresh.",
         ),
+        emptyActions,
       );
       feedPanel.append(empty);
     } else {
@@ -560,8 +592,7 @@
     min-block-size: 100svh;
   }
 
-  .dashboard__loading,
-  .dashboard__signin {
+  .dashboard__loading {
     place-self: center;
   }
 
@@ -596,15 +627,9 @@
     }
   }
 
-  .dashboard__signin {
-    display: grid;
-    justify-items: center;
-    gap: var(--s-4);
-  }
-
   .dashboard__signin-error {
     max-inline-size: 32rem;
-    margin: 0;
+    margin: calc(-1 * var(--s-4)) 0 0;
     color: var(--danger);
     font-size: var(--t-sm);
     line-height: var(--lh-sm);

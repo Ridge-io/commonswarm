@@ -1,14 +1,14 @@
 ---
 /*
  * WhatHappens — the honest walkthrough. Trust is the product on this page, so every claim
- * below is read straight out of install.sh (repo root; 156 lines of POSIX sh) and is stated
+ * below is read straight out of install.sh (repo root; commented POSIX sh) and is stated
  * in the order the script actually does it. Line references are to that file:
  *
  * RE-READ AGAINST install.sh BEFORE THE NEXT DEPLOY. The script was rewritten for the
  * CommonSwarm rename in a different lane while this page was being edited, and it was still
  * uncommitted when these numbers were taken. Every reference below was re-checked against it
  * at that moment — the step boundaries survived the rewrite unchanged — but the file grew
- * from 142 lines to 156, which is exactly the kind of number that goes stale silently.
+ * more than once, which is exactly why a line count would go stale silently.
  *
  *   1. node check BEFORE any download, with the searched PATH printed  -> `command -v node` +
  *      the die() message that prints "$PATH" and names version managers (l.26-40)
@@ -23,17 +23,13 @@
  *   8. reads --version back OUT OF the installed file                  -> l.115-121
  *   9. PATH advice printed, per $SHELL. It prints the line; it does
  *      not edit any file.                                             -> l.126-136
- *  10. ends by pointing at `cswarm accept --link-stdin`                -> l.151
+ *  10. ends with next steps for invited people, browser signup,
+ *      terminal signup, and local help
  *
- * ABOUT THAT LAST ONE — THE OLD WARNING HERE IS NOW DEAD, KEPT SO IT IS NOT RE-DERIVED.
- * This note used to read: the script ends on `coswarm accept <invite-link>`, the POSITIONAL
- * form, which our own --help annotates "# unsafe: shell history/process list"; the note
- * recorded what the script printed rather than what we wished it printed, and told the reader
- * to fix the script first. THE SCRIPT IS FIXED. l.151-153 now print `cswarm accept
- * --link-stdin` followed by "Paste the link when prompted -- passing it as an argument would
- * leave a live capability in your shell history." The positional form is gone from the
- * installer entirely. So the script, this page and AfterInstall.astro finally agree, and
- * AfterInstall's matching "still unfixed upstream" note went with it.
+ * The invite path uses `cswarm accept --link-stdin`, so the capability does not enter shell
+ * history. The other paths match AfterInstall.astro: open /start in a browser, or run
+ * `cswarm login` followed by `cswarm new "<project name>"`. The installer also points at
+ * `cswarm --help`, which works without an account or network.
  *
  * The name and the identifiers below were checked against the rewritten script, not assumed:
  * it installs `cswarm` (l.65, l.109), verifies `cswarm.sha256` (l.68, l.74), and reads
@@ -75,7 +71,7 @@ const steps = [
   },
   {
     t: "It reads the version back off disk, then gets out of the way",
-    d: "Not the version it meant to install — the one the installed file reports. If ~/.local/bin isn’t on your PATH it prints the exact line to add for your shell, and leaves you to add it: the script never edits a profile file. Then it prints the one command to run next.",
+    d: "Not the version it meant to install — the one the installed file reports. If ~/.local/bin isn’t on your PATH it prints the exact line to add for your shell, and leaves you to add it: the script never edits a profile file. Then it gives you the right next step whether you have an invite, want to sign up in a browser, prefer to stay in the terminal, or just need help.",
   },
 ];
 
