@@ -1145,3 +1145,34 @@ only when the reviewer's family is *verified, not assumed*, and verdicts state i
 verification is one command, and I skipped it twice. The "retroactive remediation" review panel
 was dispatched under the false premise; its results remain useful as an extra independent voice
 on merged infrastructure, but nothing was actually broken that it needed to remediate.
+
+---
+
+## D-031 — the p1-server suite is not idempotent against its own database
+
+**Found by:** Cinder, via the D-025 parent×2/branch×2 control · **Severity:** P1 — it corrupts
+the shared instrument
+
+**The measurement:** `SELECT count(*) FROM swarm.workspaces WHERE created_at > now() - interval
+'1 day'` returned **1,540** on the local stack. Three self-serve tests assert free-tier
+rolling-window caps, and the window had accumulated every suite run of the day — so they fail as
+a function of **how much the suite has been run**, not of what the code does. Nothing clears the
+window between runs.
+
+This single fact explains the whole afternoon of "turbulence": 33/33 early, then 32/33, 31/33,
+30/33, 29/33 as the day wore on — a monotonic counter nobody clears, wearing the costume of
+flakiness. It also exonerated D-025 twice over: zero cold-start trace lines in all four control
+runs (the widened budget never engaged), T-03 passed all four (its earlier 33.6s belonged to the
+contaminated window-collision period), the same three tests fail on parent and branch alike, and
+the worst run of the four was the one **without** the change.
+
+**Standing caveat this entry places on the register itself:** every whole-suite p1-server count
+reported today is conditional on the database state at the time it was taken. A clean checkout
+can go red because someone ran the suite four times an hour ago; a defective change can go green
+because the stack was freshly reset. Treat historical suite numbers accordingly.
+
+**Prescription (chartered to Cinder, ahead of the extension, the local-integration split, and
+remove_member):** make the cap assertions hermetic — fresh identity per run where the cap is
+per-identity, window reset in the fixture where it is not, and the fix must state which caps are
+per-identity and which are global **as measured**, since that distinction decides the design.
+With the usual observer + mutation discipline.
