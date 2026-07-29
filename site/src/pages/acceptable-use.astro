@@ -24,8 +24,8 @@
  * THE NUMBERS ARE READ OUT OF THE CODE, NOT ASSUMED:
  *   3 live workspaces per verified identity -> FREE_TIER_WORKSPACE_LIMIT,
  *                                              supabase/functions/command/index.ts:330
- *                                              (counted on created_by, archived_at IS NULL,
- *                                              so archiving genuinely frees a slot — :2245)
+ *                                              (the query excludes archived_at rows, but
+ *                                              no product command archives a workspace)
  *   120 signals / credential / hour         -> SIGNAL_CREDENTIAL_LIMIT, :297
  *   1000 signals / workspace / hour         -> SIGNAL_WORKSPACE_LIMIT, :298
  *   hourly window, not rolling              -> incrementSignalBucket, :2342 uses
@@ -43,7 +43,7 @@ import Base from "../layouts/Base.astro";
 import LegalDoc, { type Section } from "../components/legal/LegalDoc.astro";
 
 const EFFECTIVE = "27 July 2026";
-const UPDATED = "27 July 2026";
+const UPDATED = "29 July 2026";
 
 const sections: Section[] = [
   {
@@ -130,7 +130,7 @@ const sections: Section[] = [
       "The service is free, and the caps below exist so that one person cannot create unlimited tenants and unlimited load at our expense. As at the date of this policy:",
       {
         ul: [
-          "**3 live workspaces per verified identity.** Archiving a workspace frees its slot.",
+          "**Three live workspaces per verified identity, free, no card.** If you need a fourth, write to us at legal@commonswarm.com.",
           "**120 signals per hour per credential**, counted in fixed hourly windows.",
           "**1,000 signals per hour per workspace**, counted the same way.",
           "**2,000 characters** of signal body, **500 characters** of reference, and a signal lifetime of at most **30 days**.",
