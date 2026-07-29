@@ -589,3 +589,51 @@ advisor missed instance 1 while believing it had verified it, and approved insta
 the strength of its description. The reviewer caught all four because it was standing somewhere
 neither of them was — which is the argument for §2, not against anyone.
 
+---
+
+## D-019 — No test file in this repo is ever typechecked · OPEN
+
+**Found:** 2026-07-29 by Cinder, while implementing D-011's round-three fix. It declined to
+count a `Record<RefusalCode, Cause>` exhaustiveness check as the mechanism, on the grounds that
+nothing evaluates it — and was right.
+
+`tsconfig.json` is `include: ["src/**/*.ts"]`, and every test script runs through `tsx`, which
+strips types without checking them. Measured by the advisor, not inferred — appending
+`const _x: number = "definitely not a number"` to a test file:
+
+```
+npx tsc --noEmit     exit 0   did not notice
+npm run build        exit 0   did not notice
+npm run test:p1-cli  exit 0   did not notice
+```
+
+**So every type-level guarantee written in `tests/` is decoration** — including one added
+deliberately as the mechanism that would catch a new production reason. That is D-017's shape
+again: a guarantee no gate evaluates, described as the thing that makes the change safe.
+Cinder documented it as inert *inside the test* rather than claiming it worked, which is the
+correct handling and the reason this is a finding rather than an incident.
+
+**Sizing it — and my first two measurements of this were both wrong:**
+
+- A throwaway config in `/tmp` reported **0 errors**. Wrong: absolute include paths resolved
+  differently.
+- A `tsconfig.tests.json` extending the base reported **17**. Also wrong: all 17 were `TS6059`,
+  the inherited `rootDir: src` rejecting every test file before typechecking a line.
+- With `rootDir` overridden: `grep -c "error TS"` reported **0**. Wrong again — ANSI colour
+  codes split the pattern. Stripping them: **7 real errors in 3 files.**
+
+Three bad measurements in five minutes, in the entry about things that measure nothing. Two of
+the three read as *good news* (0 errors), which is the direction that does not prompt a
+recheck.
+
+```
+tests/p1-cli/command-client.test.ts:109         TS2352
+tests/p1-cli/renewal-refusal-cause.test.ts:216,218,222,222   TS2339
+tests/p1-cli/workspaces.test.ts:101,409         TS2322, TS2790
+```
+
+**Not landed, deliberately.** The gate is ~10 lines, but 4 of the 7 errors are in a file that is
+currently mid-review on two branches. Landing a gate that reddens someone else's in-flight work
+is how a good change becomes a bad afternoon. It goes in once the review queue drains, with the
+7 fixed in the branches that own those files.
+
