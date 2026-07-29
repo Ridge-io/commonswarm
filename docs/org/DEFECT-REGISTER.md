@@ -630,6 +630,17 @@ The `== 1` matters as much as the match: it also catches an anchor appearing twi
 silently edited in both places, or a declaration edited instead of the use site — exactly the
 global-`sed` trap the advisor hit on `LOCALLY_EXPIRED_MESSAGE`.
 
+★ **A SIXTH FAILURE, AND A NEW SHAPE: COMPARING INCOMMENSURABLE DIFFS.** Merging L1, the advisor
+compared `git diff <sha>^ <sha>` (the LAST commit's diff) against `git diff <base> <branch>` (the
+WHOLE branch's diff) and read the mismatched patch-ids as evidence that a rebase had altered
+reviewed content. It had not — the branch simply had three commits. 31 lines versus 842.
+
+The scare was harmless because the merge was halted and re-measured, but the lesson is that
+**patch-id is only meaningful between two diffs of the same span.** On a multi-commit branch, compare
+`base..head` on both sides, or ask the question directly: `git diff <reviewed-sha> <merged-head>`
+empty, and `git merge-base --is-ancestor <reviewed-sha> main`. Both of those are unambiguous where
+the patch-id comparison was not.
+
 **Its honest limit, stated by its author:** it guarantees the TEXT changed, not that the change was
 semantically the mutation intended. It would not catch editing the right line to something
 harmless. `sed` line addresses and regexes remain strictly worse, because they fail **silently**
