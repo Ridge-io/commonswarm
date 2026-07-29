@@ -368,6 +368,7 @@ import SampleNotice from "./SampleNotice.astro";
     let sampleMode = false;
     let signalOffset = 0;
     let signalHasMore = false;
+    let signalCutoff = "";
 
     const SIGNAL_PAGE_SIZE = 50;
 
@@ -594,6 +595,7 @@ import SampleNotice from "./SampleNotice.astro";
     const signalPage = async (
       workspaceId: string,
       offset: number,
+      cutoff: string,
     ): Promise<{ rows: Signal[]; hasMore: boolean }> => {
       const api = client();
       if (!api) throw new NoDeployment();
@@ -602,7 +604,7 @@ import SampleNotice from "./SampleNotice.astro";
         .from("signals")
         .select("id,from,from_kind,kind,body,about,until,created_at")
         .eq("workspace_id", workspaceId)
-        .gt("until", new Date().toISOString())
+        .gt("until", cutoff)
         .order("created_at", { ascending: false })
         .order("id", { ascending: false })
         .range(offset, offset + SIGNAL_PAGE_SIZE);
@@ -767,7 +769,8 @@ import SampleNotice from "./SampleNotice.astro";
         author.textContent = authorName;
         const badge = document.createElement("span");
         badge.className = `dashboard__message-kind dashboard__message-kind--${signal.kind}`;
-        badge.textContent = kindLabel(signal.kind);
+        const expired = signal.until !== null && new Date(signal.until).getTime() <= Date.now();
+        badge.textContent = expired ? `${kindLabel(signal.kind)} · expired` : kindLabel(signal.kind);
         const time = document.createElement("time");
         const formatted = formatTime(signal.createdAt);
         time.dateTime = signal.createdAt;
@@ -795,7 +798,8 @@ import SampleNotice from "./SampleNotice.astro";
       version: number,
     ): Promise<void> => {
       const offset = reset ? 0 : signalOffset;
-      const page = await signalPage(workspaceId, offset);
+      if (reset) signalCutoff = new Date().toISOString();
+      const page = await signalPage(workspaceId, offset, signalCutoff);
       if (version !== requestVersion || workspaceId !== activeWorkspaceId) return;
       if (reset) {
         signals = page.rows;
@@ -851,6 +855,7 @@ import SampleNotice from "./SampleNotice.astro";
       signals = [];
       signalOffset = 0;
       signalHasMore = false;
+      signalCutoff = "";
       if (keepShell) renderChannel(selected, true);
       else setLoading(`Opening ${selected.name}…`);
       try {
@@ -953,6 +958,7 @@ import SampleNotice from "./SampleNotice.astro";
       sampleMode = true;
       signalHasMore = false;
       signalOffset = 0;
+      signalCutoff = "";
       const now = Date.now();
       workspaces = [
         { id: "sample-design-studio", name: "Design studio" },
