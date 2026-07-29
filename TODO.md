@@ -292,7 +292,7 @@ closed, and leaving them listed would have made the table lie about the state of
 | 5 | Supabase hosting region | Fact from dashboard | ✅ **DONE** — East US (North Virginia) | the privacy policy |
 | 6 | `SWARM_SELF_SERVE=1` | Deferred on purpose | ✅ **DONE** — set on the production project 2026-07-28, after all 10 migrations were pushed and the three edge functions redeployed. The web app is now wired to the backend too (`PUBLIC_SUPABASE_URL` / anon key at build time) and GitHub OAuth answers 302 to github.com with a real client id | public signup |
 | 7 | Attorney review | External review | ⬜ **OPEN** | publishing the legal docs as in-force |
-| 8 | One re-login per dogfood machine | Human action | ⬜ **OPEN** | dogfood surviving the rename |
+| 8 | One re-login per dogfood machine | Human action | ✅ **DONE 2026-07-29** — mini logged in as GitHub `Ridgeio`, laptop as `tlangridge`, both live in project `CommonSwarm Build`. First real two-machine, two-identity dogfood run; see `docs/evidence/2026-07-29-first-real-dogfood.md` | dogfood surviving the rename |
 | 9 | `legal@commonswarm.com` delivers | Test to run | ⬜ **OPEN** — never confirmed | every document that names it |
 | 10 | USPTO check on "CommonSwarm" | Research | ⬜ **OPEN** — prompt written for an agent | launching under a name nobody has cleared |
 | 11 | **Custom SMTP for magic-link sign-in** | External account + DNS | ◐ **IN FLIGHT** — no new account needed: `commonswarm.com` added to the EXISTING Resend account beside `ridgehq.com` and `prompteden.com` (domain id `6dd49fe3-fe28-46ce-8fd9-49cde8d15195`, us-east-1). Blocked on three DNS records at Namecheap, delegated to Anvil | email sign-in working for more than 2 people an hour |
