@@ -16,9 +16,12 @@ const SHELL_ROUTES = [
   ["acceptable use", "acceptable-use/index.html"],
 ];
 
-const RETIRED =
+const RETIRED_HEADER =
   "Signup is not switched on for everyone yet, so the flow is a preview.";
-const CURRENT = "Free — three workspaces, no card. Signup is open.";
+const RETIRED_FOOTER =
+  "Early access. Access is by invitation while we run CommonSwarm on our own work. Self-serve signup is built but is not open on this deployment yet.";
+const CURRENT_HEADER = "Free — three workspaces, no card. Signup is open.";
+const CURRENT_FOOTER = "Signup is open. Free — three workspaces, no card.";
 
 function decodeEntities(value) {
   return value
@@ -46,17 +49,23 @@ function renderedText(relativePath) {
     .trim();
 }
 
-test("D-023: rendered shell says signup is open and never publishes the retired preview claim", () => {
+test("D-023: rendered shell says signup is open and never publishes retired access claims", () => {
   for (const [route, output] of SHELL_ROUTES) {
     const text = renderedText(output);
     assert.ok(
-      text.includes(CURRENT),
-      `${route}: positive control missing from rendered text: ${JSON.stringify(CURRENT)}`
+      text.includes(CURRENT_HEADER),
+      `${route}: header positive control missing: ${JSON.stringify(CURRENT_HEADER)}`
     );
-    assert.equal(
-      text.includes(RETIRED),
-      false,
-      `${route}: retired signup-unavailable claim remains in rendered text`
+    assert.ok(
+      text.includes(CURRENT_FOOTER),
+      `${route}: footer positive control missing: ${JSON.stringify(CURRENT_FOOTER)}`
     );
+    for (const retired of [RETIRED_HEADER, RETIRED_FOOTER]) {
+      assert.equal(
+        text.includes(retired),
+        false,
+        `${route}: retired signup-unavailable claim remains: ${JSON.stringify(retired)}`
+      );
+    }
   }
 });

@@ -33,17 +33,16 @@
  * with "/" so it still resolves from a route that is not "/". The rest are real routes.
  *
  * ---------------------------------------------------------------------------------------
- * THE STATUS LINE WAS FALSE-IN-WAITING AND HAS BEEN REPLACED
+ * THE STATUS LINE MUST FOLLOW THE DEPLOYED SIGN-UP GATE
  * ---------------------------------------------------------------------------------------
- * SUPERSEDED, KEPT SO NOBODY RE-DERIVES IT — this line rendered on every page:
+ * D-023 RETIRED two successive status lines which said there was no public sign-up. Their
+ * exact wording is deliberately not preserved here: even though frontmatter is stripped,
+ * quoting a false launch state as if it were current made the next edit easier to get wrong.
  *
- *     "Pre-launch. Access is by invitation while we run coswarm on our own work — there
- *      is nothing to sign up for yet."   (quoted verbatim; the product is CommonSwarm now)
- *
- * The last clause is DEAD. Self-serve workspace creation exists on the server: the
+ * Self-serve workspace creation exists on the server: the
  * `create_workspace` command is handled by createSelfServeWorkspace() in
  * supabase/functions/command/index.ts, dispatched ahead of route resolution because a new
- * caller has no membership yet. There IS something to sign up for; it is gated, not absent.
+ * caller has no membership yet. Production now sets `SWARM_SELF_SERVE=1`; sign-up is open.
  *
  * WHAT THE LINE SAYS NOW, AND WHERE EACH PART WAS CHECKED IN THAT FILE:
  *   three workspaces ........ FREE_TIER_WORKSPACE_LIMIT = 3 (:330), compared against a
@@ -59,10 +58,9 @@
  *                             SAME grep for "workspace" over the SAME paths returns 1002 —
  *                             so the zero is a measurement and not a broken instrument.
  *
- * IT DOES NOT SAY SIGN-UP IS OPEN, because it is not: the handler's first gate is
- * `SWARM_SELF_SERVE === "1"` (:323, :2182) and that variable is not set in production, so a
- * real attempt today gets 403. Every sentence here is chosen to be true both today and on
- * the day that flag flips — a footer that has to be rewritten on launch day gets forgotten.
+ * The handler's first gate remains `SWARM_SELF_SERVE === "1"` (:323, :2182), so this status
+ * is deployment truth rather than a timeless product property. If the gate changes, update
+ * the shared header, this footer, and the rendered shell observer together.
  *
  * THE LEGAL COLUMN LINKS PAGES THAT DO NOT EXIST IN THIS BRANCH. /terms and /privacy are
  * built on `legal/terms-and-policies` and merge later; until that merge both links 404. They
@@ -230,8 +228,7 @@ const year = new Date().getFullYear();
       <p class="ft__status">
         <span class="ft__pip" aria-hidden="true"></span>
         <span>
-          <strong>Early access.</strong> Access is by invitation while we run CommonSwarm on
-          our own work. Self-serve signup is built but is not open on this deployment yet.
+          <strong>Signup is open.</strong> Free — three workspaces, no card.
         </span>
       </p>
       <p class="ft__legal">
