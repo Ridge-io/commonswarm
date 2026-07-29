@@ -415,3 +415,53 @@ over-enforced. Those are opposite fixes — one adds a reducer refusal, the othe
 capability refusal — and the answer is a product decision, not an engineering one. Nobody
 should write code against either until it is made.
 
+---
+
+## D-017 — A measurement-shaped thing that measured nothing · FIXED
+
+**Found:** 2026-07-29 by Mica, reviewing D-011. The sharpest instance of this register's
+recurring pattern, because it was inside the guard built against that pattern.
+
+D-011's class test was sold — by its author, in a commit message, and accepted by both the
+advisor and the reviewer — as proving *"the client never reports a cause it did not measure"*.
+
+Mica appended one sentence to the unexplained-refusal message:
+
+> This credential was revoked by an administrator.
+
+`tsc` clean. **12 of 12 tests passed**, including the test named *"names neither cause"* and the
+class test with its empty deviation list. A flat lie about revocation passed a suite whose
+entire purpose was to prevent that lie. Reproduced independently by the advisor: same 12/12.
+
+**Why it could not work.** `assertedCauses()` read English prose with two regexes and called
+the result "the causes this message asserts". That is a guess about natural language wearing
+the costume of an invariant. Prose can assert a cause in words a regex does not contain, and
+no regex over English decides the question.
+
+**The author's own account, quoted because it is the lesson:** *"I flagged the regexes as my
+weakest joint twice and still shipped them as the load-bearing check; flagging a risk is not
+the same as not taking it."*
+
+**Fix, all three parts, verified by the advisor at `5857dce`:**
+
+- **Structural.** The invariant now reads `RenewalRevoked.code` — a closed set the client itself
+  chooses — mapped to the cause each code stands for. An *unrecognised* code is a violation
+  rather than a silent pass, which was the deeper version of the same hole.
+- **Prose pinned by exact equality** against literal copies, deliberately **not** the imported
+  constants: comparing a constant to itself passes whatever it says.
+- **The regex classifier is deleted, not narrowed.** No claim beats a false claim.
+
+**Both halves proven to catch different failures** — neither would catch the other's, which is
+why both stay:
+
+```
+prose lie (the mutation that passed 12/12)   -> 15 tests, 14 pass, 1 fail  (prose pin)
+wrong code, prose untouched, tsc clean       -> 15 tests, 14 pass, 1 fail  (class test)
+restored                                     -> 15/15, clean tree
+```
+
+**Generalises D-013.** A green test is a stronger claim than a log line, and this one was cited
+in a commit message as the reason to trust the change. The rule is not "distrust tests" — it is
+that an invariant must be checked against **structure the code commits to**, never against
+prose a human wrote and a pattern happened to match.
+
