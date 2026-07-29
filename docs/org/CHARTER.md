@@ -265,6 +265,39 @@ on the same channel, or the recipient is right to refuse.**
 ## 6. LAUNCHABLE — the bar   *(§6 — this section. The label is here so grepping for it finds it.)*
 
 Not "the tests pass." A stranger, on their own machine, can:
+
+1. **◐ UNBLOCKED; cold-stranger outcome not measured — install `cswarm` and authenticate
+   without being walked through it.** The public installer at
+   `https://commonswarm.com/install.sh` installs the checksummed `v0.1.1` release from
+   public `Ridge-io/cloud-swarm`. The first two-machine dogfood run installed from that URL
+   and completed GitHub OAuth; see `docs/evidence/2026-07-29-first-real-dogfood.md`. Both
+   participants were operators, so that run did not establish “without being walked
+   through it” for a cold stranger.
+2. **◐ LIVE; cold-browser outcome not measured — create their own workspace.**
+   `SWARM_SELF_SERVE=1` has been set in production since 2026-07-28. Signup is free,
+   permits three live workspaces per verified identity, and requires no card. The dogfood
+   run exercised `cswarm new` in production, but explicitly did not exercise a cold
+   browser signup.
+3. **⬜ OPEN — invite a collaborator who accepts without a terminal ritual.** The installer
+   no longer blocks this item, and `cswarm accept --link-stdin` is proven on a second
+   machine. That is still a terminal path. The separate capability-URL zero-install on-ramp
+   is not established as publicly enabled, so the launch-bar outcome remains open for this
+   narrower reason.
+4. **✅ DONE — post and read signals from both machines.** The 2026-07-29 dogfood run used
+   two machines, two GitHub identities, and an agent credential in one production
+   workspace; both machines observed member and agent signals.
+5. **◐ UNBLOCKED; comprehension not re-measured — understand what they are looking at
+   without reading source.** The repository is public, `commonswarm.com` is live, and the
+   deployed `/start`, `/app`, and `/download` surfaces provide a public explanation and
+   on-ramp. Those facts kill the private-repository blocker; they do not substitute for a
+   cold-reader comprehension test.
+
+<details>
+<summary>★ SUPERSEDED launch-bar snapshot — DEAD as current status</summary>
+
+The original list is retained because its measurements explain why the launch bar is about
+a stranger, not an already-equipped operator. Every present-tense blocker below is dead.
+
 1. Install `cswarm` and authenticate without being walked through it **— blocked today: THERE IS
    NO INSTALLER.** Distribution was ruled on 2026-07-25 (operator: signed installer, source stays
    private, npm unpublished, `54795ec`) and the guard is measured — **but a ruling is not a
@@ -295,6 +328,21 @@ Not "the tests pass." A stranger, on their own machine, can:
    everyone WITH access and does not move this item.** ★ It is blocked by the operator's
    distribution ruling, which is deliberate and correct; **the unblock is the installer plus a
    public surface to read, not more copy.**
+
+</details>
+
+The gate remains **stranger**, not “invited reader.” Current evidence proves item 4 end to
+end and proves the delivery mechanics behind items 1–2; it does not establish the cold
+outcomes in items 1, 2, or 5. Item 3 remains open for a genuinely zero-install,
+no-terminal invite-acceptance path. Do not turn unmeasured outcomes into “done,” and do not
+reopen dead blockers as if the installer, self-serve gate, or public surface were still
+missing.
+
+<details>
+<summary>★ SUPERSEDED 2026-07-25 launch-bar commentary — DEAD as current status</summary>
+
+The reasoning about keeping the audience at “stranger” remains historical context. Its
+0-of-5 score, private-repository measurements, and missing-installer dependencies are dead.
 
 **Every item is a lane. Item 5 is marketing's, and it is the one most likely to be treated as
 optional.**
@@ -335,3 +383,5 @@ MOVE A §6 CRITERION, because items 1-4 all require an installer that nobody bui
 requires a stranger who can see the repo.** ★ **A seat reading "moved the bar zero" alone would
 conclude the day was wasted. It was not, and this bar does not claim it was** — the bar measures
 one thing, and a fleet can do ten hours of correct work that is orthogonal to it.
+
+</details>

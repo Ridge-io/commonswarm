@@ -10,7 +10,7 @@ on 2026-07-27.
 
 ---
 
-## 1. Name and domain are DECIDED — three operator actions still block them
+## 1. Name and domain are live — one launch check remains open
 
 ★ SUPERSEDED, kept so nobody re-derives it: this item used to read *"Domain not chosen"*
 and floated `coswarm.dev` / `coswarm.ai` / `coswarm.app`, with a warning that
@@ -43,19 +43,23 @@ warning in mind only as history — nothing should point at it either way.
    with 17 content markers and a control string at 0; apex cert `CN=commonswarm.com` valid
    to 26 Oct 2026; `https://coswarm-site.vercel.app` still 200, so nothing broke.
    `site/astro.config.mjs` now sets `site: "https://commonswarm.com"` — the deliberately
-   unresolvable `coswarm.invalid` placeholder is gone.
+   unresolvable `coswarm.invalid` placeholder is gone. DNS subsequently moved to Cloudflare;
+   its nameservers are now `chelsea.ns.cloudflare.com` and `ezra.ns.cloudflare.com`.
 
    Still open here: the Vercel **project** is still named `coswarm-site`. Renaming it moves
    the deployment URL and is an operator action; the custom domain makes it cosmetic.
-2. **The mailboxes do not exist.** `legal@commonswarm.com` and `security@commonswarm.com`
-   must actually **receive mail** before the legal documents publish. A terms page naming an
-   address that bounces is worse than a placeholder: it is a stated channel that silently
-   discards notice, including security reports and legal service.
+2. ~~**The mailboxes do not exist.**~~ ★ **DONE, 2026-07-29.** The superseded sentence is
+   **dead**: `legal@commonswarm.com` and `security@commonswarm.com` were verified end to end.
+   Root MX and SPF now use Cloudflare Email Routing.
 3. **No USPTO check has been done on "CommonSwarm."** The rename happened because the old
    name collided with a competitor; nobody has searched TESS or checked common-law use for
    the new one. Do this **before** any public announcement or domain launch, not after.
 
-**Fills that unblock once (2) lands:**
+<details>
+<summary>★ SUPERSEDED pre-merge fill snapshot — DEAD as current status</summary>
+
+The following table and branch measurements are retained as the state before the legal
+surface and canonical URL landed. They are not current instructions.
 
 | Blocked thing | Where | Fill with |
 |---|---|---|
@@ -72,13 +76,29 @@ in force"** band. The legal branch is **not merged** — verified:
 `git branch --merged main` does not list `legal/terms-and-policies`, and it holds 4
 commits not on `main`. Nothing above is live today.
 
-Interim hosting stays the Vercel alias `https://coswarm-site.vercel.app`. The Vercel
-project keeps its `coswarm-site` name; renaming it is a separate operator action that would
-move the URL, so it is deliberately untouched by the rename.
+</details>
+
+~~Interim hosting stays the Vercel alias `https://coswarm-site.vercel.app`.~~ ★
+**SUPERSEDED — DEAD as the canonical-host instruction.** `https://commonswarm.com` is the
+live public URL on Cloudflare. The Vercel alias still returns 200 and the Vercel project
+keeps its `coswarm-site` name; renaming that underlying project remains a separate operator
+action.
 
 ---
 
-## 2. Release repository decision — blocks distribution
+## 2. Release repository and installer — **RESOLVED 2026-07-29**
+
+Published releases live on the public `Ridge-io/cloud-swarm` repository. Release `v0.1.1`
+carries both `cswarm` and `cswarm.sha256`, and the installer published at
+`https://commonswarm.com/install.sh` defaults to that repository. A fresh install reports
+`cswarm 0.1.1`.
+
+Measured again 2026-07-29: the repository is `PUBLIC`; the release has both assets;
+`/install.sh` returns 200 while `/nope.sh` returns 404; and the served script sets
+`REPO="${CSWARM_REPO:-Ridge-io/cloud-swarm}"`.
+
+<details>
+<summary>★ SUPERSEDED release-decision snapshot — DEAD as current instruction</summary>
 
 **Decision needed:** where published releases live.
 
@@ -103,6 +123,8 @@ published anywhere under the old name is stale and does not match what the insta
 downloads — rebuild before publishing. The default `REPO` value still names
 `Ridge-io/coswarm-dist` on purpose: it encodes this undecided answer, so do not "fix" it
 as part of the rename.
+
+</details>
 
 ---
 
@@ -192,7 +214,7 @@ the tree records it. The operator must read it off the project and supply it.
 
 ---
 
-## 6. `SWARM_SELF_SERVE=1` in production — deliberately NOT yet
+## 6. `SWARM_SELF_SERVE=1` in production — **LIVE 2026-07-28**
 
 Self-serve workspace creation is implemented and tested server-side in
 `supabase/functions/command/index.ts`, gated on:
@@ -201,37 +223,34 @@ Self-serve workspace creation is implemented and tested server-side in
 const selfServeEnabled = Deno.env.get("SWARM_SELF_SERVE") === "1";
 ```
 
-The variable is **unset in production**, so a stranger gets 403. Opening signup requires
-setting it in the production edge-function environment.
-
-**It should not be set yet.** The code comment states the intent — it "ships dark: until
-the free-tier abuse controls land, an operator must opt in." In place today: a
-per-verified-identity cap of `FREE_TIER_WORKSPACE_LIMIT = 3` live workspaces (archiving
-frees a slot), a per-identity daily invite cap, a workspace seat ceiling, a live agent
-principal ceiling, and a disposable-email-domain speed bump. Still missing, and named in
-§9 P5 as launch-blocking: the **global spend circuit breaker** that trips to a
-signup-paused mode before cost runs away. That needs infrastructure this repo does not
-have, so it is a real gap, not an oversight.
+The production value has been `1` since 2026-07-28. Signup is open and free at
+`https://commonswarm.com/start`: a verified identity may hold three live workspaces, and
+no card is required. All 10 migrations were pushed, the three edge functions were
+redeployed, and the web app was deployed with its public Supabase configuration.
 
 ★ SUPERSEDED, kept so nobody re-derives it: this section used to say there is "no CLI verb
 that calls `create_workspace`" and that reaching it "requires a hand-rolled request."
 **That is dead.** `cswarm new "<name>"` exists in `src/cli.ts` and posts the command.
 
-**THE ORDERING CONSTRAINT THAT MATTERS MOST HERE.** The marketing site and the edge
-function deploy **independently** — `cd site && vercel deploy` is not coupled to a Supabase
-function deploy, and there is no CI. So the switch is really three steps, and doing them
-out of order publishes a false claim:
+<details>
+<summary>★ SUPERSEDED pre-launch status and instruction — DEAD</summary>
 
-1. Deploy the edge function carrying `create_workspace` (it is on a branch, not on `main`;
-   `git show origin/main:supabase/functions/command/index.ts | grep -c createSelfServeWorkspace`
-   returns 0).
-2. Set `SWARM_SELF_SERVE=1` in the production edge-function environment.
-3. **Only then** deploy site copy that says signup is open.
+The variable is **unset in production**, so a stranger gets 403. Opening signup requires
+setting it in the production edge-function environment.
 
-Until step 2, site copy must not promise self-serve. The copy in this branch is written to
-be true *before* the switch — it says signup is built but not open on this deployment. When
-the switch flips, that wording is what needs revisiting, in `SiteFooter.astro`,
-`download/AfterInstall.astro`, `landing/Invite.astro`, and `install.sh`'s closing text.
+**It should not be set yet.** Until step 2, site copy must not promise self-serve. The copy
+in this branch is written to be true *before* the switch — it says signup is built but not
+open on this deployment.
+
+</details>
+
+**THE ORDERING CONSTRAINT STILL MATTERS.** The marketing site, edge functions, and
+production environment deploy independently; there is no CI coupling them. The 2026-07-28
+switch completed in the safe order: migrations and functions, hosted configuration,
+`SWARM_SELF_SERVE=1`, then public copy. If the gate ever changes again, sweep every
+availability surface in the same change — at minimum `SiteFooter.astro`,
+`download/AfterInstall.astro`, `landing/Invite.astro`, and `install.sh` — so git does not
+keep instructing agents to publish the previous deployment state.
 
 ---
 
@@ -286,16 +305,16 @@ closed, and leaving them listed would have made the table lie about the state of
 | # | Item | Kind | State | Unblocks |
 |---|---|---|---|---|
 | 1 | Name and domain | Operator actions | ✅ **DONE** — commonswarm.com live, apex + www, certs issued | canonical URL, contact addresses |
-| 2 | Release repo + published installer | Decision + deploy | ✅ **DONE** — repo is public, release `v0.0.1` carries `cswarm` + `cswarm.sha256`, and `commonswarm.com/install.sh` serves the repo's installer (verified end to end: a clean `curl \| sh` installed a working `cswarm 0.0.1`) | `curl \| sh` installing at all |
+| 2 | Release repo + published installer | Decision + deploy | ✅ **DONE** — repo is public, release `v0.1.1` carries `cswarm` + `cswarm.sha256`, and `commonswarm.com/install.sh` serves the repo's installer (verified end to end: a clean `curl \| sh` installed a working `cswarm 0.1.1`) | `curl \| sh` installing at all |
 | 3 | State of formation | Fact to confirm | ✅ **DONE** — WA-formed LLC, TX office, venue kept | correctness of the terms |
 | 4 | DMCA agent | External filing | ◐ **HALF** — named in the document, **not registered** | the §512 safe harbour |
 | 5 | Supabase hosting region | Fact from dashboard | ✅ **DONE** — East US (North Virginia) | the privacy policy |
 | 6 | `SWARM_SELF_SERVE=1` | Deferred on purpose | ✅ **DONE** — set on the production project 2026-07-28, after all 10 migrations were pushed and the three edge functions redeployed. The web app is now wired to the backend too (`PUBLIC_SUPABASE_URL` / anon key at build time) and GitHub OAuth answers 302 to github.com with a real client id | public signup |
 | 7 | Attorney review | External review | ⬜ **OPEN** | publishing the legal docs as in-force |
 | 8 | One re-login per dogfood machine | Human action | ✅ **DONE 2026-07-29** — mini logged in as GitHub `Ridgeio`, laptop as `tlangridge`, both live in project `CommonSwarm Build`. First real two-machine, two-identity dogfood run; see `docs/evidence/2026-07-29-first-real-dogfood.md` | dogfood surviving the rename |
-| 9 | `legal@commonswarm.com` delivers | Test to run | ⬜ **OPEN** — never confirmed | every document that names it |
+| 9 | `legal@commonswarm.com` delivers | Test to run | ✅ **DONE 2026-07-29** — `legal@` and `security@` verified end to end through Cloudflare Email Routing | every document that names it |
 | 10 | USPTO check on "CommonSwarm" | Research | ⬜ **OPEN** — prompt written for an agent | launching under a name nobody has cleared |
-| 11 | **Custom SMTP for magic-link sign-in** | External account + DNS | ◐ **IN FLIGHT** — no new account needed: `commonswarm.com` added to the EXISTING Resend account beside `ridgehq.com` and `prompteden.com` (domain id `6dd49fe3-fe28-46ce-8fd9-49cde8d15195`, us-east-1). Blocked on three DNS records at Namecheap, delegated to Anvil | email sign-in working for more than 2 people an hour |
+| 11 | **Custom SMTP for magic-link sign-in** | External account + DNS | ◐ **IN FLIGHT** — the three Resend DNS records now resolve on Cloudflare; Resend verification and Supabase custom-SMTP activation are not established here | email sign-in working for more than 2 people an hour |
 
 ### Item 11 in full — what magic-link sign-in still needs
 
@@ -323,8 +342,9 @@ points at GitHub — but honest degradation is not the same as working.
 `prompteden.com` — no second subscription, no second bill, and the existing full-access API
 key in `ridgehq/marketing/.env` was enough to do it.
 
-**Step 2 is the blocker: three DNS records at Namecheap** (delegated to Anvil, who has the
-credentials). All three sit on SUBDOMAINS:
+~~**Step 2 is the blocker: three DNS records at Namecheap.**~~ ★ **SUPERSEDED — DEAD.**
+DNS is now on Cloudflare and all three Resend records resolve publicly. They correctly sit
+on subdomains:
 
 | Type | Host | Value |
 |---|---|---|
@@ -332,17 +352,17 @@ credentials). All three sit on SUBDOMAINS:
 | MX | `send` (priority 10) | `feedback-smtp.us-east-1.amazonses.com` |
 | TXT | `send` | `v=spf1 include:amazonses.com ~all` |
 
-★ **THE TRAP, WRITTEN DOWN BEFORE SOMEBODY HITS IT.** `commonswarm.com` ALREADY has, on the
-ROOT host, an MX set pointing at `eforward1..5.registrar-servers.com` and a TXT reading
-`v=spf1 include:spf.efwd.registrar-servers.com ~all`. That pair is what makes
-`legal@commonswarm.com` and `security@commonswarm.com` forward to the operator's real inbox —
-i.e. it is item 9. Resend's records go on subdomains precisely so they do not collide. But a
-domain may hold only ONE SPF record per host: anybody who "tidies up" by moving Resend's SPF
-onto the root ends up with two, which is invalid, and breaks BOTH the forwarding and the
-sending at once. **Add, never replace.** Same for the Vercel A/CNAME records — the site is
-live on them.
+★ **THE TRAP, UPDATED AFTER THE DNS MOVE.** The superseded root records —
+~~`eforward1..5.registrar-servers.com` and
+`v=spf1 include:spf.efwd.registrar-servers.com ~all`~~ — are **dead**. Cloudflare Email
+Routing now supplies root MX records at `route1..3.mx.cloudflare.net` and root SPF
+`v=spf1 include:_spf.mx.cloudflare.net ~all`; that is what makes `legal@commonswarm.com`
+and `security@commonswarm.com` deliver. Resend's records belong on the `send` and
+`resend._domainkey` subdomains precisely so they do not collide. A domain may hold only
+one SPF record per host: moving Resend's SPF onto the root would break forwarding and
+sending. **Add, never replace.** Preserve the Cloudflare apex/www site records too.
 
-**Step 3, once DNS resolves:** trigger verification (`POST /domains/<id>/verify`), create a
+**Step 3 is now the blocker:** trigger verification (`POST /domains/<id>/verify`), create a
 Resend API key scoped to this project rather than reusing RidgeHQ's, put the SMTP credentials
 into Supabase, and only then raise `rate_limit_email_sent`.
 
@@ -357,15 +377,16 @@ before — `site_url` and the redirect allow-list both pointed at `localhost` in
 until 2026-07-28, so every OAuth callback would have bounced a real user to a dead address
 while the outbound redirect looked perfect.
 
-**THE LEGAL DOCUMENTS ARE NOW GATED ON THREE THINGS, NONE OF THEM TEXT IN THIS REPO:**
-items **4** (the filing), **9** (does the mailbox actually deliver) and **7** (attorney
-review). Every `[[placeholder]]` is filled — the writing is finished. What is left is a
-filing, a test, and a review, and all three happen outside version control. That is why the
-draft banner is still up and why no amount of further editing will lift it.
+**THE LEGAL DOCUMENTS ARE NOW GATED ON TWO THINGS, NEITHER OF THEM TEXT IN THIS REPO:**
+items **4** (the filing) and **7** (attorney review). Item **9**, mailbox delivery, is
+done. Every `[[placeholder]]` is filled — the writing is finished. What is left is a filing
+and a review, and both happen outside version control. That is why the draft banner is still
+up and why no amount of further editing will lift it.
 
-Item **2** is closed: a stranger can install. What remains between a stranger and a working
-workspace is item **8** (someone has to complete one GitHub sign-in against production —
-nothing in this repo can prove that leg works) and the legal items.
+Items **2** and **8** are closed: a stranger can install, and the two-machine dogfood run
+completed production GitHub sign-in, workspace creation, invite acceptance, and signal
+exchange. That run did **not** exercise a cold browser signup or magic-link sign-in; the
+legal items remain external.
 
 **`SWARM_CAPABILITY_URLS` is deliberately still dark.** The §7 zero-install on-ramp is built
 and its two DoS blockers are fixed, but the capability endpoint answers `404` both when the
@@ -373,7 +394,9 @@ feature is off AND when a presented token is bad — that uniformity is the no-e
 working as designed, and it means flipping the gate produces NO externally observable change.
 Turning on a switch whose effect cannot be measured from outside is the "green check against
 the wrong target" failure. It should be flipped during dogfood, when a real session can mint a
-capability URL and fetch it, and the flip verified rather than assumed. Item **6** gates the product being self-serve at all.
+capability URL and fetch it, and the flip verified rather than assumed. ★ SUPERSEDED:
+~~Item **6** gates the product being self-serve at all.~~ **Dead** — item 6 is live;
+`SWARM_CAPABILITY_URLS` is the separate gate described here.
 
 ---
 

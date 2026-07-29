@@ -193,14 +193,20 @@ still built on the retired authority framing. See the vocabulary table in
   button — has no writer and no command. Relevant because renewal mints successors
   carrying `lineage_id`. Not an auth bypass: a *missing* containment, not a broken one.
   Source-and-schema trace, not executed.
-- **`Ridge-io/coswarm-dist` does not exist**, so `install.sh`'s default target 404s.
-  `COSWARM_BASE_URL` overrides it, which unblocks gate 5 without any publish decision.
+- ★ **RESOLVED 2026-07-29:** ~~`Ridge-io/coswarm-dist` does not exist, so
+  `install.sh`'s default target 404s.~~ The missing repository still does not exist, but it
+  is no longer the default and the blocker is **dead**. `install.sh` now defaults to public
+  `Ridge-io/cloud-swarm`; `https://commonswarm.com/install.sh` installs the checksummed
+  `cswarm 0.1.1` release. `CSWARM_BASE_URL` remains the test override.
 - **The name `coswarm` collides** with a shipping self-hosted PaaS that owns `coswarm.dev`.
   **RESOLVED 2026-07-27:** the operator renamed the product to **CommonSwarm**, the binary
-  to **`cswarm`**, and the domain to `commonswarm.com` (parked, not yet serving). The
-  finding is kept because it is the reason the rename happened; `coswarm.dev` is still
-  someone else's and still must never be referenced.
-- **`/docs` and the GitHub nav link 404.** The repo is private.
+  to **`cswarm`**, and the domain to `commonswarm.com`.
+  ~~The domain is parked, not yet serving.~~ ★ **SUPERSEDED — DEAD:** it is live on
+  Cloudflare. The finding is kept because it is the reason the rename happened;
+  `coswarm.dev` is still someone else's and still must never be referenced.
+- ★ **PARTIALLY RESOLVED 2026-07-29:** `/docs` still returns 404, so that route remains a
+  real gap. ~~The GitHub nav link also 404s because the repo is private.~~ That half is
+  **dead**: `Ridge-io/cloud-swarm` is public and its GitHub URL returns 200.
 
 ## ⚠ THREE WORDS, NOT TWO — read before using the branch table below
 

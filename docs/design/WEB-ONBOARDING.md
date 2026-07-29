@@ -5,9 +5,11 @@ browser, gets a workspace, and hands their agent a credential. The CLI is what t
 runs. This document is the **order of operations** for turning that on, what breaks if the
 order is wrong, and which steps are done today.
 
-It is a runbook, not a claim that the product is open. **Nothing in the sequence below has
-been executed by the author of this document.** Every "done" and "not done" here carries the
-measurement that produced it, and every step names the code that makes it safe.
+★ SUPERSEDED, kept because it describes the preflight posture:
+~~It is a runbook, not a claim that the product is open. Nothing in the sequence below has
+been executed by the author of this document.~~ **That present-tense status is dead.** The
+sequence remains the deployment runbook, but the current-state table below records the
+completed rollout.
 
 ---
 
@@ -23,7 +25,27 @@ spend circuit breaker to be **in place**, not merely written.
 
 ---
 
-## Current state, measured
+## Current state, re-measured 2026-07-29
+
+| Thing | Current state | How that was established |
+|---|---|---|
+| Browser client code | **Committed and deployed** | `site/src/lib/` is tracked on `main`; the live `/app` carries the public backend config and client surface |
+| `<meta>` config tags in the shell | **Deployed** | live `/app` contains a non-empty `commonswarm:url` tag |
+| `command`, `read`, and `capability` edge functions | **Deployed** | all three were redeployed after all 10 migrations were pushed |
+| Spend circuit breaker | **Applied and deployed** | included in the 10 pushed migrations and the redeployed `command` function |
+| `SWARM_SELF_SERVE` in production | **`1` since 2026-07-28** | production configuration, operator-confirmed; anonymous probes alone cannot reveal the flag |
+| Signed-in web app | **Deployed** | `/app` returns 200 with backend configuration; `/start` is the live signup route |
+| CLI install (`curl \| sh`) | **Working** | `/install.sh` returns 200, `/nope.sh` returns 404, and the published script installs checksummed `cswarm 0.1.1` from public `Ridge-io/cloud-swarm` |
+| Public web front door | **Serving on Cloudflare** | `/`, `/start`, `/app`, and `/download` return 200; a nonexistent route returns 404 |
+| Auth email templates | **13 branded templates in production** | the local template manifest enumerates 13 bodies; the production configuration was applied and verified |
+
+Signup is open and free: a verified identity may hold three live workspaces and no card is
+required. This table records deployment state, not a claim that every human journey has
+been exercised. In particular, the first dogfood run used CLI GitHub OAuth rather than a
+cold browser signup.
+
+<details>
+<summary>★ SUPERSEDED 2026-07-28 current-state table — DEAD as current status</summary>
 
 | Thing | State | How that was established |
 |---|---|---|
@@ -38,8 +60,10 @@ spend circuit breaker to be **in place**, not merely written.
 | CLI install (`curl \| sh`) | **Broken** | `install.sh:12` defaults to `Ridge-io/coswarm-dist`; `https://github.com/Ridge-io/coswarm-dist` → **404**, with controls `Ridge-io/cloud-swarm` → 200 and an unrelated public repo → 200 |
 | `commonswarm.com` | **Serving** | `/` → 200, `/app` → 200, `/definitely-not-a-page` → 404 (control proves the 200s are not a catch-all) |
 
-Probes run 2026-07-28 against the production project in `.env.cloud` (gitignored;
+These probes ran 2026-07-28 against the production project in `.env.cloud` (gitignored;
 `.gitignore:11`). They are unauthenticated and read-only. None of them can create anything.
+
+</details>
 
 **On the line numbers in this document.** They were read off the working tree on 2026-07-28,
 and `supabase/functions/command/index.ts` had **uncommitted edits from another seat** at that
@@ -281,41 +305,34 @@ curl -s "$U/app" | grep -c 'og:title'                             # 1 — positi
 curl -s "$U/definitely-not-a-page" -o /dev/null -w '%{http_code}\n'  # 404 — proves 200 is real
 ```
 
-Then, and only then, revisit the copy that says signup is not open. TODO.md item 6 names the
-places: `SiteFooter.astro`, `download/AfterInstall.astro`, `landing/Invite.astro`, and
-`install.sh`'s closing text.
+★ **COMPLETED 2026-07-28:** ~~Then, and only then, revisit the copy that says signup is not
+open.~~ The availability-copy sweep covered `SiteFooter.astro`,
+`download/AfterInstall.astro`, `landing/Invite.astro`, and `install.sh`'s closing text.
+Repeat that sweep whenever the deployment gate changes.
 
-**The CLI hand-off is still broken at this point** and copy must not pretend otherwise:
-`install.sh:12` points at `Ridge-io/coswarm-dist`, which returns **404** (measured, with two
-200 controls). A web signup that ends in "now run `curl … | sh`" hands the user a command
-that cannot work. That is TODO.md item 2 — an operator decision, not code.
+~~**The CLI hand-off is still broken at this point** and copy must not pretend otherwise:
+`install.sh:12` points at `Ridge-io/coswarm-dist`, which returns **404**.~~ ★
+**SUPERSEDED — DEAD.** The public installer now defaults to `Ridge-io/cloud-swarm`,
+downloads the checksummed `v0.1.1` release, and installs `cswarm 0.1.1`. A web signup may
+hand off to `curl -fsSL https://commonswarm.com/install.sh | sh`; the live installer returns
+200 and a nonexistent `/nope.sh` control returns 404.
 
 ---
 
 ## What cannot be measured from outside, and must not be guessed
 
-- **Whether `SWARM_SELF_SERVE` is set** — not from outside, and not from any anonymous
-  probe: the bearer check at `:4516` refuses before the gate is ever reached, so a stranger
-  sees `401`, never the 403 that carries the answer. `uxtest/scripts/reset-round.sh:44` states
-  the operational form of this: a report must say which of "self-serve disabled" and "not
-  permitted" it *observed*, and from outside it can observe neither.
+- **Whether `SWARM_SELF_SERVE` is set cannot be inferred from an anonymous probe alone.**
+  That measurement limit remains true: the bearer check refuses before the gate is reached.
+  It is nevertheless known from production configuration that the value has been `1` since
+  2026-07-28. Do not turn “anonymous probes cannot distinguish the state” back into “the
+  state is unknown.”
 
-  ⚠ **This bullet is being narrowed by an in-flight change in another seat's lane, uncommitted
-  in the working tree as this was written.** It used to be true that `createSelfServeWorkspace`
-  returned an identical opaque `403 {"error":"forbidden"}` for all four refusals. In the
-  working tree, `identity_not_verified` now answers `403 {"error":"email_not_verified"}` and
-  `disposable_email_domain` answers `403 {"error":"email_domain_not_accepted"}`, deliberately,
-  so a signed-in user is told the thirty-second fix instead of hitting a dead end. Both still
-  sit **below** the feature gate, so while self-serve is dark every response is still uniform.
-  What changes once it is on: a *verified signed-in* caller who gets the opaque `forbidden`
-  can now infer the feature is off. That is a disclosure about the deployment, not about
-  another person, and it is the intended trade — but if that edit lands, this document and any
-  copy that says the two are indistinguishable must be re-read.
-
-  **Follow-up for the app lane, flagged not fixed (not this seat's files):**
-  `site/src/lib/commonswarm.ts:207-214` maps *every* 403 to one `SignupRefused` message naming
-  both causes. If the distinct bodies above land, that message can and should be split — the
-  server would then be telling the UI exactly which one applies.
+  ★ SUPERSEDED: ~~The typed refusal change is in-flight and uncommitted, self-serve is dark,
+  and the app maps every 403 to one `SignupRefused`.~~ **Dead.** The server now returns
+  distinct `email_not_verified`, `email_domain_not_accepted`, and
+  `self_serve_disabled` bodies; the deployed client maps the first two to their own fixable
+  states. A verified signed-in caller can distinguish a disabled deployment gate, which is
+  an intentional disclosure about deployment state, not another person.
 - **Whether the spend-breaker migration is applied**, and **which build of `command` is
   deployed**. Both need credentials this seat does not hold. The deployed function answered
   requests; that says it exists, not what is in it.
