@@ -1121,3 +1121,27 @@ same D-028 class, self-caught, broadcast).
 into its own script (`test:p1-local` or similar) so `test:p1-cli` becomes genuinely pure and
 slot-free. Small and mechanical; the payoff repeats on every pure observer for the life of the
 project.
+
+### D-029 CORRECTION (same day, ~40 minutes later) — the central claim was wrong
+
+The entry above asserts *"D-019, D-020, and D-003 all merged to main carrying only codex-family
+verdicts on codex-authored work."* **That claim is dead.** `swarm members` prints each seat's
+family, and reading it instead of assuming shows: **Cinder is `family=claude`** (a
+`cmux/claude-code` seat). All three changes were therefore **claude-authored work reviewed by
+two openai seats — the inversion was satisfied correctly the whole time.**
+
+What actually happened is worse for the Lead and better for the process: I made the family error
+**twice in one day, in opposite directions** — first assuming Nori was claude (it is openai),
+then "correcting" my ledger by assuming Cinder was openai (it is claude). Neither assumption was
+ever checked against the tool that prints the answer.
+
+The measured registry, from `swarm members` at 17:36:
+- **claude:** Lead6, Quarry, Cinder
+- **openai:** Mica, Kestrel, Juniper, Lumen, Nori, Tundra
+- **a2a / family unknown:** Anvil, Dana
+
+The rule in the entry above **survives and is strengthened** — a review counts toward inversion
+only when the reviewer's family is *verified, not assumed*, and verdicts state it — because the
+verification is one command, and I skipped it twice. The "retroactive remediation" review panel
+was dispatched under the false premise; its results remain useful as an extra independent voice
+on merged infrastructure, but nothing was actually broken that it needed to remediate.
