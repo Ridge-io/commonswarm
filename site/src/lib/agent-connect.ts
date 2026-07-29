@@ -657,12 +657,10 @@ function renewalLines(credential: AgentCredential): string[] {
  * true, here is what to do with it". The reader is a model with a terminal, so the block
  * states the facts, states the constraint on the secret, and gives one worked invocation.
  *
- * IT TELLS THE TRUTH ABOUT THE GAP. There is no zero-install path for an agent today: the §7
- * capability URL is built but not deployed, and install.sh downloads from
- * Ridge-io/coswarm-dist, which does not exist — probed while writing this, 404 against a
- * control repository that answers 302 for the same asset path. An agent that improvises an
- * install from a 404 wastes the five minutes this whole screen exists to save, so the block
- * says so up front and tells it to ask rather than guess.
+ * INSTALL IS AVAILABLE; ZERO-INSTALL IS NOT. The §7 capability URL remains gated off, but
+ * commonswarm.com/install.sh now downloads the verified release from Ridge-io/cloud-swarm.
+ * This legacy exporter is unmounted after /start hands workspace setup to /app; it must not
+ * return to a page without replacing the old 404 stop-copy below with the published path.
  */
 export function agentPrompt(input: PromptInput): string {
   const { credential, workspaceId, workspaceName, deploymentUrl, anonKey } = input;

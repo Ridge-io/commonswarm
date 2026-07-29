@@ -1,7 +1,7 @@
 /*
  * The shared shape of every panel in the /start stage.
  *
- * WHY A PLAIN .css FILE AND NOT A WRAPPER COMPONENT. The stage holds eight panels of which
+ * WHY A PLAIN .css FILE AND NOT A WRAPPER COMPONENT. The stage holds several panels of which
  * exactly one is visible, and they must be the same box: same padding, same border, same
  * heading size, so switching state never moves the page under the reader. A shared <Panel>
  * component would give that too — but every panel here also needs its own script hooks and
@@ -18,7 +18,7 @@
  * halt panels, which are `--info-dim` / `--warning-dim` rather than a hand-rolled color-mix:
  * those tokens carry a DIFFERENT alpha per theme (0.09 light, 0.13 dark) because a tint over
  * white costs the ink on it contrast. A literal percentage carries one theme's value into
- * both. See the same note in Steps.astro.
+ * both.
  */
 
 .st-pn {
@@ -239,39 +239,6 @@
     border-block-start-color: var(--border-strong);
     background: var(--accent-dim);
   }
-}
-
-/* --- the workspace summary ----------------------------------------------------------- */
-
-.st-pn__meta {
-  display: grid;
-  grid-template-columns: minmax(0, auto) minmax(0, 1fr);
-  gap: var(--s-2) var(--s-4);
-  margin: var(--s-5) 0 0;
-  padding: var(--s-4);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--elev-0);
-  font-size: var(--t-xs);
-  line-height: var(--lh-xs);
-}
-
-.st-pn__meta dt {
-  margin: 0;
-  color: var(--text-muted);
-}
-
-.st-pn__meta dd {
-  margin: 0;
-  min-inline-size: 0;
-  overflow-wrap: anywhere;
-  color: var(--text);
-}
-
-.st-pn__id {
-  font-family: var(--font-mono);
-  font-variant-ligatures: none;
-  letter-spacing: -0.01em;
 }
 
 .st-pn__who {

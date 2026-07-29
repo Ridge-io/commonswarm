@@ -8,17 +8,14 @@
  * ---------------------------------------------------------------------------------------
  * Coming back from GitHub, the page creates the workspace by itself: the reader already
  * pressed a button that said what would happen, and making them press a second one to
- * confirm the thing they asked for is ceremony. This panel is for the two cases where
- * creating without asking would be a guess:
+ * confirm the thing they asked for is ceremony. This panel is for the case where creating
+ * without asking would be a guess:
  *
- *   1. THE PAGE COULD NOT READ WHAT THEY ALREADY HAVE. Before creating anything unprompted
+ *   THE PAGE COULD NOT READ WHAT THEY ALREADY HAVE. Before creating anything unprompted
  *      the script calls myWorkspaces() to check whether this identity already owns one. If
  *      that read fails — a network blip, a schema that is not exposed — the script does not
  *      know whether creating would be their first workspace or their fourth, so it stops and
  *      asks. Creating on a failed read is how you mint a duplicate.
- *   2. THEY ASKED FOR ANOTHER ONE. "Create another workspace" from the finished panel lands
- *      here, and here they get to name it, because a second workspace called exactly what the
- *      first one is called is not a name.
  *
  * ---------------------------------------------------------------------------------------
  * THE NAME FIELD

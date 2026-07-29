@@ -19,10 +19,9 @@
  * "fix" it by hiding it, and do NOT ever put a service-role key here.
  *
  * WHAT THIS FILE MAY NOT DO. It must never claim a capability the deployment does not have.
- * `create_workspace` is gated server-side on SWARM_SELF_SERVE, which is unset in production
- * today, so signUp() can legitimately come back refused on a correctly configured
- * deployment. That is a state the UI has to render honestly, not an error to hide — see
- * SignupRefused below.
+ * `create_workspace` is gated server-side on SWARM_SELF_SERVE. Production enables it, while a
+ * self-hosted or paused deployment can still refuse signup. That is a state the UI has to
+ * render honestly, not an error to hide — see SignupRefused below.
  */
 
 import { createClient, type SupabaseClient, type Session } from "@supabase/supabase-js";
@@ -186,10 +185,10 @@ export class NoDeployment extends Error {
 }
 
 /**
- * Signup is CLOSED on this deployment. A distinct type rather than a generic error because
- * the UI must render it as a state — "not open yet" — and never as a failure the reader
- * could mistake for something they did wrong. The server answers 403 with reason
- * self_serve_disabled when SWARM_SELF_SERVE is unset, which is its state in production.
+ * This deployment refused signup. A distinct type rather than a generic error because the UI
+ * must render it as a deployment state, never as a failure the reader could mistake for
+ * something they did wrong. A self-host can produce this by leaving SWARM_SELF_SERVE unset;
+ * production enables self-serve but can still pause signup at its usage ceiling.
  */
 export class SignupRefused extends Error {
   override name = "SignupRefused";
@@ -328,12 +327,12 @@ export async function createWorkspace(
     throw new EmailDomainNotAccepted();
   }
   if (status === 403) {
-    // The remaining 403 is the uniform one, and it stays uniform on purpose: while
-    // self-serve is dark the server answers identically whatever is wrong, so this message
-    // must not guess which cause applies.
+    // The remaining 403 is the uniform one, and it stays uniform on purpose: when self-serve
+    // is disabled the server answers identically whatever is wrong, so this message must not
+    // guess which cause applies.
     throw new SignupRefused(
-      "Creating a workspace is not open on this deployment yet. If someone has invited " +
-        "you, an invite link still works.",
+      "Creating a workspace is not enabled on this deployment. Nothing was created. Ask " +
+        "the deployment operator to enable self-serve signup.",
     );
   }
   if (status === 503) {

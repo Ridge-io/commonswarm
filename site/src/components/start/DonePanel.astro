@@ -1,74 +1,15 @@
 ---
 /*
- * The workspace exists. What this panel does and, more usefully, what it does not.
- *
- * ---------------------------------------------------------------------------------------
- * IT DOES NOT REDIRECT ON A TIMER
- * ---------------------------------------------------------------------------------------
- * The primary next action is the embedded agent-connect step. The dashboard link remains a
- * deliberate press after it; there is no automatic navigation after n seconds. A timer would
- * take the credential handoff away from a reader who was still using it, and would race
- * anyone using a screen reader or keyboard.
- *
- * ---------------------------------------------------------------------------------------
- * IT MAKES NO CLAIM ABOUT WHAT IS ON /app
- * ---------------------------------------------------------------------------------------
- * Deliberate. /app is another change's file and is being worked on at the same time as this
- * one, so any sentence here describing what a reader will find there is a guess with a short
- * shelf life. The link is labelled with the destination and stops. /app carries its own
- * notice about its own state, which is the right place for it.
- *
- * ---------------------------------------------------------------------------------------
- * THE BROWSER HANDS THE WORKSPACE TO THE CONNECT STEP
- * ---------------------------------------------------------------------------------------
- * The workspace id is implementation data, not a task for the person signing up. start.astro
- * places it on <agent-connect> when the workspace is known; the reader sees the workspace
- * name and a direct next step instead of a UUID they do not need to interpret.
- *
- * ---------------------------------------------------------------------------------------
- * "CREATE ANOTHER" GOES BACK THROUGH THE NAMING PANEL, ON PURPOSE
- * ---------------------------------------------------------------------------------------
- * It does not create anything itself. It hands off to ReadyPanel so the second workspace gets
- * its own name and its own freshly minted pair of ids — a NEW intent, minted by an explicit
- * press. That is the one place in this flow where new ids are correct: every automatic retry
- * reuses the ids it already has, and only a deliberate "I want another one" mints more. The
- * free tier stops at three live workspaces, which the sentence beside the button states
- * before it is pressed rather than after the server refuses.
+ * The workspace exists, so /start is finished. start.astro reveals this one-line fallback,
+ * then replaces the current history entry with /app. The link remains if navigation is
+ * interrupted; /app owns the durable accessible state after the handoff.
  */
 
 import "./panel.css";
-import Button from "../ui/Button.astro";
-import AgentConnect from "../connect/AgentConnect.astro";
 ---
 
-<section class="st-pn" data-panel="done" tabindex="-1" aria-labelledby="pn-done-t" hidden>
-  <h2 class="st-pn__t" id="pn-done-t">Your workspace is ready</h2>
-  <p class="st-pn__p">
-    Next, connect the AI assistant you already use. CommonSwarm will give you one block to
-    paste into it, and the assistant will handle the technical setup.
-  </p>
-
-  <dl class="st-pn__meta">
-    <dt>Name</dt>
-    <dd data-ws-name></dd>
-  </dl>
-
-  <AgentConnect eyebrow="Next" />
-
-  <p class="st-pn__note">
-    Free plan: three live workspaces, no card.
-    <button class="st-pn__linkbtn" type="button" data-create-another>
-      Create another workspace</button
-    >.
-  </p>
-
-  <div class="st-pn__act">
-    <Button href="/app" variant="secondary">Go to your dashboard</Button>
-  </div>
-
-  <p class="st-pn__who">
-    Signed in as <strong data-who>your GitHub account</strong>. Not you?
-    <button class="st-pn__linkbtn" type="button" data-signout>Sign out</button> — the
-    workspace above stays where it is.
+<section class="st-pn" data-panel="done" hidden>
+  <p class="st-pn__p" role="status">
+    Your workspace is ready. Opening your dashboard… <a href="/app">Open it now</a>.
   </p>
 </section>

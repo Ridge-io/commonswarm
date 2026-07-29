@@ -10,7 +10,6 @@
  *
  *   no-deployment  this static bundle was built without a backend to talk to.
  *   refused        workspace creation is paused on this deployment.
- *   limit          three live workspaces is the free tier, enforced server-side.
  *   email-*        confirm the address or choose another provider, then continue.
  *   client-too-old reload the current page; nothing was created.
  *   error          something the client could not classify. This one stops and says so.
@@ -18,21 +17,20 @@
  * So none of them uses --danger, none says "Error", none uses the word "failed", and none
  * has an exclamation mark or a warning triangle. A red box tells a reader they broke
  * something they did not touch, and the next thing they do is stop trusting the screen.
- * Informational states use --info; only ambiguous and ceiling stops use --warning.
+ * Informational states use --info; ambiguous stops use --warning.
  *
  * ---------------------------------------------------------------------------------------
  * EVERY ONE OF THEM HAS SOMETHING TO DO NEXT
  * ---------------------------------------------------------------------------------------
  * A stop with no exit is a dead end, and /start was already the site's dead end once. The
  * body of each is written by the page, and every one of them ends in a real destination or a
- * real press. The invite path at the foot of /start is under all of them as well, so
- * there is always a way in that works today.
+ * real press.
  *
  * ---------------------------------------------------------------------------------------
  * `detail` IS THE CLIENT'S OWN WORDS, NOT OURS
  * ---------------------------------------------------------------------------------------
  * When the page passes detail=true it renders an empty <p> that the script fills with the
- * message off the thrown error — SignupRefused's own sentence, or whatever the client said.
+ * message off the thrown error — ClientTooOld's own sentence, or whatever the client said.
  * It is boxed and set apart from the copy so a reader can see which words came from the
  * server and which are the page's. It ships EMPTY: a placeholder sentence in the HTML would
  * be a sentence nobody wrote, sitting in the built file, ready to be read as a real message.

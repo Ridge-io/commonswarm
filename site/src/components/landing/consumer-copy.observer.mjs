@@ -54,24 +54,16 @@ const required = {
     "A workspace is the shared feed",
     "Reload and try again",
     "Turn on JavaScript and reload this page",
-    "Connect your AI assistant",
-    "Create a temporary key for the assistant you already use.",
-    "Before you paste it.",
-    "The download is ready.",
-    "it takes about a minute",
-    "Then paste this block into your AI assistant.",
-    "The installer is published at the address above.",
+    "then opens your dashboard",
+    "Your workspace is ready. Opening your dashboard",
+    "Open it now",
   ],
 };
 
 const typedStops = {
   SignupRefused: [
     "CommonSwarm can’t create a workspace right now",
-    "come back later and start again from this page",
-  ],
-  WorkspaceLimitReached: [
-    "Your three workspaces are ready to use",
-    "Open your dashboard",
+    "Come back later and start again from this page",
   ],
   EmailNotVerified: [
     "Confirm your email before creating a workspace",
@@ -116,6 +108,13 @@ const forbidden = {
     "credential",
     "deployment",
     "backend",
+    "Connect your AI assistant",
+    "Connect an agent",
+    "Create a temporary key",
+    "Before you paste it",
+    "Joining a teammate’s workspace",
+    "Accept your invite",
+    "Your three workspaces are ready to use",
   ],
 };
 
@@ -157,5 +156,5 @@ if (failures.length > 0) {
   process.exitCode = 1;
 } else {
   console.log(`consumer-copy observer: ${checks} checks across built / and /start passed`);
-  console.log(`typed stops covered: ${Object.keys(typedStops).join(", ")}`);
+  console.log(`typed stop panels covered: ${Object.keys(typedStops).join(", ")}`);
 }

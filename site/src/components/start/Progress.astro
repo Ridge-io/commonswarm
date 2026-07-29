@@ -1,17 +1,17 @@
 ---
 /*
- * The three steps of signup, drawn once at the top of /start.
+ * The two steps of signup, drawn once at the top of /start.
  *
  * IT IS A LABEL, NOT A CONTROL. Nothing here is clickable and nothing here navigates. A
- * stepper whose numerals are buttons invites a reader to jump to step 3 before step 1 has
+ * stepper whose numerals are buttons invites a reader to jump ahead before sign-in has
  * happened, and this flow has a server refusal sitting in the middle of it — there is no
  * state where "skip ahead" is a truthful offer.
  *
  * NO STEP IS MARKED CURRENT IN THE SHIPPED HTML. The page's script sets data-state on each
  * item once it knows which state the reader is actually in. Marking step 1 current at build
  * time would be a claim about a session the static file cannot have read, and a returning
- * user landing on step 3 would see the strip flip under them. Without JavaScript the strip
- * renders as three plain, unmarked labels, which is the honest rendering of "unknown".
+ * user would briefly see sign-in as unfinished. Without JavaScript the strip
+ * renders as two plain, unmarked labels, which is the honest rendering of "unknown".
  *
  * The <ol> carries the ordering for assistive tech, so the numerals are decoration and are
  * aria-hidden. aria-current="step" is set by the script on the one that is live — that, not
@@ -21,7 +21,6 @@
 const STEPS = [
   { n: 1, label: "Sign in" },
   { n: 2, label: "Create your workspace" },
-  { n: 3, label: "Connect your AI assistant" },
 ];
 ---
 
@@ -59,8 +58,7 @@ const STEPS = [
     color: var(--text-muted);
   }
 
-  /* Same 1.5rem ring the /start steps and /download's badge already use. Three components
-     drawing the same idea three sizes is how a site stops looking like one product. */
+  /* Same 1.5rem ring /download's badge uses. Repeated UI should keep one visual scale. */
   .pg__n {
     flex: none;
     display: inline-flex;
