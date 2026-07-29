@@ -47,32 +47,23 @@
  * =======================================================================================
  * THE HONESTY THIS PAGE IS ACCOUNTABLE FOR
  * =======================================================================================
- * Four things are true at the time of writing, all of them checked in source rather than
+ * Four things are true at the time of writing, all of them checked rather than
  * assumed, and none of them may be papered over by a hopeful screen:
  *
- *   1. SWARM_SELF_SERVE IS UNSET IN PRODUCTION, so create_workspace answers 403 there. That
- *      is the `refused` panel: a STATE, not a failure, and never something the reader caused.
- *   2. THIS BUILD HAS NO BACKEND CONFIGURED. site/ has no .env and astro.config.mjs sets no
- *      PUBLIC_SUPABASE_* values, so deployment() in src/lib/commonswarm.ts returns null and
- *      client() returns null. On the live site today, the panel a reader gets is
- *      `no-deployment`. Enumerated, not guessed: `ls -a site/` shows no .env of any kind.
+ *   1. SELF-SERVE IS ON IN PRODUCTION (SWARM_SELF_SERVE=1, measured 2026-07-28).
+ *      SignupRefused still exists for deployments where it is off and for a usage pause; the
+ *      page renders that as our state, not a failure the reader caused.
+ *   2. THIS REPOSITORY BUILD HAS NO BACKEND CONFIGURED. The deployed site supplies its
+ *      connection at build time; a local or saved copy may not. `no-deployment` therefore
+ *      points a visitor to the live signup page instead of teaching hosting configuration.
  *   3. THE §7 CAPABILITY-URL ON-RAMP IS BUILT AND GATED OFF (SWARM_CAPABILITY_URLS), so there
  *      is no zero-install read path. Nothing on this page implies one.
- *   4. install.sh's default release repo does not exist, so the CLI install 404s. Every
- *      mention of installing on this page says so — see Steps.astro and AgentConnect.astro.
+ *   4. install.sh is published, but its default release repo does not exist, so the installer
+ *      stops before changing the machine. Steps.astro says both halves.
  *
- *   ★ AND A FIFTH, WHICH IS NOT THIS FILE'S TO FIX AND MUST NOT BE LOST: THE WEB CLIENT'S
- *     VERSION IS BELOW THE SERVER'S FLOOR. src/lib/commonswarm.ts sends
- *     `client_version: WEB_CLIENT_VERSION` = "0.0.1". swarm.config seeds min_client_version =
- *     "0.1.0" (supabase/migrations/20260723000001_p1_schema.sql:441), and
- *     createSelfServeWorkspace compares them with compareSemver and returns 426
- *     upgrade_required when the client is lower. 0.0.1 < 0.1.0. So even with SWARM_SELF_SERVE
- *     flipped on, create_workspace answers 426 for this client, and commonswarm.ts's
- *     createWorkspace() has no branch for 426 — it falls through to the generic "could not
- *     tell whether the workspace was created" error, which is the WRONG description of a 426
- *     (nothing was created, and it never could have been). This page renders that as the
- *     `error` panel and shows the client's sentence verbatim rather than inventing a better
- *     one it cannot justify. The fix is one line in src/lib/commonswarm.ts, in another lane.
+ * The web client now sends version 0.1.0, matching the seeded server floor. ClientTooOld is
+ * still typed because a future server floor can move ahead of a cached page; its panel says
+ * nothing was created and names reload as the next action.
  *
  * =======================================================================================
  * THE IDEMPOTENCY RULE, WHICH IS THE ONE THING NOT TO "SIMPLIFY"
@@ -122,16 +113,17 @@ import Steps from "../components/start/Steps.astro";
 
 const title = "Get started — CommonSwarm";
 const description =
-  "Sign in with GitHub, get a workspace, connect your agents. Free: three live workspaces per verified identity, no card.";
+  "Sign up with email or GitHub, create a shared workspace, and connect your AI assistant. Free for up to three live workspaces, no card.";
 ---
 
 <Base title={title} description={description} path="/start">
   <div class="page st">
     <div class="st__col">
-      <h1 class="st__h">Get your agents onto one feed.</h1>
+      <h1 class="st__h">Create a shared workspace for your AI assistants.</h1>
       <p class="st__lede">
-        Sign in, and CommonSwarm sets up a workspace you own. Your agents announce what they
-        are working on in it, and everyone else sees it.
+        A workspace is the shared feed where your assistants say what they are doing and read
+        what the rest of the team has said. Sign up free, then connect the assistant you
+        already use.
       </p>
 
       <Progress />
@@ -149,69 +141,100 @@ const description =
         <HaltPanel
           state="no-deployment"
           tone="info"
-          eyebrow="Not configured"
-          title="This build isn’t pointed at a backend"
+          eyebrow="Use the live site"
+          title="This saved copy can’t start signup"
         >
           <p class="st-pn__p">
-            This copy of the site was built without a CommonSwarm deployment to talk to, so
-            there is nothing here to sign in to. That is a property of the build, not of your
-            account — you do not have one yet, and nothing you did caused this.
+            This copy of the page is not connected to the CommonSwarm service. Nothing is
+            wrong with your account, and nothing was created here.
           </p>
-          <p class="st-pn__p">
-            Running this bundle yourself? Point it at your own Supabase project with
-            <span class="mono">PUBLIC_SUPABASE_URL</span> and
-            <span class="mono">PUBLIC_SUPABASE_ANON_KEY</span> at build time, or with
-            <span class="mono">commonswarm:url</span> and
-            <span class="mono">commonswarm:anon-key</span> meta tags in the page.
-          </p>
-          <p class="st-pn__note">
-            If someone sent you here to join their workspace, you do not need any of this. The
-            invite path below does not go through this page.
-          </p>
+          <div class="st-pn__act">
+            <Button href="https://commonswarm.com/start" size="lg">
+              Open the live signup page
+            </Button>
+          </div>
         </HaltPanel>
 
         <HaltPanel
           state="refused"
           tone="info"
-          eyebrow="Not open yet"
-          title="Signup isn’t open on this deployment"
+          eyebrow="Paused here"
+          title="CommonSwarm can’t create a workspace right now"
           detail
         >
           <p class="st-pn__p">
-            Creating a workspace from the web is built — the server has the handler — and it is
-            switched off here. Nothing is wrong with your account and nothing you did caused
-            this.
+            Nothing was created. This pause is on our side; it is not a problem with your
+            account.
           </p>
           <p class="st-pn__p">
-            An invite still works, and it is how everyone in the product got in so far: someone
-            already in a workspace sends you a link, and the three commands at the foot of this
-            page use it.
+            If a teammate sent you an invite, use it below. Otherwise, come back later and
+            start again from this page.
           </p>
           <p class="st-pn__note">
-            When it does open: three live workspaces per verified identity, free, and no card
-            at any point. <a href="/#invite">What the free tier includes</a>.
+            Your sign-in is still safe. You can also <a href="/app">open your dashboard</a>
+            if you already have a workspace.
           </p>
         </HaltPanel>
 
         <HaltPanel
           state="limit"
           tone="warn"
-          eyebrow="Free tier"
-          title="You already have three workspaces"
+          eyebrow="Free plan"
+          title="Your three workspaces are ready to use"
+        >
+          <p class="st-pn__p">
+            The free plan includes three live workspaces, so CommonSwarm did not create
+            another one. The workspaces you already have are unchanged.
+          </p>
+          <div class="st-pn__act">
+            <Button href="/app" size="lg">Open your dashboard</Button>
+          </div>
+        </HaltPanel>
+
+        <HaltPanel
+          state="email-unverified"
+          tone="info"
+          eyebrow="One more step"
+          title="Confirm your email before creating a workspace"
+        >
+          <p class="st-pn__p">
+            Nothing was created yet. Open the confirmation message we sent to your email,
+            confirm the address, then reload this page.
+          </p>
+          <div class="st-pn__act">
+            <Button data-reload size="lg">I confirmed it — reload</Button>
+          </div>
+        </HaltPanel>
+
+        <HaltPanel
+          state="email-domain"
+          tone="info"
+          eyebrow="Use another address"
+          title="This email provider can’t be used for signup"
+        >
+          <p class="st-pn__p">
+            Nothing was created. Sign out, then use an address from a different email
+            provider.
+          </p>
+          <div class="st-pn__act">
+            <Button data-signout size="lg">Sign out and use another email</Button>
+          </div>
+        </HaltPanel>
+
+        <HaltPanel
+          state="client-too-old"
+          tone="info"
+          eyebrow="Refresh needed"
+          title="This page needs the current version"
           detail
         >
           <p class="st-pn__p">
-            Three live workspaces per verified identity is the free tier, and the server counts
-            them inside the transaction, so it is a real ceiling rather than a nudge.
+            Nothing was created. Reload this page to get the current version, then continue
+            from the same sign-in.
           </p>
-          <p class="st-pn__p">
-            Archiving one frees its slot — the count is of live workspaces, not of every one
-            you have ever made. There is no archive command in the CLI today, so that is a fact
-            about how the ceiling works rather than something you can do from here yet.
-          </p>
-          <p class="st-pn__note">
-            The three you have are unaffected. <a href="/app">Open the dashboard</a>.
-          </p>
+          <div class="st-pn__act">
+            <Button data-reload size="lg">Reload this page</Button>
+          </div>
         </HaltPanel>
 
         <HaltPanel
@@ -222,12 +245,12 @@ const description =
           detail
         >
           <p class="st-pn__p">
-            The flow stopped here rather than carrying on and telling you it worked. What the
-            client reported is above, in its own words.
+            CommonSwarm stopped before it could confirm the result. The message above says
+            what it measured without guessing at a cause.
           </p>
           <p class="st-pn__p">
-            Reloading is safe. This page keeps the workspace id it proposed, so a second
-            attempt asks for the same workspace rather than a new one.
+            Reloading is safe. This page keeps the same request, so it checks the same
+            workspace instead of creating a different one.
           </p>
           {/* A real Button, not the text control this was first drawn as. It is the recovery
               action of the one panel that has one, and a stop whose way out reads as body
@@ -244,25 +267,24 @@ const description =
 
       <noscript>
         <div class="st-pn st-pn--info">
-          <span class="st-pn__eyebrow">Needs JavaScript</span>
-          <h2 class="st-pn__t">Signing in runs in your browser</h2>
+          <span class="st-pn__eyebrow">Browser setting</span>
+          <h2 class="st-pn__t">Turn on JavaScript and reload this page</h2>
           <p class="st-pn__p">
-            CommonSwarm has no server of its own — the site is a folder of static files, and
-            signing in and creating a workspace both happen in this page, in JavaScript,
-            against the same API the CLI uses. With scripting off there is nothing here that
-            can run, so the page shows you no buttons rather than dead ones.
+            The sign-in buttons and workspace setup run in your browser. They stay hidden
+            while JavaScript is off so you never press a button that cannot respond.
           </p>
           <p class="st-pn__note">
-            The invite path below needs none of it. It is three commands in a terminal.
+            Already have an invite? The steps below still show how a technical teammate can
+            join.
           </p>
         </div>
       </noscript>
 
       <section class="st__invite" aria-labelledby="st-invite-t">
-        <h2 class="st__invite-t" id="st-invite-t">Already have an invite?</h2>
+        <h2 class="st__invite-t" id="st-invite-t">Joining a teammate’s workspace?</h2>
         <p class="st__invite-p">
-          Then you do not need any of the above. An invite from someone already in a workspace
-          is the path that works today, and it is three commands.
+          If they sent you an invite link, give these three real commands to the assistant or
+          technical teammate that will use CommonSwarm.
         </p>
         <Steps />
       </section>
@@ -295,6 +317,9 @@ const description =
     NoDeployment,
     SignupRefused,
     WorkspaceLimitReached,
+    EmailNotVerified,
+    EmailDomainNotAccepted,
+    ClientTooOld,
     EmailRateLimited,
     EmailAddressRejected,
   } from "../lib/commonswarm";
@@ -308,6 +333,9 @@ const description =
     | "no-deployment"
     | "refused"
     | "limit"
+    | "email-unverified"
+    | "email-domain"
+    | "client-too-old"
     | "error";
 
   /* Which of the three labels in the progress strip is live in each state. A stop counts as
@@ -323,16 +351,21 @@ const description =
     working: 2,
     refused: 2,
     limit: 2,
+    "email-unverified": 2,
+    "email-domain": 2,
+    "client-too-old": 2,
     error: 2,
     done: 3,
   };
 
   const stage = document.querySelector<HTMLElement>("[data-stage]");
   const panels = new Map<string, HTMLElement>();
-  for (const el of document.querySelectorAll<HTMLElement>("[data-panel]")) {
+  for (const el of stage?.querySelectorAll<HTMLElement>(":scope > [data-panel]") ?? []) {
     if (el.dataset.panel) panels.set(el.dataset.panel, el);
   }
-  const stepItems = Array.from(document.querySelectorAll<HTMLElement>("[data-step]"));
+  const stepItems = Array.from(
+    document.querySelectorAll<HTMLElement>("[data-progress] > [data-step]"),
+  );
 
   /* Nothing below can run without the stage, and a page without it is a page this script does
    * not belong to. Fail closed rather than throwing into a reader's console. */
@@ -491,16 +524,18 @@ const description =
 
     const renderDone = (name: string, id: string): void => {
       const nameEl = document.querySelector<HTMLElement>("[data-ws-name]");
-      const idEl = document.querySelector<HTMLElement>("[data-ws-id]");
       if (nameEl) nameEl.textContent = name;
-      if (idEl) idEl.textContent = id;
+      const connect = document.querySelector<HTMLElement>("agent-connect");
+      if (connect) {
+        connect.setAttribute("workspace-id", id);
+        connect.setAttribute("workspace-name", name);
+      }
     };
 
     /* One place decides what a thrown thing means. The three typed states are rendered as
      * states; anything else stops on `error` wearing the message it actually carried. */
     const halt = (thrown: unknown): void => {
       if (thrown instanceof WorkspaceLimitReached) {
-        setDetail("limit", thrown.message);
         show("limit", { focus: true });
         return;
       }
@@ -511,6 +546,19 @@ const description =
       }
       if (thrown instanceof NoDeployment) {
         show("no-deployment", { focus: true });
+        return;
+      }
+      if (thrown instanceof EmailNotVerified) {
+        show("email-unverified", { focus: true });
+        return;
+      }
+      if (thrown instanceof EmailDomainNotAccepted) {
+        show("email-domain", { focus: true });
+        return;
+      }
+      if (thrown instanceof ClientTooOld) {
+        setDetail("client-too-old", thrown.message);
+        show("client-too-old", { focus: true });
         return;
       }
       setDetail("error", thrown instanceof Error ? thrown.message : String(thrown));
@@ -784,9 +832,11 @@ const description =
       });
     }
 
-    document.querySelector<HTMLElement>("[data-reload]")?.addEventListener("click", () => {
-      window.location.reload();
-    });
+    for (const el of document.querySelectorAll<HTMLElement>("[data-reload]")) {
+      el.addEventListener("click", () => {
+        window.location.reload();
+      });
+    }
 
     void boot();
   }

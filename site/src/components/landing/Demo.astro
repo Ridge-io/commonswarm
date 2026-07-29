@@ -5,12 +5,11 @@
  * IT TEACHES ONE IDEA: you say what you are about to touch, and you immediately find out
  * whether a teammate is already there. Everything else in the widget is in service of that.
  *
- * IT IS ALSO WHERE THE PAGE'S ONE FRAMING SENTENCE STOPS BEING A CLAIM AND BECOMES A DEMO.
- * Hero says "A signal announces. It never locks."; here the reader picks the file someone is
- * already on, presses the button, and WATCHES IT GO THROUGH. That is the whole reason outcome
- * A is not an error state and has no red in it. The foot of that outcome says it in words —
- * "Nothing stopped you" — because the thing being proved is a negative, and a negative has to
- * be pointed at or a reader will not notice it did not happen.
+ * IT IS ALSO WHERE THE PAGE INTRODUCES ITS ONE FRAMING SENTENCE. The ordinary customer-launch
+ * collision defines a signal first, then says "A signal announces. It never locks." The real
+ * terminal version follows and proves the rule when the reader picks a file someone is
+ * already on and watches their update go through. Outcome A is therefore not an error state
+ * and has no red in it.
  *
  * THE WORD "claim" IS GONE FROM THIS FILE. It read as a thing held against someone, which is
  * the retired framing (docs/marketing/SITE-BRIEF.md's vocabulary table) creeping back in a
@@ -129,13 +128,40 @@ const DEFAULT_TEXT = "wiring the payments webhook";
 <section class="section section--tight demo" id="demo" aria-labelledby="demo-title">
   <div class="page">
     <div class="demo__head js-reveal">
-      <p class="eyebrow">Try it</p>
-      <h2 class="h-section" id="demo-title">Find out who’s already there.</h2>
+      <p class="eyebrow">One ordinary overlap</p>
+      <h2 class="h-section" id="demo-title">See the overlap before work gets duplicated.</h2>
       <p class="lede">
-        Say what you’re about to touch, the way an agent would. The command builds as you
-        type — it’s the real one — and the panel shows what everyone else sees.
+        Your assistants share short updates before they begin. When two plans overlap, they
+        can divide the work while both people keep moving.
       </p>
     </div>
+
+    <div class="card card--lg demo__story js-reveal">
+      <div class="demo__story-turn">
+        <span class="demo__story-who">You</span>
+        <p>What are you working on?</p>
+      </div>
+      <div class="demo__story-turn">
+        <span class="demo__story-who">Your assistant</span>
+        <p>Preparing the customer launch email.</p>
+      </div>
+      <div class="demo__story-result">
+        <span class="demo__story-who">CommonSwarm</span>
+        <p>
+          Maya is already drafting it, so your assistant takes the launch checklist instead.
+          No duplicate draft, and nobody has to stop and ask around.
+        </p>
+      </div>
+      <p class="demo__story-rule">
+        CommonSwarm calls each short update a signal.
+        <strong>A signal announces. It never locks.</strong>
+      </p>
+    </div>
+
+    <p class="demo__technical-intro js-reveal">
+      <strong>For technical teams:</strong> the interactive example below uses the real
+      command. Change the work, file, or time and see exactly what the shared feed reports.
+    </p>
 
     <div class="demo__grid js-reveal">
       {/* ------------------------------------------------------------- the form */}
@@ -557,6 +583,69 @@ const DEFAULT_TEXT = "wiring the payments webhook";
     margin-block-end: var(--s-1);
   }
 
+  .demo__story {
+    display: grid;
+    gap: var(--s-4);
+    max-inline-size: 52rem;
+  }
+
+  .demo__story-turn,
+  .demo__story-result {
+    display: grid;
+    grid-template-columns: minmax(7rem, 0.3fr) minmax(0, 1fr);
+    gap: var(--s-4);
+    align-items: baseline;
+  }
+
+  .demo__story-result {
+    padding: var(--s-4);
+    border: 1px solid color-mix(in oklab, var(--accent) 30%, transparent);
+    border-radius: var(--radius);
+    background: var(--accent-dim);
+  }
+
+  .demo__story-who {
+    font-size: var(--t-xs);
+    line-height: var(--lh-xs);
+    letter-spacing: var(--track-eyebrow);
+    text-transform: uppercase;
+    font-weight: var(--weight-semibold);
+    color: var(--text-faint);
+  }
+
+  .demo__story-turn p,
+  .demo__story-result p {
+    margin: 0;
+    font-size: var(--t-base);
+    line-height: var(--lh-base);
+    color: var(--text);
+  }
+
+  .demo__story-rule {
+    margin: 0;
+    padding-block-start: var(--s-4);
+    border-block-start: 1px solid var(--border);
+    font-size: var(--t-sm);
+    line-height: var(--lh-sm);
+    color: var(--text-muted);
+  }
+
+  .demo__story-rule strong {
+    color: var(--text);
+  }
+
+  .demo__technical-intro {
+    margin: var(--s-10) 0 var(--s-5);
+    max-inline-size: var(--measure-wide);
+    font-size: var(--t-sm);
+    line-height: var(--lh-sm);
+    color: var(--text-muted);
+  }
+
+  .demo__technical-intro strong {
+    color: var(--text);
+  }
+
   /* stretch, not start: the two columns are a matched pair, and before the first announce
      the result side is only an empty state. Left to size itself it left a card a third the
      height of the form beside it, with a void underneath. */
@@ -569,6 +658,14 @@ const DEFAULT_TEXT = "wiring the payments webhook";
   @media (min-width: 62rem) {
     .demo__grid {
       grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    }
+  }
+
+  @media (max-width: 38rem) {
+    .demo__story-turn,
+    .demo__story-result {
+      grid-template-columns: minmax(0, 1fr);
+      gap: var(--s-2);
     }
   }
 

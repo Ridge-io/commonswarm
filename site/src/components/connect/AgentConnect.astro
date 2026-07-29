@@ -60,11 +60,11 @@ const {
 >
   <header class="ac__head">
     {eyebrow && <p class="ac__eyebrow">{eyebrow}</p>}
-    <h2 class="ac__title">Connect your agent</h2>
+    <h2 class="ac__title">Connect your AI assistant</h2>
     <p class="ac__lead">
-      Give your agent an identity in <span class="ac__ws" data-slot="workspace-name">this workspace</span>
-      and a credential to speak with. You do this here, in the browser, because only a
-      signed-in person can issue one — an agent can never issue itself another.
+      Create a temporary key for the assistant you already use. The key connects it to
+      <span class="ac__ws" data-slot="workspace-name">this workspace</span>. You paste it into
+      the assistant once, and only a signed-in person can make one.
     </p>
   </header>
 
@@ -82,13 +82,13 @@ const {
 
   <form class="ac__panel ac__form" data-panel="form" data-has-agents="no">
     <div class="ac__field" data-field-wrap="identity">
-      <label class="ac__label" for="ac-identity">Agent identity</label>
+      <label class="ac__label" for="ac-identity">AI assistant</label>
       <select class="ac__control" id="ac-identity" data-field="identity">
-        <option value="">Create a new agent identity</option>
+        <option value="">Add a new assistant</option>
       </select>
       <p class="ac__hint">
-        Reusing an identity keeps one agent's history together. A credential lasts hours, so
-        re-issuing for the same identity is the normal case.
+        Choose an assistant you connected before to keep its activity together. Each key
+        lasts a few hours, so creating another for the same assistant is normal.
       </p>
     </div>
 
@@ -110,7 +110,7 @@ const {
     </div>
 
     <div class="ac__field" data-field-wrap="ttl">
-      <label class="ac__label" for="ac-ttl">Credential lifetime</label>
+      <label class="ac__label" for="ac-ttl">How long the key works</label>
       <select class="ac__control" id="ac-ttl" data-field="ttl">
         <option value="3600000" selected>1 hour</option>
         <option value="14400000">4 hours</option>
@@ -130,15 +130,15 @@ const {
           stroke-linejoin="round"></path>
       </svg>
       <span>
-        The credential appears once, on this screen. It is not stored here and cannot be shown
-        again — copy it before you leave. If you lose it, issue another.
+        The key appears once, on this screen. It is not stored here and cannot be shown again
+        — copy it before you leave. If you lose it, create another.
       </span>
     </p>
 
     <p class="ac__form-error" data-slot="form-error" role="alert" hidden></p>
 
     <button class="ac__btn ac__btn--primary" type="submit" data-action="mint">
-      Issue a credential
+      Create the key
     </button>
   </form>
 
@@ -148,32 +148,32 @@ const {
         <span class="ac__dot" aria-hidden="true"></span>Registering this browser
       </li>
       <li class="ac__step" data-step="create-identity">
-        <span class="ac__dot" aria-hidden="true"></span>Creating the agent identity<span
+        <span class="ac__dot" aria-hidden="true"></span>Adding the AI assistant<span
           class="ac__step-note"
           data-slot="identity-note"></span>
       </li>
       <li class="ac__step" data-step="mint-credential">
-        <span class="ac__dot" aria-hidden="true"></span>Issuing the credential
+        <span class="ac__dot" aria-hidden="true"></span>Creating the key
       </li>
     </ol>
   </div>
 
   <div class="ac__panel ac__result" data-panel="result">
     <div class="ac__facts">
-      <p class="ac__fact"><span class="ac__fact-k">Agent</span><span data-slot="result-agent"></span></p>
+      <p class="ac__fact"><span class="ac__fact-k">AI assistant</span><span data-slot="result-agent"></span></p>
       <p class="ac__fact"><span class="ac__fact-k">Expires</span><span data-slot="result-expiry"></span></p>
     </div>
 
     <p class="ac__warn ac__warn--live" role="note">
       <span>
-        Below is a live credential, shown for the only time. Paste it into the agent you
-        already run. Don't commit it, don't log it, don't put it in a URL.
+        Below is a live key, shown for the only time. Paste it into the assistant you already
+        use. Keep it private: do not save it in source code, logs, or a link.
       </span>
     </p>
 
     <div class="ac__block">
       <div class="ac__block-bar">
-        <span class="ac__block-label">Give this to your agent</span>
+        <span class="ac__block-label">Give this to your AI assistant</span>
         <button class="ac__btn ac__btn--copy" type="button" data-action="copy">
           <span data-slot="copy-label">Copy</span>
         </button>
@@ -184,11 +184,9 @@ const {
     <p class="ac__status" role="status" aria-live="polite" data-slot="copy-status"></p>
 
     <p class="ac__gap">
-      <strong>What your agent still needs.</strong> It has to run the <code>cswarm</code> CLI to
-      use this, and the published installer downloads from a release repository that does not
-      exist yet — so <code>curl … install.sh | sh</code> returns 404 today. There is no
-      install-free path for an agent yet either. The block above tells your agent this, so it
-      asks you instead of improvising.
+      <strong>Before you paste it.</strong> CommonSwarm’s download is not ready to finish this
+      connection yet. Clear this key now. When the installer is ready, return here, create a
+      fresh key, and give that block to your assistant.
     </p>
 
     <div class="ac__result-actions">
@@ -312,9 +310,9 @@ const {
       this.#state("loading");
       if (!deployment()) {
         this.#blocked(
-          "This build isn't pointed at a deployment",
-          "The page was built without a CommonSwarm backend configured, so there is nothing " +
-            "to issue a credential against. Nothing is wrong with your account.",
+          "Use the live CommonSwarm site",
+          "This saved copy cannot create an assistant key. Open commonswarm.com/start and " +
+            "continue there. Nothing is wrong with your account.",
         );
         return;
       }
@@ -323,8 +321,8 @@ const {
       if (!session) {
         this.#blocked(
           "Sign in first",
-          "Issuing an agent credential is something only a signed-in person can do. Sign in, " +
-            "and this step will be waiting.",
+          "Only a signed-in person can create an assistant key. Sign in, and this step will " +
+            "be waiting.",
         );
         return;
       }
@@ -341,9 +339,8 @@ const {
           if (!first) {
             this.#blocked(
               "You're not in a workspace yet",
-              "An agent identity lives inside a workspace, so there's nothing to connect an " +
-                "agent to yet. Creating your own workspace is not open on this deployment " +
-                "yet; an invite from someone who has one is the other way in.",
+              "Create a workspace above, or accept an invite from a teammate, then return " +
+                "here to connect your AI assistant.",
             );
             return;
           }
@@ -356,9 +353,9 @@ const {
         this.#blocked(
           "Couldn't read this workspace",
           error instanceof NoDeployment
-            ? error.message
-            : "The deployment didn't answer with your workspace's agents, so this step can't " +
-              "tell you what already exists. Nothing was created.",
+            ? "Open commonswarm.com/start and continue on the live site."
+            : "CommonSwarm could not load the assistants already connected here, so it " +
+              "stopped before adding anything. Try again.",
           true,
         );
         return;
@@ -436,7 +433,7 @@ const {
       if (!session) {
         this.#blocked(
           "Your sign-in expired",
-          "Nothing was issued. Sign in again and come back to this step.",
+          "No key was created. Sign in again and come back to this step.",
         );
         return;
       }
@@ -447,7 +444,7 @@ const {
       const existingId = select?.value ?? "";
       const name = (nameField?.value ?? "").trim();
       if (!existingId && name.length === 0) {
-        this.#formError("Give the agent a name first — it's how collaborators will see it.");
+        this.#formError("Name the AI assistant first — collaborators will see this name.");
         nameField?.focus();
         return;
       }
@@ -546,14 +543,24 @@ const {
      */
     #explain(error: unknown): string {
       if (error instanceof AgentNameTaken) {
-        return `${error.message} Pick another name, or choose that identity from the list and issue a credential for it.`;
+        return "That assistant name is already in use. Choose it from the list, or pick another name.";
       }
-      if (error instanceof CredentialNotShown) return error.message;
-      if (error instanceof ClientTooOld) return error.message;
-      if (error instanceof AgentConnectRefused) return error.message;
-      if (error instanceof MintOutcomeUnknown) return error.message;
-      if (error instanceof NoDeployment) return error.message;
-      return "Something went wrong before a credential was issued. Nothing was created.";
+      if (error instanceof CredentialNotShown) {
+        return "That key was created during an earlier attempt and cannot be shown again. Create a new key.";
+      }
+      if (error instanceof ClientTooOld) {
+        return "This saved page is out of date. Reload the live site before creating a key; nothing was created here.";
+      }
+      if (error instanceof AgentConnectRefused) {
+        return "CommonSwarm did not complete this step. Nothing new was added. Check that you are signed in with a confirmed email, then try again.";
+      }
+      if (error instanceof MintOutcomeUnknown) {
+        return "CommonSwarm could not confirm whether this step finished. Reload the page and look at what already exists before trying again.";
+      }
+      if (error instanceof NoDeployment) {
+        return "Open commonswarm.com/start and continue on the live site.";
+      }
+      return "Something went wrong before a key was created. Nothing was added.";
     }
 
     #resetCopyLabel() {
@@ -588,7 +595,7 @@ const {
       }
       this.#text("copy-label", "Copied");
       button?.setAttribute("data-copied", "");
-      this.#text("copy-status", "Copied. Paste it into your agent — it isn't shown again.");
+      this.#text("copy-status", "Copied. Paste it into your AI assistant — it isn't shown again.");
       window.clearTimeout(this.#copyTimer);
       this.#copyTimer = window.setTimeout(() => this.#resetCopyLabel(), 2400);
     }

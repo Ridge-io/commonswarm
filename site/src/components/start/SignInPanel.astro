@@ -12,12 +12,9 @@
  * (src/cloud/auth.ts). It really navigates to GitHub, and the session really comes back
  * here, because the client is created with detectSessionInUrl: true.
  *
- * WHAT IT STILL CANNOT DO is create a workspace on production, because that is gated
- * server-side on SWARM_SELF_SERVE, which is unset there. That refusal is rendered as its own
- * state AFTER the press, by the page's script — it is not pre-empted here. A button that
- * refuses to run because of a condition it has not tested is guessing, and it would guess
- * wrong the moment an operator flips the flag or somebody points this same static bundle at
- * their own Supabase project.
+ * Production self-serve is on (measured 2026-07-28). The server can still pause creation for
+ * a deployment or usage ceiling, so a refusal is rendered as its own state AFTER the press.
+ * The button never guesses deployment state before it asks.
  *
  * ---------------------------------------------------------------------------------------
  * THE PANEL SHIPS HIDDEN
@@ -48,8 +45,8 @@ import Button from "../ui/Button.astro";
 <section class="st-pn" data-panel="signed-out" tabindex="-1" aria-labelledby="pn-in-t" hidden>
   <h2 class="st-pn__t" id="pn-in-t">Create your workspace</h2>
   <p class="st-pn__p">
-    Sign in and CommonSwarm sets up your workspace, then you hand the CLI to your agent. No
-    password either way.
+    Sign in and CommonSwarm creates the shared space your AI assistants will use. You will
+    connect one on the next screen. No password and no card.
   </p>
 
   {/* EMAIL FIRST, GITHUB SECOND, AND THE ORDER IS THE DECISION.
@@ -157,6 +154,6 @@ import Button from "../ui/Button.astro";
   </p>
 
   <p class="st-pn__fine">
-    Free: three live workspaces per verified identity, and no card at any point.
+    Free: up to three live workspaces. No card.
   </p>
 </section>

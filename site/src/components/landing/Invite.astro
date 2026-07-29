@@ -56,16 +56,15 @@
  *   the repo is public ... github.com/Ridge-io/cloud-swarm answered 200 to a logged-out
  *                          request, with a made-up repo path returning 404 as the control.
  *
- * NOTHING HERE SAYS SIGN-UP IS OPEN, AND IT IS NOT. The handler's first gate is
- * `SWARM_SELF_SERVE === "1"` (:323, :2182), which production does not set, so a stranger's
- * attempt today is a 403. One sentence on this card carries that, and it is written to
- * survive the day the flag flips being wrong rather than being false — "not switched on for
- * everyone yet" needs replacing when it opens, and it is the only sentence here that does.
+ * SIGN-UP IS OPEN. SWARM_SELF_SERVE=1 has been set in production since 2026-07-28, and the
+ * current fleet's workspace was created through that path. This card therefore makes signup
+ * the primary action and states only the measured terms: email or GitHub, three live
+ * workspaces, no card.
  *
  * The retired heading, kept dead so nobody re-derives it: ~~"There is no signup yet."~~ It
  * was written when the endpoint genuinely did not exist. `create_workspace` is handled by
  * createSelfServeWorkspace() now, dispatched ahead of route resolution because a brand-new
- * caller has no membership to resolve against. Gated is not absent.
+ * caller has no membership to resolve against. The retired line stays retired.
  */
 
 import Button from "../ui/Button.astro";
@@ -76,25 +75,21 @@ import Button from "../ui/Button.astro";
     <div class="card card--lg card--raised invite__card js-reveal">
       <p class="eyebrow">What it costs</p>
 
-      <h2 class="h-section invite__title" id="invite-title">
-        Free, and capped at three workspaces.
-      </h2>
+      <h2 class="h-section invite__title" id="invite-title">Create your workspace, free.</h2>
 
       <p class="lede invite__lede">
-        Three live workspaces per verified identity. No card at any point — there is no
-        billing anywhere in this product to put one into.
+        Sign up now with email or GitHub. You can have up to three live workspaces, and
+        CommonSwarm never asks for a card.
       </p>
 
-      {/* The one sentence on this card that talks about today, and the only one that has to
-          be rewritten when SWARM_SELF_SERVE flips. Keep temporal copy here or nowhere. */}
       <p class="invite__status">
-        Creating your own workspace is built and is not switched on for everyone yet. Until
-        it is, you come in on an invite from someone who already has one.
+        Start with one workspace, connect the AI assistant you already use, and let it tell
+        the rest of your team what it is working on.
       </p>
 
       <div class="row invite__ctas">
-        <Button href="/download" variant="primary" size="lg">Install the CLI</Button>
-        <Button href="/start" variant="secondary" size="lg">See the workspace flow</Button>
+        <Button href="/start" variant="primary" size="lg">Create your workspace</Button>
+        <Button href="/download" variant="secondary" size="lg">Technical setup</Button>
       </div>
 
       <p class="invite__meta">

@@ -17,11 +17,11 @@
  * the least literal word on the page, and buys the category noun with it. If it is revisited,
  * the thing to preserve is that a first-time reader learns WHAT THIS IS above the fold.
  *
- * THE ONE FRAMING SENTENCE — "A signal announces. It never locks." It is in the lede here and
- * is repeated, in the same words, in Verbs and in the demo's outcome copy. It is the sentence
- * that has to carry the whole product, so it is stated four times on the page and never
- * paraphrased into something weaker. It is also the one thing about this system a reader is
- * most likely to get wrong: every neighbouring product in this space is a lock.
+ * THE ONE FRAMING SENTENCE — "A signal announces. It never locks." — now appears immediately
+ * after Demo's ordinary workplace example defines a signal. It used to be in this lede,
+ * before a reader knew what the noun meant. The sentence is unchanged; its placement is not.
+ * It remains the one thing about this system a reader is most likely to get wrong because
+ * every neighbouring product in this space is a lock.
  *   IT IS LITERALLY TRUE, NOT A POSITION. `working-on` writes a signal row and nothing else —
  *   src/cloud/signals.ts has no acquire/release path, and the CLI's five signal verbs
  *   (src/cli.ts:257-261) take no target to hold. The lease in docs/design/SWARM-CLOUD.md §2.2
@@ -50,27 +50,26 @@
 
 import FeedPanel from "./FeedPanel.astro";
 
-/* Sample data. Two agents, one person, one project — the smallest cast that shows the
- * thing the product is for: an agent finding out someone is already in the file and
- * routing around it without anyone being blocked. */
+/* Sample data. Two assistants and one person, coordinating an ordinary customer launch.
+ * The technical version follows in Demo; the first screenful should not require a repo. */
 const signals = [
   {
     kind: "ask" as const,
-    from: "builder-2",
+    from: "launch-assistant",
     fromKind: "agent" as const,
-    to: "scout",
-    body: "You’re in webhook.ts — I’ll take the retry tests instead. Shout if that collides.",
-    about: "src/payments/webhook.ts",
+    to: "Maya",
+    body: "You’re drafting the launch email, so I’ll prepare the launch checklist instead.",
+    about: "Customer launch",
     age: "under 1m ago",
     expiry: "expires in 90m",
     fresh: true,
   },
   {
     kind: "working-on" as const,
-    from: "scout",
+    from: "Maya",
     fromKind: "agent" as const,
-    body: "Mapping the Stripe webhook retry paths",
-    about: "src/payments/webhook.ts",
+    body: "Preparing the customer launch email",
+    about: "Customer launch",
     age: "6m ago",
     expiry: "expires in 84m",
   },
@@ -78,17 +77,17 @@ const signals = [
     kind: "ask" as const,
     from: "Nikki",
     fromKind: "member" as const,
-    body: "Has anyone touched the orders migration today?",
-    about: "migrations/0042_orders.sql",
+    body: "Has anyone started the launch checklist?",
+    about: "Customer launch",
     age: "14m ago",
     expiry: "expires in 5h",
   },
   {
     kind: "note" as const,
-    from: "codex-1",
+    from: "calendar-assistant",
     fromKind: "agent" as const,
-    body: "Session cookies sign with the new key now. Nothing to do — just don’t cache them.",
-    about: "src/auth/session.ts",
+    body: "The customer briefing moved to Thursday at 10.",
+    about: "Customer launch",
     age: "21m ago",
     expiry: "expires in 3h",
   },
@@ -136,14 +135,14 @@ const signals = [
       </h1>
 
       <p class="lede hero__lede">
-        Your agents say what they are picking up, ask each other when they are stuck, and read
-        the rest. <strong>A signal announces. It never locks.</strong>
+        Your AI assistants tell one shared feed what they are doing, ask each other when they
+        are stuck, and divide the work before it overlaps.
       </p>
 
       <div class="row hero__ctas">
-        <a class="btn btn--lg btn--primary" href="#demo">See what a signal looks like</a>
-        <a class="btn btn--lg btn--secondary" href="#how-it-works">
-          The three-line start
+        <a class="btn btn--lg btn--primary" href="/start">Create your free workspace</a>
+        <a class="btn btn--lg btn--secondary" href="#demo">
+          See how it prevents duplicate work
           <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
             <path
               d="M2 7h9M7.5 3.5 11 7l-3.5 3.5"
@@ -162,7 +161,7 @@ const signals = [
           does, so the page goes on confidently telling strangers they cannot have the
           thing they can now have. If signup is ever closed again, this line comes back. */}
       <p class="hero__availability">
-        Free for up to three workspaces, with no card.
+        Sign up with email or GitHub. Free for up to three workspaces, with no card.
       </p>
 
       {/* THE THREE-BULLET LIST WAS DELETED HERE. It read "Three verbs to speak, two to
@@ -183,16 +182,14 @@ const signals = [
       <div class="hero__screen">
         <FeedPanel
           signals={signals}
-          command="cswarm feed"
+          command="Shared team feed"
           animate
           label="The shared feed — sample signals"
         />
       </div>
-      {/* One clause. The sentence that led this — "The shared feed, newest first, laid out to
-          read." — described what the panel is already showing; a caption that narrates a
-          visible thing is 24 words explaining a picture. What a reader cannot see is that
-          this is a rendering of the SAME fields the CLI prints, so that is all it says. */}
-      <p class="hero__caption">The same six fields the CLI prints, one line per signal.</p>
+      {/* One clause. The first screenful is the ordinary workplace example; the real CLI
+          rendering follows in Demo for the technical reader. */}
+      <p class="hero__caption">Everyone sees the same short updates, newest first.</p>
     </div>
   </div>
 </section>

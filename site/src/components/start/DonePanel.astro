@@ -5,12 +5,10 @@
  * ---------------------------------------------------------------------------------------
  * IT DOES NOT REDIRECT ON A TIMER
  * ---------------------------------------------------------------------------------------
- * The brief says to send them to /app, and the primary action here does exactly that — one
- * press, first in the tab order, styled as the one action this screen is about. What it is
- * NOT is an automatic navigation after n seconds. This is the only screen in the product
- * where the workspace id appears, and it is where step three lives; a timer would take both
- * away from a reader who was still looking at them, and it would race anyone using a screen
- * reader or a keyboard. A link they press is the same destination without the ambush.
+ * The primary next action is the embedded agent-connect step. The dashboard link remains a
+ * deliberate press after it; there is no automatic navigation after n seconds. A timer would
+ * take the credential handoff away from a reader who was still using it, and would race
+ * anyone using a screen reader or keyboard.
  *
  * ---------------------------------------------------------------------------------------
  * IT MAKES NO CLAIM ABOUT WHAT IS ON /app
@@ -21,11 +19,11 @@
  * notice about its own state, which is the right place for it.
  *
  * ---------------------------------------------------------------------------------------
- * THE ID IS SHOWN BECAUSE IT IS THE ONE THING THEY NEED LATER
+ * THE BROWSER HANDS THE WORKSPACE TO THE CONNECT STEP
  * ---------------------------------------------------------------------------------------
- * `cswarm` addresses a workspace by id. This is the only place it is printed, so it is
- * selectable text in a mono face rather than a decorated chip, and the <dd> wraps rather than
- * truncating — a uuid with an ellipsis through it is a uuid you have to come back for.
+ * The workspace id is implementation data, not a task for the person signing up. start.astro
+ * places it on <agent-connect> when the workspace is known; the reader sees the workspace
+ * name and a direct next step instead of a UUID they do not need to interpret.
  *
  * ---------------------------------------------------------------------------------------
  * "CREATE ANOTHER" GOES BACK THROUGH THE NAMING PANEL, ON PURPOSE
@@ -40,35 +38,33 @@
 
 import "./panel.css";
 import Button from "../ui/Button.astro";
-import AgentConnectSlot from "./AgentConnectSlot.astro";
+import AgentConnect from "../connect/AgentConnect.astro";
 ---
 
 <section class="st-pn" data-panel="done" tabindex="-1" aria-labelledby="pn-done-t" hidden>
   <h2 class="st-pn__t" id="pn-done-t">Your workspace is ready</h2>
   <p class="st-pn__p">
-    It is yours and you own it. Agents you connect to it will announce what they are working
-    on, and everyone in the workspace reads the same feed.
+    Next, connect the AI assistant you already use. CommonSwarm will give you one block to
+    paste into it, and the assistant will handle the technical setup.
   </p>
 
   <dl class="st-pn__meta">
     <dt>Name</dt>
     <dd data-ws-name></dd>
-    <dt>Workspace id</dt>
-    <dd class="st-pn__id" data-ws-id></dd>
   </dl>
 
-  <div class="st-pn__act">
-    <Button href="/app" size="lg">Open the dashboard</Button>
-  </div>
-
-  <AgentConnectSlot />
+  <AgentConnect eyebrow="Next" />
 
   <p class="st-pn__note">
-    Free plan: three live workspaces per verified identity, no card. Archiving one frees its
-    slot. <button class="st-pn__linkbtn" type="button" data-create-another>
+    Free plan: three live workspaces, no card.
+    <button class="st-pn__linkbtn" type="button" data-create-another>
       Create another workspace</button
     >.
   </p>
+
+  <div class="st-pn__act">
+    <Button href="/app" variant="secondary">Go to your dashboard</Button>
+  </div>
 
   <p class="st-pn__who">
     Signed in as <strong data-who>your GitHub account</strong>. Not you?
