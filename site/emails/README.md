@@ -29,13 +29,16 @@ Preview the Management API diff without changing the project:
 SUPABASE_ACCESS_TOKEN=... \
 SUPABASE_PROJECT_REF=... \
 COMMONSWARM_SMTP_ADMIN_EMAIL=... \
+COMMONSWARM_SMTP_SENDER_NAME=CommonSwarm \
 scripts/push-email-templates.sh
 ```
 
 The script is dry-run by default. The operator can add `--apply` after reviewing the
 field-by-field diff. A second apply is a no-op when the project already matches.
 
-The script configures template subjects, rendered HTML, `smtp_sender_name`, and the
-operator-supplied `smtp_admin_email`. It intentionally does not enable security
-notifications: enabling a new class of account email is a separate product decision from
-customizing the copy that is sent when one is enabled.
+The script configures template subjects, rendered HTML, the configurable
+`smtp_sender_name` (default `CommonSwarm`), and the operator-supplied `smtp_admin_email`.
+The recommended sender is `CommonSwarm <hello@commonswarm.com>`: `hello@` is warm and
+reply-capable without implying a formal support channel. The script intentionally does not
+enable security notifications: enabling a new class of account email is a separate product
+decision from customizing the copy that is sent when one is enabled.

@@ -61,6 +61,7 @@ test("push script diffs before PATCH, defaults dry, and becomes a no-op when cur
   const address = server.address();
   const env = {
     COMMONSWARM_SMTP_ADMIN_EMAIL: "mail@example.test",
+    COMMONSWARM_SMTP_SENDER_NAME: "CommonSwarm Team",
     SUPABASE_ACCESS_TOKEN: "fixture-token",
     SUPABASE_MANAGEMENT_API_URL: `http://127.0.0.1:${address.port}`,
     SUPABASE_PROJECT_REF: "fixture-project",
@@ -78,7 +79,7 @@ test("push script diffs before PATCH, defaults dry, and becomes a no-op when cur
   assert.match(apply.stdout, /Applied 28/);
   assert.deepEqual(methods, ["GET", "GET", "PATCH"], "apply must GET, print diff, then PATCH");
   assert.equal(Object.keys(currentConfig).length, 28);
-  assert.equal(currentConfig.smtp_sender_name, "CommonSwarm");
+  assert.equal(currentConfig.smtp_sender_name, "CommonSwarm Team");
   assert.equal(currentConfig.smtp_admin_email, "mail@example.test");
   assert.match(currentConfig.mailer_templates_magic_link_content, /CommonSwarm/);
 

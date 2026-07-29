@@ -14,6 +14,7 @@ Required environment:
   COMMONSWARM_SMTP_ADMIN_EMAIL   Real sender address selected by the operator
 
 Optional environment:
+  COMMONSWARM_SMTP_SENDER_NAME   From-line name (default: CommonSwarm)
   SUPABASE_MANAGEMENT_API_URL    Management API origin (default: https://api.supabase.com)
 EOF
 }

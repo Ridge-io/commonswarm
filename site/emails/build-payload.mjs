@@ -6,7 +6,7 @@ if (!smtpAdminEmail) {
 }
 
 const payload = {
-  smtp_sender_name: "CommonSwarm",
+  smtp_sender_name: process.env.COMMONSWARM_SMTP_SENDER_NAME || "CommonSwarm",
   smtp_admin_email: smtpAdminEmail,
 };
 
