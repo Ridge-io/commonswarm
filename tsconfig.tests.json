@@ -4,6 +4,11 @@
   // type error in a test passed tsc, build, AND the test run, because tsx strips types
   // without checking them.
   //
+  // The tests include is `tests/**/*`, NOT `tests/**/*.ts`. tsx executes TSX as well, so a
+  // `.tsx` test would have run untypechecked while this file claimed to cover `tests/` —
+  // the claim being wider than the mechanism, which is the defect this gate exists to catch.
+  // TypeScript only picks up the extensions it recognises, so the bare glob adds .tsx and
+  // .d.ts without dragging in fixtures or JSON.
   // `rootDir` MUST be widened to the repo root. Inheriting "src" while including tests/
   // produces a wall of TS6059 "not under rootDir" errors that look like real findings and
   // are purely an artefact of this file.
@@ -14,5 +19,5 @@
     "declaration": false,
     "sourceMap": false
   },
-  "include": ["src/**/*.ts", "tests/**/*.ts"]
+  "include": ["src/**/*.ts", "tests/**/*"]
 }
