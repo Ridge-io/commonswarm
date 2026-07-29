@@ -369,6 +369,7 @@ import SampleNotice from "./SampleNotice.astro";
     let signalOffset = 0;
     let signalHasMore = false;
     let signalCutoff = "";
+    let pendingWorkspaceId = "";
 
     const SIGNAL_PAGE_SIZE = 50;
 
@@ -847,6 +848,26 @@ import SampleNotice from "./SampleNotice.astro";
     const openWorkspace = async (workspaceId: string): Promise<void> => {
       const selected = workspaces.find((workspace) => workspace.id === workspaceId);
       if (!selected) return;
+      const connect = one<SecretHoldingAgentConnect>("agent-connect");
+      const promptWorkspaceId = connect?.getAttribute("workspace-id") ?? "";
+      if (
+        connect?.dataset.state === "done" &&
+        promptWorkspaceId.length > 0 &&
+        promptWorkspaceId !== workspaceId
+      ) {
+        pendingWorkspaceId = workspaceId;
+        const status = connect.querySelector<HTMLElement>("[data-slot='copy-status']");
+        if (status) {
+          status.textContent =
+            "Copy this live prompt, then clear it before switching workspaces.";
+        }
+        showChannelView("connect");
+        window.requestAnimationFrame(() => {
+          connect.querySelector<HTMLButtonElement>("[data-action='clear']")?.focus();
+        });
+        return;
+      }
+      pendingWorkspaceId = "";
       const keepShell = app.dataset.state === "channel";
       activeWorkspaceId = selected.id;
       const version = ++requestVersion;
@@ -1129,6 +1150,7 @@ import SampleNotice from "./SampleNotice.astro";
         agents = [];
         people = new Map();
         signals = [];
+        pendingWorkspaceId = "";
         showAuthView("choices");
         showPanel("signed-out");
         button.disabled = false;
@@ -1175,8 +1197,12 @@ import SampleNotice from "./SampleNotice.astro";
 
     app.addEventListener("commonswarm:agent-connected", async () => {
       if (!activeWorkspaceId || sampleMode) return;
+      const workspaceId = activeWorkspaceId;
+      const version = requestVersion;
       try {
-        agents = await roster(activeWorkspaceId);
+        const nextAgents = await roster(workspaceId);
+        if (version !== requestVersion || workspaceId !== activeWorkspaceId) return;
+        agents = nextAgents;
         renderRoster();
         const addInRail = one<HTMLButtonElement>("[data-add-agent-rail]");
         if (addInRail) addInRail.hidden = agents.length === 0;
@@ -1188,6 +1214,12 @@ import SampleNotice from "./SampleNotice.astro";
     });
 
     app.addEventListener("commonswarm:agent-secret-cleared", () => {
+      const nextWorkspaceId = pendingWorkspaceId;
+      pendingWorkspaceId = "";
+      if (nextWorkspaceId) {
+        void openWorkspace(nextWorkspaceId);
+        return;
+      }
       const selected = workspaces.find((workspace) => workspace.id === activeWorkspaceId);
       const connect = one<SecretHoldingAgentConnect>("agent-connect");
       if (!selected || !connect) return;
