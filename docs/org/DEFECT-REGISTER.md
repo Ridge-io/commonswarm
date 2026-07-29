@@ -759,3 +759,51 @@ re-review.
 long queue, stopped to say the reviewer's stated condition no longer held and handed the call
 upward. That is worth more than the ruling.
 
+---
+
+## D-022 — The primary install command on `/download` has been broken all day, behind two passing checks · IN REVIEW
+
+**Found:** 2026-07-29 by Lumen (codex, L3), reading the DEPLOYED DOM rather than the source or the
+build output. This is the most consequential instance of D-018 recorded, and the author of the
+failed verification was the advisor.
+
+`site/src/components/download/InstallPanel.astro:150`:
+
+```astro
+{cmdHead}<span class="dl-cmd__host">&lt;host&gt;</span>{cmdTail}
+```
+
+The host placeholder is **hardcoded in the markup as an HTML entity**. Earlier today `HOST_TOKEN`
+was changed from the literal `"<host>"` to `INSTALL_HOST`, which correctly fixed how `cmdHead`
+and `cmdTail` split — and left the span *between them* emitting the entity. So the primary
+install command on the site renders as:
+
+```
+curl -fsSL https://<host>/install.sh | sh
+```
+
+The single most important string on the product's site. Live, all day, through a commit whose
+message asserted it was fixed and verified.
+
+★ **WHY BOTH OF MY CHECKS PASSED.** This is the part worth keeping:
+
+- The absence check grepped built HTML for the **contiguous** string `https://&lt;host&gt;`. The
+  tinting `<span>` splits the URL across markup, so the pattern matched nothing and **0 was read
+  as "gone"**.
+- The positive control counted `curl -fsSL https://commonswarm.com/install.sh` and found **4** —
+  all of them in the lower-page variants, which were genuinely correct. **So the control passed
+  while the headline CTA was wrong.**
+
+A passing absence check *and* a passing positive control, on the same invocation, per the
+doctrine — and the defect was on neither path. Pairing the two greps is necessary and was not
+sufficient, because both looked at a place the defect was not.
+
+**The rule this adds, and it is narrower and more useful than "look harder":** an observer for
+rendered copy must assert on **extracted text with markup stripped**, never on HTML source. Any
+styling span re-breaks a source-level grep, so a source-grep observer will keep missing this
+class forever. Lumen's observer reads the DOM text node; mine read the file.
+
+**Status:** assigned in-lane to Lumen rather than fixed by the advisor, deliberately — Lumen was
+actively editing that file and a shared-checkout collision (D-013) is worse than the extra
+minutes. Fix + markup-stripping observer + mutation at line 150.
+
