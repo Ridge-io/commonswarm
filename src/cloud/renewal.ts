@@ -246,6 +246,35 @@ function reauthorisationMessage(
   ].join("\n");
 }
 
+/** The reasons the deployment names when a lineage, grant, or predecessor was really revoked. */
+const REVOCATION_REASONS: ReadonlySet<string> = new Set([
+  "renewal_lineage_revoked",
+  "renewal_grant_revoked",
+  "predecessor_revoked",
+  "predecessor_not_found",
+  "predecessor_not_owned",
+]);
+
+/** Said only where a revocation was actually named, because it asserts one happened. */
+const REVOKED_MESSAGE =
+  "This agent credential is no longer accepted, and renewal cannot bring it back — that is deliberate: revoking a credential, a device, or a person's membership revokes everything descended from it. Ask whoever runs this workspace what was revoked and why, then get a new credential from them.";
+
+/**
+ * ★ SAID WHERE THE CLIENT MEASURED EXPIRY AND THE DEPLOYMENT NAMED NOTHING, SO IT MUST STAY
+ * TRUE IF A REVOCATION ALSO HAPPENED.
+ *
+ * A 401 does not distinguish the two — the deployment answers a uniform `forbidden` on
+ * purpose, so that a caller cannot enumerate which credentials exist. The one thing that IS
+ * known here is local and checkable: this credential is past the expiry it carries. So the
+ * message claims exactly that and nothing more. It does not say "nothing was revoked", which
+ * would be an assertion about the thing we cannot see, and it does not promise a re-issue
+ * will work — if the lineage was revoked, a fresh credential from the same principal fails
+ * too, so the last sentence sends them on to the revocation question instead of leaving
+ * them to discover it a second time.
+ */
+const LOCALLY_EXPIRED_MESSAGE =
+  "This agent credential is past its own expiry, so renewal cannot bring it back. Ask whoever set this agent up for a new one. The deployment does not say why a credential was refused, so if a fresh one is refused too, ask them whether this agent's access was revoked as well.";
+
 /**
  * One successor request. Does no storage and no scheduling — the caller owns both, so this
  * stays a reviewable statement of what goes on the wire and what comes back.
@@ -256,6 +285,12 @@ export async function requestSuccessor(options: {
   /** The active predecessor. Presented as a bearer, never placed in the body. */
   predecessor: string;
   commandId: string;
+  /**
+   * The predecessor's own expiry, when it is known. Read ONLY to tell an expired credential
+   * apart from a revoked one at 401/403, where the deployment says neither. Null means the
+   * client cannot tell, and the generic message stands.
+   */
+  expiresAt?: number | null;
   fetcher?: typeof fetch;
   now?: () => number;
 }): Promise<SuccessorCredential | null> {
@@ -321,10 +356,28 @@ export async function requestSuccessor(options: {
     );
   }
   if (response.status === 401 || response.status === 403) {
-    throw new RenewalRevoked(
-      "forbidden",
-      "This agent credential is no longer accepted, and renewal cannot bring it back — that is deliberate: revoking a credential, a device, or a person's membership revokes everything descended from it. Ask whoever runs this workspace what was revoked and why, then get a new credential from them.",
-    );
+    /* PRECEDENCE, AND WHY IT IS THIS WAY ROUND (D-004).
+     *
+     * 1. A named revocation wins, if one is ever present. It is not today — the command
+     *    function answers 401/403 with a bare `{ error }` and no reason, by design — but the
+     *    consequences differ enough that the order has to be written down rather than left
+     *    to whichever branch happens to come first. Revocation ends the whole lineage, so
+     *    re-issuing from the same principal fails again; expiry just needs a fresh
+     *    credential. Calling a revocation "expiry" sends someone down a path that dead-ends.
+     * 2. Otherwise, a credential past its own expiry reports expiry. That is the case this
+     *    branch used to get wrong: the credential timed out, nothing was revoked, and the
+     *    operator was sent looking for a revocation that never happened.
+     * 3. Otherwise, the generic message. A null expiry means the client cannot tell, and
+     *    guessing is what this whole branch is being fixed for. */
+    const named = typeof body.reason === "string" && REVOCATION_REASONS.has(body.reason)
+      ? body.reason
+      : null;
+    if (named !== null) throw new RenewalRevoked(named, REVOKED_MESSAGE);
+    const expiresAt = options.expiresAt ?? null;
+    if (expiresAt !== null && now() >= expiresAt) {
+      throw new RenewalRevoked("predecessor_expired_local", LOCALLY_EXPIRED_MESSAGE);
+    }
+    throw new RenewalRevoked("forbidden", REVOKED_MESSAGE);
   }
   if (response.status === 426) {
     const minimum = typeof body.min_client_version === "string"
@@ -378,17 +431,8 @@ export async function requestSuccessor(options: {
         "another cswarm process renewed this credential first",
       );
     }
-    if (
-      reason === "renewal_lineage_revoked" ||
-      reason === "renewal_grant_revoked" ||
-      reason === "predecessor_revoked" ||
-      reason === "predecessor_not_found" ||
-      reason === "predecessor_not_owned"
-    ) {
-      throw new RenewalRevoked(
-        reason,
-        "This agent credential is no longer accepted, and renewal cannot bring it back — that is deliberate: revoking a credential, a device, or a person's membership revokes everything descended from it. Ask whoever runs this workspace what was revoked and why, then get a new credential from them.",
-      );
+    if (REVOCATION_REASONS.has(reason)) {
+      throw new RenewalRevoked(reason, REVOKED_MESSAGE);
     }
     if (reason === "predecessor_expired") {
       throw new RenewalRevoked(
@@ -739,6 +783,9 @@ export class AgentCredentialSession {
         workspaceId: this.options.workspaceId,
         predecessor: this.token,
         commandId,
+        // Only so a 401 on an already-expired credential is reported as expiry, not
+        // revocation (D-004). Never sent on the wire.
+        expiresAt: this.expiresAt,
         ...(this.options.fetcher ? { fetcher: this.options.fetcher } : {}),
         now: this.clock,
       });
