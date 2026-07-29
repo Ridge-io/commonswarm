@@ -381,3 +381,37 @@ say so. A prompt for judgement is not evidence that judgement is what is needed.
 branches with explicit `--onto <newbase> <oldbase>`. If a rebase you did not expect to conflict
 conflicts, suspect the base before resolving the content.
 
+---
+
+## D-016 — Two surfaces disagree about whether an archived workspace is live · OPEN
+
+**Found:** 2026-07-29. Cinder asked whether `archived` is a server state with an authorization
+consequence or a client-side label, correctly saying the answer would change the D-006 ruling.
+It is a server state, and the two surfaces do not agree about it.
+
+Measured:
+
+| Surface | Enforces `archived_at`? |
+|---|---|
+| capability endpoint | **Yes** — `workspace_archived` is a pinned refusal, `capability_workspace_archived` |
+| command endpoint | **No** — `archived_at` is loaded into workspace state (`command/index.ts:1787`) and the reducer never consults it. `grep -c archived src/protocol/workspace-commands.ts` → **0** |
+
+So archiving a workspace stops an anonymous capability link from reading it, and does not stop
+a member or an agent posting to it. The state exists, is carried all the way into the decision
+core, and is then ignored by every decision.
+
+**Consequence for D-006, and it inverts the obvious fix:** filtering archived projects out of
+`cswarm workspaces` would make the list look right while commands still succeed against them.
+That HIDES this defect rather than fixing it, and it is exactly the shape this register keeps
+recording — presentation that a determined client bypasses, reading as enforcement.
+
+**Ruling: do not filter the list.** Enforcement, if it is wanted, belongs in the reducer where
+the state already is. Until then the honest surface is a CLI that says archived projects are
+still live, which is what it says today.
+
+**Unresolved and deliberately not decided here:** whether archiving is *meant* to be an
+authorization boundary at all, or only a shelf-tidying label that the capability path
+over-enforced. Those are opposite fixes — one adds a reducer refusal, the other removes the
+capability refusal — and the answer is a product decision, not an engineering one. Nobody
+should write code against either until it is made.
+
