@@ -850,20 +850,27 @@ import SampleNotice from "./SampleNotice.astro";
       if (!selected) return;
       const connect = one<SecretHoldingAgentConnect>("agent-connect");
       const promptWorkspaceId = connect?.getAttribute("workspace-id") ?? "";
+      const connectState = connect?.dataset.state ?? "";
       if (
-        connect?.dataset.state === "done" &&
+        (connectState === "working" || connectState === "done") &&
         promptWorkspaceId.length > 0 &&
         promptWorkspaceId !== workspaceId
       ) {
         pendingWorkspaceId = workspaceId;
-        const status = connect.querySelector<HTMLElement>("[data-slot='copy-status']");
-        if (status) {
-          status.textContent =
-            "Copy this live prompt, then clear it before switching workspaces.";
+        if (connectState === "done") {
+          const status = connect.querySelector<HTMLElement>("[data-slot='copy-status']");
+          if (status) {
+            status.textContent =
+              "Copy this live prompt, then clear it before switching workspaces.";
+          }
         }
         showChannelView("connect");
         window.requestAnimationFrame(() => {
-          connect.querySelector<HTMLButtonElement>("[data-action='clear']")?.focus();
+          if (connectState === "done") {
+            connect.querySelector<HTMLButtonElement>("[data-action='clear']")?.focus();
+          } else {
+            one<HTMLElement>("[data-close-connect]")?.focus();
+          }
         });
         return;
       }
@@ -917,6 +924,7 @@ import SampleNotice from "./SampleNotice.astro";
     };
 
     const closeConnect = (): void => {
+      pendingWorkspaceId = "";
       if (agents.length === 0) showChannelView("no-agents");
       else if (signals.length === 0) {
         const workspaceId = activeWorkspaceId;
@@ -1195,9 +1203,13 @@ import SampleNotice from "./SampleNotice.astro";
       }
     });
 
-    app.addEventListener("commonswarm:agent-connected", async () => {
-      if (!activeWorkspaceId || sampleMode) return;
-      const workspaceId = activeWorkspaceId;
+    app.addEventListener("commonswarm:agent-connected", async (event) => {
+      const workspaceId = (event as CustomEvent<{ workspaceId?: unknown }>).detail?.workspaceId;
+      if (
+        typeof workspaceId !== "string" ||
+        workspaceId !== activeWorkspaceId ||
+        sampleMode
+      ) return;
       const version = requestVersion;
       try {
         const nextAgents = await roster(workspaceId);
