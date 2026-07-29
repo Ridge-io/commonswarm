@@ -246,14 +246,58 @@ function reauthorisationMessage(
   ].join("\n");
 }
 
-/** The reasons the deployment names when a lineage, grant, or predecessor was really revoked. */
-const REVOCATION_REASONS: ReadonlySet<string> = new Set([
+/**
+ * The reasons the deployment names when a lineage, grant, or predecessor was really revoked.
+ *
+ * ★ EXPORTED AS A TUPLE SO THE TEST CANNOT FALL BEHIND IT (D-011 review, Mica).
+ *
+ * This was a private Set, mirrored by hand in the test's code-to-cause map. I claimed the
+ * mirror was safe because an unknown code would trip the test's unclassified-code guard.
+ * That claim was FALSE, and Mica proved it: the class test only ever sends the reasons its
+ * own fixture lists, so a sixth reason added here is never presented, never observed, and
+ * never rejected — the suite stayed 15/15 green with the production set silently wider than
+ * the test's understanding of it.
+ *
+ * The tuple is the fix, and the enforcement is at RUNTIME: the test imports this same tuple
+ * and DERIVES its input space from it, so a reason added here is presented automatically,
+ * comes back as an unclassified refusal code, and fails the class test. Nobody has to
+ * remember to add a fixture.
+ *
+ * The test also maps this tuple through `Record<RefusalCode, …>`, which would be a second,
+ * compile-time line of defence — except that `tsconfig.json` is `include: ["src/**\/*.ts"]`
+ * and no script typechecks `tests/`, so that annotation is inert here today. Measured, not
+ * assumed: adding a sixth reason leaves `npx tsc --noEmit` at exit 0. Treat it as editor help
+ * and as something that becomes real if tests are ever typechecked — not as what catches this.
+ *
+ * Exporting a private constant is a real cost; a guard that cannot see the thing it guards
+ * is a bigger one.
+ */
+export const REVOCATION_REASONS_LIST = [
   "renewal_lineage_revoked",
   "renewal_grant_revoked",
   "predecessor_revoked",
   "predecessor_not_found",
   "predecessor_not_owned",
-]);
+] as const;
+
+/** A reason the deployment gives when something was genuinely revoked. */
+export type RevocationReason = (typeof REVOCATION_REASONS_LIST)[number];
+
+/**
+ * Every code the 401/403 branch can attach to a `RenewalRevoked`. Exported so a test can key
+ * an exhaustive `Record<…>` on the real set rather than on a hand-copied one.
+ *
+ * That exhaustiveness is a TYPE-LEVEL claim, and type-level claims are not checked in this
+ * repo's `tests/` — see the note on REVOCATION_REASONS_LIST above. What actually enforces the
+ * set today is the tuple-derived input space in
+ * `tests/p1-cli/renewal-refusal-cause.test.ts`, at runtime.
+ */
+export type RefusalCode =
+  | RevocationReason
+  | "predecessor_expired_local"
+  | "forbidden";
+
+const REVOCATION_REASONS: ReadonlySet<string> = new Set(REVOCATION_REASONS_LIST);
 
 /** Said only where a revocation was actually named, because it asserts one happened. */
 const REVOKED_MESSAGE =
@@ -274,6 +318,24 @@ const REVOKED_MESSAGE =
  */
 const LOCALLY_EXPIRED_MESSAGE =
   "This agent credential is past its own expiry, so renewal cannot bring it back. Ask whoever set this agent up for a new one. The deployment does not say why a credential was refused, so if a fresh one is refused too, ask them whether this agent's access was revoked as well.";
+
+/**
+ * ★ SAID WHERE NOTHING AT ALL WAS ESTABLISHED, WHICH IS MOST OF THE TIME (D-011).
+ *
+ * No reason came back and the credential is not measurably past its expiry — often because
+ * it carries no expiry the client can read. Until D-011 this fell to REVOKED_MESSAGE, so the
+ * client named revocation on no evidence whatever: the same defect as D-004, reached by a
+ * different input, and it is the one the operator hits by default.
+ *
+ * The honest sentence is the short one. The deployment refused and will not say why — that
+ * is not evasion, it is the no-enumeration rule doing its job, so it is worth saying out
+ * loud rather than leaving the silence to look like a bug. Naming neither cause costs the
+ * reader nothing, because the remedy is identical either way: go to the person who can
+ * actually see the answer. The last clause asks about access without asserting anything
+ * about it, which is the whole difference between this and what it replaces.
+ */
+const UNEXPLAINED_REFUSAL_MESSAGE =
+  "This agent credential was refused, and the deployment does not say why — it answers every refusal identically on purpose, so that nobody can discover which credentials exist by asking. Renewal cannot get past that. Ask whoever runs this workspace for a new credential, and whether this agent's access was changed.";
 
 /**
  * One successor request. Does no storage and no scheduling — the caller owns both, so this
@@ -367,8 +429,10 @@ export async function requestSuccessor(options: {
      * 2. Otherwise, a credential past its own expiry reports expiry. That is the case this
      *    branch used to get wrong: the credential timed out, nothing was revoked, and the
      *    operator was sent looking for a revocation that never happened.
-     * 3. Otherwise, the generic message. A null expiry means the client cannot tell, and
-     *    guessing is what this whole branch is being fixed for. */
+     * 3. Otherwise, NAME NOTHING (D-011). Nothing was sent and nothing was measured, so the
+     *    refusal itself is the only fact in hand and it is the only thing said. This used to
+     *    reach for the revocation message, which is how the default path came to assert a
+     *    cause on no evidence at all. */
     const named = typeof body.reason === "string" && REVOCATION_REASONS.has(body.reason)
       ? body.reason
       : null;
@@ -377,7 +441,7 @@ export async function requestSuccessor(options: {
     if (expiresAt !== null && now() >= expiresAt) {
       throw new RenewalRevoked("predecessor_expired_local", LOCALLY_EXPIRED_MESSAGE);
     }
-    throw new RenewalRevoked("forbidden", REVOKED_MESSAGE);
+    throw new RenewalRevoked("forbidden", UNEXPLAINED_REFUSAL_MESSAGE);
   }
   if (response.status === 426) {
     const minimum = typeof body.min_client_version === "string"
