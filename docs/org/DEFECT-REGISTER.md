@@ -184,3 +184,51 @@ works, and email sign-in still functions at the built-in 2/hour cap.
 
 **Advisor recommendation:** B, and not urgently. Restore the root SPF (D-007) first. Do not
 attempt A without first establishing what happens to the forwarding rules.
+
+---
+
+## D-009 — `cmux close-surface` reports a surface ref it did not close · OPEN (tooling)
+
+**Found:** 2026-07-29 by Cinder, closing the orphaned Atlas seat.
+
+`cmux close-surface --surface surface:61` succeeded — surface:61 was removed, `ttys000` was
+destroyed, and nothing else was touched — but it printed:
+
+```
+OK surface:120 workspace:1
+```
+
+`surface:120` **does not exist in the tree before or after the operation.** The command
+reported success against a ref that names nothing.
+
+**Why this is worth an entry in a product repo's register:** our operating model turns agent
+reports into merge decisions, and this is a tool whose success line is not bound to the thing
+it acted on. Here the outcome happened to be right and Cinder caught the mismatch by comparing
+against the tree. A tool that says OK about the wrong ref is one bad inference away from a
+wrong kill that reads as a clean success — the same shape as a green check against the wrong
+target, which this codebase has now shipped three times in other forms.
+
+**Operating rule, effective immediately:** never trust `close-surface`'s OK line. Verify
+against `cmux` tree state and the process table before and after. Cinder did exactly this
+unprompted, which is the only reason the wart is known.
+
+**Not ours to fix** — it is in the swarm/cmux tooling, not this repo. Recorded so nobody
+scripts against that output.
+
+---
+
+## D-010 — `swarm spawn` with no arguments spawns rather than printing usage · OPEN (tooling)
+
+**Found:** 2026-07-29 by Lead6, the hard way.
+
+`swarm spawn` was run to read its usage. It does not print usage; it **acts**, creating a
+Claude Code session and joining it to the swarm. That produced an unintended seat (Cinder) on
+a machine already under reported memory pressure.
+
+The flags exist and are documented in the source (`--agent <claude|codex>` / `--codex`,
+`--split`, `--new-workspace`), but there is no argument-less help path.
+
+**Operating rule:** read spawn flags from `src/index.ts`, never by invoking the command to see
+what it says. Also recorded because the resulting seat then produced two genuine findings
+(D-009 and the Atlas orphan), which is luck, not vindication.
+
