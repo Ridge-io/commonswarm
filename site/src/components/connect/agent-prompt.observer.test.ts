@@ -29,6 +29,8 @@ test("dashboard agent prompt is one complete, secret-safe handoff", () => {
   assert.match(prompt, /Workspace id:\s+44444444-4444-4444-8444-444444444444/);
   assert.match(prompt, /URL:\s+https:\/\/example\.supabase\.co/);
   assert.match(prompt, /Anon key: public-anon-observer/);
+  assert.equal(prompt.split("public-anon-observer").length - 1, 2);
+  assert.doesNotMatch(prompt, /<the anon key above>/);
   assert.match(prompt, /DO NOT ECHO THIS CREDENTIAL BACK/);
   assert.match(prompt, /--agent-token-stdin/);
 });

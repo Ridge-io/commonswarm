@@ -129,6 +129,36 @@ import SampleNotice from "./SampleNotice.astro";
       </button>
     </section>
 
+    <section
+      class="dashboard__gateway dashboard__gateway--create"
+      data-panel="workspace-error"
+      aria-labelledby="dashboard-workspace-error-title"
+      hidden
+    >
+      <a class="dashboard__wordmark" href="/" aria-label="CommonSwarm home">CommonSwarm</a>
+      <div class="dashboard__account-line">
+        <span class="dashboard__account-dot" aria-hidden="true"></span>
+        <span>Signed in as <strong data-account-name>your account</strong></span>
+      </div>
+      <div class="dashboard__gateway-copy" role="alert">
+        <p class="dashboard__eyebrow">Workspace check interrupted</p>
+        <h1 id="dashboard-workspace-error-title">Your workspaces could not load.</h1>
+        <p data-workspace-error>
+          CommonSwarm could not check your memberships. Nothing was created or changed.
+        </p>
+      </div>
+      <button
+        class="dashboard__button dashboard__button--primary"
+        type="button"
+        data-retry-workspaces
+      >
+        Try again
+      </button>
+      <button class="dashboard__text-button dashboard__signout-link" type="button" data-signout>
+        Sign out
+      </button>
+    </section>
+
     <section class="dashboard__product" data-panel="channel" hidden>
       <div class="dashboard__sample-notice" data-sample-notice hidden>
         <SampleNotice />
@@ -144,7 +174,7 @@ import SampleNotice from "./SampleNotice.astro";
           <nav class="dashboard__rail-section" aria-labelledby="dashboard-workspaces-label">
             <div class="dashboard__rail-label-row">
               <h2 id="dashboard-workspaces-label">Workspaces</h2>
-              <span data-workspace-count>0 / 3</span>
+              <span data-workspace-count>0</span>
             </div>
             <div class="dashboard__workspace-list" data-workspace-list></div>
           </nav>
@@ -242,7 +272,12 @@ import SampleNotice from "./SampleNotice.astro";
               </div>
             </section>
 
-            <section class="dashboard__feed-state dashboard__feed-state--error" data-channel-view="feed-error" hidden>
+            <section
+              class="dashboard__feed-state dashboard__feed-state--error"
+              data-channel-view="feed-error"
+              role="alert"
+              hidden
+            >
               <span class="dashboard__feed-zero" aria-hidden="true">!</span>
               <div>
                 <h2>The channel needs another try.</h2>
@@ -263,6 +298,7 @@ import SampleNotice from "./SampleNotice.astro";
                 >
                   Load older updates
                 </button>
+                <p class="dashboard__feed-more-error" data-load-older-error role="alert" hidden></p>
               </div>
             </section>
           </div>
@@ -286,7 +322,6 @@ import SampleNotice from "./SampleNotice.astro";
     client,
     createWorkspace,
     currentSession,
-    myWorkspaces,
     signInWithEmail,
     signInWithGitHub,
     signOut,
@@ -302,6 +337,10 @@ import SampleNotice from "./SampleNotice.astro";
   interface Agent {
     principalId: string;
     name: string;
+  }
+
+  interface SecretHoldingAgentConnect extends HTMLElement {
+    clearPrompt(notify?: boolean): void;
   }
 
   interface CreateIntent {
@@ -322,6 +361,7 @@ import SampleNotice from "./SampleNotice.astro";
     let session: Session | null = null;
     let workspaces: Workspace[] = [];
     let agents: Agent[] = [];
+    let people = new Map<string, string>();
     let signals: Signal[] = [];
     let activeWorkspaceId = "";
     let requestVersion = 0;
@@ -331,7 +371,9 @@ import SampleNotice from "./SampleNotice.astro";
 
     const SIGNAL_PAGE_SIZE = 50;
 
-    const showPanel = (name: "loading" | "signed-out" | "create" | "channel"): void => {
+    const showPanel = (
+      name: "loading" | "signed-out" | "create" | "workspace-error" | "channel",
+    ): void => {
       for (const section of all<HTMLElement>("[data-panel]")) {
         section.hidden = section.dataset.panel !== name;
       }
@@ -472,22 +514,81 @@ import SampleNotice from "./SampleNotice.astro";
       showPanel("create");
     };
 
+    const renderWorkspaceError = (value: Session, error: unknown): void => {
+      for (const target of all<HTMLElement>("[data-account-name]")) {
+        target.textContent = accountName(value);
+      }
+      const message = one<HTMLElement>("[data-workspace-error]");
+      if (message) {
+        message.textContent = `${readableError(error)} Nothing was created or changed.`;
+      }
+      showPanel("workspace-error");
+    };
+
+    const workspaceMemberships = async (): Promise<Workspace[]> => {
+      const api = client();
+      if (!api) throw new NoDeployment();
+      const pageSize = 200;
+      const result: Workspace[] = [];
+      for (let offset = 0; ; offset += pageSize) {
+        const { data, error } = await api
+          .schema("swarm_read")
+          .from("workspaces")
+          .select("workspace_id,name,archived_at")
+          .is("archived_at", null)
+          .order("name", { ascending: true })
+          .order("workspace_id", { ascending: true })
+          .range(offset, offset + pageSize - 1);
+        if (error) throw new Error(error.message);
+        const page = data ?? [];
+        result.push(...page.map((row) => ({
+          id: String(row.workspace_id ?? ""),
+          name: String(row.name ?? row.workspace_id ?? ""),
+        })).filter((workspace) => workspace.id.length > 0));
+        if (page.length < pageSize) return result;
+      }
+    };
+
     const roster = async (workspaceId: string): Promise<Agent[]> => {
+      const api = client();
+      if (!api) throw new NoDeployment();
+      const pageSize = 200;
+      const result: Agent[] = [];
+      for (let offset = 0; ; offset += pageSize) {
+        const { data, error } = await api
+          .schema("swarm_read")
+          .from("agent_principals")
+          .select("principal_id,name,revoked_at,workspace_id")
+          .eq("workspace_id", workspaceId)
+          .is("revoked_at", null)
+          .order("name", { ascending: true })
+          .order("principal_id", { ascending: true })
+          .range(offset, offset + pageSize - 1);
+        if (error) throw new Error(error.message);
+        const page = data ?? [];
+        result.push(...page.map((row) => ({
+          principalId: String(row.principal_id ?? ""),
+          name: String(row.name ?? "Unnamed agent"),
+        })).filter((agent) => agent.principalId.length > 0));
+        if (page.length < pageSize) return result;
+      }
+    };
+
+    const memberNames = async (workspaceId: string): Promise<Map<string, string>> => {
       const api = client();
       if (!api) throw new NoDeployment();
       const { data, error } = await api
         .schema("swarm_read")
-        .from("agent_principals")
-        .select("principal_id,name,revoked_at,workspace_id")
+        .from("member_profiles")
+        .select("user_id,display_name")
         .eq("workspace_id", workspaceId)
-        .is("revoked_at", null)
-        .order("name", { ascending: true })
-        .limit(100);
+        .limit(1_000);
       if (error) throw new Error(error.message);
-      return (data ?? []).map((row) => ({
-        principalId: String(row.principal_id ?? ""),
-        name: String(row.name ?? "Unnamed agent"),
-      })).filter((agent) => agent.principalId.length > 0);
+      return new Map(
+        (data ?? [])
+          .map((row) => [String(row.user_id ?? ""), String(row.display_name ?? "")] as const)
+          .filter(([id, name]) => id.length > 0 && name.length > 0),
+      );
     };
 
     const signalPage = async (
@@ -501,6 +602,7 @@ import SampleNotice from "./SampleNotice.astro";
         .from("signals")
         .select("id,from,from_kind,kind,body,about,until,created_at")
         .eq("workspace_id", workspaceId)
+        .gt("until", new Date().toISOString())
         .order("created_at", { ascending: false })
         .order("id", { ascending: false })
         .range(offset, offset + SIGNAL_PAGE_SIZE);
@@ -530,10 +632,10 @@ import SampleNotice from "./SampleNotice.astro";
     const renderWorkspaceList = (selected: Workspace): void => {
       const list = one<HTMLElement>("[data-workspace-list]");
       const count = one<HTMLElement>("[data-workspace-count]");
-      if (count) count.textContent = `${Math.min(workspaces.length, 3)} / 3`;
+      if (count) count.textContent = String(workspaces.length);
       if (!list) return;
       list.replaceChildren();
-      for (const workspace of workspaces.slice(0, 3)) {
+      for (const workspace of workspaces) {
         const button = document.createElement("button");
         button.type = "button";
         button.className = "dashboard__workspace-button";
@@ -650,6 +752,7 @@ import SampleNotice from "./SampleNotice.astro";
         const row = document.createElement("li");
         row.className = "dashboard__message";
         const authorName = names.get(signal.from) ??
+          people.get(signal.from) ??
           (signal.fromKind === "user" ? "Team member" : `Agent ${signal.from.slice(0, 6)}`);
         const avatar = document.createElement("span");
         avatar.className = "dashboard__message-avatar";
@@ -707,7 +810,7 @@ import SampleNotice from "./SampleNotice.astro";
       renderFeed();
     };
 
-    const renderChannel = (workspace: Workspace): void => {
+    const renderChannel = (workspace: Workspace, pending = false): void => {
       const name = one<HTMLElement>("[data-channel-name]");
       const id = one<HTMLElement>("[data-channel-id]");
       if (name) name.textContent = workspace.name;
@@ -722,7 +825,11 @@ import SampleNotice from "./SampleNotice.astro";
         target.textContent = sampleMode || !session ? "Sample account" : accountName(session);
       }
       showPanel("channel");
-      if (sampleMode) {
+      if (pending) {
+        const count = one<HTMLElement>("[data-update-count]");
+        if (count) count.textContent = "Loading updates…";
+        showChannelView("feed-pending");
+      } else if (sampleMode) {
         renderFeed();
       } else if (agents.length === 0) {
         const count = one<HTMLElement>("[data-update-count]");
@@ -736,16 +843,24 @@ import SampleNotice from "./SampleNotice.astro";
     const openWorkspace = async (workspaceId: string): Promise<void> => {
       const selected = workspaces.find((workspace) => workspace.id === workspaceId);
       if (!selected) return;
+      const keepShell = app.dataset.state === "channel";
       activeWorkspaceId = selected.id;
       const version = ++requestVersion;
-      setLoading(`Opening ${selected.name}…`);
       agents = [];
+      people = new Map();
       signals = [];
       signalOffset = 0;
       signalHasMore = false;
+      if (keepShell) renderChannel(selected, true);
+      else setLoading(`Opening ${selected.name}…`);
       try {
-        agents = await roster(selected.id);
+        const [nextAgents, nextPeople] = await Promise.all([
+          roster(selected.id),
+          memberNames(selected.id),
+        ]);
         if (version !== requestVersion) return;
+        agents = nextAgents;
+        people = nextPeople;
         renderChannel(selected);
         if (agents.length > 0) {
           await loadSignals(selected.id, true, version);
@@ -763,10 +878,12 @@ import SampleNotice from "./SampleNotice.astro";
     const openConnect = (): void => {
       if (sampleMode) return;
       const selected = workspaces.find((workspace) => workspace.id === activeWorkspaceId);
-      const connect = one<HTMLElement>("agent-connect");
+      const connect = one<SecretHoldingAgentConnect>("agent-connect");
       if (!selected || !connect) return;
-      connect.setAttribute("workspace-name", selected.name);
-      connect.setAttribute("workspace-id", selected.id);
+      if (connect.dataset.state !== "done") {
+        connect.setAttribute("workspace-name", selected.name);
+        connect.setAttribute("workspace-id", selected.id);
+      }
       showChannelView("connect");
       window.requestAnimationFrame(() => {
         one<HTMLElement>("[data-close-connect]")?.focus();
@@ -776,8 +893,11 @@ import SampleNotice from "./SampleNotice.astro";
     const closeConnect = (): void => {
       if (agents.length === 0) showChannelView("no-agents");
       else if (signals.length === 0) {
+        const workspaceId = activeWorkspaceId;
+        const version = requestVersion;
         showChannelView("feed-pending");
-        void loadSignals(activeWorkspaceId, true, requestVersion).catch((error) => {
+        void loadSignals(workspaceId, true, version).catch((error) => {
+          if (version !== requestVersion || workspaceId !== activeWorkspaceId) return;
           const target = one<HTMLElement>("[data-feed-error]");
           if (target) target.textContent = `${readableError(error)} Nothing was changed.`;
           showChannelView("feed-error");
@@ -836,7 +956,6 @@ import SampleNotice from "./SampleNotice.astro";
       const now = Date.now();
       workspaces = [
         { id: "sample-design-studio", name: "Design studio" },
-        { id: "sample-launch-room", name: "Launch room" },
       ];
       agents = [
         { principalId: "sample-river", name: "River" },
@@ -906,7 +1025,7 @@ import SampleNotice from "./SampleNotice.astro";
         for (const target of all<HTMLElement>("[data-account-name], [data-rail-account]")) {
           target.textContent = who;
         }
-        workspaces = await myWorkspaces();
+        workspaces = await workspaceMemberships();
         if (workspaces.length === 0) {
           const pending = readCreateIntent(session.user.id);
           renderCreate(session);
@@ -920,7 +1039,7 @@ import SampleNotice from "./SampleNotice.astro";
         await openWorkspace(workspaces[0]!.id);
       } catch (error) {
         if (session) {
-          renderCreate(session, `${readableError(error)} Reload and try again.`);
+          renderWorkspaceError(session, error);
         } else {
           showAuthView("choices");
           showPanel("signed-out");
@@ -996,11 +1115,13 @@ import SampleNotice from "./SampleNotice.astro";
     for (const button of all<HTMLButtonElement>("[data-signout]")) {
       button.addEventListener("click", async () => {
         button.disabled = true;
+        one<SecretHoldingAgentConnect>("agent-connect")?.clearPrompt(false);
         if (session) clearCreateIntent(session.user.id);
         await signOut();
         session = null;
         workspaces = [];
         agents = [];
+        people = new Map();
         signals = [];
         showAuthView("choices");
         showPanel("signed-out");
@@ -1014,20 +1135,32 @@ import SampleNotice from "./SampleNotice.astro";
     one<HTMLButtonElement>("[data-retry-workspace]")?.addEventListener("click", () => {
       if (activeWorkspaceId) void openWorkspace(activeWorkspaceId);
     });
+    one<HTMLButtonElement>("[data-retry-workspaces]")?.addEventListener("click", () => {
+      void boot();
+    });
     one<HTMLButtonElement>("[data-refresh]")?.addEventListener("click", () => {
       if (activeWorkspaceId) void openWorkspace(activeWorkspaceId);
     });
     one<HTMLButtonElement>("[data-load-older]")?.addEventListener("click", async (event) => {
       if (!activeWorkspaceId || !signalHasMore) return;
+      const workspaceId = activeWorkspaceId;
+      const version = requestVersion;
       const button = event.currentTarget as HTMLButtonElement;
+      const inlineError = one<HTMLElement>("[data-load-older-error]");
+      if (inlineError) {
+        inlineError.textContent = "";
+        inlineError.hidden = true;
+      }
       button.disabled = true;
       button.textContent = "Loading older updates…";
       try {
-        await loadSignals(activeWorkspaceId, false, requestVersion);
+        await loadSignals(workspaceId, false, version);
       } catch (error) {
-        const target = one<HTMLElement>("[data-feed-error]");
-        if (target) target.textContent = `${readableError(error)} Nothing was changed.`;
-        showChannelView("feed-error");
+        if (version !== requestVersion || workspaceId !== activeWorkspaceId) return;
+        if (inlineError) {
+          inlineError.textContent = `${readableError(error)} The loaded updates are still here.`;
+          inlineError.hidden = false;
+        }
       } finally {
         button.disabled = false;
         button.textContent = "Load older updates";
@@ -1041,9 +1174,19 @@ import SampleNotice from "./SampleNotice.astro";
         renderRoster();
         const addInRail = one<HTMLButtonElement>("[data-add-agent-rail]");
         if (addInRail) addInRail.hidden = agents.length === 0;
+        const refresh = one<HTMLButtonElement>("[data-refresh]");
+        if (refresh) refresh.hidden = agents.length === 0;
       } catch {
         /* The mint result remains on screen; a roster refresh must never erase its secret. */
       }
+    });
+
+    app.addEventListener("commonswarm:agent-secret-cleared", () => {
+      const selected = workspaces.find((workspace) => workspace.id === activeWorkspaceId);
+      const connect = one<SecretHoldingAgentConnect>("agent-connect");
+      if (!selected || !connect) return;
+      connect.setAttribute("workspace-name", selected.name);
+      connect.setAttribute("workspace-id", selected.id);
     });
 
     void boot();
@@ -1454,6 +1597,8 @@ import SampleNotice from "./SampleNotice.astro";
   .dashboard__workspace-list {
     display: grid;
     gap: var(--s-1);
+    max-block-size: min(40svh, 20rem);
+    overflow: auto;
   }
 
   .dashboard__workspace-button {
@@ -1827,8 +1972,19 @@ import SampleNotice from "./SampleNotice.astro";
 
   .dashboard__feed-more {
     display: flex;
+    flex-direction: column;
+    align-items: center;
     justify-content: center;
+    gap: var(--s-3);
     padding: 0 clamp(var(--s-5), 4vw, var(--s-8)) var(--s-10);
+  }
+
+  .dashboard__feed-more-error {
+    max-inline-size: 36rem;
+    margin: 0;
+    color: var(--danger);
+    font-size: var(--t-sm);
+    text-align: center;
   }
 
   .dashboard__message {
@@ -1959,7 +2115,9 @@ import SampleNotice from "./SampleNotice.astro";
 
     .dashboard__workspace-list {
       display: flex;
+      max-block-size: none;
       overflow-x: auto;
+      overflow-y: hidden;
     }
 
     .dashboard__workspace-button {

@@ -215,7 +215,13 @@ const {
     }
 
     attributeChangedCallback() {
-      if (!this.#ready || !this.isConnected || this.#busy || this.#loadQueued) return;
+      if (
+        !this.#ready ||
+        !this.isConnected ||
+        this.#busy ||
+        this.#loadQueued ||
+        this.dataset.state === "done"
+      ) return;
       this.#loadQueued = true;
       queueMicrotask(() => {
         this.#loadQueued = false;
@@ -259,9 +265,17 @@ const {
         void this.#copy();
       });
       this.#q<HTMLButtonElement>('[data-action="clear"]')?.addEventListener("click", () => {
-        this.#forget();
-        this.#state("ready");
+        this.clearPrompt();
       });
+    }
+
+    clearPrompt(notify = true) {
+      if (this.#prompt === null) return;
+      this.#forget();
+      this.#state("ready");
+      if (notify) {
+        this.dispatchEvent(new CustomEvent("commonswarm:agent-secret-cleared", { bubbles: true }));
+      }
     }
 
     /*

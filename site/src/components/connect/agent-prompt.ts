@@ -87,7 +87,7 @@ export function dashboardAgentPrompt(input: DashboardPromptInput): string {
     "",
     `   cswarm working-on "what you are about to do" --agent-token-stdin \\`,
     `     --url ${deploymentUrl} \\`,
-    "     --anon-key <the anon key above> \\",
+    `     --anon-key ${anonKey} \\`,
     `     --workspace-id ${workspaceId}`,
     "",
     "Then run cswarm feed with the same stdin credential and connection details. Use",
