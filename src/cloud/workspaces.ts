@@ -663,6 +663,53 @@ export function relativeExpiry(
   return remaining >= 0 ? `expires in ${amount}` : `expired ${amount} ago`;
 }
 
+/**
+ * ★ WHAT ARCHIVING DOES AND DOES NOT DO, SAID ONCE (D-006).
+ *
+ * The sentence this replaces — "Project archive enforcement is not available yet; archived
+ * projects remain selectable while your membership is live" — was true and useless. It
+ * described the SYSTEM'S state to someone asking about THEIR list, and left them with no
+ * action, which is the D-004 failure in a different surface.
+ *
+ * The scoping is deliberate and it is the part most easily got wrong. Archiving is NOT
+ * inert: the capability endpoint refuses an archived workspace outright
+ * (capability_workspace_archived), so "archiving does not restrict access" would be false
+ * as a flat claim. What is true, and all that is claimed here, is that it does not restrict
+ * MEMBERS AND THEIR AGENTS — the command path loads archived_at and never consults it
+ * (D-016). That is the audience of this list.
+ *
+ * "Yet" is also gone. It promised enforcement is coming, and whether archiving is meant to
+ * be an authorization boundary at all is an open product question (D-016), so the old
+ * wording asserted the outcome of a decision nobody has made.
+ *
+ * The remedy names no command because there is none: nothing in this CLI archives a project
+ * or ends a membership. It points at the person who can instead of inventing a flag.
+ */
+export const ARCHIVE_NOT_ENFORCED_CODE = "workspace_archive_not_enforced";
+export const ARCHIVE_NOT_ENFORCED_MESSAGE =
+  "Archiving a project does not restrict what members or their agents can do in it: an archived project stays selectable, and commands against it still succeed while your membership is live. Removing a project from this list means ending your membership, which this CLI cannot do — ask whoever runs the project.";
+
+/**
+ * The `known_gaps` payload, built in ONE place because it is emitted from two.
+ *
+ * ★ WHY THIS IS A FUNCTION AND NOT TWO OBJECT LITERALS (D-006(b) review, Mica).
+ *
+ * The first version exported the code and message constants and let each CLI command build
+ * its own `known_gaps` entry. My "text and JSON cannot drift" test then observed only
+ * `renderWorkspaces`, never either payload — so Mica changed the message at ONE json site,
+ * left the constant and the renderer alone, and all 9 tests passed while the two surfaces
+ * said different things. The test named the property and could not see the thing it named.
+ *
+ * With the payload built here, the JSON surface is a function a test can call, and the human
+ * surface reads the same constant. Neither can move without the other.
+ */
+export function archiveKnownGaps(): ReadonlyArray<{ code: string; message: string }> {
+  return [{
+    code: ARCHIVE_NOT_ENFORCED_CODE,
+    message: ARCHIVE_NOT_ENFORCED_MESSAGE,
+  }];
+}
+
 export function renderWorkspaces(
   workspaces: readonly WorkspaceSummary[],
   currentWorkspaceId: string | null,
@@ -690,9 +737,14 @@ export function renderWorkspaces(
       "No project is selected. Run cswarm use <full-id|exact-name>.",
     );
   }
-  lines.push(
-    "Project archive enforcement is not available yet; archived projects remain selectable while your membership is live.",
-  );
+  /* Shown only when the list actually holds an archived project. The old line printed on
+   * every run, to everyone, about a state most readers had nothing in — and today nobody
+   * can be in it, because no command sets archived_at; only tests do. The machine-readable
+   * `known_gaps` entry is NOT made conditional, because a contract that appears and
+   * disappears with the data is worse for a consumer than one that is always there. */
+  if (workspaces.some((workspace) => workspace.archived)) {
+    lines.push(ARCHIVE_NOT_ENFORCED_MESSAGE);
+  }
   return lines.join("\n");
 }
 

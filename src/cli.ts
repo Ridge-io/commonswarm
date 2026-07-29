@@ -92,6 +92,7 @@ import {
 } from "./cloud/capability-link.js";
 import {
   clearWorkspaceDefault,
+  archiveKnownGaps,
   cloudWorkspaceDirectory,
   DEFAULT_MEMBERSHIP_REVOKED,
   renderStatus,
@@ -692,13 +693,7 @@ async function runWorkspaces(args: Arguments): Promise<void> {
       },
       selected_workspace_id: selectedWorkspaceId,
       projects,
-      known_gaps: [
-        {
-          code: "workspace_archive_not_enforced",
-          message:
-            "Project archive enforcement is not available yet; archived projects remain selectable while your membership is live.",
-        },
-      ],
+      known_gaps: archiveKnownGaps(),
     });
     return;
   }
@@ -963,13 +958,7 @@ async function runStatus(args: Arguments): Promise<void> {
       recent_signals: signalStatus.recentSignals,
       inbox_asks_waiting: signalStatus.waitingAsks,
       warnings: statusWarnings,
-      known_gaps: [
-        {
-          code: "workspace_archive_not_enforced",
-          message:
-            "Project archive enforcement is not available yet; archived projects remain selectable while your membership is live.",
-        },
-      ],
+      known_gaps: archiveKnownGaps(),
     });
     return;
   }
