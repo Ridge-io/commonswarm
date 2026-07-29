@@ -3987,10 +3987,18 @@ test("§2.3 self-healing renewal keeps exactly one live successor per predecesso
     );
 
     // AND THE GUARANTEE IS THE DATABASE'S, not the command function's. A second
-    // LIVE successor is refused for a statement that never goes near Deno —
-    // 23505 is the partial CAS index, 55000 is the successor fence naming the
-    // refusal itself; either is the database refusing, and neither leaves a
-    // spent slot behind.
+    // LIVE successor is refused for a statement that never goes near Deno.
+    //
+    // ★ THIS PROBE REQUIRES 23505 SPECIFICALLY — the partial unique index — and
+    // treats 55000 as a FAILURE. The two are not interchangeable here even though
+    // both are "the database refusing": 55000 is the successor fence's catch-all,
+    // raised for roughly eighteen named conditions, so accepting it would let the
+    // probe pass with the CAS index dropped entirely. That is the exact defect this
+    // assertion was tightened to close, and this comment used to say "either is the
+    // database refusing" — contradicting the assertion three lines below it and
+    // describing the behaviour that was removed. A 55000 here means the fence
+    // refused first and the index never got the chance to, which is a different
+    // guarantee than the one being measured.
     const guardGrant = await seedRenewalGrant(f, { maxSuccessors: 5 });
     const guarded = await seedPredecessor(f, { grantId: guardGrant });
     const only = await issueRenewal(f, guarded.token, commandId("renewguard"));
@@ -4185,6 +4193,66 @@ test("§2.3 first_used_at is write-once in the DATABASE, not merely in the write
   });
 });
 
+/**
+ * Every place in the `swarm` schema a string could be hiding, derived from the catalogue
+ * rather than remembered.
+ *
+ * ★ THE LIST USED TO BE HAND-KEPT — four tables someone thought of — and Nori's review named
+ * why that is not a search: a sink nobody listed is a sink nobody checks, and the whole point
+ * of this test is the fix that stores the secret somewhere unexpected. The catalogue knows
+ * every column; a person does not.
+ *
+ * Bytea and JSON are included deliberately. A secret written to a `jsonb` payload or a
+ * `bytea` "blob" column is exactly the shape of the mistake being guarded against, and the
+ * original four searches covered only two of those representations.
+ */
+async function searchableColumns(): Promise<
+  Array<{ table: string; column: string; expression: string }>
+> {
+  const rows = await sql<
+    { table_name: string; column_name: string; udt_name: string }[]
+  >`
+    SELECT c.table_name, c.column_name, c.udt_name
+    FROM information_schema.columns AS c
+    JOIN information_schema.tables AS t
+      ON t.table_schema = c.table_schema AND t.table_name = c.table_name
+    WHERE c.table_schema = 'swarm'
+      AND t.table_type = 'BASE TABLE'
+      AND c.udt_name IN ('text', 'varchar', 'bpchar', 'json', 'jsonb', 'bytea')
+    ORDER BY c.table_name, c.column_name
+  `;
+  const identifier = /^[a-z_][a-z0-9_]*$/;
+  return rows.map((row) => {
+    // The names come from the catalogue, so they are already trustworthy; asserted anyway,
+    // because "it cannot happen" is a convention and an assertion is a mechanism.
+    assert.match(row.table_name, identifier, "unexpected table identifier");
+    assert.match(row.column_name, identifier, "unexpected column identifier");
+    const quoted = `"${row.column_name}"`;
+    const expression = row.udt_name === "bytea"
+      ? `encode(${quoted}, 'escape')`
+      : row.udt_name === "json" || row.udt_name === "jsonb"
+      ? `${quoted}::text`
+      : quoted;
+    return { table: row.table_name, column: row.column_name, expression };
+  });
+}
+
+/** Where a needle actually appears, as `table.column`, using one search for every column. */
+async function findAtRest(needle: string): Promise<string[]> {
+  assert.ok(needle.length >= 8, "a short needle would match everywhere and prove nothing");
+  const columns = await searchableColumns();
+  assert.ok(columns.length > 0, "the catalogue query returned no columns to search");
+  const found: string[] = [];
+  for (const column of columns) {
+    const rows = await sql.unsafe<{ hit: number }[]>(
+      `SELECT count(*)::int AS hit FROM swarm."${column.table}" WHERE ${column.expression} LIKE $1`,
+      [`%${needle}%`],
+    );
+    if ((rows[0]?.hit ?? 0) > 0) found.push(`${column.table}.${column.column}`);
+  }
+  return found;
+}
+
 test("§2.3 no raw successor credential is ever stored at rest", async () => {
   await scenario(async (f) => {
     /* ★ THE ONLY GUARD ON THIS WAS AN HTTP ASSERTION. The replay body was checked for the
@@ -4194,8 +4262,14 @@ test("§2.3 no raw successor credential is ever stored at rest", async () => {
        and would have put a live credential in a table read on every replay. That is the
        precise trade the design forbids, so it is measured here rather than trusted.
 
-       This searches for the RAW STRING, which is the only thing that matters: a hash is
-       fine, an encoding of the secret is not. */
+       ★ WHAT THIS OBSERVER DOES AND DOES NOT COVER (narrowed deliberately, D-003 review).
+       It finds the LITERAL secret in any text, JSON or bytea column of the `swarm` schema.
+       It does NOT find an encoding of it — base64, a reversed string, a split across two
+       columns. The earlier prose claimed encodings were forbidden while the search looked
+       only for the literal, which made the file claim more than it measured. An unbounded
+       encoding search is not a thing a test can do; naming the boundary is. A hash is fine
+       and is the intended storage; a reversible encoding would pass here and is out of
+       scope rather than proven absent. */
     const grantId = await seedRenewalGrant(f, { maxSuccessors: 5 });
     const predecessor = await seedPredecessor(f, { grantId });
     const cmd = commandId("atrest");
@@ -4205,42 +4279,41 @@ test("§2.3 no raw successor credential is ever stored at rest", async () => {
     registerAgentCredential(f, secret);
     assert.ok(secret.startsWith("swm_agt_"), "no secret was returned to search for");
 
-    const [idem] = await sql<{ hit: number }[]>`
-      SELECT count(*)::int AS hit FROM swarm.idempotency_keys
-      WHERE response::text LIKE ${"%" + secret + "%"}
-    `;
-    assert.equal(idem?.hit, 0, "the raw successor is stored in swarm.idempotency_keys");
-
-    const [audit] = await sql<{ hit: number }[]>`
-      SELECT count(*)::int AS hit FROM swarm.audit_log
-      WHERE coalesce(detail, '') LIKE ${"%" + secret + "%"}
-         OR coalesce(reason, '') LIKE ${"%" + secret + "%"}
-    `;
-    assert.equal(audit?.hit, 0, "the raw successor appears in swarm.audit_log");
-
-    const [events] = await sql<{ hit: number }[]>`
-      SELECT count(*)::int AS hit FROM swarm.events
-      WHERE payload::text LIKE ${"%" + secret + "%"}
-    `;
-    assert.equal(events?.hit, 0, "the raw successor appears in an event payload");
-
-    const [tokens] = await sql<{ hit: number }[]>`
-      SELECT count(*)::int AS hit FROM swarm.agent_tokens
-      WHERE encode(token_hash, 'escape') LIKE ${"%" + secret + "%"}
-    `;
-    assert.equal(tokens?.hit, 0, "the raw successor is stored beside its own hash");
-
-    /* THE POSITIVE CONTROL, and it is what makes the four zeros mean something. The same
-       four queries, run against a string that IS in those tables, must find it. Otherwise
-       a LIKE that matches nothing — a quoting slip, an empty `secret` — reads identically
-       to a clean result. */
-    const [control] = await sql<{ hit: number }[]>`
-      SELECT count(*)::int AS hit FROM swarm.idempotency_keys
-      WHERE command_id = ${cmd}
-    `;
+    /* ★ THE POSITIVE CONTROL, AND IT IS NOW THE SAME PREDICATE.
+       The previous one ran `command_id = $cmd` — an equality check, on one column, in one
+       table. It could pass while every LIKE search above it was broken: an empty needle, a
+       quoting slip, a catalogue query returning nothing. It proved the row existed, not that
+       the search worked, so the four zeros rested on nothing.
+       This runs the WHOLE SCANNER against a string known to be stored, and requires it to
+       report the exact location. If the enumeration is empty, if LIKE is mis-quoted, if the
+       needle is mangled — this fails, and it fails before the absence check is believed. */
+    const control = await findAtRest(cmd);
     assert.ok(
-      (control?.hit ?? 0) > 0,
-      "the control found nothing either, so the four absence checks above prove nothing",
+      control.includes("idempotency_keys.command_id"),
+      `the scanner could not find a string that IS stored (${cmd}); it found ${
+        JSON.stringify(control)
+      }, so an empty result below would prove nothing`,
+    );
+
+    /* The scanner must also reach the representations the old hand-list under-covered, or
+       "no hits" would again be an artefact of where it looked. */
+    const columns = await searchableColumns();
+    const reached = (name: string) =>
+      columns.some((column) => `${column.table}.${column.column}` === name);
+    for (const required of [
+      "events.payload",
+      "audit_log.detail",
+      "agent_tokens.token_hash",
+      "idempotency_keys.response",
+    ]) {
+      assert.ok(reached(required), `the scanner does not cover ${required}`);
+    }
+
+    const leaked = await findAtRest(secret);
+    assert.deepEqual(
+      leaked,
+      [],
+      `the raw successor credential is stored at rest in: ${JSON.stringify(leaked)}`,
     );
   });
 });
