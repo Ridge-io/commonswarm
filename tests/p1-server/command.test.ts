@@ -4019,13 +4019,56 @@ test("§2.3 self-healing renewal keeps exactly one live successor per predecesso
         `;
       },
       (error: unknown) => {
+        /* ★ 23505 EXACTLY, NOT "23505 OR 55000". This used to accept either, and that made
+           the probe unable to fail for the reason it exists. 55000 is the successor fence's
+           catch-all for every one of its ~18 named refusals, so a fixture drift that trips
+           SWARM_RENEWAL_SCOPES_MALFORMED or SWARM_RENEWAL_TARGET_MISMATCH first would
+           satisfy the assertion while the CAS index was MISSING ENTIRELY — the exact
+           invariant under test, unmeasured, reported green.
+           23505 is a unique-violation and nothing else raises it here. If the fence starts
+           refusing this insert before the index is consulted, that is a real change in which
+           guarantee is doing the work, and this assertion should fail so somebody looks. */
         const code = sqlstate(error);
-        assert.ok(
-          code === "23505" || code === "55000",
-          `a second live successor must be refused by the database, got ${code}: ${String(error)}`,
+        assert.equal(
+          code,
+          "23505",
+          `a second live successor must be refused by the UNIQUE INDEX (23505), got ${code}: ${String(error)}`,
         );
         return true;
       },
+    );
+
+    /* And the index is measured directly, not merely inferred from one insert failing.
+       Its predicate is compared against a CONTROL index that must NOT match the same
+       probe — without that, a substring test that returns true for everything would look
+       exactly like a pass. */
+    const [casIndex] = await sql<{ predicate: string | null; unique: boolean }[]>`
+      SELECT pg_catalog.pg_get_expr(i.indpred, i.indrelid) AS predicate,
+             i.indisunique AS unique
+      FROM pg_catalog.pg_index AS i
+      JOIN pg_catalog.pg_class AS c ON c.oid = i.indexrelid
+      JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
+      WHERE n.nspname = 'swarm'
+        AND c.relname = 'agent_tokens_one_successor_per_predecessor'
+    `;
+    assert.ok(casIndex, "the one-successor CAS index does not exist");
+    assert.equal(casIndex.unique, true, "the CAS index is not UNIQUE");
+    assert.match(
+      casIndex.predicate ?? "",
+      /revoked_at/,
+      `the CAS must be partial on live rows or a discarded successor holds its slot for ever: ${casIndex.predicate}`,
+    );
+    const [controlIndex] = await sql<{ predicate: string | null }[]>`
+      SELECT pg_catalog.pg_get_expr(i.indpred, i.indrelid) AS predicate
+      FROM pg_catalog.pg_index AS i
+      JOIN pg_catalog.pg_class AS c ON c.oid = i.indexrelid
+      JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
+      WHERE n.nspname = 'swarm' AND c.relname = 'agent_tokens_by_renewal_grant'
+    `;
+    assert.doesNotMatch(
+      controlIndex?.predicate ?? "",
+      /revoked_at/,
+      "the control index also mentions revoked_at, so the probe above distinguishes nothing",
     );
     assert.equal(
       (await successorsOf(guarded.tokenId)).length,
@@ -4036,6 +4079,168 @@ test("§2.3 self-healing renewal keeps exactly one live successor per predecesso
       await successorsUsed(guardGrant),
       1,
       "a refused insert spends no slot",
+    );
+  });
+});
+
+test("§2.3 first_used_at is write-once in the DATABASE, not merely in the writer", async () => {
+  await scenario(async (f) => {
+    /* ★ THESE TWO TRIGGERS HAD ZERO COVERAGE. Both could be dropped from
+       20260728000003 and every other test in this file would still pass, because every
+       other test only proves the APPLICATION does not rewrite the column — and the
+       application cannot, since its stamping UPDATE carries `AND first_used_at IS NULL`
+       and is a no-op the second time regardless of any trigger.
+       What the triggers exist to stop is a SECOND WRITER: a migration, a support script,
+       a hand-run UPDATE at a psql prompt. That is exactly what this test is, and it is the
+       only thing in the suite that reaches them. */
+    const grantId = await seedRenewalGrant(f, { maxSuccessors: 5 });
+    const predecessor = await seedPredecessor(f, { grantId });
+    const renewal = await issueRenewal(f, predecessor.token, commandId("wo1"));
+    assert.equal(renewal.body.status, "accepted", renewal.text);
+    const successorId = String(renewal.body.token_id);
+    const successorToken = String(renewal.body.agent_token);
+    registerAgentCredential(f, successorToken);
+
+    // Use it, so first_used_at is set and the immutability rule has something to protect.
+    assert.equal((await useToken(f, successorToken)).status, 200);
+    const used = await tokenLifecycle(successorId);
+    assert.notEqual(used.firstUsedAt, null, "first use must stamp the column");
+
+    // (a) CLEARING it would return a used credential to PENDING, which makes it
+    //     discardable by a renewal while its holder is still using it.
+    await assert.rejects(
+      async () => {
+        await sql`
+          UPDATE swarm.agent_tokens SET first_used_at = NULL
+          WHERE token_id = ${successorId}::uuid
+        `;
+      },
+      (error: unknown) => {
+        assert.equal(sqlstate(error), "55000", String(error));
+        assert.match(String(error), /SWARM_TOKEN_FIRST_USE_IMMUTABLE/);
+        return true;
+      },
+    );
+
+    // (b) MOVING it relocates a supersession that has already happened.
+    await assert.rejects(
+      async () => {
+        await sql`
+          UPDATE swarm.agent_tokens
+          SET first_used_at = statement_timestamp() + interval '1 hour'
+          WHERE token_id = ${successorId}::uuid
+        `;
+      },
+      (error: unknown) => {
+        assert.equal(sqlstate(error), "55000", String(error));
+        assert.match(String(error), /SWARM_TOKEN_FIRST_USE_IMMUTABLE/);
+        return true;
+      },
+    );
+
+    // (c) A token BORN used skips PENDING entirely: permanently non-disposable by the
+    //     self-heal, and immediately renewable in violation of the overlap bound. Write-once
+    //     alone does not stop this, which is why there is a second trigger.
+    await assert.rejects(
+      async () => {
+        await sql`
+          INSERT INTO swarm.agent_tokens (
+            token_id, principal_id, run_id, task_id, epoch,
+            scopes, token_hash, expires_at, lineage_id, first_used_at
+          ) VALUES (
+            ${randomUUID()}::uuid, ${f.agentPrincipal}::uuid, ${f.agentRun}::uuid,
+            ${predecessor.taskId}::uuid, ${predecessor.epoch},
+            ${sql.json(predecessor.scopes)}::jsonb,
+            ${createHash("sha256").update(randomUUID()).digest()},
+            statement_timestamp() + interval '10 minutes',
+            ${predecessor.lineageId}::uuid,
+            statement_timestamp()
+          )
+        `;
+      },
+      (error: unknown) => {
+        assert.equal(sqlstate(error), "55000", String(error));
+        assert.match(String(error), /SWARM_TOKEN_FIRST_USE_PRESET/);
+        return true;
+      },
+    );
+
+    // The positive control for all three: the SAME statement shape, on a column the rules
+    // do not govern, must SUCCEED. Without it, three rejections prove only that this
+    // connection cannot write to the table at all.
+    const [ok] = await sql<{ token_id: string }[]>`
+      UPDATE swarm.agent_tokens SET surrender_only = surrender_only
+      WHERE token_id = ${successorId}::uuid
+      RETURNING token_id
+    `;
+    assert.equal(ok?.token_id, successorId, "the control write was refused too — this connection cannot write at all, so the refusals above mean nothing");
+
+    // And the column still holds its original value after every refused attempt.
+    const after = await tokenLifecycle(successorId);
+    assert.equal(
+      after.firstUsedAt?.getTime(),
+      used.firstUsedAt?.getTime(),
+      "first_used_at changed despite every write being refused",
+    );
+  });
+});
+
+test("§2.3 no raw successor credential is ever stored at rest", async () => {
+  await scenario(async (f) => {
+    /* ★ THE ONLY GUARD ON THIS WAS AN HTTP ASSERTION. The replay body was checked for the
+       absence of `agent_token`, and nothing ever looked in the DATABASE. A "fix" that
+       stored the secret under any other key — `recovery_token`, "for support" — while
+       keeping the response projection unchanged would have passed every existing test,
+       and would have put a live credential in a table read on every replay. That is the
+       precise trade the design forbids, so it is measured here rather than trusted.
+
+       This searches for the RAW STRING, which is the only thing that matters: a hash is
+       fine, an encoding of the secret is not. */
+    const grantId = await seedRenewalGrant(f, { maxSuccessors: 5 });
+    const predecessor = await seedPredecessor(f, { grantId });
+    const cmd = commandId("atrest");
+    const renewal = await issueRenewal(f, predecessor.token, cmd);
+    assert.equal(renewal.body.status, "accepted", renewal.text);
+    const secret = String(renewal.body.agent_token);
+    registerAgentCredential(f, secret);
+    assert.ok(secret.startsWith("swm_agt_"), "no secret was returned to search for");
+
+    const [idem] = await sql<{ hit: number }[]>`
+      SELECT count(*)::int AS hit FROM swarm.idempotency_keys
+      WHERE response::text LIKE ${"%" + secret + "%"}
+    `;
+    assert.equal(idem?.hit, 0, "the raw successor is stored in swarm.idempotency_keys");
+
+    const [audit] = await sql<{ hit: number }[]>`
+      SELECT count(*)::int AS hit FROM swarm.audit_log
+      WHERE coalesce(detail, '') LIKE ${"%" + secret + "%"}
+         OR coalesce(reason, '') LIKE ${"%" + secret + "%"}
+    `;
+    assert.equal(audit?.hit, 0, "the raw successor appears in swarm.audit_log");
+
+    const [events] = await sql<{ hit: number }[]>`
+      SELECT count(*)::int AS hit FROM swarm.events
+      WHERE payload::text LIKE ${"%" + secret + "%"}
+    `;
+    assert.equal(events?.hit, 0, "the raw successor appears in an event payload");
+
+    const [tokens] = await sql<{ hit: number }[]>`
+      SELECT count(*)::int AS hit FROM swarm.agent_tokens
+      WHERE encode(token_hash, 'escape') LIKE ${"%" + secret + "%"}
+    `;
+    assert.equal(tokens?.hit, 0, "the raw successor is stored beside its own hash");
+
+    /* THE POSITIVE CONTROL, and it is what makes the four zeros mean something. The same
+       four queries, run against a string that IS in those tables, must find it. Otherwise
+       a LIKE that matches nothing — a quoting slip, an empty `secret` — reads identically
+       to a clean result. */
+    const [control] = await sql<{ hit: number }[]>`
+      SELECT count(*)::int AS hit FROM swarm.idempotency_keys
+      WHERE command_id = ${cmd}
+    `;
+    assert.ok(
+      (control?.hit ?? 0) > 0,
+      "the control found nothing either, so the four absence checks above prove nothing",
     );
   });
 });
