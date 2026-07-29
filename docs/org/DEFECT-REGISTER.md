@@ -665,9 +665,33 @@ suite with an unidentified intermittent can support. It does not invalidate the 
 proofs — those turn specific tests red and green on demand, which a flake cannot fake in both
 directions — but it does weaken any claim resting on a whole-suite pass alone.
 
-**Being hunted:** eight consecutive runs, capturing full output on any non-zero exit rather
-than only the summary line. If it does not reproduce, the entry stays OPEN with that stated —
-"did not reproduce in 8" is a measurement, not a closure.
+**IDENTIFIED — reproduced on run 1 of 8**, by re-running the suite in a loop and capturing
+full output on non-zero exit rather than only the summary line:
+
+```
+tests/p1-cli/local-integration.test.ts
+  ✖ fixture bridge is idempotent and CLI client drives cradle-to-grave  (4963ms)
+    AssertionError: cswarm: command failed (HTTP 502): unknown_error
+```
+
+Runs 2–8: 95/95. So roughly **1 in 8**, and it is the one test `AGENTS.md` already documents as
+requiring live local Supabase. A 502 from the local edge runtime is a cold-start or restart
+artefact of the local stack, **not a logic defect** in the code under test.
+
+**Revised consequence, narrower than the original entry feared.** The flake lands in the
+live-infrastructure test, not in the pure ones. Every mutation proof cited today ran against
+targeted pure tests and turned specific assertions red and green on demand — which a transport
+502 cannot fake in both directions. So the merge evidence stands.
+
+What genuinely changes: a bare "`test:p1-cli` is green" has about a **1-in-8 chance of being
+red for reasons unrelated to the change**, which means a red on that test is not evidence of a
+defect until it is re-run. Anyone treating a single red there as a blocker will chase a ghost;
+anyone treating a single green as proof of the live path is being slightly lucky.
+
+**Not fixed, and deliberately not chased further.** The fix is either retry-with-backoff around
+the local edge call or a readiness gate before the suite starts, and neither is worth doing
+mid-review-queue. Status stays OPEN with the cause named, which is a better state than the
+unnamed intermittent it started as.
 
 **The reporting is the point.** An agent noticed a one-in-five anomaly it could not explain, in
 its own favour to ignore, and wrote it down. That is the behaviour that makes the rest of this
