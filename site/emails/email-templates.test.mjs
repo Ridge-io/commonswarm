@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readdir } from "node:fs/promises";
 import test from "node:test";
 import { templates } from "./templates.mjs";
 import { renderTemplate } from "./render.mjs";
@@ -68,6 +69,20 @@ assert.deepEqual(
   expectedKeys,
   "the observer must enumerate all 13 Supabase templates",
 );
+
+test("email body directory matches the explicit Supabase contract", async () => {
+  const directoryKeys = (await readdir(new URL(".", import.meta.url), { withFileTypes: true }))
+    .filter((entry) => entry.isFile() && entry.name.endsWith(".html") && entry.name !== "layout.html")
+    .map((entry) => entry.name.slice(0, -".html".length))
+    .sort();
+  const contractKeys = templates.map((template) => template.key).sort();
+
+  assert.deepEqual(
+    directoryKeys,
+    contractKeys,
+    "email body files and templates.mjs must agree in both directions",
+  );
+});
 
 for (const template of templates) {
   test(`${template.key} renders as a complete email`, async () => {
