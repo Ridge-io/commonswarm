@@ -42,6 +42,8 @@ export const CLIENT_PROTOCOL_VERSION = "0.1.0";
  */
 export const WEB_CLIENT_VERSION = "0.1.0";
 
+const BROWSER_REQUEST_TIMEOUT_MS = 30_000;
+
 export interface Deployment {
   url: string;
   anonKey: string;
@@ -59,8 +61,16 @@ export function deployment(): Deployment | null {
   const meta = (name: string): string | null =>
     document.querySelector<HTMLMetaElement>(`meta[name="${name}"]`)?.content?.trim() || null;
 
-  const url = import.meta.env.PUBLIC_SUPABASE_URL ?? meta("commonswarm:url");
-  const anonKey = import.meta.env.PUBLIC_SUPABASE_ANON_KEY ?? meta("commonswarm:anon-key");
+  const buildEnv = (
+    import.meta as ImportMeta & {
+      env?: {
+        PUBLIC_SUPABASE_URL?: string;
+        PUBLIC_SUPABASE_ANON_KEY?: string;
+      };
+    }
+  ).env;
+  const url = buildEnv?.PUBLIC_SUPABASE_URL ?? meta("commonswarm:url");
+  const anonKey = buildEnv?.PUBLIC_SUPABASE_ANON_KEY ?? meta("commonswarm:anon-key");
   if (!url || !anonKey) return null;
   return { url, anonKey };
 }
@@ -236,9 +246,69 @@ export class WorkspaceLimitReached extends Error {
   }
 }
 
+/**
+ * A create request crossed the network, but its durable outcome did not come back.
+ *
+ * Unlike a read timeout, retry is not automatically safe with a newly-minted intent: the
+ * first command may already have committed. The signup page displays this sentence verbatim.
+ */
+export class WorkspaceOutcomeUnknown extends Error {
+  override name = "WorkspaceOutcomeUnknown";
+  constructor(detail: string) {
+    super(detail);
+  }
+}
+
+/** A read stopped at the application deadline. Reads change nothing and are safe to retry. */
+export class BrowserReadTimedOut extends Error {
+  override name = "BrowserReadTimedOut";
+  constructor(readonly operation: string) {
+    super(
+      `CommonSwarm stopped waiting for ${operation} after 30 seconds. ` +
+        "Nothing changed; try again.",
+    );
+  }
+}
+
 interface CommandResult {
   status: number;
   body: Record<string, unknown>;
+}
+
+interface RequestDeadline {
+  controller: AbortController;
+  clear(): void;
+}
+
+/** One bounded timer per request, always cleared when that request settles. */
+function requestDeadline(): RequestDeadline {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), BROWSER_REQUEST_TIMEOUT_MS);
+  return {
+    controller,
+    clear: () => clearTimeout(timer),
+  };
+}
+
+async function readWithDeadline<T>(
+  operation: string,
+  request: (signal: AbortSignal) => PromiseLike<T>,
+): Promise<T> {
+  const deadline = requestDeadline();
+  try {
+    const result = await request(deadline.controller.signal);
+    if (deadline.controller.signal.aborted) {
+      throw new BrowserReadTimedOut(operation);
+    }
+    return result;
+  } catch (error) {
+    if (deadline.controller.signal.aborted) {
+      throw new BrowserReadTimedOut(operation);
+    }
+    throw error;
+  } finally {
+    deadline.clear();
+  }
 }
 
 /**
@@ -258,28 +328,48 @@ async function postCommand(
 ): Promise<CommandResult> {
   const d = deployment();
   if (!d) throw new NoDeployment();
-  const response = await fetch(`${d.url}/functions/v1/command`, {
-    method: "POST",
-    headers: {
-      authorization: `Bearer ${session.access_token}`,
-      apikey: d.anonKey,
-      "content-type": "application/json",
-    },
-    body: JSON.stringify({
-      command_id: commandId,
-      client_version: WEB_CLIENT_VERSION,
-      command,
-      ...extra,
-    }),
-  });
-  const text = await response.text();
-  let body: Record<string, unknown> = {};
+
+  const deadline = requestDeadline();
   try {
-    body = text ? (JSON.parse(text) as Record<string, unknown>) : {};
+    const response = await fetch(`${d.url}/functions/v1/command`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${session.access_token}`,
+        apikey: d.anonKey,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        command_id: commandId,
+        client_version: WEB_CLIENT_VERSION,
+        command,
+        ...extra,
+      }),
+      signal: deadline.controller.signal,
+    });
+    const text = await response.text();
+    let body: Record<string, unknown> = {};
+    try {
+      body = text ? (JSON.parse(text) as Record<string, unknown>) : {};
+    } catch {
+      body = { error: "unreadable_response" };
+    }
+    return { status: response.status, body };
   } catch {
-    body = { error: "unreadable_response" };
+    if (deadline.controller.signal.aborted) {
+      throw new WorkspaceOutcomeUnknown(
+        "CommonSwarm stopped waiting after 30 seconds, so it cannot tell whether the " +
+          "workspace was created. Reload before trying again — retrying with a new request " +
+          "could create a second one.",
+      );
+    }
+    throw new WorkspaceOutcomeUnknown(
+      "CommonSwarm lost contact before it could read the result, so it cannot tell whether " +
+        "the workspace was created. Reload before trying again — retrying with a new request " +
+        "could create a second one.",
+    );
+  } finally {
+    deadline.clear();
   }
-  return { status: response.status, body };
 }
 
 export interface CreatedWorkspace {
@@ -390,13 +480,18 @@ export interface Signal {
 export async function feed(workspaceId: string, limit = 50): Promise<Signal[]> {
   const c = client();
   if (!c) throw new NoDeployment();
-  const { data, error } = await c
-    .schema("swarm_read")
-    .from("signals")
-    .select("id,from,from_kind,kind,body,about,until,created_at")
-    .eq("workspace_id", workspaceId)
-    .order("created_at", { ascending: false })
-    .limit(limit);
+  const { data, error } = await readWithDeadline(
+    "workspace activity",
+    (signal) =>
+      c
+        .schema("swarm_read")
+        .from("signals")
+        .select("id,from,from_kind,kind,body,about,until,created_at")
+        .eq("workspace_id", workspaceId)
+        .order("created_at", { ascending: false })
+        .limit(limit)
+        .abortSignal(signal),
+  );
   if (error) throw new Error(error.message);
   return (data ?? []).map((row) => ({
     id: String(row.id),
@@ -427,12 +522,17 @@ export async function feed(workspaceId: string, limit = 50): Promise<Signal[]> {
 export async function myWorkspaces(): Promise<{ id: string; name: string }[]> {
   const c = client();
   if (!c) throw new NoDeployment();
-  const { data, error } = await c
-    .schema("swarm_read")
-    .from("workspaces")
-    .select("workspace_id,name,archived_at")
-    .is("archived_at", null)
-    .limit(50);
+  const { data, error } = await readWithDeadline(
+    "your workspaces",
+    (signal) =>
+      c
+        .schema("swarm_read")
+        .from("workspaces")
+        .select("workspace_id,name,archived_at")
+        .is("archived_at", null)
+        .limit(50)
+        .abortSignal(signal),
+  );
   if (error) throw new Error(error.message);
   return (data ?? [])
     .map((row) => ({

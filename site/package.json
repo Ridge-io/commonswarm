@@ -8,7 +8,8 @@
   "scripts": {
     "dev": "npm run sync:installer && astro dev",
     "build": "npm run sync:installer && astro build",
-    "test": "node --import tsx --test 'scripts/*.test.mjs' 'src/components/**/*.observer.mjs' 'src/components/**/*.observer.test.ts'",
+    "test": "node --import tsx --test 'scripts/*.test.mjs' 'src/components/**/*.observer.mjs' 'src/components/**/*.observer.test.ts' ../tests/p1-cli/browser-fetch-deadline.test.ts",
+    "test:browser-deadline": "node --import tsx --test ../tests/p1-cli/browser-fetch-deadline.test.ts",
     "test:onramp": "npm run build && node src/components/start/onramp.observer.mjs",
     "sync:installer": "cp ../install.sh public/install.sh",
     "preview": "astro preview",
