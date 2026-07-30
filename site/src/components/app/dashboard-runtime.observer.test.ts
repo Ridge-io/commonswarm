@@ -223,6 +223,10 @@ test("dashboard cannot hide a live or still-minting credential", () => {
     /channelLoadError = `\$\{readableError\(error\)\} Nothing was changed\.`;[\s\S]*if \(app\.dataset\.channelView === "connect"\) return;[\s\S]*renderChannel\(selected\);[\s\S]*showChannelView\("feed-error"\)/,
   );
   assert.match(close, /if \(channelLoadError\) showChannelView\("feed-error"\)/);
+  assert.match(
+    close,
+    /loadSignals\(workspaceId, true, version\)\.catch\(\(error\) => \{[\s\S]*channelLoadError = `\$\{readableError\(error\)\} Nothing was changed\.`;[\s\S]*if \(app\.dataset\.channelView === "connect"\) return;[\s\S]*showChannelView\("feed-error"\)/,
+  );
 });
 
 test("workspace changes synchronously retarget AgentConnect before its panel opens", () => {

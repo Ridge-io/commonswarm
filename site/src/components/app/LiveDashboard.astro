@@ -1033,8 +1033,10 @@ import SampleNotice from "./SampleNotice.astro";
         showChannelView("feed-pending");
         void loadSignals(workspaceId, true, version).catch((error) => {
           if (version !== requestVersion || workspaceId !== activeWorkspaceId) return;
+          channelLoadError = `${readableError(error)} Nothing was changed.`;
           const target = one<HTMLElement>("[data-feed-error]");
-          if (target) target.textContent = `${readableError(error)} Nothing was changed.`;
+          if (target) target.textContent = channelLoadError;
+          if (app.dataset.channelView === "connect") return;
           showChannelView("feed-error");
         });
       }
