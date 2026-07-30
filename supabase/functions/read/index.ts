@@ -28,6 +28,7 @@ interface SignalReadRequest {
   about: string | null;
   kind: string | null;
   since: string | null;
+  in_reply_to?: string | null;
   limit: number;
   include_stale: boolean;
 }
@@ -94,6 +95,7 @@ function parseBody(
       workspace_id: body.workspace_id.toLowerCase(),
     };
   }
+  const modernShape = Object.hasOwn(body, "in_reply_to");
   if (
     !exactKeys(body, [
       "resource",
@@ -102,6 +104,7 @@ function parseBody(
       "about",
       "kind",
       "since",
+      ...(modernShape ? ["in_reply_to"] : []),
       "limit",
       "include_stale",
     ]) ||
@@ -116,6 +119,10 @@ function parseBody(
     !(body.since === null ||
       (typeof body.since === "string" &&
         Number.isFinite(Date.parse(body.since)))) ||
+    (modernShape &&
+      !(body.in_reply_to === null ||
+        (typeof body.in_reply_to === "string" &&
+          UUID_RE.test(body.in_reply_to)))) ||
     !Number.isSafeInteger(body.limit) ||
     (body.limit as number) < 1 ||
     (body.limit as number) > 100 ||
@@ -126,6 +133,13 @@ function parseBody(
   return {
     ...(body as unknown as SignalReadRequest),
     workspace_id: body.workspace_id.toLowerCase(),
+    ...(modernShape
+      ? {
+        in_reply_to: typeof body.in_reply_to === "string"
+          ? body.in_reply_to.toLowerCase()
+          : null,
+      }
+      : {}),
   };
 }
 
@@ -167,7 +181,7 @@ async function handle(request: Request): Promise<Response> {
 
     if (body.workspace_id !== agent.principal_workspace_id) {
       return body.resource === "members"
-        ? json(200, { members: [] })
+        ? json(200, { members: [], agents: [] })
         : json(200, { signals: [] });
     }
 
@@ -190,23 +204,53 @@ async function handle(request: Request): Promise<Response> {
         WHERE workspace_id = ${body.workspace_id}::uuid
         ORDER BY user_id ASC
       `;
-      return json(200, { members });
+      const agents = await tx<Record<string, unknown>[]>`
+        SELECT
+          p.principal_id,
+          p.name,
+          p.owner_user_id
+        FROM swarm_read.agent_principals AS p
+        JOIN swarm_read.member_profiles AS owner
+          ON owner.workspace_id = p.workspace_id
+         AND owner.user_id = p.owner_user_id
+        WHERE p.workspace_id = ${body.workspace_id}::uuid
+          AND p.revoked_at IS NULL
+        ORDER BY p.principal_id ASC
+      `;
+      return json(200, { members, agents });
     }
+    const inReplyTo = body.in_reply_to ?? null;
     const rows = await tx<Record<string, unknown>[]>`
       SELECT
         id, workspace_id, "from", from_kind, "to",
-        about, kind, body, until, created_at
+        about, kind, body, until, created_at,
+        to_agent, in_reply_to
       FROM swarm_read.signals
       WHERE workspace_id = ${body.workspace_id}::uuid
-        AND (${body.inbox} = false OR "to" = ${agent.owner_user_id}::uuid)
+        AND (
+          ("to" IS NULL AND to_agent IS NULL)
+          OR to_agent = ${agent.principal_id}::uuid
+        )
+        AND (
+          ${body.inbox} = false
+          OR to_agent = ${agent.principal_id}::uuid
+        )
         AND (${body.include_stale} = true OR until > statement_timestamp())
         AND (${body.about}::text IS NULL OR about = ${body.about})
         AND (${body.kind}::text IS NULL OR kind = ${body.kind})
         AND (
+          ${inReplyTo}::uuid IS NULL
+          OR in_reply_to = ${inReplyTo}::uuid
+        )
+        AND (
           ${body.since}::timestamptz IS NULL OR
           created_at >= ${body.since}::timestamptz
         )
-      ORDER BY created_at DESC, id DESC
+      ORDER BY
+        CASE WHEN ${inReplyTo}::uuid IS NOT NULL THEN created_at END ASC,
+        CASE WHEN ${inReplyTo}::uuid IS NULL THEN created_at END DESC,
+        CASE WHEN ${inReplyTo}::uuid IS NOT NULL THEN id END ASC,
+        CASE WHEN ${inReplyTo}::uuid IS NULL THEN id END DESC
       LIMIT ${body.limit}
     `;
     return json(200, { signals: rows });

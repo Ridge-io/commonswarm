@@ -81,6 +81,8 @@ type SignalCommand = {
   signal_kind: "working-on" | "note" | "ask";
   body: string;
   to_user_id: string | null;
+  to_agent_principal_id?: string | null;
+  in_reply_to?: string | null;
   about: string | null;
   until_ms?: number;
 };
@@ -458,6 +460,90 @@ async function fixture(): Promise<Fixture> {
   };
 }
 
+interface FixtureAgent {
+  principalId: string;
+  runId: string;
+  tokenId: string;
+  token: string;
+}
+
+async function createFixtureAgent(
+  f: Fixture,
+  ownerUserId: string,
+  name: string,
+  workspaceId = f.workspaceA,
+): Promise<FixtureAgent> {
+  const deviceId = randomUUID();
+  const principalId = randomUUID();
+  const runId = randomUUID();
+  const tokenId = randomUUID();
+  const lineageId = randomUUID();
+  const token = `swm_agt_${randomBytes(32).toString("base64url")}`;
+  const tokenHash = createHash("sha256").update(token).digest();
+  await sql.begin(async (tx) => {
+    await tx`
+      INSERT INTO swarm.devices (device_id, user_id, label)
+      VALUES (
+        ${deviceId}::uuid,
+        ${ownerUserId}::uuid,
+        ${`integration-${name}`}
+      )
+    `;
+    await tx`
+      INSERT INTO swarm.agent_principals (
+        principal_id, workspace_id, owner_user_id, name
+      ) VALUES (
+        ${principalId}::uuid,
+        ${workspaceId}::uuid,
+        ${ownerUserId}::uuid,
+        ${name}
+      )
+    `;
+    await tx`
+      INSERT INTO swarm.agent_runs (run_id, principal_id, device_id)
+      VALUES (
+        ${runId}::uuid,
+        ${principalId}::uuid,
+        ${deviceId}::uuid
+      )
+    `;
+    await tx`
+      INSERT INTO swarm.agent_tokens (
+        token_id, principal_id, run_id, scopes, token_hash,
+        expires_at, lineage_id
+      ) VALUES (
+        ${tokenId}::uuid,
+        ${principalId}::uuid,
+        ${runId}::uuid,
+        ${tx.json([
+          "create",
+          "acquire",
+          "renew",
+          "handoff",
+          "takeover",
+          "submit",
+          "close",
+          "reopen",
+          "post_signal",
+        ])}::jsonb,
+        ${tokenHash},
+        statement_timestamp() + interval '1 hour',
+        ${lineageId}::uuid
+      )
+    `;
+  });
+  f.credentials.set(token, {
+    kind: "agent",
+    id: principalId,
+    actor: {
+      user: ownerUserId,
+      agent_principal: principalId,
+      run: runId,
+    },
+  });
+  return { principalId, runId, tokenId, token };
+}
+
 function commandId(label: string): string {
   return `${label}_${randomBytes(8).toString("hex")}`;
 }
@@ -571,7 +657,7 @@ async function humanSignalRead(
   const url = new URL(`${local.API_URL}/rest/v1/signals`);
   url.searchParams.set(
     "select",
-    "id,workspace_id,from,from_kind,to,about,kind,body,until,created_at",
+    "id,workspace_id,from,from_kind,to,to_agent,in_reply_to,about,kind,body,until,created_at",
   );
   url.searchParams.set("workspace_id", `eq.${workspaceId}`);
   for (const [key, value] of Object.entries(parameters)) {
@@ -596,6 +682,7 @@ async function agentSignalRead(
   token: string,
   workspaceId: string,
   inbox = false,
+  inReplyTo: string | null | undefined = undefined,
 ): Promise<CommandResponse> {
   const response = await fetch(`${local.API_URL}/functions/v1/read`, {
     method: "POST",
@@ -611,8 +698,33 @@ async function agentSignalRead(
       about: null,
       kind: null,
       since: null,
+      ...(inReplyTo === undefined ? {} : { in_reply_to: inReplyTo }),
       limit: 50,
       include_stale: true,
+    }),
+  });
+  const text = await response.text();
+  return {
+    status: response.status,
+    text,
+    body: JSON.parse(text) as Record<string, unknown>,
+  };
+}
+
+async function agentMemberRead(
+  token: string,
+  workspaceId: string,
+): Promise<CommandResponse> {
+  const response = await fetch(`${local.API_URL}/functions/v1/read`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${token}`,
+      apikey: local.ANON_KEY,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      resource: "members",
+      workspace_id: workspaceId,
     }),
   });
   const text = await response.text();
@@ -866,14 +978,14 @@ async function assertInvariants(f: Fixture): Promise<void> {
     const key = `${String(row.principal_kind)}:${String(row.principal_id)}:${String(row.command_id)}`;
     const original = f.firstRequests.get(key);
     assert.ok(original, `I4 has original request for ${key}`);
-    const actor = row.principal_kind === "agent"
-      ? f.credentials.get(f.agentToken)!.actor
-      : [...f.credentials.values()].find((entry) =>
-        entry.kind === "user" && entry.id === row.principal_id
-      )!.actor;
+    const credential = [...f.credentials.values()].find((entry) =>
+      entry.kind === row.principal_kind &&
+      entry.id === row.principal_id
+    );
+    assert.ok(credential, `I4 has credential actor for ${key}`);
     assert.equal(
       row.request_hash,
-      requestHash(actor, original as Command),
+      requestHash(credential.actor, original as Command),
       "I4 request hash",
     );
   }
@@ -1147,6 +1259,8 @@ test("P3-1 signals are authored, sanitized, isolated, idempotent, stale at read 
     const humanSignal = human.body.signal as Record<string, unknown>;
     assert.equal(humanSignal.from, f.ua);
     assert.equal(humanSignal.from_kind, "user");
+    assert.equal(humanSignal.to_agent, null);
+    assert.equal(humanSignal.in_reply_to, null);
 
     const positive = await humanSignalRead(
       f.uaJwt,
@@ -1422,12 +1536,12 @@ test("P3-1 signals are authored, sanitized, isolated, idempotent, stale at read 
     );
     assert.equal(agentInbox.status, 200);
     assert.ok(
-      (agentInbox.body.signals as Array<Record<string, unknown>>)
+      !(agentInbox.body.signals as Array<Record<string, unknown>>)
         .some((row) =>
           row.id ===
             (ownerDirected.body.signal as Record<string, unknown>).id
-      ),
-      "agent inbox targets the credential-derived owner human",
+        ),
+      "an agent inbox must not inherit its owner's human-directed signals",
     );
 
     await sql`
@@ -1453,6 +1567,272 @@ test("P3-1 signals are authored, sanitized, isolated, idempotent, stale at read 
     `;
     assert.equal(afterStream[0]?.head_seq, beforeStream[0]?.head_seq);
     assert.equal(afterEvents[0]?.count, beforeEvents[0]?.count);
+  });
+});
+
+test("P3-2 agent-principal inboxes isolate siblings and replies derive their target", async () => {
+  await scenario(async (f) => {
+    const agentB = await createFixtureAgent(f, f.ua2, "worker-b");
+    const siblingB = await createFixtureAgent(f, f.ua2, "worker-b-sibling");
+    const foreignAgent = await createFixtureAgent(
+      f,
+      f.ub,
+      "worker-foreign",
+      f.workspaceB,
+    );
+
+    const directory = await agentMemberRead(f.agentToken, f.workspaceA);
+    assert.equal(directory.status, 200);
+    assert.ok(
+      (directory.body.members as Array<Record<string, unknown>>)
+        .some((member) => member.user_id === f.ua2),
+      "member directory positive control",
+    );
+    const directoryAgents = directory.body.agents as Array<
+      Record<string, unknown>
+    >;
+    assert.ok(
+      directoryAgents.some((agent) =>
+        agent.principal_id === agentB.principalId &&
+        agent.name === "worker-b" &&
+        agent.owner_user_id === f.ua2
+      ),
+      "agent directory returns live typed principals",
+    );
+    assert.ok(
+      directoryAgents.some((agent) =>
+        agent.principal_id === siblingB.principalId
+      ),
+      "agent directory includes a same-owner sibling positive control",
+    );
+
+    const askCommand: SignalCommand = {
+      kind: "post_signal",
+      signal_kind: "ask",
+      body: "mvp-ping",
+      to_user_id: null,
+      to_agent_principal_id: agentB.principalId,
+      in_reply_to: null,
+      about: "agent-receive-mvp",
+    };
+    const ask = await issueSignal(f, f.agentToken, askCommand);
+    assert.equal(ask.status, 200);
+    const askSignal = ask.body.signal as Record<string, unknown>;
+    assert.equal(askSignal.from, f.agentPrincipal);
+    assert.equal(askSignal.to, null);
+    assert.equal(askSignal.to_agent, agentB.principalId);
+    assert.equal(askSignal.in_reply_to, null);
+
+    const ownerOversight = await humanSignalRead(
+      f.ua2Jwt,
+      f.workspaceA,
+      { id: `eq.${String(askSignal.id)}` },
+    );
+    assert.equal(ownerOversight.status, 200);
+    assert.equal(
+      (ownerOversight.body.rows as Array<Record<string, unknown>>)[0]
+        ?.to_agent,
+      agentB.principalId,
+      "an agent owner can oversee the addressed row",
+    );
+    const senderOwnerFeed = await humanSignalRead(
+      f.uaJwt,
+      f.workspaceA,
+      { id: `eq.${String(askSignal.id)}` },
+    );
+    assert.deepEqual(
+      senderOwnerFeed.body.rows,
+      [],
+      "the post response remains the directed sender's receipt",
+    );
+
+    const recipientInbox = await agentSignalRead(
+      agentB.token,
+      f.workspaceA,
+      true,
+      null,
+    );
+    assert.equal(recipientInbox.status, 200);
+    assert.ok(
+      (recipientInbox.body.signals as Array<Record<string, unknown>>)
+        .some((row) => row.id === askSignal.id),
+      "the exact addressed principal receives the ask",
+    );
+    const siblingInbox = await agentSignalRead(
+      siblingB.token,
+      f.workspaceA,
+      true,
+      null,
+    );
+    assert.equal(siblingInbox.status, 200);
+    assert.ok(
+      !(siblingInbox.body.signals as Array<Record<string, unknown>>)
+        .some((row) => row.id === askSignal.id),
+      "sharing one owner never shares an agent inbox",
+    );
+
+    const forgedDualTarget = await issueSignal(f, f.agentToken, {
+      ...askCommand,
+      body: "two recipients are not one direct signal",
+      to_user_id: f.ua2,
+    });
+    assert.equal(forgedDualTarget.status, 400);
+
+    const nonRecipientReply = await issueSignal(f, siblingB.token, {
+      kind: "post_signal",
+      signal_kind: "note",
+      body: "not my ask",
+      to_user_id: null,
+      to_agent_principal_id: null,
+      in_reply_to: String(askSignal.id),
+      about: null,
+    });
+    assert.equal(nonRecipientReply.status, 403);
+    assert.deepEqual(nonRecipientReply.body, { error: "forbidden" });
+
+    const replyCommand: SignalCommand = {
+      kind: "post_signal",
+      signal_kind: "note",
+      body: "mvp-pong",
+      to_user_id: null,
+      to_agent_principal_id: null,
+      in_reply_to: String(askSignal.id),
+      about: "agent-receive-mvp",
+    };
+    const replyId = commandId("agent_reply");
+    const reply = await issueSignal(
+      f,
+      agentB.token,
+      replyCommand,
+      replyId,
+    );
+    assert.equal(reply.status, 200);
+    const replySignal = reply.body.signal as Record<string, unknown>;
+    assert.equal(replySignal.from, agentB.principalId);
+    assert.equal(replySignal.to, null);
+    assert.equal(replySignal.to_agent, f.agentPrincipal);
+    assert.equal(replySignal.in_reply_to, askSignal.id);
+    const replyReplay = await issueSignal(
+      f,
+      agentB.token,
+      replyCommand,
+      replyId,
+    );
+    assert.equal(replyReplay.status, 200);
+    assert.deepEqual(replyReplay.body.signal, replySignal);
+    const replyCopies = await sql<{ count: string | number }[]>`
+      SELECT count(*) AS count
+      FROM swarm.signals
+      WHERE workspace_id = ${f.workspaceA}::uuid
+        AND in_reply_to = ${String(askSignal.id)}::uuid
+        AND from_principal = ${agentB.principalId}::uuid
+        AND body = 'mvp-pong'
+    `;
+    assert.equal(Number(replyCopies[0]?.count), 1);
+    await assert.rejects(
+      sql`
+        UPDATE swarm.signals
+        SET in_reply_to = NULL
+        WHERE id = ${String(replySignal.id)}::uuid
+      `,
+      /SWARM_APPEND_ONLY/,
+      "reply correlation is protected by the existing signal immutability trigger",
+    );
+
+    const correlatedInbox = await agentSignalRead(
+      f.agentToken,
+      f.workspaceA,
+      true,
+      String(askSignal.id),
+    );
+    assert.equal(correlatedInbox.status, 200);
+    assert.deepEqual(
+      (correlatedInbox.body.signals as Array<Record<string, unknown>>)
+        .map((row) => row.id),
+      [replySignal.id],
+      "the requester receives the first exact correlated reply",
+    );
+    const siblingReplyRead = await agentSignalRead(
+      siblingB.token,
+      f.workspaceA,
+      true,
+      String(askSignal.id),
+    );
+    assert.deepEqual(siblingReplyRead.body.signals, []);
+
+    const secondAsk = await issueSignal(f, f.agentToken, {
+      ...askCommand,
+      body: "owner oversight reply",
+    });
+    assert.equal(secondAsk.status, 200);
+    const secondAskId = String(
+      (secondAsk.body.signal as Record<string, unknown>).id,
+    );
+    const ownerReply = await issueSignal(f, f.ua2Jwt, {
+      kind: "post_signal",
+      signal_kind: "note",
+      body: "owner-pong",
+      to_user_id: null,
+      to_agent_principal_id: null,
+      in_reply_to: secondAskId,
+      about: null,
+    });
+    assert.equal(ownerReply.status, 200);
+    assert.equal(
+      (ownerReply.body.signal as Record<string, unknown>).to_agent,
+      f.agentPrincipal,
+      "a human may reply to a direct signal addressed to an agent they own",
+    );
+
+    const foreignTarget = await issueSignal(f, f.agentToken, {
+      ...askCommand,
+      body: "cross-workspace target",
+      to_agent_principal_id: foreignAgent.principalId,
+    });
+    const missingTarget = await issueSignal(f, f.agentToken, {
+      ...askCommand,
+      body: "missing target",
+      to_agent_principal_id: randomUUID(),
+    });
+    assert.equal(foreignTarget.status, 403);
+    assert.equal(missingTarget.status, 403);
+    assert.equal(foreignTarget.text, missingTarget.text);
+
+    await sql`
+      UPDATE swarm.agent_principals
+      SET revoked_at = statement_timestamp()
+      WHERE principal_id = ${agentB.principalId}::uuid
+    `;
+    const revokedTarget = await issueSignal(f, f.agentToken, {
+      ...askCommand,
+      body: "revoked target",
+    });
+    assert.equal(revokedTarget.status, 403);
+    const directoryAfterRevoke = await agentMemberRead(
+      f.agentToken,
+      f.workspaceA,
+    );
+    assert.ok(
+      !(directoryAfterRevoke.body.agents as Array<Record<string, unknown>>)
+        .some((agent) => agent.principal_id === agentB.principalId),
+      "revoked principals leave the live addressing directory",
+    );
+
+    await sql`
+      UPDATE swarm.agent_principals
+      SET revoked_at = statement_timestamp()
+      WHERE principal_id = ${f.agentPrincipal}::uuid
+    `;
+    const replyToRevokedAuthor = await issueSignal(f, f.ua2Jwt, {
+      kind: "post_signal",
+      signal_kind: "note",
+      body: "the original author is no longer eligible",
+      to_user_id: null,
+      to_agent_principal_id: null,
+      in_reply_to: secondAskId,
+      about: null,
+    });
+    assert.equal(replyToRevokedAuthor.status, 403);
   });
 });
 

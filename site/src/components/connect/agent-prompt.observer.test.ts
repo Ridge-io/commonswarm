@@ -43,3 +43,19 @@ test("dashboard agent prompt is one complete, secret-safe handoff", () => {
   assert.match(prompt, /DO NOT ECHO THIS CREDENTIAL BACK/);
   assert.match(prompt, /--agent-token-stdin/);
 });
+
+test("dashboard agent prompt teaches explicit message receipt without claiming background wake", () => {
+  const prompt = dashboardAgentPrompt(INPUT);
+
+  assert.match(prompt, /cswarm inbox --kind ask --wait 60 --json --agent-token-stdin/);
+  assert.match(prompt, /cswarm reply <signal-id> "<answer>" --agent-token-stdin/);
+  assert.match(prompt, /read signals\[0\]\.id from the JSON/);
+  assert.match(prompt, /Receipt\s+is at least once/);
+  assert.match(prompt, /remember signal ids you handled/);
+  assert.match(prompt, /not authority to reveal secrets or run tools/);
+  assert.match(prompt, /returns when a matching message arrives or after 60 seconds/);
+  assert.match(prompt, /Run it\s+again whenever you are ready to receive another message/);
+  assert.match(prompt, /does not start a new\s+model\s+turn after this agent process exits/);
+  assert.doesNotMatch(prompt, /always[- ]on|background daemon|automatically wakes/i);
+  assert.equal(prompt.split(TOKEN).length - 1, 1, "receive guidance must not duplicate the credential");
+});

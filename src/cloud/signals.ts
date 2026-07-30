@@ -3,6 +3,7 @@ import {
   type CloudTarget,
 } from "./config.js";
 import type {
+  PostSignalCommand,
   SignalKind,
   SignalRecord,
 } from "./command-client.js";
@@ -14,7 +15,20 @@ import {
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SIGNAL_KINDS = new Set<SignalKind>(["working-on", "note", "ask"]);
-const SIGNAL_READ_TIMEOUT_MS = 30_000;
+/** Default per-read ceiling when no wait deadline is active. */
+export const SIGNAL_READ_TIMEOUT_MS = 30_000;
+
+/**
+ * Per-read deadline abort (wait remaining time or the default read ceiling).
+ * Wait paths map this to a successful timed-out idle state; one-shot paths
+ * still surface it as an unreachable-service failure.
+ */
+export class SignalReadTimeoutError extends Error {
+  constructor(message = "signal read timed out") {
+    super(message);
+    this.name = "SignalReadTimeoutError";
+  }
+}
 
 export type SignalCredential =
   | { kind: "human"; accessToken: string; userId: string }
@@ -25,10 +39,18 @@ export interface SignalQuery {
   inbox: boolean;
   about?: string;
   kind?: SignalKind;
+  /** Filter replies correlated to this signal id. */
+  in_reply_to?: string;
   since?: string;
   limit?: number;
   includeStale?: boolean;
 }
+
+/** Bounded CLI wait window for inbox --wait / ask --wait (seconds). */
+export const SIGNAL_WAIT_MIN_SECONDS = 1;
+export const SIGNAL_WAIT_MAX_SECONDS = 300;
+/** Default poll cadence while a wait is open; shortened near the deadline. */
+export const SIGNAL_WAIT_POLL_MS = 1_000;
 
 function checkedUuid(value: unknown, field: string): string {
   if (typeof value !== "string" || !UUID_RE.test(value)) {
@@ -72,6 +94,13 @@ function signalRecord(value: unknown): SignalRecord {
     from: checkedUuid(row.from, "from"),
     from_kind: row.from_kind as SignalRecord["from_kind"],
     to: checkedNullableUuid(row.to, "to"),
+    // Absent fields are treated as null so an old server response still parses.
+    to_agent: row.to_agent === undefined
+      ? null
+      : checkedNullableUuid(row.to_agent, "to_agent"),
+    in_reply_to: row.in_reply_to === undefined
+      ? null
+      : checkedNullableUuid(row.in_reply_to, "in_reply_to"),
     about: row.about as string | null,
     kind: row.kind as SignalKind,
     body: row.body,
@@ -95,67 +124,130 @@ function checkedSince(value: string | undefined): string | undefined {
   return value;
 }
 
+export interface SignalReadOptions {
+  fetcher?: typeof fetch;
+  /** Caller-supplied abort; combined with the per-read timeout ceiling. */
+  signal?: AbortSignal;
+  /**
+   * Absolute epoch ms for a wait window. Each read aborts at
+   * min(SIGNAL_READ_TIMEOUT_MS, remaining until deadlineMs).
+   */
+  deadlineMs?: number;
+  now?: () => number;
+}
+
+function normalizeReadOptions(
+  fetcherOrOptions: typeof fetch | SignalReadOptions | undefined,
+): Required<Pick<SignalReadOptions, "fetcher" | "now">> & SignalReadOptions {
+  if (typeof fetcherOrOptions === "function") {
+    return { fetcher: fetcherOrOptions, now: Date.now };
+  }
+  return {
+    fetcher: fetcherOrOptions?.fetcher ?? fetch,
+    signal: fetcherOrOptions?.signal,
+    deadlineMs: fetcherOrOptions?.deadlineMs,
+    now: fetcherOrOptions?.now ?? Date.now,
+  };
+}
+
+function perReadTimeoutMs(options: SignalReadOptions): number {
+  if (options.deadlineMs === undefined) return SIGNAL_READ_TIMEOUT_MS;
+  const remaining = options.deadlineMs - (options.now ?? Date.now)();
+  if (remaining <= 0) return 0;
+  return Math.min(SIGNAL_READ_TIMEOUT_MS, remaining);
+}
+
+/**
+ * Fetch with an application deadline. Timeout aborts throw
+ * SignalReadTimeoutError; transport failures return null; HTTP/body problems
+ * return a response the caller validates.
+ */
 async function fetchSignalRead(
   fetcher: typeof fetch,
   input: Parameters<typeof fetch>[0],
   init: RequestInit,
+  timeoutMs: number = SIGNAL_READ_TIMEOUT_MS,
 ): Promise<{ response: Response; body: unknown } | null> {
+  if (timeoutMs <= 0) {
+    throw new SignalReadTimeoutError();
+  }
   const deadlineController = new AbortController();
+  let timedOut = false;
   const signal = init.signal
     ? AbortSignal.any([init.signal, deadlineController.signal])
     : deadlineController.signal;
   let onAbort = () => {};
-  const aborted = new Promise<null>((resolve) => {
-    onAbort = () => resolve(null);
+  const aborted = new Promise<"timeout">((resolve) => {
+    onAbort = () => resolve("timeout");
     if (signal.aborted) {
       onAbort();
     } else {
       signal.addEventListener("abort", onAbort, { once: true });
     }
   });
-  const timeout = setTimeout(
-    () => deadlineController.abort(),
-    SIGNAL_READ_TIMEOUT_MS,
-  );
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    deadlineController.abort();
+  }, timeoutMs);
   try {
-    if (signal.aborted) return null;
-    const read = (async () => {
+    if (signal.aborted) {
+      throw new SignalReadTimeoutError();
+    }
+    const read = (async (): Promise<
+      { response: Response; body: unknown } | null | "timeout"
+    > => {
       let response: Response;
       try {
         response = await fetcher(input, {
           ...init,
           signal,
         });
-      } catch {
+      } catch (error) {
+        if (signal.aborted || timedOut || (error as Error)?.name === "AbortError") {
+          return "timeout";
+        }
         return null;
       }
-      if (signal.aborted) return null;
+      if (signal.aborted || timedOut) return "timeout";
       if (!response.ok) {
         return { response, body: null };
       }
       try {
         return { response, body: await response.json() };
       } catch {
-        return signal.aborted ? null : { response, body: null };
+        if (signal.aborted || timedOut) return "timeout";
+        return { response, body: null };
       }
     })();
-    return await Promise.race([read, aborted]);
+    const raced = await Promise.race([read, aborted]);
+    if (raced === "timeout") {
+      throw new SignalReadTimeoutError();
+    }
+    return raced;
   } finally {
     clearTimeout(timeout);
     signal.removeEventListener("abort", onAbort);
   }
 }
 
+function mapReadFailure(error: unknown, waitBound: boolean): never {
+  if (error instanceof SignalReadTimeoutError) {
+    if (waitBound) throw error;
+    throw new Error("signal read could not reach the cloud service");
+  }
+  throw error;
+}
+
 async function humanSignals(
   target: CloudTarget,
   credential: Extract<SignalCredential, { kind: "human" }>,
   query: SignalQuery,
-  fetcher: typeof fetch,
+  options: ReturnType<typeof normalizeReadOptions>,
 ): Promise<SignalRecord[]> {
   const url = new URL("/rest/v1/signals", target.url);
   url.searchParams.set(
     "select",
-    "id,workspace_id,from,from_kind,to,about,kind,body,until,created_at",
+    "id,workspace_id,from,from_kind,to,to_agent,in_reply_to,about,kind,body,until,created_at",
   );
   url.searchParams.set("workspace_id", `eq.${query.workspaceId}`);
   if (query.inbox) url.searchParams.set("to", `eq.${credential.userId}`);
@@ -168,18 +260,27 @@ async function humanSignals(
   if (query.kind !== undefined) {
     url.searchParams.set("kind", `eq.${query.kind}`);
   }
+  if (query.in_reply_to !== undefined) {
+    url.searchParams.set("in_reply_to", `eq.${query.in_reply_to}`);
+  }
   if (query.since !== undefined) {
     url.searchParams.set("created_at", `gte.${query.since}`);
   }
   url.searchParams.set("order", "created_at.desc,id.desc");
   url.searchParams.set("limit", String(query.limit));
-  const result = await fetchSignalRead(fetcher, url, {
-    headers: {
-      authorization: `Bearer ${credential.accessToken}`,
-      apikey: target.anonKey,
-      "accept-profile": "swarm_read",
-    },
-  });
+  let result: { response: Response; body: unknown } | null;
+  try {
+    result = await fetchSignalRead(options.fetcher, url, {
+      headers: {
+        authorization: `Bearer ${credential.accessToken}`,
+        apikey: target.anonKey,
+        "accept-profile": "swarm_read",
+      },
+      ...(options.signal ? { signal: options.signal } : {}),
+    }, perReadTimeoutMs(options));
+  } catch (error) {
+    mapReadFailure(error, options.deadlineMs !== undefined);
+  }
   if (result === null) {
     throw new Error("signal read could not reach the cloud service");
   }
@@ -197,26 +298,33 @@ async function agentSignals(
   target: CloudTarget,
   credential: Extract<SignalCredential, { kind: "agent" }>,
   query: SignalQuery,
-  fetcher: typeof fetch,
+  options: ReturnType<typeof normalizeReadOptions>,
 ): Promise<SignalRecord[]> {
-  const result = await fetchSignalRead(fetcher, readEndpoint(target), {
-    method: "POST",
-    headers: {
-      authorization: `Bearer ${credential.token}`,
-      apikey: target.anonKey,
-      "content-type": "application/json",
-    },
-    body: JSON.stringify({
-      resource: "signals",
-      workspace_id: query.workspaceId,
-      inbox: query.inbox,
-      about: query.about ?? null,
-      kind: query.kind ?? null,
-      since: query.since ?? null,
-      limit: query.limit,
-      include_stale: query.includeStale ?? false,
-    }),
-  });
+  let result: { response: Response; body: unknown } | null;
+  try {
+    result = await fetchSignalRead(options.fetcher, readEndpoint(target), {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${credential.token}`,
+        apikey: target.anonKey,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        resource: "signals",
+        workspace_id: query.workspaceId,
+        inbox: query.inbox,
+        about: query.about ?? null,
+        kind: query.kind ?? null,
+        in_reply_to: query.in_reply_to ?? null,
+        since: query.since ?? null,
+        limit: query.limit,
+        include_stale: query.includeStale ?? false,
+      }),
+      ...(options.signal ? { signal: options.signal } : {}),
+    }, perReadTimeoutMs(options));
+  } catch (error) {
+    mapReadFailure(error, options.deadlineMs !== undefined);
+  }
   if (result === null) {
     throw new Error("signal read could not reach the cloud service");
   }
@@ -241,24 +349,75 @@ export interface SignalMember {
   display_name: string;
 }
 
-export async function readAgentSignalMembers(
+export interface SignalAgent {
+  principal_id: string;
+  name: string;
+}
+
+/** Live members and agents available as signal targets in one workspace. */
+export interface SignalDirectory {
+  members: readonly SignalMember[];
+  agents: readonly SignalAgent[];
+}
+
+export type ResolvedSignalRecipient =
+  | { kind: "user"; id: string }
+  | { kind: "agent"; id: string };
+
+function parseAgentMemberRow(value: unknown): SignalAgent {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("member read returned a malformed agent row");
+  }
+  const row = value as Record<string, unknown>;
+  if (typeof row.name !== "string") {
+    throw new Error("member read returned a malformed agent name");
+  }
+  return {
+    principal_id: checkedUuid(row.principal_id, "agent principal_id"),
+    name: row.name,
+  };
+}
+
+function parseMemberRow(value: unknown): SignalMember {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("member read returned a malformed row");
+  }
+  const row = value as Record<string, unknown>;
+  if (typeof row.display_name !== "string") {
+    throw new Error("member read returned a malformed display name");
+  }
+  return {
+    user_id: checkedUuid(row.user_id, "member user_id"),
+    display_name: row.display_name,
+  };
+}
+
+export async function readAgentSignalDirectory(
   target: CloudTarget,
   token: string,
   workspaceId: string,
   fetcher: typeof fetch = fetch,
-): Promise<SignalMember[]> {
-  const result = await fetchSignalRead(fetcher, readEndpoint(target), {
-    method: "POST",
-    headers: {
-      authorization: `Bearer ${token}`,
-      apikey: target.anonKey,
-      "content-type": "application/json",
-    },
-    body: JSON.stringify({
-      resource: "members",
-      workspace_id: workspaceId,
-    }),
-  });
+): Promise<SignalDirectory> {
+  let result: { response: Response; body: unknown } | null;
+  try {
+    result = await fetchSignalRead(fetcher, readEndpoint(target), {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${token}`,
+        apikey: target.anonKey,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        resource: "members",
+        workspace_id: workspaceId,
+      }),
+    });
+  } catch (error) {
+    if (error instanceof SignalReadTimeoutError) {
+      throw new Error("member read could not reach the cloud service");
+    }
+    throw error;
+  }
   if (result === null) {
     throw new Error("member read could not reach the cloud service");
   }
@@ -266,71 +425,210 @@ export async function readAgentSignalMembers(
   if (!response.ok) {
     throw new Error(`member read failed (HTTP ${response.status})`);
   }
-  const raw = body && typeof body === "object" && !Array.isArray(body)
-    ? (body as Record<string, unknown>).members
-    : null;
-  if (!Array.isArray(raw)) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
     throw new Error("member read returned malformed JSON");
   }
-  return raw.map((value): SignalMember => {
-    if (!value || typeof value !== "object" || Array.isArray(value)) {
-      throw new Error("member read returned a malformed row");
-    }
-    const row = value as Record<string, unknown>;
-    if (typeof row.display_name !== "string") {
-      throw new Error("member read returned a malformed display name");
-    }
-    return {
-      user_id: checkedUuid(row.user_id, "member user_id"),
-      display_name: row.display_name,
-    };
-  });
+  const payload = body as Record<string, unknown>;
+  if (!Array.isArray(payload.members)) {
+    throw new Error("member read returned malformed JSON");
+  }
+  const agentsRaw = payload.agents;
+  // Agents are additive; an older members response without agents[] still works.
+  const agents = agentsRaw === undefined
+    ? []
+    : Array.isArray(agentsRaw)
+    ? agentsRaw.map(parseAgentMemberRow)
+    : (() => {
+      throw new Error("member read returned malformed agents");
+    })();
+  return {
+    members: payload.members.map(parseMemberRow),
+    agents,
+  };
 }
 
+/** @deprecated Prefer readAgentSignalDirectory; kept for call sites that only need humans. */
+export async function readAgentSignalMembers(
+  target: CloudTarget,
+  token: string,
+  workspaceId: string,
+  fetcher: typeof fetch = fetch,
+): Promise<SignalMember[]> {
+  const directory = await readAgentSignalDirectory(
+    target,
+    token,
+    workspaceId,
+    fetcher,
+  );
+  return [...directory.members];
+}
+
+/**
+ * Resolve --to against live members and agents. Exact UUID wins when it names
+ * one live principal; exact name is accepted only when unique across both sets.
+ */
 export function resolveSignalRecipient(
   selector: string,
-  members: readonly SignalMember[],
-): string {
+  directory: SignalDirectory | readonly SignalMember[],
+): ResolvedSignalRecipient {
+  const resolved: SignalDirectory = Array.isArray(directory)
+    ? { members: directory, agents: [] }
+    : directory as SignalDirectory;
+
   if (UUID_RE.test(selector)) {
     const normalized = selector.toLowerCase();
-    if (members.some((member) => member.user_id === normalized)) {
-      return normalized;
+    const member = resolved.members.find((row) => row.user_id === normalized);
+    const agent = resolved.agents.find((row) =>
+      row.principal_id === normalized
+    );
+    if (member && !agent) return { kind: "user", id: member.user_id };
+    if (agent && !member) return { kind: "agent", id: agent.principal_id };
+    if (member && agent) {
+      throw new Error(
+        `signal recipient id matches both a member and an agent; use a unique id`,
+      );
     }
-    throw new Error("signal recipient is not a live member of this project");
+    throw new Error(
+      "signal recipient is not a live member or agent of this project",
+    );
   }
-  const matches = members.filter(
+
+  const memberMatches = resolved.members.filter(
     (member) => member.display_name === selector,
   );
-  if (matches.length === 1) return matches[0]!.user_id;
-  if (matches.length > 1) {
+  const agentMatches = resolved.agents.filter(
+    (agent) => agent.name === selector,
+  );
+  const total = memberMatches.length + agentMatches.length;
+  if (total === 1) {
+    if (memberMatches.length === 1) {
+      return { kind: "user", id: memberMatches[0]!.user_id };
+    }
+    return { kind: "agent", id: agentMatches[0]!.principal_id };
+  }
+  if (total > 1) {
+    const choices = [
+      ...memberMatches.map((member) => `user ${member.user_id}`),
+      ...agentMatches.map((agent) => `agent ${agent.principal_id}`),
+    ];
     throw new Error(
-      `signal recipient name is ambiguous; use one of these user ids: ${
-        matches.map((member) => member.user_id).join(", ")
+      `signal recipient name is ambiguous; use one of these ids: ${
+        choices.join(", ")
       }`,
     );
   }
-  throw new Error("signal recipient is not a live member of this project");
+  throw new Error(
+    "signal recipient is not a live member or agent of this project",
+  );
+}
+
+/** Parse --wait as an integer number of seconds in 1..300. */
+export function parseWaitSeconds(value: string): number {
+  if (!/^[1-9]\d*$/.test(value)) {
+    throw new Error("--wait must be an integer number of seconds in 1..300");
+  }
+  const seconds = Number(value);
+  if (
+    !Number.isSafeInteger(seconds) ||
+    seconds < SIGNAL_WAIT_MIN_SECONDS ||
+    seconds > SIGNAL_WAIT_MAX_SECONDS
+  ) {
+    throw new Error("--wait must be an integer number of seconds in 1..300");
+  }
+  return seconds;
+}
+
+export function waitDeadlineMs(
+  waitSeconds: number,
+  nowMs: number = Date.now(),
+): number {
+  return nowMs + waitSeconds * 1000;
+}
+
+export function nextWaitSleepMs(
+  nowMs: number,
+  deadlineMs: number,
+  pollMs: number = SIGNAL_WAIT_POLL_MS,
+): number {
+  return Math.max(0, Math.min(pollMs, deadlineMs - nowMs));
+}
+
+export interface SignalWaitResult {
+  signals: SignalRecord[];
+  timedOut: boolean;
+}
+
+/**
+ * Immediate read, then poll until a non-empty match or the deadline. After each
+ * sleep — including the sleep that lands on the deadline — probe once more so a
+ * signal that arrives during the last sleep is observed. Deadline aborts are a
+ * successful timed-out idle state; transport/HTTP/malformed errors propagate.
+ */
+export async function pollForSignals(options: {
+  read: () => Promise<SignalRecord[]>;
+  deadlineMs: number;
+  now?: () => number;
+  sleep?: (ms: number) => Promise<void>;
+  pollMs?: number;
+}): Promise<SignalWaitResult> {
+  const now = options.now ?? Date.now;
+  const sleep = options.sleep ??
+    ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms)));
+  const pollMs = options.pollMs ?? SIGNAL_WAIT_POLL_MS;
+
+  const probe = async (): Promise<SignalWaitResult | "empty"> => {
+    try {
+      const signals = await options.read();
+      if (signals.length > 0) return { signals, timedOut: false };
+      return "empty";
+    } catch (error) {
+      if (error instanceof SignalReadTimeoutError) {
+        return { signals: [], timedOut: true };
+      }
+      throw error;
+    }
+  };
+
+  // Always attempt at least one read, even if the deadline is already past.
+  const first = await probe();
+  if (first !== "empty") return first;
+
+  while (now() < options.deadlineMs) {
+    const sleepMs = nextWaitSleepMs(now(), options.deadlineMs, pollMs);
+    if (sleepMs > 0) await sleep(sleepMs);
+    // Probe after every sleep, including one that exhausts the wait window.
+    const next = await probe();
+    if (next !== "empty") return next;
+  }
+  return { signals: [], timedOut: true };
 }
 
 export async function readSignals(
   target: CloudTarget,
   credential: SignalCredential,
   query: SignalQuery,
-  fetcher: typeof fetch = fetch,
+  fetcherOrOptions: typeof fetch | SignalReadOptions = fetch,
 ): Promise<SignalRecord[]> {
   if (!UUID_RE.test(query.workspaceId)) {
     throw new Error("--workspace-id must be a UUID");
   }
+  if (query.in_reply_to !== undefined && !UUID_RE.test(query.in_reply_to)) {
+    throw new Error("in_reply_to must be a signal UUID");
+  }
+  const options = normalizeReadOptions(fetcherOrOptions);
   const normalized: SignalQuery = {
     ...query,
     workspaceId: query.workspaceId.toLowerCase(),
+    ...(query.in_reply_to === undefined
+      ? {}
+      : { in_reply_to: query.in_reply_to.toLowerCase() }),
     limit: checkedLimit(query.limit),
     since: checkedSince(query.since),
     includeStale: query.includeStale ?? false,
   };
   return credential.kind === "human"
-    ? await humanSignals(target, credential, normalized, fetcher)
-    : await agentSignals(target, credential, normalized, fetcher);
+    ? await humanSignals(target, credential, normalized, options)
+    : await agentSignals(target, credential, normalized, options);
 }
 
 export const SIGNAL_STATUS_UNAVAILABLE_MESSAGE =
@@ -379,16 +677,70 @@ export function signalReadJsonPayload(
   workspaceId: string,
   inbox: boolean,
   signals: readonly SignalRecord[],
+  options: { waited?: boolean; timedOut?: boolean } = {},
 ): Record<string, unknown> {
+  const waited = options.waited === true;
+  const timedOut = options.timedOut === true;
+  const emptyMessage = timedOut
+    ? inbox
+      ? "Nothing arrived before the wait ended."
+      : "No matching signals arrived before the wait ended."
+    : inbox
+    ? "Nothing is waiting for you."
+    : "No matching signals are visible.";
+  const message = signals.length === 0
+    ? emptyMessage
+    : `${signals.length} signal${signals.length === 1 ? "" : "s"} visible.`;
   return {
     workspace_id: workspaceId,
     view: inbox ? "inbox" : "feed",
     signals,
-    message: signals.length === 0
-      ? inbox
-        ? "Nothing is waiting for you."
-        : "No matching signals are visible."
-      : `${signals.length} signal${signals.length === 1 ? "" : "s"} visible.`,
+    ...(waited ? { waited: true, timed_out: timedOut } : {}),
+    message,
+  };
+}
+
+/** JSON document for ask --wait: one document, timeout is success with no reply. */
+export function askWaitJsonPayload(
+  ask: SignalRecord,
+  reply: SignalRecord | null,
+  timedOut: boolean,
+): Record<string, unknown> {
+  return {
+    status: "accepted",
+    message: timedOut
+      ? "Ask shared. No reply arrived before the wait ended; the ask remains live."
+      : "Ask shared and a correlated reply arrived.",
+    signal: ask,
+    reply,
+    timed_out: timedOut,
+  };
+}
+
+export function postSignalTargets(
+  recipient: ResolvedSignalRecipient | null,
+): Pick<
+  PostSignalCommand,
+  "to_user_id" | "to_agent_principal_id" | "in_reply_to"
+> {
+  if (recipient === null) {
+    return {
+      to_user_id: null,
+      to_agent_principal_id: null,
+      in_reply_to: null,
+    };
+  }
+  if (recipient.kind === "user") {
+    return {
+      to_user_id: recipient.id,
+      to_agent_principal_id: null,
+      in_reply_to: null,
+    };
+  }
+  return {
+    to_user_id: null,
+    to_agent_principal_id: recipient.id,
+    in_reply_to: null,
   };
 }
 

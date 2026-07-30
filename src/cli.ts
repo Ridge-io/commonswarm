@@ -110,7 +110,11 @@ import {
   type WorkspaceWarning,
 } from "./cloud/workspaces.js";
 import {
-  readAgentSignalMembers,
+  askWaitJsonPayload,
+  parseWaitSeconds,
+  pollForSignals,
+  postSignalTargets,
+  readAgentSignalDirectory,
   readSignals,
   renderSignalStatus,
   renderSignals,
@@ -118,9 +122,11 @@ import {
   settleSignalAuthorLabels,
   settleSignalStatus,
   signalReadJsonPayload,
+  waitDeadlineMs,
   type SignalAuthorLabels,
   type SignalCredential,
-  type SignalMember,
+  type SignalDirectory,
+  type ResolvedSignalRecipient,
 } from "./cloud/signals.js";
 
 const BOOLEAN_FLAGS = new Set([
@@ -282,10 +288,11 @@ Usage:
   cswarm target clear [--json]
   cswarm status [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--json]
   cswarm working-on "<what>" [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--about <ref>] [--until <dur>] [--json]
-  cswarm note "<text>" [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--to <member>] [--about <ref>] [--until <dur>] [--json]
-  cswarm ask "<text>" [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--to <member>] [--about <ref>] [--until <dur>] [--json]
+  cswarm note "<text>" [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--to <member|agent>] [--about <ref>] [--until <dur>] [--json]
+  cswarm ask "<text>" [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--to <member|agent>] [--about <ref>] [--until <dur>] [--wait <seconds>] [--json]
+  cswarm reply <signal-id> "<text>" [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--until <dur>] [--json]
   cswarm feed [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--about <ref>] [--kind <kind>] [--since <timestamp>] [--limit <n>] [--include-stale] [--json]
-  cswarm inbox [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--since <timestamp>] [--limit <n>] [--include-stale] [--json]
+  cswarm inbox [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--kind <kind>] [--about <ref>] [--since <timestamp>] [--limit <n>] [--include-stale] [--wait <seconds>] [--json]
   cswarm new "<project name>" [--url <url> --anon-key <key>] [--json]
   cswarm new --name "<project name>" [--url <url> --anon-key <key>] [--json]
   cswarm workspaces [--url <url> --anon-key <key>] [--json]
@@ -1926,13 +1933,13 @@ function signalText(value: string, label: "body" | "about"): string {
   return value;
 }
 
-async function signalMembers(
+async function signalDirectory(
   cloud: CloudTarget,
   selectedWorkspace: string,
   credential: Awaited<ReturnType<typeof commandWorkspaceAndCredential>>,
-): Promise<SignalMember[]> {
+): Promise<SignalDirectory> {
   if (credential.kind === "agent") {
-    return await readAgentSignalMembers(
+    return await readAgentSignalDirectory(
       cloud,
       credential.bearer,
       selectedWorkspace,
@@ -1943,10 +1950,18 @@ async function signalMembers(
     human,
     selectedWorkspace,
   );
-  return status.members.map((member) => ({
-    user_id: member.user_id,
-    display_name: member.name,
-  }));
+  return {
+    members: status.members.map((member) => ({
+      user_id: member.user_id,
+      display_name: member.name,
+    })),
+    agents: status.agents
+      .filter((agent) => !agent.revoked)
+      .map((agent) => ({
+        principal_id: agent.principal_id,
+        name: agent.name,
+      })),
+  };
 }
 
 function signalAuthorLabelsFromStatus(
@@ -1970,19 +1985,24 @@ async function signalAuthorLabels(
   credential: Awaited<ReturnType<typeof commandWorkspaceAndCredential>>,
 ): Promise<SignalAuthorLabels> {
   if (credential.kind === "agent") {
-    const members = await readAgentSignalMembers(
+    const directory = await readAgentSignalDirectory(
       cloud,
       credential.bearer,
       selectedWorkspace,
     );
     return {
       users: new Map(
-        members.map((member) => [
+        directory.members.map((member) => [
           member.user_id,
           sanitizeDisplayLabel(member.display_name, "Unnamed member"),
         ]),
       ),
-      agents: new Map(),
+      agents: new Map(
+        directory.agents.map((agent) => [
+          agent.principal_id,
+          sanitizeDisplayLabel(agent.name, "Unnamed agent"),
+        ]),
+      ),
     };
   }
   const human = credential.human!;
@@ -1993,48 +2013,14 @@ async function signalAuthorLabels(
   return signalAuthorLabelsFromStatus(status, human.userId);
 }
 
-async function runPostSignal(
-  args: Arguments,
-  kind: SignalKind,
-): Promise<void> {
-  const allowTo = kind !== "working-on";
-  args.assertShape([
-    ...TARGET_FLAGS,
-    "workspace-id",
-    ...CREDENTIAL_FLAGS,
-    ...(allowTo ? ["to"] : []),
-    "about",
-    "until",
-    "json",
-  ], 2);
-  const cloud = await target(args);
-  const credential = await commandWorkspaceAndCredential(args, cloud, {
-    validateHumanWorkspace: true,
-  });
-  const toSelector = allowTo ? args.optional("to") : undefined;
-  const toUserId = toSelector === undefined
-    ? null
-    : resolveSignalRecipient(
-      toSelector,
-      await signalMembers(cloud, credential.selectedWorkspace, credential),
-    );
-  const untilMs = signalDuration(args.optional("until"));
-  const command: PostSignalCommand = {
-    kind: "post_signal",
-    signal_kind: kind,
-    body: signalText(args.positionals[1]!, "body"),
-    to_user_id: toUserId,
-    about: args.optional("about") === undefined
-      ? null
-      : signalText(args.required("about"), "about"),
-    ...(untilMs === undefined
-      ? {}
-      : { until_ms: untilMs }),
-  };
+async function postSignalCommand(
+  cloud: CloudTarget,
+  credential: Awaited<ReturnType<typeof commandWorkspaceAndCredential>>,
+  command: PostSignalCommand,
+): Promise<PostSignalResult> {
   const client = new ThinCommandClient(cloud);
-  let result: PostSignalResult;
   if (credential.kind === "human") {
-    result = await sendSignalWithPending(
+    return await sendSignalWithPending(
       client,
       {
         credential: credential.bearer,
@@ -2044,43 +2030,157 @@ async function runPostSignal(
       credential.selectedWorkspace,
       command,
     );
-  } else {
-    const agent = credential.agent!;
-    let pendingStore = null;
-    if (agent.durable && agent.principalId !== null) {
-      try {
-        pendingStore = await agentSignalPendingStore({
-          target: cloud,
-          principalId: agent.principalId,
-        });
-      } catch {
-        process.stderr.write(
-          "cswarm: durable agent signal recovery state is unavailable; this post uses an ephemeral command ID and an ambiguous retry may create a visible duplicate.\n",
-        );
-      }
-    } else {
+  }
+  const agent = credential.agent!;
+  let pendingStore = null;
+  if (agent.durable && agent.principalId !== null) {
+    try {
+      pendingStore = await agentSignalPendingStore({
+        target: cloud,
+        principalId: agent.principalId,
+      });
+    } catch {
       process.stderr.write(
-        "cswarm: bare agent credentials post with ephemeral command IDs; pipe the JSON from cswarm token mint for durable retry recovery.\n",
+        "cswarm: durable agent signal recovery state is unavailable; this post uses an ephemeral command ID and an ambiguous retry may create a visible duplicate.\n",
       );
     }
-    result = pendingStore === null
-      ? await client.sendSignal({
-        workspaceId: credential.selectedWorkspace,
-        command,
-        credential: credential.bearer,
-      })
-      : await sendSignalWithPending(
-        client,
-        {
-          credential: credential.bearer,
-          credentialIdentity: `agent:${agent.principalId}`,
-          store: pendingStore,
-        },
-        credential.selectedWorkspace,
-        command,
-      );
+  } else {
+    process.stderr.write(
+      "cswarm: bare agent credentials post with ephemeral command IDs; pipe the JSON from cswarm token mint for durable retry recovery.\n",
+    );
   }
+  return pendingStore === null
+    ? await client.sendSignal({
+      workspaceId: credential.selectedWorkspace,
+      command,
+      credential: credential.bearer,
+    })
+    : await sendSignalWithPending(
+      client,
+      {
+        credential: credential.bearer,
+        credentialIdentity: `agent:${agent.principalId}`,
+        store: pendingStore,
+      },
+      credential.selectedWorkspace,
+      command,
+    );
+}
+
+function signalCredentialOf(
+  selected: Awaited<ReturnType<typeof commandWorkspaceAndCredential>>,
+): SignalCredential {
+  return selected.kind === "agent"
+    ? { kind: "agent", token: selected.bearer }
+    : {
+      kind: "human",
+      accessToken: selected.bearer,
+      userId: selected.human!.userId,
+    };
+}
+
+async function runPostSignal(
+  args: Arguments,
+  kind: SignalKind,
+): Promise<void> {
+  const allowTo = kind !== "working-on";
+  const allowWait = kind === "ask";
+  args.assertShape([
+    ...TARGET_FLAGS,
+    "workspace-id",
+    ...CREDENTIAL_FLAGS,
+    ...(allowTo ? ["to"] : []),
+    "about",
+    "until",
+    ...(allowWait ? ["wait"] : []),
+    "json",
+  ], 2);
+  const waitSeconds = allowWait && args.optional("wait") !== undefined
+    ? parseWaitSeconds(args.required("wait"))
+    : undefined;
+  const cloud = await target(args);
+  const credential = await commandWorkspaceAndCredential(args, cloud, {
+    validateHumanWorkspace: true,
+  });
+  const toSelector = allowTo ? args.optional("to") : undefined;
+  const recipient: ResolvedSignalRecipient | null = toSelector === undefined
+    ? null
+    : resolveSignalRecipient(
+      toSelector,
+      await signalDirectory(cloud, credential.selectedWorkspace, credential),
+    );
+  // Broadcast asks cannot receive authorized replies; waiting would never succeed.
+  if (waitSeconds !== undefined && recipient === null) {
+    throw new Error(
+      "ask --wait requires --to with a direct member or agent recipient",
+    );
+  }
+  const untilMs = signalDuration(args.optional("until"));
+  const command: PostSignalCommand = {
+    kind: "post_signal",
+    signal_kind: kind,
+    body: signalText(args.positionals[1]!, "body"),
+    ...postSignalTargets(recipient),
+    about: args.optional("about") === undefined
+      ? null
+      : signalText(args.required("about"), "about"),
+    ...(untilMs === undefined
+      ? {}
+      : { until_ms: untilMs }),
+  };
+  const result = await postSignalCommand(cloud, credential, command);
   const signal = result.response.signal!;
+
+  if (waitSeconds !== undefined) {
+    const credentialForRead = signalCredentialOf(credential);
+    const deadlineMs = waitDeadlineMs(waitSeconds);
+    const waitResult = await pollForSignals({
+      deadlineMs,
+      read: () =>
+        readSignals(cloud, credentialForRead, {
+          workspaceId: credential.selectedWorkspace,
+          inbox: true,
+          in_reply_to: signal.id,
+          includeStale: false,
+          limit: 1,
+        }, { deadlineMs }),
+    });
+    const reply = waitResult.signals[0] ?? null;
+    if (args.has("json")) {
+      printJson(askWaitJsonPayload(signal, reply, waitResult.timedOut));
+      return;
+    }
+    const authors = await settleSignalAuthorLabels(
+      signalAuthorLabels(
+        cloud,
+        credential.selectedWorkspace,
+        credential,
+      ),
+    );
+    if (waitResult.timedOut || reply === null) {
+      process.stdout.write(
+        `Ask shared. No reply arrived before the wait ended; the ask remains live.\n${
+          renderSignals([signal], {
+            inbox: false,
+            includeStale: true,
+            authors,
+          })
+        }\n`,
+      );
+      return;
+    }
+    process.stdout.write(
+      `Ask shared and a correlated reply arrived.\n${
+        renderSignals([signal, reply], {
+          inbox: false,
+          includeStale: true,
+          authors,
+        })
+      }\n`,
+    );
+    return;
+  }
+
   if (args.has("json")) {
     printJson({
       status: result.response.status,
@@ -2097,15 +2197,77 @@ async function runPostSignal(
       credential,
     ),
   );
-  const audience = signal.to === null
-    ? "visible to members of this workspace"
-    : "visible only to its recipient";
+  const directed = signal.to !== null || signal.to_agent !== null;
+  const audience = directed
+    ? "visible only to its recipient"
+    : "visible to members of this workspace";
   process.stdout.write(
     `Signal shared. It is immutable and ${audience}.\n${renderSignals([signal], {
       inbox: false,
       includeStale: true,
       authors,
     })}\n`,
+  );
+}
+
+async function runReply(args: Arguments): Promise<void> {
+  args.assertShape([
+    ...TARGET_FLAGS,
+    "workspace-id",
+    ...CREDENTIAL_FLAGS,
+    "until",
+    "json",
+  ], 3);
+  const signalId = args.positionals[1];
+  if (signalId === undefined || !UUID_RE.test(signalId)) {
+    throw new Error("reply requires the signal UUID being answered");
+  }
+  const body = args.positionals[2];
+  if (body === undefined) {
+    throw new Error("reply requires the reply text");
+  }
+  const cloud = await target(args);
+  const credential = await commandWorkspaceAndCredential(args, cloud, {
+    validateHumanWorkspace: true,
+  });
+  const untilMs = signalDuration(args.optional("until"));
+  // Audience is derived server-side from the referenced signal; client sends null targets.
+  const command: PostSignalCommand = {
+    kind: "post_signal",
+    signal_kind: "note",
+    body: signalText(body, "body"),
+    to_user_id: null,
+    to_agent_principal_id: null,
+    in_reply_to: signalId.toLowerCase(),
+    about: null,
+    ...(untilMs === undefined ? {} : { until_ms: untilMs }),
+  };
+  const result = await postSignalCommand(cloud, credential, command);
+  const signal = result.response.signal!;
+  if (args.has("json")) {
+    printJson({
+      status: result.response.status,
+      message:
+        "Reply shared. It is immutable, tenancy-scoped, and will quietly expire at its horizon.",
+      signal,
+    });
+    return;
+  }
+  const authors = await settleSignalAuthorLabels(
+    signalAuthorLabels(
+      cloud,
+      credential.selectedWorkspace,
+      credential,
+    ),
+  );
+  process.stdout.write(
+    `Reply shared. It is immutable and addressed to the original author.\n${
+      renderSignals([signal], {
+        inbox: false,
+        includeStale: true,
+        authors,
+      })
+    }\n`,
   );
 }
 
@@ -2117,24 +2279,23 @@ async function runSignalRead(
     ...TARGET_FLAGS,
     "workspace-id",
     ...CREDENTIAL_FLAGS,
-    ...(inbox ? [] : ["about", "kind"]),
+    "about",
+    "kind",
+    ...(inbox ? ["wait"] : []),
     "since",
     "limit",
     "include-stale",
     "json",
   ], 1);
+  const waitSeconds = inbox && args.optional("wait") !== undefined
+    ? parseWaitSeconds(args.required("wait"))
+    : undefined;
   const cloud = await target(args);
   const selected = await commandWorkspaceAndCredential(args, cloud, {
     validateHumanWorkspace: true,
   });
-  const credential: SignalCredential = selected.kind === "agent"
-    ? { kind: "agent", token: selected.bearer }
-    : {
-      kind: "human",
-      accessToken: selected.bearer,
-      userId: selected.human!.userId,
-    };
-  const rows = await readSignals(cloud, credential, {
+  const credential = signalCredentialOf(selected);
+  const queryBase = {
     workspaceId: selected.selectedWorkspace,
     inbox,
     ...(args.optional("about") === undefined
@@ -2150,10 +2311,31 @@ async function runSignalRead(
       ? {}
       : { limit: integer(args, "limit", { minimum: 1, maximum: 100 }) }),
     includeStale: args.has("include-stale"),
-  });
+  };
+
+  let rows;
+  let timedOut = false;
+  let waited = false;
+  if (waitSeconds === undefined) {
+    rows = await readSignals(cloud, credential, queryBase);
+  } else {
+    waited = true;
+    const deadlineMs = waitDeadlineMs(waitSeconds);
+    const waitResult = await pollForSignals({
+      deadlineMs,
+      read: () =>
+        readSignals(cloud, credential, queryBase, { deadlineMs }),
+    });
+    rows = waitResult.signals;
+    timedOut = waitResult.timedOut;
+  }
+
   if (args.has("json")) {
     printJson(
-      signalReadJsonPayload(selected.selectedWorkspace, inbox, rows),
+      signalReadJsonPayload(selected.selectedWorkspace, inbox, rows, {
+        waited,
+        timedOut,
+      }),
     );
     return;
   }
@@ -2164,6 +2346,14 @@ async function runSignalRead(
       selected,
     ),
   );
+  if (waited && timedOut && rows.length === 0) {
+    process.stdout.write(
+      `${
+        inbox ? "Inbox" : "Feed"
+      }: Nothing arrived before the wait ended.\n`,
+    );
+    return;
+  }
   process.stdout.write(`${renderSignals(rows, {
     inbox,
     includeStale: args.has("include-stale"),
@@ -2430,6 +2620,10 @@ async function main(): Promise<void> {
     await runPostSignal(args, verb);
     return;
   }
+  if (verb === "reply") {
+    await runReply(args);
+    return;
+  }
   if (verb === "feed" || verb === "inbox") {
     await runSignalRead(args, verb === "inbox");
     return;
@@ -2521,6 +2715,7 @@ main().catch((error) => {
         verb === "working-on" ||
         verb === "note" ||
         verb === "ask" ||
+        verb === "reply" ||
         verb === "feed" ||
         verb === "inbox"
       );

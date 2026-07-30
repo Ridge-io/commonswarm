@@ -53,6 +53,7 @@ let local: LocalEnvironment;
 let admin: SupabaseClient;
 let functionProcess: ReturnType<typeof spawn>;
 let functionLogs = "";
+let functionEnvDirectory = "";
 
 class LocalMemoryStore implements CredentialStore {
   readonly kind = "keychain" as const;
@@ -105,23 +106,25 @@ function environment(): LocalEnvironment {
 }
 
 /**
- * D-020: wait for the command function to be RUNNING, not merely reachable.
+ * D-020: wait for both Edge functions to be RUNNING, not merely reachable.
  *
  * This used to return on any 401, which the local gateway answers before the function module
  * has loaded — so the gate cleared while the runtime was cold and the first real command came
- * back `502 unknown_error`, roughly 1 run in 8. The predicate now requires the function's own
- * `{ "error": "unauthenticated" }` body, which only its code produces. See edge-readiness.ts
- * for why this is a gate rather than a retry around the failing command.
+ * back `502 unknown_error`, roughly 1 run in 8. The predicate now requires each function's own
+ * `{ "error": "unauthenticated" }` body, which only loaded function code produces. See
+ * edge-readiness.ts for why this is a gate rather than a retry around the failing command.
  */
 async function ready(): Promise<void> {
-  await awaitFunctionRunning({
-    url: `${local.API_URL}/functions/v1/command`,
-    fetcher: fetch,
-    timeoutMs: 30_000,
-    sleep: (ms) => delay(ms),
-    now: () => Date.now(),
-    diagnostics: () => functionLogs.slice(-4000),
-  });
+  for (const name of ["command", "read"]) {
+    await awaitFunctionRunning({
+      url: `${local.API_URL}/functions/v1/${name}`,
+      fetcher: fetch,
+      timeoutMs: 30_000,
+      sleep: (ms) => delay(ms),
+      now: () => Date.now(),
+      diagnostics: () => `${name} function logs:\n${functionLogs.slice(-4000)}`,
+    });
+  }
 }
 
 async function runDogfoodCli(
@@ -178,6 +181,137 @@ async function runDogfoodCli(
   return { stdout, stderr };
 }
 
+interface AgentCliResult {
+  code: number;
+  stdout: string;
+  stderr: string;
+}
+
+interface RunningAgentCli {
+  child: ReturnType<typeof spawn>;
+  completed: Promise<AgentCliResult>;
+}
+
+function agentCredentialArtifact(
+  seeded: Awaited<ReturnType<typeof seedDogfood>>,
+): string {
+  assert.ok(seeded.agentToken, "fixture must mint a fresh agent token");
+  return JSON.stringify({
+    message:
+      "Agent credential minted. It is bound to this task and run so the agent's work stays scoped and attributable.",
+    status: "accepted",
+    principal_id: seeded.principalId,
+    token_id: seeded.tokenId,
+    run_id: seeded.runId,
+    agent_token: seeded.agentToken,
+    expires_at: seeded.tokenExpiresAt,
+  });
+}
+
+function startAgentCli(
+  workspaceId: string,
+  credential: string,
+  stateDirectory: string,
+  command: readonly string[],
+): RunningAgentCli {
+  const child = spawn(process.execPath, [
+    "--import",
+    "tsx",
+    "src/cli.ts",
+    ...command,
+    "--url",
+    local.API_URL,
+    "--anon-key",
+    local.ANON_KEY,
+    "--workspace-id",
+    workspaceId,
+    "--agent-token-stdin",
+    "--force-file-store",
+  ], {
+    cwd: process.cwd(),
+    env: {
+      ...process.env,
+      SWARM_AGENT_STATE_DIR: stateDirectory,
+      SWARM_ALLOW_INSECURE_STORE: "0",
+    },
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  let stdout = "";
+  let stderr = "";
+  let timedOut = false;
+  child.stdout.setEncoding("utf8");
+  child.stderr.setEncoding("utf8");
+  child.stdout.on("data", (chunk: string) => {
+    stdout += chunk;
+  });
+  child.stderr.on("data", (chunk: string) => {
+    stderr += chunk;
+  });
+  child.stdin.end(credential);
+  const watchdog = setTimeout(() => {
+    timedOut = true;
+    child.kill("SIGKILL");
+  }, 20_000);
+  const completed = new Promise<AgentCliResult>((resolve, reject) => {
+    child.once("error", reject);
+    child.once("close", (status) => {
+      clearTimeout(watchdog);
+      if (timedOut) {
+        reject(
+          new Error(
+            `agent CLI exceeded its 20s watchdog\nstdout:\n${stdout}\nstderr:\n${stderr}`,
+          ),
+        );
+        return;
+      }
+      resolve({ code: status ?? 1, stdout, stderr });
+    });
+  });
+  return { child, completed };
+}
+
+async function runAgentCli(
+  workspaceId: string,
+  credential: string,
+  stateDirectory: string,
+  command: readonly string[],
+): Promise<AgentCliResult> {
+  return await startAgentCli(
+    workspaceId,
+    credential,
+    stateDirectory,
+    command,
+  ).completed;
+}
+
+async function awaitStoredSignal(
+  workspaceId: string,
+  body: string,
+): Promise<void> {
+  const sql = postgres(local.DB_URL, {
+    prepare: false,
+    max: 1,
+    connect_timeout: 5,
+  });
+  const deadline = Date.now() + 5_000;
+  try {
+    while (Date.now() < deadline) {
+      const rows = await sql<{ id: string }[]>`
+        SELECT id
+        FROM swarm.signals
+        WHERE workspace_id = ${workspaceId}::uuid
+          AND body = ${body}
+        LIMIT 1
+      `;
+      if (rows[0]) return;
+      await delay(25);
+    }
+    throw new Error(`signal ${JSON.stringify(body)} was not stored within 5s`);
+  } finally {
+    await sql.end({ timeout: 5 });
+  }
+}
+
 async function runSeedCli(
   userId: string,
   tokenPath: string,
@@ -228,9 +362,22 @@ before(async () => {
   admin = createClient(local.API_URL, local.SERVICE_ROLE_KEY, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
+  functionEnvDirectory = await mkdtemp(join(tmpdir(), "cswarm-local-fn-env-"));
+  const functionEnvFile = join(functionEnvDirectory, "test.env");
+  await writeFile(
+    functionEnvFile,
+    "SWARM_ENV=test\nSWARM_SELF_SERVE=1\n",
+    { mode: 0o600 },
+  );
   functionProcess = spawn(
     "supabase",
-    ["functions", "serve", "command", "--no-verify-jwt", "--env-file", "/dev/null"],
+    [
+      "functions",
+      "serve",
+      "--no-verify-jwt",
+      "--env-file",
+      functionEnvFile,
+    ],
     {
       cwd: process.cwd(),
       env: { ...process.env, SWARM_ENV: "test" },
@@ -245,8 +392,11 @@ before(async () => {
   await ready();
 });
 
-after(() => {
+after(async () => {
   functionProcess?.kill("SIGINT");
+  if (functionEnvDirectory) {
+    await rm(functionEnvDirectory, { recursive: true, force: true });
+  }
 });
 
 test("fixture bridge is idempotent and CLI client drives cradle-to-grave", async () => {
@@ -387,6 +537,170 @@ test("fixture bridge is idempotent and CLI client drives cradle-to-grave", async
     await rm(tokenDirectory, { recursive: true, force: true });
   }
 });
+
+test(
+  "two CLI agents receive and answer one directed ask without terminal injection",
+  { timeout: 30_000 },
+  async () => {
+    const nonce = randomUUID();
+    const created = await admin.auth.admin.createUser({
+      email: `agent-receive-${nonce}@example.test`,
+      password: `T-${randomBytes(24).toString("base64url")}!`,
+      email_confirm: true,
+    });
+    assert.ifError(created.error);
+    assert.ok(created.data.user);
+    const workspaceId = randomUUID();
+    const agentA = await seedDogfood({
+      databaseUrl: local.DB_URL,
+      userId: created.data.user.id,
+      deviceId: randomUUID(),
+      workspaceId,
+      workspaceName: `Agent receive ${nonce.slice(0, 8)}`,
+      displayName: "Agent Receive Owner",
+      agentName: `mvp-a-${nonce.slice(0, 8)}`,
+    });
+    const agentB = await seedDogfood({
+      databaseUrl: local.DB_URL,
+      userId: created.data.user.id,
+      deviceId: randomUUID(),
+      workspaceId,
+      displayName: "Agent Receive Owner",
+      agentName: `mvp-b-${nonce.slice(0, 8)}`,
+    });
+    assert.notEqual(agentA.principalId, agentB.principalId);
+    const credentialA = agentCredentialArtifact(agentA);
+    const credentialB = agentCredentialArtifact(agentB);
+    const stateRoot = await mkdtemp(join(tmpdir(), "cswarm-agent-receive-"));
+    const ping = `mvp-ping-${nonce}`;
+    const pong = `mvp-pong-${nonce}`;
+    let asking: RunningAgentCli | null = null;
+    try {
+      asking = startAgentCli(
+        workspaceId,
+        credentialA,
+        join(stateRoot, "agent-a"),
+        [
+          "ask",
+          ping,
+          "--to",
+          `mvp-b-${nonce.slice(0, 8)}`,
+          "--wait",
+          "10",
+          "--json",
+        ],
+      );
+
+      // This is only a deterministic concurrency barrier. The receiver obtains
+      // the signal id from its own CLI result, never by reaching around the API.
+      try {
+        await awaitStoredSignal(workspaceId, ping);
+      } catch (error) {
+        const failedAsk = await asking.completed;
+        throw new Error(
+          `${error instanceof Error ? error.message : String(error)}\n` +
+            `ask exit: ${failedAsk.code}\n` +
+            `ask stdout:\n${failedAsk.stdout}\n` +
+            `ask stderr:\n${failedAsk.stderr}\n` +
+            `function logs:\n${functionLogs.slice(-4000)}`,
+        );
+      }
+
+      const received = await runAgentCli(
+        workspaceId,
+        credentialB,
+        join(stateRoot, "agent-b"),
+        ["inbox", "--kind", "ask", "--wait", "10", "--json"],
+      );
+      assert.equal(received.code, 0, received.stderr);
+      const receivedPayload = JSON.parse(received.stdout) as {
+        timed_out: boolean;
+        signals: Array<Record<string, unknown>>;
+      };
+      assert.equal(receivedPayload.timed_out, false);
+      assert.equal(receivedPayload.signals.length, 1);
+      const askSignal = receivedPayload.signals[0]!;
+      assert.equal(askSignal.body, ping);
+      assert.equal(askSignal.from, agentA.principalId);
+      assert.equal(askSignal.to_agent, agentB.principalId);
+      const askId = String(askSignal.id);
+
+      const siblingProbe = await runAgentCli(
+        workspaceId,
+        credentialA,
+        join(stateRoot, "agent-a-probe"),
+        ["inbox", "--kind", "ask", "--json"],
+      );
+      assert.equal(siblingProbe.code, 0, siblingProbe.stderr);
+      const siblingPayload = JSON.parse(siblingProbe.stdout) as {
+        signals: Array<Record<string, unknown>>;
+      };
+      assert.ok(
+        !siblingPayload.signals.some((signal) => signal.id === askId),
+        "the sender credential must not inherit the recipient agent's inbox",
+      );
+
+      const replied = await runAgentCli(
+        workspaceId,
+        credentialB,
+        join(stateRoot, "agent-b"),
+        ["reply", askId, pong, "--json"],
+      );
+      assert.equal(replied.code, 0, replied.stderr);
+      const repliedPayload = JSON.parse(replied.stdout) as {
+        signal: Record<string, unknown>;
+      };
+      assert.equal(repliedPayload.signal.body, pong);
+      assert.equal(repliedPayload.signal.from, agentB.principalId);
+      assert.equal(repliedPayload.signal.to_agent, agentA.principalId);
+      assert.equal(repliedPayload.signal.in_reply_to, askId);
+
+      const completedAsk = await asking.completed;
+      assert.equal(completedAsk.code, 0, completedAsk.stderr);
+      const completedPayload = JSON.parse(completedAsk.stdout) as {
+        timed_out: boolean;
+        signal: Record<string, unknown>;
+        reply: Record<string, unknown>;
+      };
+      assert.equal(completedPayload.timed_out, false);
+      assert.equal(completedPayload.signal.id, askId);
+      assert.equal(completedPayload.signal.body, ping);
+      assert.equal(completedPayload.reply.body, pong);
+      assert.equal(completedPayload.reply.in_reply_to, askId);
+
+      for (
+        const transcript of [
+          received,
+          siblingProbe,
+          replied,
+          completedAsk,
+        ]
+      ) {
+        assert.equal(
+          transcript.stdout.includes(String(agentA.agentToken)),
+          false,
+        );
+        assert.equal(
+          transcript.stderr.includes(String(agentA.agentToken)),
+          false,
+        );
+        assert.equal(
+          transcript.stdout.includes(String(agentB.agentToken)),
+          false,
+        );
+        assert.equal(
+          transcript.stderr.includes(String(agentB.agentToken)),
+          false,
+        );
+      }
+    } finally {
+      if (asking?.child.exitCode === null) {
+        asking.child.kill("SIGKILL");
+      }
+      await rm(stateRoot, { recursive: true, force: true });
+    }
+  },
+);
 
 test("one-command invite link accept converges after a live local double-run", async () => {
   const nonce = randomUUID();

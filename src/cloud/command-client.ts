@@ -130,7 +130,12 @@ export interface PostSignalCommand {
   kind: "post_signal";
   signal_kind: SignalKind;
   body: string;
+  /** Human recipient; mutually exclusive with to_agent_principal_id. */
   to_user_id: string | null;
+  /** Agent recipient; mutually exclusive with to_user_id. Always sent (null when absent). */
+  to_agent_principal_id: string | null;
+  /** Correlates a reply to the signal it answers. Always sent (null when absent). */
+  in_reply_to: string | null;
   about: string | null;
   until_ms?: number;
 }
@@ -141,6 +146,8 @@ export interface SignalRecord {
   from: string;
   from_kind: "user" | "agent";
   to: string | null;
+  to_agent: string | null;
+  in_reply_to: string | null;
   about: string | null;
   kind: SignalKind;
   body: string;
@@ -771,11 +778,14 @@ export class ThinCommandClient {
 
   async sendSignal(request: PostSignalRequest): Promise<PostSignalResult> {
     const commandId = request.commandId ?? newCommandId();
+    // New clients always send both target fields and in_reply_to (null when absent).
     const command: PostSignalCommand = {
       kind: "post_signal",
       signal_kind: request.command.signal_kind,
       body: request.command.body,
       to_user_id: request.command.to_user_id,
+      to_agent_principal_id: request.command.to_agent_principal_id,
+      in_reply_to: request.command.in_reply_to,
       about: request.command.about,
       ...(request.command.until_ms === undefined
         ? {}

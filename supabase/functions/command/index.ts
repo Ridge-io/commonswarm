@@ -99,6 +99,8 @@ interface SignalCommand {
   signal_kind: SignalKind;
   body: string;
   to_user_id: string | null;
+  to_agent_principal_id?: string | null;
+  in_reply_to?: string | null;
   about: string | null;
   until_ms?: number;
 }
@@ -109,6 +111,8 @@ interface SignalRecord {
   from: string;
   from_kind: CredentialKind;
   to: string | null;
+  to_agent: string | null;
+  in_reply_to: string | null;
   about: string | null;
   kind: SignalKind;
   body: string;
@@ -1134,7 +1138,13 @@ function validateCommand(
         reason: "client-supplied from is forbidden",
       };
     }
+    const modernShape =
+      Object.hasOwn(cmd, "to_agent_principal_id") ||
+      Object.hasOwn(cmd, "in_reply_to");
     const optionalKeys = Object.hasOwn(cmd, "until_ms") ? ["until_ms"] : [];
+    const modernKeys = modernShape
+      ? ["to_agent_principal_id", "in_reply_to"]
+      : [];
     const signalKinds: readonly SignalKind[] = ["working-on", "note", "ask"];
     const sanitizedBody = typeof cmd.body === "string"
       ? sanitizeSignalText(cmd.body)
@@ -1142,12 +1152,17 @@ function validateCommand(
     const sanitizedAbout = typeof cmd.about === "string"
       ? sanitizeSignalText(cmd.about) || null
       : null;
+    const toAgentPrincipalId = modernShape
+      ? cmd.to_agent_principal_id
+      : null;
+    const inReplyTo = modernShape ? cmd.in_reply_to : null;
     const valid = exactKeys(cmd, [
       "kind",
       "signal_kind",
       "body",
       "to_user_id",
       "about",
+      ...modernKeys,
       ...optionalKeys,
     ]) &&
       typeof cmd.signal_kind === "string" &&
@@ -1157,9 +1172,31 @@ function validateCommand(
       cmd.body.length <= 2000 &&
       sanitizedBody.length >= 1 &&
       nullableUuid(cmd.to_user_id) &&
+      (!modernShape ||
+        (
+          Object.hasOwn(cmd, "to_agent_principal_id") &&
+          Object.hasOwn(cmd, "in_reply_to") &&
+          nullableUuid(toAgentPrincipalId) &&
+          nullableUuid(inReplyTo)
+        )) &&
+      Number(cmd.to_user_id !== null) +
+          Number(toAgentPrincipalId !== null) <=
+        1 &&
       (
         cmd.signal_kind !== "working-on" ||
-        cmd.to_user_id === null
+        (
+          cmd.to_user_id === null &&
+          toAgentPrincipalId === null &&
+          inReplyTo === null
+        )
+      ) &&
+      (
+        inReplyTo === null ||
+        (
+          cmd.signal_kind === "note" &&
+          cmd.to_user_id === null &&
+          toAgentPrincipalId === null
+        )
       ) &&
       (
         cmd.about === null ||
@@ -1183,6 +1220,12 @@ function validateCommand(
           signal_kind: cmd.signal_kind as SignalKind,
           body: sanitizedBody,
           to_user_id: cmd.to_user_id as string | null,
+          ...(modernShape
+            ? {
+              to_agent_principal_id: toAgentPrincipalId as string | null,
+              in_reply_to: inReplyTo as string | null,
+            }
+            : {}),
           about: sanitizedAbout,
           ...(cmd.until_ms === undefined
             ? {}
@@ -4736,7 +4779,13 @@ async function enforceFreeTierBudget(
   return null;
 }
 
-async function signalTargetIsLive(
+interface SignalWriteTarget {
+  toUserId: string | null;
+  toAgentPrincipalId: string | null;
+  inReplyTo: string | null;
+}
+
+async function signalUserTargetIsLive(
   tx: Sql,
   route: Route,
   toUserId: string | null,
@@ -4753,11 +4802,141 @@ async function signalTargetIsLive(
   return targetRows[0] !== undefined;
 }
 
+async function signalAgentTargetIsLive(
+  tx: Sql,
+  route: Route,
+  toAgentPrincipalId: string | null,
+): Promise<boolean> {
+  if (toAgentPrincipalId === null) return true;
+  const targetRows = await tx<{ principal_id: string }[]>`
+    SELECT p.principal_id
+    FROM swarm.agent_principals AS p
+    JOIN swarm.memberships AS owner
+      ON owner.workspace_id = p.workspace_id
+     AND owner.user_id = p.owner_user_id
+     AND owner.revoked_at IS NULL
+    WHERE p.workspace_id = ${route.workspaceId}::uuid
+      AND p.principal_id = ${toAgentPrincipalId}::uuid
+      AND p.revoked_at IS NULL
+    LIMIT 1
+  `;
+  return targetRows[0] !== undefined;
+}
+
+async function signalAgentOwnedByUser(
+  tx: Sql,
+  route: Route,
+  principalId: string | null,
+  ownerUserId: string,
+): Promise<boolean> {
+  if (principalId === null) return false;
+  const rows = await tx<{ principal_id: string }[]>`
+    SELECT principal_id
+    FROM swarm.agent_principals
+    WHERE workspace_id = ${route.workspaceId}::uuid
+      AND principal_id = ${principalId}::uuid
+      AND owner_user_id = ${ownerUserId}::uuid
+    LIMIT 1
+  `;
+  return rows[0] !== undefined;
+}
+
+async function resolveSignalWriteTarget(
+  tx: Sql,
+  route: Route,
+  auth: AuthContext,
+  command: SignalCommand,
+): Promise<SignalWriteTarget | null> {
+  const toAgentPrincipalId = command.to_agent_principal_id ?? null;
+  const inReplyTo = command.in_reply_to ?? null;
+  if (inReplyTo === null) {
+    const userLive = await signalUserTargetIsLive(
+      tx,
+      route,
+      command.to_user_id,
+    );
+    const agentLive = await signalAgentTargetIsLive(
+      tx,
+      route,
+      toAgentPrincipalId,
+    );
+    return userLive && agentLive
+      ? {
+        toUserId: command.to_user_id,
+        toAgentPrincipalId,
+        inReplyTo: null,
+      }
+      : null;
+  }
+
+  const referenceRows = await tx<{
+    from_principal: string;
+    from_kind: CredentialKind;
+    to_user_id: string | null;
+    to_agent_principal_id: string | null;
+  }[]>`
+    SELECT
+      from_principal,
+      from_kind,
+      to_user_id,
+      to_agent_principal_id
+    FROM swarm.signals
+    WHERE workspace_id = ${route.workspaceId}::uuid
+      AND id = ${inReplyTo}::uuid
+      AND kind IN ('ask', 'note')
+      AND until > statement_timestamp()
+    LIMIT 1
+  `;
+  const reference = referenceRows[0];
+  if (!reference) return null;
+
+  const callerUserId = auth.actor.user;
+  const addressedToCaller = auth.agent !== null
+    ? reference.to_agent_principal_id === auth.agent.principal_id
+    : callerUserId !== null &&
+      (
+        reference.to_user_id === callerUserId ||
+        await signalAgentOwnedByUser(
+          tx,
+          route,
+          reference.to_agent_principal_id,
+          callerUserId,
+        )
+      );
+  if (!addressedToCaller) return null;
+
+  if (reference.from_kind === "user") {
+    return await signalUserTargetIsLive(
+        tx,
+        route,
+        reference.from_principal,
+      )
+      ? {
+        toUserId: reference.from_principal,
+        toAgentPrincipalId: null,
+        inReplyTo,
+      }
+      : null;
+  }
+  return await signalAgentTargetIsLive(
+      tx,
+      route,
+      reference.from_principal,
+    )
+    ? {
+      toUserId: null,
+      toAgentPrincipalId: reference.from_principal,
+      inReplyTo,
+    }
+    : null;
+}
+
 async function postSignal(
   tx: Sql,
   route: Route,
   auth: AuthContext,
   command: SignalCommand,
+  target: SignalWriteTarget,
 ): Promise<SignalRecord> {
   const untilMs = command.until_ms ??
     SIGNAL_DEFAULT_UNTIL_MS[command.signal_kind];
@@ -4768,6 +4947,8 @@ async function postSignal(
     from_principal: string;
     from_kind: CredentialKind;
     to_user_id: string | null;
+    to_agent_principal_id: string | null;
+    in_reply_to: string | null;
     about: string | null;
     kind: SignalKind;
     body: string;
@@ -4775,14 +4956,17 @@ async function postSignal(
     created_at: Date;
   }[]>`
     INSERT INTO swarm.signals (
-      id, workspace_id, from_principal, from_kind, to_user_id,
+      id, workspace_id, from_principal, from_kind,
+      to_user_id, to_agent_principal_id, in_reply_to,
       about, kind, body, until, created_at
     ) VALUES (
       ${signalId}::uuid,
       ${route.workspaceId}::uuid,
       ${canonicalPrincipal(auth.actor)}::uuid,
       ${auth.credentialKind},
-      ${command.to_user_id}::uuid,
+      ${target.toUserId}::uuid,
+      ${target.toAgentPrincipalId}::uuid,
+      ${target.inReplyTo}::uuid,
       ${command.about},
       ${command.signal_kind},
       ${command.body},
@@ -4790,7 +4974,8 @@ async function postSignal(
       statement_timestamp()
     )
     RETURNING
-      id, workspace_id, from_principal, from_kind, to_user_id,
+      id, workspace_id, from_principal, from_kind,
+      to_user_id, to_agent_principal_id, in_reply_to,
       about, kind, body, until, created_at
   `;
   const signal = rows[0];
@@ -4801,6 +4986,8 @@ async function postSignal(
     from: signal.from_principal,
     from_kind: signal.from_kind,
     to: signal.to_user_id,
+    to_agent: signal.to_agent_principal_id,
+    in_reply_to: signal.in_reply_to,
     about: signal.about,
     kind: signal.kind,
     body: signal.body,
@@ -5161,14 +5348,20 @@ async function handleTransaction(
     }
 
     if (command.kind === "post_signal") {
-      if (!await signalTargetIsLive(tx, route, command.to_user_id)) {
+      const signalTarget = await resolveSignalWriteTarget(
+        tx,
+        route,
+        auth,
+        command,
+      );
+      if (signalTarget === null) {
         await insertAudit(tx, {
           auth,
           commandKind: kind,
           workspaceId: route.workspaceId,
           streamId: route.streamId,
           outcome: "authz",
-          reason: "signal target is not a live workspace member",
+          reason: "signal target or reply is not eligible",
           hash,
         });
         return { status: 403, body: { error: "forbidden" } };
@@ -5216,7 +5409,13 @@ async function handleTransaction(
         };
       }
 
-      const signal = await postSignal(tx, route, auth, command);
+      const signal = await postSignal(
+        tx,
+        route,
+        auth,
+        command,
+        signalTarget,
+      );
       const signalResponse: StoredResponse = {
         ok: true,
         event_ids: [],

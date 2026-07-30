@@ -35,7 +35,7 @@ spend circuit breaker to be **in place**, not merely written.
 | Spend circuit breaker | **Applied and deployed (operator-confirmed)** | the repo enumerates exactly 10 SQL migrations (excluding `.gitkeep`), including `20260728000001_spend_circuit_breaker.sql`; the rollout record says all 10 were pushed. This is exhaustive-set evidence, not an anonymous production probe |
 | `SWARM_SELF_SERVE` in production | **`1` since 2026-07-28** | production configuration, operator-confirmed; anonymous probes alone cannot reveal the flag |
 | Signed-in web app | **Deployed** | `/app` returns 200 with backend configuration; `/start` is the live signup route |
-| CLI install (`curl \| sh`) | **Working** | `/install.sh` returns 200, `/nope.sh` returns 404, and the published script installs checksummed `cswarm 0.1.1` from public `Ridge-io/cloud-swarm` |
+| CLI install (`curl \| sh`) | **Working** | `/install.sh` returns 200, `/nope.sh` returns 404, and the published script installs checksummed `cswarm 0.1.2` from public `Ridge-io/cloud-swarm` |
 | Public web front door | **Serving on Cloudflare** | `/`, `/start`, `/app`, and `/download` return 200; a nonexistent route returns 404 |
 | Auth email templates | **13 branded templates in production (operator-confirmed)** | the local template manifest independently enumerates 13 bodies; the production application is the operator's measured state |
 
@@ -313,7 +313,7 @@ Repeat that sweep whenever the deployment gate changes.
 ~~**The CLI hand-off is still broken at this point** and copy must not pretend otherwise:
 `install.sh:12` points at `Ridge-io/coswarm-dist`, which returns **404**.~~ ★
 **SUPERSEDED — DEAD.** The public installer now defaults to `Ridge-io/cloud-swarm`,
-downloads the checksummed `v0.1.1` release, and installs `cswarm 0.1.1`. A web signup may
+downloads the checksummed `v0.1.2` release, and installs `cswarm 0.1.2`. A web signup may
 hand off to `curl -fsSL https://commonswarm.com/install.sh | sh`; the live installer returns
 200 and a nonexistent `/nope.sh` control returns 404.
 
