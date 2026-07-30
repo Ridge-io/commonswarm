@@ -9,6 +9,10 @@ interface PackageJson {
 }
 
 const repoRoot = process.cwd();
+const pureCliCommand = "node --import tsx --test tests/p1-cli/**/*.test.ts";
+const localStackCommand =
+  "node --import tsx --test tests/p1-local/local-integration.test.ts";
+const localStackTest = "tests/p1-local/local-integration.test.ts";
 
 function repoRelative(path: string): string {
   return relative(repoRoot, path).split(sep).join("/");
@@ -25,7 +29,17 @@ async function findTestFiles(directory: string): Promise<string[]> {
 }
 
 function testPathPatterns(command: string): string[] {
-  return command.match(/tests\/[^\s'"]+/g) ?? [];
+  const withoutComment = command.replace(/\s+#.*$/, "");
+  return withoutComment
+    .split(/\s*(?:&&|\|\||;)\s*/)
+    .flatMap((segment) => {
+      const tokens = segment.trim().split(/\s+/);
+      const testFlag = tokens.indexOf("--test");
+      if (testFlag === -1) return [];
+      return tokens
+        .slice(testFlag + 1)
+        .filter((token) => token.startsWith("tests/"));
+    });
 }
 
 function executionScripts(packageJson: PackageJson): Map<string, string[]> {
@@ -55,6 +69,8 @@ test("D-030: every test file is reached by an npm execution script", async () =>
   const scripts = executionScripts(await readPackageJson());
   const unreachable = files.filter((file) => matchingScripts(file, scripts).length === 0);
 
+  assert.ok(files.length > 0);
+  assert.ok(files.includes(localStackTest));
   assert.deepEqual(unreachable, []);
 });
 
@@ -80,13 +96,15 @@ test("D-030: check:tests structurally includes every test source", async () => {
 test("D-030: the pure CLI gate cannot reach the stack-touching suite", async () => {
   const packageJson = await readPackageJson();
   const scripts = executionScripts(packageJson);
-  const stackTest = "tests/p1-local/local-integration.test.ts";
+  const files = await findTestFiles(resolve(repoRoot, "tests"));
 
   assert.equal(packageJson.scripts?.["pretest:p1-cli"], undefined);
   assert.equal(packageJson.scripts?.["posttest:p1-cli"], undefined);
-  assert.deepEqual(matchingScripts(stackTest, scripts), ["test:p1-local"]);
-  assert.equal(
-    (scripts.get("test:p1-cli") ?? []).some((pattern) => matchesGlob(stackTest, pattern)),
-    false,
+  assert.equal(packageJson.scripts?.["test:p1-cli"], pureCliCommand);
+  assert.equal(packageJson.scripts?.["test:p1-local"], localStackCommand);
+  assert.deepEqual(
+    files.filter((file) => file.endsWith("/local-integration.test.ts")),
+    [localStackTest],
   );
+  assert.deepEqual(matchingScripts(localStackTest, scripts), ["test:p1-local"]);
 });

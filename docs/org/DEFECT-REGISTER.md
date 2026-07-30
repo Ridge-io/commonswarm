@@ -1131,11 +1131,19 @@ stack suite **3/3** in its one announced exclusive DB slot.
 
 The new observers derive every `*.test.ts` / `*.test.tsx` path from the filesystem, derive its
 real execution reachability from `package.json`, and ask TypeScript's own config parser whether
-`check:tests` includes it. Mutation at the package dispatch call site changed `test:p1-local`
-back to the old, now-missing p1-cli path: the real pure gate went **122/124**, with exactly
-`D-030: every test file is reached by an npm execution script` and
-`D-030: the pure CLI gate cannot reach the stack-touching suite` red. Restored:
-`test:p1-cli` **124/124**, `npm test` **79/79**, `check:tests` exit 0, build exit 0.
+the config actually named by `check:tests` includes it. They run in both pure gates. Grok's
+first exact-SHA review found that the initial purity observer could not reject a copied-back
+stack file, an `npm run test:p1-local && ...` chain, or deletion of the moved file; that SHA was
+rejected. The corrected observer pins both boundary commands and asserts exactly one on-disk
+`local-integration.test.ts`, at the isolated path.
+
+Five printed mutations then went through the real pure `npm test` gate: copying the file back
+under `tests/p1-cli/` and chaining `test:p1-local` into `test:p1-cli` each produced **81/82** with
+the purity observer red; removing the isolated file and pointing its script at a missing path
+each produced **80/82** with the reachability and purity observers red; placing an orphan path
+only in a shell comment produced **81/82** with the reachability observer red. Restored:
+`npm test` **82/82**, `test:p1-cli` **124/124**, `test:p1-local` **3/3** in its one announced
+exclusive slot, `check:tests` exit 0, build exit 0.
 
 ### D-029 CORRECTION (same day, ~40 minutes later) — the central claim was wrong
 
