@@ -15,8 +15,8 @@ test("every current workspace-creation door enters the dashboard", () => {
   const sources = [
     "src/components/SiteHeader.astro",
     "src/components/SiteFooter.astro",
-    "src/components/landing/Hero.astro",
-    "src/components/landing/Invite.astro",
+    "src/components/landing/ConsumerHero.astro",
+    "src/components/landing/ConsumerStory.astro",
     "src/components/download/AfterInstall.astro",
   ].map(read);
 
@@ -50,7 +50,7 @@ test("/app is email-first, truthful about the free tier, and owns consent", () =
   assert.ok(githubAt > emailAt, "email must appear before GitHub in the signed-out gateway");
   assert.match(dashboard, /data-auth-view="choices"/);
   assert.match(dashboard, /No password\./);
-  assert.match(dashboard, /Free: up to three\s+live workspaces\. No card\./);
+  assert.match(dashboard, /up to three\s+workspaces, no card\./);
   assert.match(dashboard, /href="\/terms"/);
   assert.match(dashboard, /href="\/privacy"/);
   assert.match(dashboard, /drafts published for review \(not yet in force\)/);
@@ -63,32 +63,55 @@ test("the live dashboard retains the empty-channel to copy-prompt path", () => {
   const connect = read("src/components/connect/AgentConnect.astro");
   const prompt = read("src/components/connect/agent-prompt.ts");
 
-  assert.match(dashboard, /You don’t have a workspace yet/);
-  assert.match(dashboard, /Nobody else is here yet/);
+  assert.match(dashboard, /Name your workspace\./);
+  assert.match(dashboard, /Add your first agent\./);
   assert.match(dashboard, /data-add-agent/);
+  assert.doesNotMatch(dashboard, /data-add-agent-channel/);
   assert.match(
     dashboard,
-    /data-add-agent-channel[\s\S]*one<HTMLButtonElement>\("\[data-add-agent-channel\]"\)\?\.addEventListener\("click", openConnect\)/,
+    /const addInRail = one<HTMLButtonElement>\("\[data-add-agent-rail\]"\);[\s\S]*addInRail\.hidden = sampleMode \|\| agents\.length === 0/,
   );
-  assert.match(
-    dashboard,
-    /const addInChannel = one<HTMLButtonElement>\("\[data-add-agent-channel\]"\);[\s\S]*addInChannel\.hidden = sampleMode \|\| agents\.length === 0/,
+  const noAgents = dashboard.match(
+    /data-channel-view="no-agents"[\s\S]*?<\/section>/,
+  )?.[0] ?? "";
+  assert.equal(
+    [...noAgents.matchAll(/data-add-agent(?=[\s>])/g)].length,
+    1,
+    "zero-agent state must render exactly one Add-agent action",
   );
   assert.doesNotMatch(
     dashboard,
-    /\.dashboard__rail-label-row,\s*\.dashboard__rail-agents,\s*\.dashboard__channel-add/,
-    "the narrow layout may hide the rail, but not the channel-level Add agent control",
+    /<p class="dashboard__channel-id">/,
+    "the primary channel header must not expose the workspace UUID",
   );
   assert.match(
     dashboard,
-    /@media \(max-width: 34rem\)[\s\S]*\.dashboard__channel-head \{[\s\S]*flex-direction: column[\s\S]*\.dashboard__channel-actions \{[\s\S]*inline-size: 100%;[\s\S]*flex-wrap: wrap/,
+    /data-workspace-details[\s\S]*data-channel-id/,
+    "support-only workspace details retain the ID in a collapsed disclosure",
   );
   assert.match(
     dashboard,
     /error instanceof WorkspaceLimitReached \|\| error instanceof WorkspaceOutcomeUnknown[\s\S]*\? ""[\s\S]*: "Trying again checks the same request; it cannot create a duplicate\."/,
   );
-  assert.match(connect, /Create the copy-paste prompt/);
+  assert.match(connect, /Generate prompt/);
   assert.match(connect, /Copy prompt/);
+  assert.equal(
+    [...connect.matchAll(/<button\b[^>]*data-action="copy"[^>]*>/g)].length,
+    1,
+    "the one-time prompt result must render exactly one copy action",
+  );
+  assert.match(
+    connect,
+    /\.ac__block\s*\{[\s\S]*?min-inline-size:\s*0;[\s\S]*?inline-size:\s*100%/,
+    "the non-wrapping prompt must scroll inside the mobile card, not widen it",
+  );
+  assert.match(
+    dashboard,
+    /matchMedia\("\(max-width: 52rem\)"\)[\s\S]*agentRail\.open = !narrowRail\.matches/,
+    "the agent roster must begin collapsed when the rail becomes a mobile top bar",
+  );
+  assert.doesNotMatch(dashboard, /cswarm working-on|cswarm note|cswarm ask/);
+  assert.match(dashboard, /Waiting for your agent’s first update\./);
   assert.doesNotMatch(connect, /commonswarm\.com\/start/);
   assert.match(prompt, /Workspace id:/);
   assert.match(prompt, /DO NOT ECHO THIS CREDENTIAL BACK/);

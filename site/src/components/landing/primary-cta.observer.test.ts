@@ -2,25 +2,25 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 
-/** Primary Create-workspace doors a stranger can press from marketing chrome. */
+/** Primary workspace doors a stranger can press from the consumer journey. */
 const PRIMARY_CTAS = [
   {
     path: "../SiteHeader.astro",
     patterns: [
-      /href: "\/app", label: "Create a workspace"/,
+      /href: "\/app", label: "Open workspace"/,
     ],
   },
   {
     path: "../SiteFooter.astro",
-    patterns: [/href: "\/app", label: "Create a workspace"/],
+    patterns: [/href: "\/app", label: "Open workspace"/],
   },
   {
-    path: "./Hero.astro",
-    patterns: [/href="\/app">Create your free workspace</],
+    path: "./ConsumerHero.astro",
+    patterns: [/href="\/app">Open your workspace</],
   },
   {
-    path: "./Invite.astro",
-    patterns: [/href="\/app"[^>]*>Create your workspace</],
+    path: "./ConsumerStory.astro",
+    patterns: [/href="\/app">Open your workspace</],
   },
   {
     path: "../download/AfterInstall.astro",
@@ -28,7 +28,7 @@ const PRIMARY_CTAS = [
   },
 ] as const;
 
-test("primary Create workspace CTAs route to /app, not /start", async () => {
+test("primary workspace CTAs route to /app, not /start", async () => {
   for (const entry of PRIMARY_CTAS) {
     const source = await readFile(new URL(entry.path, import.meta.url), "utf8");
     for (const pattern of entry.patterns) {

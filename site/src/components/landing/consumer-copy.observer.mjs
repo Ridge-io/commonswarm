@@ -39,15 +39,18 @@ const pages = {
 
 const required = {
   home: [
-    "See what every agent is working on.",
-    "Create your free workspace",
-    "What are you working on?",
-    "Preparing the customer launch email.",
-    "Maya is already drafting it",
-    "A signal announces. It never locks.",
-    "For technical teams:",
-    'cswarm working-on "wiring the payments webhook"',
-    "Sign up now with email or GitHub.",
+    "See what your teammates picked up — before you start.",
+    "CommonSwarm gives the AI agents you already use one shared feed.",
+    "Open your workspace",
+    "Free for up to 3 workspaces. No card.",
+    "Sample workspace",
+    "Signals are posted once, never edited.",
+    "Your agents work alone. They can’t see each other.",
+    "Three small steps. Then your agents can see the room.",
+    "The whole handoff is one paste.",
+    "Signals inform. They never lock or block the work.",
+    "Simple on purpose.",
+    "Give your agents somewhere to say what they’re doing.",
   ],
   start: [
     "Opening your workspace",
@@ -63,6 +66,10 @@ const forbidden = {
     "the flow is a preview",
     "There is no signup",
     "Accelerate teamwork with agent-to-agent chat.",
+    "Create your free workspace",
+    "For technical teams:",
+    'cswarm working-on "wiring the payments webhook"',
+    "Your workspace is ready. Open the dashboard.",
   ],
   start: [
     "SWARM_CLOUD_URL",
@@ -117,12 +124,12 @@ for (const [page, needles] of Object.entries(forbidden)) {
   }
 }
 
-// Primary marketing Create CTAs must land on /app, not the legacy /start detour.
+// Primary consumer workspace CTAs must land on /app, not the legacy /start detour.
 const primaryCtaFiles = [
   path.join(siteRoot, "src/components/SiteHeader.astro"),
   path.join(siteRoot, "src/components/SiteFooter.astro"),
-  path.join(siteRoot, "src/components/landing/Hero.astro"),
-  path.join(siteRoot, "src/components/landing/Invite.astro"),
+  path.join(siteRoot, "src/components/landing/ConsumerHero.astro"),
+  path.join(siteRoot, "src/components/landing/ConsumerStory.astro"),
   path.join(siteRoot, "src/components/download/AfterInstall.astro"),
 ];
 for (const file of primaryCtaFiles) {
@@ -146,8 +153,8 @@ if (startCreateHrefs.length > 0) {
   failures.push(`home: built primary create still points at /start: ${startCreateHrefs.map((m) => m[0]).join("; ")}`);
 }
 checks += 1;
-if (!/href="\/app"[^>]*>Create your free workspace</.test(homeHtml)) {
-  failures.push('home: built hero CTA must be /app Create your free workspace');
+if (!/href="\/app"[^>]*>Open your workspace</.test(homeHtml)) {
+  failures.push('home: built hero CTA must be /app Open your workspace');
 }
 
 // /start remains a real route for backward compatibility.
@@ -162,6 +169,6 @@ if (failures.length > 0) {
   process.exitCode = 1;
 } else {
   console.log(`consumer-copy observer: ${checks} checks across built / and /start passed`);
-  console.log("primary create CTAs: /app (SiteHeader, SiteFooter, Hero, Invite, AfterInstall)");
+  console.log("primary workspace CTAs: /app (header, footer, consumer hero/story, install)");
   console.log("legacy signup checklist is absent from the compatibility handoff");
 }

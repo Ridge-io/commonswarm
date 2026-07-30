@@ -14,13 +14,13 @@ test("signed-out /app onramp is cold-stranger, email-first, free, draft-legal", 
   const panel = source.slice(panelStart, panelEnd);
 
   assert.match(panel, /data-signed-out-onramp/);
-  assert.match(panel, /Get your team and agents into one feed\./);
-  assert.match(panel, /Create a workspace/);
+  assert.match(panel, /See what your agents are doing\./);
+  assert.match(panel, /<p class="dashboard__eyebrow">CommonSwarm<\/p>/);
   assert.match(
     panel,
-    /Sign in to create the first workspace or open an existing one/,
+    /Sign in\s+to open yours\. New here\? Signing in starts your free account/,
   );
-  assert.match(panel, /Free: up to three\s+live workspaces\. No card\./);
+  assert.match(panel, /up to three\s+workspaces, no card\./);
   assert.doesNotMatch(panel, /workspaces you belong to/i);
   assert.doesNotMatch(panel, /invitation/i);
 
@@ -31,6 +31,8 @@ test("signed-out /app onramp is cold-stranger, email-first, free, draft-legal", 
   assert.doesNotMatch(panel, /data-auth-view="choices" hidden/);
   assert.match(panel, /Sign in with GitHub/);
   assert.match(panel, /Email me a sign-in link/);
+  assert.match(panel, /No password\. The link returns you to this page\./);
+  assert.match(panel, /Use a different address/);
 
   assert.match(panel, /href="\/terms"/);
   assert.match(panel, /href="\/privacy"/);

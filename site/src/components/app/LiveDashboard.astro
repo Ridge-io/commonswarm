@@ -32,11 +32,12 @@ import SampleNotice from "./SampleNotice.astro";
     >
       <a class="dashboard__wordmark" href="/" aria-label="CommonSwarm home">CommonSwarm</a>
       <div class="dashboard__gateway-copy">
-        <p class="dashboard__eyebrow">Create a workspace</p>
-        <h1 id="dashboard-signin-title">Get your team and agents into one feed.</h1>
+        <p class="dashboard__eyebrow">CommonSwarm</p>
+        <h1 id="dashboard-signin-title">See what your agents are doing.</h1>
         <p>
-          Sign in to create the first workspace or open an existing one. Free: up to three
-          live workspaces. No card.
+          One feed where your people and AI agents announce what they’re about to do. Sign in
+          to open yours. New here? Signing in starts your free account — up to three
+          workspaces, no card.
         </p>
       </div>
 
@@ -56,7 +57,7 @@ import SampleNotice from "./SampleNotice.astro";
             Email me a sign-in link
           </button>
         </div>
-        <p class="dashboard__auth-note">No password. We send a link that returns to this dashboard.</p>
+        <p class="dashboard__auth-note">No password. The link returns you to this page.</p>
         <div class="dashboard__auth-divider" aria-hidden="true"><span>or</span></div>
         <button
           class="dashboard__button dashboard__button--secondary"
@@ -76,11 +77,11 @@ import SampleNotice from "./SampleNotice.astro";
       <div class="dashboard__auth dashboard__email-sent" data-auth-view="email-sent" hidden>
         <p class="dashboard__email-sent-title">Check your inbox.</p>
         <p>
-          Open the CommonSwarm sign-in link in this browser. It returns here so you can create
-          a workspace or open one you already have.
+          We sent a sign-in link to <strong data-auth-email>your email</strong>. Open it in this
+          browser — it brings you straight back here.
         </p>
         <button class="dashboard__text-button" type="button" data-use-email>
-          Send it to a different address
+          Use a different address
         </button>
       </div>
 
@@ -106,11 +107,11 @@ import SampleNotice from "./SampleNotice.astro";
         <span>Signed in as <strong data-account-name>your account</strong></span>
       </div>
       <div class="dashboard__gateway-copy">
-        <p class="dashboard__eyebrow">Start your first channel</p>
-        <h1 id="dashboard-create-title">You don’t have a workspace yet.</h1>
+        <p class="dashboard__eyebrow">Your first workspace</p>
+        <h1 id="dashboard-create-title">Name your workspace.</h1>
         <p>
-          A workspace is the shared channel where your people and AI agents announce what
-          they are about to do.
+          A workspace is one shared feed. Your people and AI agents post what they’re about
+          to do, so work does not collide.
         </p>
       </div>
       <form class="dashboard__create-form" data-create-form>
@@ -125,7 +126,7 @@ import SampleNotice from "./SampleNotice.astro";
           spellcheck="false"
         />
         <button class="dashboard__button dashboard__button--primary" type="submit" data-create-button>
-          Create a workspace
+          Create workspace
         </button>
       </form>
       <p class="dashboard__form-error" role="alert" data-create-error hidden></p>
@@ -184,40 +185,59 @@ import SampleNotice from "./SampleNotice.astro";
             <div class="dashboard__workspace-list" data-workspace-list></div>
           </nav>
 
-          <section class="dashboard__rail-section dashboard__rail-agents" aria-labelledby="dashboard-agents-label">
-            <div class="dashboard__rail-label-row">
-              <h2 id="dashboard-agents-label">Agents</h2>
+          <details class="dashboard__rail-section dashboard__rail-agents" open>
+            <summary class="dashboard__rail-mobile-summary">
+              <span>Agents</span>
               <span data-agent-count>0</span>
+            </summary>
+            <div class="dashboard__rail-agents-body">
+              <div class="dashboard__rail-label-row">
+                <h2 id="dashboard-agents-label">Agents</h2>
+                <span data-agent-count>0</span>
+              </div>
+              <ul class="dashboard__agent-list" data-agent-list></ul>
+              <p class="dashboard__form-error" data-agent-error role="alert" hidden></p>
+              <button
+                class="dashboard__rail-add"
+                type="button"
+                data-add-agent-rail
+                hidden
+              >
+                <span aria-hidden="true">+</span>
+                Add an agent
+              </button>
             </div>
-            <ul class="dashboard__agent-list" data-agent-list></ul>
-            <p class="dashboard__form-error" data-agent-error role="alert" hidden></p>
-            <button
-              class="dashboard__rail-add"
-              type="button"
-              data-add-agent-rail
-              hidden
-            >
-              <span aria-hidden="true">+</span>
-              Add an agent
-            </button>
-          </section>
+          </details>
 
-          <section class="dashboard__rail-section" aria-labelledby="dashboard-members-label">
-            <div class="dashboard__rail-label-row">
-              <h2 id="dashboard-members-label">Members</h2>
+          <details class="dashboard__rail-details" data-member-details hidden>
+            <summary>
+              <span>Members</span>
               <span data-member-count>0</span>
+            </summary>
+            <div class="dashboard__rail-details-body">
+              <ul class="dashboard__agent-list" data-member-list></ul>
+              <p class="dashboard__form-error" data-member-error role="alert" hidden></p>
+              <div data-member-reauth hidden>
+                <button class="dashboard__rail-add" type="button" data-member-reauth-github>
+                  Sign in again with GitHub
+                </button>
+                <button class="dashboard__rail-add" type="button" data-member-reauth-email>
+                  Email a fresh sign-in link
+                </button>
+              </div>
             </div>
-            <ul class="dashboard__agent-list" data-member-list></ul>
-            <p class="dashboard__form-error" data-member-error role="alert" hidden></p>
-            <div data-member-reauth hidden>
-              <button class="dashboard__rail-add" type="button" data-member-reauth-github>
-                Sign in again with GitHub
+          </details>
+
+          <details class="dashboard__rail-details" data-workspace-details>
+            <summary>Workspace details</summary>
+            <div class="dashboard__rail-details-body">
+              <code class="dashboard__workspace-id" data-channel-id></code>
+              <button class="dashboard__text-button" type="button" data-copy-workspace-id>
+                Copy workspace ID
               </button>
-              <button class="dashboard__rail-add" type="button" data-member-reauth-email>
-                Email a fresh sign-in link
-              </button>
+              <span class="dashboard__copy-status" role="status" aria-live="polite" data-workspace-id-status></span>
             </div>
-          </section>
+          </details>
 
           <div class="dashboard__rail-foot">
             <span data-rail-account>Your account</span>
@@ -230,22 +250,9 @@ import SampleNotice from "./SampleNotice.astro";
             <div>
               <p class="dashboard__channel-kicker">Workspace channel</p>
               <h1 id="dashboard-channel-title" data-channel-name>Workspace</h1>
-              <p class="dashboard__channel-id">
-                <span class="visually-hidden">Workspace id: </span>
-                <code data-channel-id></code>
-              </p>
             </div>
             <div class="dashboard__channel-actions">
-              <span class="dashboard__update-count" data-update-count>0 updates</span>
-              <button
-                class="dashboard__channel-add"
-                type="button"
-                data-add-agent-channel
-                hidden
-              >
-                <span aria-hidden="true">+</span>
-                Add agent
-              </button>
+              <span class="dashboard__update-count" data-update-count hidden>0 updates</span>
               <button
                 class="dashboard__icon-button"
                 type="button"
@@ -266,11 +273,11 @@ import SampleNotice from "./SampleNotice.astro";
               <div class="dashboard__empty-orbit" aria-hidden="true">
                 <span></span><span></span><span></span>
               </div>
-              <p class="dashboard__eyebrow">The channel is ready</p>
-              <h2>Nobody else is here yet.</h2>
+              <p class="dashboard__eyebrow">Workspace ready</p>
+              <h2>Add your first agent.</h2>
               <p>
-                Add an AI agent to this workspace. CommonSwarm will make one prompt for you
-                to copy and paste into the assistant you already use.
+                CommonSwarm writes one prompt for you. Paste it into the AI assistant you
+                already use, and the agent joins this feed.
               </p>
               <button class="dashboard__button dashboard__button--primary" type="button" data-add-agent>
                 Add an agent
@@ -303,10 +310,10 @@ import SampleNotice from "./SampleNotice.astro";
             <section class="dashboard__feed-state" data-channel-view="feed-empty" hidden>
               <span class="dashboard__feed-zero" aria-hidden="true">0</span>
               <div>
-                <h2>No updates yet.</h2>
+                <h2 data-feed-empty-title>Waiting for your agent’s first update.</h2>
                 <p>
-                  Your agents can start the channel with a <code>cswarm working-on</code>,
-                  <code>cswarm note</code>, or <code>cswarm ask</code> update.
+                  As soon as an agent starts something, asks a question, or leaves a note, it
+                  lands here. Nothing for you to do meanwhile.
                 </p>
               </div>
             </section>
@@ -439,6 +446,9 @@ import SampleNotice from "./SampleNotice.astro";
     let bootInFlight: Promise<void> | null = null;
     let bootAgain = false;
     let signalExpiryTimer: number | undefined;
+    let connectFocusObserver: MutationObserver | null = null;
+    let previousSignalIds = new Set<string>();
+    let feedWasEmpty = false;
     let channelLoadError = "";
     let activeCreate: { version: number; userId: string } | null = null;
     /** Principal whose live Copy-prompt secret is still on screen, if any. */
@@ -604,6 +614,10 @@ import SampleNotice from "./SampleNotice.astro";
       if (input && !input.value) input.value = defaultWorkspaceName(value);
       setCreateError(message);
       showPanel("create");
+      window.requestAnimationFrame(() => {
+        input?.focus({ preventScroll: true });
+        input?.select();
+      });
     };
 
     const renderWorkspaceError = (value: Session, error: unknown): void => {
@@ -699,10 +713,16 @@ import SampleNotice from "./SampleNotice.astro";
     const renderMembers = (): void => {
       const list = one<HTMLUListElement>("[data-member-list]");
       const count = one<HTMLElement>("[data-member-count]");
+      const details = one<HTMLDetailsElement>("[data-member-details]");
       if (count) count.textContent = String(members.length);
+      const me = members.find((member) => member.userId === session?.user.id);
+      if (details) {
+        details.hidden =
+          sampleMode || (me?.role !== "owner" && me?.role !== "admin");
+        if (details.hidden) details.open = false;
+      }
       if (!list) return;
       list.replaceChildren();
-      const me = members.find((member) => member.userId === session?.user.id);
       for (const member of members) {
         const item = document.createElement("li");
         item.className = "dashboard__agent";
@@ -843,8 +863,9 @@ import SampleNotice from "./SampleNotice.astro";
 
     const renderRoster = (): void => {
       const list = one<HTMLUListElement>("[data-agent-list]");
-      const count = one<HTMLElement>("[data-agent-count]");
-      if (count) count.textContent = String(agents.length);
+      for (const count of all<HTMLElement>("[data-agent-count]")) {
+        count.textContent = String(agents.length);
+      }
       if (!list) return;
       list.replaceChildren();
       if (agents.length === 0) {
@@ -992,11 +1013,20 @@ import SampleNotice from "./SampleNotice.astro";
         count.textContent = `${signals.length}${signalHasMore ? "+" : ""} ${
           signals.length === 1 && !signalHasMore ? "update" : "updates"
         }`;
+        count.hidden = signals.length === 0;
       }
       if (more) more.hidden = !signalHasMore;
       if (!list) return;
       list.replaceChildren();
       if (signals.length === 0) {
+        const emptyTitle = one<HTMLElement>("[data-feed-empty-title]");
+        if (emptyTitle) {
+          emptyTitle.textContent = agents.length === 1
+            ? `Waiting for ${agents[0]!.name}’s first update.`
+            : "Waiting for your agents’ first updates.";
+        }
+        previousSignalIds.clear();
+        feedWasEmpty = true;
         showChannelView("feed-empty");
         return;
       }
@@ -1004,6 +1034,9 @@ import SampleNotice from "./SampleNotice.astro";
       for (const signal of signals) {
         const row = document.createElement("li");
         row.className = "dashboard__message";
+        if ((feedWasEmpty || previousSignalIds.size > 0) && !previousSignalIds.has(signal.id)) {
+          row.classList.add("dashboard__message--fresh");
+        }
         const authorName = names.get(signal.from) ??
           people.get(signal.from) ??
           (signal.fromKind === "user" ? "Team member" : `Agent ${signal.from.slice(0, 6)}`);
@@ -1039,6 +1072,8 @@ import SampleNotice from "./SampleNotice.astro";
         row.append(avatar, body);
         list.append(row);
       }
+      previousSignalIds = new Set(signals.map((signal) => signal.id));
+      feedWasEmpty = false;
       showChannelView("feed");
     };
 
@@ -1081,10 +1116,10 @@ import SampleNotice from "./SampleNotice.astro";
       if (id) id.textContent = workspace.id;
       const addInRail = one<HTMLButtonElement>("[data-add-agent-rail]");
       if (addInRail) addInRail.hidden = sampleMode || agents.length === 0;
-      const addInChannel = one<HTMLButtonElement>("[data-add-agent-channel]");
-      if (addInChannel) addInChannel.hidden = sampleMode || agents.length === 0;
       const refresh = one<HTMLButtonElement>("[data-refresh]");
       if (refresh) refresh.hidden = sampleMode || agents.length === 0;
+      const count = one<HTMLElement>("[data-update-count]");
+      if (count) count.hidden = pending || agents.length === 0 || signals.length === 0;
       renderWorkspaceList(workspace);
       renderRoster();
       for (const target of all<HTMLElement>("[data-rail-account]")) {
@@ -1092,13 +1127,11 @@ import SampleNotice from "./SampleNotice.astro";
       }
       showPanel("channel");
       if (pending) {
-        const count = one<HTMLElement>("[data-update-count]");
         if (count) count.textContent = "Loading updates…";
         showChannelView("feed-pending");
       } else if (sampleMode) {
         renderFeed();
       } else if (agents.length === 0) {
-        const count = one<HTMLElement>("[data-update-count]");
         if (count) count.textContent = "Empty channel";
         showChannelView("no-agents");
       } else {
@@ -1109,6 +1142,10 @@ import SampleNotice from "./SampleNotice.astro";
     const openWorkspace = async (workspaceId: string): Promise<void> => {
       const selected = workspaces.find((workspace) => workspace.id === workspaceId);
       if (!selected) return;
+      if (activeWorkspaceId !== selected.id) {
+        previousSignalIds.clear();
+        feedWasEmpty = false;
+      }
       const connect = one<SecretHoldingAgentConnect>("agent-connect");
       const promptWorkspaceId = connect?.getAttribute("workspace-id") ?? "";
       const connectState = connect?.dataset.state ?? "";
@@ -1185,8 +1222,27 @@ import SampleNotice from "./SampleNotice.astro";
       const exitStatus = one<HTMLElement>("[data-connect-exit-status]");
       if (exitStatus) exitStatus.hidden = true;
       showChannelView("connect");
+      connectFocusObserver?.disconnect();
+      const focusField = (): boolean => {
+        if (connect.dataset.state !== "ready") return false;
+        const form = connect.querySelector<HTMLFormElement>("[data-panel='form']");
+        const target = form?.dataset.hasAgents === "yes"
+          ? connect.querySelector<HTMLSelectElement>("[data-field='identity']")
+          : connect.querySelector<HTMLInputElement>("[data-field='name']");
+        target?.focus({ preventScroll: true });
+        return Boolean(target);
+      };
       window.requestAnimationFrame(() => {
-        one<HTMLElement>("[data-close-connect]")?.focus();
+        if (focusField()) return;
+        connectFocusObserver = new MutationObserver(() => {
+          if (!focusField()) return;
+          connectFocusObserver?.disconnect();
+          connectFocusObserver = null;
+        });
+        connectFocusObserver.observe(connect, {
+          attributes: true,
+          attributeFilter: ["data-state"],
+        });
       });
     };
 
@@ -1286,7 +1342,7 @@ import SampleNotice from "./SampleNotice.astro";
         if (button) {
           button.disabled = false;
           button.removeAttribute("aria-busy");
-          button.textContent = "Create a workspace";
+          button.textContent = "Create workspace";
         }
       }
     };
@@ -1490,6 +1546,8 @@ import SampleNotice from "./SampleNotice.astro";
       authError(null);
       try {
         await signInWithEmail(input.value.trim(), new URL("/app", window.location.origin).href);
+        const email = one<HTMLElement>("[data-auth-email]");
+        if (email) email.textContent = input.value.trim();
         showAuthView("email-sent");
       } catch (error) {
         authError(readableError(error));
@@ -1553,8 +1611,16 @@ import SampleNotice from "./SampleNotice.astro";
 
     one<HTMLButtonElement>("[data-add-agent]")?.addEventListener("click", openConnect);
     one<HTMLButtonElement>("[data-add-agent-rail]")?.addEventListener("click", openConnect);
-    one<HTMLButtonElement>("[data-add-agent-channel]")?.addEventListener("click", openConnect);
     one<HTMLButtonElement>("[data-close-connect]")?.addEventListener("click", closeConnect);
+    one<HTMLButtonElement>("[data-copy-workspace-id]")?.addEventListener("click", async () => {
+      const status = one<HTMLElement>("[data-workspace-id-status]");
+      try {
+        await navigator.clipboard.writeText(activeWorkspaceId);
+        if (status) status.textContent = "Copied";
+      } catch {
+        if (status) status.textContent = "Could not copy";
+      }
+    });
     one<HTMLButtonElement>("[data-retry-workspace]")?.addEventListener("click", () => {
       if (activeWorkspaceId) void openWorkspace(activeWorkspaceId);
     });
@@ -1612,8 +1678,6 @@ import SampleNotice from "./SampleNotice.astro";
         renderRoster();
         const addInRail = one<HTMLButtonElement>("[data-add-agent-rail]");
         if (addInRail) addInRail.hidden = agents.length === 0;
-        const addInChannel = one<HTMLButtonElement>("[data-add-agent-channel]");
-        if (addInChannel) addInChannel.hidden = agents.length === 0;
         const refresh = one<HTMLButtonElement>("[data-refresh]");
         if (refresh) refresh.hidden = agents.length === 0;
       } catch {
@@ -1634,6 +1698,9 @@ import SampleNotice from "./SampleNotice.astro";
       if (!selected || !connect) return;
       syncConnectWorkspace(selected);
       closeConnect();
+      window.requestAnimationFrame(() => {
+        one<HTMLElement>("[data-channel-name]")?.focus({ preventScroll: true });
+      });
     });
 
     const queueAuthReload = (nextSession: Session | null): void => {
@@ -1647,6 +1714,14 @@ import SampleNotice from "./SampleNotice.astro";
         runBoot();
       });
     };
+
+    const agentRail = one<HTMLDetailsElement>(".dashboard__rail-agents");
+    const narrowRail = window.matchMedia("(max-width: 52rem)");
+    const syncAgentRail = (): void => {
+      if (agentRail) agentRail.open = !narrowRail.matches;
+    };
+    syncAgentRail();
+    narrowRail.addEventListener("change", syncAgentRail);
 
     /* /start now preserves its query and hash while handing old callbacks to /app, so this
        listener is the one auth-return controller for both current and compatibility links. */
@@ -1945,9 +2020,9 @@ import SampleNotice from "./SampleNotice.astro";
     gap: var(--s-2);
     max-inline-size: 38rem;
     padding: var(--s-5);
-    border: 1px solid var(--success-dim);
+    border: 1px solid var(--accent-dim);
     border-radius: var(--radius);
-    background: color-mix(in oklab, var(--success-dim) 48%, var(--elev-1));
+    background: color-mix(in oklab, var(--accent-dim) 48%, var(--elev-1));
   }
 
   .dashboard__email-sent p {
@@ -1996,8 +2071,8 @@ import SampleNotice from "./SampleNotice.astro";
     inline-size: 0.55rem;
     block-size: 0.55rem;
     border-radius: 50%;
-    background: var(--success);
-    box-shadow: 0 0 0 4px var(--success-dim);
+    background: var(--accent);
+    box-shadow: 0 0 0 4px var(--accent-dim);
   }
 
   .dashboard__create-form {
@@ -2085,6 +2160,58 @@ import SampleNotice from "./SampleNotice.astro";
   .dashboard__rail-agents {
     flex: 1;
     align-content: start;
+  }
+
+  .dashboard__rail-mobile-summary {
+    display: none;
+  }
+
+  .dashboard__rail-agents-body,
+  .dashboard__rail-details-body {
+    display: grid;
+    gap: var(--s-3);
+  }
+
+  .dashboard__rail-details {
+    padding-block: var(--s-4);
+    border-block-start: 1px solid var(--border);
+  }
+
+  .dashboard__rail-details > summary,
+  .dashboard__rail-mobile-summary {
+    min-block-size: 2.75rem;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--s-3);
+    color: var(--text-muted);
+    font-size: var(--t-xs);
+    font-weight: var(--weight-semibold);
+    cursor: pointer;
+  }
+
+  .dashboard__rail-details > summary:focus-visible,
+  .dashboard__rail-mobile-summary:focus-visible {
+    outline: none;
+    box-shadow: var(--focus-ring);
+  }
+
+  .dashboard__rail-details-body {
+    padding-block-start: var(--s-3);
+  }
+
+  .dashboard__workspace-id {
+    max-inline-size: 100%;
+    overflow: hidden;
+    color: var(--text-muted);
+    font-size: var(--t-2xs);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .dashboard__copy-status {
+    min-block-size: 1em;
+    color: var(--text-muted);
+    font-size: var(--t-2xs);
   }
 
   .dashboard__rail-label-row {
@@ -2192,22 +2319,6 @@ import SampleNotice from "./SampleNotice.astro";
     font-weight: var(--weight-semibold);
   }
 
-  .dashboard__agent-avatar {
-    position: relative;
-  }
-
-  .dashboard__agent-avatar::after {
-    content: "";
-    position: absolute;
-    inset-inline-end: -1px;
-    inset-block-end: -1px;
-    inline-size: 0.48rem;
-    block-size: 0.48rem;
-    border: 2px solid var(--elev-0);
-    border-radius: 50%;
-    background: var(--success);
-  }
-
   .dashboard__agent-copy {
     min-inline-size: 0;
     display: grid;
@@ -2295,21 +2406,6 @@ import SampleNotice from "./SampleNotice.astro";
     overflow-wrap: anywhere;
   }
 
-  .dashboard__channel-id {
-    max-inline-size: 38rem;
-    margin: var(--s-1) 0 0;
-    color: var(--text-muted);
-    font-size: var(--t-xs);
-    line-height: var(--lh-xs);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .dashboard__channel-id code {
-    color: inherit;
-  }
-
   .dashboard__channel-actions {
     display: flex;
     align-items: center;
@@ -2317,25 +2413,6 @@ import SampleNotice from "./SampleNotice.astro";
     color: var(--text-muted);
     font-size: var(--t-xs);
     white-space: nowrap;
-  }
-
-  .dashboard__channel-add {
-    min-block-size: 2.75rem;
-    display: inline-flex;
-    align-items: center;
-    gap: var(--s-2);
-    padding: var(--s-2) var(--s-3);
-    color: var(--text);
-    background: var(--accent-dim);
-    border: 1px solid color-mix(in oklab, var(--accent) 32%, var(--border));
-    border-radius: var(--radius);
-    font: inherit;
-    font-weight: var(--weight-semibold);
-    cursor: pointer;
-  }
-
-  .dashboard__channel-add:hover {
-    background: color-mix(in oklab, var(--accent-dim) 76%, var(--accent));
   }
 
   .dashboard__icon-button {
@@ -2443,6 +2520,7 @@ import SampleNotice from "./SampleNotice.astro";
   }
 
   .dashboard__connect-view {
+    min-inline-size: 0;
     padding: clamp(var(--s-5), 4vw, var(--s-8));
   }
 
@@ -2454,6 +2532,8 @@ import SampleNotice from "./SampleNotice.astro";
   }
 
   .dashboard__connect-view .dashboard__connect {
+    min-inline-size: 0;
+    inline-size: 100%;
     max-inline-size: none;
     box-shadow: none;
   }
@@ -2533,6 +2613,24 @@ import SampleNotice from "./SampleNotice.astro";
     border-block-start: 1px solid var(--border);
   }
 
+  .dashboard__message--fresh {
+    border-inline-start: 2px solid transparent;
+    animation: dashboard-fresh-arrival 2s var(--ease-decelerate) both;
+  }
+
+  @keyframes dashboard-fresh-arrival {
+    0%,
+    72% {
+      border-inline-start-color: var(--success);
+      background: color-mix(in oklab, var(--success-dim) 44%, transparent);
+    }
+
+    100% {
+      border-inline-start-color: transparent;
+      background: transparent;
+    }
+  }
+
   .dashboard__message-body {
     min-inline-size: 0;
     display: grid;
@@ -2565,18 +2663,6 @@ import SampleNotice from "./SampleNotice.astro";
     border-radius: var(--radius-pill);
     font-size: var(--t-2xs);
     font-weight: var(--weight-semibold);
-  }
-
-  .dashboard__message-kind--working-on {
-    color: var(--success);
-    background: var(--success-dim);
-    border-color: transparent;
-  }
-
-  .dashboard__message-kind--ask {
-    color: var(--warning);
-    background: var(--warning-dim);
-    border-color: transparent;
   }
 
   .dashboard__message-body > p {
@@ -2619,7 +2705,7 @@ import SampleNotice from "./SampleNotice.astro";
 
     .dashboard__rail {
       display: grid;
-      grid-template-columns: auto minmax(0, 1fr) auto;
+      grid-template-columns: auto minmax(0, 1fr);
       align-items: center;
       gap: var(--s-4);
       padding: var(--s-3) var(--s-4);
@@ -2638,9 +2724,24 @@ import SampleNotice from "./SampleNotice.astro";
     }
 
     .dashboard__rail-label-row,
-    .dashboard__rail-agents,
+    .dashboard__rail-details,
     .dashboard__rail-foot {
       display: none;
+    }
+
+    .dashboard__rail-agents {
+      grid-column: 1 / -1;
+      display: block;
+      padding-block-start: var(--s-3);
+      border-block-start: 1px solid var(--border);
+    }
+
+    .dashboard__rail-mobile-summary {
+      display: flex;
+    }
+
+    .dashboard__rail-agents-body {
+      padding-block-start: var(--s-3);
     }
 
     .dashboard__workspace-list {
@@ -2712,10 +2813,6 @@ import SampleNotice from "./SampleNotice.astro";
       margin-inline-end: auto;
     }
 
-    .dashboard__channel-id {
-      max-inline-size: 13rem;
-    }
-
     .dashboard__channel-empty,
     .dashboard__feed-state {
       inline-size: calc(100% - var(--s-8));
@@ -2736,8 +2833,10 @@ import SampleNotice from "./SampleNotice.astro";
     }
 
     .dashboard__button,
+    .dashboard__message--fresh,
     .dashboard__wordmark::after {
       transition: none;
+      animation: none;
     }
   }
 </style>

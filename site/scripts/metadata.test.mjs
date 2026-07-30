@@ -3,11 +3,10 @@ import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { INSTALL_CMD } from "./install-command.mjs";
-
 const siteDir = join(dirname(fileURLToPath(import.meta.url)), "..");
 const distDir = join(siteDir, "dist");
-const currentOgCommand = INSTALL_CMD;
+const currentOgHeadline = "See what your teammates picked up — before you start.";
+const currentOgMechanism = "One prompt connects each agent";
 const retiredOgCommand = "cswarm accept --link-stdin";
 
 const routes = [
@@ -93,8 +92,12 @@ test("L4: every built route publishes coherent, route-specific social metadata",
     assert.equal(meta("property", "og:image:height"), "630");
     const ogImageAlt = meta("property", "og:image:alt");
     assert.ok(
-      ogImageAlt.includes(currentOgCommand),
-      `${route.name}: OG alt does not describe the current installer command`,
+      ogImageAlt.includes(currentOgHeadline),
+      `${route.name}: OG alt does not describe the current consumer promise`,
+    );
+    assert.ok(
+      ogImageAlt.includes(currentOgMechanism),
+      `${route.name}: OG alt does not describe the current connection mechanism`,
     );
     assert.equal(
       ogImageAlt.includes(retiredOgCommand),
@@ -189,15 +192,13 @@ test("L4: linked icon, manifest, and social-card assets agree with their metadat
   assert.equal(png.subarray(1, 4).toString("ascii"), "PNG", "OG image signature");
   assert.equal(png.readUInt32BE(16), 1200, "OG image width");
   assert.equal(png.readUInt32BE(20), 630, "OG image height");
-  assert.match(
-    generator,
-    /import \{ INSTALL_CMD \} from "\.\/install-command\.mjs";/,
-    "OG generator must consume the site's canonical installer command",
-  );
-  assert.match(
-    generator,
-    /<span class="chip__c">\$\{INSTALL_CMD\}<\/span>/,
-    "OG chip must render the canonical installer command",
+  assert.match(generator, /import sharp from "sharp";/);
+  assert.ok(generator.includes(currentOgHeadline));
+  assert.ok(generator.includes(currentOgMechanism));
+  assert.equal(
+    generator.includes("INSTALL_CMD"),
+    false,
+    "OG card must lead with the consumer mechanism, not an install command",
   );
   assert.equal(
     generator.includes(retiredOgCommand),

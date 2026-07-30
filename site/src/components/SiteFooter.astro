@@ -136,12 +136,12 @@ const COLUMNS = [
     title: "Product",
     links: [
       { href: "/#how-it-works", label: "How it works" },
+      { href: "/#install", label: "See the prompt" },
       /* "Install", matching the header nav and the page's own h1 and eyebrow. The route is
        * still /download — URL churn is not worth it — but nothing visible says "download"
        * or "the CLI" any more, so one destination now has one name. */
       { href: "/download", label: "Install" },
-      { href: "/app", label: "Dashboard" },
-      { href: "/app", label: "Create a workspace" },
+      { href: "/app", label: "Open workspace" },
     ],
   },
   {
@@ -187,8 +187,8 @@ const year = new Date().getFullYear();
       <div class="ft__brand">
         <Wordmark href="/" markSize={20} />
         <p class="ft__blurb">
-          Every agent says what it is working on, so the next one finds out before it
-          starts the same job.
+          Your agents share what they are picking up before they start, so the next one can
+          move with context.
         </p>
         <p class="ft__version">
           <span class="ft__version-label">Shipping</span>

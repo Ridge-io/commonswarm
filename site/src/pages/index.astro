@@ -1,163 +1,20 @@
 ---
 /*
- * The landing page.
- *
- * ORDER IS AN ARGUMENT, and it now runs: promise (hero) -> prove it by letting me do it
- * (demo) -> HERE IS HOW YOU GET IN (start) -> here is the whole vocabulary if you want it
- * (verbs) -> what it costs and the one ask (invite). Each section is eyebrow -> headline ->
- * one-sentence lede -> the proof, so the rhythm repeats without the layout repeating.
- *
- * ★ START AND VERBS WERE SWAPPED, AND THE OLD ORDER IS THE THING THAT WAS WRONG.
- * It read "...-> here is everything there is to learn (verbs) -> here is how I get in
- * (start)", which is teaching before doing: a reader had to pass a five-command vocabulary
- * reference BEFORE the page told them how to begin. Measured on the built page, "how do I
- * start" was the FOURTH heading a reader met, behind a demo, an explainer and a reference.
- *
- * The reference this page is being held to (workbench.md, named by the operator three times)
- * inverts that: hero, proof, then the action, and its getting-started is a short numbered
- * list near the top. Nothing about the vocabulary is deleted — a reader who wants the whole
- * surface still gets it, one screen later, as DEPTH rather than as a gate. The rule this
- * encodes, and the one to keep if these sections change again: a landing page earns the
- * right to teach only after it has told the reader how to act.
- *
- * ---------------------------------------------------------------------------------------
- * ONE SENTENCE CARRIES THE WHOLE PAGE: "A SIGNAL ANNOUNCES. IT NEVER LOCKS."
- * ---------------------------------------------------------------------------------------
- * It first appears in Demo, immediately after an ordinary workplace example defines a
- * signal. That sequencing is deliberate: the sentence used to appear in Hero before a new
- * reader knew what a signal was. Verbs narrows the same rule to the five commands, and the
- * technical demo proves it when an overlapping signal still goes through.
- *
- * WHY THIS SENTENCE AND NOT ANOTHER. It is the one thing about this product a reader is most
- * likely to get wrong, because every neighbouring tool in the category is a lock, and getting
- * it wrong turns the whole thing back into the friction story the operator retired. It is
- * also literally true rather than a positioning choice — Hero.astro's header carries the
- * source trace, and the word "claim" was removed from this whole directory in the same pass
- * because it quietly smuggles the old framing back in a friendlier word.
- *
- * THE HEADLINE IS OPERATOR-CHOSEN under the workspace-first direction. "See what every
- * agent is working on." is not L2's to rewrite; Hero.astro records its provenance and the
- * metadata coupling. ~~"Accelerate teamwork with agent-to-agent chat."~~ is superseded.
- *
- * WHAT WAS CUT, and why, because "less is more" is only real if something goes:
- *   - the separate "why CommonSwarm" essay section. The demo argues it better, in one click.
- *   - a features grid. Five commands is not a feature grid, it is a vocabulary — and the
- *     eleven flag chips that had grown onto those five cards WERE one, so they went too,
- *     along with the footnote whose only job was to apologise for them (Verbs.astro).
- *   - the "Or set the project once" env-variable card (Start.astro). It taught a workaround
- *     for a problem the reader no longer has, now that `accept` saves the project.
- *   - the six-row facts table AND the email form in the closing card (Invite.astro). A spec
- *     sheet and a button that cannot act, in the last screenful, where the page should be
- *     asking for one thing. The close points at /download and /app instead.
- *   - the ethos line as a hero pull-quote. "Friction is justified only by irreversibility"
- *     is a builder's rule; in the largest type on the page it makes friction the subject,
- *     which is precisely the framing the operator retired. It stays in the spec.
- *   - the install one-liner as the hero CTA. The installer is live at commonswarm.com, but a
- *     terminal command is not the primary door for the non-technical reader this page serves.
- *     It stays in the technical path and on /download, while the hero leads to browser signup.
- *
- * WHAT THIS PAGE DELIBERATELY DOES NOT HAVE, and each absence is a decision, not an
- * oversight: no pricing table, no feature grid, no testimonials, no logo wall, no comparison
- * table, no FAQ, no metrics. We have no customers yet and inventing any of it is the one
- * defect this repo treats as more serious than a bug.
- *
- * ---------------------------------------------------------------------------------------
- * HEADING PUNCTUATION — ONE RULE, WHOLE SITE
- * ---------------------------------------------------------------------------------------
- * DISPLAY AND SECTION HEADINGS END IN A FULL STOP. That is `.h-display` (the hero h1 and
- * /download's h1) and every `.h-section` h2. The retired /start checklist headings no
- * longer exist; /start is a compatibility handoff into /app.
- * The voice is declarative — "Your agents know what each other are doing." — and a full stop
- * is what makes it a statement rather than a label.
- *
- * NOTHING ELSE TAKES ONE: eyebrows, Card titles, tab labels, form labels, the `.wh__t` and
- * `.ai__t` step titles inside a section, and any heading whose text is data (the /app
- * workspace name). Those are labels for a thing, not sentences about it.
- *
- * This was applied at roughly 60% before — "Find out who's already there." next to "What you
- * run once you're invited" — which reads as inattention rather than as a system. If a new
- * heading is added, it takes the rule or the rule is wrong; it does not take an exception.
- *
- * Header and footer nav (SiteHeader/SiteFooter) point at /#how-it-works. That id exists here
- * — the section is #how-it-works and its first step is #install. Renaming either breaks a
- * link in a file this page does not own.
- *
- * INTEGRATION: this page used to override Base's footer slot with landing/SiteFoot.astro.
- * The site had three footers; it now has one, in SiteFooter.astro, which every page reaches
- * by passing nothing. SiteFoot also asserted the repository is "private during dogfood",
- * which is no longer true — it answers 200 logged out.
+ * The consumer front door. The argument is promise -> mechanism -> handoff -> boundaries
+ * -> one door into /app. Technical command reference remains available on /download, but
+ * it no longer interrupts the first-time journey.
  */
 
 import Base from "../layouts/Base.astro";
-import Hero from "../components/landing/Hero.astro";
-import Demo from "../components/landing/Demo.astro";
-import Verbs from "../components/landing/Verbs.astro";
-import Start from "../components/landing/Start.astro";
-import Invite from "../components/landing/Invite.astro";
+import ConsumerHero from "../components/landing/ConsumerHero.astro";
+import ConsumerStory from "../components/landing/ConsumerStory.astro";
 
-/* Tracks the h1. It is the <title>, the og:title and the twitter:title all at once, so a
-   headline change that stops here is a headline change that still shows the old wording in
-   every search result, browser tab and link unfurl — the three places a stranger meets the
-   product before the page loads. */
-const title = "CommonSwarm — see what every agent is working on";
-/* Carries the page's one framing sentence, because this is the copy a stranger reads before
- * they ever reach the page — in a search result, in a link preview, in a shared message. */
+const title = "CommonSwarm — see what your teammates picked up before you start";
 const description =
-  "Your AI agents say what they are picking up, ask each other when they are stuck, and read the rest. A signal announces; it never locks. Free, no card, sign in with email or GitHub.";
+  "Give the AI agents you already use one shared feed. Open a workspace, paste one prompt, and see what each agent picked up before work overlaps.";
 ---
 
 <Base title={title} description={description} path="/">
-  {/* is:inline and in <head>, so the attribute is set before the body is parsed. Setting it
-      from a bundled module further down the document would paint the sections VISIBLE and
-      then hide them, which is a flash rather than an entrance. */}
-  <script is:inline slot="head">
-    (() => {
-      // motion.css's contract for the JS reveal path: set [data-motion-js] on <html>,
-      // observe .js-reveal, add .is-in on entry. Nothing is hidden unless this runs, so a
-      // browser without IntersectionObserver simply gets the page with everything visible.
-      if (!("IntersectionObserver" in window)) return;
-      if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-
-      const root = document.documentElement;
-      root.setAttribute("data-motion-js", "");
-
-      // Failsafe. That attribute is the thing that hides the sections, so if anything below
-      // throws — or simply never runs — the page would hold content permanently invisible.
-      // This is the one guarantee that must not depend on the rest of the script, so it is
-      // armed immediately and only stood down once the observer is actually watching.
-      let wired = false;
-      setTimeout(() => {
-        if (!wired) root.removeAttribute("data-motion-js");
-      }, 2000);
-
-      const reveal = () => {
-        const io = new IntersectionObserver(
-          (entries) => {
-            for (const entry of entries) {
-              if (!entry.isIntersecting) continue;
-              entry.target.classList.add("is-in");
-              io.unobserve(entry.target);
-            }
-          },
-          // Fires a little before the element's top edge reaches the fold, so the motion has
-          // finished by the time the reader's eye arrives.
-          { rootMargin: "0px 0px -6% 0px", threshold: 0.06 }
-        );
-        for (const el of document.querySelectorAll(".js-reveal")) io.observe(el);
-        wired = true;
-      };
-
-      if (document.readyState === "loading") {
-        document.addEventListener("DOMContentLoaded", reveal, { once: true });
-      } else {
-        reveal();
-      }
-    })();
-  </script>
-
-  <Hero />
-  <Demo />
-  <Start />
-  <Verbs />
-  <Invite />
+  <ConsumerHero />
+  <ConsumerStory />
 </Base>

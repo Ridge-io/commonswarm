@@ -2,14 +2,10 @@
 /*
  * SiteHeader — the app bar every route renders under.
  *
- * TWO STATES, ONE COMPONENT. `signedIn` picks the nav. There is no auth in the product yet,
- * so nothing sets it to true today and the signed-in branch is dormant scaffolding, not a
- * live surface. That distinction matters: the signed-out links below all resolve to routes
- * that are actually built (/download, /app, /start) or to a section id that exists on the
- * landing page (#how-it-works), whereas APP_NAV points at routes that DO NOT EXIST
- * (/app/feed, /app/agents, /app/workspaces — /app itself is built, its children are not).
- * Wiring `signedIn` to a real session is therefore a two-part job — flip the prop AND build
- * /app/*. Do not flip it first.
+ * TWO STATES, ONE COMPONENT. `signedIn` picks the nav. There is no shared shell session
+ * today, so nothing sets it to true and the signed-in branch remains dormant scaffolding.
+ * Both branches deliberately point only at real destinations: marketing sections, /download,
+ * and the single /app route that owns sign-in through the live workspace.
  *
  * WHY /docs IS NOT IN THE NAV. It used to be. There is no docs page in src/pages, so the
  * link was a guaranteed 404 for every visitor who clicked it. A nav entry that dead-ends is
@@ -62,27 +58,22 @@ const { signedIn = false, path = "/" } = Astro.props;
  * not "/". */
 const MARKETING_NAV = [
   { href: "/#how-it-works", label: "How it works" },
+  { href: "/#install", label: "See the prompt" },
   { href: "/download", label: "Install" },
-  { href: "/app", label: "Dashboard" },
 ];
 
-/* App nav. NONE of these routes are built. Rendered only when signedIn is true, which
- * nothing does. Listed here so the shell's two states are visible in one place. */
+/* The app is one workspace-first route today. Do not invent child links before those routes
+ * exist; a smaller honest nav is better than a complete-looking set of dead ends. */
 const APP_NAV = [
-  { href: "/app/feed", label: "Feed" },
-  { href: "/app/agents", label: "Agents" },
-  { href: "/app/workspaces", label: "Workspaces" },
+  { href: "/app", label: "Workspace" },
 ];
 
 const REPO = "https://github.com/Ridge-io/cloud-swarm";
 
 const nav = signedIn ? APP_NAV : MARKETING_NAV;
-/* The CTA is the one write operation the product has for a human: create a workspace and
- * onboard agents into it. It used to be "Install the CLI" -> /#install, which is a job for
- * the nav (and now has a whole page), not for the single most prominent action on the site. */
-const cta = signedIn
-  ? { href: "/app/new", label: "New workspace" }
-  : { href: "/app", label: "Create a workspace" };
+/* /app discovers the visitor's real state, then offers the one appropriate next action:
+ * sign in, create a workspace, or open the workspace they already have. */
+const cta = { href: "/app", label: "Open workspace" };
 
 /* Only a real route can be the current page. A hash link points inside the page we are
  * already on, so aria-current would be a lie on every one of them. */

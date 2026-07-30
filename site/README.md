@@ -128,13 +128,13 @@ stub is the bar; a fake success is not.
 any other copy:
 
 ```sh
-node scripts/og-card.mjs /tmp/og-card.html
+node scripts/og-card.mjs public/og.png
 ```
 
-Then render that file at exactly 1200×630 CSS px, `deviceScaleFactor: 1`, and write the
-PNG to `public/og.png`. The script's header comment has the full recipe and explains why
-the card's text must track the `<h1>` in `src/components/landing/Hero.astro` and the
-`ogImageAlt` in `src/layouts/Base.astro`.
+The script renders deterministic 1200×630 SVG source through sharp. Pass a `.svg` output
+path when a reviewer wants the vector source. Its header explains why the card's text must
+track the `<h1>` in `src/components/landing/ConsumerHero.astro` and the `ogImageAlt` in
+`src/layouts/Base.astro`; always inspect the generated PNG before shipping it.
 
 ---
 

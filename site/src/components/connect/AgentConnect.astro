@@ -51,11 +51,9 @@ const {
 >
   <header class="ac__head">
     {eyebrow && <p class="ac__eyebrow">{eyebrow}</p>}
-    <h2 class="ac__title">Add an agent</h2>
+    <h2 class="ac__title">Name your agent.</h2>
     <p class="ac__lead">
-      Name the AI assistant you already use. CommonSwarm creates one complete prompt for
-      <span class="ac__ws" data-slot="workspace-name">this workspace</span>. Copy it, paste it
-      into the assistant, and the agent handles the setup.
+      This is the name collaborators see when it posts to the feed.
     </p>
   </header>
 
@@ -96,7 +94,7 @@ const {
         placeholder="claude-code"
       />
       <p class="ac__hint">
-        Whatever you'd call this agent out loud. It's how collaborators will see its signals.
+        Whatever you would call it out loud.
       </p>
     </div>
 
@@ -119,7 +117,7 @@ const {
     <p class="ac__form-error" data-slot="form-error" role="alert" hidden></p>
 
     <button class="ac__btn ac__btn--primary" type="submit" data-action="mint">
-      Create the copy-paste prompt
+      Generate prompt
     </button>
   </form>
 
@@ -142,22 +140,23 @@ const {
   <div class="ac__panel ac__result" data-panel="result">
     <div class="ac__result-copy">
       <p class="ac__eyebrow">Ready to hand off</p>
-      <h3 class="ac__result-title">Copy this entire prompt.</h3>
+      <h3 class="ac__result-title">Your agent prompt is ready.</h3>
       <p class="ac__result-lead">
-        Paste it into your AI assistant as one message. The live key appears inside it once
-        and cannot be shown again after you clear this screen.
+        Paste it into your assistant as one message. The key inside appears once and cannot
+        be shown again.
       </p>
     </div>
 
     <div class="ac__block">
       <div class="ac__block-bar">
         <span class="ac__block-label">Prompt for your AI agent</span>
-        <button class="ac__btn ac__btn--copy" type="button" data-action="copy">
-          <span data-slot="copy-label">Copy prompt</span>
-        </button>
       </div>
       <pre class="ac__pre" data-slot="prompt" tabindex="0" aria-label="The block to give your agent"></pre>
     </div>
+
+    <button class="ac__btn ac__btn--primary ac__btn--copy" type="button" data-action="copy">
+      <span data-slot="copy-label">Copy prompt</span>
+    </button>
 
     <p class="ac__status" role="status" aria-live="polite" data-slot="copy-status"></p>
 
@@ -615,6 +614,8 @@ const {
      across two surfaces would make the credential look like a separate screen you could
      navigate back to — which is exactly what it is not. */
   .ac {
+    min-inline-size: 0;
+    inline-size: 100%;
     display: block;
     padding: var(--pad-card-lg);
     background: var(--surface);
@@ -654,11 +655,6 @@ const {
     color: var(--text-muted);
   }
 
-  .ac__ws {
-    color: var(--text);
-    font-weight: var(--weight-medium);
-  }
-
   .ac__muted {
     font-size: var(--t-sm);
     line-height: var(--lh-sm);
@@ -668,6 +664,7 @@ const {
   /* Every panel is in the DOM at build time and switched by data-state on the host, so Astro's
      scoping attribute is on all of them. Nothing here is created by script. */
   .ac__panel {
+    min-inline-size: 0;
     display: none;
     flex-direction: column;
     gap: var(--stack-lg);
@@ -852,7 +849,8 @@ const {
   }
 
   .ac__step[data-status="done"] .ac__dot {
-    background: var(--success);
+    background: var(--accent);
+    opacity: 0.55;
   }
 
   /* A step that did not need to run is not a step that succeeded, and it should not wear the
@@ -888,6 +886,9 @@ const {
   }
 
   .ac__block {
+    min-inline-size: 0;
+    inline-size: 100%;
+    max-inline-size: 100%;
     border: 1px solid var(--border);
     border-radius: var(--radius);
     background: var(--elev-3);
@@ -910,19 +911,27 @@ const {
     color: var(--text-muted);
   }
 
+  /* The one primary action of the result panel, sitting directly under the block it copies
+     and matching its width — copying the prompt is the whole point of this screen. */
   .ac__btn--copy {
-    align-self: auto;
-    padding: var(--s-2) var(--s-4);
+    align-self: stretch;
+    padding: var(--s-4) var(--s-6);
+    font-size: var(--t-base);
+    line-height: var(--lh-base);
   }
 
+  /* Copied feedback stays violet: a green success state would certify the wrong thing —
+     nothing here has succeeded except the clipboard. */
   .ac__btn--copy[data-copied] {
-    color: var(--success);
-    border-color: var(--success);
+    background: var(--accent);
   }
 
   /* The block scrolls inside its own box rather than wrapping: this text is going to an agent
      verbatim, and a soft-wrapped continuation of a flag reads as a different flag. */
   .ac__pre {
+    min-inline-size: 0;
+    inline-size: 100%;
+    max-inline-size: 100%;
     max-block-size: 22rem;
     padding: var(--s-4);
     overflow: auto;

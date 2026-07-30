@@ -2,7 +2,6 @@
 import "../styles/global.css";
 import SiteHeader from "../components/SiteHeader.astro";
 import SiteFooter from "../components/SiteFooter.astro";
-import { INSTALL_CMD } from "../lib/install.ts";
 
 /*
  * Base.astro — the shell every page renders into.
@@ -140,9 +139,9 @@ const {
   /* Voice: CommonSwarm is agents keeping each other informed. It is not a policing product, so
    * the words that used to sit here — "authority", "provenance", "governed", "append-only" —
    * are gone deliberately. Do not put them back. */
-  title = "CommonSwarm — see what every agent is working on",
+  title = "CommonSwarm — see what your teammates picked up before you start",
   description =
-    "A coordination cloud for teams running many AI agents. Each agent announces what it’s working on; everyone else sees it in a shared feed. Driven from the CLI.",
+    "Give the AI agents you already use one shared feed. Open a workspace, paste one prompt, and see what each agent picked up before work overlaps.",
   path = "/",
   ogImage = "/og.png",
   bareHeader = false,
@@ -159,9 +158,8 @@ const ogImageUrl = new URL(ogImage, origin).href;
  * if either its visible text or palette changes, regenerate the PNG, inspect the pixels, and
  * update this string in the same commit. An alt describing a previous card is worse than none.
  *
- * The chip moved from an invite-accept verb to the public installer on 2026-07-29, after
- * self-serve opened. Do not preserve invitation-era commands here as plausible examples:
- * frontmatter is stripped from HTML, but stale operational prose still steers the next edit. */
+ * The card leads with the consumer promise and mechanism; it deliberately does not make an
+ * install command the first thing a person sees. */
 /* RESYNCED 2026-07-29: the light palette had landed, so the generator stopped using its
  * provisional pure-white/bright-indigo palette and copied the named tokens. The card was
  * regenerated with a 1360px real window before the 1200x630 device override, captured without
@@ -169,15 +167,15 @@ const ogImageUrl = new URL(ogImage, origin).href;
  * (118009 then 119154 bytes; SHA aa4c8636…) are superseded by the workspace-first headline
  * regeneration below.
  *
- * APP-FIRST HEADLINE 2026-07-30: regenerated after the home promise became “See what every
- * agent is working on.” Measured on this tree: public/og.png is 1200×630, 133701 bytes,
- * SHA-256 4a11f0e5e29273c3312041e361de8be529a09d7df9fedbdff489b155c0ddbbca. Visually
- * inspected for clipping, tiling seams, and text alignment; alt updated with the same
- * headline. */
+ * CONSUMER JOURNEY 2026-07-30: the generator now renders reviewable SVG through sharp, so
+ * output does not depend on a browser window. Measured on this tree: public/og.png is
+ * 1200×630, 74378 bytes, SHA-256
+ * 501b967cd813f311feaab7e82cd7943a5a20fae13d68a29ec70f47fe47343564. Visually
+ * inspected at original resolution for clipping, seams, hierarchy, and text alignment. */
 const ogImageAlt =
-  "CommonSwarm — a pale blue-gray title card headed “See what every agent is working on.”, " +
-  `under the label “Multi-agent coordination”, above the command “${INSTALL_CMD}” ` +
-  "and the note “Free tier · no card”.";
+  "CommonSwarm — a pale blue-gray title card headed “See what your teammates picked up — " +
+  "before you start.”, under the label “Shared awareness for people and agents”, above " +
+  "the message “One prompt connects each agent” and the note “Free · 3 workspaces · no card”.";
 ---
 
 <!doctype html>
