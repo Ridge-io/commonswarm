@@ -387,6 +387,7 @@ import SampleNotice from "./SampleNotice.astro";
     let bootInFlight: Promise<void> | null = null;
     let bootAgain = false;
     let signalExpiryTimer: number | undefined;
+    let activeCreate: { version: number; userId: string } | null = null;
 
     const SIGNAL_PAGE_SIZE = 50;
     const SIGNAL_FETCH_SIZE = SIGNAL_PAGE_SIZE + 1;
@@ -421,6 +422,10 @@ import SampleNotice from "./SampleNotice.astro";
     const showChannelView = (
       name: "no-agents" | "connect" | "feed-pending" | "feed-empty" | "feed-error" | "feed",
     ): void => {
+      if (name !== "feed") {
+        window.clearTimeout(signalExpiryTimer);
+        signalExpiryTimer = undefined;
+      }
       for (const section of all<HTMLElement>("[data-channel-view]")) {
         section.hidden = section.dataset.channelView !== name;
       }
@@ -1033,6 +1038,9 @@ import SampleNotice from "./SampleNotice.astro";
     const createFromIntent = async (value: Session, intent: CreateIntent): Promise<void> => {
       const version = requestVersion;
       const userId = value.user.id;
+      if (activeCreate?.version === version && activeCreate.userId === userId) return;
+      const marker = { version, userId };
+      activeCreate = marker;
       const isCurrent = (): boolean =>
         version === requestVersion && session?.user.id === userId;
       const input = one<HTMLInputElement>("#dashboard-workspace-name");
@@ -1070,6 +1078,7 @@ import SampleNotice from "./SampleNotice.astro";
           }`.trim(),
         );
       } finally {
+        if (activeCreate === marker) activeCreate = null;
         if (!isCurrent()) return;
         if (input) input.disabled = false;
         if (button) {
@@ -1249,6 +1258,10 @@ import SampleNotice from "./SampleNotice.astro";
     one<HTMLFormElement>("[data-create-form]")?.addEventListener("submit", async (event) => {
       event.preventDefault();
       if (!session) return;
+      if (
+        activeCreate?.version === requestVersion &&
+        activeCreate.userId === session.user.id
+      ) return;
       const input = one<HTMLInputElement>("#dashboard-workspace-name");
       const name = input?.value.trim() ?? "";
       if (!name) {
@@ -1378,6 +1391,7 @@ import SampleNotice from "./SampleNotice.astro";
     /* This listener closes /app's auth-return race only. /start owns a separate controller
        and needs its own observer before anyone claims the whole magic-link journey is fixed. */
     client()?.auth.onAuthStateChange((event, nextSession) => {
+      if (nextSession?.user.id === renderedAuthUserId) session = nextSession;
       if (
         event === "INITIAL_SESSION" ||
         event === "SIGNED_IN" ||

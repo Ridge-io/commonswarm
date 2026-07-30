@@ -101,6 +101,10 @@ test("dashboard auth transitions include INITIAL_SESSION and coalesce reloads", 
   assert.match(source, /renderedAuthUserId = nextUserId;[\s\S]*requestVersion \+= 1/);
   assert.match(source, /queueMicrotask\(\(\) =>/);
   assert.match(source, /authReloadQueued = false;[\s\S]*runBoot\(\)/);
+  assert.match(
+    source,
+    /if \(nextSession\?\.user\.id === renderedAuthUserId\) session = nextSession/,
+  );
   assert.match(dashboard, /if \(bootInFlight\)[\s\S]*bootAgain = true/);
   assert.match(dashboard, /do \{[\s\S]*await boot\(\);[\s\S]*\} while \(bootAgain\)/);
   assert.match(
@@ -118,9 +122,25 @@ test("dashboard auth transitions include INITIAL_SESSION and coalesce reloads", 
 test("workspace creation and active-feed expiry cannot outlive their session", () => {
   const create = between(dashboard, "const createFromIntent =", "const renderSample =");
   const feed = between(dashboard, "const renderFeed =", "const syncConnectWorkspace =");
+  const channelView = between(dashboard, "const showChannelView =", "const accountName =");
+  const createSubmit = between(
+    dashboard,
+    'one<HTMLFormElement>("[data-create-form]")',
+    'for (const button of all<HTMLButtonElement>("[data-signout]"))',
+  );
 
   assert.match(create, /const version = requestVersion/);
   assert.match(create, /session\?\.user\.id === userId/);
+  assert.match(
+    create,
+    /if \(activeCreate\?\.version === version && activeCreate\.userId === userId\) return/,
+  );
+  assert.match(create, /activeCreate = marker/);
+  assert.match(create, /if \(activeCreate === marker\) activeCreate = null/);
+  assert.match(
+    createSubmit,
+    /activeCreate\?\.version === requestVersion[\s\S]*activeCreate\.userId === session\.user\.id/,
+  );
   assert.equal(
     create.match(/if \(!isCurrent\(\)\) return/g)?.length,
     3,
@@ -131,6 +151,10 @@ test("workspace creation and active-feed expiry cannot outlive their session", (
     /signals = signals\.filter\([\s\S]*signal\.until === null \|\| new Date\(signal\.until\)\.getTime\(\) > now/,
   );
   assert.match(feed, /signalExpiryTimer = window\.setTimeout\([\s\S]*renderFeed/);
+  assert.match(
+    channelView,
+    /if \(name !== "feed"\) \{[\s\S]*window\.clearTimeout\(signalExpiryTimer\)[\s\S]*signalExpiryTimer = undefined/,
+  );
   assert.doesNotMatch(feed, /expired \?/);
 });
 
