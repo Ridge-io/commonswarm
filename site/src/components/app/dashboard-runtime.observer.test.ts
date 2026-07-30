@@ -10,13 +10,9 @@ const siteRoot = fs.existsSync(path.join(cwd, "src", "components", "app"))
 const dashboardPath =
   process.env.COMMONSWARM_DASHBOARD_SOURCE ??
   path.join(siteRoot, "src", "components", "app", "LiveDashboard.astro");
-const connectPath = path.join(
-  siteRoot,
-  "src",
-  "components",
-  "connect",
-  "AgentConnect.astro",
-);
+const connectPath =
+  process.env.COMMONSWARM_CONNECT_SOURCE ??
+  path.join(siteRoot, "src", "components", "connect", "AgentConnect.astro");
 const dashboard = fs.readFileSync(dashboardPath, "utf8");
 const connect = fs.readFileSync(connectPath, "utf8");
 
@@ -65,15 +61,17 @@ test("signal pages include standard signals and terminate exact-multiple lookahe
 
 test("dashboard auth transitions include INITIAL_SESSION and coalesce reloads", () => {
   const startAt = dashboard.indexOf("const queueAuthReload =");
-  const endAt = dashboard.lastIndexOf("void boot();");
+  const endAt = dashboard.lastIndexOf("runBoot();");
   assert.notEqual(startAt, -1);
   assert.notEqual(endAt, -1);
-  const source = dashboard.slice(startAt, endAt + "void boot();".length);
+  const source = dashboard.slice(startAt, endAt + "runBoot();".length);
 
   assert.match(source, /nextUserId === renderedAuthUserId \|\| authReloadQueued/);
   assert.match(source, /authReloadQueued = true/);
   assert.match(source, /queueMicrotask\(\(\) =>/);
-  assert.match(source, /authReloadQueued = false;[\s\S]*void boot\(\)/);
+  assert.match(source, /authReloadQueued = false;[\s\S]*runBoot\(\)/);
+  assert.match(dashboard, /if \(bootInFlight\)[\s\S]*bootAgain = true/);
+  assert.match(dashboard, /do \{[\s\S]*await boot\(\);[\s\S]*\} while \(bootAgain\)/);
   assert.match(source, /closes \/app's auth-return race only/);
   assert.match(source, /auth\.onAuthStateChange\(/);
   assert.match(
@@ -82,12 +80,27 @@ test("dashboard auth transitions include INITIAL_SESSION and coalesce reloads", 
   );
 });
 
+test("dashboard cannot hide a live or still-minting credential", () => {
+  const source = between(dashboard, "const closeConnect =", "const createFromIntent =");
+
+  assert.match(source, /mintBusy \|\| connectState === "working" \|\| connectState === "done"/);
+  assert.match(source, /Clear this live prompt before leaving this screen/);
+  assert.match(source, /data-action='clear'/);
+  assert.match(source, /return;[\s\S]*pendingWorkspaceId = ""/);
+});
+
 test("workspace changes synchronously retarget AgentConnect before its panel opens", () => {
   const openWorkspace = between(dashboard, "const openWorkspace =", "const openConnect =");
   const openConnect = between(dashboard, "const openConnect =", "const closeConnect =");
 
   assert.match(connect, /static observedAttributes = \["workspace-id", "workspace-name"\]/);
   assert.match(connect, /attributeChangedCallback\(\)/);
+  assert.match(connect, /const version = \+\+this\.#loadVersion/);
+  assert.match(connect, /if \(version !== this\.#loadVersion\) return/);
+  assert.match(
+    connect,
+    /const nextAgents = await myAgents\(session, nextWorkspaceId\);[\s\S]*if \(version !== this\.#loadVersion\) return;[\s\S]*this\.#workspaceId = nextWorkspaceId/,
+  );
   assert.match(
     dashboard,
     /connect\.setAttribute\("workspace-name", workspace\.name\);[\s\S]*connect\.setAttribute\("workspace-id", workspace\.id\)/,

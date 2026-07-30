@@ -372,6 +372,8 @@ import SampleNotice from "./SampleNotice.astro";
     let pendingWorkspaceId = "";
     let renderedAuthUserId = "";
     let authReloadQueued = false;
+    let bootInFlight: Promise<void> | null = null;
+    let bootAgain = false;
 
     const SIGNAL_PAGE_SIZE = 50;
     const SIGNAL_FETCH_SIZE = SIGNAL_PAGE_SIZE + 1;
@@ -933,6 +935,24 @@ import SampleNotice from "./SampleNotice.astro";
     };
 
     const closeConnect = (): void => {
+      const connect = one<SecretHoldingAgentConnect>("agent-connect");
+      const connectState = connect?.dataset.state ?? "";
+      const mintBusy = connect?.hasAttribute("data-mint-busy") ?? false;
+      if (mintBusy || connectState === "working" || connectState === "done") {
+        showChannelView("connect");
+        if (connectState === "done") {
+          const status = connect?.querySelector<HTMLElement>("[data-slot='copy-status']");
+          if (status) status.textContent = "Clear this live prompt before leaving this screen.";
+        }
+        window.requestAnimationFrame(() => {
+          if (connectState === "done") {
+            connect?.querySelector<HTMLButtonElement>("[data-action='clear']")?.focus();
+          } else {
+            one<HTMLButtonElement>("[data-close-connect]")?.focus();
+          }
+        });
+        return;
+      }
       pendingWorkspaceId = "";
       if (agents.length === 0) showChannelView("no-agents");
       else if (signals.length === 0) {
@@ -1093,6 +1113,22 @@ import SampleNotice from "./SampleNotice.astro";
       }
     };
 
+    const runBoot = (): void => {
+      if (bootInFlight) {
+        bootAgain = true;
+        return;
+      }
+      bootInFlight = (async () => {
+        do {
+          bootAgain = false;
+          await boot();
+        } while (bootAgain);
+      })().finally(() => {
+        bootInFlight = null;
+        if (bootAgain) runBoot();
+      });
+    };
+
     one<HTMLButtonElement>("[data-signin-github]")?.addEventListener("click", async (event) => {
       const button = event.currentTarget as HTMLButtonElement;
       button.disabled = true;
@@ -1182,7 +1218,7 @@ import SampleNotice from "./SampleNotice.astro";
       if (activeWorkspaceId) void openWorkspace(activeWorkspaceId);
     });
     one<HTMLButtonElement>("[data-retry-workspaces]")?.addEventListener("click", () => {
-      void boot();
+      runBoot();
     });
     one<HTMLButtonElement>("[data-refresh]")?.addEventListener("click", () => {
       if (activeWorkspaceId) void openWorkspace(activeWorkspaceId);
@@ -1256,7 +1292,7 @@ import SampleNotice from "./SampleNotice.astro";
       authReloadQueued = true;
       queueMicrotask(() => {
         authReloadQueued = false;
-        void boot();
+        runBoot();
       });
     };
 
@@ -1272,7 +1308,7 @@ import SampleNotice from "./SampleNotice.astro";
       }
     });
 
-    void boot();
+    runBoot();
   }
 </script>
 
