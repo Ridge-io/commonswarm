@@ -27,6 +27,12 @@ test("the rail carries no agent roster: no list, no rail Add door, no collapse s
     /narrowRail|syncAgentRail/,
     "nothing remains that needs collapsing on narrow screens",
   );
+  assert.doesNotMatch(
+    dashboard,
+    /Workspace and agent navigation/,
+    "the rail's accessible name went stale when agents moved to the header — it must not return",
+  );
+  assert.match(dashboard, /aria-label="Workspace navigation and details"/);
 });
 
 test("the header control is one stack button with a dialog relationship", () => {
