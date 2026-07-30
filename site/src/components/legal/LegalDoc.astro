@@ -55,9 +55,10 @@ interface Props {
   updated: string;
   sections: Section[];
   /**
-   * True while the document still carries [[PLACEHOLDER]] markers. Renders the draft band
-   * and switches off the build-time guard below. Flip to false only once every placeholder
-   * is filled — the guard then enforces that it stays true.
+   * True while the document is published for review and not yet in force. Renders the draft
+   * band and switches off the build-time placeholder guard below. Flip to false only when
+   * the draft banner is removed and a real effective date is published — the guard then
+   * refuses unresolved [[PLACEHOLDER]] markers on a final page.
    */
   draft?: boolean;
 }
@@ -162,9 +163,9 @@ const peers = PEERS.filter((peer) => peer.label !== title);
         <p class="lgl__draft">
           <span class="lgl__draft-dot" aria-hidden="true" />
           <span>
-            <strong>Draft — not yet in force.</strong> The highlighted fields below are
-            decisions the operator has not made yet. This document does not bind anyone
-            until they are filled in and it is published with a real effective date.
+            <strong>Draft — not yet in force.</strong> This draft is published for review.
+            It does not take effect until the draft banner is removed and a real effective
+            date is published.
           </span>
         </p>
       )
