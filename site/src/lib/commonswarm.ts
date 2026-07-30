@@ -259,6 +259,11 @@ export class WorkspaceOutcomeUnknown extends Error {
   }
 }
 
+/** A non-workspace mutation crossed the network but its durable outcome did not return. */
+export class CommandOutcomeUnknown extends Error {
+  override name = "CommandOutcomeUnknown";
+}
+
 /** A read stopped at the application deadline. Reads change nothing and are safe to retry. */
 export class BrowserReadTimedOut extends Error {
   override name = "BrowserReadTimedOut";
@@ -276,10 +281,10 @@ interface CommandResult {
 }
 
 export class FreshLoginRequired extends Error {
-  constructor() {
-    super(
-      "Sign in again, then press Remove once more. CommonSwarm did not remove anyone.",
-    );
+  constructor(
+    message = "Sign in again, then press Remove once more. CommonSwarm did not remove anyone.",
+  ) {
+    super(message);
     this.name = "FreshLoginRequired";
   }
 }
@@ -334,6 +339,7 @@ async function postCommand(
   commandId: string,
   command: Record<string, unknown>,
   extra: Record<string, unknown> = {},
+  unknownOutcome?: string,
 ): Promise<CommandResult> {
   const d = deployment();
   if (!d) throw new NoDeployment();
@@ -364,6 +370,7 @@ async function postCommand(
     }
     return { status: response.status, body };
   } catch {
+    if (unknownOutcome) throw new CommandOutcomeUnknown(unknownOutcome);
     if (deadline.controller.signal.aborted) {
       throw new WorkspaceOutcomeUnknown(
         "CommonSwarm stopped waiting after 30 seconds, so it cannot tell whether the " +
@@ -379,6 +386,218 @@ async function postCommand(
   } finally {
     deadline.clear();
   }
+}
+
+export interface CreatedMemberInvite {
+  invitationId: string;
+  invitationToken: string;
+  workspaceId: string;
+  workspaceName: string;
+  inviterDisplayName: string;
+  inviterUserId: string | null;
+}
+
+/** Creates one fresh, one-use teammate invitation; its token exists only in this response. */
+export async function inviteWorkspaceMember(
+  session: Session,
+  commandId: string,
+  workspaceId: string,
+  email: string,
+): Promise<CreatedMemberInvite> {
+  const { status, body } = await postCommand(
+    session,
+    commandId,
+    { kind: "invite_member", email, ttl_ms: 7 * 24 * 60 * 60 * 1_000 },
+    { workspace_id: workspaceId, stream: { kind: "workspace" } },
+    "CommonSwarm lost the invitation result. Check Pending access before creating another link.",
+  );
+  if (status === 401 && body.error === "fresh_auth_required") {
+    throw new FreshLoginRequired(
+      "Sign in again, then create the invitation once more. CommonSwarm did not create a link.",
+    );
+  }
+  if (status !== 200 || body.status !== "accepted") {
+    throw new Error(
+      status === 403
+        ? "Only a workspace Owner or Admin can invite a teammate."
+        : `CommonSwarm did not create the invitation (${String(body.reason ?? body.error ?? status)}).`,
+    );
+  }
+  const invitationId = String(body.invitation_id ?? "");
+  const invitationToken = String(body.invitation_token ?? "");
+  if (!invitationId || !invitationToken) {
+    throw new CommandOutcomeUnknown(
+      "CommonSwarm accepted the invitation without returning its one-use link. Check Pending access.",
+    );
+  }
+  return {
+    invitationId,
+    invitationToken,
+    workspaceId: String(body.workspace_id ?? workspaceId),
+    workspaceName: String(body.workspace_name ?? ""),
+    inviterDisplayName: String(body.inviter_display_name ?? "A teammate"),
+    inviterUserId: typeof body.inviter_user_id === "string" ? body.inviter_user_id : null,
+  };
+}
+
+export interface AcceptedMemberInvite {
+  workspaceId: string;
+  workspaceName: string;
+}
+
+/** Consumes one invitation capability and joins the authenticated person to its workspace. */
+export async function acceptWorkspaceInvitation(
+  session: Session,
+  commandId: string,
+  token: string,
+): Promise<AcceptedMemberInvite> {
+  const { status, body } = await postCommand(
+    session,
+    commandId,
+    { kind: "accept_invitation", token },
+    {},
+    "CommonSwarm lost the join result. Reload this invitation before trying again.",
+  );
+  if (status !== 200 || body.status !== "accepted") {
+    throw new Error(
+      status === 403
+        ? "This invitation is no longer usable. Ask the sender for a new link."
+        : `CommonSwarm could not join this workspace (${String(body.reason ?? body.error ?? status)}).`,
+    );
+  }
+  return {
+    workspaceId: String(body.workspace_id ?? ""),
+    workspaceName: String(body.workspace_name ?? ""),
+  };
+}
+
+/** Cancels a pending teammate invitation by id; the raw invitation is not required. */
+export async function revokeWorkspaceInvitation(
+  session: Session,
+  commandId: string,
+  workspaceId: string,
+  invitationId: string,
+): Promise<void> {
+  const { status, body } = await postCommand(
+    session,
+    commandId,
+    { kind: "revoke_invitation", invitation_id: invitationId },
+    { workspace_id: workspaceId, stream: { kind: "workspace" } },
+    "CommonSwarm lost the cancellation result. Refresh Pending access before trying again.",
+  );
+  if (status !== 200 || body.status !== "accepted") {
+    throw new Error(
+      `Invitation cancellation was refused: ${String(body.reason ?? body.error ?? status)}.`,
+    );
+  }
+}
+
+/** Cancels one pending agent credential without removing its agent identity. */
+export async function revokeAgentToken(
+  session: Session,
+  commandId: string,
+  workspaceId: string,
+  tokenId: string,
+): Promise<void> {
+  const { status, body } = await postCommand(
+    session,
+    commandId,
+    { kind: "revoke_agent_token", token_id: tokenId },
+    { workspace_id: workspaceId, stream: { kind: "workspace" } },
+    "CommonSwarm lost the cancellation result. Refresh Pending access before trying again.",
+  );
+  if (status !== 200 || body.status !== "accepted") {
+    throw new Error(
+      `Agent access cancellation was refused: ${String(body.reason ?? body.error ?? status)}.`,
+    );
+  }
+}
+
+export interface PendingMemberInvite {
+  workspaceId: string;
+  invitationId: string;
+  email: string;
+  createdBy: string;
+  createdAt: string;
+  expiresAt: string;
+}
+
+/** Live teammate invitations visible to workspace Owners and Admins. */
+export async function pendingMemberInvites(workspaceId: string): Promise<PendingMemberInvite[]> {
+  const c = client();
+  if (!c) throw new NoDeployment();
+  const { data, error } = await readWithDeadline(
+    "pending teammate invitations",
+    (signal) =>
+      c
+        .schema("swarm_read")
+        .from("pending_invitations")
+        .select("workspace_id,invitation_id,email,created_by,created_at,expires_at")
+        .eq("workspace_id", workspaceId)
+        .order("created_at", { ascending: false })
+        .limit(50)
+        .abortSignal(signal),
+  );
+  if (error) throw new Error(error.message);
+  return (data ?? []).map((row) => ({
+    workspaceId: String(row.workspace_id),
+    invitationId: String(row.invitation_id),
+    email: String(row.email ?? "Teammate"),
+    createdBy: String(row.created_by),
+    createdAt: String(row.created_at),
+    expiresAt: String(row.expires_at),
+  }));
+}
+
+export interface AgentAccessStatus {
+  workspaceId: string;
+  principalId: string;
+  ownerUserId: string;
+  agentName: string;
+  model: string | null;
+  tokenId: string;
+  issuedAt: string;
+  expiresAt: string;
+  firstUsedAt: string | null;
+  revokedAt: string | null;
+}
+
+/** Initial agent credentials visible to their owner or a workspace Owner/Admin. */
+export async function agentAccessStatuses(
+  workspaceId: string,
+  tokenId?: string,
+): Promise<AgentAccessStatus[]> {
+  const c = client();
+  if (!c) throw new NoDeployment();
+  const { data, error } = await readWithDeadline(
+    "agent access status",
+    (signal) => {
+      let query = c
+        .schema("swarm_read")
+        .from("agent_access_status")
+        .select(
+          "workspace_id,principal_id,owner_user_id,agent_name,model,token_id,issued_at,expires_at,first_used_at,revoked_at",
+        )
+        .eq("workspace_id", workspaceId)
+        .order("issued_at", { ascending: false })
+        .limit(tokenId ? 1 : 100);
+      if (tokenId) query = query.eq("token_id", tokenId);
+      return query.abortSignal(signal);
+    },
+  );
+  if (error) throw new Error(error.message);
+  return (data ?? []).map((row) => ({
+    workspaceId: String(row.workspace_id),
+    principalId: String(row.principal_id),
+    ownerUserId: String(row.owner_user_id),
+    agentName: String(row.agent_name),
+    model: row.model === null ? null : String(row.model),
+    tokenId: String(row.token_id),
+    issuedAt: String(row.issued_at),
+    expiresAt: String(row.expires_at),
+    firstUsedAt: row.first_used_at === null ? null : String(row.first_used_at),
+    revokedAt: row.revoked_at === null ? null : String(row.revoked_at),
+  }));
 }
 
 export async function removeWorkspaceMember(
@@ -546,6 +765,7 @@ export interface Signal {
   id: string;
   from: string;
   fromKind: string;
+  to: string | null;
   kind: string;
   body: string;
   about: string | null;
@@ -568,7 +788,7 @@ export async function feed(workspaceId: string, limit = 50): Promise<Signal[]> {
       c
         .schema("swarm_read")
         .from("signals")
-        .select("id,from,from_kind,kind,body,about,until,created_at")
+        .select("id,from,from_kind,to,kind,body,about,until,created_at")
         .eq("workspace_id", workspaceId)
         .order("created_at", { ascending: false })
         .limit(limit)
@@ -579,6 +799,7 @@ export async function feed(workspaceId: string, limit = 50): Promise<Signal[]> {
     id: String(row.id),
     from: String(row.from ?? ""),
     fromKind: String(row.from_kind ?? ""),
+    to: row.to === null || row.to === undefined ? null : String(row.to),
     kind: String(row.kind ?? ""),
     body: String(row.body ?? ""),
     about: row.about === null || row.about === undefined ? null : String(row.about),

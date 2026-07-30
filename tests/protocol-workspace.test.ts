@@ -692,6 +692,17 @@ describe('agent principals', () => {
     world.join('bob');
     world.createPrincipal('bob');
     assert.equal(world.state()!.principals['principal-bob'].owner_user_id, 'bob');
+    const modeled = world.apply(
+      {
+        kind: 'create_agent_principal',
+        principal_id: 'principal-kimi',
+        name: 'agent-kimi',
+        model: 'Kimi K3',
+      },
+      { actor: human('bob') },
+    );
+    assert.equal(modeled.ok, true);
+    assert.equal(world.state()!.principals['principal-kimi'].model, 'Kimi K3');
     rejected(
       world.apply(
         {

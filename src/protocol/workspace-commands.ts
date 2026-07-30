@@ -50,7 +50,13 @@ export type WorkspaceCommand =
       role: WorkspaceRole;
       landing_authority_successor_user_id?: string;
     }
-  | { kind: 'create_agent_principal'; principal_id: string; name: string }
+  | {
+      kind: 'create_agent_principal';
+      principal_id: string;
+      name: string;
+      /** Human-declared model identity; never an authorization input. */
+      model?: string | null;
+    }
   | { kind: 'revoke_agent_principal'; principal_id: string }
   | {
       kind: 'mint_agent_token';
@@ -609,6 +615,7 @@ export function decideWorkspace(
           principal_id: cmd.principal_id,
           owner_user_id: user_id,
           name: cmd.name,
+          model: cmd.model ?? null,
           created_at: ctx.now,
         }),
       ]);

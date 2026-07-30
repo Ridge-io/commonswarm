@@ -57,9 +57,10 @@ interface Fixture {
 
 type ConnectCommand =
   | { kind: "invite_member"; email: string; ttl_ms?: number }
+  | { kind: "revoke_invitation"; invitation_id: string }
   | { kind: "accept_invitation"; token: string }
   | { kind: "remove_member"; user_id: string }
-  | { kind: "create_agent_principal"; name: string }
+  | { kind: "create_agent_principal"; name: string; model?: string }
   | { kind: "revoke_agent_principal"; principal_id: string }
   | {
     kind: "mint_agent_token";
@@ -2844,11 +2845,31 @@ test("connect loop invites, accepts, creates a principal, and mints a narrow tok
     const principalResult = await issueConnect(
       f,
       invitee.jwt,
-      { kind: "create_agent_principal", name: "connect-worker" },
+      { kind: "create_agent_principal", name: "connect-worker", model: "Kimi K3" },
     );
     assert.equal(principalResult.body.status, "accepted");
     const principalId = String(principalResult.body.principal_id);
     assert.match(principalId, /^[0-9a-f-]{36}$/i);
+    const [principalRow] = await sql<{ model: string | null }[]>`
+      SELECT model
+      FROM swarm.agent_principals
+      WHERE principal_id = ${principalId}::uuid
+    `;
+    assert.equal(principalRow?.model, "Kimi K3");
+    const principalResponse = await fetch(
+      `${local.API_URL}/rest/v1/agent_principals?select=workspace_id,principal_id,owner_user_id,name,model&principal_id=eq.${principalId}`,
+      {
+        headers: {
+          authorization: `Bearer ${invitee.jwt}`,
+          apikey: local.ANON_KEY,
+          "accept-profile": "swarm_read",
+        },
+      },
+    );
+    assert.equal(principalResponse.status, 200);
+    const principalRows = await principalResponse.json() as Array<Record<string, unknown>>;
+    assert.equal(principalRows.length, 1);
+    assert.equal(principalRows[0]?.model, "Kimi K3");
 
     const runId = randomUUID();
     const taskId = randomUUID();
@@ -2885,6 +2906,24 @@ test("connect loop invites, accepts, creates a principal, and mints a narrow tok
     assert.equal(minted.body.run_id, runId);
     const agentToken = String(minted.body.agent_token);
     assert.match(agentToken, /^swm_agt_[A-Za-z0-9_-]{43}$/);
+    const accessResponse = await fetch(
+      `${local.API_URL}/rest/v1/agent_access_status?select=workspace_id,principal_id,owner_user_id,agent_name,model,token_id,issued_at,expires_at,first_used_at,revoked_at&token_id=eq.${String(minted.body.token_id)}`,
+      {
+        headers: {
+          authorization: `Bearer ${invitee.jwt}`,
+          apikey: local.ANON_KEY,
+          "accept-profile": "swarm_read",
+        },
+      },
+    );
+    assert.equal(accessResponse.status, 200);
+    const accessRows = await accessResponse.json() as Array<Record<string, unknown>>;
+    assert.equal(accessRows.length, 1);
+    assert.equal(accessRows[0]?.owner_user_id, invitee.id);
+    assert.equal(accessRows[0]?.model, "Kimi K3");
+    assert.equal(accessRows[0]?.first_used_at, null);
+    assert.equal(Object.hasOwn(accessRows[0] ?? {}, "token_hash"), false);
+    assert.equal(Object.hasOwn(accessRows[0] ?? {}, "agent_token"), false);
     const mintReplay = await issueConnect(
       f,
       invitee.jwt,
@@ -2976,6 +3015,50 @@ test("connect loop invites, accepts, creates a principal, and mints a narrow tok
         ) AS count
     `;
     assert.equal(Number(secretLeaks?.count), 0);
+  });
+});
+
+test("pending teammate invitations are metadata-only and cancellable", async () => {
+  await scenario(async (f) => {
+    const invited = await issueConnect(f, f.uaJwt, {
+      kind: "invite_member",
+      email: `pending-${randomUUID()}@example.test`,
+    });
+    assert.equal(invited.status, 200);
+    const invitationId = String(invited.body.invitation_id);
+    const headers = {
+      authorization: `Bearer ${f.uaJwt}`,
+      apikey: local.ANON_KEY,
+      "accept-profile": "swarm_read",
+    };
+    const beforeResponse = await fetch(
+      `${local.API_URL}/rest/v1/pending_invitations?select=workspace_id,invitation_id,email,role,created_by,created_at,expires_at&invitation_id=eq.${invitationId}`,
+      { headers },
+    );
+    assert.equal(beforeResponse.status, 200);
+    const before = await beforeResponse.json() as Array<Record<string, unknown>>;
+    assert.equal(before.length, 1);
+    assert.equal(Object.hasOwn(before[0] ?? {}, "token_hash"), false);
+    assert.equal(Object.hasOwn(before[0] ?? {}, "invitation_token"), false);
+
+    const revoked = await issueConnect(f, f.uaJwt, {
+      kind: "revoke_invitation",
+      invitation_id: invitationId,
+    });
+    assert.equal(revoked.status, 200);
+    assert.equal(revoked.body.status, "accepted");
+    const afterResponse = await fetch(
+      `${local.API_URL}/rest/v1/pending_invitations?select=invitation_id&invitation_id=eq.${invitationId}`,
+      { headers },
+    );
+    assert.equal(afterResponse.status, 200);
+    assert.deepEqual(await afterResponse.json(), []);
+    const [row] = await sql<{ revoked_at: Date | null }[]>`
+      SELECT revoked_at
+      FROM swarm.invitations
+      WHERE invitation_id = ${invitationId}::uuid
+    `;
+    assert.ok(row?.revoked_at instanceof Date);
   });
 });
 

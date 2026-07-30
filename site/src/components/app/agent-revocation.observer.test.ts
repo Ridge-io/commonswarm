@@ -19,7 +19,7 @@ test("agent roster Remove is role-aware and confirms identity end", async () => 
   assert.match(source, /livePromptPrincipalId/);
 });
 
-test("browser helper posts strict revoke_agent_principal only", async () => {
+test("browser helpers keep identity removal distinct from pending-token cancellation", async () => {
   const source = await readFile(
     new URL("../../lib/commonswarm.ts", import.meta.url),
     "utf8",
@@ -29,17 +29,19 @@ test("browser helper posts strict revoke_agent_principal only", async () => {
     /\{ kind: "revoke_agent_principal", principal_id: principalId \}/,
   );
   assert.match(source, /stream: \{ kind: "workspace" \}/);
-  assert.doesNotMatch(source, /kind: "revoke_agent_token"/);
+  assert.match(source, /\{ kind: "revoke_agent_token", token_id: tokenId \}/);
+  assert.match(source, /agent_access_status/);
 });
 
-test("Clear on connect panel does not revoke", async () => {
+test("Done on connect panel forgets the visible secret without revoking", async () => {
   const source = await readFile(
     new URL("../connect/AgentConnect.astro", import.meta.url),
     "utf8",
   );
-  assert.match(source, /data-action="clear"/);
-  assert.match(source, /Clear this prompt/);
-  assert.match(source, /clearPrompt\(/);
+  assert.match(source, /data-action="done"/);
+  assert.match(source, />\s*Done\s*</);
+  assert.match(source, /finishPrompt\("done"\)/);
+  assert.doesNotMatch(source, /Clear this prompt/);
   assert.doesNotMatch(source, /revoke_agent_principal/);
   assert.doesNotMatch(source, /revokeAgentPrincipal/);
   assert.doesNotMatch(source, /revoke_agent_token/);

@@ -53,7 +53,7 @@ const {
     {eyebrow && <p class="ac__eyebrow">{eyebrow}</p>}
     <h2 class="ac__title">Name your agent.</h2>
     <p class="ac__lead">
-      This is the name collaborators see when it posts to the feed.
+      Add the name and model collaborators will see in the feed.
     </p>
   </header>
 
@@ -96,6 +96,29 @@ const {
       <p class="ac__hint">
         Whatever you would call it out loud.
       </p>
+    </div>
+
+    <div class="ac__field" data-field-wrap="model">
+      <label class="ac__label" for="ac-model">Model</label>
+      <input
+        class="ac__control"
+        id="ac-model"
+        data-field="model"
+        type="text"
+        maxlength="120"
+        autocomplete="off"
+        spellcheck="false"
+        list="ac-models"
+        placeholder="Kimi K3"
+      />
+      <datalist id="ac-models">
+        <option value="Claude"></option>
+        <option value="Codex"></option>
+        <option value="Gemini"></option>
+        <option value="Grok"></option>
+        <option value="Kimi K3"></option>
+      </datalist>
+      <p class="ac__hint">Use the model name you would recognize later.</p>
     </div>
 
     <p class="ac__warn" role="note">
@@ -142,8 +165,8 @@ const {
       <p class="ac__eyebrow">Ready to hand off</p>
       <h3 class="ac__result-title">Your agent prompt is ready.</h3>
       <p class="ac__result-lead">
-        Paste it into your assistant as one message. The key inside appears once and cannot
-        be shown again.
+        Paste it into your assistant as one message. This page will close the prompt when
+        the agent first connects.
       </p>
     </div>
 
@@ -161,8 +184,8 @@ const {
     <p class="ac__status" role="status" aria-live="polite" data-slot="copy-status"></p>
 
     <div class="ac__result-actions">
-      <button class="ac__btn ac__btn--quiet" type="button" data-action="clear">
-        Clear this prompt
+      <button class="ac__btn ac__btn--quiet" type="button" data-action="done">
+        Done
       </button>
     </div>
   </div>
@@ -182,7 +205,14 @@ const {
     myAgents,
     type AgentIdentity,
   } from "../../lib/agent-connect";
-  import { NoDeployment, currentSession, deployment, myWorkspaces, uuid } from "../../lib/commonswarm";
+  import {
+    NoDeployment,
+    agentAccessStatuses,
+    currentSession,
+    deployment,
+    myWorkspaces,
+    uuid,
+  } from "../../lib/commonswarm";
   import { dashboardAgentPrompt } from "./agent-prompt";
 
   /*
@@ -196,11 +226,13 @@ const {
 
     /** Held only between the mint returning and the reader clearing the screen. */
     #prompt: string | null = null;
+    #tokenId: string | null = null;
     #workspaceId = "";
     #workspaceName = "";
     #agents: AgentIdentity[] = [];
     #busy = false;
     #copyTimer: number | undefined;
+    #pollTimer: number | undefined;
     #loadQueued = false;
     #loadVersion = 0;
     #retargetPending = false;
@@ -213,6 +245,11 @@ const {
       this.#wire();
       this.#ready = true;
       void this.#load();
+    }
+
+    disconnectedCallback() {
+      window.clearTimeout(this.#copyTimer);
+      window.clearInterval(this.#pollTimer);
     }
 
     attributeChangedCallback() {
@@ -268,19 +305,29 @@ const {
       this.#q<HTMLButtonElement>('[data-action="copy"]')?.addEventListener("click", () => {
         void this.#copy();
       });
-      this.#q<HTMLButtonElement>('[data-action="clear"]')?.addEventListener("click", () => {
-        this.clearPrompt();
+      this.#q<HTMLButtonElement>('[data-action="done"]')?.addEventListener("click", () => {
+        this.finishPrompt("done");
       });
     }
 
     clearPrompt(notify = true) {
+      this.finishPrompt("done", notify);
+    }
+
+    finishPrompt(reason: "done" | "back" | "consumed", notify = true) {
       if (this.#prompt === null) return;
+      const tokenId = this.#tokenId;
       this.#forget();
       this.#state("ready");
       const retarget = this.#retargetPending;
       this.#retargetPending = false;
       if (notify) {
-        this.dispatchEvent(new CustomEvent("commonswarm:agent-secret-cleared", { bubbles: true }));
+        this.dispatchEvent(
+          new CustomEvent("commonswarm:agent-secret-cleared", {
+            bubbles: true,
+            detail: { reason, tokenId },
+          }),
+        );
       }
       if (retarget) this.#queueLoad();
     }
@@ -292,6 +339,9 @@ const {
      */
     #forget() {
       this.#prompt = null;
+      this.#tokenId = null;
+      window.clearInterval(this.#pollTimer);
+      this.#pollTimer = undefined;
       this.#text("prompt", "");
       this.#text("copy-status", "");
       this.#resetCopyLabel();
@@ -374,7 +424,7 @@ const {
       for (const agent of this.#agents) {
         const option = document.createElement("option");
         option.value = agent.principalId;
-        option.textContent = agent.name;
+        option.textContent = `${agent.name} · ${agent.model ?? "Model not specified"}`;
         select.append(option);
       }
       form.dataset.hasAgents = this.#agents.length > 0 ? "yes" : "no";
@@ -385,9 +435,12 @@ const {
     /** The name field is only meaningful when a new identity is being created. */
     #syncNameField() {
       const select = this.#q<HTMLSelectElement>('[data-field="identity"]');
-      const wrap = this.#q<HTMLElement>('[data-field-wrap="name"]');
-      if (!select || !wrap) return;
-      wrap.hidden = select.value !== "";
+      const nameWrap = this.#q<HTMLElement>('[data-field-wrap="name"]');
+      const modelWrap = this.#q<HTMLElement>('[data-field-wrap="model"]');
+      if (!select || !nameWrap || !modelWrap) return;
+      const existing = select.value !== "";
+      nameWrap.hidden = existing;
+      modelWrap.hidden = existing;
     }
 
     #formError(message: string | null) {
@@ -447,11 +500,18 @@ const {
 
       const select = this.#q<HTMLSelectElement>('[data-field="identity"]');
       const nameField = this.#q<HTMLInputElement>('[data-field="name"]');
+      const modelField = this.#q<HTMLInputElement>('[data-field="model"]');
       const existingId = select?.value ?? "";
       const name = (nameField?.value ?? "").trim();
+      const model = (modelField?.value ?? "").trim();
       if (!existingId && name.length === 0) {
         this.#formError("Name the AI assistant first — collaborators will see this name.");
         nameField?.focus();
+        return;
+      }
+      if (!existingId && model.length === 0) {
+        this.#formError("Add the model so teammates can tell your agents apart.");
+        modelField?.focus();
         return;
       }
 
@@ -479,9 +539,10 @@ const {
 
         let identity: AgentIdentity;
         if (existingId) {
-          identity = {
+          identity = this.#agents.find((agent) => agent.principalId === existingId) ?? {
             principalId: existingId,
-            name: this.#agents.find((a) => a.principalId === existingId)?.name ?? "your agent",
+            name: "your agent",
+            model: null,
           };
           this.#text("identity-note", " — reusing the one you already have");
           this.#step("create-identity", "skipped");
@@ -493,6 +554,7 @@ const {
             identityCommandId,
             this.#workspaceId,
             name,
+            model,
           );
           this.#step("create-identity", "done");
         }
@@ -519,25 +581,48 @@ const {
           anonKey: target.anonKey,
         });
         this.#text("prompt", this.#prompt);
+        this.#tokenId = credential.tokenId;
         this.#text("copy-status", "");
         this.#resetCopyLabel();
         this.#state("done");
         this.dispatchEvent(
-          new CustomEvent("commonswarm:agent-connected", {
+          new CustomEvent("commonswarm:agent-prompt-ready", {
             bubbles: true,
             detail: {
               principalId: credential.principalId,
               name: credential.principalName,
+              model: identity.model,
+              tokenId: credential.tokenId,
               workspaceId: this.#workspaceId,
             },
           }),
         );
+        this.#watchForFirstUse(credential.tokenId);
       } catch (error) {
         this.#state("ready");
         this.#formError(this.#explain(error));
       }
       /* No `finally { #busy = false }` here: #mint()'s wrapper clears it, and clearing it
          twice would let a second submit through while this call was still unwinding. */
+    }
+
+    #watchForFirstUse(tokenId: string) {
+      window.clearInterval(this.#pollTimer);
+      let checking = false;
+      const check = async () => {
+        if (checking || this.#prompt === null || this.#tokenId !== tokenId) return;
+        checking = true;
+        try {
+          const [status] = await agentAccessStatuses(this.#workspaceId, tokenId);
+          if (status?.firstUsedAt) this.finishPrompt("consumed");
+        } catch {
+          // Polling is advisory. Pending access remains the durable place to
+          // inspect or cancel a credential if this read temporarily fails.
+        } finally {
+          checking = false;
+        }
+      };
+      this.#pollTimer = window.setInterval(() => void check(), 1_800);
     }
 
     /*

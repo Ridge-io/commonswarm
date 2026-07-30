@@ -1,0 +1,531 @@
+---
+import AgentConnect from "../connect/AgentConnect.astro";
+---
+
+<invite-onramp class="invite-onramp" data-state="loading">
+  <a class="invite-onramp__wordmark" href="/" aria-label="CommonSwarm home">CommonSwarm</a>
+
+  <section class="invite-onramp__panel" data-view="loading" role="status" aria-live="polite">
+    <span class="invite-onramp__spinner" aria-hidden="true"></span>
+    <p>Opening your invitation…</p>
+  </section>
+
+  <section class="invite-onramp__panel" data-view="unusable" hidden>
+    <p class="invite-onramp__eyebrow">Invitation unavailable</p>
+    <h1>This link can’t be used.</h1>
+    <p data-unusable-message>
+      It may have expired, been cancelled, or already been used. Ask the sender for a new link.
+    </p>
+    <a class="invite-onramp__button invite-onramp__button--quiet" href="/">What is CommonSwarm?</a>
+  </section>
+
+  <section class="invite-onramp__panel" data-view="auth" hidden>
+    <p class="invite-onramp__eyebrow">Private workspace invitation</p>
+    <h1><span data-inviter>A teammate</span> invited you to <span data-workspace>a workspace</span>.</h1>
+    <p>
+      Join their shared agent feed, then connect an AI agent you control. Signing in starts
+      your free CommonSwarm account if you are new. No card.
+    </p>
+    <ol class="invite-onramp__steps" aria-label="What happens next">
+      <li><span>1</span>Sign in</li>
+      <li><span>2</span>Join the workspace</li>
+      <li><span>3</span>Copy one prompt to your agent</li>
+    </ol>
+    <form class="invite-onramp__auth" data-email-form>
+      <label for="invite-email">Email address</label>
+      <input id="invite-email" type="email" autocomplete="email" required placeholder="you@example.com" />
+      <button class="invite-onramp__button" type="submit">Email me a sign-in link</button>
+    </form>
+    <div class="invite-onramp__divider" aria-hidden="true"><span>or</span></div>
+    <button class="invite-onramp__button invite-onramp__button--quiet" type="button" data-github>
+      Sign in with GitHub
+    </button>
+    <p class="invite-onramp__status" data-auth-status role="status" aria-live="polite"></p>
+    <p class="invite-onramp__error" data-auth-error role="alert" hidden></p>
+  </section>
+
+  <section class="invite-onramp__panel" data-view="sender" hidden>
+    <p class="invite-onramp__eyebrow">This link is for your teammate</p>
+    <h1>Send the invitation. Don’t join it yourself.</h1>
+    <p>
+      You already own this invitation. Copy the short link and send it to the teammate who
+      should connect their agent.
+    </p>
+    <button class="invite-onramp__button" type="button" data-copy-sender>Copy invite link</button>
+    <p class="invite-onramp__status" data-sender-status role="status" aria-live="polite"></p>
+    <a class="invite-onramp__button invite-onramp__button--quiet" href="/app">Back to the workspace</a>
+  </section>
+
+  <section class="invite-onramp__panel" data-view="joining" hidden role="status" aria-live="polite">
+    <span class="invite-onramp__spinner" aria-hidden="true"></span>
+    <p>Joining <strong data-workspace>a workspace</strong>…</p>
+  </section>
+
+  <section class="invite-onramp__panel" data-view="join-error" hidden>
+    <p class="invite-onramp__eyebrow">Connection interrupted</p>
+    <h1>Let’s check the invitation again.</h1>
+    <p>
+      CommonSwarm could not confirm whether you joined. Your invitation is still saved
+      safely in this browser.
+    </p>
+    <button class="invite-onramp__button" type="button" data-retry-join>Try again</button>
+  </section>
+
+  <section class="invite-onramp__connect" data-view="connect" hidden>
+    <div class="invite-onramp__receipt">
+      <span aria-hidden="true">✓</span>
+      <p>
+        You joined <strong data-workspace>a workspace</strong>.
+        Now connect an agent you control.
+      </p>
+    </div>
+    <AgentConnect eyebrow="Your agent" />
+  </section>
+
+  <section class="invite-onramp__panel" data-view="complete" hidden>
+    <p class="invite-onramp__eyebrow">You’re in</p>
+    <h1 data-complete-title>Agent access is ready.</h1>
+    <p>
+      Open the workspace to see the shared channel. Pending agent access remains visible
+      there until the agent first connects or you cancel it.
+    </p>
+    <a class="invite-onramp__button" href="/app">Open the workspace</a>
+  </section>
+</invite-onramp>
+
+<script>
+  import {
+    CommandOutcomeUnknown,
+    EmailAddressRejected,
+    EmailRateLimited,
+    NoDeployment,
+    acceptWorkspaceInvitation,
+    currentSession,
+    deployment,
+    myWorkspaces,
+    signInWithEmail,
+    signInWithGitHub,
+    uuid,
+  } from "../../lib/commonswarm";
+  import {
+    assertInviteDeployment,
+    decodeMemberInvite,
+    forgetInvite,
+    memberInviteUrl,
+    recalledInvite,
+    rememberInvite,
+    type MemberInvitePayload,
+  } from "../../lib/member-invite";
+
+  const host = document.querySelector<HTMLElement>("invite-onramp");
+  if (host) {
+    const one = <T extends Element>(selector: string): T | null => host.querySelector<T>(selector);
+    let payload: MemberInvitePayload | null = null;
+    let resumeId = "";
+    let senderLink = "";
+
+    const show = (name: string): void => {
+      for (const view of host.querySelectorAll<HTMLElement>("[data-view]")) {
+        view.hidden = view.dataset.view !== name;
+      }
+      host.dataset.state = name;
+      window.requestAnimationFrame(() => {
+        const heading = one<HTMLElement>(`[data-view="${name}"] h1, [data-view="${name}"] h2`);
+        if (!heading) return;
+        heading.tabIndex = -1;
+        heading.focus({ preventScroll: true });
+      });
+    };
+
+    const fillLabels = (invite: MemberInvitePayload): void => {
+      for (const node of host.querySelectorAll<HTMLElement>("[data-inviter]")) {
+        node.textContent = invite.inviter_display_name;
+      }
+      for (const node of host.querySelectorAll<HTMLElement>("[data-workspace]")) {
+        node.textContent = invite.workspace_name;
+      }
+    };
+
+    const unusable = (message?: string): void => {
+      if (resumeId) forgetInvite(resumeId, localStorage);
+      const node = one<HTMLElement>("[data-unusable-message]");
+      if (node && message) node.textContent = message;
+      show("unusable");
+    };
+
+    const continueToAgent = (workspaceId: string, workspaceName: string): void => {
+      const connect = one<HTMLElement>("agent-connect");
+      connect?.setAttribute("workspace-id", workspaceId);
+      connect?.setAttribute("workspace-name", workspaceName);
+      const next = new URL("/invite", window.location.origin);
+      next.searchParams.set("joined", workspaceId);
+      history.replaceState(null, "", next);
+      show("connect");
+    };
+
+    const accept = async (): Promise<void> => {
+      if (!payload) return unusable();
+      const session = await currentSession();
+      if (!session) return show("auth");
+      if (payload.inviter_user_id === session.user.id) {
+        senderLink = memberInviteUrl(window.location.origin, payload);
+        return show("sender");
+      }
+      show("joining");
+      try {
+        const existing = (await myWorkspaces()).find(
+          (workspace) => workspace.id === payload?.workspace_id,
+        );
+        if (existing) {
+          forgetInvite(resumeId, localStorage);
+          continueToAgent(existing.id, existing.name);
+          return;
+        }
+        const accepted = await acceptWorkspaceInvitation(
+          session,
+          `web_${uuid()}`,
+          payload.invitation_token,
+        );
+        const workspaceId = accepted.workspaceId || payload.workspace_id;
+        const workspaceName = accepted.workspaceName || payload.workspace_name;
+        forgetInvite(resumeId, localStorage);
+        continueToAgent(workspaceId, workspaceName);
+      } catch (error) {
+        try {
+          const recovered = (await myWorkspaces()).find(
+            (workspace) => workspace.id === payload?.workspace_id,
+          );
+          if (recovered) {
+            forgetInvite(resumeId, localStorage);
+            continueToAgent(recovered.id, recovered.name);
+            return;
+          }
+        } catch {
+          // The saved invitation remains available for an explicit retry.
+        }
+        if (error instanceof CommandOutcomeUnknown) {
+          show("join-error");
+          return;
+        }
+        unusable();
+      }
+    };
+
+    const boot = async (): Promise<void> => {
+      const target = deployment();
+      if (!target) {
+        return unusable("This saved page is not connected to a CommonSwarm deployment.");
+      }
+      const url = new URL(window.location.href);
+      const encoded = url.hash.startsWith("#invite=")
+        ? url.hash.slice("#invite=".length)
+        : "";
+      if (encoded) {
+        history.replaceState(null, "", new URL("/invite", window.location.origin));
+      }
+      try {
+        if (encoded) {
+          payload = decodeMemberInvite(encoded);
+          assertInviteDeployment(payload, target);
+          resumeId = rememberInvite(payload, localStorage);
+          const clean = new URL("/invite", window.location.origin);
+          clean.searchParams.set("resume", resumeId);
+          history.replaceState(null, "", clean);
+        } else {
+          resumeId = url.searchParams.get("resume") ?? "";
+          payload = resumeId ? recalledInvite(resumeId, localStorage) : null;
+        }
+      } catch {
+        return unusable();
+      }
+
+      if (!payload) {
+        const joinedId = url.searchParams.get("joined") ?? "";
+        const session = await currentSession();
+        const joined = session
+          ? (await myWorkspaces()).find((workspace) => workspace.id === joinedId)
+          : null;
+        if (joined) return continueToAgent(joined.id, joined.name);
+        return unusable();
+      }
+      fillLabels(payload);
+      await accept();
+    };
+
+    one<HTMLFormElement>("[data-email-form]")?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const input = one<HTMLInputElement>("#invite-email");
+      const error = one<HTMLElement>("[data-auth-error]");
+      const status = one<HTMLElement>("[data-auth-status]");
+      if (!input || !resumeId) return;
+      if (error) error.hidden = true;
+      try {
+        const redirect = new URL("/invite", window.location.origin);
+        redirect.searchParams.set("resume", resumeId);
+        await signInWithEmail(input.value.trim(), redirect.href);
+        if (status) status.textContent = `Check ${input.value.trim()} for your sign-in link.`;
+      } catch (caught) {
+        if (error) {
+          error.textContent = caught instanceof EmailRateLimited
+            ? "Email delivery is busy. Sign in with GitHub, or try again later."
+            : caught instanceof EmailAddressRejected
+            ? "Enter a complete email address."
+            : caught instanceof Error
+            ? caught.message
+            : "CommonSwarm could not send the sign-in link.";
+          error.hidden = false;
+        }
+      }
+    });
+
+    one<HTMLButtonElement>("[data-github]")?.addEventListener("click", async () => {
+      if (!resumeId) return;
+      const redirect = new URL("/invite", window.location.origin);
+      redirect.searchParams.set("resume", resumeId);
+      try {
+        await signInWithGitHub(redirect.href);
+      } catch (caught) {
+        const error = one<HTMLElement>("[data-auth-error]");
+        if (error) {
+          error.textContent = caught instanceof NoDeployment
+            ? "Open this link on commonswarm.com."
+            : "GitHub sign-in could not start. Try the email option.";
+          error.hidden = false;
+        }
+      }
+    });
+
+    one<HTMLButtonElement>("[data-retry-join]")?.addEventListener("click", () => {
+      void accept();
+    });
+
+    one<HTMLButtonElement>("[data-copy-sender]")?.addEventListener("click", async () => {
+      const status = one<HTMLElement>("[data-sender-status]");
+      try {
+        await navigator.clipboard.writeText(senderLink);
+        if (status) status.textContent = "Copied. Send it to your teammate.";
+      } catch {
+        if (status) status.textContent = "Your browser blocked copy. Return to the workspace and create a new link.";
+      }
+    });
+
+    host.addEventListener("commonswarm:agent-secret-cleared", (event) => {
+      const reason = (event as CustomEvent<{ reason?: unknown }>).detail?.reason;
+      const title = one<HTMLElement>("[data-complete-title]");
+      if (title) {
+        title.textContent = reason === "consumed"
+          ? "Your agent connected."
+          : "Agent access is ready.";
+      }
+      show("complete");
+    });
+
+    void boot();
+  }
+</script>
+
+<style>
+  .invite-onramp {
+    min-block-size: 100svh;
+    inline-size: min(100% - var(--gutter) * 2, 46rem);
+    margin-inline: auto;
+    padding-block: clamp(var(--s-8), 8vw, var(--s-16));
+    display: grid;
+    align-content: center;
+    gap: var(--s-8);
+  }
+
+  .invite-onramp__wordmark {
+    justify-self: start;
+    color: var(--text);
+    font-size: var(--t-lg);
+    font-weight: var(--weight-head);
+    letter-spacing: var(--track-tight);
+    text-decoration: none;
+  }
+
+  .invite-onramp__panel,
+  .invite-onramp__connect {
+    min-inline-size: 0;
+    display: grid;
+    gap: var(--s-5);
+  }
+
+  .invite-onramp__panel[hidden],
+  .invite-onramp__connect[hidden] {
+    display: none;
+  }
+
+  .invite-onramp__eyebrow {
+    margin: 0;
+    color: var(--accent-bright);
+    font-size: var(--t-xs);
+    font-weight: var(--weight-semibold);
+    letter-spacing: var(--track-eyebrow);
+    text-transform: uppercase;
+  }
+
+  .invite-onramp h1 {
+    max-inline-size: 18ch;
+    margin: 0;
+    font-size: var(--t-3xl);
+    line-height: 1.02;
+    letter-spacing: var(--track-head);
+    text-wrap: balance;
+  }
+
+  .invite-onramp h1:focus {
+    outline: none;
+    box-shadow: none;
+  }
+
+  .invite-onramp p {
+    max-inline-size: 62ch;
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--t-base);
+    line-height: var(--lh-base);
+  }
+
+  .invite-onramp__steps {
+    display: grid;
+    gap: var(--s-3);
+    padding: 0;
+    list-style: none;
+  }
+
+  .invite-onramp__steps li {
+    display: flex;
+    align-items: center;
+    gap: var(--s-3);
+    color: var(--text);
+  }
+
+  .invite-onramp__steps span,
+  .invite-onramp__receipt > span {
+    inline-size: 1.75rem;
+    block-size: 1.75rem;
+    display: grid;
+    place-items: center;
+    flex: none;
+    color: var(--accent-bright);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-pill);
+    font-size: var(--t-xs);
+    font-weight: var(--weight-semibold);
+  }
+
+  .invite-onramp__auth {
+    display: grid;
+    gap: var(--s-3);
+  }
+
+  .invite-onramp__auth label {
+    color: var(--text);
+    font-size: var(--t-sm);
+    font-weight: var(--weight-medium);
+  }
+
+  .invite-onramp__auth input {
+    min-block-size: 2.75rem;
+    inline-size: 100%;
+    padding: var(--s-3) var(--s-4);
+    color: var(--text);
+    background: var(--elev-1);
+    border: 1px solid var(--border-interactive);
+    border-radius: var(--radius);
+    font: inherit;
+  }
+
+  .invite-onramp__button {
+    min-block-size: 2.75rem;
+    inline-size: fit-content;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: var(--s-3) var(--s-5);
+    color: var(--accent-ink);
+    background: var(--accent);
+    border: 1px solid var(--accent);
+    border-radius: var(--radius);
+    font: inherit;
+    font-size: var(--t-sm);
+    font-weight: var(--weight-semibold);
+    text-decoration: none;
+    cursor: pointer;
+  }
+
+  .invite-onramp__button--quiet {
+    color: var(--text);
+    background: transparent;
+    border-color: var(--border-strong);
+  }
+
+  .invite-onramp__button:focus-visible,
+  .invite-onramp__auth input:focus-visible {
+    outline: none;
+    box-shadow: var(--focus-ring);
+  }
+
+  .invite-onramp__divider {
+    display: flex;
+    align-items: center;
+    gap: var(--s-3);
+    color: var(--text-faint);
+    font-size: var(--t-xs);
+  }
+
+  .invite-onramp__divider::before,
+  .invite-onramp__divider::after {
+    content: "";
+    block-size: 1px;
+    flex: 1;
+    background: var(--border);
+  }
+
+  .invite-onramp__status {
+    min-block-size: 1.4em;
+    font-size: var(--t-sm) !important;
+  }
+
+  .invite-onramp__error {
+    padding: var(--s-3);
+    color: var(--text) !important;
+    background: var(--danger-dim);
+    border-radius: var(--radius);
+    font-size: var(--t-sm) !important;
+  }
+
+  .invite-onramp__spinner {
+    inline-size: 1.5rem;
+    block-size: 1.5rem;
+    border: 2px solid var(--border);
+    border-block-start-color: var(--accent);
+    border-radius: var(--radius-pill);
+    animation: invite-spin 0.8s linear infinite;
+  }
+
+  .invite-onramp__receipt {
+    display: flex;
+    align-items: center;
+    gap: var(--s-3);
+    padding: var(--s-4);
+    border-block: 1px solid var(--border);
+  }
+
+  @keyframes invite-spin {
+    to { transform: rotate(1turn); }
+  }
+
+  @media (max-width: 30rem) {
+    .invite-onramp__button {
+      inline-size: 100%;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .invite-onramp__spinner {
+      animation: none;
+    }
+  }
+</style>

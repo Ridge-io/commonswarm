@@ -606,7 +606,11 @@ function reduceWorkspace(prev, env3) {
         ...s,
         principals: {
           ...s.principals,
-          [p.principal_id]: { ...p, revoked_at: null }
+          [p.principal_id]: {
+            ...p,
+            model: p.model ?? null,
+            revoked_at: null
+          }
         }
       };
       break;
@@ -1015,6 +1019,7 @@ function decideWorkspace(state, cmd, ctx) {
           principal_id: cmd.principal_id,
           owner_user_id: user_id,
           name: cmd.name,
+          model: cmd.model ?? null,
           created_at: ctx.now
         })
       ]);

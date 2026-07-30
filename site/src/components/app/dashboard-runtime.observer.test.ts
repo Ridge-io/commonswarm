@@ -156,7 +156,7 @@ test("workspace creation and active-feed expiry cannot outlive their session", (
   );
   assert.match(
     feed,
-    /window\.clearTimeout\(signalExpiryTimer\)[\s\S]*if \(app\.dataset\.channelView === "connect"\) return/,
+    /window\.clearTimeout\(signalExpiryTimer\)[\s\S]*if \(addAgentViewOpen\(\)\) return/,
   );
   assert.match(
     feed,
@@ -224,8 +224,8 @@ test("showPanel must not stamp hidden on AgentConnect nested data-panel surfaces
   );
 });
 
-test("dashboard cannot hide a live or still-minting credential", () => {
-  const openWorkspace = between(dashboard, "const openWorkspace =", "const openConnect =");
+test("dashboard blocks an in-flight mint but Done and Back can finish a visible prompt", () => {
+  const openWorkspace = between(dashboard, "const openWorkspace =", "const openAgentChoice =");
   const guard = between(
     dashboard,
     "const keepConnectCredentialVisible =",
@@ -238,24 +238,19 @@ test("dashboard cannot hide a live or still-minting credential", () => {
     'one<HTMLButtonElement>("[data-add-agent]")',
   );
 
-  assert.match(guard, /connectState !== "working" && connectState !== "done"/);
-  assert.match(guard, /Clear this live prompt before leaving this screen/);
+  assert.match(guard, /connectState !== "working"/);
   assert.match(guard, /finish creating the key before leaving this screen/);
-  assert.match(guard, /data-action='clear'/);
   assert.match(close, /if \(keepConnectCredentialVisible\(\)\) return/);
+  assert.match(close, /connect\?\.dataset\.state === "done"[\s\S]*connect\.finishPrompt\("back"\)/);
   assert.match(signout, /if \(keepConnectCredentialVisible\(\)\) return/);
   assert.match(signout, /requestVersion \+= 1;[\s\S]*activeWorkspaceId = ""/);
   assert.match(
     openWorkspace,
-    /if \(mintBusy \|\| connectState === "working" \|\| connectState === "done"\)/,
+    /if \(connectState === "done"\)[\s\S]*pendingWorkspaceId = workspaceId;[\s\S]*connect\?\.finishPrompt\("back"\)/,
   );
   assert.match(
     openWorkspace,
-    /pendingWorkspaceId = changesWorkspace \? workspaceId : ""/,
-  );
-  assert.match(
-    openWorkspace,
-    /Clear this live prompt before refreshing this workspace/,
+    /if \(mintBusy \|\| connectState === "working"\)/,
   );
   assert.match(
     openWorkspace,
@@ -263,16 +258,19 @@ test("dashboard cannot hide a live or still-minting credential", () => {
   );
   assert.match(
     openWorkspace,
-    /people = nextRoster\.names;[\s\S]*members = nextRoster\.members;[\s\S]*if \(app\.dataset\.channelView !== "connect"\) renderChannel\(selected\)/,
+    /people = nextRoster\.names;[\s\S]*members = nextRoster\.members;[\s\S]*if \(!addAgentViewOpen\(\)\) renderChannel\(selected\)/,
   );
   assert.match(
     openWorkspace,
-    /channelLoadError = `\$\{readableError\(error\)\} Nothing was changed\.`;[\s\S]*if \(app\.dataset\.channelView === "connect"\) return;[\s\S]*renderChannel\(selected\);[\s\S]*showChannelView\("feed-error"\)/,
+    /channelLoadError = `\$\{readableError\(error\)\} Nothing was changed\.`;[\s\S]*if \(addAgentViewOpen\(\)\) return;[\s\S]*renderChannel\(selected\);[\s\S]*showChannelView\("feed-error"\)/,
   );
-  assert.match(close, /if \(channelLoadError\) showChannelView\("feed-error"\)/);
   assert.match(
-    close,
-    /loadSignals\(workspaceId, true, version\)\.catch\(\(error\) => \{[\s\S]*channelLoadError = `\$\{readableError\(error\)\} Nothing was changed\.`;[\s\S]*if \(app\.dataset\.channelView === "connect"\) return;[\s\S]*showChannelView\("feed-error"\)/,
+    dashboard,
+    /const returnToChannel = \(\): void => \{[\s\S]*if \(channelLoadError\) showChannelView\("feed-error"\)/,
+  );
+  assert.match(
+    dashboard,
+    /loadSignals\(workspaceId, true, version\)\.catch\(\(error\) => \{[\s\S]*channelLoadError = `\$\{readableError\(error\)\} Nothing was changed\.`;[\s\S]*if \(addAgentViewOpen\(\)\) return;[\s\S]*showChannelView\("feed-error"\)/,
   );
 });
 
@@ -329,5 +327,5 @@ test("clearing the one-time secret always returns to the active channel", () => 
   );
 
   assert.match(source, /if \(nextWorkspaceId\)[\s\S]*void openWorkspace\(nextWorkspaceId\)/);
-  assert.match(source, /syncConnectWorkspace\(selected\);[\s\S]*closeConnect\(\);/);
+  assert.match(source, /syncConnectWorkspace\(selected\);[\s\S]*returnToChannel\(\);/);
 });

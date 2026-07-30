@@ -72,7 +72,7 @@ test("agent sibling gate stays in the pure reducer and edge scope path", async (
   );
 });
 
-test("site Remove is principal-only and distinct from Clear", async () => {
+test("site identity removal stays distinct from cancelling pending access", async () => {
   const dashboard = await readFile(
     "site/src/components/app/LiveDashboard.astro",
     "utf8",
@@ -97,13 +97,11 @@ test("site Remove is principal-only and distinct from Clear", async () => {
     /Clearing a Copy prompt only hides the secret/,
   );
   assert.match(commonswarm, /kind: "revoke_agent_principal"/);
-  assert.doesNotMatch(
-    commonswarm,
-    /kind: "revoke_agent_token"/,
-    "browser must not expose per-token revoke UI",
-  );
-  assert.match(connect, /data-action="clear"/);
-  assert.match(connect, /Clear this prompt/);
+  assert.match(commonswarm, /kind: "revoke_agent_token"/);
+  assert.match(dashboard, /Pending access/);
+  assert.match(dashboard, /revokeAgentToken\(/);
+  assert.match(connect, /data-action="done"/);
+  assert.match(connect, />\s*Done\s*</);
   assert.doesNotMatch(
     connect,
     /revoke_agent_principal|revokeAgentPrincipal/,

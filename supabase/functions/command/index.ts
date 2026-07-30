@@ -71,9 +71,10 @@ type Command =
 
 type ConnectCommand =
   | { kind: "invite_member"; email: string; ttl_ms?: number }
+  | { kind: "revoke_invitation"; invitation_id: string }
   | { kind: "accept_invitation"; token: string }
   | { kind: "remove_member"; user_id: string }
-  | { kind: "create_agent_principal"; name: string }
+  | { kind: "create_agent_principal"; name: string; model?: string }
   | { kind: "revoke_agent_principal"; principal_id: string }
   | {
     kind: "mint_agent_token";
@@ -150,6 +151,7 @@ interface WorkspaceState {
     principal_id: string;
     owner_user_id: string;
     name: string;
+    model: string | null;
     created_at: number;
     revoked_at: number | null;
   }>;
@@ -176,9 +178,15 @@ type WorkspaceCommand =
     token_hash: string;
     expires_at: number;
   }
+  | { kind: "revoke_invitation"; invitation_id: string }
   | { kind: "accept_invitation"; token_hash: string }
   | { kind: "remove_member"; user_id: string }
-  | { kind: "create_agent_principal"; principal_id: string; name: string }
+  | {
+    kind: "create_agent_principal";
+    principal_id: string;
+    name: string;
+    model: string | null;
+  }
   | { kind: "revoke_agent_principal"; principal_id: string }
   | {
     kind: "mint_agent_token";
@@ -607,6 +615,7 @@ const COMMAND_KINDS = [
   "close",
   "reopen",
   "invite_member",
+  "revoke_invitation",
   "accept_invitation",
   "remove_member",
   "create_agent_principal",
@@ -633,6 +642,7 @@ const TASK_COMMAND_KINDS = [
  */
 const CONNECT_COMMAND_KINDS = [
   "invite_member",
+  "revoke_invitation",
   "accept_invitation",
   "remove_member",
   "create_agent_principal",
@@ -1264,11 +1274,35 @@ function validateCommand(
         }
         : { ok: false, status: 400, reason: "invitation token is malformed" };
     }
-    if (cmd.kind === "create_agent_principal") {
-      return exactKeys(cmd, ["kind", "name"]) && boundedText(cmd.name, 80)
+    if (cmd.kind === "revoke_invitation") {
+      return exactKeys(cmd, ["kind", "invitation_id"]) &&
+          typeof cmd.invitation_id === "string" &&
+          UUID_RE.test(cmd.invitation_id)
         ? {
           ok: true,
-          command: { kind: "create_agent_principal", name: cmd.name },
+          command: {
+            kind: "revoke_invitation",
+            invitation_id: cmd.invitation_id,
+          },
+        }
+        : {
+          ok: false,
+          status: 400,
+          reason: "revoke_invitation fields are malformed",
+        };
+    }
+    if (cmd.kind === "create_agent_principal") {
+      const optionalKeys = Object.hasOwn(cmd, "model") ? ["model"] : [];
+      return exactKeys(cmd, ["kind", "name", ...optionalKeys]) &&
+          boundedText(cmd.name, 80) &&
+          (cmd.model === undefined || boundedText(cmd.model, 120))
+        ? {
+          ok: true,
+          command: {
+            kind: "create_agent_principal",
+            name: cmd.name,
+            ...(cmd.model === undefined ? {} : { model: cmd.model }),
+          },
         }
         : { ok: false, status: 400, reason: "principal name is malformed" };
     }
@@ -1887,7 +1921,7 @@ async function loadWorkspaceState(
         WHERE workspace_id = ${route.workspaceId}::uuid
       `,
       tx<Record<string, unknown>[]>`
-        SELECT principal_id, owner_user_id, name, created_at, revoked_at
+        SELECT principal_id, owner_user_id, name, model, created_at, revoked_at
         FROM swarm.agent_principals
         WHERE workspace_id = ${route.workspaceId}::uuid
       `,
@@ -1938,6 +1972,7 @@ async function loadWorkspaceState(
       principal_id: principalId,
       owner_user_id: String(row.owner_user_id),
       name: String(row.name),
+      model: row.model === null ? null : String(row.model),
       created_at: millis(row.created_at) ?? 0,
       revoked_at: millis(row.revoked_at),
     };
@@ -2076,11 +2111,17 @@ async function prepareWorkspaceCommand(
       kind: "accept_invitation",
       token_hash: bytesToHex(invitationHash),
     };
+  } else if (wire.kind === "revoke_invitation") {
+    command = {
+      kind: "revoke_invitation",
+      invitation_id: wire.invitation_id,
+    };
   } else if (wire.kind === "create_agent_principal") {
     command = {
       kind: "create_agent_principal",
       principal_id: crypto.randomUUID(),
       name: wire.name,
+      model: wire.model ?? null,
     };
   } else if (wire.kind === "remove_member") {
     command = { kind: "remove_member", user_id: wire.user_id };
@@ -2849,6 +2890,25 @@ async function updateWorkspaceProjection(
           NULL
         )
       `;
+    } else if (event.type === "InvitationRevoked") {
+      if (
+        typeof payload.invitation_id !== "string" ||
+        typeof payload.revoked_at !== "number"
+      ) {
+        throw new Error("InvitationRevoked payload is malformed");
+      }
+      const updated = await tx<{ invitation_id: string }[]>`
+        UPDATE swarm.invitations
+        SET revoked_at = ${new Date(payload.revoked_at)}
+        WHERE invitation_id = ${payload.invitation_id}::uuid
+          AND workspace_id = ${route.workspaceId}::uuid
+          AND consumed_at IS NULL
+          AND revoked_at IS NULL
+        RETURNING invitation_id
+      `;
+      if (updated.length !== 1) {
+        throw new Error("InvitationRevoked projection did not revoke exactly one invitation");
+      }
     } else if (event.type === "MemberJoined") {
       const member = projection.members[String(payload.user_id)];
       if (!member) throw new Error("folded member projection missing");
@@ -2892,12 +2952,13 @@ async function updateWorkspaceProjection(
       if (!principal) throw new Error("folded principal projection missing");
       await tx`
         INSERT INTO swarm.agent_principals (
-          principal_id, workspace_id, owner_user_id, name, created_at, revoked_at
+          principal_id, workspace_id, owner_user_id, name, model, created_at, revoked_at
         ) VALUES (
           ${principal.principal_id}::uuid,
           ${route.workspaceId}::uuid,
           ${principal.owner_user_id}::uuid,
           ${principal.name},
+          ${principal.model},
           ${new Date(principal.created_at)},
           NULL
         )

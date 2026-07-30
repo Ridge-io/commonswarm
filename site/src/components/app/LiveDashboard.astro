@@ -228,6 +228,17 @@ import SampleNotice from "./SampleNotice.astro";
             </div>
           </details>
 
+          <details class="dashboard__rail-details" data-access-details hidden>
+            <summary>
+              <span>Pending access</span>
+              <span data-access-count>0</span>
+            </summary>
+            <div class="dashboard__rail-details-body">
+              <ul class="dashboard__agent-list" data-access-list></ul>
+              <p class="dashboard__form-error" data-access-error role="alert" hidden></p>
+            </div>
+          </details>
+
           <details class="dashboard__rail-details" data-workspace-details>
             <summary>Workspace details</summary>
             <div class="dashboard__rail-details-body">
@@ -276,6 +287,7 @@ import SampleNotice from "./SampleNotice.astro";
           </header>
 
           <div class="dashboard__channel-body">
+            <p class="dashboard__channel-receipt" role="status" aria-live="polite" data-channel-receipt hidden></p>
             <section class="dashboard__channel-empty" data-channel-view="no-agents">
               <div class="dashboard__empty-orbit" aria-hidden="true">
                 <span></span><span></span><span></span>
@@ -289,6 +301,77 @@ import SampleNotice from "./SampleNotice.astro";
               <button class="dashboard__button dashboard__button--primary" type="button" data-add-agent>
                 Add an agent
               </button>
+            </section>
+
+            <section class="dashboard__connect-view dashboard__choice-view" data-channel-view="agent-choice" hidden>
+              <button class="dashboard__back-button" type="button" data-close-agent-choice>
+                <span aria-hidden="true">←</span>
+                Back to the channel
+              </button>
+              <div class="dashboard__choice-copy">
+                <p class="dashboard__eyebrow">Add an agent</p>
+                <h2>Who runs this agent?</h2>
+                <p>Choose who should receive and control the one-time agent prompt.</p>
+              </div>
+              <div class="dashboard__choice-list">
+                <button class="dashboard__choice" type="button" data-agent-owner-self>
+                  <span>
+                    <strong>I do</strong>
+                    <small>Create a prompt for an agent you control.</small>
+                  </span>
+                  <span aria-hidden="true">→</span>
+                </button>
+                <button class="dashboard__choice" type="button" data-agent-owner-teammate>
+                  <span>
+                    <strong>A teammate does</strong>
+                    <small>Send a short invite link. They create their own agent prompt.</small>
+                  </span>
+                  <span aria-hidden="true">→</span>
+                </button>
+              </div>
+            </section>
+
+            <section class="dashboard__connect-view dashboard__invite-view" data-channel-view="invite" hidden>
+              <button class="dashboard__back-button" type="button" data-close-invite>
+                <span aria-hidden="true">←</span>
+                Back to who runs this agent
+              </button>
+              <div class="dashboard__choice-copy">
+                <p class="dashboard__eyebrow">Invite a teammate</p>
+                <h2>Send one link. They connect their agent.</h2>
+                <p>
+                  Your teammate sees the workspace, signs in, and gets the prompt for an
+                  agent they control. You never need to text them a live agent key.
+                </p>
+              </div>
+              <form class="dashboard__invite-form" data-invite-form>
+                <label for="dashboard-invite-email">Their email</label>
+                <input
+                  id="dashboard-invite-email"
+                  type="email"
+                  autocomplete="email"
+                  required
+                  placeholder="calvin@example.com"
+                  data-invite-email
+                />
+                <button class="dashboard__button dashboard__button--primary" type="submit" data-invite-submit>
+                  Create invite link
+                </button>
+              </form>
+              <div class="dashboard__invite-result" data-invite-result hidden>
+                <p class="dashboard__invite-receipt">
+                  Private one-use link · expires in 7 days
+                </p>
+                <pre class="dashboard__invite-link" data-invite-link tabindex="0"></pre>
+                <button class="dashboard__button dashboard__button--primary" type="button" data-copy-invite>
+                  Copy invite link
+                </button>
+                <p class="dashboard__copy-status" role="status" aria-live="polite" data-invite-status></p>
+                <button class="dashboard__text-button" type="button" data-invite-done>
+                  Done
+                </button>
+              </div>
+              <p class="dashboard__form-error" role="alert" data-invite-error hidden></p>
             </section>
 
             <section class="dashboard__connect-view" data-channel-view="connect" hidden>
@@ -365,6 +448,7 @@ import SampleNotice from "./SampleNotice.astro";
   import type { Session } from "@supabase/supabase-js";
   import {
     ClientTooOld,
+    CommandOutcomeUnknown,
     EmailAddressRejected,
     EmailDomainNotAccepted,
     EmailNotVerified,
@@ -374,9 +458,15 @@ import SampleNotice from "./SampleNotice.astro";
     SignupRefused,
     WorkspaceOutcomeUnknown,
     WorkspaceLimitReached,
+    agentAccessStatuses,
     client,
     createWorkspace,
     currentSession,
+    deployment,
+    inviteWorkspaceMember,
+    pendingMemberInvites,
+    revokeAgentToken,
+    revokeWorkspaceInvitation,
     signInWithEmail,
     signInWithGitHub,
     signOut,
@@ -384,7 +474,10 @@ import SampleNotice from "./SampleNotice.astro";
     revokeAgentPrincipal,
     uuid,
     type Signal,
+    type AgentAccessStatus,
+    type PendingMemberInvite,
   } from "../../lib/commonswarm";
+  import { memberInviteUrl } from "../../lib/member-invite";
 
   interface Workspace {
     id: string;
@@ -394,6 +487,7 @@ import SampleNotice from "./SampleNotice.astro";
   interface Agent {
     principalId: string;
     name: string;
+    model: string | null;
     ownerUserId: string;
   }
 
@@ -405,6 +499,7 @@ import SampleNotice from "./SampleNotice.astro";
 
   interface SecretHoldingAgentConnect extends HTMLElement {
     clearPrompt(notify?: boolean): void;
+    finishPrompt(reason: "done" | "back" | "consumed", notify?: boolean): void;
   }
 
   interface CreateIntent {
@@ -439,6 +534,8 @@ import SampleNotice from "./SampleNotice.astro";
     let workspaces: Workspace[] = [];
     let agents: Agent[] = [];
     let members: Member[] = [];
+    let pendingInvites: PendingMemberInvite[] = [];
+    let accessStatuses: AgentAccessStatus[] = [];
     let people = new Map<string, string>();
     let signals: Signal[] = [];
     let activeWorkspaceId = "";
@@ -453,6 +550,9 @@ import SampleNotice from "./SampleNotice.astro";
     let bootInFlight: Promise<void> | null = null;
     let bootAgain = false;
     let signalExpiryTimer: number | undefined;
+    let liveFeedTimer: number | undefined;
+    let liveFeedInFlight = false;
+    let armLiveFeed = (): void => {};
     let connectFocusObserver: MutationObserver | null = null;
     let previousSignalIds = new Set<string>();
     let feedWasEmpty = false;
@@ -460,6 +560,8 @@ import SampleNotice from "./SampleNotice.astro";
     let activeCreate: { version: number; userId: string } | null = null;
     /** Principal whose live Copy-prompt secret is still on screen, if any. */
     let livePromptPrincipalId = "";
+    let freshInviteLink = "";
+    let inviteIntent: { email: string; commandId: string } | null = null;
 
     const SIGNAL_PAGE_SIZE = 50;
     const SIGNAL_FETCH_SIZE = SIGNAL_PAGE_SIZE + 1;
@@ -492,17 +594,35 @@ import SampleNotice from "./SampleNotice.astro";
     };
 
     const showChannelView = (
-      name: "no-agents" | "connect" | "feed-pending" | "feed-empty" | "feed-error" | "feed",
+      name:
+        | "no-agents"
+        | "agent-choice"
+        | "invite"
+        | "connect"
+        | "feed-pending"
+        | "feed-empty"
+        | "feed-error"
+        | "feed",
     ): void => {
       if (name !== "feed") {
         window.clearTimeout(signalExpiryTimer);
         signalExpiryTimer = undefined;
       }
+      if (name !== "feed" && name !== "feed-empty") {
+        window.clearInterval(liveFeedTimer);
+        liveFeedTimer = undefined;
+      }
       for (const section of all<HTMLElement>("[data-channel-view]")) {
         section.hidden = section.dataset.channelView !== name;
       }
       app.dataset.channelView = name;
+      if (name === "feed" || name === "feed-empty") {
+        queueMicrotask(() => armLiveFeed());
+      }
     };
+
+    const addAgentViewOpen = (): boolean =>
+      ["agent-choice", "invite", "connect"].includes(app.dataset.channelView ?? "");
 
     const accountName = (value: Session): string => {
       const meta = (value.user.user_metadata ?? {}) as Record<string, unknown>;
@@ -671,7 +791,7 @@ import SampleNotice from "./SampleNotice.astro";
         const { data, error } = await api
           .schema("swarm_read")
           .from("agent_principals")
-          .select("principal_id,name,owner_user_id,revoked_at,workspace_id")
+          .select("principal_id,name,model,owner_user_id,revoked_at,workspace_id")
           .eq("workspace_id", workspaceId)
           .is("revoked_at", null)
           .order("name", { ascending: true })
@@ -682,6 +802,7 @@ import SampleNotice from "./SampleNotice.astro";
         result.push(...page.map((row) => ({
           principalId: String(row.principal_id ?? ""),
           name: String(row.name ?? "Unnamed agent"),
+          model: row.model === null ? null : String(row.model),
           ownerUserId: String(row.owner_user_id ?? ""),
         })).filter((agent) =>
           agent.principalId.length > 0 && agent.ownerUserId.length > 0
@@ -792,6 +913,117 @@ import SampleNotice from "./SampleNotice.astro";
       }
     };
 
+    const renderPendingAccess = (): void => {
+      const list = one<HTMLUListElement>("[data-access-list]");
+      const count = one<HTMLElement>("[data-access-count]");
+      const details = one<HTMLDetailsElement>("[data-access-details]");
+      const now = Date.now();
+      const pendingAgents = accessStatuses.filter((access) =>
+        access.firstUsedAt === null &&
+        access.revokedAt === null &&
+        new Date(access.expiresAt).getTime() > now
+      );
+      const total = pendingInvites.length + pendingAgents.length;
+      if (count) count.textContent = String(total);
+      if (details) {
+        details.hidden = sampleMode || total === 0;
+        if (details.hidden) details.open = false;
+      }
+      if (!list) return;
+      list.replaceChildren();
+
+      const cancelButton = (
+        label: string,
+        cancel: (button: HTMLButtonElement) => Promise<void>,
+      ): HTMLButtonElement => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "dashboard__text-button";
+        button.textContent = "Cancel";
+        button.setAttribute("aria-label", `Cancel ${label}`);
+        button.addEventListener("click", () => void cancel(button));
+        return button;
+      };
+
+      for (const invitation of pendingInvites) {
+        const row = document.createElement("li");
+        row.className = "dashboard__agent";
+        const copy = document.createElement("span");
+        copy.className = "dashboard__agent-copy";
+        const title = document.createElement("strong");
+        title.textContent = invitation.email;
+        const state = document.createElement("span");
+        state.textContent = `Teammate invite · expires ${formatTime(invitation.expiresAt).relative}`;
+        copy.append(title, state);
+        row.append(
+          copy,
+          cancelButton(`invite for ${invitation.email}`, async (button) => {
+            if (!session) return;
+            button.disabled = true;
+            try {
+              await revokeWorkspaceInvitation(
+                session,
+                uuid(),
+                invitation.workspaceId,
+                invitation.invitationId,
+              );
+              await openWorkspace(invitation.workspaceId);
+            } catch (error) {
+              const target = one<HTMLElement>("[data-access-error]");
+              if (target) {
+                target.textContent = readableError(error);
+                target.hidden = false;
+              }
+            } finally {
+              button.disabled = false;
+            }
+          }),
+        );
+        list.append(row);
+      }
+
+      for (const access of pendingAgents) {
+        const row = document.createElement("li");
+        row.className = "dashboard__agent";
+        const copy = document.createElement("span");
+        copy.className = "dashboard__agent-copy";
+        const title = document.createElement("strong");
+        title.textContent = access.agentName;
+        const state = document.createElement("span");
+        const owner = people.get(access.ownerUserId) ?? "Workspace member";
+        state.textContent =
+          `${access.model ?? "Model not specified"} · owned by ${owner} · expires ${
+            formatTime(access.expiresAt).relative
+          }`;
+        copy.append(title, state);
+        row.append(
+          copy,
+          cancelButton(`access for ${access.agentName}`, async (button) => {
+            if (!session) return;
+            button.disabled = true;
+            try {
+              await revokeAgentToken(
+                session,
+                uuid(),
+                access.workspaceId,
+                access.tokenId,
+              );
+              await openWorkspace(access.workspaceId);
+            } catch (error) {
+              const target = one<HTMLElement>("[data-access-error]");
+              if (target) {
+                target.textContent = readableError(error);
+                target.hidden = false;
+              }
+            } finally {
+              button.disabled = false;
+            }
+          }),
+        );
+        list.append(row);
+      }
+    };
+
     const signalPage = async (
       workspaceId: string,
       cursor: SignalCursor | null,
@@ -802,7 +1034,7 @@ import SampleNotice from "./SampleNotice.astro";
       let query = api
         .schema("swarm_read")
         .from("signals")
-        .select("id,from,from_kind,kind,body,about,until,created_at")
+        .select("id,from,from_kind,to,kind,body,about,until,created_at")
         .eq("workspace_id", workspaceId)
         .or(`until.is.null,until.gt.${cutoff}`);
       if (cursor) {
@@ -822,6 +1054,7 @@ import SampleNotice from "./SampleNotice.astro";
           id: String(row.id),
           from: String(row.from ?? ""),
           fromKind: String(row.from_kind ?? ""),
+          to: row.to === null || row.to === undefined ? null : String(row.to),
           kind: String(row.kind ?? ""),
           body: String(row.body ?? ""),
           about: row.about === null || row.about === undefined ? null : String(row.about),
@@ -835,6 +1068,17 @@ import SampleNotice from "./SampleNotice.astro";
       const parts = name.trim().split(/\s+/).filter(Boolean);
       return (parts.length > 1 ? `${parts[0]?.[0] ?? ""}${parts[1]?.[0] ?? ""}` : name.slice(0, 2))
         .toUpperCase();
+    };
+
+    const markAgentAvatar = (node: HTMLElement, principalId: string): void => {
+      let hash = 2_166_136_261;
+      for (const char of principalId) {
+        hash ^= char.charCodeAt(0);
+        hash = Math.imul(hash, 16_777_619);
+      }
+      const unsigned = hash >>> 0;
+      node.style.setProperty("--avatar-hue", String(unsigned % 360));
+      node.dataset.avatarShape = String(unsigned % 3);
     };
 
     const renderWorkspaceList = (selected: Workspace): void => {
@@ -890,12 +1134,16 @@ import SampleNotice from "./SampleNotice.astro";
         avatar.className = "dashboard__agent-avatar";
         avatar.textContent = initials(agent.name);
         avatar.setAttribute("aria-hidden", "true");
+        markAgentAvatar(avatar, agent.principalId);
         const copy = document.createElement("span");
         copy.className = "dashboard__agent-copy";
         const name = document.createElement("strong");
         name.textContent = agent.name;
         const state = document.createElement("span");
-        state.textContent = "AI agent";
+        state.textContent =
+          `${agent.model ?? "Model not specified"} · owned by ${
+            people.get(agent.ownerUserId) ?? "Workspace member"
+          }`;
         copy.append(name, state);
         row.append(avatar, copy);
         // Owner/admin any principal; member only own. Clear on the connect
@@ -996,7 +1244,7 @@ import SampleNotice from "./SampleNotice.astro";
     const renderFeed = (): void => {
       window.clearTimeout(signalExpiryTimer);
       signalExpiryTimer = undefined;
-      if (app.dataset.channelView === "connect") return;
+      if (addAgentViewOpen()) return;
       const now = Date.now();
       signals = signals.filter(
         (signal) => signal.until === null || new Date(signal.until).getTime() > now,
@@ -1037,20 +1285,22 @@ import SampleNotice from "./SampleNotice.astro";
         showChannelView("feed-empty");
         return;
       }
-      const names = new Map(agents.map((agent) => [agent.principalId, agent.name]));
+      const agentById = new Map(agents.map((agent) => [agent.principalId, agent]));
       for (const signal of signals) {
         const row = document.createElement("li");
         row.className = "dashboard__message";
         if ((feedWasEmpty || previousSignalIds.size > 0) && !previousSignalIds.has(signal.id)) {
           row.classList.add("dashboard__message--fresh");
         }
-        const authorName = names.get(signal.from) ??
+        const authorAgent = agentById.get(signal.from);
+        const authorName = authorAgent?.name ??
           people.get(signal.from) ??
           (signal.fromKind === "user" ? "Team member" : `Agent ${signal.from.slice(0, 6)}`);
         const avatar = document.createElement("span");
         avatar.className = "dashboard__message-avatar";
         avatar.textContent = initials(authorName);
         avatar.setAttribute("aria-hidden", "true");
+        if (authorAgent) markAgentAvatar(avatar, authorAgent.principalId);
 
         const body = document.createElement("article");
         body.className = "dashboard__message-body";
@@ -1058,6 +1308,19 @@ import SampleNotice from "./SampleNotice.astro";
         meta.className = "dashboard__message-meta";
         const author = document.createElement("strong");
         author.textContent = authorName;
+        const identity = document.createElement("span");
+        identity.className = "dashboard__message-identity";
+        if (authorAgent) {
+          identity.textContent =
+            `${authorAgent.model ?? "Model not specified"} · owned by ${
+              people.get(authorAgent.ownerUserId) ?? "Workspace member"
+            }`;
+        } else {
+          identity.textContent = signal.fromKind === "user" ? "Workspace member" : "AI agent";
+        }
+        if (signal.to) {
+          identity.textContent += ` · to ${people.get(signal.to) ?? "workspace member"}`;
+        }
         const badge = document.createElement("span");
         badge.className = `dashboard__message-kind dashboard__message-kind--${signal.kind}`;
         badge.textContent = kindLabel(signal.kind);
@@ -1066,7 +1329,7 @@ import SampleNotice from "./SampleNotice.astro";
         time.dateTime = signal.createdAt;
         time.title = formatted.absolute;
         time.textContent = formatted.relative;
-        meta.append(author, badge, time);
+        meta.append(author, identity, badge, time);
         const text = document.createElement("p");
         text.textContent = signal.body;
         body.append(meta, text);
@@ -1116,6 +1379,59 @@ import SampleNotice from "./SampleNotice.astro";
       renderFeed();
     };
 
+    const refreshLatestSignals = async (): Promise<void> => {
+      const workspaceId = activeWorkspaceId;
+      const version = requestVersion;
+      if (
+        liveFeedInFlight ||
+        sampleMode ||
+        !workspaceId ||
+        document.visibilityState !== "visible" ||
+        !["feed", "feed-empty"].includes(app.dataset.channelView ?? "")
+      ) return;
+      liveFeedInFlight = true;
+      try {
+        const page = await signalPage(workspaceId, null, new Date().toISOString());
+        if (version !== requestVersion || workspaceId !== activeWorkspaceId) return;
+        const known = new Set(page.rows.map((signal) => signal.id));
+        const next = [...page.rows, ...signals.filter((signal) => !known.has(signal.id))];
+        const changed =
+          next.length !== signals.length ||
+          next.some((signal, index) => signal.id !== signals[index]?.id);
+        signalHasMore = signalHasMore || page.hasMore;
+        if (changed) {
+          signals = next;
+          renderFeed();
+        }
+      } catch {
+        // A live refresh never replaces a readable channel with an error. The
+        // next tick retries, and the explicit refresh control remains available.
+      } finally {
+        liveFeedInFlight = false;
+      }
+    };
+
+    armLiveFeed = (): void => {
+      if (
+        sampleMode ||
+        !activeWorkspaceId ||
+        document.visibilityState !== "visible" ||
+        !["feed", "feed-empty"].includes(app.dataset.channelView ?? "")
+      ) return;
+      if (liveFeedTimer !== undefined) return;
+      liveFeedTimer = window.setInterval(() => void refreshLatestSignals(), 2_000);
+    };
+
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState !== "visible") {
+        window.clearInterval(liveFeedTimer);
+        liveFeedTimer = undefined;
+        return;
+      }
+      void refreshLatestSignals();
+      armLiveFeed();
+    });
+
     const renderChannel = (workspace: Workspace, pending = false): void => {
       const name = one<HTMLElement>("[data-channel-name]");
       const id = one<HTMLElement>("[data-channel-id]");
@@ -1157,25 +1473,18 @@ import SampleNotice from "./SampleNotice.astro";
       const promptWorkspaceId = connect?.getAttribute("workspace-id") ?? "";
       const connectState = connect?.dataset.state ?? "";
       const mintBusy = connect?.hasAttribute("data-mint-busy") ?? false;
-      if (mintBusy || connectState === "working" || connectState === "done") {
+      if (connectState === "done") {
+        pendingWorkspaceId = workspaceId;
+        connect?.finishPrompt("back");
+        return;
+      }
+      if (mintBusy || connectState === "working") {
         const changesWorkspace =
           promptWorkspaceId.length > 0 && promptWorkspaceId !== workspaceId;
         pendingWorkspaceId = changesWorkspace ? workspaceId : "";
-        if (connectState === "done") {
-          const status = connect.querySelector<HTMLElement>("[data-slot='copy-status']");
-          if (status) {
-            status.textContent = changesWorkspace
-              ? "Copy this live prompt, then clear it before switching workspaces."
-              : "Clear this live prompt before refreshing this workspace.";
-          }
-        }
         showChannelView("connect");
         window.requestAnimationFrame(() => {
-          if (connectState === "done") {
-            connect.querySelector<HTMLButtonElement>("[data-action='clear']")?.focus();
-          } else {
-            one<HTMLElement>("[data-close-connect]")?.focus();
-          }
+          one<HTMLElement>("[data-close-connect]")?.focus();
         });
         return;
       }
@@ -1186,6 +1495,8 @@ import SampleNotice from "./SampleNotice.astro";
       const version = ++requestVersion;
       agents = [];
       members = [];
+      pendingInvites = [];
+      accessStatuses = [];
       people = new Map();
       signals = [];
       signalCursor = null;
@@ -1195,16 +1506,21 @@ import SampleNotice from "./SampleNotice.astro";
       if (keepShell) renderChannel(selected, true);
       else setLoading(`Opening ${selected.name}…`);
       try {
-        const [nextAgents, nextRoster] = await Promise.all([
+        const [nextAgents, nextRoster, nextInvites, nextAccessStatuses] = await Promise.all([
           roster(selected.id),
           memberRoster(selected.id),
+          pendingMemberInvites(selected.id),
+          agentAccessStatuses(selected.id),
         ]);
         if (version !== requestVersion) return;
         agents = nextAgents;
         people = nextRoster.names;
         members = nextRoster.members;
-        if (app.dataset.channelView !== "connect") renderChannel(selected);
+        pendingInvites = nextInvites;
+        accessStatuses = nextAccessStatuses;
+        if (!addAgentViewOpen()) renderChannel(selected);
         renderMembers();
+        renderPendingAccess();
         if (agents.length > 0) {
           await loadSignals(selected.id, true, version);
         }
@@ -1214,10 +1530,36 @@ import SampleNotice from "./SampleNotice.astro";
         channelLoadError = `${readableError(error)} Nothing was changed.`;
         const target = one<HTMLElement>("[data-feed-error]");
         if (target) target.textContent = channelLoadError;
-        if (app.dataset.channelView === "connect") return;
+        if (addAgentViewOpen()) return;
         renderChannel(selected);
         showChannelView("feed-error");
       }
+    };
+
+    const openAgentChoice = (): void => {
+      if (sampleMode) return;
+      showChannelView("agent-choice");
+      window.requestAnimationFrame(() => {
+        one<HTMLButtonElement>("[data-agent-owner-self]")?.focus({ preventScroll: true });
+      });
+    };
+
+    const openInvite = (): void => {
+      if (sampleMode) return;
+      freshInviteLink = "";
+      const result = one<HTMLElement>("[data-invite-result]");
+      const form = one<HTMLFormElement>("[data-invite-form]");
+      const error = one<HTMLElement>("[data-invite-error]");
+      if (result) result.hidden = true;
+      if (form) form.hidden = false;
+      if (error) {
+        error.textContent = "";
+        error.hidden = true;
+      }
+      showChannelView("invite");
+      window.requestAnimationFrame(() => {
+        one<HTMLInputElement>("[data-invite-email]")?.focus({ preventScroll: true });
+      });
     };
 
     const openConnect = (): void => {
@@ -1257,28 +1599,21 @@ import SampleNotice from "./SampleNotice.astro";
       const connect = one<SecretHoldingAgentConnect>("agent-connect");
       const connectState = connect?.dataset.state ?? "";
       const mintBusy = connect?.hasAttribute("data-mint-busy") ?? false;
-      if (!mintBusy && connectState !== "working" && connectState !== "done") return false;
+      if (!mintBusy && connectState !== "working") return false;
       showChannelView("connect");
       const exitStatus = one<HTMLElement>("[data-connect-exit-status]");
       if (exitStatus) {
         exitStatus.textContent =
-          connectState === "done"
-            ? "Clear this live prompt before leaving this screen."
-            : "Wait for CommonSwarm to finish creating the key before leaving this screen.";
+          "Wait for CommonSwarm to finish creating the key before leaving this screen.";
         exitStatus.hidden = false;
       }
       window.requestAnimationFrame(() => {
-        if (connectState === "done") {
-          connect?.querySelector<HTMLButtonElement>("[data-action='clear']")?.focus();
-        } else {
-          one<HTMLButtonElement>("[data-close-connect]")?.focus();
-        }
+        one<HTMLButtonElement>("[data-close-connect]")?.focus();
       });
       return true;
     };
 
-    const closeConnect = (): void => {
-      if (keepConnectCredentialVisible()) return;
+    const returnToChannel = (): void => {
       pendingWorkspaceId = "";
       const exitStatus = one<HTMLElement>("[data-connect-exit-status]");
       if (exitStatus) exitStatus.hidden = true;
@@ -1293,11 +1628,27 @@ import SampleNotice from "./SampleNotice.astro";
           channelLoadError = `${readableError(error)} Nothing was changed.`;
           const target = one<HTMLElement>("[data-feed-error]");
           if (target) target.textContent = channelLoadError;
-          if (app.dataset.channelView === "connect") return;
+          if (addAgentViewOpen()) return;
           showChannelView("feed-error");
         });
       }
-      else renderFeed();
+      else {
+        // This is an explicit exit from an add-agent view. Mark the feed active
+        // before rendering so renderFeed's background-refresh guard does not
+        // mistake the requested return for an unsolicited view change.
+        showChannelView("feed");
+        renderFeed();
+      }
+    };
+
+    const closeConnect = (): void => {
+      if (keepConnectCredentialVisible()) return;
+      const connect = one<SecretHoldingAgentConnect>("agent-connect");
+      if (connect?.dataset.state === "done") {
+        connect.finishPrompt("back");
+        return;
+      }
+      returnToChannel();
     };
 
     const createFromIntent = async (value: Session, intent: CreateIntent): Promise<void> => {
@@ -1616,8 +1967,107 @@ import SampleNotice from "./SampleNotice.astro";
       });
     }
 
-    one<HTMLButtonElement>("[data-add-agent]")?.addEventListener("click", openConnect);
-    one<HTMLButtonElement>("[data-add-agent-rail]")?.addEventListener("click", openConnect);
+    one<HTMLFormElement>("[data-invite-form]")?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      if (!session || !activeWorkspaceId) return;
+      const emailInput = one<HTMLInputElement>("[data-invite-email]");
+      const submit = one<HTMLButtonElement>("[data-invite-submit]");
+      const error = one<HTMLElement>("[data-invite-error]");
+      const email = emailInput?.value.trim() ?? "";
+      if (!email) {
+        if (error) {
+          error.textContent = "Enter the teammate’s email first.";
+          error.hidden = false;
+        }
+        emailInput?.focus();
+        return;
+      }
+      if (!inviteIntent || inviteIntent.email !== email) {
+        inviteIntent = { email, commandId: uuid() };
+      }
+      if (error) {
+        error.textContent = "";
+        error.hidden = true;
+      }
+      if (submit) {
+        submit.disabled = true;
+        submit.textContent = "Creating a private link…";
+      }
+      try {
+        const target = deployment();
+        const workspace = workspaces.find((entry) => entry.id === activeWorkspaceId);
+        if (!target || !workspace) throw new NoDeployment();
+        const created = await inviteWorkspaceMember(
+          session,
+          inviteIntent.commandId,
+          activeWorkspaceId,
+          email,
+        );
+        freshInviteLink = memberInviteUrl(window.location.origin, {
+          v: 1,
+          url: target.url,
+          anon_key: target.anonKey,
+          workspace_id: created.workspaceId,
+          invitation_token: created.invitationToken,
+          workspace_name: created.workspaceName || workspace.name,
+          inviter_display_name: created.inviterDisplayName || accountName(session),
+          inviter_user_id: created.inviterUserId ?? session.user.id,
+        });
+        inviteIntent = null;
+        const link = one<HTMLElement>("[data-invite-link]");
+        const result = one<HTMLElement>("[data-invite-result]");
+        const form = one<HTMLFormElement>("[data-invite-form]");
+        if (link) link.textContent = freshInviteLink;
+        if (result) result.hidden = false;
+        if (form) form.hidden = true;
+        pendingInvites = await pendingMemberInvites(activeWorkspaceId);
+        renderPendingAccess();
+        window.requestAnimationFrame(() => {
+          one<HTMLButtonElement>("[data-copy-invite]")?.focus({ preventScroll: true });
+        });
+      } catch (caught) {
+        if (!(caught instanceof CommandOutcomeUnknown)) inviteIntent = null;
+        if (error) {
+          error.textContent = readableError(caught);
+          error.hidden = false;
+        }
+      } finally {
+        if (submit) {
+          submit.disabled = false;
+          submit.textContent = "Create invite link";
+        }
+      }
+    });
+
+    one<HTMLButtonElement>("[data-copy-invite]")?.addEventListener("click", async () => {
+      const status = one<HTMLElement>("[data-invite-status]");
+      if (!freshInviteLink) return;
+      try {
+        await navigator.clipboard.writeText(freshInviteLink);
+        if (status) status.textContent = "Copied. Send this link to your teammate.";
+      } catch {
+        const link = one<HTMLElement>("[data-invite-link]");
+        if (link) {
+          const range = document.createRange();
+          range.selectNodeContents(link);
+          const selection = window.getSelection();
+          selection?.removeAllRanges();
+          selection?.addRange(range);
+        }
+        if (status) status.textContent = "The link is selected. Press ⌘C or Ctrl+C.";
+      }
+    });
+
+    one<HTMLButtonElement>("[data-add-agent]")?.addEventListener("click", openAgentChoice);
+    one<HTMLButtonElement>("[data-add-agent-rail]")?.addEventListener("click", openAgentChoice);
+    one<HTMLButtonElement>("[data-close-agent-choice]")?.addEventListener("click", returnToChannel);
+    one<HTMLButtonElement>("[data-agent-owner-self]")?.addEventListener("click", openConnect);
+    one<HTMLButtonElement>("[data-agent-owner-teammate]")?.addEventListener("click", openInvite);
+    one<HTMLButtonElement>("[data-close-invite]")?.addEventListener("click", openAgentChoice);
+    one<HTMLButtonElement>("[data-invite-done]")?.addEventListener("click", () => {
+      freshInviteLink = "";
+      returnToChannel();
+    });
     one<HTMLButtonElement>("[data-close-connect]")?.addEventListener("click", closeConnect);
     one<HTMLButtonElement>("[data-copy-workspace-id]")?.addEventListener("click", async () => {
       const status = one<HTMLElement>("[data-workspace-id-status]");
@@ -1663,7 +2113,7 @@ import SampleNotice from "./SampleNotice.astro";
       }
     });
 
-    app.addEventListener("commonswarm:agent-connected", async (event) => {
+    app.addEventListener("commonswarm:agent-prompt-ready", async (event) => {
       const detail = (event as CustomEvent<{
         workspaceId?: unknown;
         principalId?: unknown;
@@ -1679,10 +2129,15 @@ import SampleNotice from "./SampleNotice.astro";
       }
       const version = requestVersion;
       try {
-        const nextAgents = await roster(workspaceId);
+        const [nextAgents, nextStatuses] = await Promise.all([
+          roster(workspaceId),
+          agentAccessStatuses(workspaceId),
+        ]);
         if (version !== requestVersion || workspaceId !== activeWorkspaceId) return;
         agents = nextAgents;
+        accessStatuses = nextStatuses;
         renderRoster();
+        renderPendingAccess();
         const addInRail = one<HTMLButtonElement>("[data-add-agent-rail]");
         if (addInRail) addInRail.hidden = agents.length === 0;
         const refresh = one<HTMLButtonElement>("[data-refresh]");
@@ -1692,7 +2147,8 @@ import SampleNotice from "./SampleNotice.astro";
       }
     });
 
-    app.addEventListener("commonswarm:agent-secret-cleared", () => {
+    app.addEventListener("commonswarm:agent-secret-cleared", (event) => {
+      const detail = (event as CustomEvent<{ reason?: unknown }>).detail;
       livePromptPrincipalId = "";
       const nextWorkspaceId = pendingWorkspaceId;
       pendingWorkspaceId = "";
@@ -1704,7 +2160,20 @@ import SampleNotice from "./SampleNotice.astro";
       const connect = one<SecretHoldingAgentConnect>("agent-connect");
       if (!selected || !connect) return;
       syncConnectWorkspace(selected);
-      closeConnect();
+      returnToChannel();
+      const receipt = one<HTMLElement>("[data-channel-receipt]");
+      if (receipt && detail?.reason === "consumed") {
+        receipt.textContent = "Agent connected. Its one-time prompt has been cleared.";
+        receipt.hidden = false;
+        window.setTimeout(() => {
+          receipt.hidden = true;
+        }, 6_000);
+      }
+      void agentAccessStatuses(activeWorkspaceId).then((next) => {
+        if (selected.id !== activeWorkspaceId) return;
+        accessStatuses = next;
+        renderPendingAccess();
+      });
       window.requestAnimationFrame(() => {
         one<HTMLElement>("[data-channel-name]")?.focus({ preventScroll: true });
       });
@@ -2326,6 +2795,23 @@ import SampleNotice from "./SampleNotice.astro";
     font-weight: var(--weight-semibold);
   }
 
+  .dashboard__agent-avatar[data-avatar-shape],
+  .dashboard__message-avatar[data-avatar-shape] {
+    color: hsl(var(--avatar-hue) 75% 82%);
+    background: color-mix(in oklab, hsl(var(--avatar-hue) 58% 48%) 20%, var(--elev-3));
+    border-color: color-mix(in oklab, hsl(var(--avatar-hue) 70% 58%) 52%, var(--border));
+  }
+
+  .dashboard__agent-avatar[data-avatar-shape="1"],
+  .dashboard__message-avatar[data-avatar-shape="1"] {
+    border-radius: 0.48rem;
+  }
+
+  .dashboard__agent-avatar[data-avatar-shape="2"],
+  .dashboard__message-avatar[data-avatar-shape="2"] {
+    border-radius: 0.42rem 50% 50% 0.42rem;
+  }
+
   .dashboard__agent-copy {
     min-inline-size: 0;
     display: grid;
@@ -2541,6 +3027,147 @@ import SampleNotice from "./SampleNotice.astro";
     padding: clamp(var(--s-5), 4vw, var(--s-8));
   }
 
+  .dashboard__channel-receipt {
+    z-index: 3;
+    grid-area: 1 / 1;
+    align-self: start;
+    justify-self: center;
+    margin: var(--s-4);
+    padding: var(--s-3) var(--s-4);
+    color: var(--text);
+    background: color-mix(in oklab, var(--success-dim) 82%, var(--elev-2));
+    border: 1px solid color-mix(in oklab, var(--success) 40%, var(--border));
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-md);
+    font-size: var(--t-sm);
+  }
+
+  .dashboard__choice-view,
+  .dashboard__invite-view {
+    align-content: start;
+    gap: var(--s-6);
+  }
+
+  .dashboard__choice-copy {
+    display: grid;
+    gap: var(--s-3);
+    max-inline-size: 42rem;
+  }
+
+  .dashboard__choice-copy h2 {
+    margin: 0;
+    color: var(--text);
+    font-size: var(--t-2xl);
+    line-height: var(--lh-2xl);
+    letter-spacing: var(--track-head);
+  }
+
+  .dashboard__choice-copy > p:last-child {
+    margin: 0;
+    color: var(--text-muted);
+    line-height: var(--lh-base);
+  }
+
+  .dashboard__choice-list {
+    display: grid;
+    max-inline-size: 46rem;
+    border-block-start: 1px solid var(--border);
+  }
+
+  .dashboard__choice {
+    min-block-size: 5.75rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--s-5);
+    padding: var(--s-4) var(--s-2);
+    color: var(--text);
+    background: transparent;
+    border: 0;
+    border-block-end: 1px solid var(--border);
+    font: inherit;
+    text-align: start;
+    cursor: pointer;
+  }
+
+  .dashboard__choice:hover {
+    padding-inline: var(--s-4);
+    background: var(--accent-dim);
+  }
+
+  .dashboard__choice:focus-visible {
+    outline: none;
+    box-shadow: var(--focus-ring);
+  }
+
+  .dashboard__choice > span:first-child {
+    display: grid;
+    gap: var(--s-1);
+  }
+
+  .dashboard__choice strong {
+    font-size: var(--t-lg);
+  }
+
+  .dashboard__choice small {
+    color: var(--text-muted);
+    font-size: var(--t-sm);
+    line-height: var(--lh-sm);
+  }
+
+  .dashboard__invite-form {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: end;
+    gap: var(--s-3);
+    max-inline-size: 42rem;
+  }
+
+  .dashboard__invite-form label {
+    grid-column: 1 / -1;
+    color: var(--text);
+    font-size: var(--t-sm);
+    font-weight: var(--weight-semibold);
+  }
+
+  .dashboard__invite-form input {
+    min-block-size: 2.75rem;
+    inline-size: 100%;
+    padding: var(--s-3) var(--s-4);
+    color: var(--text);
+    background: var(--elev-1);
+    border: 1px solid var(--border-interactive);
+    border-radius: var(--radius);
+    font: inherit;
+  }
+
+  .dashboard__invite-result {
+    display: grid;
+    gap: var(--s-3);
+    max-inline-size: 42rem;
+  }
+
+  .dashboard__invite-receipt {
+    margin: 0;
+    color: var(--success);
+    font-size: var(--t-sm);
+  }
+
+  .dashboard__invite-link {
+    max-inline-size: 100%;
+    max-block-size: 8rem;
+    margin: 0;
+    padding: var(--s-4);
+    overflow: auto;
+    color: var(--text);
+    background: var(--elev-3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    font-family: var(--font-mono);
+    font-size: var(--t-xs);
+    white-space: pre;
+  }
+
   .dashboard__back-button {
     display: inline-flex;
     align-items: center;
@@ -2664,6 +3291,11 @@ import SampleNotice from "./SampleNotice.astro";
   .dashboard__message-meta strong {
     color: var(--text);
     font-size: var(--t-sm);
+  }
+
+  .dashboard__message-identity {
+    color: var(--text-muted);
+    font-size: var(--t-xs);
   }
 
   .dashboard__message-meta time {
@@ -2839,8 +3471,18 @@ import SampleNotice from "./SampleNotice.astro";
     }
 
     .dashboard__channel-empty,
-    .dashboard__feed-state {
+    .dashboard__feed-state,
+    .dashboard__choice-view,
+    .dashboard__invite-view {
       inline-size: calc(100% - var(--s-8));
+    }
+
+    .dashboard__invite-form {
+      grid-template-columns: 1fr;
+    }
+
+    .dashboard__invite-form label {
+      grid-column: 1;
     }
 
     .dashboard__feed-state {

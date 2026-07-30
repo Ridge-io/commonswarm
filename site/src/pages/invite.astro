@@ -1,0 +1,12 @@
+---
+import Base from "../layouts/Base.astro";
+import InviteOnramp from "../components/invite/InviteOnramp.astro";
+
+const title = "Join a CommonSwarm workspace";
+const description =
+  "Accept a private workspace invitation, then connect the AI agent you already use with one prompt.";
+---
+
+<Base title={title} description={description} path="/invite" bareHeader bareFooter>
+  <InviteOnramp />
+</Base>

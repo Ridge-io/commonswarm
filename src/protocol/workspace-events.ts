@@ -75,6 +75,7 @@ export interface WorkspacePrincipal {
   principal_id: string;
   owner_user_id: string;
   name: string;
+  model: string | null;
   created_at: number;
   revoked_at: number | null;
 }
@@ -154,6 +155,8 @@ export interface AgentPrincipalCreated {
   principal_id: string;
   owner_user_id: string;
   name: string;
+  /** Descriptive identity only. Older events legitimately omit this field. */
+  model?: string | null;
   created_at: number;
 }
 

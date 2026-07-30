@@ -68,10 +68,11 @@ export interface CommandResult {
 
 export type ConnectCommand =
   | { kind: "invite_member"; email: string; ttl_ms?: number }
+  | { kind: "revoke_invitation"; invitation_id: string }
   | { kind: "accept_invitation"; token: string }
   | { kind: "create_workspace"; workspace_id: string; name: string }
   | { kind: "remove_member"; user_id: string }
-  | { kind: "create_agent_principal"; name: string }
+  | { kind: "create_agent_principal"; name: string; model?: string }
   | { kind: "revoke_agent_principal"; principal_id: string }
   | {
     kind: "mint_agent_token";
@@ -82,26 +83,7 @@ export type ConnectCommand =
     device_id: string;
     ttl_ms?: number;
   }
-  | { kind: "revoke_agent_token"; token_id: string }
-  /**
-   * The bounded renewal grant §2.3 requires to be "created at human `join`/`spawn`". It is
-   * a human-credential command like the mint beside it, and it is issued BEFORE the mint so
-   * the token has a grant to be bound to; the server pairs them by (principal_id, run_id)
-   * rather than accepting a grant id on the mint, which would be a caller-selected field on
-   * the very path that must not have one.
-   *
-   * Without one, a credential is exactly what it was before renewal existed: usable for at
-   * most eight hours and then re-issued by hand. So a failure to create it is worth a
-   * warning and never worth failing the mint over.
-   */
-  | {
-    kind: "create_renewal_grant";
-    renewal_grant_id: string;
-    principal_id: string;
-    run_id: string;
-    horizon_ms?: number;
-    max_successors?: number;
-  };
+  | { kind: "revoke_agent_token"; token_id: string };
 
 export interface ConnectCommandRequest {
   /** Omitted for accept_invitation; the capability derives tenancy server-side. */
