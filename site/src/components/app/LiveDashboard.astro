@@ -237,6 +237,15 @@ import SampleNotice from "./SampleNotice.astro";
             <div class="dashboard__channel-actions">
               <span class="dashboard__update-count" data-update-count>0 updates</span>
               <button
+                class="dashboard__channel-add"
+                type="button"
+                data-add-agent-channel
+                hidden
+              >
+                <span aria-hidden="true">+</span>
+                Add agent
+              </button>
+              <button
                 class="dashboard__icon-button"
                 type="button"
                 data-refresh
@@ -348,6 +357,7 @@ import SampleNotice from "./SampleNotice.astro";
     NoDeployment,
     FreshLoginRequired,
     SignupRefused,
+    WorkspaceOutcomeUnknown,
     WorkspaceLimitReached,
     client,
     createWorkspace,
@@ -1002,6 +1012,8 @@ import SampleNotice from "./SampleNotice.astro";
       if (id) id.textContent = workspace.id;
       const addInRail = one<HTMLButtonElement>("[data-add-agent-rail]");
       if (addInRail) addInRail.hidden = sampleMode || agents.length === 0;
+      const addInChannel = one<HTMLButtonElement>("[data-add-agent-channel]");
+      if (addInChannel) addInChannel.hidden = sampleMode || agents.length === 0;
       const refresh = one<HTMLButtonElement>("[data-refresh]");
       if (refresh) refresh.hidden = sampleMode || agents.length === 0;
       renderWorkspaceList(workspace);
@@ -1193,7 +1205,7 @@ import SampleNotice from "./SampleNotice.astro";
         renderCreate(
           value,
           `${readableError(error)} ${
-            error instanceof WorkspaceLimitReached
+            error instanceof WorkspaceLimitReached || error instanceof WorkspaceOutcomeUnknown
               ? ""
               : "Trying again checks the same request; it cannot create a duplicate."
           }`.trim(),
@@ -1472,6 +1484,7 @@ import SampleNotice from "./SampleNotice.astro";
 
     one<HTMLButtonElement>("[data-add-agent]")?.addEventListener("click", openConnect);
     one<HTMLButtonElement>("[data-add-agent-rail]")?.addEventListener("click", openConnect);
+    one<HTMLButtonElement>("[data-add-agent-channel]")?.addEventListener("click", openConnect);
     one<HTMLButtonElement>("[data-close-connect]")?.addEventListener("click", closeConnect);
     one<HTMLButtonElement>("[data-retry-workspace]")?.addEventListener("click", () => {
       if (activeWorkspaceId) void openWorkspace(activeWorkspaceId);
@@ -1523,6 +1536,8 @@ import SampleNotice from "./SampleNotice.astro";
         renderRoster();
         const addInRail = one<HTMLButtonElement>("[data-add-agent-rail]");
         if (addInRail) addInRail.hidden = agents.length === 0;
+        const addInChannel = one<HTMLButtonElement>("[data-add-agent-channel]");
+        if (addInChannel) addInChannel.hidden = agents.length === 0;
         const refresh = one<HTMLButtonElement>("[data-refresh]");
         if (refresh) refresh.hidden = agents.length === 0;
       } catch {
@@ -2227,6 +2242,25 @@ import SampleNotice from "./SampleNotice.astro";
     white-space: nowrap;
   }
 
+  .dashboard__channel-add {
+    min-block-size: 2.75rem;
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s-2);
+    padding: var(--s-2) var(--s-3);
+    color: var(--text);
+    background: var(--accent-dim);
+    border: 1px solid color-mix(in oklab, var(--accent) 32%, var(--border));
+    border-radius: var(--radius);
+    font: inherit;
+    font-weight: var(--weight-semibold);
+    cursor: pointer;
+  }
+
+  .dashboard__channel-add:hover {
+    background: color-mix(in oklab, var(--accent-dim) 76%, var(--accent));
+  }
+
   .dashboard__icon-button {
     min-inline-size: 2.75rem;
     min-block-size: 2.75rem;
@@ -2587,10 +2621,18 @@ import SampleNotice from "./SampleNotice.astro";
 
     .dashboard__channel-head {
       align-items: flex-start;
+      flex-direction: column;
+      gap: var(--s-3);
     }
 
     .dashboard__channel-actions {
-      padding-block-start: var(--s-5);
+      inline-size: 100%;
+      flex-wrap: wrap;
+      padding-block-start: 0;
+    }
+
+    .dashboard__update-count {
+      margin-inline-end: auto;
     }
 
     .dashboard__channel-id {

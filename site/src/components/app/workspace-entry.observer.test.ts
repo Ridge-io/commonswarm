@@ -34,6 +34,11 @@ test("/start is only a query-and-fragment-preserving compatibility handoff", () 
   assert.match(start, /target\.hash = window\.location\.hash/);
   assert.match(start, /window\.location\.replace\(target\.href\)/);
   assert.doesNotMatch(start, /Progress|SignInPanel|ReadyPanel|AgentConnect/);
+  assert.deepEqual(
+    fs.readdirSync(path.join(siteRoot, "src", "components", "start")).sort(),
+    ["onramp.observer.mjs"],
+    "retired signup panels must not remain available for an accidental rewire",
+  );
 });
 
 test("/app is email-first, truthful about the free tier, and owns consent", () => {
@@ -61,6 +66,27 @@ test("the live dashboard retains the empty-channel to copy-prompt path", () => {
   assert.match(dashboard, /You don’t have a workspace yet/);
   assert.match(dashboard, /Nobody else is here yet/);
   assert.match(dashboard, /data-add-agent/);
+  assert.match(
+    dashboard,
+    /data-add-agent-channel[\s\S]*one<HTMLButtonElement>\("\[data-add-agent-channel\]"\)\?\.addEventListener\("click", openConnect\)/,
+  );
+  assert.match(
+    dashboard,
+    /const addInChannel = one<HTMLButtonElement>\("\[data-add-agent-channel\]"\);[\s\S]*addInChannel\.hidden = sampleMode \|\| agents\.length === 0/,
+  );
+  assert.doesNotMatch(
+    dashboard,
+    /\.dashboard__rail-label-row,\s*\.dashboard__rail-agents,\s*\.dashboard__channel-add/,
+    "the narrow layout may hide the rail, but not the channel-level Add agent control",
+  );
+  assert.match(
+    dashboard,
+    /@media \(max-width: 34rem\)[\s\S]*\.dashboard__channel-head \{[\s\S]*flex-direction: column[\s\S]*\.dashboard__channel-actions \{[\s\S]*inline-size: 100%;[\s\S]*flex-wrap: wrap/,
+  );
+  assert.match(
+    dashboard,
+    /error instanceof WorkspaceLimitReached \|\| error instanceof WorkspaceOutcomeUnknown[\s\S]*\? ""[\s\S]*: "Trying again checks the same request; it cannot create a duplicate\."/,
+  );
   assert.match(connect, /Create the copy-paste prompt/);
   assert.match(connect, /Copy prompt/);
   assert.doesNotMatch(connect, /commonswarm\.com\/start/);

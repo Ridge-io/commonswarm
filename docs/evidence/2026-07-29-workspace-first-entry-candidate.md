@@ -23,8 +23,9 @@ All commands below were run from the isolated
 - `npm run build`: passed.
 - `npm run check:edge`: all three edge-function entrypoints passed `deno check`.
 - Clean configured site build: seven static routes built.
-- Site test gate: 26 passed, including the workspace-entry, signed-out app, prompt,
-  compatibility-handoff, legal-draft, metadata, and browser-deadline observers.
+- Site test gate: 30 passed, including the workspace-entry, signed-out app, prompt,
+  compatibility-handoff, legal-draft/date/placeholder, metadata, and browser-deadline
+  observers.
 - Built-artifact enumeration found eight `/app` links and zero `/start` links on the home
   page; `/app` contained non-empty backend URL and anon-key metadata; the sampled built
   routes contained zero service-role JWT markers.
@@ -35,6 +36,29 @@ All commands below were run from the isolated
   no horizontal overflow at 375px, email before GitHub, and no duplicate `main` landmark.
   `/start?source=legacy#compat-test` arrived at
   `/app?source=legacy#compat-test`.
+
+## Adversarial feedback closed before the final gate
+
+The first exact-SHA Grok pass approved `9e7ebf6dad7f1e2f0b114441754a4a6299e6d74a`
+but identified two medium product gaps and two low source-hygiene gaps:
+
+- At widths below 52rem the agent rail disappears, so after the first agent joined there
+  was no visible control for adding another. The channel header now owns an **Add agent**
+  action whenever the active workspace has agents; at 34rem and below the header actions
+  wrap in a full-width row.
+- An unknown workspace-create outcome correctly warned the user to reload, but the
+  dashboard then appended a generic sentence that said retry was safe. That suffix is no
+  longer added to `WorkspaceOutcomeUnknown`.
+- The old `/start` panels contained retired signup and assent language even though the
+  compatibility route no longer imported them. Those orphaned components and their CSS
+  were removed, and an observer enumerates the one test file that remains in that
+  directory.
+- The stale `Base.astro` comment claiming `/app` did not exist now describes the actual
+  dormant multi-route navigation flag.
+
+These changes alter the candidate SHA. The replacement SHA must receive fresh substantive
+Grok and AGY/Gemini reviews after all gates pass; the first pass is evidence of feedback,
+not the final model-inversion approval.
 
 ## Deliberately not established by this artifact
 

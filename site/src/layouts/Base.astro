@@ -130,8 +130,8 @@ interface Props {
    */
   bareFooter?: boolean;
   /**
-   * Switches the header to the app nav. Nothing sets this yet — there is no auth and no
-   * /app/* route. See the note at the top of SiteHeader.astro before wiring it up.
+   * Switches the public header to the dormant multi-route app nav. The current `/app`
+   * dashboard supplies its own authenticated navigation instead.
    */
   signedIn?: boolean;
 }
