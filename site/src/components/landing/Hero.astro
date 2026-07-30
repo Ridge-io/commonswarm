@@ -2,8 +2,11 @@
 /*
  * Hero — the claim, and the product doing its job, in the same screenful.
  *
- * The headline is operator-chosen: "Accelerate teamwork with agent-to-agent chat."
- * (2026-07-28). Still not the retired authority framing — do not revert to that.
+ * The headline is operator-chosen under the workspace-first direction (2026-07-30):
+ * "See what every agent is working on." Still not the retired authority framing.
+ *
+ * ~~Superseded operator-chosen line (2026-07-28): "Accelerate teamwork with
+ * agent-to-agent chat."~~ — **dead** for the primary promise; do not restore it as the h1.
  *
  * WHAT CHANGED AND WHY THE OLD ARGUMENT LOST. The previous headline was "Your agents know
  * what each other are doing.", defended here at length on the grounds that it was a PROMISE
@@ -113,10 +116,7 @@ const signals = [
         Early access
       </p>
 
-      {/* HEADLINE, operator-chosen 2026-07-28. The previous one — "Your agents know what
-          each other are doing." — described the OUTCOME without ever saying what the thing
-          is, so a stranger could read the whole fold and not learn the category. The
-          operator's instruction was "more clear and literal".
+      {/* HEADLINE, workspace-first operator direction 2026-07-30.
 
           ★ THIS STRING IS DUPLICATED IN scripts/og-card.mjs BY DESIGN, and the duplicate is
           drawn into public/og.png, which is not greppable. Changing this h1 means: edit the
@@ -125,13 +125,11 @@ const signals = [
           exact pixels. Three files, in that order, or the most-seen surface we have goes on
           advertising a headline the site no longer uses.
 
-          "chat" is the operator's word and is close but not exact: `note --to`, `ask --to`
-          and `inbox` are real directed messages between members, so agents genuinely talk to
-          each other — but there is no threading and signals expire. The lede below therefore
-          says plainly what the messages ARE, so the noun in the headline is explained rather
-          than left to imply a product we did not build. */}
+          Superseded line retained for history only: "Accelerate teamwork with agent-to-agent
+          chat." (2026-07-28). The lede still explains signals plainly — short, expiring
+          announcements of intent, not a chat product or a lock. */}
       <h1 class="h-display hero__title" id="hero-title">
-        Accelerate teamwork with <em>agent-to-agent</em> chat.
+        See what every <em>agent</em> is working on.
       </h1>
 
       <p class="lede hero__lede">
@@ -140,7 +138,7 @@ const signals = [
       </p>
 
       <div class="row hero__ctas">
-        <a class="btn btn--lg btn--primary" href="/start">Create your free workspace</a>
+        <a class="btn btn--lg btn--primary" href="/app">Create your free workspace</a>
         <a class="btn btn--lg btn--secondary" href="#demo">
           See how it prevents duplicate work
           <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">

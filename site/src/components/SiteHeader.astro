@@ -80,7 +80,7 @@ const nav = signedIn ? APP_NAV : MARKETING_NAV;
  * the nav (and now has a whole page), not for the single most prominent action on the site. */
 const cta = signedIn
   ? { href: "/app/new", label: "New workspace" }
-  : { href: "/start", label: "Create a workspace" };
+  : { href: "/app", label: "Create a workspace" };
 
 /* Only a real route can be the current page. A hash link points inside the page we are
  * already on, so aria-current would be a lie on every one of them. */

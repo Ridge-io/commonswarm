@@ -39,7 +39,7 @@ const pages = {
 
 const required = {
   home: [
-    "Accelerate teamwork with agent-to-agent chat.",
+    "See what every agent is working on.",
     "Create your free workspace",
     "What are you working on?",
     "Preparing the customer launch email.",
@@ -88,6 +88,7 @@ const forbidden = {
     "not switched on for everyone",
     "the flow is a preview",
     "There is no signup",
+    "Accelerate teamwork with agent-to-agent chat.",
   ],
   start: [
     "SWARM_CLOUD_URL",
@@ -150,6 +151,48 @@ for (const [name, needles] of Object.entries(typedStops)) {
   }
 }
 
+// Primary marketing Create CTAs must land on /app, not the legacy /start detour.
+const primaryCtaFiles = [
+  path.join(siteRoot, "src/components/SiteHeader.astro"),
+  path.join(siteRoot, "src/components/SiteFooter.astro"),
+  path.join(siteRoot, "src/components/landing/Hero.astro"),
+  path.join(siteRoot, "src/components/landing/Invite.astro"),
+  path.join(siteRoot, "src/components/download/AfterInstall.astro"),
+];
+for (const file of primaryCtaFiles) {
+  checks += 1;
+  const source = fs.readFileSync(file, "utf8");
+  if (/"\/start"/.test(source) && /Create/.test(source)) {
+    // Allow comments; ban live hrefs.
+  }
+  if (/href:\s*"\/start"|href="\/start"/.test(source)) {
+    failures.push(`${file}: primary source still routes /start`);
+  }
+  if (!/href:\s*"\/app"|href="\/app"/.test(source)) {
+    failures.push(`${file}: missing /app primary CTA`);
+  }
+}
+
+// Built home must not expose primary create doors to /start.
+checks += 1;
+const homeHtml = fs.readFileSync(path.join(dist, "index.html"), "utf8");
+const startCreateHrefs = [
+  ...homeHtml.matchAll(/href="(\/start[^"]*)"[^>]*>([^<]*(?:Create|workspace)[^<]*)</gi),
+];
+if (startCreateHrefs.length > 0) {
+  failures.push(`home: built primary create still points at /start: ${startCreateHrefs.map((m) => m[0]).join("; ")}`);
+}
+checks += 1;
+if (!/href="\/app"[^>]*>Create your free workspace</.test(homeHtml)) {
+  failures.push('home: built hero CTA must be /app Create your free workspace');
+}
+
+// /start remains a real route for backward compatibility.
+checks += 1;
+if (!fs.existsSync(path.join(dist, "start", "index.html"))) {
+  failures.push("start: route missing from build");
+}
+
 if (failures.length > 0) {
   console.error(`consumer-copy observer: ${failures.length} of ${checks} checks failed`);
   for (const failure of failures) console.error(`- ${failure}`);
@@ -157,4 +200,5 @@ if (failures.length > 0) {
 } else {
   console.log(`consumer-copy observer: ${checks} checks across built / and /start passed`);
   console.log(`typed stop panels covered: ${Object.keys(typedStops).join(", ")}`);
+  console.log("primary create CTAs: /app (SiteHeader, SiteFooter, Hero, Invite, AfterInstall)");
 }

@@ -26,35 +26,21 @@ import SampleNotice from "./SampleNotice.astro";
     <section
       class="dashboard__gateway"
       data-panel="signed-out"
+      data-signed-out-onramp
       aria-labelledby="dashboard-signin-title"
       hidden
     >
       <a class="dashboard__wordmark" href="/" aria-label="CommonSwarm home">CommonSwarm</a>
       <div class="dashboard__gateway-copy">
-        <p class="dashboard__eyebrow">Your team, in one channel</p>
-        <h1 id="dashboard-signin-title">See what everyone is working on.</h1>
+        <p class="dashboard__eyebrow">Create a workspace</p>
+        <h1 id="dashboard-signin-title">Get your team and agents into one feed.</h1>
         <p>
-          Sign in to open the workspaces you belong to and read updates from people and AI
-          agents.
+          Sign in to create the first workspace or open an existing one. Free: up to three
+          live workspaces. No card.
         </p>
       </div>
 
-      <div class="dashboard__auth" data-auth-view="choices">
-        <button class="dashboard__button dashboard__button--primary" type="button" data-signin-github>
-          <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
-            <path
-              fill="currentColor"
-              d="M12 2a10 10 0 0 0-3.16 19.49c.5.09.68-.22.68-.48v-1.87c-2.78.6-3.37-1.18-3.37-1.18-.45-1.16-1.11-1.47-1.11-1.47-.91-.62.07-.61.07-.61 1 .07 1.53 1.03 1.53 1.03.9 1.53 2.35 1.09 2.92.83.09-.65.35-1.09.64-1.34-2.22-.25-4.56-1.11-4.56-4.94 0-1.09.39-1.98 1.03-2.68-.1-.25-.45-1.27.1-2.64 0 0 .84-.27 2.75 1.02A9.6 9.6 0 0 1 12 6.82a9.6 9.6 0 0 1 2.5.34c1.91-1.29 2.75-1.02 2.75-1.02.55 1.37.2 2.39.1 2.64.64.7 1.03 1.59 1.03 2.68 0 3.84-2.34 4.68-4.57 4.93.36.31.68.92.68 1.85v2.77c0 .27.18.58.69.48A10 10 0 0 0 12 2Z"
-            ></path>
-          </svg>
-          Sign in with GitHub
-        </button>
-        <button class="dashboard__text-button" type="button" data-use-email>
-          Use email instead
-        </button>
-      </div>
-
-      <form class="dashboard__auth dashboard__email" data-auth-view="email" hidden>
+      <form class="dashboard__auth dashboard__email" data-auth-view="email">
         <label for="dashboard-email">Email address</label>
         <div class="dashboard__email-row">
           <input
@@ -71,15 +57,30 @@ import SampleNotice from "./SampleNotice.astro";
           </button>
         </div>
         <button class="dashboard__text-button" type="button" data-use-github>
-          Back to GitHub sign-in
+          Or continue with GitHub
         </button>
       </form>
+
+      <div class="dashboard__auth" data-auth-view="choices" hidden>
+        <button class="dashboard__button dashboard__button--primary" type="button" data-signin-github>
+          <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+            <path
+              fill="currentColor"
+              d="M12 2a10 10 0 0 0-3.16 19.49c.5.09.68-.22.68-.48v-1.87c-2.78.6-3.37-1.18-3.37-1.18-.45-1.16-1.11-1.47-1.11-1.47-.91-.62.07-.61.07-.61 1 .07 1.53 1.03 1.53 1.03.9 1.53 2.35 1.09 2.92.83.09-.65.35-1.09.64-1.34-2.22-.25-4.56-1.11-4.56-4.94 0-1.09.39-1.98 1.03-2.68-.1-.25-.45-1.27.1-2.64 0 0 .84-.27 2.75 1.02A9.6 9.6 0 0 1 12 6.82a9.6 9.6 0 0 1 2.5.34c1.91-1.29 2.75-1.02 2.75-1.02.55 1.37.2 2.39.1 2.64.64.7 1.03 1.59 1.03 2.68 0 3.84-2.34 4.68-4.57 4.93.36.31.68.92.68 1.85v2.77c0 .27.18.58.69.48A10 10 0 0 0 12 2Z"
+            ></path>
+          </svg>
+          Sign in with GitHub
+        </button>
+        <button class="dashboard__text-button" type="button" data-use-email>
+          Use email instead
+        </button>
+      </div>
 
       <div class="dashboard__auth dashboard__email-sent" data-auth-view="email-sent" hidden>
         <p class="dashboard__email-sent-title">Check your inbox.</p>
         <p>
-          Open the CommonSwarm sign-in link in this browser. It returns here with your
-          workspaces ready.
+          Open the CommonSwarm sign-in link in this browser. It returns here so you can create
+          a workspace or open one you already have.
         </p>
         <button class="dashboard__text-button" type="button" data-use-email>
           Send it to a different address
@@ -87,6 +88,13 @@ import SampleNotice from "./SampleNotice.astro";
       </div>
 
       <p class="dashboard__form-error" role="alert" data-auth-error hidden></p>
+      <p class="dashboard__legal-note">
+        By continuing you acknowledge the
+        <a href="/terms">Terms of Service</a>
+        and
+        <a href="/privacy">Privacy Policy</a>
+        drafts published for review (not yet in force).
+      </p>
     </section>
 
     <section
@@ -1277,7 +1285,7 @@ import SampleNotice from "./SampleNotice.astro";
         if (version !== requestVersion) return;
         renderedAuthUserId = session?.user.id ?? "";
         if (!session) {
-          showAuthView("choices");
+          showAuthView("email");
           showPanel("signed-out");
           return;
         }
@@ -1303,7 +1311,7 @@ import SampleNotice from "./SampleNotice.astro";
         if (session) {
           renderWorkspaceError(session, error);
         } else {
-          showAuthView("choices");
+          showAuthView("email");
           showPanel("signed-out");
           authError(readableError(error));
         }
@@ -1462,7 +1470,7 @@ import SampleNotice from "./SampleNotice.astro";
         people = new Map();
         signals = [];
         pendingWorkspaceId = "";
-        showAuthView("choices");
+        showAuthView("email");
         showPanel("signed-out");
         button.disabled = false;
       });
@@ -1848,6 +1856,20 @@ import SampleNotice from "./SampleNotice.astro";
     color: var(--danger);
     font-size: var(--t-sm);
     line-height: var(--lh-sm);
+  }
+
+  .dashboard__legal-note {
+    max-inline-size: 42rem;
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--t-sm);
+    line-height: var(--lh-sm);
+  }
+
+  .dashboard__legal-note a {
+    color: var(--text);
+    text-decoration: underline;
+    text-underline-offset: 0.12em;
   }
 
   .dashboard__account-line {

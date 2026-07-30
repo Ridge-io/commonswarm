@@ -8,8 +8,9 @@
  * said "Nobody gets blocked". A card with no source is a card nobody can fix.
  *
  * THE CARD SAYS WHAT THE PAGE SAYS. Headline = the operator-approved h1 in
- * src/components/landing/Hero.astro. If that h1 changes, this changes with it, and so does
- * `ogImageAlt` in src/layouts/Base.astro — the alt is a description of these pixels.
+ * src/components/landing/Hero.astro ("See what every agent is working on."). If that h1
+ * changes, this changes with it, and so does `ogImageAlt` in src/layouts/Base.astro — the
+ * alt is a description of these pixels.
  *
  * THE CHIP IS INSTALL_CMD FROM src/lib/install.ts, the same value the download and start
  * pages render. Kestrel verified the real installer path returns HTTP 200 and a made-up
@@ -297,7 +298,7 @@ const html = `<!doctype html>
 
   <div class="body">
     <p class="eyebrow">Multi-agent coordination</p>
-    <h1>Accelerate teamwork<br>with agent-to-agent chat.</h1>
+    <h1>See what every agent<br>is working on.</h1>
 
     <div class="foot">
       <span class="chip"><span class="chip__p">$</span><span class="chip__c">${INSTALL_CMD}</span></span>

@@ -304,7 +304,7 @@ const {
       if (!deployment()) {
         this.#blocked(
           "Use the live CommonSwarm site",
-          "This saved copy cannot create an assistant key. Open commonswarm.com/start and " +
+          "This saved copy cannot create an assistant key. Open commonswarm.com/app and " +
             "continue there. Nothing is wrong with your account.",
         );
         return;
@@ -355,7 +355,7 @@ const {
         this.#blocked(
           "Couldn't read this workspace",
           error instanceof NoDeployment
-            ? "Open commonswarm.com/start and continue on the live site."
+            ? "Open commonswarm.com/app and continue on the live site."
             : "CommonSwarm could not load the assistants already connected here, so it " +
               "stopped before adding anything. Try again.",
           true,
@@ -562,7 +562,7 @@ const {
         return "CommonSwarm could not confirm whether this step finished. Reload the page and look at what already exists before trying again.";
       }
       if (error instanceof NoDeployment) {
-        return "Open commonswarm.com/start and continue on the live site.";
+        return "Open commonswarm.com/app and continue on the live site.";
       }
       return "Something went wrong before a key was created. Nothing was added.";
     }
