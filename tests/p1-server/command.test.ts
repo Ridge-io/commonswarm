@@ -111,6 +111,80 @@ function localEnvironment(): LocalEnvironment {
   return parsed as LocalEnvironment;
 }
 
+const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]"]);
+
+/**
+ * This suite owns a local Supabase instance, not the production breaker.
+ *
+ * Checking both endpoints is intentional. A loopback API paired with a remote
+ * database (or the reverse) is not a local test environment, and must fail
+ * closed before the reset helper gets a SQL connection to act on.
+ */
+function assertLocalSpendResetTarget(environment: LocalEnvironment): void {
+  let api: URL;
+  let database: URL;
+  try {
+    api = new URL(environment.API_URL);
+    database = new URL(environment.DB_URL);
+  } catch {
+    throw new Error("spend-breaker test reset requires parseable local URLs");
+  }
+  const apiIsLocal = api.protocol === "http:" &&
+    LOOPBACK_HOSTS.has(api.hostname);
+  const databaseIsLocal =
+    (database.protocol === "postgres:" || database.protocol === "postgresql:") &&
+    LOOPBACK_HOSTS.has(database.hostname);
+  if (!apiIsLocal || !databaseIsLocal) {
+    throw new Error(
+      "spend-breaker test reset is restricted to loopback API and database targets",
+    );
+  }
+}
+
+/**
+ * A test run spends the same global hourly proxies as production. Without
+ * isolation, several honest runs accumulate past 100 workspace creations and
+ * leave the manual-reset latch open for every later run.
+ *
+ * Production reset semantics remain untouched: reset_spend_breaker still
+ * clears only the latch. This TEST-ONLY fixture additionally removes the
+ * local suite's spend shards so the next accepted action cannot immediately
+ * retrip on the current hour's stale test traffic.
+ */
+async function resetLocalTestSpendBreaker(
+  environment: LocalEnvironment,
+  connection: postgres.Sql,
+): Promise<void> {
+  assertLocalSpendResetTarget(environment);
+  await connection.begin(async (tx) => {
+    await tx`
+      SELECT swarm.reset_spend_breaker(
+        'p1-server test fixture',
+        'D-031 local test isolation'
+      )
+    `;
+    await tx`
+      DELETE FROM swarm.rate_buckets
+      WHERE bucket_key LIKE 'spend:%'
+    `;
+    const [state] = await tx<{ open_trips: string; spend_shards: string }[]>`
+      SELECT
+        (
+          SELECT count(*)::text
+          FROM swarm.spend_breaker
+          WHERE cleared_at IS NULL
+        ) AS open_trips,
+        (
+          SELECT count(*)::text
+          FROM swarm.rate_buckets
+          WHERE bucket_key LIKE 'spend:%'
+        ) AS spend_shards
+    `;
+    assert.equal(state?.open_trips, "0", "local spend-breaker latch reset");
+    assert.equal(state?.spend_shards, "0", "local spend counters reset");
+  });
+}
+
 /**
  * D-025 / D-020: wait for both functions to be RUNNING, not merely reachable.
  *
@@ -135,7 +209,9 @@ async function waitForFunction(): Promise<void> {
 
 before(async () => {
   local = localEnvironment();
+  assertLocalSpendResetTarget(local);
   sql = postgres(local.DB_URL, { prepare: false, max: 10 });
+  await resetLocalTestSpendBreaker(local, sql);
   admin = createClient(local.API_URL, local.SERVICE_ROLE_KEY, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
@@ -2096,6 +2172,64 @@ test("login device registration is owned, live-only, and sanitizes profile names
     const revoked = await registerDevice(f, user.jwt, deviceId);
     assert.equal(revoked.status, 403);
     assert.deepEqual(revoked.body, { error: "forbidden" });
+  });
+});
+
+test("D-031 spend reset rejects production-shaped targets before touching SQL", () => {
+  const productionApi = {
+    API_URL: "https://api.commonswarm.example",
+    ANON_KEY: "not-used",
+    DB_URL: "postgresql://postgres:secret@127.0.0.1:54322/postgres",
+    SERVICE_ROLE_KEY: "not-used",
+  };
+  assert.throws(
+    () => assertLocalSpendResetTarget(productionApi),
+    /restricted to loopback API and database targets/,
+  );
+
+  const productionDatabase = {
+    API_URL: "http://127.0.0.1:54321",
+    ANON_KEY: "not-used",
+    DB_URL: "postgresql://postgres:secret@db.commonswarm.example:5432/postgres",
+    SERVICE_ROLE_KEY: "not-used",
+  };
+  assert.throws(
+    () => assertLocalSpendResetTarget(productionDatabase),
+    /restricted to loopback API and database targets/,
+  );
+});
+
+test("D-031 local reset clears a latched breaker and restores signup", async () => {
+  await scenario(async (f) => {
+    const user = await createUser("spend-breaker-recovery");
+    registerHuman(f, user);
+
+    const [trip] = await sql<{ trip_id: string | null }[]>`
+      SELECT swarm.trip_spend_breaker(
+        'p1-server D-031 observer',
+        'prove an open global latch blocks signup before the test reset'
+      )::text AS trip_id
+    `;
+    assert.ok(trip?.trip_id, "the observer must begin with a newly opened latch");
+
+    const blocked = await createWorkspace(
+      user.jwt,
+      randomUUID(),
+      "blocked by spend latch",
+    );
+    assert.equal(blocked.status, 503, blocked.text);
+    assert.equal(blocked.body.error, "signup_paused", blocked.text);
+
+    await resetLocalTestSpendBreaker(local, sql);
+
+    const workspaceId = randomUUID();
+    const restored = await createWorkspace(
+      user.jwt,
+      workspaceId,
+      "restored after local reset",
+    );
+    assert.equal(restored.status, 200, restored.text);
+    assert.equal(restored.body.workspace_id, workspaceId, restored.text);
   });
 });
 
