@@ -153,6 +153,10 @@ test("workspace creation and active-feed expiry cannot outlive their session", (
   );
   assert.match(
     feed,
+    /window\.clearTimeout\(signalExpiryTimer\)[\s\S]*if \(app\.dataset\.channelView === "connect"\) return/,
+  );
+  assert.match(
+    feed,
     /signals = signals\.filter\([\s\S]*signal\.until === null \|\| new Date\(signal\.until\)\.getTime\(\) > now/,
   );
   assert.match(feed, /signalExpiryTimer = window\.setTimeout\([\s\S]*renderFeed/);

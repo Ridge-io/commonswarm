@@ -778,6 +778,7 @@ import SampleNotice from "./SampleNotice.astro";
     const renderFeed = (): void => {
       window.clearTimeout(signalExpiryTimer);
       signalExpiryTimer = undefined;
+      if (app.dataset.channelView === "connect") return;
       const now = Date.now();
       signals = signals.filter(
         (signal) => signal.until === null || new Date(signal.until).getTime() > now,
