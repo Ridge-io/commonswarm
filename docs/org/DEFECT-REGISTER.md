@@ -1318,3 +1318,14 @@ Gemini-not-installed, no-Google-voice, and Claude-reviewer variants found the cu
 instruction surfaces corrected above. Remaining matches are historical defect evidence,
 superseded text retained and marked dead, product examples naming supported agent brands, or
 source comments describing past reviewer identity; none is an alternate live review gate.
+
+**Both reviewer command paths produced substantive positive and negative verdicts on related,
+but non-identical, D-033 instruction controls.** Grok rejected real SHA
+`3d5ed0a24b55924443c138b290e2b229e5b3ddf7` for stale alternate-review mechanisms, then
+approved corrected SHA `f8588b738862dc5f72d93293624c2ecabbad6c3e`. AGY with
+`gemini-3.1-pro-high` approved that corrected SHA, then rejected a later deliberate mutation
+that required Claude only, made Grok and AGY/Gemini optional, and removed exact-SHA rebinding.
+The captured stdout and exact finding labels are committed at
+`docs/evidence/2026-07-29-d033-reviewer-controls.md`. This demonstrates positive and negative
+results for this instruction class; it does not establish universal reviewer quality or future
+determinism.
