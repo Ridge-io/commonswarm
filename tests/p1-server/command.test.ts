@@ -4735,6 +4735,20 @@ test("hosted agent revocation: human roles, agent confinement, lineage fail-clos
     assert.equal(missing.body.status, "rejected");
     assert.equal(missing.body.reason, "token_not_found");
 
+    // Wrong-workspace: UA is not a member of B by default, so the uniform
+    // membership gate is 403 before domain. Add UA as a live member of B, then
+    // prove a principal that lives only in A is domain-not-found on B's stream.
+    await sql`
+      INSERT INTO swarm.memberships (workspace_id, user_id, role, joined_at)
+      VALUES (
+        ${f.workspaceB}::uuid,
+        ${f.ua}::uuid,
+        'member',
+        statement_timestamp()
+      )
+      ON CONFLICT (workspace_id, user_id) DO UPDATE
+        SET role = 'member', revoked_at = NULL
+    `;
     const wrongWs = await issueConnect(
       f,
       f.uaJwt,
@@ -4742,6 +4756,7 @@ test("hosted agent revocation: human roles, agent confinement, lineage fail-clos
       commandId("wrongws"),
       f.workspaceB,
     );
+    assert.equal(wrongWs.status, 200, wrongWs.text);
     assert.equal(wrongWs.body.status, "rejected");
     assert.equal(wrongWs.body.reason, "principal_not_found");
 
