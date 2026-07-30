@@ -14,6 +14,7 @@ import {
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SIGNAL_KINDS = new Set<SignalKind>(["working-on", "note", "ask"]);
+const SIGNAL_READ_TIMEOUT_MS = 30_000;
 
 export type SignalCredential =
   | { kind: "human"; accessToken: string; userId: string }
@@ -94,6 +95,28 @@ function checkedSince(value: string | undefined): string | undefined {
   return value;
 }
 
+async function fetchSignalRead(
+  fetcher: typeof fetch,
+  input: Parameters<typeof fetch>[0],
+  init: RequestInit,
+): Promise<Response | null> {
+  const controller = new AbortController();
+  const timeout = setTimeout(
+    () => controller.abort(),
+    SIGNAL_READ_TIMEOUT_MS,
+  );
+  try {
+    return await fetcher(input, {
+      ...init,
+      signal: controller.signal,
+    });
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 async function humanSignals(
   target: CloudTarget,
   credential: Extract<SignalCredential, { kind: "human" }>,
@@ -121,13 +144,13 @@ async function humanSignals(
   }
   url.searchParams.set("order", "created_at.desc,id.desc");
   url.searchParams.set("limit", String(query.limit));
-  const response = await fetcher(url, {
+  const response = await fetchSignalRead(fetcher, url, {
     headers: {
       authorization: `Bearer ${credential.accessToken}`,
       apikey: target.anonKey,
       "accept-profile": "swarm_read",
     },
-  }).catch(() => null);
+  });
   if (response === null) {
     throw new Error("signal read could not reach the cloud service");
   }
@@ -147,7 +170,7 @@ async function agentSignals(
   query: SignalQuery,
   fetcher: typeof fetch,
 ): Promise<SignalRecord[]> {
-  const response = await fetcher(readEndpoint(target), {
+  const response = await fetchSignalRead(fetcher, readEndpoint(target), {
     method: "POST",
     headers: {
       authorization: `Bearer ${credential.token}`,
@@ -164,7 +187,7 @@ async function agentSignals(
       limit: query.limit,
       include_stale: query.includeStale ?? false,
     }),
-  }).catch(() => null);
+  });
   if (response === null) {
     throw new Error("signal read could not reach the cloud service");
   }
@@ -195,7 +218,7 @@ export async function readAgentSignalMembers(
   workspaceId: string,
   fetcher: typeof fetch = fetch,
 ): Promise<SignalMember[]> {
-  const response = await fetcher(readEndpoint(target), {
+  const response = await fetchSignalRead(fetcher, readEndpoint(target), {
     method: "POST",
     headers: {
       authorization: `Bearer ${token}`,
@@ -206,7 +229,7 @@ export async function readAgentSignalMembers(
       resource: "members",
       workspace_id: workspaceId,
     }),
-  }).catch(() => null);
+  });
   if (response === null) {
     throw new Error("member read could not reach the cloud service");
   }

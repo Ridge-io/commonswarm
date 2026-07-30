@@ -1352,3 +1352,34 @@ The captured stdout and exact finding labels are committed at
 `docs/evidence/2026-07-29-d033-reviewer-controls.md`. This demonstrates positive and negative
 results for this instruction class; it does not establish universal reviewer quality or future
 determinism.
+
+---
+
+## D-034 — signal status fallback could wait forever on a pending fetch · IN REVIEW
+
+**Found by:** Tundra, 2026-07-29, read-only audit of exact main
+`c152c2cd78194007be57fb8671ae6820699f0ee1`
+**Owner:** Tundra · **Severity:** P1 status-path availability
+
+`settleSignalStatus()` used `Promise.allSettled()` to turn rejected signal reads into a warning,
+but all three underlying signal/member `fetch` call sites had no application deadline. A
+provider connection that stayed pending therefore never rejected, `allSettled()` never
+returned, and the fallback it advertised could not fire.
+
+The signals-only patch on `swarm/Tundra/d034-signal-fetch-deadline` puts the human signal read,
+agent signal read, and agent member read through one 30-second `AbortController` deadline.
+Successful responses are unchanged, fetch rejections and timeouts retain the existing
+`could not reach the cloud service` wording, and the timer is cleared on every settled path.
+
+The pure observer is explicitly named in root `npm test`. It drives all three production fetch
+sites with providers that never answer, proves each receives and obeys an `AbortSignal` at
+30 seconds, and proves the real `settleSignalStatus(readSignals(...), readSignals(...))` path
+returns its warning. Removing production signal propagation made the observer fail 0/2;
+restoring it made the targeted observer pass 2/2 and root `npm test` pass 81/81. Full commands,
+ledger run numbers, scope, and non-claims are recorded in
+`docs/evidence/2026-07-29-d034-signal-fetch-deadline.md`.
+
+**Scope boundary:** the exact-main audit found 14 default-native fetch/fetcher call sites:
+6 already carried application deadlines and 8 did not. D-034 changes only the three signal
+read sites. Browser create-workspace, CLI login, accept-link, and workspace-list reads remain
+separate defects and are not fixed or claimed here.
