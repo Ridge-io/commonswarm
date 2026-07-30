@@ -12,8 +12,10 @@ test("member admin stays a thin, confirmed, role-aware command API consumer", as
   assert.match(source, /me\?\.role === "admin" && member\.role !== "owner"/);
   assert.match(source, /window\.confirm\(/);
   assert.match(source, /removeWorkspaceMember\(/);
-  assert.match(source, /FreshLoginRequired/);
+  assert.match(source, /error instanceof FreshLoginRequired/);
   assert.match(source, /pending-member-selection/);
+  assert.match(source, /\[data-member-reauth-github\][\s\S]*?signInWithGitHub\(/);
+  assert.match(source, /\[data-member-reauth-email\][\s\S]*?signInWithEmail\(/);
   assert.match(source, /press Remove again/);
   assert.doesNotMatch(
     source,
