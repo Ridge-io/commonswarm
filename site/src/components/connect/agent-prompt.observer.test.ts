@@ -59,3 +59,28 @@ test("dashboard agent prompt teaches explicit message receipt without claiming b
   assert.doesNotMatch(prompt, /always[- ]on|background daemon|automatically wakes/i);
   assert.equal(prompt.split(TOKEN).length - 1, 1, "receive guidance must not duplicate the credential");
 });
+
+test("dashboard agent prompt requires cswarm 0.1.2+ before inbox --wait or reply", () => {
+  const prompt = dashboardAgentPrompt(INPUT);
+
+  assert.match(prompt, /cswarm 0\.1\.2 or newer/i);
+  assert.match(prompt, /cswarm --version/);
+  assert.match(
+    prompt,
+    /missing or older than 0\.1\.2[\s\S]*inbox --wait or reply/i,
+  );
+  assertLiveInstallCopy(prompt);
+  // Same canonical installer for first install and for upgrade of a stale CLI.
+  assert.equal(
+    (prompt.match(/curl -fsSL https:\/\/commonswarm\.com\/install\.sh \| sh/g) ??
+      []).length,
+    1,
+    "install guidance must stay a single canonical command",
+  );
+  assert.match(
+    prompt,
+    /Only after cswarm 0\.1\.2 or\s+newer is\s+installed[\s\S]*cswarm inbox --kind ask --wait 60/i,
+  );
+  assert.equal(prompt.split(TOKEN).length - 1, 1, "version guidance must not duplicate the credential");
+  assert.doesNotMatch(prompt, /swm_agt_[^"\s]+.*0\.1\.2/);
+});
