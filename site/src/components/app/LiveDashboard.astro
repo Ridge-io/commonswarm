@@ -407,8 +407,16 @@ import SampleNotice from "./SampleNotice.astro";
   const app = document.querySelector<HTMLElement>("live-dashboard");
 
   if (app) {
+    /*
+     * Top-level dashboard panels only. AgentConnect reuses data-panel=… for its own
+     * loading/form/result surfaces inside <agent-connect>. A broad [data-panel] walk
+     * would stamp hidden on those children whenever showPanel("channel") ran, and the
+     * UA's [hidden] { display:none !important } permanently hides the name field and
+     * mint button even after AgentConnect sets data-state=ready. Scope to the root's
+     * direct panel sections so nested connect markup keeps its own visibility model.
+     */
     const panel = (name: string): HTMLElement | null =>
-      app.querySelector<HTMLElement>(`[data-panel="${name}"]`);
+      app.querySelector<HTMLElement>(`.dashboard__root > [data-panel="${name}"]`);
     const one = <T extends Element>(selector: string): T | null => app.querySelector<T>(selector);
     const all = <T extends Element>(selector: string): T[] =>
       Array.from(app.querySelectorAll<T>(selector));
@@ -443,7 +451,7 @@ import SampleNotice from "./SampleNotice.astro";
       name: "loading" | "signed-out" | "create" | "workspace-error" | "channel",
     ): void => {
       const previous = app.dataset.state;
-      for (const section of all<HTMLElement>("[data-panel]")) {
+      for (const section of all<HTMLElement>(".dashboard__root > [data-panel]")) {
         section.hidden = section.dataset.panel !== name;
       }
       app.dataset.state = name;

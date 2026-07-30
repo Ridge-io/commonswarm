@@ -180,6 +180,50 @@ test("panel changes expose busy state and move focus only on real transitions", 
   assert.match(source, /heading\.focus\(\{ preventScroll: true \}\)/);
 });
 
+/*
+ * LIVE RELEASE BLOCKER (62f8a3b): showPanel walked every [data-panel] under live-dashboard,
+ * including AgentConnect's nested loading/form/result panels. Opening the channel set
+ * hidden on those children; UA [hidden]{display:none!important} then permanently hid the
+ * name field and mint button after "Add an agent", while the always-visible card header
+ * still rendered. The fix scopes panel lookup and showPanel to .dashboard__root > [data-panel].
+ * Causal: the unscoped walk must be absent; the scoped walk must be present; AgentConnect
+ * must still own its own data-panel surfaces.
+ */
+test("showPanel must not stamp hidden on AgentConnect nested data-panel surfaces", () => {
+  const showPanel = between(dashboard, "const showPanel =", "const setLoading =");
+  const panelHelper = between(
+    dashboard,
+    "const panel = (name: string)",
+    "const one =",
+  );
+
+  assert.match(
+    panelHelper,
+    /\.dashboard__root > \[data-panel="\$\{name\}"\]/,
+    "panel() must resolve only top-level dashboard panels",
+  );
+  assert.match(
+    showPanel,
+    /all<HTMLElement>\("\.dashboard__root > \[data-panel\]"\)/,
+    "showPanel must toggle only .dashboard__root > [data-panel]",
+  );
+  assert.doesNotMatch(
+    showPanel,
+    /all<HTMLElement>\("\[data-panel\]"\)/,
+    "unscoped [data-panel] walk is the 62f8a3b cause of the missing form",
+  );
+  assert.match(
+    connect,
+    /data-panel="form"[\s\S]*data-field="name"[\s\S]*data-action="mint"/,
+    "AgentConnect still owns nested data-panel form surfaces",
+  );
+  assert.match(
+    connect,
+    /\.ac\[data-state="ready"\] \[data-panel="form"\]/,
+    "AgentConnect still switches form visibility via data-state, not dashboard hidden",
+  );
+});
+
 test("dashboard cannot hide a live or still-minting credential", () => {
   const openWorkspace = between(dashboard, "const openWorkspace =", "const openConnect =");
   const guard = between(
