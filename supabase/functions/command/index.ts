@@ -5,6 +5,11 @@ import {
   loadAgentCredential,
   type AgentAuthRow,
 } from "../_shared/agent-auth.ts";
+import {
+  commandAllowedOrigins,
+  commandPreflight,
+  withCommandCors,
+} from "./cors.ts";
 // Supabase's edge graph cannot resolve the NodeNext `.js` specifiers in the
 // frozen TypeScript core. This checked-in bundle is regenerated directly from
 // src/protocol/index.ts by build:command-core; it is not a second implementation.
@@ -647,6 +652,10 @@ const databaseUrl =
   Deno.env.get("SWARM_DATABASE_URL") ?? Deno.env.get("SUPABASE_DB_URL");
 const supabaseUrl = Deno.env.get("SUPABASE_URL");
 const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY");
+const commandEnvironment = Deno.env.get("SWARM_ENV");
+const allowedCommandOrigins = commandAllowedOrigins(
+  Deno.env.get("SWARM_COMMAND_ALLOWED_ORIGINS"),
+);
 if (!databaseUrl || !supabaseUrl || !supabaseAnonKey) {
   throw new Error(
     "command function requires SWARM_DATABASE_URL/SUPABASE_DB_URL, SUPABASE_URL, and SUPABASE_ANON_KEY",
@@ -5296,7 +5305,7 @@ async function resolveLedgerRace(error: LedgerRace): Promise<HttpResult> {
   });
 }
 
-async function handleRequest(request: Request): Promise<Response> {
+async function handlePostRequest(request: Request): Promise<Response> {
   if (request.method !== "POST") {
     return json(405, { error: "method_not_allowed" });
   }
@@ -5408,6 +5417,20 @@ async function handleRequest(request: Request): Promise<Response> {
       ? json(503, { error: "temporarily_unavailable" })
       : json(500, { error: "internal_error" });
   }
+}
+
+async function handleRequest(request: Request): Promise<Response> {
+  // Browser command calls carry Authorization, apikey and JSON headers, so they
+  // are preflighted. OPTIONS must terminate before parsing, auth or database work.
+  if (request.method === "OPTIONS") {
+    return commandPreflight(request, allowedCommandOrigins, commandEnvironment);
+  }
+  return withCommandCors(
+    request,
+    await handlePostRequest(request),
+    allowedCommandOrigins,
+    commandEnvironment,
+  );
 }
 
 Deno.serve(handleRequest);

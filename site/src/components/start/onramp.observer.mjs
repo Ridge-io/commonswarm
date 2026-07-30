@@ -69,6 +69,12 @@ const orderedInBoot = [
   "if (intent)",
   "await create(session, named);",
 ].map((needle) => bootSource.indexOf(needle));
+const authObserverStart = source.indexOf("const queueAuthReload =");
+const authObserverEnd = source.indexOf("\n  }\n</script>", authObserverStart);
+const authObserverSource =
+  authObserverStart >= 0 && authObserverEnd > authObserverStart
+    ? source.slice(authObserverStart, authObserverEnd)
+    : null;
 
 const checks = [
   {
@@ -151,6 +157,43 @@ const checks = [
       createPressSource.indexOf("scopeKeyTo(session.user?.id ?? null);") >= 0 &&
       createPressSource.indexOf("scopeKeyTo(session.user?.id ?? null);") <
         createPressSource.indexOf("const intent = readIntent();"),
+  },
+  {
+    name: "auth return waits for the initial session event and coalesces identity reloads",
+    pass:
+      authObserverSource !== null &&
+      authObserverSource.includes("configuredClient.auth.onAuthStateChange") &&
+      authObserverSource.includes('event !== "INITIAL_SESSION"') &&
+      authObserverSource.includes('event !== "SIGNED_IN"') &&
+      authObserverSource.includes('event !== "SIGNED_OUT"') &&
+      authObserverSource.includes("nextSession?.user?.id ??") &&
+      authObserverSource.includes("nextAuthUserId === renderedAuthUserId") &&
+      authObserverSource.includes("queueMicrotask(") &&
+      authObserverSource.includes("await boot();"),
+  },
+  {
+    name: "auth reload stays single-flight through boot and drains a changed identity",
+    pass:
+      authObserverSource !== null &&
+      source.includes("let authReloadPending = false;") &&
+      /if \(authReloadQueued\)[\s\S]{0,100}authReloadPending = true;[\s\S]{0,60}return;/.test(
+        authObserverSource,
+      ) &&
+      /do \{[\s\S]{0,100}authReloadPending = false;[\s\S]{0,80}await boot\(\);[\s\S]{0,80}\} while \(authReloadPending\)/.test(
+        authObserverSource,
+      ) &&
+      /finally \{[\s\S]{0,80}authReloadQueued = false;/.test(authObserverSource),
+  },
+  {
+    name: "configured start boots from auth state instead of racing it",
+    pass:
+      authObserverSource !== null &&
+      /if \(!configuredClient\)[\s\S]{0,80}void boot\(\);[\s\S]{0,120}else \{[\s\S]*onAuthStateChange/.test(
+        authObserverSource,
+      ) &&
+      !/const configuredClient = client\(\);[\s\S]*onAuthStateChange[\s\S]*\n\s*void boot\(\);\s*$/.test(
+        authObserverSource,
+      ),
   },
   {
     name: "typed signup refusal no longer emits the retired invite-only premise",

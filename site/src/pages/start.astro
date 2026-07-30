@@ -501,6 +501,10 @@ const description =
     /* ------------------------------------------------------------------------------------
      * Boot
      * ---------------------------------------------------------------------------------- */
+    let renderedAuthUserId: string | undefined;
+    let authReloadQueued = false;
+    let authReloadPending = false;
+
     const boot = async (): Promise<void> => {
       if (!client()) {
         show("no-deployment", { step: null });
@@ -518,6 +522,8 @@ const description =
         halt(thrown, null);
         return;
       }
+
+      renderedAuthUserId = session?.user?.id ?? "";
 
       if (!session) {
         show("signed-out");
@@ -713,7 +719,42 @@ const description =
       });
     }
 
-    void boot();
+    const queueAuthReload = (nextSession: Session | null): void => {
+      const nextAuthUserId = nextSession?.user?.id ?? "";
+      if (nextAuthUserId === renderedAuthUserId) return;
+      renderedAuthUserId = nextAuthUserId;
+      if (authReloadQueued) {
+        authReloadPending = true;
+        return;
+      }
+      authReloadQueued = true;
+      queueMicrotask(async () => {
+        try {
+          do {
+            authReloadPending = false;
+            await boot();
+          } while (authReloadPending);
+        } finally {
+          authReloadQueued = false;
+        }
+      });
+    };
+
+    const configuredClient = client();
+    if (!configuredClient) {
+      void boot();
+    } else {
+      configuredClient.auth.onAuthStateChange((event, nextSession) => {
+        if (
+          event !== "INITIAL_SESSION" &&
+          event !== "SIGNED_IN" &&
+          event !== "SIGNED_OUT"
+        ) {
+          return;
+        }
+        queueAuthReload(nextSession);
+      });
+    }
   }
 </script>
 
