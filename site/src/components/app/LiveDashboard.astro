@@ -1269,11 +1269,14 @@ import SampleNotice from "./SampleNotice.astro";
         input?.focus();
         return;
       }
-      const intent: CreateIntent = {
-        workspaceId: uuid(),
-        commandId: uuid(),
-        name,
-      };
+      const savedIntent = readCreateIntent(session.user.id);
+      const intent: CreateIntent = savedIntent?.name === name
+        ? savedIntent
+        : {
+            workspaceId: uuid(),
+            commandId: uuid(),
+            name,
+          };
       writeCreateIntent(session.user.id, intent);
       await createFromIntent(session, intent);
     });

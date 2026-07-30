@@ -141,6 +141,11 @@ test("workspace creation and active-feed expiry cannot outlive their session", (
     createSubmit,
     /activeCreate\?\.version === requestVersion[\s\S]*activeCreate\.userId === session\.user\.id/,
   );
+  assert.match(createSubmit, /const savedIntent = readCreateIntent\(session\.user\.id\)/);
+  assert.match(
+    createSubmit,
+    /const intent: CreateIntent = savedIntent\?\.name === name[\s\S]*\? savedIntent[\s\S]*workspaceId: uuid\(\)[\s\S]*commandId: uuid\(\)/,
+  );
   assert.equal(
     create.match(/if \(!isCurrent\(\)\) return/g)?.length,
     3,
