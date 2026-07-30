@@ -4661,69 +4661,41 @@ test("hosted agent revocation: human roles, agent confinement, lineage fail-clos
       return Number(row?.count ?? 0);
     };
 
-    // --- Agent confinement on an owner-minted principal ---
-    const principalResult = await issueConnect(f, f.uaJwt, {
-      kind: "create_agent_principal",
-      name: `revoke-target-${randomUUID().slice(0, 8)}`,
-    });
-    assert.equal(principalResult.status, 200, principalResult.text);
-    assert.equal(principalResult.body.status, "accepted");
-    const principalId = String(principalResult.body.principal_id);
-
-    const deviceId = randomUUID();
-    assert.equal((await registerDevice(f, f.uaJwt, deviceId)).status, 200);
-    const runId = randomUUID();
-    const minted = await issueConnect(f, f.uaJwt, {
-      kind: "mint_agent_token",
-      principal_id: principalId,
-      run_id: runId,
-      task_id: randomUUID(),
-      epoch: 1,
-      device_id: deviceId,
-    });
-    assert.equal(minted.status, 200, minted.text);
-    assert.equal(minted.body.status, "accepted");
-    const tokenId = String(minted.body.token_id);
-    const agentToken = String(minted.body.agent_token);
-    f.credentials.set(agentToken, {
-      kind: "agent",
-      id: principalId,
-      actor: { user: f.ua, agent_principal: principalId, run: runId },
-    });
-
+    // --- Agent confinement on the fixture principal only ---
+    // I4 recomputes agent request hashes with f.agentToken's actor, so any
+    // ledgered agent outcome must use the fixture principal/run identity.
     // Agent may not revoke a principal (CONNECT human-only → 403).
-    const agentPrincipal = await issueConnect(f, agentToken, {
+    const agentPrincipal = await issueConnect(f, f.agentToken, {
       kind: "revoke_agent_principal",
-      principal_id: principalId,
+      principal_id: f.agentPrincipal,
     });
     assert.equal(agentPrincipal.status, 403, agentPrincipal.text);
 
     // Agent may not revoke a sibling token; zero tombstones on the refused target.
     const sibling = await seedPredecessor(f, {});
-    const agentSibling = await issueConnect(f, agentToken, {
+    const agentSibling = await issueConnect(f, f.agentToken, {
       kind: "revoke_agent_token",
       token_id: sibling.tokenId,
     });
     assert.equal(agentSibling.status, 403, agentSibling.text);
     assert.equal(await tombstonesFor("token", sibling.tokenId), 0);
 
-    // Agent self-surrender of the exact presenting token succeeds.
-    const selfSurrender = await issueConnect(f, agentToken, {
+    // Agent self-surrender of its exact presenting token (seeded on fixture
+    // principal so I4 actor namespace matches).
+    const selfTok = await seedPredecessor(f, {});
+    const selfSurrender = await issueConnect(f, selfTok.token, {
       kind: "revoke_agent_token",
-      token_id: tokenId,
+      token_id: selfTok.tokenId,
     });
     assert.equal(selfSurrender.status, 200, selfSurrender.text);
     assert.equal(selfSurrender.body.status, "accepted", selfSurrender.text);
-    assert.equal(await tombstonesFor("token", tokenId), 1);
-    const [selfRow] = await sql<{ lineage_id: string }[]>`
-      SELECT lineage_id FROM swarm.agent_tokens WHERE token_id = ${tokenId}::uuid
-    `;
-    assert.equal(await tombstonesFor("lineage", String(selfRow?.lineage_id)), 1);
+    assert.equal(await tombstonesFor("token", selfTok.tokenId), 1);
+    assert.equal(await tombstonesFor("lineage", selfTok.lineageId), 1);
 
     // Double / missing / wrong-workspace refusals.
     const doubleToken = await issueConnect(f, f.uaJwt, {
       kind: "revoke_agent_token",
-      token_id: tokenId,
+      token_id: selfTok.tokenId,
     });
     assert.equal(doubleToken.body.status, "rejected");
     assert.equal(doubleToken.body.reason, "token_revoked");
@@ -4735,9 +4707,14 @@ test("hosted agent revocation: human roles, agent confinement, lineage fail-clos
     assert.equal(missing.body.status, "rejected");
     assert.equal(missing.body.reason, "token_not_found");
 
-    // Wrong-workspace: UA is not a member of B by default, so the uniform
-    // membership gate is 403 before domain. Add UA as a live member of B, then
-    // prove a principal that lives only in A is domain-not-found on B's stream.
+    // Wrong-workspace: create an A-only principal, put UA on B, prove domain
+    // isolation (not merely the non-member 403 gate).
+    const aOnlyPrincipal = await issueConnect(f, f.uaJwt, {
+      kind: "create_agent_principal",
+      name: `a-only-${randomUUID().slice(0, 8)}`,
+    });
+    assert.equal(aOnlyPrincipal.body.status, "accepted", aOnlyPrincipal.text);
+    const aOnlyPrincipalId = String(aOnlyPrincipal.body.principal_id);
     await sql`
       INSERT INTO swarm.memberships (workspace_id, user_id, role, joined_at)
       VALUES (
@@ -4752,7 +4729,7 @@ test("hosted agent revocation: human roles, agent confinement, lineage fail-clos
     const wrongWs = await issueConnect(
       f,
       f.uaJwt,
-      { kind: "revoke_agent_principal", principal_id: principalId },
+      { kind: "revoke_agent_principal", principal_id: aOnlyPrincipalId },
       commandId("wrongws"),
       f.workspaceB,
     );
