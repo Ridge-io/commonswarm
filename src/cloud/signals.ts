@@ -99,21 +99,50 @@ async function fetchSignalRead(
   fetcher: typeof fetch,
   input: Parameters<typeof fetch>[0],
   init: RequestInit,
-): Promise<Response | null> {
-  const controller = new AbortController();
+): Promise<{ response: Response; body: unknown } | null> {
+  const deadlineController = new AbortController();
+  const signal = init.signal
+    ? AbortSignal.any([init.signal, deadlineController.signal])
+    : deadlineController.signal;
+  let onAbort = () => {};
+  const aborted = new Promise<null>((resolve) => {
+    onAbort = () => resolve(null);
+    if (signal.aborted) {
+      onAbort();
+    } else {
+      signal.addEventListener("abort", onAbort, { once: true });
+    }
+  });
   const timeout = setTimeout(
-    () => controller.abort(),
+    () => deadlineController.abort(),
     SIGNAL_READ_TIMEOUT_MS,
   );
   try {
-    return await fetcher(input, {
-      ...init,
-      signal: controller.signal,
-    });
-  } catch {
-    return null;
+    if (signal.aborted) return null;
+    const read = (async () => {
+      let response: Response;
+      try {
+        response = await fetcher(input, {
+          ...init,
+          signal,
+        });
+      } catch {
+        return null;
+      }
+      if (signal.aborted) return null;
+      if (!response.ok) {
+        return { response, body: null };
+      }
+      try {
+        return { response, body: await response.json() };
+      } catch {
+        return signal.aborted ? null : { response, body: null };
+      }
+    })();
+    return await Promise.race([read, aborted]);
   } finally {
     clearTimeout(timeout);
+    signal.removeEventListener("abort", onAbort);
   }
 }
 
@@ -144,20 +173,20 @@ async function humanSignals(
   }
   url.searchParams.set("order", "created_at.desc,id.desc");
   url.searchParams.set("limit", String(query.limit));
-  const response = await fetchSignalRead(fetcher, url, {
+  const result = await fetchSignalRead(fetcher, url, {
     headers: {
       authorization: `Bearer ${credential.accessToken}`,
       apikey: target.anonKey,
       "accept-profile": "swarm_read",
     },
   });
-  if (response === null) {
+  if (result === null) {
     throw new Error("signal read could not reach the cloud service");
   }
+  const { response, body } = result;
   if (!response.ok) {
     throw new Error(`signal read failed (HTTP ${response.status})`);
   }
-  const body = await response.json().catch(() => null);
   if (!Array.isArray(body)) {
     throw new Error("signal read returned malformed JSON");
   }
@@ -170,7 +199,7 @@ async function agentSignals(
   query: SignalQuery,
   fetcher: typeof fetch,
 ): Promise<SignalRecord[]> {
-  const response = await fetchSignalRead(fetcher, readEndpoint(target), {
+  const result = await fetchSignalRead(fetcher, readEndpoint(target), {
     method: "POST",
     headers: {
       authorization: `Bearer ${credential.token}`,
@@ -188,13 +217,13 @@ async function agentSignals(
       include_stale: query.includeStale ?? false,
     }),
   });
-  if (response === null) {
+  if (result === null) {
     throw new Error("signal read could not reach the cloud service");
   }
+  const { response, body } = result;
   if (!response.ok) {
     throw new Error(`signal read failed (HTTP ${response.status})`);
   }
-  const body = await response.json().catch(() => null);
   if (
     !body ||
     typeof body !== "object" ||
@@ -218,7 +247,7 @@ export async function readAgentSignalMembers(
   workspaceId: string,
   fetcher: typeof fetch = fetch,
 ): Promise<SignalMember[]> {
-  const response = await fetchSignalRead(fetcher, readEndpoint(target), {
+  const result = await fetchSignalRead(fetcher, readEndpoint(target), {
     method: "POST",
     headers: {
       authorization: `Bearer ${token}`,
@@ -230,13 +259,13 @@ export async function readAgentSignalMembers(
       workspace_id: workspaceId,
     }),
   });
-  if (response === null) {
+  if (result === null) {
     throw new Error("member read could not reach the cloud service");
   }
+  const { response, body } = result;
   if (!response.ok) {
     throw new Error(`member read failed (HTTP ${response.status})`);
   }
-  const body = await response.json().catch(() => null);
   const raw = body && typeof body === "object" && !Array.isArray(body)
     ? (body as Record<string, unknown>).members
     : null;

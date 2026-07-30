@@ -1368,15 +1368,20 @@ returned, and the fallback it advertised could not fire.
 
 The signals-only patch on `swarm/Tundra/d034-signal-fetch-deadline` puts the human signal read,
 agent signal read, and agent member read through one 30-second `AbortController` deadline.
-Successful responses are unchanged, fetch rejections and timeouts retain the existing
-`could not reach the cloud service` wording, and the timer is cleared on every settled path.
+The deadline covers both fetch and successful-response JSON consumption, composes any existing
+caller signal, and races the full read so even a non-cooperative injected fetcher cannot keep
+the caller pending. Successful responses are unchanged, rejections and timeouts retain the
+existing `could not reach the cloud service` wording, and timer/listener cleanup runs on every
+settled caller path.
 
 The pure observer is explicitly named in root `npm test`. It drives all three production fetch
 sites with providers that never answer, proves each receives and obeys an `AbortSignal` at
-30 seconds, and proves the real `settleSignalStatus(readSignals(...), readSignals(...))` path
-returns its warning. Removing production signal propagation made the observer fail 0/2;
-restoring it made the targeted observer pass 2/2 and root `npm test` pass 81/81. Full commands,
-ledger run numbers, scope, and non-claims are recorded in
+30 seconds, proves a successful-response body stall remains under the same deadline, and proves
+the real `settleSignalStatus(readSignals(...), readSignals(...))` path returns its warning.
+Removing production signal propagation made the initial observer fail 0/2. Deliberately ending
+the timer at response headers made the corrected body observer time out; restoring it made the
+targeted observer pass 3/3 and root `npm test` pass 82/82. Full commands, ledger run numbers,
+the first-SHA Gemini rejection, its accepted correction, scope, and non-claims are recorded in
 `docs/evidence/2026-07-29-d034-signal-fetch-deadline.md`.
 
 **Scope boundary:** the exact-main audit found 14 default-native fetch/fetcher call sites:

@@ -45,6 +45,22 @@ function hangingFetch(observed: AbortSignal[]): typeof fetch {
   }) as typeof fetch;
 }
 
+function headersThenHangingBody(observed: AbortSignal[]): typeof fetch {
+  return (async (_input, init) => {
+    const signal = init?.signal;
+    assert.ok(
+      signal instanceof AbortSignal,
+      "the body read must remain under the production AbortSignal",
+    );
+    observed.push(signal);
+    return {
+      ok: true,
+      status: 200,
+      json: async () => await new Promise<never>(() => {}),
+    } as unknown as Response;
+  }) as typeof fetch;
+}
+
 test("D-034: every signal fetch aborts at the 30 second application deadline", async (t) => {
   t.mock.timers.enable({ apis: ["setTimeout"] });
   const observed: AbortSignal[] = [];
@@ -98,6 +114,36 @@ test("D-034: every signal fetch aborts at the 30 second application deadline", a
     observed.map((signal) => signal.aborted),
     [true, true, true],
     "the deadline must abort every production fetch site",
+  );
+});
+
+test("D-034: response headers cannot end the deadline before the body settles", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const observed: AbortSignal[] = [];
+  const read = readSignals(TARGET, {
+    kind: "agent",
+    token: "agent-token",
+  }, {
+    workspaceId: WORKSPACE_ID,
+    inbox: false,
+  }, headersThenHangingBody(observed));
+  const failure = assert.rejects(
+    read,
+    { message: "signal read could not reach the cloud service" },
+  );
+
+  // Let fetchSignalRead receive the Response and enter its pending json() call before
+  // advancing time. Merely observing the fetch double is not proof that headers were handled.
+  await Promise.resolve();
+  assert.equal(observed.length, 1, "the response returned its headers");
+  t.mock.timers.tick(29_999);
+  assert.equal(observed[0]!.aborted, false, "the deadline must not fire early");
+  t.mock.timers.tick(1);
+  await failure;
+  assert.equal(
+    observed[0]!.aborted,
+    true,
+    "the body stall must remain covered by the production deadline",
   );
 });
 
