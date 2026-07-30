@@ -275,6 +275,15 @@ interface CommandResult {
   body: Record<string, unknown>;
 }
 
+export class FreshLoginRequired extends Error {
+  constructor() {
+    super(
+      "Sign in again, then press Remove once more. CommonSwarm did not remove anyone.",
+    );
+    this.name = "FreshLoginRequired";
+  }
+}
+
 interface RequestDeadline {
   controller: AbortController;
   clear(): void;
@@ -369,6 +378,46 @@ async function postCommand(
     );
   } finally {
     deadline.clear();
+  }
+}
+
+export async function removeWorkspaceMember(
+  session: Session,
+  commandId: string,
+  workspaceId: string,
+  userId: string,
+): Promise<void> {
+  const { status, body } = await postCommand(
+    session,
+    commandId,
+    { kind: "remove_member", user_id: userId },
+    { workspace_id: workspaceId, stream: { kind: "workspace" } },
+  );
+  if (status === 401 && body.error === "fresh_auth_required") {
+    throw new FreshLoginRequired();
+  }
+  if (status === 403) {
+    throw new Error(
+      "Your current project role cannot remove this member. CommonSwarm did not change access.",
+    );
+  }
+  if (status !== 200) {
+    throw new Error(
+      `Member removal failed (HTTP ${status}). CommonSwarm did not confirm a change.`,
+    );
+  }
+  if (body.status !== "accepted") {
+    if (body.reason === "landing_authority_unresolved") {
+      throw new Error(
+        "Transfer this member's repository landing authority with the separate audited transfer command, then try again.",
+      );
+    }
+    if (body.reason === "last_owner") {
+      throw new Error("Promote another Owner before removing the last Owner.");
+    }
+    throw new Error(
+      `Member removal was refused: ${String(body.reason ?? "required condition not met")}.`,
+    );
   }
 }
 

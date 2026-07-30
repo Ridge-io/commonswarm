@@ -101,6 +101,7 @@ import {
   selectWorkspace,
   WorkspaceCliError,
   WorkspaceUnavailableError,
+  resolveWorkspaceMember,
   workspaceOverride,
   writeWorkspaceDefault,
   type WorkspaceDirectory,
@@ -290,6 +291,7 @@ Usage:
   cswarm workspaces [--url <url> --anon-key <key>] [--json]
   cswarm use <full-id|exact-name> [--url <url> --anon-key <key>] [--json]
   cswarm invite [--url <url> --anon-key <key>] [--workspace-id <uuid>] --email <email>
+  cswarm member remove <full-user-id|exact-name> --confirm <same-selector> [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--json]
   cswarm accept --link-stdin [--name <name>] [--no-browser] [--json]
   cswarm accept <cswarm://accept/...> [--name <name>] [--no-browser] [--json]  # unsafe: shell history/process list
   cswarm accept --invitation-token-stdin [--url <url> --anon-key <key>]
@@ -1029,6 +1031,63 @@ async function runInvite(args: Arguments): Promise<void> {
     invitation_id: uuid(response.invitation_id, "invitation_id"),
     invite_link: inviteLink,
   });
+}
+
+async function runMember(args: Arguments): Promise<void> {
+  args.assertShape(
+    [...TARGET_FLAGS, "workspace-id", "confirm", "json"],
+    3,
+  );
+  if (args.positionals[1] !== "remove") {
+    throw new UsageError(
+      `unknown member command: ${args.positionals[1] ?? "(missing)"}`,
+    );
+  }
+  const selector = args.positionals[2]!;
+  if (args.required("confirm") !== selector) {
+    throw new Error(
+      "--confirm must exactly repeat the member selector; no request was sent",
+    );
+  }
+  const cloud = await target(args);
+  const human = await humanCredential(args, cloud);
+  const directory = cloudWorkspaceDirectory(cloud);
+  const workspace = await workspaceId(args, cloud, human, { directory });
+  const status = await directory.status(human, workspace);
+  const selected = resolveWorkspaceMember(selector, status.members);
+  const response = (
+    await sendConnectWithPending(
+      new ThinCommandClient(cloud),
+      human,
+      workspace,
+      { kind: "remove_member", user_id: selected.user_id },
+    )
+  ).response;
+  if (response.status !== "accepted") {
+    const reason: string = response.reason ?? "";
+    const recovery = reason === "landing_authority_unresolved"
+      ? " Transfer this member's repository landing authority with the separate audited transfer command, then retry."
+      : reason === "last_owner"
+      ? " Promote another Owner before retrying."
+      : "";
+    throw new Error(
+      `Member removal was rejected: ${
+        reason || "domain rejection"
+      }. No membership change was recorded.${recovery}`,
+    );
+  }
+  const output = {
+    message:
+      `Removed ${selected.name} (${selected.user_id}) from this project. Their access to other projects was not changed.`,
+    status: response.status,
+    user_id: selected.user_id,
+    command_event_ids: response.event_ids,
+  };
+  if (args.has("json")) {
+    printJson(output);
+  } else {
+    process.stdout.write(`${output.message}\n`);
+  }
 }
 
 async function runLegacyAccept(args: Arguments): Promise<void> {
@@ -2208,6 +2267,10 @@ async function main(): Promise<void> {
   }
   if (verb === "invite") {
     await runInvite(args);
+    return;
+  }
+  if (verb === "member") {
+    await runMember(args);
     return;
   }
   if (verb === "target") {

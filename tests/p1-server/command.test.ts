@@ -58,6 +58,7 @@ interface Fixture {
 type ConnectCommand =
   | { kind: "invite_member"; email: string; ttl_ms?: number }
   | { kind: "accept_invitation"; token: string }
+  | { kind: "remove_member"; user_id: string }
   | { kind: "create_agent_principal"; name: string }
   | {
     kind: "mint_agent_token";
@@ -2439,6 +2440,110 @@ test("self-serve refuses throwaway domains and caps creations per rolling day", 
         AND detail->>'user_id' = ${churner.id}
     `;
     assert.equal(churnAlert?.count, "1");
+  });
+});
+
+test("remove_member revokes exactly one workspace membership at the event timestamp", async () => {
+  await scenario(async (f) => {
+    await sql`
+      INSERT INTO swarm.memberships (workspace_id, user_id, role)
+      VALUES (${f.workspaceB}::uuid, ${f.ua2}::uuid, 'member')
+    `;
+    const result = await issueConnect(
+      f,
+      f.uaJwt,
+      { kind: "remove_member", user_id: f.ua2 },
+      commandId("remove_member"),
+    );
+    assert.equal(result.status, 200);
+    assert.equal(result.body.status, "accepted");
+    const [event] = await sql<{
+      occurred_at_server: Date;
+      revoked_at: string;
+    }[]>`
+      SELECT
+        to_timestamp(occurred_at_server / 1000.0) AS occurred_at_server,
+        payload->>'revoked_at' AS revoked_at
+      FROM swarm.events
+      WHERE workspace_id = ${f.workspaceA}::uuid
+        AND type = 'MemberRemoved'
+        AND payload->>'user_id' = ${f.ua2}
+      ORDER BY seq DESC
+      LIMIT 1
+    `;
+    const memberships = await sql<{
+      workspace_id: string;
+      revoked_at: Date | null;
+    }[]>`
+      SELECT workspace_id, revoked_at
+      FROM swarm.memberships
+      WHERE user_id = ${f.ua2}::uuid
+        AND workspace_id IN (${f.workspaceA}::uuid, ${f.workspaceB}::uuid)
+      ORDER BY workspace_id
+    `;
+    const removed = memberships.find((row) => row.workspace_id === f.workspaceA);
+    const untouched = memberships.find((row) => row.workspace_id === f.workspaceB);
+    assert.ok(event && removed?.revoked_at);
+    assert.equal(
+      removed.revoked_at.getTime(),
+      Number(event.revoked_at),
+      "projection timestamp is the MemberRemoved payload timestamp",
+    );
+    assert.equal(untouched?.revoked_at, null, "other workspace remains live");
+  });
+});
+
+test("remove_member enforces role, agent denial, last-owner, and landing authority", async () => {
+  await scenario(async (f) => {
+    const memberDenied = await issueConnect(
+      f,
+      f.ua2Jwt,
+      { kind: "remove_member", user_id: f.ua },
+    );
+    const agentDenied = await issueConnect(
+      f,
+      f.agentToken,
+      { kind: "remove_member", user_id: f.ua2 },
+    );
+    assert.equal(memberDenied.status, 403);
+    assert.deepEqual(memberDenied.body, { error: "forbidden" });
+    assert.equal(agentDenied.status, 403);
+    assert.deepEqual(agentDenied.body, { error: "forbidden" });
+
+    const lastOwner = await issueConnect(
+      f,
+      f.uaJwt,
+      { kind: "remove_member", user_id: f.ua },
+    );
+    assert.equal(lastOwner.status, 200);
+    assert.equal(lastOwner.body.status, "rejected");
+    assert.equal(lastOwner.body.reason, "last_owner");
+
+    await sql`
+      INSERT INTO swarm.memberships (workspace_id, user_id, role)
+      VALUES (${f.workspaceB}::uuid, ${f.ua}::uuid, 'owner')
+    `;
+    const blocked = await issueConnect(
+      f,
+      f.uaJwt,
+      { kind: "remove_member", user_id: f.ub },
+      commandId("landing_authority"),
+      f.workspaceB,
+    );
+    assert.equal(blocked.status, 200);
+    assert.equal(blocked.body.status, "rejected");
+    assert.equal(blocked.body.reason, "landing_authority_unresolved");
+    assert.match(
+      String(blocked.body.detail),
+      /transferred to a live successor first/,
+    );
+    const [ledger] = await sql<{ count: string }[]>`
+      SELECT count(*)::text AS count
+      FROM swarm.idempotency_keys
+      WHERE workspace_id = ${f.workspaceB}::uuid
+        AND response->>'reason' = 'landing_authority_unresolved'
+    `;
+    assert.equal(ledger?.count, "1");
   });
 });
 

@@ -29,6 +29,47 @@ export interface WorkspaceMember {
   you: boolean;
 }
 
+export class MemberSelectionError extends Error {
+  constructor(
+    readonly code: "member_not_found" | "member_name_ambiguous",
+    message: string,
+    readonly matches: readonly WorkspaceMember[] = [],
+  ) {
+    super(message);
+    this.name = "MemberSelectionError";
+  }
+}
+
+export function resolveWorkspaceMember(
+  selector: string,
+  members: readonly WorkspaceMember[],
+): WorkspaceMember {
+  if (UUID_RE.test(selector)) {
+    const selected = members.find(
+      (member) => member.user_id === selector.toLowerCase(),
+    );
+    if (selected) return selected;
+    throw new MemberSelectionError(
+      "member_not_found",
+      "No current project member has that user id.",
+    );
+  }
+  const safe = sanitizeDisplayLabel(selector, "");
+  const matches = members.filter((member) => member.name === safe);
+  if (matches.length === 1) return matches[0]!;
+  if (matches.length > 1) {
+    throw new MemberSelectionError(
+      "member_name_ambiguous",
+      "That exact member name is ambiguous. Repeat the command with the full user id.",
+      matches,
+    );
+  }
+  throw new MemberSelectionError(
+    "member_not_found",
+    "No current project member has that exact name.",
+  );
+}
+
 export interface WorkspaceAgent {
   principal_id: string;
   name: string;

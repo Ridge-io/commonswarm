@@ -16,6 +16,7 @@ import {
   relativeAge,
   relativeExpiry,
   renderStatus,
+  resolveWorkspaceMember,
   resolveWorkspace,
   selectWorkspace,
   WorkspaceAmbiguousNameError,
@@ -26,6 +27,30 @@ import {
   WorkspaceUnavailableError,
   workspaceOverride,
 } from "../../src/cloud/workspaces.js";
+
+test("member selection is exact and ambiguous names require a UUID", () => {
+  const first = {
+    user_id: USER_ID,
+    name: "Alex",
+    role: "owner" as const,
+    you: true,
+  };
+  const second = {
+    user_id: DEVICE_ID,
+    name: "Alex",
+    role: "member" as const,
+    you: false,
+  };
+  assert.equal(resolveWorkspaceMember(USER_ID, [first, second]), first);
+  assert.throws(
+    () => resolveWorkspaceMember("Alex", [first, second]),
+    /ambiguous.*full user id/i,
+  );
+  assert.throws(
+    () => resolveWorkspaceMember("alex", [first, second]),
+    /exact name/i,
+  );
+});
 
 class MemoryStore implements CredentialStore {
   readonly kind = "keychain" as const;

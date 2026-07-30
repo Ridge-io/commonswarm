@@ -10,6 +10,10 @@ import {
   commandPreflight,
   withCommandCors,
 } from "./cors.ts";
+import {
+  hasFreshInteractiveAuth,
+  newestInteractiveAmrSeconds,
+} from "./fresh-auth.ts";
 // Supabase's edge graph cannot resolve the NodeNext `.js` specifiers in the
 // frozen TypeScript core. This checked-in bundle is regenerated directly from
 // src/protocol/index.ts by build:command-core; it is not a second implementation.
@@ -68,6 +72,7 @@ type Command =
 type ConnectCommand =
   | { kind: "invite_member"; email: string; ttl_ms?: number }
   | { kind: "accept_invitation"; token: string }
+  | { kind: "remove_member"; user_id: string }
   | { kind: "create_agent_principal"; name: string }
   | {
     kind: "mint_agent_token";
@@ -170,6 +175,7 @@ type WorkspaceCommand =
     expires_at: number;
   }
   | { kind: "accept_invitation"; token_hash: string }
+  | { kind: "remove_member"; user_id: string }
   | { kind: "create_agent_principal"; principal_id: string; name: string }
   | {
     kind: "mint_agent_token";
@@ -598,6 +604,7 @@ const COMMAND_KINDS = [
   "reopen",
   "invite_member",
   "accept_invitation",
+  "remove_member",
   "create_agent_principal",
   "mint_agent_token",
   "renew_agent_token",
@@ -621,6 +628,7 @@ const TASK_COMMAND_KINDS = [
 const CONNECT_COMMAND_KINDS = [
   "invite_member",
   "accept_invitation",
+  "remove_member",
   "create_agent_principal",
   "mint_agent_token",
 ] as const;
@@ -711,6 +719,8 @@ interface AuthContext {
   identityVerified: boolean;
   /** Bookkeeping for the §8 disposable-domain speed bump; never authorization. */
   email: string | null;
+  /** Newest interactive AMR timestamp from verified claims for this JWT. */
+  interactiveAuthAtSeconds: number | null;
 }
 
 interface Route {
@@ -725,6 +735,7 @@ interface VerifiedHuman {
   email: string | null;
   displayName: string;
   identityVerified: boolean;
+  interactiveAuthAtSeconds: number | null;
 }
 
 interface PreparedWorkspace {
@@ -1182,6 +1193,20 @@ function validateCommand(
   }
 
   if ((CONNECT_COMMAND_KINDS as readonly string[]).includes(cmd.kind)) {
+    if (cmd.kind === "remove_member") {
+      return exactKeys(cmd, ["kind", "user_id"]) &&
+          typeof cmd.user_id === "string" &&
+          UUID_RE.test(cmd.user_id)
+        ? {
+          ok: true,
+          command: { kind: "remove_member", user_id: cmd.user_id },
+        }
+        : {
+          ok: false,
+          status: 400,
+          reason: "remove_member fields are malformed",
+        };
+    }
     if (cmd.kind === "invite_member") {
       const email = normalizedEmail(cmd.email);
       const optionalKeys = Object.hasOwn(cmd, "ttl_ms") ? ["ttl_ms"] : [];
@@ -1491,6 +1516,7 @@ async function authenticateAgent(
     agentFirstUse: agent.first_use === true,
     identityVerified: false,
     email: null,
+    interactiveAuthAtSeconds: null,
   };
 }
 
@@ -1520,6 +1546,7 @@ async function authenticateHuman(
     agentFirstUse: false,
     identityVerified: verified.identityVerified,
     email: verified.email ?? rows[0].email,
+    interactiveAuthAtSeconds: verified.interactiveAuthAtSeconds,
   };
 }
 
@@ -2006,6 +2033,8 @@ async function prepareWorkspaceCommand(
       principal_id: crypto.randomUUID(),
       name: wire.name,
     };
+  } else if (wire.kind === "remove_member") {
+    command = { kind: "remove_member", user_id: wire.user_id };
   } else if (wire.kind === RENEW_AGENT_TOKEN_KIND) {
     // Every field below is read from the authenticated predecessor row or from
     // the server. `wire` contributes nothing but its kind.
@@ -2060,6 +2089,19 @@ async function prepareWorkspaceCommand(
     `;
     inviteeAlreadyMember = rows[0]?.present ?? false;
   }
+  let landingAuthorityChangeResolved = true;
+  if (wire.kind === "remove_member") {
+    const mappings = await tx<{ blocked: boolean }[]>`
+      SELECT EXISTS (
+        SELECT 1
+        FROM swarm.repositories
+        WHERE workspace_id = ${route.workspaceId}::uuid
+          AND landing_authority_user_id = ${wire.user_id}::uuid
+          AND archived_at IS NULL
+      ) AS blocked
+    `;
+    landingAuthorityChangeResolved = !(mappings[0]?.blocked ?? true);
+  }
 
   let nextSeq = headSeq;
   const ctx: WorkspaceDecideCtx = {
@@ -2082,7 +2124,12 @@ async function prepareWorkspaceCommand(
     identityVerified: (userId) =>
       userId === auth.actor.user && auth.identityVerified,
     humanRights: () => [...P0_AGENT_SCOPES],
-    landingAuthorityChangeResolved: () => true,
+    landingAuthorityChangeResolved: (targetUserId, successorUserId) =>
+      wire.kind === "remove_member" &&
+        targetUserId === wire.user_id &&
+        successorUserId === null
+        ? landingAuthorityChangeResolved
+        : true,
     // Present only for a renewal that resolved a predecessor. Left undefined
     // otherwise so the reducer refuses `renewal_unsupported` instead of
     // deciding against a fabricated fact.
@@ -2758,6 +2805,24 @@ async function updateWorkspaceProjection(
           joined_at = EXCLUDED.joined_at,
           revoked_at = NULL
       `;
+    } else if (event.type === "MemberRemoved") {
+      if (
+        typeof payload.user_id !== "string" ||
+        typeof payload.revoked_at !== "number"
+      ) {
+        throw new Error("MemberRemoved payload is malformed");
+      }
+      const updated = await tx<{ user_id: string }[]>`
+        UPDATE swarm.memberships
+        SET revoked_at = ${new Date(payload.revoked_at)}
+        WHERE workspace_id = ${route.workspaceId}::uuid
+          AND user_id = ${payload.user_id}::uuid
+          AND revoked_at IS NULL
+        RETURNING user_id
+      `;
+      if (updated.length !== 1) {
+        throw new Error("MemberRemoved projection did not revoke exactly one membership");
+      }
     } else if (event.type === "AgentPrincipalCreated") {
       const principal = projection.principals[String(payload.principal_id)];
       if (!principal) throw new Error("folded principal projection missing");
@@ -4787,6 +4852,40 @@ async function handleTransaction(
     }
     await afterStep(7);
 
+    if (command.kind === "remove_member") {
+      const serverTime = await tx<{ now_ms: string | number }[]>`
+        SELECT floor(extract(epoch FROM statement_timestamp()) * 1000)::bigint AS now_ms
+      `;
+      const serverNowMs = Number(serverTime[0]?.now_ms);
+      if (
+        auth.credentialKind !== "user" ||
+        !hasFreshInteractiveAuth(
+          auth.interactiveAuthAtSeconds,
+          serverNowMs,
+        )
+      ) {
+        await insertAudit(tx, {
+          auth,
+          commandKind: kind,
+          workspaceId: route.workspaceId,
+          streamId: route.streamId,
+          outcome: "authn",
+          reason: "fresh_auth_required",
+          detail:
+            "Sign in again, then retry member removal. No membership change was recorded.",
+          hash,
+        });
+        return {
+          status: 401,
+          body: {
+            error: "fresh_auth_required",
+            message:
+              "Sign in again, then retry member removal. No membership change was recorded.",
+          },
+        };
+      }
+    }
+
     if (command.kind === "post_signal") {
       if (!await signalTargetIsLive(tx, route, command.to_user_id)) {
         await insertAudit(tx, {
@@ -5352,8 +5451,14 @@ async function handlePostRequest(request: Request): Promise<Response> {
     }
     agentTokenHash = await sha256(credential);
   } else {
-    const { data, error } = await authClient.auth.getUser(credential);
-    if (error || !data.user) {
+    const [
+      { data, error },
+      { data: claimsData, error: claimsError },
+    ] = await Promise.all([
+      authClient.auth.getUser(credential),
+      authClient.auth.getClaims(credential),
+    ]);
+    if (error || claimsError || !data.user || !claimsData?.claims) {
       logCommandFailure(
         "command_pre_auth_failure",
         kind,
@@ -5381,6 +5486,7 @@ async function handlePostRequest(request: Request): Promise<Response> {
       displayName: strippedDisplayName || "Coswarm User",
       identityVerified: data.user.email_confirmed_at !== undefined &&
         data.user.email_confirmed_at !== null,
+      interactiveAuthAtSeconds: newestInteractiveAmrSeconds(claimsData.claims),
     };
   }
 

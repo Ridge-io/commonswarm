@@ -196,6 +196,23 @@ import SampleNotice from "./SampleNotice.astro";
             </button>
           </section>
 
+          <section class="dashboard__rail-section" aria-labelledby="dashboard-members-label">
+            <div class="dashboard__rail-label-row">
+              <h2 id="dashboard-members-label">Members</h2>
+              <span data-member-count>0</span>
+            </div>
+            <ul class="dashboard__agent-list" data-member-list></ul>
+            <p class="dashboard__form-error" data-member-error role="alert" hidden></p>
+            <div data-member-reauth hidden>
+              <button class="dashboard__rail-add" type="button" data-member-reauth-github>
+                Sign in again with GitHub
+              </button>
+              <button class="dashboard__rail-add" type="button" data-member-reauth-email>
+                Email a fresh sign-in link
+              </button>
+            </div>
+          </section>
+
           <div class="dashboard__rail-foot">
             <span data-rail-account>Your account</span>
             <button class="dashboard__text-button" type="button" data-signout>Sign out</button>
@@ -324,6 +341,7 @@ import SampleNotice from "./SampleNotice.astro";
     EmailNotVerified,
     EmailRateLimited,
     NoDeployment,
+    FreshLoginRequired,
     SignupRefused,
     WorkspaceLimitReached,
     client,
@@ -332,6 +350,7 @@ import SampleNotice from "./SampleNotice.astro";
     signInWithEmail,
     signInWithGitHub,
     signOut,
+    removeWorkspaceMember,
     uuid,
     type Signal,
   } from "../../lib/commonswarm";
@@ -344,6 +363,12 @@ import SampleNotice from "./SampleNotice.astro";
   interface Agent {
     principalId: string;
     name: string;
+  }
+
+  interface Member {
+    userId: string;
+    name: string;
+    role: "owner" | "admin" | "member";
   }
 
   interface SecretHoldingAgentConnect extends HTMLElement {
@@ -373,6 +398,7 @@ import SampleNotice from "./SampleNotice.astro";
     let session: Session | null = null;
     let workspaces: Workspace[] = [];
     let agents: Agent[] = [];
+    let members: Member[] = [];
     let people = new Map<string, string>();
     let signals: Signal[] = [];
     let activeWorkspaceId = "";
@@ -612,21 +638,100 @@ import SampleNotice from "./SampleNotice.astro";
       }
     };
 
-    const memberNames = async (workspaceId: string): Promise<Map<string, string>> => {
+    const memberRoster = async (
+      workspaceId: string,
+    ): Promise<{ names: Map<string, string>; members: Member[] }> => {
       const api = client();
       if (!api) throw new NoDeployment();
       const { data, error } = await api
         .schema("swarm_read")
         .from("member_profiles")
-        .select("user_id,display_name")
+        .select("user_id,display_name,role")
         .eq("workspace_id", workspaceId)
         .limit(1_000);
       if (error) throw new Error(error.message);
-      return new Map(
-        (data ?? [])
-          .map((row) => [String(row.user_id ?? ""), String(row.display_name ?? "")] as const)
-          .filter(([id, name]) => id.length > 0 && name.length > 0),
+      const members = (data ?? []).map((row) => ({
+        userId: String(row.user_id ?? ""),
+        name: String(row.display_name ?? ""),
+        role: String(row.role ?? "") as Member["role"],
+      })).filter((member) =>
+        member.userId.length > 0 &&
+        member.name.length > 0 &&
+        ["owner", "admin", "member"].includes(member.role)
       );
+      return {
+        members,
+        names: new Map(members.map((member) => [member.userId, member.name])),
+      };
+    };
+
+    const renderMembers = (): void => {
+      const list = one<HTMLUListElement>("[data-member-list]");
+      const count = one<HTMLElement>("[data-member-count]");
+      if (count) count.textContent = String(members.length);
+      if (!list) return;
+      list.replaceChildren();
+      const me = members.find((member) => member.userId === session?.user.id);
+      for (const member of members) {
+        const item = document.createElement("li");
+        item.className = "dashboard__agent";
+        const label = document.createElement("span");
+        label.textContent = `${member.name} · ${member.role}`;
+        item.append(label);
+        const mayRemove = me?.role === "owner" ||
+          (me?.role === "admin" && member.role !== "owner");
+        if (mayRemove && member.userId !== session?.user.id) {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.className = "dashboard__text-button";
+          button.textContent = "Remove";
+          button.dataset.removeMember = member.userId;
+          button.addEventListener("click", async () => {
+            if (!session || !activeWorkspaceId) return;
+            if (
+              !window.confirm(
+                `Remove ${member.name} from this workspace? This does not affect their other workspaces.`,
+              )
+            ) return;
+            const errorTarget = one<HTMLElement>("[data-member-error]");
+            const reauth = one<HTMLElement>("[data-member-reauth]");
+            if (errorTarget) {
+              errorTarget.hidden = true;
+              errorTarget.textContent = "";
+            }
+            if (reauth) reauth.hidden = true;
+            button.disabled = true;
+            try {
+              await removeWorkspaceMember(
+                session,
+                uuid(),
+                activeWorkspaceId,
+                member.userId,
+              );
+              await openWorkspace(activeWorkspaceId);
+            } catch (error) {
+              if (error instanceof FreshLoginRequired) {
+                sessionStorage.setItem(
+                  "commonswarm.pending-member-selection",
+                  JSON.stringify({
+                    workspaceId: activeWorkspaceId,
+                    userId: member.userId,
+                  }),
+                );
+                if (reauth) reauth.hidden = false;
+              }
+              if (errorTarget) {
+                errorTarget.textContent = readableError(error);
+                errorTarget.hidden = false;
+              }
+            } finally {
+              button.disabled = false;
+            }
+          });
+          item.append(button);
+        }
+        list.append(item);
+      }
     };
 
     const signalPage = async (
@@ -950,6 +1055,7 @@ import SampleNotice from "./SampleNotice.astro";
       syncConnectWorkspace(selected);
       const version = ++requestVersion;
       agents = [];
+      members = [];
       people = new Map();
       signals = [];
       signalCursor = null;
@@ -959,14 +1065,16 @@ import SampleNotice from "./SampleNotice.astro";
       if (keepShell) renderChannel(selected, true);
       else setLoading(`Opening ${selected.name}…`);
       try {
-        const [nextAgents, nextPeople] = await Promise.all([
+        const [nextAgents, nextRoster] = await Promise.all([
           roster(selected.id),
-          memberNames(selected.id),
+          memberRoster(selected.id),
         ]);
         if (version !== requestVersion) return;
         agents = nextAgents;
-        people = nextPeople;
+        people = nextRoster.names;
+        members = nextRoster.members;
         if (app.dataset.channelView !== "connect") renderChannel(selected);
+        renderMembers();
         if (agents.length > 0) {
           await loadSignals(selected.id, true, version);
         }
@@ -1231,6 +1339,53 @@ import SampleNotice from "./SampleNotice.astro";
         button.removeAttribute("aria-busy");
       }
     });
+
+    one<HTMLButtonElement>("[data-member-reauth-github]")?.addEventListener(
+      "click",
+      async (event) => {
+        const button = event.currentTarget as HTMLButtonElement;
+        button.disabled = true;
+        try {
+          await signInWithGitHub(new URL("/app", window.location.origin).href);
+        } catch (error) {
+          const target = one<HTMLElement>("[data-member-error]");
+          if (target) {
+            target.textContent = readableError(error);
+            target.hidden = false;
+          }
+          button.disabled = false;
+        }
+      },
+    );
+    one<HTMLButtonElement>("[data-member-reauth-email]")?.addEventListener(
+      "click",
+      async (event) => {
+        const email = window.prompt("Email address for a fresh sign-in link:");
+        if (!email?.trim()) return;
+        const button = event.currentTarget as HTMLButtonElement;
+        button.disabled = true;
+        try {
+          await signInWithEmail(
+            email.trim(),
+            new URL("/app", window.location.origin).href,
+          );
+          const target = one<HTMLElement>("[data-member-error]");
+          if (target) {
+            target.textContent =
+              "Check your email. After signing in, return here and press Remove again.";
+            target.hidden = false;
+          }
+        } catch (error) {
+          const target = one<HTMLElement>("[data-member-error]");
+          if (target) {
+            target.textContent = readableError(error);
+            target.hidden = false;
+          }
+        } finally {
+          button.disabled = false;
+        }
+      },
+    );
 
     for (const button of all<HTMLButtonElement>("[data-use-email]")) {
       button.addEventListener("click", () => showAuthView("email"));

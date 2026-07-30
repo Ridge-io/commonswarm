@@ -7,6 +7,7 @@ import {
   assertInvitationToken,
   CommandHttpError,
   newCommandId,
+  ReauthenticationRequired,
   ThinCommandClient,
 } from "../../src/cloud/command-client.js";
 import { cloudTarget } from "../../src/cloud/config.js";
@@ -124,6 +125,51 @@ test("uniform 403 connect failures are never decoded", async () => {
       error instanceof CommandHttpError && error.status === 403,
   );
   assert.equal(decoded, false);
+});
+
+test("remove_member uses the workspace route and names fresh-login recovery", async () => {
+  const target = cloudTarget("http://127.0.0.1:54321", "anon-key");
+  const workspaceId = randomUUID();
+  const userId = randomUUID();
+  let request: Record<string, unknown> | null = null;
+  const accepted = new ThinCommandClient(
+    target,
+    (async (_url, init) => {
+      request = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      return new Response(JSON.stringify({
+        status: "accepted",
+        ok: true,
+        event_ids: [],
+      }), { status: 200 });
+    }) as typeof fetch,
+  );
+  await accepted.sendConnect({
+    workspaceId,
+    command: { kind: "remove_member", user_id: userId },
+    credential: "human-jwt",
+    commandId: "remove_member_test",
+  });
+  assert.deepEqual(request?.stream, { kind: "workspace" });
+  assert.deepEqual(request?.command, { kind: "remove_member", user_id: userId });
+  assert.equal(request?.command_id, "remove_member_test");
+
+  const stale = new ThinCommandClient(
+    target,
+    (async () =>
+      new Response(JSON.stringify({ error: "fresh_auth_required" }), {
+        status: 401,
+      })) as typeof fetch,
+  );
+  await assert.rejects(
+    stale.sendConnect({
+      workspaceId,
+      command: { kind: "remove_member", user_id: userId },
+      credential: "stale-human-jwt",
+    }),
+    (error: unknown) =>
+      error instanceof ReauthenticationRequired &&
+      /cswarm login/.test(error.message),
+  );
 });
 
 test("thin client sends the frozen wire contract and folds a dogfood sequence", async () => {

@@ -70,6 +70,7 @@ export type ConnectCommand =
   | { kind: "invite_member"; email: string; ttl_ms?: number }
   | { kind: "accept_invitation"; token: string }
   | { kind: "create_workspace"; workspace_id: string; name: string }
+  | { kind: "remove_member"; user_id: string }
   | { kind: "create_agent_principal"; name: string }
   | {
     kind: "mint_agent_token";
@@ -189,6 +190,16 @@ export class CommandHttpError extends Error {
   ) {
     super(message);
     this.name = "CommandHttpError";
+  }
+}
+
+export class ReauthenticationRequired extends CommandHttpError {
+  constructor() {
+    super(
+      401,
+      "Sign in again with cswarm login, then repeat the member remove command. No membership change was recorded.",
+    );
+    this.name = "ReauthenticationRequired";
   }
 }
 
@@ -546,6 +557,9 @@ export class ThinCommandClient {
       const error = raw && typeof raw === "object" && !Array.isArray(raw)
         ? (raw as Record<string, unknown>).error
         : null;
+      if (response.status === 401 && error === "fresh_auth_required") {
+        throw new ReauthenticationRequired();
+      }
       throw new CommandHttpError(
         response.status,
         `command failed (HTTP ${response.status}): ${
@@ -663,6 +677,9 @@ export class ThinCommandClient {
       const error = raw && typeof raw === "object" && !Array.isArray(raw)
         ? (raw as Record<string, unknown>).error
         : null;
+      if (response.status === 401 && error === "fresh_auth_required") {
+        throw new ReauthenticationRequired();
+      }
       throw new CommandHttpError(
         response.status,
         `command failed (HTTP ${response.status}): ${
