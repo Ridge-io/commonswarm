@@ -145,6 +145,7 @@ test("panel changes expose busy state and move focus only on real transitions", 
 });
 
 test("dashboard cannot hide a live or still-minting credential", () => {
+  const openWorkspace = between(dashboard, "const openWorkspace =", "const openConnect =");
   const guard = between(
     dashboard,
     "const keepConnectCredentialVisible =",
@@ -164,6 +165,22 @@ test("dashboard cannot hide a live or still-minting credential", () => {
   assert.match(close, /if \(keepConnectCredentialVisible\(\)\) return/);
   assert.match(signout, /if \(keepConnectCredentialVisible\(\)\) return/);
   assert.match(signout, /requestVersion \+= 1;[\s\S]*activeWorkspaceId = ""/);
+  assert.match(
+    openWorkspace,
+    /if \(mintBusy \|\| connectState === "working" \|\| connectState === "done"\)/,
+  );
+  assert.match(
+    openWorkspace,
+    /pendingWorkspaceId = changesWorkspace \? workspaceId : ""/,
+  );
+  assert.match(
+    openWorkspace,
+    /Clear this live prompt before refreshing this workspace/,
+  );
+  assert.match(
+    openWorkspace,
+    /showChannelView\("connect"\);[\s\S]*return;[\s\S]*activeWorkspaceId = selected\.id/,
+  );
 });
 
 test("workspace changes synchronously retarget AgentConnect before its panel opens", () => {

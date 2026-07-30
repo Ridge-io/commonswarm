@@ -915,17 +915,16 @@ import SampleNotice from "./SampleNotice.astro";
       const promptWorkspaceId = connect?.getAttribute("workspace-id") ?? "";
       const connectState = connect?.dataset.state ?? "";
       const mintBusy = connect?.hasAttribute("data-mint-busy") ?? false;
-      if (
-        (mintBusy || connectState === "working" || connectState === "done") &&
-        promptWorkspaceId.length > 0 &&
-        promptWorkspaceId !== workspaceId
-      ) {
-        pendingWorkspaceId = workspaceId;
+      if (mintBusy || connectState === "working" || connectState === "done") {
+        const changesWorkspace =
+          promptWorkspaceId.length > 0 && promptWorkspaceId !== workspaceId;
+        pendingWorkspaceId = changesWorkspace ? workspaceId : "";
         if (connectState === "done") {
           const status = connect.querySelector<HTMLElement>("[data-slot='copy-status']");
           if (status) {
-            status.textContent =
-              "Copy this live prompt, then clear it before switching workspaces.";
+            status.textContent = changesWorkspace
+              ? "Copy this live prompt, then clear it before switching workspaces."
+              : "Clear this live prompt before refreshing this workspace.";
           }
         }
         showChannelView("connect");
