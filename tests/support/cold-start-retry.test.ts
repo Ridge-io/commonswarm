@@ -15,11 +15,11 @@
  * when invoked by hand, which is not a gate. Found by Nori. D-012's shape — a guard nothing
  * executes — inside the change whose subject is a failure that went unreported.
  *
- * The first fix moved it to tests/p1-cli/, where the glob would pick it up. Nori then withdrew
- * that preference and was right to: `test:p1-cli` pulls in local-integration.test.ts, which
- * spawns `supabase functions serve` and writes Postgres, so that suite requires an exclusive
- * database slot. Filing PURE observers there would mean they could only be run by whoever
- * currently holds the stack — a gate you must queue for is a gate that gets skipped.
+ * The first fix moved it to tests/p1-cli/, where the glob would pick it up. At that time the
+ * same glob also pulled in local-integration.test.ts, which spawns `supabase functions serve`
+ * and writes Postgres, so Nori withdrew that preference: filing PURE observers there would
+ * have meant they could only run inside an exclusive database slot. D-030 later split that
+ * stack-touching file into `test:p1-local`, making `test:p1-cli` pure as well.
  *
  * So it stays beside the helper it tests and is named in `npm test`, which touches no network
  * and no database. That is what makes the mutation proof for this change runnable by anyone,

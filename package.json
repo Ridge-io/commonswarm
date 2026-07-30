@@ -19,6 +19,7 @@
     "check:edge": "deno check --config supabase/functions/command/deno.json supabase/functions/command/index.ts supabase/functions/read/index.ts supabase/functions/capability/index.ts",
     "test": "node --import tsx --test tests/protocol-next.test.ts tests/protocol-workspace.test.ts tests/protocol-agent-token-binding.test.ts tests/support/cold-start-retry.test.ts",
     "test:p1-cli": "node --import tsx --test tests/p1-cli/**/*.test.ts",
+    "test:p1-local": "node --import tsx --test tests/p1-local/local-integration.test.ts",
     "test:uxtest": "node --import tsx --test tests/uxtest-harness.test.ts",
     "pretest:p1-server": "npm run build:command-core",
     "test:p1-server": "node --import tsx --test tests/p1-server/**/*.test.ts",

@@ -219,7 +219,7 @@ Unknown holders should remain the full id, never an invented label.
 - Prove no prompt path by racing the TTY-marked invocation against a short
   timeout; correct text alone is insufficient. The workspace module should
   have no input/readline dependency, making this easy to assert structurally.
-- Extend `tests/p1-cli/local-integration.test.ts` for real `swarm_read`
+- Extend `tests/p1-local/local-integration.test.ts` for real `swarm_read`
   projection reads and selection against the local stack. It already has user
   creation/sign-in, `LocalMemoryStore`, and fixture seeding patterns.
 - Extend `tests/p1-server/command.test.ts` or add an equivalent local authority
@@ -228,4 +228,4 @@ Unknown holders should remain the full id, never an invented label.
 - Before/after hash the generated protocol bundle or otherwise assert
   `src/protocol` / `supabase/functions/_shared/protocol.js` is unchanged.
 - Run the new migration against local Supabase before any hosted action, then
-  `tsc`, `npm test`, `test:p1-cli`, and `test:p1-server`.
+  `tsc`, `npm test`, `test:p1-cli`, `test:p1-local`, and `test:p1-server`.

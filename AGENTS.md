@@ -44,7 +44,8 @@ All verified working from a clean `npm install` on this repo.
 | `npm install` | Deps. No postinstall surprises. |
 | `npm run build` | `tsc` → `dist/`. Wipes `dist/` first, `chmod 755 dist/cli.js` after. |
 | `npm test` | The pure gate: protocol reducer plus every file NAMED in the `test` script. No network, no database. **Read the trap below.** |
-| `npm run test:p1-cli` | Globs `tests/p1-cli/**`. **Needs an exclusive DB slot** — `local-integration.test.ts` serves edge functions and writes local Postgres, so the whole script is stack-touching even though most of its tests are pure. |
+| `npm run test:p1-cli` | Pure, slot-free gate. Globs `tests/p1-cli/**`; no network or database. |
+| `npm run test:p1-local` | Runs `tests/p1-local/local-integration.test.ts`. **Needs an exclusive DB slot** — serves edge functions, creates auth users, and writes local Postgres. |
 | `npm run test:p1-server` | Globs `tests/p1-server/**`. **Requires local Supabase** (Docker) and an exclusive DB slot. |
 | `npm run test:uxtest` | The cross-machine UX harness. |
 | `npm run check:tests` | Typechecks `tests/` as well as `src/`. Nothing else does — see below. |
@@ -80,9 +81,10 @@ These have each cost someone real time. They are not theoretical.
 
 **A test file runs only if some script's path or glob reaches it. `package.json` is the
 source of truth — read the scripts, do not assume.** `npm test` names its files as a
-LITERAL LIST; `test:p1-cli` and `test:p1-server` glob their own directories, and
-**nothing globs anything else**. So a new file under `tests/support/`, or any directory
-that is not one of those two, is silently *not run* — it will typecheck under
+LITERAL LIST; `test:p1-cli` and `test:p1-server` glob their own directories;
+`test:p1-local` names its stack-touching file explicitly; and **nothing globs anything
+else**. So a new file under `tests/support/`, or any directory that is not reached by one
+of those scripts, is silently *not run* — it will typecheck under
 `check:tests` and pass by hand, which is not a gate.
 
 This is not hypothetical and the counts in the table above are deliberately absent
@@ -91,9 +93,10 @@ six observers for D-025 were written into `tests/support/` where no script reach
 `npm run test:p1-cli | grep -c "D-025:"` returned **0**. They proved nothing until they
 were named in the `test` script.
 
-If you add a test, check which script picks it up and say so in the change. Prefer the
-pure `npm test` gate for anything that needs no database: `test:p1-cli` requires an
-exclusive DB slot, and **a gate you must queue for is a gate that gets skipped**.
+If you add a test, check which script picks it up and say so in the change. Use the pure
+`npm test` or `test:p1-cli` gates for anything that needs no database. `test:p1-local`,
+`test:p1-server`, and `db:*` require an announced exclusive slot: **a gate you must queue
+for is a gate that gets skipped**.
 
 **Edge functions are outside `tsc`.** `tsconfig.json` sets `include: ["src/**/*.ts"]`, so
 nothing under `supabase/functions/` is checked by it. `npm run build` passing tells you

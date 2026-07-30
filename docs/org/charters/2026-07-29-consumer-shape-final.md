@@ -211,5 +211,6 @@ If you have nothing to say for a long stretch, that is fine — but if you are w
 something, say so once. **Going quiet while stuck is the one unacceptable state.**
 
 Gate counts are read from real output, unpiped. `skipped` is not green. A suite that passed in
-zero seconds did not run. And note D-020: `test:p1-cli` has a ~1-in-8 local-edge 502 in
-`local-integration.test.ts` — a single red there is not evidence of a defect until re-run.
+zero seconds did not run. D-030 moved D-020's stack-touching `local-integration.test.ts` into
+`test:p1-local`; `test:p1-cli` is now pure. A single local-edge 502 in `test:p1-local` is not
+evidence of a defect until re-run.

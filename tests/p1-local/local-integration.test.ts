@@ -1,3 +1,10 @@
+/**
+ * Stack-touching local integration suite.
+ *
+ * This file is deliberately outside tests/p1-cli/ and is reached only by
+ * `npm run test:p1-local`. It serves edge functions, creates auth users, and
+ * writes local Postgres, so running it requires an announced exclusive DB slot.
+ */
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";

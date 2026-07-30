@@ -91,10 +91,11 @@ Planned tracks beyond the coordination core (architected-for now, built later):
 
 ```bash
 npm install
-npm test      # node --test via tsx
-npm run build # tsc → dist/
-npm run test:p1-server
-npm run test:p1-cli
+npm test                # pure unit gate, node --test via tsx
+npm run test:p1-cli     # pure P1 CLI gate
+npm run build           # tsc → dist/
+npm run test:p1-local   # local Supabase; announce an exclusive DB slot
+npm run test:p1-server  # local Supabase; announce an exclusive DB slot
 ```
 
 ## Thin cloud CLI

@@ -117,8 +117,8 @@ vercel deploy dist --prod --yes --scope ridgedotio
    signup globally until someone resets it.** That belongs on the launch checklist and the ceiling
    is an operator ruling, not a fleet fix.
 3. **Cinder's chartered queue after D-031:** unguarded direct-fetch cold-start sites (the `:3284`
-   class), splitting `local-integration.test.ts` out of `test:p1-cli` so 43 pure tests stop needing
-   a DB slot (D-030), then **hosted `remove_member` exposure** — the protocol command exists but
+   class), ~~splitting `local-integration.test.ts` out of `test:p1-cli` so pure tests stop needing
+   a DB slot (D-030)~~ **DONE by Nori**, then **hosted `remove_member` exposure** — the protocol command exists but
    neither the edge function nor the CLI expose it, so Privacy's removal promise had to be deleted.
    A Slack-channel product needs it.
 4. **Dana's cold-browser stranger walkthrough** was dispatched against the freshly deployed site and
@@ -143,7 +143,8 @@ day, in opposite directions (D-029 and its correction).**
 depend on Anvil for anything on the critical path.
 
 **The exclusive DB slot protocol, which binds the Lead too (D-028 — I broke it and contaminated
-three measurements):** `test:p1-server`, `test:p1-cli`, and `db:*` all require an announced slot.
+three measurements):** `test:p1-server`, `test:p1-local`, and `db:*` all require an announced slot.
+`test:p1-cli` is pure and slot-free after D-030.
 Announce start, announce finish **with the numbers** — a release without its measurement is a
 window paid for and returned empty. Never compose the finish broadcast into the same command as the
 run (D-025's author did, and it broadcast success for a failed run).

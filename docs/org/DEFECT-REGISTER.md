@@ -1122,6 +1122,21 @@ into its own script (`test:p1-local` or similar) so `test:p1-cli` becomes genuin
 slot-free. Small and mechanical; the payoff repeats on every pure observer for the life of the
 project.
 
+**Resolved by Nori.** `local-integration.test.ts` now lives under `tests/p1-local/` and is the
+only file reached by the separately named `test:p1-local` script. `test:p1-cli` remains globbed
+over `tests/p1-cli/**` and is genuinely pure and slot-free. The old "43 pure tests" count above
+was true when the defect was filed but had already rotted: the measured final split is **121
+existing pure tests + 3 D-030 structural observers = 124/124** in `test:p1-cli`, with the isolated
+stack suite **3/3** in its one announced exclusive DB slot.
+
+The new observers derive every `*.test.ts` / `*.test.tsx` path from the filesystem, derive its
+real execution reachability from `package.json`, and ask TypeScript's own config parser whether
+`check:tests` includes it. Mutation at the package dispatch call site changed `test:p1-local`
+back to the old, now-missing p1-cli path: the real pure gate went **122/124**, with exactly
+`D-030: every test file is reached by an npm execution script` and
+`D-030: the pure CLI gate cannot reach the stack-touching suite` red. Restored:
+`test:p1-cli` **124/124**, `npm test` **79/79**, `check:tests` exit 0, build exit 0.
+
 ### D-029 CORRECTION (same day, ~40 minutes later) — the central claim was wrong
 
 The entry above asserts *"D-019, D-020, and D-003 all merged to main carrying only codex-family
