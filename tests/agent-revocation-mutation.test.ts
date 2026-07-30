@@ -3,9 +3,12 @@ import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 
 /**
- * Causal static mutations for hosted agent revocation. Each arm asserts a
- * load-bearing seam is present; a parallel RED control proves the assertion
- * would fail if the seam were removed.
+ * Seam-presence observers for hosted agent revocation.
+ *
+ * These prove the production source still names the load-bearing identifiers.
+ * They are NOT causal mutation evidence: Lead7 requires temporary production
+ * edits, a reachable RED run, byte-identical restore, and durable RED/GREEN
+ * logs under an exclusive slot (see docs/evidence/2026-07-30-hosted-agent-revocation.md).
  */
 
 test("edge registers revoke kinds and refuses mint fallthrough", async () => {
@@ -40,19 +43,6 @@ test("edge registers revoke kinds and refuses mint fallthrough", async () => {
   assert.match(source, /'principal'/);
   assert.match(source, /'lineage'/);
   assert.match(source, /'token'/);
-
-  // RED controls: if these seams vanished, the positive greps above would pass
-  // a hollow implementation. Mutating copies must fail.
-  const withoutPrepare = source.replace(
-    /wire\.kind === "revoke_agent_principal"/g,
-    'wire.kind === "not_revoke_principal"',
-  );
-  assert.equal(
-    /wire\.kind === "revoke_agent_principal"/.test(withoutPrepare),
-    false,
-  );
-  const withoutLineage = source.replace(/'lineage'/g, "'family'");
-  assert.equal(/'lineage'/.test(withoutLineage), false);
 });
 
 test("agent sibling gate stays in the pure reducer and edge scope path", async () => {
@@ -79,15 +69,6 @@ test("agent sibling gate stays in the pure reducer and edge scope path", async (
     edge,
     /CONNECT_COMMAND_KINDS = \[[^\]]*"revoke_agent_token"/,
     "token revoke must not be CONNECT-only or agents cannot self-surrender",
-  );
-
-  const red = protocol.replace(
-    /agent credential may revoke only its exact presenting token/g,
-    "agent credential may revoke any token",
-  );
-  assert.equal(
-    /agent credential may revoke only its exact presenting token/.test(red),
-    false,
   );
 });
 
@@ -128,7 +109,4 @@ test("site Remove is principal-only and distinct from Clear", async () => {
     /revoke_agent_principal|revokeAgentPrincipal/,
     "Clear on the connect panel must not call revoke",
   );
-
-  const red = dashboard.replace(/revokeAgentPrincipal\(/g, "clearPrompt(");
-  assert.equal(/revokeAgentPrincipal\(/.test(red), false);
 });

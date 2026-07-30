@@ -5,55 +5,45 @@ Branch: `swarm/Forge/hosted-agent-revocation`
 Worktree: `~/.swarm/wt/cloud-swarm-source/Forge--hosted-agent-revocation`
 Task: `hosted-agent-revocation` (claim: code-merged)
 
-## Scope delivered
+## Implementation (unchanged product surface from a8ec975)
 
-1. **Edge** (`supabase/functions/command/index.ts`)
-   - Wire accepts `revoke_agent_principal` (human CONNECT) and `revoke_agent_token` (workspace; agent self-surrender without a revoke scope).
-   - Explicit prepare arms for both kinds; mint is no longer the prepare fallthrough.
-   - Projection for `AgentPrincipalRevoked`: principal `revoked_at`, principal tombstone, all live tokens + distinct lineage tombstones, renewal grant revoke.
-   - Projection for `AgentTokenRevoked`: token `revoked_at`, token + lineage tombstones.
-2. **CLI** (`src/cli.ts`)
-   - `cswarm principal revoke --principal-id`
-   - `cswarm token revoke --token-id` (human)
-   - `cswarm token revoke --agent-token-stdin` (agent self-surrender; derives/validates artifact `token_id`; never argv secret / never prints secret)
-3. **Browser** (`/app` roster)
-   - Remove only where owner/admin or owner-of-principal; confirmation ends identity+credentials and distinguishes Clear; posts `revoke_agent_principal` via user JWT; success refreshes roster and clears matching live prompt; refusal stays visible.
-4. **Tests**
-   - Pure: `tests/agent-revocation-mutation.test.ts` (named in `npm test`)
-   - CLI observers: `tests/p1-cli/agent-revocation-cli.test.ts` (reached by `test:p1-cli` glob)
-   - Site observers: `site/src/components/app/agent-revocation.observer.test.ts` (reached by site `test` glob)
-   - p1-server: `tests/p1-server/command.test.ts` suite "hosted agent revocation…" (needs exclusive DB slot)
+Edge wire/prepare/projection, CLI principal/token revoke + agent stdin surrender,
+browser Remove. See prior commit message.
 
-## Cheap gates (measured)
+## Test evidence revision (Lead7 #17548)
 
-| Gate | Result |
-|------|--------|
-| `npm run build` | PASS |
-| `npm test` | PASS 102/102 |
-| `npm run check:tests` | PASS |
-| `npm run check:edge` | PASS (deno check command/read/capability) |
-| `site npm run build` | PASS 7 pages |
-| `site npm test` | PASS 29/29 (after build) |
-| pure mutation + CLI observers | PASS 7/7 |
+Invalidation of a8ec975 was **test evidence**, not implementation.
 
-## Mutations (RED controls)
+### p1-server suite now asserts
 
-Causal static mutations in `tests/agent-revocation-mutation.test.ts`:
+1. **Causal successor path:** `seedRenewalGrant` + `seedPredecessor` + `issueRenewal`
+   creates a real successor; human revokes the **predecessor** token; already-issued
+   successor cannot `post_signal` and cannot renew; a separate unrevoked control
+   successor remains green in the same invocation.
+2. **Hosted human role matrix:** Member own principal/token accepted; Member foreign
+   principal/token → `principal_not_owned` with zero new tombstones; Admin foreign
+   principal/token accepted; Owner cascade coverage retained.
+3. Agent self-surrender, sibling 403 + zero tombstones, agent principal 403 retained.
+4. Double/missing/wrong-workspace domain reasons retained.
 
-- remove prepare arm for principal revoke → positive grep fails
-- replace lineage tombstone kind → positive grep fails
-- replace sibling-gate message → positive grep fails
-- replace `revokeAgentPrincipal(` with `clearPrompt(` → site Remove ≠ Clear fails
+### Mutations
 
-## NOT ESTABLISHED at this write
+| Arm | Result | Log |
+|-----|--------|-----|
+| Site `await revokeAgentPrincipal(` → `await clearPrompt(` | **RED exit 1** then restored **GREEN exit 0** | `docs/evidence/hosted-agent-revocation-mutations/site-observer-red-only.log` / `site-observer-green-only.log` |
+| Agent-self scope exception (`isAgentTokenRevoke`) | **NOT ESTABLISHED** — requires exclusive p1-server slot | after GREEN suite on revised SHA |
+| Lineage tombstone insert in `AgentTokenRevoked` projection | **NOT ESTABLISHED** — requires exclusive p1-server slot | after GREEN |
 
-- `npm run test:p1-server` / `test:p1-cli` full stack runs (require named exclusive slot from Tundra; one heavy process)
-- Push / land / deploy / production verification
-- Live browser QA of Remove against hosted deployment
+Site mutation measured: observer `agent roster Remove is role-aware…` failed only when the production call site was rewritten; restore returned 3/3 pass. Source is byte-restored (`await revokeAgentPrincipal(` present).
 
-## Ceilings
+`tests/agent-revocation-mutation.test.ts` holds **seam observers only** (not causal mutation evidence).
 
-- No new migration (existing `revoked_at` + `revocation_tombstones` + grant cascade)
-- No per-token browser UI
-- No Claude review
-- No push
+## Cheap gates (to re-measure on revised SHA)
+
+Record after re-run on successor commit.
+
+## NOT ESTABLISHED until slot
+
+- `npm run test:p1-server` full TAP
+- Edge production RED/restore mutation logs (scope exception + lineage tombstone)
+- Push / land / deploy / reviews

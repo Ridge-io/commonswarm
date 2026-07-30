@@ -4648,7 +4648,20 @@ test("§2.3 a pending successor cannot renew: the overlap window cannot be stack
 
 test("hosted agent revocation: human roles, agent confinement, lineage fail-closed", async () => {
   await scenario(async (f) => {
-    // --- Human owner revokes a principal end-to-end ---
+    const tombstonesFor = async (
+      kind: string,
+      targetId: string,
+    ): Promise<number> => {
+      const [row] = await sql<{ count: string | number }[]>`
+        SELECT count(*) AS count
+        FROM swarm.revocation_tombstones
+        WHERE kind = ${kind}
+          AND target_id = ${targetId}::uuid
+      `;
+      return Number(row?.count ?? 0);
+    };
+
+    // --- Agent confinement on an owner-minted principal ---
     const principalResult = await issueConnect(f, f.uaJwt, {
       kind: "create_agent_principal",
       name: `revoke-target-${randomUUID().slice(0, 8)}`,
@@ -4660,12 +4673,11 @@ test("hosted agent revocation: human roles, agent confinement, lineage fail-clos
     const deviceId = randomUUID();
     assert.equal((await registerDevice(f, f.uaJwt, deviceId)).status, 200);
     const runId = randomUUID();
-    const taskId = randomUUID();
     const minted = await issueConnect(f, f.uaJwt, {
       kind: "mint_agent_token",
       principal_id: principalId,
       run_id: runId,
-      task_id: taskId,
+      task_id: randomUUID(),
       epoch: 1,
       device_id: deviceId,
     });
@@ -4679,75 +4691,47 @@ test("hosted agent revocation: human roles, agent confinement, lineage fail-clos
       actor: { user: f.ua, agent_principal: principalId, run: runId },
     });
 
-    const [tokenRow] = await sql<{ lineage_id: string; renewal_grant_id: string | null }[]>`
-      SELECT lineage_id, renewal_grant_id
-      FROM swarm.agent_tokens
-      WHERE token_id = ${tokenId}::uuid
-    `;
-    assert.ok(tokenRow?.lineage_id);
-    const lineageId = tokenRow.lineage_id;
-    const grantId = tokenRow.renewal_grant_id;
-
-    // Agent may not revoke a principal (CONNECT human-only).
+    // Agent may not revoke a principal (CONNECT human-only → 403).
     const agentPrincipal = await issueConnect(f, agentToken, {
       kind: "revoke_agent_principal",
       principal_id: principalId,
     });
     assert.equal(agentPrincipal.status, 403, agentPrincipal.text);
 
-    // Agent may not revoke a sibling token.
+    // Agent may not revoke a sibling token; zero tombstones on the refused target.
     const sibling = await seedPredecessor(f, {});
     const agentSibling = await issueConnect(f, agentToken, {
       kind: "revoke_agent_token",
       token_id: sibling.tokenId,
     });
     assert.equal(agentSibling.status, 403, agentSibling.text);
-    const siblingTombstones = await sql<{ count: string | number }[]>`
-      SELECT count(*) AS count
-      FROM swarm.revocation_tombstones
-      WHERE target_id = ${sibling.tokenId}::uuid
-    `;
-    assert.equal(Number(siblingTombstones[0]?.count), 0);
+    assert.equal(await tombstonesFor("token", sibling.tokenId), 0);
 
-    // Agent self-surrender of exact presenting token succeeds.
+    // Agent self-surrender of the exact presenting token succeeds.
     const selfSurrender = await issueConnect(f, agentToken, {
       kind: "revoke_agent_token",
       token_id: tokenId,
     });
     assert.equal(selfSurrender.status, 200, selfSurrender.text);
     assert.equal(selfSurrender.body.status, "accepted", selfSurrender.text);
+    assert.equal(await tombstonesFor("token", tokenId), 1);
+    const [selfRow] = await sql<{ lineage_id: string }[]>`
+      SELECT lineage_id FROM swarm.agent_tokens WHERE token_id = ${tokenId}::uuid
+    `;
+    assert.equal(await tombstonesFor("lineage", String(selfRow?.lineage_id)), 1);
 
-    const [revokedToken] = await sql<{ revoked_at: Date | null }[]>`
-      SELECT revoked_at FROM swarm.agent_tokens WHERE token_id = ${tokenId}::uuid
-    `;
-    assert.notEqual(revokedToken?.revoked_at, null);
-    const tokenTombs = await sql<{ kind: string }[]>`
-      SELECT kind FROM swarm.revocation_tombstones
-      WHERE target_id = ${tokenId}::uuid
-      ORDER BY kind
-    `;
-    assert.deepEqual(tokenTombs.map((row) => row.kind), ["token"]);
-    const lineageTombs = await sql<{ kind: string }[]>`
-      SELECT kind FROM swarm.revocation_tombstones
-      WHERE target_id = ${lineageId}::uuid AND kind = 'lineage'
-    `;
-    assert.equal(lineageTombs.length, 1);
-
-    // Double revoke is a domain refusal, not a second tombstone.
+    // Double / missing / wrong-workspace refusals.
     const doubleToken = await issueConnect(f, f.uaJwt, {
       kind: "revoke_agent_token",
       token_id: tokenId,
     });
-    assert.equal(doubleToken.status, 200, doubleToken.text);
     assert.equal(doubleToken.body.status, "rejected");
     assert.equal(doubleToken.body.reason, "token_revoked");
 
-    // Missing and wrong-workspace targets refuse without inventing state.
     const missing = await issueConnect(f, f.uaJwt, {
       kind: "revoke_agent_token",
       token_id: randomUUID(),
     });
-    assert.equal(missing.status, 200, missing.text);
     assert.equal(missing.body.status, "rejected");
     assert.equal(missing.body.reason, "token_not_found");
 
@@ -4758,156 +4742,8 @@ test("hosted agent revocation: human roles, agent confinement, lineage fail-clos
       commandId("wrongws"),
       f.workspaceB,
     );
-    assert.equal(wrongWs.status, 200, wrongWs.text);
     assert.equal(wrongWs.body.status, "rejected");
     assert.equal(wrongWs.body.reason, "principal_not_found");
-
-    // Fresh principal + token for principal-level cascade and role matrix.
-    const principal2 = await issueConnect(f, f.uaJwt, {
-      kind: "create_agent_principal",
-      name: `revoke-p2-${randomUUID().slice(0, 8)}`,
-    });
-    const principal2Id = String(principal2.body.principal_id);
-    const device2 = randomUUID();
-    assert.equal((await registerDevice(f, f.uaJwt, device2)).status, 200);
-    const mint2 = await issueConnect(f, f.uaJwt, {
-      kind: "mint_agent_token",
-      principal_id: principal2Id,
-      run_id: randomUUID(),
-      task_id: randomUUID(),
-      epoch: 1,
-      device_id: device2,
-    });
-    assert.equal(mint2.body.status, "accepted", mint2.text);
-    const token2Id = String(mint2.body.token_id);
-    const agent2Token = String(mint2.body.agent_token);
-    f.credentials.set(agent2Token, {
-      kind: "agent",
-      id: principal2Id,
-      actor: {
-        user: f.ua,
-        agent_principal: principal2Id,
-        run: String(mint2.body.run_id),
-      },
-    });
-    const [row2] = await sql<{ lineage_id: string; renewal_grant_id: string }[]>`
-      SELECT lineage_id, renewal_grant_id
-      FROM swarm.agent_tokens WHERE token_id = ${token2Id}::uuid
-    `;
-    assert.ok(row2);
-
-    // Member may only revoke own principal: promote ua2 as member and try.
-    await sql`
-      INSERT INTO swarm.memberships (workspace_id, user_id, role, joined_at)
-      VALUES (${f.workspaceA}::uuid, ${f.ub}::uuid, 'member', statement_timestamp())
-      ON CONFLICT (workspace_id, user_id) DO UPDATE
-        SET role = 'member', revoked_at = NULL
-    `;
-    registerHuman(f, { id: f.ub, jwt: f.ubJwt });
-    const memberDenied = await issueConnect(f, f.ubJwt, {
-      kind: "revoke_agent_principal",
-      principal_id: principal2Id,
-    });
-    assert.equal(memberDenied.status, 200, memberDenied.text);
-    assert.equal(memberDenied.body.status, "rejected");
-    assert.equal(memberDenied.body.reason, "principal_not_owned");
-
-    const ownerRevoke = await issueConnect(f, f.uaJwt, {
-      kind: "revoke_agent_principal",
-      principal_id: principal2Id,
-    });
-    assert.equal(ownerRevoke.status, 200, ownerRevoke.text);
-    assert.equal(ownerRevoke.body.status, "accepted", ownerRevoke.text);
-
-    const [p2] = await sql<{ revoked_at: Date | null }[]>`
-      SELECT revoked_at FROM swarm.agent_principals
-      WHERE principal_id = ${principal2Id}::uuid
-    `;
-    assert.notEqual(p2?.revoked_at, null);
-    const [t2] = await sql<{ revoked_at: Date | null }[]>`
-      SELECT revoked_at FROM swarm.agent_tokens WHERE token_id = ${token2Id}::uuid
-    `;
-    assert.notEqual(t2?.revoked_at, null);
-    const principalTomb = await sql<{ count: string | number }[]>`
-      SELECT count(*) AS count FROM swarm.revocation_tombstones
-      WHERE kind = 'principal' AND target_id = ${principal2Id}::uuid
-    `;
-    assert.equal(Number(principalTomb[0]?.count), 1);
-    const lineage2Tomb = await sql<{ count: string | number }[]>`
-      SELECT count(*) AS count FROM swarm.revocation_tombstones
-      WHERE kind = 'lineage' AND target_id = ${row2.lineage_id}::uuid
-    `;
-    assert.equal(Number(lineage2Tomb[0]?.count), 1);
-    if (row2.renewal_grant_id) {
-      const [grant] = await sql<{ revoked_at: Date | null }[]>`
-        SELECT revoked_at FROM swarm.renewal_grants
-        WHERE renewal_grant_id = ${row2.renewal_grant_id}::uuid
-      `;
-      assert.notEqual(grant?.revoked_at, null);
-    }
-
-    // Successor command and renewal on a lineage-tombstoned chain fail closed.
-    // seed a fresh lineage, mint, revoke token (lineage tombstone), then renew.
-    const principal3 = await issueConnect(f, f.uaJwt, {
-      kind: "create_agent_principal",
-      name: `revoke-p3-${randomUUID().slice(0, 8)}`,
-    });
-    const principal3Id = String(principal3.body.principal_id);
-    const device3 = randomUUID();
-    assert.equal((await registerDevice(f, f.uaJwt, device3)).status, 200);
-    const mint3 = await issueConnect(f, f.uaJwt, {
-      kind: "mint_agent_token",
-      principal_id: principal3Id,
-      run_id: randomUUID(),
-      task_id: randomUUID(),
-      epoch: 1,
-      device_id: device3,
-    });
-    assert.equal(mint3.body.status, "accepted", mint3.text);
-    const token3Id = String(mint3.body.token_id);
-    const agent3 = String(mint3.body.agent_token);
-    f.credentials.set(agent3, {
-      kind: "agent",
-      id: principal3Id,
-      actor: {
-        user: f.ua,
-        agent_principal: principal3Id,
-        run: String(mint3.body.run_id),
-      },
-    });
-    const humanTokenRevoke = await issueConnect(f, f.uaJwt, {
-      kind: "revoke_agent_token",
-      token_id: token3Id,
-    });
-    assert.equal(humanTokenRevoke.body.status, "accepted", humanTokenRevoke.text);
-
-    const nextCommand = await issueSignal(f, agent3, {
-      kind: "post_signal",
-      signal_kind: "note",
-      body: "should fail closed after revoke",
-      to_user_id: null,
-      about: null,
-    });
-    assert.equal(nextCommand.status, 403, nextCommand.text);
-
-    // Positive control: unrevoked fixture agent still posts.
-    const live = await issueSignal(f, f.agentToken, {
-      kind: "post_signal",
-      signal_kind: "note",
-      body: "live control after revoke suite",
-      to_user_id: null,
-      about: null,
-    });
-    assert.equal(live.status, 200, live.text);
-    assert.equal(live.body.status, "accepted");
-
-    // Double principal revoke.
-    const doublePrincipal = await issueConnect(f, f.uaJwt, {
-      kind: "revoke_agent_principal",
-      principal_id: principal2Id,
-    });
-    assert.equal(doublePrincipal.body.status, "rejected");
-    assert.equal(doublePrincipal.body.reason, "principal_revoked");
 
     // Wire shape: revoke_agent_token without token_id is 400.
     const badShape = await fetch(`${local.API_URL}/functions/v1/command`, {
@@ -4926,6 +4762,244 @@ test("hosted agent revocation: human roles, agent confinement, lineage fail-clos
     });
     assert.equal(badShape.status, 400);
 
-    void grantId; // retained for future grant-level assertions in this suite
+    // --- Hosted human role matrix (edge) ---
+    // ua2 is already a live Member of workspaceA (fixture).
+    // Member may create/revoke own principal and own token.
+    const memberOwnPrincipal = await issueConnect(f, f.ua2Jwt, {
+      kind: "create_agent_principal",
+      name: `member-own-${randomUUID().slice(0, 8)}`,
+    });
+    assert.equal(memberOwnPrincipal.body.status, "accepted", memberOwnPrincipal.text);
+    const memberPrincipalId = String(memberOwnPrincipal.body.principal_id);
+    const memberDevice = randomUUID();
+    assert.equal((await registerDevice(f, f.ua2Jwt, memberDevice)).status, 200);
+    const memberMint = await issueConnect(f, f.ua2Jwt, {
+      kind: "mint_agent_token",
+      principal_id: memberPrincipalId,
+      run_id: randomUUID(),
+      task_id: randomUUID(),
+      epoch: 1,
+      device_id: memberDevice,
+    });
+    assert.equal(memberMint.body.status, "accepted", memberMint.text);
+    const memberTokenId = String(memberMint.body.token_id);
+
+    // Owner-owned principal/token used as "another" target for member refusal.
+    const ownerOther = await issueConnect(f, f.uaJwt, {
+      kind: "create_agent_principal",
+      name: `owner-other-${randomUUID().slice(0, 8)}`,
+    });
+    assert.equal(ownerOther.body.status, "accepted", ownerOther.text);
+    const ownerOtherPrincipalId = String(ownerOther.body.principal_id);
+    const ownerOtherDevice = randomUUID();
+    assert.equal((await registerDevice(f, f.uaJwt, ownerOtherDevice)).status, 200);
+    const ownerOtherMint = await issueConnect(f, f.uaJwt, {
+      kind: "mint_agent_token",
+      principal_id: ownerOtherPrincipalId,
+      run_id: randomUUID(),
+      task_id: randomUUID(),
+      epoch: 1,
+      device_id: ownerOtherDevice,
+    });
+    assert.equal(ownerOtherMint.body.status, "accepted", ownerOtherMint.text);
+    const ownerOtherTokenId = String(ownerOtherMint.body.token_id);
+    const tombsBeforeMemberRefusal = {
+      principal: await tombstonesFor("principal", ownerOtherPrincipalId),
+      token: await tombstonesFor("token", ownerOtherTokenId),
+    };
+
+    const memberDenyPrincipal = await issueConnect(f, f.ua2Jwt, {
+      kind: "revoke_agent_principal",
+      principal_id: ownerOtherPrincipalId,
+    });
+    assert.equal(memberDenyPrincipal.body.status, "rejected");
+    assert.equal(memberDenyPrincipal.body.reason, "principal_not_owned");
+    assert.equal(
+      await tombstonesFor("principal", ownerOtherPrincipalId),
+      tombsBeforeMemberRefusal.principal,
+    );
+
+    const memberDenyToken = await issueConnect(f, f.ua2Jwt, {
+      kind: "revoke_agent_token",
+      token_id: ownerOtherTokenId,
+    });
+    assert.equal(memberDenyToken.body.status, "rejected");
+    assert.equal(memberDenyToken.body.reason, "principal_not_owned");
+    assert.equal(
+      await tombstonesFor("token", ownerOtherTokenId),
+      tombsBeforeMemberRefusal.token,
+    );
+
+    // Member revokes its own token (accepted + token/lineage tombstones).
+    const memberRevokeOwnToken = await issueConnect(f, f.ua2Jwt, {
+      kind: "revoke_agent_token",
+      token_id: memberTokenId,
+    });
+    assert.equal(memberRevokeOwnToken.body.status, "accepted", memberRevokeOwnToken.text);
+    assert.equal(await tombstonesFor("token", memberTokenId), 1);
+
+    // Fresh own principal for principal revoke (previous token already gone).
+    const memberOwn2 = await issueConnect(f, f.ua2Jwt, {
+      kind: "create_agent_principal",
+      name: `member-own2-${randomUUID().slice(0, 8)}`,
+    });
+    assert.equal(memberOwn2.body.status, "accepted", memberOwn2.text);
+    const memberPrincipal2Id = String(memberOwn2.body.principal_id);
+    const memberRevokeOwnPrincipal = await issueConnect(f, f.ua2Jwt, {
+      kind: "revoke_agent_principal",
+      principal_id: memberPrincipal2Id,
+    });
+    assert.equal(
+      memberRevokeOwnPrincipal.body.status,
+      "accepted",
+      memberRevokeOwnPrincipal.text,
+    );
+    assert.equal(await tombstonesFor("principal", memberPrincipal2Id), 1);
+
+    // Admin may revoke another's principal/token. Promote ua2 after member cases.
+    await sql`
+      UPDATE swarm.memberships
+      SET role = 'admin'
+      WHERE workspace_id = ${f.workspaceA}::uuid
+        AND user_id = ${f.ua2}::uuid
+        AND revoked_at IS NULL
+    `;
+    const adminRevokeToken = await issueConnect(f, f.ua2Jwt, {
+      kind: "revoke_agent_token",
+      token_id: ownerOtherTokenId,
+    });
+    assert.equal(adminRevokeToken.body.status, "accepted", adminRevokeToken.text);
+    assert.equal(await tombstonesFor("token", ownerOtherTokenId), 1);
+
+    // Owner coverage: cascade principal revoke with positive tombstones.
+    const ownerCascade = await issueConnect(f, f.uaJwt, {
+      kind: "create_agent_principal",
+      name: `owner-cascade-${randomUUID().slice(0, 8)}`,
+    });
+    assert.equal(ownerCascade.body.status, "accepted", ownerCascade.text);
+    const cascadePrincipalId = String(ownerCascade.body.principal_id);
+    const cascadeDevice = randomUUID();
+    assert.equal((await registerDevice(f, f.uaJwt, cascadeDevice)).status, 200);
+    const cascadeMint = await issueConnect(f, f.uaJwt, {
+      kind: "mint_agent_token",
+      principal_id: cascadePrincipalId,
+      run_id: randomUUID(),
+      task_id: randomUUID(),
+      epoch: 1,
+      device_id: cascadeDevice,
+    });
+    assert.equal(cascadeMint.body.status, "accepted", cascadeMint.text);
+    const cascadeTokenId = String(cascadeMint.body.token_id);
+    const [cascadeRow] = await sql<{ lineage_id: string; renewal_grant_id: string | null }[]>`
+      SELECT lineage_id, renewal_grant_id
+      FROM swarm.agent_tokens
+      WHERE token_id = ${cascadeTokenId}::uuid
+    `;
+    assert.ok(cascadeRow);
+
+    // Admin may also revoke another principal (owner-owned).
+    const adminRevokePrincipal = await issueConnect(f, f.ua2Jwt, {
+      kind: "revoke_agent_principal",
+      principal_id: cascadePrincipalId,
+    });
+    assert.equal(adminRevokePrincipal.body.status, "accepted", adminRevokePrincipal.text);
+    assert.equal(await tombstonesFor("principal", cascadePrincipalId), 1);
+    assert.equal(await tombstonesFor("token", cascadeTokenId), 1);
+    assert.equal(await tombstonesFor("lineage", String(cascadeRow.lineage_id)), 1);
+    if (cascadeRow.renewal_grant_id) {
+      const [g] = await sql<{ revoked_at: Date | null }[]>`
+        SELECT revoked_at FROM swarm.renewal_grants
+        WHERE renewal_grant_id = ${cascadeRow.renewal_grant_id}::uuid
+      `;
+      assert.notEqual(g?.revoked_at, null);
+    }
+
+    const doublePrincipal = await issueConnect(f, f.uaJwt, {
+      kind: "revoke_agent_principal",
+      principal_id: cascadePrincipalId,
+    });
+    assert.equal(doublePrincipal.body.status, "rejected");
+    assert.equal(doublePrincipal.body.reason, "principal_revoked");
+
+    // --- Causal successor: renew first, then human-revoke predecessor ---
+    // Proves the already-issued successor cannot post and cannot renew once the
+    // predecessor token is revoked (lineage tombstone). An unrevoked control
+    // successor on a different lineage stays green in the same invocation.
+    const grantVictim = await seedRenewalGrant(f, { maxSuccessors: 10 });
+    const predVictim = await seedPredecessor(f, { grantId: grantVictim });
+    const renewedVictim = await issueRenewal(f, predVictim.token);
+    assert.equal(renewedVictim.status, 200, renewedVictim.text);
+    assert.equal(renewedVictim.body.status, "accepted", renewedVictim.text);
+    const succVictimToken = String(renewedVictim.body.agent_token);
+    const succVictimId = String(renewedVictim.body.token_id);
+    registerAgentCredential(f, succVictimToken);
+    assert.match(succVictimToken, /^swm_agt_[A-Za-z0-9_-]{43}$/);
+    assert.notEqual(succVictimId, predVictim.tokenId);
+
+    const grantControl = await seedRenewalGrant(f, { maxSuccessors: 10 });
+    const predControl = await seedPredecessor(f, { grantId: grantControl });
+    const renewedControl = await issueRenewal(f, predControl.token);
+    assert.equal(renewedControl.body.status, "accepted", renewedControl.text);
+    const succControlToken = String(renewedControl.body.agent_token);
+    registerAgentCredential(f, succControlToken);
+
+    // Human revokes the PREDECESSOR of the victim chain only.
+    const humanRevokePred = await issueConnect(f, f.uaJwt, {
+      kind: "revoke_agent_token",
+      token_id: predVictim.tokenId,
+    });
+    assert.equal(humanRevokePred.body.status, "accepted", humanRevokePred.text);
+    assert.equal(await tombstonesFor("token", predVictim.tokenId), 1);
+    assert.equal(await tombstonesFor("lineage", predVictim.lineageId), 1);
+
+    // Already-issued successor on the revoked lineage cannot post.
+    const succSignal = await issueSignal(f, succVictimToken, {
+      kind: "post_signal",
+      signal_kind: "note",
+      body: "successor should fail closed after predecessor revoke",
+      to_user_id: null,
+      about: null,
+    });
+    assert.equal(succSignal.status, 403, succSignal.text);
+
+    // Already-issued successor cannot renew.
+    const succRenew = await issueRenewal(
+      f,
+      succVictimToken,
+      commandId("succ-renew-after-revoke"),
+    );
+    // Fail-closed is either authn (401) or revocation/authz (403). A 200 with
+    // accepted would mean the successor still renewed after lineage tombstone.
+    assert.notEqual(
+      succRenew.status,
+      200,
+      `successor renewal must not succeed HTTP 200: ${succRenew.text}`,
+    );
+    assert.ok(
+      succRenew.status === 403 || succRenew.status === 401,
+      `successor renewal must fail closed, got ${succRenew.status}: ${succRenew.text}`,
+    );
+
+    // Control successor on an unrevoked lineage remains live.
+    const controlSignal = await issueSignal(f, succControlToken, {
+      kind: "post_signal",
+      signal_kind: "note",
+      body: "control successor still live after unrelated lineage revoke",
+      to_user_id: null,
+      about: null,
+    });
+    assert.equal(controlSignal.status, 200, controlSignal.text);
+    assert.equal(controlSignal.body.status, "accepted");
+
+    // Fixture agent (unrelated) also remains live — second positive control.
+    const live = await issueSignal(f, f.agentToken, {
+      kind: "post_signal",
+      signal_kind: "note",
+      body: "fixture agent live control after revoke suite",
+      to_user_id: null,
+      about: null,
+    });
+    assert.equal(live.status, 200, live.text);
+    assert.equal(live.body.status, "accepted");
   });
 });
