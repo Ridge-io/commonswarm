@@ -235,6 +235,13 @@ redeployed, and the web app was deployed with its public Supabase configuration.
 that calls `create_workspace`" and that reaching it "requires a hand-rolled request."
 **That is dead.** `cswarm new "<name>"` exists in `src/cli.ts` and posts the command.
 
+~~Still missing, and named in §9 P5 as launch-blocking: the **global spend circuit
+breaker** that trips to a signup-paused mode before cost runs away.~~ ★ **SUPERSEDED —
+DEAD.** Migration `20260728000001_spend_circuit_breaker.sql` added the breaker and the
+operator records it among the 10 pushed migrations. Its 100 workspace-creations/hour
+production latch and manual reset requirement remain launch-operations debt; D-031 covers
+the separate local-suite reset defect.
+
 <details>
 <summary>★ SUPERSEDED pre-launch status and instruction — DEAD</summary>
 
@@ -317,18 +324,23 @@ closed, and leaving them listed would have made the table lie about the state of
 | 8 | One re-login per dogfood machine | Human action | ✅ **DONE 2026-07-29** — mini logged in as GitHub `Ridgeio`, laptop as `tlangridge`, both live in project `CommonSwarm Build`. First real two-machine, two-identity dogfood run; see `docs/evidence/2026-07-29-first-real-dogfood.md` | dogfood surviving the rename |
 | 9 | `legal@commonswarm.com` delivers | Test to run | ✅ **DONE 2026-07-29** — operator-confirmed end-to-end delivery for `legal@` and `security@` (D-007/D-008); this seat independently verified the Cloudflare Email Routing DNS | every document that names it |
 | 10 | USPTO check on "CommonSwarm" | Research | ⬜ **OPEN** — prompt written for an agent | launching under a name nobody has cleared |
-| 11 | **Custom SMTP for magic-link sign-in** | External account + DNS | ◐ **IN FLIGHT** — the three Resend DNS records now resolve on Cloudflare; Resend verification and Supabase custom-SMTP activation are not established here | email sign-in working for more than 2 people an hour |
+| 11 | **Custom SMTP for magic-link sign-in** | External account + DNS | ◐ **IN FLIGHT** — Resend verified; Supabase custom SMTP is active at 30 emails/hour with `CommonSwarm <hello@commonswarm.com>`; production accepted a request and Resend recorded delivery, but inbox-visible receipt and the magic-link return leg are not established | complete email sign-in, not only sender delivery |
 
-### Item 11 in full — what magic-link sign-in still needs
+### Item 11 in full — cutover complete, return leg still needs proof
 
-Email sign-in is **built, deployed and working** on https://commonswarm.com/start: a real
-`<form>`, `signInWithOtp`, a "link is on its way" state that echoes the address back, and
-typed handling for the two ways it fails. It is above the GitHub button on purpose — a
-GitHub-only door tells a non-developer the product is not for them.
+The email sign-in **UI and sender path are built and deployed** on
+https://commonswarm.com/start: a real `<form>`, `signInWithOtp`, a "link is on its way"
+state that echoes the address back, and typed handling for the two ways it fails. A
+production request was accepted and Resend recorded delivery, but inbox receipt and the
+magic-link return/sign-in leg are not established. Email stays above the GitHub button on
+purpose — a GitHub-only door tells a non-developer the product is not for them.
 
-**What it cannot do is scale, and the cap is not ours to raise from code.** With no custom
-SMTP configured, Supabase's built-in sender allows **2 emails per hour for the entire
-project**. Measured, not assumed — the Management API refuses the change outright:
+<details>
+<summary>SUPERSEDED snapshot — the pre-custom-SMTP 2/hour blocker (dead)</summary>
+
+**What it could not do was scale, and the cap was not ours to raise from code.** With no
+custom SMTP configured, Supabase's built-in sender allowed **2 emails per hour for the
+entire project**. Measured, not assumed — the Management API refused the change outright:
 
 ```
 PATCH /v1/projects/<ref>/config/auth  {"rate_limit_email_sent": 30}
@@ -336,9 +348,11 @@ PATCH /v1/projects/<ref>/config/auth  {"rate_limit_email_sent": 30}
       Missing SMTP_ADMIN_EMAIL, SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS fields."}
 ```
 
-So the third stranger to try email in any given hour is refused through no fault of their
-own. The page handles that honestly — it says the limit is ours, not their address, and
-points at GitHub — but honest degradation is not the same as working.
+So the third stranger to try email in any given hour was refused through no fault of their
+own. The page handled that honestly — it said the limit was ours, not their address, and
+pointed at GitHub — but honest degradation was not the same as working.
+
+</details>
 
 **Step 1 is done and cost nothing.** Resend scopes by DOMAIN, not by project or account, so
 `commonswarm.com` was added to the account that already holds `ridgehq.com` and
@@ -365,20 +379,28 @@ and `security@commonswarm.com` deliver. Resend's records belong on the `send` an
 one SPF record per host: moving Resend's SPF onto the root would break forwarding and
 sending. **Add, never replace.** Preserve the Cloudflare apex/www site records too.
 
-**Step 3 is now the blocker:** trigger verification (`POST /domains/<id>/verify`), create a
-Resend API key scoped to this project rather than reusing RidgeHQ's, put the SMTP credentials
-into Supabase, and only then raise `rate_limit_email_sent`.
+~~**Step 3 is now the blocker:** trigger verification, create a domain-scoped Resend API key,
+put the SMTP credentials into Supabase, and only then raise `rate_limit_email_sent`.~~
+★ **SUPERSEDED — DONE 2026-07-29.** Resend is verified; `hello@commonswarm.com` is an Active
+Cloudflare route; Supabase Management GET reports sender
+`CommonSwarm <hello@commonswarm.com>`, host `smtp.resend.com`, port `465`, user `resend`, and
+`rate_limit_email_sent=30`. A production request at `/start` was accepted and Resend recorded
+`Confirm your CommonSwarm email` delivered from the exact sender. The credential was never
+placed on the bus or disk.
 
-**Order matters and the wrong order is worse than waiting.** Configuring Supabase SMTP BEFORE
-the domain verifies replaces a sender that works-but-is-capped with one that fails outright.
-Today magic links do send, just 2 per hour.
+**The ordering rule remains load-bearing:** configuring Supabase SMTP before domain
+verification would replace a sender that works-but-is-capped with one that fails outright.
+That sequence was followed; the old line ~~"Today magic links do send, just 2 per hour"~~ is
+dead.
 
-**Then verify it end to end rather than assuming**: request a link at
-https://commonswarm.com/start with a real address, confirm the mail arrives, and confirm the
-link returns you to `/start` signed in. The return leg is the half that was silently broken
-before — `site_url` and the redirect allow-list both pointed at `localhost` in production
-until 2026-07-28, so every OAuth callback would have bounced a real user to a dead address
-while the outbound redirect looked perfect.
+**The remaining proof is the human-visible return leg, not the sender cutover:** inspect the
+mailbox receipt, follow the magic link in a cold browser, and confirm the resulting signed-in
+`/app` state. The sender-side production evidence does not establish those steps. Run the
+remaining test at https://commonswarm.com/start with a real address, confirm the mail arrives,
+and confirm the link returns signed in. The return leg is the half that was silently broken
+before — `site_url` and the redirect allow-list both pointed at `localhost` in production until
+2026-07-28, so every OAuth callback would have bounced a real user to a dead address while the
+outbound redirect looked perfect.
 
 **THE LEGAL DOCUMENTS ARE NOW GATED ON TWO THINGS, NEITHER OF THEM TEXT IN THIS REPO:**
 items **4** (the filing) and **7** (attorney review). Item **9**, mailbox delivery, is
@@ -386,10 +408,11 @@ done. Every `[[placeholder]]` is filled — the writing is finished. What is lef
 and a review, and both happen outside version control. That is why the draft banner is still
 up and why no amount of further editing will lift it.
 
-Items **2** and **8** are closed: a stranger can install, and the two-machine dogfood run
-completed production GitHub sign-in, workspace creation, invite acceptance, and signal
-exchange. That run did **not** exercise a cold browser signup or magic-link sign-in; the
-legal items remain external.
+Items **2** and **8** are closed: the public release and installer mechanics work, and the
+two-machine operator dogfood run completed production GitHub sign-in, workspace creation,
+invite acceptance, and signal exchange. That run did **not** establish cold-stranger
+install/auth without a walkthrough, cold-browser signup, or magic-link sign-in; the legal
+items remain external.
 
 **`SWARM_CAPABILITY_URLS` is deliberately still dark.** The §7 zero-install on-ramp is built
 and its two DoS blockers are fixed, but the capability endpoint answers `404` both when the

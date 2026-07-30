@@ -48,13 +48,16 @@ All verified against the deployed site with paired positive/absence greps, not a
 | `/start` | pure two-step on-ramp (merged `0ed02a9`) — no stepper, no dead ends |
 | `/download` | real command, correct version, prerequisites before paste |
 | Legal pages | Terms/Privacy/AUP — false archiving + member-removal remedies deleted |
-| Email | **all 13 Supabase templates branded in production** (verified 13/13 subjects + bodies) |
+| Email | **all 13 Supabase templates branded in production; custom SMTP active at 30/hour** from `CommonSwarm <hello@commonswarm.com>` |
 | OG card | per-route metadata; card shows the real installer command; served SHA verified |
 | Docs/briefs | AGENTS.md, README, SITE-BRIEF corrected — they no longer instruct agents to write the closed-signup world |
 
-**Resend DKIM went VERIFIED at ~18:05** (I triggered one verify sweep; `dig` had shown the record
-correct all along). This unblocks custom SMTP, which lifts the **2/hour magic-link cap** —
-currently the tightest limit on a stranger signing up. See §4 item 1.
+~~**Resend DKIM went VERIFIED at ~18:05. This unblocks custom SMTP, which lifts the 2/hour
+magic-link cap — currently the tightest limit on a stranger signing up.**~~ **Dead as an
+open blocker:** Kestrel completed the cutover. Resend is verified, Cloudflare routes
+`hello@`, `legal@`, and `security@`, Supabase reports the exact CommonSwarm sender and
+`rate_limit_email_sent=30`, and a production `/start` request reached a Resend delivered
+record. Inbox-visible receipt and the cold-browser magic-link return leg remain unestablished.
 
 ---
 
@@ -101,13 +104,12 @@ vercel deploy dist --prod --yes --scope ridgedotio
 
 ## 4. The queue, in priority order
 
-1. **Configure custom SMTP now that DKIM is verified.** Run Kestrel's guarded script
-   (`scripts/push-email-templates.sh`, merged `b8d65c6`) with the full SMTP block — it refuses
-   partial blocks by design. Sender: `CommonSwarm <hello@commonswarm.com>`. **I was mid-task
-   creating the Cloudflare Email Routing rule for `hello@` when I handed off** — the browser is
-   authenticated at Email Routing → Routing rules for commonswarm.com; two rules exist
-   (`legal@`, `security@` → <employer-b-address REDACTED 2026-08-10>) and `hello@` needs adding. Then raise
-   `rate_limit_email_sent` above 2/hour. Kestrel is free and owns this script.
+1. ~~**Configure custom SMTP now that DKIM is verified.** Add the `hello@` Cloudflare route,
+   apply the guarded full SMTP block, and raise `rate_limit_email_sent` above 2/hour.~~
+   **DONE by Kestrel.** The three routes are Active, the guarded apply succeeded, Management
+   GET reports the exact sender/host/port/user and rate 30, and Resend recorded a production
+   message delivered. **Still open:** inbox-visible receipt, inbound `hello@` forwarding, and
+   the cold-browser magic-link return leg.
 2. **D-031 — the local suite trips a global latching spend breaker** (Cinder, in progress).
    `SPEND_CEILINGS.workspace_create = 100/hour`, latching until `swarm.reset_spend_breaker`. The
    suite burns ~30 creations/run, so it self-poisons. **Operator-visible implication I flagged and
