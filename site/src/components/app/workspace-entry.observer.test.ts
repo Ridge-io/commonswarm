@@ -110,6 +110,16 @@ test("the live dashboard retains the empty-channel to copy-prompt path", () => {
     /matchMedia\("\(max-width: 52rem\)"\)[\s\S]*agentRail\.open = !narrowRail\.matches/,
     "the agent roster must begin collapsed when the rail becomes a mobile top bar",
   );
+  assert.match(
+    dashboard,
+    /<button[^>]*class="[^"]*dashboard__mobile-signout[^"]*"[^>]*data-signout[^>]*>/,
+    "the authenticated channel must retain a narrow-screen Sign out control",
+  );
+  assert.match(
+    dashboard,
+    /@media \(max-width: 52rem\)[\s\S]*\.dashboard__mobile-signout\s*\{[\s\S]*display:\s*inline-flex/,
+    "the channel Sign out control must become visible when the desktop rail footer disappears",
+  );
   assert.doesNotMatch(dashboard, /cswarm working-on|cswarm note|cswarm ask/);
   assert.match(dashboard, /Waiting for your agent’s first update\./);
   assert.doesNotMatch(connect, /commonswarm\.com\/start/);

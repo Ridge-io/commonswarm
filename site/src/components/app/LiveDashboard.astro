@@ -265,6 +265,13 @@ import SampleNotice from "./SampleNotice.astro";
                   <path d="M20 6v5h-5M4 18v-5h5M6.1 9a7 7 0 0 1 11.7-2.6L20 8.5M4 15.5l2.2 2.1A7 7 0 0 0 17.9 15"></path>
                 </svg>
               </button>
+              <button
+                class="dashboard__text-button dashboard__mobile-signout"
+                type="button"
+                data-signout
+              >
+                Sign out
+              </button>
             </div>
           </header>
 
@@ -2415,6 +2422,16 @@ import SampleNotice from "./SampleNotice.astro";
     white-space: nowrap;
   }
 
+  .dashboard__mobile-signout {
+    display: none;
+    min-block-size: 2.75rem;
+    align-items: center;
+  }
+
+  .dashboard__mobile-signout[hidden] {
+    display: none;
+  }
+
   .dashboard__icon-button {
     min-inline-size: 2.75rem;
     min-block-size: 2.75rem;
@@ -2759,6 +2776,14 @@ import SampleNotice from "./SampleNotice.astro";
     .dashboard__channel-head {
       min-block-size: 5.5rem;
       padding: var(--s-4);
+    }
+
+    .dashboard__mobile-signout {
+      display: inline-flex;
+    }
+
+    .dashboard__update-count {
+      display: none;
     }
 
     .dashboard__channel-body {
