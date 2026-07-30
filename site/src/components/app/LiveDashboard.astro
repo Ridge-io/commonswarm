@@ -370,8 +370,11 @@ import SampleNotice from "./SampleNotice.astro";
     let signalHasMore = false;
     let signalCutoff = "";
     let pendingWorkspaceId = "";
+    let renderedAuthUserId = "";
+    let authReloadQueued = false;
 
     const SIGNAL_PAGE_SIZE = 50;
+    const SIGNAL_FETCH_SIZE = SIGNAL_PAGE_SIZE + 1;
 
     const showPanel = (
       name: "loading" | "signed-out" | "create" | "workspace-error" | "channel",
@@ -605,14 +608,14 @@ import SampleNotice from "./SampleNotice.astro";
         .from("signals")
         .select("id,from,from_kind,kind,body,about,until,created_at")
         .eq("workspace_id", workspaceId)
-        .gt("until", cutoff)
+        .or(`until.is.null,until.gt.${cutoff}`)
         .order("created_at", { ascending: false })
         .order("id", { ascending: false })
-        .range(offset, offset + SIGNAL_PAGE_SIZE);
+        .range(offset, offset + SIGNAL_FETCH_SIZE - 1);
       if (error) throw new Error(error.message);
       const page = data ?? [];
       return {
-        hasMore: page.length > SIGNAL_PAGE_SIZE,
+        hasMore: page.length === SIGNAL_FETCH_SIZE,
         rows: page.slice(0, SIGNAL_PAGE_SIZE).map((row) => ({
           id: String(row.id),
           from: String(row.from ?? ""),
@@ -793,6 +796,13 @@ import SampleNotice from "./SampleNotice.astro";
       showChannelView("feed");
     };
 
+    const syncConnectWorkspace = (workspace: Workspace): void => {
+      const connect = one<SecretHoldingAgentConnect>("agent-connect");
+      if (!connect) return;
+      connect.setAttribute("workspace-name", workspace.name);
+      connect.setAttribute("workspace-id", workspace.id);
+    };
+
     const loadSignals = async (
       workspaceId: string,
       reset: boolean,
@@ -878,6 +888,7 @@ import SampleNotice from "./SampleNotice.astro";
       pendingWorkspaceId = "";
       const keepShell = app.dataset.state === "channel";
       activeWorkspaceId = selected.id;
+      syncConnectWorkspace(selected);
       const version = ++requestVersion;
       agents = [];
       people = new Map();
@@ -914,10 +925,7 @@ import SampleNotice from "./SampleNotice.astro";
       const selected = workspaces.find((workspace) => workspace.id === activeWorkspaceId);
       const connect = one<SecretHoldingAgentConnect>("agent-connect");
       if (!selected || !connect) return;
-      if (connect.dataset.state !== "done") {
-        connect.setAttribute("workspace-name", selected.name);
-        connect.setAttribute("workspace-id", selected.id);
-      }
+      syncConnectWorkspace(selected);
       showChannelView("connect");
       window.requestAnimationFrame(() => {
         one<HTMLElement>("[data-close-connect]")?.focus();
@@ -1052,6 +1060,7 @@ import SampleNotice from "./SampleNotice.astro";
       setLoading("Checking your sign-in…");
       try {
         session = await currentSession();
+        renderedAuthUserId = session?.user.id ?? "";
         if (!session) {
           showAuthView("choices");
           showPanel("signed-out");
@@ -1236,8 +1245,31 @@ import SampleNotice from "./SampleNotice.astro";
       const selected = workspaces.find((workspace) => workspace.id === activeWorkspaceId);
       const connect = one<SecretHoldingAgentConnect>("agent-connect");
       if (!selected || !connect) return;
-      connect.setAttribute("workspace-name", selected.name);
-      connect.setAttribute("workspace-id", selected.id);
+      syncConnectWorkspace(selected);
+      closeConnect();
+    });
+
+    const queueAuthReload = (nextSession: Session | null): void => {
+      const nextUserId = nextSession?.user.id ?? "";
+      if (nextUserId === renderedAuthUserId || authReloadQueued) return;
+      renderedAuthUserId = nextUserId;
+      authReloadQueued = true;
+      queueMicrotask(() => {
+        authReloadQueued = false;
+        void boot();
+      });
+    };
+
+    /* This listener closes /app's auth-return race only. /start owns a separate controller
+       and needs its own observer before anyone claims the whole magic-link journey is fixed. */
+    client()?.auth.onAuthStateChange((event, nextSession) => {
+      if (
+        event === "INITIAL_SESSION" ||
+        event === "SIGNED_IN" ||
+        event === "SIGNED_OUT"
+      ) {
+        queueAuthReload(nextSession);
+      }
     });
 
     void boot();
