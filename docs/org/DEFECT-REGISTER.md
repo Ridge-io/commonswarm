@@ -1380,11 +1380,21 @@ sites with providers that never answer, proves each receives and obeys an `Abort
 the real `settleSignalStatus(readSignals(...), readSignals(...))` path returns its warning.
 Removing production signal propagation made the initial observer fail 0/2. Deliberately ending
 the timer at response headers made the corrected body observer time out; restoring it made the
-targeted observer pass 3/3 and root `npm test` pass 82/82. Full commands, ledger run numbers,
-the first-SHA Gemini rejection, its accepted correction, scope, and non-claims are recorded in
-`docs/evidence/2026-07-29-d034-signal-fetch-deadline.md`.
+targeted observer pass 3/3 and root `npm test` pass 82/82 on the pre-rebase signals-only branch.
+Those counts and the evidence-document run IDs are frozen historical evidence, not the final
+integrated gate count; the post-rebase task ledger and Lead handoff carry that count. Full
+commands, ledger run numbers, the first-SHA Gemini rejection, its accepted correction, scope,
+and non-claims are recorded in `docs/evidence/2026-07-29-d034-signal-fetch-deadline.md`.
 
 **Scope boundary:** the exact-main audit found 14 default-native fetch/fetcher call sites:
 6 already carried application deadlines and 8 did not. D-034 changes only the three signal
-read sites. Browser create-workspace, CLI login, accept-link, and workspace-list reads remain
-separate defects and are not fixed or claimed here.
+read sites.
+
+**Superseded integration-history statement — DEAD after browser lane `e7537289`:**
+~~Browser create-workspace, CLI login, accept-link, and workspace-list reads remain separate
+defects and are not fixed or claimed here.~~
+
+**Current integrated truth:** the separate landed browser lane at
+`e7537289a5a0f6d4b034764dbdf2caa13480610b` bounds browser create-workspace, signup membership,
+and dashboard feed reads. Those browser outcomes are not evidence claimed by this signals lane.
+CLI login, accept-link, and workspace-list reads remain open and outside the signals-only scope.
