@@ -4661,27 +4661,100 @@ test("hosted agent revocation: human roles, agent confinement, lineage fail-clos
       return Number(row?.count ?? 0);
     };
 
-    // --- Agent confinement on the fixture principal only ---
+    // --- Agent confinement (authz only; no tombstone counts yet) ---
     // I4 recomputes agent request hashes with f.agentToken's actor, so any
     // ledgered agent outcome must use the fixture principal/run identity.
-    // Agent may not revoke a principal (CONNECT human-only → 403).
     const agentPrincipal = await issueConnect(f, f.agentToken, {
       kind: "revoke_agent_principal",
       principal_id: f.agentPrincipal,
     });
     assert.equal(agentPrincipal.status, 403, agentPrincipal.text);
 
-    // Agent may not revoke a sibling token; zero tombstones on the refused target.
     const sibling = await seedPredecessor(f, {});
     const agentSibling = await issueConnect(f, f.agentToken, {
       kind: "revoke_agent_token",
       token_id: sibling.tokenId,
     });
     assert.equal(agentSibling.status, 403, agentSibling.text);
-    assert.equal(await tombstonesFor("token", sibling.tokenId), 0);
+    // Deferred: sibling must still have zero token tombstones after the suite's
+    // containment section (see composite asserts below).
 
-    // Agent self-surrender of its exact presenting token (seeded on fixture
-    // principal so I4 actor namespace matches).
+    // --- Causal successor containment FIRST (arm2 RED target) ---
+    // Renew, then human-revoke the PREDECESSOR. The already-issued successor must
+    // fail both post_signal and renew (lineage tombstone). An unrevoked control
+    // successor stays green. Token/lineage COUNT asserts are deferred so a
+    // missing lineage insert fails here on successor liveness, not on an early
+    // count probe.
+    const grantVictim = await seedRenewalGrant(f, { maxSuccessors: 10 });
+    const predVictim = await seedPredecessor(f, { grantId: grantVictim });
+    const renewedVictim = await issueRenewal(f, predVictim.token);
+    assert.equal(renewedVictim.status, 200, renewedVictim.text);
+    assert.equal(renewedVictim.body.status, "accepted", renewedVictim.text);
+    const succVictimToken = String(renewedVictim.body.agent_token);
+    const succVictimId = String(renewedVictim.body.token_id);
+    registerAgentCredential(f, succVictimToken);
+    assert.match(succVictimToken, /^swm_agt_[A-Za-z0-9_-]{43}$/);
+    assert.notEqual(succVictimId, predVictim.tokenId);
+
+    const grantControl = await seedRenewalGrant(f, { maxSuccessors: 10 });
+    const predControl = await seedPredecessor(f, { grantId: grantControl });
+    const renewedControl = await issueRenewal(f, predControl.token);
+    assert.equal(renewedControl.body.status, "accepted", renewedControl.text);
+    const succControlToken = String(renewedControl.body.agent_token);
+    registerAgentCredential(f, succControlToken);
+
+    const humanRevokePred = await issueConnect(f, f.uaJwt, {
+      kind: "revoke_agent_token",
+      token_id: predVictim.tokenId,
+    });
+    assert.equal(humanRevokePred.body.status, "accepted", humanRevokePred.text);
+
+    // One composite containment assertion: issue BOTH post and renew first, then
+    // accept only 401/403 for each. Failure message reports both HTTP statuses so
+    // arm2 (missing lineage tombstone) is diagnosed on successor liveness, not an
+    // early count probe.
+    const succSignal = await issueSignal(f, succVictimToken, {
+      kind: "post_signal",
+      signal_kind: "note",
+      body: "successor should fail closed after predecessor revoke",
+      to_user_id: null,
+      about: null,
+    });
+    const succRenew = await issueRenewal(
+      f,
+      succVictimToken,
+      commandId("succ-renew-after-revoke"),
+    );
+    const postOk = succSignal.status === 401 || succSignal.status === 403;
+    const renewOk = succRenew.status === 401 || succRenew.status === 403;
+    assert.ok(
+      postOk && renewOk,
+      `already-issued successor must fail closed on both post and renew after predecessor revoke; post HTTP ${succSignal.status}, renew HTTP ${succRenew.status}`,
+    );
+
+    // Control successor on an unrevoked lineage remains live.
+    const controlSignal = await issueSignal(f, succControlToken, {
+      kind: "post_signal",
+      signal_kind: "note",
+      body: "control successor still live after unrelated lineage revoke",
+      to_user_id: null,
+      about: null,
+    });
+    assert.equal(controlSignal.status, 200, controlSignal.text);
+    assert.equal(controlSignal.body.status, "accepted");
+
+    // Fixture agent remains live — second positive control.
+    const live = await issueSignal(f, f.agentToken, {
+      kind: "post_signal",
+      signal_kind: "note",
+      body: "fixture agent live control after revoke suite",
+      to_user_id: null,
+      about: null,
+    });
+    assert.equal(live.status, 200, live.text);
+    assert.equal(live.body.status, "accepted");
+
+    // --- Agent self-surrender (accept only; counts deferred) ---
     const selfTok = await seedPredecessor(f, {});
     const selfSurrender = await issueConnect(f, selfTok.token, {
       kind: "revoke_agent_token",
@@ -4689,8 +4762,6 @@ test("hosted agent revocation: human roles, agent confinement, lineage fail-clos
     });
     assert.equal(selfSurrender.status, 200, selfSurrender.text);
     assert.equal(selfSurrender.body.status, "accepted", selfSurrender.text);
-    assert.equal(await tombstonesFor("token", selfTok.tokenId), 1);
-    assert.equal(await tombstonesFor("lineage", selfTok.lineageId), 1);
 
     // Double / missing / wrong-workspace refusals.
     const doubleToken = await issueConnect(f, f.uaJwt, {
@@ -4707,8 +4778,6 @@ test("hosted agent revocation: human roles, agent confinement, lineage fail-clos
     assert.equal(missing.body.status, "rejected");
     assert.equal(missing.body.reason, "token_not_found");
 
-    // Wrong-workspace: create an A-only principal, put UA on B, prove domain
-    // isolation (not merely the non-member 403 gate).
     const aOnlyPrincipal = await issueConnect(f, f.uaJwt, {
       kind: "create_agent_principal",
       name: `a-only-${randomUUID().slice(0, 8)}`,
@@ -4737,7 +4806,6 @@ test("hosted agent revocation: human roles, agent confinement, lineage fail-clos
     assert.equal(wrongWs.body.status, "rejected");
     assert.equal(wrongWs.body.reason, "principal_not_found");
 
-    // Wire shape: revoke_agent_token without token_id is 400.
     const badShape = await fetch(`${local.API_URL}/functions/v1/command`, {
       method: "POST",
       headers: {
@@ -4755,8 +4823,6 @@ test("hosted agent revocation: human roles, agent confinement, lineage fail-clos
     assert.equal(badShape.status, 400);
 
     // --- Hosted human role matrix (edge) ---
-    // ua2 is already a live Member of workspaceA (fixture).
-    // Member may create/revoke own principal and own token.
     const memberOwnPrincipal = await issueConnect(f, f.ua2Jwt, {
       kind: "create_agent_principal",
       name: `member-own-${randomUUID().slice(0, 8)}`,
@@ -4776,7 +4842,6 @@ test("hosted agent revocation: human roles, agent confinement, lineage fail-clos
     assert.equal(memberMint.body.status, "accepted", memberMint.text);
     const memberTokenId = String(memberMint.body.token_id);
 
-    // Owner-owned principal/token used as "another" target for member refusal.
     const ownerOther = await issueConnect(f, f.uaJwt, {
       kind: "create_agent_principal",
       name: `owner-other-${randomUUID().slice(0, 8)}`,
@@ -4822,15 +4887,12 @@ test("hosted agent revocation: human roles, agent confinement, lineage fail-clos
       tombsBeforeMemberRefusal.token,
     );
 
-    // Member revokes its own token (accepted + token/lineage tombstones).
     const memberRevokeOwnToken = await issueConnect(f, f.ua2Jwt, {
       kind: "revoke_agent_token",
       token_id: memberTokenId,
     });
     assert.equal(memberRevokeOwnToken.body.status, "accepted", memberRevokeOwnToken.text);
-    assert.equal(await tombstonesFor("token", memberTokenId), 1);
 
-    // Fresh own principal for principal revoke (previous token already gone).
     const memberOwn2 = await issueConnect(f, f.ua2Jwt, {
       kind: "create_agent_principal",
       name: `member-own2-${randomUUID().slice(0, 8)}`,
@@ -4846,9 +4908,7 @@ test("hosted agent revocation: human roles, agent confinement, lineage fail-clos
       "accepted",
       memberRevokeOwnPrincipal.text,
     );
-    assert.equal(await tombstonesFor("principal", memberPrincipal2Id), 1);
 
-    // Admin may revoke another's principal/token. Promote ua2 after member cases.
     await sql`
       UPDATE swarm.memberships
       SET role = 'admin'
@@ -4861,9 +4921,7 @@ test("hosted agent revocation: human roles, agent confinement, lineage fail-clos
       token_id: ownerOtherTokenId,
     });
     assert.equal(adminRevokeToken.body.status, "accepted", adminRevokeToken.text);
-    assert.equal(await tombstonesFor("token", ownerOtherTokenId), 1);
 
-    // Owner coverage: cascade principal revoke with positive tombstones.
     const ownerCascade = await issueConnect(f, f.uaJwt, {
       kind: "create_agent_principal",
       name: `owner-cascade-${randomUUID().slice(0, 8)}`,
@@ -4889,12 +4947,30 @@ test("hosted agent revocation: human roles, agent confinement, lineage fail-clos
     `;
     assert.ok(cascadeRow);
 
-    // Admin may also revoke another principal (owner-owned).
     const adminRevokePrincipal = await issueConnect(f, f.ua2Jwt, {
       kind: "revoke_agent_principal",
       principal_id: cascadePrincipalId,
     });
     assert.equal(adminRevokePrincipal.body.status, "accepted", adminRevokePrincipal.text);
+
+    const doublePrincipal = await issueConnect(f, f.uaJwt, {
+      kind: "revoke_agent_principal",
+      principal_id: cascadePrincipalId,
+    });
+    assert.equal(doublePrincipal.body.status, "rejected");
+    assert.equal(doublePrincipal.body.reason, "principal_revoked");
+
+    // --- Deferred composite tombstone / cascade counts ---
+    // Kept after successor containment so arm2 (missing lineage insert) fails on
+    // successor post/renew first, not on an early count probe.
+    assert.equal(await tombstonesFor("token", sibling.tokenId), 0);
+    assert.equal(await tombstonesFor("token", predVictim.tokenId), 1);
+    assert.equal(await tombstonesFor("lineage", predVictim.lineageId), 1);
+    assert.equal(await tombstonesFor("token", selfTok.tokenId), 1);
+    assert.equal(await tombstonesFor("lineage", selfTok.lineageId), 1);
+    assert.equal(await tombstonesFor("token", memberTokenId), 1);
+    assert.equal(await tombstonesFor("principal", memberPrincipal2Id), 1);
+    assert.equal(await tombstonesFor("token", ownerOtherTokenId), 1);
     assert.equal(await tombstonesFor("principal", cascadePrincipalId), 1);
     assert.equal(await tombstonesFor("token", cascadeTokenId), 1);
     assert.equal(await tombstonesFor("lineage", String(cascadeRow.lineage_id)), 1);
@@ -4905,93 +4981,5 @@ test("hosted agent revocation: human roles, agent confinement, lineage fail-clos
       `;
       assert.notEqual(g?.revoked_at, null);
     }
-
-    const doublePrincipal = await issueConnect(f, f.uaJwt, {
-      kind: "revoke_agent_principal",
-      principal_id: cascadePrincipalId,
-    });
-    assert.equal(doublePrincipal.body.status, "rejected");
-    assert.equal(doublePrincipal.body.reason, "principal_revoked");
-
-    // --- Causal successor: renew first, then human-revoke predecessor ---
-    // Proves the already-issued successor cannot post and cannot renew once the
-    // predecessor token is revoked (lineage tombstone). An unrevoked control
-    // successor on a different lineage stays green in the same invocation.
-    const grantVictim = await seedRenewalGrant(f, { maxSuccessors: 10 });
-    const predVictim = await seedPredecessor(f, { grantId: grantVictim });
-    const renewedVictim = await issueRenewal(f, predVictim.token);
-    assert.equal(renewedVictim.status, 200, renewedVictim.text);
-    assert.equal(renewedVictim.body.status, "accepted", renewedVictim.text);
-    const succVictimToken = String(renewedVictim.body.agent_token);
-    const succVictimId = String(renewedVictim.body.token_id);
-    registerAgentCredential(f, succVictimToken);
-    assert.match(succVictimToken, /^swm_agt_[A-Za-z0-9_-]{43}$/);
-    assert.notEqual(succVictimId, predVictim.tokenId);
-
-    const grantControl = await seedRenewalGrant(f, { maxSuccessors: 10 });
-    const predControl = await seedPredecessor(f, { grantId: grantControl });
-    const renewedControl = await issueRenewal(f, predControl.token);
-    assert.equal(renewedControl.body.status, "accepted", renewedControl.text);
-    const succControlToken = String(renewedControl.body.agent_token);
-    registerAgentCredential(f, succControlToken);
-
-    // Human revokes the PREDECESSOR of the victim chain only.
-    const humanRevokePred = await issueConnect(f, f.uaJwt, {
-      kind: "revoke_agent_token",
-      token_id: predVictim.tokenId,
-    });
-    assert.equal(humanRevokePred.body.status, "accepted", humanRevokePred.text);
-    assert.equal(await tombstonesFor("token", predVictim.tokenId), 1);
-    assert.equal(await tombstonesFor("lineage", predVictim.lineageId), 1);
-
-    // Already-issued successor on the revoked lineage cannot post.
-    const succSignal = await issueSignal(f, succVictimToken, {
-      kind: "post_signal",
-      signal_kind: "note",
-      body: "successor should fail closed after predecessor revoke",
-      to_user_id: null,
-      about: null,
-    });
-    assert.equal(succSignal.status, 403, succSignal.text);
-
-    // Already-issued successor cannot renew.
-    const succRenew = await issueRenewal(
-      f,
-      succVictimToken,
-      commandId("succ-renew-after-revoke"),
-    );
-    // Fail-closed is either authn (401) or revocation/authz (403). A 200 with
-    // accepted would mean the successor still renewed after lineage tombstone.
-    assert.notEqual(
-      succRenew.status,
-      200,
-      `successor renewal must not succeed HTTP 200: ${succRenew.text}`,
-    );
-    assert.ok(
-      succRenew.status === 403 || succRenew.status === 401,
-      `successor renewal must fail closed, got ${succRenew.status}: ${succRenew.text}`,
-    );
-
-    // Control successor on an unrevoked lineage remains live.
-    const controlSignal = await issueSignal(f, succControlToken, {
-      kind: "post_signal",
-      signal_kind: "note",
-      body: "control successor still live after unrelated lineage revoke",
-      to_user_id: null,
-      about: null,
-    });
-    assert.equal(controlSignal.status, 200, controlSignal.text);
-    assert.equal(controlSignal.body.status, "accepted");
-
-    // Fixture agent (unrelated) also remains live — second positive control.
-    const live = await issueSignal(f, f.agentToken, {
-      kind: "post_signal",
-      signal_kind: "note",
-      body: "fixture agent live control after revoke suite",
-      to_user_id: null,
-      about: null,
-    });
-    assert.equal(live.status, 200, live.text);
-    assert.equal(live.body.status, "accepted");
   });
 });

@@ -1,0 +1,62 @@
+
+> cloud-swarm@0.1.1 pretest:p1-server
+> npm run build:command-core
+
+
+> cloud-swarm@0.1.1 build:command-core
+> esbuild src/protocol/index.ts --bundle --format=esm --platform=neutral --target=es2022 --external:node:crypto --banner:js='// GENERATED from src/protocol/index.ts; do not hand-edit.' --outfile=supabase/functions/_shared/protocol.js
+
+
+  supabase/functions/_shared/protocol.js  47.6kb
+
+⚡ Done in 11ms
+
+> cloud-swarm@0.1.1 test:p1-server
+> node --import tsx --test tests/p1-server/**/*.test.ts
+
+✔ pre-principal failures never write audit rows while authenticated validation remains audited (2049.495209ms)
+✔ T-01 cross-tenant and nonexistent workspaces are uniform 403s (250.434417ms)
+✔ P3-1 signals are authored, sanitized, isolated, idempotent, stale at read time, and agent-readable (1300.399875ms)
+✔ P3-1 agent proxy stays pinned when its owner joins another workspace (281.440916ms)
+✔ P3-1 idempotent retry leaves one semantic signal row (274.582583ms)
+✔ P3-1 signal rate limits separate credentials and cap each workspace (1653.82725ms)
+✔ P2-2 read views retain the membership gate and hide foreign projects (184.845542ms)
+✔ T-02 actor fields are ignored at the envelope boundary (355.496833ms)
+✔ T-03 stale close is one ledgered domain rejection (1839.743208ms)
+✔ T-05/T-06 accepted replay and conflicting command-id reuse (489.835083ms)
+✔ T-10 concurrent acquire has exactly one winner (13619.171959ms)
+✔ T-11 domain rejection replay preserves the original response (563.429625ms)
+✔ unknown-task agent command is history-only and replayable (621.236375ms)
+✔ login device registration is owned, live-only, and sanitizes profile names (528.835792ms)
+✔ D-031 spend reset rejects production-shaped targets before touching SQL (0.339166ms)
+✔ D-031 local reset clears a latched breaker and restores signup (405.896833ms)
+✔ self-serve creates an owned workspace with a workspace stream (373.036584ms)
+✔ self-serve is capped per identity and closed to agent credentials (882.392667ms)
+✔ self-serve refuses throwaway domains and caps creations per rolling day (1223.094334ms)
+✔ remove_member revokes exactly one workspace membership at the event timestamp (254.544666ms)
+✔ remove_member enforces role, agent denial, last-owner, and landing authority (487.809917ms)
+✔ free-tier invite cap bounds outbound email per identity, not per tenant (480.901792ms)
+✔ free-tier tenant ceilings count seats in use and live principals (574.0205ms)
+✔ connect loop invites, accepts, creates a principal, and mints a narrow token (1045.169084ms)
+✔ forwarded invitation has exactly one atomic accept winner (668.967208ms)
+✔ HTTP-only custom scope input is governed by the pure denylist (456.765833ms)
+✔ §2.3 renewal issues an equal-scoped successor and accepts no caller-selected target (838.653375ms)
+✔ §2.3 renewal revocation is fail-closed and lineage-wide (553.875625ms)
+✔ §2.3 renewal stops at the horizon, at a revoked grant, and at the successor budget (2181.277417ms)
+✔ §2.3 renewal is grant-authorised, agent-only, and has exactly one winner under concurrency (476.796708ms)
+✔ §2.3 a renewal whose response is lost is recoverable, and the stranded successor costs one slot, not two (686.207125ms)
+✔ §2.3 a successor that has been used blocks renewal and is never discarded underneath its holder (627.097125ms)
+✔ §2.3 the handover completes at first use, and first_used_at is stamped once (769.017709ms)
+✔ §2.3 self-healing renewal keeps exactly one live successor per predecessor under concurrency (945.47325ms)
+✔ §2.3 first_used_at is write-once in the DATABASE, not merely in the writer (349.260666ms)
+✔ §2.3 no raw successor credential is ever stored at rest (353.553167ms)
+✔ §2.3 a pending successor cannot renew: the overlap window cannot be stacked (506.112958ms)
+✔ hosted agent revocation: human roles, agent confinement, lineage fail-closed (3009.20825ms)
+ℹ tests 38
+ℹ suites 0
+ℹ pass 38
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 45162.910292

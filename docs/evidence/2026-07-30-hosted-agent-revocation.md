@@ -1,49 +1,64 @@
 # Hosted agent revocation — Forge evidence
 
-Base: `492b6d150223adab66d47f1185fabbb227ca630b` (exact origin/main)
-Branch: `swarm/Forge/hosted-agent-revocation`
-Worktree: `~/.swarm/wt/cloud-swarm-source/Forge--hosted-agent-revocation`
-Task: `hosted-agent-revocation` (claim: code-merged)
+## Lineage
 
-## Implementation (unchanged product surface from a8ec975)
+| Item | Value |
+|------|--------|
+| Pre-rebase tip | `8991ad2989be5ba6c947067e38785369431cd040` |
+| Pre-rebase `command/index.ts` sha256 | `42f441dd97fee25c703d9a84538f7046f74f5c4c2c7b9f399ca2f48ecf690291` |
+| Original implementation base | `492b6d150223adab66d47f1185fabbb227ca630b` |
+| **Current base (after rebase)** | **`fb1dfdfd2f2f9d7c70820e76a23523d893cd68a3`** (origin/main) |
+| Branch | `swarm/Forge/hosted-agent-revocation` |
+| Worktree | `~/.swarm/wt/cloud-swarm-source/Forge--hosted-agent-revocation` |
+| Task | `hosted-agent-revocation` (claim: code-merged) |
 
-Edge wire/prepare/projection, CLI principal/token revoke + agent stdin surrender,
-browser Remove. See prior commit message.
+## Implementation
 
-## Test evidence revision (Lead7 #17548)
+Edge wire/prepare/projection for `revoke_agent_principal` / `revoke_agent_token`, CLI
+principal/token revoke + agent stdin surrender, browser `/app` Remove (role-aware).
+No migration.
 
-Invalidation of a8ec975 was **test evidence**, not implementation.
+Rebased onto `fb1dfdf` (workspace entry redesign). **LiveDashboard conflicts: none**
+(auto-merge). Manually verified both:
 
-### p1-server suite now asserts
+- upstream workspace-entry redesign (create-workspace / zero-workspace create panel)
+- revocation roster Remove / error slot / livePrompt clear path
 
-1. **Causal successor path:** `seedRenewalGrant` + `seedPredecessor` + `issueRenewal`
-   creates a real successor; human revokes the **predecessor** token; already-issued
-   successor cannot `post_signal` and cannot renew; a separate unrevoked control
-   successor remains green in the same invocation.
-2. **Hosted human role matrix:** Member own principal/token accepted; Member foreign
-   principal/token → `principal_not_owned` with zero new tombstones; Admin foreign
-   principal/token accepted; Owner cascade coverage retained.
-3. Agent self-surrender, sibling 403 + zero tombstones, agent principal 403 retained.
-4. Double/missing/wrong-workspace domain reasons retained.
+## Test observer order (post-rebase revision)
 
-### Mutations
+Hosted revocation p1-server suite order is intentional for arm2 discrimination:
 
-| Arm | Result | Log |
-|-----|--------|-----|
-| Site `await revokeAgentPrincipal(` → `await clearPrompt(` | **RED exit 1** then restored **GREEN exit 0** | `docs/evidence/2026-07-30-agent-revocation-site-mutation-red.log` / `docs/evidence/2026-07-30-agent-revocation-site-mutation-green.log` |
-| Agent-self scope exception (`isAgentTokenRevoke`) | **NOT ESTABLISHED** — requires exclusive p1-server slot | after GREEN suite on revised SHA |
-| Lineage tombstone insert in `AgentTokenRevoked` projection | **NOT ESTABLISHED** — requires exclusive p1-server slot | after GREEN |
+1. Agent principal/sibling **403** (authz only; no tombstone counts)
+2. **Causal successor first:** renew → human-revoke predecessor → issue successor
+   **post AND renew**, then **one** composite assertion: both statuses ∈ {401,403};
+   failure message reports **both** HTTP codes
+3. Controls (unrevoked successor + fixture agent) **after** containment
+4. Self-surrender accept + double/missing/wrong-workspace + human role matrix
+5. **Deferred** token/lineage/principal count asserts (selfTok, predVictim, and others)
+   only after behavior
 
-Site mutation measured: observer `agent roster Remove is role-aware…` failed only when the production call site was rewritten; restore returned 3/3 pass. Source is byte-restored (`await revokeAgentPrincipal(` present).
+## Measured gates on pre-rebase exact `8991ad2` (source sha256 `42f441dd…`)
 
-`tests/agent-revocation-mutation.test.ts` holds **seam observers only** (not causal mutation evidence).
+| Run | Exit | TAP | What was established |
+|-----|------|-----|----------------------|
+| run-003 | 0 | 38/38 | Full suite GREEN |
+| run-004 (arm1 mut: remove `!isAgentTokenRevoke &&`) | 1 | 37/38 | **Causal RED:** self-surrender HTTP 403 forbidden |
+| run-005 (restored) | 1 | 37/38 | Hosted-revocation PASS; pre-principal log-count flake 2≠5 |
+| run-006 (recovery) | 0 | 38/38 | Full suite GREEN after arm1 |
+| run-007 (arm2 mut: disable AgentTokenRevoked lineage INSERT) | 1 | 37/38 | **Structural RED only:** lineage count 0≠1 at self-surrender — suite stopped **before** successor post/renew asserts; **successor causal RED NOT ESTABLISHED** |
+| run-008 (restored) | 1 | 37/38 | Hosted-revocation PASS; same pre-principal flake |
+| run-009 (recovery) | 0 | 38/38 | Full suite GREEN after arm2 |
 
-## Cheap gates (to re-measure on revised SHA)
+Durable logs: `~/.swarm/evidence/9a518dee-…/hosted-agent-revocation/run-00N.log`
 
-Record after re-run on successor commit.
+Site mutation (cheap, pre-rebase): `docs/evidence/2026-07-30-agent-revocation-site-mutation-red.log` /
+`…-green.log` — `revokeAgentPrincipal`→`clearPrompt` RED then restore GREEN.
 
-## NOT ESTABLISHED until slot
+`docs/evidence/2026-07-30-agent-revocation-p1-server-run-003.log` — pre-rebase TAP copy of run-003,
+force-added so it is not silently lost across rebase.
 
-- `npm run test:p1-server` full TAP
-- Edge production RED/restore mutation logs (scope exception + lineage tombstone)
-- Push / land / deploy / reviews
+## NOT ESTABLISHED on the post-rebase tip
+
+- Full `test:p1-server` after rebase/observer revision (**no tests in this cheap lane**)
+- Arm2 **successor-causal** RED (post+renew both fail closed) on new tip — needs Tundra grant
+- Reviews / push / land / deploy
