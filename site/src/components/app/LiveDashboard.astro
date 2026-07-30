@@ -386,6 +386,7 @@ import SampleNotice from "./SampleNotice.astro";
     let authReloadQueued = false;
     let bootInFlight: Promise<void> | null = null;
     let bootAgain = false;
+    let signalExpiryTimer: number | undefined;
 
     const SIGNAL_PAGE_SIZE = 50;
     const SIGNAL_FETCH_SIZE = SIGNAL_PAGE_SIZE + 1;
@@ -393,10 +394,22 @@ import SampleNotice from "./SampleNotice.astro";
     const showPanel = (
       name: "loading" | "signed-out" | "create" | "workspace-error" | "channel",
     ): void => {
+      const previous = app.dataset.state;
       for (const section of all<HTMLElement>("[data-panel]")) {
         section.hidden = section.dataset.panel !== name;
       }
       app.dataset.state = name;
+      const root = one<HTMLElement>(".dashboard__root");
+      root?.setAttribute("aria-busy", name === "loading" ? "true" : "false");
+      if (previous !== name && name !== "loading") {
+        window.requestAnimationFrame(() => {
+          const visible = panel(name);
+          const heading = visible?.querySelector<HTMLElement>("h1, h2");
+          if (!heading) return;
+          heading.tabIndex = -1;
+          heading.focus({ preventScroll: true });
+        });
+      }
     };
 
     const setLoading = (label: string): void => {
@@ -758,6 +771,24 @@ import SampleNotice from "./SampleNotice.astro";
     };
 
     const renderFeed = (): void => {
+      window.clearTimeout(signalExpiryTimer);
+      signalExpiryTimer = undefined;
+      const now = Date.now();
+      signals = signals.filter(
+        (signal) => signal.until === null || new Date(signal.until).getTime() > now,
+      );
+      const nextExpiry = signals.reduce<number | null>((nearest, signal) => {
+        if (signal.until === null) return nearest;
+        const expiresAt = new Date(signal.until).getTime();
+        if (!Number.isFinite(expiresAt) || expiresAt <= now) return nearest;
+        return nearest === null || expiresAt < nearest ? expiresAt : nearest;
+      }, null);
+      if (nextExpiry !== null) {
+        signalExpiryTimer = window.setTimeout(
+          renderFeed,
+          Math.min(Math.max(nextExpiry - now + 25, 25), 2_147_483_647),
+        );
+      }
       const list = one<HTMLOListElement>("[data-feed-list]");
       const count = one<HTMLElement>("[data-update-count]");
       const more = one<HTMLElement>("[data-feed-more]");
@@ -793,8 +824,7 @@ import SampleNotice from "./SampleNotice.astro";
         author.textContent = authorName;
         const badge = document.createElement("span");
         badge.className = `dashboard__message-kind dashboard__message-kind--${signal.kind}`;
-        const expired = signal.until !== null && new Date(signal.until).getTime() <= Date.now();
-        badge.textContent = expired ? `${kindLabel(signal.kind)} · expired` : kindLabel(signal.kind);
+        badge.textContent = kindLabel(signal.kind);
         const time = document.createElement("time");
         const formatted = formatTime(signal.createdAt);
         time.dateTime = signal.createdAt;
@@ -1002,6 +1032,10 @@ import SampleNotice from "./SampleNotice.astro";
     };
 
     const createFromIntent = async (value: Session, intent: CreateIntent): Promise<void> => {
+      const version = requestVersion;
+      const userId = value.user.id;
+      const isCurrent = (): boolean =>
+        version === requestVersion && session?.user.id === userId;
       const input = one<HTMLInputElement>("#dashboard-workspace-name");
       const button = one<HTMLButtonElement>("[data-create-button]");
       if (input) {
@@ -1021,11 +1055,13 @@ import SampleNotice from "./SampleNotice.astro";
           intent.workspaceId,
           intent.name,
         );
+        if (!isCurrent()) return;
         clearCreateIntent(value.user.id);
         workspaces = [{ id: made.workspaceId, name: made.name }];
         if (input) input.disabled = false;
         await openWorkspace(made.workspaceId);
       } catch (error) {
+        if (!isCurrent()) return;
         renderCreate(
           value,
           `${readableError(error)} ${
@@ -1035,6 +1071,7 @@ import SampleNotice from "./SampleNotice.astro";
           }`.trim(),
         );
       } finally {
+        if (!isCurrent()) return;
         if (input) input.disabled = false;
         if (button) {
           button.disabled = false;
@@ -1102,6 +1139,7 @@ import SampleNotice from "./SampleNotice.astro";
     };
 
     const boot = async (): Promise<void> => {
+      const version = ++requestVersion;
       if (!client()) {
         renderSample();
         return;
@@ -1112,6 +1150,7 @@ import SampleNotice from "./SampleNotice.astro";
       setLoading("Checking your sign-in…");
       try {
         session = await currentSession();
+        if (version !== requestVersion) return;
         renderedAuthUserId = session?.user.id ?? "";
         if (!session) {
           showAuthView("choices");
@@ -1123,6 +1162,7 @@ import SampleNotice from "./SampleNotice.astro";
           target.textContent = who;
         }
         workspaces = await workspaceMemberships();
+        if (version !== requestVersion) return;
         if (workspaces.length === 0) {
           const pending = readCreateIntent(session.user.id);
           renderCreate(session);
@@ -1135,6 +1175,7 @@ import SampleNotice from "./SampleNotice.astro";
         }
         await openWorkspace(workspaces[0]!.id);
       } catch (error) {
+        if (version !== requestVersion) return;
         if (session) {
           renderWorkspaceError(session, error);
         } else {
@@ -1234,6 +1275,8 @@ import SampleNotice from "./SampleNotice.astro";
         requestVersion += 1;
         activeWorkspaceId = "";
         renderedAuthUserId = "";
+        window.clearTimeout(signalExpiryTimer);
+        signalExpiryTimer = undefined;
         await signOut();
         session = null;
         workspaces = [];
@@ -1325,6 +1368,7 @@ import SampleNotice from "./SampleNotice.astro";
       const nextUserId = nextSession?.user.id ?? "";
       if (nextUserId === renderedAuthUserId || authReloadQueued) return;
       renderedAuthUserId = nextUserId;
+      requestVersion += 1;
       authReloadQueued = true;
       queueMicrotask(() => {
         authReloadQueued = false;

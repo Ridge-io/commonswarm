@@ -98,16 +98,50 @@ test("dashboard auth transitions include INITIAL_SESSION and coalesce reloads", 
 
   assert.match(source, /nextUserId === renderedAuthUserId \|\| authReloadQueued/);
   assert.match(source, /authReloadQueued = true/);
+  assert.match(source, /renderedAuthUserId = nextUserId;[\s\S]*requestVersion \+= 1/);
   assert.match(source, /queueMicrotask\(\(\) =>/);
   assert.match(source, /authReloadQueued = false;[\s\S]*runBoot\(\)/);
   assert.match(dashboard, /if \(bootInFlight\)[\s\S]*bootAgain = true/);
   assert.match(dashboard, /do \{[\s\S]*await boot\(\);[\s\S]*\} while \(bootAgain\)/);
+  assert.match(
+    dashboard,
+    /const boot = async[\s\S]*const version = \+\+requestVersion;[\s\S]*session = await currentSession\(\);[\s\S]*if \(version !== requestVersion\) return;[\s\S]*workspaces = await workspaceMemberships\(\);[\s\S]*if \(version !== requestVersion\) return;[\s\S]*catch \(error\) \{[\s\S]*if \(version !== requestVersion\) return/,
+  );
   assert.match(source, /closes \/app's auth-return race only/);
   assert.match(source, /auth\.onAuthStateChange\(/);
   assert.match(
     source,
     /event === "INITIAL_SESSION" \|\|[\s\S]*event === "SIGNED_IN" \|\|[\s\S]*event === "SIGNED_OUT"/,
   );
+});
+
+test("workspace creation and active-feed expiry cannot outlive their session", () => {
+  const create = between(dashboard, "const createFromIntent =", "const renderSample =");
+  const feed = between(dashboard, "const renderFeed =", "const syncConnectWorkspace =");
+
+  assert.match(create, /const version = requestVersion/);
+  assert.match(create, /session\?\.user\.id === userId/);
+  assert.equal(
+    create.match(/if \(!isCurrent\(\)\) return/g)?.length,
+    3,
+    "success, failure, and cleanup must all reject a stale create completion",
+  );
+  assert.match(
+    feed,
+    /signals = signals\.filter\([\s\S]*signal\.until === null \|\| new Date\(signal\.until\)\.getTime\(\) > now/,
+  );
+  assert.match(feed, /signalExpiryTimer = window\.setTimeout\([\s\S]*renderFeed/);
+  assert.doesNotMatch(feed, /expired \?/);
+});
+
+test("panel changes expose busy state and move focus only on real transitions", () => {
+  const source = between(dashboard, "const showPanel =", "const setLoading =");
+
+  assert.match(source, /const previous = app\.dataset\.state/);
+  assert.match(source, /aria-busy/);
+  assert.match(source, /previous !== name && name !== "loading"/);
+  assert.match(source, /querySelector<HTMLElement>\("h1, h2"\)/);
+  assert.match(source, /heading\.focus\(\{ preventScroll: true \}\)/);
 });
 
 test("dashboard cannot hide a live or still-minting credential", () => {
