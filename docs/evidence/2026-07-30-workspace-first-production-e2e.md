@@ -133,4 +133,3 @@ The agent-created CommonSwarm Chrome tab was closed after cleanup.
   label reported Gemini 3.6 Flash (High).
 - That `revoke_agent_principal` ends an active run. The inspected disposable run remained
   not ended after the accepted command.
-
