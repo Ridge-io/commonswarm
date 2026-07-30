@@ -43,6 +43,12 @@ test("the header control is one stack button with a dialog relationship", () => 
     "the single header control announces that it opens a dialog",
   );
   assert.match(dashboard, /aria-expanded/);
+  assert.match(dashboard, /id="dashboard-roster-dialog"/);
+  assert.match(
+    dashboard,
+    /data-roster-open[^>]*aria-controls="dashboard-roster-dialog"/,
+    "aria-controls ties the button to the dialog it opens",
+  );
   assert.match(dashboard, /data-header-agent-stack/);
   assert.match(
     dashboard,
@@ -145,7 +151,7 @@ test("the stack gets its own header row and the body floor gives it back at mobi
 test("unknown agent-authored signals trigger a bounded roster refresh", () => {
   assert.match(
     dashboard,
-    /signal\.fromKind === "agent" && !knownAgents\.has\(signal\.from\)/,
+    /signal\.fromKind === "agent" &&\s*!knownAgents\.has\(signal\.from\)/,
     "a new agent's first signal is the join event the roster learns from",
   );
   assert.match(dashboard, /rosterRefreshInFlight/);
@@ -159,5 +165,165 @@ test("unknown agent-authored signals trigger a bounded roster refresh", () => {
     dashboard,
     /setInterval\(\(\) => void refreshLatestSignals\(\), 2_000\)/,
     "the two-second signal polling cadence is preserved",
+  );
+});
+
+/*
+ * Release blocker (Lead7, 2026-07-30): after a Remove, the revoked principal is absent
+ * from roster() but its immutable recent signals stay in every latest feed page, so an
+ * unaware catch-up refetches roster+member every cooldown forever. The catch-up must be
+ * principal-aware: only a SUCCESSFUL fetch may settle a principal, only principals still
+ * absent from that fetch settle, a failure settles and drains nothing, and a workspace
+ * switch clears both sets.
+ */
+test("roster catch-up is principal-aware: settle confirmed-absent, retry failed, reset on switch", () => {
+  assert.match(
+    dashboard,
+    /!settledUnknownAgents\.has\(signal\.from\)/,
+    "a settled (confirmed revoked/historical) principal must not re-trigger",
+  );
+  assert.match(
+    dashboard,
+    /if \(unknownAgentCandidates\.size > 0\)/,
+    "queued candidates drive the attempt; the cooldown inside bounds it",
+  );
+  const refresh = dashboard.slice(
+    dashboard.indexOf("const refreshRosterForUnknownAgents ="),
+    dashboard.indexOf("const renderChannel ="),
+  );
+  assert.match(refresh, /const candidates = \[\.\.\.unknownAgentCandidates\]/);
+  assert.match(
+    refresh,
+    /for \(const principalId of \[\.\.\.unknownAgentCandidates\]\) \{[\s\S]*if \(rosterIds\.has\(principalId\)\) unknownAgentCandidates\.delete\(principalId\)/,
+    "principals queued during the flight and present in the fresh roster are pruned, not refetched",
+  );
+  assert.match(
+    refresh,
+    /unknownAgentCandidates\.delete\(principalId\);[\s\S]*if \(!rosterIds\.has\(principalId\)\) settledUnknownAgents\.add\(principalId\)/,
+    "only a successful fetch may settle, and only captured principals still absent from it",
+  );
+  const catchBlock = refresh.slice(
+    refresh.indexOf("} catch {"),
+    refresh.indexOf("} finally {"),
+  );
+  assert.doesNotMatch(
+    catchBlock,
+    /settledUnknownAgents\.add|unknownAgentCandidates\.delete/,
+    "a failed refresh settles and drains nothing — it stays retryable after the cooldown",
+  );
+  const openWorkspace = dashboard.slice(
+    dashboard.indexOf("const openWorkspace ="),
+    dashboard.indexOf("const openAgentChoice ="),
+  );
+  assert.match(openWorkspace, /unknownAgentCandidates\.clear\(\)/);
+  assert.match(openWorkspace, /settledUnknownAgents\.clear\(\)/);
+});
+
+test("the catch-up state machine: no repeat after absent confirmation, retry after failure", () => {
+  /* A pure model of the rules the regexes above pin to the real source, in the same
+     spirit as the pagination model in dashboard-runtime.observer.test.ts. */
+  const simulate = (
+    fetchOutcomes: Array<"ok-absent" | "ok-present" | "fail">,
+    polls: number,
+  ): number => {
+    const known = new Set<string>();
+    const candidates = new Set<string>();
+    const settled = new Set<string>();
+    let attemptedAt = Number.NEGATIVE_INFINITY;
+    let fetches = 0;
+    let outcomeIx = 0;
+    for (let poll = 0; poll < polls; poll++) {
+      const now = poll * 2_000;
+      /* Every page carries one historical signal from the revoked principal. */
+      if (
+        !known.has("revoked-1") &&
+        !settled.has("revoked-1") &&
+        !candidates.has("revoked-1")
+      ) {
+        candidates.add("revoked-1");
+      }
+      if (candidates.size === 0) continue;
+      if (now - attemptedAt < 10_000) continue;
+      attemptedAt = now;
+      fetches++;
+      const outcome = fetchOutcomes[Math.min(outcomeIx++, fetchOutcomes.length - 1)];
+      if (outcome === "fail") continue; /* settles and drains nothing */
+      candidates.delete("revoked-1");
+      if (outcome === "ok-absent") settled.add("revoked-1");
+      else known.add("revoked-1"); /* present in the fresh roster: now known */
+    }
+    return fetches;
+  };
+  assert.equal(
+    simulate(["ok-absent"], 20),
+    1,
+    "a confirmed-absent principal must not be refetched every cooldown",
+  );
+  assert.equal(
+    simulate(["ok-present"], 20),
+    1,
+    "a genuinely joined principal is fetched once and becomes known",
+  );
+  assert.equal(
+    simulate(["fail", "fail", "ok-absent"], 20),
+    3,
+    "failed refreshes stay retryable after each cooldown until one succeeds",
+  );
+
+  /* Coalescing (Lead7 #18166): "new-2" first signals while the fetch for "old-1" is in
+     flight, and the completed fetch's roster already contains it. It must be pruned from
+     the queue — never settled, never refetched after the cooldown. */
+  const simulateCoalesce = (): number => {
+    const known = new Set<string>();
+    const candidates = new Set<string>();
+    const settled = new Set<string>();
+    let attemptedAt = Number.NEGATIVE_INFINITY;
+    let fetches = 0;
+    let inFlight = false;
+    let completesAt = -1;
+    let captured: string[] = [];
+    for (let poll = 0; poll < 20; poll++) {
+      const now = poll * 2_000;
+      for (const [principal, since] of [["old-1", 0], ["new-2", 1]] as const) {
+        if (
+          poll >= since &&
+          !known.has(principal) &&
+          !settled.has(principal) &&
+          !candidates.has(principal)
+        ) {
+          candidates.add(principal);
+        }
+      }
+      /* The one fetch takes a full poll, so "new-2" queues DURING its flight. */
+      if (inFlight && poll >= completesAt) {
+        const rosterIds = new Set(["old-1", "new-2"]);
+        for (const principalId of [...candidates]) {
+          if (rosterIds.has(principalId)) {
+            candidates.delete(principalId);
+            known.add(principalId); /* present in the fresh roster */
+          }
+        }
+        for (const principalId of captured) {
+          candidates.delete(principalId);
+          if (!rosterIds.has(principalId)) settled.add(principalId);
+          else known.add(principalId);
+        }
+        inFlight = false;
+        continue;
+      }
+      if (candidates.size === 0 || inFlight) continue;
+      if (now - attemptedAt < 10_000) continue;
+      attemptedAt = now;
+      fetches++;
+      inFlight = true;
+      captured = [...candidates];
+      completesAt = poll + 1;
+    }
+    return fetches;
+  };
+  assert.equal(
+    simulateCoalesce(),
+    1,
+    "a principal queued during the flight and present in the fetch is pruned, not refetched",
   );
 });

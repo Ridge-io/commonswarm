@@ -38,10 +38,42 @@ test("dashboard agent prompt is one complete, secret-safe handoff", () => {
   assert.match(prompt, /Workspace id:\s+44444444-4444-4444-8444-444444444444/);
   assert.match(prompt, /URL:\s+https:\/\/example\.supabase\.co/);
   assert.match(prompt, /Anon key: public-anon-observer/);
-  assert.equal(prompt.split("public-anon-observer").length - 1, 2);
+  /* The anon key is a public identifier, not the credential: it appears once in the
+     deployment details and once per self-contained command (working-on, inbox, reply),
+     so a fresh agent can copy any single command block and have it work. */
+  assert.equal(prompt.split("public-anon-observer").length - 1, 4);
   assert.doesNotMatch(prompt, /<the anon key above>/);
   assert.match(prompt, /DO NOT ECHO THIS CREDENTIAL BACK/);
   assert.match(prompt, /--agent-token-stdin/);
+});
+
+test("every cswarm command in the prompt is self-contained with deployment flags", () => {
+  const prompt = dashboardAgentPrompt(INPUT);
+  const commandBlock = (command: string): string => {
+    const at = prompt.indexOf(command);
+    assert.notEqual(at, -1, `missing command: ${command}`);
+    return prompt.slice(at, prompt.indexOf("\n\n", at));
+  };
+  for (const command of [
+    'cswarm working-on "what you are about to do" --agent-token-stdin',
+    "cswarm inbox --kind ask --wait 60 --json --agent-token-stdin",
+    'cswarm reply <signal-id> "<answer>" --agent-token-stdin',
+  ]) {
+    const block = commandBlock(command);
+    assert.match(block, /--url https:\/\/example\.supabase\.co/);
+    assert.match(block, /--anon-key public-anon-observer/);
+    assert.match(block, /--workspace-id 44444444-4444-4444-8444-444444444444/);
+    assert.doesNotMatch(
+      block,
+      /swm_agt_observer_secret_once/,
+      "the flags are public; the credential never leaves stdin",
+    );
+  }
+  assert.equal(
+    prompt.split(TOKEN).length - 1,
+    1,
+    "self-contained commands must not duplicate the credential",
+  );
 });
 
 test("dashboard agent prompt teaches explicit message receipt without claiming background wake", () => {

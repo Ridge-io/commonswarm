@@ -256,6 +256,7 @@ import SampleNotice from "./SampleNotice.astro";
                 data-roster-open
                 aria-haspopup="dialog"
                 aria-expanded="false"
+                aria-controls="dashboard-roster-dialog"
                 aria-label="0 agents — view and manage agents"
               >
                 <span class="dashboard__roster-stack" data-header-agent-stack aria-hidden="true"></span>
@@ -452,6 +453,7 @@ import SampleNotice from "./SampleNotice.astro";
       bottom sheet (see the media query), not a second component. */}
   <dialog
     class="dashboard__roster-dialog"
+    id="dashboard-roster-dialog"
     data-roster-dialog
     aria-labelledby="dashboard-roster-title"
   >
@@ -612,6 +614,10 @@ import SampleNotice from "./SampleNotice.astro";
     let rosterRefreshInFlight = false;
     let rosterRefreshAttemptedAt = 0;
     let rosterFilter = "";
+    /* Catch-up queues UNKNOWN principals here and settles CONFIRMED-absent ones there.
+       Both are per workspace session; openWorkspace clears them. */
+    const unknownAgentCandidates = new Set<string>();
+    const settledUnknownAgents = new Set<string>();
     let armLiveFeed = (): void => {};
     let connectFocusObserver: MutationObserver | null = null;
     let previousSignalIds = new Set<string>();
@@ -1569,13 +1575,20 @@ import SampleNotice from "./SampleNotice.astro";
         const page = await signalPage(workspaceId, null, new Date().toISOString());
         if (version !== requestVersion || workspaceId !== activeWorkspaceId) return;
         /* A signal from a principal the roster does not know is how a join first shows
-           up here: the feed keeps polling, and the roster catches up once, bounded. */
+           up here: queue it for one bounded catch-up. Settled principals (confirmed
+           revoked/historical by a previous successful fetch) never re-queue, so their
+           immutable old signals cannot keep the queue alive forever. */
         const knownAgents = new Set(agents.map((agent) => agent.principalId));
-        if (
-          page.rows.some(
-            (signal) => signal.fromKind === "agent" && !knownAgents.has(signal.from),
-          )
-        ) {
+        for (const signal of page.rows) {
+          if (
+            signal.fromKind === "agent" &&
+            !knownAgents.has(signal.from) &&
+            !settledUnknownAgents.has(signal.from)
+          ) {
+            unknownAgentCandidates.add(signal.from);
+          }
+        }
+        if (unknownAgentCandidates.size > 0) {
           void refreshRosterForUnknownAgents(workspaceId, version);
         }
         const known = new Set(page.rows.map((signal) => signal.id));
@@ -1611,17 +1624,26 @@ import SampleNotice from "./SampleNotice.astro";
      * The feed polls every two seconds; the roster does not. When a poll brings in a
      * signal from an agent principal we do not know, that first signal IS the join event:
      * refresh the roster once so the header stack, the dialog, and the feed's author
-     * names stop showing the "Agent a1b2c3" fallback. Bounded two ways — one refresh in
-     * flight, and a ten-second cooldown so a failed refresh cannot retry on every poll.
+     * names stop showing the "Agent a1b2c3" fallback.
+     *
+     * The catch-up is principal-aware because signals are immutable. A revoked agent's
+     * old signals keep arriving in every latest page forever; settling is how that stops
+     * costing fetches. Only a SUCCESSFUL fetch may settle, and only a candidate still
+     * absent from that fetch — a failed fetch settles and drains nothing, so it stays
+     * retryable after the cooldown. Concurrent candidates coalesce: the attempt drains
+     * a snapshot of the queue while detection keeps filling it, and whatever arrives
+     * during the flight is covered by the next bounded attempt.
      */
     const refreshRosterForUnknownAgents = async (
       workspaceId: string,
       version: number,
     ): Promise<void> => {
       if (rosterRefreshInFlight || sampleMode) return;
+      if (unknownAgentCandidates.size === 0) return;
       if (Date.now() - rosterRefreshAttemptedAt < 10_000) return;
       rosterRefreshInFlight = true;
       rosterRefreshAttemptedAt = Date.now();
+      const candidates = [...unknownAgentCandidates];
       try {
         const [nextAgents, nextRoster] = await Promise.all([
           roster(workspaceId),
@@ -1631,12 +1653,23 @@ import SampleNotice from "./SampleNotice.astro";
         agents = nextAgents;
         people = nextRoster.names;
         members = nextRoster.members;
+        const rosterIds = new Set(nextAgents.map((agent) => agent.principalId));
+        /* A principal queued DURING the flight is not in the captured snapshot, but the
+           fresh roster may already know it: prune those from the queue so they cannot
+           cause a redundant fetch after the cooldown. Settling stays snapshot-only. */
+        for (const principalId of [...unknownAgentCandidates]) {
+          if (rosterIds.has(principalId)) unknownAgentCandidates.delete(principalId);
+        }
+        for (const principalId of candidates) {
+          unknownAgentCandidates.delete(principalId);
+          if (!rosterIds.has(principalId)) settledUnknownAgents.add(principalId);
+        }
         renderRoster();
         renderMembers();
         renderFeed();
       } catch {
-        // A roster refresh never replaces a readable channel with an error. The next
-        // unknown-authored signal retries after the cooldown.
+        // A roster refresh never replaces a readable channel with an error. Nothing is
+        // settled or drained here, so the same candidates retry after the cooldown.
       } finally {
         rosterRefreshInFlight = false;
       }
@@ -1711,6 +1744,8 @@ import SampleNotice from "./SampleNotice.astro";
          let it outlive its data. The refresh cooldown resets with the workspace. */
       closeRosterDialog();
       rosterRefreshAttemptedAt = 0;
+      unknownAgentCandidates.clear();
+      settledUnknownAgents.clear();
       const keepShell = app.dataset.state === "channel";
       activeWorkspaceId = selected.id;
       syncConnectWorkspace(selected);
