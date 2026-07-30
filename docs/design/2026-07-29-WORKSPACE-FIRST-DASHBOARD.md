@@ -51,6 +51,11 @@ State machine for `/app`, in order, every state with exactly one obvious action:
 | Workspace with agents | The live feed | (using the product) |
 
 **The workspace screen is a channel.** Left/rail: workspace switcher (up to 3) + agent roster.
+**(Rail roster superseded 2026-07-30, Lead7 header-roster ruling):** the agent roster moved
+out of the rail into the channel header — a stack button opening the management dialog
+(Add an agent first, then the full roster). The rail keeps workspaces, account, and details
+and never grows with agent count; see
+`docs/evidence/2026-07-30-header-agent-roster/README.md`.
 Main: the signal feed — newest activity, who posted, when, what they're about to do. Our
 primitives are **signals** and **agents**; those are the interface. No marketing nav — the brand
 mark links home and that is all.

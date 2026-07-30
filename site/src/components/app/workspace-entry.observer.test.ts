@@ -67,10 +67,6 @@ test("the live dashboard retains the empty-channel to copy-prompt path", () => {
   assert.match(dashboard, /Add your first agent\./);
   assert.match(dashboard, /data-add-agent/);
   assert.doesNotMatch(dashboard, /data-add-agent-channel/);
-  assert.match(
-    dashboard,
-    /const addInRail = one<HTMLButtonElement>\("\[data-add-agent-rail\]"\);[\s\S]*addInRail\.hidden = sampleMode \|\| agents\.length === 0/,
-  );
   const noAgents = dashboard.match(
     /data-channel-view="no-agents"[\s\S]*?<\/section>/,
   )?.[0] ?? "";
@@ -105,11 +101,15 @@ test("the live dashboard retains the empty-channel to copy-prompt path", () => {
     /\.ac__block\s*\{[\s\S]*?min-inline-size:\s*0;[\s\S]*?inline-size:\s*100%/,
     "the non-wrapping prompt must scroll inside the mobile card, not widen it",
   );
-  assert.match(
-    dashboard,
-    /matchMedia\("\(max-width: 52rem\)"\)[\s\S]*agentRail\.open = !narrowRail\.matches/,
-    "the agent roster must begin collapsed when the rail becomes a mobile top bar",
-  );
+  /*
+   * TWO ASSERTIONS DIED HERE on 2026-07-30, by Lead7 ruling, not by bit-rot:
+   *   - the rail's Add-an-agent door (`data-add-agent-rail`, hidden in sample mode)
+   *   - the mobile collapse sync (`agentRail.open = !narrowRail.matches`)
+   * Both locked the rail-resident agent roster, which the workspace-header roster
+   * redesign moved OUT of the rail: the header carries a stack button that opens the
+   * management dialog, and the rail must not grow with agent count. The successor
+   * assertions live in header-roster.observer.test.ts, picked up by the same glob.
+   */
   assert.match(
     dashboard,
     /<button[^>]*class="[^"]*dashboard__mobile-signout[^"]*"[^>]*data-signout[^>]*>/,

@@ -5,8 +5,12 @@
  * session. Static markup contains every panel so focus, loading, and failure states stay
  * styled even before data arrives; dynamic values are written with textContent only.
  *
- * The workspace view follows the operator's channel model: workspaces and agents in a rail,
- * signals in the channel. Files and tasks are deliberately absent because they are not
+ * The workspace view follows the operator's channel model: workspaces in a rail, signals
+ * in the channel, and agents in a header roster — a stack button that opens the management
+ * dialog. (The earlier model put the agent roster in the rail. That is DEAD: a long rail
+ * pushed the only Add door below the fold, and the collapsed mobile rail left no agent
+ * control at all. The rail now carries workspaces, account, and details only, and never
+ * grows with agent count.) Files and tasks are deliberately absent because they are not
  * CommonSwarm primitives.
  */
 
@@ -185,30 +189,6 @@ import SampleNotice from "./SampleNotice.astro";
             <div class="dashboard__workspace-list" data-workspace-list></div>
           </nav>
 
-          <details class="dashboard__rail-section dashboard__rail-agents" open>
-            <summary class="dashboard__rail-mobile-summary">
-              <span>Agents</span>
-              <span data-agent-count>0</span>
-            </summary>
-            <div class="dashboard__rail-agents-body">
-              <div class="dashboard__rail-label-row">
-                <h2 id="dashboard-agents-label">Agents</h2>
-                <span data-agent-count>0</span>
-              </div>
-              <ul class="dashboard__agent-list" data-agent-list></ul>
-              <p class="dashboard__form-error" data-agent-error role="alert" hidden></p>
-              <button
-                class="dashboard__rail-add"
-                type="button"
-                data-add-agent-rail
-                hidden
-              >
-                <span aria-hidden="true">+</span>
-                Add an agent
-              </button>
-            </div>
-          </details>
-
           <details class="dashboard__rail-details" data-member-details hidden>
             <summary>
               <span>Members</span>
@@ -258,10 +238,31 @@ import SampleNotice from "./SampleNotice.astro";
 
         <section class="dashboard__channel" aria-labelledby="dashboard-channel-title">
           <header class="dashboard__channel-head">
-            <div>
+            <div class="dashboard__channel-titleblock">
               <p class="dashboard__channel-kicker">Workspace channel</p>
               <h1 id="dashboard-channel-title" data-channel-name>Workspace</h1>
             </div>
+
+            {/* The header agent roster: ONE control, the Slack-style members stack.
+                Activating it opens the management dialog (Add an agent first, then the
+                full roster with Remove). Hidden whenever there are no agents — the empty
+                channel carries that CTA, and two doors to the same flow would be the same
+                news twice. The stack initials are decorative; the accessible name carries
+                the count and the action. */}
+            <div class="dashboard__channel-roster" data-header-roster hidden>
+              <button
+                class="dashboard__roster-button"
+                type="button"
+                data-roster-open
+                aria-haspopup="dialog"
+                aria-expanded="false"
+                aria-label="0 agents — view and manage agents"
+              >
+                <span class="dashboard__roster-stack" data-header-agent-stack aria-hidden="true"></span>
+                <span class="dashboard__roster-count" data-agent-count aria-hidden="true">0</span>
+              </button>
+            </div>
+
             <div class="dashboard__channel-actions">
               <span class="dashboard__update-count" data-update-count hidden>0 updates</span>
               <button
@@ -442,6 +443,62 @@ import SampleNotice from "./SampleNotice.astro";
       </div>
     </section>
   </div>
+
+  {/* The agent management dialog. A native <dialog>: Escape, modal focus containment,
+      and focus restore to the stack button are the platform's, not ours. It lives outside
+      every panel so a panel switch can never display:none it out from under an open
+      session; openWorkspace and sign-out close it explicitly instead. Add an agent is the
+      first visible primary action; the filter and the roster follow. At ≤52rem it is a
+      bottom sheet (see the media query), not a second component. */}
+  <dialog
+    class="dashboard__roster-dialog"
+    data-roster-dialog
+    aria-labelledby="dashboard-roster-title"
+  >
+    <div class="dashboard__roster-dialog-head">
+      <h2 id="dashboard-roster-title">
+        Agents
+        <span class="dashboard__roster-dialog-count" data-agent-count>0</span>
+      </h2>
+      <button
+        class="dashboard__icon-button"
+        type="button"
+        data-roster-close
+        aria-label="Close agents panel"
+        title="Close agents panel"
+      >
+        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+          <path d="M6 6l12 12M18 6L6 18"></path>
+        </svg>
+      </button>
+    </div>
+
+    <div class="dashboard__roster-dialog-body">
+      <button
+        class="dashboard__button dashboard__button--primary dashboard__roster-dialog-add"
+        type="button"
+        data-add-agent-dialog
+      >
+        Add an agent
+      </button>
+
+      <input
+        class="dashboard__roster-dialog-search"
+        type="search"
+        data-roster-search
+        aria-label="Filter agents"
+        placeholder="Filter agents…"
+        autocomplete="off"
+        spellcheck="false"
+      />
+
+      <ul
+        class="dashboard__agent-list dashboard__roster-dialog-list"
+        data-dialog-agent-list
+      ></ul>
+      <p class="dashboard__form-error" data-agent-error role="alert" hidden></p>
+    </div>
+  </dialog>
 </live-dashboard>
 
 <script>
@@ -552,6 +609,9 @@ import SampleNotice from "./SampleNotice.astro";
     let signalExpiryTimer: number | undefined;
     let liveFeedTimer: number | undefined;
     let liveFeedInFlight = false;
+    let rosterRefreshInFlight = false;
+    let rosterRefreshAttemptedAt = 0;
+    let rosterFilter = "";
     let armLiveFeed = (): void => {};
     let connectFocusObserver: MutationObserver | null = null;
     let previousSignalIds = new Set<string>();
@@ -1070,6 +1130,11 @@ import SampleNotice from "./SampleNotice.astro";
         .toUpperCase();
     };
 
+    /* One shape, one tint. The avatar set once mixed three border-radii (a circle, a
+       rounded square, and an asymmetric blob) across identical 32px initial tiles, which
+       read as inconsistency rather than identity — most visibly where the tiles now sit
+       shoulder to shoulder in the header strip. The hue keeps the per-agent distinction;
+       the shape is always the circle. */
     const markAgentAvatar = (node: HTMLElement, principalId: string): void => {
       let hash = 2_166_136_261;
       for (const char of principalId) {
@@ -1078,7 +1143,7 @@ import SampleNotice from "./SampleNotice.astro";
       }
       const unsigned = hash >>> 0;
       node.style.setProperty("--avatar-hue", String(unsigned % 360));
-      node.dataset.avatarShape = String(unsigned % 3);
+      node.classList.add("dashboard__avatar--tinted");
     };
 
     const renderWorkspaceList = (selected: Workspace): void => {
@@ -1112,24 +1177,95 @@ import SampleNotice from "./SampleNotice.astro";
       }
     };
 
+    /*
+     * One roster in memory, two surfaces: the header stack (summary) and the dialog list
+     * (management). Both render here from `agents` — never re-counted per surface — so
+     * stack, dialog, and feed cannot disagree about who is in the workspace.
+     */
     const renderRoster = (): void => {
-      const list = one<HTMLUListElement>("[data-agent-list]");
+      renderHeaderRoster();
+      renderDialogRoster();
+    };
+
+    /*
+     * The header stack is a summary, not a second management surface: up to three uniform
+     * circular initials and the live count. The count spans (stack button + dialog title)
+     * share one data-hook and one loop, so they cannot drift apart.
+     */
+    const HEADER_STACK_LIMIT = 3;
+
+    const renderHeaderRoster = (): void => {
+      const wrap = one<HTMLElement>("[data-header-roster]");
+      const stack = one<HTMLElement>("[data-header-agent-stack]");
+      const button = one<HTMLButtonElement>("[data-roster-open]");
+      const show = agents.length > 0;
+      if (wrap) wrap.hidden = !show;
+      one<HTMLElement>(".dashboard__channel")?.classList.toggle(
+        "dashboard__channel--roster",
+        show,
+      );
       for (const count of all<HTMLElement>("[data-agent-count]")) {
         count.textContent = String(agents.length);
       }
+      if (button) {
+        button.setAttribute(
+          "aria-label",
+          `${agents.length} ${agents.length === 1 ? "agent" : "agents"} — view and manage agents`,
+        );
+      }
+      if (!stack) return;
+      stack.replaceChildren();
+      for (const agent of agents.slice(0, HEADER_STACK_LIMIT)) {
+        const avatar = document.createElement("span");
+        avatar.className = "dashboard__agent-avatar";
+        avatar.textContent = initials(agent.name);
+        markAgentAvatar(avatar, agent.principalId);
+        stack.append(avatar);
+      }
+    };
+
+    /*
+     * The dialog roster is the management list: model, owner, and a permission-aware
+     * Remove per row — the same rules the rail roster enforced, unchanged. When a
+     * background roster refresh re-renders while the dialog is open, focus parked inside
+     * the list is handed back to the same agent's row rather than dropped out of the
+     * dialog (a replaced node cannot keep focus, and losing it would strand a keyboard
+     * user on <body> behind the modal).
+     */
+    const renderDialogRoster = (): void => {
+      const add = one<HTMLButtonElement>("[data-add-agent-dialog]");
+      if (add) add.hidden = sampleMode;
+      const list = one<HTMLUListElement>("[data-dialog-agent-list]");
       if (!list) return;
+      let refocusPrincipal = "";
+      if (
+        document.activeElement instanceof HTMLElement &&
+        list.contains(document.activeElement)
+      ) {
+        refocusPrincipal =
+          document.activeElement.closest<HTMLElement>("[data-agent-row]")?.dataset
+            .agentRow ?? "";
+      }
       list.replaceChildren();
-      if (agents.length === 0) {
+      const query = rosterFilter.trim().toLowerCase();
+      const visible = query
+        ? agents.filter((agent) => agent.name.toLowerCase().includes(query))
+        : agents;
+      if (visible.length === 0) {
         const empty = document.createElement("li");
         empty.className = "dashboard__agent-empty";
-        empty.textContent = "No agents yet";
+        empty.textContent = query
+          ? `No agents match “${rosterFilter.trim()}”.`
+          : "No agents yet";
         list.append(empty);
         return;
       }
       const me = members.find((member) => member.userId === session?.user.id);
-      for (const agent of agents) {
+      for (const agent of visible) {
         const row = document.createElement("li");
         row.className = "dashboard__agent";
+        row.dataset.agentRow = agent.principalId;
+        row.tabIndex = -1;
         const avatar = document.createElement("span");
         avatar.className = "dashboard__agent-avatar";
         avatar.textContent = initials(agent.name);
@@ -1187,6 +1323,12 @@ import SampleNotice from "./SampleNotice.astro";
                 livePromptPrincipalId = "";
               }
               await openWorkspace(activeWorkspaceId);
+              /* The reload closed the dialog; hand focus to the control that reopens
+                 it, or to the empty channel's Add door when that was the last agent. */
+              const door = agents.length > 0
+                ? one<HTMLButtonElement>("[data-roster-open]")
+                : one<HTMLButtonElement>("[data-add-agent]");
+              door?.focus({ preventScroll: true });
             } catch (error) {
               if (errorTarget) {
                 errorTarget.textContent = readableError(error);
@@ -1200,6 +1342,39 @@ import SampleNotice from "./SampleNotice.astro";
         }
         list.append(row);
       }
+      if (refocusPrincipal) {
+        const row = list.querySelector<HTMLElement>(
+          `[data-agent-row="${refocusPrincipal}"]`,
+        );
+        const target = row?.querySelector<HTMLButtonElement>("button") ?? row;
+        target?.focus({ preventScroll: true });
+      }
+    };
+
+    /*
+     * Opening resets the filter so every session starts from the full roster. Initial
+     * focus goes to Add an agent — the first visible primary action — or, when sample
+     * mode hides that door, to the filter. Escape, modal focus containment, and focus
+     * restore on close are the native <dialog>'s; the close event re-syncs the stack
+     * button's aria-expanded no matter which path closed it.
+     */
+    const openRosterDialog = (): void => {
+      const dialog = one<HTMLDialogElement>("[data-roster-dialog]");
+      if (!dialog || dialog.open) return;
+      rosterFilter = "";
+      const search = one<HTMLInputElement>("[data-roster-search]");
+      if (search) search.value = "";
+      renderDialogRoster();
+      dialog.showModal();
+      const add = one<HTMLButtonElement>("[data-add-agent-dialog]");
+      const firstStop = add && !add.hidden ? add : search;
+      window.requestAnimationFrame(() => firstStop?.focus({ preventScroll: true }));
+      one<HTMLButtonElement>("[data-roster-open]")?.setAttribute("aria-expanded", "true");
+    };
+
+    const closeRosterDialog = (): void => {
+      const dialog = one<HTMLDialogElement>("[data-roster-dialog]");
+      if (dialog?.open) dialog.close();
     };
 
     const formatTime = (value: string): { relative: string; absolute: string } => {
@@ -1393,6 +1568,16 @@ import SampleNotice from "./SampleNotice.astro";
       try {
         const page = await signalPage(workspaceId, null, new Date().toISOString());
         if (version !== requestVersion || workspaceId !== activeWorkspaceId) return;
+        /* A signal from a principal the roster does not know is how a join first shows
+           up here: the feed keeps polling, and the roster catches up once, bounded. */
+        const knownAgents = new Set(agents.map((agent) => agent.principalId));
+        if (
+          page.rows.some(
+            (signal) => signal.fromKind === "agent" && !knownAgents.has(signal.from),
+          )
+        ) {
+          void refreshRosterForUnknownAgents(workspaceId, version);
+        }
         const known = new Set(page.rows.map((signal) => signal.id));
         const next = [...page.rows, ...signals.filter((signal) => !known.has(signal.id))];
         const changed =
@@ -1422,6 +1607,41 @@ import SampleNotice from "./SampleNotice.astro";
       liveFeedTimer = window.setInterval(() => void refreshLatestSignals(), 2_000);
     };
 
+    /*
+     * The feed polls every two seconds; the roster does not. When a poll brings in a
+     * signal from an agent principal we do not know, that first signal IS the join event:
+     * refresh the roster once so the header stack, the dialog, and the feed's author
+     * names stop showing the "Agent a1b2c3" fallback. Bounded two ways — one refresh in
+     * flight, and a ten-second cooldown so a failed refresh cannot retry on every poll.
+     */
+    const refreshRosterForUnknownAgents = async (
+      workspaceId: string,
+      version: number,
+    ): Promise<void> => {
+      if (rosterRefreshInFlight || sampleMode) return;
+      if (Date.now() - rosterRefreshAttemptedAt < 10_000) return;
+      rosterRefreshInFlight = true;
+      rosterRefreshAttemptedAt = Date.now();
+      try {
+        const [nextAgents, nextRoster] = await Promise.all([
+          roster(workspaceId),
+          memberRoster(workspaceId),
+        ]);
+        if (version !== requestVersion || workspaceId !== activeWorkspaceId) return;
+        agents = nextAgents;
+        people = nextRoster.names;
+        members = nextRoster.members;
+        renderRoster();
+        renderMembers();
+        renderFeed();
+      } catch {
+        // A roster refresh never replaces a readable channel with an error. The next
+        // unknown-authored signal retries after the cooldown.
+      } finally {
+        rosterRefreshInFlight = false;
+      }
+    };
+
     document.addEventListener("visibilitychange", () => {
       if (document.visibilityState !== "visible") {
         window.clearInterval(liveFeedTimer);
@@ -1437,8 +1657,6 @@ import SampleNotice from "./SampleNotice.astro";
       const id = one<HTMLElement>("[data-channel-id]");
       if (name) name.textContent = workspace.name;
       if (id) id.textContent = workspace.id;
-      const addInRail = one<HTMLButtonElement>("[data-add-agent-rail]");
-      if (addInRail) addInRail.hidden = sampleMode || agents.length === 0;
       const refresh = one<HTMLButtonElement>("[data-refresh]");
       if (refresh) refresh.hidden = sampleMode || agents.length === 0;
       const count = one<HTMLElement>("[data-update-count]");
@@ -1489,6 +1707,10 @@ import SampleNotice from "./SampleNotice.astro";
         return;
       }
       pendingWorkspaceId = "";
+      /* The dialog shows the OLD workspace's roster from here on; close it rather than
+         let it outlive its data. The refresh cooldown resets with the workspace. */
+      closeRosterDialog();
+      rosterRefreshAttemptedAt = 0;
       const keepShell = app.dataset.state === "channel";
       activeWorkspaceId = selected.id;
       syncConnectWorkspace(selected);
@@ -1947,6 +2169,7 @@ import SampleNotice from "./SampleNotice.astro";
       button.addEventListener("click", async () => {
         if (keepConnectCredentialVisible()) return;
         button.disabled = true;
+        closeRosterDialog();
         one<SecretHoldingAgentConnect>("agent-connect")?.clearPrompt(false);
         if (session) clearCreateIntent(session.user.id);
         requestVersion += 1;
@@ -2059,7 +2282,27 @@ import SampleNotice from "./SampleNotice.astro";
     });
 
     one<HTMLButtonElement>("[data-add-agent]")?.addEventListener("click", openAgentChoice);
-    one<HTMLButtonElement>("[data-add-agent-rail]")?.addEventListener("click", openAgentChoice);
+    one<HTMLButtonElement>("[data-roster-open]")?.addEventListener("click", openRosterDialog);
+    one<HTMLButtonElement>("[data-roster-close]")?.addEventListener("click", closeRosterDialog);
+    one<HTMLButtonElement>("[data-add-agent-dialog]")?.addEventListener("click", () => {
+      closeRosterDialog();
+      openAgentChoice();
+    });
+    one<HTMLInputElement>("[data-roster-search]")?.addEventListener("input", (event) => {
+      rosterFilter = (event.currentTarget as HTMLInputElement).value;
+      renderDialogRoster();
+    });
+    {
+      const dialog = one<HTMLDialogElement>("[data-roster-dialog]");
+      /* A click landing on the dialog element itself is a click on the backdrop — the
+         dialog's box did not catch it. */
+      dialog?.addEventListener("click", (event) => {
+        if (event.target === dialog) dialog.close();
+      });
+      dialog?.addEventListener("close", () => {
+        one<HTMLButtonElement>("[data-roster-open]")?.setAttribute("aria-expanded", "false");
+      });
+    }
     one<HTMLButtonElement>("[data-close-agent-choice]")?.addEventListener("click", returnToChannel);
     one<HTMLButtonElement>("[data-agent-owner-self]")?.addEventListener("click", openConnect);
     one<HTMLButtonElement>("[data-agent-owner-teammate]")?.addEventListener("click", openInvite);
@@ -2138,8 +2381,6 @@ import SampleNotice from "./SampleNotice.astro";
         accessStatuses = nextStatuses;
         renderRoster();
         renderPendingAccess();
-        const addInRail = one<HTMLButtonElement>("[data-add-agent-rail]");
-        if (addInRail) addInRail.hidden = agents.length === 0;
         const refresh = one<HTMLButtonElement>("[data-refresh]");
         if (refresh) refresh.hidden = agents.length === 0;
       } catch {
@@ -2190,14 +2431,6 @@ import SampleNotice from "./SampleNotice.astro";
         runBoot();
       });
     };
-
-    const agentRail = one<HTMLDetailsElement>(".dashboard__rail-agents");
-    const narrowRail = window.matchMedia("(max-width: 52rem)");
-    const syncAgentRail = (): void => {
-      if (agentRail) agentRail.open = !narrowRail.matches;
-    };
-    syncAgentRail();
-    narrowRail.addEventListener("change", syncAgentRail);
 
     /* /start now preserves its query and hash while handing old callbacks to /app, so this
        listener is the one auth-return controller for both current and compatibility links. */
@@ -2368,6 +2601,7 @@ import SampleNotice from "./SampleNotice.astro";
   .dashboard__workspace-button,
   .dashboard__rail-add,
   .dashboard__back-button,
+  .dashboard__roster-button,
   .dashboard__text-button {
     font: inherit;
   }
@@ -2633,16 +2867,6 @@ import SampleNotice from "./SampleNotice.astro";
     border-block-start: 1px solid var(--border);
   }
 
-  .dashboard__rail-agents {
-    flex: 1;
-    align-content: start;
-  }
-
-  .dashboard__rail-mobile-summary {
-    display: none;
-  }
-
-  .dashboard__rail-agents-body,
   .dashboard__rail-details-body {
     display: grid;
     gap: var(--s-3);
@@ -2653,8 +2877,7 @@ import SampleNotice from "./SampleNotice.astro";
     border-block-start: 1px solid var(--border);
   }
 
-  .dashboard__rail-details > summary,
-  .dashboard__rail-mobile-summary {
+  .dashboard__rail-details > summary {
     min-block-size: 2.75rem;
     align-items: center;
     justify-content: space-between;
@@ -2665,8 +2888,7 @@ import SampleNotice from "./SampleNotice.astro";
     cursor: pointer;
   }
 
-  .dashboard__rail-details > summary:focus-visible,
-  .dashboard__rail-mobile-summary:focus-visible {
+  .dashboard__rail-details > summary:focus-visible {
     outline: none;
     box-shadow: var(--focus-ring);
   }
@@ -2795,21 +3017,15 @@ import SampleNotice from "./SampleNotice.astro";
     font-weight: var(--weight-semibold);
   }
 
-  .dashboard__agent-avatar[data-avatar-shape],
-  .dashboard__message-avatar[data-avatar-shape] {
-    color: hsl(var(--avatar-hue) 75% 82%);
+  /* The tint carries the per-agent identity now that the shape is fixed to the circle.
+     Initials use --text rather than a pastel of the hue: the pastel was tuned for the
+     dark palette and washed out on the light tint, while --text clears 16:1 on every
+     surface in both modes. The hue still distinguishes agents in the fill and the ring. */
+  .dashboard__agent-avatar.dashboard__avatar--tinted,
+  .dashboard__message-avatar.dashboard__avatar--tinted {
+    color: var(--text);
     background: color-mix(in oklab, hsl(var(--avatar-hue) 58% 48%) 20%, var(--elev-3));
     border-color: color-mix(in oklab, hsl(var(--avatar-hue) 70% 58%) 52%, var(--border));
-  }
-
-  .dashboard__agent-avatar[data-avatar-shape="1"],
-  .dashboard__message-avatar[data-avatar-shape="1"] {
-    border-radius: 0.48rem;
-  }
-
-  .dashboard__agent-avatar[data-avatar-shape="2"],
-  .dashboard__message-avatar[data-avatar-shape="2"] {
-    border-radius: 0.42rem 50% 50% 0.42rem;
   }
 
   .dashboard__agent-copy {
@@ -2861,6 +3077,9 @@ import SampleNotice from "./SampleNotice.astro";
     align-items: center;
     justify-content: space-between;
     gap: var(--s-3);
+    /* The agents section used to flex:1 the footer to the bottom; with the roster moved
+       to the header dialog, the footer's own margin does the pinning now. */
+    margin-block-start: auto;
     padding-block-start: var(--s-4);
     border-block-start: 1px solid var(--border);
     color: var(--text-muted);
@@ -2878,10 +3097,15 @@ import SampleNotice from "./SampleNotice.astro";
     min-block-size: 6.5rem;
     display: flex;
     align-items: center;
+    flex-wrap: wrap;
     justify-content: space-between;
-    gap: var(--s-6);
+    gap: var(--s-3) var(--s-6);
     padding: var(--s-5) clamp(var(--s-5), 4vw, var(--s-8));
     border-block-end: 1px solid var(--border);
+  }
+
+  .dashboard__channel-titleblock {
+    min-inline-size: 0;
   }
 
   .dashboard__channel-kicker {
@@ -2906,6 +3130,162 @@ import SampleNotice from "./SampleNotice.astro";
     color: var(--text-muted);
     font-size: var(--t-xs);
     white-space: nowrap;
+  }
+
+  /* --- the header agent roster: one stack button + its dialog ----------------------- */
+
+  /* The stack sits between the title and the actions while there is room, glued right;
+     at ≤52rem it takes its own row (see the media query) so it never squeezes out. */
+  .dashboard__channel-roster {
+    flex: none;
+    min-inline-size: 0;
+    margin-inline-start: auto;
+  }
+
+  .dashboard__roster-button {
+    min-block-size: 2.75rem;
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s-2);
+    padding: var(--s-1) var(--s-3) var(--s-1) var(--s-1);
+    color: var(--text);
+    background: var(--elev-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-pill);
+    cursor: pointer;
+    transition:
+      background var(--dur-2) var(--ease-standard),
+      border-color var(--dur-2) var(--ease-standard);
+  }
+
+  .dashboard__roster-button:hover {
+    background: var(--elev-3);
+    border-color: var(--border-strong);
+  }
+
+  .dashboard__roster-button:focus-visible {
+    outline: none;
+    box-shadow: var(--focus-ring);
+  }
+
+  .dashboard__roster-stack {
+    display: flex;
+    align-items: center;
+  }
+
+  /* The overlap ring reads as a cut between neighbours when it matches the button's own
+     fill, so it follows the hover fill too. */
+  .dashboard__roster-stack .dashboard__agent-avatar {
+    inline-size: 1.75rem;
+    block-size: 1.75rem;
+    border: 2px solid var(--elev-2);
+    margin-inline-start: -0.5rem;
+  }
+
+  .dashboard__roster-stack .dashboard__agent-avatar:first-child {
+    margin-inline-start: 0;
+  }
+
+  .dashboard__roster-button:hover .dashboard__roster-stack .dashboard__agent-avatar {
+    border-color: var(--elev-3);
+  }
+
+  .dashboard__roster-count {
+    color: var(--text);
+    font-size: var(--t-sm);
+    font-weight: var(--weight-semibold);
+  }
+
+  /* The dialog. Native <dialog>: the UA centers it over a backdrop and owns Escape,
+     focus containment, and focus restore; the styles only make it ours. At ≤52rem the
+     same element becomes a bottom sheet rather than a second component. */
+  .dashboard__roster-dialog {
+    inline-size: min(calc(100% - var(--s-8)), 26rem);
+    max-inline-size: calc(100% - var(--s-8));
+    max-block-size: min(42rem, calc(100dvh - var(--s-8)));
+    /* global.css's universal * { margin: 0 } beats the UA's dialog-centering margin:auto,
+       so centering is restated here; the ≤52rem sheet re-anchors it to the bottom. */
+    margin: auto;
+    padding: 0;
+    color: var(--text);
+    background: var(--elev-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-lg);
+  }
+
+  .dashboard__roster-dialog::backdrop {
+    background: color-mix(in oklab, var(--text) 32%, transparent);
+  }
+
+  .dashboard__roster-dialog[open] {
+    animation: dashboard-dialog-in var(--dur-3) var(--ease-decelerate);
+  }
+
+  @keyframes dashboard-dialog-in {
+    from {
+      opacity: 0;
+      transform: translateY(6px);
+    }
+  }
+
+  .dashboard__roster-dialog-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--s-3);
+    padding: var(--s-4) var(--s-5);
+    border-block-end: 1px solid var(--border);
+  }
+
+  .dashboard__roster-dialog-head h2 {
+    margin: 0;
+    display: flex;
+    align-items: baseline;
+    gap: var(--s-2);
+    color: var(--text);
+    font-size: var(--t-lg);
+    line-height: var(--lh-lg);
+    letter-spacing: var(--track-head);
+  }
+
+  .dashboard__roster-dialog-count {
+    color: var(--text-muted);
+    font-size: var(--t-sm);
+    font-weight: var(--weight-medium);
+  }
+
+  .dashboard__roster-dialog-body {
+    display: grid;
+    gap: var(--s-3);
+    padding: var(--s-4) var(--s-5) var(--s-5);
+  }
+
+  .dashboard__roster-dialog-add {
+    inline-size: 100%;
+  }
+
+  .dashboard__roster-dialog-search {
+    min-block-size: 2.75rem;
+    inline-size: 100%;
+    padding: var(--s-2) var(--s-3);
+    color: var(--text);
+    background: var(--elev-1);
+    border: 1px solid var(--border-interactive);
+    border-radius: var(--radius);
+    font: inherit;
+    font-size: var(--t-sm);
+  }
+
+  /* The roster scrolls inside the dialog rather than growing it past the viewport. */
+  .dashboard__roster-dialog-list {
+    max-block-size: min(46svh, 20rem);
+    overflow: auto;
+    margin-inline: calc(var(--s-2) * -1);
+  }
+
+  .dashboard__roster-dialog-list .dashboard__agent {
+    border-radius: var(--radius-sm);
   }
 
   .dashboard__mobile-signout {
@@ -3378,21 +3758,6 @@ import SampleNotice from "./SampleNotice.astro";
       display: none;
     }
 
-    .dashboard__rail-agents {
-      grid-column: 1 / -1;
-      display: block;
-      padding-block-start: var(--s-3);
-      border-block-start: 1px solid var(--border);
-    }
-
-    .dashboard__rail-mobile-summary {
-      display: flex;
-    }
-
-    .dashboard__rail-agents-body {
-      padding-block-start: var(--s-3);
-    }
-
     .dashboard__workspace-list {
       display: flex;
       max-block-size: none;
@@ -3408,6 +3773,46 @@ import SampleNotice from "./SampleNotice.astro";
     .dashboard__channel-head {
       min-block-size: 5.5rem;
       padding: var(--s-4);
+    }
+
+    /* Title and actions share the first row; the roster stack always gets the row
+       below, so Add-agent reachability never depends on the workspace name's length. */
+    .dashboard__channel-titleblock {
+      order: 1;
+    }
+
+    .dashboard__channel-actions {
+      order: 2;
+      margin-inline-start: auto;
+    }
+
+    .dashboard__channel-roster {
+      order: 3;
+      flex: 1 1 100%;
+      margin-inline-start: 0;
+    }
+
+    /* The roster row costs the feed ~3.5rem of viewport (2.75rem control + the wrap
+       gap); the body's floor gives it back so empty states stay centred, not scrolled. */
+    .dashboard__channel--roster .dashboard__channel-body {
+      min-block-size: calc(100svh - 5.5rem - 4.5rem - 3.5rem);
+    }
+
+    /* The same dialog, presented as a bottom sheet. */
+    .dashboard__roster-dialog {
+      inline-size: 100%;
+      max-inline-size: 100%;
+      max-block-size: 82dvh;
+      margin-block-start: auto;
+      margin-block-end: 0;
+      margin-inline: 0;
+      border-inline: 0;
+      border-block-end: 0;
+      border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    }
+
+    .dashboard__roster-dialog-list {
+      max-block-size: 46dvh;
     }
 
     .dashboard__mobile-signout {
@@ -3457,6 +3862,9 @@ import SampleNotice from "./SampleNotice.astro";
     .dashboard__channel-head {
       align-items: flex-start;
       flex-direction: column;
+      /* Column + wrap would lay the children out as multiple COLUMNS (the wrap creates a
+         new flex line to the right); the stacked header must not wrap. */
+      flex-wrap: nowrap;
       gap: var(--s-3);
     }
 
@@ -3501,6 +3909,8 @@ import SampleNotice from "./SampleNotice.astro";
 
     .dashboard__button,
     .dashboard__message--fresh,
+    .dashboard__roster-button,
+    .dashboard__roster-dialog[open],
     .dashboard__wordmark::after {
       transition: none;
       animation: none;
