@@ -24,39 +24,69 @@ function between(source: string, start: string, end: string): string {
   return source.slice(startAt, endAt);
 }
 
-test("signal pages include standard signals and terminate exact-multiple lookahead pages", () => {
+test("signal pages use a frozen keyset and terminate exact-multiple lookahead pages", () => {
   const source = between(dashboard, "const signalPage = async", "const initials =");
+  const loader = between(dashboard, "const loadSignals = async", "const renderChannel =");
 
   assert.match(source, /\.or\(`until\.is\.null,until\.gt\.\$\{cutoff\}`\)/);
   assert.doesNotMatch(source, /\.gt\("until", cutoff\)/);
-  assert.match(source, /\.range\(offset, offset \+ SIGNAL_FETCH_SIZE - 1\)/);
+  assert.match(source, /if \(cursor\) \{/);
+  assert.match(
+    source,
+    /created_at\.lt\.\$\{cursor\.createdAt\},and\(created_at\.eq\.\$\{cursor\.createdAt\},id\.lt\.\$\{cursor\.id\}\)/,
+  );
+  assert.match(source, /\.order\("created_at", \{ ascending: false \}\)/);
+  assert.match(source, /\.order\("id", \{ ascending: false \}\)/);
+  assert.match(source, /\.limit\(SIGNAL_FETCH_SIZE\)/);
+  assert.doesNotMatch(source, /\.range\(/);
   assert.match(source, /hasMore: page\.length === SIGNAL_FETCH_SIZE/);
   assert.match(source, /rows: page\.slice\(0, SIGNAL_PAGE_SIZE\)\.map/);
+  assert.match(loader, /const cursor = reset \? null : signalCursor/);
+  assert.match(loader, /if \(reset\) \{[\s\S]*signalCutoff = new Date\(\)\.toISOString\(\)/);
+  assert.match(loader, /const last = page\.rows\.at\(-1\)/);
+  assert.match(
+    loader,
+    /signalCursor = last \? \{ createdAt: last\.createdAt, id: last\.id \} : cursor/,
+  );
+  assert.doesNotMatch(dashboard, /signalOffset/);
 
   const pageSize = 50;
   const fetchSize = pageSize + 1;
-  const paginate = (total: number): Array<{ offset: number; returned: number; hasMore: boolean }> => {
+  const paginate = (total: number): Array<{ returned: number; hasMore: boolean }> => {
     const pages = [];
-    for (let offset = 0; ; ) {
-      const fetched = Math.max(0, Math.min(fetchSize, total - offset));
+    for (let consumed = 0; ; ) {
+      const fetched = Math.max(0, Math.min(fetchSize, total - consumed));
       const returned = Math.min(pageSize, fetched);
       const hasMore = fetched === fetchSize;
-      pages.push({ offset, returned, hasMore });
+      pages.push({ returned, hasMore });
       if (!hasMore) return pages;
-      offset += returned;
+      consumed += returned;
     }
   };
 
-  assert.deepEqual(paginate(50), [{ offset: 0, returned: 50, hasMore: false }]);
+  assert.deepEqual(paginate(50), [{ returned: 50, hasMore: false }]);
   assert.deepEqual(paginate(100), [
-    { offset: 0, returned: 50, hasMore: true },
-    { offset: 50, returned: 50, hasMore: false },
+    { returned: 50, hasMore: true },
+    { returned: 50, hasMore: false },
   ]);
   assert.deepEqual(paginate(101), [
-    { offset: 0, returned: 50, hasMore: true },
-    { offset: 50, returned: 50, hasMore: true },
-    { offset: 100, returned: 1, hasMore: false },
+    { returned: 50, hasMore: true },
+    { returned: 50, hasMore: true },
+    { returned: 1, hasMore: false },
   ]);
+
+  const ordered = [
+    { createdAt: "2026-07-29T12:00:00Z", id: "b" },
+    { createdAt: "2026-07-29T12:00:00Z", id: "a" },
+    { createdAt: "2026-07-29T11:59:59Z", id: "z" },
+  ];
+  const cursor = ordered[1]!;
+  const afterCursor = ordered.filter(
+    (row) =>
+      row.createdAt < cursor.createdAt ||
+      (row.createdAt === cursor.createdAt && row.id < cursor.id),
+  );
+  assert.deepEqual(afterCursor, [ordered[2]]);
 });
 
 test("dashboard auth transitions include INITIAL_SESSION and coalesce reloads", () => {
@@ -81,12 +111,25 @@ test("dashboard auth transitions include INITIAL_SESSION and coalesce reloads", 
 });
 
 test("dashboard cannot hide a live or still-minting credential", () => {
-  const source = between(dashboard, "const closeConnect =", "const createFromIntent =");
+  const guard = between(
+    dashboard,
+    "const keepConnectCredentialVisible =",
+    "const closeConnect =",
+  );
+  const close = between(dashboard, "const closeConnect =", "const createFromIntent =");
+  const signout = between(
+    dashboard,
+    'for (const button of all<HTMLButtonElement>("[data-signout]"))',
+    'one<HTMLButtonElement>("[data-add-agent]")',
+  );
 
-  assert.match(source, /mintBusy \|\| connectState === "working" \|\| connectState === "done"/);
-  assert.match(source, /Clear this live prompt before leaving this screen/);
-  assert.match(source, /data-action='clear'/);
-  assert.match(source, /return;[\s\S]*pendingWorkspaceId = ""/);
+  assert.match(guard, /connectState !== "working" && connectState !== "done"/);
+  assert.match(guard, /Clear this live prompt before leaving this screen/);
+  assert.match(guard, /finish creating the key before leaving this screen/);
+  assert.match(guard, /data-action='clear'/);
+  assert.match(close, /if \(keepConnectCredentialVisible\(\)\) return/);
+  assert.match(signout, /if \(keepConnectCredentialVisible\(\)\) return/);
+  assert.match(signout, /requestVersion \+= 1;[\s\S]*activeWorkspaceId = ""/);
 });
 
 test("workspace changes synchronously retarget AgentConnect before its panel opens", () => {
@@ -95,8 +138,28 @@ test("workspace changes synchronously retarget AgentConnect before its panel ope
 
   assert.match(connect, /static observedAttributes = \["workspace-id", "workspace-name"\]/);
   assert.match(connect, /attributeChangedCallback\(\)/);
+  assert.match(
+    connect,
+    /if \(this\.#busy \|\| this\.dataset\.state === "done"\)[\s\S]*this\.#retargetPending = true/,
+  );
+  assert.match(
+    connect,
+    /if \(this\.#retargetPending && this\.dataset\.state !== "done"\)[\s\S]*this\.#queueLoad\(\)/,
+  );
   assert.match(connect, /const version = \+\+this\.#loadVersion/);
-  assert.match(connect, /if \(version !== this\.#loadVersion\) return/);
+  assert.equal(
+    connect.match(/if \(version !== this\.#loadVersion\) return/g)?.length,
+    4,
+    "every async AgentConnect load branch must reject stale results",
+  );
+  assert.match(
+    connect,
+    /const session = await currentSession\(\);[\s\S]*if \(version !== this\.#loadVersion\) return/,
+  );
+  assert.match(
+    connect,
+    /const workspaces = await myWorkspaces\(\);[\s\S]*if \(version !== this\.#loadVersion\) return/,
+  );
   assert.match(
     connect,
     /const nextAgents = await myAgents\(session, nextWorkspaceId\);[\s\S]*if \(version !== this\.#loadVersion\) return;[\s\S]*this\.#workspaceId = nextWorkspaceId/,

@@ -250,6 +250,13 @@ import SampleNotice from "./SampleNotice.astro";
                 <span aria-hidden="true">←</span>
                 Back to the channel
               </button>
+              <p
+                class="dashboard__form-error dashboard__connect-exit-status"
+                role="status"
+                aria-live="polite"
+                data-connect-exit-status
+                hidden
+              ></p>
               <AgentConnect eyebrow="Add an agent" class="dashboard__connect" />
             </section>
 
@@ -349,6 +356,11 @@ import SampleNotice from "./SampleNotice.astro";
     name: string;
   }
 
+  interface SignalCursor {
+    createdAt: string;
+    id: string;
+  }
+
   const app = document.querySelector<HTMLElement>("live-dashboard");
 
   if (app) {
@@ -366,7 +378,7 @@ import SampleNotice from "./SampleNotice.astro";
     let activeWorkspaceId = "";
     let requestVersion = 0;
     let sampleMode = false;
-    let signalOffset = 0;
+    let signalCursor: SignalCursor | null = null;
     let signalHasMore = false;
     let signalCutoff = "";
     let pendingWorkspaceId = "";
@@ -600,20 +612,26 @@ import SampleNotice from "./SampleNotice.astro";
 
     const signalPage = async (
       workspaceId: string,
-      offset: number,
+      cursor: SignalCursor | null,
       cutoff: string,
     ): Promise<{ rows: Signal[]; hasMore: boolean }> => {
       const api = client();
       if (!api) throw new NoDeployment();
-      const { data, error } = await api
+      let query = api
         .schema("swarm_read")
         .from("signals")
         .select("id,from,from_kind,kind,body,about,until,created_at")
         .eq("workspace_id", workspaceId)
-        .or(`until.is.null,until.gt.${cutoff}`)
+        .or(`until.is.null,until.gt.${cutoff}`);
+      if (cursor) {
+        query = query.or(
+          `created_at.lt.${cursor.createdAt},and(created_at.eq.${cursor.createdAt},id.lt.${cursor.id})`,
+        );
+      }
+      const { data, error } = await query
         .order("created_at", { ascending: false })
         .order("id", { ascending: false })
-        .range(offset, offset + SIGNAL_FETCH_SIZE - 1);
+        .limit(SIGNAL_FETCH_SIZE);
       if (error) throw new Error(error.message);
       const page = data ?? [];
       return {
@@ -810,19 +828,22 @@ import SampleNotice from "./SampleNotice.astro";
       reset: boolean,
       version: number,
     ): Promise<void> => {
-      const offset = reset ? 0 : signalOffset;
-      if (reset) signalCutoff = new Date().toISOString();
-      const page = await signalPage(workspaceId, offset, signalCutoff);
+      const cursor = reset ? null : signalCursor;
+      if (reset) {
+        signalCursor = null;
+        signalCutoff = new Date().toISOString();
+      }
+      const page = await signalPage(workspaceId, cursor, signalCutoff);
       if (version !== requestVersion || workspaceId !== activeWorkspaceId) return;
       if (reset) {
         signals = page.rows;
-        signalOffset = page.rows.length;
       } else {
         const known = new Set(signals.map((signal) => signal.id));
         const additions = page.rows.filter((signal) => !known.has(signal.id));
         signals = [...signals, ...additions];
-        signalOffset = offset + page.rows.length;
       }
+      const last = page.rows.at(-1);
+      signalCursor = last ? { createdAt: last.createdAt, id: last.id } : cursor;
       signalHasMore = page.hasMore;
       renderFeed();
     };
@@ -895,7 +916,7 @@ import SampleNotice from "./SampleNotice.astro";
       agents = [];
       people = new Map();
       signals = [];
-      signalOffset = 0;
+      signalCursor = null;
       signalHasMore = false;
       signalCutoff = "";
       if (keepShell) renderChannel(selected, true);
@@ -928,32 +949,43 @@ import SampleNotice from "./SampleNotice.astro";
       const connect = one<SecretHoldingAgentConnect>("agent-connect");
       if (!selected || !connect) return;
       syncConnectWorkspace(selected);
+      const exitStatus = one<HTMLElement>("[data-connect-exit-status]");
+      if (exitStatus) exitStatus.hidden = true;
       showChannelView("connect");
       window.requestAnimationFrame(() => {
         one<HTMLElement>("[data-close-connect]")?.focus();
       });
     };
 
-    const closeConnect = (): void => {
+    const keepConnectCredentialVisible = (): boolean => {
       const connect = one<SecretHoldingAgentConnect>("agent-connect");
       const connectState = connect?.dataset.state ?? "";
       const mintBusy = connect?.hasAttribute("data-mint-busy") ?? false;
-      if (mintBusy || connectState === "working" || connectState === "done") {
-        showChannelView("connect");
-        if (connectState === "done") {
-          const status = connect?.querySelector<HTMLElement>("[data-slot='copy-status']");
-          if (status) status.textContent = "Clear this live prompt before leaving this screen.";
-        }
-        window.requestAnimationFrame(() => {
-          if (connectState === "done") {
-            connect?.querySelector<HTMLButtonElement>("[data-action='clear']")?.focus();
-          } else {
-            one<HTMLButtonElement>("[data-close-connect]")?.focus();
-          }
-        });
-        return;
+      if (!mintBusy && connectState !== "working" && connectState !== "done") return false;
+      showChannelView("connect");
+      const exitStatus = one<HTMLElement>("[data-connect-exit-status]");
+      if (exitStatus) {
+        exitStatus.textContent =
+          connectState === "done"
+            ? "Clear this live prompt before leaving this screen."
+            : "Wait for CommonSwarm to finish creating the key before leaving this screen.";
+        exitStatus.hidden = false;
       }
+      window.requestAnimationFrame(() => {
+        if (connectState === "done") {
+          connect?.querySelector<HTMLButtonElement>("[data-action='clear']")?.focus();
+        } else {
+          one<HTMLButtonElement>("[data-close-connect]")?.focus();
+        }
+      });
+      return true;
+    };
+
+    const closeConnect = (): void => {
+      if (keepConnectCredentialVisible()) return;
       pendingWorkspaceId = "";
+      const exitStatus = one<HTMLElement>("[data-connect-exit-status]");
+      if (exitStatus) exitStatus.hidden = true;
       if (agents.length === 0) showChannelView("no-agents");
       else if (signals.length === 0) {
         const workspaceId = activeWorkspaceId;
@@ -1015,7 +1047,7 @@ import SampleNotice from "./SampleNotice.astro";
     const renderSample = (): void => {
       sampleMode = true;
       signalHasMore = false;
-      signalOffset = 0;
+      signalCursor = null;
       signalCutoff = "";
       const now = Date.now();
       workspaces = [
@@ -1195,9 +1227,13 @@ import SampleNotice from "./SampleNotice.astro";
 
     for (const button of all<HTMLButtonElement>("[data-signout]")) {
       button.addEventListener("click", async () => {
+        if (keepConnectCredentialVisible()) return;
         button.disabled = true;
         one<SecretHoldingAgentConnect>("agent-connect")?.clearPrompt(false);
         if (session) clearCreateIntent(session.user.id);
+        requestVersion += 1;
+        activeWorkspaceId = "";
+        renderedAuthUserId = "";
         await signOut();
         session = null;
         workspaces = [];

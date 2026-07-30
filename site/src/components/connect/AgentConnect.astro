@@ -204,6 +204,7 @@ const {
     #copyTimer: number | undefined;
     #loadQueued = false;
     #loadVersion = 0;
+    #retargetPending = false;
     /* Attributes present in the markup fire attributeChangedCallback during upgrade, BEFORE
        connectedCallback — so without this the element would load twice on every page. */
     #ready = false;
@@ -216,13 +217,16 @@ const {
     }
 
     attributeChangedCallback() {
-      if (
-        !this.#ready ||
-        !this.isConnected ||
-        this.#busy ||
-        this.#loadQueued ||
-        this.dataset.state === "done"
-      ) return;
+      if (!this.#ready || !this.isConnected) return;
+      if (this.#busy || this.dataset.state === "done") {
+        this.#retargetPending = true;
+        return;
+      }
+      this.#queueLoad();
+    }
+
+    #queueLoad() {
+      if (this.#loadQueued) return;
       this.#loadQueued = true;
       queueMicrotask(() => {
         this.#loadQueued = false;
@@ -274,9 +278,12 @@ const {
       if (this.#prompt === null) return;
       this.#forget();
       this.#state("ready");
+      const retarget = this.#retargetPending;
+      this.#retargetPending = false;
       if (notify) {
         this.dispatchEvent(new CustomEvent("commonswarm:agent-secret-cleared", { bubbles: true }));
       }
+      if (retarget) this.#queueLoad();
     }
 
     /*
@@ -420,6 +427,10 @@ const {
       } finally {
         this.#busy = false;
         this.toggleAttribute("data-mint-busy", false);
+        if (this.#retargetPending && this.dataset.state !== "done") {
+          this.#retargetPending = false;
+          this.#queueLoad();
+        }
       }
     }
 
