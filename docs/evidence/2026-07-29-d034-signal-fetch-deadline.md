@@ -43,7 +43,8 @@ handling remains the only outward failure mapping. Consequently:
 
 The observer at `tests/support/signal-fetch-deadline.test.ts` is pure and is named literally in
 the root `npm test` script. It does not inherit credibility from a provider responding quickly:
-one fetch double never returns headers and a second returns headers before its JSON body hangs.
+one fetch double never returns headers, a second ignores abort entirely, and a third returns
+headers before its JSON body hangs.
 
 ## Positive observation
 
@@ -52,17 +53,18 @@ All commands below were captured by the fenced task ledger under evidence direct
 
 | Run | Command | Observed result |
 | --- | --- | --- |
-| 028 | restored final `node --import tsx --test tests/support/signal-fetch-deadline.test.ts` | 3 tests, 3 pass, 0 fail |
-| 029 | final `npm test` | 82 tests, 82 pass, 0 fail |
-| 030 | final `npm run build` | exit 0 |
-| 031 | final `npm run check:tests` | exit 0 |
+| 036 | final `node --import tsx --test tests/support/signal-fetch-deadline.test.ts` | 3 tests, 3 pass, 0 fail |
+| 037 | final `npm test` | 82 tests, 82 pass, 0 fail |
+| 038 | final `npm run build` | exit 0 |
+| 039 | final `npm run check:tests` | exit 0 |
 
 The first observer reaches all three production fetch sites, checks that none abort at
 29,999 ms, then checks that all abort at 30,000 ms while preserving the three existing error
 messages. The second lets the helper receive successful response headers, then proves a pending
 JSON body is still bounded. The third passes two real pending `readSignals()` calls into
-`settleSignalStatus()` and observes the nullable values plus the existing warning after
-30,000 ms.
+`settleSignalStatus()` through a fetcher that records but deliberately ignores both abort
+signals; it observes the nullable values plus the existing warning after 30,000 ms. That third
+observer distinguishes bounded caller settlement from cancellation of underlying I/O.
 
 ## Mutation discrimination
 
@@ -86,7 +88,7 @@ headers. Run 022 initially (and incorrectly) passed because the observer advance
 before the helper's fetch continuation had processed those headers. That result is discarded.
 The observer was corrected to yield through that continuation first. With the same production
 mutation still present, run 023 then timed out at 250 ms: 1 selected, 0 pass, 1 cancelled.
-Restoring the production lifecycle passed all 3 observers in the final run 028.
+Restoring the production lifecycle passed all 3 observers in the final run 036.
 
 This second discrimination matters independently of signal propagation: it proves response
 headers cannot silently end the application deadline before the body settles.
@@ -103,10 +105,17 @@ that risk contradicted the task's bounded-read outcome. The rejection was accept
   keep `readSignals()` pending, although its ignored underlying I/O may continue;
 - the body-stall observer and its corrected scheduling discrimination are on root `npm test`.
 
+Grok then approved replacement SHA `7613165aa3c0927a16a751c52ac286af4daaf915`
+but found that a header-level fetcher which ignored abort was proven by code and an external
+probe rather than the committed root observer. That evidence-completeness finding was accepted:
+the real status-fallback observer now deliberately uses two fetch calls that never settle and
+ignore their propagated abort signals. Its settlement therefore discriminates the abort race,
+not cooperative transport cancellation.
+
 Gemini also noted that `settleSignalStatus()` accepts arbitrary promises. That is retained as
 a non-claim: the product path is bounded because it passes the deadline-backed `readSignals()`
 promises, not because `Promise.allSettled()` independently times out every possible input.
-Both required reviewers must bind again to the replacement SHA; the task ledger and Lead
+Both required reviewers must bind again to the final SHA; the task ledger and Lead
 handoff carry those final exact-SHA verdicts because a commit cannot contain its own hash.
 
 ## Scope and NOT ESTABLISHED

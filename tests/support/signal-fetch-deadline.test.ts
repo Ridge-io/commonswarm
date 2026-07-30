@@ -45,6 +45,18 @@ function hangingFetch(observed: AbortSignal[]): typeof fetch {
   }) as typeof fetch;
 }
 
+function ignoringAbortFetch(observed: AbortSignal[]): typeof fetch {
+  return (async (_input, init) => {
+    const signal = init?.signal;
+    assert.ok(
+      signal instanceof AbortSignal,
+      "the production read must still propagate its AbortSignal",
+    );
+    observed.push(signal);
+    return await new Promise<Response>(() => {});
+  }) as typeof fetch;
+}
+
 function headersThenHangingBody(observed: AbortSignal[]): typeof fetch {
   return (async (_input, init) => {
     const signal = init?.signal;
@@ -150,7 +162,7 @@ test("D-034: response headers cannot end the deadline before the body settles", 
 test("D-034: the signal status fallback settles when providers never answer", async (t) => {
   t.mock.timers.enable({ apis: ["setTimeout"] });
   const observed: AbortSignal[] = [];
-  const fetcher = hangingFetch(observed);
+  const fetcher = ignoringAbortFetch(observed);
   const recent = readSignals(TARGET, {
     kind: "agent",
     token: "agent-token",
@@ -175,4 +187,9 @@ test("D-034: the signal status fallback settles when providers never answer", as
     waitingAsks: null,
     warning: SIGNAL_STATUS_UNAVAILABLE_MESSAGE,
   });
+  assert.deepEqual(
+    observed.map((signal) => signal.aborted),
+    [true, true],
+    "status must settle even though both fetch calls ignored the abort",
+  );
 });
