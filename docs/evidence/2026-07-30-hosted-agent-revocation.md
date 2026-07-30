@@ -54,8 +54,11 @@ Durable logs: `~/.swarm/evidence/9a518dee-…/hosted-agent-revocation/run-00N.lo
 Site mutation (cheap, pre-rebase): `docs/evidence/2026-07-30-agent-revocation-site-mutation-red.log` /
 `…-green.log` — `revokeAgentPrincipal`→`clearPrompt` RED then restore GREEN.
 
-`docs/evidence/2026-07-30-agent-revocation-p1-server-run-003.log` — pre-rebase TAP copy of run-003,
-force-added so it is not silently lost across rebase.
+## Preserved full log
+
+`docs/evidence/2026-07-30-agent-revocation-p1-server-run-003.log` is the pre-rebase TAP
+copy of swarm run-003. It is **tracked in this branch** (force-added under
+`docs/evidence/`) so it is not silently lost across rebase.
 
 ## NOT ESTABLISHED on the post-rebase tip
 

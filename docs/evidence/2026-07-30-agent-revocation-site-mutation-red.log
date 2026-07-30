@@ -15,7 +15,7 @@
 test at src/components/app/agent-revocation.observer.test.ts:1:107
 ✖ agent roster Remove is role-aware and confirms identity end (3.251167ms)
   AssertionError [ERR_ASSERTION]: The input did not match the regular expression /revokeAgentPrincipal\(/. Input:
-  
+
   '---\n' +
     '/*\n' +
     ' * /app is the product surface. The browser owns the state machine because the page is\n' +
@@ -251,7 +251,7 @@ test at src/components/app/agent-revocation.observer.test.ts:1:107
     '            <div>\n' +
     '              <p class="dashboard__channel-kicker">Workspace channel</p>\n' +
     '              <h1 id="dashboard-channel-titl'... 75897 more characters
-  
+
       at TestContext.<anonymous> (/Users/yulanbot/.swarm/wt/cloud-swarm-source/Forge--hosted-agent-revocation/site/src/components/app/agent-revocation.observer.test.ts:15:10)
       at async Test.run (node:internal/test_runner/test:1389:7)
       at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {

@@ -4729,7 +4729,7 @@ test("hosted agent revocation: human roles, agent confinement, lineage fail-clos
     const renewOk = succRenew.status === 401 || succRenew.status === 403;
     assert.ok(
       postOk && renewOk,
-      `already-issued successor must fail closed on both post and renew after predecessor revoke; post HTTP ${succSignal.status}, renew HTTP ${succRenew.status}`,
+      `already-issued successor must fail closed on both post and renew after predecessor revoke; post HTTP ${succSignal.status} body=${succSignal.text}; renew HTTP ${succRenew.status} body=${succRenew.text}`,
     );
 
     // Control successor on an unrevoked lineage remains live.
