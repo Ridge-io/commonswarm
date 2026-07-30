@@ -112,11 +112,20 @@ Established by the combination of:
 
 **Instrument caveat (not incomplete product evidence):** no later chronological suite free of the unrelated pre-principal async log-observer flake (`2!==5` / `4!==5` in 012/013) was observed. That is an instrument/observer caveat only. It does **not** leave product revocation uncertain and is **not** a remaining shipping gate.
 
-## NOT ESTABLISHED (shipping only)
+## Shipping follow-through — ESTABLISHED
 
-On exact `0c4aed9` product/test tree (and any docs-only successor of this evidence file), remaining only:
+The shipping-only items that remained when this evidence was written were completed on
+2026-07-30:
 
-- Fresh **exact-SHA** inverted-family review pair (**Grok + AGY/Gemini**)
-- Push / land of `swarm/Forge/hosted-agent-revocation`
-- Deploy of edge `command` (or other functions) and marketing site
-- Live identity / onboarding / cleanup E2E on production
+- the product tree received fresh exact-SHA Grok and AGY Google-family approvals
+- hosted revocation landed on `main`
+- production `command` version 13 was deployed and downloaded bytes matched the landed
+  source
+- the site was deployed, live-browser tested, repaired for one causal Add-agent panel
+  defect, and redeployed from product SHA `21c3328`
+- the disposable live onboarding, agent signal, removal backend, and complete privileged
+  cleanup were exercised
+
+See `docs/evidence/2026-07-30-workspace-first-production-e2e.md` for the production
+artifact identities, measured journey, cleanup enumeration, and honest remaining
+ceilings.
