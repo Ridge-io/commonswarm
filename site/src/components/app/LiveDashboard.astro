@@ -387,6 +387,7 @@ import SampleNotice from "./SampleNotice.astro";
     let bootInFlight: Promise<void> | null = null;
     let bootAgain = false;
     let signalExpiryTimer: number | undefined;
+    let channelLoadError = "";
     let activeCreate: { version: number; userId: string } | null = null;
 
     const SIGNAL_PAGE_SIZE = 50;
@@ -954,6 +955,7 @@ import SampleNotice from "./SampleNotice.astro";
       signalCursor = null;
       signalHasMore = false;
       signalCutoff = "";
+      channelLoadError = "";
       if (keepShell) renderChannel(selected, true);
       else setLoading(`Opening ${selected.name}…`);
       try {
@@ -964,16 +966,18 @@ import SampleNotice from "./SampleNotice.astro";
         if (version !== requestVersion) return;
         agents = nextAgents;
         people = nextPeople;
-        renderChannel(selected);
+        if (app.dataset.channelView !== "connect") renderChannel(selected);
         if (agents.length > 0) {
           await loadSignals(selected.id, true, version);
         }
       } catch (error) {
         if (version !== requestVersion) return;
         signalHasMore = false;
-        renderChannel(selected);
+        channelLoadError = `${readableError(error)} Nothing was changed.`;
         const target = one<HTMLElement>("[data-feed-error]");
-        if (target) target.textContent = `${readableError(error)} Nothing was changed.`;
+        if (target) target.textContent = channelLoadError;
+        if (app.dataset.channelView === "connect") return;
+        renderChannel(selected);
         showChannelView("feed-error");
       }
     };
@@ -1021,7 +1025,8 @@ import SampleNotice from "./SampleNotice.astro";
       pendingWorkspaceId = "";
       const exitStatus = one<HTMLElement>("[data-connect-exit-status]");
       if (exitStatus) exitStatus.hidden = true;
-      if (agents.length === 0) showChannelView("no-agents");
+      if (channelLoadError) showChannelView("feed-error");
+      else if (agents.length === 0) showChannelView("no-agents");
       else if (signals.length === 0) {
         const workspaceId = activeWorkspaceId;
         const version = requestVersion;
