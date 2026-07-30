@@ -43,13 +43,14 @@ test("fresh-auth helper cannot be weakened to JWT iat or token refresh", async (
       "password",
       "otp",
       "totp",
-      "sso",
-      "saml",
+      "sso/saml",
       "magiclink",
-      "email",
-      "signup",
+      "email/signup",
     ]
   ) {
     assert.match(source, new RegExp(`"${method}"`));
+  }
+  for (const alias of ["sso", "saml", "email", "signup"]) {
+    assert.doesNotMatch(source, new RegExp(`"${alias}"`));
   }
 });

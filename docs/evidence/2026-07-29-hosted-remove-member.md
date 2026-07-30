@@ -9,8 +9,8 @@
   rewrites repository authority.
 - Fresh authentication is 300 seconds from the newest interactive AMR in
   verified claims for the presented session. Decision #183 allows
-  `oauth`, `password`, `otp`, `totp`, `sso`, `saml`, `magiclink`, `email`, and
-  `signup`; refresh/recovery/email-change/anonymous/missing/malformed/future
+  `oauth`, `password`, `otp`, `totp`, `sso/saml`, `magiclink`, and `email/signup`;
+  refresh/recovery/email-change/anonymous/missing/malformed/future
   methods fail closed. JWT `iat` and global sign-in timestamps are not used.
 - Idempotency replay precedes the fresh-auth gate. A stale first attempt is
   audit-only and unledgered; the CLI preserves that command ID for the explicit

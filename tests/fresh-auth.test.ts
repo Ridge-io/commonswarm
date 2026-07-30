@@ -15,11 +15,9 @@ test("Decision 183 interactive AMR allowlist is complete", () => {
       "password",
       "otp",
       "totp",
-      "sso",
-      "saml",
+      "sso/saml",
       "magiclink",
-      "email",
-      "signup",
+      "email/signup",
     ]
   ) {
     assert.equal(
@@ -65,6 +63,13 @@ test("fresh auth fails closed for excluded, missing, malformed, and future AMR",
     ]
   ) {
     assert.equal(newestInteractiveAmrSeconds(claims), null);
+  }
+  for (const method of ["sso", "saml", "email", "signup"]) {
+    assert.equal(
+      newestInteractiveAmrSeconds({ amr: [{ method, timestamp: NOW_SECONDS - 1 }] }),
+      null,
+      `undocumented alias ${method} must fail closed`,
+    );
   }
   assert.equal(
     hasFreshInteractiveAuth(NOW_SECONDS + 1, NOW_SECONDS * 1000),

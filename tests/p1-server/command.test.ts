@@ -2458,11 +2458,11 @@ test("remove_member revokes exactly one workspace membership at the event timest
     assert.equal(result.status, 200);
     assert.equal(result.body.status, "accepted");
     const [event] = await sql<{
-      occurred_at_server: Date;
+      occurred_at_server: number;
       revoked_at: string;
     }[]>`
       SELECT
-        to_timestamp(occurred_at_server / 1000.0) AS occurred_at_server,
+        occurred_at_server,
         payload->>'revoked_at' AS revoked_at
       FROM swarm.events
       WHERE workspace_id = ${f.workspaceA}::uuid
@@ -2505,8 +2505,9 @@ test("remove_member enforces role, agent denial, last-owner, and landing authori
       f.agentToken,
       { kind: "remove_member", user_id: f.ua2 },
     );
-    assert.equal(memberDenied.status, 403);
-    assert.deepEqual(memberDenied.body, { error: "forbidden" });
+    assert.equal(memberDenied.status, 200);
+    assert.equal(memberDenied.body.status, "rejected");
+    assert.equal(memberDenied.body.reason, "role_forbidden");
     assert.equal(agentDenied.status, 403);
     assert.deepEqual(agentDenied.body, { error: "forbidden" });
 

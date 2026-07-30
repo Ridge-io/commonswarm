@@ -5,11 +5,9 @@ const INTERACTIVE_METHODS = new Set([
   "password",
   "otp",
   "totp",
-  "sso",
-  "saml",
+  "sso/saml",
   "magiclink",
-  "email",
-  "signup",
+  "email/signup",
 ]);
 
 function record(value: unknown): Record<string, unknown> | null {
