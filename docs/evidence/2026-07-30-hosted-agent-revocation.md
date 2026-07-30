@@ -30,7 +30,7 @@ Invalidation of a8ec975 was **test evidence**, not implementation.
 
 | Arm | Result | Log |
 |-----|--------|-----|
-| Site `await revokeAgentPrincipal(` → `await clearPrompt(` | **RED exit 1** then restored **GREEN exit 0** | `docs/evidence/hosted-agent-revocation-mutations/site-observer-red-only.log` / `site-observer-green-only.log` |
+| Site `await revokeAgentPrincipal(` → `await clearPrompt(` | **RED exit 1** then restored **GREEN exit 0** | `docs/evidence/2026-07-30-agent-revocation-site-mutation-red.log` / `docs/evidence/2026-07-30-agent-revocation-site-mutation-green.log` |
 | Agent-self scope exception (`isAgentTokenRevoke`) | **NOT ESTABLISHED** — requires exclusive p1-server slot | after GREEN suite on revised SHA |
 | Lineage tombstone insert in `AgentTokenRevoked` projection | **NOT ESTABLISHED** — requires exclusive p1-server slot | after GREEN |
 

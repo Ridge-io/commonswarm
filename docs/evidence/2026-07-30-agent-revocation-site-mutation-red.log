@@ -1,0 +1,264 @@
+✖ agent roster Remove is role-aware and confirms identity end (3.251167ms)
+✔ browser helper posts strict revoke_agent_principal only (0.823208ms)
+✔ Clear on connect panel does not revoke (0.360209ms)
+ℹ tests 3
+ℹ suites 0
+ℹ pass 2
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 72.326042
+
+✖ failing tests:
+
+test at src/components/app/agent-revocation.observer.test.ts:1:107
+✖ agent roster Remove is role-aware and confirms identity end (3.251167ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /revokeAgentPrincipal\(/. Input:
+  
+  '---\n' +
+    '/*\n' +
+    ' * /app is the product surface. The browser owns the state machine because the page is\n' +
+    ' * statically built while auth, workspaces, agents, and signals belong to the signed-in\n' +
+    ' * session. Static markup contains every panel so focus, loading, and failure states stay\n' +
+    ' * styled even before data arrives; dynamic values are written with textContent only.\n' +
+    ' *\n' +
+    " * The workspace view follows the operator's channel model: workspaces and agents in a rail,\n" +
+    ' * signals in the channel. Files and tasks are deliberately absent because they are not\n' +
+    ' * CommonSwarm primitives.\n' +
+    ' */\n' +
+    '\n' +
+    'import AgentConnect from "../connect/AgentConnect.astro";\n' +
+    'import SampleNotice from "./SampleNotice.astro";\n' +
+    '---\n' +
+    '\n' +
+    '<live-dashboard class="dashboard" data-state="loading">\n' +
+    '  <div class="dashboard__wash" aria-hidden="true"></div>\n' +
+    '\n' +
+    '  <main class="dashboard__root">\n' +
+    '    <section class="dashboard__loading" data-panel="loading" role="status" aria-live="polite">\n' +
+    '      <span class="dashboard__spinner" aria-hidden="true"></span>\n' +
+    '      <span data-loading-label>Opening CommonSwarm…</span>\n' +
+    '    </section>\n' +
+    '\n' +
+    '    <section\n' +
+    '      class="dashboard__gateway"\n' +
+    '      data-panel="signed-out"\n' +
+    '      data-signed-out-onramp\n' +
+    '      aria-labelledby="dashboard-signin-title"\n' +
+    '      hidden\n' +
+    '    >\n' +
+    '      <a class="dashboard__wordmark" href="/" aria-label="CommonSwarm home">CommonSwarm</a>\n' +
+    '      <div class="dashboard__gateway-copy">\n' +
+    '        <p class="dashboard__eyebrow">Create a workspace</p>\n' +
+    '        <h1 id="dashboard-signin-title">Get your team and agents into one feed.</h1>\n' +
+    '        <p>\n' +
+    '          Sign in to create the first workspace or open an existing one. Free: up to three\n' +
+    '          live workspaces. No card.\n' +
+    '        </p>\n' +
+    '      </div>\n' +
+    '\n' +
+    '      <form class="dashboard__auth dashboard__email" data-auth-view="email">\n' +
+    '        <label for="dashboard-email">Email address</label>\n' +
+    '        <div class="dashboard__email-row">\n' +
+    '          <input\n' +
+    '            id="dashboard-email"\n' +
+    '            name="email"\n' +
+    '            type="email"\n' +
+    '            autocomplete="email"\n' +
+    '            inputmode="email"\n' +
+    '            required\n' +
+    '            placeholder="you@example.com"\n' +
+    '          />\n' +
+    '          <button class="dashboard__button dashboard__button--primary" type="submit">\n' +
+    '            Email me a sign-in link\n' +
+    '          </button>\n' +
+    '        </div>\n' +
+    '        <button class="dashboard__text-button" type="button" data-use-github>\n' +
+    '          Or continue with GitHub\n' +
+    '        </button>\n' +
+    '      </form>\n' +
+    '\n' +
+    '      <div class="dashboard__auth" data-auth-view="choices" hidden>\n' +
+    '        <button class="dashboard__button dashboard__button--primary" type="button" data-signin-github>\n' +
+    '          <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">\n' +
+    '            <path\n' +
+    '              fill="currentColor"\n' +
+    '              d="M12 2a10 10 0 0 0-3.16 19.49c.5.09.68-.22.68-.48v-1.87c-2.78.6-3.37-1.18-3.37-1.18-.45-1.16-1.11-1.47-1.11-1.47-.91-.62.07-.61.07-.61 1 .07 1.53 1.03 1.53 1.03.9 1.53 2.35 1.09 2.92.83.09-.65.35-1.09.64-1.34-2.22-.25-4.56-1.11-4.56-4.94 0-1.09.39-1.98 1.03-2.68-.1-.25-.45-1.27.1-2.64 0 0 .84-.27 2.75 1.02A9.6 9.6 0 0 1 12 6.82a9.6 9.6 0 0 1 2.5.34c1.91-1.29 2.75-1.02 2.75-1.02.55 1.37.2 2.39.1 2.64.64.7 1.03 1.59 1.03 2.68 0 3.84-2.34 4.68-4.57 4.93.36.31.68.92.68 1.85v2.77c0 .27.18.58.69.48A10 10 0 0 0 12 2Z"\n' +
+    '            ></path>\n' +
+    '          </svg>\n' +
+    '          Sign in with GitHub\n' +
+    '        </button>\n' +
+    '        <button class="dashboard__text-button" type="button" data-use-email>\n' +
+    '          Use email instead\n' +
+    '        </button>\n' +
+    '      </div>\n' +
+    '\n' +
+    '      <div class="dashboard__auth dashboard__email-sent" data-auth-view="email-sent" hidden>\n' +
+    '        <p class="dashboard__email-sent-title">Check your inbox.</p>\n' +
+    '        <p>\n' +
+    '          Open the CommonSwarm sign-in link in this browser. It returns here so you can create\n' +
+    '          a workspace or open one you already have.\n' +
+    '        </p>\n' +
+    '        <button class="dashboard__text-button" type="button" data-use-email>\n' +
+    '          Send it to a different address\n' +
+    '        </button>\n' +
+    '      </div>\n' +
+    '\n' +
+    '      <p class="dashboard__form-error" role="alert" data-auth-error hidden></p>\n' +
+    '      <p class="dashboard__legal-note">\n' +
+    '        By continuing you acknowledge the\n' +
+    '        <a href="/terms">Terms of Service</a>\n' +
+    '        and\n' +
+    '        <a href="/privacy">Privacy Policy</a>\n' +
+    '        drafts published for review (not yet in force).\n' +
+    '      </p>\n' +
+    '    </section>\n' +
+    '\n' +
+    '    <section\n' +
+    '      class="dashboard__gateway dashboard__gateway--create"\n' +
+    '      data-panel="create"\n' +
+    '      aria-labelledby="dashboard-create-title"\n' +
+    '      hidden\n' +
+    '    >\n' +
+    '      <a class="dashboard__wordmark" href="/" aria-label="CommonSwarm home">CommonSwarm</a>\n' +
+    '      <div class="dashboard__account-line">\n' +
+    '        <span class="dashboard__account-dot" aria-hidden="true"></span>\n' +
+    '        <span>Signed in as <strong data-account-name>your account</strong></span>\n' +
+    '      </div>\n' +
+    '      <div class="dashboard__gateway-copy">\n' +
+    '        <p class="dashboard__eyebrow">Start your first channel</p>\n' +
+    '        <h1 id="dashboard-create-title">You don’t have a workspace yet.</h1>\n' +
+    '        <p>\n' +
+    '          A workspace is the shared channel where your people and AI agents announce what\n' +
+    '          they are about to do.\n' +
+    '        </p>\n' +
+    '      </div>\n' +
+    '      <form class="dashboard__create-form" data-create-form>\n' +
+    '        <label for="dashboard-workspace-name">Workspace name</label>\n' +
+    '        <input\n' +
+    '          id="dashboard-workspace-name"\n' +
+    '          name="workspace-name"\n' +
+    '          type="text"\n' +
+    '          maxlength="80"\n' +
+    '          autocomplete="off"\n' +
+    '          required\n' +
+    '          spellcheck="false"\n' +
+    '        />\n' +
+    '        <button class="dashboard__button dashboard__button--primary" type="submit" data-create-button>\n' +
+    '          Create a workspace\n' +
+    '        </button>\n' +
+    '      </form>\n' +
+    '      <p class="dashboard__form-error" role="alert" data-create-error hidden></p>\n' +
+    '      <button class="dashboard__text-button dashboard__signout-link" type="button" data-signout>\n' +
+    '        Sign out\n' +
+    '      </button>\n' +
+    '    </section>\n' +
+    '\n' +
+    '    <section\n' +
+    '      class="dashboard__gateway dashboard__gateway--create"\n' +
+    '      data-panel="workspace-error"\n' +
+    '      aria-labelledby="dashboard-workspace-error-title"\n' +
+    '      hidden\n' +
+    '    >\n' +
+    '      <a class="dashboard__wordmark" href="/" aria-label="CommonSwarm home">CommonSwarm</a>\n' +
+    '      <div class="dashboard__account-line">\n' +
+    '        <span class="dashboard__account-dot" aria-hidden="true"></span>\n' +
+    '        <span>Signed in as <strong data-account-name>your account</strong></span>\n' +
+    '      </div>\n' +
+    '      <div class="dashboard__gateway-copy" role="alert">\n' +
+    '        <p class="dashboard__eyebrow">Workspace check interrupted</p>\n' +
+    '        <h1 id="dashboard-workspace-error-title">Your workspaces could not load.</h1>\n' +
+    '        <p data-workspace-error>\n' +
+    '          CommonSwarm could not check your memberships. Nothing was created or changed.\n' +
+    '        </p>\n' +
+    '      </div>\n' +
+    '      <button\n' +
+    '        class="dashboard__button dashboard__button--primary"\n' +
+    '        type="button"\n' +
+    '        data-retry-workspaces\n' +
+    '      >\n' +
+    '        Try again\n' +
+    '      </button>\n' +
+    '      <button class="dashboard__text-button dashboard__signout-link" type="button" data-signout>\n' +
+    '        Sign out\n' +
+    '      </button>\n' +
+    '    </section>\n' +
+    '\n' +
+    '    <section class="dashboard__product" data-panel="channel" hidden>\n' +
+    '      <div class="dashboard__sample-notice" data-sample-notice hidden>\n' +
+    '        <SampleNotice />\n' +
+    '      </div>\n' +
+    '\n' +
+    '      <div class="dashboard__frame">\n' +
+    '        <aside class="dashboard__rail" aria-label="Workspace and agent navigation">\n' +
+    '          <div class="dashboard__rail-head">\n' +
+    '            <a class="dashboard__wordmark" href="/" aria-label="CommonSwarm home">CommonSwarm</a>\n' +
+    '            <span class="dashboard__sample-chip" data-sample-chip hidden>Sample</span>\n' +
+    '          </div>\n' +
+    '\n' +
+    '          <nav class="dashboard__rail-section" aria-labelledby="dashboard-workspaces-label">\n' +
+    '            <div class="dashboard__rail-label-row">\n' +
+    '              <h2 id="dashboard-workspaces-label">Workspaces</h2>\n' +
+    '              <span data-workspace-count>0</span>\n' +
+    '            </div>\n' +
+    '            <div class="dashboard__workspace-list" data-workspace-list></div>\n' +
+    '          </nav>\n' +
+    '\n' +
+    '          <section class="dashboard__rail-section dashboard__rail-agents" aria-labelledby="dashboard-agents-label">\n' +
+    '            <div class="dashboard__rail-label-row">\n' +
+    '              <h2 id="dashboard-agents-label">Agents</h2>\n' +
+    '              <span data-agent-count>0</span>\n' +
+    '            </div>\n' +
+    '            <ul class="dashboard__agent-list" data-agent-list></ul>\n' +
+    '            <p class="dashboard__form-error" data-agent-error role="alert" hidden></p>\n' +
+    '            <button\n' +
+    '              class="dashboard__rail-add"\n' +
+    '              type="button"\n' +
+    '              data-add-agent-rail\n' +
+    '              hidden\n' +
+    '            >\n' +
+    '              <span aria-hidden="true">+</span>\n' +
+    '              Add an agent\n' +
+    '            </button>\n' +
+    '          </section>\n' +
+    '\n' +
+    '          <section class="dashboard__rail-section" aria-labelledby="dashboard-members-label">\n' +
+    '            <div class="dashboard__rail-label-row">\n' +
+    '              <h2 id="dashboard-members-label">Members</h2>\n' +
+    '              <span data-member-count>0</span>\n' +
+    '            </div>\n' +
+    '            <ul class="dashboard__agent-list" data-member-list></ul>\n' +
+    '            <p class="dashboard__form-error" data-member-error role="alert" hidden></p>\n' +
+    '            <div data-member-reauth hidden>\n' +
+    '              <button class="dashboard__rail-add" type="button" data-member-reauth-github>\n' +
+    '                Sign in again with GitHub\n' +
+    '              </button>\n' +
+    '              <button class="dashboard__rail-add" type="button" data-member-reauth-email>\n' +
+    '                Email a fresh sign-in link\n' +
+    '              </button>\n' +
+    '            </div>\n' +
+    '          </section>\n' +
+    '\n' +
+    '          <div class="dashboard__rail-foot">\n' +
+    '            <span data-rail-account>Your account</span>\n' +
+    '            <button class="dashboard__text-button" type="button" data-signout>Sign out</button>\n' +
+    '          </div>\n' +
+    '        </aside>\n' +
+    '\n' +
+    '        <section class="dashboard__channel" aria-labelledby="dashboard-channel-title">\n' +
+    '          <header class="dashboard__channel-head">\n' +
+    '            <div>\n' +
+    '              <p class="dashboard__channel-kicker">Workspace channel</p>\n' +
+    '              <h1 id="dashboard-channel-titl'... 75897 more characters
+  
+      at TestContext.<anonymous> (/Users/yulanbot/.swarm/wt/cloud-swarm-source/Forge--hosted-agent-revocation/site/src/components/app/agent-revocation.observer.test.ts:15:10)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: `---\n/*\n * /app is the product surface. The browser owns the state machine because the page is\n * statically built while auth, workspaces, agents, and signals belong to the signed-in\n * session. Static markup contains every panel so focus, loading, and failure states stay\n * styled even before data arrives; dynamic values are written with textContent only.\n *\n * The workspace view follows the operator's channel model: workspaces and agents in a rail,\n * signals in the channel. Files and tasks are deliberately absent because they are not\n * CommonSwarm primitives.\n */\n\nimport AgentConnect from "../connect/AgentConnect.astro";\nimport SampleNotice from "./SampleNotice.astro";\n---\n\n<live-dashboard class="dashboard" data-state="loading">\n  <div class="dashboard__wash" aria-hidden="true"></div>\n\n  <main class="dashboard__root">\n    <section class="dashboard__loading" data-panel="loading" role="status" aria-live="polite">\n      <span class="dashboard__spinner" aria-hidden="true"></span>\n      <span data-loading-label>Opening CommonSwarm…</span>\n    </section>\n\n    <section\n      class="dashboard__gateway"\n      data-panel="signed-out"\n      data-signed-out-onramp\n      aria-labelledby="dashboard-signin-title"\n      hidden\n    >\n      <a class="dashboard__wordmark" href="/" aria-label="CommonSwarm home">CommonSwarm</a>\n      <div class="dashboard__gateway-copy">\n        <p class="dashboard__eyebrow">Create a workspace</p>\n        <h1 id="dashboard-signin-title">Get your team and agents into one feed.</h1>\n        <p>\n          Sign in to create the first workspace or open an existing one. Free: up to three\n          live workspaces. No card.\n        </p>\n      </div>\n\n      <form class="dashboard__auth dashboard__email" data-auth-view="email">\n        <label for="dashboard-email">Email address</label>\n        <div class="dashboard__email-row">\n          <input\n            id="dashboard-email"\n            name="email"\n            type="email"\n            autocomplete="email"\n            inputmode="email"\n            required\n            placeholder="you@example.com"\n          />\n          <button class="dashboard__button dashboard__button--primary" type="submit">\n            Email me a sign-in link\n          </button>\n        </div>\n        <button class="dashboard__text-button" type="button" data-use-github>\n          Or continue with GitHub\n        </button>\n      </form>\n\n      <div class="dashboard__auth" data-auth-view="choices" hidden>\n        <button class="dashboard__button dashboard__button--primary" type="button" data-signin-github>\n          <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">\n            <path\n              fill="currentColor"\n              d="M12 2a10 10 0 0 0-3.16 19.49c.5.09.68-.22.68-.48v-1.87c-2.78.6-3.37-1.18-3.37-1.18-.45-1.16-1.11-1.47-1.11-1.47-.91-.62.07-.61.07-.61 1 .07 1.53 1.03 1.53 1.03.9 1.53 2.35 1.09 2.92.83.09-.65.35-1.09.64-1.34-2.22-.25-4.56-1.11-4.56-4.94 0-1.09.39-1.98 1.03-2.68-.1-.25-.45-1.27.1-2.64 0 0 .84-.27 2.75 1.02A9.6 9.6 0 0 1 12 6.82a9.6 9.6 0 0 1 2.5.34c1.91-1.29 2.75-1.02 2.75-1.02.55 1.37.2 2.39.1 2.64.64.7 1.03 1.59 1.03 2.68 0 3.84-2.34 4.68-4.57 4.93.36.31.68.92.68 1.85v2.77c0 .27.18.58.69.48A10 10 0 0 0 12 2Z"\n            ></path>\n          </svg>\n          Sign in with GitHub\n        </button>\n        <button class="dashboard__text-button" type="button" data-use-email>\n          Use email instead\n        </button>\n      </div>\n\n      <div class="dashboard__auth dashboard__email-sent" data-auth-view="email-sent" hidden>\n        <p class="dashboard__email-sent-title">Check your inbox.</p>\n        <p>\n          Open the CommonSwarm sign-in link in this browser. It returns here so you can create\n          a workspace or open one you already have.\n        </p>\n        <button class="dashboard__text-button" type="button" data-use-email>\n          Send it to a different address\n        </button>\n      </div>\n\n      <p class="dashboard__form-error" role="alert" data-auth-error hidden></p>\n      <p class="dashboard__legal-note">\n        By continuing you acknowledge the\n        <a href="/terms">Terms of Service</a>\n        and\n        <a href="/privacy">Privacy Policy</a>\n        drafts published for review (not yet in force).\n      </p>\n    </section>\n\n    <section\n      class="dashboard__gateway dashboard__gateway--create"\n      data-panel="create"\n      aria-labelledby="dashboard-create-title"\n      hidden\n    >\n      <a class="dashboard__wordmark" href="/" aria-label="CommonSwarm home">CommonSwarm</a>\n      <div class="dashboard__account-line">\n        <span class="dashboard__account-dot" aria-hidden="true"></span>\n        <span>Signed in as <strong data-account-name>your account</strong></span>\n      </div>\n      <div class="dashboard__gateway-copy">\n        <p class="dashboard__eyebrow">Start your first channel</p>\n        <h1 id="dashboard-create-title">You don’t have a workspace yet.</h1>\n        <p>\n          A workspace is the shared channel where your people and AI agents announce what\n          they are about to do.\n        </p>\n      </div>\n      <form class="dashboard__create-form" data-create-form>\n        <label for="dashboard-workspace-name">Workspace name</label>\n        <input\n          id="dashboard-workspace-name"\n          name="workspace-name"\n          type="text"\n          maxlength="80"\n          autocomplete="off"\n          required\n          spellcheck="false"\n        />\n        <button class="dashboard__button dashboard__button--primary" type="submit" data-create-button>\n          Create a workspace\n        </button>\n      </form>\n      <p class="dashboard__form-error" role="alert" data-create-error hidden></p>\n      <button class="dashboard__text-button dashboard__signout-link" type="button" data-signout>\n        Sign out\n      </button>\n    </section>\n\n    <section\n      class="dashboard__gateway dashboard__gateway--create"\n      data-panel="workspace-error"\n      aria-labelledby="dashboard-workspace-error-title"\n      hidden\n    >\n      <a class="dashboard__wordmark" href="/" aria-label="CommonSwarm home">CommonSwarm</a>\n      <div class="dashboard__account-line">\n        <span class="dashboard__account-dot" aria-hidden="true"></span>\n        <span>Signed in as <strong data-account-name>your account</strong></span>\n      </div>\n      <div class="dashboard__gateway-copy" role="alert">\n        <p class="dashboard__eyebrow">Workspace check interrupted</p>\n        <h1 id="dashboard-workspace-error-title">Your workspaces could not load.</h1>\n        <p data-workspace-error>\n          CommonSwarm could not check your memberships. Nothing was created or changed.\n        </p>\n      </div>\n      <button\n        class="dashboard__button dashboard__button--primary"\n        type="button"\n        data-retry-workspaces\n      >\n        Try again\n      </button>\n      <button class="dashboard__text-button dashboard__signout-link" type="button" data-signout>\n        Sign out\n      </button>\n    </section>\n\n    <section class="dashboard__product" data-panel="channel" hidden>\n      <div class="dashboard__sample-notice" data-sample-notice hidden>\n        <SampleNotice />\n      </div>\n\n      <div class="dashboard__frame">\n        <aside class="dashboard__rail" aria-label="Workspace and agent navigation">\n          <div class="dashboard__rail-head">\n            <a class="dashboard__wordmark" href="/" aria-label="CommonSwarm home">CommonSwarm</a>\n            <span class="dashboard__sample-chip" data-sample-chip hidden>Sample</span>\n          </div>\n\n          <nav class="dashboard__rail-section" aria-labelledby="dashboard-workspaces-label">\n            <div class="dashboard__rail-label-row">\n              <h2 id="dashboard-workspaces-label">Workspaces</h2>\n              <span data-workspace-count>0</span>\n            </div>\n            <div class="dashboard__workspace-list" data-workspace-list></div>\n          </nav>\n\n          <section class="dashboard__rail-section dashboard__rail-agents" aria-labelledby="dashboard-agents-label">\n            <div class="dashboard__rail-label-row">\n              <h2 id="dashboard-agents-label">Agents</h2>\n              <span data-agent-count>0</span>\n            </div>\n            <ul class="dashboard__agent-list" data-agent-list></ul>\n            <p class="dashboard__form-error" data-agent-error role="alert" hidden></p>\n            <button\n              class="dashboard__rail-add"\n              type="button"\n              data-add-agent-rail\n              hidden\n            >\n              <span aria-hidden="true">+</span>\n              Add an agent\n            </button>\n          </section>\n\n          <section class="dashboard__rail-section" aria-labelledby="dashboard-members-label">\n            <div class="dashboard__rail-label-row">\n              <h2 id="dashboard-members-label">Members</h2>\n              <span data-member-count>0</span>\n            </div>\n            <ul class="dashboard__agent-list" data-member-list></ul>\n            <p class="dashboard__form-error" data-member-error role="alert" hidden></p>\n            <div data-member-reauth hidden>\n              <button class="dashboard__rail-add" type="button" data-member-reauth-github>\n                Sign in again with GitHub\n              </button>\n              <button class="dashboard__rail-add" type="button" data-member-reauth-email>\n                Email a fresh sign-in link\n              </button>\n            </div>\n          </section>\n\n          <div class="dashboard__rail-foot">\n            <span data-rail-account>Your account</span>\n            <button class="dashboard__text-button" type="button" data-signout>Sign out</button>\n          </div>\n        </aside>\n\n        <section class="dashboard__channel" aria-labelledby="dashboard-channel-title">\n          <header class="dashboard__channel-head">\n            <div>\n              <p class="dashboard__channel-kicker">Workspace channel</p>\n              <h1 id="dashboard-channel-titl`... 75897 more characters,
+    expected: /revokeAgentPrincipal\(/,
+    operator: 'match',
+    diff: 'simple'
+  }
