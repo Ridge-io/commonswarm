@@ -1,0 +1,4 @@
+
+> cloud-swarm@0.1.1 check:tests
+> tsc -p tsconfig.tests.json
+

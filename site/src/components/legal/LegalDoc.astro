@@ -28,21 +28,17 @@
  */
 
 import "../../styles/legal.css";
+import {
+  LEGAL_PLACEHOLDER_RE,
+  scanLegalDocPlaceholders,
+  type LegalBlock,
+  type LegalSection,
+} from "../../lib/legal-placeholders.js";
 
 /** A run of body copy. A bare string is a paragraph; the object forms are the other four. */
-export type Block =
-  | string
-  | { sub: string }
-  | { ul: string[] }
-  | { ol: string[] }
-  | { note: string };
+export type Block = LegalBlock;
 
-export interface Section {
-  /** URL fragment. Stable — it is a public deep link the moment this ships. */
-  id: string;
-  title: string;
-  blocks: Block[];
-}
+export interface Section extends LegalSection {}
 
 interface Props {
   /** Document name. Rendered as the h1 and expected to match the page <title>. */
@@ -65,7 +61,8 @@ interface Props {
 
 const { title, lede, effective, updated, sections, draft = false } = Astro.props;
 
-const PLACEHOLDER_RE = /\[\[([^\]]+)\]\]/g;
+/** Draft pages name a proposed target date; final pages keep the in-force Effective label. */
+const effectiveDateLabel = draft ? "Proposed effective" : "Effective";
 
 /**
  * Escape first, then mark up. The strings are ours, not user input, but set:html on
@@ -92,7 +89,7 @@ function escapeHtml(raw: string): string {
  */
 function inline(raw: string): string {
   return escapeHtml(raw)
-    .replace(PLACEHOLDER_RE, '<mark class="lgl__ph">$1</mark>')
+    .replace(LEGAL_PLACEHOLDER_RE, '<mark class="lgl__ph">$1</mark>')
     .replace(/`([^`]+)`/g, "<code>$1</code>")
     .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
     .replace(
@@ -107,29 +104,23 @@ function inline(raw: string): string {
  * [[PLACEHOLDER]] markers is a document that will be read as a contract with a blank in it,
  * so the build stops and names every marker it found rather than shipping them.
  *
- * This cannot fire while a document is draft={true}, which all three are today. It exists
- * for the day one of them is flipped.
+ * Scans every user-visible field (title, lede, dates, section ids/titles, and all nested
+ * block/list strings) via scanLegalDocPlaceholders — not only section bodies. This cannot
+ * fire while a document is draft={true}, which all three are today. It exists for the day
+ * one of them is flipped.
  */
 if (!draft) {
-  const found = new Set<string>();
-  for (const section of sections) {
-    for (const block of section.blocks) {
-      const text = typeof block === "string"
-        ? block
-        : "sub" in block
-        ? block.sub
-        : "note" in block
-        ? block.note
-        : "ul" in block
-        ? block.ul.join(" ")
-        : block.ol.join(" ");
-      for (const match of text.matchAll(PLACEHOLDER_RE)) found.add(match[1]!);
-    }
-  }
-  if (found.size > 0) {
+  const found = scanLegalDocPlaceholders({
+    title,
+    lede,
+    effective,
+    updated,
+    sections,
+  });
+  if (found.length > 0) {
     throw new Error(
       `LegalDoc: "${title}" is marked final (draft={false}) but still contains ` +
-        `${found.size} unresolved placeholder(s): ${[...found].join(", ")}. ` +
+        `${found.length} unresolved placeholder(s): ${found.join(", ")}. ` +
         "Fill them in, or set draft={true} until they are decided.",
     );
   }
@@ -153,7 +144,10 @@ const peers = PEERS.filter((peer) => peer.label !== title);
       <p class="lede lgl__lede">{lede}</p>
 
       <p class="lgl__dates">
-        <span>Effective <span class="mono lgl__date-val">{effective}</span></span>
+        <span
+          >{effectiveDateLabel}{" "}
+          <span class="mono lgl__date-val">{effective}</span></span
+        >
         <span>Last updated <span class="mono lgl__date-val">{updated}</span></span>
       </p>
     </header>

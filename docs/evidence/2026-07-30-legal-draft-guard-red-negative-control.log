@@ -1,0 +1,44 @@
+
+> site@0.0.1 build
+> npm run sync:installer && astro build
+
+
+> site@0.0.1 sync:installer
+> cp ../install.sh public/install.sh
+
+22:43:02 [types] Generated 22ms
+22:43:02 [build] output: "static"
+22:43:02 [build] mode: "static"
+22:43:02 [build] directory: /Users/yulanbot/.swarm/wt/cloud-swarm-source/Onyx--legal-draft-date-guard/site/dist/
+22:43:02 [build] Collecting build info...
+22:43:02 [build] ✓ Completed in 48ms.
+22:43:02 [build] Building static entrypoints...
+22:43:02 [vite] ✓ built in 172ms
+22:43:02 [vite] ✓ built in 48ms
+22:43:02 [build] Rearranging server assets...
+
+ generating static routes 
+22:43:02   ├─ /acceptable-use/index.html (+8ms) 
+22:43:02   ├─ /app/index.html (+2ms) 
+22:43:02   ├─ /download/index.html (+4ms) 
+22:43:02   ├─ /privacy/index.html (+2ms) 
+22:43:02   ├─ /start/index.html (+2ms) 
+22:43:02   ├─ /terms/index.html22:43:02 [ERROR] Error: LegalDoc: "Terms of Service" is marked final (draft={false}) but still contains 1 unresolved placeholder(s): NEGATIVE_CONTROL. Fill them in, or set draft={true} until they are decided.
+    at file:///Users/yulanbot/.swarm/wt/cloud-swarm-source/Onyx--legal-draft-date-guard/site/dist/.prerender/chunks/LegalDoc_8HFQoalg.mjs:65:31
+    at AstroComponentInstance.LegalDoc [as factory] (file:///Users/yulanbot/.swarm/wt/cloud-swarm-source/Onyx--legal-draft-date-guard/site/dist/.prerender/chunks/Base_CSeR4LfR.mjs:27:10)
+    at AstroComponentInstance.init (file:///Users/yulanbot/.swarm/wt/cloud-swarm-source/Onyx--legal-draft-date-guard/site/dist/.prerender/chunks/server_ATsDyOc7.mjs:1714:27)
+    at AstroComponentInstance.render (file:///Users/yulanbot/.swarm/wt/cloud-swarm-source/Onyx--legal-draft-date-guard/site/dist/.prerender/chunks/server_ATsDyOc7.mjs:1721:28)
+    at Object.render (file:///Users/yulanbot/.swarm/wt/cloud-swarm-source/Onyx--legal-draft-date-guard/site/dist/.prerender/chunks/server_ATsDyOc7.mjs:2374:19)
+    at renderChild (file:///Users/yulanbot/.swarm/wt/cloud-swarm-source/Onyx--legal-draft-date-guard/site/dist/.prerender/chunks/server_ATsDyOc7.mjs:1633:44)
+    at RenderTemplateResult.render (file:///Users/yulanbot/.swarm/wt/cloud-swarm-source/Onyx--legal-draft-date-guard/site/dist/.prerender/chunks/server_ATsDyOc7.mjs:1273:19)
+    at renderChild (file:///Users/yulanbot/.swarm/wt/cloud-swarm-source/Onyx--legal-draft-date-guard/site/dist/.prerender/chunks/server_ATsDyOc7.mjs:1633:44)
+    at Object.render (file:///Users/yulanbot/.swarm/wt/cloud-swarm-source/Onyx--legal-draft-date-guard/site/dist/.prerender/chunks/server_ATsDyOc7.mjs:1341:9)
+    at renderChild (file:///Users/yulanbot/.swarm/wt/cloud-swarm-source/Onyx--legal-draft-date-guard/site/dist/.prerender/chunks/server_ATsDyOc7.mjs:1633:44)
+22:43:02 [ERROR] [build] Caught error rendering /terms: Error: LegalDoc: "Terms of Service" is marked final (draft={false}) but still contains 1 unresolved placeholder(s): NEGATIVE_CONTROL. Fill them in, or set draft={true} until they are decided.
+LegalDoc: "Terms of Service" is marked final (draft={false}) but still contains 1 unresolved placeholder(s): NEGATIVE_CONTROL. Fill them in, or set draft={true} until they are decided.
+  Stack trace:
+    at file:///Users/yulanbot/.swarm/wt/cloud-swarm-source/Onyx--legal-draft-date-guard/site/dist/.prerender/chunks/LegalDoc_8HFQoalg.mjs:65:31
+    at AstroComponentInstance.init (file:///Users/yulanbot/.swarm/wt/cloud-swarm-source/Onyx--legal-draft-date-guard/site/dist/.prerender/chunks/server_ATsDyOc7.mjs:1714:27)
+    at Object.render (file:///Users/yulanbot/.swarm/wt/cloud-swarm-source/Onyx--legal-draft-date-guard/site/dist/.prerender/chunks/server_ATsDyOc7.mjs:2374:19)
+    at RenderTemplateResult.render (file:///Users/yulanbot/.swarm/wt/cloud-swarm-source/Onyx--legal-draft-date-guard/site/dist/.prerender/chunks/server_ATsDyOc7.mjs:1273:19)
+    at Object.render (file:///Users/yulanbot/.swarm/wt/cloud-swarm-source/Onyx--legal-draft-date-guard/site/dist/.prerender/chunks/server_ATsDyOc7.mjs:1341:9)

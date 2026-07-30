@@ -1,0 +1,32 @@
+
+> site@0.0.1 build
+> npm run sync:installer && astro build
+
+
+> site@0.0.1 sync:installer
+> cp ../install.sh public/install.sh
+
+22:43:03 [types] Generated 15ms
+22:43:03 [build] output: "static"
+22:43:03 [build] mode: "static"
+22:43:03 [build] directory: /Users/yulanbot/.swarm/wt/cloud-swarm-source/Onyx--legal-draft-date-guard/site/dist/
+22:43:03 [build] Collecting build info...
+22:43:03 [build] ✓ Completed in 37ms.
+22:43:03 [build] Building static entrypoints...
+22:43:03 [vite] ✓ built in 113ms
+22:43:03 [vite] ✓ built in 39ms
+22:43:03 [build] Rearranging server assets...
+
+ generating static routes 
+22:43:03   ├─ /acceptable-use/index.html (+6ms) 
+22:43:03   ├─ /app/index.html (+2ms) 
+22:43:03   ├─ /download/index.html (+3ms) 
+22:43:03   ├─ /privacy/index.html (+1ms) 
+22:43:03   ├─ /start/index.html (+1ms) 
+22:43:03   ├─ /terms/index.html (+1ms) 
+22:43:03   ├─ /index.html (+2ms) 
+22:43:03 ✓ Completed in 22ms.
+
+22:43:03 [build] ✓ Completed in 187ms.
+22:43:03 [build] 7 page(s) built in 224ms
+22:43:03 [build] Complete!

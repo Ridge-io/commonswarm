@@ -1,0 +1,47 @@
+
+> cloud-swarm@0.1.1 test:site
+> npm --prefix site test
+
+
+> site@0.0.1 test
+> node --import tsx --test 'scripts/*.test.mjs' 'src/components/**/*.observer.mjs' 'src/components/**/*.observer.test.ts' 'src/components/legal/legal-placeholders.test.ts' ../tests/p1-cli/browser-fetch-deadline.test.ts
+
+✔ D-034: create fetch settles with an explicit unknown outcome at the deadline (1.326208ms)
+✔ D-034: signup membership read settles safely at the browser deadline (11.578458ms)
+✔ D-034: dashboard feed read settles safely at the browser deadline (0.444291ms)
+✔ D-034: create deadline remains live while the response body is unreadable (0.249208ms)
+✔ L4: every built route publishes coherent, route-specific social metadata (32.210583ms)
+✔ L4: linked icon, manifest, and social-card assets agree with their metadata (4.370209ms)
+✔ D-023: rendered shell says signup is open and never publishes retired access claims (6.689333ms)
+✔ signed-out /app onramp is cold-stranger, email-first, free, draft-legal (21.620625ms)
+✔ signal pages use a frozen keyset and terminate exact-multiple lookahead pages (1.643666ms)
+✔ dashboard auth transitions include INITIAL_SESSION and coalesce reloads (2.303333ms)
+✔ workspace creation and active-feed expiry cannot outlive their session (0.404917ms)
+✔ panel changes expose busy state and move focus only on real transitions (0.064084ms)
+✔ dashboard cannot hide a live or still-minting credential (0.3895ms)
+✔ workspace changes synchronously retarget AgentConnect before its panel opens (0.680041ms)
+✔ clearing the one-time secret always returns to the active channel (0.0745ms)
+✔ member admin stays a thin, confirmed, role-aware command API consumer (20.76475ms)
+✔ browser command helper posts strict remove_member and names recovery (15.191375ms)
+✔ dashboard agent prompt is one complete, secret-safe handoff (1.248375ms)
+consumer-copy observer: 63 checks across built / and /start passed
+typed stop panels covered: SignupRefused, EmailNotVerified, EmailDomainNotAccepted, ClientTooOld, NoDeployment
+primary create CTAs: /app (SiteHeader, SiteFooter, Hero, Invite, AfterInstall)
+✔ src/components/landing/consumer-copy.observer.mjs (128.921417ms)
+✔ primary Create workspace CTAs route to /app, not /start (15.502167ms)
+✔ legal draft band states review-only draft without inventing placeholders (6.883208ms)
+✔ legal date label is Proposed effective while draft and Effective when final (1.666125ms)
+✔ clean legal document reports no placeholders (0.852959ms)
+✔ placeholders are reported from every field class and deduplicated (0.308917ms)
+✔ collectPlaceholderNames preserves first-seen order across strings (0.072292ms)
+start on-ramp observer: 17/17 rendered checks passed
+rendered HTML and production bundle invariants checked
+✔ src/components/start/onramp.observer.mjs (109.339417ms)
+ℹ tests 26
+ℹ suites 0
+ℹ pass 26
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 373.556833

@@ -41,3 +41,21 @@ test("legal draft band states review-only draft without inventing placeholders",
     );
   }
 });
+
+test("legal date label is Proposed effective while draft and Effective when final", async () => {
+  const shell = await readFile(
+    new URL("./LegalDoc.astro", import.meta.url),
+    "utf8",
+  );
+  assert.match(
+    shell,
+    /const effectiveDateLabel = draft \? "Proposed effective" : "Effective"/,
+  );
+  assert.match(shell, /\{effectiveDateLabel\}/);
+  assert.doesNotMatch(
+    shell,
+    /<span>Effective <span class="mono lgl__date-val">\{effective\}<\/span><\/span>/,
+    "hard-coded Effective label must not remain for draft pages",
+  );
+  assert.match(shell, /scanLegalDocPlaceholders\(/);
+});
