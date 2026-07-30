@@ -216,7 +216,7 @@ test("dashboard cannot hide a live or still-minting credential", () => {
   );
   assert.match(
     openWorkspace,
-    /people = nextPeople;[\s\S]*if \(app\.dataset\.channelView !== "connect"\) renderChannel\(selected\)/,
+    /people = nextRoster\.names;[\s\S]*members = nextRoster\.members;[\s\S]*if \(app\.dataset\.channelView !== "connect"\) renderChannel\(selected\)/,
   );
   assert.match(
     openWorkspace,

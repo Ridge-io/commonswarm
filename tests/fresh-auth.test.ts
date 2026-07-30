@@ -4,7 +4,7 @@ import {
   FRESH_INTERACTIVE_AUTH_SECONDS,
   hasFreshInteractiveAuth,
   newestInteractiveAmrSeconds,
-} from "../supabase/functions/command/fresh-auth.ts";
+} from "../supabase/functions/command/fresh-auth.js";
 
 const NOW_SECONDS = 2_000_000_000;
 

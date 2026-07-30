@@ -110,3 +110,51 @@ test("parsed HTTP failures clear pending ids", async () => {
   );
   assert.deepEqual(store.profile.pendingCommands, {});
 });
+
+test("fresh-login removal keeps its command id for the post-login retry", async () => {
+  const target = cloudTarget("http://127.0.0.1:54321", "anon-key");
+  const userId = randomUUID();
+  const workspaceId = randomUUID();
+  const removedUserId = randomUUID();
+  const store = new MemoryStore(userId, workspaceId);
+  const requests: Array<Record<string, unknown>> = [];
+  let call = 0;
+  const client = new ThinCommandClient(
+    target,
+    (async (_url, init) => {
+      requests.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      call += 1;
+      return call === 1
+        ? new Response(JSON.stringify({ error: "fresh_auth_required" }), {
+          status: 401,
+        })
+        : new Response(JSON.stringify({
+          status: "accepted",
+          ok: true,
+          event_ids: [],
+        }), { status: 200 });
+    }) as typeof fetch,
+  );
+  const command = {
+    kind: "remove_member",
+    user_id: removedUserId,
+  } as const;
+  await assert.rejects(
+    sendConnectWithPending(
+      client,
+      { accessToken: "stale-jwt", userId, store },
+      workspaceId,
+      command,
+    ),
+    /Sign in again/,
+  );
+  assert.equal(Object.keys(store.profile.pendingCommands).length, 1);
+  await sendConnectWithPending(
+    client,
+    { accessToken: "fresh-jwt", userId, store },
+    workspaceId,
+    command,
+  );
+  assert.equal(requests[0]?.command_id, requests[1]?.command_id);
+  assert.deepEqual(store.profile.pendingCommands, {});
+});

@@ -131,11 +131,13 @@ test("remove_member uses the workspace route and names fresh-login recovery", as
   const target = cloudTarget("http://127.0.0.1:54321", "anon-key");
   const workspaceId = randomUUID();
   const userId = randomUUID();
-  let request: Record<string, unknown> | null = null;
+  const requests: Array<Record<string, unknown>> = [];
   const accepted = new ThinCommandClient(
     target,
     (async (_url, init) => {
-      request = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      requests.push(
+        JSON.parse(String(init?.body)) as Record<string, unknown>,
+      );
       return new Response(JSON.stringify({
         status: "accepted",
         ok: true,
@@ -149,9 +151,12 @@ test("remove_member uses the workspace route and names fresh-login recovery", as
     credential: "human-jwt",
     commandId: "remove_member_test",
   });
-  assert.deepEqual(request?.stream, { kind: "workspace" });
-  assert.deepEqual(request?.command, { kind: "remove_member", user_id: userId });
-  assert.equal(request?.command_id, "remove_member_test");
+  assert.deepEqual(requests[0]?.stream, { kind: "workspace" });
+  assert.deepEqual(requests[0]?.command, {
+    kind: "remove_member",
+    user_id: userId,
+  });
+  assert.equal(requests[0]?.command_id, "remove_member_test");
 
   const stale = new ThinCommandClient(
     target,

@@ -4,6 +4,7 @@ import {
   CommandHttpError,
   CommandTransportError,
   newCommandId,
+  ReauthenticationRequired,
   type CapabilityCommand,
   type CapabilityCommandResult,
   type ConnectCommand,
@@ -105,6 +106,12 @@ export async function sendConnectWithPending(
     await clearPendingCommand(session.store, session.userId, pending.intent);
     return result;
   } catch (error) {
+    if (error instanceof ReauthenticationRequired) {
+      // A fresh-login refusal is explicitly not ledgered. Preserve the intent
+      // so the post-login retry proves that the same command id can be
+      // evaluated afresh without risking a second destructive intent.
+      throw error;
+    }
     if (!(error instanceof CommandTransportError)) {
       await clearPendingCommand(session.store, session.userId, pending.intent);
       throw error;
