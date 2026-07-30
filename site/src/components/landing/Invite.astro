@@ -16,8 +16,10 @@
  *      Sign-in "GitHub" — the strongest cut. The old note beside it conceded it was
  *        NOT VERIFIED: no auth provider is enabled in supabase/config.toml, so the row named
  *        an intended flow as if it were a wired integration. A fact that needs a disclaimer
- *        in a comment does not belong in a table on a landing page. /start is where sign-in
- *        is actually offered, and that is where the claim can be made against real screens.
+ *        in a comment does not belong in a table on a landing page. /app is where sign-in
+ *        is actually offered for the primary create path (and /start remains only as a
+ *        backward-compatible on-ramp), and that is where the claim can be made against real
+ *        screens.
  *      Cost "No card, no billing" — folded into the lede, where it reads as reassurance
  *        rather than as a specification.
  *      Shape "A CLI and a hosted service" — the reader has just been shown five commands and
@@ -29,9 +31,12 @@
  *    state — it was a careful, well-built control that did nothing, and it said so three
  *    times in one card. That care was the tell. A button that cannot act is a dead affordance
  *    however honestly it is labelled, and a consumer page closes by pointing at the real
- *    door, not by asking for an address it has nowhere to put. The site already has two real
- *    doors — /download and /start — and the header CTA points at the second of them. So the
- *    close points at both and the form is gone, along with its script and its outcome region.
+ *    door, not by asking for an address it has nowhere to put.
+ *    SUPERSEDED (dead, 2026-07-30 app-first): "The site already has two real doors —
+ *    /download and /start — and the header CTA points at the second of them."
+ *    CURRENT: the primary create door is /app; /download remains the technical setup door;
+ *    /start is backward-compatible only, not a primary CTA. The close points at /app and
+ *    /download and the form is gone, along with its script and its outcome region.
  *
  *    IF A WAITLIST IS EVER WANTED HERE, it needs a server first. Re-adding the front end
  *    without one puts back the thing that was removed.

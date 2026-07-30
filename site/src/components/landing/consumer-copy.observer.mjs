@@ -162,9 +162,6 @@ const primaryCtaFiles = [
 for (const file of primaryCtaFiles) {
   checks += 1;
   const source = fs.readFileSync(file, "utf8");
-  if (/"\/start"/.test(source) && /Create/.test(source)) {
-    // Allow comments; ban live hrefs.
-  }
   if (/href:\s*"\/start"|href="\/start"/.test(source)) {
     failures.push(`${file}: primary source still routes /start`);
   }

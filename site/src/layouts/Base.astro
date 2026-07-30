@@ -165,17 +165,15 @@ const ogImageUrl = new URL(ogImage, origin).href;
 /* RESYNCED 2026-07-29: the light palette had landed, so the generator stopped using its
  * provisional pure-white/bright-indigo palette and copied the named tokens. The card was
  * regenerated with a 1360px real window before the 1200x630 device override, captured without
- * captureBeyondViewport, and visually inspected for the tiling seam. The resulting PNG is
- * 118009 bytes before the installer-command update; its headline had dark pixels through rows
- * 425-435, confirming the descenders
- * below the main line box remain painted. The alt below was updated from generic "light" to
- * the visible pale blue-gray background in the same change.
+ * captureBeyondViewport, and visually inspected for the tiling seam. Historical size notes
+ * (118009 then 119154 bytes; SHA aa4c8636…) are superseded by the workspace-first headline
+ * regeneration below.
  *
- * INSTALLER UPDATE 2026-07-29: regenerated to 119154 bytes after replacing the invitation-era
- * verb. The chip ends at x=605.47 and the note at x=785.22, both clear of the decorative mark;
- * the 1200x630 PNG was visually inspected for clipping and tiling, and the descender band still
- * carries dark pixels through row 435. SHA-256:
- * aa4c8636a4ecc8e953ceb24e69e0c110ce674b80a7e5f01623a58f6ce6202fba. */
+ * APP-FIRST HEADLINE 2026-07-30: regenerated after the home promise became “See what every
+ * agent is working on.” Measured on this tree: public/og.png is 1200×630, 133701 bytes,
+ * SHA-256 4a11f0e5e29273c3312041e361de8be529a09d7df9fedbdff489b155c0ddbbca. Visually
+ * inspected for clipping, tiling seams, and text alignment; alt updated with the same
+ * headline. */
 const ogImageAlt =
   "CommonSwarm — a pale blue-gray title card headed “See what every agent is working on.”, " +
   `under the label “Multi-agent coordination”, above the command “${INSTALL_CMD}” ` +
