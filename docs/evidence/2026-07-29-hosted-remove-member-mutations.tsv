@@ -1,0 +1,12 @@
+arm	mutation	observer_exit	restored
+1	remove one COMMAND_KINDS registration	RED(1)	byte-identical
+2	replace sso/saml with sso	RED(1)	byte-identical
+3	admit token_refresh	RED(1)	byte-identical
+4	remove getClaims/newestInteractiveAmrSeconds	RED(1)	byte-identical
+5	hardcode landing oracle true	RED(1)	byte-identical
+6	drop MemberRemoved workspace_id scope	RED(1)	byte-identical
+7	drop exact-one rowcount	RED(1)	byte-identical
+8	browser confirm/API/FreshLoginRequired	RED(1)	byte-identical
+9	clear pending on ReauthenticationRequired	RED(1)	byte-identical
+10	fresh-auth before idempotency step7	RED(1)	byte-identical
+11	zero FRESH_INTERACTIVE_AUTH_CLOCK_SKEW_SECONDS	RED(1)	byte-identical

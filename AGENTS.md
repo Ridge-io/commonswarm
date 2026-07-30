@@ -51,7 +51,7 @@ All verified working from a clean `npm install` on this repo.
 | `npm run check:tests` | Typechecks `tests/` as well as `src/`. Nothing else does — see below. |
 | `npm run db:start` / `db:stop` / `db:reset` / `db:status` | Local Supabase lifecycle. |
 | `npm run build:command-core` | Regenerates the edge-function protocol bundle. |
-| `npm run check:edge` | `deno check` over both edge functions. Needs `brew install deno`. |
+| `npm run check:edge` | `deno check` over all three edge functions (`command`, `read`, `capability`). Needs `brew install deno`. |
 
 Anything touching the database needs local Supabase up (`npm run db:start`, needs Docker).
 
@@ -67,7 +67,7 @@ The marketing site is a separate npm project: `cd site && npm install && npm run
 src/protocol/   pure authority core — reducer, events, commands. No I/O.
 src/cloud/      client side: auth, signals, workspaces, transport.
 src/cli.ts      the cswarm CLI surface.
-supabase/       migrations + Deno edge functions (command, read).
+supabase/       migrations + Deno edge functions (command, read, capability).
 tests/          protocol tests; tests/p1-cli/ and tests/p1-server/ are separate suites.
 scripts/        verification helpers (see below).
 site/           Astro marketing site — hand-written CSS, no Tailwind.
@@ -103,12 +103,15 @@ nothing under `supabase/functions/` is checked by it. `npm run build` passing te
 **nothing** about whether an edge function compiles.
 
 ★ **They are no longer unchecked, though — use `npm run check:edge`** (added 2026-07-27).
-It runs `deno check` over both functions and needs Deno (`brew install deno`). Measured on
-the tree at `ab9babb`: both functions pass, and a deliberately broken copy exits 1 with
-TS2322, so the check discriminates. The superseded line — *"Deno is not necessarily
-installed, so edge functions cannot be checked here"* — is **dead**: install it and check.
-Two caveats that still stand: the checker is not run by any other script, and
-`_shared/protocol.js` is generated, so a stale bundle typechecks fine while being wrong.
+It runs `deno check` over **all three** edge functions (`command`, `read`, `capability`) and
+needs Deno (`brew install deno`). Measured on the tree at `ab9babb`: the then-existing
+functions pass, and a deliberately broken copy exits 1 with TS2322, so the check
+discriminates. The package script now names three entrypoints; a green `check:edge` is not
+proof that a fourth function would be covered. The superseded lines — *"Deno is not necessarily
+installed, so edge functions cannot be checked here"* and *"deno check over both edge
+functions"* — are **dead**: install Deno and check all three. Two caveats that still stand:
+the checker is not run by any other script, and `_shared/protocol.js` is generated, so a
+stale bundle typechecks fine while being wrong.
 
 **`supabase functions serve` does NOT inherit the parent environment.** The runtime gets
 only what `--env-file` holds. `tests/p1-server` passed `--env-file /dev/null` for a long

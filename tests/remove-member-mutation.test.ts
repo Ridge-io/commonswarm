@@ -19,14 +19,21 @@ test("remove_member edge security seams remain reachable and fail closed", async
     /exactKeys\(cmd, \["kind", "user_id"\]\)/,
   );
   assert.match(source, /authClient\.auth\.getClaims\(credential\)/);
+  assert.match(source, /newestInteractiveAmrSeconds\(claimsData\.claims\)/);
   assert.match(source, /hasFreshInteractiveAuth\(/);
   assert.match(source, /reason: "fresh_auth_required"/);
   assert.match(source, /FROM swarm\.repositories/);
   assert.match(source, /landing_authority_user_id = \$\{wire\.user_id\}/);
-  assert.doesNotMatch(source, /landingAuthorityChangeResolved:\s*\(\)\s*=>\s*true/);
+  assert.doesNotMatch(
+    source,
+    /landingAuthorityChangeResolved:\s*\(\)\s*=>\s*true/,
+  );
   assert.match(source, /event\.type === "MemberRemoved"/);
   assert.match(source, /updated\.length !== 1/);
-  assert.match(source, /SET revoked_at = \$\{new Date\(payload\.revoked_at\)\}/);
+  assert.match(
+    source,
+    /SET revoked_at = \$\{new Date\(payload\.revoked_at\)\}/,
+  );
   assert.match(
     source,
     /event\.type === "MemberRemoved"[\s\S]*?UPDATE swarm\.memberships[\s\S]*?WHERE workspace_id = \$\{route\.workspaceId\}::uuid[\s\S]*?AND user_id = \$\{payload\.user_id\}::uuid[\s\S]*?AND revoked_at IS NULL[\s\S]*?RETURNING user_id/,
@@ -40,6 +47,11 @@ test("fresh-auth helper cannot be weakened to JWT iat or token refresh", async (
     "utf8",
   );
   assert.match(source, /FRESH_INTERACTIVE_AUTH_SECONDS = 300/);
+  assert.match(source, /FRESH_INTERACTIVE_AUTH_CLOCK_SKEW_SECONDS = 5/);
+  assert.match(
+    source,
+    /ageSeconds >= -FRESH_INTERACTIVE_AUTH_CLOCK_SKEW_SECONDS/,
+  );
   assert.doesNotMatch(source, /token_refresh/);
   assert.doesNotMatch(source, /\.iat\b/);
   for (
@@ -112,5 +124,21 @@ test("fresh-login refusal preserves pending remove_member command id", async () 
   assert.match(
     source,
     /A fresh-login refusal is explicitly not ledgered/,
+  );
+});
+
+test("MemberRemoved event timestamp is the projection write timestamp", async () => {
+  const commands = await readFile("src/protocol/workspace-commands.ts", "utf8");
+  const edge = await readFile(
+    "supabase/functions/command/index.ts",
+    "utf8",
+  );
+  assert.match(
+    commands,
+    /case 'remove_member':[\s\S]*?env\(ctx, 'MemberRemoved', \{ user_id: cmd\.user_id, revoked_at: ctx\.now \}/,
+  );
+  assert.match(
+    edge,
+    /SET revoked_at = \$\{new Date\(payload\.revoked_at\)\}/,
   );
 });

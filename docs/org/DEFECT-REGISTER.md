@@ -1398,3 +1398,74 @@ defects and are not fixed or claimed here.~~
 `e7537289a5a0f6d4b034764dbdf2caa13480610b` bounds browser create-workspace, signup membership,
 and dashboard feed reads. Those browser outcomes are not evidence claimed by this signals lane.
 CLI login, accept-link, and workspace-list reads remain open and outside the signals-only scope.
+
+**D-034 content reconciliation (measured 2026-07-30, Onyx hosted-remove-member-final):** orphan
+browser candidate `4be37fc` and primary-clone `main` carry byte-identical
+`site/src/lib/commonswarm.ts` and `tests/p1-cli/browser-fetch-deadline.test.ts` relative to the
+landed browser runtime path; the browser lane landed via `e753728` with later evidence
+corrections on main. This is a content-identity note for remove_member documentation hygiene,
+not a claim that D-034 is closed or that hosted remove_member is deployed.
+
+---
+
+## D-035 — hosted remove_member fresh-auth AMR allowlist (Decision #198) · RULING
+
+**Found by:** Lead7, 2026-07-29/30, hosted remove_member design and candidate gates
+**Owner:** Onyx (executor) · **Severity:** P1 authn correctness for a destructive workspace command
+**Authority:** Decision #198 (supersedes any local mention of Decision #183 for this allowlist)
+
+Hosted `remove_member` must require a **fresh interactive authentication** measured from
+verified JWT claims produced by `auth.getClaims()` for the presented session. The newest
+allowed AMR method timestamp is the only clock. JWT `iat` and global sign-in timestamps
+are not used.
+
+**Exact interactive AMR method strings (literals, not aliases):**
+
+- `oauth`
+- `password`
+- `otp`
+- `totp`
+- `sso/saml`
+- `magiclink`
+- `email/signup`
+
+Slash-bearing values are **literal** method strings as emitted by Supabase GoTrue. Undocumented
+aliases such as bare `sso`, `saml`, `email`, or `signup` fail closed.
+
+**Explicitly excluded (fail closed):** `token_refresh`, `recovery`, `invite`, `email_change`,
+`anonymous`, missing, malformed, future (timestamp after server now), and any method not in
+the allowlist.
+
+**Window:** 300 seconds (`FRESH_INTERACTIVE_AUTH_SECONDS`) upper age on **new**
+idempotency misses. **Idempotency replay precedes the fresh-auth gate** and returns the stored
+result without rechecking freshness. A stale first attempt is audit-only and unledgered; the
+CLI preserves that command id for the explicit post-login retry.
+
+**Clock-skew policy (supersedes zero-tolerance prose):** accept
+`ageSeconds >= -FRESH_INTERACTIVE_AUTH_CLOCK_SKEW_SECONDS` (5) and
+`ageSeconds <= FRESH_INTERACTIVE_AUTH_SECONDS` (300). The five-second negative floor covers
+auth-service (GoTrue AMR timestamps) versus database `statement_timestamp()` skew so a
+just-signed-in user cannot loop forever on `fresh_auth_required`. The 300-second upper bound
+is unchanged. Larger future timestamps still fail closed.
+
+**AMR shape disposition (Gemini string-array proposal rejected):** Supabase JWT Claims
+Reference defines `amr` as `Array<{ method: string; timestamp: number }>` with object entries
+(https://supabase.com/docs/guides/auth/jwt-fields). Timestamp-less RFC method strings cannot
+prove freshness and fail closed. Hosted real-token AMR shape remains an **unestablished
+deploy-time observation**.
+
+**Label note:** pure tests cite `D-035 / Decision 198` on this candidate; a reviewer claim that
+the test still said Decision 183 was a stale artifact, not the exact tip under review.
+
+
+**Landing authority and workspace-scoped revocation** rulings are unchanged: removal never
+transfers repository landing authority; `MemberRemoved` projection updates exactly one live
+membership in the routed workspace using the event timestamp.
+
+**Evidence:** `docs/evidence/2026-07-29-hosted-remove-member.md`, pure observers in
+`tests/remove-member-mutation.test.ts`, `tests/fresh-auth.test.ts`, and browser observers in
+`site/src/components/app/member-admin.observer.test.ts`.
+
+~~Any prose that cites "Decision #183" as the remove_member AMR allowlist authority is
+superseded; use Decision #198 / D-035.~~
+
