@@ -2458,7 +2458,7 @@ test("remove_member revokes exactly one workspace membership at the event timest
     assert.equal(result.status, 200);
     assert.equal(result.body.status, "accepted");
     const [event] = await sql<{
-      occurred_at_server: number;
+      occurred_at_server: Date;
       revoked_at: string;
     }[]>`
       SELECT
@@ -2484,6 +2484,11 @@ test("remove_member revokes exactly one workspace membership at the event timest
     const removed = memberships.find((row) => row.workspace_id === f.workspaceA);
     const untouched = memberships.find((row) => row.workspace_id === f.workspaceB);
     assert.ok(event && removed?.revoked_at);
+    assert.equal(
+      event.occurred_at_server.getTime(),
+      Number(event.revoked_at),
+      "MemberRemoved payload timestamp is the persisted event timestamp",
+    );
     assert.equal(
       removed.revoked_at.getTime(),
       Number(event.revoked_at),
