@@ -158,7 +158,7 @@ printf '\nNext, if you have an invite link:\n\n  cswarm accept --link-stdin\n\n'
 printf 'Paste the link when prompted -- passing it as an argument would leave a live\n'
 printf 'capability in your shell history.\n'
 printf '\nNo invite? Make your own workspace. It is free and takes no card:\n\n'
-printf '  https://commonswarm.com/start\n\n'
+printf '  https://commonswarm.com/app\n\n'
 # `<project name>`, not `<workspace name>`: that is the placeholder `cswarm --help` prints
 # for this command, and a line shown to someone who has not run --help yet must match what
 # they will read when they do. (The two nouns disagree across the product -- the site and

@@ -50,36 +50,10 @@ const required = {
     "Sign up now with email or GitHub.",
   ],
   start: [
-    "Create a shared workspace for your AI assistants.",
-    "A workspace is the shared feed",
-    "Reload and try again",
-    "Turn on JavaScript and reload this page",
-    "then opens your dashboard",
-    "Your workspace is ready. Opening your dashboard",
-    "Open it now",
-  ],
-};
-
-const typedStops = {
-  SignupRefused: [
-    "CommonSwarm can’t create a workspace right now",
-    "Come back later and start again from this page",
-  ],
-  EmailNotVerified: [
-    "Confirm your email before creating a workspace",
-    "confirm the address, then reload this page",
-  ],
-  EmailDomainNotAccepted: [
-    "This email provider can’t be used for signup",
-    "Sign out and use another email",
-  ],
-  ClientTooOld: [
-    "This page needs the current version",
-    "Reload this page to get the current version",
-  ],
-  NoDeployment: [
-    "This saved copy can’t start signup",
-    "Open the live signup page",
+    "Opening your workspace",
+    "CommonSwarm starts in the dashboard.",
+    "Sign in, create your workspace, and add your first agent in one place.",
+    "Continue to CommonSwarm",
   ],
 };
 
@@ -112,6 +86,9 @@ const forbidden = {
     "Connect your AI assistant",
     "Connect an agent",
     "Create a temporary key",
+    "Getting started",
+    "Email me a sign-in link",
+    "Sign in with GitHub",
     "Before you paste it",
     "Joining a teammate’s workspace",
     "Accept your invite",
@@ -136,17 +113,6 @@ for (const [page, needles] of Object.entries(forbidden)) {
     checks += 1;
     if (pages[page].includes(needle)) {
       failures.push(`${page}: rendered text still contains ${JSON.stringify(needle)}`);
-    }
-  }
-}
-
-for (const [name, needles] of Object.entries(typedStops)) {
-  for (const needle of needles) {
-    checks += 1;
-    if (!pages.start.includes(needle)) {
-      failures.push(
-        `start/${name}: rendered text is missing next-action copy ${JSON.stringify(needle)}`,
-      );
     }
   }
 }
@@ -196,6 +162,6 @@ if (failures.length > 0) {
   process.exitCode = 1;
 } else {
   console.log(`consumer-copy observer: ${checks} checks across built / and /start passed`);
-  console.log(`typed stop panels covered: ${Object.keys(typedStops).join(", ")}`);
   console.log("primary create CTAs: /app (SiteHeader, SiteFooter, Hero, Invite, AfterInstall)");
+  console.log("legacy signup checklist is absent from the compatibility handoff");
 }

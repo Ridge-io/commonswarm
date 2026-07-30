@@ -96,13 +96,14 @@ and at least one genuinely interactive demo of *our* product's actual behaviour.
 
 Multi-human, multi-agent **coordination cloud service**. The cloud evolution of the
 local `swarm` CLI. It is a **CLI plus a hosted service plus a web front door** —
-self-serve signup at `/start`, a dashboard at `/app` (workspace-first redesign chartered
-2026-07-29). Two superseded claims, kept dead: ~~"There is no web UI."~~ and
+self-serve signup and the workspace channel at `/app`; `/start` is a compatibility
+handoff for old links and auth callbacks (workspace-first redesign chartered 2026-07-29).
+Two superseded claims, kept dead: ~~"There is no web UI."~~ and
 ~~"Status: P3-1, invited dogfood. Pre-launch. Not self-serve yet."~~
 
 Status: **P3-1, open free tier.** Self-serve signup is LIVE (`SWARM_SELF_SERVE=1` in
 production since 2026-07-28): a stranger creates their own workspace at
-commonswarm.com/start — free, three workspaces, no card, no invitation.
+commonswarm.com/app — free, three workspaces, no card, no invitation.
 
 Real, shipped surface (from `cswarm --help`, verified):
 
@@ -244,7 +245,7 @@ Consequences, and they bind:
   turns out to need `--url`, the honest quickstart is two lines, not three.
 - ~~**There is no working paste we can give a stranger today.**~~ — **dead** (2026-07-29):
   `curl -fsSL https://commonswarm.com/install.sh | sh` works for any stranger, and
-  commonswarm.com/start needs no per-person link. What survives of the old rule: an invite
+  commonswarm.com/app needs no per-person link. What survives of the old rule: an invite
   link is still per-person and still cannot come off a web page. Any command block on the
   site either carries its own exports/flags inline, or it is presented as *what you run
   once you are in* — not as

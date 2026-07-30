@@ -53,8 +53,10 @@ const { signedIn = false, path = "/" } = Astro.props;
  *
  * The nav is now three real destinations plus the CTA, which is how every route becomes
  * reachable: /download and /app had NOTHING linking to them from anywhere on the site, and
- * /start was reachable only via the canonical <link>. Verified after this change by grepping
- * every href in dist/ — see the note in Base.astro.
+ * The creation CTA now points at /app because /app owns sign-in, zero-workspace creation,
+ * and the live channel. /start remains only as a compatibility handoff for old links and
+ * auth callbacks. Verified after this change by grepping every href in dist/ — see the note
+ * in Base.astro.
  *
  * Absolute (`/#…`) rather than bare (`#…`) so the hash still resolves from a route that is
  * not "/". */

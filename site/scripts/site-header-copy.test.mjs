@@ -9,11 +9,15 @@ const DIST = join(SITE, "dist");
 
 const SHELL_ROUTES = [
   ["home", "index.html"],
-  ["start", "start/index.html"],
   ["download", "download/index.html"],
   ["terms", "terms/index.html"],
   ["privacy", "privacy/index.html"],
   ["acceptable use", "acceptable-use/index.html"],
+];
+const ALL_ROUTES = [
+  ...SHELL_ROUTES,
+  ["start handoff", "start/index.html"],
+  ["dashboard", "app/index.html"],
 ];
 
 const RETIRED_HEADER =
@@ -60,6 +64,10 @@ test("D-023: rendered shell says signup is open and never publishes retired acce
       text.includes(CURRENT_FOOTER),
       `${route}: footer positive control missing: ${JSON.stringify(CURRENT_FOOTER)}`
     );
+  }
+
+  for (const [route, output] of ALL_ROUTES) {
+    const text = renderedText(output);
     for (const retired of [RETIRED_HEADER, RETIRED_FOOTER]) {
       assert.equal(
         text.includes(retired),

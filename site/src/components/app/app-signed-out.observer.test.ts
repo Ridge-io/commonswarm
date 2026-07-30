@@ -24,17 +24,12 @@ test("signed-out /app onramp is cold-stranger, email-first, free, draft-legal", 
   assert.doesNotMatch(panel, /workspaces you belong to/i);
   assert.doesNotMatch(panel, /invitation/i);
 
-  const emailView = panel.indexOf('data-auth-view="email"');
-  const choicesView = panel.indexOf('data-auth-view="choices"');
-  assert.ok(emailView >= 0 && choicesView > emailView, "email must precede GitHub choices in DOM");
-  assert.match(panel, /data-auth-view="email">/);
-  assert.doesNotMatch(
-    panel,
-    /data-auth-view="email" hidden/,
-    "email is the default visible auth path",
-  );
-  assert.match(panel, /data-auth-view="choices" hidden/);
-  assert.match(panel, /Or continue with GitHub/);
+  const email = panel.indexOf('id="dashboard-email"');
+  const github = panel.indexOf("data-signin-github");
+  assert.ok(email >= 0 && github > email, "email must precede GitHub in the shared auth view");
+  assert.match(panel, /data-auth-view="choices">/);
+  assert.doesNotMatch(panel, /data-auth-view="choices" hidden/);
+  assert.match(panel, /Sign in with GitHub/);
   assert.match(panel, /Email me a sign-in link/);
 
   assert.match(panel, /href="\/terms"/);
@@ -43,5 +38,5 @@ test("signed-out /app onramp is cold-stranger, email-first, free, draft-legal", 
   assert.doesNotMatch(panel, /by using this service you agree/i);
 
   assert.match(source, /signInWithGitHub\(new URL\("\/app"/);
-  assert.match(source, /showAuthView\("email"\)/);
+  assert.match(source, /showAuthView\("choices"\)/);
 });

@@ -1,818 +1,128 @@
 ---
 /*
- * /start is an on-ramp, not the product.
+ * /start is a compatibility handoff, not a second onboarding product.
  *
- * The workspace-first ruling in docs/design/2026-07-29-WORKSPACE-FIRST-DASHBOARD.md makes
- * /app the product. This page has exactly two jobs: establish a human session and create the
- * first workspace. As soon as a workspace exists, navigation moves to /app. Agent setup,
- * workspace switching, and the signal feed belong there.
- *
- * SESSION: the progress strip ships unmarked. While currentSession() is unresolved, it stays
- * unmarked; otherwise a signed-in visitor briefly sees "Sign in" as pending. Once a session
- * is confirmed, step one is marked done before the page reads or creates a workspace.
- *
- * IDEMPOTENCY: the workspace id and command id are minted once, immediately before the first
- * create request, and reused on every retry. Before an unprompted create, myWorkspaces()
- * checks whether this identity already owns one. If storage or that read fails, the page asks
- * instead of risking a duplicate. Intent is never stored before sign-in because it cannot yet
- * be scoped to a user; the authenticated key is cleared on sign-out.
- *
- * This repository build has no backend configured. Its no-deployment state points to the
- * live page instead of exposing hosting configuration. The signed-in half remains dependent
- * on the deployment supplied at build time.
+ * Every current "Create a workspace" link points directly to /app, which owns sign-in,
+ * zero-workspace creation, the empty channel, and Add an agent. This route remains because
+ * old email/OAuth callbacks and saved links can still arrive here. The inline handoff keeps
+ * both query parameters and the URL fragment: Supabase may put auth state in either one, and
+ * dropping the fragment would turn a valid old sign-in link into a signed-out loop.
  */
 
 import Base from "../layouts/Base.astro";
-import Button from "../components/ui/Button.astro";
-import Progress from "../components/start/Progress.astro";
-import SignInPanel from "../components/start/SignInPanel.astro";
-import EmailSentPanel from "../components/start/EmailSentPanel.astro";
-import ReadyPanel from "../components/start/ReadyPanel.astro";
-import WorkingPanel from "../components/start/WorkingPanel.astro";
-import DonePanel from "../components/start/DonePanel.astro";
-import HaltPanel from "../components/start/HaltPanel.astro";
 
-const title = "Get started — CommonSwarm";
+const title = "Opening CommonSwarm";
 const description =
-  "Sign up with email or GitHub and create a shared workspace. Free for up to three live workspaces, no card.";
+  "Continue to the CommonSwarm dashboard to create or open a workspace and add an agent.";
 ---
 
-<Base title={title} description={description} path="/start">
-  <div class="page st">
-    <div class="st__col">
-      <h1 class="st__h">Create a shared workspace for your AI assistants.</h1>
-      <p class="st__lede">
-        A workspace is the shared feed where your assistants say what they are doing and read
-        what the rest of the team has said. Sign up free, create your workspace, and continue
-        in the dashboard.
+<Base
+  title={title}
+  description={description}
+  path="/start"
+  bareHeader
+  bareFooter
+>
+  <section class="handoff" aria-labelledby="handoff-title">
+    <a class="handoff__wordmark" href="/" aria-label="CommonSwarm home">CommonSwarm</a>
+    <div class="handoff__copy">
+      <p class="handoff__eyebrow">Opening your workspace</p>
+      <h1 id="handoff-title">CommonSwarm starts in the dashboard.</h1>
+      <p>
+        Sign in, create your workspace, and add your first agent in one place. You are being
+        taken there now.
       </p>
-
-      <Progress />
-
-      {/* Exactly one of these is visible at a time. They all ship hidden; the script below
-          reveals one. See the note in SignInPanel.astro for why nothing is shown by
-          default. */}
-      <div class="st__stage" data-stage>
-        <SignInPanel />
-        <EmailSentPanel />
-        <ReadyPanel />
-        <WorkingPanel />
-        <DonePanel />
-
-        <HaltPanel
-          state="no-deployment"
-          tone="info"
-          eyebrow="Use the live site"
-          title="This saved copy can’t start signup"
-        >
-          <p class="st-pn__p">
-            This copy of the page is not connected to the CommonSwarm service. Nothing is
-            wrong with your account, and nothing was created here.
-          </p>
-          <div class="st-pn__act">
-            <Button href="https://commonswarm.com/start" size="lg">
-              Open the live signup page
-            </Button>
-          </div>
-        </HaltPanel>
-
-        <HaltPanel
-          state="refused"
-          tone="info"
-          eyebrow="Paused here"
-          title="CommonSwarm can’t create a workspace right now"
-        >
-          <p class="st-pn__p">
-            CommonSwarm stopped this attempt before any workspace was created.
-          </p>
-          <p class="st-pn__p">
-            Come back later and start again from this page.
-          </p>
-          <p class="st-pn__note">
-            Your sign-in is still safe. You can also <a href="/app">open your dashboard</a>
-            if you already have a workspace.
-          </p>
-        </HaltPanel>
-
-        <HaltPanel
-          state="email-unverified"
-          tone="info"
-          eyebrow="One more step"
-          title="Confirm your email before creating a workspace"
-        >
-          <p class="st-pn__p">
-            Nothing was created yet. Open the confirmation message we sent to your email,
-            confirm the address, then reload this page.
-          </p>
-          <div class="st-pn__act">
-            <Button data-reload size="lg">I confirmed it — reload</Button>
-          </div>
-        </HaltPanel>
-
-        <HaltPanel
-          state="email-domain"
-          tone="info"
-          eyebrow="Use another address"
-          title="This email provider can’t be used for signup"
-        >
-          <p class="st-pn__p">
-            Nothing was created. Sign out, then use an address from a different email
-            provider.
-          </p>
-          <div class="st-pn__act">
-            <Button data-signout size="lg">Sign out and use another email</Button>
-          </div>
-        </HaltPanel>
-
-        <HaltPanel
-          state="client-too-old"
-          tone="info"
-          eyebrow="Refresh needed"
-          title="This page needs the current version"
-          detail
-        >
-          <p class="st-pn__p">
-            Nothing was created. Reload this page to get the current version, then continue
-            from the same sign-in.
-          </p>
-          <div class="st-pn__act">
-            <Button data-reload size="lg">Reload this page</Button>
-          </div>
-        </HaltPanel>
-
-        <HaltPanel
-          state="error"
-          tone="warn"
-          eyebrow="Stopped"
-          title="CommonSwarm couldn’t confirm what happened"
-          detail
-        >
-          <p class="st-pn__p">
-            CommonSwarm stopped before it could confirm the result. The message above says
-            what it measured without guessing at a cause.
-          </p>
-          <p class="st-pn__p">
-            Reloading is safe. This page keeps the same request, so it checks the same
-            workspace instead of creating a different one.
-          </p>
-          {/* A real Button, not the text control this was first drawn as. It is the recovery
-              action of the one panel that has one, and a stop whose way out reads as body
-              copy is a stop most readers do not leave. `secondary` rather than `primary`:
-              retrying is the sensible next move, not a celebrated one. */}
-          <div class="st-pn__act">
-            <Button variant="secondary" data-reload>Reload and try again</Button>
-          </div>
-        </HaltPanel>
-      </div>
-
-      <noscript>
-        <div class="st-pn st-pn--info">
-          <span class="st-pn__eyebrow">Browser setting</span>
-          <h2 class="st-pn__t">Turn on JavaScript and reload this page</h2>
-          <p class="st-pn__p">
-            The sign-in buttons and workspace setup run in your browser. They stay hidden
-            while JavaScript is off so you never press a button that cannot respond.
-          </p>
-          <p class="st-pn__note">
-            Open the live CommonSwarm site in a browser with JavaScript enabled to continue.
-          </p>
-        </div>
-      </noscript>
     </div>
-  </div>
+    <a class="handoff__button" href="/app" data-open-app>Continue to CommonSwarm</a>
+    <noscript>
+      <p class="handoff__note">
+        JavaScript is off, so this saved link cannot carry its sign-in details forward
+        automatically. Open the dashboard to continue.
+      </p>
+    </noscript>
+  </section>
 </Base>
 
-<script>
-  /*
-   * The flow controller. Every state this page can be in, and nothing else.
-   *
-   * IT NEVER FABRICATES PROGRESS. There is no optimistic "workspace created" ahead of the
-   * server saying so, no state that is entered on a timer, and no path that moves forward
-   * after a refusal. If a step cannot complete, the machine stops on a panel that says why.
-   *
-   * READ THE FRONTMATTER ABOVE BEFORE CHANGING THE ID HANDLING. The workspace id and command
-   * id are minted once and reused; that, plus the myWorkspaces() check before any unprompted
-   * create, is what stops this flow producing a duplicate workspace.
-   */
-  import type { Session } from "@supabase/supabase-js";
-  import {
-    client,
-    createWorkspace,
-    currentSession,
-    myWorkspaces,
-    signInWithGitHub,
-    signInWithEmail,
-    signOut,
-    uuid,
-    NoDeployment,
-    SignupRefused,
-    WorkspaceLimitReached,
-    EmailNotVerified,
-    EmailDomainNotAccepted,
-    ClientTooOld,
-    EmailRateLimited,
-    EmailAddressRejected,
-  } from "../lib/commonswarm";
-
-  type State =
-    | "signed-out"
-    | "email-sent"
-    | "ready"
-    | "working"
-    | "done"
-    | "no-deployment"
-    | "refused"
-    | "email-unverified"
-    | "email-domain"
-    | "client-too-old"
-    | "error";
-  type ProgressAt = number | "complete";
-  type Handoff =
-    | "stored-workspace"
-    | "server-workspace"
-    | "workspace-created"
-    | "workspace-limit";
-
-  /* Which of the two labels in the progress strip is live in each state. A stop counts as
-   * being ON the step it stopped at — a refusal at step 2 is not step 1 all over again. */
-  const STEP_OF: Record<State, ProgressAt> = {
-    "no-deployment": 1,
-    "signed-out": 1,
-    /* Still step ONE. The link has been sent but nobody is signed in yet, and the strip must
-       not advance on an action the user has not completed — that would tell them they are
-       further along than they are, and the next thing they do is leave for their inbox. */
-    "email-sent": 1,
-    ready: 2,
-    working: 2,
-    refused: 2,
-    "email-unverified": 2,
-    "email-domain": 2,
-    "client-too-old": 2,
-    error: 2,
-    done: "complete",
-  };
-
-  const stage = document.querySelector<HTMLElement>("[data-stage]");
-  const panels = new Map<string, HTMLElement>();
-  for (const el of stage?.querySelectorAll<HTMLElement>(":scope > [data-panel]") ?? []) {
-    if (el.dataset.panel) panels.set(el.dataset.panel, el);
-  }
-  const stepItems = Array.from(
-    document.querySelectorAll<HTMLElement>("[data-progress] > [data-step]"),
-  );
-
-  /* Nothing below can run without the stage, and a page without it is a page this script does
-   * not belong to. Fail closed rather than throwing into a reader's console. */
-  if (stage && panels.size > 0) {
-    const workingText = document.querySelector<HTMLElement>("[data-working-text]");
-    const nameInput = document.querySelector<HTMLInputElement>("[data-ws-name-input]");
-    const readyNote = document.querySelector<HTMLElement>("[data-ready-note]");
-
-    /* ------------------------------------------------------------------------------------
-     * The intent: the pair of ids this page is allowed to use, minted once.
-     * ---------------------------------------------------------------------------------- */
-    interface Intent {
-      workspaceId: string;
-      commandId: string;
-      name: string;
-      done: boolean;
-    }
-
-    /* ★ THE KEY CARRIES THE USER ID, AND THAT IS A CORRECTNESS FIX, NOT TIDINESS.
-     *
-     * It used to be a bare origin-scoped string. On a shared browser that showed one person
-     * ANOTHER person's workspace as their own: A completes signup, so {workspaceId, done}
-     * sits on disk; A signs out; B signs in; boot() reads the surviving intent, sees
-     * done:true, and renders "Your workspace is ready — it is yours and you own it" over A's
-     * workspace id. B owns nothing. Nothing was leaked from the server — the read views gate
-     * on membership — but the PAGE asserted ownership that was not true, which is the same
-     * defect class as any other claim the system cannot support.
-     *
-     * Scoping by user id makes a stale intent unreadable to a different identity, and
-     * clearIntent() on sign-out means it does not linger even for the same one. Both are
-     * needed: the key alone still leaves A's row on disk after A leaves a shared machine. */
-    const KEY_BASE = "commonswarm:start-intent:v2";
-    let KEY = KEY_BASE;
-    const scopeKeyTo = (userId: string | null): void => {
-      KEY = userId ? `${KEY_BASE}:${userId}` : KEY_BASE;
-    };
-
-    /* localStorage throws on access in some privacy modes rather than returning null, so it
-     * is probed once and the result is a nullable handle. `memory` is the fallback: it does
-     * not survive the OAuth redirect, which is exactly why the create path also asks the
-     * server what this identity already owns. */
-    const disk: Storage | null = (() => {
-      try {
-        const s = window.localStorage;
-        s.setItem(`${KEY}:probe`, "1");
-        s.removeItem(`${KEY}:probe`);
-        return s;
-      } catch {
-        return null;
-      }
-    })();
-
-    let memory: Intent | null = null;
-
-    const readIntent = (): Intent | null => {
-      if (!disk) return memory;
-      try {
-        const raw = disk.getItem(KEY);
-        if (!raw) return memory;
-        const parsed = JSON.parse(raw) as Partial<Intent>;
-        if (typeof parsed.workspaceId !== "string" || typeof parsed.commandId !== "string") {
-          return memory;
-        }
-        return {
-          workspaceId: parsed.workspaceId,
-          commandId: parsed.commandId,
-          name: typeof parsed.name === "string" ? parsed.name : "",
-          done: parsed.done === true,
-        };
-      } catch {
-        return memory;
-      }
-    };
-
-    const writeIntent = (intent: Intent): Intent => {
-      memory = intent;
-      try {
-        disk?.setItem(KEY, JSON.stringify(intent));
-      } catch {
-        /* memory already holds it; see the note above about what that costs. */
-      }
-      return intent;
-    };
-
-    /* Removes the intent for whichever identity is currently scoped, plus the legacy
-     * unscoped key. Called on sign-out so a finished signup does not survive on a shared
-     * machine. */
-    const clearIntent = (): void => {
-      memory = null;
-      try {
-        disk?.removeItem(KEY);
-        disk?.removeItem(KEY_BASE);
-      } catch {
-        /* Nothing to do: memory is already cleared, which is what this page reads. */
-      }
-    };
-
-    /* The ONLY place a new pair of ids is minted. Every other path reuses what it was given. */
-    const mintIntent = (name: string): Intent =>
-      writeIntent({ workspaceId: uuid(), commandId: uuid(), name, done: false });
-
-    /* ------------------------------------------------------------------------------------
-     * Rendering
-     * ---------------------------------------------------------------------------------- */
-    const show = (
-      state: State,
-      opts: { focus?: boolean; step?: ProgressAt | null } = {},
-    ): void => {
-      for (const [key, el] of panels) el.hidden = key !== state;
-      const at = opts.step === undefined ? STEP_OF[state] : opts.step;
-      for (const item of stepItems) {
-        if (at === null) {
-          delete item.dataset.state;
-          item.removeAttribute("aria-current");
-          continue;
-        }
-        if (at === "complete") {
-          item.dataset.state = "done";
-          item.removeAttribute("aria-current");
-          continue;
-        }
-        const n = Number(item.dataset.step);
-        item.dataset.state = n < at ? "done" : n === at ? "current" : "todo";
-        if (n === at) item.setAttribute("aria-current", "step");
-        else item.removeAttribute("aria-current");
-      }
-      if (opts.focus) panels.get(state)?.focus();
-    };
-
-    const busy = (message: string, step?: ProgressAt | null): void => {
-      if (workingText) workingText.textContent = message;
-      show("working", { step });
-    };
-
-    /* The thrown sentence, shown as the server's own words rather than paraphrased. Set on
-     * the panel it belongs to, not on the first [data-halt-detail] in the document. */
-    const setDetail = (state: State, message: string): void => {
-      const el = panels.get(state)?.querySelector<HTMLElement>("[data-halt-detail]");
-      if (!el) return;
-      el.textContent = message;
-      el.hidden = message.length === 0;
-    };
-
-    const setWho = (session: Session): void => {
-      const meta = (session.user.user_metadata ?? {}) as Record<string, unknown>;
-      const handle =
-        (typeof meta.user_name === "string" && meta.user_name) ||
-        (typeof meta.preferred_username === "string" && meta.preferred_username) ||
-        session.user.email ||
-        "your GitHub account";
-      for (const el of document.querySelectorAll<HTMLElement>("[data-who]")) {
-        el.textContent = handle;
-      }
-    };
-
-    /* A DEFAULT, not a decision — the field in ReadyPanel is editable and this is what it is
-     * seeded with. Capped at 80 because the server validates the name with
-     * boundedText(name, 80) and a 400 is not something a reader should have to decode. */
-    const defaultName = (session: Session): string => {
-      const meta = (session.user.user_metadata ?? {}) as Record<string, unknown>;
-      const handle =
-        (typeof meta.user_name === "string" && meta.user_name) ||
-        (typeof meta.preferred_username === "string" && meta.preferred_username) ||
-        session.user.email?.split("@")[0] ||
-        "";
-      const base = handle ? `${handle}’s workspace` : "My workspace";
-      return base.slice(0, 80);
-    };
-
-    /* /app owns every state after a workspace exists. The reason becomes a transient data
-     * hook in the built bundle; the observer pairs its presence there with source checks for
-     * the four call sites. Replace keeps Back from re-entering completed setup. */
-    const openApp = (reason: Handoff): void => {
-      const done = panels.get("done");
-      if (done) done.dataset.handoff = reason;
-      show("done");
-      window.location.replace("/app");
-    };
-
-    /* One place decides what a thrown thing means. WorkspaceLimitReached proves the account
-     * already has workspaces, so it follows the same direct handoff to /app. */
-    const halt = (thrown: unknown, errorStep?: number | null): void => {
-      if (thrown instanceof WorkspaceLimitReached) {
-        clearIntent();
-        openApp("workspace-limit");
-        return;
-      }
-      if (thrown instanceof SignupRefused) {
-        show("refused", { focus: true });
-        return;
-      }
-      if (thrown instanceof NoDeployment) {
-        show("no-deployment", { focus: true });
-        return;
-      }
-      if (thrown instanceof EmailNotVerified) {
-        show("email-unverified", { focus: true });
-        return;
-      }
-      if (thrown instanceof EmailDomainNotAccepted) {
-        show("email-domain", { focus: true });
-        return;
-      }
-      if (thrown instanceof ClientTooOld) {
-        setDetail("client-too-old", thrown.message);
-        show("client-too-old", { focus: true });
-        return;
-      }
-      setDetail("error", thrown instanceof Error ? thrown.message : String(thrown));
-      show("error", { focus: true, step: errorStep });
-    };
-
-    /* ------------------------------------------------------------------------------------
-     * The one write in the whole web UI
-     * ---------------------------------------------------------------------------------- */
-    const create = async (session: Session, intent: Intent): Promise<void> => {
-      busy("Creating your workspace…");
-      try {
-        const made = await createWorkspace(
-          session,
-          intent.commandId,
-          intent.workspaceId,
-          intent.name,
-        );
-        writeIntent({ ...intent, done: true, name: made.name });
-        openApp("workspace-created");
-      } catch (thrown) {
-        halt(thrown);
-      }
-    };
-
-    /* Ask, rather than create, when the page cannot tell what this identity already has. */
-    const ask = (session: Session, why: string): void => {
-      if (nameInput) nameInput.value = defaultName(session);
-      if (readyNote) readyNote.textContent = why;
-      show("ready", { focus: true });
-    };
-
-    /* ------------------------------------------------------------------------------------
-     * Boot
-     * ---------------------------------------------------------------------------------- */
-    let renderedAuthUserId: string | undefined;
-    let authReloadQueued = false;
-    let authReloadPending = false;
-
-    const boot = async (): Promise<void> => {
-      if (!client()) {
-        show("no-deployment", { step: null });
-        return;
-      }
-
-      /* Keep both progress labels neutral until the session read resolves. A signed-in
-       * visitor must never see "Sign in" rendered as their pending task. */
-      busy("Checking your session…", null);
-
-      let session: Session | null = null;
-      try {
-        session = await currentSession();
-      } catch (thrown) {
-        halt(thrown, null);
-        return;
-      }
-
-      renderedAuthUserId = session?.user?.id ?? "";
-
-      if (!session) {
-        show("signed-out");
-        return;
-      }
-
-      /* Session is established: mark sign-in done before any workspace read or write. */
-      busy("Opening your workspace…", 2);
-
-      /* Scope the stored intent to THIS identity before anything reads it. Until this runs
-       * KEY is the unscoped base, so an intent written by a previous user of this browser
-       * would otherwise be picked up as the current user's own. */
-      scopeKeyTo(session.user?.id ?? null);
-
-      setWho(session);
-
-      const intent = readIntent();
-
-      /* Already created on a previous visit. Do not post again or keep them on /start. */
-      if (intent?.done) {
-        openApp("stored-workspace");
-        return;
-      }
-
-      /* Ask the server before every unprompted create, including the OAuth return path. A
-       * pending local intent proves only that signup started; it does not prove the account
-       * still has zero workspaces. Another tab or device may have created one meanwhile. */
-      let mine: { id: string; name: string }[] | null = null;
-      try {
-        mine = await myWorkspaces();
-      } catch {
-        mine = null;
-      }
-
-      if (mine === null) {
-        ask(
-          session,
-          "You are signed in. This page could not check which workspaces you already have, " +
-            "so it is asking instead of creating one you may not want.",
-        );
-        return;
-      }
-
-      if (mine.length > 0) {
-        clearIntent();
-        openApp("server-workspace");
-        return;
-      }
-
-      /* Mid-flight: they pressed sign in and came back with the same two ids. Only the
-       * server-confirmed empty account reaches this write. */
-      if (intent) {
-        const named = intent.name ? intent : writeIntent({ ...intent, name: defaultName(session) });
-        await create(session, named);
-        return;
-      }
-
-      await create(session, mintIntent(defaultName(session)));
-    };
-
-    /* ------------------------------------------------------------------------------------
-     * Presses
-     * ---------------------------------------------------------------------------------- */
-    document.querySelector<HTMLElement>("[data-signin]")?.addEventListener("click", async () => {
-      busy("Sending you to GitHub…", 1);
-      try {
-        await signInWithGitHub(`${window.location.origin}/start`);
-      } catch (thrown) {
-        halt(thrown, 1);
-      }
-    });
-
-    /* THE EMAIL DOOR.
-     *
-     * THE SUCCESS STATE DOES NOT CLAIM DELIVERY. It says a link was sent, not that it
-     * arrived — we get an accepted POST from GoTrue and nothing else. Saying "check your
-     * inbox" when the mail is queued behind a rate limit would be the same class of false
-     * claim as the install command that could not run.
-     *
-     * IT ALSO DOES NOT SAY WHETHER THE ADDRESS WAS ALREADY REGISTERED. The response is
-     * identical either way by design (see signInWithEmail), and surfacing the difference here
-     * would turn this form into an account-enumeration oracle. */
-    const emailForm = document.querySelector<HTMLFormElement>("[data-email-form]");
-    const emailError = document.querySelector<HTMLElement>("[data-email-error]");
-    const emailSubmit = document.querySelector<HTMLButtonElement>("[data-email-submit]");
-
-    const showEmailError = (text: string) => {
-      if (!emailError) return;
-      emailError.textContent = text;
-      emailError.hidden = false;
-    };
-    const clearEmailError = () => {
-      if (!emailError) return;
-      emailError.hidden = true;
-      emailError.textContent = "";
-    };
-
-    emailForm?.addEventListener("submit", async (event) => {
-      event.preventDefault();
-      clearEmailError();
-      const field = emailForm.querySelector<HTMLInputElement>("input[name=email]");
-      const address = (field?.value ?? "").trim();
-      /* checkValidity() rather than a hand-rolled regex: the browser's type="email" rule is
-       * the one the user's autofill and their other forms already agree with, and every
-       * address regex anyone writes rejects something deliverable. */
-      if (!address || !field?.checkValidity()) {
-        showEmailError("Enter an email address you can open right now.");
-        field?.focus();
-        return;
-      }
-      if (emailSubmit) emailSubmit.disabled = true;
-      try {
-        await signInWithEmail(address, `${window.location.origin}/start`);
-        show("email-sent", { focus: true });
-        const target = document.querySelector<HTMLElement>("[data-email-sent-address]");
-        if (target) target.textContent = address;
-      } catch (thrown) {
-        if (thrown instanceof EmailRateLimited) {
-          /* THE CAP IS OURS, NOT THEIRS, AND THE MESSAGE SAYS SO. Until custom SMTP is
-             configured, Supabase's built-in sender allows 2 emails per hour ACROSS THE WHOLE
-             PROJECT — the Management API refuses to raise rate_limit_email_sent without it
-             ("Custom SMTP required..."). So a visitor can be rate limited by a stranger who
-             signed up ten minutes earlier, having done nothing wrong at all. Telling them to
-             "wait a minute" would be advice that does not work; pointing at the door that has
-             no such limit does. */
-          showEmailError(
-            "Our email sender is busy — that is a limit on our side, not a problem with your address. Sign in with GitHub below, or try again in a few minutes.",
-          );
-        } else if (thrown instanceof EmailAddressRejected) {
-          showEmailError("That address was refused. Check it for a typo and try again.");
-        } else if (thrown instanceof NoDeployment) {
-          halt(thrown);
-        } else {
-          showEmailError(
-            thrown instanceof Error && thrown.message
-              ? thrown.message
-              : "Could not send the link. Try again in a moment.",
-          );
-        }
-      } finally {
-        if (emailSubmit) emailSubmit.disabled = false;
-      }
-    });
-
-    document.querySelector<HTMLElement>("[data-resend]")?.addEventListener("click", () => {
-      show("signed-out", { focus: true });
-      document.querySelector<HTMLInputElement>("input[name=email]")?.focus();
-    });
-
-    document.querySelector<HTMLElement>("[data-create]")?.addEventListener("click", async () => {
-      const session = await currentSession();
-      if (!session) {
-        show("signed-out", { focus: true });
-        return;
-      }
-      scopeKeyTo(session.user?.id ?? null);
-      const typed = (nameInput?.value ?? "").trim();
-      if (!typed) {
-        nameInput?.focus();
-        return;
-      }
-      const intent = readIntent();
-      /* Reuse a pending intent's ids; mint only when there is none, or when the last one was
-       * already spent on a workspace that exists. */
-      const use =
-        intent && !intent.done
-          ? writeIntent({ ...intent, name: typed })
-          : mintIntent(typed);
-      await create(session, use);
-    });
-
-    for (const el of document.querySelectorAll<HTMLElement>("[data-signout]")) {
-      el.addEventListener("click", async () => {
-        busy("Signing you out…", 1);
-        try {
-          await signOut();
-        } catch {
-          /* Whether or not the network call succeeded, the local session is what this page
-           * reads, and boot() will report what it actually finds. */
-        }
-        /* Drop the stored intent on the way out. Without this a completed signup survives
-         * sign-out, and the next person to sign in on this browser is shown the previous
-         * user's workspace as their own. Cleared AFTER signOut so it still happens even if
-         * the network call throws. */
-        clearIntent();
-        window.location.reload();
-      });
-    }
-
-    for (const el of document.querySelectorAll<HTMLElement>("[data-reload]")) {
-      el.addEventListener("click", () => {
-        window.location.reload();
-      });
-    }
-
-    const queueAuthReload = (nextSession: Session | null): void => {
-      const nextAuthUserId = nextSession?.user?.id ?? "";
-      if (nextAuthUserId === renderedAuthUserId) return;
-      renderedAuthUserId = nextAuthUserId;
-      if (authReloadQueued) {
-        authReloadPending = true;
-        return;
-      }
-      authReloadQueued = true;
-      queueMicrotask(async () => {
-        try {
-          do {
-            authReloadPending = false;
-            await boot();
-          } while (authReloadPending);
-        } finally {
-          authReloadQueued = false;
-        }
-      });
-    };
-
-    const configuredClient = client();
-    if (!configuredClient) {
-      void boot();
-    } else {
-      configuredClient.auth.onAuthStateChange((event, nextSession) => {
-        if (
-          event !== "INITIAL_SESSION" &&
-          event !== "SIGNED_IN" &&
-          event !== "SIGNED_OUT"
-        ) {
-          return;
-        }
-        queueAuthReload(nextSession);
-      });
-    }
-  }
+<script is:inline>
+  (() => {
+    const target = new URL("/app", window.location.origin);
+    target.search = window.location.search;
+    target.hash = window.location.hash;
+    document.querySelector("[data-open-app]")?.setAttribute("href", target.href);
+    window.location.replace(target.href);
+  })();
 </script>
 
 <style>
-  .st {
-    padding-block: var(--s-10) var(--s-16);
-  }
-
-  /* Narrower than .page's 76rem on purpose: this is one focused setup column. */
-  .st__col {
-    display: grid;
-    /* minmax(0, …) so nothing inside — a uuid, a command line — can size the track and push
-       the column past its container. The old page measured 441px of scrollWidth against a
-       375px viewport before this was added. */
-    grid-template-columns: minmax(0, 1fr);
-    inline-size: 100%;
-    max-inline-size: 38rem;
+  .handoff {
+    min-block-size: 100svh;
+    inline-size: min(100% - var(--gutter) * 2, 42rem);
     margin-inline: auto;
+    padding-block: var(--s-12);
+    display: grid;
+    align-content: center;
+    justify-items: start;
+    gap: var(--s-8);
   }
 
-  .st__h {
-    margin: 0;
-    font-size: var(--t-2xl);
-    line-height: var(--lh-2xl);
-    letter-spacing: var(--track-head);
-    font-weight: var(--weight-head);
+  .handoff__wordmark {
     color: var(--text);
+    font-size: var(--t-lg);
+    font-weight: var(--weight-head);
+    letter-spacing: var(--track-tight);
+    text-decoration: none;
+  }
+
+  .handoff__copy {
+    display: grid;
+    gap: var(--s-3);
+  }
+
+  .handoff__eyebrow {
+    margin: 0;
+    color: var(--accent-bright);
+    font-size: var(--t-xs);
+    font-weight: var(--weight-semibold);
+    letter-spacing: var(--track-eyebrow);
+    text-transform: uppercase;
+  }
+
+  .handoff h1 {
+    max-inline-size: 16ch;
+    margin: 0;
+    font-size: clamp(var(--t-2xl), 6vw, var(--t-4xl));
+    line-height: 1.02;
+    letter-spacing: var(--track-head);
     text-wrap: balance;
   }
 
-  .st__lede {
-    margin: var(--stack-sm) 0 0;
-    max-inline-size: 32rem;
-    font-size: var(--t-base);
-    line-height: var(--lh-base);
+  .handoff__copy > p:last-child,
+  .handoff__note {
+    max-inline-size: 56ch;
+    margin: 0;
     color: var(--text-muted);
-    text-wrap: pretty;
+    line-height: var(--lh-base);
   }
 
-  /* A min-height, so swapping between a two-line busy panel and a full done panel does not
-     jump the page under the reader's pointer, and so the brief moment before the script runs
-     is a reserved space rather than a collapse. */
-  .st__stage {
-    margin-block-start: var(--s-6);
-    min-block-size: 14rem;
+  .handoff__button {
+    min-block-size: 2.75rem;
+    display: inline-flex;
+    align-items: center;
+    padding: var(--s-3) var(--s-5);
+    color: var(--accent-ink);
+    background: var(--accent);
+    border: 1px solid var(--accent);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-sm);
+    font-size: var(--t-sm);
+    font-weight: var(--weight-semibold);
+    line-height: 1;
+    text-decoration: none;
   }
 
-  @media (max-width: 30rem) {
-    .st__h {
-      font-size: var(--t-xl);
-      line-height: var(--lh-xl);
-      letter-spacing: var(--track-xl);
-    }
-
-    .st__lede {
-      font-size: var(--t-sm);
-      line-height: var(--lh-sm);
-      letter-spacing: var(--track-sm);
-    }
+  .handoff__button:hover {
+    background: var(--accent-hover);
+    border-color: var(--accent-hover);
+    transform: translateY(-1px);
   }
 </style>

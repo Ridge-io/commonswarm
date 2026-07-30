@@ -44,8 +44,8 @@
  * ---------------------------------------------------------------------------------------
  * WHERE THE SURVIVING FACTS WERE CHECKED, all in supabase/functions/command/index.ts:
  *   3 live workspaces .... FREE_TIER_WORKSPACE_LIMIT = 3 (:330), counted against rows with
- *                          archived_at IS NULL (:2325) — archiving one frees the slot, which
- *                          is why the copy says "live" and not just "three".
+ *                          archived_at IS NULL (:2325). No user-facing archive/free-a-slot
+ *                          action exists, so the page does not promise a way to reclaim one.
  *   verified identity .... a non-human credential is refused, then an unverified one
  *                          (:2183-2186); identityVerified is email_confirmed_at.
  *   no card .............. no billing surface exists in this repo. RE-MEASURED 2026-07-27,

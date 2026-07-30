@@ -5,216 +5,54 @@ const cwd = process.cwd();
 const siteRoot = fs.existsSync(path.join(cwd, "dist", "start", "index.html"))
   ? cwd
   : path.join(cwd, "site");
-const dist = path.join(siteRoot, "dist");
-const html = fs.readFileSync(path.join(dist, "start", "index.html"), "utf8");
+const html = fs.readFileSync(path.join(siteRoot, "dist", "start", "index.html"), "utf8");
 const source = fs.readFileSync(path.join(siteRoot, "src", "pages", "start.astro"), "utf8");
-const clientSource = fs.readFileSync(
-  path.join(siteRoot, "src", "lib", "commonswarm.ts"),
+const dashboard = fs.readFileSync(
+  path.join(siteRoot, "src", "components", "app", "LiveDashboard.astro"),
   "utf8",
 );
 
-const scriptSource = html.match(
-  /<script\b[^>]*\bsrc="([^"]*\/start\.astro_[^"]*\.js)"[^>]*><\/script>/i,
-)?.[1];
-if (!scriptSource) {
-  console.error("start on-ramp observer: rendered /start has no page controller bundle");
-  process.exit(1);
-}
-
-const bundle = fs.readFileSync(path.join(dist, scriptSource.replace(/^\//, "")), "utf8");
-const progress = html.match(/<ol\b[^>]*\bdata-progress\b[^>]*>([\s\S]*?)<\/ol>/i)?.[1] ?? "";
-const progressSteps = [...progress.matchAll(/\bdata-step="(\d+)"/g)].map((match) =>
-  Number(match[1]),
-);
-const donePanel = html.match(
-  /<section\b[^>]*\bdata-panel="done"[^>]*>([\s\S]*?)<\/section>/i,
-)?.[1] ?? "";
-const checkingAt = bundle.indexOf("Checking your session…");
-const signedInAt = bundle.indexOf("Opening your workspace…");
-const handoffs = [
-  "stored-workspace",
-  "server-workspace",
-  "workspace-created",
-  "workspace-limit",
-];
-const bootSource = source.slice(
-  source.indexOf("const boot = async"),
-  source.indexOf("* Presses"),
-);
-const signInPressStart = source.indexOf('[data-signin]")?.addEventListener');
-const signInPressEnd = source.indexOf("/* THE EMAIL DOOR.");
-const emailPressStart = source.indexOf('emailForm?.addEventListener("submit"');
-const emailPressEnd = source.indexOf('[data-resend]")?.addEventListener');
-const signInPressSource =
-  signInPressStart >= 0 && signInPressEnd > signInPressStart
-    ? source.slice(signInPressStart, signInPressEnd)
-    : null;
-const emailPressSource =
-  emailPressStart >= 0 && emailPressEnd > emailPressStart
-    ? source.slice(emailPressStart, emailPressEnd)
-    : null;
-const createPressStart = source.indexOf('[data-create]")?.addEventListener');
-const createPressEnd = source.indexOf(
-  "for (const el of document.querySelectorAll",
-  createPressStart,
-);
-const createPressSource =
-  createPressStart >= 0 && createPressEnd > createPressStart
-    ? source.slice(createPressStart, createPressEnd)
-    : null;
-const orderedInBoot = [
-  "const intent = readIntent();",
-  "mine = await myWorkspaces();",
-  "if (mine.length > 0)",
-  "if (intent)",
-  "await create(session, named);",
-].map((needle) => bootSource.indexOf(needle));
-const authObserverStart = source.indexOf("const queueAuthReload =");
-const authObserverEnd = source.indexOf("\n  }\n</script>", authObserverStart);
-const authObserverSource =
-  authObserverStart >= 0 && authObserverEnd > authObserverStart
-    ? source.slice(authObserverStart, authObserverEnd)
-    : null;
-
 const checks = [
   {
-    name: "rendered progress has only sign-in and workspace creation",
-    pass: progressSteps.length === 2 && progressSteps[0] === 1 && progressSteps[1] === 2,
-  },
-  {
-    name: "rendered progress ships neutral before session detection",
-    pass: !/\bdata-state=|\baria-current=/.test(progress),
-  },
-  {
-    name: "rendered success handoff is one line with an /app fallback",
+    name: "rendered /start is a compatibility handoff with an accessible /app fallback",
     pass:
-      html.includes("Your workspace is ready. Opening your dashboard") &&
-      html.includes('<a href="/app">Open it now</a>') &&
-      (donePanel.match(/<p\b/g) ?? []).length === 1 &&
-      !/<(?:h[1-6]|dl|button|agent-connect)\b/i.test(donePanel),
+      html.includes("CommonSwarm starts in the dashboard.") &&
+      html.includes('href="/app"') &&
+      html.includes("Continue to CommonSwarm"),
   },
   {
-    name: "rendered /start contains no agent-connection step",
+    name: "legacy checklist and duplicate signup controls are absent",
     pass:
-      !html.includes("Connect your AI assistant") &&
-      !html.includes("Connect an agent") &&
-      !html.includes("<agent-connect") &&
-      !html.includes('data-panel="limit"') &&
-      !html.includes("Joining a teammate’s workspace") &&
-      !html.includes("Accept your invite"),
+      !html.includes("Getting started") &&
+      !html.includes("Create your workspace") &&
+      !html.includes('data-progress') &&
+      !html.includes('data-signin') &&
+      !html.includes("<agent-connect"),
   },
   {
-    name: "session check leaves progress neutral",
-    pass: /Checking your session…[`"'],null/.test(bundle),
-  },
-  {
-    name: "confirmed-session progress follows the neutral session check",
+    name: "handoff preserves both auth query and fragment before replacing history",
     pass:
-      /Opening your workspace…[`"'],2/.test(bundle) &&
-      checkingAt >= 0 &&
-      signedInAt > checkingAt,
+      source.includes('new URL("/app", window.location.origin)') &&
+      source.includes("target.search = window.location.search") &&
+      source.includes("target.hash = window.location.hash") &&
+      source.includes("window.location.replace(target.href)"),
   },
   {
-    name: "all four workspace proofs reach the bundled handoff",
-    pass: handoffs.every((reason) => bundle.includes(reason)),
-  },
-  {
-    name: "pending-intent create follows the server workspace guard",
+    name: "dashboard is the only auth-return controller",
     pass:
-      orderedInBoot.every((index) => index >= 0) &&
-      orderedInBoot.every((index, position) => position === 0 || index > orderedInBoot[position - 1]),
-  },
-  {
-    name: "stored and server workspace paths are labeled and settled correctly",
-    pass:
-      /if \(intent\?\.done\)[\s\S]{0,160}openApp\("stored-workspace"\)/.test(bootSource) &&
-      /if \(mine\.length > 0\)[\s\S]{0,160}clearIntent\(\);[\s\S]{0,80}openApp\("server-workspace"\)/.test(
-        bootSource,
-      ),
-  },
-  {
-    name: "limit and create paths settle before their labeled handoff",
-    pass:
-      /WorkspaceLimitReached[\s\S]{0,180}clearIntent\(\);[\s\S]{0,80}openApp\("workspace-limit"\)/.test(
-        source,
-      ) &&
-      /writeIntent\(\{ \.\.\.intent, done: true, name: made\.name \}\);[\s\S]{0,80}openApp\("workspace-created"\)/.test(
-        source,
-      ),
-  },
-  {
-    name: "unauthenticated sign-in presses do not mint unscoped intent",
-    pass:
-      signInPressSource !== null &&
-      emailPressSource !== null &&
-      !signInPressSource.includes("mintIntent(") &&
-      !emailPressSource.includes("mintIntent("),
-  },
-  {
-    name: "prompted create re-scopes intent to its current session",
-    pass:
-      createPressSource !== null &&
-      createPressSource.indexOf("scopeKeyTo(session.user?.id ?? null);") >= 0 &&
-      createPressSource.indexOf("scopeKeyTo(session.user?.id ?? null);") <
-        createPressSource.indexOf("const intent = readIntent();"),
-  },
-  {
-    name: "auth return waits for the initial session event and coalesces identity reloads",
-    pass:
-      authObserverSource !== null &&
-      authObserverSource.includes("configuredClient.auth.onAuthStateChange") &&
-      authObserverSource.includes('event !== "INITIAL_SESSION"') &&
-      authObserverSource.includes('event !== "SIGNED_IN"') &&
-      authObserverSource.includes('event !== "SIGNED_OUT"') &&
-      authObserverSource.includes("nextSession?.user?.id ??") &&
-      authObserverSource.includes("nextAuthUserId === renderedAuthUserId") &&
-      authObserverSource.includes("queueMicrotask(") &&
-      authObserverSource.includes("await boot();"),
-  },
-  {
-    name: "auth reload stays single-flight through boot and drains a changed identity",
-    pass:
-      authObserverSource !== null &&
-      source.includes("let authReloadPending = false;") &&
-      /if \(authReloadQueued\)[\s\S]{0,100}authReloadPending = true;[\s\S]{0,60}return;/.test(
-        authObserverSource,
-      ) &&
-      /do \{[\s\S]{0,100}authReloadPending = false;[\s\S]{0,80}await boot\(\);[\s\S]{0,80}\} while \(authReloadPending\)/.test(
-        authObserverSource,
-      ) &&
-      /finally \{[\s\S]{0,80}authReloadQueued = false;/.test(authObserverSource),
-  },
-  {
-    name: "configured start boots from auth state instead of racing it",
-    pass:
-      authObserverSource !== null &&
-      /if \(!configuredClient\)[\s\S]{0,80}void boot\(\);[\s\S]{0,120}else \{[\s\S]*onAuthStateChange/.test(
-        authObserverSource,
-      ) &&
-      !/const configuredClient = client\(\);[\s\S]*onAuthStateChange[\s\S]*\n\s*void boot\(\);\s*$/.test(
-        authObserverSource,
-      ),
-  },
-  {
-    name: "typed signup refusal no longer emits the retired invite-only premise",
-    pass:
-      clientSource.includes("the deployment operator to enable self-serve signup.") &&
-      !clientSource.includes("an invite link still works") &&
-      !clientSource.includes("Signup is CLOSED on this deployment") &&
-      !clientSource.includes("unset in production today"),
-  },
-  {
-    name: "workspace handoff replaces /start with /app",
-    pass: /location\.replace\([`"']\/app[`"']\)/.test(bundle),
+      dashboard.includes("the one auth-return controller for both current and compatibility links") &&
+      dashboard.includes("auth.onAuthStateChange(") &&
+      dashboard.includes('event === "INITIAL_SESSION"') &&
+      dashboard.includes('event === "SIGNED_IN"'),
   },
 ];
 
 const failures = checks.filter((check) => !check.pass);
 if (failures.length > 0) {
-  console.error(`start on-ramp observer: ${failures.length} of ${checks.length} checks failed`);
+  console.error(`start handoff observer: ${failures.length} of ${checks.length} checks failed`);
   for (const failure of failures) console.error(`- ${failure.name}`);
   process.exitCode = 1;
 } else {
-  console.log(`start on-ramp observer: ${checks.length}/${checks.length} rendered checks passed`);
-  console.log("rendered HTML and production bundle invariants checked");
+  console.log(`start handoff observer: ${checks.length}/${checks.length} rendered checks passed`);
+  console.log("rendered compatibility handoff and source invariants checked");
 }

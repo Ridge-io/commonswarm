@@ -111,7 +111,10 @@ test("dashboard auth transitions include INITIAL_SESSION and coalesce reloads", 
     dashboard,
     /const boot = async[\s\S]*const version = \+\+requestVersion;[\s\S]*session = await currentSession\(\);[\s\S]*if \(version !== requestVersion\) return;[\s\S]*workspaces = await workspaceMemberships\(\);[\s\S]*if \(version !== requestVersion\) return;[\s\S]*catch \(error\) \{[\s\S]*if \(version !== requestVersion\) return/,
   );
-  assert.match(source, /closes \/app's auth-return race only/);
+  assert.match(
+    source,
+    /one auth-return controller for both current and compatibility links/,
+  );
   assert.match(source, /auth\.onAuthStateChange\(/);
   assert.match(
     source,
