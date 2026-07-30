@@ -421,6 +421,39 @@ export async function removeWorkspaceMember(
   }
 }
 
+/**
+ * Ends an agent identity in this workspace: the principal and every live credential.
+ * Browser surface is principal-only — there is no per-token UI.
+ */
+export async function revokeAgentPrincipal(
+  session: Session,
+  commandId: string,
+  workspaceId: string,
+  principalId: string,
+): Promise<void> {
+  const { status, body } = await postCommand(
+    session,
+    commandId,
+    { kind: "revoke_agent_principal", principal_id: principalId },
+    { workspace_id: workspaceId, stream: { kind: "workspace" } },
+  );
+  if (status === 403) {
+    throw new Error(
+      "Your current project role cannot remove this agent. CommonSwarm did not change anything.",
+    );
+  }
+  if (status !== 200) {
+    throw new Error(
+      `Agent removal failed (HTTP ${status}). CommonSwarm did not confirm a change.`,
+    );
+  }
+  if (body.status !== "accepted") {
+    throw new Error(
+      `Agent removal was refused: ${String(body.reason ?? "required condition not met")}. The identity and credentials are unchanged.`,
+    );
+  }
+}
+
 export interface CreatedWorkspace {
   workspaceId: string;
   streamId: string;

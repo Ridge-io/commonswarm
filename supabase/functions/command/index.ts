@@ -74,6 +74,7 @@ type ConnectCommand =
   | { kind: "accept_invitation"; token: string }
   | { kind: "remove_member"; user_id: string }
   | { kind: "create_agent_principal"; name: string }
+  | { kind: "revoke_agent_principal"; principal_id: string }
   | {
     kind: "mint_agent_token";
     principal_id: string;
@@ -84,6 +85,7 @@ type ConnectCommand =
     device_id: string;
     scopes?: string[];
   }
+  | { kind: "revoke_agent_token"; token_id: string }
   // §2.3 successor endpoint. It has no fields on purpose: the presented
   // predecessor credential IS the request, and accepting any target field here
   // is exactly the escalation the fence exists to stop.
@@ -177,6 +179,7 @@ type WorkspaceCommand =
   | { kind: "accept_invitation"; token_hash: string }
   | { kind: "remove_member"; user_id: string }
   | { kind: "create_agent_principal"; principal_id: string; name: string }
+  | { kind: "revoke_agent_principal"; principal_id: string }
   | {
     kind: "mint_agent_token";
     token_id: string;
@@ -187,6 +190,7 @@ type WorkspaceCommand =
     scopes: string[];
     ttl_ms?: number;
   }
+  | { kind: "revoke_agent_token"; token_id: string }
   | {
     kind: "renew_agent_token";
     successor_token_id: string;
@@ -607,6 +611,8 @@ const COMMAND_KINDS = [
   "remove_member",
   "create_agent_principal",
   "mint_agent_token",
+  "revoke_agent_principal",
+  "revoke_agent_token",
   "renew_agent_token",
   "post_signal",
 ] as const;
@@ -631,6 +637,7 @@ const CONNECT_COMMAND_KINDS = [
   "remove_member",
   "create_agent_principal",
   "mint_agent_token",
+  "revoke_agent_principal",
 ] as const;
 /**
  * Everything that travels the workspace-stream path. `renew_agent_token` routes
@@ -642,6 +649,7 @@ const CONNECT_COMMAND_KINDS = [
  */
 const WORKSPACE_COMMAND_KINDS = [
   ...CONNECT_COMMAND_KINDS,
+  "revoke_agent_token",
   RENEW_AGENT_TOKEN_KIND,
 ] as const;
 const P0_AGENT_SCOPES = [
@@ -1192,6 +1200,25 @@ function validateCommand(
       };
   }
 
+  // Token revoke is workspace-routed and may be presented by an agent for
+  // exact-token self-surrender (§2.3/§10). It is outside CONNECT so the human-
+  // only registry does not pre-refuse agents before the reducer can confine
+  // them to their presenting token_id.
+  if (cmd.kind === "revoke_agent_token") {
+    return exactKeys(cmd, ["kind", "token_id"]) &&
+        typeof cmd.token_id === "string" &&
+        UUID_RE.test(cmd.token_id)
+      ? {
+        ok: true,
+        command: { kind: "revoke_agent_token", token_id: cmd.token_id },
+      }
+      : {
+        ok: false,
+        status: 400,
+        reason: "revoke_agent_token fields are malformed",
+      };
+  }
+
   if ((CONNECT_COMMAND_KINDS as readonly string[]).includes(cmd.kind)) {
     if (cmd.kind === "remove_member") {
       return exactKeys(cmd, ["kind", "user_id"]) &&
@@ -1244,6 +1271,28 @@ function validateCommand(
           command: { kind: "create_agent_principal", name: cmd.name },
         }
         : { ok: false, status: 400, reason: "principal name is malformed" };
+    }
+    if (cmd.kind === "revoke_agent_principal") {
+      return exactKeys(cmd, ["kind", "principal_id"]) &&
+          typeof cmd.principal_id === "string" &&
+          UUID_RE.test(cmd.principal_id)
+        ? {
+          ok: true,
+          command: {
+            kind: "revoke_agent_principal",
+            principal_id: cmd.principal_id,
+          },
+        }
+        : {
+          ok: false,
+          status: 400,
+          reason: "revoke_agent_principal fields are malformed",
+        };
+    }
+    // Explicit mint arm only — never fall through from revoke kinds into a
+    // mint prepare that would invent a live credential.
+    if (cmd.kind !== "mint_agent_token") {
+      return { ok: false, status: 400, reason: "unknown command kind" };
     }
     const optionalKeys = [
       ...(Object.hasOwn(cmd, "ttl_ms") ? ["ttl_ms"] : []),
@@ -2035,6 +2084,13 @@ async function prepareWorkspaceCommand(
     };
   } else if (wire.kind === "remove_member") {
     command = { kind: "remove_member", user_id: wire.user_id };
+  } else if (wire.kind === "revoke_agent_principal") {
+    command = {
+      kind: "revoke_agent_principal",
+      principal_id: wire.principal_id,
+    };
+  } else if (wire.kind === "revoke_agent_token") {
+    command = { kind: "revoke_agent_token", token_id: wire.token_id };
   } else if (wire.kind === RENEW_AGENT_TOKEN_KIND) {
     // Every field below is read from the authenticated predecessor row or from
     // the server. `wire` contributes nothing but its kind.
@@ -2058,7 +2114,7 @@ async function prepareWorkspaceCommand(
       successor_token_id: crypto.randomUUID(),
       scopes: [...(predecessor?.scopes ?? [])],
     };
-  } else {
+  } else if (wire.kind === "mint_agent_token") {
     agentToken = opaqueToken("swm_agt_");
     agentTokenHash = await sha256(agentToken);
     lineageId = crypto.randomUUID();
@@ -2072,6 +2128,14 @@ async function prepareWorkspaceCommand(
       scopes: [...(wire.scopes ?? P0_AGENT_SCOPES)],
       ...(wire.ttl_ms === undefined ? {} : { ttl_ms: wire.ttl_ms }),
     };
+  } else {
+    // Exhaustiveness: every ConnectCommand kind is armed above. Falling into a
+    // mint would invent a live credential for an unhandled revoke/other kind.
+    const unexpected: never = wire;
+    void unexpected;
+    throw new Error(
+      "prepareWorkspaceCommand has no arm for this workspace kind; refusing mint fallthrough",
+    );
   }
 
   let inviteeAlreadyMember = false;
@@ -2837,6 +2901,149 @@ async function updateWorkspaceProjection(
           ${new Date(principal.created_at)},
           NULL
         )
+      `;
+    } else if (event.type === "AgentPrincipalRevoked") {
+      // One canonical event, one atomic projection: principal stamp + principal
+      // tombstone + every live token + distinct lineage tombstones + grant
+      // revocation. Descendants fail closed on the next command and on renewal.
+      if (
+        typeof payload.principal_id !== "string" ||
+        typeof payload.revoked_at !== "number"
+      ) {
+        throw new Error("AgentPrincipalRevoked payload is malformed");
+      }
+      const principalId = payload.principal_id;
+      const revokedAt = new Date(payload.revoked_at);
+      const createdBy = authUser(prepared.ctx.actor);
+      const updated = await tx<{ principal_id: string }[]>`
+        UPDATE swarm.agent_principals
+        SET revoked_at = ${revokedAt}
+        WHERE principal_id = ${principalId}::uuid
+          AND workspace_id = ${route.workspaceId}::uuid
+          AND revoked_at IS NULL
+        RETURNING principal_id
+      `;
+      if (updated.length !== 1) {
+        throw new Error(
+          "AgentPrincipalRevoked projection did not revoke exactly one principal",
+        );
+      }
+      await tx`
+        INSERT INTO swarm.revocation_tombstones (kind, target_id, created_by)
+        VALUES (
+          'principal',
+          ${principalId}::uuid,
+          ${createdBy}::uuid
+        )
+        ON CONFLICT (kind, target_id) DO NOTHING
+      `;
+      const liveTokens = await tx<{ token_id: string; lineage_id: string }[]>`
+        SELECT token_id, lineage_id
+        FROM swarm.agent_tokens
+        WHERE principal_id = ${principalId}::uuid
+          AND revoked_at IS NULL
+      `;
+      await tx`
+        UPDATE swarm.agent_tokens
+        SET revoked_at = ${revokedAt}
+        WHERE principal_id = ${principalId}::uuid
+          AND revoked_at IS NULL
+      `;
+      for (const token of liveTokens) {
+        await tx`
+          INSERT INTO swarm.revocation_tombstones (kind, target_id, created_by)
+          VALUES (
+            'token',
+            ${token.token_id}::uuid,
+            ${createdBy}::uuid
+          )
+          ON CONFLICT (kind, target_id) DO NOTHING
+        `;
+      }
+      const lineageIds = [...new Set(liveTokens.map((row) => row.lineage_id))];
+      for (const lineageId of lineageIds) {
+        await tx`
+          INSERT INTO swarm.revocation_tombstones (kind, target_id, created_by)
+          VALUES (
+            'lineage',
+            ${lineageId}::uuid,
+            ${createdBy}::uuid
+          )
+          ON CONFLICT (kind, target_id) DO NOTHING
+        `;
+      }
+      // Grant revoke is paired (revoked_at, revoked_by); the cascade trigger
+      // tombstones the grant and stamps any residual tokens.
+      if (createdBy !== null) {
+        await tx`
+          UPDATE swarm.renewal_grants
+          SET revoked_at = ${revokedAt},
+              revoked_by = ${createdBy}::uuid
+          WHERE principal_id = ${principalId}::uuid
+            AND workspace_id = ${route.workspaceId}::uuid
+            AND revoked_at IS NULL
+        `;
+      } else {
+        await tx`
+          UPDATE swarm.renewal_grants
+          SET revoked_at = ${revokedAt},
+              revoked_by = (
+                SELECT owner_user_id
+                FROM swarm.agent_principals
+                WHERE principal_id = ${principalId}::uuid
+              )
+          WHERE principal_id = ${principalId}::uuid
+            AND workspace_id = ${route.workspaceId}::uuid
+            AND revoked_at IS NULL
+        `;
+      }
+    } else if (event.type === "AgentTokenRevoked") {
+      if (
+        typeof payload.token_id !== "string" ||
+        typeof payload.revoked_at !== "number"
+      ) {
+        throw new Error("AgentTokenRevoked payload is malformed");
+      }
+      const tokenId = payload.token_id;
+      const revokedAt = new Date(payload.revoked_at);
+      const createdBy = authUser(prepared.ctx.actor);
+      const revoked = await tx<{ token_id: string; lineage_id: string }[]>`
+        UPDATE swarm.agent_tokens
+        SET revoked_at = ${revokedAt}
+        WHERE token_id = ${tokenId}::uuid
+          AND revoked_at IS NULL
+          AND principal_id IN (
+            SELECT principal_id
+            FROM swarm.agent_principals
+            WHERE workspace_id = ${route.workspaceId}::uuid
+          )
+        RETURNING token_id, lineage_id
+      `;
+      if (revoked.length !== 1) {
+        throw new Error(
+          "AgentTokenRevoked projection did not revoke exactly one token",
+        );
+      }
+      const lineageId = revoked[0]!.lineage_id;
+      await tx`
+        INSERT INTO swarm.revocation_tombstones (kind, target_id, created_by)
+        VALUES (
+          'token',
+          ${tokenId}::uuid,
+          ${createdBy}::uuid
+        )
+        ON CONFLICT (kind, target_id) DO NOTHING
+      `;
+      // Distinct lineage tombstone so successors and renewals fail closed even
+      // when only this one token was named.
+      await tx`
+        INSERT INTO swarm.revocation_tombstones (kind, target_id, created_by)
+        VALUES (
+          'lineage',
+          ${lineageId}::uuid,
+          ${createdBy}::uuid
+        )
+        ON CONFLICT (kind, target_id) DO NOTHING
       `;
     } else if (
       event.type === "AgentTokenMinted" &&
@@ -4723,6 +4930,11 @@ async function handleTransaction(
     // grant instead, checked in the reducer and fenced in the transaction. The
     // scope gate below is therefore skipped for it, and only for it.
     const isRenewal = validation.command.kind === RENEW_AGENT_TOKEN_KIND;
+    // Agent self-surrender of the exact presenting token needs no "revoke"
+    // scope — scopes of that shape are denylisted by design. The reducer still
+    // refuses sibling/principal targets; this only opens the door to the check.
+    const isAgentTokenRevoke =
+      validation.command.kind === "revoke_agent_token";
     if (isRenewal && auth.agent === null) {
       await insertAudit(tx, {
         auth,
@@ -4738,6 +4950,7 @@ async function handleTransaction(
     if (
       auth.agent !== null &&
       !isRenewal &&
+      !isAgentTokenRevoke &&
       (
         (CONNECT_COMMAND_KINDS as readonly string[]).includes(
           validation.command.kind,

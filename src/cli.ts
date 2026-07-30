@@ -297,7 +297,10 @@ Usage:
   cswarm accept --invitation-token-stdin [--url <url> --anon-key <key>]
   cswarm accept <invitation-token> [--url <url> --anon-key <key>]  # unsafe: shell history/process list
   cswarm principal create [--url <url> --anon-key <key>] [--workspace-id <uuid>] --name <name>
+  cswarm principal revoke [--url <url> --anon-key <key>] [--workspace-id <uuid>] --principal-id <uuid>
   cswarm token mint [--url <url> --anon-key <key>] [--workspace-id <uuid>] --principal-id <uuid> --run-id <uuid> --task-id <uuid> --epoch <n> [--ttl-ms <ms>]
+  cswarm token revoke [--url <url> --anon-key <key>] [--workspace-id <uuid>] --token-id <uuid>
+  cswarm token revoke --agent-token-stdin [--url <url> --anon-key <key>] --workspace-id <uuid> [--token-id <uuid>]
   cswarm link new [--url <url> --anon-key <key>] [--workspace-id <uuid>] --task-id <uuid> [--ttl-ms <ms>] [--site <origin>] [--json]
   cswarm link revoke [--url <url> --anon-key <key>] [--workspace-id <uuid>] --capability-id <uuid> [--json]
   cswarm command <kind> [--url <url> --anon-key <key>] [--workspace-id <uuid>] [command fields]
@@ -313,8 +316,8 @@ never opens a browser or infers a human's saved project. Durations use a whole
 number plus m, h, or d (for example 90m, 24h, or 7d) and are capped at 30d.
 Place -- before signal text that itself begins with -- to stop option parsing.
 
-Invite, legacy token accept, principal create, token mint, link, and new require a
-stored human login. Invite-link accept signs in when needed, then accepts and
+Invite, legacy token accept, principal create/revoke, human token mint/revoke, link, and new require a
+stored human login. Agent self-surrender of a token uses --agent-token-stdin and never takes the secret on argv. Invite-link accept signs in when needed, then accepts and
 registers one principal. Invitation links, agent credentials, and capability links
 appear only in fresh success responses.
 
@@ -1240,31 +1243,68 @@ async function runAccept(args: Arguments): Promise<void> {
 }
 
 async function runPrincipal(args: Arguments): Promise<void> {
-  args.assertShape([...TARGET_FLAGS, "workspace-id", "name"], 2);
-  if (args.positionals[1] !== "create") {
-    throw new Error(`unknown principal command: ${args.positionals[1]}`);
+  const action = args.positionals[1];
+  if (action === "create") {
+    args.assertShape([...TARGET_FLAGS, "workspace-id", "name"], 2);
+    const cloud = await target(args);
+    const human = await humanCredential(args, cloud);
+    const workspace = await workspaceId(args, cloud, human);
+    const response = acceptedConnect(
+      "principal create",
+      await sendConnectWithPending(
+        new ThinCommandClient(cloud),
+        human,
+        workspace,
+        {
+          kind: "create_agent_principal",
+          name: args.required("name"),
+        },
+      ),
+    );
+    printJson({
+      message:
+        "Agent identity created. It makes this machine's agent auditable inside the shared workspace.",
+      status: response.status,
+      principal_id: uuid(response.principal_id, "principal_id"),
+    });
+    return;
   }
-  const cloud = await target(args);
-  const human = await humanCredential(args, cloud);
-  const workspace = await workspaceId(args, cloud, human);
-  const response = acceptedConnect(
-    "principal create",
-    await sendConnectWithPending(
-      new ThinCommandClient(cloud),
-      human,
-      workspace,
-      {
-        kind: "create_agent_principal",
-        name: args.required("name"),
-      },
-    ),
-  );
-  printJson({
-    message:
-      "Agent identity created. It makes this machine's agent auditable inside the shared workspace.",
-    status: response.status,
-    principal_id: uuid(response.principal_id, "principal_id"),
-  });
+  if (action === "revoke") {
+    args.assertShape([...TARGET_FLAGS, "workspace-id", "principal-id", "json"], 2);
+    const cloud = await target(args);
+    const human = await humanCredential(args, cloud);
+    const workspace = await workspaceId(args, cloud, human);
+    const principalId = args.required("principal-id");
+    const response = (
+      await sendConnectWithPending(
+        new ThinCommandClient(cloud),
+        human,
+        workspace,
+        { kind: "revoke_agent_principal", principal_id: principalId },
+      )
+    ).response;
+    if (response.status !== "accepted") {
+      throw new Error(
+        `Agent identity revocation was refused: ${
+          response.reason ?? "required condition not met"
+        }. The identity and its credentials are unchanged.`,
+      );
+    }
+    const output = {
+      message:
+        "Agent identity revoked. Its credentials can no longer post or renew, and collaborators will no longer see it as active.",
+      status: response.status,
+      principal_id: principalId,
+      command_event_ids: response.event_ids,
+    };
+    if (args.has("json")) {
+      printJson(output);
+    } else {
+      process.stdout.write(`${output.message}\n`);
+    }
+    return;
+  }
+  throw new Error(`unknown principal command: ${action ?? "(missing)"}`);
 }
 
 /**
@@ -1294,6 +1334,11 @@ async function runPrincipal(args: Arguments): Promise<void> {
  */
 
 async function runToken(args: Arguments): Promise<void> {
+  const action = args.positionals[1];
+  if (action === "revoke") {
+    await runTokenRevoke(args);
+    return;
+  }
   args.assertShape(
     [
       ...TARGET_FLAGS,
@@ -1307,8 +1352,8 @@ async function runToken(args: Arguments): Promise<void> {
     ],
     2,
   );
-  if (args.positionals[1] !== "mint") {
-    throw new Error(`unknown token command: ${args.positionals[1]}`);
+  if (action !== "mint") {
+    throw new Error(`unknown token command: ${action ?? "(missing)"}`);
   }
   const cloud = await target(args);
   const human = await humanCredential(args, cloud);
@@ -1379,6 +1424,106 @@ async function runToken(args: Arguments): Promise<void> {
     token: response.agent_token,
     expiresAt,
   }));
+}
+
+/**
+ * Human token revoke names a token-id. Agent self-surrender pipes the artifact via
+ * --agent-token-stdin, derives (or validates) token_id from that artifact, and never
+ * accepts the secret as argv or prints it back.
+ */
+async function runTokenRevoke(args: Arguments): Promise<void> {
+  if (args.has("agent-token-stdin")) {
+    args.assertShape(
+      [...TARGET_FLAGS, "workspace-id", "token-id", "agent-token-stdin", "json"],
+      2,
+    );
+    const cloud = await target(args);
+    const agent = await stdinCredential();
+    const override = workspaceOverride(
+      args.optional("workspace-id"),
+      process.env.SWARM_CLOUD_WORKSPACE_ID,
+    );
+    if (override === null) {
+      throw new Error(
+        "agent token revoke requires --workspace-id or SWARM_CLOUD_WORKSPACE_ID",
+      );
+    }
+    if (agent.tokenId === null) {
+      throw new Error(
+        "agent credential on stdin has no token_id; pipe the JSON artifact from token mint, not a bare secret",
+      );
+    }
+    const requested = args.optional("token-id");
+    if (requested !== undefined && requested.toLowerCase() !== agent.tokenId) {
+      throw new Error(
+        "token-id does not match the credential on stdin; no request was sent",
+      );
+    }
+    const tokenId = agent.tokenId;
+    const response = (
+      await new ThinCommandClient(cloud).sendConnect({
+        workspaceId: override,
+        credential: agent.token,
+        command: { kind: "revoke_agent_token", token_id: tokenId },
+      })
+    ).response;
+    if (response.status !== "accepted") {
+      throw new Error(
+        `Credential surrender was refused: ${
+          response.reason ?? "required condition not met"
+        }. The credential is unchanged.`,
+      );
+    }
+    const output = {
+      message:
+        "This credential has been surrendered. It can no longer post or renew.",
+      status: response.status,
+      token_id: tokenId,
+      command_event_ids: response.event_ids,
+    };
+    if (args.has("json")) {
+      printJson(output);
+    } else {
+      process.stdout.write(`${output.message}\n`);
+    }
+    return;
+  }
+
+  args.assertShape(
+    [...TARGET_FLAGS, "workspace-id", "token-id", "json"],
+    2,
+  );
+  const cloud = await target(args);
+  const human = await humanCredential(args, cloud);
+  const workspace = await workspaceId(args, cloud, human);
+  const tokenId = args.required("token-id");
+  const response = (
+    await sendConnectWithPending(
+      new ThinCommandClient(cloud),
+      human,
+      workspace,
+      { kind: "revoke_agent_token", token_id: tokenId },
+    )
+  ).response;
+  if (response.status !== "accepted") {
+    throw new Error(
+      `Token revocation was refused: ${
+        response.reason ?? "required condition not met"
+      }. The credential is unchanged.`,
+    );
+  }
+  const output = {
+    message:
+      "Agent credential revoked. It can no longer post or renew, and its renewal lineage is closed.",
+    status: response.status,
+    token_id: tokenId,
+    command_event_ids: response.event_ids,
+  };
+  if (args.has("json")) {
+    printJson(output);
+  } else {
+    process.stdout.write(`${output.message}\n`);
+  }
 }
 
 /**

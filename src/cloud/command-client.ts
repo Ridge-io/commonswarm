@@ -72,6 +72,7 @@ export type ConnectCommand =
   | { kind: "create_workspace"; workspace_id: string; name: string }
   | { kind: "remove_member"; user_id: string }
   | { kind: "create_agent_principal"; name: string }
+  | { kind: "revoke_agent_principal"; principal_id: string }
   | {
     kind: "mint_agent_token";
     principal_id: string;
@@ -81,6 +82,7 @@ export type ConnectCommand =
     device_id: string;
     ttl_ms?: number;
   }
+  | { kind: "revoke_agent_token"; token_id: string }
   /**
    * The bounded renewal grant §2.3 requires to be "created at human `join`/`spawn`". It is
    * a human-credential command like the mint beside it, and it is issued BEFORE the mint so
