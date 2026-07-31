@@ -62,7 +62,7 @@ const { cmd } = Astro.props;
 /* Derived from the one command, so a change at the top of the page cannot leave this
    variant behind pointing at a different host. */
 const readCmd = cmd.replace(/\|\s*sh$/, "| less");
-const pinCmd = cmd.replace(/\|\s*sh$/, "| CSWARM_VERSION=0.1.2 sh");
+const pinCmd = cmd.replace(/\|\s*sh$/, "| CSWARM_VERSION=0.1.3 sh");
 const dirCmd = INSTALL_CMD_DIR;
 const sourceCmd = `git clone https://github.com/Ridge-io/cloud-swarm.git
 cd cloud-swarm

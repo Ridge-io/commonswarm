@@ -25,7 +25,7 @@ the old name collided with a competitor. Prose says CommonSwarm; anything a user
 
 - ~~the release repo default `Ridge-io/coswarm-dist` in `install.sh`~~ — **dead**
   (2026-07-29): the decision landed; `install.sh:16` now defaults to `Ridge-io/cloud-swarm`
-  (public), and the published installer at commonswarm.com/install.sh installs cswarm 0.1.2;
+  (public), and the published installer at commonswarm.com/install.sh installs cswarm 0.1.3;
 - the Vercel project and live URL `coswarm-site` / `coswarm-site.vercel.app` — still the
   deployed site, see the deploy section below;
 - the esbuild define `__COSWARM_VERSION__` — a build-time identifier shared between

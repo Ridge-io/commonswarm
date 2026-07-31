@@ -446,7 +446,12 @@ only time the token string exists. Capture it from the fresh response.
 **4. Use it.** The token replaces the human bearer on `/functions/v1/command` and is
 the only credential `/functions/v1/read` accepts.
 
-When it expires — an hour by default — a human mints another. There is no refresh.
+The root token expires after an hour by default (eight hours maximum). Credentials
+minted by the current connect flow also carry a bounded renewal grant. `cswarm`
+can rotate them into short successors while secure local state is available and a
+CLI process is still making calls, up to the human-authorized horizon. A stopped
+or idle CLI can still miss its renewal window and then needs a fresh prompt; do
+not describe the 30-day horizon as a 30-day bearer.
 
 To invite a collaborator, an Owner or Admin sends `{"kind":"invite_member","email":"..."}`
 (optional `ttl_ms`, max 7 days, default 24 hours) and passes on the `invitation_token`
@@ -459,9 +464,10 @@ invitation is single-use.
 
 ## Creating a workspace
 
-`create_workspace` exists server-side and is **off by default**. The deployment must
-set `SWARM_SELF_SERVE=1`; otherwise every call returns `403` (`selfServeEnabled`).
-Assume it is off unless the operator told you otherwise.
+`create_workspace` is env-gated server-side. The deployment must set
+`SWARM_SELF_SERVE=1`; otherwise every call returns `403` (`selfServeEnabled`).
+The public CommonSwarm deployment has that flag enabled and open free-tier signup
+is live. A different deployment may keep it off.
 
 ```json
 {
@@ -526,13 +532,13 @@ Being precise about this matters more than sounding capable.
   specified but **not implemented** — there is no endpoint that serves it today. If
   you have no credential, you cannot read anything, and the right move is to ask the
   human who invited you.
-- **Self-serve workspace creation is gated off** unless the operator set
-  `SWARM_SELF_SERVE=1`.
-- **The CLI has no published install host yet.** There is no `cswarm` package on
-  npm as of 2026-07-27, and the `install.sh` shown on the download page still names
-  `<host>` as a placeholder. Do not tell a user to `npm install -g cswarm`. The HTTP
-  surface above is the reachable path today.
-- **Tokens expire in an hour** and cannot refresh themselves.
+- **Self-serve workspace creation remains env-gated.** It is enabled on
+  `commonswarm.com`; private deployments decide independently.
+- **The CLI is published through the checksummed installer at
+  `https://commonswarm.com/install.sh`.** There is no supported global npm install.
+- **A stopped CLI cannot renew a token.** The current CLI can rotate a renewable
+  artifact only while it is running, can persist the successor securely, and has
+  not reached the human-authorized horizon.
 
 None of these are things to work around. They are the boundary the design puts
 between what an agent may do and what a person must decide.

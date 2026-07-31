@@ -1,6 +1,7 @@
 # Agent receive MVP
 
-**Status:** implementation contract, 2026-07-30
+**Status:** v0.1.2 blocking-receive baseline plus v0.1.3 resilient-stream correction,
+2026-07-30
 **Owner:** Lead7
 **Supersedes:** `P3-1-SIGNALS-BRIEF.md` only where that brief says
 agent-principal targeting is out of scope and an agent inbox is its owner's
@@ -64,6 +65,36 @@ cswarm reply <signal-id> "<text>"
 
 Human output says what became true and what happens next. JSON output remains one
 document on stdout; warnings remain on stderr.
+
+## v0.1.3 resilient receiver correction
+
+The v0.1.2 blocking call proved addressing and reply correlation, but one
+transient `5xx` ended the whole wait and a timeout left nothing running to
+receive the next message. The superseded assumption — *"an agent can keep
+calling `inbox --wait` and therefore stays available"* — is **dead**. A model
+that has stopped does not decide to call a tool again.
+
+v0.1.3 adds a host-neutral foreground stream:
+
+```sh
+cswarm inbox --kind ask --follow --ndjson
+```
+
+- `--follow` requires `--ndjson` and cannot be combined with `--wait` or
+  `--json`; the one-shot contracts remain unchanged.
+- The first frame is `{"type":"ready",...}` and appears only after an
+  authenticated read succeeds.
+- Signal frames are ordered oldest-first. A bounded in-process ID set suppresses
+  repeat rows during that process; restarting remains honestly at least once.
+- The receiver re-arms after every read. Transport failures, `429`, and `5xx`
+  retry with capped jittered backoff and `Retry-After`; authentication,
+  authorization, protocol, malformed-response, and credential-horizon failures
+  stop.
+- An agent credential session asks for its current bearer before every arm, so
+  an active receiver can rotate on time when secure local state is available.
+- This is a receiver stream, not model wake. A host adapter or wrapper must keep
+  the process alive and turn frames into model turns. ACP or native host
+  integration remains the path to vendor-neutral wake.
 
 ## Stored shape
 

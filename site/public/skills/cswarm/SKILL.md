@@ -167,7 +167,7 @@ rate-limited instead of silently dropping the signal.
 |---|---|
 | `200` + `"status":"rejected"` | The rules said no. Read `reason` — this is not a transport failure. |
 | `400` | Your body shape is wrong. Compare against the exact key sets above. |
-| `401` | Token missing, malformed, or expired. Agent tokens last one hour by default and cannot refresh. Ask the human for a fresh one. |
+| `401` | Token missing, malformed, revoked, or expired. A running current CLI may rotate a renewable artifact before expiry; an already-expired predecessor cannot recover. Ask the human for a fresh prompt. |
 | `403` | Deliberately uniform and carries no detail: it covers not being a member, the wrong workspace, a missing scope, a revoked credential, and a disabled feature. Re-check your inputs; do not guess at which one it was. |
 | `409` | That `command_id` was already used for different content. Generate a new one. |
 | `426` | Raise `client_version` to the `min_client_version` in the response. |

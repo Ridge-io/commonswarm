@@ -33,7 +33,7 @@ export const INSTALL_CMD = `curl -fsSL https://${INSTALL_HOST}/install.sh | sh`;
  * installer itself; it is not a flag we invented for the page.
  */
 export const INSTALL_CMD_PINNED =
-  `curl -fsSL https://${INSTALL_HOST}/install.sh | CSWARM_VERSION=0.1.2 sh`;
+  `curl -fsSL https://${INSTALL_HOST}/install.sh | CSWARM_VERSION=0.1.3 sh`;
 
 /** Install somewhere other than ~/.local/bin. Also the installer's own variable. */
 export const INSTALL_CMD_DIR =

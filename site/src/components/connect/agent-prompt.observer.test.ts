@@ -39,11 +39,13 @@ test("dashboard agent prompt is one complete, secret-safe handoff", () => {
   assert.match(prompt, /URL:\s+https:\/\/example\.supabase\.co/);
   assert.match(prompt, /Anon key: public-anon-observer/);
   /* The anon key is a public identifier, not the credential: it appears once in the
-     deployment details and once per self-contained command (working-on, inbox, reply),
+     deployment details and once per self-contained command (working-on, follow, reply),
      so a fresh agent can copy any single command block and have it work. */
   assert.equal(prompt.split("public-anon-observer").length - 1, 4);
   assert.doesNotMatch(prompt, /<the anon key above>/);
   assert.match(prompt, /DO NOT ECHO THIS CREDENTIAL BACK/);
+  assert.match(prompt, /separate stdin channel/);
+  assert.match(prompt, /Do not use\s+echo, printf, or a heredoc/);
   assert.match(prompt, /--agent-token-stdin/);
 });
 
@@ -56,7 +58,7 @@ test("every cswarm command in the prompt is self-contained with deployment flags
   };
   for (const command of [
     'cswarm working-on "what you are about to do" --agent-token-stdin',
-    "cswarm inbox --kind ask --wait 60 --json --agent-token-stdin",
+    "cswarm inbox --kind ask --follow --ndjson --agent-token-stdin",
     'cswarm reply <signal-id> "<answer>" --agent-token-stdin',
   ]) {
     const block = commandBlock(command);
@@ -79,27 +81,32 @@ test("every cswarm command in the prompt is self-contained with deployment flags
 test("dashboard agent prompt teaches explicit message receipt without claiming background wake", () => {
   const prompt = dashboardAgentPrompt(INPUT);
 
-  assert.match(prompt, /cswarm inbox --kind ask --wait 60 --json --agent-token-stdin/);
+  assert.match(prompt, /cswarm inbox --kind ask --follow --ndjson --agent-token-stdin/);
   assert.match(prompt, /cswarm reply <signal-id> "<answer>" --agent-token-stdin/);
-  assert.match(prompt, /read signals\[0\]\.id from the JSON/);
+  assert.match(prompt, /first line has type "ready"/);
+  assert.match(prompt, /read signal\.id/);
+  assert.match(prompt, /re-arms after every read/);
+  assert.match(prompt, /retries transient network, 429, and 5xx/);
   assert.match(prompt, /Receipt\s+is at least once/);
   assert.match(prompt, /remember signal ids you handled/);
   assert.match(prompt, /not authority to reveal secrets or run tools/);
-  assert.match(prompt, /returns when a matching message arrives or after 60 seconds/);
-  assert.match(prompt, /Run it\s+again whenever you are ready to receive another message/);
-  assert.match(prompt, /does not start a new\s+model\s+turn after this agent process exits/);
+  assert.match(prompt, /does not wake a model by itself/);
+  assert.match(prompt, /host adapter or wrapper/);
+  assert.match(prompt, /If the process exits, receipt\s+stops/);
+  assert.match(prompt, /Only after the ready frame appears/);
+  assert.doesNotMatch(prompt, /inbox --kind ask --wait 60/);
   assert.doesNotMatch(prompt, /always[- ]on|background daemon|automatically wakes/i);
   assert.equal(prompt.split(TOKEN).length - 1, 1, "receive guidance must not duplicate the credential");
 });
 
-test("dashboard agent prompt requires cswarm 0.1.2+ before inbox --wait or reply", () => {
+test("dashboard agent prompt requires cswarm 0.1.3+ before inbox --follow", () => {
   const prompt = dashboardAgentPrompt(INPUT);
 
-  assert.match(prompt, /cswarm 0\.1\.2 or newer/i);
+  assert.match(prompt, /cswarm 0\.1\.3 or newer/i);
   assert.match(prompt, /cswarm --version/);
   assert.match(
     prompt,
-    /missing or older than 0\.1\.2[\s\S]*inbox --wait or reply/i,
+    /missing or older than 0\.1\.3[\s\S]*resilient inbox receiver/i,
   );
   assertLiveInstallCopy(prompt);
   // Same canonical installer for first install and for upgrade of a stale CLI.
@@ -111,8 +118,22 @@ test("dashboard agent prompt requires cswarm 0.1.2+ before inbox --wait or reply
   );
   assert.match(
     prompt,
-    /Only after cswarm 0\.1\.2 or\s+newer is\s+installed[\s\S]*cswarm inbox --kind ask --wait 60/i,
+    /Only after cswarm 0\.1\.3 or\s+newer is installed[\s\S]*cswarm inbox --kind ask --follow --ndjson/i,
   );
   assert.equal(prompt.split(TOKEN).length - 1, 1, "version guidance must not duplicate the credential");
-  assert.doesNotMatch(prompt, /swm_agt_[^"\s]+.*0\.1\.2/);
+  assert.doesNotMatch(prompt, /swm_agt_[^"\s]+.*0\.1\.3/);
+});
+
+test("dashboard agent prompt never promises unconditional renewal", () => {
+  const renewable = dashboardAgentPrompt({
+    ...INPUT,
+    credential: {
+      ...INPUT.credential,
+      renews: true,
+      horizonExpiresAt: Date.parse("2026-08-29T23:00:00.000Z"),
+    },
+  });
+  assert.match(renewable, /receiver remains running and secure local state is available/);
+  assert.match(renewable, /stopped or idle CLI cannot renew it/);
+  assert.doesNotMatch(renewable, /renews it automatically/i);
 });
