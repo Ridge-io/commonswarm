@@ -20,6 +20,8 @@ CREATE TABLE swarm.signal_deliveries (
   lease_id uuid,
   leased_by uuid,
   leased_until timestamptz,
+  last_lease_id uuid,
+  last_leased_by uuid,
   attempt_count integer NOT NULL DEFAULT 0,
   lease_expiry_count integer NOT NULL DEFAULT 0,
   last_lease_expired_at timestamptz,
@@ -220,7 +222,9 @@ $$;
 -- 6. Terminal-row purge + daily schedule
 -- ---------------------------------------------------------------------------
 
-CREATE OR REPLACE FUNCTION swarm.purge_terminal_signal_deliveries()
+CREATE OR REPLACE FUNCTION swarm.purge_terminal_signal_deliveries(
+  p_retention_days integer DEFAULT NULL
+)
 RETURNS void
 LANGUAGE sql
 VOLATILE
@@ -235,6 +239,7 @@ AS $$
             days => GREATEST(
               30,
               COALESCE(
+                p_retention_days,
                 (
                   SELECT (value #>> '{}')::integer
                   FROM swarm.config
@@ -246,8 +251,8 @@ AS $$
           );
 $$;
 
-ALTER FUNCTION swarm.purge_terminal_signal_deliveries() OWNER TO swarm_admin;
-REVOKE ALL ON FUNCTION swarm.purge_terminal_signal_deliveries() FROM PUBLIC;
+ALTER FUNCTION swarm.purge_terminal_signal_deliveries(integer) OWNER TO swarm_admin;
+REVOKE ALL ON FUNCTION swarm.purge_terminal_signal_deliveries(integer) FROM PUBLIC;
 
 CREATE EXTENSION IF NOT EXISTS pg_cron;
 

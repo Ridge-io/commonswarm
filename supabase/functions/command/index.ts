@@ -5319,7 +5319,7 @@ async function handleTransaction(
         reason: "delivery_requires_agent_credential",
         detail: ignoredIdentity,
       });
-      return { status: 403, body: { error: "forbidden" } };
+      return { status: 403, body: { error: "delivery_unavailable" } };
     }
     if (
       auth.agent !== null &&
@@ -5745,7 +5745,7 @@ async function handleTransaction(
           commandKind: kind,
           workspaceId: route.workspaceId,
           streamId: route.streamId,
-          outcome: "conflict",
+          outcome: "domain",
           reason: "delivery_ack_outcome_conflict",
           detail: ignoredIdentity,
           hash,
@@ -5792,11 +5792,10 @@ async function handleTransaction(
         status: 200,
         body: {
           status: "accepted",
+          ok: true,
+          event_ids: [],
           signal_id: ackResponse.signal_id,
           outcome: ackResponse.outcome,
-          event_ids: [],
-          events: [],
-          min_client_version: minClientVersion,
         },
       };
     }

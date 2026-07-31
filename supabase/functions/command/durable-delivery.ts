@@ -382,13 +382,15 @@ export async function ackAgentDelivery(
     lastErrorCode: string | null;
   },
 ): Promise<AckResult> {
-  // Already acked with same outcome → idempotent even after lease cleared.
+  // Already acked with same outcome AND same lease/listener identity → idempotent.
   // Lock row FOR UPDATE so concurrent identical ack calls serialize cleanly.
   const existing = await tx<{
     ack_outcome: string | null;
     acked_at: Date | null;
+    last_lease_id: string | null;
+    last_leased_by: string | null;
   }[]>`
-    SELECT ack_outcome, acked_at
+    SELECT ack_outcome, acked_at, last_lease_id, last_leased_by
     FROM swarm.signal_deliveries
     WHERE workspace_id = ${args.workspaceId}::uuid
       AND signal_id = ${args.signalId}::uuid
@@ -399,7 +401,11 @@ export async function ackAgentDelivery(
   const row = existing[0];
   if (!row) return { status: "unavailable" };
   if (row.acked_at !== null) {
-    if (row.ack_outcome === args.outcome) {
+    if (
+      row.ack_outcome === args.outcome &&
+      row.last_lease_id === args.leaseId &&
+      row.last_leased_by === args.listenerInstanceId
+    ) {
       return {
         status: "idempotent",
         response: {
@@ -436,6 +442,8 @@ export async function ackAgentDelivery(
       acked_at = statement_timestamp(),
       ack_outcome = ${args.outcome},
       last_error_code = ${args.lastErrorCode},
+      last_lease_id = lease_id,
+      last_leased_by = leased_by,
       lease_id = NULL,
       leased_by = NULL,
       leased_until = NULL,
