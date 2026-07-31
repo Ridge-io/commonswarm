@@ -111,6 +111,7 @@ import {
 } from "./cloud/workspaces.js";
 import {
   askWaitJsonPayload,
+  formatFollowFrame,
   parseWaitSeconds,
   pollForSignals,
   postSignalTargets,
@@ -119,6 +120,7 @@ import {
   renderSignalStatus,
   renderSignals,
   resolveSignalRecipient,
+  runInboxFollow,
   settleSignalAuthorLabels,
   settleSignalStatus,
   signalReadJsonPayload,
@@ -133,11 +135,13 @@ const BOOLEAN_FLAGS = new Set([
   "agent-token-stdin",
   "all-devices",
   "force-file-store",
+  "follow",
   "help",
   "include-stale",
   "invitation-token-stdin",
   "json",
   "link-stdin",
+  "ndjson",
   "no-browser",
 ]);
 
@@ -293,6 +297,7 @@ Usage:
   cswarm reply <signal-id> "<text>" [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--until <dur>] [--json]
   cswarm feed [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--about <ref>] [--kind <kind>] [--since <timestamp>] [--limit <n>] [--include-stale] [--json]
   cswarm inbox [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--kind <kind>] [--about <ref>] [--since <timestamp>] [--limit <n>] [--include-stale] [--wait <seconds>] [--json]
+  cswarm inbox --follow --ndjson [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--kind <kind>] [--about <ref>] [--since <timestamp>] [--limit <n>] [--include-stale]
   cswarm new "<project name>" [--url <url> --anon-key <key>] [--json]
   cswarm new --name "<project name>" [--url <url> --anon-key <key>] [--json]
   cswarm workspaces [--url <url> --anon-key <key>] [--json]
@@ -2281,12 +2286,30 @@ async function runSignalRead(
     ...CREDENTIAL_FLAGS,
     "about",
     "kind",
-    ...(inbox ? ["wait"] : []),
+    ...(inbox ? ["wait", "follow", "ndjson"] : []),
     "since",
     "limit",
     "include-stale",
     "json",
   ], 1);
+
+  if (inbox && args.has("follow")) {
+    if (!args.has("ndjson")) {
+      throw new Error("inbox --follow requires --ndjson");
+    }
+    if (args.optional("wait") !== undefined) {
+      throw new Error("inbox --follow cannot be combined with --wait");
+    }
+    if (args.has("json")) {
+      throw new Error("inbox --follow --ndjson cannot be combined with --json");
+    }
+    await runInboxFollowCommand(args);
+    return;
+  }
+  if (inbox && args.has("ndjson")) {
+    throw new Error("inbox --ndjson requires --follow");
+  }
+
   const waitSeconds = inbox && args.optional("wait") !== undefined
     ? parseWaitSeconds(args.required("wait"))
     : undefined;
@@ -2359,6 +2382,70 @@ async function runSignalRead(
     includeStale: args.has("include-stale"),
     authors,
   })}\n`);
+}
+
+/**
+ * Host-neutral resilient inbox receiver. NDJSON frames only; never claims to
+ * wake a model or execute message bodies. Rearms with AgentCredentialSession
+ * when the caller presented an agent credential so renewal runs before each arm.
+ */
+async function runInboxFollowCommand(args: Arguments): Promise<void> {
+  const cloud = await target(args);
+  const selected = await commandWorkspaceAndCredential(args, cloud, {
+    validateHumanWorkspace: true,
+  });
+  const queryBase = {
+    workspaceId: selected.selectedWorkspace,
+    inbox: true as const,
+    ...(args.optional("about") === undefined
+      ? {}
+      : { about: signalText(args.required("about"), "about") }),
+    ...(args.optional("kind") === undefined
+      ? {}
+      : { kind: signalKind(args.required("kind")) }),
+    ...(args.optional("since") === undefined
+      ? {}
+      : { since: args.required("since") }),
+    ...(args.optional("limit") === undefined
+      ? {}
+      : { limit: integer(args, "limit", { minimum: 1, maximum: 100 }) }),
+    includeStale: args.has("include-stale"),
+  };
+
+  const controller = new AbortController();
+  const onAbortSignal = () => controller.abort();
+  process.on("SIGINT", onAbortSignal);
+  process.on("SIGTERM", onAbortSignal);
+  try {
+    const stop = await runInboxFollow({
+      workspaceId: selected.selectedWorkspace,
+      signal: controller.signal,
+      isCredentialFailure: (error) =>
+        error instanceof RenewalReauthorisationRequired ||
+        error instanceof RenewalRevoked,
+      arm: async () => {
+        // Renewal is checked on every arm for agent credentials; humans reuse
+        // the session bearer already resolved for this process.
+        const credential: SignalCredential = selected.session
+          ? { kind: "agent", token: await selected.session.bearer() }
+          : signalCredentialOf(selected);
+        return await readSignals(cloud, credential, queryBase, {
+          signal: controller.signal,
+        });
+      },
+      emit: (frame) => {
+        process.stdout.write(`${formatFollowFrame(frame)}\n`);
+      },
+    });
+    if (stop.reason === "cancelled") {
+      return;
+    }
+    if (stop.error) throw stop.error;
+    throw new Error(`inbox follow stopped (${stop.reason})`);
+  } finally {
+    process.off("SIGINT", onAbortSignal);
+    process.off("SIGTERM", onAbortSignal);
+  }
 }
 
 async function runTaskCommand(args: Arguments): Promise<void> {

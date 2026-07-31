@@ -1,6 +1,7 @@
 /**
  * Pure client contract for agent-receive MVP: typed recipient resolution,
- * wait deadlines, JSON shapes, and timeout/error separation.
+ * wait deadlines, JSON shapes, timeout/error separation, and the resilient
+ * inbox --follow --ndjson receive stream.
  *
  * ★ THIS FILE IS NAMED IN `npm test` — a hand-run or typecheck-only pass is not a gate.
  */
@@ -10,16 +11,29 @@ import type { SignalRecord } from "../../src/cloud/command-client.js";
 import { cloudTarget } from "../../src/cloud/config.js";
 import {
   askWaitJsonPayload,
+  BoundedSignalIdSet,
+  formatFollowFrame,
+  isFatalFollowError,
+  isRetryableFollowError,
+  nextFollowBackoffMs,
   nextWaitSleepMs,
+  parseRetryAfterMs,
   parseWaitSeconds,
   pollForSignals,
   postSignalTargets,
   readSignals,
   resolveSignalRecipient,
+  runInboxFollow,
+  SIGNAL_FOLLOW_POLL_MS,
   SIGNAL_READ_TIMEOUT_MS,
+  SIGNAL_WAIT_POLL_MS,
+  SignalHttpError,
+  SignalMalformedError,
   SignalReadTimeoutError,
+  SignalTransportError,
   signalReadJsonPayload,
   waitDeadlineMs,
+  type FollowFrame,
   type SignalDirectory,
 } from "../../src/cloud/signals.js";
 
@@ -309,4 +323,260 @@ test("ask wait JSON returns ask plus reply or explicit timed_out success", () =>
     reply: null,
     timed_out: true,
   });
+});
+
+// ---------------------------------------------------------------------------
+// inbox --follow --ndjson resilient receive stream
+// ---------------------------------------------------------------------------
+
+test("follow backoff is exponential with jitter and respects Retry-After", () => {
+  assert.ok(SIGNAL_FOLLOW_POLL_MS > SIGNAL_WAIT_POLL_MS || SIGNAL_FOLLOW_POLL_MS >= 1_000);
+  assert.ok(SIGNAL_FOLLOW_POLL_MS >= 1_000, "follow poll must not be faster than 1Hz");
+  // Fixed random = 0.5 => jitter factor 0.75 on the exponential base.
+  assert.equal(nextFollowBackoffMs(1, null, () => 0.5), 375);
+  assert.equal(nextFollowBackoffMs(2, null, () => 0.5), 750);
+  assert.equal(nextFollowBackoffMs(3, null, () => 0.5), 1_500);
+  assert.equal(nextFollowBackoffMs(1, 5_000, () => 0.5), 5_000);
+  assert.equal(parseRetryAfterMs("2"), 2_000);
+  assert.equal(parseRetryAfterMs("not-a-date"), null);
+});
+
+test("follow error classification: retryable 5xx/429/transport; fatal 4xx/malformed", () => {
+  assert.equal(isRetryableFollowError(new SignalHttpError(500)), true);
+  assert.equal(isRetryableFollowError(new SignalHttpError(429, 1_000)), true);
+  assert.equal(isRetryableFollowError(new SignalTransportError()), true);
+  assert.equal(isRetryableFollowError(new SignalReadTimeoutError()), true);
+  assert.equal(isRetryableFollowError(new SignalHttpError(401)), false);
+  assert.equal(isFatalFollowError(new SignalHttpError(400)), true);
+  assert.equal(isFatalFollowError(new SignalHttpError(401)), true);
+  assert.equal(isFatalFollowError(new SignalHttpError(403)), true);
+  assert.equal(isFatalFollowError(new SignalHttpError(404)), true);
+  assert.equal(isFatalFollowError(new SignalHttpError(426)), true);
+  assert.equal(isFatalFollowError(new SignalMalformedError("bad")), true);
+  assert.equal(isFatalFollowError(new SignalHttpError(500)), false);
+});
+
+test("BoundedSignalIdSet suppresses duplicates and evicts oldest when full", () => {
+  const seen = new BoundedSignalIdSet(2);
+  assert.equal(seen.add("a"), true);
+  assert.equal(seen.add("a"), false);
+  assert.equal(seen.add("b"), true);
+  assert.equal(seen.add("c"), true);
+  assert.equal(seen.has("a"), false);
+  assert.equal(seen.has("b"), true);
+  assert.equal(seen.has("c"), true);
+});
+
+test("formatFollowFrame emits one-line NDJSON without a trailing newline", () => {
+  const ready = formatFollowFrame({
+    type: "ready",
+    workspace_id: WORKSPACE,
+    view: "inbox",
+    ts: "2026-07-30T00:00:00.000Z",
+  });
+  assert.equal(ready.includes("\n"), false);
+  assert.equal(JSON.parse(ready).type, "ready");
+  const signal = formatFollowFrame({
+    type: "signal",
+    signal: row(),
+    ts: "2026-07-30T00:00:00.000Z",
+  });
+  assert.equal(JSON.parse(signal).signal.id, SIGNAL);
+});
+
+test("follow emits ready only after first successful arm, then signals", async () => {
+  const frames: FollowFrame[] = [];
+  let arms = 0;
+  const controller = new AbortController();
+  const stop = await runInboxFollow({
+    workspaceId: WORKSPACE,
+    now: () => 1_700_000_000_000,
+    random: () => 0,
+    sleep: async () => {
+      controller.abort();
+    },
+    signal: controller.signal,
+    arm: async () => {
+      arms += 1;
+      if (arms === 1) return [row()];
+      return [];
+    },
+    emit: (frame) => frames.push(frame),
+  });
+  assert.equal(stop.reason, "cancelled");
+  assert.equal(frames[0]?.type, "ready");
+  assert.equal(frames[1]?.type, "signal");
+  if (frames[1]?.type === "signal") {
+    assert.equal(frames[1].signal.body, "mvp-ping");
+  }
+  assert.ok(arms >= 1);
+});
+
+test("follow recovers from transient 500 then emits ready and signals", async () => {
+  const frames: FollowFrame[] = [];
+  let arms = 0;
+  const controller = new AbortController();
+  const stop = await runInboxFollow({
+    workspaceId: WORKSPACE,
+    now: () => 1_700_000_000_000,
+    random: () => 0,
+    sleep: async () => {},
+    signal: controller.signal,
+    arm: async () => {
+      arms += 1;
+      if (arms === 1) throw new SignalHttpError(500);
+      if (arms === 2) return [row()];
+      controller.abort();
+      return [];
+    },
+    emit: (frame) => frames.push(frame),
+  });
+  assert.equal(stop.reason, "cancelled");
+  // No ready before the successful arm; no retrying frames before ready either.
+  assert.equal(frames[0]?.type, "ready");
+  assert.equal(frames[1]?.type, "signal");
+  assert.equal(frames.some((f) => f.type === "retrying"), false);
+  assert.ok(arms >= 2);
+});
+
+test("follow emits retrying after ready when a later 500 occurs, then recovers", async () => {
+  const frames: FollowFrame[] = [];
+  let arms = 0;
+  const controller = new AbortController();
+  const stop = await runInboxFollow({
+    workspaceId: WORKSPACE,
+    now: () => 1_700_000_000_000,
+    random: () => 0,
+    sleep: async () => {},
+    signal: controller.signal,
+    arm: async () => {
+      arms += 1;
+      if (arms === 1) return [];
+      if (arms === 2) throw new SignalHttpError(500);
+      if (arms === 3) return [row()];
+      controller.abort();
+      return [];
+    },
+    emit: (frame) => frames.push(frame),
+  });
+  assert.equal(stop.reason, "cancelled");
+  assert.equal(frames[0]?.type, "ready");
+  const retry = frames.find((f) => f.type === "retrying");
+  assert.ok(retry && retry.type === "retrying");
+  assert.equal(retry.reason, "http_500");
+  assert.ok(frames.some((f) => f.type === "signal"));
+});
+
+test("follow stops on fatal 4xx without retrying", async () => {
+  const frames: FollowFrame[] = [];
+  let arms = 0;
+  const stop = await runInboxFollow({
+    workspaceId: WORKSPACE,
+    now: () => 1_700_000_000_000,
+    sleep: async () => {
+      throw new Error("sleep must not run on fatal 4xx");
+    },
+    arm: async () => {
+      arms += 1;
+      throw new SignalHttpError(403);
+    },
+    emit: (frame) => frames.push(frame),
+  });
+  assert.equal(stop.reason, "fatal_http");
+  assert.equal(frames.length, 0);
+  assert.equal(arms, 1);
+  assert.match(stop.error?.message ?? "", /HTTP 403/);
+});
+
+test("follow rearm after signal and suppresses duplicate live rows", async () => {
+  const frames: FollowFrame[] = [];
+  let arms = 0;
+  const controller = new AbortController();
+  const stop = await runInboxFollow({
+    workspaceId: WORKSPACE,
+    now: () => 1_700_000_000_000,
+    random: () => 0,
+    pollMs: 10,
+    sleep: async () => {},
+    signal: controller.signal,
+    arm: async () => {
+      arms += 1;
+      // Same live row on every arm — must emit once only.
+      if (arms >= 4) controller.abort();
+      return [row()];
+    },
+    emit: (frame) => frames.push(frame),
+  });
+  assert.equal(stop.reason, "cancelled");
+  assert.equal(frames.filter((f) => f.type === "ready").length, 1);
+  assert.equal(frames.filter((f) => f.type === "signal").length, 1);
+  assert.ok(arms >= 3, "must rearm after the first emission");
+});
+
+test("follow cancellation during idle poll stops cleanly", async () => {
+  const frames: FollowFrame[] = [];
+  const controller = new AbortController();
+  let arms = 0;
+  const stop = await runInboxFollow({
+    workspaceId: WORKSPACE,
+    now: () => 1_700_000_000_000,
+    pollMs: 50,
+    sleep: async () => {
+      controller.abort();
+    },
+    signal: controller.signal,
+    arm: async () => {
+      arms += 1;
+      return [];
+    },
+    emit: (frame) => frames.push(frame),
+  });
+  assert.equal(stop.reason, "cancelled");
+  assert.equal(frames[0]?.type, "ready");
+  assert.equal(frames.some((f) => f.type === "signal"), false);
+  assert.equal(arms, 1);
+});
+
+test("follow secret/credential absence never emits ready", async () => {
+  const frames: FollowFrame[] = [];
+  const secretMissing = new Error("agent credential secret is absent");
+  const stop = await runInboxFollow({
+    workspaceId: WORKSPACE,
+    now: () => 1_700_000_000_000,
+    sleep: async () => {
+      throw new Error("sleep must not run when secret is absent");
+    },
+    isCredentialFailure: (error) =>
+      error instanceof Error && /secret is absent/.test(error.message),
+    arm: async () => {
+      throw secretMissing;
+    },
+    emit: (frame) => frames.push(frame),
+  });
+  assert.equal(stop.reason, "credential");
+  assert.equal(frames.length, 0);
+  assert.equal(stop.error, secretMissing);
+});
+
+test("readSignals surfaces typed HTTP status for follow classification", async () => {
+  const target = cloudTarget("https://cloud.example.test", "anon-key");
+  const fetcher = (async () =>
+    new Response(null, {
+      status: 500,
+      headers: { "retry-after": "3" },
+    })) as typeof fetch;
+  await assert.rejects(
+    readSignals(
+      target,
+      { kind: "agent", token: "swm_agt_" + "A".repeat(43) },
+      { workspaceId: WORKSPACE, inbox: true },
+      { fetcher },
+    ),
+    (error: unknown) => {
+      assert.ok(error instanceof SignalHttpError);
+      assert.equal(error.status, 500);
+      assert.equal(error.retryAfterMs, 3_000);
+      return true;
+    },
+  );
 });

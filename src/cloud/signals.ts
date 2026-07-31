@@ -51,10 +51,50 @@ export const SIGNAL_WAIT_MIN_SECONDS = 1;
 export const SIGNAL_WAIT_MAX_SECONDS = 300;
 /** Default poll cadence while a wait is open; shortened near the deadline. */
 export const SIGNAL_WAIT_POLL_MS = 1_000;
+/**
+ * Follow-stream idle rearm cadence. Slower than the wait path's 1Hz poll so a
+ * long-lived receiver does not hammer the edge on empty inboxes.
+ */
+export const SIGNAL_FOLLOW_POLL_MS = 2_000;
+/** First retry delay after a retryable follow failure. */
+export const SIGNAL_FOLLOW_BACKOFF_INITIAL_MS = 500;
+/** Cap on exponential backoff between follow rearms. */
+export const SIGNAL_FOLLOW_BACKOFF_MAX_MS = 30_000;
+/** In-process signal-id memory for one follow run (at-least-once, no durable ack). */
+export const SIGNAL_FOLLOW_SEEN_MAX = 1_024;
+
+/** HTTP failure from a signal read; carries status for follow retry classification. */
+export class SignalHttpError extends Error {
+  readonly status: number;
+  readonly retryAfterMs: number | null;
+
+  constructor(status: number, retryAfterMs: number | null = null) {
+    super(`signal read failed (HTTP ${status})`);
+    this.name = "SignalHttpError";
+    this.status = status;
+    this.retryAfterMs = retryAfterMs;
+  }
+}
+
+/** Transport unreachable / network failure for a signal read. */
+export class SignalTransportError extends Error {
+  constructor(message = "signal read could not reach the cloud service") {
+    super(message);
+    this.name = "SignalTransportError";
+  }
+}
+
+/** Response body failed structural validation. */
+export class SignalMalformedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "SignalMalformedError";
+  }
+}
 
 function checkedUuid(value: unknown, field: string): string {
   if (typeof value !== "string" || !UUID_RE.test(value)) {
-    throw new Error(`signal read returned a malformed ${field}`);
+    throw new SignalMalformedError(`signal read returned a malformed ${field}`);
   }
   return value.toLowerCase();
 }
@@ -65,14 +105,14 @@ function checkedNullableUuid(value: unknown, field: string): string | null {
 
 function checkedTimestamp(value: unknown, field: string): string {
   if (typeof value !== "string" || !Number.isFinite(Date.parse(value))) {
-    throw new Error(`signal read returned a malformed ${field}`);
+    throw new SignalMalformedError(`signal read returned a malformed ${field}`);
   }
   return value;
 }
 
 function signalRecord(value: unknown): SignalRecord {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error("signal read returned a malformed row");
+    throw new SignalMalformedError("signal read returned a malformed row");
   }
   const row = value as Record<string, unknown>;
   if (
@@ -86,7 +126,7 @@ function signalRecord(value: unknown): SignalRecord {
     !(row.about === null ||
       (typeof row.about === "string" && row.about.length <= 500))
   ) {
-    throw new Error("signal read returned malformed signal data");
+    throw new SignalMalformedError("signal read returned malformed signal data");
   }
   return {
     id: checkedUuid(row.id, "id"),
@@ -107,6 +147,30 @@ function signalRecord(value: unknown): SignalRecord {
     until: checkedTimestamp(row.until, "until"),
     created_at: checkedTimestamp(row.created_at, "created_at"),
   };
+}
+
+/** Parse Retry-After as delta-seconds or HTTP-date into a delay in ms. */
+export function parseRetryAfterMs(
+  header: string | null,
+  nowMs: number = Date.now(),
+): number | null {
+  if (header === null || header.trim() === "") return null;
+  const trimmed = header.trim();
+  if (/^\d+$/.test(trimmed)) {
+    const seconds = Number(trimmed);
+    if (!Number.isSafeInteger(seconds) || seconds < 0) return null;
+    return Math.min(seconds * 1000, SIGNAL_FOLLOW_BACKOFF_MAX_MS);
+  }
+  const when = Date.parse(trimmed);
+  if (!Number.isFinite(when)) return null;
+  return Math.max(0, Math.min(when - nowMs, SIGNAL_FOLLOW_BACKOFF_MAX_MS));
+}
+
+function signalHttpError(response: Response): SignalHttpError {
+  return new SignalHttpError(
+    response.status,
+    parseRetryAfterMs(response.headers.get("retry-after")),
+  );
 }
 
 function checkedLimit(value: number | undefined): number {
@@ -233,7 +297,7 @@ async function fetchSignalRead(
 function mapReadFailure(error: unknown, waitBound: boolean): never {
   if (error instanceof SignalReadTimeoutError) {
     if (waitBound) throw error;
-    throw new Error("signal read could not reach the cloud service");
+    throw new SignalTransportError();
   }
   throw error;
 }
@@ -282,14 +346,14 @@ async function humanSignals(
     mapReadFailure(error, options.deadlineMs !== undefined);
   }
   if (result === null) {
-    throw new Error("signal read could not reach the cloud service");
+    throw new SignalTransportError();
   }
   const { response, body } = result;
   if (!response.ok) {
-    throw new Error(`signal read failed (HTTP ${response.status})`);
+    throw signalHttpError(response);
   }
   if (!Array.isArray(body)) {
-    throw new Error("signal read returned malformed JSON");
+    throw new SignalMalformedError("signal read returned malformed JSON");
   }
   return body.map(signalRecord);
 }
@@ -326,11 +390,11 @@ async function agentSignals(
     mapReadFailure(error, options.deadlineMs !== undefined);
   }
   if (result === null) {
-    throw new Error("signal read could not reach the cloud service");
+    throw new SignalTransportError();
   }
   const { response, body } = result;
   if (!response.ok) {
-    throw new Error(`signal read failed (HTTP ${response.status})`);
+    throw signalHttpError(response);
   }
   if (
     !body ||
@@ -338,7 +402,7 @@ async function agentSignals(
     Array.isArray(body) ||
     !Array.isArray((body as Record<string, unknown>).signals)
   ) {
-    throw new Error("signal read returned malformed JSON");
+    throw new SignalMalformedError("signal read returned malformed JSON");
   }
   return ((body as Record<string, unknown>).signals as unknown[])
     .map(signalRecord);
@@ -808,4 +872,285 @@ export function renderSignalStatus(
     includeStale: false,
     ...options,
   })}\n${askSummary}`;
+}
+
+// ---------------------------------------------------------------------------
+// inbox --follow --ndjson: host-neutral resilient receive stream
+//
+// This is a long-lived NDJSON stream of durable signal rows. It never claims
+// to wake a model, execute a message, or install a host daemon. Receipt is
+// at-least-once for one process: there is no durable ack, and a second run
+// may re-emit still-live rows.
+// ---------------------------------------------------------------------------
+
+export type FollowFrame =
+  | {
+    type: "ready";
+    workspace_id: string;
+    view: "inbox";
+    ts: string;
+  }
+  | {
+    type: "signal";
+    signal: SignalRecord;
+    ts: string;
+  }
+  | {
+    type: "retrying";
+    reason: string;
+    attempt: number;
+    delay_ms: number;
+    ts: string;
+  };
+
+export type FollowStopReason =
+  | "cancelled"
+  | "fatal_http"
+  | "malformed"
+  | "credential"
+  | "error";
+
+export interface FollowStop {
+  reason: FollowStopReason;
+  error?: Error;
+}
+
+/** Bounded FIFO set of signal ids seen during one follow process. */
+export class BoundedSignalIdSet {
+  private readonly order: string[] = [];
+  private readonly ids = new Set<string>();
+
+  constructor(private readonly max: number = SIGNAL_FOLLOW_SEEN_MAX) {
+    if (!Number.isSafeInteger(max) || max < 1) {
+      throw new Error("BoundedSignalIdSet max must be a positive integer");
+    }
+  }
+
+  get size(): number {
+    return this.ids.size;
+  }
+
+  has(id: string): boolean {
+    return this.ids.has(id);
+  }
+
+  /** Insert id; returns true when it was new (should emit). */
+  add(id: string): boolean {
+    if (this.ids.has(id)) return false;
+    this.ids.add(id);
+    this.order.push(id);
+    while (this.order.length > this.max) {
+      const oldest = this.order.shift();
+      if (oldest !== undefined) this.ids.delete(oldest);
+    }
+    return true;
+  }
+}
+
+/**
+ * Full-jitter exponential backoff, respecting Retry-After when larger.
+ * attempt is 1-based (first retry = 1).
+ */
+export function nextFollowBackoffMs(
+  attempt: number,
+  retryAfterMs: number | null = null,
+  random: () => number = Math.random,
+): number {
+  const safeAttempt = Math.max(1, Math.min(attempt, 16));
+  const exp = Math.min(
+    SIGNAL_FOLLOW_BACKOFF_MAX_MS,
+    SIGNAL_FOLLOW_BACKOFF_INITIAL_MS * (2 ** (safeAttempt - 1)),
+  );
+  const jittered = Math.floor(exp * (0.5 + random() * 0.5));
+  if (retryAfterMs === null) return jittered;
+  return Math.min(
+    SIGNAL_FOLLOW_BACKOFF_MAX_MS,
+    Math.max(jittered, retryAfterMs),
+  );
+}
+
+export function isRetryableFollowError(error: unknown): boolean {
+  if (error instanceof SignalReadTimeoutError) return true;
+  if (error instanceof SignalTransportError) return true;
+  if (error instanceof SignalHttpError) {
+    return error.status === 429 || error.status >= 500;
+  }
+  return false;
+}
+
+export function isFatalFollowError(error: unknown): boolean {
+  if (error instanceof SignalMalformedError) return true;
+  if (error instanceof SignalHttpError) {
+    return error.status === 400 ||
+      error.status === 401 ||
+      error.status === 403 ||
+      error.status === 404 ||
+      error.status === 426 ||
+      (error.status >= 400 && error.status < 500 && error.status !== 429);
+  }
+  return false;
+}
+
+function followRetryReason(error: unknown): string {
+  if (error instanceof SignalReadTimeoutError) return "idle_deadline";
+  if (error instanceof SignalTransportError) return "transport";
+  if (error instanceof SignalHttpError) {
+    if (error.status === 429) return "http_429";
+    if (error.status >= 500) return `http_${error.status}`;
+  }
+  return "retryable";
+}
+
+function followTs(nowMs: number): string {
+  return new Date(nowMs).toISOString();
+}
+
+/** Serialize one follow frame as a single NDJSON line (no trailing newline). */
+export function formatFollowFrame(frame: FollowFrame): string {
+  return JSON.stringify(frame);
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error &&
+    (error.name === "AbortError" || /aborted/i.test(error.message));
+}
+
+/**
+ * Long-running inbox receive loop. Caller supplies `arm`, which must refresh
+ * credentials (AgentCredentialSession.bearer when agent) and perform one read.
+ * Emits ready only after the first successful arm. Does not ack rows.
+ */
+export async function runInboxFollow(options: {
+  workspaceId: string;
+  arm: () => Promise<SignalRecord[]>;
+  emit: (frame: FollowFrame) => void;
+  sleep?: (ms: number) => Promise<void>;
+  now?: () => number;
+  random?: () => number;
+  signal?: AbortSignal;
+  pollMs?: number;
+  seen?: BoundedSignalIdSet;
+  /** Optional classifier for credential refusal/horizon failures from arm(). */
+  isCredentialFailure?: (error: unknown) => boolean;
+}): Promise<FollowStop> {
+  const now = options.now ?? Date.now;
+  const sleep = options.sleep ??
+    ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms)));
+  const random = options.random ?? Math.random;
+  const pollMs = options.pollMs ?? SIGNAL_FOLLOW_POLL_MS;
+  const seen = options.seen ?? new BoundedSignalIdSet();
+  const isCredentialFailure = options.isCredentialFailure ?? (() => false);
+  const abort = options.signal;
+
+  let ready = false;
+  let attempt = 0;
+
+  const cancelled = (): boolean => abort?.aborted === true;
+
+  const sleepInterruptible = async (ms: number): Promise<"ok" | "cancelled"> => {
+    if (cancelled()) return "cancelled";
+    if (ms <= 0) return cancelled() ? "cancelled" : "ok";
+    // Always use the injected sleep so tests can drive time; race abort so a
+    // live SIGINT/AbortSignal still interrupts a long backoff.
+    if (!abort) {
+      await sleep(ms);
+      return cancelled() ? "cancelled" : "ok";
+    }
+    await Promise.race([
+      sleep(ms),
+      new Promise<void>((resolve) => {
+        if (abort.aborted) {
+          resolve();
+          return;
+        }
+        abort.addEventListener("abort", () => resolve(), { once: true });
+      }),
+    ]);
+    return cancelled() ? "cancelled" : "ok";
+  };
+
+  while (true) {
+    if (cancelled()) return { reason: "cancelled" };
+
+    try {
+      const rows = await options.arm();
+      attempt = 0;
+
+      if (!ready) {
+        options.emit({
+          type: "ready",
+          workspace_id: options.workspaceId,
+          view: "inbox",
+          ts: followTs(now()),
+        });
+        ready = true;
+      }
+
+      // Oldest first so a multi-row arm is deterministic for consumers.
+      const ordered = [...rows].sort((a, b) => {
+        const byTime = Date.parse(a.created_at) - Date.parse(b.created_at);
+        if (byTime !== 0) return byTime;
+        return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+      });
+
+      let emitted = false;
+      for (const signal of ordered) {
+        if (!seen.add(signal.id)) continue;
+        options.emit({
+          type: "signal",
+          signal,
+          ts: followTs(now()),
+        });
+        emitted = true;
+      }
+
+      // Rearm promptly after emissions; otherwise idle at the slowed poll cadence.
+      if (!emitted) {
+        const wait = await sleepInterruptible(pollMs);
+        if (wait === "cancelled") return { reason: "cancelled" };
+      }
+    } catch (error) {
+      if (cancelled() || isAbortError(error)) {
+        return { reason: "cancelled" };
+      }
+      if (isCredentialFailure(error)) {
+        return {
+          reason: "credential",
+          error: error instanceof Error ? error : new Error(String(error)),
+        };
+      }
+      if (isRetryableFollowError(error)) {
+        attempt += 1;
+        const retryAfterMs = error instanceof SignalHttpError
+          ? error.retryAfterMs
+          : null;
+        const delayMs = nextFollowBackoffMs(attempt, retryAfterMs, random);
+        if (ready) {
+          options.emit({
+            type: "retrying",
+            reason: followRetryReason(error),
+            attempt,
+            delay_ms: delayMs,
+            ts: followTs(now()),
+          });
+        }
+        const wait = await sleepInterruptible(delayMs);
+        if (wait === "cancelled") return { reason: "cancelled" };
+        continue;
+      }
+      if (error instanceof SignalMalformedError) {
+        return { reason: "malformed", error };
+      }
+      if (isFatalFollowError(error)) {
+        return {
+          reason: "fatal_http",
+          error: error instanceof Error ? error : new Error(String(error)),
+        };
+      }
+      return {
+        reason: "error",
+        error: error instanceof Error ? error : new Error(String(error)),
+      };
+    }
+  }
 }
