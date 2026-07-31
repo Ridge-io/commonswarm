@@ -758,13 +758,21 @@ test("9. Required filesystem causality: wrong-mode dir/file, symlinks, and atomi
     );
 
     // 9f. Atomic replacement causality: write replaces file atomically and maintains 0600 mode
+    const statBefore = await lstat(journal.journalPath);
     const contentBefore = await readFile(journal.journalPath, "utf8");
-    await journal.reserveClaim(t0);
-    const contentAfter = await readFile(journal.journalPath, "utf8");
-    assert.notEqual(contentBefore, contentAfter);
+    const parsedBefore = parseJournalRecord(contentBefore, WORKSPACE_ID, PRINCIPAL_ID);
+    assert.equal(parsedBefore.active, null);
 
-    const postWriteStat = await lstat(journal.journalPath);
-    assert.equal(postWriteStat.mode & 0o777, 0o600);
+    await journal.reserveClaim(t0);
+
+    const statAfter = await lstat(journal.journalPath);
+    const contentAfter = await readFile(journal.journalPath, "utf8");
+    const parsedAfter = parseJournalRecord(contentAfter, WORKSPACE_ID, PRINCIPAL_ID);
+    assert.notEqual(parsedAfter.active, null);
+
+    assert.notEqual(contentBefore, contentAfter);
+    assert.notEqual(statBefore.ino, statAfter.ino, "Atomic replacement must yield a replacement inode");
+    assert.equal(statAfter.mode & 0o777, 0o600);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -1270,6 +1278,273 @@ test("14. Causal defect table for numeric offset timestamps across all record fi
     const recClear = await journal.read();
     assert.equal(recClear.active, null);
     assert.equal(recClear.updatedAt, tClear);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("15. Concurrency and locking causality: concurrent recordLease + recordClaimAttempt, two concurrent reserveClaim", async () => {
+  const dir = await makeTempDir();
+  try {
+    const t0 = "2026-07-31T12:00:00.000Z";
+    const tLease = "2026-07-31T13:00:00.000Z";
+    const tAttempt = "2026-07-31T12:30:00.000Z";
+
+    // 15a. Concurrent recordLease + recordClaimAttempt over 30 runs
+    for (let i = 0; i < 30; i++) {
+      const profileId = `test-profile-concurrent-${i}`;
+      const { journal } = await openListenerDeliveryJournal({
+        profileId,
+        workspaceId: WORKSPACE_ID,
+        principalId: PRINCIPAL_ID,
+        proposedListenerInstanceId: INSTANCE_ID_1,
+        stateDirectory: dir,
+        now: t0,
+      });
+
+      await journal.reserveClaim(t0);
+
+      await Promise.all([
+        journal.recordLease({
+          signalId: SIGNAL_ID,
+          leaseId: LEASE_ID,
+          leasedUntil: tLease,
+          now: t0,
+        }),
+        journal.recordClaimAttempt(tAttempt),
+      ]);
+
+      const finalRecord = await journal.read();
+      assert.equal(
+        finalRecord.active?.phase,
+        "leased",
+        `Run ${i}: Lease phase must be preserved`,
+      );
+      assert.equal(
+        finalRecord.active?.leaseId,
+        LEASE_ID,
+        `Run ${i}: Lease ID must be preserved`,
+      );
+      assert.equal(
+        finalRecord.active?.signalId,
+        SIGNAL_ID,
+        `Run ${i}: Signal ID must be preserved`,
+      );
+      assert.equal(
+        finalRecord.active?.claimLastAttemptAt,
+        tAttempt,
+        `Run ${i}: Attempt timestamp must be preserved`,
+      );
+    }
+
+    // 15b. Two concurrent reserveClaim: exactly one reservation, one state conflict, one ordinal advance
+    const { journal: reserveJ } = await openListenerDeliveryJournal({
+      profileId: "test-profile-concurrent-reserve",
+      workspaceId: WORKSPACE_ID,
+      principalId: PRINCIPAL_ID,
+      proposedListenerInstanceId: INSTANCE_ID_1,
+      stateDirectory: dir,
+      now: t0,
+    });
+
+    const reserveResults = await Promise.allSettled([
+      reserveJ.reserveClaim(t0),
+      reserveJ.reserveClaim(t0),
+    ]);
+
+    const fulfilled = reserveResults.filter((r) => r.status === "fulfilled");
+    const rejected = reserveResults.filter((r) => r.status === "rejected");
+
+    assert.equal(fulfilled.length, 1, "Exactly one reserveClaim must succeed");
+    assert.equal(rejected.length, 1, "Exactly one reserveClaim must reject");
+    if (rejected[0]?.status === "rejected") {
+      assert.equal(
+        (rejected[0].reason as Error).message,
+        "delivery journal state conflict",
+      );
+    }
+
+    const recAfterReserve = await reserveJ.read();
+    assert.equal(recAfterReserve.nextClaimOrdinal, 1);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("16. Oversize fractional timestamps: fresh open, inactive rotation, and transition guards", async () => {
+  const dir = await makeTempDir();
+  try {
+    const t0 = "2026-07-31T12:00:00.000Z";
+    const oversizeTs = "2026-07-31T12:00:00." + "9".repeat(9000) + "Z";
+
+    // 16a. Fresh open with 9,000 fractional digits rejects, creates no journal file, leaves no lock
+    const profileIdFresh = "test-profile-oversize-fresh";
+    await assert.rejects(
+      async () => {
+        await openListenerDeliveryJournal({
+          profileId: profileIdFresh,
+          workspaceId: WORKSPACE_ID,
+          principalId: PRINCIPAL_ID,
+          proposedListenerInstanceId: INSTANCE_ID_1,
+          stateDirectory: dir,
+          now: oversizeTs,
+        });
+      },
+      (err: Error) => err.message === "delivery journal configuration rejected",
+    );
+
+    const instKeyFresh = listenerInstanceKey({
+      profileId: profileIdFresh,
+      workspaceId: WORKSPACE_ID,
+      principalId: PRINCIPAL_ID,
+    });
+    const journalPathFresh = join(dir, instKeyFresh, "delivery-journal.json");
+    const lockPathFresh = join(dir, instKeyFresh, "delivery-journal.lock");
+
+    await assert.rejects(async () => await lstat(journalPathFresh));
+    await assert.rejects(async () => await lstat(lockPathFresh));
+
+    // 16b. Inactive existing open with 9,000 fractional digits rejects and preserves exact bytes and inode
+    const profileIdInactive = "test-profile-oversize-inactive";
+    const { journal: inactiveJ } = await openListenerDeliveryJournal({
+      profileId: profileIdInactive,
+      workspaceId: WORKSPACE_ID,
+      principalId: PRINCIPAL_ID,
+      proposedListenerInstanceId: INSTANCE_ID_1,
+      stateDirectory: dir,
+      now: t0,
+    });
+
+    const statBefore = await lstat(inactiveJ.journalPath);
+    const contentBefore = await readFile(inactiveJ.journalPath, "utf8");
+
+    await assert.rejects(
+      async () => {
+        await openListenerDeliveryJournal({
+          profileId: profileIdInactive,
+          workspaceId: WORKSPACE_ID,
+          principalId: PRINCIPAL_ID,
+          proposedListenerInstanceId: INSTANCE_ID_2,
+          stateDirectory: dir,
+          now: oversizeTs,
+        });
+      },
+      (err: Error) => err.message === "delivery journal configuration rejected",
+    );
+
+    const statAfter = await lstat(inactiveJ.journalPath);
+    const contentAfter = await readFile(inactiveJ.journalPath, "utf8");
+
+    assert.equal(statBefore.ino, statAfter.ino, "Inode must remain unchanged");
+    assert.equal(contentBefore, contentAfter, "Bytes must remain unchanged");
+
+    const lockPathInactive = join(inactiveJ.instanceDirectory, "delivery-journal.lock");
+    await assert.rejects(async () => await lstat(lockPathInactive));
+
+    // 16c. Oversize timestamps in transitions reject before modification
+    await assert.rejects(
+      async () => await inactiveJ.reserveClaim(oversizeTs),
+      (err: Error) => err.message === "delivery journal mutation rejected",
+    );
+
+    await inactiveJ.reserveClaim(t0);
+
+    await assert.rejects(
+      async () => await inactiveJ.recordClaimAttempt(oversizeTs),
+      (err: Error) => err.message === "delivery journal mutation rejected",
+    );
+
+    await assert.rejects(
+      async () =>
+        await inactiveJ.recordLease({
+          signalId: SIGNAL_ID,
+          leaseId: LEASE_ID,
+          leasedUntil: "2026-07-31T13:00:00Z",
+          now: oversizeTs,
+        }),
+      (err: Error) => err.message === "delivery journal mutation rejected",
+    );
+
+    await assert.rejects(
+      async () =>
+        await inactiveJ.recordLease({
+          signalId: SIGNAL_ID,
+          leaseId: LEASE_ID,
+          leasedUntil: oversizeTs,
+          now: t0,
+        }),
+      (err: Error) => err.message === "delivery journal mutation rejected",
+    );
+
+    await inactiveJ.recordLease({
+      signalId: SIGNAL_ID,
+      leaseId: LEASE_ID,
+      leasedUntil: "2026-07-31T13:00:00Z",
+      now: t0,
+    });
+
+    await assert.rejects(
+      async () =>
+        await inactiveJ.prepareAck({
+          outcome: "replied",
+          lastErrorCode: null,
+          now: oversizeTs,
+        }),
+      (err: Error) => err.message === "delivery journal mutation rejected",
+    );
+
+    await assert.rejects(
+      async () =>
+        await inactiveJ.prepareAck({
+          outcome: "replied",
+          lastErrorCode: null,
+          preparedAt: oversizeTs,
+          now: t0,
+        }),
+      (err: Error) => err.message === "delivery journal mutation rejected",
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("17. Fractional timestamp precision (3- and 9-digit) and immediate post-write read <= 8192 bytes", async () => {
+  const dir = await makeTempDir();
+  try {
+    const t3 = "2026-07-31T12:00:00.123Z";
+    const t9 = "2026-07-31T12:00:00.123456789Z";
+    const tLease = "2026-07-31T13:00:00.987654321Z";
+
+    const { journal } = await openListenerDeliveryJournal({
+      profileId: "test-profile-fractional",
+      workspaceId: WORKSPACE_ID,
+      principalId: PRINCIPAL_ID,
+      proposedListenerInstanceId: INSTANCE_ID_1,
+      stateDirectory: dir,
+      now: t3,
+    });
+
+    const rec0 = await journal.read();
+    assert.equal(rec0.updatedAt, t3);
+    assert.ok(Buffer.byteLength(JSON.stringify(rec0), "utf8") <= 8192);
+
+    const claim = await journal.reserveClaim(t9);
+    assert.equal(claim.claimCreatedAt, t9);
+
+    const rec1 = await journal.read();
+    assert.equal(rec1.updatedAt, t9);
+    assert.ok(Buffer.byteLength(JSON.stringify(rec1), "utf8") <= 8192);
+
+    await journal.recordLease({
+      signalId: SIGNAL_ID,
+      leaseId: LEASE_ID,
+      leasedUntil: tLease,
+      now: t9,
+    });
+
+    const rec2 = await journal.read();
+    assert.equal(rec2.active?.leasedUntil, tLease);
+    assert.ok(Buffer.byteLength(JSON.stringify(rec2), "utf8") <= 8192);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

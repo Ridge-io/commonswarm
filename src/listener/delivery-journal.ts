@@ -6,6 +6,7 @@ import { isAbsolute, join } from "node:path";
 import { types } from "node:util";
 import {
   readSecureJsonFile,
+  withFileLock,
   writeSecureJsonFile,
 } from "../cloud/storage.js";
 import {
@@ -18,7 +19,7 @@ const UUID_RE =
 const COMMAND_ID_RE = /^[A-Za-z0-9_-]{8,72}$/;
 const MAX_JOURNAL_BYTES = 8192;
 const ISO_8601_RE =
-  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|([+-]\d{2}):(\d{2}))$/;
+  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,9}))?(?:Z|([+-]\d{2}):(\d{2}))$/;
 
 function isLeapYear(year: number): boolean {
   return (year % 4 === 0 && year % 100 !== 0) || (year % 400 === 0);
@@ -629,7 +630,7 @@ class FileListenerDeliveryJournal implements ListenerDeliveryJournal {
     this.journalPath = join(this.instanceDirectory, "delivery-journal.json");
   }
 
-  async read(): Promise<ListenerDeliveryJournalRecord> {
+  private async readRecordUnlocked(): Promise<ListenerDeliveryJournalRecord> {
     let raw: string | null;
     try {
       raw = await readSecureJsonFile(this.journalPath, MAX_JOURNAL_BYTES);
@@ -654,41 +655,63 @@ class FileListenerDeliveryJournal implements ListenerDeliveryJournal {
     );
   }
 
+  async read(): Promise<ListenerDeliveryJournalRecord> {
+    return await this.readRecordUnlocked();
+  }
+
+  private withLock<T>(work: () => Promise<T>): Promise<T> {
+    return withFileLock(this.instanceDirectory, "delivery-journal", work);
+  }
+
+  private async writeRecordUnlocked(
+    record: ListenerDeliveryJournalRecord,
+  ): Promise<void> {
+    const serialized = JSON.stringify(record);
+    parseJournalRecord(
+      serialized,
+      this.options.workspaceId,
+      this.options.principalId,
+    );
+    await writeSecureJsonFile(this.journalPath, serialized);
+  }
+
   async reserveClaim(now?: string): Promise<ListenerActiveClaim> {
     const nowTimestamp = now ?? new Date().toISOString();
     if (!isValidIsoTimestamp(nowTimestamp)) {
       throw new Error("delivery journal mutation rejected");
     }
 
-    const current = await this.read();
-    if (current.active !== null) {
-      throw new Error("delivery journal state conflict");
-    }
+    return await this.withLock(async () => {
+      const current = await this.readRecordUnlocked();
+      if (current.active !== null) {
+        throw new Error("delivery journal state conflict");
+      }
 
-    const ordinal = current.nextClaimOrdinal;
-    const cmdId = claimCommandId(current.listenerInstanceId, ordinal);
+      const ordinal = current.nextClaimOrdinal;
+      const cmdId = claimCommandId(current.listenerInstanceId, ordinal);
 
-    const activeClaim: ListenerActiveClaim = {
-      phase: "claim_pending",
-      claimOrdinal: ordinal,
-      claimCommandId: cmdId,
-      claimCreatedAt: nowTimestamp,
-      claimLastAttemptAt: null,
-      signalId: null,
-      leaseId: null,
-      leasedUntil: null,
-      ack: null,
-    };
+      const activeClaim: ListenerActiveClaim = {
+        phase: "claim_pending",
+        claimOrdinal: ordinal,
+        claimCommandId: cmdId,
+        claimCreatedAt: nowTimestamp,
+        claimLastAttemptAt: null,
+        signalId: null,
+        leaseId: null,
+        leasedUntil: null,
+        ack: null,
+      };
 
-    const updatedRecord: ListenerDeliveryJournalRecord = {
-      ...current,
-      nextClaimOrdinal: ordinal + 1,
-      active: activeClaim,
-      updatedAt: nowTimestamp,
-    };
+      const updatedRecord: ListenerDeliveryJournalRecord = {
+        ...current,
+        nextClaimOrdinal: ordinal + 1,
+        active: activeClaim,
+        updatedAt: nowTimestamp,
+      };
 
-    await this.writeRecord(updatedRecord);
-    return activeClaim;
+      await this.writeRecordUnlocked(updatedRecord);
+      return activeClaim;
+    });
   }
 
   async recordClaimAttempt(now?: string): Promise<void> {
@@ -697,27 +720,29 @@ class FileListenerDeliveryJournal implements ListenerDeliveryJournal {
       throw new Error("delivery journal mutation rejected");
     }
 
-    const current = await this.read();
-    if (current.active === null) {
-      throw new Error("delivery journal state conflict");
-    }
+    return await this.withLock(async () => {
+      const current = await this.readRecordUnlocked();
+      if (current.active === null) {
+        throw new Error("delivery journal state conflict");
+      }
 
-    if (current.active.phase === "ack_pending") {
-      throw new Error("delivery journal state conflict");
-    }
+      if (current.active.phase === "ack_pending") {
+        throw new Error("delivery journal state conflict");
+      }
 
-    const updatedActive: ListenerActiveClaim = {
-      ...current.active,
-      claimLastAttemptAt: nowTimestamp,
-    };
+      const updatedActive: ListenerActiveClaim = {
+        ...current.active,
+        claimLastAttemptAt: nowTimestamp,
+      };
 
-    const updatedRecord: ListenerDeliveryJournalRecord = {
-      ...current,
-      active: updatedActive,
-      updatedAt: nowTimestamp,
-    };
+      const updatedRecord: ListenerDeliveryJournalRecord = {
+        ...current,
+        active: updatedActive,
+        updatedAt: nowTimestamp,
+      };
 
-    await this.writeRecord(updatedRecord);
+      await this.writeRecordUnlocked(updatedRecord);
+    });
   }
 
   async recordLease(input: RecordLeaseInput): Promise<void> {
@@ -748,46 +773,48 @@ class FileListenerDeliveryJournal implements ListenerDeliveryJournal {
       throw new Error("delivery journal mutation rejected");
     }
 
-    const current = await this.read();
-    if (current.active === null) {
-      throw new Error("delivery journal state conflict");
-    }
-
-    if (Date.parse(leasedUntilSnapshot) <= Date.parse(current.active.claimCreatedAt)) {
-      throw new Error("delivery journal mutation rejected");
-    }
-
-    if (current.active.phase === "leased") {
-      if (
-        current.active.signalId === canonicalSignalId &&
-        current.active.leaseId === canonicalLeaseId &&
-        current.active.leasedUntil === leasedUntilSnapshot
-      ) {
-        return;
+    return await this.withLock(async () => {
+      const current = await this.readRecordUnlocked();
+      if (current.active === null) {
+        throw new Error("delivery journal state conflict");
       }
-      throw new Error("delivery journal state conflict");
-    }
 
-    if (current.active.phase !== "claim_pending") {
-      throw new Error("delivery journal state conflict");
-    }
+      if (Date.parse(leasedUntilSnapshot) <= Date.parse(current.active.claimCreatedAt)) {
+        throw new Error("delivery journal mutation rejected");
+      }
 
-    const updatedActive: ListenerActiveClaim = {
-      ...current.active,
-      phase: "leased",
-      claimLastAttemptAt: current.active.claimLastAttemptAt ?? nowTimestamp,
-      signalId: canonicalSignalId,
-      leaseId: canonicalLeaseId,
-      leasedUntil: leasedUntilSnapshot,
-    };
+      if (current.active.phase === "leased") {
+        if (
+          current.active.signalId === canonicalSignalId &&
+          current.active.leaseId === canonicalLeaseId &&
+          current.active.leasedUntil === leasedUntilSnapshot
+        ) {
+          return;
+        }
+        throw new Error("delivery journal state conflict");
+      }
 
-    const updatedRecord: ListenerDeliveryJournalRecord = {
-      ...current,
-      active: updatedActive,
-      updatedAt: nowTimestamp,
-    };
+      if (current.active.phase !== "claim_pending") {
+        throw new Error("delivery journal state conflict");
+      }
 
-    await this.writeRecord(updatedRecord);
+      const updatedActive: ListenerActiveClaim = {
+        ...current.active,
+        phase: "leased",
+        claimLastAttemptAt: current.active.claimLastAttemptAt ?? nowTimestamp,
+        signalId: canonicalSignalId,
+        leaseId: canonicalLeaseId,
+        leasedUntil: leasedUntilSnapshot,
+      };
+
+      const updatedRecord: ListenerDeliveryJournalRecord = {
+        ...current,
+        active: updatedActive,
+        updatedAt: nowTimestamp,
+      };
+
+      await this.writeRecordUnlocked(updatedRecord);
+    });
   }
 
   async prepareAck(input: PrepareAckInput): Promise<void> {
@@ -833,46 +860,48 @@ class FileListenerDeliveryJournal implements ListenerDeliveryJournal {
       throw new Error("delivery journal mutation rejected");
     }
 
-    const current = await this.read();
-    if (current.active === null) {
-      throw new Error("delivery journal state conflict");
-    }
-
-    if (current.active.phase === "ack_pending") {
-      if (
-        current.active.ack &&
-        current.active.ack.outcome === outcomeSnapshot &&
-        current.active.ack.lastErrorCode === lastErrorCodeSnapshot
-      ) {
-        return;
+    return await this.withLock(async () => {
+      const current = await this.readRecordUnlocked();
+      if (current.active === null) {
+        throw new Error("delivery journal state conflict");
       }
-      throw new Error("delivery journal state conflict");
-    }
 
-    if (current.active.phase !== "leased") {
-      throw new Error("delivery journal state conflict");
-    }
+      if (current.active.phase === "ack_pending") {
+        if (
+          current.active.ack &&
+          current.active.ack.outcome === outcomeSnapshot &&
+          current.active.ack.lastErrorCode === lastErrorCodeSnapshot
+        ) {
+          return;
+        }
+        throw new Error("delivery journal state conflict");
+      }
 
-    const ackCmdId = ackCommandId(current.active.leaseId!);
+      if (current.active.phase !== "leased") {
+        throw new Error("delivery journal state conflict");
+      }
 
-    const updatedActive: ListenerActiveClaim = {
-      ...current.active,
-      phase: "ack_pending",
-      ack: {
-        commandId: ackCmdId,
-        outcome: outcomeSnapshot,
-        lastErrorCode: lastErrorCodeSnapshot,
-        preparedAt: preparedAtSnapshot,
-      },
-    };
+      const ackCmdId = ackCommandId(current.active.leaseId!);
 
-    const updatedRecord: ListenerDeliveryJournalRecord = {
-      ...current,
-      active: updatedActive,
-      updatedAt: nowTimestamp,
-    };
+      const updatedActive: ListenerActiveClaim = {
+        ...current.active,
+        phase: "ack_pending",
+        ack: {
+          commandId: ackCmdId,
+          outcome: outcomeSnapshot,
+          lastErrorCode: lastErrorCodeSnapshot,
+          preparedAt: preparedAtSnapshot,
+        },
+      };
 
-    await this.writeRecord(updatedRecord);
+      const updatedRecord: ListenerDeliveryJournalRecord = {
+        ...current,
+        active: updatedActive,
+        updatedAt: nowTimestamp,
+      };
+
+      await this.writeRecordUnlocked(updatedRecord);
+    });
   }
 
   async clearActive(now?: string): Promise<void> {
@@ -881,24 +910,16 @@ class FileListenerDeliveryJournal implements ListenerDeliveryJournal {
       throw new Error("delivery journal mutation rejected");
     }
 
-    const current = await this.read();
-    const updatedRecord: ListenerDeliveryJournalRecord = {
-      ...current,
-      active: null,
-      updatedAt: nowTimestamp,
-    };
+    return await this.withLock(async () => {
+      const current = await this.readRecordUnlocked();
+      const updatedRecord: ListenerDeliveryJournalRecord = {
+        ...current,
+        active: null,
+        updatedAt: nowTimestamp,
+      };
 
-    await this.writeRecord(updatedRecord);
-  }
-
-  private async writeRecord(record: ListenerDeliveryJournalRecord): Promise<void> {
-    const serialized = JSON.stringify(record);
-    parseJournalRecord(
-      serialized,
-      this.options.workspaceId,
-      this.options.principalId,
-    );
-    await writeSecureJsonFile(this.journalPath, serialized);
+      await this.writeRecordUnlocked(updatedRecord);
+    });
   }
 }
 
@@ -959,22 +980,60 @@ export async function openListenerDeliveryJournal(
     stateDirectory: stateDirectorySnapshot,
   });
 
-  let raw: string | null;
-  try {
-    raw = await readSecureJsonFile(journal.journalPath, MAX_JOURNAL_BYTES);
-  } catch (error) {
-    if (
-      error instanceof Error &&
-      (error.message.startsWith("stored record is larger") ||
-        error.message.includes("larger than this store accepts"))
-    ) {
-      throw new Error("stored delivery journal is malformed");
+  return await withFileLock(journal.instanceDirectory, "delivery-journal", async () => {
+    let raw: string | null;
+    try {
+      raw = await readSecureJsonFile(journal.journalPath, MAX_JOURNAL_BYTES);
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        (error.message.startsWith("stored record is larger") ||
+          error.message.includes("larger than this store accepts"))
+      ) {
+        throw new Error("stored delivery journal is malformed");
+      }
+      throw error;
     }
-    throw error;
-  }
 
-  if (raw === null) {
-    const record: ListenerDeliveryJournalRecord = {
+    if (raw === null) {
+      const record: ListenerDeliveryJournalRecord = {
+        version: 1,
+        workspaceId: workspaceIdSnapshot,
+        principalId: principalIdSnapshot,
+        listenerInstanceId: proposedInstanceIdSnapshot,
+        nextClaimOrdinal: 0,
+        active: null,
+        updatedAt: nowTimestamp,
+      };
+      const serialized = JSON.stringify(record);
+      parseJournalRecord(
+        serialized,
+        workspaceIdSnapshot,
+        principalIdSnapshot,
+      );
+      await writeSecureJsonFile(journal.journalPath, serialized);
+      return {
+        journal,
+        record,
+        listenerInstanceId: record.listenerInstanceId,
+      };
+    }
+
+    const existingRecord = parseJournalRecord(
+      raw,
+      workspaceIdSnapshot,
+      principalIdSnapshot,
+    );
+
+    if (existingRecord.active !== null) {
+      return {
+        journal,
+        record: existingRecord,
+        listenerInstanceId: existingRecord.listenerInstanceId,
+      };
+    }
+
+    const freshRecord: ListenerDeliveryJournalRecord = {
       version: 1,
       workspaceId: workspaceIdSnapshot,
       principalId: principalIdSnapshot,
@@ -983,43 +1042,17 @@ export async function openListenerDeliveryJournal(
       active: null,
       updatedAt: nowTimestamp,
     };
-    const serialized = JSON.stringify(record);
+    const serialized = JSON.stringify(freshRecord);
+    parseJournalRecord(
+      serialized,
+      workspaceIdSnapshot,
+      principalIdSnapshot,
+    );
     await writeSecureJsonFile(journal.journalPath, serialized);
     return {
       journal,
-      record,
-      listenerInstanceId: record.listenerInstanceId,
+      record: freshRecord,
+      listenerInstanceId: freshRecord.listenerInstanceId,
     };
-  }
-
-  const existingRecord = parseJournalRecord(
-    raw,
-    workspaceIdSnapshot,
-    principalIdSnapshot,
-  );
-
-  if (existingRecord.active !== null) {
-    return {
-      journal,
-      record: existingRecord,
-      listenerInstanceId: existingRecord.listenerInstanceId,
-    };
-  }
-
-  const freshRecord: ListenerDeliveryJournalRecord = {
-    version: 1,
-    workspaceId: workspaceIdSnapshot,
-    principalId: principalIdSnapshot,
-    listenerInstanceId: proposedInstanceIdSnapshot,
-    nextClaimOrdinal: 0,
-    active: null,
-    updatedAt: nowTimestamp,
-  };
-  const serialized = JSON.stringify(freshRecord);
-  await writeSecureJsonFile(journal.journalPath, serialized);
-  return {
-    journal,
-    record: freshRecord,
-    listenerInstanceId: freshRecord.listenerInstanceId,
-  };
+  });
 }
