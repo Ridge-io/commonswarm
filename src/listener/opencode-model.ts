@@ -64,11 +64,12 @@ const DEFAULT_PENDING_OPEN_WAIT_MS = 5_000;
 type PendingOpen = {
   home: string;
   instanceId: string;
-  /** pre-spawn: prepare only; opening: openSession in flight (child may be live). */
+  /** pre-spawn: prepare only; opening: openSession or worker init in flight (child live). */
   phase: "pre-spawn" | "opening";
   openPromise: Promise<OpenCodeAcpHandle> | null;
   settlePromise: Promise<void>;
-  markSettled: () => void;
+  markSettled: (err?: unknown) => void;
+  handle?: OpenCodeAcpHandle | null;
   timer?: NodeJS.Timeout;
   closedByOpenPath?: boolean;
 };
@@ -76,10 +77,10 @@ type PendingOpen = {
 /**
  * OpenCode-backed listener model.
  *
- * Homes are never deleted while an openSession may have spawned a child.
+ * Homes are never deleted while an openSession or worker initialization may have spawned a child.
  * close/cancel waits (bounded) for pending opens to settle via single-owner
  * open path cleanup, then verifies handle.close before release. Unsettled opens
- * or failed closes retain the exact home.
+ * or failed closes retain the exact home and propagate child_exit_timeout.
  */
 export class OpenCodeListenerModel implements ListenerModel {
   private readonly openSession: OpenOpenCodeSession;
@@ -150,6 +151,13 @@ export class OpenCodeListenerModel implements ListenerModel {
     for (const handle of this.inFlight) {
       try {
         handle.session.cancel();
+      } catch {
+        // best-effort
+      }
+    }
+    for (const pending of this.pendingOpens.values()) {
+      try {
+        pending.handle?.session.cancel();
       } catch {
         // best-effort
       }
@@ -233,18 +241,28 @@ export class OpenCodeListenerModel implements ListenerModel {
     }
 
     let timedOut = false;
-    await Promise.race([
-      entry.settlePromise,
-      new Promise<void>((resolve) => {
-        entry.timer = setTimeout(() => {
-          timedOut = true;
-          resolve();
-        }, this.pendingOpenWaitMs);
-      }),
-    ]);
+    let errResult: unknown = null;
+    try {
+      await Promise.race([
+        entry.settlePromise,
+        new Promise<void>((resolve) => {
+          entry.timer = setTimeout(() => {
+            timedOut = true;
+            resolve();
+          }, this.pendingOpenWaitMs);
+        }),
+      ]);
+    } catch (e) {
+      errResult = e;
+    }
 
     if (entry.timer) clearTimeout(entry.timer);
     this.pendingOpens.delete(entry.home);
+
+    if (errResult) {
+      if (entry.home === this.workerHome) this.workerHome = null;
+      throw asError(errResult);
+    }
 
     if (timedOut) {
       if (entry.home === this.workerHome) this.workerHome = null;
@@ -254,6 +272,38 @@ export class OpenCodeListenerModel implements ListenerModel {
         "OpenCode openSession did not settle during close; retaining home",
       );
     }
+  }
+
+  private async performSingleOwnerCleanup(
+    handle: OpenCodeAcpHandle,
+    home: string,
+    instanceId: string,
+    pending: PendingOpen,
+    disposeHomeOnClose: boolean,
+  ): Promise<void> {
+    if (pending.closedByOpenPath) return;
+    pending.closedByOpenPath = true;
+    this.pendingOpens.delete(home);
+    if (pending.timer) clearTimeout(pending.timer);
+
+    let closeErr: unknown = null;
+    try {
+      await handle.close();
+      if (this.workerHome === home) this.workerHome = null;
+      await releaseOpenCodeHome(home, instanceId).catch(() => undefined);
+    } catch (e) {
+      if (this.workerHome === home) this.workerHome = null;
+      this.retainedHomes.push(home);
+      closeErr = e;
+    }
+
+    if (closeErr) {
+      pending.markSettled(closeErr);
+      throw closeErr;
+    }
+
+    pending.markSettled();
+    throw new AcpHostError("cancelled_during_open", "listener model cancelled during open");
   }
 
   private async releaseWorkerHomeIfOwned(): Promise<void> {
@@ -314,10 +364,14 @@ export class OpenCodeListenerModel implements ListenerModel {
         : {}),
     });
     this.workerHome = home;
-    let markSettled!: () => void;
-    const settlePromise = new Promise<void>((resolve) => {
-      markSettled = resolve;
+    let markSettled!: (err?: unknown) => void;
+    const settlePromise = new Promise<void>((resolve, reject) => {
+      markSettled = (err?: unknown) => {
+        if (err) reject(err);
+        else resolve();
+      };
     });
+    void settlePromise.catch(() => undefined);
     const pending: PendingOpen = {
       home,
       instanceId: this.instanceId,
@@ -375,61 +429,50 @@ export class OpenCodeListenerModel implements ListenerModel {
       });
       pending.phase = "opening";
       pending.openPromise = openPromise;
+      void openPromise.catch(() => undefined);
 
       try {
         handle = await openPromise;
+        pending.handle = handle;
       } catch (openError) {
         this.pendingOpens.delete(home);
         if (this.workerHome === home) this.workerHome = null;
-        await releaseOpenCodeHome(home, this.instanceId).catch(() => undefined);
-        pending.markSettled();
+        if (openError instanceof AcpChildExitError || (openError as any)?.code === "child_exit_timeout") {
+          this.retainedHomes.push(home);
+        } else {
+          await releaseOpenCodeHome(home, this.instanceId).catch(() => undefined);
+        }
+        pending.markSettled(openError);
         throw openError;
       }
 
       if (this.closed || this.cancelled || generation !== this.openGeneration) {
-        this.pendingOpens.delete(home);
-        if (pending.timer) clearTimeout(pending.timer);
-        if (!pending.closedByOpenPath) {
-          pending.closedByOpenPath = true;
-          try {
-            await handle.close();
-            if (this.workerHome === home) this.workerHome = null;
-            await releaseOpenCodeHome(home, this.instanceId).catch(() => undefined);
-          } catch (closeErr) {
-            if (this.workerHome === home) this.workerHome = null;
-            this.retainedHomes.push(home);
-          }
-        }
-        pending.markSettled();
-        throw new AcpHostError("cancelled_during_open", "listener model cancelled during open");
+        await this.performSingleOwnerCleanup(handle, home, this.instanceId, pending, false);
+      }
+
+      await handle.session.enablePromptsAfterCanary();
+      if (this.closed || this.cancelled || generation !== this.openGeneration) {
+        await this.performSingleOwnerCleanup(handle, home, this.instanceId, pending, false);
+      }
+
+      await handle.session.openWorkCwd(this.options.cwd);
+      if (this.closed || this.cancelled || generation !== this.openGeneration) {
+        await this.performSingleOwnerCleanup(handle, home, this.instanceId, pending, false);
       }
 
       this.pendingOpens.delete(home);
       pending.markSettled();
-      await handle.session.enablePromptsAfterCanary();
-      this.assertOpen(generation);
-      await handle.session.openWorkCwd(this.options.cwd);
-      this.assertOpen(generation);
       this.workerCanary = false;
       this.worker = handle;
       return handle;
     } catch (error) {
-      if (handle && (this.closed || this.cancelled || generation !== this.openGeneration)) {
-        // already cleaned up by open path above
-      } else if (handle) {
-        try {
-          await handle.close();
-          await this.abandonWorkerHome();
-        } catch (closeError) {
-          if (home) {
-            this.retainedHomes.push(home);
-            this.workerHome = null;
-            if (pending) this.pendingOpens.delete(home);
-          }
-          throw closeError;
-        }
-      } else if (home) {
-        await this.abandonWorkerHome();
+      if (handle && pending && !pending.closedByOpenPath) {
+        await this.performSingleOwnerCleanup(handle, home!, this.instanceId, pending, false).catch(() => undefined);
+      }
+      if (pending && this.pendingOpens.has(home!)) {
+        this.pendingOpens.delete(home!);
+        if (this.workerHome === home) this.workerHome = null;
+        pending.markSettled(error);
       }
       throw error;
     } finally {
@@ -459,10 +502,14 @@ export class OpenCodeListenerModel implements ListenerModel {
           ? { allowMissingAuth: true }
           : {}),
       });
-      let markSettled!: () => void;
-      const settlePromise = new Promise<void>((resolve) => {
-        markSettled = resolve;
+      let markSettled!: (err?: unknown) => void;
+      const settlePromise = new Promise<void>((resolve, reject) => {
+        markSettled = (err?: unknown) => {
+          if (err) reject(err);
+          else resolve();
+        };
       });
+      void settlePromise.catch(() => undefined);
       pending = {
         home,
         instanceId: isolatedInstanceId,
@@ -496,42 +543,40 @@ export class OpenCodeListenerModel implements ListenerModel {
       });
       pending.phase = "opening";
       pending.openPromise = openPromise;
+      void openPromise.catch(() => undefined);
 
       try {
         handle = await openPromise;
+        pending.handle = handle;
       } catch (openError) {
         this.pendingOpens.delete(home);
-        await releaseOpenCodeHome(home, isolatedInstanceId).catch(() => undefined);
-        pending.markSettled();
+        if (openError instanceof AcpChildExitError || (openError as any)?.code === "child_exit_timeout") {
+          this.retainedHomes.push(home);
+        } else {
+          await releaseOpenCodeHome(home, isolatedInstanceId).catch(() => undefined);
+        }
+        pending.markSettled(openError);
         home = null;
         throw openError;
       }
 
       if (this.closed || this.cancelled || generation !== this.openGeneration) {
-        this.pendingOpens.delete(home);
-        if (pending.timer) clearTimeout(pending.timer);
-        if (!pending.closedByOpenPath) {
-          pending.closedByOpenPath = true;
-          try {
-            await handle.close();
-            await releaseOpenCodeHome(home, isolatedInstanceId).catch(() => undefined);
-            home = null;
-          } catch (closeErr) {
-            if (home) this.retainedHomes.push(home);
-            home = null;
-          }
-        }
-        pending.markSettled();
-        throw new AcpHostError("cancelled_during_open", "listener model cancelled during open");
+        await this.performSingleOwnerCleanup(handle, home, isolatedInstanceId, pending, true);
+      }
+
+      this.inFlight.add(handle);
+      await handle.session.enablePromptsAfterCanary();
+      if (this.closed || this.cancelled || generation !== this.openGeneration) {
+        await this.performSingleOwnerCleanup(handle, home, isolatedInstanceId, pending, true);
       }
 
       this.pendingOpens.delete(home);
       pending.markSettled();
-      this.inFlight.add(handle);
-      await handle.session.enablePromptsAfterCanary();
-      this.assertOpen(generation);
       return await handle.session.prompt(prompt);
     } catch (error) {
+      if (handle && pending && !pending.closedByOpenPath) {
+        await this.performSingleOwnerCleanup(handle, home!, isolatedInstanceId, pending, true).catch(() => undefined);
+      }
       if (home && pending && this.pendingOpens.has(home)) {
         const currentHome = home;
         if (pending.phase === "pre-spawn") {

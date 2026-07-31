@@ -240,7 +240,12 @@ export async function releaseOpenCodeHome(
     // Another process's home — never touch.
     return;
   }
-  await rm(home, { recursive: true, force: true }).catch(() => undefined);
+  try {
+    await rm(home, { recursive: true, force: true });
+  } catch {
+    await chmod(home, 0o700).catch(() => undefined);
+    await rm(home, { recursive: true, force: true }).catch(() => undefined);
+  }
 }
 
 /** Parse `opencode --version` stdout. Measured target is exactly 1.18.10. */
@@ -830,11 +835,14 @@ export async function openOpenCodeAcpSession(
       return { session, child, executable, args, env, home, close };
     } catch (err) {
       transport.close();
+      let termErr: unknown = null;
       try {
         await terminateOpenCodeChild(child);
-      } catch {
-        // Retain home when terminate fails; surface the original open error.
-        throw err;
+      } catch (e) {
+        termErr = e;
+      }
+      if (termErr) {
+        throw termErr;
       }
       await disposeHome();
       throw err;

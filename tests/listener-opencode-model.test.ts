@@ -10,6 +10,7 @@ import {
   type OpenCodeAcpOpenOptions,
 } from "../src/host/opencode.js";
 import {
+  AcpChildExitError,
   AcpHostError,
   type PermissionDecision,
   type PermissionRequest,
@@ -143,12 +144,13 @@ test("ensureWorker canary failure abandons workerHome without later close()", as
     allowMissingAuth: true,
     open: async (options) => {
       capturedHome = options.isolatedHome;
+      await Promise.resolve();
       throw new Error("canary open failed");
     },
   });
-  await assert.rejects(() => adapter.start(), /canary open failed/);
+  await assert.rejects(adapter.start(), /canary open failed/);
   assert.equal(typeof capturedHome, "string");
-  await assert.rejects(() => stat(capturedHome!), /ENOENT/);
+  await assert.rejects(stat(capturedHome!), /ENOENT/);
   // Second start can recreate; no stranded auth home from first failure.
   const okRecords: Parameters<typeof fakeOpen>[0] = [];
   const adapter2 = new OpenCodeListenerModel({
@@ -388,6 +390,192 @@ test("pending open that never settles retains home and fails close", async () =>
   await rm(workerHome!, { recursive: true, force: true }).catch(() => undefined);
   await rm(cwd, { recursive: true, force: true }).catch(() => undefined);
   void startPromise.catch(() => undefined);
+});
+
+test("close during gated worker enablePromptsAfterCanary waits for settle; handle closed once", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "cswarm-oc-worker-"));
+  let releaseCanary: (() => void) | undefined;
+  const canaryGate = new Promise<void>((resolve) => {
+    releaseCanary = resolve;
+  });
+  let workerHome: string | undefined;
+  let handleCloseCount = 0;
+  const adapter = new OpenCodeListenerModel({
+    cwd,
+    allowMissingAuth: true,
+    pendingOpenWaitMs: 2_000,
+    open: async (options) => {
+      workerHome = options.isolatedHome;
+      return {
+        session: {
+          async enablePromptsAfterCanary() {
+            await canaryGate;
+          },
+          async openWorkCwd() {},
+          async prompt() {
+            return { message: "w", stopReason: "end_turn" as const, updates: [] };
+          },
+          cancel() {},
+        },
+        child: {},
+        executable: process.execPath,
+        args: ["acp", "--pure"],
+        env: {},
+        home: options.isolatedHome ?? "/tmp/w",
+        async close() {
+          handleCloseCount += 1;
+        },
+      } as unknown as OpenCodeAcpHandle;
+    },
+  });
+  const startPromise = adapter.start();
+  for (let i = 0; i < 50 && !workerHome; i += 1) {
+    await new Promise((r) => setTimeout(r, 5));
+  }
+  assert.equal(typeof workerHome, "string");
+  await stat(workerHome!);
+  const closePromise = adapter.close();
+  await new Promise((r) => setTimeout(r, 30));
+  await stat(workerHome!);
+  releaseCanary?.();
+  await assert.rejects(startPromise, /cancelled during open|closed/i);
+  await closePromise;
+  assert.equal(handleCloseCount, 1);
+  await assert.rejects(() => stat(workerHome!), /ENOENT/);
+  await rm(cwd, { recursive: true, force: true }).catch(() => undefined);
+});
+
+test("close during gated worker openWorkCwd waits for settle; handle closed once", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "cswarm-oc-worker-"));
+  let releaseCwd: (() => void) | undefined;
+  const cwdGate = new Promise<void>((resolve) => {
+    releaseCwd = resolve;
+  });
+  let workerHome: string | undefined;
+  let handleCloseCount = 0;
+  const adapter = new OpenCodeListenerModel({
+    cwd,
+    allowMissingAuth: true,
+    pendingOpenWaitMs: 2_000,
+    open: async (options) => {
+      workerHome = options.isolatedHome;
+      return {
+        session: {
+          async enablePromptsAfterCanary() {},
+          async openWorkCwd() {
+            await cwdGate;
+          },
+          async prompt() {
+            return { message: "w", stopReason: "end_turn" as const, updates: [] };
+          },
+          cancel() {},
+        },
+        child: {},
+        executable: process.execPath,
+        args: ["acp", "--pure"],
+        env: {},
+        home: options.isolatedHome ?? "/tmp/w",
+        async close() {
+          handleCloseCount += 1;
+        },
+      } as unknown as OpenCodeAcpHandle;
+    },
+  });
+  const startPromise = adapter.start();
+  for (let i = 0; i < 50 && !workerHome; i += 1) {
+    await new Promise((r) => setTimeout(r, 5));
+  }
+  assert.equal(typeof workerHome, "string");
+  await stat(workerHome!);
+  const closePromise = adapter.close();
+  await new Promise((r) => setTimeout(r, 30));
+  await stat(workerHome!);
+  releaseCwd?.();
+  await assert.rejects(startPromise, /cancelled during open|closed/i);
+  await closePromise;
+  assert.equal(handleCloseCount, 1);
+  await assert.rejects(() => stat(workerHome!), /ENOENT/);
+  await rm(cwd, { recursive: true, force: true }).catch(() => undefined);
+});
+
+test("close during in-flight open propagates exact child_exit_timeout cleanup failure", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "cswarm-oc-worker-"));
+  let releaseOpen: (() => void) | undefined;
+  const gate = new Promise<void>((resolve) => {
+    releaseOpen = resolve;
+  });
+  let workerHome: string | undefined;
+  const timeoutErr = new AcpHostError(
+    "child_exit_timeout",
+    "child process did not exit after SIGKILL within 5000ms deadline",
+  );
+  const adapter = new OpenCodeListenerModel({
+    cwd,
+    allowMissingAuth: true,
+    pendingOpenWaitMs: 2_000,
+    open: async (options) => {
+      workerHome = options.isolatedHome;
+      await gate;
+      return {
+        session: {
+          async enablePromptsAfterCanary() {},
+          async openWorkCwd() {},
+          async prompt() {
+            return { message: "w", stopReason: "end_turn" as const, updates: [] };
+          },
+          cancel() {},
+        },
+        child: {},
+        executable: process.execPath,
+        args: ["acp", "--pure"],
+        env: {},
+        home: options.isolatedHome ?? "/tmp/w",
+        async close() {
+          await Promise.resolve();
+          throw timeoutErr;
+        },
+      } as unknown as OpenCodeAcpHandle;
+    },
+  });
+  const startPromise = adapter.start();
+  void startPromise.catch(() => undefined);
+  for (let i = 0; i < 50 && !workerHome; i += 1) {
+    await new Promise((r) => setTimeout(r, 5));
+  }
+  assert.equal(typeof workerHome, "string");
+  const closePromise = adapter.close();
+  void closePromise.catch(() => undefined);
+  releaseOpen?.();
+  await assert.rejects(startPromise, /child process did not exit/);
+  await assert.rejects(closePromise, /child process did not exit/);
+  assert.ok(adapter.getRetainedHomes().includes(workerHome!));
+  await stat(workerHome!);
+  await rm(workerHome!, { recursive: true, force: true }).catch(() => undefined);
+  await rm(cwd, { recursive: true, force: true }).catch(() => undefined);
+});
+
+test("openSession failure propagating child_exit_timeout retains home directory in model", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "cswarm-oc-worker-"));
+  let workerHome: string | undefined;
+  const timeoutErr = new AcpHostError(
+    "child_exit_timeout",
+    "child process did not exit after SIGKILL within 5000ms deadline",
+  );
+  const adapter = new OpenCodeListenerModel({
+    cwd,
+    allowMissingAuth: true,
+    open: async (options) => {
+      workerHome = options.isolatedHome;
+      await Promise.resolve();
+      throw timeoutErr;
+    },
+  });
+  await assert.rejects(adapter.start(), /child process did not exit/);
+  assert.equal(typeof workerHome, "string");
+  assert.ok(adapter.getRetainedHomes().includes(workerHome!));
+  await stat(workerHome!);
+  await rm(workerHome!, { recursive: true, force: true }).catch(() => undefined);
+  await rm(cwd, { recursive: true, force: true }).catch(() => undefined);
 });
 
 test("allowMissingAuth is explicit — not implied by fake open alone", async () => {
