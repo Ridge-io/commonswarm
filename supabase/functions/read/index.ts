@@ -3,6 +3,13 @@ import {
   agentCredentialRevoked,
   loadAgentCredential,
 } from "../_shared/agent-auth.ts";
+import {
+  extractSafeDiagnostics,
+  formatReadFailureLog,
+  newRequestId,
+  publicReadErrorBody,
+  type ReadHandlerPhase,
+} from "./diagnostics.ts";
 
 const AGENT_TOKEN_RE = /^swm_agt_[A-Za-z0-9_-]{43}$/;
 const UUID_RE =
@@ -143,7 +150,23 @@ function parseBody(
   };
 }
 
-async function handle(request: Request): Promise<Response> {
+/** Log allowlisted fields only; return a generic correlatable 500 body. */
+function readFailureResponse(
+  error: unknown,
+  phase: ReadHandlerPhase,
+  requestId: string,
+): Response {
+  const diagnostics = extractSafeDiagnostics(error, phase, requestId);
+  console.error(formatReadFailureLog(diagnostics));
+  return json(500, { ...publicReadErrorBody(diagnostics) });
+}
+
+async function handle(
+  request: Request,
+  requestId: string,
+  setPhase: (phase: ReadHandlerPhase) => void,
+): Promise<Response> {
+  setPhase("auth");
   if (request.method !== "POST") {
     return json(405, { error: "method_not_allowed" });
   }
@@ -151,19 +174,25 @@ async function handle(request: Request): Promise<Response> {
   if (token === null || !AGENT_TOKEN_RE.test(token)) {
     return json(401, { error: "unauthenticated" });
   }
+
+  setPhase("parse");
   const parsed = await request.json().catch(() => null);
   const body = parseBody(parsed);
   if (body === null) return json(400, { error: "invalid_request" });
   const tokenHash = await sha256(token);
 
   return await db.begin(async (tx) => {
+    setPhase("session_setup");
     await tx.unsafe("SET TRANSACTION ISOLATION LEVEL READ COMMITTED");
     await tx.unsafe("SET LOCAL ROLE swarm_command");
     await tx.unsafe("SET LOCAL search_path = swarm, pg_catalog");
     await tx.unsafe("SET LOCAL lock_timeout = '5s'");
 
+    setPhase("credential_lookup");
     const agent = await loadAgentCredential(tx, tokenHash);
     if (agent === null) return json(401, { error: "unauthenticated" });
+
+    setPhase("membership");
     const membershipRows = await tx<{ revoked_at: Date | null }[]>`
       SELECT revoked_at
       FROM swarm.memberships
@@ -185,6 +214,7 @@ async function handle(request: Request): Promise<Response> {
         : json(200, { signals: [] });
     }
 
+    setPhase("query");
     await tx`
       SELECT set_config(
         'request.jwt.claims',
@@ -257,12 +287,10 @@ async function handle(request: Request): Promise<Response> {
   });
 }
 
-Deno.serve((request) =>
-  handle(request).catch((error) => {
-    console.error(
-      "read function failure",
-      error instanceof Error ? error.name : "unknown",
-    );
-    return json(500, { error: "internal_error" });
-  })
-);
+Deno.serve((request) => {
+  const requestId = newRequestId();
+  let phase: ReadHandlerPhase = "top_level";
+  return handle(request, requestId, (next) => {
+    phase = next;
+  }).catch((error) => readFailureResponse(error, phase, requestId));
+});
