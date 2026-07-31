@@ -177,7 +177,12 @@ test("panel changes expose busy state and move focus only on real transitions", 
   assert.match(source, /aria-busy/);
   assert.match(source, /previous !== name && name !== "loading"/);
   assert.match(source, /querySelector<HTMLElement>\("h1, h2"\)/);
-  assert.match(source, /heading\.focus\(\{ preventScroll: true \}\)/);
+  assert.match(
+    source,
+    /heading\.focus\(\{ preventScroll: true, focusVisible: false \}\)/,
+    "script-driven panel focus must move the AT anchor without painting a " +
+      ":focus-visible ring around the headline on every fresh load",
+  );
 });
 
 /*

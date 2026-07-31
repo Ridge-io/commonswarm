@@ -763,6 +763,15 @@ const {
     display: flex;
   }
 
+  /* The head is the question the form asks ("Name your agent."). In the done and
+     blocked states the visible panel already carries its own eyebrow and title —
+     "Your agent prompt is ready." / the blocked reason — so the question would
+     sit above the answer as a stale, contradictory heading. */
+  .ac[data-state="done"] .ac__head,
+  .ac[data-state="blocked"] .ac__head {
+    display: none;
+  }
+
   .ac__panel--state {
     gap: var(--stack-sm);
     align-items: flex-start;

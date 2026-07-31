@@ -265,6 +265,14 @@ import SampleNotice from "./SampleNotice.astro";
             </div>
 
             <div class="dashboard__channel-actions">
+              {/* The one promise the header owes a first-timer: this feed moves by
+                  itself. Shown exactly while the two-second poll can be armed
+                  (feed views, never sample mode), so the word is always true.
+                  It also answers the question the refresh button accidentally
+                  raises — no, you do not have to. */}
+              <span class="dashboard__live" data-live-chip hidden>
+                <span class="dashboard__live-dot" aria-hidden="true"></span>Live
+              </span>
               <span class="dashboard__update-count" data-update-count hidden>0 updates</span>
               <button
                 class="dashboard__icon-button"
@@ -326,7 +334,10 @@ import SampleNotice from "./SampleNotice.astro";
                 <button class="dashboard__choice" type="button" data-agent-owner-teammate>
                   <span>
                     <strong>A teammate does</strong>
-                    <small>Send a short invite link. They create their own agent prompt.</small>
+                    {/* "Short" was a promise the link cannot keep — the capability
+                        travels in the URL fragment, so it is long. What is true:
+                        one link, one tap to copy, easy to text. */}
+                    <small>Send one link — easy to copy and text. They create their own agent prompt.</small>
                   </span>
                   <span aria-hidden="true">→</span>
                 </button>
@@ -613,6 +624,8 @@ import SampleNotice from "./SampleNotice.astro";
     let liveFeedInFlight = false;
     let rosterRefreshInFlight = false;
     let rosterRefreshAttemptedAt = 0;
+    let pendingRefreshInFlight = false;
+    let pendingRefreshAttemptedAt = 0;
     let rosterFilter = "";
     /* Catch-up queues UNKNOWN principals here and settles CONFIRMED-absent ones there.
        Both are per workspace session; openWorkspace clears them. */
@@ -648,7 +661,12 @@ import SampleNotice from "./SampleNotice.astro";
           const heading = visible?.querySelector<HTMLElement>("h1, h2");
           if (!heading) return;
           heading.tabIndex = -1;
-          heading.focus({ preventScroll: true });
+          /* focusVisible:false — the focus MOVE is for assistive technology; the
+             painted ring is not wanted here. Without this, the very first
+             programmatic focus of a page load matches :focus-visible in Chromium
+             and the gateway headline opens wearing a focus ring it was never
+             given, which reads as a rendering bug rather than as affordance. */
+          heading.focus({ preventScroll: true, focusVisible: false });
         });
       }
     };
@@ -682,6 +700,11 @@ import SampleNotice from "./SampleNotice.astro";
         section.hidden = section.dataset.channelView !== name;
       }
       app.dataset.channelView = name;
+      /* The Live chip is true exactly while armLiveFeed is allowed to run. */
+      const liveChip = one<HTMLElement>("[data-live-chip]");
+      if (liveChip) {
+        liveChip.hidden = sampleMode || !(name === "feed" || name === "feed-empty");
+      }
       if (name === "feed" || name === "feed-empty") {
         queueMicrotask(() => armLiveFeed());
       }
@@ -1601,11 +1624,60 @@ import SampleNotice from "./SampleNotice.astro";
           signals = next;
           renderFeed();
         }
+        /* Consumption of a pending invite or agent key arrives with no signal of
+           its own; the slow pending refresh rides the same healthy poll. */
+        void refreshPendingAccess(workspaceId, version);
       } catch {
         // A live refresh never replaces a readable channel with an error. The
         // next tick retries, and the explicit refresh control remains available.
       } finally {
         liveFeedInFlight = false;
+      }
+    };
+
+    /*
+     * Pending access is where the inviter WAITS: a teammate invite or an agent key sits
+     * there until it is consumed or cancelled. The two-second signal poll already runs
+     * while the feed is visible, so consumption should show up without a full workspace
+     * reopen — a teammate redeeming their invite in another browser is exactly the moment
+     * the inviter is watching this list. The refresh piggybacks on that poll at a slower
+     * cooldown, only while something is actually pending, and only re-renders the rail
+     * list; it never touches the feed, the dialog, or an open add-agent view. A failure
+     * retries at the next cooldown, silently — same doctrine as the signal refresh.
+     */
+    const PENDING_REFRESH_COOLDOWN_MS = 12_000;
+
+    const hasPendingAccess = (): boolean =>
+      pendingInvites.length > 0 ||
+      accessStatuses.some(
+        (access) =>
+          access.firstUsedAt === null &&
+          access.revokedAt === null &&
+          new Date(access.expiresAt).getTime() > Date.now(),
+      );
+
+    const refreshPendingAccess = async (
+      workspaceId: string,
+      version: number,
+    ): Promise<void> => {
+      if (pendingRefreshInFlight || sampleMode) return;
+      if (!hasPendingAccess()) return;
+      if (Date.now() - pendingRefreshAttemptedAt < PENDING_REFRESH_COOLDOWN_MS) return;
+      pendingRefreshInFlight = true;
+      pendingRefreshAttemptedAt = Date.now();
+      try {
+        const [nextInvites, nextStatuses] = await Promise.all([
+          pendingMemberInvites(workspaceId),
+          agentAccessStatuses(workspaceId),
+        ]);
+        if (version !== requestVersion || workspaceId !== activeWorkspaceId) return;
+        pendingInvites = nextInvites;
+        accessStatuses = nextStatuses;
+        renderPendingAccess();
+      } catch {
+        // Stay silent and retryable; the last good list remains on screen.
+      } finally {
+        pendingRefreshInFlight = false;
       }
     };
 
@@ -1744,6 +1816,7 @@ import SampleNotice from "./SampleNotice.astro";
          let it outlive its data. The refresh cooldown resets with the workspace. */
       closeRosterDialog();
       rosterRefreshAttemptedAt = 0;
+      pendingRefreshAttemptedAt = 0;
       unknownAgentCandidates.clear();
       settledUnknownAgents.clear();
       const keepShell = app.dataset.state === "channel";
@@ -2451,7 +2524,9 @@ import SampleNotice from "./SampleNotice.astro";
         renderPendingAccess();
       });
       window.requestAnimationFrame(() => {
-        one<HTMLElement>("[data-channel-name]")?.focus({ preventScroll: true });
+        /* Programmatic after an async event, not a user gesture — same
+           focusVisible suppression as showPanel's heading focus. */
+        one<HTMLElement>("[data-channel-name]")?.focus({ preventScroll: true, focusVisible: false });
       });
     });
 
@@ -3167,6 +3242,40 @@ import SampleNotice from "./SampleNotice.astro";
     white-space: nowrap;
   }
 
+  /* The live affordance: the same pulse idiom the landing FeedPanel uses for a
+     signal that just landed, reused here as a standing state. motion.css stills
+     the pulse under prefers-reduced-motion; the dot itself stays. */
+  .dashboard__live {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s-2);
+    color: var(--success);
+    font-size: var(--t-2xs);
+    font-weight: var(--weight-semibold);
+    letter-spacing: var(--track-eyebrow);
+    text-transform: uppercase;
+  }
+
+  .dashboard__live-dot {
+    inline-size: 0.5rem;
+    block-size: 0.5rem;
+    border-radius: 50%;
+    background: var(--success);
+    animation: dashboard-live-pulse 2.6s var(--ease-standard) infinite;
+  }
+
+  @keyframes dashboard-live-pulse {
+    0% {
+      box-shadow: 0 0 0 0 var(--success-dim);
+    }
+    70% {
+      box-shadow: 0 0 0 6px transparent;
+    }
+    100% {
+      box-shadow: 0 0 0 0 transparent;
+    }
+  }
+
   /* --- the header agent roster: one stack button + its dialog ----------------------- */
 
   /* The stack sits between the title and the actions while there is room, glued right;
@@ -3459,8 +3568,20 @@ import SampleNotice from "./SampleNotice.astro";
 
   .dashboard__choice-view,
   .dashboard__invite-view {
+    /* The gap was declared without a display, so it never applied: these sections
+       stayed block boxes and their children touched — most visibly the invite
+       form's "Their email" label crowding the intro paragraph. The grid makes
+       the declared rhythm real. */
+    display: grid;
     align-content: start;
     gap: var(--s-6);
+  }
+
+  /* Inside the grid the back button's own trailing margin would stack on the
+     gap; the connect view keeps the margin because it is not a grid. */
+  .dashboard__choice-view .dashboard__back-button,
+  .dashboard__invite-view .dashboard__back-button {
+    margin-block-end: 0;
   }
 
   .dashboard__choice-copy {
