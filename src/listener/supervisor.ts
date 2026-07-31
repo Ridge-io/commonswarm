@@ -7,6 +7,7 @@ import {
   startListenerControlServer,
   writeListenerStatus,
   type ListenerPaths,
+  type ListenerProviderId,
   type ListenerStatus,
 } from "./control.js";
 import type {
@@ -19,6 +20,8 @@ export interface ListenerSupervisorOptions {
   profileId: string;
   workspaceId: string;
   principalId: string;
+  /** Host adapter id recorded in status metadata only. Default: grok. */
+  provider?: ListenerProviderId;
   now?: () => number;
   run: (
     signal: AbortSignal,
@@ -57,7 +60,7 @@ export async function runListenerSupervisor(
   let status: ListenerStatus = {
     version: 1,
     instanceId: randomUUID(),
-    provider: "grok",
+    provider: options.provider ?? "grok",
     profileId: options.profileId,
     workspaceId: options.workspaceId.toLowerCase(),
     principalId: options.principalId.toLowerCase(),

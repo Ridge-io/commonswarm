@@ -13,9 +13,14 @@ export interface ListenerChildSpec {
   principalId: string;
   cwd: string;
   permissionMode: "deny" | "allow";
+  provider?: "grok" | "opencode";
   stateDirectory?: string;
+  /** Grok binary override (provider grok). */
   executable?: string;
+  /** OpenCode binary override (provider opencode). */
+  opencodeExecutable?: string;
   model?: string;
+  /** Grok-only; must not be set for opencode. */
   effort?: string;
   nodeExecArgv?: string[];
 }
@@ -47,6 +52,12 @@ export function listenerNodeExecArgv(values: readonly string[]): string[] {
 
 /** Public-only argv; the credential is intentionally not accepted here. */
 export function buildListenerChildArgs(spec: ListenerChildSpec): string[] {
+  const provider = spec.provider ?? "grok";
+  if (provider === "opencode" && spec.effort) {
+    throw new Error(
+      "--effort is not supported for --provider opencode (no measured mapping)",
+    );
+  }
   return [
     ...listenerNodeExecArgv(spec.nodeExecArgv ?? []),
     spec.entrypoint,
@@ -63,12 +74,22 @@ export function buildListenerChildArgs(spec: ListenerChildSpec): string[] {
     spec.cwd,
     "--permissions",
     spec.permissionMode,
+    "--provider",
+    provider,
     ...(spec.stateDirectory
       ? ["--state-dir", spec.stateDirectory]
       : []),
-    ...(spec.executable ? ["--grok-executable", spec.executable] : []),
+    ...(provider === "grok" && spec.executable
+      ? ["--grok-executable", spec.executable]
+      : []),
+    ...(provider === "opencode" && spec.opencodeExecutable
+      ? ["--opencode-executable", spec.opencodeExecutable]
+      : []),
+    ...(provider === "opencode" && spec.executable && !spec.opencodeExecutable
+      ? ["--opencode-executable", spec.executable]
+      : []),
     ...(spec.model ? ["--model", spec.model] : []),
-    ...(spec.effort ? ["--effort", spec.effort] : []),
+    ...(provider === "grok" && spec.effort ? ["--effort", spec.effort] : []),
   ];
 }
 

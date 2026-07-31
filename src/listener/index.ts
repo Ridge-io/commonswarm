@@ -2,6 +2,7 @@ export * from "./types.js";
 export * from "./engine.js";
 export * from "./file-store.js";
 export * from "./grok-model.js";
+export * from "./opencode-model.js";
 export * from "./runtime.js";
 export * from "./control.js";
 export * from "./supervisor.js";

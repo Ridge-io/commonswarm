@@ -32,10 +32,12 @@ export type ListenerStatusState =
   | "stopped"
   | "failed";
 
+export type ListenerProviderId = "grok" | "opencode";
+
 export interface ListenerStatus {
   version: 1;
   instanceId: string;
-  provider: "grok";
+  provider: ListenerProviderId;
   profileId: string;
   workspaceId: string;
   principalId: string;
@@ -112,7 +114,7 @@ function parseStatus(raw: string): ListenerStatus {
     row.version !== 1 ||
     typeof row.instanceId !== "string" ||
     !UUID_RE.test(row.instanceId) ||
-    row.provider !== "grok" ||
+    (row.provider !== "grok" && row.provider !== "opencode") ||
     typeof row.profileId !== "string" ||
     typeof row.workspaceId !== "string" ||
     !UUID_RE.test(row.workspaceId) ||

@@ -1,6 +1,6 @@
 /**
- * Host ACP core — provider-neutral session types plus the measured Grok
- * subprocess implementation. Not wired into the CLI.
+ * Host ACP core — provider-neutral session types plus measured Grok and
+ * OpenCode ACP subprocess implementations.
  */
 
 export * from "./bounds.js";
@@ -11,3 +11,4 @@ export * from "./permission.js";
 export * from "./transport.js";
 export * from "./session.js";
 export * from "./grok.js";
+export * from "./opencode.js";

@@ -45,12 +45,37 @@ test("detached argv is public-only and strips ambient Node hooks", () => {
   assert.equal(args.includes("/tmp/hook.js"), false);
   assert.equal(args.includes("--agent-token-stdin"), false);
   assert.equal(args.some((value) => value.startsWith("swm_agt_")), false);
+  assert.ok(args.includes("--provider"));
+  assert.equal(args[args.indexOf("--provider") + 1], "grok");
   assert.deepEqual(args.slice(-4), [
     "--model",
     "grok-4.5",
     "--effort",
     "low",
   ]);
+});
+
+test("opencode detached argv pins provider and rejects effort", () => {
+  const args = buildListenerChildArgs({
+    ...SPEC,
+    provider: "opencode",
+    effort: undefined,
+    opencodeExecutable: "/opt/opencode",
+    executable: undefined,
+  });
+  assert.equal(args[args.indexOf("--provider") + 1], "opencode");
+  assert.ok(args.includes("--opencode-executable"));
+  assert.equal(args.includes("--effort"), false);
+  assert.equal(args.includes("--grok-executable"), false);
+  assert.throws(
+    () =>
+      buildListenerChildArgs({
+        ...SPEC,
+        provider: "opencode",
+        effort: "low",
+      }),
+    /effort.*opencode/i,
+  );
 });
 
 test("credential travels only over child stdin, never argv or env", async () => {
