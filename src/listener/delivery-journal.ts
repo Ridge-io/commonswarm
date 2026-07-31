@@ -522,15 +522,19 @@ export function parseJournalRecord(
 class FileListenerDeliveryJournal implements ListenerDeliveryJournal {
   readonly instanceDirectory: string;
   readonly journalPath: string;
+  private readonly options: Readonly<{
+    profileId: string;
+    workspaceId: string;
+    principalId: string;
+    stateDirectory?: string;
+  }>;
 
-  constructor(
-    private readonly options: {
-      profileId: string;
-      workspaceId: string;
-      principalId: string;
-      stateDirectory?: string;
-    },
-  ) {
+  constructor(options: {
+    profileId: string;
+    workspaceId: string;
+    principalId: string;
+    stateDirectory?: string;
+  }) {
     assertPlainObject(
       options,
       ["profileId", "workspaceId", "principalId", "stateDirectory"],
@@ -560,11 +564,18 @@ class FileListenerDeliveryJournal implements ListenerDeliveryJournal {
       }
     }
 
-    const root = options.stateDirectory ?? defaultListenerStateDirectory();
+    this.options = Object.freeze({
+      profileId: options.profileId,
+      workspaceId: options.workspaceId.toLowerCase(),
+      principalId: options.principalId.toLowerCase(),
+      stateDirectory: options.stateDirectory,
+    });
+
+    const root = this.options.stateDirectory ?? defaultListenerStateDirectory();
     if (!isAbsolute(root)) {
       throw new Error("delivery journal configuration rejected");
     }
-    this.instanceDirectory = join(root, listenerInstanceKey(options));
+    this.instanceDirectory = join(root, listenerInstanceKey(this.options));
     this.journalPath = join(this.instanceDirectory, "delivery-journal.json");
   }
 
@@ -581,14 +592,14 @@ class FileListenerDeliveryJournal implements ListenerDeliveryJournal {
   }
 
   async reserveClaim(now?: string): Promise<ListenerActiveClaim> {
-    const current = await this.read();
-    if (current.active !== null) {
-      throw new Error("delivery journal state conflict");
-    }
-
     const nowTimestamp = now ?? new Date().toISOString();
     if (!isValidIsoTimestamp(nowTimestamp)) {
       throw new Error("delivery journal mutation rejected");
+    }
+
+    const current = await this.read();
+    if (current.active !== null) {
+      throw new Error("delivery journal state conflict");
     }
 
     const ordinal = current.nextClaimOrdinal;
@@ -618,6 +629,11 @@ class FileListenerDeliveryJournal implements ListenerDeliveryJournal {
   }
 
   async recordClaimAttempt(now?: string): Promise<void> {
+    const nowTimestamp = now ?? new Date().toISOString();
+    if (!isValidIsoTimestamp(nowTimestamp)) {
+      throw new Error("delivery journal mutation rejected");
+    }
+
     const current = await this.read();
     if (current.active === null) {
       throw new Error("delivery journal state conflict");
@@ -625,11 +641,6 @@ class FileListenerDeliveryJournal implements ListenerDeliveryJournal {
 
     if (current.active.phase === "ack_pending") {
       throw new Error("delivery journal state conflict");
-    }
-
-    const nowTimestamp = now ?? new Date().toISOString();
-    if (!isValidIsoTimestamp(nowTimestamp)) {
-      throw new Error("delivery journal mutation rejected");
     }
 
     const updatedActive: ListenerActiveClaim = {
@@ -664,20 +675,22 @@ class FileListenerDeliveryJournal implements ListenerDeliveryJournal {
       throw new Error("delivery journal mutation rejected");
     }
 
+    const canonicalSignalId = input.signalId.toLowerCase();
+    const canonicalLeaseId = input.leaseId.toLowerCase();
+    const leasedUntilSnapshot = input.leasedUntil;
+    const nowInput = input.now;
+
+    const nowTimestamp = nowInput ?? new Date().toISOString();
+    if (!isValidIsoTimestamp(nowTimestamp)) {
+      throw new Error("delivery journal mutation rejected");
+    }
+
     const current = await this.read();
     if (current.active === null) {
       throw new Error("delivery journal state conflict");
     }
 
-    const canonicalSignalId = input.signalId.toLowerCase();
-    const canonicalLeaseId = input.leaseId.toLowerCase();
-
-    const nowTimestamp = input.now ?? new Date().toISOString();
-    if (!isValidIsoTimestamp(nowTimestamp)) {
-      throw new Error("delivery journal mutation rejected");
-    }
-
-    if (Date.parse(input.leasedUntil) <= Date.parse(current.active.claimCreatedAt)) {
+    if (Date.parse(leasedUntilSnapshot) <= Date.parse(current.active.claimCreatedAt)) {
       throw new Error("delivery journal mutation rejected");
     }
 
@@ -685,7 +698,7 @@ class FileListenerDeliveryJournal implements ListenerDeliveryJournal {
       if (
         current.active.signalId === canonicalSignalId &&
         current.active.leaseId === canonicalLeaseId &&
-        current.active.leasedUntil === input.leasedUntil
+        current.active.leasedUntil === leasedUntilSnapshot
       ) {
         return;
       }
@@ -702,7 +715,7 @@ class FileListenerDeliveryJournal implements ListenerDeliveryJournal {
       claimLastAttemptAt: current.active.claimLastAttemptAt ?? nowTimestamp,
       signalId: canonicalSignalId,
       leaseId: canonicalLeaseId,
-      leasedUntil: input.leasedUntil,
+      leasedUntil: leasedUntilSnapshot,
     };
 
     const updatedRecord: ListenerDeliveryJournalRecord = {
@@ -742,26 +755,31 @@ class FileListenerDeliveryJournal implements ListenerDeliveryJournal {
       }
     }
 
+    const outcomeSnapshot = input.outcome;
+    const lastErrorCodeSnapshot = input.lastErrorCode;
+    const preparedAtInput = input.preparedAt;
+    const nowInput = input.now;
+
+    const nowTimestamp = nowInput ?? new Date().toISOString();
+    if (!isValidIsoTimestamp(nowTimestamp)) {
+      throw new Error("delivery journal mutation rejected");
+    }
+
+    const preparedAtSnapshot = preparedAtInput ?? nowTimestamp;
+    if (!isValidIsoTimestamp(preparedAtSnapshot)) {
+      throw new Error("delivery journal mutation rejected");
+    }
+
     const current = await this.read();
     if (current.active === null) {
       throw new Error("delivery journal state conflict");
     }
 
-    const nowTimestamp = input.now ?? new Date().toISOString();
-    if (!isValidIsoTimestamp(nowTimestamp)) {
-      throw new Error("delivery journal mutation rejected");
-    }
-
-    const preparedAt = input.preparedAt ?? nowTimestamp;
-    if (!isValidIsoTimestamp(preparedAt)) {
-      throw new Error("delivery journal mutation rejected");
-    }
-
     if (current.active.phase === "ack_pending") {
       if (
         current.active.ack &&
-        current.active.ack.outcome === input.outcome &&
-        current.active.ack.lastErrorCode === input.lastErrorCode
+        current.active.ack.outcome === outcomeSnapshot &&
+        current.active.ack.lastErrorCode === lastErrorCodeSnapshot
       ) {
         return;
       }
@@ -779,9 +797,9 @@ class FileListenerDeliveryJournal implements ListenerDeliveryJournal {
       phase: "ack_pending",
       ack: {
         commandId: ackCmdId,
-        outcome: input.outcome,
-        lastErrorCode: input.lastErrorCode,
-        preparedAt,
+        outcome: outcomeSnapshot,
+        lastErrorCode: lastErrorCodeSnapshot,
+        preparedAt: preparedAtSnapshot,
       },
     };
 
@@ -795,12 +813,12 @@ class FileListenerDeliveryJournal implements ListenerDeliveryJournal {
   }
 
   async clearActive(now?: string): Promise<void> {
-    const current = await this.read();
     const nowTimestamp = now ?? new Date().toISOString();
     if (!isValidIsoTimestamp(nowTimestamp)) {
       throw new Error("delivery journal mutation rejected");
     }
 
+    const current = await this.read();
     const updatedRecord: ListenerDeliveryJournalRecord = {
       ...current,
       active: null,
@@ -859,16 +877,23 @@ export async function openListenerDeliveryJournal(
     }
   }
 
-  const nowTimestamp = options.now ?? new Date().toISOString();
+  const profileIdSnapshot = options.profileId;
+  const workspaceIdSnapshot = options.workspaceId.toLowerCase();
+  const principalIdSnapshot = options.principalId.toLowerCase();
+  const proposedInstanceIdSnapshot = options.proposedListenerInstanceId.toLowerCase();
+  const stateDirectorySnapshot = options.stateDirectory;
+  const nowInput = options.now;
+
+  const nowTimestamp = nowInput ?? new Date().toISOString();
   if (!isValidIsoTimestamp(nowTimestamp)) {
     throw new Error("delivery journal configuration rejected");
   }
 
   const journal = new FileListenerDeliveryJournal({
-    profileId: options.profileId,
-    workspaceId: options.workspaceId,
-    principalId: options.principalId,
-    stateDirectory: options.stateDirectory,
+    profileId: profileIdSnapshot,
+    workspaceId: workspaceIdSnapshot,
+    principalId: principalIdSnapshot,
+    stateDirectory: stateDirectorySnapshot,
   });
 
   const raw = await readSecureJsonFile(journal.journalPath, MAX_JOURNAL_BYTES);
@@ -876,9 +901,9 @@ export async function openListenerDeliveryJournal(
   if (raw === null) {
     const record: ListenerDeliveryJournalRecord = {
       version: 1,
-      workspaceId: options.workspaceId.toLowerCase(),
-      principalId: options.principalId.toLowerCase(),
-      listenerInstanceId: options.proposedListenerInstanceId.toLowerCase(),
+      workspaceId: workspaceIdSnapshot,
+      principalId: principalIdSnapshot,
+      listenerInstanceId: proposedInstanceIdSnapshot,
       nextClaimOrdinal: 0,
       active: null,
       updatedAt: nowTimestamp,
@@ -894,8 +919,8 @@ export async function openListenerDeliveryJournal(
 
   const existingRecord = parseJournalRecord(
     raw,
-    options.workspaceId,
-    options.principalId,
+    workspaceIdSnapshot,
+    principalIdSnapshot,
   );
 
   if (existingRecord.active !== null) {
@@ -908,9 +933,9 @@ export async function openListenerDeliveryJournal(
 
   const freshRecord: ListenerDeliveryJournalRecord = {
     version: 1,
-    workspaceId: options.workspaceId.toLowerCase(),
-    principalId: options.principalId.toLowerCase(),
-    listenerInstanceId: options.proposedListenerInstanceId.toLowerCase(),
+    workspaceId: workspaceIdSnapshot,
+    principalId: principalIdSnapshot,
+    listenerInstanceId: proposedInstanceIdSnapshot,
     nextClaimOrdinal: 0,
     active: null,
     updatedAt: nowTimestamp,

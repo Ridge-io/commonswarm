@@ -529,7 +529,6 @@ test("9. Required filesystem causality: wrong-mode dir/file, symlinks, and atomi
     const t0 = "2026-07-31T12:00:00.000Z";
     const profileId = "test-profile-causality";
     const instKey = listenerInstanceKey({ profileId, workspaceId: WORKSPACE_ID, principalId: PRINCIPAL_ID });
-    const targetInstDir = join(dir, instKey);
 
     const { journal } = await openListenerDeliveryJournal({
       profileId,
@@ -933,6 +932,81 @@ test("12. Generic error sanitization: no UUIDs or sentinels in thrown error mess
     } catch (e) {
       assertGenericError(e as Error);
     }
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("13. TOCTOU deferred-read snapshot controls for open, recordLease, and prepareAck", async () => {
+  const dir = await makeTempDir();
+  try {
+    const t0 = "2026-07-31T12:00:00.000Z";
+    const tLease = "2026-07-31T13:00:00.000Z";
+
+    // 13a. TOCTOU in openListenerDeliveryJournal
+    const openOptions = {
+      profileId: "test-profile",
+      workspaceId: WORKSPACE_ID,
+      principalId: PRINCIPAL_ID,
+      proposedListenerInstanceId: INSTANCE_ID_1,
+      stateDirectory: dir,
+      now: t0,
+    };
+
+    // Initiate open without awaiting immediately
+    const openPromise = openListenerDeliveryJournal(openOptions);
+
+    // Synchronously mutate caller's options object while open is in flight
+    openOptions.proposedListenerInstanceId = "ffffffff-ffff-4fff-8fff-ffffffffffff";
+    openOptions.workspaceId = "ffffffff-ffff-4fff-8fff-ffffffffffff";
+
+    const { journal, record, listenerInstanceId } = await openPromise;
+
+    // Verify snapshot was used, ignoring caller's post-call mutation
+    assert.equal(listenerInstanceId, INSTANCE_ID_1);
+    assert.equal(record.workspaceId, WORKSPACE_ID);
+    assert.equal(record.listenerInstanceId, INSTANCE_ID_1);
+
+    await journal.reserveClaim(t0);
+
+    // 13b. TOCTOU in recordLease
+    const leaseInput = {
+      signalId: SIGNAL_ID,
+      leaseId: LEASE_ID,
+      leasedUntil: tLease,
+      now: t0,
+    };
+
+    const leasePromise = journal.recordLease(leaseInput);
+
+    // Synchronously mutate caller's lease input object while recordLease is in flight
+    leaseInput.signalId = "ffffffff-ffff-4fff-8fff-ffffffffffff";
+    leaseInput.leaseId = "ffffffff-ffff-4fff-8fff-ffffffffffff";
+
+    await leasePromise;
+
+    const recLease = await journal.read();
+    assert.equal(recLease.active?.signalId, SIGNAL_ID);
+    assert.equal(recLease.active?.leaseId, LEASE_ID);
+
+    // 13c. TOCTOU in prepareAck
+    const ackInput = {
+      outcome: "replied" as const,
+      lastErrorCode: null,
+      now: t0,
+    };
+
+    const ackPromise = journal.prepareAck(ackInput);
+
+    // Synchronously mutate caller's ack input object while prepareAck is in flight
+    (ackInput as any).outcome = "failed_terminal";
+    (ackInput as any).lastErrorCode = "provider_refused";
+
+    await ackPromise;
+
+    const recAck = await journal.read();
+    assert.equal(recAck.active?.ack?.outcome, "replied");
+    assert.equal(recAck.active?.ack?.lastErrorCode, null);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
