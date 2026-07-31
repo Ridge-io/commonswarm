@@ -1,8 +1,9 @@
 /*
  * Ownership gate for the dashboard's pending-access refresh.
  *
- * The browser polls signals every two seconds per workspace, and pending access
- * (teammate invites and unused agent keys) rides that poll at a slower cooldown.
+ * Pending access (teammate invites and unused agent keys) has its own bounded
+ * workspace cadence. Known pending access refreshes promptly; an empty local
+ * list refreshes less often so access created in another browser is discovered.
  * The race this exists for: a refresh for workspace A is slow, the user switches
  * to workspace B, and B's refresh must neither wait behind A's request nor be
  * disturbed when A's request finally settles. A single boolean in-flight flag
@@ -23,17 +24,19 @@ export interface PendingRefreshOwner {
 export class PendingRefreshGate {
   #owner: PendingRefreshOwner | null = null;
   #attemptedAt = Number.NEGATIVE_INFINITY;
-  readonly #cooldownMs: number;
+  readonly #activeCooldownMs: number;
+  readonly #discoveryCooldownMs: number;
 
-  constructor(cooldownMs: number) {
-    this.#cooldownMs = cooldownMs;
+  constructor(activeCooldownMs: number, discoveryCooldownMs: number) {
+    this.#activeCooldownMs = activeCooldownMs;
+    this.#discoveryCooldownMs = discoveryCooldownMs;
   }
 
   /**
-   * True when this caller becomes the owner and should fetch. False when nothing
-   * is pending, when the cooldown is still running, or when this exact refresh
-   * is already in flight. A different workspace or newer generation takes the
-   * gate from the stale owner instead of waiting.
+   * True when this caller becomes the owner and should fetch. Known pending
+   * access uses the active cooldown; local zero uses the slower discovery
+   * cooldown. A different workspace or newer generation takes the gate from a
+   * stale owner instead of waiting.
    */
   tryAcquire(
     workspaceId: string,
@@ -41,8 +44,10 @@ export class PendingRefreshGate {
     now: number,
     hasPending: boolean,
   ): boolean {
-    if (!hasPending) return false;
-    if (now - this.#attemptedAt < this.#cooldownMs) return false;
+    const cooldownMs = hasPending
+      ? this.#activeCooldownMs
+      : this.#discoveryCooldownMs;
+    if (now - this.#attemptedAt < cooldownMs) return false;
     const owner = this.#owner;
     if (
       owner !== null &&

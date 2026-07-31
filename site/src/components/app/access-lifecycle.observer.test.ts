@@ -5,6 +5,7 @@ import { PendingRefreshGate } from "../../lib/pending-refresh";
 import {
   pendingAccessRows,
   shouldPollPendingAccess,
+  shouldRetireFreshInvite,
 } from "../../lib/pending-access";
 import type {
   AgentAccessStatus,
@@ -173,15 +174,68 @@ test("pendingAccessRows filters, orders, and carries cancel identity", () => {
   assert.equal(rows[1]!.cancelLabel, "Cancel access for Wren-LaneQ-Agent");
 });
 
+test("a fresh invite retires only when its exact pending row disappears", () => {
+  const invite: PendingMemberInvite = {
+    workspaceId: "w-1",
+    invitationId: "inv-fresh",
+    email: "calvin@example.com",
+    createdBy: "u-owner",
+    createdAt: "2026-07-31T10:00:00Z",
+    expiresAt: "2026-08-07T10:00:00Z",
+  };
+  const other = { ...invite, invitationId: "inv-other", email: "alex@example.com" };
+
+  assert.equal(
+    shouldRetireFreshInvite("inv-fresh", [invite, other]),
+    false,
+    "a still-pending link remains copyable",
+  );
+  assert.equal(
+    shouldRetireFreshInvite("inv-fresh", [other]),
+    true,
+    "acceptance, cancellation, or expiry removes the exact row and retires its link",
+  );
+  assert.equal(
+    shouldRetireFreshInvite("", []),
+    false,
+    "ordinary pending refreshes cannot invent a completion when no fresh link exists",
+  );
+});
+
+test("the invite result clears a dead credential without stealing focus", () => {
+  assert.match(dashboard, /freshInviteId = created\.invitationId/);
+  assert.match(dashboard, /freshInviteWorkspaceId = created\.workspaceId/);
+  const retire = dashboard.slice(
+    dashboard.indexOf("const retireFreshInviteResult ="),
+    dashboard.indexOf("const openInvite ="),
+  );
+  assert.match(retire, /freshInviteLink = ""/);
+  assert.match(retire, /freshInviteId = ""/);
+  assert.match(retire, /freshInviteWorkspaceId = ""/);
+  assert.match(retire, /receipt\.textContent = "This invite is no longer pending\."/);
+  assert.match(retire, /copy\.textContent = "Back to channel"/);
+  assert.match(retire, /copy\.dataset\.inviteComplete = "true"/);
+  assert.match(
+    retire,
+    /link\.hidden = document\.activeElement !== link/,
+    "a focused link node remains present after its secret text is replaced",
+  );
+  assert.doesNotMatch(retire, /\.focus\(/, "a remote lifecycle event never moves focus");
+  assert.match(
+    dashboard,
+    /button\.dataset\.inviteComplete === "true"[\s\S]*resetFreshInviteResult\(\);[\s\S]*returnToChannel\(\)/,
+    "the transformed primary action returns to the live channel",
+  );
+});
+
 /*
  * The empty-workspace stale-row bug: agents=[], view=no-agents, one pending invite.
  * The poll predicate takes no view input at all — that is the fix — so the
  * no-agents view cannot starve the cadence. This drives the real predicate and
- * the real gate through a simulated redemption: the row clears on its own, and
- * once nothing is pending the predicate stops the poll, so no fetch ever runs
- * after zero.
+ * the real gate through a simulated redemption: the row clears on its own, then
+ * the timer remains cheap and discoverable at the slower idle cadence.
  */
-test("no-agents pending poll clears a remote redemption, then stops polling", () => {
+test("no-agents pending poll clears a remote redemption without request storms", () => {
   // The predicate never sees the channel view — the no-agents case is covered
   // by construction, and the flag matrix proves the rest of the contract.
   assert.equal(
@@ -189,16 +243,15 @@ test("no-agents pending poll clears a remote redemption, then stops polling", ()
       sampleMode: false,
       activeWorkspaceId: "w-1",
       visible: true,
-      hasPending: true,
     }),
     true,
     "pending exists: poll runs regardless of which view is open",
   );
   for (const [args, expected] of [
-    [{ sampleMode: true, activeWorkspaceId: "w-1", visible: true, hasPending: true }, false],
-    [{ sampleMode: false, activeWorkspaceId: "", visible: true, hasPending: true }, false],
-    [{ sampleMode: false, activeWorkspaceId: "w-1", visible: false, hasPending: true }, false],
-    [{ sampleMode: false, activeWorkspaceId: "w-1", visible: true, hasPending: false }, false],
+    [{ sampleMode: true, activeWorkspaceId: "w-1", visible: true }, false],
+    [{ sampleMode: false, activeWorkspaceId: "", visible: true }, false],
+    [{ sampleMode: false, activeWorkspaceId: "w-1", visible: false }, false],
+    [{ sampleMode: false, activeWorkspaceId: "w-1", visible: true }, true],
   ] as const) {
     assert.equal(shouldPollPendingAccess(args), expected, JSON.stringify(args));
   }
@@ -214,7 +267,7 @@ test("no-agents pending poll clears a remote redemption, then stops polling", ()
       expiresAt: "2026-08-07T10:00:00Z",
     },
   ];
-  const gate = new PendingRefreshGate(12_000);
+  const gate = new PendingRefreshGate(12_000, 30_000);
   const fetches: number[] = [];
   let rows = pendingAccessRows(remote, [], () => "Ridgeio", 0, () => "in 7 days");
   for (let tick = 0; tick <= 24_000; tick += 4_000) {
@@ -224,7 +277,6 @@ test("no-agents pending poll clears a remote redemption, then stops polling", ()
       sampleMode: false,
       activeWorkspaceId: "w-1",
       visible: true,
-      hasPending: rows.length > 0,
     });
     if (!armed) break;
     if (!gate.tryAcquire("w-1", 1, tick, rows.length > 0)) continue;
@@ -240,11 +292,38 @@ test("no-agents pending poll clears a remote redemption, then stops polling", ()
       sampleMode: false,
       activeWorkspaceId: "w-1",
       visible: true,
-      hasPending: rows.length > 0,
     }),
-    false,
-    "with nothing pending the predicate stops the poll — no fetch after zero",
+    true,
+    "local zero keeps the workspace discoverable",
   );
+});
+
+test("idle discovery finds remote zero-to-one access on a bounded cadence", () => {
+  const gate = new PendingRefreshGate(12_000, 30_000);
+  const fetches: number[] = [];
+  let remote: PendingMemberInvite[] = [];
+  let local: PendingMemberInvite[] = [];
+
+  for (let tick = 0; tick <= 40_000; tick += 4_000) {
+    if (tick === 8_000) {
+      remote = [{
+        workspaceId: "w-1",
+        invitationId: "inv-remote",
+        email: "remote@example.com",
+        createdBy: "u-admin",
+        createdAt: "2026-07-31T10:00:00Z",
+        expiresAt: "2026-08-07T10:00:00Z",
+      }];
+    }
+    const hasPending = pendingAccessRows(local, [], () => "Owner", 0, () => "later").length > 0;
+    if (!gate.tryAcquire("w-1", 1, tick, hasPending)) continue;
+    fetches.push(tick);
+    local = remote;
+    gate.release("w-1", 1);
+  }
+
+  assert.deepEqual(fetches, [0, 32_000], "idle requests stay at least 30 seconds apart");
+  assert.equal(local[0]?.invitationId, "inv-remote", "remote first access is discovered");
 });
 
 test("visible channels poll for fresh signals and preserve readable state on failure", () => {
@@ -261,9 +340,9 @@ test("visible channels poll for fresh signals and preserve readable state on fai
 /*
  * Pending access is a waiting room: the inviter watches it until the teammate redeems
  * or the agent first connects. Consumption that happens in ANOTHER session must clear
- * the row without a full workspace reopen, so the refresh rides the existing signal
- * poll at a slower cooldown, only while something is pending, and never disturbs the
- * feed or the dialog.
+ * the row without a full workspace reopen, so the dedicated access cadence runs in
+ * every channel view and slows down — but stays discoverable — when local state is
+ * empty. Feed ticks may offer catch-up without owning that cadence.
  *
  * CAUSAL, NOT SOURCE-MATCHED: the race tests below import and drive the same
  * PendingRefreshGate class the dashboard constructs. The race being pinned: a slow
@@ -273,7 +352,7 @@ test("visible channels poll for fresh signals and preserve readable state on fai
  * pin that the dashboard is wired to this class; they make no causal claim.
  */
 test("pending-refresh gate: a slow old-workspace request cannot block or clear the new one", () => {
-  const gate = new PendingRefreshGate(12_000);
+  const gate = new PendingRefreshGate(12_000, 30_000);
   const t0 = 100_000;
   assert.equal(gate.tryAcquire("A", 1, t0, true), true, "A owns its refresh");
   // The user switches workspaces mid-flight; openWorkspace resets the cooldown.
@@ -298,7 +377,7 @@ test("pending-refresh gate: a slow old-workspace request cannot block or clear t
 });
 
 test("pending-refresh gate: generations of one workspace stay ordered", () => {
-  const gate = new PendingRefreshGate(12_000);
+  const gate = new PendingRefreshGate(12_000, 30_000);
   const t0 = 200_000;
   assert.equal(gate.tryAcquire("A", 1, t0, true), true);
   // Same workspace, newer generation (reopened): the new generation takes the gate.
@@ -312,26 +391,31 @@ test("pending-refresh gate: generations of one workspace stay ordered", () => {
   );
 });
 
-test("pending-refresh gate: no-pending, duplicate, and cooldown suppression", () => {
-  const gate = new PendingRefreshGate(12_000);
+test("pending-refresh gate: discovery, duplicate, and cooldown suppression", () => {
+  const gate = new PendingRefreshGate(12_000, 30_000);
   const t0 = 300_000;
-  assert.equal(gate.tryAcquire("A", 1, t0, false), false, "nothing pending: no fetch");
-  assert.equal(gate.tryAcquire("A", 1, t0, true), true);
+  assert.equal(gate.tryAcquire("A", 1, t0, false), true, "local zero starts discovery");
   assert.equal(
-    gate.tryAcquire("A", 1, t0 + 1, true),
+    gate.tryAcquire("A", 1, t0 + 1, false),
     false,
     "the same refresh does not duplicate while in flight",
   );
   gate.release("A", 1);
   assert.equal(
-    gate.tryAcquire("A", 1, t0 + 6_000, true),
+    gate.tryAcquire("A", 1, t0 + 12_001, false),
     false,
-    "released but inside the cooldown: no refetch",
+    "idle discovery remains on the slower cooldown",
   );
   assert.equal(
-    gate.tryAcquire("A", 1, t0 + 12_001, true),
+    gate.tryAcquire("A", 1, t0 + 30_001, false),
     true,
-    "the cooldown passing re-arms the refresh",
+    "the discovery cooldown passing re-arms the refresh",
+  );
+  gate.release("A", 1);
+  assert.equal(
+    gate.tryAcquire("A", 1, t0 + 42_002, true),
+    true,
+    "known pending access returns to the faster active cooldown",
   );
 });
 
@@ -342,7 +426,7 @@ test("the dashboard is wired to the gate with the apply guard intact", () => {
   );
   assert.match(
     dashboard,
-    /new PendingRefreshGate\(PENDING_REFRESH_COOLDOWN_MS\)/,
+    /new PendingRefreshGate\(\s*PENDING_REFRESH_ACTIVE_COOLDOWN_MS,\s*PENDING_REFRESH_DISCOVERY_COOLDOWN_MS,?\s*\)/,
     "the dashboard drives the same class the race tests drive",
   );
   const refresh = dashboard.slice(
@@ -352,12 +436,22 @@ test("the dashboard is wired to the gate with the apply guard intact", () => {
   assert.match(
     refresh,
     /pendingRefreshGate\.tryAcquire\(\s*workspaceId,\s*version,\s*Date\.now\(\),\s*hasPendingAccess\(\),?\s*\)/,
-    "acquisition carries the (workspace, generation) identity and the pending check",
+    "acquisition carries the workspace, generation, and cadence state",
   );
   assert.match(
     refresh,
     /if \(version !== requestVersion \|\| workspaceId !== activeWorkspaceId\) return;[\s\S]*pendingInvites = nextInvites/,
     "a stale completion applies nothing — the guard runs before any assignment",
+  );
+  assert.match(
+    refresh,
+    /memberRoster\(workspaceId\)\.catch\(\(\) => null\)[\s\S]*people = nextRoster\.names;[\s\S]*members = nextRoster\.members;[\s\S]*renderMembers\(\);[\s\S]*renderRoster\(\);/,
+    "the guarded catch-up makes a remotely accepted teammate visible without reopening",
+  );
+  assert.match(
+    refresh,
+    /shouldRetireFreshInvite\(freshInviteId, nextInvites\)[\s\S]*retireFreshInviteResult\(\)/,
+    "the exact fresh invitation disappearing clears its one-use result",
   );
   assert.match(
     refresh,
@@ -367,7 +461,7 @@ test("the dashboard is wired to the gate with the apply guard intact", () => {
   assert.match(
     dashboard,
     /void refreshPendingAccess\(workspaceId, version\)/,
-    "the refresh still rides the healthy signal poll",
+    "healthy signal ticks may offer a catch-up through the same bounded gate",
   );
   const openWorkspace = dashboard.slice(
     dashboard.indexOf("const openWorkspace ="),
@@ -489,11 +583,11 @@ test("the Agents dialog carries a mobile-presented Pending access section fed by
     "hidden at desktop — no duplicate, competing control",
   );
 
-  /* The view-agnostic poll: armed from the predicate after every render, cleared
-     on hide and on sign-out, and it never involves the feed's Live chip. */
+  /* The view- and row-agnostic timer: armed from the predicate after every render,
+     cleared on hide and sign-out, and network work remains gate-bounded. */
   assert.match(
     dashboard,
-    /shouldPollPendingAccess\(\{[\s\S]*hasPending: hasPendingAccess\(\),?\s*\}\)/,
+    /shouldPollPendingAccess\(\{\s*sampleMode,\s*activeWorkspaceId,\s*visible: document\.visibilityState === "visible",?\s*\}\)/,
   );
   assert.match(dashboard, /syncPendingPoll\(\);[\s\S]*showAuthView\("choices"\)/);
   const visibility = dashboard.slice(
@@ -507,8 +601,8 @@ test("the Agents dialog carries a mobile-presented Pending access section fed by
   );
   assert.match(
     pendingPoll,
-    /if \(!hasPendingAccess\(\)\)\s*\{\s*renderPendingAccess\(\);\s*return;/,
-    "a locally expired key re-renders away and disarms the timer without a fetch",
+    /if \(pendingAccessKey\(\) !== renderedPendingAccessKey\) renderPendingAccess\(\);[\s\S]*void refreshPendingAccess\(activeWorkspaceId, requestVersion\)/,
+    "local expiry re-renders while zero-state discovery continues through the gate",
   );
   const openWorkspace = dashboard.slice(
     dashboard.indexOf("const openWorkspace ="),
@@ -516,8 +610,8 @@ test("the Agents dialog carries a mobile-presented Pending access section fed by
   );
   assert.match(
     openWorkspace,
-    /pendingInvites = \[\];\s*accessStatuses = \[\];[\s\S]{0,180}syncPendingPoll\(\);/,
-    "a workspace switch disarms the prior workspace's pending timer before loading",
+    /stopPendingPoll\(\);[\s\S]*activeWorkspaceId = selected\.id;[\s\S]*renderedPendingAccessKey = "";[\s\S]{0,220}syncPendingPoll\(\);/,
+    "a workspace switch restarts one timer under the new guarded identity",
   );
   assert.match(
     dashboard,

@@ -372,7 +372,7 @@ import SampleNotice from "./SampleNotice.astro";
                 </button>
               </form>
               <div class="dashboard__invite-result" data-invite-result hidden>
-                <p class="dashboard__invite-receipt">
+                <p class="dashboard__invite-receipt" data-invite-receipt>
                   Private one-use link · expires in 7 days
                 </p>
                 <pre class="dashboard__invite-link" data-invite-link tabindex="0"></pre>
@@ -575,7 +575,11 @@ import SampleNotice from "./SampleNotice.astro";
   import { memberInviteUrl } from "../../lib/member-invite";
   import { PendingRefreshGate } from "../../lib/pending-refresh";
   import { BootFocusGate } from "../../lib/boot-focus";
-  import { pendingAccessRows, shouldPollPendingAccess } from "../../lib/pending-access";
+  import {
+    pendingAccessRows,
+    shouldPollPendingAccess,
+    shouldRetireFreshInvite,
+  } from "../../lib/pending-access";
 
   interface Workspace {
     id: string;
@@ -634,6 +638,7 @@ import SampleNotice from "./SampleNotice.astro";
     let members: Member[] = [];
     let pendingInvites: PendingMemberInvite[] = [];
     let accessStatuses: AgentAccessStatus[] = [];
+    let renderedPendingAccessKey = "";
     let people = new Map<string, string>();
     let signals: Signal[] = [];
     let activeWorkspaceId = "";
@@ -655,8 +660,12 @@ import SampleNotice from "./SampleNotice.astro";
     /* Ownership of the pending-access refresh lives in the gate, not in flags:
        (workspaceId, version) pairs, so a slow request from the workspace the
        user just left can neither block nor clear the fresh one. */
-    const PENDING_REFRESH_COOLDOWN_MS = 12_000;
-    const pendingRefreshGate = new PendingRefreshGate(PENDING_REFRESH_COOLDOWN_MS);
+    const PENDING_REFRESH_ACTIVE_COOLDOWN_MS = 12_000;
+    const PENDING_REFRESH_DISCOVERY_COOLDOWN_MS = 30_000;
+    const pendingRefreshGate = new PendingRefreshGate(
+      PENDING_REFRESH_ACTIVE_COOLDOWN_MS,
+      PENDING_REFRESH_DISCOVERY_COOLDOWN_MS,
+    );
     let rosterFilter = "";
     /* Catch-up queues UNKNOWN principals here and settles CONFIRMED-absent ones there.
        Both are per workspace session; openWorkspace clears them. */
@@ -671,19 +680,20 @@ import SampleNotice from "./SampleNotice.astro";
     /** Principal whose live Copy-prompt secret is still on screen, if any. */
     let livePromptPrincipalId = "";
     let freshInviteLink = "";
+    let freshInviteId = "";
+    let freshInviteWorkspaceId = "";
     let inviteIntent: { email: string; commandId: string } | null = null;
 
     const SIGNAL_PAGE_SIZE = 50;
     const SIGNAL_FETCH_SIZE = SIGNAL_PAGE_SIZE + 1;
 
-    /* The very first content presentation of the page's life takes no scripted
-       focus: it is not a response to anything the reader did, so moving focus
+    /* The first presentation of EACH independently gated surface takes no scripted
+       focus: it is not necessarily a response to anything the reader did, so moving focus
        would paint a ring around something they never asked for, raise the
        on-screen keyboard on a phone before any orientation, and pull assistive
-       technology past the page's own opening. Every LATER transition is a
-       response to something the user did — the gate says move, a plain focus()
-       runs, and the platform heuristic decides the ring. One gate per surface:
-       panels and the auth form present independently. */
+       technology past the surrounding context. Later presentations of that same
+       surface move focus. One gate per surface: panels and the auth form present
+       independently, so a signed-in boot does not pre-consume the auth form's skip. */
     const panelBootFocus = new BootFocusGate();
     const authBootFocus = new BootFocusGate();
 
@@ -806,9 +816,10 @@ import SampleNotice from "./SampleNotice.astro";
         view.hidden = view.dataset.authView !== name;
       }
       authError(null);
-      /* The gate consumes only on choices presentations, so boot skips the email
-         focus (no keyboard raise on mobile, AT reads the page's opening first)
-         while "use a different address" and sign-out still land on the field. */
+      /* The gate consumes only on choices presentations. Its first presentation
+         skips the email move; on a signed-in boot that can be the first explicit
+         sign-out, where showPanel already moves context to the signed-out heading.
+         Later choices presentations (such as "use a different address") focus it. */
       if (name === "choices" && authBootFocus.allowsFocus()) {
         window.requestAnimationFrame(() => one<HTMLInputElement>("#dashboard-email")?.focus());
       }
@@ -1061,8 +1072,12 @@ import SampleNotice from "./SampleNotice.astro";
         (iso) => formatTime(iso).relative,
       );
 
+    const pendingAccessKey = (rows = currentPendingAccessRows()): string =>
+      rows.map((row) => `${row.kind}:${row.id}`).join("\n");
+
     const renderPendingAccess = (): void => {
       const rows = currentPendingAccessRows();
+      renderedPendingAccessKey = pendingAccessKey(rows);
       const total = rows.length;
       const railList = one<HTMLUListElement>("[data-access-list]");
       const dialogList = one<HTMLUListElement>("[data-dialog-access-list]");
@@ -1708,8 +1723,8 @@ import SampleNotice from "./SampleNotice.astro";
           signals = next;
           renderFeed();
         }
-        /* Consumption of a pending invite or agent key arrives with no signal of
-           its own; the slow pending refresh rides the same healthy poll. */
+        /* The dedicated access cadence owns discovery; a healthy feed tick also
+           offers a catch-up, and the shared gate keeps the requests bounded. */
         void refreshPendingAccess(workspaceId, version);
       } catch {
         // A live refresh never replaces a readable channel with an error. The
@@ -1721,12 +1736,12 @@ import SampleNotice from "./SampleNotice.astro";
 
     /*
      * Pending access is where the inviter WAITS: a teammate invite or an agent key sits
-     * there until it is consumed or cancelled. Feed refreshes opportunistically request
-     * the same catch-up while a channel is visible, but the dedicated pending poll owns
-     * the cadence in every view — especially a new workspace with no agents and therefore
-     * no feed poll. The shared cooldown keeps both triggers cheap. A successful refresh
-     * re-renders the mirrored rail and dialog lists without touching the feed or an open
-     * add-agent view; failure stays silent and retries on the next cooldown.
+     * there until it is consumed or cancelled. The dedicated workspace poll owns the
+     * cadence in every view and also discovers access another browser created while this
+     * one knew zero rows. Known pending access uses a prompt cadence; local zero uses a
+     * slower discovery cadence. Feed refreshes may request the same catch-up, but the gate
+     * bounds both triggers. A successful refresh updates access and membership without
+     * touching the feed or closing an open add-agent view; failure stays silent and retries.
      *
      * Ownership is the gate's, and it is (workspaceId, version)-scoped: a slow request
      * started under the previous workspace holds no slot here, applies nothing when it
@@ -1759,15 +1774,28 @@ import SampleNotice from "./SampleNotice.astro";
         return;
       }
       try {
-        const [nextInvites, nextStatuses] = await Promise.all([
+        const [nextInvites, nextStatuses, nextRoster] = await Promise.all([
           pendingMemberInvites(workspaceId),
           agentAccessStatuses(workspaceId),
+          memberRoster(workspaceId).catch(() => null),
         ]);
         /* A request that settles after the user moved on applies nothing: its
            generation and workspace no longer match the live ones. */
         if (version !== requestVersion || workspaceId !== activeWorkspaceId) return;
         pendingInvites = nextInvites;
         accessStatuses = nextStatuses;
+        if (nextRoster) {
+          people = nextRoster.names;
+          members = nextRoster.members;
+          renderMembers();
+          renderRoster();
+        }
+        if (
+          freshInviteWorkspaceId === workspaceId &&
+          shouldRetireFreshInvite(freshInviteId, nextInvites)
+        ) {
+          retireFreshInviteResult();
+        }
         renderPendingAccess();
       } catch {
         // Stay silent and retryable; the last good list remains on screen.
@@ -1777,41 +1805,36 @@ import SampleNotice from "./SampleNotice.astro";
     };
 
     /*
-     * The pending-access poll: the fix for the empty-workspace stale row. The signal
-     * feed's two-second cadence only arms in feed views, which is exactly why the
-     * FIRST invite in a NEW workspace never cleared — the inviter sits in no-agents,
-     * no interval runs, and the redemption they are waiting for has no fetch to ride.
-     * This poll owes nothing to the channel view: it runs while — and only while —
-     * pending access exists, the tab is visible, and a workspace is open. When the
-     * last pending row clears it stops, so it never becomes background noise. The
-     * tick is cheap; the gate's cooldown decides when an actual fetch happens. The
-     * Live chip stays out of this: liveness of the FEED is a different claim.
+     * The pending-access poll owes nothing to the channel view or locally-known rows.
+     * That fixes both stale removal in a no-agents view and remote zero-to-one creation:
+     * a visible live workspace keeps one cheap timer, while the gate permits actual
+     * network work every 12 seconds with pending access and every 30 seconds at local
+     * zero. The Live chip stays out of this: liveness of the FEED is a different claim.
      */
     const PENDING_POLL_TICK_MS = 4_000;
     let pendingPollTimer: number | undefined;
+
+    const stopPendingPoll = (): void => {
+      window.clearInterval(pendingPollTimer);
+      pendingPollTimer = undefined;
+    };
 
     const syncPendingPoll = (): void => {
       const should = shouldPollPendingAccess({
         sampleMode,
         activeWorkspaceId,
         visible: document.visibilityState === "visible",
-        hasPending: hasPendingAccess(),
       });
       if (should && pendingPollTimer === undefined) {
         pendingPollTimer = window.setInterval(() => {
-          /* Time alone can retire an unused key. In that case no network request is
-             needed (or allowed by the gate), but the stale row must disappear and
-             this interval must disarm itself. Rendering recomputes expiry and then
-             calls syncPendingPoll, which clears this timer. */
-          if (!hasPendingAccess()) {
-            renderPendingAccess();
-            return;
-          }
+          /* Time alone can retire an unused key. Re-render that local transition,
+             then continue the slower discovery cadence rather than treating zero
+             as proof that another browser cannot add access. */
+          if (pendingAccessKey() !== renderedPendingAccessKey) renderPendingAccess();
           void refreshPendingAccess(activeWorkspaceId, requestVersion);
         }, PENDING_POLL_TICK_MS);
       } else if (!should && pendingPollTimer !== undefined) {
-        window.clearInterval(pendingPollTimer);
-        pendingPollTimer = undefined;
+        stopPendingPoll();
       }
     };
 
@@ -1828,6 +1851,7 @@ import SampleNotice from "./SampleNotice.astro";
       members = [];
       pendingInvites = [];
       accessStatuses = [];
+      renderedPendingAccessKey = "";
       people = new Map();
       signals = [];
       signalCursor = null;
@@ -1836,6 +1860,8 @@ import SampleNotice from "./SampleNotice.astro";
       channelLoadError = "";
       livePromptPrincipalId = "";
       freshInviteLink = "";
+      freshInviteId = "";
+      freshInviteWorkspaceId = "";
       inviteIntent = null;
       activeCreate = null;
       rosterFilter = "";
@@ -2012,6 +2038,12 @@ import SampleNotice from "./SampleNotice.astro";
     const openWorkspace = async (workspaceId: string): Promise<void> => {
       const selected = workspaces.find((workspace) => workspace.id === workspaceId);
       if (!selected) return;
+      if (
+        freshInviteWorkspaceId.length > 0 &&
+        freshInviteWorkspaceId !== selected.id
+      ) {
+        resetFreshInviteResult();
+      }
       if (activeWorkspaceId !== selected.id) {
         previousSignalIds.clear();
         feedWasEmpty = false;
@@ -2044,6 +2076,7 @@ import SampleNotice from "./SampleNotice.astro";
       unknownAgentCandidates.clear();
       settledUnknownAgents.clear();
       const keepShell = app.dataset.state === "channel";
+      stopPendingPoll();
       activeWorkspaceId = selected.id;
       syncConnectWorkspace(selected);
       const version = ++requestVersion;
@@ -2051,8 +2084,9 @@ import SampleNotice from "./SampleNotice.astro";
       members = [];
       pendingInvites = [];
       accessStatuses = [];
-      /* Disarm the previous workspace's pending timer before this workspace's
-         request begins. A failed load must not leave a no-op interval behind. */
+      renderedPendingAccessKey = "";
+      /* Restart one timer under the new workspace/version. The callbacks read the
+         guarded live identity, and a failed initial load remains retryable. */
       syncPendingPoll();
       people = new Map();
       signals = [];
@@ -2075,6 +2109,12 @@ import SampleNotice from "./SampleNotice.astro";
         members = nextRoster.members;
         pendingInvites = nextInvites;
         accessStatuses = nextAccessStatuses;
+        if (
+          freshInviteWorkspaceId === selected.id &&
+          shouldRetireFreshInvite(freshInviteId, nextInvites)
+        ) {
+          retireFreshInviteResult();
+        }
         if (!addAgentViewOpen()) renderChannel(selected);
         renderMembers();
         renderPendingAccess();
@@ -2101,14 +2141,66 @@ import SampleNotice from "./SampleNotice.astro";
       });
     };
 
-    const openInvite = (): void => {
-      if (sampleMode) return;
+    const resetFreshInviteResult = (): void => {
       freshInviteLink = "";
+      freshInviteId = "";
+      freshInviteWorkspaceId = "";
       const result = one<HTMLElement>("[data-invite-result]");
       const form = one<HTMLFormElement>("[data-invite-form]");
-      const error = one<HTMLElement>("[data-invite-error]");
+      const receipt = one<HTMLElement>("[data-invite-receipt]");
+      const link = one<HTMLElement>("[data-invite-link]");
+      const copy = one<HTMLButtonElement>("[data-copy-invite]");
+      const done = one<HTMLButtonElement>("[data-invite-done]");
+      const status = one<HTMLElement>("[data-invite-status]");
       if (result) result.hidden = true;
       if (form) form.hidden = false;
+      if (receipt) receipt.textContent = "Private one-use link · expires in 7 days";
+      if (link) {
+        link.textContent = "";
+        link.hidden = false;
+      }
+      if (copy) {
+        copy.textContent = "Copy invite link";
+        delete copy.dataset.inviteComplete;
+      }
+      if (done) done.textContent = "Done";
+      if (status) status.textContent = "";
+    };
+
+    /* Remote acceptance, cancellation, and expiry are indistinguishable from the
+       pending endpoint, but all make the one-use URL dead. Clear the credential
+       and turn the existing controls into truthful exits without moving focus.
+       If the link itself holds focus, keep that node visible with safe text. */
+    const retireFreshInviteResult = (): void => {
+      freshInviteLink = "";
+      freshInviteId = "";
+      freshInviteWorkspaceId = "";
+      const result = one<HTMLElement>("[data-invite-result]");
+      const form = one<HTMLFormElement>("[data-invite-form]");
+      const receipt = one<HTMLElement>("[data-invite-receipt]");
+      const link = one<HTMLElement>("[data-invite-link]");
+      const copy = one<HTMLButtonElement>("[data-copy-invite]");
+      const done = one<HTMLButtonElement>("[data-invite-done]");
+      const status = one<HTMLElement>("[data-invite-status]");
+      if (result) result.hidden = false;
+      if (form) form.hidden = true;
+      if (receipt) receipt.textContent = "This invite is no longer pending.";
+      if (link) {
+        link.textContent = "The one-use link has been cleared.";
+        link.hidden = document.activeElement !== link;
+      }
+      if (copy) {
+        copy.textContent = "Back to channel";
+        copy.dataset.inviteComplete = "true";
+      }
+      if (done) done.textContent = "Invite someone else";
+      if (status) status.textContent = "The one-use link has been cleared.";
+    };
+
+    const openInvite = (): void => {
+      if (sampleMode) return;
+      resetFreshInviteResult();
+      const error = one<HTMLElement>("[data-invite-error]");
       if (error) {
         error.textContent = "";
         error.hidden = true;
@@ -2566,18 +2658,39 @@ import SampleNotice from "./SampleNotice.astro";
           inviter_display_name: created.inviterDisplayName || accountName(session),
           inviter_user_id: created.inviterUserId ?? session.user.id,
         });
+        freshInviteId = created.invitationId;
+        freshInviteWorkspaceId = created.workspaceId;
         inviteIntent = null;
         const link = one<HTMLElement>("[data-invite-link]");
         const result = one<HTMLElement>("[data-invite-result]");
         const form = one<HTMLFormElement>("[data-invite-form]");
-        if (link) link.textContent = freshInviteLink;
+        const receipt = one<HTMLElement>("[data-invite-receipt]");
+        const copy = one<HTMLButtonElement>("[data-copy-invite]");
+        const done = one<HTMLButtonElement>("[data-invite-done]");
+        const status = one<HTMLElement>("[data-invite-status]");
+        if (link) {
+          link.textContent = freshInviteLink;
+          link.hidden = false;
+        }
+        if (receipt) receipt.textContent = "Private one-use link · expires in 7 days";
+        if (copy) {
+          copy.textContent = "Copy invite link";
+          delete copy.dataset.inviteComplete;
+        }
+        if (done) done.textContent = "Done";
+        if (status) status.textContent = "";
         if (result) result.hidden = false;
         if (form) form.hidden = true;
         pendingInvites = await pendingMemberInvites(activeWorkspaceId);
+        if (shouldRetireFreshInvite(freshInviteId, pendingInvites)) {
+          retireFreshInviteResult();
+        }
         renderPendingAccess();
-        window.requestAnimationFrame(() => {
-          one<HTMLButtonElement>("[data-copy-invite]")?.focus({ preventScroll: true });
-        });
+        if (freshInviteLink) {
+          window.requestAnimationFrame(() => {
+            one<HTMLButtonElement>("[data-copy-invite]")?.focus({ preventScroll: true });
+          });
+        }
       } catch (caught) {
         if (!(caught instanceof CommandOutcomeUnknown)) inviteIntent = null;
         if (error) {
@@ -2592,8 +2705,14 @@ import SampleNotice from "./SampleNotice.astro";
       }
     });
 
-    one<HTMLButtonElement>("[data-copy-invite]")?.addEventListener("click", async () => {
+    one<HTMLButtonElement>("[data-copy-invite]")?.addEventListener("click", async (event) => {
       const status = one<HTMLElement>("[data-invite-status]");
+      const button = event.currentTarget as HTMLButtonElement;
+      if (button.dataset.inviteComplete === "true") {
+        resetFreshInviteResult();
+        returnToChannel();
+        return;
+      }
       if (!freshInviteLink) return;
       try {
         await navigator.clipboard.writeText(freshInviteLink);
@@ -2638,7 +2757,11 @@ import SampleNotice from "./SampleNotice.astro";
     one<HTMLButtonElement>("[data-agent-owner-teammate]")?.addEventListener("click", openInvite);
     one<HTMLButtonElement>("[data-close-invite]")?.addEventListener("click", openAgentChoice);
     one<HTMLButtonElement>("[data-invite-done]")?.addEventListener("click", () => {
-      freshInviteLink = "";
+      if (one<HTMLButtonElement>("[data-copy-invite]")?.dataset.inviteComplete === "true") {
+        openInvite();
+        return;
+      }
+      resetFreshInviteResult();
       returnToChannel();
     });
     one<HTMLButtonElement>("[data-close-connect]")?.addEventListener("click", closeConnect);

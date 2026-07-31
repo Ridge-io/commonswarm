@@ -202,12 +202,12 @@ test("panel changes expose busy state and move focus only on real transitions", 
  * dashboard constructs for both surfaces (panel headings, the auth email field).
  * The regexes after it only pin that wiring.
  */
-test("boot focus gate: first presentation skips, every later presentation moves", () => {
+test("boot focus gate: each surface skips its first presentation", () => {
   const gate = new BootFocusGate();
   assert.equal(
     gate.allowsFocus(),
     false,
-    "the boot presentation of a surface takes no scripted focus",
+    "the first presentation of a surface takes no scripted focus",
   );
   assert.equal(
     gate.allowsFocus(),
@@ -219,14 +219,24 @@ test("boot focus gate: first presentation skips, every later presentation moves"
     true,
     "and every transition after that",
   );
-  /* Two surfaces are independent gates: the auth form consuming its boot skip
-     must not also consume the panel's, or the boot panel would refocus. */
+  /* Two surfaces are independent gates: a signed-in boot presents the channel
+     panel without presenting auth. On the first explicit sign-out, the panel's
+     later presentation may focus its heading while auth's first presentation
+     still skips the email field, avoiding two competing scripted moves. */
   const panel = new BootFocusGate();
   const auth = new BootFocusGate();
-  assert.equal(auth.allowsFocus(), false, "auth boot presentation skips");
-  assert.equal(panel.allowsFocus(), false, "panel boot presentation still skips");
-  assert.equal(panel.allowsFocus(), true, "panel's next transition moves");
-  assert.equal(auth.allowsFocus(), true, "auth's next transition moves");
+  assert.equal(panel.allowsFocus(), false, "signed-in channel boot skips panel focus");
+  assert.equal(panel.allowsFocus(), true, "sign-out moves context to the panel heading");
+  assert.equal(
+    auth.allowsFocus(),
+    false,
+    "auth's first presentation does not steal that focus for the email field",
+  );
+  assert.equal(
+    auth.allowsFocus(),
+    true,
+    "a later use-different-address transition may focus the email field",
+  );
 });
 
 test("the dashboard wires one boot gate per scripted-focus surface", () => {
@@ -240,8 +250,8 @@ test("the dashboard wires one boot gate per scripted-focus surface", () => {
   assert.match(
     authView,
     /name === "choices" && authBootFocus\.allowsFocus\(\)/,
-    "the email field is focused only when the gate allows — boot skips, " +
-      "user-driven choices presentations focus; email-sent never consumes",
+    "the email field is focused only when the gate allows — its first choices " +
+      "presentation skips, and email-sent never consumes",
   );
   assert.match(
     authView,
