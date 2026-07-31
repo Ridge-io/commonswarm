@@ -25,6 +25,8 @@ const CONTROL_TIMEOUT_MS = 2_000;
 const START_LOCK_WAIT_MS = 2_000;
 const START_LOCK_STALE_MS = 10_000;
 
+import type { ListenerPermissionMode } from "./types.js";
+
 export type ListenerStatusState =
   | "starting"
   | "ready"
@@ -32,10 +34,13 @@ export type ListenerStatusState =
   | "stopped"
   | "failed";
 
+export type ListenerProviderId = "grok" | "opencode";
+
 export interface ListenerStatus {
   version: 1;
   instanceId: string;
-  provider: "grok";
+  provider: ListenerProviderId;
+  permissionMode?: ListenerPermissionMode;
   profileId: string;
   workspaceId: string;
   principalId: string;
@@ -112,7 +117,7 @@ function parseStatus(raw: string): ListenerStatus {
     row.version !== 1 ||
     typeof row.instanceId !== "string" ||
     !UUID_RE.test(row.instanceId) ||
-    row.provider !== "grok" ||
+    (row.provider !== "grok" && row.provider !== "opencode") ||
     typeof row.profileId !== "string" ||
     typeof row.workspaceId !== "string" ||
     !UUID_RE.test(row.workspaceId) ||
@@ -238,7 +243,13 @@ function parseControlRequest(raw: string): ControlRequest {
 }
 
 function writeResponse(socket: Socket, response: ControlResponse): void {
-  socket.end(`${JSON.stringify(response)}\n`);
+  if (socket.writable) {
+    try {
+      socket.end(`${JSON.stringify(response)}\n`);
+    } catch {
+      socket.destroy();
+    }
+  }
 }
 
 async function startupLock(
@@ -308,6 +319,9 @@ export async function startListenerControlServer(options: {
 }): Promise<{ close: () => Promise<void> }> {
   const releaseStartupLock = await startupLock(options.paths);
   const server = createServer((socket) => {
+    socket.on("error", () => {
+      socket.destroy();
+    });
     let input = "";
     let handled = false;
     socket.setEncoding("utf8");

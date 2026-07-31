@@ -133,10 +133,12 @@ import {
   type SignalDirectory,
   type ResolvedSignalRecipient,
 } from "./cloud/signals.js";
+import { resolveOpenCodeExecutable } from "./host/opencode.js";
 import {
   FileListenerEffectStore,
   GrokListenerModel,
   ListenerStartupError,
+  OpenCodeListenerModel,
   effectiveListenerStatus,
   listenerPaths,
   runListenerRuntime,
@@ -145,6 +147,7 @@ import {
   stopListener,
   waitForListenerReady,
   type ListenerPermissionMode,
+  type ListenerProviderId,
   type ListenerStatus,
 } from "./listener/index.js";
 
@@ -316,7 +319,7 @@ Usage:
   cswarm feed [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--about <ref>] [--kind <kind>] [--since <timestamp>] [--limit <n>] [--include-stale] [--json]
   cswarm inbox [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--kind <kind>] [--about <ref>] [--since <timestamp>] [--limit <n>] [--include-stale] [--wait <seconds>] [--json]
   cswarm inbox --follow --ndjson [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--kind <kind>] [--about <ref>] [--since <timestamp>] [--limit <n>] [--include-stale]
-  cswarm listen start --agent-token-stdin [--url <url> --anon-key <key>] --workspace-id <uuid> [--provider grok] [--cwd <absolute-path>] [--model <model>] [--effort <level>] [--permissions deny|allow] [--foreground] [--json]
+  cswarm listen start --agent-token-stdin [--url <url> --anon-key <key>] --workspace-id <uuid> [--provider grok|opencode] [--cwd <absolute-path>] [--model <model>] [--effort <level>] [--permissions deny|allow] [--grok-executable <path>] [--opencode-executable <path>] [--foreground] [--json]
   cswarm listen status [--url <url> --anon-key <key>] --workspace-id <uuid> --principal-id <uuid> [--json]
   cswarm listen stop [--url <url> --anon-key <key>] --workspace-id <uuid> --principal-id <uuid> [--json]
   cswarm new "<project name>" [--url <url> --anon-key <key>] [--json]
@@ -2538,34 +2541,107 @@ function listenerStateDirectory(args: Arguments): string | undefined {
   return value;
 }
 
-function listenerProvider(args: Arguments): "grok" {
+function listenerProvider(args: Arguments): ListenerProviderId {
   const provider = args.optional("provider") ?? "grok";
-  if (provider !== "grok") {
+  if (provider !== "grok" && provider !== "opencode") {
     throw new Error(
-      "this release supports --provider grok; other host adapters are not shipped yet",
+      "this release supports --provider grok or --provider opencode",
     );
   }
   return provider;
 }
 
-function listenerStatusJson(
+/** Structured host limit copy for listen status JSON. */
+export type ListenerHostLimits = {
+  config_isolation: string;
+  deny_canary_scope: string;
+  steady_allow_unproven: string;
+  cross_owner_isolation: string;
+  credential_home_cleanup: string;
+  human_copy: string;
+  toString(): string;
+};
+
+export function listenerHostLimits(
+  provider: ListenerStatus["provider"],
+): ListenerHostLimits {
+  if (provider === "opencode") {
+    const config_isolation =
+      "OpenCode same-owner: private 0700 home is auth-only + forced-ask config, not a project-config firewall. Project allow lists are defeated only by OPENCODE_DISABLE_PROJECT_CONFIG=1 plus a verified debug config --pure effective-config probe before spawn.";
+    const deny_canary_scope =
+      "The deny canary proves host reject + correlated terminal deny only.";
+    const steady_allow_unproven =
+      "It does not prove steady-state --permissions allow behavior.";
+    const cross_owner_isolation =
+      "Cross-owner/unknown turns use a fresh auth-only home and empty cwd.";
+    const credential_home_cleanup =
+      "Removed after verified close (or retained on shutdown failure).";
+    const human_copy = [
+      config_isolation,
+      deny_canary_scope,
+      steady_allow_unproven,
+      cross_owner_isolation,
+      credential_home_cleanup,
+    ].join(" ");
+    return {
+      config_isolation,
+      deny_canary_scope,
+      steady_allow_unproven,
+      cross_owner_isolation,
+      credential_home_cleanup,
+      human_copy,
+      toString() {
+        return human_copy;
+      },
+    };
+  }
+  const config_isolation =
+    "Same-owner Grok workers may load ambient user hooks outside CommonSwarm's ACP permission boundary; cmux integration hooks are disabled for the listener child.";
+  const deny_canary_scope =
+    "The deny canary proves host reject + correlated terminal deny only.";
+  const steady_allow_unproven =
+    "The deny canary does not prove steady-state --permissions allow behavior.";
+  const cross_owner_isolation =
+    "Isolated cross-owner turns use a clean temporary home and empty cwd.";
+  const credential_home_cleanup =
+    "Temporary isolated home removed after verified turn close.";
+  const human_copy = [
+    config_isolation,
+    cross_owner_isolation,
+    steady_allow_unproven,
+    credential_home_cleanup,
+  ].join(" ");
+  return {
+    config_isolation,
+    deny_canary_scope,
+    steady_allow_unproven,
+    cross_owner_isolation,
+    credential_home_cleanup,
+    human_copy,
+    toString() {
+      return human_copy;
+    },
+  };
+}
+
+export function listenerStatusJson(
   status: ListenerStatus,
   permissionMode?: ListenerPermissionMode,
 ): Record<string, unknown> {
+  const mode = permissionMode ?? status.permissionMode;
   return {
     ...status,
-    ...(permissionMode
+    ...(mode
       ? {
-        permission_mode: permissionMode,
-        same_owner_delivery: permissionMode === "allow"
+        permission_mode: mode,
+        same_owner_delivery: mode === "allow"
           ? "worker session; tool requests allowed once"
           : "worker session; tool requests denied",
         cross_owner_delivery:
-          "fresh strict-sandbox session; all tool requests denied",
+          "fresh tool-denied session; all tool requests denied",
       }
       : {}),
-    host_limits:
-      "The same-owner Grok worker may load ambient user hooks outside CommonSwarm's ACP permission boundary; isolated cross-owner turns use a clean temporary home.",
+    host_limits: listenerHostLimits(status.provider),
   };
 }
 
@@ -2585,13 +2661,23 @@ function renderListenerStatus(status: ListenerStatus): string {
 
 function listenerFailureMessage(code: string): string {
   if (code === "version_refused") {
-    return "the listener requires Grok CLI exactly 0.2.117; run grok --version and install that measured version before retrying";
+    return "the listener requires a measured host CLI version (Grok 0.2.117 or OpenCode 1.18.10); run the provider --version and install the pinned build before retrying";
   }
   if (code === "grok_auth_missing") {
     return "Grok is not signed in for detached use; run grok login, then retry listen start";
   }
   if (code.startsWith("grok_auth_")) {
     return `Grok's local login artifact failed its safety check (${code}); run grok login again and ensure ~/.grok/auth.json is an owned 0600 regular file`;
+  }
+  if (code === "opencode_auth_missing") {
+    return "OpenCode is not signed in for detached use; authenticate OpenCode, then retry listen start";
+  }
+  if (
+    code.startsWith("opencode_auth_") ||
+    code === "opencode_project_config_active" ||
+    code === "opencode_config_probe_failed"
+  ) {
+    return `OpenCode host safety check failed (${code}); re-authenticate and ensure OPENCODE_DISABLE_PROJECT_CONFIG keeps project allow from merging`;
   }
   if (
     code === "sender_relation_capability_missing" ||
@@ -2603,13 +2689,13 @@ function listenerFailureMessage(code: string): string {
     return "the agent credential expired, was revoked, or reached its renewal horizon; ask the signed-in workspace owner for a new onboarding prompt";
   }
   if (code === "permission_canary_failed") {
-    return "Grok did not prove that CommonSwarm controls ACP tool permissions; no model prompt was delivered";
+    return "the host did not prove that CommonSwarm controls ACP tool permissions; no model prompt was delivered";
   }
   if (code === "process_exit") {
-    return "the detached listener process exited before it became ready; run grok --version and grok login, then retry";
+    return "the detached listener process exited before it became ready; check the measured host version and login, then retry";
   }
   if (code === "ready_timeout") {
-    return "the listener did not become ready within two minutes; check network access and Grok login, then retry";
+    return "the listener did not become ready within two minutes; check network access and host login, then retry";
   }
   return `listener failed (${code}); no ready listener was left running`;
 }
@@ -2658,11 +2744,18 @@ async function runConfiguredListener(options: {
   };
   cwd: string;
   permissionMode: ListenerPermissionMode;
+  provider: ListenerProviderId;
   model?: string;
   effort?: string;
   executable?: string;
+  opencodeExecutable?: string;
   stateDirectory?: string;
 }): Promise<ListenerStatus> {
+  if (options.provider === "opencode" && options.effort) {
+    throw new Error(
+      "--effort is not supported for --provider opencode (no measured mapping); omit it",
+    );
+  }
   const paths = listenerPaths({
     profileId: options.cloud.profileId,
     workspaceId: options.workspaceId,
@@ -2684,13 +2777,24 @@ async function runConfiguredListener(options: {
       ? { stateDirectory: options.stateDirectory }
       : {}),
   });
-  const model = new GrokListenerModel({
-    cwd: options.cwd,
-    permissionMode: options.permissionMode,
-    ...(options.model ? { model: options.model } : {}),
-    ...(options.effort ? { effort: options.effort } : {}),
-    ...(options.executable ? { executable: options.executable } : {}),
-  });
+  const model = options.provider === "opencode"
+    ? new OpenCodeListenerModel({
+      cwd: options.cwd,
+      permissionMode: options.permissionMode,
+      ...(options.model ? { model: options.model } : {}),
+      ...(options.opencodeExecutable
+        ? { executable: options.opencodeExecutable }
+        : options.executable
+        ? { executable: options.executable }
+        : {}),
+    })
+    : new GrokListenerModel({
+      cwd: options.cwd,
+      permissionMode: options.permissionMode,
+      ...(options.model ? { model: options.model } : {}),
+      ...(options.effort ? { effort: options.effort } : {}),
+      ...(options.executable ? { executable: options.executable } : {}),
+    });
   const onProcessSignal = () => {
     void stopListener(paths);
   };
@@ -2702,6 +2806,8 @@ async function runConfiguredListener(options: {
       profileId: options.cloud.profileId,
       workspaceId: options.workspaceId,
       principalId: options.principalId,
+      provider: options.provider,
+      permissionMode: options.permissionMode,
       run: async (signal, onEvent) =>
         await runListenerRuntime({
           target: options.cloud,
@@ -2731,6 +2837,7 @@ async function runListenStart(args: Arguments): Promise<void> {
     "effort",
     "permissions",
     "grok-executable",
+    "opencode-executable",
     "state-dir",
     "foreground",
     "json",
@@ -2740,7 +2847,18 @@ async function runListenStart(args: Arguments): Promise<void> {
       "listen start requires --agent-token-stdin; credentials are never accepted on argv",
     );
   }
-  listenerProvider(args);
+  const provider = listenerProvider(args);
+  if (provider === "opencode" && args.optional("effort")) {
+    throw new Error(
+      "--effort is not supported for --provider opencode (no measured mapping); omit it",
+    );
+  }
+  if (provider === "grok" && args.optional("opencode-executable")) {
+    throw new Error("--opencode-executable requires --provider opencode");
+  }
+  if (provider === "opencode" && args.optional("grok-executable")) {
+    throw new Error("--grok-executable requires --provider grok");
+  }
   const cloud = await target(args);
   const workspaceId = listenerUuid(
     args.optional("workspace-id") ?? process.env.SWARM_CLOUD_WORKSPACE_ID,
@@ -2780,10 +2898,14 @@ async function runListenStart(args: Arguments): Promise<void> {
       agent,
       cwd,
       permissionMode,
+      provider,
       ...(args.optional("model") ? { model: args.required("model") } : {}),
       ...(args.optional("effort") ? { effort: args.required("effort") } : {}),
       ...(args.optional("grok-executable")
         ? { executable: args.required("grok-executable") }
+        : {}),
+      ...(args.optional("opencode-executable")
+        ? { opencodeExecutable: args.required("opencode-executable") }
         : {}),
       ...(stateDirectory ? { stateDirectory } : {}),
     });
@@ -2799,6 +2921,11 @@ async function runListenStart(args: Arguments): Promise<void> {
       token: agent.token,
       expiresAt: agent.expiresAt,
     }));
+    const opencodeExecutable = provider === "opencode"
+      ? resolveOpenCodeExecutable(
+        args.optional("opencode-executable") ?? "opencode",
+      )
+      : undefined;
     const child = await spawnDetachedListener({
       spec: {
         entrypoint,
@@ -2808,12 +2935,16 @@ async function runListenStart(args: Arguments): Promise<void> {
         principalId,
         cwd,
         permissionMode,
+        provider,
         nodeExecArgv: process.execArgv,
         ...(stateDirectory ? { stateDirectory } : {}),
         ...(args.optional("model") ? { model: args.required("model") } : {}),
         ...(args.optional("effort") ? { effort: args.required("effort") } : {}),
         ...(args.optional("grok-executable")
           ? { executable: args.required("grok-executable") }
+          : {}),
+        ...(opencodeExecutable
+          ? { opencodeExecutable }
           : {}),
       },
       credentialArtifact: artifact,
@@ -2845,6 +2976,9 @@ async function runListenStart(args: Arguments): Promise<void> {
     printJson(listenerStatusJson(status, permissionMode));
     return;
   }
+  const hostNote = provider === "opencode"
+    ? "The same-owner OpenCode worker uses a private 0700 home with auth-only copy, forced-ask tool config, and OPENCODE_DISABLE_PROJECT_CONFIG (verified via debug config --pure) so project allow lists cannot merge. The deny canary runs on an empty temp cwd, not your repo. Cross-owner turns use a fresh auth-only home and empty cwd that are removed after each turn. Steady-state --permissions allow is a separate local opt-in after the deny canary.\n"
+    : "The same-owner Grok worker may load ambient user hooks outside CommonSwarm's ACP permission boundary; cmux integration hooks are disabled. Cross-owner turns use a clean temporary home with no user hooks or local context.\n";
   process.stdout.write(
     `${
       args.has("foreground")
@@ -2855,9 +2989,9 @@ async function runListenStart(args: Arguments): Promise<void> {
         permissionMode === "allow"
           ? "allowed once because you explicitly selected --permissions allow"
           : "denied by default"
-      }. Cross-owner and unknown senders always use fresh strict, tool-denied sessions.\n` +
+      }. Cross-owner and unknown senders always use fresh tool-denied sessions.\n` +
       "The short credential rotates while this process remains alive and secure local state is available; a person reauthorises after the 30-day horizon.\n" +
-      "The same-owner Grok worker may load ambient user hooks outside CommonSwarm's ACP permission boundary; cmux integration hooks are disabled. Cross-owner turns use a clean temporary home with no user hooks or local context.\n" +
+      hostNote +
       `Use listen status/stop with --workspace-id ${workspaceId} --principal-id ${principalId} and the same Cloud target.\n`,
   );
 }
@@ -2871,9 +3005,17 @@ async function runListenSupervisor(args: Arguments): Promise<void> {
     "model",
     "effort",
     "permissions",
+    "provider",
     "grok-executable",
+    "opencode-executable",
     "state-dir",
   ], 1);
+  const provider = listenerProvider(args);
+  if (provider === "opencode" && args.optional("effort")) {
+    throw new Error(
+      "--effort is not supported for --provider opencode (no measured mapping); omit it",
+    );
+  }
   const cloud = await target(args);
   const workspaceId = listenerUuid(args.optional("workspace-id"), "workspace-id");
   const principalId = listenerUuid(args.optional("principal-id"), "principal-id");
@@ -2888,10 +3030,14 @@ async function runListenSupervisor(args: Arguments): Promise<void> {
     agent,
     cwd,
     permissionMode: listenerPermissionMode(args.optional("permissions")),
+    provider,
     ...(args.optional("model") ? { model: args.required("model") } : {}),
     ...(args.optional("effort") ? { effort: args.required("effort") } : {}),
     ...(args.optional("grok-executable")
       ? { executable: args.required("grok-executable") }
+      : {}),
+    ...(args.optional("opencode-executable")
+      ? { opencodeExecutable: args.required("opencode-executable") }
       : {}),
     ...(listenerStateDirectory(args)
       ? { stateDirectory: listenerStateDirectory(args) }

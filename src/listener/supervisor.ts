@@ -7,6 +7,7 @@ import {
   startListenerControlServer,
   writeListenerStatus,
   type ListenerPaths,
+  type ListenerProviderId,
   type ListenerStatus,
 } from "./control.js";
 import type {
@@ -14,11 +15,16 @@ import type {
   ListenerRuntimeStop,
 } from "./runtime.js";
 
+import type { ListenerPermissionMode } from "./types.js";
+
 export interface ListenerSupervisorOptions {
   paths: ListenerPaths;
   profileId: string;
   workspaceId: string;
   principalId: string;
+  /** Host adapter id recorded in status metadata only. Default: grok. */
+  provider?: ListenerProviderId;
+  permissionMode?: ListenerPermissionMode;
   now?: () => number;
   run: (
     signal: AbortSignal,
@@ -57,7 +63,8 @@ export async function runListenerSupervisor(
   let status: ListenerStatus = {
     version: 1,
     instanceId: randomUUID(),
-    provider: "grok",
+    provider: options.provider ?? "grok",
+    ...(options.permissionMode ? { permissionMode: options.permissionMode } : {}),
     profileId: options.profileId,
     workspaceId: options.workspaceId.toLowerCase(),
     principalId: options.principalId.toLowerCase(),

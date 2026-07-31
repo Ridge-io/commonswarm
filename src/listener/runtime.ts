@@ -202,9 +202,27 @@ export async function runListenerRuntime(
   let after: SignalCursor | null = null;
   let ready = false;
   let readAttempt = 0;
+  // Cancel in-flight host turns immediately on abort — do not wait for finally.
+  // A hung engine.process must see cancel while still pending, not only after it returns.
+  const onAbort = () => {
+    options.model.cancel();
+  };
+  if (abort) {
+    if (abort.aborted) {
+      options.model.cancel();
+      // Do not swallow close failures (e.g. child_exit_timeout): escalate.
+      await options.model.close();
+      return { reason: "cancelled" };
+    }
+    abort.addEventListener("abort", onAbort);
+  }
+  let stop: ListenerRuntimeStop | undefined;
   try {
     while (true) {
-      if (abort?.aborted) return { reason: "cancelled" };
+      if (abort?.aborted) {
+        stop = { reason: "cancelled" };
+        break;
+      }
       let page: AgentSignalPage;
       try {
         const token = await options.credentialSession.bearer();
@@ -226,13 +244,17 @@ export async function runListenerRuntime(
         requireCapabilities(page);
         readAttempt = 0;
       } catch (error) {
-        if (abort?.aborted || isAbort(error)) return { reason: "cancelled" };
+        if (abort?.aborted || isAbort(error)) {
+          stop = { reason: "cancelled" };
+          break;
+        }
         if (
           isFollowCredentialFailure(error) ||
           error instanceof RenewalReauthorisationRequired ||
           error instanceof RenewalRevoked
         ) {
-          return { reason: "credential", error: asError(error) };
+          stop = { reason: "credential", error: asError(error) };
+          break;
         }
         if (isRetryableFollowError(error)) {
           readAttempt += 1;
@@ -248,14 +270,16 @@ export async function runListenerRuntime(
           await sleep(delayMs, abort);
           continue;
         }
-        return { reason: "fatal", error: asError(error) };
+        stop = { reason: "fatal", error: asError(error) };
+        break;
       }
 
       if (!ready) {
         try {
           await options.model.start();
         } catch (error) {
-          return { reason: "fatal", error: asError(error) };
+          stop = { reason: "fatal", error: asError(error) };
+          break;
         }
         ready = true;
         options.onEvent?.({
@@ -267,13 +291,20 @@ export async function runListenerRuntime(
       }
 
       for (const signal of page.signals) {
-        if (abort?.aborted) return { reason: "cancelled" };
+        if (abort?.aborted) {
+          stop = { reason: "cancelled" };
+          break;
+        }
         let result: ListenerProcessResult;
         try {
           result = await engine.process(signal);
         } catch (error) {
-          if (abort?.aborted || isAbort(error)) return { reason: "cancelled" };
-          return { reason: "fatal", error: asError(error) };
+          if (abort?.aborted || isAbort(error)) {
+            stop = { reason: "cancelled" };
+            break;
+          }
+          stop = { reason: "fatal", error: asError(error) };
+          break;
         }
         const record = "record" in result ? result.record : null;
         options.onEvent?.({
@@ -284,16 +315,18 @@ export async function runListenerRuntime(
           ts: eventTime(now),
         });
       }
+      if (stop) break;
 
       const fullPage = page.rawCount >= pageLimit;
       if (fullPage) {
         if (page.nextCursor === null) {
-          return {
+          stop = {
             reason: "fatal",
             error: new Error(
               "the read service returned a full page without a safe cursor",
             ),
           };
+          break;
         }
         after = page.nextCursor;
         continue;
@@ -303,7 +336,14 @@ export async function runListenerRuntime(
       await sleep(pollMs, abort);
     }
   } finally {
+    abort?.removeEventListener("abort", onAbort);
     options.model.cancel();
-    await options.model.close().catch(() => undefined);
+    // Never swallow close failures — child_exit_timeout must reach supervisor.
+    try {
+      await options.model.close();
+    } catch (error) {
+      stop = { reason: "fatal", error: asError(error) };
+    }
   }
+  return stop ?? { reason: "cancelled" };
 }
