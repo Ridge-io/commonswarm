@@ -31,3 +31,27 @@ Dispatch note: the first attempt at §5–§10 as ONE request wedged for 3h38m a
 CPU and produced nothing. Splitting it into three parallel slices completed the same
 material in ~17 minutes. If a long generation stalls, check accumulated CPU time
 (`ps -o time`) rather than instantaneous %CPU — on a shared machine %CPU lies.
+
+## `2026-07-31-handoff/` — the current zero-context handoff
+
+**Start here if you are picking up CommonSwarm with no context.** Five documents covering
+product state, repository/worktree inventory, the phased continuation plan, production QA, and
+an independent adversarial review of the other four.
+
+| File | What it is |
+|---|---|
+| `README.md` | Entry point: executive status, stop-the-line warnings, corrections log |
+| `STATE-AND-PRODUCTION.md` | Architecture, exact release/repo state, production verification, customer-facing issues |
+| `SWARM-AND-WORKTREES.md` | Agent lanes, task ledger, all 28 registered worktrees with dispositions |
+| `NEXT-EXECUTION-PLAN.md` | Phased plan, specifications, acceptance gates, rollback, operator decisions |
+| `PRODUCTION-QA.md` | Route-by-route public QA with reproducible issues |
+| `ADVISOR-REVIEW.md` | Independent read-only re-measurement; nine findings; best first slice |
+
+**Why it is here and not in `scratchpad/`.** It was written to `scratchpad/` and would have
+been lost to any `git clean` — the identical failure described in this file's first paragraph,
+recurring. The four original documents carry in-place corrections with **superseded lines kept
+and marked dead**; `ADVISOR-REVIEW.md` records the measurements behind each correction and
+bounds itself with an explicit "what I did not establish" section.
+
+The `scratchpad/2026-07-31-common-swarm-handoff/` copy is a working convenience. **This copy is
+authoritative.**
