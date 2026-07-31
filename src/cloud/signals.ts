@@ -68,6 +68,10 @@ export interface SignalQuery {
 export interface SignalReadCapabilities {
   senderOwnerRelation: boolean;
   cursorAfter: boolean;
+  /** Command edge supports claim_agent_inbox; absent means cursor-only. */
+  deliveryClaim: boolean;
+  /** Command edge supports ack_agent_delivery. */
+  deliveryAck: boolean;
 }
 
 export interface AgentSignalPage {
@@ -80,6 +84,12 @@ export interface AgentSignalPage {
   /** Cursor of the last raw row, null when it was not safely readable. */
   nextCursor: SignalCursor | null;
   malformedRows: number;
+  /**
+   * Live-unacked delivery count for this exact agent, null only on edges that
+   * advertise no delivery capability. A capability-carrying edge must send a
+   * valid non-negative safe integer. No content is ever included.
+   */
+  pendingDeliveryCount: number | null;
 }
 
 /** Bounded CLI wait window for inbox --wait / ask --wait (seconds). */
@@ -164,15 +174,55 @@ function checkedTimestamp(value: unknown, field: string): string {
   return value;
 }
 
+/**
+ * A delivery marker that is present but not exactly 1 is a malformed
+ * advertisement, never a legacy downgrade. Absent means the capability is
+ * simply not offered.
+ */
+function deliveryCapabilityMarker(
+  row: Record<string, unknown>,
+  key: string,
+): boolean {
+  if (row[key] === undefined) return false;
+  if (row[key] !== 1) {
+    throw new Error("signal read returned a malformed delivery capability marker");
+  }
+  return true;
+}
+
 function signalReadCapabilities(value: unknown): SignalReadCapabilities {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return { senderOwnerRelation: false, cursorAfter: false };
+    return {
+      senderOwnerRelation: false,
+      cursorAfter: false,
+      deliveryClaim: false,
+      deliveryAck: false,
+    };
   }
   const row = value as Record<string, unknown>;
   return {
     senderOwnerRelation: row.sender_owner_relation === 1,
     cursorAfter: row.cursor_after === 1,
+    deliveryClaim: deliveryCapabilityMarker(row, "delivery_claim"),
+    deliveryAck: deliveryCapabilityMarker(row, "delivery_ack"),
   };
+}
+
+/**
+ * Strict live-unacked count on a capable agent inbox page. A missing, negative,
+ * fractional, unsafe, or otherwise malformed count is a protocol error; a
+ * delivery marker advertises the field, so its absence cannot be tolerated.
+ */
+function pendingDeliveryCountOf(
+  body: Record<string, unknown>,
+  capabilities: SignalReadCapabilities,
+): number | null {
+  if (!capabilities.deliveryClaim && !capabilities.deliveryAck) return null;
+  const value = body.pending_delivery_count;
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+    throw new Error("signal read returned a malformed pending_delivery_count");
+  }
+  return value;
 }
 
 const SENDER_OWNER_RELATIONS = new Set<SenderOwnerRelation>([
@@ -669,7 +719,12 @@ async function agentSignalPage(
       ? signalReadCapabilities(
         (fallbackBody as Record<string, unknown>).capabilities,
       )
-      : { senderOwnerRelation: false, cursorAfter: false };
+      : {
+        senderOwnerRelation: false,
+        cursorAfter: false,
+        deliveryClaim: false,
+        deliveryAck: false,
+      };
     // A capable edge rejecting the capability request is a real protocol bug,
     // not an excuse to silently fall back to a lossy newest-N window.
     if (fallbackCapabilities.cursorAfter) throwSignalHttp(original);
@@ -688,6 +743,10 @@ async function agentSignalPage(
   const capabilities = signalReadCapabilities(
     (body as Record<string, unknown>).capabilities,
   );
+  const pendingDeliveryCount = pendingDeliveryCountOf(
+    body as Record<string, unknown>,
+    capabilities,
+  );
   const rawRows = (body as Record<string, unknown>).signals as unknown[];
   const parsedRows = parseSignalRows(rawRows, parseOptions);
   const ascending = query.ascending === true || query.after !== undefined;
@@ -703,6 +762,7 @@ async function agentSignalPage(
       ? null
       : cursorFromUnknown(rawRows[rawRows.length - 1]),
     malformedRows: parsedRows.malformedRows,
+    pendingDeliveryCount,
   };
 }
 

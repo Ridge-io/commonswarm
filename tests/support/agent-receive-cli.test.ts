@@ -761,6 +761,8 @@ test("agent signal pages expose capabilities and fail closed on absent markers",
   assert.deepEqual(page.capabilities, {
     senderOwnerRelation: true,
     cursorAfter: true,
+    deliveryClaim: false,
+    deliveryAck: false,
   });
   assert.equal(page.legacyCursorFallback, false);
   assert.equal(bodies[0]?.after_created_at, null);
@@ -782,6 +784,8 @@ test("agent signal pages expose capabilities and fail closed on absent markers",
   assert.deepEqual(old.capabilities, {
     senderOwnerRelation: false,
     cursorAfter: false,
+    deliveryClaim: false,
+    deliveryAck: false,
   });
   assert.equal(old.signals[0]?.sender_owner_relation, "unknown");
 });
