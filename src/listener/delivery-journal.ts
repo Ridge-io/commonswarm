@@ -17,6 +17,8 @@ const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const COMMAND_ID_RE = /^[A-Za-z0-9_-]{8,72}$/;
 const MAX_JOURNAL_BYTES = 8192;
+const ISO_8601_RE =
+  /^\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/;
 
 export interface ListenerActiveClaim {
   phase: "claim_pending" | "leased" | "ack_pending";
@@ -173,8 +175,21 @@ export function ackCommandId(leaseId: string): string {
 
 function isValidIsoTimestamp(value: unknown): value is string {
   if (typeof value !== "string") return false;
+  if (!ISO_8601_RE.test(value)) return false;
   const ms = Date.parse(value);
-  return Number.isFinite(ms);
+  if (!Number.isFinite(ms)) return false;
+
+  const d = new Date(ms);
+  const year = parseInt(value.slice(0, 4), 10);
+  const month = parseInt(value.slice(5, 7), 10);
+  const day = parseInt(value.slice(8, 10), 10);
+
+  if (value.endsWith("Z")) {
+    if (d.getUTCFullYear() !== year) return false;
+    if (d.getUTCMonth() + 1 !== month) return false;
+    if (d.getUTCDate() !== day) return false;
+  }
+  return true;
 }
 
 function assertPlainObject(
@@ -580,7 +595,20 @@ class FileListenerDeliveryJournal implements ListenerDeliveryJournal {
   }
 
   async read(): Promise<ListenerDeliveryJournalRecord> {
-    const raw = await readSecureJsonFile(this.journalPath, MAX_JOURNAL_BYTES);
+    let raw: string | null;
+    try {
+      raw = await readSecureJsonFile(this.journalPath, MAX_JOURNAL_BYTES);
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        (error.message.startsWith("stored record is larger") ||
+          error.message.includes("larger than this store accepts"))
+      ) {
+        throw new Error("stored delivery journal is malformed");
+      }
+      throw error;
+    }
+
     if (raw === null) {
       throw new Error("stored delivery journal does not exist");
     }
@@ -896,7 +924,19 @@ export async function openListenerDeliveryJournal(
     stateDirectory: stateDirectorySnapshot,
   });
 
-  const raw = await readSecureJsonFile(journal.journalPath, MAX_JOURNAL_BYTES);
+  let raw: string | null;
+  try {
+    raw = await readSecureJsonFile(journal.journalPath, MAX_JOURNAL_BYTES);
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      (error.message.startsWith("stored record is larger") ||
+        error.message.includes("larger than this store accepts"))
+    ) {
+      throw new Error("stored delivery journal is malformed");
+    }
+    throw error;
+  }
 
   if (raw === null) {
     const record: ListenerDeliveryJournalRecord = {

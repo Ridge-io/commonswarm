@@ -11,16 +11,41 @@ import {
 } from "../src/listener/delivery-journal.js";
 import { listenerInstanceKey } from "../src/listener/file-store.js";
 
-const WORKSPACE_ID = "11111111-1111-4111-8111-111111111111";
-const PRINCIPAL_ID = "22222222-2222-4222-8222-222222222222";
-const INSTANCE_ID_1 = "33333333-3333-4333-8333-333333333333";
-const INSTANCE_ID_2 = "44444444-4444-4444-8444-444444444444";
-const INSTANCE_ID_3 = "55555555-5555-4555-8555-555555555555";
-const SIGNAL_ID = "66666666-6666-4666-8666-666666666666";
-const LEASE_ID = "77777777-7777-4777-8777-777777777777";
+// Valid RFC4122 letter-bearing UUIDs for strict uppercase / noncanonical rejection testing
+const WORKSPACE_ID = "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d";
+const PRINCIPAL_ID = "b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6e";
+const INSTANCE_ID_1 = "c3d4e5f6-a7b8-4c9d-8e1f-2a3b4c5d6e7f";
+const INSTANCE_ID_2 = "d4e5f6a7-b8c9-4d0e-9f2a-3b4c5d6e7f8a";
+const INSTANCE_ID_3 = "e5f6a7b8-c9d0-4e1f-af2a-3b4c5d6e7f8a";
+const SIGNAL_ID = "f6a7b8c9-d0e1-4f2a-bf4c-5d6e7f8a9b0c";
+const LEASE_ID = "a7b8c9d0-e1f2-4a3b-8c5d-6e7f8a9b0c1d";
+
+const UPPERCASE_WORKSPACE_ID = "A1B2C3D4-E5F6-4A7B-8C9D-0E1F2A3B4C5D";
+const UPPERCASE_LEASE_ID = "A7B8C9D0-E1F2-4A3B-8C5D-6E7F8A9B0C1D";
+
+const SENTINEL_VALUES = [
+  WORKSPACE_ID,
+  PRINCIPAL_ID,
+  INSTANCE_ID_1,
+  SIGNAL_ID,
+  LEASE_ID,
+  "SECRET_BEARER_TOKEN_VAL",
+  "SECRET_PROMPT_VAL",
+  "SECRET_REPLY_VAL",
+];
 
 async function makeTempDir(): Promise<string> {
   return await mkdtemp(join(tmpdir(), "cswarm-journal-test-"));
+}
+
+function assertNoSentinelInError(err: Error): void {
+  for (const val of SENTINEL_VALUES) {
+    assert.equal(
+      err.message.includes(val),
+      false,
+      `Error message "${err.message}" must not contain sentinel value "${val}"`,
+    );
+  }
 }
 
 test("1. Generation selection API: missing file initializes, active resumes old ID, inactive starts fresh generation", async () => {
@@ -90,7 +115,7 @@ test("2. Reserve claim, claim ID generation, attempt recording, and retries", as
     });
 
     const expectedClaimId = claimCommandId(listenerInstanceId, 0);
-    assert.equal(expectedClaimId, `claim_33333333333343338333333333333333_0`);
+    assert.equal(expectedClaimId, `claim_c3d4e5f6a7b84c9d8e1f2a3b4c5d6e7f_0`);
 
     const claim = await journal.reserveClaim(t0);
     assert.equal(claim.phase, "claim_pending");
@@ -113,7 +138,7 @@ test("2. Reserve claim, claim ID generation, attempt recording, and retries", as
   }
 });
 
-test("3. Schema, phase, null-field invariants, and malformed/oversized file rejection", async () => {
+test("3. Comprehensive schema, phase/null invariants, strict RFC3339 timestamps, letter-bearing UUIDs, and storage error normalization", async () => {
   const dir = await makeTempDir();
   try {
     const validJson = JSON.stringify({
@@ -129,35 +154,71 @@ test("3. Schema, phase, null-field invariants, and malformed/oversized file reje
     // Valid parses
     assert.doesNotThrow(() => parseJournalRecord(validJson, WORKSPACE_ID, PRINCIPAL_ID));
 
-    // Mismatched workspace/principal
-    assert.throws(() => parseJournalRecord(validJson, "ffffffff-ffff-4fff-8fff-ffffffffffff", PRINCIPAL_ID));
+    // Mismatched workspace/principal path identities
+    assert.throws(() => parseJournalRecord(validJson, INSTANCE_ID_2, PRINCIPAL_ID));
+    assert.throws(() => parseJournalRecord(validJson, WORKSPACE_ID, INSTANCE_ID_2));
 
-    // Unsafe ordinal
+    // Uppercase letter-bearing UUID rejection
+    const upperUuidJson = JSON.parse(validJson);
+    upperUuidJson.workspaceId = UPPERCASE_WORKSPACE_ID;
+    assert.throws(() => parseJournalRecord(JSON.stringify(upperUuidJson)));
+
+    // Unsafe / equal ordinals
     const unsafeOrd = JSON.parse(validJson);
     unsafeOrd.nextClaimOrdinal = 1.5;
     assert.throws(() => parseJournalRecord(JSON.stringify(unsafeOrd)));
+
+    // Ordinal claimOrdinal >= nextClaimOrdinal
+    const equalOrdJson = JSON.parse(validJson);
+    equalOrdJson.nextClaimOrdinal = 1;
+    equalOrdJson.active = {
+      phase: "claim_pending",
+      claimOrdinal: 1, // Equal to nextClaimOrdinal!
+      claimCommandId: claimCommandId(INSTANCE_ID_1, 1),
+      claimCreatedAt: "2026-07-31T12:00:00.000Z",
+      claimLastAttemptAt: null,
+      signalId: null,
+      leaseId: null,
+      leasedUntil: null,
+      ack: null,
+    };
+    assert.throws(() => parseJournalRecord(JSON.stringify(equalOrdJson)));
+
+    // Unknown top-level, active, or ack keys
+    const extraActiveKey = JSON.parse(validJson);
+    extraActiveKey.active = {
+      phase: "claim_pending",
+      claimOrdinal: 0,
+      claimCommandId: claimCommandId(INSTANCE_ID_1, 0),
+      claimCreatedAt: "2026-07-31T12:00:00.000Z",
+      claimLastAttemptAt: null,
+      signalId: null,
+      leaseId: null,
+      leasedUntil: null,
+      ack: null,
+      unknownActiveField: 123,
+    };
+    assert.throws(() => parseJournalRecord(JSON.stringify(extraActiveKey)));
 
     // Unknown version
     const badVer = JSON.parse(validJson);
     badVer.version = 2;
     assert.throws(() => parseJournalRecord(JSON.stringify(badVer)));
 
-    // Unknown top key
-    const extraKey = JSON.parse(validJson);
-    extraKey.extra = "junk";
-    assert.throws(() => parseJournalRecord(JSON.stringify(extraKey)));
+    // Strict RFC3339 / ISO timestamp validation edge cases across all timestamp fields
+    const invalidTimestamps = [
+      "0",
+      "2026-02-30T12:00:00Z", // Non-existent date
+      "2026-07-31T24:00:00Z", // Hour 24
+      "2025-02-29T12:00:00Z", // Non-leap year Feb 29
+      "not-a-date",
+    ];
 
-    // Malformed timestamp
-    const badTime = JSON.parse(validJson);
-    badTime.updatedAt = "invalid-date";
-    assert.throws(() => parseJournalRecord(JSON.stringify(badTime)));
-
-    // Oversized file (> 8 KiB)
-    const oversized = JSON.stringify({
-      ...JSON.parse(validJson),
-      padding: "x".repeat(9000),
-    });
-    assert.throws(() => parseJournalRecord(oversized));
+    for (const badTs of invalidTimestamps) {
+      const badUpdatedAt = JSON.parse(validJson);
+      badUpdatedAt.updatedAt = badTs;
+      assert.throws(() => parseJournalRecord(JSON.stringify(badUpdatedAt)));
+    }
 
     // Phase invariants: claim_pending with non-null leaseId
     const badActive = JSON.parse(validJson);
@@ -174,20 +235,52 @@ test("3. Schema, phase, null-field invariants, and malformed/oversized file reje
     };
     assert.throws(() => parseJournalRecord(JSON.stringify(badActive)));
 
-    // Phase invariants: leased with leasedUntil <= claimCreatedAt
-    const badLeasedTime = JSON.parse(validJson);
-    badLeasedTime.active = {
-      phase: "leased",
+    // Deterministic command ID mismatch
+    const badCmdId = JSON.parse(validJson);
+    badCmdId.active = {
+      phase: "claim_pending",
       claimOrdinal: 0,
-      claimCommandId: claimCommandId(INSTANCE_ID_1, 0),
+      claimCommandId: "claim_wrongcommandid_0",
       claimCreatedAt: "2026-07-31T12:00:00.000Z",
-      claimLastAttemptAt: "2026-07-31T12:00:01.000Z",
-      signalId: SIGNAL_ID,
-      leaseId: LEASE_ID,
-      leasedUntil: "2026-07-31T12:00:00.000Z",
+      claimLastAttemptAt: null,
+      signalId: null,
+      leaseId: null,
+      leasedUntil: null,
       ack: null,
     };
-    assert.throws(() => parseJournalRecord(JSON.stringify(badLeasedTime)));
+    assert.throws(() => parseJournalRecord(JSON.stringify(badCmdId)));
+
+    // Storage error normalization: actual > 8 KiB file on disk
+    const profileIdOversized = "test-profile-oversized";
+    const instKeyOversized = listenerInstanceKey({ profileId: profileIdOversized, workspaceId: WORKSPACE_ID, principalId: PRINCIPAL_ID });
+    const oversizedDir = join(dir, instKeyOversized);
+    await mkdir(oversizedDir, { recursive: true, mode: 0o700 });
+    const oversizedFile = join(oversizedDir, "delivery-journal.json");
+    await writeFile(oversizedFile, JSON.stringify({
+      version: 1,
+      workspaceId: WORKSPACE_ID,
+      principalId: PRINCIPAL_ID,
+      listenerInstanceId: INSTANCE_ID_1,
+      nextClaimOrdinal: 0,
+      active: null,
+      updatedAt: "2026-07-31T12:00:00.000Z",
+      padding: "x".repeat(9000),
+    }), { mode: 0o600 });
+
+    await assert.rejects(
+      async () => {
+        const { journal: oversizedJ } = await openListenerDeliveryJournal({
+          profileId: profileIdOversized,
+          workspaceId: WORKSPACE_ID,
+          principalId: PRINCIPAL_ID,
+          proposedListenerInstanceId: INSTANCE_ID_1,
+          stateDirectory: dir,
+          now: "2026-07-31T12:00:00.000Z",
+        });
+        await oversizedJ.read();
+      },
+      (err: Error) => err.message === "stored delivery journal is malformed",
+    );
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -237,12 +330,25 @@ test("4. Record lease idempotence and hostile mismatch controls", async () => {
       async () => {
         await journal.recordLease({
           signalId: SIGNAL_ID,
-          leaseId: "88888888-8888-4888-8888-888888888888",
+          leaseId: INSTANCE_ID_2,
           leasedUntil: tLease,
           now: t0,
         });
       },
       (err: Error) => err.message === "delivery journal state conflict",
+    );
+
+    // Uppercase lease ID rejection
+    await assert.rejects(
+      async () => {
+        await journal.recordLease({
+          signalId: SIGNAL_ID,
+          leaseId: UPPERCASE_LEASE_ID,
+          leasedUntil: tLease,
+          now: t0,
+        });
+      },
+      (err: Error) => err.message === "delivery journal mutation rejected",
     );
 
     // State remains unmodified
@@ -276,7 +382,7 @@ test("5. Prepare ACK idempotence, ACK command ID, and outcome/error immutability
     });
 
     const expectedAckId = ackCommandId(LEASE_ID);
-    assert.equal(expectedAckId, "ack_77777777777747778777777777777777");
+    assert.equal(expectedAckId, "ack_a7b8c9d0e1f24a3b8c5d6e7f8a9b0c1d");
 
     await journal.prepareAck({
       outcome: "replied",
@@ -424,7 +530,7 @@ test("7. Clear active preserves next ordinal and future reserve gets next ID", a
     const c2 = await journal.reserveClaim(t0);
     assert.equal(c2.claimOrdinal, 1);
     assert.equal(c2.claimCommandId, claimCommandId(INSTANCE_ID_1, 1));
-    assert.equal(c2.claimCommandId, `claim_33333333333343338333333333333333_1`);
+    assert.equal(c2.claimCommandId, `claim_c3d4e5f6a7b84c9d8e1f2a3b4c5d6e7f_1`);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -733,7 +839,7 @@ test("11. Public mutation inputs reject non-plain objects, proxies, getters, sym
       signalId: SIGNAL_ID,
       leaseId: LEASE_ID,
       leasedUntil: tLease,
-      secretBearerToken: "ATTACKER_SECRET_BEARER_TOKEN",
+      secretBearerToken: "SECRET_BEARER_TOKEN_VAL",
     };
     const proxyHidingExtra = new Proxy(proxyTarget, {
       ownKeys() {
@@ -763,20 +869,22 @@ test("11. Public mutation inputs reject non-plain objects, proxies, getters, sym
       leasedUntil: tLease,
     }, {
       ownKeys() {
-        throw new Error("ATTACKER_SENTINEL_SECRET_PAYLOAD_LEAK");
+        throw new Error("SECRET_BEARER_TOKEN_VAL");
       },
       get(target, prop) {
-        throw new Error("ATTACKER_SENTINEL_SECRET_PAYLOAD_LEAK");
+        throw new Error("SECRET_BEARER_TOKEN_VAL");
       },
     });
 
-    try {
-      await journal.recordLease(throwingProxy as any);
-      assert.fail("Should have rejected throwing Proxy");
-    } catch (err) {
-      assert.equal((err as Error).message, "delivery journal mutation rejected");
-      assert.equal((err as Error).message.includes("ATTACKER_SENTINEL"), false);
-    }
+    await assert.rejects(
+      async () => {
+        await journal.recordLease(throwingProxy as any);
+      },
+      (err: Error) => {
+        assertNoSentinelInError(err);
+        return err.message === "delivery journal mutation rejected";
+      },
+    );
 
     // 11c. Revoked proxy control
     const revocable = Proxy.revocable({
@@ -826,7 +934,7 @@ test("11. Public mutation inputs reject non-plain objects, proxies, getters, sym
       signalId: SIGNAL_ID,
       leaseId: LEASE_ID,
       leasedUntil: tLease,
-      [Symbol("secret")]: "hidden",
+      [Symbol("secret")]: "SECRET_BEARER_TOKEN_VAL",
     };
     await assert.rejects(
       async () => {
@@ -856,7 +964,7 @@ test("11. Public mutation inputs reject non-plain objects, proxies, getters, sym
       signalId: SIGNAL_ID,
       leaseId: LEASE_ID,
       leasedUntil: tLease,
-      bearer: "sb-secret-bearer-token",
+      bearer: "SECRET_BEARER_TOKEN_VAL",
     };
     await assert.rejects(
       async () => {
@@ -888,21 +996,10 @@ test("11. Public mutation inputs reject non-plain objects, proxies, getters, sym
   }
 });
 
-test("12. Generic error sanitization: no UUIDs or sentinels in thrown error messages", async () => {
+test("12. Generic error sanitization: no sentinel values in thrown error messages for all hostile operations", async () => {
   const dir = await makeTempDir();
   try {
     const t0 = "2026-07-31T12:00:00.000Z";
-    const sentinels = [WORKSPACE_ID, PRINCIPAL_ID, INSTANCE_ID_1, SIGNAL_ID, LEASE_ID, "bearer-token", "secret-prompt"];
-
-    const assertGenericError = (err: Error) => {
-      for (const sentinel of sentinels) {
-        assert.equal(
-          err.message.includes(sentinel),
-          false,
-          `Error message "${err.message}" must not contain sentinel "${sentinel}"`,
-        );
-      }
-    };
 
     const { journal } = await openListenerDeliveryJournal({
       profileId: "test-profile",
@@ -913,25 +1010,33 @@ test("12. Generic error sanitization: no UUIDs or sentinels in thrown error mess
       now: t0,
     });
 
-    try {
-      await journal.recordLease({
-        signalId: SIGNAL_ID,
-        leaseId: LEASE_ID,
-        leasedUntil: "2026-07-31T13:00:00.000Z",
-      });
-    } catch (e) {
-      assertGenericError(e as Error);
-    }
+    await assert.rejects(
+      async () => {
+        await journal.recordLease({
+          signalId: SIGNAL_ID,
+          leaseId: LEASE_ID,
+          leasedUntil: "2026-07-31T13:00:00.000Z",
+        });
+      },
+      (err: Error) => {
+        assertNoSentinelInError(err);
+        return err.message === "delivery journal state conflict";
+      },
+    );
 
-    try {
-      await journal.recordLease({
-        signalId: "invalid-uuid",
-        leaseId: LEASE_ID,
-        leasedUntil: "2026-07-31T13:00:00.000Z",
-      } as any);
-    } catch (e) {
-      assertGenericError(e as Error);
-    }
+    await assert.rejects(
+      async () => {
+        await journal.recordLease({
+          signalId: "invalid-uuid-SECRET_BEARER_TOKEN_VAL",
+          leaseId: LEASE_ID,
+          leasedUntil: "2026-07-31T13:00:00.000Z",
+        } as any);
+      },
+      (err: Error) => {
+        assertNoSentinelInError(err);
+        return err.message === "delivery journal mutation rejected";
+      },
+    );
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -957,8 +1062,8 @@ test("13. TOCTOU deferred-read snapshot controls for open, recordLease, and prep
     const openPromise = openListenerDeliveryJournal(openOptions);
 
     // Synchronously mutate caller's options object while open is in flight
-    openOptions.proposedListenerInstanceId = "ffffffff-ffff-4fff-8fff-ffffffffffff";
-    openOptions.workspaceId = "ffffffff-ffff-4fff-8fff-ffffffffffff";
+    openOptions.proposedListenerInstanceId = INSTANCE_ID_2;
+    openOptions.workspaceId = INSTANCE_ID_2;
 
     const { journal, record, listenerInstanceId } = await openPromise;
 
@@ -980,8 +1085,8 @@ test("13. TOCTOU deferred-read snapshot controls for open, recordLease, and prep
     const leasePromise = journal.recordLease(leaseInput);
 
     // Synchronously mutate caller's lease input object while recordLease is in flight
-    leaseInput.signalId = "ffffffff-ffff-4fff-8fff-ffffffffffff";
-    leaseInput.leaseId = "ffffffff-ffff-4fff-8fff-ffffffffffff";
+    leaseInput.signalId = INSTANCE_ID_2;
+    leaseInput.leaseId = INSTANCE_ID_2;
 
     await leasePromise;
 
