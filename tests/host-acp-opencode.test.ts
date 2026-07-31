@@ -260,9 +260,13 @@ describe("OpenCode ACP host core (pure)", () => {
 
 
   test("resolveOpenCodeExecutable requires absolute realpath (no bare ambiguous spawn)", () => {
-    const abs = resolveOpenCodeExecutable("/Users/yulanbot/.opencode/bin/opencode");
+    // Use this process binary as a portable absolute executable (no machine paths).
+    const abs = resolveOpenCodeExecutable(process.execPath);
     assert.equal(abs.startsWith("/"), true);
-    assert.throws(() => resolveOpenCodeExecutable("no-such-opencode-binary-zzzz"), /not found|not executable/);
+    assert.throws(
+      () => resolveOpenCodeExecutable("no-such-opencode-binary-zzzz"),
+      /not found|not executable|realpath/i,
+    );
   });
 
   test("canary requires permission request AND denied tool result (negative + positive)", async () => {
@@ -413,6 +417,60 @@ describe("OpenCode ACP host core (pure)", () => {
       assert.equal(out.message, "ok");
       await session.close();
       fake.close();
+
+      // Negative: matching toolCallId on the wrong sessionId must not unlock.
+      const mismatchFake = createFakeChild({
+        onRequest: async (_id, method, params, api) => {
+          if (method === "initialize") {
+            api.result({ protocolVersion: ACP_PROTOCOL_VERSION });
+            return;
+          }
+          if (method === "session/new") {
+            api.result({ sessionId: "s-active" });
+            return;
+          }
+          if (method === "session/prompt") {
+            api.request(88, "session/request_permission", {
+              sessionId: "s-other",
+              options: [{ optionId: "r", name: "Reject", kind: "reject_once" }],
+              toolCall: { toolCallId: "c9", title: "bash", kind: "bash" },
+            });
+            await new Promise((r) => setTimeout(r, 15));
+            api.notify("session/update", {
+              sessionId: "s-other",
+              update: {
+                sessionUpdate: "tool_call_update",
+                toolCallId: "c9",
+                status: "failed",
+              },
+            });
+            // Also try a terminal update on the active session without a matching reject key.
+            api.notify("session/update", {
+              sessionId: "s-active",
+              update: {
+                sessionUpdate: "tool_call_update",
+                toolCallId: "c9",
+                status: "failed",
+              },
+            });
+            api.result({ stopReason: "end_turn" });
+          }
+        },
+      });
+      const mismatch = await openAcpSessionOverStdio({
+        cwd,
+        readable: mismatchFake.readable,
+        writable: mismatchFake.writable,
+        requestTimeoutMs: 5_000,
+      });
+      const mismatchResult = await mismatch.session.runPermissionBoundaryCanary({
+        timeoutMs: 2_000,
+      });
+      assert.equal(mismatchResult.passed, false);
+      assert.equal(mismatchResult.sawPermissionRequest, false);
+      assert.equal(mismatchResult.sawDeniedToolResult, false);
+      await mismatch.session.close();
+      mismatchFake.close();
     } finally {
       await rm(cwd, { recursive: true, force: true });
     }

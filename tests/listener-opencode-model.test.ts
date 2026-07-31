@@ -211,10 +211,90 @@ test("OpenCode cancel reaches worker and in-flight isolates", async () => {
     open: fakeOpen(records),
   });
   await adapter.start();
-  // Leave an isolate "in flight" by hanging mid-prompt via controlled open? cancel after start is enough for worker.
   adapter.cancel();
   assert.equal(records[0]?.cancelled, true);
   await adapter.close();
+});
+
+test("close during isolate openSession race abandons preparing home and handle", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "cswarm-oc-worker-"));
+  let releaseOpen: (() => void) | undefined;
+  const gate = new Promise<void>((resolve) => {
+    releaseOpen = resolve;
+  });
+  let isolatedHome: string | undefined;
+  let isolatedClosed = false;
+  let isolatedCancelled = false;
+  const adapter = new OpenCodeListenerModel({
+    cwd,
+    allowMissingAuth: true,
+    open: async (options) => {
+      if (options.clientName === "cswarm-listener") {
+        // Worker start path — cooperative fake.
+        const session = {
+          async enablePromptsAfterCanary() {
+            await options.permissionCallback?.(REQUEST);
+          },
+          async openWorkCwd() {},
+          async prompt() {
+            return { message: "w", stopReason: "end_turn" as const, updates: [] };
+          },
+          cancel() {},
+        };
+        return {
+          session,
+          child: {},
+          executable: process.execPath,
+          args: ["acp", "--pure"],
+          env: {},
+          home: options.isolatedHome ?? "/tmp/x",
+          async close() {},
+        } as unknown as OpenCodeAcpHandle;
+      }
+      // Isolate open: hold until close() races in.
+      isolatedHome = options.isolatedHome;
+      await gate;
+      const session = {
+        async enablePromptsAfterCanary() {
+          await options.permissionCallback?.(REQUEST);
+        },
+        async prompt() {
+          return { message: "i", stopReason: "end_turn" as const, updates: [] };
+        },
+        cancel() {
+          isolatedCancelled = true;
+        },
+      };
+      return {
+        session,
+        child: {},
+        executable: process.execPath,
+        args: ["acp", "--pure"],
+        env: {},
+        home: options.isolatedHome ?? "/tmp/y",
+        async close() {
+          isolatedClosed = true;
+        },
+      } as unknown as OpenCodeAcpHandle;
+    },
+  });
+  await adapter.start();
+  const isolatedPrompt = adapter.prompt(
+    { ...SIGNAL, sender_owner_relation: "cross_owner" },
+    "isolated",
+    "race",
+  );
+  for (let i = 0; i < 50 && !isolatedHome; i += 1) {
+    await new Promise((r) => setTimeout(r, 5));
+  }
+  assert.equal(typeof isolatedHome, "string");
+  const closePromise = adapter.close();
+  releaseOpen?.();
+  await assert.rejects(isolatedPrompt, /cancelled during open|closed/i);
+  await closePromise;
+  assert.equal(isolatedClosed || isolatedCancelled, true);
+  // Preparing home must not remain after close race.
+  await assert.rejects(() => stat(isolatedHome!), /ENOENT/);
 });
 
 test("allowMissingAuth is explicit — not implied by fake open alone", async () => {

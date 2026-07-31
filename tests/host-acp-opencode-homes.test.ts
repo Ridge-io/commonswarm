@@ -129,6 +129,32 @@ test("releaseOpenCodeHome respects ownership boundary", async () => {
   await assert.rejects(() => stat(b), /ENOENT/);
 });
 
+test("terminateOpenCodeChild fails closed when child never exits", async () => {
+  const { EventEmitter } = await import("node:events");
+  const { terminateOpenCodeChild } = await import("../src/host/opencode.js");
+  const emitter = new EventEmitter() as InstanceType<typeof EventEmitter> & {
+    exitCode: number | null;
+    signalCode: NodeJS.Signals | null;
+    kill: (signal?: NodeJS.Signals) => boolean;
+  };
+  emitter.exitCode = null;
+  emitter.signalCode = null;
+  let kills = 0;
+  emitter.kill = () => {
+    kills += 1;
+    // Never emits exit — simulates an unkillable child.
+    return true;
+  };
+  await assert.rejects(
+    () =>
+      terminateOpenCodeChild(
+        emitter as unknown as import("node:child_process").ChildProcessWithoutNullStreams,
+      ),
+    /child_exit_timeout|did not exit/i,
+  );
+  assert.ok(kills >= 2); // SIGTERM then SIGKILL
+});
+
 test("prepareOpenCodeIsolatedHome writes 0600 owner marker", async () => {
   const home = await prepareOpenCodeIsolatedHome({
     allowMissingAuth: true,

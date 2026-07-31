@@ -701,7 +701,11 @@ function waitForChildExit(
   });
 }
 
-/** SIGTERM then SIGKILL; always await exit within bounds. */
+/**
+ * SIGTERM then SIGKILL; await exit within bounds.
+ * Throws if the child still has not exited — callers must not treat that as
+ * success or delete credential homes (retain/escalate).
+ */
 export async function terminateOpenCodeChild(
   child: ChildProcessWithoutNullStreams,
 ): Promise<void> {
@@ -719,6 +723,12 @@ export async function terminateOpenCodeChild(
     // already dead
   }
   await waitForChildExit(child, CHILD_KILL_WAIT_MS);
+  if (child.exitCode === null && child.signalCode === null) {
+    throw new AcpHostError(
+      "child_exit_timeout",
+      "OpenCode child did not exit after SIGTERM and SIGKILL",
+    );
+  }
 }
 
 /**
@@ -748,6 +758,7 @@ export async function openOpenCodeAcpSession(
   }
 
   const env = buildOpenCodeChildEnv(options.env ?? process.env, home);
+  let childStarted = false;
   const disposeHome = async () => {
     if (createdHome || options.disposeHomeOnClose === true) {
       await rm(home!, { recursive: true, force: true }).catch(() => undefined);
@@ -770,6 +781,7 @@ export async function openOpenCodeAcpSession(
       env,
       cwd: options.cwd,
     }) as ChildProcessWithoutNullStreams;
+    childStarted = true;
 
     if (!child.stdin || !child.stdout) {
       await terminateOpenCodeChild(child);
@@ -808,23 +820,31 @@ export async function openOpenCodeAcpSession(
         try {
           await session.close();
         } finally {
-          try {
-            await terminateOpenCodeChild(child);
-          } finally {
-            await disposeHome();
-          }
+          // Only dispose the credential home after a verified child exit.
+          // A hung child after SIGKILL retains the home for escalation.
+          await terminateOpenCodeChild(child);
+          await disposeHome();
         }
       };
 
       return { session, child, executable, args, env, home, close };
     } catch (err) {
       transport.close();
-      await terminateOpenCodeChild(child);
+      try {
+        await terminateOpenCodeChild(child);
+      } catch {
+        // Retain home when terminate fails; surface the original open error.
+        throw err;
+      }
       await disposeHome();
       throw err;
     }
   } catch (err) {
-    await disposeHome();
+    // Probe/version failure before a child exists: safe to dispose.
+    // After childStarted, only dispose on verified terminate (above).
+    if (!childStarted) {
+      await disposeHome();
+    }
     throw err;
   }
 }

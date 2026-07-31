@@ -136,11 +136,12 @@ export class AcpHostSession {
   private canaryState: {
     sawPermissionRequest: boolean;
     sawDeniedToolResult: boolean;
-    rejectedToolCallIds: Set<string>;
+    /** Keys are `${sessionId}\\0${toolCallId}` — both must match active session. */
+    rejectedToolKeys: Set<string>;
   } = {
     sawPermissionRequest: false,
     sawDeniedToolResult: false,
-    rejectedToolCallIds: new Set(),
+    rejectedToolKeys: new Set(),
   };
 
   private constructor(options: AcpSessionConnectOptions) {
@@ -234,8 +235,12 @@ export class AcpHostSession {
     this.canaryState = {
       sawPermissionRequest: false,
       sawDeniedToolResult: false,
-      rejectedToolCallIds: new Set(),
+      rejectedToolKeys: new Set(),
     };
+  }
+
+  private canaryRejectKey(sessionId: string, toolCallId: string): string {
+    return `${sessionId}\0${toolCallId}`;
   }
 
   async runPermissionBoundaryCanary(options?: {
@@ -251,7 +256,7 @@ export class AcpHostSession {
     this.canaryState = {
       sawPermissionRequest: false,
       sawDeniedToolResult: false,
-      rejectedToolCallIds: new Set(),
+      rejectedToolKeys: new Set(),
     };
     // Harmless sentinel: no file paths, no project mutation instructions.
     const probe =
@@ -512,13 +517,17 @@ export class AcpHostSession {
     const status = typeof update.status === "string" ? update.status : undefined;
     const toolKind = typeof update.kind === "string" ? update.kind : undefined;
 
-    // Canary deny arm: only our prior reject of this toolCallId + bounded status.
-    // Never scan provider content bodies (unbounded / spoofable).
+    // Canary deny arm: host reject of (sessionId, toolCallId) + bounded status.
+    // Mismatched session ids never unlock prompts. Never scan content bodies.
     if (
       (kind === "tool_call_update" || kind === "tool_call") &&
       toolCallId &&
       status &&
-      this.canaryState.rejectedToolCallIds.has(toolCallId) &&
+      this.sessionId !== null &&
+      sessionId === this.sessionId &&
+      this.canaryState.rejectedToolKeys.has(
+        this.canaryRejectKey(sessionId, toolCallId),
+      ) &&
       CANARY_TERMINAL_DENY_STATUSES.has(status.toLowerCase())
     ) {
       this.canaryState.sawDeniedToolResult = true;
@@ -544,7 +553,6 @@ export class AcpHostSession {
   }
 
   private async handlePermissionRequest(id: JsonRpcId, params: unknown): Promise<void> {
-    this.canaryState.sawPermissionRequest = true;
     const rec = isRecord(params) ? params : {};
     const sessionId =
       typeof rec.sessionId === "string" ? rec.sessionId : this.sessionId ?? "";
@@ -554,6 +562,12 @@ export class AcpHostSession {
       typeof toolCall.toolCallId === "string" ? toolCall.toolCallId : undefined;
     const title = typeof toolCall.title === "string" ? toolCall.title : undefined;
     const kind = typeof toolCall.kind === "string" ? toolCall.kind : undefined;
+    // Only the active session counts for the canary permission arm.
+    const sessionMatches =
+      this.sessionId !== null && sessionId === this.sessionId;
+    if (sessionMatches) {
+      this.canaryState.sawPermissionRequest = true;
+    }
     // Never pass rawInput through — summary only.
     const summary = sanitizeText(
       [kind, title, toolCallId].filter(Boolean).join(" ") || "permission request",
@@ -592,13 +606,19 @@ export class AcpHostSession {
       });
     }
 
-    // Record host-authored rejects for canary correlation (never allow_*).
-    if (toolCallId && isHostRejectDecision(decision, options)) {
-      this.canaryState.rejectedToolCallIds.add(toolCallId);
+    // Record host-authored rejects bound to active sessionId + toolCallId.
+    if (
+      sessionMatches &&
+      toolCallId &&
+      isHostRejectDecision(decision, options)
+    ) {
+      this.canaryState.rejectedToolKeys.add(
+        this.canaryRejectKey(sessionId, toolCallId),
+      );
     }
 
     // Denied-tool canary signal requires a later structured terminal update
-    // for the same toolCallId — not the host decision alone.
+    // for the same sessionId+toolCallId — not the host decision alone.
     const result = permissionDecisionToResult(decision);
     this.transport.respond(id, result);
   }

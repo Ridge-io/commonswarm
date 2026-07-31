@@ -239,7 +239,8 @@ test("runtime drains pages, resets scan cursor, and posts stable replies", async
   assert.ok(bearerCalls >= reads + posts.length);
   assert.equal(events.filter((event) => event.type === "ready").length, 1);
   assert.equal(model.starts, 1);
-  assert.equal(model.cancels, 1);
+  // Abort listener cancels immediately; finally also cancels (at least once).
+  assert.ok(model.cancels >= 1);
   assert.equal(model.closes, 1);
 });
 
@@ -299,6 +300,69 @@ test("runtime asks the credential session immediately before the real reply post
     "bearer",
     "fetch:Bearer fresh-token",
   ]);
+});
+
+test("runtime abort cancels model immediately while a hung prompt is pending", async () => {
+  const model = new FakeModel();
+  let releasePrompt: (() => void) | undefined;
+  const hung = new Promise<void>((resolve) => {
+    releasePrompt = resolve;
+  });
+  model.prompt = async () => {
+    model.prompts.push({
+      id: "hung",
+      mode: "worker",
+      prompt: "hang",
+    });
+    await hung;
+    return { message: "late", stopReason: "end_turn" as const };
+  };
+  const controller = new AbortController();
+  let cancelAtPrompt = 0;
+  const originalCancel = model.cancel.bind(model);
+  model.cancel = () => {
+    cancelAtPrompt = model.prompts.length;
+    originalCancel();
+    releasePrompt?.();
+  };
+  let reads = 0;
+  const stopPromise = runListenerRuntime({
+    target: cloudTarget("https://cloud.example.test", "anon"),
+    workspaceId: WORKSPACE_ID,
+    principalId: PRINCIPAL_ID,
+    credentialSession: { async bearer() { return "token"; } },
+    store: new MemoryStore(),
+    model,
+    signal: controller.signal,
+    sleep: async () => undefined,
+    readPage: async () => {
+      reads += 1;
+      if (reads === 1) {
+        return page([
+          ask("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa9", "2026-07-30T00:00:01.000Z"),
+        ]);
+      }
+      return page([]);
+    },
+    poster: {
+      async post() {
+        return { signalId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb" };
+      },
+    },
+  });
+  // Wait until the hung prompt is entered, then abort while it is still pending.
+  for (let i = 0; i < 50 && model.prompts.length === 0; i += 1) {
+    await new Promise((r) => setTimeout(r, 5));
+  }
+  assert.equal(model.prompts.length, 1);
+  assert.equal(model.cancels, 0);
+  controller.abort();
+  const stop = await stopPromise;
+  assert.equal(stop.reason, "cancelled");
+  // Causal: cancel fired while the hung prompt was in flight (not only in finally after settle).
+  assert.equal(cancelAtPrompt, 1);
+  assert.ok(model.cancels >= 1);
+  assert.equal(model.closes, 1);
 });
 
 test("runtime emits only bounded malformed-row metadata", async () => {

@@ -202,6 +202,19 @@ export async function runListenerRuntime(
   let after: SignalCursor | null = null;
   let ready = false;
   let readAttempt = 0;
+  // Cancel in-flight host turns immediately on abort — do not wait for finally.
+  // A hung engine.process must see cancel while still pending, not only after it returns.
+  const onAbort = () => {
+    options.model.cancel();
+  };
+  if (abort) {
+    if (abort.aborted) {
+      options.model.cancel();
+      await options.model.close().catch(() => undefined);
+      return { reason: "cancelled" };
+    }
+    abort.addEventListener("abort", onAbort);
+  }
   try {
     while (true) {
       if (abort?.aborted) return { reason: "cancelled" };
@@ -303,6 +316,7 @@ export async function runListenerRuntime(
       await sleep(pollMs, abort);
     }
   } finally {
+    abort?.removeEventListener("abort", onAbort);
     options.model.cancel();
     await options.model.close().catch(() => undefined);
   }

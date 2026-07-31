@@ -57,10 +57,9 @@ function allowOnceOrDeny(request: PermissionRequest): PermissionDecision {
  * fresh empty temp cwd (never the user repo), then the same child opens a work
  * session on the real cwd. Cross-owner/unknown turns get a brand-new auth-only
  * home + empty cwd and are tracked in an in-flight set until closed.
- * Provider code never interprets ownership.
  *
- * Worker homes carry PID/instance ownership so age-based sweep never kills a
- * live listener. Canary/open failure synchronously abandons workerHome.
+ * close/cancel also covers home-preparation and openSession races via a
+ * generation counter and preparing-homes set — not only already-open workers.
  */
 export class OpenCodeListenerModel implements ListenerModel {
   private readonly openSession: OpenOpenCodeSession;
@@ -70,8 +69,12 @@ export class OpenCodeListenerModel implements ListenerModel {
   private workerHome: string | null = null;
   /** All in-flight isolated handles (concurrent cross-owner asks). */
   private readonly inFlight = new Set<OpenCodeAcpHandle>();
+  /** Homes being prepared that are not yet bound to a handle. */
+  private readonly preparingHomes = new Map<string, string>();
+  private openGeneration = 0;
   private workerCanary = true;
   private closed = false;
+  private cancelled = false;
   private exitCleanupInstalled = false;
 
   constructor(private readonly options: OpenCodeListenerModelOptions) {
@@ -105,6 +108,8 @@ export class OpenCodeListenerModel implements ListenerModel {
   }
 
   cancel(): void {
+    this.cancelled = true;
+    this.openGeneration += 1;
     this.worker?.session.cancel();
     for (const handle of this.inFlight) {
       try {
@@ -119,6 +124,7 @@ export class OpenCodeListenerModel implements ListenerModel {
     if (this.closed) return;
     this.closed = true;
     this.removeExitCleanup();
+    // cancel() bumps generation and cancels open + in-flight sessions.
     this.cancel();
     const handles = [
       this.worker,
@@ -127,6 +133,14 @@ export class OpenCodeListenerModel implements ListenerModel {
     this.worker = null;
     this.inFlight.clear();
     await Promise.all(handles.map((handle) => handle.close().catch(() => undefined)));
+    // Release homes still mid-prepare (openSession/home race).
+    const preparing = [...this.preparingHomes.entries()];
+    this.preparingHomes.clear();
+    await Promise.all(
+      preparing.map(([home, instanceId]) =>
+        releaseOpenCodeHome(home, instanceId).catch(() => undefined)
+      ),
+    );
     await this.abandonWorkerHome();
   }
 
@@ -138,11 +152,15 @@ export class OpenCodeListenerModel implements ListenerModel {
     await releaseOpenCodeHome(home, this.instanceId);
   }
 
+  private assertOpen(generation: number): void {
+    if (this.closed || this.cancelled || generation !== this.openGeneration) {
+      throw new Error("listener model cancelled during open");
+    }
+  }
+
   private installExitCleanup(): void {
     if (this.exitCleanupInstalled) return;
     this.exitCleanupInstalled = true;
-    // SIGTERM/SIGINT only — never beforeExit (that fires on idle loops during
-    // startup and would tear down a healthy long-lived listener).
     process.on("SIGTERM", this.onProcessSignal);
     process.on("SIGINT", this.onProcessSignal);
   }
@@ -158,7 +176,7 @@ export class OpenCodeListenerModel implements ListenerModel {
     void this.close();
   };
 
-  private async ensureWorkerHome(): Promise<string> {
+  private async ensureWorkerHome(generation: number): Promise<string> {
     if (this.workerHome) return this.workerHome;
     const owner = buildOpenCodeHomeOwner({
       role: "worker",
@@ -173,16 +191,19 @@ export class OpenCodeListenerModel implements ListenerModel {
         ? { allowMissingAuth: true }
         : {}),
     });
+    this.assertOpen(generation);
     this.workerHome = home;
+    this.preparingHomes.set(home, this.instanceId);
     return home;
   }
 
   private async ensureWorker(): Promise<OpenCodeAcpHandle> {
-    if (this.closed) throw new Error("listener model is closed");
+    if (this.closed || this.cancelled) {
+      throw new Error("listener model is closed");
+    }
     if (this.worker) return this.worker;
+    const generation = this.openGeneration;
     this.workerCanary = true;
-    let home: string | null = null;
-    // Canary never runs inside the real repo — empty temp cwd only.
     const canaryCwd = await mkdtemp(join(tmpdir(), "cswarm-opencode-canary-"));
     await chmod(canaryCwd, 0o700);
     const permissionCallback: PermissionCallback = (request) =>
@@ -190,8 +211,10 @@ export class OpenCodeListenerModel implements ListenerModel {
         ? defaultPermissionCallback(request)
         : allowOnceOrDeny(request);
     let handle: OpenCodeAcpHandle | null = null;
+    let home: string | null = null;
     try {
-      home = await this.ensureWorkerHome();
+      home = await this.ensureWorkerHome(generation);
+      this.assertOpen(generation);
       handle = await this.openSession({
         cwd: canaryCwd,
         permissionCallback,
@@ -205,17 +228,19 @@ export class OpenCodeListenerModel implements ListenerModel {
           : {}),
         clientName: "cswarm-listener",
       });
+      this.assertOpen(generation);
       await handle.session.enablePromptsAfterCanary();
-      // Same child: open a work session on the real cwd without re-probing tools there.
+      this.assertOpen(generation);
       await handle.session.openWorkCwd(this.options.cwd);
+      this.assertOpen(generation);
       this.workerCanary = false;
       this.worker = handle;
+      if (home) this.preparingHomes.delete(home);
       return handle;
     } catch (error) {
       await handle?.close().catch(() => undefined);
-      // Canary/open failure must not leave an auth-bearing home behind even if
-      // the caller never invokes close().
       await this.abandonWorkerHome();
+      if (home) this.preparingHomes.delete(home);
       throw error;
     } finally {
       await rm(canaryCwd, { recursive: true, force: true }).catch(() => undefined);
@@ -224,9 +249,12 @@ export class OpenCodeListenerModel implements ListenerModel {
 
   /**
    * Fresh auth-only 0700 home + empty 0700 cwd for every cross-owner/unknown turn.
-   * Tracked in `inFlight` so close/cancel reaches concurrent isolates.
+   * Tracked in `inFlight` so close/cancel reaches concurrent isolates and
+   * mid-prepare homes.
    */
   private async promptIsolated(prompt: string): Promise<ListenerPromptResult> {
+    if (this.closed) throw new Error("listener model is closed");
+    const generation = this.openGeneration;
     const cwd = await mkdtemp(join(tmpdir(), "cswarm-opencode-cwd-"));
     await chmod(cwd, 0o700);
     const isolatedInstanceId = randomUUID();
@@ -245,6 +273,8 @@ export class OpenCodeListenerModel implements ListenerModel {
           ? { allowMissingAuth: true }
           : {}),
       });
+      this.preparingHomes.set(home, isolatedInstanceId);
+      this.assertOpen(generation);
       handle = await this.openSession({
         cwd,
         permissionCallback: defaultPermissionCallback,
@@ -258,9 +288,15 @@ export class OpenCodeListenerModel implements ListenerModel {
           : {}),
         clientName: "cswarm-isolated-listener",
       });
+      this.assertOpen(generation);
       this.inFlight.add(handle);
+      this.preparingHomes.delete(home);
       await handle.session.enablePromptsAfterCanary();
+      this.assertOpen(generation);
       return await handle.session.prompt(prompt);
+    } catch (error) {
+      if (home) this.preparingHomes.delete(home);
+      throw error;
     } finally {
       if (handle) this.inFlight.delete(handle);
       await handle?.close().catch(() => undefined);
