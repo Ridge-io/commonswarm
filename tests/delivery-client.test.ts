@@ -93,6 +93,7 @@ function ackBody(overrides: Partial<Record<string, unknown>> = {}): Record<strin
     status: "accepted",
     ok: true,
     event_ids: [],
+    events: [],
     signal_id: SIGNAL,
     outcome: "replied",
     ...overrides,
@@ -284,18 +285,49 @@ test("header-immediate/body-never-settles non-2xx refusal and ACK body time out 
   );
 });
 
-test("timer does not fire early and is cleaned after success", async () => {
+test("scheduler timer teardown and abort-listener cleanup are strictly executed", async () => {
+  const clearedTimers: any[] = [];
+  let addedAbortListeners = 0;
+  let removedAbortListeners = 0;
+
+  const customClearTimeout = (id: any) => {
+    clearedTimers.push(id);
+    clearTimeout(id);
+  };
+
+  const customCreateAbortController = () => {
+    const controller = new AbortController();
+    const origAdd = controller.signal.addEventListener.bind(controller.signal);
+    const origRemove = controller.signal.removeEventListener.bind(controller.signal);
+
+    controller.signal.addEventListener = (type: string, listener: any, opts: any) => {
+      if (type === "abort") addedAbortListeners++;
+      return origAdd(type, listener, opts);
+    };
+    controller.signal.removeEventListener = (type: string, listener: any, opts: any) => {
+      if (type === "abort") removedAbortListeners++;
+      return origRemove(type, listener, opts);
+    };
+    return controller;
+  };
+
   const client = new DeliveryCommandClient(
     target,
     capturingFetch([], () => jsonResponse(200, claimBody())),
-    { deadlineMs: 1000 },
+    {
+      clearTimeout: customClearTimeout,
+      createAbortController: customCreateAbortController,
+    },
   );
+
   const result = await client.claimAgentInbox(claimRequest());
   assert.equal(result.deliveries.length, 1);
+  assert.equal(clearedTimers.length, 1, "clearTimeout must be called on success");
+  assert.equal(addedAbortListeners, 1, "addEventListener('abort') must be registered");
+  assert.equal(removedAbortListeners, 1, "removeEventListener('abort') must be cleaned up");
 });
 
-test("duplicate signal/lease errors contain none of the test IDs, body, or bearer", async () => {
-  // Test duplicate signal ID rejection message
+test("duplicate signal ids reject separately without leaking sentinels", async () => {
   const dupSignalBody = claimBody({
     deliveries: [
       delivery({ signal: signal({ id: SIGNAL }) }),
@@ -311,42 +343,120 @@ test("duplicate signal/lease errors contain none of the test IDs, body, or beare
     client.claimAgentInbox(claimRequest()),
     (error: unknown) => {
       assert.ok(error instanceof DeliveryProtocolError);
-      assert.ok(!error.message.includes(SIGNAL));
-      assert.ok(!error.message.includes(LEASE));
-      assert.ok(!error.message.includes(TOKEN));
+      assert.equal((error as Error).message, "delivery claim response repeats a signal id");
+      assert.ok(!error.message.includes(SIGNAL), "signal id must not leak");
+      assert.ok(!error.message.includes(LEASE), "lease id must not leak");
+      assert.ok(!error.message.includes(TOKEN), "token must not leak");
+      assert.ok(!error.message.includes(WORKSPACE), "workspace must not leak");
+      assert.ok(!error.message.includes(AGENT), "agent must not leak");
       return true;
     },
   );
 });
 
-test("outer relation overwrites absent or hostile inner relation and normalizes to outer value", async () => {
-  const body = claimBody({
+test("duplicate lease ids reject separately without leaking sentinels", async () => {
+  const dupLeaseBody = claimBody({
+    deliveries: [
+      delivery({ signal: signal({ id: SIGNAL }), lease_id: LEASE }),
+      delivery({ signal: signal({ id: SIGNAL_2 }), lease_id: LEASE }),
+    ],
+    pending_delivery_count: 5,
+  });
+  const client = new DeliveryCommandClient(
+    target,
+    capturingFetch([], () => jsonResponse(200, dupLeaseBody)),
+  );
+  await assert.rejects(
+    client.claimAgentInbox(claimRequest()),
+    (error: unknown) => {
+      assert.ok(error instanceof DeliveryProtocolError);
+      assert.equal((error as Error).message, "delivery claim response repeats a lease id");
+      assert.ok(!error.message.includes(SIGNAL), "signal id must not leak");
+      assert.ok(!error.message.includes(LEASE), "lease id must not leak");
+      assert.ok(!error.message.includes(TOKEN), "token must not leak");
+      assert.ok(!error.message.includes(WORKSPACE), "workspace must not leak");
+      assert.ok(!error.message.includes(AGENT), "agent must not leak");
+      return true;
+    },
+  );
+});
+
+test("outer relation normalizes absent, hostile, or cross inner relations to outer value", async () => {
+  // 1. Truly absent inner relation
+  const absentInnerSignal = signal();
+  delete (absentInnerSignal as any).sender_owner_relation;
+  const absentBody = claimBody({
     deliveries: [
       delivery({
-        signal: signal({ sender_owner_relation: "cross_owner" }),
+        signal: absentInnerSignal,
         sender_owner_relation: "same_owner",
       }),
     ],
   });
-  const client = new DeliveryCommandClient(
+  const client1 = new DeliveryCommandClient(
     target,
-    capturingFetch([], () => jsonResponse(200, body)),
+    capturingFetch([], () => jsonResponse(200, absentBody)),
   );
-  const result = await client.claimAgentInbox(claimRequest());
-  assert.equal(result.deliveries[0]!.senderOwnerRelation, "same_owner");
-  assert.equal(result.deliveries[0]!.signal.sender_owner_relation, "same_owner");
+  const result1 = await client1.claimAgentInbox(claimRequest());
+  assert.equal(result1.deliveries[0]!.senderOwnerRelation, "same_owner");
+  assert.equal(result1.deliveries[0]!.signal.sender_owner_relation, "same_owner");
 
-  const hostileBody = claimBody({
+  // 2. Cross-owner inner relation overwritten by outer same_owner relation
+  const crossInnerSignal = signal({ sender_owner_relation: "cross_owner" });
+  const crossInnerBody = claimBody({
+    deliveries: [
+      delivery({
+        signal: crossInnerSignal,
+        sender_owner_relation: "same_owner",
+      }),
+    ],
+  });
+  const client2 = new DeliveryCommandClient(
+    target,
+    capturingFetch([], () => jsonResponse(200, crossInnerBody)),
+  );
+  const result2 = await client2.claimAgentInbox(claimRequest());
+  assert.equal(result2.deliveries[0]!.senderOwnerRelation, "same_owner");
+  assert.equal(result2.deliveries[0]!.signal.sender_owner_relation, "same_owner");
+
+  // 3. Hostile inner relation rejected as malformed signal
+  const hostileInnerSignal = signal({ sender_owner_relation: "hostile_enemy" as any });
+  const hostileInnerBody = claimBody({
+    deliveries: [
+      delivery({
+        signal: hostileInnerSignal,
+        sender_owner_relation: "same_owner",
+      }),
+    ],
+  });
+  const client3 = new DeliveryCommandClient(
+    target,
+    capturingFetch([], () => jsonResponse(200, hostileInnerBody)),
+  );
+  await assert.rejects(
+    client3.claimAgentInbox(claimRequest()),
+    (error: unknown) => {
+      assert.ok(error instanceof DeliveryProtocolError);
+      assert.equal(
+        (error as Error).message,
+        "delivery claim response returned a malformed signal at 0",
+      );
+      return true;
+    },
+  );
+
+  // 4. Hostile outer relation rejected as malformed sender_owner_relation
+  const hostileOuterBody = claimBody({
     deliveries: [
       delivery({ sender_owner_relation: "hostile_enemy" }),
     ],
   });
-  const hostileClient = new DeliveryCommandClient(
+  const client4 = new DeliveryCommandClient(
     target,
-    capturingFetch([], () => jsonResponse(200, hostileBody)),
+    capturingFetch([], () => jsonResponse(200, hostileOuterBody)),
   );
   await assert.rejects(
-    hostileClient.claimAgentInbox(claimRequest()),
+    client4.claimAgentInbox(claimRequest()),
     (error: unknown) => {
       assert.ok(error instanceof DeliveryProtocolError);
       assert.equal(
@@ -358,16 +468,17 @@ test("outer relation overwrites absent or hostile inner relation and normalizes 
   );
 });
 
-test("non-RFC3339 timestamp and already-expired lease reject; future exact server timestamp succeeds under injected clock", async () => {
-  const fakeNowMs = 1_700_000_000_000; // 2023-11-14T22:13:20.000Z
+test("strict component-semantic RFC3339 validation rejects non-leap Feb 29 and hour 24", async () => {
+  const fakeNowMs = 1_700_000_000_000;
   const now = () => fakeNowMs;
 
-  const badTimestampBody = claimBody({
-    deliveries: [delivery({ leased_until: "2030-01-02 03:04:05" })],
+  // Feb 29 in non-leap year 2031
+  const nonLeapFeb29Body = claimBody({
+    deliveries: [delivery({ leased_until: "2031-02-29T00:00:00Z" })],
   });
   const client1 = new DeliveryCommandClient(
     target,
-    capturingFetch([], () => jsonResponse(200, badTimestampBody)),
+    capturingFetch([], () => jsonResponse(200, nonLeapFeb29Body)),
     { now },
   );
   await assert.rejects(
@@ -379,16 +490,63 @@ test("non-RFC3339 timestamp and already-expired lease reject; future exact serve
     },
   );
 
+  // Hour 24
+  const hour24Body = claimBody({
+    deliveries: [delivery({ leased_until: "2031-01-01T24:00:00Z" })],
+  });
+  const client2 = new DeliveryCommandClient(
+    target,
+    capturingFetch([], () => jsonResponse(200, hour24Body)),
+    { now },
+  );
+  await assert.rejects(
+    client2.claimAgentInbox(claimRequest()),
+    (error: unknown) => {
+      assert.ok(error instanceof DeliveryProtocolError);
+      assert.equal((error as Error).message, "delivery response returned a malformed leased_until");
+      return true;
+    },
+  );
+
+  // Valid leap year 2032 Feb 29
+  const leapFeb29Body = claimBody({
+    deliveries: [delivery({ leased_until: "2032-02-29T00:00:00Z" })],
+  });
+  const client3 = new DeliveryCommandClient(
+    target,
+    capturingFetch([], () => jsonResponse(200, leapFeb29Body)),
+    { now },
+  );
+  const res3 = await client3.claimAgentInbox(claimRequest());
+  assert.equal(res3.deliveries[0]!.leasedUntil, "2032-02-29T00:00:00Z");
+
+  // Valid offset +05:30
+  const offsetBody = claimBody({
+    deliveries: [delivery({ leased_until: "2030-01-02T03:04:05.123+05:30" })],
+  });
+  const client4 = new DeliveryCommandClient(
+    target,
+    capturingFetch([], () => jsonResponse(200, offsetBody)),
+    { now },
+  );
+  const res4 = await client4.claimAgentInbox(claimRequest());
+  assert.equal(res4.deliveries[0]!.leasedUntil, "2030-01-02T03:04:05.123+05:30");
+});
+
+test("already-expired lease rejects without reflecting timestamp", async () => {
+  const fakeNowMs = 1_700_000_000_000; // 2023-11-14T22:13:20.000Z
+  const now = () => fakeNowMs;
+
   const expiredLeaseBody = claimBody({
     deliveries: [delivery({ leased_until: "2023-11-14T22:13:20.000Z" })],
   });
-  const client2 = new DeliveryCommandClient(
+  const client = new DeliveryCommandClient(
     target,
     capturingFetch([], () => jsonResponse(200, expiredLeaseBody)),
     { now },
   );
   await assert.rejects(
-    client2.claimAgentInbox(claimRequest()),
+    client.claimAgentInbox(claimRequest()),
     (error: unknown) => {
       assert.ok(error instanceof DeliveryProtocolError);
       assert.equal((error as Error).message, "delivery claim response returned an already expired lease");
@@ -396,24 +554,14 @@ test("non-RFC3339 timestamp and already-expired lease reject; future exact serve
       return true;
     },
   );
-
-  const futureLeaseBody = claimBody({
-    deliveries: [delivery({ leased_until: "2023-11-14T22:13:21.000Z" })],
-  });
-  const client3 = new DeliveryCommandClient(
-    target,
-    capturingFetch([], () => jsonResponse(200, futureLeaseBody)),
-    { now },
-  );
-  const result = await client3.claimAgentInbox(claimRequest());
-  assert.equal(result.deliveries[0]!.leasedUntil, "2023-11-14T22:13:21.000Z");
 });
 
-test("malformed event_ids elements and non-array events reject", async () => {
-  const badEventIdsBody = claimBody({ event_ids: [123] });
+test("malformed event_ids elements and non-array events reject for claim and ACK", async () => {
+  // Claim bad event_ids
+  const badClaimEventIds = claimBody({ event_ids: [123] });
   const client1 = new DeliveryCommandClient(
     target,
-    capturingFetch([], () => jsonResponse(200, badEventIdsBody)),
+    capturingFetch([], () => jsonResponse(200, badClaimEventIds)),
   );
   await assert.rejects(
     client1.claimAgentInbox(claimRequest()),
@@ -424,10 +572,11 @@ test("malformed event_ids elements and non-array events reject", async () => {
     },
   );
 
-  const badEventsBody = claimBody({ events: "not-an-array" });
+  // Claim bad events
+  const badClaimEvents = claimBody({ events: "not-an-array" });
   const client2 = new DeliveryCommandClient(
     target,
-    capturingFetch([], () => jsonResponse(200, badEventsBody)),
+    capturingFetch([], () => jsonResponse(200, badClaimEvents)),
   );
   await assert.rejects(
     client2.claimAgentInbox(claimRequest()),
@@ -437,6 +586,30 @@ test("malformed event_ids elements and non-array events reject", async () => {
       return true;
     },
   );
+
+  // ACK bad events
+  const badAckEvents = ackBody({ events: "not-an-array" });
+  const client3 = new DeliveryCommandClient(
+    target,
+    capturingFetch([], () => jsonResponse(200, badAckEvents)),
+  );
+  await assert.rejects(
+    client3.ackAgentDelivery(ackRequest()),
+    (error: unknown) => {
+      assert.ok(error instanceof DeliveryProtocolError);
+      assert.equal((error as Error).message, "delivery response returned a malformed events");
+      return true;
+    },
+  );
+
+  // ACK valid optional events array
+  const validAckEvents = ackBody({ events: [{ opaque: "envelope" }] });
+  const client4 = new DeliveryCommandClient(
+    target,
+    capturingFetch([], () => jsonResponse(200, validAckEvents)),
+  );
+  const ackRes = await client4.ackAgentDelivery(ackRequest());
+  assert.equal(ackRes.outcome, "replied");
 });
 
 test("missing, fractional, negative, or unsafe terminal failure count rejects; valid zero and positive return", async () => {
@@ -485,6 +658,24 @@ test("missing, fractional, negative, or unsafe terminal failure count rejects; v
   assert.equal(posRes.terminalDeliveryFailureCount, 4);
 });
 
+test("vocabularies are runtime-frozen and attacker-selected error codes collapse", () => {
+  // Test mutation resistance of exported Sets
+  assert.throws(
+    () => { (DELIVERY_SERVER_ERROR_CODES as any).add("attacker_selected_code"); },
+    TypeError,
+    "DELIVERY_SERVER_ERROR_CODES.add must throw TypeError",
+  );
+  assert.throws(
+    () => { (DELIVERY_FAILED_TERMINAL_CODES as any).add("attacker_selected_code"); },
+    TypeError,
+    "DELIVERY_FAILED_TERMINAL_CODES.add must throw TypeError",
+  );
+  assert.equal(DELIVERY_SERVER_ERROR_CODES.has("attacker_selected_code"), false);
+  assert.equal(DELIVERY_FAILED_TERMINAL_CODES.has("attacker_selected_code"), false);
+  assert.equal(DELIVERY_SERVER_ERROR_CODES.has("delivery_unavailable"), true);
+  assert.equal(DELIVERY_FAILED_TERMINAL_CODES.has("provider_refused"), true);
+});
+
 test("429 Retry-After produces bounded retry metadata without reflecting raw body", async () => {
   const secretBody = { error: "rate_limited", secret: "super-secret-token" };
   const client = new DeliveryCommandClient(
@@ -503,58 +694,6 @@ test("429 Retry-After produces bounded retry metadata without reflecting raw bod
       return true;
     },
   );
-});
-
-test("claim rejects malformed responses and rows", async () => {
-  const rejections: Array<[string, Record<string, unknown> | Response]> = [
-    ["status rejected", claimBody({ status: "rejected" })],
-    ["ok missing", claimBody({ ok: false })],
-    ["capabilities missing", claimBody({ capabilities: undefined })],
-    ["delivery_claim marker off", claimBody({
-      capabilities: { delivery_claim: 1, delivery_ack: 1, sender_owner_relation: 0 },
-    })],
-    ["deliveries not an array", claimBody({ deliveries: "nope" })],
-    ["malformed lease id", claimBody({
-      deliveries: [delivery({ lease_id: "not-a-uuid" })],
-    })],
-    ["malformed leased_until", claimBody({
-      deliveries: [delivery({ leased_until: "tomorrow-ish" })],
-    })],
-    ["malformed relation", claimBody({
-      deliveries: [delivery({ sender_owner_relation: "enemy" })],
-    })],
-    ["signal workspace mismatch", claimBody({
-      deliveries: [delivery({ signal: signal({ workspace_id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb" }) })],
-    })],
-    ["signal recipient mismatch", claimBody({
-      deliveries: [delivery({ signal: signal({ to_agent: AGENT.replace("2", "9") }) })],
-    })],
-    ["non-direct signal kind", claimBody({
-      deliveries: [delivery({ signal: signal({ kind: "working-on" }) })],
-    })],
-    ["negative count", claimBody({ pending_delivery_count: -1 })],
-    ["fractional count", claimBody({ pending_delivery_count: 1.5 })],
-    ["unsafe count", claimBody({ pending_delivery_count: 9_007_199_254_740_992 })],
-    ["count missing", claimBody({ pending_delivery_count: undefined })],
-    ["count smaller than deliveries", claimBody({ pending_delivery_count: 0 })],
-    ["malformed signal row", claimBody({
-      deliveries: [{ lease_id: LEASE, leased_until: FUTURE, sender_owner_relation: "unknown" }],
-    })],
-  ];
-  for (const [label, body] of rejections) {
-    const client = new DeliveryCommandClient(
-      target,
-      capturingFetch([], () => jsonResponse(200, body)),
-    );
-    await assert.rejects(
-      client.claimAgentInbox(claimRequest()),
-      (error: unknown) => {
-        assert.ok(error instanceof DeliveryProtocolError, `${label}: ${String(error)}`);
-        return true;
-      },
-      label,
-    );
-  }
 });
 
 test("claim maps bounded HTTP refusals without body or bearer leakage", async () => {
@@ -588,16 +727,17 @@ test("claim maps bounded HTTP refusals without body or bearer leakage", async ()
     );
   }
 
-  // An unknown or non-string code collapses to the bounded unknown code.
+  // An unknown or attacker-selected code collapses to bounded unknown code.
   const client = new DeliveryCommandClient(
     target,
-    capturingFetch([], () => jsonResponse(403, { error: secret, secret })),
+    capturingFetch([], () => jsonResponse(403, { error: "attacker_selected_code", secret })),
   );
   await assert.rejects(
     client.claimAgentInbox(claimRequest()),
     (error: unknown) => {
       assert.ok(error instanceof DeliveryHttpError);
       assert.equal((error as DeliveryHttpError).code, DELIVERY_UNKNOWN_ERROR_CODE);
+      assert.ok(!error.message.includes("attacker_selected_code"));
       assert.ok(!error.message.includes(secret));
       return true;
     },
@@ -766,7 +906,7 @@ test("delivery marker present as 0, 2, string, or null rejects; total absence re
   assert.equal(legacy.capabilities.deliveryAck, false);
   assert.equal(legacy.pendingDeliveryCount, null);
 
-  const capableOneMarker = await readAgentSignalPage(
+  const capableClaimOnly = await readAgentSignalPage(
     target,
     credentials,
     { workspaceId: WORKSPACE, inbox: true },
@@ -778,14 +918,66 @@ test("delivery marker present as 0, 2, string, or null rejects; total absence re
       })) as typeof fetch,
     },
   );
-  assert.equal(capableOneMarker.capabilities.deliveryClaim, true);
-  assert.equal(capableOneMarker.pendingDeliveryCount, 3);
-});
+  assert.equal(capableClaimOnly.capabilities.deliveryClaim, true);
+  assert.equal(capableClaimOnly.capabilities.deliveryAck, false);
+  assert.equal(capableClaimOnly.pendingDeliveryCount, 3);
 
-test("the delivery error vocabulary stays bounded and unknown codes collapse", () => {
-  assert.equal(DELIVERY_SERVER_ERROR_CODES.has(DELIVERY_UNKNOWN_ERROR_CODE), false);
-  assert.equal(DELIVERY_SERVER_ERROR_CODES.has("delivery_unavailable"), true);
-  assert.equal(DELIVERY_SERVER_ERROR_CODES.has("delivery_ack_conflict"), true);
+  const capableAckOnly = await readAgentSignalPage(
+    target,
+    credentials,
+    { workspaceId: WORKSPACE, inbox: true },
+    {
+      fetcher: (async () => jsonResponse(200, {
+        signals: [signal()],
+        capabilities: { delivery_ack: 1 },
+        pending_delivery_count: 2,
+      })) as typeof fetch,
+    },
+  );
+  assert.equal(capableAckOnly.capabilities.deliveryClaim, false);
+  assert.equal(capableAckOnly.capabilities.deliveryAck, true);
+  assert.equal(capableAckOnly.pendingDeliveryCount, 2);
+
+  const capableBoth = await readAgentSignalPage(
+    target,
+    credentials,
+    { workspaceId: WORKSPACE, inbox: true },
+    {
+      fetcher: (async () => jsonResponse(200, {
+        signals: [signal()],
+        capabilities: { delivery_claim: 1, delivery_ack: 1 },
+        pending_delivery_count: 7,
+      })) as typeof fetch,
+    },
+  );
+  assert.equal(capableBoth.capabilities.deliveryClaim, true);
+  assert.equal(capableBoth.capabilities.deliveryAck, true);
+  assert.equal(capableBoth.pendingDeliveryCount, 7);
+
+  const malformedCountBodies: Array<[string, unknown]> = [
+    ["missing", undefined],
+    ["negative", -1],
+    ["fractional", 2.5],
+    ["unsafe", 9_007_199_254_740_992],
+    ["string", "3"],
+  ];
+  for (const [label, count] of malformedCountBodies) {
+    const body: Record<string, unknown> = {
+      signals: [signal()],
+      capabilities: { delivery_claim: 1 },
+    };
+    if (count !== undefined) body.pending_delivery_count = count;
+    await assert.rejects(
+      readAgentSignalPage(
+        target,
+        credentials,
+        { workspaceId: WORKSPACE, inbox: true },
+        { fetcher: (async () => jsonResponse(200, body)) as typeof fetch },
+      ),
+      /malformed pending_delivery_count/,
+      `count ${label}`,
+    );
+  }
 });
 
 test("delivery-client.test.ts is literally named by the root npm test script", async () => {

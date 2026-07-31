@@ -13,7 +13,7 @@ import { parseRetryAfterMs, parseSignalRecord } from "./signals.js";
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const RFC3339_TIMESTAMP_RE =
-  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
+  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|([+-]\d{2}):(\d{2}))$/i;
 const DELIVERY_KINDS = new Set<SignalRecord["kind"]>(["ask", "note"]);
 const SENDER_OWNER_RELATIONS = new Set<SenderOwnerRelation>([
   "same_owner",
@@ -27,18 +27,46 @@ const DELIVERY_ACK_OUTCOMES = new Set<DeliveryOutcome>([
   "failed_terminal",
 ]);
 
+function makeFrozenSet<T>(values: Iterable<T>): ReadonlySet<T> {
+  const set = new Set(values);
+  Object.defineProperty(set, "add", {
+    value: () => {
+      throw new TypeError("Cannot mutate frozen Set");
+    },
+    writable: false,
+    configurable: false,
+  });
+  Object.defineProperty(set, "delete", {
+    value: () => {
+      throw new TypeError("Cannot mutate frozen Set");
+    },
+    writable: false,
+    configurable: false,
+  });
+  Object.defineProperty(set, "clear", {
+    value: () => {
+      throw new TypeError("Cannot mutate frozen Set");
+    },
+    writable: false,
+    configurable: false,
+  });
+  return Object.freeze(set);
+}
+
 /** Per-request deadline covering fetch and the response body read. */
 export const DELIVERY_REQUEST_TIMEOUT_MS = 30_000;
 /** Mirrors the command edge's command_id bound so a typo fails before the round trip. */
 export const DELIVERY_COMMAND_ID_RE = /^[A-Za-z0-9_-]{8,72}$/;
-export const DELIVERY_FAILED_TERMINAL_CODES = new Set([
+
+export const DELIVERY_FAILED_TERMINAL_CODES: ReadonlySet<string> = makeFrozenSet([
   "provider_refused",
   "local_effect_failed",
   "host_session_failed",
   "credential_unavailable",
 ]);
+
 /** The bounded client-visible server error vocabulary; anything else collapses. */
-export const DELIVERY_SERVER_ERROR_CODES = new Set([
+export const DELIVERY_SERVER_ERROR_CODES: ReadonlySet<string> = makeFrozenSet([
   "unauthenticated",
   "fresh_auth_required",
   "invalid_request",
@@ -52,6 +80,7 @@ export const DELIVERY_SERVER_ERROR_CODES = new Set([
   "temporarily_unavailable",
   "internal_error",
 ]);
+
 export const DELIVERY_UNKNOWN_ERROR_CODE = "unknown_error";
 
 /** Direct signal delivery outcome vocabulary (server closed enum). */
@@ -136,6 +165,10 @@ export interface DeliveryClientOptions {
   deadlineMs?: number;
   /** Injected clock for live-lease validation; defaults to Date.now. */
   now?: () => number;
+  /** Injected clearTimeout function to verify timer teardown in causal tests. */
+  clearTimeout?: typeof clearTimeout;
+  /** Injected AbortController factory to verify abort listener cleanup in causal tests. */
+  createAbortController?: () => AbortController;
 }
 
 /** Transport refused the round trip before a bounded HTTP status existed. */
@@ -182,17 +215,71 @@ function checkedUuid(value: unknown, field: string): string {
   return value.toLowerCase();
 }
 
+function isLeapYear(year: number): boolean {
+  return (year % 4 === 0 && year % 100 !== 0) || (year % 400 === 0);
+}
+
+function daysInMonth(year: number, month: number): number {
+  switch (month) {
+    case 1: case 3: case 5: case 7: case 8: case 10: case 12:
+      return 31;
+    case 4: case 6: case 9: case 11:
+      return 30;
+    case 2:
+      return isLeapYear(year) ? 29 : 28;
+    default:
+      return 0;
+  }
+}
+
 /**
  * Server timestamps must be RFC3339/ISO shaped (T separator, Z or numeric
- * offset) and genuinely parseable — a bare Date.parse-friendly string is not
- * a server timestamp shape. The value is never embedded in the error.
+ * offset) and component-semantically valid (e.g. real day-in-month, hour 00..23,
+ * minute/second 00..59). Date.parse auto-coercions such as Feb 29 on a non-leap
+ * year or hour 24 are strictly rejected. The value is never embedded in the error.
  */
 function checkedRfc3339Timestamp(value: unknown, field: string): string {
+  if (typeof value !== "string") {
+    throw new DeliveryProtocolError(
+      `delivery response returned a malformed ${field}`,
+    );
+  }
+  const match = RFC3339_TIMESTAMP_RE.exec(value);
+  if (!match) {
+    throw new DeliveryProtocolError(
+      `delivery response returned a malformed ${field}`,
+    );
+  }
+  const year = parseInt(match[1]!, 10);
+  const month = parseInt(match[2]!, 10);
+  const day = parseInt(match[3]!, 10);
+  const hour = parseInt(match[4]!, 10);
+  const minute = parseInt(match[5]!, 10);
+  const second = parseInt(match[6]!, 10);
+
   if (
-    typeof value !== "string" ||
-    !RFC3339_TIMESTAMP_RE.test(value) ||
-    !Number.isFinite(Date.parse(value))
+    month < 1 || month > 12 ||
+    day < 1 || day > daysInMonth(year, month) ||
+    hour < 0 || hour > 23 ||
+    minute < 0 || minute > 59 ||
+    second < 0 || second > 59
   ) {
+    throw new DeliveryProtocolError(
+      `delivery response returned a malformed ${field}`,
+    );
+  }
+
+  if (match[7] !== undefined && match[8] !== undefined) {
+    const offsetHour = Math.abs(parseInt(match[7], 10));
+    const offsetMin = parseInt(match[8], 10);
+    if (offsetHour > 23 || offsetMin < 0 || offsetMin > 59) {
+      throw new DeliveryProtocolError(
+        `delivery response returned a malformed ${field}`,
+      );
+    }
+  }
+
+  if (!Number.isFinite(Date.parse(value))) {
     throw new DeliveryProtocolError(
       `delivery response returned a malformed ${field}`,
     );
@@ -405,6 +492,7 @@ function parseAckSuccess(
     );
   }
   checkedOptionalUuidArray(row.event_ids, "event_ids");
+  checkedOptionalArray(row.events, "events");
   if (row.signal_id !== expected.signalId) {
     throw new DeliveryProtocolError(
       "delivery acknowledgement response echoed a different signal id",
@@ -516,6 +604,8 @@ function successBody(response: Response, text: string, verb: string): unknown {
 export class DeliveryCommandClient {
   private readonly deadlineMs: number;
   private readonly now: () => number;
+  private readonly clearTimeoutFn: typeof clearTimeout;
+  private readonly createAbortControllerFn: () => AbortController;
 
   constructor(
     private readonly target: CloudTarget,
@@ -524,6 +614,9 @@ export class DeliveryCommandClient {
   ) {
     this.deadlineMs = options.deadlineMs ?? DELIVERY_REQUEST_TIMEOUT_MS;
     this.now = options.now ?? Date.now;
+    this.clearTimeoutFn = options.clearTimeout ?? clearTimeout;
+    this.createAbortControllerFn =
+      options.createAbortController ?? (() => new AbortController());
   }
 
   private async post(
@@ -534,7 +627,7 @@ export class DeliveryCommandClient {
     if (this.deadlineMs <= 0) {
       throw new DeliveryTransportError(`${verb} request timed out`);
     }
-    const deadlineController = new AbortController();
+    const deadlineController = this.createAbortControllerFn();
     let timedOut = false;
     const signal = deadlineController.signal;
     let onAbort = () => {};
@@ -606,7 +699,7 @@ export class DeliveryCommandClient {
       }
       return raced;
     } finally {
-      clearTimeout(timer);
+      this.clearTimeoutFn(timer);
       signal.removeEventListener("abort", onAbort);
     }
   }
