@@ -208,3 +208,28 @@ test("missing socket converts a live-looking status to unclean_exit", async () =
   assert.equal(effective?.state, "failed");
   assert.equal(effective?.lastErrorCode, "unclean_exit");
 });
+
+test("control socket handles peer RST and connection reset without crashing", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cswarm-control-test-"));
+  const target = paths(root);
+  const current = statusFor(target, "ready");
+  const control = await startListenerControlServer({
+    paths: target,
+    status: () => current,
+    stop: () => undefined,
+  });
+  try {
+    for (let i = 0; i < 10; i += 1) {
+      const client = createConnection(target.socketPath);
+      client.once("connect", () => {
+        client.write('{"command":"status"}\n');
+        client.destroy();
+      });
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    const res = await queryListenerControl(target, "status");
+    assert.equal(res.state, "ready");
+  } finally {
+    await control.close();
+  }
+});

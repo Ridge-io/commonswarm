@@ -319,6 +319,9 @@ export async function startListenerControlServer(options: {
 }): Promise<{ close: () => Promise<void> }> {
   const releaseStartupLock = await startupLock(options.paths);
   const server = createServer((socket) => {
+    socket.on("error", () => {
+      socket.destroy();
+    });
     let input = "";
     let handled = false;
     socket.setEncoding("utf8");
