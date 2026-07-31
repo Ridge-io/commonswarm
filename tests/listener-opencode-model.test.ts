@@ -857,29 +857,81 @@ test("promptIsolated init error closes handle exactly once without double close"
   await rm(cwd, { recursive: true, force: true }).catch(() => undefined);
 });
 
-test("releaseOpenCodeHome failure records home in retainedHomes and preserves model tracking", async () => {
-  const cwd = await mkdtemp(join(tmpdir(), "cswarm-oc-worker-"));
-  let capturedHome: string | undefined;
+test("releaseOpenCodeHome failure records home in retainedHomes and surfaces exact cleanup failure to caller", async () => {
+  const parent = await mkdtemp(join(tmpdir(), "cswarm-oc-ro-"));
+  const workerHome = await mkdtemp(join(parent, "home-"));
   const adapter = new OpenCodeListenerModel({
-    cwd,
+    cwd: parent,
     allowMissingAuth: true,
-    open: async (options) => {
-      capturedHome = options.isolatedHome;
-      const sub = await mkdtemp(join(options.isolatedHome!, "sub-"));
-      await writeFile(join(sub, "lock"), "lock");
-      await chmod(sub, 0o000);
-      await chmod(options.isolatedHome!, 0o500);
+    prepareHome: async () => workerHome,
+    open: async () => {
+      await chmod(parent, 0o400);
       throw new Error("open failed");
     },
   });
 
-  await assert.rejects(adapter.start(), /open failed/);
-  assert.equal(typeof capturedHome, "string");
-  assert.ok(adapter.getRetainedHomes().includes(capturedHome!));
+  await assert.rejects(adapter.start(), /EACCES|permission denied/i);
+  assert.ok(adapter.getRetainedHomes().includes(workerHome));
 
-  await chmod(capturedHome!, 0o700).catch(() => undefined);
-  await rm(capturedHome!, { recursive: true, force: true }).catch(() => undefined);
-  await rm(cwd, { recursive: true, force: true }).catch(() => undefined);
+  await chmod(parent, 0o700).catch(() => undefined);
+  await rm(parent, { recursive: true, force: true }).catch(() => undefined);
+});
+
+test("promptIsolated finalizer home deletion failure surfaces exact error to caller", async () => {
+  const parent = await mkdtemp(join(tmpdir(), "cswarm-oc-ro-"));
+  const isolateHome = await mkdtemp(join(parent, "iso-"));
+  const adapter = new OpenCodeListenerModel({
+    cwd: parent,
+    allowMissingAuth: true,
+    prepareHome: async () => isolateHome,
+    open: async () => {
+      await chmod(parent, 0o400);
+      return {
+        session: {
+          async enablePromptsAfterCanary() {},
+          async openWorkCwd() {},
+          async prompt() {
+            return { message: "w", stopReason: "end_turn" as const, updates: [] };
+          },
+          cancel() {},
+        },
+        child: {},
+        executable: process.execPath,
+        args: ["acp", "--pure"],
+        env: {},
+        home: isolateHome,
+        async close() {},
+      } as unknown as OpenCodeAcpHandle;
+    },
+  });
+
+  await assert.rejects(
+    adapter.prompt(
+      {
+        id: "sig_iso",
+        workspace_id: "ws_1",
+        from: "usr_1",
+        from_kind: "user",
+        to: "usr_1",
+        to_agent: null,
+        in_reply_to: null,
+        about: null,
+        kind: "ask",
+        body: "hello",
+        until: new Date().toISOString(),
+        created_at: new Date().toISOString(),
+        sender_owner_relation: "cross_owner",
+      },
+      "isolated",
+      "prompt text",
+    ),
+    /EACCES|permission denied/i,
+  );
+
+  assert.ok(adapter.getRetainedHomes().includes(isolateHome));
+
+  await chmod(parent, 0o700).catch(() => undefined);
+  await rm(parent, { recursive: true, force: true }).catch(() => undefined);
 });
 
 test("performClose active isolate close failure records handle.home in retainedHomes", async () => {

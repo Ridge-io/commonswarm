@@ -4,8 +4,9 @@
  */
 import assert from "node:assert/strict";
 import test from "node:test";
-import { listenerHostLimits } from "../src/cli.js";
+import { listenerHostLimits, listenerStatusJson } from "../src/cli.js";
 import { OPENCODE_FORCED_PERMISSION_TOOLS } from "../src/host/bounds.js";
+import type { ListenerStatus } from "../src/listener/control.js";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
@@ -58,4 +59,32 @@ test("bounds.ts does not claim wildcard stops project allow merging", () => {
   );
   assert.ok(OPENCODE_FORCED_PERMISSION_TOOLS.includes("*"));
   assert.ok(OPENCODE_FORCED_PERMISSION_TOOLS.includes("bash"));
+});
+
+test("listenerStatusJson emits host_limits as a structured object, not a string", () => {
+  const status: ListenerStatus = {
+    version: 1,
+    instanceId: "inst_1",
+    profileId: "prof_1",
+    workspaceId: "ws_1",
+    state: "ready",
+    provider: "opencode",
+    principalId: "prn_1",
+    pid: 1234,
+    startedAt: "2026-07-31T00:00:00Z",
+    readyAt: "2026-07-31T00:00:01Z",
+    updatedAt: "2026-07-31T00:00:01Z",
+    stoppedAt: null,
+    lastSignalId: null,
+    lastErrorCode: null,
+    logPath: "/tmp/log",
+  };
+  const json = listenerStatusJson(status, "deny");
+  assert.equal(typeof json.host_limits, "object");
+  assert.notEqual(json.host_limits, null);
+  const limits = json.host_limits as Record<string, unknown>;
+  assert.equal(typeof limits.config_isolation, "string");
+  assert.equal(typeof limits.credential_home_cleanup, "string");
+  assert.equal(typeof limits.human_copy, "string");
+  assert.match(String(limits.credential_home_cleanup), /retained on shutdown failure/);
 });

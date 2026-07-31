@@ -478,17 +478,19 @@ export class OpenCodeListenerModel implements ListenerModel {
       } catch (openError) {
         this.pendingOpens.delete(home);
         if (this.workerHome === home) this.workerHome = null;
+        let finalOpenErr = openError;
         if ((openError as any)?.code === "child_exit_timeout") {
           this.retainedHomes.push(home);
         } else {
           try {
             await releaseOpenCodeHome(home, this.instanceId);
-          } catch {
+          } catch (relErr) {
             this.retainedHomes.push(home);
+            finalOpenErr = relErr;
           }
         }
-        pending.markSettled(openError);
-        throw openError;
+        pending.markSettled(finalOpenErr);
+        throw finalOpenErr;
       }
 
       if (this.closed || this.cancelled || generation !== this.openGeneration) {
@@ -573,14 +575,16 @@ export class OpenCodeListenerModel implements ListenerModel {
         this.assertOpen(generation);
       } catch (error) {
         this.pendingOpens.delete(home);
+        let finalErr = error;
         try {
           await releaseOpenCodeHome(home, isolatedInstanceId);
-        } catch {
+        } catch (relErr) {
           this.retainedHomes.push(home);
+          finalErr = relErr;
         }
-        pending.markSettled();
+        pending.markSettled(finalErr);
         home = null;
-        throw error;
+        throw finalErr;
       }
       const openPromise = this.openSession({
         cwd,
@@ -604,18 +608,20 @@ export class OpenCodeListenerModel implements ListenerModel {
         pending.handle = handle;
       } catch (openError) {
         this.pendingOpens.delete(home);
+        let finalOpenErr = openError;
         if ((openError as any)?.code === "child_exit_timeout") {
           this.retainedHomes.push(home);
         } else {
           try {
             await releaseOpenCodeHome(home, isolatedInstanceId);
-          } catch {
+          } catch (relErr) {
             this.retainedHomes.push(home);
+            finalOpenErr = relErr;
           }
         }
-        pending.markSettled(openError);
+        pending.markSettled(finalOpenErr);
         home = null;
-        throw openError;
+        throw finalOpenErr;
       }
 
       if (this.closed || this.cancelled || generation !== this.openGeneration) {
@@ -673,8 +679,9 @@ export class OpenCodeListenerModel implements ListenerModel {
         if (home && closeOk) {
           try {
             await releaseOpenCodeHome(home, isolatedInstanceId);
-          } catch {
+          } catch (relErr) {
             this.retainedHomes.push(home);
+            throw relErr;
           }
         }
       } else {

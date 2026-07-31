@@ -2581,6 +2581,7 @@ export function listenerHostLimits(
       deny_canary_scope,
       steady_allow_unproven,
       cross_owner_isolation,
+      credential_home_cleanup,
     ].join(" ");
     return {
       config_isolation,
@@ -2608,6 +2609,7 @@ export function listenerHostLimits(
     config_isolation,
     cross_owner_isolation,
     steady_allow_unproven,
+    credential_home_cleanup,
   ].join(" ");
   return {
     config_isolation,
@@ -2622,7 +2624,7 @@ export function listenerHostLimits(
   };
 }
 
-function listenerStatusJson(
+export function listenerStatusJson(
   status: ListenerStatus,
   permissionMode?: ListenerPermissionMode,
 ): Record<string, unknown> {
@@ -2639,7 +2641,7 @@ function listenerStatusJson(
           "fresh tool-denied session; all tool requests denied",
       }
       : {}),
-    host_limits: listenerHostLimits(status.provider).toString(),
+    host_limits: listenerHostLimits(status.provider),
   };
 }
 
