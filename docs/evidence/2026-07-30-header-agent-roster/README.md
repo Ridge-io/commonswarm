@@ -146,4 +146,3 @@ Screenshots (this directory; from the 3d3c438 build — the follow-ups have no v
   workspace open; the unknown-agent refresh does not refetch access statuses.
 - Dark-mode screenshot set was captured with the user's Chrome in dark; light mode was
   verified under emulated prefers-color-scheme.
-
