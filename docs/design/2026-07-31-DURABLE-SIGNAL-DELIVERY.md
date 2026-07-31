@@ -1,7 +1,6 @@
 # Durable direct-signal delivery and acknowledgement
 
-Status: revised after adversarial security review; ready for implementation, with no production
-mutation yet
+Status: revised after adversarial security review; implemented in codebase; not yet production-applied until rollout
 
 Date: 2026-07-31
 
