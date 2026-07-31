@@ -4,13 +4,14 @@ Excerpts, not the full runs. The full `npm --prefix site test` total is recorded
 separately (82 tests, 82 pass), and the root gates separately at the end of the
 evidence doc.
 
-## clean site build — ONE unambiguous command, from `site/`
+## clean site build — ONE unambiguous command, from the repo root
 
     cd site && rm -rf dist && npm run build
 
 (The previous record showed `rm -rf site/dist && npm run build` — ambiguous: from
 `site/` it removes `site/site/dist`, and from the repo root `npm run build` builds the
-CLI, not the site. The command above is what was actually executed.)
+CLI, not the site. The command above is what was actually executed; it resolves only
+from the repo root, which is exactly how `cd site && …` is read.)
 
 `rm -rf dist` is load-bearing: the clean must be real or stale files survive.
 
