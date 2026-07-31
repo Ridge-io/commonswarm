@@ -1013,6 +1013,93 @@ test("performClose active isolate close failure records handle.home in retainedH
   await rm(cwd, { recursive: true, force: true }).catch(() => undefined);
 });
 
+test("performSingleOwnerCleanup home deletion failure overrides cause error and retains home", async () => {
+  const parent = await mkdtemp(join(tmpdir(), "cswarm-oc-ro-"));
+  const workerHome = await mkdtemp(join(parent, "home-"));
+  const adapter = new OpenCodeListenerModel({
+    cwd: parent,
+    allowMissingAuth: true,
+    prepareHome: async () => workerHome,
+    open: async (options) => {
+      return {
+        session: {
+          async enablePromptsAfterCanary() {
+            await chmod(parent, 0o400);
+          },
+          async openWorkCwd() {
+            throw new Error("canary work CWD failed");
+          },
+          async prompt() {
+            return { message: "w", stopReason: "end_turn" as const, updates: [] };
+          },
+          cancel() {},
+        },
+        child: {},
+        executable: process.execPath,
+        args: ["acp", "--pure"],
+        env: {},
+        home: options.isolatedHome ?? "/tmp/w",
+        async close() {},
+      } as unknown as OpenCodeAcpHandle;
+    },
+  });
+
+  await assert.rejects(adapter.start(), /EACCES|permission denied/i);
+  assert.ok(adapter.getRetainedHomes().includes(workerHome));
+
+  await chmod(parent, 0o700).catch(() => undefined);
+  await rm(parent, { recursive: true, force: true }).catch(() => undefined);
+});
+
+test("ensureWorkerHome cancellation home deletion failure surfaces cleanup error and retains home", async () => {
+  const parent = await mkdtemp(join(tmpdir(), "cswarm-oc-ro-"));
+  const workerHome = await mkdtemp(join(parent, "home-"));
+  let homePrepared: (() => void) | undefined;
+  const prepareGate = new Promise<void>((r) => {
+    homePrepared = r;
+  });
+
+  const adapter = new OpenCodeListenerModel({
+    cwd: parent,
+    allowMissingAuth: true,
+    prepareHome: async () => {
+      homePrepared?.();
+      await new Promise((r) => setTimeout(r, 15));
+      await chmod(parent, 0o400);
+      return workerHome;
+    },
+    open: async (options) => {
+      return {
+        session: {
+          async enablePromptsAfterCanary() {},
+          async openWorkCwd() {},
+          async prompt() {
+            return { message: "w", stopReason: "end_turn" as const, updates: [] };
+          },
+          cancel() {},
+        },
+        child: {},
+        executable: process.execPath,
+        args: ["acp", "--pure"],
+        env: {},
+        home: options.isolatedHome ?? "/tmp/w",
+        async close() {},
+      } as unknown as OpenCodeAcpHandle;
+    },
+  });
+
+  const startPromise = adapter.start();
+  await prepareGate;
+  const closePromise = adapter.close();
+
+  await assert.rejects(startPromise, /EACCES|permission denied/i);
+  await closePromise.catch(() => undefined);
+  assert.ok(adapter.getRetainedHomes().includes(workerHome));
+
+  await chmod(parent, 0o700).catch(() => undefined);
+  await rm(parent, { recursive: true, force: true }).catch(() => undefined);
+});
+
 test("allowMissingAuth is explicit — not implied by fake open alone", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "cswarm-oc-worker-"));
   const records: Parameters<typeof fakeOpen>[0] = [];

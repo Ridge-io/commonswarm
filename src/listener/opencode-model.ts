@@ -318,7 +318,7 @@ export class OpenCodeListenerModel implements ListenerModel {
     try {
       await handle.close();
       if (this.workerHome === home) this.workerHome = null;
-      await releaseOpenCodeHome(home, instanceId).catch(() => undefined);
+      await releaseOpenCodeHome(home, instanceId);
     } catch (e) {
       if (this.workerHome === home) this.workerHome = null;
       this.retainedHomes.push(home);
@@ -327,11 +327,11 @@ export class OpenCodeListenerModel implements ListenerModel {
 
     if (closeErr) {
       pending.markSettled(closeErr);
-      throw closeErr;
+    } else {
+      pending.markSettled();
     }
 
-    const finalErr = causeErr ?? new AcpHostError("cancelled_during_open", "listener model cancelled during open");
-    pending.markSettled();
+    const finalErr = closeErr ?? causeErr ?? new AcpHostError("cancelled_during_open", "listener model cancelled during open");
     throw finalErr;
   }
 
@@ -427,9 +427,15 @@ export class OpenCodeListenerModel implements ListenerModel {
     } catch (error) {
       this.workerHome = null;
       this.pendingOpens.delete(home);
-      await releaseOpenCodeHome(home, this.instanceId);
-      pending.markSettled();
-      throw error;
+      let finalErr = error;
+      try {
+        await releaseOpenCodeHome(home, this.instanceId);
+      } catch (relErr) {
+        this.retainedHomes.push(home);
+        finalErr = relErr;
+      }
+      pending.markSettled(finalErr);
+      throw finalErr;
     }
     return { home, pending };
   }

@@ -243,7 +243,13 @@ function parseControlRequest(raw: string): ControlRequest {
 }
 
 function writeResponse(socket: Socket, response: ControlResponse): void {
-  socket.end(`${JSON.stringify(response)}\n`);
+  if (socket.writable) {
+    try {
+      socket.end(`${JSON.stringify(response)}\n`);
+    } catch {
+      socket.destroy();
+    }
+  }
 }
 
 async function startupLock(
