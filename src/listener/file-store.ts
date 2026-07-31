@@ -319,6 +319,73 @@ export function newObservedNoteRecord(input: {
   };
 }
 
+/**
+ * Strict write-side gate for durable effects. Inspects the ORIGINAL caller
+ * object before any serialization: JSON.stringify silently drops non-enumerable,
+ * symbol-keyed, inherited, accessor, and toJSON-hidden extras, so each of those
+ * shapes is rejected here instead. Requires a plain v2 data object and returns
+ * an explicit canonical v2 projection so the caller object is never written.
+ */
+function serializeEffectRecord(record: ListenerEffectRecord): string {
+  if (!record || typeof record !== "object" || Array.isArray(record)) {
+    throw new Error("listener effect must be a plain data object");
+  }
+  const prototype = Object.getPrototypeOf(record);
+  if (prototype !== Object.prototype && prototype !== null) {
+    throw new Error("listener effect must be a plain data object");
+  }
+  for (const key of Reflect.ownKeys(record)) {
+    const descriptor = Object.getOwnPropertyDescriptor(record, key);
+    if (descriptor === undefined || !("value" in descriptor)) {
+      throw new Error("listener effect field is an accessor");
+    }
+    if (!descriptor.enumerable) {
+      throw new Error("listener effect field is not enumerable");
+    }
+    if (typeof key !== "string") {
+      throw new Error("listener effect has a non-string field key");
+    }
+    if (!V2_EFFECT_KEYS.has(key)) {
+      throw new Error(`listener effect has an unknown field: ${key}`);
+    }
+    // No nested objects or functions: serialization must not be able to hide
+    // or transform a field value before the parse validator sees it.
+    if (
+      descriptor.value !== null &&
+      typeof descriptor.value !== "string" &&
+      typeof descriptor.value !== "number" &&
+      typeof descriptor.value !== "boolean"
+    ) {
+      throw new Error("listener effect field must be a primitive value");
+    }
+  }
+  if (Reflect.ownKeys(record).length !== V2_EFFECT_KEYS.size) {
+    throw new Error("listener effect is missing schema fields");
+  }
+  if (record.version !== 2 || record.effectOrdinal !== 0) {
+    throw new Error("listener effect must be a version-2 record");
+  }
+  // Build and serialize the canonical projection; never the caller object.
+  return JSON.stringify({
+    version: 2,
+    signalId: record.signalId,
+    signalKind: record.signalKind,
+    effectOrdinal: 0,
+    commandId: record.commandId,
+    askBody: record.askBody,
+    askUntil: record.askUntil,
+    senderOwnerRelation: record.senderOwnerRelation,
+    state: record.state,
+    promptAttempts: record.promptAttempts,
+    postAttempts: record.postAttempts,
+    replyBody: record.replyBody,
+    replyTruncated: record.replyTruncated,
+    replySignalId: record.replySignalId,
+    failureCode: record.failureCode,
+    updatedAt: record.updatedAt,
+  });
+}
+
 /** One secure atomic file per immutable signal effect. */
 export class FileListenerEffectStore implements ListenerEffectStore {
   readonly instanceDirectory: string;
@@ -348,8 +415,8 @@ export class FileListenerEffectStore implements ListenerEffectStore {
   }
 
   async write(record: ListenerEffectRecord): Promise<void> {
+    const serialized = serializeEffectRecord(record);
     const id = this.checkedId(record.signalId);
-    const serialized = JSON.stringify(record);
     parseListenerEffectRecord(serialized, id);
     if (Buffer.byteLength(serialized, "utf8") > MAX_EFFECT_BYTES) {
       throw new Error("listener effect is too large");

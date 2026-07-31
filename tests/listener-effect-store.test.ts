@@ -145,6 +145,28 @@ function tagged(
   return { ...record, [key]: value } as unknown as ListenerEffectRecord;
 }
 
+async function forbidStore(
+  prefix: string,
+): Promise<{ store: FileListenerEffectStore; path: string }> {
+  const root = await mkdtemp(join(tmpdir(), prefix));
+  const store = new FileListenerEffectStore({
+    profileId: "profile-test",
+    workspaceId: "11111111-1111-4111-8111-111111111111",
+    principalId: "22222222-2222-4222-8222-222222222222",
+    stateDirectory: root,
+  });
+  const path = join(store.instanceDirectory, "effects", `${SIGNAL_ID}.json`);
+  return { store, path };
+}
+
+async function assertNoFile(path: string): Promise<void> {
+  const info = await stat(path).catch((error: NodeJS.ErrnoException) => {
+    assert.equal(error.code, "ENOENT");
+    return null;
+  });
+  assert.equal(info, null);
+}
+
 const malformed = /stored listener effect is malformed/;
 
 /** Representative sensitive fields that must never enter an effect record. */
@@ -375,31 +397,124 @@ test("an on-disk file with a forbidden extra fails on read for v1 and v2", async
 });
 
 test("a rejected write with a forbidden extra creates no file for v1 and v2", async () => {
-  const root = await mkdtemp(join(tmpdir(), "cswarm-effect-forbid-write-"));
-  const store = new FileListenerEffectStore({
-    profileId: "profile-test",
-    workspaceId: "11111111-1111-4111-8111-111111111111",
-    principalId: "22222222-2222-4222-8222-222222222222",
-    stateDirectory: root,
-  });
-  const path = join(store.instanceDirectory, "effects", `${SIGNAL_ID}.json`);
+  const { store, path } = await forbidStore("cswarm-effect-forbid-write-");
   for (const [key, value] of forbiddenExtras) {
     await assert.rejects(
       () => store.write(tagged(v1Row(), key, value)),
-      malformed,
+      /listener effect/,
       `v1 extra ${key} must fail on write`,
     );
   }
   for (const [key, value] of forbiddenExtras) {
     await assert.rejects(
       () => store.write(tagged(v2AskRow(), key, value)),
-      malformed,
+      /listener effect/,
       `v2 extra ${key} must fail on write`,
     );
   }
-  const info = await stat(path).catch((error: NodeJS.ErrnoException) => {
-    assert.equal(error.code, "ENOENT");
-    return null;
-  });
-  assert.equal(info, null);
+  await assertNoFile(path);
+});
+
+test("hidden extras that JSON.stringify would erase cannot reach disk", async () => {
+  const { store, path } = await forbidStore("cswarm-effect-hidden-");
+  const cases: Array<{
+    name: string;
+    build: () => object;
+    hiddenFrom: ((json: string) => boolean) | null;
+  }> = [
+    {
+      name: "non-enumerable own extra",
+      hiddenFrom: (json) => !json.includes("listenerBearer"),
+      build: () => {
+        const record = v2AskRow();
+        Object.defineProperty(record, "listenerBearer", {
+          enumerable: false,
+          configurable: true,
+          value: "sentinel",
+        });
+        return record;
+      },
+    },
+    {
+      name: "symbol-keyed extra",
+      hiddenFrom: (json) => !json.includes("sentinel"),
+      build: () => {
+        const record = v2AskRow() as unknown as Record<PropertyKey, unknown>;
+        record[Symbol.for("listenerBearer")] = "sentinel";
+        return record as unknown as object;
+      },
+    },
+    {
+      name: "custom prototype with inherited extra",
+      hiddenFrom: (json) => !json.includes("listenerBearer"),
+      build: () => Object.assign(
+        Object.create({ listenerBearer: "sentinel" }),
+        v2AskRow(),
+      ),
+    },
+    {
+      name: "accessor field",
+      hiddenFrom: (json) => !json.includes("sentinel"),
+      build: () => {
+        const record = v2AskRow();
+        Object.defineProperty(record, "askBody", {
+          enumerable: true,
+          configurable: true,
+          get: () => "What are you working on?",
+        });
+        return record;
+      },
+    },
+    {
+      name: "toJSON method",
+      hiddenFrom: (json) => !json.includes("sentinel"),
+      build: () => {
+        const record = v2AskRow();
+        Object.defineProperty(record, "toJSON", {
+          enumerable: true,
+          configurable: true,
+          value: () => JSON.parse(JSON.stringify(v2AskRow())),
+        });
+        return record;
+      },
+    },
+    {
+      name: "ordinary unknown extra",
+      hiddenFrom: null,
+      build: () => ({ ...v2AskRow(), lease_id: "lease" }),
+    },
+  ];
+  for (const { name, build, hiddenFrom } of cases) {
+    const candidate = build();
+    if (hiddenFrom) {
+      assert.ok(
+        hiddenFrom(JSON.stringify(candidate)),
+        `${name}: control — JSON.stringify must not surface the extra`,
+      );
+    }
+    await assert.rejects(
+      () => store.write(candidate as unknown as ListenerEffectRecord),
+      /listener effect/,
+      `${name}: hidden extra must fail on write`,
+    );
+    await assertNoFile(path);
+  }
+});
+
+test("a valid version-1 record is rejected on write, never persisted", async () => {
+  const { store, path } = await forbidStore("cswarm-effect-v1write-");
+  await assert.rejects(
+    () => store.write(v1Row() as unknown as ListenerEffectRecord),
+    /listener effect/,
+    "a version-1 write must be rejected",
+  );
+  await assertNoFile(path);
+});
+
+test("a null-prototype plain record is an allowed write shape", async () => {
+  const { store } = await forbidStore("cswarm-effect-nullproto-");
+  const bare = Object.create(null);
+  Object.assign(bare, v2AskRow());
+  await store.write(bare as unknown as ListenerEffectRecord);
+  assert.deepEqual(await store.read(SIGNAL_ID), v2AskRow());
 });
