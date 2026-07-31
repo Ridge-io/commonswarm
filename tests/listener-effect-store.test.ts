@@ -518,3 +518,40 @@ test("a null-prototype plain record is an allowed write shape", async () => {
   await store.write(bare as unknown as ListenerEffectRecord);
   assert.deepEqual(await store.read(SIGNAL_ID), v2AskRow());
 });
+
+test("write-boundary failures use one generic message and echo no key or value", async () => {
+  const { store, path } = await forbidStore("cswarm-effect-generic-");
+  const sentinelKey = "sentinel_bearer_9f3a1c";
+  const sentinelValue = "secret-sentinel-value-77";
+  const hidden = v2AskRow();
+  Object.defineProperty(hidden, sentinelKey, {
+    enumerable: false,
+    configurable: true,
+    value: sentinelValue,
+  });
+  const cases: object[] = [
+    { ...v2AskRow(), [sentinelKey]: sentinelValue },
+    hidden,
+  ];
+  const messages: string[] = [];
+  for (const candidate of cases) {
+    await assert.rejects(
+      () => store.write(candidate as unknown as ListenerEffectRecord),
+      (error: Error) => {
+        assert.equal(error.message, "listener effect write rejected");
+        assert.ok(
+          !error.message.includes(sentinelKey) &&
+            !error.message.includes(sentinelValue),
+          "the rejection must not echo the attacker-controlled key or value",
+        );
+        messages.push(error.message);
+        return true;
+      },
+    );
+  }
+  assert.deepEqual(messages, [
+    "listener effect write rejected",
+    "listener effect write rejected",
+  ]);
+  await assertNoFile(path);
+});

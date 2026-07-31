@@ -320,6 +320,14 @@ export function newObservedNoteRecord(input: {
 }
 
 /**
+ * Generic bounded write-gate rejection: never echo a caller-controlled key,
+ * value, or capability. A malicious extra key name can itself carry a secret.
+ */
+function rejectWrite(): never {
+  throw new Error("listener effect write rejected");
+}
+
+/**
  * Strict write-side gate for durable effects. Inspects the ORIGINAL caller
  * object before any serialization: JSON.stringify silently drops non-enumerable,
  * symbol-keyed, inherited, accessor, and toJSON-hidden extras, so each of those
@@ -328,25 +336,25 @@ export function newObservedNoteRecord(input: {
  */
 function serializeEffectRecord(record: ListenerEffectRecord): string {
   if (!record || typeof record !== "object" || Array.isArray(record)) {
-    throw new Error("listener effect must be a plain data object");
+    rejectWrite();
   }
   const prototype = Object.getPrototypeOf(record);
   if (prototype !== Object.prototype && prototype !== null) {
-    throw new Error("listener effect must be a plain data object");
+    rejectWrite();
   }
   for (const key of Reflect.ownKeys(record)) {
     const descriptor = Object.getOwnPropertyDescriptor(record, key);
     if (descriptor === undefined || !("value" in descriptor)) {
-      throw new Error("listener effect field is an accessor");
+      rejectWrite();
     }
     if (!descriptor.enumerable) {
-      throw new Error("listener effect field is not enumerable");
+      rejectWrite();
     }
     if (typeof key !== "string") {
-      throw new Error("listener effect has a non-string field key");
+      rejectWrite();
     }
     if (!V2_EFFECT_KEYS.has(key)) {
-      throw new Error(`listener effect has an unknown field: ${key}`);
+      rejectWrite();
     }
     // No nested objects or functions: serialization must not be able to hide
     // or transform a field value before the parse validator sees it.
@@ -356,14 +364,14 @@ function serializeEffectRecord(record: ListenerEffectRecord): string {
       typeof descriptor.value !== "number" &&
       typeof descriptor.value !== "boolean"
     ) {
-      throw new Error("listener effect field must be a primitive value");
+      rejectWrite();
     }
   }
   if (Reflect.ownKeys(record).length !== V2_EFFECT_KEYS.size) {
-    throw new Error("listener effect is missing schema fields");
+    rejectWrite();
   }
   if (record.version !== 2 || record.effectOrdinal !== 0) {
-    throw new Error("listener effect must be a version-2 record");
+    rejectWrite();
   }
   // Build and serialize the canonical projection; never the caller object.
   return JSON.stringify({
