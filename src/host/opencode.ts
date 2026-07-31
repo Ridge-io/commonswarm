@@ -14,6 +14,7 @@ import {
   execFile,
   type ChildProcessWithoutNullStreams,
 } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import {
   accessSync,
   constants as fsConstants,
@@ -46,6 +47,18 @@ import {
   type HostSessionEvents,
   type PermissionCallback,
 } from "./types.js";
+
+/** Ownership marker written into every managed OpenCode home. */
+export const OPENCODE_HOME_OWNER_FILE = ".cswarm-opencode-owner.json";
+
+export type OpenCodeHomeOwner = {
+  version: 1;
+  pid: number;
+  uid: number;
+  instanceId: string;
+  role: "worker" | "isolated" | "ephemeral";
+  createdAt: string;
+};
 
 export type OpenCodeAcpOpenOptions = {
   cwd: string;
@@ -90,10 +103,22 @@ export type OpenCodeAcpHandle = {
 };
 
 const MAX_OPENCODE_AUTH_BYTES = 256 * 1024;
-const OPENCODE_HOME_PREFIX = "cswarm-opencode-home-";
+export const OPENCODE_HOME_PREFIX = "cswarm-opencode-home-";
 const CHILD_EXIT_WAIT_MS = 3_000;
 const CHILD_KILL_WAIT_MS = 1_000;
+/** Orphans without a live owner may be swept after this age. */
 const STALE_HOME_MAX_AGE_MS = 60 * 60 * 1000;
+
+/** True when signal 0 reaches pid (process exists and is killable by us). */
+export function isProcessAlive(pid: number): boolean {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 /** Resolve bare or relative executable to one absolute realpath (same for probe + spawn). */
 export function resolveOpenCodeExecutable(
@@ -110,7 +135,10 @@ export function resolveOpenCodeExecutable(
     try {
       return realpathSync(abs);
     } catch {
-      return abs;
+      throw new AcpHostError(
+        "executable_missing",
+        `could not realpath opencode executable: ${abs}`,
+      );
     }
   }
   const pathValue = pathEnv ?? process.env.PATH ?? "";
@@ -119,15 +147,100 @@ export function resolveOpenCodeExecutable(
     const candidate = join(dir, executable);
     try {
       accessSync(candidate, fsConstants.X_OK);
-      return realpathSync(candidate);
-    } catch {
-      // try next
+      try {
+        return realpathSync(candidate);
+      } catch {
+        throw new AcpHostError(
+          "executable_missing",
+          `could not realpath opencode executable: ${candidate}`,
+        );
+      }
+    } catch (err) {
+      if (err instanceof AcpHostError) throw err;
+      // try next PATH entry
     }
   }
   throw new AcpHostError(
     "executable_missing",
     `opencode executable not found on PATH: ${executable}`,
   );
+}
+
+export function buildOpenCodeHomeOwner(options: {
+  role: OpenCodeHomeOwner["role"];
+  instanceId?: string;
+  pid?: number;
+  now?: () => number;
+}): OpenCodeHomeOwner {
+  const uid = typeof process.getuid === "function" ? process.getuid() : 0;
+  return {
+    version: 1,
+    pid: options.pid ?? process.pid,
+    uid,
+    instanceId: options.instanceId ?? randomUUID(),
+    role: options.role,
+    createdAt: new Date((options.now ?? Date.now)()).toISOString(),
+  };
+}
+
+export async function writeOpenCodeHomeOwner(
+  home: string,
+  owner: OpenCodeHomeOwner,
+): Promise<void> {
+  const path = join(home, OPENCODE_HOME_OWNER_FILE);
+  await writeFile(path, `${JSON.stringify(owner)}\n`, {
+    flag: "wx",
+    mode: 0o600,
+  });
+  await chmod(path, 0o600);
+}
+
+export async function readOpenCodeHomeOwner(
+  home: string,
+): Promise<OpenCodeHomeOwner | null> {
+  const path = join(home, OPENCODE_HOME_OWNER_FILE);
+  let raw: string;
+  try {
+    raw = await readFile(path, "utf8");
+  } catch {
+    return null;
+  }
+  try {
+    const value = JSON.parse(raw) as Partial<OpenCodeHomeOwner>;
+    if (
+      value.version !== 1 ||
+      !Number.isSafeInteger(value.pid) ||
+      !Number.isSafeInteger(value.uid) ||
+      typeof value.instanceId !== "string" ||
+      !value.instanceId ||
+      (value.role !== "worker" &&
+        value.role !== "isolated" &&
+        value.role !== "ephemeral") ||
+      typeof value.createdAt !== "string"
+    ) {
+      return null;
+    }
+    return value as OpenCodeHomeOwner;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Delete a home only when this process still owns it (matching instanceId)
+ * or the marker is absent for a home we just created and still hold.
+ */
+export async function releaseOpenCodeHome(
+  home: string,
+  instanceId: string,
+): Promise<void> {
+  if (!isAbsolute(home)) return;
+  const owner = await readOpenCodeHomeOwner(home);
+  if (owner && owner.instanceId !== instanceId) {
+    // Another process's home — never touch.
+    return;
+  }
+  await rm(home, { recursive: true, force: true }).catch(() => undefined);
 }
 
 /** Parse `opencode --version` stdout. Measured target is exactly 1.18.10. */
@@ -295,6 +408,8 @@ export async function prepareOpenCodeIsolatedHome(options: {
   home?: string;
   /** Explicit test-only; production must not set this. */
   allowMissingAuth?: boolean;
+  /** Ownership/liveness metadata so sweep never kills a live listener home. */
+  owner?: OpenCodeHomeOwner;
 }): Promise<string> {
   const home = options.home ??
     await mkdtemp(join(tmpdir(), OPENCODE_HOME_PREFIX));
@@ -340,6 +455,9 @@ export async function prepareOpenCodeIsolatedHome(options: {
       await writeFile(destAuth, authBytes, { flag: "wx", mode: 0o600 });
       await chmod(destAuth, 0o600);
     }
+    const owner = options.owner ??
+      buildOpenCodeHomeOwner({ role: "ephemeral" });
+    await writeOpenCodeHomeOwner(home, owner);
     return home;
   } catch (error) {
     if (!options.home) {
@@ -447,33 +565,79 @@ export async function assertOpenCodeEffectiveConfig(options: {
       );
     }
     const map = permission as Record<string, unknown>;
-    // Hostile project wants allow; we must not observe allow on bash/*.
-    if (map.bash === "allow" || map["*"] === "allow") {
-      throw new AcpHostError(
-        "opencode_project_config_active",
-        "effective OpenCode config still merges project allow permissions; OPENCODE_DISABLE_PROJECT_CONFIG failed",
-      );
-    }
-    if (map.bash !== "ask" && map["*"] !== "ask") {
-      throw new AcpHostError(
-        "opencode_config_probe_failed",
-        "effective OpenCode config lacks forced-ask permissions",
-      );
-    }
+    assertForcedAskPermissionMap(map);
     return { permission: map };
   } finally {
     await rm(hostile, { recursive: true, force: true }).catch(() => undefined);
   }
 }
 
-/** Remove stale cswarm-opencode-home-* dirs under tmpdir (auth-copy safety net). */
+/**
+ * Every OPENCODE_FORCED_PERMISSION_TOOLS entry must resolve to ask:
+ * explicit ask, or (non-wildcard only) missing with wildcard ask and no allow.
+ */
+export function assertForcedAskPermissionMap(
+  map: Record<string, unknown>,
+): void {
+  for (const tool of OPENCODE_FORCED_PERMISSION_TOOLS) {
+    const value = map[tool];
+    if (value === "allow") {
+      throw new AcpHostError(
+        "opencode_project_config_active",
+        `effective OpenCode config still allows tool ${tool}; OPENCODE_DISABLE_PROJECT_CONFIG failed`,
+      );
+    }
+    if (tool === "*") {
+      if (value !== "ask") {
+        throw new AcpHostError(
+          "opencode_config_probe_failed",
+          "effective OpenCode config missing forced-ask wildcard",
+        );
+      }
+      continue;
+    }
+    const star = map["*"];
+    const effective = value === undefined || value === null ? star : value;
+    if (effective !== "ask") {
+      throw new AcpHostError(
+        "opencode_config_probe_failed",
+        `effective OpenCode config lacks forced-ask for tool ${tool}`,
+      );
+    }
+  }
+  // Critical tools called out by audit — must not be allow even if map is odd.
+  for (const critical of ["bash", "write", "edit", "execute", "*"] as const) {
+    const value = map[critical];
+    const star = map["*"];
+    const effective = critical === "*"
+      ? value
+      : (value === undefined || value === null ? star : value);
+    if (effective !== "ask") {
+      throw new AcpHostError(
+        "opencode_config_probe_failed",
+        `critical tool ${critical} is not forced-ask`,
+      );
+    }
+  }
+}
+
+/**
+ * Remove only provably dead OpenCode homes under tmpdir.
+ * Never age-deletes a home whose owner PID is still alive.
+ */
 export async function sweepStaleOpenCodeHomes(options?: {
   maxAgeMs?: number;
   now?: number;
+  /** Inject for tests: override process liveness. */
+  isAlive?: (pid: number) => boolean;
+  /** Inject for tests: scan root (default tmpdir). */
+  root?: string;
 }): Promise<number> {
   const maxAgeMs = options?.maxAgeMs ?? STALE_HOME_MAX_AGE_MS;
   const now = options?.now ?? Date.now();
-  const root = tmpdir();
+  const alive = options?.isAlive ?? isProcessAlive;
+  const root = options?.root ?? tmpdir();
+  const selfUid = typeof process.getuid === "function" ? process.getuid() : null;
   let removed = 0;
   let entries: string[];
   try {
@@ -487,6 +651,30 @@ export async function sweepStaleOpenCodeHomes(options?: {
     try {
       const st = await lstat(full);
       if (!st.isDirectory() || st.isSymbolicLink()) continue;
+      if (
+        selfUid !== null &&
+        typeof st.uid === "number" &&
+        st.uid !== selfUid
+      ) {
+        continue; // never touch another user's dir
+      }
+      if ((Number(st.mode) & 0o777) !== 0o700) {
+        // Unexpected mode — leave alone rather than rm -rf.
+        continue;
+      }
+      const owner = await readOpenCodeHomeOwner(full);
+      if (owner) {
+        if (selfUid !== null && owner.uid !== selfUid) continue;
+        if (alive(owner.pid)) {
+          // Healthy long-lived listener home — never age-delete.
+          continue;
+        }
+        // Owner process is dead: safe to reclaim regardless of age.
+        await rm(full, { recursive: true, force: true });
+        removed += 1;
+        continue;
+      }
+      // No ownership marker: only reclaim after age (legacy/orphan).
       if (now - st.mtimeMs < maxAgeMs) continue;
       await rm(full, { recursive: true, force: true });
       removed += 1;

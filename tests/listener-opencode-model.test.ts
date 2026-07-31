@@ -127,6 +127,31 @@ test("OpenCode worker canary denies on empty cwd then openWorkCwd retargets", as
   assert.equal(records[0]?.closed, true);
 });
 
+test("ensureWorker canary failure abandons workerHome without later close()", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "cswarm-oc-worker-"));
+  let capturedHome: string | undefined;
+  const adapter = new OpenCodeListenerModel({
+    cwd,
+    allowMissingAuth: true,
+    open: async (options) => {
+      capturedHome = options.isolatedHome;
+      throw new Error("canary open failed");
+    },
+  });
+  await assert.rejects(() => adapter.start(), /canary open failed/);
+  assert.equal(typeof capturedHome, "string");
+  await assert.rejects(() => stat(capturedHome!), /ENOENT/);
+  // Second start can recreate; no stranded auth home from first failure.
+  const okRecords: Parameters<typeof fakeOpen>[0] = [];
+  const adapter2 = new OpenCodeListenerModel({
+    cwd,
+    allowMissingAuth: true,
+    open: fakeOpen(okRecords),
+  });
+  await adapter2.start();
+  await adapter2.close();
+});
+
 test("OpenCode cross-owner turns get fresh homes/cwds and always deny tools", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "cswarm-oc-worker-"));
   const records: Parameters<typeof fakeOpen>[0] = [];

@@ -19,6 +19,7 @@ Version: `1.18.10`
 | unset (causal control) | `allow` | `allow` |
 
 - Sentinel file created: **false**
+- Every forced tool (`bash`, `write`, `edit`, `execute`, `*`, and the full OPENCODE_FORCED_PERMISSION_TOOLS set) resolves to **ask** under disable (re-probed 2026-07-31 remediation).
 - Conclusion: project allow is disabled only with `OPENCODE_DISABLE_PROJECT_CONFIG=1`. A private home alone is **not** sufficient (control arm merges allow).
 
 ## Machine JSON

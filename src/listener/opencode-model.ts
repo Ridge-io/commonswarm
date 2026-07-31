@@ -1,9 +1,12 @@
+import { randomUUID } from "node:crypto";
 import { chmod, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  buildOpenCodeHomeOwner,
   openOpenCodeAcpSession,
   prepareOpenCodeIsolatedHome,
+  releaseOpenCodeHome,
   type OpenCodeAcpHandle,
   type OpenCodeAcpOpenOptions,
 } from "../host/opencode.js";
@@ -56,18 +59,20 @@ function allowOnceOrDeny(request: PermissionRequest): PermissionDecision {
  * home + empty cwd and are tracked in an in-flight set until closed.
  * Provider code never interprets ownership.
  *
- * Steady-state `--permissions allow` only selects allow_once *after* the deny
- * canary; the canary itself never proves allow mode.
+ * Worker homes carry PID/instance ownership so age-based sweep never kills a
+ * live listener. Canary/open failure synchronously abandons workerHome.
  */
 export class OpenCodeListenerModel implements ListenerModel {
   private readonly openSession: OpenOpenCodeSession;
   private readonly permissionMode: ListenerPermissionMode;
+  private readonly instanceId = randomUUID();
   private worker: OpenCodeAcpHandle | null = null;
   private workerHome: string | null = null;
   /** All in-flight isolated handles (concurrent cross-owner asks). */
   private readonly inFlight = new Set<OpenCodeAcpHandle>();
   private workerCanary = true;
   private closed = false;
+  private exitCleanupInstalled = false;
 
   constructor(private readonly options: OpenCodeListenerModelOptions) {
     this.openSession = options.open ?? openOpenCodeAcpSession;
@@ -76,6 +81,7 @@ export class OpenCodeListenerModel implements ListenerModel {
 
   /** Initialize worker + deny canary before the listener reports ready. */
   async start(): Promise<void> {
+    this.installExitCleanup();
     await this.ensureWorker();
   }
 
@@ -112,6 +118,7 @@ export class OpenCodeListenerModel implements ListenerModel {
   async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
+    this.removeExitCleanup();
     this.cancel();
     const handles = [
       this.worker,
@@ -120,17 +127,47 @@ export class OpenCodeListenerModel implements ListenerModel {
     this.worker = null;
     this.inFlight.clear();
     await Promise.all(handles.map((handle) => handle.close().catch(() => undefined)));
-    if (this.workerHome) {
-      const home = this.workerHome;
-      this.workerHome = null;
-      await rm(home, { recursive: true, force: true }).catch(() => undefined);
-    }
+    await this.abandonWorkerHome();
   }
+
+  /** Drop workerHome synchronously on failure so auth copies never strand. */
+  private async abandonWorkerHome(): Promise<void> {
+    const home = this.workerHome;
+    this.workerHome = null;
+    if (!home) return;
+    await releaseOpenCodeHome(home, this.instanceId);
+  }
+
+  private installExitCleanup(): void {
+    if (this.exitCleanupInstalled) return;
+    this.exitCleanupInstalled = true;
+    // SIGTERM/SIGINT only — never beforeExit (that fires on idle loops during
+    // startup and would tear down a healthy long-lived listener).
+    process.on("SIGTERM", this.onProcessSignal);
+    process.on("SIGINT", this.onProcessSignal);
+  }
+
+  private removeExitCleanup(): void {
+    if (!this.exitCleanupInstalled) return;
+    this.exitCleanupInstalled = false;
+    process.off("SIGTERM", this.onProcessSignal);
+    process.off("SIGINT", this.onProcessSignal);
+  }
+
+  private readonly onProcessSignal = (): void => {
+    void this.close();
+  };
 
   private async ensureWorkerHome(): Promise<string> {
     if (this.workerHome) return this.workerHome;
+    const owner = buildOpenCodeHomeOwner({
+      role: "worker",
+      instanceId: this.instanceId,
+      pid: process.pid,
+    });
     const home = await prepareOpenCodeIsolatedHome({
       env: this.options.env ?? process.env,
+      owner,
       ...(this.options.model ? { model: this.options.model } : {}),
       ...(this.options.allowMissingAuth === true
         ? { allowMissingAuth: true }
@@ -144,7 +181,7 @@ export class OpenCodeListenerModel implements ListenerModel {
     if (this.closed) throw new Error("listener model is closed");
     if (this.worker) return this.worker;
     this.workerCanary = true;
-    const home = await this.ensureWorkerHome();
+    let home: string | null = null;
     // Canary never runs inside the real repo — empty temp cwd only.
     const canaryCwd = await mkdtemp(join(tmpdir(), "cswarm-opencode-canary-"));
     await chmod(canaryCwd, 0o700);
@@ -154,6 +191,7 @@ export class OpenCodeListenerModel implements ListenerModel {
         : allowOnceOrDeny(request);
     let handle: OpenCodeAcpHandle | null = null;
     try {
+      home = await this.ensureWorkerHome();
       handle = await this.openSession({
         cwd: canaryCwd,
         permissionCallback,
@@ -175,6 +213,9 @@ export class OpenCodeListenerModel implements ListenerModel {
       return handle;
     } catch (error) {
       await handle?.close().catch(() => undefined);
+      // Canary/open failure must not leave an auth-bearing home behind even if
+      // the caller never invokes close().
+      await this.abandonWorkerHome();
       throw error;
     } finally {
       await rm(canaryCwd, { recursive: true, force: true }).catch(() => undefined);
@@ -188,11 +229,17 @@ export class OpenCodeListenerModel implements ListenerModel {
   private async promptIsolated(prompt: string): Promise<ListenerPromptResult> {
     const cwd = await mkdtemp(join(tmpdir(), "cswarm-opencode-cwd-"));
     await chmod(cwd, 0o700);
+    const isolatedInstanceId = randomUUID();
     let home: string | null = null;
     let handle: OpenCodeAcpHandle | null = null;
     try {
       home = await prepareOpenCodeIsolatedHome({
         env: this.options.env ?? process.env,
+        owner: buildOpenCodeHomeOwner({
+          role: "isolated",
+          instanceId: isolatedInstanceId,
+          pid: process.pid,
+        }),
         ...(this.options.model ? { model: this.options.model } : {}),
         ...(this.options.allowMissingAuth === true
           ? { allowMissingAuth: true }
@@ -219,7 +266,7 @@ export class OpenCodeListenerModel implements ListenerModel {
       await handle?.close().catch(() => undefined);
       await rm(cwd, { recursive: true, force: true }).catch(() => undefined);
       if (home) {
-        await rm(home, { recursive: true, force: true }).catch(() => undefined);
+        await releaseOpenCodeHome(home, isolatedInstanceId);
       }
     }
   }
