@@ -4,10 +4,11 @@
  * Pending access is the waiting room of a workspace: teammate invitations not yet
  * redeemed, and agent keys not yet used. Two surfaces render it — the rail's
  * Pending access details (desktop) and the Agents dialog section (the only
- * reachable one at mobile widths) — and a poll keeps it fresh while anything is
- * pending. One function builds the rows so the two lists can never disagree
- * about content, order, or wording; one predicate decides whether the poll
- * should run, so the cadence can never depend on which channel view is open.
+ * reachable one at mobile widths) — and a bounded workspace poll keeps it fresh,
+ * including discovery of access created by another browser. One function builds
+ * the rows so the two lists can never disagree about content, order, or wording;
+ * one predicate decides whether the poll should run, so the cadence can never
+ * depend on which channel view is open or what this browser already knows.
  *
  * Pure and I/O-free so the dashboard and its test drive the same decisions.
  */
@@ -72,22 +73,33 @@ export function pendingAccessRows(
 }
 
 /**
+ * True once the exact freshly-created teammate invitation is absent from the
+ * server's pending set. Other invitations cannot keep its one-use link alive.
+ */
+export function shouldRetireFreshInvite(
+  invitationId: string,
+  invites: PendingMemberInvite[],
+): boolean {
+  return (
+    invitationId.length > 0 &&
+    !invites.some((invitation) => invitation.invitationId === invitationId)
+  );
+}
+
+/**
  * Whether the pending-access poll should be running at all. Deliberately NOT a
- * function of the channel view: an empty workspace waiting on its first invite
- * (the no-agents view) is exactly the case that went stale when the cadence was
- * tied to the signal feed. The poll is cheap precisely because it stops the
- * moment nothing is pending.
+ * function of the channel view or current pending rows: a collaborator can add
+ * the first invite from another browser, so local zero is not proof that there
+ * is nothing to discover. The refresh gate supplies the slower idle cadence.
  */
 export function shouldPollPendingAccess(args: {
   sampleMode: boolean;
   activeWorkspaceId: string;
   visible: boolean;
-  hasPending: boolean;
 }): boolean {
   return (
     !args.sampleMode &&
     args.activeWorkspaceId.length > 0 &&
-    args.visible &&
-    args.hasPending
+    args.visible
   );
 }
