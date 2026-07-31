@@ -14,10 +14,9 @@ import {
   cloudTarget,
   commandEndpoint,
 } from "../src/cloud/config.js";
+import * as deliveryModule from "../src/cloud/delivery.js";
 import {
   DeliveryCommandClient,
-  DELIVERY_COMMAND_ID_PATTERN,
-  DELIVERY_COMMAND_ID_RE,
   DELIVERY_FAILED_TERMINAL_CODES,
   DeliveryHttpError,
   DeliveryProtocolError,
@@ -981,28 +980,48 @@ test("ack rejects an echo that does not repeat the requested signal id or outcom
   }
 });
 
-test("command id validator uses unexported private regex authority and exported pattern is string", async () => {
-  // 1. Exported pattern is string
-  assert.equal(typeof DELIVERY_COMMAND_ID_RE, "string");
-  assert.equal(typeof DELIVERY_COMMAND_ID_PATTERN, "string");
-  assert.equal(Object.isFrozen(DELIVERY_COMMAND_ID_RE), true);
+test("command-ID validator authority is unexported and strictly enforced via runtime controls", async () => {
+  // 1. Module-namespace assertion: no command-ID validator or pattern authority is exported
+  assert.equal("DELIVERY_COMMAND_ID_RE" in deliveryModule, false, "DELIVERY_COMMAND_ID_RE must not be exported");
+  assert.equal("DELIVERY_COMMAND_ID_PATTERN" in deliveryModule, false, "DELIVERY_COMMAND_ID_PATTERN must not be exported");
+  assert.equal("COMMAND_ID_VALIDATOR_RE" in deliveryModule, false, "COMMAND_ID_VALIDATOR_RE must not be exported");
+  assert.equal("checkedCommandId" in deliveryModule, false, "checkedCommandId must not be exported");
 
-  // 2. checkedCommandId uses unexported private validator and cannot be bypassed
+  // 2. Behavioral controls: valid command IDs pass, invalid command IDs reject
   const client = new DeliveryCommandClient(
     target,
     capturingFetch([], () => jsonResponse(200, claimBody())),
   );
-  await assert.rejects(
-    client.claimAgentInbox(claimRequest({ commandId: "invalid!" })),
-    (error: unknown) => {
-      assert.ok(error instanceof Error);
-      assert.equal(
-        (error as Error).message,
-        "a delivery command id must be 8..72 characters of [A-Za-z0-9_-]",
-      );
-      return true;
-    },
-  );
+
+  const valid8 = "a".repeat(8);
+  const valid72 = "a".repeat(72);
+  const res8 = await client.claimAgentInbox(claimRequest({ commandId: valid8 }));
+  assert.ok(res8);
+  const res72 = await client.claimAgentInbox(claimRequest({ commandId: valid72 }));
+  assert.ok(res72);
+
+  const invalidCases = [
+    ["too short", "a".repeat(7)],
+    ["too long", "a".repeat(73)],
+    ["special char !", "cmd_test!"],
+    ["spaces", "cmd test 123"],
+    ["empty string", ""],
+  ];
+
+  for (const [label, badId] of invalidCases) {
+    await assert.rejects(
+      client.claimAgentInbox(claimRequest({ commandId: badId })),
+      (error: unknown) => {
+        assert.ok(error instanceof Error, `${label}: expected Error`);
+        assert.equal(
+          (error as Error).message,
+          "a delivery command id must be 8..72 characters of [A-Za-z0-9_-]",
+        );
+        return true;
+      },
+      label,
+    );
+  }
 });
 
 test("delivery marker present as 0, 2, string, or null rejects; total absence remains false/false/null", async () => {

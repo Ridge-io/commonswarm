@@ -31,10 +31,6 @@ const DELIVERY_ACK_OUTCOMES = new Set<DeliveryOutcome>([
 export const DELIVERY_REQUEST_TIMEOUT_MS = 30_000;
 
 const COMMAND_ID_VALIDATOR_RE = /^[A-Za-z0-9_-]{8,72}$/;
-/** Mirrors the command edge's command_id pattern string (immutable representation). */
-export const DELIVERY_COMMAND_ID_PATTERN = "^[A-Za-z0-9_-]{8,72}$";
-/** Immutable string pattern representation (no mutable RegExp instance exported). */
-export const DELIVERY_COMMAND_ID_RE: string = Object.freeze("^[A-Za-z0-9_-]{8,72}$");
 
 const FAILED_TERMINAL_CODES_SET = new Set([
   "provider_refused",
