@@ -14,6 +14,22 @@ import {
   hasFreshInteractiveAuth,
   newestInteractiveAmrSeconds,
 } from "./fresh-auth.ts";
+import {
+  ACK_AGENT_DELIVERY_KIND,
+  ackAgentDelivery,
+  CLAIM_AGENT_INBOX_KIND,
+  claimAgentInbox,
+  DELIVERY_ACK_OUTCOMES,
+  DELIVERY_CAPABILITIES,
+  DELIVERY_CLAIM_DEFAULT_LIMIT,
+  DELIVERY_CLAIM_MAX_LIMIT,
+  DELIVERY_CLIENT_ERROR_CODES,
+  hydrateDeliveryRefs,
+  parseClaimLedger,
+  type AckAgentDeliveryCommand,
+  type ClaimAgentInboxCommand,
+  type DeliveryAckOutcome,
+} from "./durable-delivery.ts";
 // Supabase's edge graph cannot resolve the NodeNext `.js` specifiers in the
 // frozen TypeScript core. This checked-in bundle is regenerated directly from
 // src/protocol/index.ts by build:command-core; it is not a second implementation.
@@ -120,7 +136,13 @@ interface SignalRecord {
   created_at: string;
 }
 
-type ValidatedCommand = Command | ConnectCommand | SignalCommand;
+type DeliveryCommand = ClaimAgentInboxCommand | AckAgentDeliveryCommand;
+
+type ValidatedCommand =
+  | Command
+  | ConnectCommand
+  | SignalCommand
+  | DeliveryCommand;
 
 type WorkspaceRole = "owner" | "admin" | "member";
 
@@ -628,6 +650,8 @@ const COMMAND_KINDS = [
   "revoke_agent_token",
   "renew_agent_token",
   "post_signal",
+  CLAIM_AGENT_INBOX_KIND,
+  ACK_AGENT_DELIVERY_KIND,
 ] as const;
 const TASK_COMMAND_KINDS = [
   "create",
@@ -1130,6 +1154,85 @@ function validateCommand(
     return { ok: false, status: 400, reason: "unknown command kind" };
   }
 
+  if (cmd.kind === CLAIM_AGENT_INBOX_KIND) {
+    const optionalKeys = Object.hasOwn(cmd, "limit") ? ["limit"] : [];
+    const limit = Object.hasOwn(cmd, "limit")
+      ? cmd.limit
+      : DELIVERY_CLAIM_DEFAULT_LIMIT;
+    const valid = exactKeys(cmd, [
+      "kind",
+      "listener_instance_id",
+      ...optionalKeys,
+    ]) &&
+      typeof cmd.listener_instance_id === "string" &&
+      UUID_RE.test(cmd.listener_instance_id) &&
+      integer(limit, 1) &&
+      (limit as number) <= DELIVERY_CLAIM_MAX_LIMIT;
+    return valid
+      ? {
+        ok: true,
+        command: {
+          kind: "claim_agent_inbox",
+          listener_instance_id: (cmd.listener_instance_id as string)
+            .toLowerCase(),
+          limit: limit as number,
+        },
+      }
+      : {
+        ok: false,
+        status: 400,
+        reason: "claim_agent_inbox fields are malformed",
+      };
+  }
+
+  if (cmd.kind === ACK_AGENT_DELIVERY_KIND) {
+    const outcome = cmd.outcome;
+    const lastError = Object.hasOwn(cmd, "last_error_code")
+      ? cmd.last_error_code
+      : null;
+    const validOutcome = typeof outcome === "string" &&
+      (DELIVERY_ACK_OUTCOMES as readonly string[]).includes(outcome);
+    const failedTerminal = outcome === "failed_terminal";
+    const validError = failedTerminal
+      ? typeof lastError === "string" &&
+        DELIVERY_CLIENT_ERROR_CODES.has(lastError)
+      : lastError === null;
+    const valid = exactKeys(cmd, [
+      "kind",
+      "signal_id",
+      "lease_id",
+      "listener_instance_id",
+      "outcome",
+      "last_error_code",
+    ]) &&
+      typeof cmd.signal_id === "string" &&
+      UUID_RE.test(cmd.signal_id) &&
+      typeof cmd.lease_id === "string" &&
+      UUID_RE.test(cmd.lease_id) &&
+      typeof cmd.listener_instance_id === "string" &&
+      UUID_RE.test(cmd.listener_instance_id) &&
+      validOutcome &&
+      validError;
+    return valid
+      ? {
+        ok: true,
+        command: {
+          kind: "ack_agent_delivery",
+          signal_id: (cmd.signal_id as string).toLowerCase(),
+          lease_id: (cmd.lease_id as string).toLowerCase(),
+          listener_instance_id: (cmd.listener_instance_id as string)
+            .toLowerCase(),
+          outcome: outcome as DeliveryAckOutcome,
+          last_error_code: lastError as string | null,
+        },
+      }
+      : {
+        ok: false,
+        status: 400,
+        reason: "ack_agent_delivery fields are malformed",
+      };
+  }
+
   if (cmd.kind === "post_signal") {
     if (Object.hasOwn(cmd, "from")) {
       return {
@@ -1585,6 +1688,12 @@ function storedResponse(value: unknown): StoredResponse {
       : {}),
     ...(typeof response.revoked_at === "string"
       ? { revoked_at: response.revoked_at }
+      : {}),
+    ...(typeof response.signal_id === "string"
+      ? { signal_id: response.signal_id }
+      : {}),
+    ...(typeof response.outcome === "string"
+      ? { outcome: response.outcome }
       : {}),
     ...(record(response.signal) === null
       ? {}
@@ -5183,6 +5292,11 @@ async function handleTransaction(
     // refuses sibling/principal targets; this only opens the door to the check.
     const isAgentTokenRevoke =
       validation.command.kind === "revoke_agent_token";
+    // Durable delivery claim/ack are authorised by exact-recipient agent auth
+    // and the delivery lease capability, not by a mint-time scope string.
+    const isDeliveryCommand =
+      validation.command.kind === CLAIM_AGENT_INBOX_KIND ||
+      validation.command.kind === ACK_AGENT_DELIVERY_KIND;
     if (isRenewal && auth.agent === null) {
       await insertAudit(tx, {
         auth,
@@ -5195,10 +5309,23 @@ async function handleTransaction(
       });
       return { status: 403, body: { error: "forbidden" } };
     }
+    if (isDeliveryCommand && auth.agent === null) {
+      await insertAudit(tx, {
+        auth,
+        commandKind: kind,
+        workspaceId: route.workspaceId,
+        streamId: route.streamId,
+        outcome: "authz",
+        reason: "delivery_requires_agent_credential",
+        detail: ignoredIdentity,
+      });
+      return { status: 403, body: { error: "forbidden" } };
+    }
     if (
       auth.agent !== null &&
       !isRenewal &&
       !isAgentTokenRevoke &&
+      !isDeliveryCommand &&
       (
         (CONNECT_COMMAND_KINDS as readonly string[]).includes(
           validation.command.kind,
@@ -5292,9 +5419,42 @@ async function handleTransaction(
           streamId: route.streamId,
           outcome: matches ? "replayed" : "conflict",
           reason: matches ? null : "command_id_conflict",
+          // Never put lease ids or bodies in audit detail.
           detail: ignoredIdentity,
           hash,
         });
+        if (kind === CLAIM_AGENT_INBOX_KIND && auth.agent !== null) {
+          const ledger = parseClaimLedger(existing.response);
+          if (ledger === null) {
+            return {
+              status: 403,
+              body: { error: "delivery_unavailable" },
+            };
+          }
+          const deliveries = await hydrateDeliveryRefs(tx, {
+            workspaceId: route.workspaceId,
+            recipientPrincipalId: auth.agent.principal_id,
+            refs: ledger.delivery_refs,
+          });
+          if (deliveries === null) {
+            return {
+              status: 403,
+              body: { error: "delivery_unavailable" },
+            };
+          }
+          return {
+            status: 200,
+            body: {
+              status: "accepted",
+              capabilities: DELIVERY_CAPABILITIES,
+              deliveries,
+              pending_delivery_count: ledger.pending_delivery_count,
+              event_ids: [],
+              events: [],
+              min_client_version: minClientVersion,
+            },
+          };
+        }
         return matches
           ? replayResult(storedResponse(existing.response), kind)
           : { status: 409, body: { error: "command_id_conflict" } };
@@ -5462,6 +5622,176 @@ async function handleTransaction(
         body: {
           status: "accepted",
           ...signalResponse,
+          events: [],
+          min_client_version: minClientVersion,
+        },
+      };
+    }
+
+    if (command.kind === CLAIM_AGENT_INBOX_KIND) {
+      // Auth already loaded the exact agent principal; request fields cannot
+      // select another recipient. Step 1 of the claim order is complete.
+      const agent = auth.agent;
+      if (agent === null) {
+        return { status: 403, body: { error: "forbidden" } };
+      }
+      const ledger = await claimAgentInbox(tx, {
+        workspaceId: route.workspaceId,
+        recipientPrincipalId: agent.principal_id,
+        receiverOwnerUserId: agent.owner_user_id,
+        listenerInstanceId: command.listener_instance_id,
+        limit: command.limit,
+      });
+      const inserted = await tx<{ command_id: string }[]>`
+        INSERT INTO swarm.idempotency_keys (
+          principal_kind, principal_id, command_id,
+          workspace_id, stream_id, request_hash, response
+        ) VALUES (
+          ${auth.credentialKind},
+          ${canonicalPrincipal(auth.actor)},
+          ${commandId},
+          ${route.workspaceId}::uuid,
+          ${route.streamId}::uuid,
+          ${hash},
+          ${tx.json(ledger as unknown as postgres.JSONValue)}::jsonb
+        )
+        ON CONFLICT (principal_kind, principal_id, command_id) DO NOTHING
+        RETURNING command_id
+      `;
+      if (inserted.length === 0) {
+        throw new LedgerRace(
+          auth,
+          commandId,
+          kind,
+          route.workspaceId,
+          route.streamId,
+          hash,
+        );
+      }
+      const deliveries = await hydrateDeliveryRefs(tx, {
+        workspaceId: route.workspaceId,
+        recipientPrincipalId: agent.principal_id,
+        refs: ledger.delivery_refs,
+      });
+      if (deliveries === null) {
+        await insertAudit(tx, {
+          auth,
+          commandKind: kind,
+          workspaceId: route.workspaceId,
+          streamId: route.streamId,
+          outcome: "domain",
+          reason: "delivery_hydration_integrity",
+          detail: ignoredIdentity,
+          hash,
+        });
+        return { status: 403, body: { error: "delivery_unavailable" } };
+      }
+      await insertAudit(tx, {
+        auth,
+        commandKind: kind,
+        workspaceId: route.workspaceId,
+        streamId: route.streamId,
+        outcome: "accepted",
+        detail: ignoredIdentity,
+        hash,
+      });
+      return {
+        status: 200,
+        body: {
+          status: "accepted",
+          capabilities: DELIVERY_CAPABILITIES,
+          deliveries,
+          pending_delivery_count: ledger.pending_delivery_count,
+          event_ids: [],
+          events: [],
+          min_client_version: minClientVersion,
+        },
+      };
+    }
+
+    if (command.kind === ACK_AGENT_DELIVERY_KIND) {
+      const agent = auth.agent;
+      if (agent === null) {
+        return { status: 403, body: { error: "forbidden" } };
+      }
+      const result = await ackAgentDelivery(tx, {
+        workspaceId: route.workspaceId,
+        recipientPrincipalId: agent.principal_id,
+        signalId: command.signal_id,
+        leaseId: command.lease_id,
+        listenerInstanceId: command.listener_instance_id,
+        outcome: command.outcome,
+        lastErrorCode: command.last_error_code,
+      });
+      if (result.status === "unavailable") {
+        await insertAudit(tx, {
+          auth,
+          commandKind: kind,
+          workspaceId: route.workspaceId,
+          streamId: route.streamId,
+          outcome: "authz",
+          reason: "delivery_unavailable",
+          detail: ignoredIdentity,
+          hash,
+        });
+        return { status: 403, body: { error: "delivery_unavailable" } };
+      }
+      if (result.status === "conflict") {
+        await insertAudit(tx, {
+          auth,
+          commandKind: kind,
+          workspaceId: route.workspaceId,
+          streamId: route.streamId,
+          outcome: "conflict",
+          reason: "delivery_ack_outcome_conflict",
+          detail: ignoredIdentity,
+          hash,
+        });
+        return { status: 409, body: { error: "delivery_ack_conflict" } };
+      }
+      const ackResponse = result.response;
+      const inserted = await tx<{ command_id: string }[]>`
+        INSERT INTO swarm.idempotency_keys (
+          principal_kind, principal_id, command_id,
+          workspace_id, stream_id, request_hash, response
+        ) VALUES (
+          ${auth.credentialKind},
+          ${canonicalPrincipal(auth.actor)},
+          ${commandId},
+          ${route.workspaceId}::uuid,
+          ${route.streamId}::uuid,
+          ${hash},
+          ${tx.json(ackResponse as unknown as postgres.JSONValue)}::jsonb
+        )
+        ON CONFLICT (principal_kind, principal_id, command_id) DO NOTHING
+        RETURNING command_id
+      `;
+      if (inserted.length === 0) {
+        throw new LedgerRace(
+          auth,
+          commandId,
+          kind,
+          route.workspaceId,
+          route.streamId,
+          hash,
+        );
+      }
+      await insertAudit(tx, {
+        auth,
+        commandKind: kind,
+        workspaceId: route.workspaceId,
+        streamId: route.streamId,
+        outcome: result.status === "idempotent" ? "replayed" : "accepted",
+        detail: ignoredIdentity,
+        hash,
+      });
+      return {
+        status: 200,
+        body: {
+          status: "accepted",
+          signal_id: ackResponse.signal_id,
+          outcome: ackResponse.outcome,
+          event_ids: [],
           events: [],
           min_client_version: minClientVersion,
         },
@@ -5871,9 +6201,60 @@ async function resolveLedgerRace(error: LedgerRace): Promise<HttpResult> {
       hash: error.hash,
       detail: "resolved concurrent idempotency race",
     });
-    return matches
-      ? replayResult(storedResponse(winner.response), error.commandKind)
-      : { status: 409, body: { error: "command_id_conflict" } };
+    if (!matches) {
+      return { status: 409, body: { error: "command_id_conflict" } };
+    }
+    // Body-free claim ledger must rehydrate after race resolution.
+    if (
+      error.commandKind === CLAIM_AGENT_INBOX_KIND &&
+      error.auth.agent !== null
+    ) {
+      const ledger = parseClaimLedger(winner.response);
+      if (ledger === null) {
+        return { status: 403, body: { error: "delivery_unavailable" } };
+      }
+      const deliveries = await hydrateDeliveryRefs(tx, {
+        workspaceId: error.workspaceId,
+        recipientPrincipalId: error.auth.agent.principal_id,
+        refs: ledger.delivery_refs,
+      });
+      if (deliveries === null) {
+        return { status: 403, body: { error: "delivery_unavailable" } };
+      }
+      return {
+        status: 200,
+        body: {
+          status: "accepted",
+          capabilities: DELIVERY_CAPABILITIES,
+          deliveries,
+          pending_delivery_count: ledger.pending_delivery_count,
+          event_ids: [],
+          events: [],
+        },
+      };
+    }
+    if (error.commandKind === ACK_AGENT_DELIVERY_KIND) {
+      const response = record(winner.response);
+      if (
+        !response ||
+        response.ok !== true ||
+        typeof response.signal_id !== "string" ||
+        typeof response.outcome !== "string"
+      ) {
+        return { status: 403, body: { error: "delivery_unavailable" } };
+      }
+      return {
+        status: 200,
+        body: {
+          status: "accepted",
+          signal_id: response.signal_id,
+          outcome: response.outcome,
+          event_ids: [],
+          events: [],
+        },
+      };
+    }
+    return replayResult(storedResponse(winner.response), error.commandKind);
   });
 }
 
