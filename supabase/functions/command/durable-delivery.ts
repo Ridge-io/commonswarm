@@ -190,7 +190,7 @@ export async function claimAgentInbox(
       AND d.acked_at IS NULL
       AND d.lease_id IS NULL
       AND d.attempt_count >= ${DELIVERY_MAX_ATTEMPTS}
-      AND (s.until IS NULL OR s.until > statement_timestamp())
+      AND s.until > statement_timestamp()
     RETURNING d.signal_id
   `;
   const terminalDeliveryFailureCount = poisonRows.length;
