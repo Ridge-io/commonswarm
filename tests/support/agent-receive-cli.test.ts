@@ -726,12 +726,14 @@ test("parseSignalRecord ignores unknown fields and fails closed on bad required 
   });
   assert.equal(parsed.id, base.id);
   assert.equal(parsed.body, base.body);
+  // Absent relation from an older edge is fail-closed to unknown for wake.
+  assert.equal(parsed.sender_owner_relation, "unknown");
   assert.equal(
     Object.prototype.hasOwnProperty.call(parsed, "future_enum"),
     false,
   );
 
-  // Absent optional fields from an older edge normalize to null.
+  // Absent optional fields from an older edge normalize to null / unknown.
   const legacy = parseSignalRecord({
     id: base.id,
     workspace_id: base.workspace_id,
@@ -746,11 +748,23 @@ test("parseSignalRecord ignores unknown fields and fails closed on bad required 
   });
   assert.equal(legacy.to_agent, null);
   assert.equal(legacy.in_reply_to, null);
+  assert.equal(legacy.sender_owner_relation, "unknown");
+
+  const related = parseSignalRecord({
+    ...base,
+    sender_owner_relation: "same_owner",
+  });
+  assert.equal(related.sender_owner_relation, "same_owner");
 
   // Present-but-invalid optional UUID fails closed.
   assert.throws(
     () => parseSignalRecord({ ...base, to_agent: "not-a-uuid" }),
     /malformed to_agent/,
+  );
+  // Present-but-invalid relation enum fails closed (not coerced to unknown).
+  assert.throws(
+    () => parseSignalRecord({ ...base, sender_owner_relation: "sibling" }),
+    /malformed sender_owner_relation/,
   );
   // Unknown kind fails closed (not silently coerced).
   assert.throws(

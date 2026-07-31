@@ -140,6 +140,9 @@ export interface PostSignalCommand {
   until_ms?: number;
 }
 
+/** Server-stamped same-owner vs cross-owner relation for host wake policy. */
+export type SenderOwnerRelation = "same_owner" | "cross_owner" | "unknown";
+
 export interface SignalRecord {
   id: string;
   workspace_id: string;
@@ -153,6 +156,11 @@ export interface SignalRecord {
   body: string;
   until: string;
   created_at: string;
+  /**
+   * Present on agent-authenticated reads from a capable edge. Absent from older
+   * edges and human REST rows; clients normalize absence to "unknown".
+   */
+  sender_owner_relation?: SenderOwnerRelation;
 }
 
 export interface PostSignalRequest {

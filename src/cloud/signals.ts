@@ -4,6 +4,7 @@ import {
 } from "./config.js";
 import type {
   PostSignalCommand,
+  SenderOwnerRelation,
   SignalKind,
   SignalRecord,
 } from "./command-client.js";
@@ -146,15 +147,22 @@ function checkedTimestamp(value: unknown, field: string): string {
   return value;
 }
 
+const SENDER_OWNER_RELATIONS = new Set<SenderOwnerRelation>([
+  "same_owner",
+  "cross_owner",
+  "unknown",
+]);
+
 /**
  * Parse one signal row.
  *
  * Forward-compatible: unknown top-level fields are ignored so a newer edge can
  * add columns without killing old clients. Absent optional known fields
  * (to_agent, in_reply_to) normalize to null so an older edge still parses.
+ * Absent sender_owner_relation normalizes to "unknown" (fail-closed for wake).
  *
  * Fail-closed: required identity/body/kind/time fields must be well-formed;
- * a present optional UUID that is not a UUID is refused rather than coerced.
+ * a present optional UUID/enum that is invalid is refused rather than coerced.
  */
 export function parseSignalRecord(value: unknown): SignalRecord {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -174,6 +182,20 @@ export function parseSignalRecord(value: unknown): SignalRecord {
   ) {
     throw new Error("signal read returned malformed signal data");
   }
+  let senderOwnerRelation: SenderOwnerRelation = "unknown";
+  if (row.sender_owner_relation !== undefined) {
+    if (
+      typeof row.sender_owner_relation !== "string" ||
+      !SENDER_OWNER_RELATIONS.has(
+        row.sender_owner_relation as SenderOwnerRelation,
+      )
+    ) {
+      throw new Error(
+        "signal read returned a malformed sender_owner_relation",
+      );
+    }
+    senderOwnerRelation = row.sender_owner_relation as SenderOwnerRelation;
+  }
   return {
     id: checkedUuid(row.id, "id"),
     workspace_id: checkedUuid(row.workspace_id, "workspace_id"),
@@ -192,6 +214,7 @@ export function parseSignalRecord(value: unknown): SignalRecord {
     body: row.body,
     until: checkedTimestamp(row.until, "until"),
     created_at: checkedTimestamp(row.created_at, "created_at"),
+    sender_owner_relation: senderOwnerRelation,
   };
 }
 
@@ -527,13 +550,14 @@ async function agentSignals(
         kind: query.kind ?? null,
         in_reply_to: query.in_reply_to ?? null,
         since: query.since ?? null,
-        // Cursor shape is additive and only sent when the follow path needs it,
-        // so one-shot agents keep talking to an older edge without 400s.
+        // Cursor pair matches the read edge (Kepler wake-relation contract):
+        // both keys present → oldest-first pages; both null on first catch-up
+        // page; both set for keyset after. Omitted entirely for one-shot so an
+        // older edge keeps accepting the legacy body shape.
         ...(query.ascending === true || query.after !== undefined
           ? {
             after_created_at: query.after?.created_at ?? null,
             after_id: query.after?.id ?? null,
-            ascending: true,
           }
           : {}),
         limit: query.limit,
