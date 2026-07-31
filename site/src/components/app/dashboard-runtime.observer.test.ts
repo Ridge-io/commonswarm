@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
+import { BootFocusGate } from "../../lib/boot-focus";
 
 const cwd = process.cwd();
 const siteRoot = fs.existsSync(path.join(cwd, "src", "components", "app"))
@@ -179,7 +180,7 @@ test("panel changes expose busy state and move focus only on real transitions", 
   assert.match(source, /querySelector<HTMLElement>\("h1, h2"\)/);
   assert.match(
     source,
-    /const moveFocus = bootPanelPresented;[\s\S]*bootPanelPresented = true;[\s\S]*if \(!moveFocus\) return;/,
+    /if \(!panelBootFocus\.allowsFocus\(\)\) return;/,
     "the boot presentation skips the focus move — a fresh load must not paint " +
       "a :focus-visible ring around the headline",
   );
@@ -190,50 +191,63 @@ test("panel changes expose busy state and move focus only on real transitions", 
       "ring to keyboard users and not to pointer users",
   );
   assert.doesNotMatch(
-    source,
+    dashboard,
     /focusVisible/,
-    "focus visibility is never suppressed — it is the platform's call",
+    "focus visibility is never suppressed anywhere — it is the platform's call",
   );
 });
 
 /*
- * The boot-skip ordering, replayed as a pure model of the flag logic the regexes
- * above pin to the source (same precedent as the header-roster catch-up model):
- * the first content panel never takes focus; every later one does.
+ * CAUSAL, NOT A COPIED MODEL: this drives the same BootFocusGate class the
+ * dashboard constructs for both surfaces (panel headings, the auth email field).
+ * The regexes after it only pin that wiring.
  */
-test("boot panel focus ordering: first content panel skips, later panels focus", () => {
-  let bootPanelPresented = false;
-  const decisions: Array<{ panel: string; focused: boolean }> = [];
-  const showPanel = (previous: string, name: string) => {
-    if (previous !== name && name !== "loading") {
-      const moveFocus = bootPanelPresented;
-      bootPanelPresented = true;
-      if (!moveFocus) {
-        decisions.push({ panel: name, focused: false });
-        return;
-      }
-      decisions.push({ panel: name, focused: true });
-    }
-  };
+test("boot focus gate: first presentation skips, every later presentation moves", () => {
+  const gate = new BootFocusGate();
+  assert.equal(
+    gate.allowsFocus(),
+    false,
+    "the boot presentation of a surface takes no scripted focus",
+  );
+  assert.equal(
+    gate.allowsFocus(),
+    true,
+    "the first user-driven transition moves focus",
+  );
+  assert.equal(
+    gate.allowsFocus(),
+    true,
+    "and every transition after that",
+  );
+  /* Two surfaces are independent gates: the auth form consuming its boot skip
+     must not also consume the panel's, or the boot panel would refocus. */
+  const panel = new BootFocusGate();
+  const auth = new BootFocusGate();
+  assert.equal(auth.allowsFocus(), false, "auth boot presentation skips");
+  assert.equal(panel.allowsFocus(), false, "panel boot presentation still skips");
+  assert.equal(panel.allowsFocus(), true, "panel's next transition moves");
+  assert.equal(auth.allowsFocus(), true, "auth's next transition moves");
+});
 
-  showPanel("loading", "signed-out"); // boot presentation
-  showPanel("signed-out", "create"); // signed in, no workspaces yet
-  showPanel("create", "channel"); // workspace created
-  assert.deepEqual(decisions, [
-    { panel: "signed-out", focused: false },
-    { panel: "create", focused: true },
-    { panel: "channel", focused: true },
-  ]);
-
-  // A signed-in boot with an existing workspace: loading -> channel is the skip.
-  bootPanelPresented = false;
-  decisions.length = 0;
-  showPanel("loading", "channel");
-  showPanel("channel", "workspace-error");
-  assert.deepEqual(decisions, [
-    { panel: "channel", focused: false },
-    { panel: "workspace-error", focused: true },
-  ]);
+test("the dashboard wires one boot gate per scripted-focus surface", () => {
+  assert.match(
+    dashboard,
+    /import \{ BootFocusGate \} from "\.\.\/\.\.\/lib\/boot-focus"/,
+  );
+  assert.match(dashboard, /const panelBootFocus = new BootFocusGate\(\)/);
+  assert.match(dashboard, /const authBootFocus = new BootFocusGate\(\)/);
+  const authView = between(dashboard, "const showAuthView =", "const createStorageKey =");
+  assert.match(
+    authView,
+    /name === "choices" && authBootFocus\.allowsFocus\(\)/,
+    "the email field is focused only when the gate allows — boot skips, " +
+      "user-driven choices presentations focus; email-sent never consumes",
+  );
+  assert.match(
+    authView,
+    /one<HTMLInputElement>\("#dashboard-email"\)\?\.focus\(\)/,
+    "and when it does focus, it is a plain platform-heuristic focus",
+  );
 });
 
 /*

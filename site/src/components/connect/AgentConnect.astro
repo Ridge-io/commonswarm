@@ -58,11 +58,11 @@ const {
   </header>
 
   <div class="ac__panel" data-panel="loading">
-    <p class="ac__muted">Checking your session…</p>
+    <h2 class="ac__muted ac__loading-title">Checking your session…</h2>
   </div>
 
   <div class="ac__panel ac__panel--state" data-panel="state">
-    <h3 class="ac__state-title" data-slot="state-title">Not available</h3>
+    <h2 class="ac__state-title" data-slot="state-title">Not available</h2>
     <p class="ac__state-body" data-slot="state-body"></p>
     <button class="ac__btn ac__btn--quiet" type="button" data-action="retry" hidden>
       Try again
@@ -145,6 +145,7 @@ const {
   </form>
 
   <div class="ac__panel" data-panel="working">
+    <h2 class="ac__working-title">Creating your agent prompt.</h2>
     <ol class="ac__steps" data-slot="steps">
       <li class="ac__step" data-step="register-device">
         <span class="ac__dot" aria-hidden="true"></span>Registering this browser
@@ -163,7 +164,7 @@ const {
   <div class="ac__panel ac__result" data-panel="result">
     <div class="ac__result-copy">
       <p class="ac__eyebrow">Ready to hand off</p>
-      <h3 class="ac__result-title">Your agent prompt is ready.</h3>
+      <h2 class="ac__result-title">Your agent prompt is ready.</h2>
       <p class="ac__result-lead">
         Paste it into your assistant as one message. This page will close the prompt when
         the agent first connects.
@@ -763,15 +764,17 @@ const {
     display: flex;
   }
 
-  /* The head is the question the form asks ("Name your agent."). In the done and
-     blocked states the visible panel already carries its own eyebrow and title —
-     "Your agent prompt is ready." / the blocked reason — so the question would
-     sit above the answer as a stale, contradictory heading. Loading hides it too:
-     the terminal state after a session check is often blocked, and a head that
-     shows for the loading frame only to vanish a beat later is a flash, not
-     context. In ready and working the head stays — it is the live question. */
+  /* The head is the question the form asks ("Name your agent."). Every other state
+     carries its own h2 — the blocked reason, "Creating your agent prompt.", "Your
+     agent prompt is ready.", "Checking your session…" — so the question would sit
+     above the answer as a stale, contradictory heading, and the a11y tree would
+     read H1-workspace then H3-result. Loading hides it too: the terminal state
+     after a session check is often blocked, and a head that shows for the loading
+     frame only to vanish a beat later is a flash, not context. The head survives
+     exactly one state: ready, where it is the live question. */
   .ac[data-state="done"] .ac__head,
   .ac[data-state="blocked"] .ac__head,
+  .ac[data-state="working"] .ac__head,
   .ac[data-state="loading"] .ac__head {
     display: none;
   }
@@ -786,6 +789,21 @@ const {
     line-height: var(--lh-lg);
     font-weight: var(--weight-semibold);
     color: var(--text);
+  }
+
+  /* The working and loading h2s match the other state headings' placement; the
+     visual voice stays quiet because the steps below carry the progress. */
+  .ac__working-title {
+    margin: 0;
+    font-size: var(--t-lg);
+    line-height: var(--lh-lg);
+    font-weight: var(--weight-semibold);
+    color: var(--text);
+  }
+
+  .ac__loading-title {
+    margin: 0;
+    font-weight: var(--weight-body);
   }
 
   .ac__state-body {

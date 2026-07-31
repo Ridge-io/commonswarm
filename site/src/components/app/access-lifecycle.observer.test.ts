@@ -22,6 +22,32 @@ test("Add an agent asks who controls it before minting", () => {
   assert.match(dashboard, /memberInviteUrl/);
 });
 
+/*
+ * Heading hierarchy inside the card: the dashboard's channel title is the H1, so
+ * every AgentConnect state must expose exactly one visible H2 — never an H3 skip
+ * (the audit found H1-workspace -> H3-result), never the stale "Name your agent."
+ * above post-submit progress, never a heading-less state. These anchors pin the
+ * markup levels and the CSS that retires the head; the live a11y-tree check is
+ * separate evidence, not something a regex can claim.
+ */
+test("every AgentConnect state exposes a correct h2 with no stale or skipped headings", () => {
+  assert.match(connect, /<h2 class="ac__title">Name your agent\.<\/h2>/);
+  assert.match(connect, /<h2 class="ac__state-title"/);
+  assert.match(connect, /<h2 class="ac__result-title">Your agent prompt is ready\.<\/h2>/);
+  assert.match(
+    connect,
+    /<h2 class="ac__working-title">Creating your agent prompt\.<\/h2>/,
+    "the working state names itself instead of wearing the form's question",
+  );
+  assert.match(connect, /<h2 class="ac__muted ac__loading-title">/);
+  assert.doesNotMatch(connect, /<h3/, "no h3 skip remains anywhere in the card");
+  assert.match(
+    connect,
+    /\.ac\[data-state="done"\] \.ac__head,[\s\S]*\.ac\[data-state="blocked"\] \.ac__head,[\s\S]*\.ac\[data-state="working"\] \.ac__head,[\s\S]*\.ac\[data-state="loading"\] \.ac__head\s*\{[\s\S]*display: none/,
+    "the head survives only in ready, where it is the live question",
+  );
+});
+
 test("Done, Back, and first use converge on a channel return", () => {
   assert.match(connect, /commonswarm:agent-prompt-ready/);
   assert.doesNotMatch(connect, /commonswarm:agent-connected/);

@@ -549,6 +549,7 @@ import SampleNotice from "./SampleNotice.astro";
   } from "../../lib/commonswarm";
   import { memberInviteUrl } from "../../lib/member-invite";
   import { PendingRefreshGate } from "../../lib/pending-refresh";
+  import { BootFocusGate } from "../../lib/boot-focus";
 
   interface Workspace {
     id: string;
@@ -649,15 +650,16 @@ import SampleNotice from "./SampleNotice.astro";
     const SIGNAL_PAGE_SIZE = 50;
     const SIGNAL_FETCH_SIZE = SIGNAL_PAGE_SIZE + 1;
 
-    /* The very first content panel of the page's life. Focus is NOT moved to its
-       heading: on a fresh load Chromium classifies the first programmatic focus
-       as :focus-visible and paints a ring around a headline the reader never
-       asked for, and there is no earlier context for assistive technology to
-       lose — the heading is the document's natural start. Every LATER panel
-       transition is a response to something the user did, so the focus move
-       happens there with a plain focus() and the platform's own heuristic:
-       keyboard users see the ring, pointer users do not. */
-    let bootPanelPresented = false;
+    /* The very first content presentation of the page's life takes no scripted
+       focus: it is not a response to anything the reader did, so moving focus
+       would paint a ring around something they never asked for, raise the
+       on-screen keyboard on a phone before any orientation, and pull assistive
+       technology past the page's own opening. Every LATER transition is a
+       response to something the user did — the gate says move, a plain focus()
+       runs, and the platform heuristic decides the ring. One gate per surface:
+       panels and the auth form present independently. */
+    const panelBootFocus = new BootFocusGate();
+    const authBootFocus = new BootFocusGate();
 
     const showPanel = (
       name: "loading" | "signed-out" | "create" | "workspace-error" | "channel",
@@ -670,9 +672,7 @@ import SampleNotice from "./SampleNotice.astro";
       const root = one<HTMLElement>(".dashboard__root");
       root?.setAttribute("aria-busy", name === "loading" ? "true" : "false");
       if (previous !== name && name !== "loading") {
-        const moveFocus = bootPanelPresented;
-        bootPanelPresented = true;
-        if (!moveFocus) return;
+        if (!panelBootFocus.allowsFocus()) return;
         window.requestAnimationFrame(() => {
           const visible = panel(name);
           const heading = visible?.querySelector<HTMLElement>("h1, h2");
@@ -780,7 +780,10 @@ import SampleNotice from "./SampleNotice.astro";
         view.hidden = view.dataset.authView !== name;
       }
       authError(null);
-      if (name === "choices") {
+      /* The gate consumes only on choices presentations, so boot skips the email
+         focus (no keyboard raise on mobile, AT reads the page's opening first)
+         while "use a different address" and sign-out still land on the field. */
+      if (name === "choices" && authBootFocus.allowsFocus()) {
         window.requestAnimationFrame(() => one<HTMLInputElement>("#dashboard-email")?.focus());
       }
     };
