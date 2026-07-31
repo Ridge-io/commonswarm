@@ -36,6 +36,14 @@ interface SignalReadRequest {
   kind: string | null;
   since: string | null;
   in_reply_to?: string | null;
+  /**
+   * Cursor keys are either both absent (legacy shape/order) or both present.
+   * When present: both null pages the full live inbox oldest-first; both valid
+   * return rows strictly after (created_at, id) oldest-first. Half-cursors reject.
+   */
+  after_created_at?: string | null;
+  after_id?: string | null;
+  cursor_mode: boolean;
   limit: number;
   include_stale: boolean;
 }
@@ -44,6 +52,12 @@ interface MemberReadRequest {
   resource: "members";
   workspace_id: string;
 }
+
+/** Explicit read-contract capability markers for agent-authenticated signals. */
+const SIGNAL_CAPABILITIES = {
+  sender_owner_relation: 1,
+  cursor_after: 1,
+} as const;
 
 function json(status: number, body: Record<string, unknown>): Response {
   return new Response(JSON.stringify(body), {
@@ -103,6 +117,12 @@ function parseBody(
     };
   }
   const modernShape = Object.hasOwn(body, "in_reply_to");
+  const hasAfterCreatedAt = Object.hasOwn(body, "after_created_at");
+  const hasAfterId = Object.hasOwn(body, "after_id");
+  // Cursor keys travel as a pair: both present or both absent. A half-cursor
+  // is not a valid request shape (exactKeys also rejects a single extra key).
+  if (hasAfterCreatedAt !== hasAfterId) return null;
+  const cursorMode = hasAfterCreatedAt && hasAfterId;
   if (
     !exactKeys(body, [
       "resource",
@@ -112,6 +132,7 @@ function parseBody(
       "kind",
       "since",
       ...(modernShape ? ["in_reply_to"] : []),
+      ...(cursorMode ? ["after_created_at", "after_id"] : []),
       "limit",
       "include_stale",
     ]) ||
@@ -130,6 +151,13 @@ function parseBody(
       !(body.in_reply_to === null ||
         (typeof body.in_reply_to === "string" &&
           UUID_RE.test(body.in_reply_to)))) ||
+    (cursorMode && !(
+      (body.after_created_at === null && body.after_id === null) ||
+      (typeof body.after_created_at === "string" &&
+        Number.isFinite(Date.parse(body.after_created_at)) &&
+        typeof body.after_id === "string" &&
+        UUID_RE.test(body.after_id))
+    )) ||
     !Number.isSafeInteger(body.limit) ||
     (body.limit as number) < 1 ||
     (body.limit as number) > 100 ||
@@ -138,8 +166,12 @@ function parseBody(
     return null;
   }
   return {
-    ...(body as unknown as SignalReadRequest),
+    resource: "signals",
     workspace_id: body.workspace_id.toLowerCase(),
+    inbox: body.inbox as boolean,
+    about: body.about as string | null,
+    kind: body.kind as string | null,
+    since: body.since as string | null,
     ...(modernShape
       ? {
         in_reply_to: typeof body.in_reply_to === "string"
@@ -147,6 +179,19 @@ function parseBody(
           : null,
       }
       : {}),
+    ...(cursorMode
+      ? {
+        after_created_at: typeof body.after_created_at === "string"
+          ? body.after_created_at
+          : null,
+        after_id: typeof body.after_id === "string"
+          ? body.after_id.toLowerCase()
+          : null,
+      }
+      : {}),
+    cursor_mode: cursorMode,
+    limit: body.limit as number,
+    include_stale: body.include_stale as boolean,
   };
 }
 
@@ -211,7 +256,10 @@ async function handle(
     if (body.workspace_id !== agent.principal_workspace_id) {
       return body.resource === "members"
         ? json(200, { members: [], agents: [] })
-        : json(200, { signals: [] });
+        : json(200, {
+          signals: [],
+          capabilities: SIGNAL_CAPABILITIES,
+        });
     }
 
     setPhase("query");
@@ -250,40 +298,84 @@ async function handle(
       return json(200, { members, agents });
     }
     const inReplyTo = body.in_reply_to ?? null;
+    // Cursor mode always pages oldest-first. Legacy requests keep the
+    // historical newest-first feed (and ASC only for in_reply_to filters).
+    const orderAsc = body.cursor_mode || inReplyTo !== null;
+    const orderDesc = !orderAsc;
+    // Apply the after-tuple filter only when both cursor values are set.
+    const afterCreatedAt = body.cursor_mode
+      ? (body.after_created_at ?? null)
+      : null;
+    const afterId = body.cursor_mode ? (body.after_id ?? null) : null;
+    const useAfterCursor = afterCreatedAt !== null && afterId !== null;
+    // Relation is computed solely from the authenticated receiver's owner and
+    // the server-stamped author. Do NOT filter author.revoked_at: a revoked
+    // same-owner author remains same_owner so host policy still wakes. An
+    // agent row the membership-gated view cannot resolve is unknown.
     const rows = await tx<Record<string, unknown>[]>`
       SELECT
-        id, workspace_id, "from", from_kind, "to",
-        about, kind, body, until, created_at,
-        to_agent, in_reply_to
-      FROM swarm_read.signals
-      WHERE workspace_id = ${body.workspace_id}::uuid
+        s.id, s.workspace_id, s."from", s.from_kind, s."to",
+        s.about, s.kind, s.body, s.until, s.created_at,
+        s.to_agent, s.in_reply_to,
+        CASE
+          WHEN s.from_kind = 'user'
+           AND s."from" = ${agent.owner_user_id}::uuid THEN 'same_owner'
+          WHEN s.from_kind = 'agent'
+           AND author.owner_user_id = ${agent.owner_user_id}::uuid
+            THEN 'same_owner'
+          WHEN s.from_kind = 'user'
+            OR author.principal_id IS NOT NULL THEN 'cross_owner'
+          ELSE 'unknown'
+        END AS sender_owner_relation
+      FROM swarm_read.signals AS s
+      LEFT JOIN swarm_read.agent_principals AS author
+        ON s.from_kind = 'agent'
+       AND author.workspace_id = s.workspace_id
+       AND author.principal_id = s."from"
+      WHERE s.workspace_id = ${body.workspace_id}::uuid
         AND (
-          ("to" IS NULL AND to_agent IS NULL)
-          OR to_agent = ${agent.principal_id}::uuid
+          (s."to" IS NULL AND s.to_agent IS NULL)
+          OR s.to_agent = ${agent.principal_id}::uuid
         )
         AND (
           ${body.inbox} = false
-          OR to_agent = ${agent.principal_id}::uuid
+          OR s.to_agent = ${agent.principal_id}::uuid
         )
-        AND (${body.include_stale} = true OR until > statement_timestamp())
-        AND (${body.about}::text IS NULL OR about = ${body.about})
-        AND (${body.kind}::text IS NULL OR kind = ${body.kind})
+        AND (${body.include_stale} = true OR s.until > statement_timestamp())
+        AND (${body.about}::text IS NULL OR s.about = ${body.about})
+        AND (${body.kind}::text IS NULL OR s.kind = ${body.kind})
         AND (
           ${inReplyTo}::uuid IS NULL
-          OR in_reply_to = ${inReplyTo}::uuid
+          OR s.in_reply_to = ${inReplyTo}::uuid
         )
         AND (
           ${body.since}::timestamptz IS NULL OR
-          created_at >= ${body.since}::timestamptz
+          s.created_at >= ${body.since}::timestamptz
+        )
+        AND (
+          -- JSON timestamps only carry millisecond precision, while Postgres
+          -- stores microseconds. Truncate both sides so a client cursor built
+          -- from a prior page's created_at cannot re-include that last row.
+          ${useAfterCursor} = false
+          OR date_trunc('milliseconds', s.created_at) >
+            date_trunc('milliseconds', ${afterCreatedAt}::timestamptz)
+          OR (
+            date_trunc('milliseconds', s.created_at) =
+              date_trunc('milliseconds', ${afterCreatedAt}::timestamptz)
+            AND s.id > ${afterId}::uuid
+          )
         )
       ORDER BY
-        CASE WHEN ${inReplyTo}::uuid IS NOT NULL THEN created_at END ASC,
-        CASE WHEN ${inReplyTo}::uuid IS NULL THEN created_at END DESC,
-        CASE WHEN ${inReplyTo}::uuid IS NOT NULL THEN id END ASC,
-        CASE WHEN ${inReplyTo}::uuid IS NULL THEN id END DESC
+        CASE WHEN ${orderAsc} THEN s.created_at END ASC,
+        CASE WHEN ${orderDesc} THEN s.created_at END DESC,
+        CASE WHEN ${orderAsc} THEN s.id END ASC,
+        CASE WHEN ${orderDesc} THEN s.id END DESC
       LIMIT ${body.limit}
     `;
-    return json(200, { signals: rows });
+    return json(200, {
+      signals: rows,
+      capabilities: SIGNAL_CAPABILITIES,
+    });
   });
 }
 

@@ -683,7 +683,26 @@ async function agentSignalRead(
   workspaceId: string,
   inbox = false,
   inReplyTo: string | null | undefined = undefined,
+  options: {
+    limit?: number;
+    after_created_at?: string | null;
+    after_id?: string | null;
+    /** When true, include only one of the cursor keys (invalid half-cursor). */
+    halfCursor?: "after_created_at" | "after_id";
+    rawExtras?: Record<string, unknown>;
+  } = {},
 ): Promise<CommandResponse> {
+  const cursorKeys =
+    options.halfCursor === "after_created_at"
+      ? { after_created_at: options.after_created_at ?? null }
+      : options.halfCursor === "after_id"
+      ? { after_id: options.after_id ?? null }
+      : options.after_created_at !== undefined || options.after_id !== undefined
+      ? {
+        after_created_at: options.after_created_at ?? null,
+        after_id: options.after_id ?? null,
+      }
+      : {};
   const response = await fetch(`${local.API_URL}/functions/v1/read`, {
     method: "POST",
     headers: {
@@ -699,8 +718,10 @@ async function agentSignalRead(
       kind: null,
       since: null,
       ...(inReplyTo === undefined ? {} : { in_reply_to: inReplyTo }),
-      limit: 50,
+      ...cursorKeys,
+      limit: options.limit ?? 50,
       include_stale: true,
+      ...(options.rawExtras ?? {}),
     }),
   });
   const text = await response.text();
@@ -1893,6 +1914,431 @@ test("P3-1 agent proxy stays pinned when its owner joins another workspace", asy
       [],
       "agent principal pinned to workspace A must not inherit owner access to B",
     );
+  });
+});
+
+test("wake-relation-contract: sender_owner_relation matrix, capabilities, and cursor", async () => {
+  await scenario(async (f) => {
+    // Receiver under test: sibling agent owned by UA (same owner as f.agentToken).
+    const receiver = await createFixtureAgent(f, f.ua, "relation-receiver");
+    const sameOwnerSibling = await createFixtureAgent(
+      f,
+      f.ua,
+      "relation-same-owner-sibling",
+    );
+    const crossOwnerAgent = await createFixtureAgent(
+      f,
+      f.ua2,
+      "relation-cross-owner-agent",
+    );
+    const foreignAgent = await createFixtureAgent(
+      f,
+      f.ub,
+      "relation-foreign",
+      f.workspaceB,
+    );
+
+    const ownerHuman = await issueSignal(f, f.uaJwt, {
+      kind: "post_signal",
+      signal_kind: "ask",
+      body: "relation-owner-human",
+      to_user_id: null,
+      to_agent_principal_id: receiver.principalId,
+      in_reply_to: null,
+      about: "wake-relation",
+    });
+    assert.equal(ownerHuman.status, 200, ownerHuman.text);
+    const ownerHumanId = String(
+      (ownerHuman.body.signal as Record<string, unknown>).id,
+    );
+
+    const sameOwnerAgent = await issueSignal(f, sameOwnerSibling.token, {
+      kind: "post_signal",
+      signal_kind: "ask",
+      body: "relation-same-owner-agent",
+      to_user_id: null,
+      to_agent_principal_id: receiver.principalId,
+      in_reply_to: null,
+      about: "wake-relation",
+    });
+    assert.equal(sameOwnerAgent.status, 200, sameOwnerAgent.text);
+    const sameOwnerAgentId = String(
+      (sameOwnerAgent.body.signal as Record<string, unknown>).id,
+    );
+
+    const crossHuman = await issueSignal(f, f.ua2Jwt, {
+      kind: "post_signal",
+      signal_kind: "ask",
+      body: "relation-cross-owner-human",
+      to_user_id: null,
+      to_agent_principal_id: receiver.principalId,
+      in_reply_to: null,
+      about: "wake-relation",
+    });
+    assert.equal(crossHuman.status, 200, crossHuman.text);
+    const crossHumanId = String(
+      (crossHuman.body.signal as Record<string, unknown>).id,
+    );
+
+    const crossAgent = await issueSignal(f, crossOwnerAgent.token, {
+      kind: "post_signal",
+      signal_kind: "ask",
+      body: "relation-cross-owner-agent",
+      to_user_id: null,
+      to_agent_principal_id: receiver.principalId,
+      in_reply_to: null,
+      about: "wake-relation",
+    });
+    assert.equal(crossAgent.status, 200, crossAgent.text);
+    const crossAgentId = String(
+      (crossAgent.body.signal as Record<string, unknown>).id,
+    );
+
+    // Revoked same-owner author: post, then revoke the principal; relation
+    // must remain same_owner (author ownership lookup must not filter revoked_at).
+    const revokedAuthor = await createFixtureAgent(
+      f,
+      f.ua,
+      "relation-revoked-author",
+    );
+    const revokedPost = await issueSignal(f, revokedAuthor.token, {
+      kind: "post_signal",
+      signal_kind: "ask",
+      body: "relation-revoked-same-owner",
+      to_user_id: null,
+      to_agent_principal_id: receiver.principalId,
+      in_reply_to: null,
+      about: "wake-relation",
+    });
+    assert.equal(revokedPost.status, 200, revokedPost.text);
+    const revokedPostId = String(
+      (revokedPost.body.signal as Record<string, unknown>).id,
+    );
+    await sql`
+      UPDATE swarm.agent_principals
+      SET revoked_at = statement_timestamp()
+      WHERE principal_id = ${revokedAuthor.principalId}::uuid
+    `;
+
+    // Unresolved agent author: from_principal has no FK, so a stamped agent
+    // row whose principal is absent yields unknown.
+    const orphanPrincipal = randomUUID();
+    const unknownSignalId = randomUUID();
+    await sql`
+      INSERT INTO swarm.signals (
+        id, workspace_id, from_principal, from_kind,
+        to_user_id, to_agent_principal_id, in_reply_to,
+        about, kind, body, until
+      ) VALUES (
+        ${unknownSignalId}::uuid,
+        ${f.workspaceA}::uuid,
+        ${orphanPrincipal}::uuid,
+        'agent',
+        NULL,
+        ${receiver.principalId}::uuid,
+        NULL,
+        'wake-relation',
+        'ask',
+        'relation-unresolved-agent',
+        statement_timestamp() + interval '1 day'
+      )
+    `;
+
+    const matrix = await agentSignalRead(
+      receiver.token,
+      f.workspaceA,
+      true,
+      null,
+      { after_created_at: null, after_id: null, limit: 100 },
+    );
+    assert.equal(matrix.status, 200, matrix.text);
+    assert.deepEqual(matrix.body.capabilities, {
+      sender_owner_relation: 1,
+      cursor_after: 1,
+    });
+    const byId = new Map(
+      (matrix.body.signals as Array<Record<string, unknown>>)
+        .map((row) => [String(row.id), row]),
+    );
+    assert.equal(byId.get(ownerHumanId)?.sender_owner_relation, "same_owner");
+    assert.equal(
+      byId.get(sameOwnerAgentId)?.sender_owner_relation,
+      "same_owner",
+    );
+    assert.equal(byId.get(crossHumanId)?.sender_owner_relation, "cross_owner");
+    assert.equal(byId.get(crossAgentId)?.sender_owner_relation, "cross_owner");
+    assert.equal(
+      byId.get(revokedPostId)?.sender_owner_relation,
+      "same_owner",
+      "revoked same-owner author stays same_owner",
+    );
+    assert.equal(
+      byId.get(unknownSignalId)?.sender_owner_relation,
+      "unknown",
+      "unresolved agent author is unknown",
+    );
+
+    // Relation is an enum only: never project owner UUIDs as separate fields.
+    // (Human authors still appear in the existing `from` column by design.)
+    for (const row of matrix.body.signals as Array<Record<string, unknown>>) {
+      for (const forbidden of [
+        "owner_user_id",
+        "author_owner_user_id",
+        "receiver_owner_user_id",
+        "sender_owner_user_id",
+      ]) {
+        assert.equal(
+          Object.hasOwn(row, forbidden),
+          false,
+          `signals rows must not project ${forbidden}`,
+        );
+      }
+      assert.ok(
+        row.sender_owner_relation === "same_owner" ||
+          row.sender_owner_relation === "cross_owner" ||
+          row.sender_owner_relation === "unknown",
+        "sender_owner_relation is a closed server enum",
+      );
+    }
+    assert.equal(
+      Object.hasOwn(matrix.body, "owner_user_id"),
+      false,
+      "signals envelope must not project owner_user_id",
+    );
+
+    // Exact-recipient isolation: sibling of the receiver does not see these.
+    const siblingLeak = await agentSignalRead(
+      sameOwnerSibling.token,
+      f.workspaceA,
+      true,
+      null,
+      { after_created_at: null, after_id: null },
+    );
+    assert.equal(siblingLeak.status, 200);
+    assert.ok(
+      !(siblingLeak.body.signals as Array<Record<string, unknown>>)
+        .some((row) => row.id === ownerHumanId),
+      "sharing an owner never shares an agent inbox",
+    );
+
+    // Two-tenant control: foreign workspace agent cannot read receiver's inbox.
+    const foreignRead = await agentSignalRead(
+      foreignAgent.token,
+      f.workspaceA,
+      true,
+      null,
+      { after_created_at: null, after_id: null },
+    );
+    assert.equal(foreignRead.status, 200);
+    assert.deepEqual(foreignRead.body.signals, []);
+    assert.deepEqual(foreignRead.body.capabilities, {
+      sender_owner_relation: 1,
+      cursor_after: 1,
+    });
+
+    // Authorship cannot be forged via the read request body.
+    const forgedRelation = await agentSignalRead(
+      receiver.token,
+      f.workspaceA,
+      true,
+      null,
+      {
+        after_created_at: null,
+        after_id: null,
+        rawExtras: { sender_owner_relation: "same_owner" },
+      },
+    );
+    assert.equal(forgedRelation.status, 400);
+
+    // Half-cursor rejects.
+    const halfCreated = await agentSignalRead(
+      receiver.token,
+      f.workspaceA,
+      true,
+      null,
+      {
+        halfCursor: "after_created_at",
+        after_created_at: new Date().toISOString(),
+      },
+    );
+    assert.equal(halfCreated.status, 400);
+    const halfId = await agentSignalRead(
+      receiver.token,
+      f.workspaceA,
+      true,
+      null,
+      { halfCursor: "after_id", after_id: randomUUID() },
+    );
+    assert.equal(halfId.status, 400);
+    const mismatchedPair = await agentSignalRead(
+      receiver.token,
+      f.workspaceA,
+      true,
+      null,
+      {
+        after_created_at: new Date().toISOString(),
+        after_id: null,
+      },
+    );
+    assert.equal(mismatchedPair.status, 400);
+
+    // Cursor pages a backlog larger than limit with no skip/duplicate.
+    const pageSize = 3;
+    const backlog: string[] = [];
+    for (let i = 0; i < 8; i++) {
+      const posted = await issueSignal(f, f.uaJwt, {
+        kind: "post_signal",
+        signal_kind: "note",
+        body: `cursor-backlog-${i}-${randomUUID()}`,
+        to_user_id: null,
+        to_agent_principal_id: receiver.principalId,
+        in_reply_to: null,
+        about: "wake-relation-cursor",
+      });
+      assert.equal(posted.status, 200, posted.text);
+      backlog.push(String((posted.body.signal as Record<string, unknown>).id));
+      // Distinct created_at so the (created_at, id) order is stable under load.
+      await delay(5);
+    }
+
+    const paged: string[] = [];
+    let afterCreatedAt: string | null = null;
+    let afterId: string | null = null;
+    for (let page = 0; page < 20; page++) {
+      const res = await agentSignalRead(
+        receiver.token,
+        f.workspaceA,
+        true,
+        null,
+        {
+          limit: pageSize,
+          after_created_at: afterCreatedAt,
+          after_id: afterId,
+        },
+      );
+      assert.equal(res.status, 200, res.text);
+      assert.deepEqual(res.body.capabilities, {
+        sender_owner_relation: 1,
+        cursor_after: 1,
+      });
+      const rows = res.body.signals as Array<Record<string, unknown>>;
+      if (rows.length === 0) break;
+      assert.ok(rows.length <= pageSize);
+      // Oldest-first within and across pages.
+      for (let i = 1; i < rows.length; i++) {
+        const prevTs = Date.parse(String(rows[i - 1]!.created_at));
+        const curTs = Date.parse(String(rows[i]!.created_at));
+        assert.ok(
+          prevTs < curTs ||
+            (prevTs === curTs &&
+              String(rows[i - 1]!.id) < String(rows[i]!.id)),
+          "cursor pages are ascending (created_at, id)",
+        );
+      }
+      for (const row of rows) {
+        const id = String(row.id);
+        assert.equal(paged.includes(id), false, `duplicate page row ${id}`);
+        paged.push(id);
+      }
+      const last = rows[rows.length - 1]!;
+      afterCreatedAt = String(last.created_at);
+      afterId = String(last.id);
+      if (rows.length < pageSize) break;
+    }
+    for (const id of backlog) {
+      assert.ok(paged.includes(id), `cursor must not skip backlog id ${id}`);
+    }
+
+    // Legacy shape (no cursor keys) preserves newest-first order for inbox feed.
+    const legacy = await agentSignalRead(
+      receiver.token,
+      f.workspaceA,
+      true,
+      null,
+      { limit: 5 },
+    );
+    assert.equal(legacy.status, 200, legacy.text);
+    assert.deepEqual(legacy.body.capabilities, {
+      sender_owner_relation: 1,
+      cursor_after: 1,
+    });
+    const legacyRows = legacy.body.signals as Array<Record<string, unknown>>;
+    assert.ok(legacyRows.length >= 2);
+    for (let i = 1; i < legacyRows.length; i++) {
+      const prevTs = Date.parse(String(legacyRows[i - 1]!.created_at));
+      const curTs = Date.parse(String(legacyRows[i]!.created_at));
+      assert.ok(
+        prevTs > curTs ||
+          (prevTs === curTs &&
+            String(legacyRows[i - 1]!.id) > String(legacyRows[i]!.id)),
+        "legacy inbox without cursor remains newest-first",
+      );
+    }
+
+    // body/about DB limits equal the client bounds (2000 / 500).
+    const bodyLimit = await sql<{ body_check: string | null }[]>`
+      SELECT pg_get_constraintdef(oid) AS body_check
+      FROM pg_constraint
+      WHERE conrelid = 'swarm.signals'::regclass
+        AND contype = 'c'
+        AND pg_get_constraintdef(oid) ILIKE '%body%'
+    `;
+    assert.ok(
+      bodyLimit.some((row) =>
+        String(row.body_check).includes("2000") &&
+        String(row.body_check).toLowerCase().includes("char_length(body)")
+      ),
+      "DB body check must match client 2000-char bound",
+    );
+    const aboutLimit = await sql<{ about_check: string | null }[]>`
+      SELECT pg_get_constraintdef(oid) AS about_check
+      FROM pg_constraint
+      WHERE conrelid = 'swarm.signals'::regclass
+        AND contype = 'c'
+        AND pg_get_constraintdef(oid) ILIKE '%about%'
+    `;
+    assert.ok(
+      aboutLimit.some((row) =>
+        String(row.about_check).includes("500") &&
+        String(row.about_check).toLowerCase().includes("char_length(about)")
+      ),
+      "DB about check must match client 500-char bound",
+    );
+    const overBody = await issueSignal(f, f.uaJwt, {
+      kind: "post_signal",
+      signal_kind: "note",
+      body: "x".repeat(2001),
+      to_user_id: null,
+      to_agent_principal_id: receiver.principalId,
+      in_reply_to: null,
+      about: null,
+    });
+    assert.equal(overBody.status, 400);
+    const overAbout = await issueSignal(f, f.uaJwt, {
+      kind: "post_signal",
+      signal_kind: "note",
+      body: "about-limit-probe",
+      to_user_id: null,
+      to_agent_principal_id: receiver.principalId,
+      in_reply_to: null,
+      about: "y".repeat(501),
+    });
+    assert.equal(overAbout.status, 400);
+
+    // Revocation control: revoked receiver credential still 403s.
+    await sql`
+      UPDATE swarm.agent_tokens
+      SET revoked_at = statement_timestamp()
+      WHERE token_id = ${receiver.tokenId}::uuid
+    `;
+    const revokedReceiver = await agentSignalRead(
+      receiver.token,
+      f.workspaceA,
+      true,
+      null,
+      { after_created_at: null, after_id: null },
+    );
+    assert.equal(revokedReceiver.status, 403);
   });
 });
 
