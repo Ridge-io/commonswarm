@@ -22,6 +22,7 @@ import {
   AcpVersionError,
   GROK_MEASURED_VERSION,
   assertGrokMeasuredVersion,
+  buildGrokChildEnv,
   buildGrokAcpArgs,
   createBoundTransport,
   defaultPermissionCallback,
@@ -216,6 +217,7 @@ describe("Grok ACP host core (pure fake child)", () => {
     const env = sanitizeChildEnv({
       PATH: "/usr/bin",
       HOME: "/Users/test",
+      GROK_HOME: "/Users/test/.grok-custom",
       LANG: "en_US.UTF-8",
       SWARM_CLOUD_URL: "https://evil.example",
       SWARM_TOKEN: "nope",
@@ -228,6 +230,7 @@ describe("Grok ACP host core (pure fake child)", () => {
     });
     assert.equal(env.PATH, "/usr/bin");
     assert.equal(env.HOME, "/Users/test");
+    assert.equal(env.GROK_HOME, "/Users/test/.grok-custom");
     assert.equal(env.LANG, "en_US.UTF-8");
     assert.equal(env.USER, "test");
     assert.equal(env.SWARM_CLOUD_URL, undefined);
@@ -237,6 +240,56 @@ describe("Grok ACP host core (pure fake child)", () => {
     assert.equal(isEnvKeyDenied("SWARM_CLOUD_URL"), true);
     assert.equal(isEnvKeyDenied("OPENAI_API_KEY"), true);
     assert.equal(isEnvKeyDenied("PATH"), false);
+    assert.equal(isEnvKeyDenied("GROK_HOME"), false);
+  });
+
+  test("strict listener env adds constant sandbox/hook/update overrides", () => {
+    const env = buildGrokChildEnv({
+      PATH: "/usr/bin",
+      HOME: "/Users/test",
+      SWARM_AGENT_TOKEN: "secret",
+      XAI_API_KEY: "secret",
+    }, {
+      sandbox: "strict",
+      disableCmuxHooks: true,
+    });
+    assert.deepEqual(env, {
+      PATH: "/usr/bin",
+      HOME: "/Users/test",
+      GROK_DISABLE_AUTOUPDATER: "1",
+      GROK_SANDBOX: "strict",
+      CMUX_GROK_HOOKS_DISABLED: "1",
+    });
+  });
+
+  test("isolated listener env replaces home and disables ambient context scanners", () => {
+    const isolatedHome = "/private/tmp/cswarm-grok-home-test";
+    const env = buildGrokChildEnv({
+      PATH: "/usr/bin",
+      HOME: "/Users/test",
+      GROK_HOME: "/Users/test/.grok-custom",
+      SWARM_AGENT_TOKEN: "secret",
+      XAI_API_KEY: "secret",
+    }, {
+      sandbox: "strict",
+      isolatedHome,
+      disableCmuxHooks: true,
+    });
+    assert.equal(env.HOME, isolatedHome);
+    assert.equal(env.GROK_HOME, isolatedHome);
+    assert.equal(env.XDG_CONFIG_HOME, `${isolatedHome}/xdg-config`);
+    assert.equal(env.GROK_CLAUDE_HOOKS_ENABLED, "0");
+    assert.equal(env.GROK_CURSOR_HOOKS_ENABLED, "0");
+    assert.equal(env.GROK_CLAUDE_RULES_ENABLED, "0");
+    assert.equal(env.GROK_CLAUDE_MCPS_ENABLED, "0");
+    assert.equal(env.GROK_MEMORY, "0");
+    assert.equal(env.GROK_SUBAGENTS, "0");
+    assert.equal(env.GROK_TOOL_SEARCH, "0");
+    assert.equal(env.GROK_LSP_TOOLS, "0");
+    assert.equal(env.GROK_WRITE_FILE, "0");
+    assert.equal(env.GROK_WEB_FETCH, "0");
+    assert.equal(env.GROK_DISABLE_AUTOUPDATER, "1");
+    assert.equal(JSON.stringify(env).includes("secret"), false);
   });
 
   test("framing + correlation + chunk accumulation", async () => {

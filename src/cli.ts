@@ -117,6 +117,7 @@ import {
   parseWaitSeconds,
   pollForSignals,
   postSignalTargets,
+  readAgentSignalPage,
   readAgentSignalDirectory,
   readSignals,
   renderSignalStatus,
@@ -132,12 +133,27 @@ import {
   type SignalDirectory,
   type ResolvedSignalRecipient,
 } from "./cloud/signals.js";
+import {
+  FileListenerEffectStore,
+  GrokListenerModel,
+  ListenerStartupError,
+  effectiveListenerStatus,
+  listenerPaths,
+  runListenerRuntime,
+  runListenerSupervisor,
+  spawnDetachedListener,
+  stopListener,
+  waitForListenerReady,
+  type ListenerPermissionMode,
+  type ListenerStatus,
+} from "./listener/index.js";
 
 const BOOLEAN_FLAGS = new Set([
   "agent-token-stdin",
   "all-devices",
   "force-file-store",
   "follow",
+  "foreground",
   "help",
   "include-stale",
   "invitation-token-stdin",
@@ -300,6 +316,9 @@ Usage:
   cswarm feed [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--about <ref>] [--kind <kind>] [--since <timestamp>] [--limit <n>] [--include-stale] [--json]
   cswarm inbox [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--kind <kind>] [--about <ref>] [--since <timestamp>] [--limit <n>] [--include-stale] [--wait <seconds>] [--json]
   cswarm inbox --follow --ndjson [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--kind <kind>] [--about <ref>] [--since <timestamp>] [--limit <n>] [--include-stale]
+  cswarm listen start --agent-token-stdin [--url <url> --anon-key <key>] --workspace-id <uuid> [--provider grok] [--cwd <absolute-path>] [--model <model>] [--effort <level>] [--permissions deny|allow] [--foreground] [--json]
+  cswarm listen status [--url <url> --anon-key <key>] --workspace-id <uuid> --principal-id <uuid> [--json]
+  cswarm listen stop [--url <url> --anon-key <key>] --workspace-id <uuid> --principal-id <uuid> [--json]
   cswarm new "<project name>" [--url <url> --anon-key <key>] [--json]
   cswarm new --name "<project name>" [--url <url> --anon-key <key>] [--json]
   cswarm workspaces [--url <url> --anon-key <key>] [--json]
@@ -2417,6 +2436,8 @@ async function runInboxFollowCommand(args: Arguments): Promise<void> {
   };
 
   const controller = new AbortController();
+  let legacyCursorWarned = false;
+  let malformedRowWarnings = 0;
   const onAbortSignal = () => controller.abort();
   process.on("SIGINT", onAbortSignal);
   process.on("SIGTERM", onAbortSignal);
@@ -2435,14 +2456,48 @@ async function runInboxFollowCommand(args: Arguments): Promise<void> {
         const credential: SignalCredential = selected.session
           ? { kind: "agent", token: await selected.session.bearer() }
           : signalCredentialOf(selected);
+        const query = {
+          ...queryBase,
+          limit,
+          ...(after === null ? {} : { after }),
+        };
+        if (credential.kind === "agent") {
+          const page = await readAgentSignalPage(
+            cloud,
+            credential,
+            query,
+            { signal: controller.signal },
+            {
+              allowLegacyCursorFallback: true,
+              tolerateMalformedRows: true,
+              maxMalformedRows: 3,
+              onMalformedRow: (index) => {
+                if (malformedRowWarnings >= 3) return;
+                malformedRowWarnings += 1;
+                process.stderr.write(
+                  `cswarm: quarantined malformed inbox row ${index + 1}; no message content was logged.\n`,
+                );
+              },
+            },
+          );
+          if (page.legacyCursorFallback && !legacyCursorWarned) {
+            legacyCursorWarned = true;
+            process.stderr.write(
+              "cswarm: this deployment predates lossless inbox paging; update the read service because a burst larger than one page can be missed.\n",
+            );
+          }
+          return {
+            signals: page.signals,
+            rawCount: page.rawCount,
+            nextCursor: page.nextCursor,
+            canPage: page.capabilities.cursorAfter &&
+              !page.legacyCursorFallback,
+          };
+        }
         return await readSignals(
           cloud,
           credential,
-          {
-            ...queryBase,
-            limit,
-            ...(after === null ? {} : { after }),
-          },
+          query,
           { signal: controller.signal },
         );
       },
@@ -2459,6 +2514,446 @@ async function runInboxFollowCommand(args: Arguments): Promise<void> {
     process.off("SIGINT", onAbortSignal);
     process.off("SIGTERM", onAbortSignal);
   }
+}
+
+function listenerUuid(value: string | undefined, flag: string): string {
+  if (!value || !UUID_RE.test(value)) {
+    throw new Error(`--${flag} must be a UUID`);
+  }
+  return value.toLowerCase();
+}
+
+function listenerPermissionMode(value: string | undefined): ListenerPermissionMode {
+  if (value === undefined || value === "deny") return "deny";
+  if (value === "allow") return "allow";
+  throw new Error("--permissions must be deny or allow");
+}
+
+function listenerStateDirectory(args: Arguments): string | undefined {
+  const value = args.optional("state-dir");
+  if (value === undefined) return undefined;
+  if (!isAbsolute(value)) {
+    throw new Error("--state-dir must be an absolute path");
+  }
+  return value;
+}
+
+function listenerProvider(args: Arguments): "grok" {
+  const provider = args.optional("provider") ?? "grok";
+  if (provider !== "grok") {
+    throw new Error(
+      "this release supports --provider grok; other host adapters are not shipped yet",
+    );
+  }
+  return provider;
+}
+
+function listenerStatusJson(
+  status: ListenerStatus,
+  permissionMode?: ListenerPermissionMode,
+): Record<string, unknown> {
+  return {
+    ...status,
+    ...(permissionMode
+      ? {
+        permission_mode: permissionMode,
+        same_owner_delivery: permissionMode === "allow"
+          ? "worker session; tool requests allowed once"
+          : "worker session; tool requests denied",
+        cross_owner_delivery:
+          "fresh strict-sandbox session; all tool requests denied",
+      }
+      : {}),
+    host_limits:
+      "The same-owner Grok worker may load ambient user hooks outside CommonSwarm's ACP permission boundary; isolated cross-owner turns use a clean temporary home.",
+  };
+}
+
+function renderListenerStatus(status: ListenerStatus): string {
+  return [
+    `Listener ${status.state} for agent ${status.principalId}.`,
+    `Provider: ${status.provider}; process: ${status.pid}; started: ${status.startedAt}.`,
+    status.readyAt ? `Ready since: ${status.readyAt}.` : "Not ready yet.",
+    status.lastSignalId
+      ? `Last handled signal: ${status.lastSignalId}.`
+      : "No signal has been handled yet.",
+    status.lastErrorCode
+      ? `Last status code: ${status.lastErrorCode}.`
+      : "No listener error is recorded.",
+  ].join("\n");
+}
+
+function listenerFailureMessage(code: string): string {
+  if (code === "version_refused") {
+    return "the listener requires Grok CLI exactly 0.2.117; run grok --version and install that measured version before retrying";
+  }
+  if (code === "grok_auth_missing") {
+    return "Grok is not signed in for detached use; run grok login, then retry listen start";
+  }
+  if (code.startsWith("grok_auth_")) {
+    return `Grok's local login artifact failed its safety check (${code}); run grok login again and ensure ~/.grok/auth.json is an owned 0600 regular file`;
+  }
+  if (
+    code === "sender_relation_capability_missing" ||
+    code === "cursor_capability_missing"
+  ) {
+    return `the deployed read service lacks the safe listener capability (${code}); update/deploy the read edge before starting a model`;
+  }
+  if (code === "credential_stopped") {
+    return "the agent credential expired, was revoked, or reached its renewal horizon; ask the signed-in workspace owner for a new onboarding prompt";
+  }
+  if (code === "permission_canary_failed") {
+    return "Grok did not prove that CommonSwarm controls ACP tool permissions; no model prompt was delivered";
+  }
+  if (code === "process_exit") {
+    return "the detached listener process exited before it became ready; run grok --version and grok login, then retry";
+  }
+  if (code === "ready_timeout") {
+    return "the listener did not become ready within two minutes; check network access and Grok login, then retry";
+  }
+  return `listener failed (${code}); no ready listener was left running`;
+}
+
+function assertDurableListenerCredential(
+  agent: AgentCredentialInput,
+  expectedPrincipal?: string,
+): asserts agent is AgentCredentialInput & {
+  principalId: string;
+  tokenId: string;
+  runId: string;
+  expiresAt: number;
+  durable: true;
+} {
+  if (
+    !agent.durable ||
+    agent.principalId === null ||
+    agent.tokenId === null ||
+    agent.runId === null ||
+    agent.expiresAt === null
+  ) {
+    throw new Error(
+      "listen start requires the complete JSON credential artifact, including expires_at; a bare token cannot identify durable state or rotate safely",
+    );
+  }
+  if (
+    expectedPrincipal !== undefined &&
+    agent.principalId !== expectedPrincipal.toLowerCase()
+  ) {
+    throw new Error(
+      "the credential artifact belongs to a different agent principal",
+    );
+  }
+}
+
+async function runConfiguredListener(options: {
+  cloud: CloudTarget;
+  workspaceId: string;
+  principalId: string;
+  agent: AgentCredentialInput & {
+    principalId: string;
+    tokenId: string;
+    runId: string;
+    expiresAt: number;
+    durable: true;
+  };
+  cwd: string;
+  permissionMode: ListenerPermissionMode;
+  model?: string;
+  effort?: string;
+  executable?: string;
+  stateDirectory?: string;
+}): Promise<ListenerStatus> {
+  const paths = listenerPaths({
+    profileId: options.cloud.profileId,
+    workspaceId: options.workspaceId,
+    principalId: options.principalId,
+    ...(options.stateDirectory
+      ? { stateDirectory: options.stateDirectory }
+      : {}),
+  });
+  const credentialSession = await agentSession(
+    options.cloud,
+    options.workspaceId,
+    options.agent,
+  );
+  const effectStore = new FileListenerEffectStore({
+    profileId: options.cloud.profileId,
+    workspaceId: options.workspaceId,
+    principalId: options.principalId,
+    ...(options.stateDirectory
+      ? { stateDirectory: options.stateDirectory }
+      : {}),
+  });
+  const model = new GrokListenerModel({
+    cwd: options.cwd,
+    permissionMode: options.permissionMode,
+    ...(options.model ? { model: options.model } : {}),
+    ...(options.effort ? { effort: options.effort } : {}),
+    ...(options.executable ? { executable: options.executable } : {}),
+  });
+  const onProcessSignal = () => {
+    void stopListener(paths);
+  };
+  process.on("SIGINT", onProcessSignal);
+  process.on("SIGTERM", onProcessSignal);
+  try {
+    return await runListenerSupervisor({
+      paths,
+      profileId: options.cloud.profileId,
+      workspaceId: options.workspaceId,
+      principalId: options.principalId,
+      run: async (signal, onEvent) =>
+        await runListenerRuntime({
+          target: options.cloud,
+          workspaceId: options.workspaceId,
+          principalId: options.principalId,
+          credentialSession,
+          store: effectStore,
+          model,
+          signal,
+          onEvent,
+        }),
+    });
+  } finally {
+    process.off("SIGINT", onProcessSignal);
+    process.off("SIGTERM", onProcessSignal);
+  }
+}
+
+async function runListenStart(args: Arguments): Promise<void> {
+  args.assertShape([
+    ...TARGET_FLAGS,
+    "workspace-id",
+    "agent-token-stdin",
+    "provider",
+    "cwd",
+    "model",
+    "effort",
+    "permissions",
+    "grok-executable",
+    "state-dir",
+    "foreground",
+    "json",
+  ], 2);
+  if (!args.has("agent-token-stdin")) {
+    throw new Error(
+      "listen start requires --agent-token-stdin; credentials are never accepted on argv",
+    );
+  }
+  listenerProvider(args);
+  const cloud = await target(args);
+  const workspaceId = listenerUuid(
+    args.optional("workspace-id") ?? process.env.SWARM_CLOUD_WORKSPACE_ID,
+    "workspace-id",
+  );
+  const agent = await stdinCredential();
+  assertDurableListenerCredential(agent);
+  const principalId = agent.principalId;
+  const cwd = args.optional("cwd") ?? process.cwd();
+  if (!isAbsolute(cwd)) throw new Error("--cwd must be an absolute path");
+  const permissionMode = listenerPermissionMode(args.optional("permissions"));
+  const stateDirectory = listenerStateDirectory(args);
+  const paths = listenerPaths({
+    profileId: cloud.profileId,
+    workspaceId,
+    principalId,
+    ...(stateDirectory ? { stateDirectory } : {}),
+  });
+  const existing = await effectiveListenerStatus(paths);
+  if (
+    existing &&
+    (existing.state === "starting" ||
+      existing.state === "ready" ||
+      existing.state === "stopping")
+  ) {
+    throw new Error(
+      `a listener is already ${existing.state} for agent ${principalId}`,
+    );
+  }
+
+  let status: ListenerStatus;
+  if (args.has("foreground")) {
+    status = await runConfiguredListener({
+      cloud,
+      workspaceId,
+      principalId,
+      agent,
+      cwd,
+      permissionMode,
+      ...(args.optional("model") ? { model: args.required("model") } : {}),
+      ...(args.optional("effort") ? { effort: args.required("effort") } : {}),
+      ...(args.optional("grok-executable")
+        ? { executable: args.required("grok-executable") }
+        : {}),
+      ...(stateDirectory ? { stateDirectory } : {}),
+    });
+  } else {
+    const entrypoint = process.argv[1];
+    if (!entrypoint || !isAbsolute(entrypoint)) {
+      throw new Error("cannot locate the cswarm executable for detached start");
+    }
+    const artifact = JSON.stringify(agentCredentialArtifact({
+      principalId,
+      tokenId: agent.tokenId,
+      runId: agent.runId,
+      token: agent.token,
+      expiresAt: agent.expiresAt,
+    }));
+    const child = await spawnDetachedListener({
+      spec: {
+        entrypoint,
+        url: cloud.url,
+        anonKey: cloud.anonKey,
+        workspaceId,
+        principalId,
+        cwd,
+        permissionMode,
+        nodeExecArgv: process.execArgv,
+        ...(stateDirectory ? { stateDirectory } : {}),
+        ...(args.optional("model") ? { model: args.required("model") } : {}),
+        ...(args.optional("effort") ? { effort: args.required("effort") } : {}),
+        ...(args.optional("grok-executable")
+          ? { executable: args.required("grok-executable") }
+          : {}),
+      },
+      credentialArtifact: artifact,
+    });
+    if (child.pid === undefined) {
+      child.kill();
+      throw new Error("detached listener did not receive a process id");
+    }
+    try {
+      status = await waitForListenerReady(paths, {
+        expectedPid: child.pid,
+        isProcessAlive: () =>
+          child.exitCode === null && child.signalCode === null,
+      });
+    } catch (error) {
+      if (error instanceof ListenerStartupError) {
+        throw new Error(listenerFailureMessage(error.code));
+      }
+      throw error;
+    }
+  }
+
+  if (status.state === "failed") {
+    throw new Error(
+      listenerFailureMessage(status.lastErrorCode ?? "unknown_error"),
+    );
+  }
+  if (args.has("json")) {
+    printJson(listenerStatusJson(status, permissionMode));
+    return;
+  }
+  process.stdout.write(
+    `${
+      args.has("foreground")
+        ? "Listener stopped."
+        : "Listener is ready and will keep receiving after this command exits."
+    }\n${renderListenerStatus(status)}\n` +
+      `Same-owner tool requests are ${
+        permissionMode === "allow"
+          ? "allowed once because you explicitly selected --permissions allow"
+          : "denied by default"
+      }. Cross-owner and unknown senders always use fresh strict, tool-denied sessions.\n` +
+      "The short credential rotates while this process remains alive and secure local state is available; a person reauthorises after the 30-day horizon.\n" +
+      "The same-owner Grok worker may load ambient user hooks outside CommonSwarm's ACP permission boundary; cmux integration hooks are disabled. Cross-owner turns use a clean temporary home with no user hooks or local context.\n" +
+      `Use listen status/stop with --workspace-id ${workspaceId} --principal-id ${principalId} and the same Cloud target.\n`,
+  );
+}
+
+async function runListenSupervisor(args: Arguments): Promise<void> {
+  args.assertShape([
+    ...TARGET_FLAGS,
+    "workspace-id",
+    "principal-id",
+    "cwd",
+    "model",
+    "effort",
+    "permissions",
+    "grok-executable",
+    "state-dir",
+  ], 1);
+  const cloud = await target(args);
+  const workspaceId = listenerUuid(args.optional("workspace-id"), "workspace-id");
+  const principalId = listenerUuid(args.optional("principal-id"), "principal-id");
+  const agent = await stdinCredential();
+  assertDurableListenerCredential(agent, principalId);
+  const cwd = args.required("cwd");
+  if (!isAbsolute(cwd)) throw new Error("--cwd must be an absolute path");
+  const status = await runConfiguredListener({
+    cloud,
+    workspaceId,
+    principalId,
+    agent,
+    cwd,
+    permissionMode: listenerPermissionMode(args.optional("permissions")),
+    ...(args.optional("model") ? { model: args.required("model") } : {}),
+    ...(args.optional("effort") ? { effort: args.required("effort") } : {}),
+    ...(args.optional("grok-executable")
+      ? { executable: args.required("grok-executable") }
+      : {}),
+    ...(listenerStateDirectory(args)
+      ? { stateDirectory: listenerStateDirectory(args) }
+      : {}),
+  });
+  if (status.state === "failed") {
+    throw new Error(
+      `listener failed (${status.lastErrorCode ?? "unknown_error"})`,
+    );
+  }
+}
+
+async function runListenStatusOrStop(
+  args: Arguments,
+  command: "status" | "stop",
+): Promise<void> {
+  args.assertShape([
+    ...TARGET_FLAGS,
+    "workspace-id",
+    "principal-id",
+    "state-dir",
+    "json",
+  ], 2);
+  const cloud = await target(args);
+  const workspaceId = listenerUuid(args.optional("workspace-id"), "workspace-id");
+  const principalId = listenerUuid(args.optional("principal-id"), "principal-id");
+  const stateDirectory = listenerStateDirectory(args);
+  const paths = listenerPaths({
+    profileId: cloud.profileId,
+    workspaceId,
+    principalId,
+    ...(stateDirectory ? { stateDirectory } : {}),
+  });
+  const status = command === "stop"
+    ? await stopListener(paths)
+    : await effectiveListenerStatus(paths);
+  if (status === null) {
+    if (args.has("json")) {
+      printJson({ status: "not_found", workspace_id: workspaceId, principal_id: principalId });
+    } else {
+      process.stdout.write("No listener has been started for that agent.\n");
+    }
+    return;
+  }
+  if (args.has("json")) {
+    printJson(listenerStatusJson(status));
+  } else {
+    process.stdout.write(`${renderListenerStatus(status)}\n`);
+  }
+}
+
+async function runListen(args: Arguments): Promise<void> {
+  const command = args.positionals[1];
+  if (command === "start") {
+    await runListenStart(args);
+    return;
+  }
+  if (command === "status" || command === "stop") {
+    await runListenStatusOrStop(args, command);
+    return;
+  }
+  throw new UsageError("listen requires start, status, or stop");
 }
 
 async function runTaskCommand(args: Arguments): Promise<void> {
@@ -2652,6 +3147,14 @@ async function main(): Promise<void> {
   if (!verb || verb === "help" || args.has("help")) {
     if (verb === "help") args.assertShape([], 1);
     process.stdout.write(`${usage()}\n`);
+    return;
+  }
+  if (verb === "__listen-supervisor") {
+    await runListenSupervisor(args);
+    return;
+  }
+  if (verb === "listen") {
+    await runListen(args);
     return;
   }
   if (verb === "login") {

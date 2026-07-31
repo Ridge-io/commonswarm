@@ -133,6 +133,14 @@ async function secureDirectory(path: string): Promise<void> {
   }
 }
 
+/** Verify or create an owned 0700 state directory for non-credential metadata. */
+export async function ensureSecureStateDirectory(path: string): Promise<void> {
+  if (!isAbsolute(path)) {
+    throw new Error("secure state directory must be absolute");
+  }
+  await secureDirectory(path);
+}
+
 async function secureCredentialFile(path: string): Promise<void> {
   const info = await lstat(path);
   if (!info.isFile() || info.isSymbolicLink()) {

@@ -332,7 +332,7 @@ export class AcpHostSession {
         },
         clientInfo: {
           name: clientName ?? "cswarm-host",
-          version: clientVersion ?? "0.1.3",
+          version: clientVersion ?? "0.1.4",
         },
       },
       this.requestTimeoutMs,

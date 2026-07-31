@@ -26,6 +26,7 @@ import {
   parseWaitSeconds,
   pollForSignals,
   postSignalTargets,
+  readAgentSignalPage,
   readSignals,
   resolveSignalRecipient,
   runInboxFollow,
@@ -713,6 +714,206 @@ test("readSignals keeps plain Error taxonomy while carrying Retry-After for foll
   );
 });
 
+test("agent signal pages expose capabilities and fail closed on absent markers", async () => {
+  const target = cloudTarget("https://cloud.example.test", "anon-key");
+  const bodies: Array<Record<string, unknown>> = [];
+  const fetcher = (async (_url: string | URL | Request, init?: RequestInit) => {
+    bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+    return new Response(JSON.stringify({
+      signals: [{ ...row(), sender_owner_relation: "same_owner" }],
+      capabilities: { sender_owner_relation: 1, cursor_after: 1 },
+    }), { status: 200, headers: { "content-type": "application/json" } });
+  }) as typeof fetch;
+  const page = await readAgentSignalPage(
+    target,
+    { kind: "agent", token: "swm_agt_" + "A".repeat(43) },
+    {
+      workspaceId: WORKSPACE,
+      inbox: true,
+      kind: "ask",
+      ascending: true,
+      limit: 100,
+    },
+    { fetcher },
+  );
+  assert.deepEqual(page.capabilities, {
+    senderOwnerRelation: true,
+    cursorAfter: true,
+  });
+  assert.equal(page.legacyCursorFallback, false);
+  assert.equal(bodies[0]?.after_created_at, null);
+  assert.equal(bodies[0]?.after_id, null);
+  assert.equal(page.signals[0]?.sender_owner_relation, "same_owner");
+
+  const old = await readAgentSignalPage(
+    target,
+    { kind: "agent", token: "swm_agt_" + "A".repeat(43) },
+    { workspaceId: WORKSPACE, inbox: true },
+    {
+      fetcher: (async () =>
+        new Response(JSON.stringify({ signals: [row()] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        })) as typeof fetch,
+    },
+  );
+  assert.deepEqual(old.capabilities, {
+    senderOwnerRelation: false,
+    cursorAfter: false,
+  });
+  assert.equal(old.signals[0]?.sender_owner_relation, "unknown");
+});
+
+test("legacy cursor fallback is explicit and a capable 400 still fails", async () => {
+  const target = cloudTarget("https://cloud.example.test", "anon-key");
+  const requests: Array<Record<string, unknown>> = [];
+  const legacyFetcher = (async (
+    _url: string | URL | Request,
+    init?: RequestInit,
+  ) => {
+    const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    requests.push(body);
+    if (Object.hasOwn(body, "after_created_at")) {
+      return new Response("{}", { status: 400 });
+    }
+    return new Response(JSON.stringify({ signals: [row()] }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  }) as typeof fetch;
+  const page = await readAgentSignalPage(
+    target,
+    { kind: "agent", token: "swm_agt_" + "A".repeat(43) },
+    {
+      workspaceId: WORKSPACE,
+      inbox: true,
+      ascending: true,
+      limit: 100,
+    },
+    { fetcher: legacyFetcher },
+    { allowLegacyCursorFallback: true },
+  );
+  assert.equal(page.legacyCursorFallback, true);
+  assert.equal(requests.length, 2);
+  assert.equal(Object.hasOwn(requests[1]!, "after_created_at"), false);
+
+  await assert.rejects(
+    readAgentSignalPage(
+      target,
+      { kind: "agent", token: "swm_agt_" + "A".repeat(43) },
+      {
+        workspaceId: WORKSPACE,
+        inbox: true,
+        ascending: true,
+        limit: 100,
+      },
+      {
+        fetcher: (async (
+          _url: string | URL | Request,
+          init?: RequestInit,
+        ) => {
+          const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          return Object.hasOwn(body, "after_created_at")
+            ? new Response("{}", { status: 400 })
+            : new Response(JSON.stringify({
+              signals: [],
+              capabilities: { sender_owner_relation: 1, cursor_after: 1 },
+            }), {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            });
+        }) as typeof fetch,
+      },
+      { allowLegacyCursorFallback: true },
+    ),
+    /HTTP 400/,
+  );
+});
+
+test("follow-only row quarantine is bounded and preserves a raw page cursor", async () => {
+  const target = cloudTarget("https://cloud.example.test", "anon-key");
+  const malformed = { ...row(), body: "" };
+  const last = row({
+    id: "13111111-1111-4111-8111-111111111111",
+    created_at: "2026-07-24T00:00:02.000Z",
+  });
+  const response = () =>
+    new Response(JSON.stringify({
+      signals: [malformed, last],
+      capabilities: { sender_owner_relation: 1, cursor_after: 1 },
+    }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  await assert.rejects(
+    readAgentSignalPage(
+      target,
+      { kind: "agent", token: "swm_agt_" + "A".repeat(43) },
+      { workspaceId: WORKSPACE, inbox: true, ascending: true },
+      { fetcher: (async () => response()) as typeof fetch },
+    ),
+    /malformed signal data/,
+  );
+
+  const diagnostics: number[] = [];
+  const page = await readAgentSignalPage(
+    target,
+    { kind: "agent", token: "swm_agt_" + "A".repeat(43) },
+    { workspaceId: WORKSPACE, inbox: true, ascending: true },
+    { fetcher: (async () => response()) as typeof fetch },
+    {
+      tolerateMalformedRows: true,
+      maxMalformedRows: 1,
+      onMalformedRow: (index) => diagnostics.push(index),
+    },
+  );
+  assert.equal(page.rawCount, 2);
+  assert.equal(page.malformedRows, 1);
+  assert.deepEqual(diagnostics, [0]);
+  assert.deepEqual(page.signals.map((item) => item.id), [last.id]);
+  assert.deepEqual(page.nextCursor, {
+    created_at: last.created_at,
+    id: last.id,
+  });
+
+  await assert.rejects(
+    readAgentSignalPage(
+      target,
+      { kind: "agent", token: "swm_agt_" + "A".repeat(43) },
+      { workspaceId: WORKSPACE, inbox: true, ascending: true },
+      {
+        fetcher: (async () =>
+          new Response(JSON.stringify({
+            signals: [malformed, malformed],
+            capabilities: { sender_owner_relation: 1, cursor_after: 1 },
+          }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          })) as typeof fetch,
+      },
+      { tolerateMalformedRows: true, maxMalformedRows: 1 },
+    ),
+    /too many malformed rows/,
+  );
+});
+
+test("follow refuses a full quarantined page without a safe terminal cursor", async () => {
+  const stop = await runInboxFollow({
+    workspaceId: WORKSPACE,
+    pageLimit: 1,
+    sleep: async () => {},
+    arm: async () => ({
+      signals: [],
+      rawCount: 1,
+      nextCursor: null,
+      canPage: true,
+    }),
+    emit: () => undefined,
+  });
+  assert.equal(stop.reason, "malformed");
+  assert.match(stop.error?.message ?? "", /terminal cursor is malformed/);
+});
+
 // ---------------------------------------------------------------------------
 // Lossless follow cursor, tolerant parse, honest renewal copy
 // ---------------------------------------------------------------------------
@@ -846,10 +1047,7 @@ test("follow pages a backlog larger than one page without dropping older rows", 
         return page2;
       }
       // Idle rearm after drain.
-      assert.deepEqual(page.after, {
-        created_at: "2026-07-24T00:00:03.000Z",
-        id: "11111111-1111-4111-8111-111111111103",
-      });
+      assert.equal(page.after, null);
       return [];
     },
     emit: (frame) => frames.push(frame),
@@ -863,6 +1061,47 @@ test("follow pages a backlog larger than one page without dropping older rows", 
     .map((f) => f.signal.body);
   assert.deepEqual(bodies, ["old-1", "old-2", "new-3"]);
   assert.ok(requests.length >= 3, "expected catch-up pages then idle rearm");
+});
+
+test("follow resets the page cursor after each scan so late older rows arrive", async () => {
+  const frames: FollowFrame[] = [];
+  const cursors: Array<FollowArmRequest["after"]> = [];
+  const controller = new AbortController();
+  const first = row({
+    id: "12111111-1111-4111-8111-111111111111",
+    created_at: "2026-07-24T00:00:10.000Z",
+    body: "first",
+  });
+  const lateOlder = row({
+    id: "12111111-1111-4111-8111-111111111112",
+    created_at: "2026-07-24T00:00:05.000Z",
+    body: "late-older",
+  });
+  let arm = 0;
+  const stop = await runInboxFollow({
+    workspaceId: WORKSPACE,
+    pageLimit: 100,
+    pollMs: 1,
+    postEmitMs: 1,
+    signal: controller.signal,
+    sleep: async () => {},
+    arm: async ({ after }) => {
+      cursors.push(after);
+      arm += 1;
+      if (arm === 1) return [first];
+      if (arm === 2) return [lateOlder, first];
+      controller.abort();
+      return [];
+    },
+    emit: (frame) => frames.push(frame),
+  });
+  assert.equal(stop.reason, "cancelled");
+  assert.deepEqual(cursors.slice(0, 2), [null, null]);
+  assert.deepEqual(
+    frames.filter((frame) => frame.type === "signal")
+      .map((frame) => frame.type === "signal" ? frame.signal.body : ""),
+    ["first", "late-older"],
+  );
 });
 
 test("describeMintRenewal states process and local-state conditions, not unconditional self-renewal", () => {

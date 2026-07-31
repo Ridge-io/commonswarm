@@ -65,6 +65,23 @@ export interface SignalQuery {
   includeStale?: boolean;
 }
 
+export interface SignalReadCapabilities {
+  senderOwnerRelation: boolean;
+  cursorAfter: boolean;
+}
+
+export interface AgentSignalPage {
+  signals: SignalRecord[];
+  capabilities: SignalReadCapabilities;
+  /** True only when a pre-capability edge required a legacy newest-first read. */
+  legacyCursorFallback: boolean;
+  /** Server row count before tolerant quarantine. */
+  rawCount: number;
+  /** Cursor of the last raw row, null when it was not safely readable. */
+  nextCursor: SignalCursor | null;
+  malformedRows: number;
+}
+
 /** Bounded CLI wait window for inbox --wait / ask --wait (seconds). */
 export const SIGNAL_WAIT_MIN_SECONDS = 1;
 export const SIGNAL_WAIT_MAX_SECONDS = 300;
@@ -147,6 +164,17 @@ function checkedTimestamp(value: unknown, field: string): string {
   return value;
 }
 
+function signalReadCapabilities(value: unknown): SignalReadCapabilities {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return { senderOwnerRelation: false, cursorAfter: false };
+  }
+  const row = value as Record<string, unknown>;
+  return {
+    senderOwnerRelation: row.sender_owner_relation === 1,
+    cursorAfter: row.cursor_after === 1,
+  };
+}
+
 const SENDER_OWNER_RELATIONS = new Set<SenderOwnerRelation>([
   "same_owner",
   "cross_owner",
@@ -216,6 +244,47 @@ export function parseSignalRecord(value: unknown): SignalRecord {
     created_at: checkedTimestamp(row.created_at, "created_at"),
     sender_owner_relation: senderOwnerRelation,
   };
+}
+
+function cursorFromUnknown(value: unknown): SignalCursor | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const row = value as Record<string, unknown>;
+  try {
+    return {
+      created_at: checkedTimestamp(row.created_at, "created_at"),
+      id: checkedUuid(row.id, "id"),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function parseSignalRows(
+  rows: unknown[],
+  options: {
+    tolerateMalformedRows: boolean;
+    maxMalformedRows: number;
+    onMalformedRow?: (index: number, error: Error) => void;
+  },
+): { signals: SignalRecord[]; malformedRows: number } {
+  const signals: SignalRecord[] = [];
+  let malformedRows = 0;
+  for (const [index, row] of rows.entries()) {
+    try {
+      signals.push(parseSignalRecord(row));
+    } catch (error) {
+      if (!options.tolerateMalformedRows) throw error;
+      malformedRows += 1;
+      const parsed = error instanceof Error ? error : new Error(String(error));
+      options.onMalformedRow?.(index, parsed);
+      if (malformedRows > options.maxMalformedRows) {
+        throw new Error(
+          `signal read returned too many malformed rows (more than ${options.maxMalformedRows})`,
+        );
+      }
+    }
+  }
+  return { signals, malformedRows };
 }
 
 /** @deprecated Use parseSignalRecord — kept as an internal alias. */
@@ -527,54 +596,87 @@ async function humanSignals(
   return sortSignals(rowsAfterCursor(parsed, query.after), ascending);
 }
 
-async function agentSignals(
+async function agentSignalPage(
   target: CloudTarget,
   credential: Extract<SignalCredential, { kind: "agent" }>,
   query: SignalQuery,
   options: ReturnType<typeof normalizeReadOptions>,
-): Promise<SignalRecord[]> {
-  let result: { response: Response; body: unknown } | null;
-  try {
-    result = await fetchSignalRead(options.fetcher, readEndpoint(target), {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${credential.token}`,
-        apikey: target.anonKey,
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        resource: "signals",
-        workspace_id: query.workspaceId,
-        inbox: query.inbox,
-        about: query.about ?? null,
-        kind: query.kind ?? null,
-        in_reply_to: query.in_reply_to ?? null,
-        since: query.since ?? null,
-        // Cursor pair matches the read edge (Kepler wake-relation contract):
-        // both keys present → oldest-first pages; both null on first catch-up
-        // page; both set for keyset after. Omitted entirely for one-shot so an
-        // older edge keeps accepting the legacy body shape.
-        ...(query.ascending === true || query.after !== undefined
-          ? {
-            after_created_at: query.after?.created_at ?? null,
-            after_id: query.after?.id ?? null,
-          }
-          : {}),
-        limit: query.limit,
-        include_stale: query.includeStale ?? false,
-      }),
-      ...(options.signal ? { signal: options.signal } : {}),
-    }, perReadTimeoutMs(options));
-  } catch (error) {
-    mapReadFailure(error, options.deadlineMs !== undefined);
-  }
-  if (result === null) {
-    throw new Error("signal read could not reach the cloud service");
+  allowLegacyCursorFallback = false,
+  parseOptions: {
+    tolerateMalformedRows: boolean;
+    maxMalformedRows: number;
+    onMalformedRow?: (index: number, error: Error) => void;
+  } = {
+    tolerateMalformedRows: false,
+    maxMalformedRows: 0,
+  },
+): Promise<AgentSignalPage> {
+  const cursorRequested = query.ascending === true || query.after !== undefined;
+  const perform = async (
+    includeCursor: boolean,
+  ): Promise<{ response: Response; body: unknown }> => {
+    let result: { response: Response; body: unknown } | null;
+    try {
+      result = await fetchSignalRead(options.fetcher, readEndpoint(target), {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${credential.token}`,
+          apikey: target.anonKey,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          resource: "signals",
+          workspace_id: query.workspaceId,
+          inbox: query.inbox,
+          about: query.about ?? null,
+          kind: query.kind ?? null,
+          in_reply_to: query.in_reply_to ?? null,
+          since: query.since ?? null,
+          ...(includeCursor
+            ? {
+              after_created_at: query.after?.created_at ?? null,
+              after_id: query.after?.id ?? null,
+            }
+            : {}),
+          limit: query.limit,
+          include_stale: query.includeStale ?? false,
+        }),
+        ...(options.signal ? { signal: options.signal } : {}),
+      }, perReadTimeoutMs(options));
+    } catch (error) {
+      mapReadFailure(error, options.deadlineMs !== undefined);
+    }
+    if (result === null) {
+      throw new Error("signal read could not reach the cloud service");
+    }
+    return result;
+  };
+
+  let result = await perform(cursorRequested);
+  let legacyCursorFallback = false;
+  if (
+    result.response.status === 400 &&
+    cursorRequested &&
+    allowLegacyCursorFallback
+  ) {
+    const original = result.response;
+    result = await perform(false);
+    if (!result.response.ok) throwSignalHttp(result.response);
+    const fallbackBody = result.body;
+    const fallbackCapabilities = fallbackBody &&
+        typeof fallbackBody === "object" &&
+        !Array.isArray(fallbackBody)
+      ? signalReadCapabilities(
+        (fallbackBody as Record<string, unknown>).capabilities,
+      )
+      : { senderOwnerRelation: false, cursorAfter: false };
+    // A capable edge rejecting the capability request is a real protocol bug,
+    // not an excuse to silently fall back to a lossy newest-N window.
+    if (fallbackCapabilities.cursorAfter) throwSignalHttp(original);
+    legacyCursorFallback = true;
   }
   const { response, body } = result;
-  if (!response.ok) {
-    throwSignalHttp(response);
-  }
+  if (!response.ok) throwSignalHttp(response);
   if (
     !body ||
     typeof body !== "object" ||
@@ -583,10 +685,25 @@ async function agentSignals(
   ) {
     throw new Error("signal read returned malformed JSON");
   }
+  const capabilities = signalReadCapabilities(
+    (body as Record<string, unknown>).capabilities,
+  );
+  const rawRows = (body as Record<string, unknown>).signals as unknown[];
+  const parsedRows = parseSignalRows(rawRows, parseOptions);
   const ascending = query.ascending === true || query.after !== undefined;
-  const parsed = ((body as Record<string, unknown>).signals as unknown[])
-    .map(parseSignalRecord);
-  return sortSignals(rowsAfterCursor(parsed, query.after), ascending);
+  return {
+    signals: sortSignals(
+      rowsAfterCursor(parsedRows.signals, query.after),
+      ascending,
+    ),
+    capabilities,
+    legacyCursorFallback,
+    rawCount: rawRows.length,
+    nextCursor: rawRows.length === 0
+      ? null
+      : cursorFromUnknown(rawRows[rawRows.length - 1]),
+    malformedRows: parsedRows.malformedRows,
+  };
 }
 
 export interface SignalMember {
@@ -848,21 +965,15 @@ export async function pollForSignals(options: {
   return { signals: [], timedOut: true };
 }
 
-export async function readSignals(
-  target: CloudTarget,
-  credential: SignalCredential,
-  query: SignalQuery,
-  fetcherOrOptions: typeof fetch | SignalReadOptions = fetch,
-): Promise<SignalRecord[]> {
+function normalizedSignalQuery(query: SignalQuery): SignalQuery {
   if (!UUID_RE.test(query.workspaceId)) {
     throw new Error("--workspace-id must be a UUID");
   }
   if (query.in_reply_to !== undefined && !UUID_RE.test(query.in_reply_to)) {
     throw new Error("in_reply_to must be a signal UUID");
   }
-  const options = normalizeReadOptions(fetcherOrOptions);
   const after = checkedAfter(query.after);
-  const normalized: SignalQuery = {
+  return {
     ...query,
     workspaceId: query.workspaceId.toLowerCase(),
     ...(query.in_reply_to === undefined
@@ -874,9 +985,63 @@ export async function readSignals(
     ascending: query.ascending === true || after !== undefined,
     includeStale: query.includeStale ?? false,
   };
+}
+
+/** Agent read with explicit edge capabilities for safe host-adapter gating. */
+export async function readAgentSignalPage(
+  target: CloudTarget,
+  credential: Extract<SignalCredential, { kind: "agent" }>,
+  query: SignalQuery,
+  fetcherOrOptions: typeof fetch | SignalReadOptions = fetch,
+  pageOptions?: {
+    allowLegacyCursorFallback?: boolean;
+    tolerateMalformedRows?: boolean;
+    maxMalformedRows?: number;
+    onMalformedRow?: (index: number, error: Error) => void;
+  },
+): Promise<AgentSignalPage> {
+  const readOptions = normalizeReadOptions(fetcherOrOptions);
+  const maxMalformedRows = pageOptions?.maxMalformedRows ?? 3;
+  if (!Number.isSafeInteger(maxMalformedRows) || maxMalformedRows < 0) {
+    throw new Error("maxMalformedRows must be a non-negative integer");
+  }
+  return await agentSignalPage(
+    target,
+    credential,
+    normalizedSignalQuery(query),
+    readOptions,
+    pageOptions?.allowLegacyCursorFallback === true,
+    {
+      tolerateMalformedRows: pageOptions?.tolerateMalformedRows === true,
+      maxMalformedRows,
+      ...(pageOptions?.onMalformedRow
+        ? { onMalformedRow: pageOptions.onMalformedRow }
+        : {}),
+    },
+  );
+}
+
+export async function readSignals(
+  target: CloudTarget,
+  credential: SignalCredential,
+  query: SignalQuery,
+  fetcherOrOptions: typeof fetch | SignalReadOptions = fetch,
+): Promise<SignalRecord[]> {
+  const options = normalizeReadOptions(fetcherOrOptions);
+  const normalized = normalizedSignalQuery(query);
   return credential.kind === "human"
     ? await humanSignals(target, credential, normalized, options)
-    : await agentSignals(target, credential, normalized, options);
+    : (await agentSignalPage(
+      target,
+      credential,
+      normalized,
+      options,
+      true,
+      {
+        tolerateMalformedRows: false,
+        maxMalformedRows: 0,
+      },
+    )).signals;
 }
 
 export const SIGNAL_STATUS_UNAVAILABLE_MESSAGE =
@@ -1222,6 +1387,16 @@ export interface FollowArmRequest {
   limit: number;
 }
 
+export interface FollowArmPage {
+  signals: SignalRecord[];
+  /** Row count before malformed-row quarantine. */
+  rawCount: number;
+  /** Last server row cursor; required to continue a full page. */
+  nextCursor: SignalCursor | null;
+  /** False for a legacy edge whose newest-N response cannot be keyset-paged. */
+  canPage: boolean;
+}
+
 /**
  * Long-running inbox receive loop. Caller supplies `arm`, which must refresh
  * credentials (AgentCredentialSession.bearer when agent) and perform one read
@@ -1235,7 +1410,9 @@ export async function runInboxFollow(options: {
    * Fetch one ascending page after the cursor. Legacy zero-arg arms still work
    * (extra args are ignored) but cannot express lossless pagination alone.
    */
-  arm: (page: FollowArmRequest) => Promise<SignalRecord[]>;
+  arm: (
+    page: FollowArmRequest,
+  ) => Promise<SignalRecord[] | FollowArmPage>;
   emit: (frame: FollowFrame) => void;
   /**
    * Optional side-effect sleep hook for tests (e.g. advance a fake clock).
@@ -1310,7 +1487,22 @@ export async function runInboxFollow(options: {
     if (cancelled()) return { reason: "cancelled" };
 
     try {
-      const rows = await options.arm({ after, limit: pageLimit });
+      const armResult = await options.arm({ after, limit: pageLimit });
+      const rows = Array.isArray(armResult)
+        ? armResult
+        : armResult.signals;
+      const rawCount = Array.isArray(armResult)
+        ? rows.length
+        : armResult.rawCount;
+      const nextCursor = Array.isArray(armResult)
+        ? (rows.length === 0
+          ? null
+          : {
+            created_at: rows[rows.length - 1]!.created_at,
+            id: rows[rows.length - 1]!.id,
+          })
+        : armResult.nextCursor;
+      const canPage = Array.isArray(armResult) ? true : armResult.canPage;
       attempt = 0;
 
       if (!ready) {
@@ -1338,15 +1530,21 @@ export async function runInboxFollow(options: {
         emitted = true;
       }
 
-      // Advance the keyset even when every row was a duplicate so a full page
-      // of already-seen ids cannot pin the cursor and spin.
-      if (ordered.length > 0) {
-        const last = ordered[ordered.length - 1]!;
-        after = { created_at: last.created_at, id: last.id };
-      }
-
       // Full page => more backlog may exist; drain without the idle poll.
-      const fullPage = rows.length >= pageLimit;
+      const fullPage = canPage && rawCount >= pageLimit;
+      if (fullPage && nextCursor === null) {
+        throw new SignalMalformedError(
+          "signal read cannot continue a full page because its terminal cursor is malformed",
+        );
+      }
+      // Advance even when every valid row was a duplicate. The cursor comes
+      // from the last raw row so quarantining an earlier malformed row cannot
+      // pin a full page forever.
+      if (fullPage) after = nextCursor;
+      // The tuple cursor is a page cursor for one complete scan, not a durable
+      // high-water mark. Reset after the last partial page so a row that commits
+      // late with an older created_at is discovered on the next full scan.
+      if (!fullPage) after = null;
       const waitMs = fullPage
         ? (emitted ? postEmitMs : 0)
         : (emitted ? postEmitMs : pollMs);

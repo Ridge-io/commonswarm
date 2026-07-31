@@ -30,6 +30,7 @@ const ALLOWED_EXACT = new Set([
   "XDG_CACHE_HOME",
   "XDG_RUNTIME_DIR",
   "XDG_STATE_HOME",
+  "GROK_HOME",
 ]);
 
 /** Explicit deny fragments even if a future allowlist widens. */

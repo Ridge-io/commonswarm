@@ -1,0 +1,117 @@
+import {
+  spawn,
+  type ChildProcess,
+  type SpawnOptions,
+} from "node:child_process";
+import { sanitizeChildEnv } from "../host/env.js";
+
+export interface ListenerChildSpec {
+  entrypoint: string;
+  url: string;
+  anonKey: string;
+  workspaceId: string;
+  principalId: string;
+  cwd: string;
+  permissionMode: "deny" | "allow";
+  stateDirectory?: string;
+  executable?: string;
+  model?: string;
+  effort?: string;
+  nodeExecArgv?: string[];
+}
+
+export type ListenerSpawn = (
+  command: string,
+  args: readonly string[],
+  options: SpawnOptions,
+) => ChildProcess;
+
+/** Keep only the dev loader needed for a TypeScript source entrypoint. */
+export function listenerNodeExecArgv(values: readonly string[]): string[] {
+  const safe: string[] = [];
+  for (let index = 0; index < values.length; index += 1) {
+    const value = values[index]!;
+    if (value === "--enable-source-maps") {
+      safe.push(value);
+      continue;
+    }
+    if (value === "--import" && values[index + 1] === "tsx") {
+      safe.push("--import", "tsx");
+      index += 1;
+      continue;
+    }
+    if (value === "--import=tsx") safe.push(value);
+  }
+  return safe;
+}
+
+/** Public-only argv; the credential is intentionally not accepted here. */
+export function buildListenerChildArgs(spec: ListenerChildSpec): string[] {
+  return [
+    ...listenerNodeExecArgv(spec.nodeExecArgv ?? []),
+    spec.entrypoint,
+    "__listen-supervisor",
+    "--url",
+    spec.url,
+    "--anon-key",
+    spec.anonKey,
+    "--workspace-id",
+    spec.workspaceId,
+    "--principal-id",
+    spec.principalId,
+    "--cwd",
+    spec.cwd,
+    "--permissions",
+    spec.permissionMode,
+    ...(spec.stateDirectory
+      ? ["--state-dir", spec.stateDirectory]
+      : []),
+    ...(spec.executable ? ["--grok-executable", spec.executable] : []),
+    ...(spec.model ? ["--model", spec.model] : []),
+    ...(spec.effort ? ["--effort", spec.effort] : []),
+  ];
+}
+
+/**
+ * Spawn a detached supervisor and hand the one-time credential through a pipe.
+ * The token never enters argv or env; stdout/stderr are ignored because safe
+ * metadata logging is owned by the supervisor.
+ */
+export async function spawnDetachedListener(options: {
+  spec: ListenerChildSpec;
+  credentialArtifact: string;
+  env?: NodeJS.ProcessEnv;
+  spawnImpl?: ListenerSpawn;
+}): Promise<ChildProcess> {
+  if (
+    options.credentialArtifact.length < 1 ||
+    options.credentialArtifact.length > 4_096
+  ) {
+    throw new Error("listener credential artifact is outside the stdin bound");
+  }
+  const spawnImpl = options.spawnImpl ?? spawn;
+  const child = spawnImpl(
+    process.execPath,
+    buildListenerChildArgs(options.spec),
+    {
+      detached: true,
+      stdio: ["pipe", "ignore", "ignore"],
+      env: sanitizeChildEnv(options.env ?? process.env),
+    },
+  );
+  if (!child.stdin) {
+    child.kill();
+    throw new Error("detached listener child has no credential pipe");
+  }
+  await new Promise<void>((resolve, reject) => {
+    const onError = (error: Error) => reject(error);
+    child.once("error", onError);
+    child.stdin!.end(options.credentialArtifact, "utf8", () => {
+      child.off("error", onError);
+      resolve();
+    });
+  });
+  child.unref();
+  return child;
+}
+
