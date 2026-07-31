@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 import { PendingRefreshGate } from "../../lib/pending-refresh";
+import { isInviteSubmitCurrent } from "../../lib/invite-submit";
 import {
   pendingAccessRows,
   shouldPollPendingAccess,
@@ -225,6 +226,104 @@ test("the invite result clears a dead credential without stealing focus", () => 
     dashboard,
     /button\.dataset\.inviteComplete === "true"[\s\S]*resetFreshInviteResult\(\);[\s\S]*returnToChannel\(\)/,
     "the transformed primary action returns to the live channel",
+  );
+});
+
+test("invite submit owner rejects A's credential after an A-to-B switch", () => {
+  const owner = { workspaceId: "A", version: 7 };
+  let activeWorkspaceId = "A";
+  let requestVersion = 7;
+  let visibleCredential = "";
+  const settleCreate = (credential: string): void => {
+    if (!isInviteSubmitCurrent(owner, activeWorkspaceId, requestVersion)) return;
+    visibleCredential = credential;
+  };
+
+  activeWorkspaceId = "B";
+  requestVersion = 8;
+  settleCreate("one-use-A");
+  assert.equal(visibleCredential, "", "A's token is discarded rather than rendered in B");
+});
+
+test("invite pending follow-up cannot assign A rows after B then C take ownership", () => {
+  const owner = { workspaceId: "A", version: 11 };
+  let activeWorkspaceId = "A";
+  let requestVersion = 11;
+  let visiblePending = ["C-existing"];
+  assert.equal(
+    isInviteSubmitCurrent(owner, activeWorkspaceId, requestVersion),
+    true,
+    "A owns the follow-up when it starts",
+  );
+
+  activeWorkspaceId = "B";
+  requestVersion = 12;
+  activeWorkspaceId = "C";
+  requestVersion = 13;
+  const applyPending = (rows: string[]): void => {
+    if (!isInviteSubmitCurrent(owner, activeWorkspaceId, requestVersion)) return;
+    visiblePending = rows;
+  };
+  applyPending(["A-invite"]);
+  assert.deepEqual(
+    visiblePending,
+    ["C-existing"],
+    "A's pending response cannot overwrite the state owned by C",
+  );
+});
+
+test("invite submit checks ownership after both awaits and before shared writes", () => {
+  const submitStart = dashboard.indexOf(
+    'one<HTMLFormElement>("[data-invite-form]")?.addEventListener("submit"',
+  );
+  const submitEnd = dashboard.indexOf(
+    'one<HTMLButtonElement>("[data-copy-invite]")?.addEventListener',
+    submitStart,
+  );
+  assert.notEqual(submitStart, -1);
+  assert.notEqual(submitEnd, -1);
+  const submitHandler = dashboard.slice(
+    submitStart,
+    submitEnd,
+  );
+  assert.match(
+    submitHandler,
+    /const submitOwner = \{\s*workspaceId: activeWorkspaceId,\s*version: requestVersion,?\s*\}/,
+    "the request captures exact workspace and generation before awaiting",
+  );
+  assert.match(
+    submitHandler,
+    /const created = await inviteWorkspaceMember\([\s\S]*?\);[\s\S]*?if \(!ownsInviteSubmit\(\)\) return;[\s\S]*?freshInviteLink = memberInviteUrl/,
+    "create settlement is rejected before the credential reaches shared state or DOM",
+  );
+  assert.match(
+    submitHandler,
+    /const nextInvites = await pendingMemberInvites\(created\.workspaceId\);\s*if \(!ownsInviteSubmit\(\)\) return;\s*pendingInvites = nextInvites/,
+    "the follow-up queries A explicitly and rejects staleness before assigning rows",
+  );
+  assert.match(
+    submitHandler,
+    /\} catch \(caught\) \{\s*if \(!ownsInviteSubmit\(\)\) return;/,
+    "a stale rejection cannot write an error into the next workspace",
+  );
+  assert.match(
+    submitHandler,
+    /\} finally \{\s*if \(ownsInviteSubmit\(\)\) resetInviteSubmitControl\(\);/,
+    "a stale completion cannot mutate the next workspace's submit control",
+  );
+  assert.match(
+    submitHandler,
+    /requestAnimationFrame\(\(\) => \{\s*if \(!ownsInviteSubmit\(\)\) return;/,
+    "deferred focus rechecks ownership too",
+  );
+  const openWorkspace = dashboard.slice(
+    dashboard.indexOf("const openWorkspace ="),
+    dashboard.indexOf("const openAgentChoice ="),
+  );
+  assert.match(
+    openWorkspace,
+    /resetInviteSubmitControl\(\);[\s\S]*if \(changesWorkspace\) \{[\s\S]*resetFreshInviteResult\(\);[\s\S]*inviteIntent = null;[\s\S]*activeWorkspaceId = selected\.id/,
+    "workspace switching resets the old form before the new workspace owns the DOM",
   );
 });
 

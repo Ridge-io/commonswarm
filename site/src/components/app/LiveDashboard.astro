@@ -573,6 +573,7 @@ import SampleNotice from "./SampleNotice.astro";
     type PendingMemberInvite,
   } from "../../lib/commonswarm";
   import { memberInviteUrl } from "../../lib/member-invite";
+  import { isInviteSubmitCurrent } from "../../lib/invite-submit";
   import { PendingRefreshGate } from "../../lib/pending-refresh";
   import { BootFocusGate } from "../../lib/boot-focus";
   import {
@@ -1863,6 +1864,7 @@ import SampleNotice from "./SampleNotice.astro";
       freshInviteId = "";
       freshInviteWorkspaceId = "";
       inviteIntent = null;
+      resetInviteSubmitControl();
       activeCreate = null;
       rosterFilter = "";
       unknownAgentCandidates.clear();
@@ -2035,16 +2037,18 @@ import SampleNotice from "./SampleNotice.astro";
       }
     };
 
+    const resetInviteSubmitControl = (): void => {
+      const submit = one<HTMLButtonElement>("[data-invite-submit]");
+      if (!submit) return;
+      submit.disabled = false;
+      submit.textContent = "Create invite link";
+    };
+
     const openWorkspace = async (workspaceId: string): Promise<void> => {
       const selected = workspaces.find((workspace) => workspace.id === workspaceId);
       if (!selected) return;
-      if (
-        freshInviteWorkspaceId.length > 0 &&
-        freshInviteWorkspaceId !== selected.id
-      ) {
-        resetFreshInviteResult();
-      }
-      if (activeWorkspaceId !== selected.id) {
+      const changesWorkspace = activeWorkspaceId !== selected.id;
+      if (changesWorkspace) {
         previousSignalIds.clear();
         feedWasEmpty = false;
       }
@@ -2068,6 +2072,21 @@ import SampleNotice from "./SampleNotice.astro";
         return;
       }
       pendingWorkspaceId = "";
+      /* Every real workspace open advances requestVersion, so an invite submission
+         from the prior generation no longer owns this shared form. Reset its busy
+         affordance here; the stale async handler is forbidden from touching it. */
+      resetInviteSubmitControl();
+      if (changesWorkspace) {
+        resetFreshInviteResult();
+        inviteIntent = null;
+        const email = one<HTMLInputElement>("[data-invite-email]");
+        const error = one<HTMLElement>("[data-invite-error]");
+        if (email) email.value = "";
+        if (error) {
+          error.textContent = "";
+          error.hidden = true;
+        }
+      }
       /* The dialog shows the OLD workspace's roster from here on; close it rather than
          let it outlive its data. The refresh cooldown resets with the workspace. */
       closeRosterDialog();
@@ -2615,6 +2634,13 @@ import SampleNotice from "./SampleNotice.astro";
     one<HTMLFormElement>("[data-invite-form]")?.addEventListener("submit", async (event) => {
       event.preventDefault();
       if (!session || !activeWorkspaceId) return;
+      const inviteSession = session;
+      const submitOwner = {
+        workspaceId: activeWorkspaceId,
+        version: requestVersion,
+      };
+      const ownsInviteSubmit = (): boolean =>
+        isInviteSubmitCurrent(submitOwner, activeWorkspaceId, requestVersion);
       const emailInput = one<HTMLInputElement>("[data-invite-email]");
       const submit = one<HTMLButtonElement>("[data-invite-submit]");
       const error = one<HTMLElement>("[data-invite-error]");
@@ -2627,8 +2653,10 @@ import SampleNotice from "./SampleNotice.astro";
         emailInput?.focus();
         return;
       }
-      if (!inviteIntent || inviteIntent.email !== email) {
-        inviteIntent = { email, commandId: uuid() };
+      let submittedIntent = inviteIntent;
+      if (!submittedIntent || submittedIntent.email !== email) {
+        submittedIntent = { email, commandId: uuid() };
+        inviteIntent = submittedIntent;
       }
       if (error) {
         error.textContent = "";
@@ -2640,14 +2668,24 @@ import SampleNotice from "./SampleNotice.astro";
       }
       try {
         const target = deployment();
-        const workspace = workspaces.find((entry) => entry.id === activeWorkspaceId);
+        const workspace = workspaces.find((entry) => entry.id === submitOwner.workspaceId);
         if (!target || !workspace) throw new NoDeployment();
         const created = await inviteWorkspaceMember(
-          session,
-          inviteIntent.commandId,
-          activeWorkspaceId,
+          inviteSession,
+          submittedIntent.commandId,
+          submitOwner.workspaceId,
           email,
         );
+        /* A stale success may have created a pending row in the submitted workspace,
+           where it remains visible and cancellable. Its one-use token is deliberately
+           discarded: rendering or persisting it in the next workspace would cross the
+           credential's tenancy boundary. */
+        if (!ownsInviteSubmit()) return;
+        if (created.workspaceId !== submitOwner.workspaceId) {
+          throw new Error(
+            "CommonSwarm returned an invite for another workspace. No link was shown.",
+          );
+        }
         freshInviteLink = memberInviteUrl(window.location.origin, {
           v: 1,
           url: target.url,
@@ -2655,12 +2693,12 @@ import SampleNotice from "./SampleNotice.astro";
           workspace_id: created.workspaceId,
           invitation_token: created.invitationToken,
           workspace_name: created.workspaceName || workspace.name,
-          inviter_display_name: created.inviterDisplayName || accountName(session),
-          inviter_user_id: created.inviterUserId ?? session.user.id,
+          inviter_display_name: created.inviterDisplayName || accountName(inviteSession),
+          inviter_user_id: created.inviterUserId ?? inviteSession.user.id,
         });
         freshInviteId = created.invitationId;
         freshInviteWorkspaceId = created.workspaceId;
-        inviteIntent = null;
+        if (inviteIntent === submittedIntent) inviteIntent = null;
         const link = one<HTMLElement>("[data-invite-link]");
         const result = one<HTMLElement>("[data-invite-result]");
         const form = one<HTMLFormElement>("[data-invite-form]");
@@ -2681,27 +2719,33 @@ import SampleNotice from "./SampleNotice.astro";
         if (status) status.textContent = "";
         if (result) result.hidden = false;
         if (form) form.hidden = true;
-        pendingInvites = await pendingMemberInvites(activeWorkspaceId);
+        const nextInvites = await pendingMemberInvites(created.workspaceId);
+        if (!ownsInviteSubmit()) return;
+        pendingInvites = nextInvites;
         if (shouldRetireFreshInvite(freshInviteId, pendingInvites)) {
           retireFreshInviteResult();
         }
         renderPendingAccess();
         if (freshInviteLink) {
           window.requestAnimationFrame(() => {
+            if (!ownsInviteSubmit()) return;
             one<HTMLButtonElement>("[data-copy-invite]")?.focus({ preventScroll: true });
           });
         }
       } catch (caught) {
-        if (!(caught instanceof CommandOutcomeUnknown)) inviteIntent = null;
+        if (!ownsInviteSubmit()) return;
+        if (
+          inviteIntent === submittedIntent &&
+          !(caught instanceof CommandOutcomeUnknown)
+        ) {
+          inviteIntent = null;
+        }
         if (error) {
           error.textContent = readableError(caught);
           error.hidden = false;
         }
       } finally {
-        if (submit) {
-          submit.disabled = false;
-          submit.textContent = "Create invite link";
-        }
+        if (ownsInviteSubmit()) resetInviteSubmitControl();
       }
     });
 
