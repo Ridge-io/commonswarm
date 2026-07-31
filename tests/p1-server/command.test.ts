@@ -6791,64 +6791,78 @@ test("durable-delivery: active-lease TTL race; backlog >100 oldest-first; RLS/gr
     `;
     assert.equal(Number(survived29?.n), 1, "29-day terminal row survives 30-day floor purge");
 
-    // Configured retention = 60 days (above 30-day floor).
-    // 40-day-old terminal row SURVIVES 60-day configured retention (since 40 < 60).
+    // Configured retention = 60 days via swarm.config.
     await sql`
-      UPDATE swarm.signal_deliveries
-      SET acked_at = statement_timestamp() - interval '40 days',
-          ack_outcome = 'observed',
-          last_lease_id = COALESCE(last_lease_id, gen_random_uuid()),
-          last_leased_by = COALESCE(last_leased_by, gen_random_uuid()),
-          lease_id = NULL, leased_by = NULL, leased_until = NULL,
-          delivered_at = COALESCE(delivered_at, statement_timestamp() - interval '40 days'),
-          updated_at = statement_timestamp()
-      WHERE signal_id = ${bulkIds[0]}::uuid
+      INSERT INTO swarm.config (key, value)
+      VALUES ('delivery_retention_days', '60'::jsonb)
+      ON CONFLICT (key) DO UPDATE SET value = '60'::jsonb
     `;
-    await sql`SELECT swarm.purge_terminal_signal_deliveries(60)`;
-    const [survived40] = await sql<{ n: string | number }[]>`
-      SELECT count(*) AS n FROM swarm.signal_deliveries
-      WHERE signal_id = ${bulkIds[0]}::uuid
-    `;
-    assert.equal(Number(survived40?.n), 1, "40-day terminal row survives 60-day configured retention");
-
-    // 70-day-old terminal row IS purged under 60-day configured retention.
-    await sql`
-      UPDATE swarm.signal_deliveries
-      SET acked_at = statement_timestamp() - interval '70 days',
-          delivered_at = COALESCE(delivered_at, statement_timestamp() - interval '70 days')
-      WHERE signal_id = ${bulkIds[0]}::uuid
-    `;
-    await sql`SELECT swarm.purge_terminal_signal_deliveries(60)`;
-    const [purged70] = await sql<{ n: string | number }[]>`
-      SELECT count(*) AS n FROM swarm.signal_deliveries
-      WHERE signal_id = ${bulkIds[0]}::uuid
-    `;
-    assert.equal(Number(purged70?.n), 0, "70-day terminal row is purged under 60-day retention");
-
-    // 70-day-old unacked row is NEVER purged.
-    await sql`ALTER TABLE swarm.signals DISABLE TRIGGER signals_append_only`;
     try {
-      await sql`
-        UPDATE swarm.signals
-        SET created_at = statement_timestamp() - interval '70 days',
-            until = statement_timestamp() - interval '65 days'
-        WHERE id = ${bulkIds[1]}::uuid
-      `;
+      // 40-day-old terminal row SURVIVES 60-day configured retention (since 40 < 60).
       await sql`
         UPDATE swarm.signal_deliveries
-        SET enqueued_at = statement_timestamp() - interval '70 days',
-            updated_at = statement_timestamp() - interval '70 days'
-        WHERE signal_id = ${bulkIds[1]}::uuid
+        SET acked_at = statement_timestamp() - interval '40 days',
+            ack_outcome = 'observed',
+            last_lease_id = COALESCE(last_lease_id, gen_random_uuid()),
+            last_leased_by = COALESCE(last_leased_by, gen_random_uuid()),
+            lease_id = NULL, leased_by = NULL, leased_until = NULL,
+            delivered_at = COALESCE(delivered_at, statement_timestamp() - interval '40 days'),
+            updated_at = statement_timestamp()
+        WHERE signal_id = ${bulkIds[0]}::uuid
       `;
+      await sql`SELECT swarm.purge_terminal_signal_deliveries()`;
+      const [survived40] = await sql<{ n: string | number }[]>`
+        SELECT count(*) AS n FROM swarm.signal_deliveries
+        WHERE signal_id = ${bulkIds[0]}::uuid
+      `;
+      assert.equal(Number(survived40?.n), 1, "40-day terminal row survives 60-day configured retention");
+
+      // 70-day-old terminal row IS purged under 60-day configured retention.
+      await sql`
+        UPDATE swarm.signal_deliveries
+        SET acked_at = statement_timestamp() - interval '70 days',
+            delivered_at = COALESCE(delivered_at, statement_timestamp() - interval '70 days')
+        WHERE signal_id = ${bulkIds[0]}::uuid
+      `;
+      await sql`SELECT swarm.purge_terminal_signal_deliveries()`;
+      const [purged70] = await sql<{ n: string | number }[]>`
+        SELECT count(*) AS n FROM swarm.signal_deliveries
+        WHERE signal_id = ${bulkIds[0]}::uuid
+      `;
+      assert.equal(Number(purged70?.n), 0, "70-day terminal row is purged under 60-day retention via zero-argument production function");
+
+      // 70-day-old unacked row is NEVER purged.
+      await sql`ALTER TABLE swarm.signals DISABLE TRIGGER signals_append_only`;
+      try {
+        await sql`
+          UPDATE swarm.signals
+          SET created_at = statement_timestamp() - interval '70 days',
+              until = statement_timestamp() - interval '65 days'
+          WHERE id = ${bulkIds[1]}::uuid
+        `;
+        await sql`
+          UPDATE swarm.signal_deliveries
+          SET enqueued_at = statement_timestamp() - interval '70 days',
+              updated_at = statement_timestamp() - interval '70 days'
+          WHERE signal_id = ${bulkIds[1]}::uuid
+        `;
+      } finally {
+        await sql`ALTER TABLE swarm.signals ENABLE TRIGGER signals_append_only`;
+      }
+      await sql`SELECT swarm.purge_terminal_signal_deliveries()`;
+      const [keptUnacked] = await sql<{ n: string | number }[]>`
+        SELECT count(*) AS n FROM swarm.signal_deliveries
+        WHERE signal_id = ${bulkIds[1]}::uuid AND acked_at IS NULL
+      `;
+      assert.equal(Number(keptUnacked?.n), 1, "unacked 70-day row is never purged regardless of age");
     } finally {
-      await sql`ALTER TABLE swarm.signals ENABLE TRIGGER signals_append_only`;
+      // Restore default config retention
+      await sql`
+        INSERT INTO swarm.config (key, value)
+        VALUES ('delivery_retention_days', '30'::jsonb)
+        ON CONFLICT (key) DO UPDATE SET value = '30'::jsonb
+      `;
     }
-    await sql`SELECT swarm.purge_terminal_signal_deliveries(60)`;
-    const [keptUnacked] = await sql<{ n: string | number }[]>`
-      SELECT count(*) AS n FROM swarm.signal_deliveries
-      WHERE signal_id = ${bulkIds[1]}::uuid AND acked_at IS NULL
-    `;
-    assert.equal(Number(keptUnacked?.n), 1, "unacked 70-day row is never purged regardless of age");
 
     // Migration-style role assertion: execute exact PL/pgSQL block extracted from migration file.
     const migrationUrl = new URL("../../supabase/migrations/20260731000001_signal_deliveries.sql", import.meta.url);
@@ -7440,38 +7454,186 @@ test("durable-delivery: negative controls (stale lease ack, expired ack TTL, rev
     assert.equal(staleAck.status, 403);
     assert.equal(staleAck.body.error, "delivery_unavailable");
 
-    // 4. Revoked principal / removed owner membership claim/ack -> 403 delivery_unavailable
-    const agentToRevoke = await createFixtureAgent(f, f.ua, "dd-rev-principal");
+    // 4. Comprehensive Auth Matrix: Token revocation, Principal revocation, Soft membership revocation, and Physical membership deletion
+    // State 1: Token revocation
+    const agentTokenRev = await createFixtureAgent(f, f.ua, "dd-token-rev");
+    const sigTokenRev = await issueSignal(f, f.uaJwt, {
+      kind: "post_signal",
+      signal_kind: "ask",
+      body: "token-rev-body",
+      to_user_id: null,
+      to_agent_principal_id: agentTokenRev.principalId,
+      in_reply_to: null,
+      about: "dd-auth-matrix",
+    });
+    assert.equal(sigTokenRev.status, 200, sigTokenRev.text);
+    const sigTokenRevId = String((sigTokenRev.body.signal as Record<string, unknown>).id);
+    const instTokenRev = randomUUID();
+    const claimBeforeTokenRev = await issueDelivery(f, agentTokenRev.token, {
+      kind: "claim_agent_inbox",
+      listener_instance_id: instTokenRev,
+      limit: 10,
+    });
+    assert.equal(claimBeforeTokenRev.status, 200, claimBeforeTokenRev.text);
+    const delTokenRev = (claimBeforeTokenRev.body.deliveries as Array<Record<string, unknown>>).find((d) => (d.signal as Record<string, unknown>).id === sigTokenRevId);
+    assert.ok(delTokenRev);
+    const leaseTokenRev = String(delTokenRev.lease_id);
+
+    // Apply token revocation
     await sql`
-      UPDATE swarm.agent_principals
+      UPDATE swarm.agent_tokens
       SET revoked_at = statement_timestamp()
-      WHERE principal_id = ${agentToRevoke.principalId}::uuid
+      WHERE token_id = ${agentTokenRev.tokenId}::uuid
     `;
-    const revClaim = await issueDelivery(f, agentToRevoke.token, {
+    const claimAfterTokenRev = await issueDelivery(f, agentTokenRev.token, {
       kind: "claim_agent_inbox",
       listener_instance_id: randomUUID(),
       limit: 10,
     });
-    assert.equal(revClaim.status, 403);
-    assert.equal(revClaim.body.error, "delivery_unavailable");
+    assert.equal(claimAfterTokenRev.status, 403);
+    assert.equal(claimAfterTokenRev.body.error, "delivery_unavailable");
+    const ackAfterTokenRev = await issueDelivery(f, agentTokenRev.token, {
+      kind: "ack_agent_delivery",
+      signal_id: sigTokenRevId,
+      lease_id: leaseTokenRev,
+      listener_instance_id: instTokenRev,
+      outcome: "replied",
+      last_error_code: null,
+    });
+    assert.equal(ackAfterTokenRev.status, 403);
+    assert.equal(ackAfterTokenRev.body.error, "delivery_unavailable");
 
-    // Physically deleted membership claim refusal -> 403 delivery_unavailable
-    const agentDeletedMem = await createFixtureAgent(f, f.ua, "dd-mem-deleted");
+    // State 2: Principal revocation
+    const agentPrinRev = await createFixtureAgent(f, f.ua, "dd-prin-rev");
+    const sigPrinRev = await issueSignal(f, f.uaJwt, {
+      kind: "post_signal",
+      signal_kind: "ask",
+      body: "prin-rev-body",
+      to_user_id: null,
+      to_agent_principal_id: agentPrinRev.principalId,
+      in_reply_to: null,
+      about: "dd-auth-matrix",
+    });
+    assert.equal(sigPrinRev.status, 200, sigPrinRev.text);
+    const sigPrinRevId = String((sigPrinRev.body.signal as Record<string, unknown>).id);
+    const instPrinRev = randomUUID();
+    const claimBeforePrinRev = await issueDelivery(f, agentPrinRev.token, {
+      kind: "claim_agent_inbox",
+      listener_instance_id: instPrinRev,
+      limit: 10,
+    });
+    assert.equal(claimBeforePrinRev.status, 200, claimBeforePrinRev.text);
+    const delPrinRev = (claimBeforePrinRev.body.deliveries as Array<Record<string, unknown>>).find((d) => (d.signal as Record<string, unknown>).id === sigPrinRevId);
+    assert.ok(delPrinRev);
+    const leasePrinRev = String(delPrinRev.lease_id);
+
+    // Apply principal revocation
+    await sql`
+      UPDATE swarm.agent_principals
+      SET revoked_at = statement_timestamp()
+      WHERE principal_id = ${agentPrinRev.principalId}::uuid
+    `;
+    const claimAfterPrinRev = await issueDelivery(f, agentPrinRev.token, {
+      kind: "claim_agent_inbox",
+      listener_instance_id: randomUUID(),
+      limit: 10,
+    });
+    assert.equal(claimAfterPrinRev.status, 403);
+    assert.equal(claimAfterPrinRev.body.error, "delivery_unavailable");
+    const ackAfterPrinRev = await issueDelivery(f, agentPrinRev.token, {
+      kind: "ack_agent_delivery",
+      signal_id: sigPrinRevId,
+      lease_id: leasePrinRev,
+      listener_instance_id: instPrinRev,
+      outcome: "replied",
+      last_error_code: null,
+    });
+    assert.equal(ackAfterPrinRev.status, 403);
+    assert.equal(ackAfterPrinRev.body.error, "delivery_unavailable");
+
+    // State 3 & 4: Soft membership revocation and Physical membership deletion
+    const agentMemRev = await createFixtureAgent(f, f.ua, "dd-mem-rev");
+    const sigMemRev = await issueSignal(f, f.uaJwt, {
+      kind: "post_signal",
+      signal_kind: "ask",
+      body: "mem-rev-body",
+      to_user_id: null,
+      to_agent_principal_id: agentMemRev.principalId,
+      in_reply_to: null,
+      about: "dd-auth-matrix",
+    });
+    assert.equal(sigMemRev.status, 200, sigMemRev.text);
+    const sigMemRevId = String((sigMemRev.body.signal as Record<string, unknown>).id);
+    const instMemRev = randomUUID();
+    const claimBeforeMemRev = await issueDelivery(f, agentMemRev.token, {
+      kind: "claim_agent_inbox",
+      listener_instance_id: instMemRev,
+      limit: 10,
+    });
+    assert.equal(claimBeforeMemRev.status, 200, claimBeforeMemRev.text);
+    const delMemRev = (claimBeforeMemRev.body.deliveries as Array<Record<string, unknown>>).find((d) => (d.signal as Record<string, unknown>).id === sigMemRevId);
+    assert.ok(delMemRev);
+    const leaseMemRev = String(delMemRev.lease_id);
+
+    // Apply soft membership revocation
+    await sql`
+      UPDATE swarm.memberships
+      SET revoked_at = statement_timestamp()
+      WHERE workspace_id = ${f.workspaceA}::uuid
+        AND user_id = ${f.ua}::uuid
+    `;
+    try {
+      const claimAfterSoftMemRev = await issueDelivery(f, agentMemRev.token, {
+        kind: "claim_agent_inbox",
+        listener_instance_id: randomUUID(),
+        limit: 10,
+      });
+      assert.equal(claimAfterSoftMemRev.status, 403);
+      assert.equal(claimAfterSoftMemRev.body.error, "delivery_unavailable");
+      const ackAfterSoftMemRev = await issueDelivery(f, agentMemRev.token, {
+        kind: "ack_agent_delivery",
+        signal_id: sigMemRevId,
+        lease_id: leaseMemRev,
+        listener_instance_id: instMemRev,
+        outcome: "replied",
+        last_error_code: null,
+      });
+      assert.equal(ackAfterSoftMemRev.status, 403);
+      assert.equal(ackAfterSoftMemRev.body.error, "delivery_unavailable");
+    } finally {
+      await sql`
+        UPDATE swarm.memberships
+        SET revoked_at = NULL
+        WHERE workspace_id = ${f.workspaceA}::uuid
+          AND user_id = ${f.ua}::uuid
+      `;
+    }
+
+    // Apply physical membership deletion
     await sql`
       DELETE FROM swarm.memberships
       WHERE workspace_id = ${f.workspaceA}::uuid
         AND user_id = ${f.ua}::uuid
     `;
     try {
-      const delMemClaim = await issueDelivery(f, agentDeletedMem.token, {
+      const claimAfterPhysDel = await issueDelivery(f, agentMemRev.token, {
         kind: "claim_agent_inbox",
         listener_instance_id: randomUUID(),
         limit: 10,
       });
-      assert.equal(delMemClaim.status, 403);
-      assert.equal(delMemClaim.body.error, "delivery_unavailable");
+      assert.equal(claimAfterPhysDel.status, 403);
+      assert.equal(claimAfterPhysDel.body.error, "delivery_unavailable");
+      const ackAfterPhysDel = await issueDelivery(f, agentMemRev.token, {
+        kind: "ack_agent_delivery",
+        signal_id: sigMemRevId,
+        lease_id: leaseMemRev,
+        listener_instance_id: instMemRev,
+        outcome: "replied",
+        last_error_code: null,
+      });
+      assert.equal(ackAfterPhysDel.status, 403);
+      assert.equal(ackAfterPhysDel.body.error, "delivery_unavailable");
     } finally {
-      // Restore workspace membership for subsequent test cleanup
       await sql`
         INSERT INTO swarm.memberships (workspace_id, user_id, role)
         VALUES (${f.workspaceA}::uuid, ${f.ua}::uuid, 'owner')
@@ -7480,8 +7642,16 @@ test("durable-delivery: negative controls (stale lease ack, expired ack TTL, rev
     }
 
     // 5. Read-definer performs zero mutations on signal_deliveries and signals (field-by-field snapshot)
-    const rawTokenBytes = randomBytes(32);
-    const validTokenHash = createHash("sha256").update(rawTokenBytes).digest();
+    // Hash the actual fixture agent token and verify the authenticated context row exists
+    const validTokenHash = createHash("sha256").update(receiver.token).digest();
+    const [authCtx] = await sql<{ principal_id: string; principal_workspace_id: string }[]>`
+      SELECT principal_id::text, principal_workspace_id::text
+      FROM swarm.agent_delivery_read_context(${validTokenHash}, ${f.workspaceA}::uuid)
+    `;
+    assert.ok(authCtx, "authenticated context row returned for valid fixture token");
+    assert.equal(authCtx.principal_id, receiver.principalId, "authenticated context maps to fixture agent principal");
+    assert.equal(authCtx.principal_workspace_id, f.workspaceA, "authenticated context maps to fixture workspace");
+
     const delSnapshotBefore = await sql`
       SELECT * FROM swarm.signal_deliveries ORDER BY signal_id, recipient_agent_principal_id
     `;
@@ -7892,34 +8062,70 @@ test("durable-delivery: lease expiry during ack processing produces clean single
 
 test("durable-delivery: table and function privilege boundaries (swarm_command DELETE denial, swarm_admin purge, cron schedule)", async () => {
   await scenario(async (f) => {
-    // 1. Browser roles and PUBLIC have zero grants on swarm.signal_deliveries
-    const publicGrants = await sql<{ grantee: string; privilege_type: string }[]>`
-      SELECT grantee, privilege_type
-      FROM information_schema.role_table_grants
-      WHERE table_schema = 'swarm'
-        AND table_name = 'signal_deliveries'
-        AND grantee IN ('anon', 'authenticated', 'swarm_read', 'PUBLIC')
-    `;
-    assert.equal(publicGrants.length, 0, "browser roles and PUBLIC have zero table grants");
+    // Verb matrix helper for swarm.signal_deliveries
+    const verbs = ["SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"] as const;
+    const checkRoleVerbs = async (role: string) => {
+      const results: Record<string, boolean> = {};
+      for (const verb of verbs) {
+        const [res] = await sql<{ allowed: boolean }[]>`
+          SELECT has_table_privilege(${role}, 'swarm.signal_deliveries', ${verb}) AS allowed
+        `;
+        results[verb] = res?.allowed ?? false;
+      }
+      return results;
+    };
 
-    // 2. swarm_command has SELECT, INSERT, UPDATE but CANNOT DELETE
-    const [cmdCanDelete] = await sql<{ allowed: boolean }[]>`
-      SELECT has_table_privilege('swarm_command', 'swarm.signal_deliveries', 'DELETE') AS allowed
-    `;
-    assert.equal(cmdCanDelete?.allowed, false, "swarm_command is denied DELETE on swarm.signal_deliveries");
+    // 1. Browser roles (anon, authenticated, swarm_read) and PUBLIC have ZERO privileges on swarm.signal_deliveries across ALL verbs
+    for (const role of ["anon", "authenticated", "swarm_read"]) {
+      const roleVerbs = await checkRoleVerbs(role);
+      for (const verb of verbs) {
+        assert.equal(roleVerbs[verb], false, `role ${role} is denied ${verb} on swarm.signal_deliveries`);
+      }
+    }
 
-    const [cmdCanSelect] = await sql<{ allowed: boolean }[]>`
-      SELECT has_table_privilege('swarm_command', 'swarm.signal_deliveries', 'SELECT') AS allowed
-    `;
-    assert.equal(cmdCanSelect?.allowed, true, "swarm_command has SELECT on swarm.signal_deliveries");
+    // Check public pseudo-role via unquoted PUBLIC in has_table_privilege
+    for (const verb of verbs) {
+      const [res] = await sql<{ allowed: boolean }[]>`
+        SELECT has_table_privilege('public', 'swarm.signal_deliveries', ${verb}) AS allowed
+      `;
+      assert.equal(res?.allowed, false, `public pseudo-role is denied ${verb} on swarm.signal_deliveries`);
+    }
 
-    // 3. swarm_admin HAS DELETE on swarm.signal_deliveries
-    const [adminCanDelete] = await sql<{ allowed: boolean }[]>`
-      SELECT has_table_privilege('swarm_admin', 'swarm.signal_deliveries', 'DELETE') AS allowed
-    `;
-    assert.equal(adminCanDelete?.allowed, true, "swarm_admin has DELETE on swarm.signal_deliveries");
+    // 2. swarm_command has SELECT, INSERT, UPDATE; denied DELETE, TRUNCATE, REFERENCES, TRIGGER
+    const cmdVerbs = await checkRoleVerbs("swarm_command");
+    assert.equal(cmdVerbs.SELECT, true, "swarm_command has SELECT");
+    assert.equal(cmdVerbs.INSERT, true, "swarm_command has INSERT");
+    assert.equal(cmdVerbs.UPDATE, true, "swarm_command has UPDATE");
+    assert.equal(cmdVerbs.DELETE, false, "swarm_command is denied DELETE");
+    assert.equal(cmdVerbs.TRUNCATE, false, "swarm_command is denied TRUNCATE");
+    assert.equal(cmdVerbs.REFERENCES, false, "swarm_command is denied REFERENCES");
+    assert.equal(cmdVerbs.TRIGGER, false, "swarm_command is denied TRIGGER");
 
-    // 4. pg_cron schedule check
+    // 3. swarm_admin HAS ALL PRIVILEGES (SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER)
+    const adminVerbs = await checkRoleVerbs("swarm_admin");
+    for (const verb of verbs) {
+      assert.equal(adminVerbs[verb], true, `swarm_admin has ${verb} on swarm.signal_deliveries`);
+    }
+
+    // 4. Inherited-role control: synthetic child role inheriting from swarm_read stays DENIED all verbs until granted
+    await sql.unsafe(`
+      DO $$
+      BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'dd_test_child_priv_role') THEN
+          CREATE ROLE dd_test_child_priv_role INHERIT ROLE swarm_read;
+        END IF;
+      END $$;
+    `);
+    try {
+      const childVerbs = await checkRoleVerbs("dd_test_child_priv_role");
+      for (const verb of verbs) {
+        assert.equal(childVerbs[verb], false, `inherited role dd_test_child_priv_role stays DENIED ${verb} on swarm.signal_deliveries`);
+      }
+    } finally {
+      await sql.unsafe(`DROP ROLE IF EXISTS dd_test_child_priv_role;`);
+    }
+
+    // 5. pg_cron schedule check
     const [cronJob] = await sql<{ jobname: string; schedule: string }[]>`
       SELECT jobname, schedule FROM cron.job WHERE jobname = 'swarm-purge-terminal-signal-deliveries'
     `;
