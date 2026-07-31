@@ -8,10 +8,12 @@ import {
   commandEndpoint,
   type CloudTarget,
 } from "./config.js";
-import { parseSignalRecord } from "./signals.js";
+import { parseRetryAfterMs, parseSignalRecord } from "./signals.js";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const RFC3339_TIMESTAMP_RE =
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
 const DELIVERY_KINDS = new Set<SignalRecord["kind"]>(["ask", "note"]);
 const SENDER_OWNER_RELATIONS = new Set<SenderOwnerRelation>([
   "same_owner",
@@ -25,8 +27,8 @@ const DELIVERY_ACK_OUTCOMES = new Set<DeliveryOutcome>([
   "failed_terminal",
 ]);
 
-export const DELIVERY_CLAIM_MIN_LIMIT = 1;
-export const DELIVERY_CLAIM_MAX_LIMIT = 100;
+/** Per-request deadline covering fetch and the response body read. */
+export const DELIVERY_REQUEST_TIMEOUT_MS = 30_000;
 /** Mirrors the command edge's command_id bound so a typo fails before the round trip. */
 export const DELIVERY_COMMAND_ID_RE = /^[A-Za-z0-9_-]{8,72}$/;
 export const DELIVERY_FAILED_TERMINAL_CODES = new Set([
@@ -66,7 +68,10 @@ export interface DeliveryRow {
   leaseId: string;
   /** Server lease deadline; the runtime slice decides refusal on replay. */
   leasedUntil: string;
-  /** Server-proven authoritative relation; the inner signal cannot upgrade it. */
+  /**
+   * Server-proven authoritative relation; the inner signal is normalized to
+   * this exact value so there is only one representation.
+   */
   senderOwnerRelation: SenderOwnerRelation;
 }
 
@@ -81,6 +86,11 @@ export interface DeliveryClaimResult {
   capabilities: DeliveryClaimCapabilities;
   deliveries: DeliveryRow[];
   pendingDeliveryCount: number;
+  /**
+   * Rows newly terminalized as delivery_attempts_exhausted by this claim
+   * transaction. Safe metadata, never content.
+   */
+  terminalDeliveryFailureCount: number;
 }
 
 export interface DeliveryAckResult {
@@ -101,7 +111,6 @@ export interface DeliveryClaimRequest {
    */
   commandId: string;
   listenerInstanceId: string;
-  limit: number;
   /** The client's own agent principal; every claimed signal must be addressed to it. */
   expectedPrincipalId: string;
 }
@@ -118,7 +127,18 @@ export interface DeliveryAckRequest {
   lastErrorCode: string | null;
 }
 
-/** Transport refused the round trip before an HTTP status existed. */
+export interface DeliveryClientOptions {
+  /**
+   * Per-request deadline in ms covering fetch and the response body read.
+   * Injectable for causal deadline tests; defaults to the bounded transport
+   * ceiling.
+   */
+  deadlineMs?: number;
+  /** Injected clock for live-lease validation; defaults to Date.now. */
+  now?: () => number;
+}
+
+/** Transport refused the round trip before a bounded HTTP status existed. */
 export class DeliveryTransportError extends Error {
   constructor(message: string) {
     super(message);
@@ -127,15 +147,18 @@ export class DeliveryTransportError extends Error {
 }
 
 /**
- * Refused command response carrying the HTTP status and a bounded server error
- * code. The code comes from an allowlist, never from the body verbatim, so no
- * response content or credential can leak into the message.
+ * Refused command response carrying the HTTP status, a bounded server error
+ * code, and bounded Retry-After metadata. The code comes from an allowlist,
+ * never from the body verbatim, so no response content or credential can leak
+ * into the message.
  */
 export class DeliveryHttpError extends Error {
   constructor(
     readonly status: number,
     readonly code: string,
     message: string,
+    /** Parsed with the signal Retry-After semantics; bounded, never the raw header. */
+    readonly retryAfterMs: number | null = null,
   ) {
     super(message);
     this.name = "DeliveryHttpError";
@@ -159,13 +182,31 @@ function checkedUuid(value: unknown, field: string): string {
   return value.toLowerCase();
 }
 
-function checkedTimestamp(value: unknown, field: string): string {
-  if (typeof value !== "string" || !Number.isFinite(Date.parse(value))) {
+/**
+ * Server timestamps must be RFC3339/ISO shaped (T separator, Z or numeric
+ * offset) and genuinely parseable — a bare Date.parse-friendly string is not
+ * a server timestamp shape. The value is never embedded in the error.
+ */
+function checkedRfc3339Timestamp(value: unknown, field: string): string {
+  if (
+    typeof value !== "string" ||
+    !RFC3339_TIMESTAMP_RE.test(value) ||
+    !Number.isFinite(Date.parse(value))
+  ) {
     throw new DeliveryProtocolError(
       `delivery response returned a malformed ${field}`,
     );
   }
   return value;
+}
+
+/** A lease that has already elapsed cannot be claimed; the value stays out of the error. */
+function checkedLiveLease(leasedUntil: string, now: () => number): void {
+  if (Date.parse(leasedUntil) <= now()) {
+    throw new DeliveryProtocolError(
+      "delivery claim response returned an already expired lease",
+    );
+  }
 }
 
 function checkedRelation(value: unknown): SenderOwnerRelation {
@@ -180,10 +221,11 @@ function checkedRelation(value: unknown): SenderOwnerRelation {
   return value as SenderOwnerRelation;
 }
 
-function checkedPendingCount(value: unknown): number {
+/** Non-negative safe integer whose value is never embedded in the error. */
+function checkedNonNegativeCount(value: unknown, field: string): number {
   if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
     throw new DeliveryProtocolError(
-      "delivery response returned a malformed pending_delivery_count",
+      `delivery response returned a malformed ${field}`,
     );
   }
   return value;
@@ -207,10 +249,34 @@ function checkedClaimCapabilities(value: unknown): DeliveryClaimCapabilities {
   return { deliveryClaim: true, deliveryAck: true, senderOwnerRelation: true };
 }
 
+/** If event_ids is present it must be an array of valid UUID strings. */
+function checkedOptionalUuidArray(value: unknown, field: string): void {
+  if (value === undefined) return;
+  if (
+    !Array.isArray(value) ||
+    value.some((item) => typeof item !== "string" || !UUID_RE.test(item))
+  ) {
+    throw new DeliveryProtocolError(
+      `delivery response returned a malformed ${field}`,
+    );
+  }
+}
+
+/** If events is present it must be an array (contents are opaque envelopes). */
+function checkedOptionalArray(value: unknown, field: string): void {
+  if (value === undefined) return;
+  if (!Array.isArray(value)) {
+    throw new DeliveryProtocolError(
+      `delivery response returned a malformed ${field}`,
+    );
+  }
+}
+
 function parseDeliveryRow(
   value: unknown,
   expected: { workspaceId: string; principalId: string },
   index: number,
+  now: () => number,
 ): DeliveryRow {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new DeliveryProtocolError(
@@ -221,11 +287,9 @@ function parseDeliveryRow(
   let signal: SignalRecord;
   try {
     signal = parseSignalRecord(row.signal);
-  } catch (error) {
+  } catch {
     throw new DeliveryProtocolError(
-      `delivery claim response returned a malformed signal at ${index}: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
+      `delivery claim response returned a malformed signal at ${index}`,
     );
   }
   if (signal.workspace_id !== expected.workspaceId) {
@@ -243,21 +307,25 @@ function parseDeliveryRow(
       "delivery claim response returned a non-direct signal kind",
     );
   }
-  return {
-    signal,
-    leaseId: checkedUuid(row.lease_id, "lease_id"),
-    leasedUntil: checkedTimestamp(row.leased_until, "leased_until"),
-    senderOwnerRelation: checkedRelation(row.sender_owner_relation),
-  };
+  const senderOwnerRelation = checkedRelation(row.sender_owner_relation);
+  const leaseId = checkedUuid(row.lease_id, "lease_id");
+  const leasedUntil = checkedRfc3339Timestamp(row.leased_until, "leased_until");
+  checkedLiveLease(leasedUntil, now);
+  // The outer relation is authoritative: the immutable signal's inner relation
+  // (unknown when absent) must not surface a second, contradicting value.
+  signal.sender_owner_relation = senderOwnerRelation;
+  return { signal, leaseId, leasedUntil, senderOwnerRelation };
 }
 
 function parseClaimSuccess(
   body: unknown,
   expected: { workspaceId: string; principalId: string },
+  now: () => number,
 ): {
   capabilities: DeliveryClaimCapabilities;
   deliveries: DeliveryRow[];
   pendingDeliveryCount: number;
+  terminalDeliveryFailureCount: number;
 } {
   if (!body || typeof body !== "object" || Array.isArray(body)) {
     throw new DeliveryProtocolError("delivery claim response was not an object");
@@ -269,37 +337,56 @@ function parseClaimSuccess(
     );
   }
   const capabilities = checkedClaimCapabilities(row.capabilities);
+  checkedOptionalUuidArray(row.event_ids, "event_ids");
+  checkedOptionalArray(row.events, "events");
   if (!Array.isArray(row.deliveries)) {
     throw new DeliveryProtocolError(
       "delivery claim response is missing its deliveries array",
     );
   }
   const deliveries = row.deliveries.map((item, index) =>
-    parseDeliveryRow(item, expected, index)
+    parseDeliveryRow(item, expected, index, now)
   );
   const signalIds = new Set<string>();
   const leaseIds = new Set<string>();
   for (const delivery of deliveries) {
     if (signalIds.has(delivery.signal.id)) {
       throw new DeliveryProtocolError(
-        `delivery claim response repeats signal ${delivery.signal.id}`,
+        "delivery claim response repeats a signal id",
       );
     }
     signalIds.add(delivery.signal.id);
     if (leaseIds.has(delivery.leaseId)) {
       throw new DeliveryProtocolError(
-        `delivery claim response repeats lease id ${delivery.leaseId}`,
+        "delivery claim response repeats a lease id",
       );
     }
     leaseIds.add(delivery.leaseId);
   }
-  const pendingDeliveryCount = checkedPendingCount(row.pending_delivery_count);
+  if (deliveries.length > 1) {
+    throw new DeliveryProtocolError(
+      "delivery claim response returned more than one delivery",
+    );
+  }
+  const pendingDeliveryCount = checkedNonNegativeCount(
+    row.pending_delivery_count,
+    "pending_delivery_count",
+  );
+  const terminalDeliveryFailureCount = checkedNonNegativeCount(
+    row.terminal_delivery_failure_count,
+    "terminal_delivery_failure_count",
+  );
   if (deliveries.length > pendingDeliveryCount) {
     throw new DeliveryProtocolError(
       "delivery claim response returned more deliveries than its pending count",
     );
   }
-  return { capabilities, deliveries, pendingDeliveryCount };
+  return {
+    capabilities,
+    deliveries,
+    pendingDeliveryCount,
+    terminalDeliveryFailureCount,
+  };
 }
 
 function parseAckSuccess(
@@ -317,6 +404,7 @@ function parseAckSuccess(
       "delivery acknowledgement response did not report accepted ok",
     );
   }
+  checkedOptionalUuidArray(row.event_ids, "event_ids");
   if (row.signal_id !== expected.signalId) {
     throw new DeliveryProtocolError(
       "delivery acknowledgement response echoed a different signal id",
@@ -334,17 +422,6 @@ function checkedCommandId(value: string): string {
     throw new Error(
       "a delivery command id must be 8..72 characters of [A-Za-z0-9_-]",
     );
-  }
-  return value;
-}
-
-function checkedLimit(value: number): number {
-  if (
-    !Number.isSafeInteger(value) ||
-    value < DELIVERY_CLAIM_MIN_LIMIT ||
-    value > DELIVERY_CLAIM_MAX_LIMIT
-  ) {
-    throw new Error("a delivery claim limit must be an integer in 1..100");
   }
   return value;
 }
@@ -398,112 +475,176 @@ function boundedDeliveryErrorCode(body: unknown): string {
   return DELIVERY_UNKNOWN_ERROR_CODE;
 }
 
-async function refusal(response: Response): Promise<DeliveryHttpError> {
+/** Refusal body parsed against the allowlist; Retry-After via signal semantics. */
+async function refusal(
+  response: Response,
+  text: string,
+): Promise<DeliveryHttpError> {
   let code = DELIVERY_UNKNOWN_ERROR_CODE;
   try {
-    code = boundedDeliveryErrorCode(JSON.parse(await response.text()));
+    code = boundedDeliveryErrorCode(JSON.parse(text));
   } catch {
     // An unreadable refusal body is still a refusal; nothing to extract.
   }
+  const retryAfterMs = parseRetryAfterMs(response.headers.get("retry-after"));
   return new DeliveryHttpError(
     response.status,
     code,
     `delivery command failed (HTTP ${response.status}): ${code}`,
+    retryAfterMs,
   );
+}
+
+function successBody(response: Response, text: string, verb: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new DeliveryProtocolError(
+      `${verb} response was not JSON (HTTP ${response.status})`,
+    );
+  }
 }
 
 /**
  * Strict transport and parsing layer for the server's durable
  * `claim_agent_inbox` / `ack_agent_delivery` contract. Sends exactly the
- * command id and body it is given; it never retries, persists, or logs.
+ * command id and body it is given; it never retries, persists, or logs. One
+ * injectable deadline covers fetch AND the response body read: the abort/deadline
+ * race mirrors `fetchSignalRead`, so a fake or provider that ignores abort still
+ * times out and every listener/timer is cleaned.
  */
 export class DeliveryCommandClient {
+  private readonly deadlineMs: number;
+  private readonly now: () => number;
+
   constructor(
     private readonly target: CloudTarget,
     private readonly fetcher: typeof fetch = fetch,
-  ) {}
+    options: DeliveryClientOptions = {},
+  ) {
+    this.deadlineMs = options.deadlineMs ?? DELIVERY_REQUEST_TIMEOUT_MS;
+    this.now = options.now ?? Date.now;
+  }
 
   private async post(
     request: { workspaceId: string; credential: string; commandId: string },
     command: Record<string, unknown>,
     verb: string,
-  ): Promise<Response> {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 30_000);
-    let response: Response;
+  ): Promise<{ response: Response; text: string }> {
+    if (this.deadlineMs <= 0) {
+      throw new DeliveryTransportError(`${verb} request timed out`);
+    }
+    const deadlineController = new AbortController();
+    let timedOut = false;
+    const signal = deadlineController.signal;
+    let onAbort = () => {};
+    const aborted = new Promise<"timeout">((resolve) => {
+      onAbort = () => resolve("timeout");
+      if (signal.aborted) {
+        onAbort();
+      } else {
+        signal.addEventListener("abort", onAbort, { once: true });
+      }
+    });
+    const timer = setTimeout(() => {
+      timedOut = true;
+      deadlineController.abort();
+    }, this.deadlineMs);
     try {
-      response = await this.fetcher(commandEndpoint(this.target), {
-        method: "POST",
-        headers: {
-          authorization: `Bearer ${request.credential}`,
-          apikey: this.target.anonKey,
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({
-          command_id: request.commandId,
-          client_version: CLIENT_PROTOCOL_VERSION,
-          workspace_id: request.workspaceId.toLowerCase(),
-          stream: { kind: "workspace" },
-          command,
-        }),
-        signal: controller.signal,
-      });
-    } catch (error) {
-      if ((error as Error).name === "AbortError") {
+      if (signal.aborted) {
         throw new DeliveryTransportError(`${verb} request timed out`);
       }
-      throw new DeliveryTransportError(
-        `${verb} request failed before a response`,
-      );
+      const read = (async (): Promise<
+        { response: Response; text: string } | "timeout"
+      > => {
+        let response: Response;
+        try {
+          response = await this.fetcher(commandEndpoint(this.target), {
+            method: "POST",
+            headers: {
+              authorization: `Bearer ${request.credential}`,
+              apikey: this.target.anonKey,
+              "content-type": "application/json",
+            },
+            body: JSON.stringify({
+              command_id: request.commandId,
+              client_version: CLIENT_PROTOCOL_VERSION,
+              workspace_id: request.workspaceId.toLowerCase(),
+              stream: { kind: "workspace" },
+              command,
+            }),
+            signal,
+          });
+        } catch (error) {
+          if (
+            signal.aborted ||
+            timedOut ||
+            (error as Error)?.name === "AbortError"
+          ) {
+            return "timeout";
+          }
+          throw new DeliveryTransportError(
+            `${verb} request failed before a response`,
+          );
+        }
+        if (signal.aborted || timedOut) return "timeout";
+        let text: string;
+        try {
+          text = await response.text();
+        } catch {
+          if (signal.aborted || timedOut) return "timeout";
+          throw new DeliveryTransportError(
+            `${verb} response body was interrupted`,
+          );
+        }
+        if (signal.aborted || timedOut) return "timeout";
+        return { response, text };
+      })();
+      const raced = await Promise.race([read, aborted]);
+      if (raced === "timeout") {
+        throw new DeliveryTransportError(`${verb} request timed out`);
+      }
+      return raced;
     } finally {
       clearTimeout(timer);
-    }
-    return response;
-  }
-
-  private async successBody(response: Response, verb: string): Promise<unknown> {
-    try {
-      return JSON.parse(await response.text());
-    } catch {
-      throw new DeliveryProtocolError(
-        `${verb} response was not JSON (HTTP ${response.status})`,
-      );
+      signal.removeEventListener("abort", onAbort);
     }
   }
 
-  /** Claim one page of the caller's own unacked direct-signal delivery rows. */
+  /** Claim the caller's own single unacked direct-signal delivery row. */
   async claimAgentInbox(request: DeliveryClaimRequest): Promise<DeliveryClaimResult> {
     checkedCommandId(request.commandId);
     assertAgentToken(request.credential);
     checkedUuidRequest(request.workspaceId, "workspaceId");
     checkedUuidRequest(request.listenerInstanceId, "listenerInstanceId");
     checkedUuidRequest(request.expectedPrincipalId, "expectedPrincipalId");
-    const limit = checkedLimit(request.limit);
-    const response = await this.post(request, {
+    const { response, text } = await this.post(request, {
       kind: "claim_agent_inbox",
       listener_instance_id: request.listenerInstanceId.toLowerCase(),
-      limit,
+      limit: 1,
     }, "delivery claim");
-    if (!response.ok) throw await refusal(response);
+    if (!response.ok) throw refusal(response, text);
     const parsed = parseClaimSuccess(
-      await this.successBody(response, "delivery claim"),
+      successBody(response, text, "delivery claim"),
       {
         workspaceId: request.workspaceId.toLowerCase(),
         principalId: request.expectedPrincipalId.toLowerCase(),
       },
+      this.now,
     );
     return {
       httpStatus: response.status,
       capabilities: parsed.capabilities,
       deliveries: parsed.deliveries,
       pendingDeliveryCount: parsed.pendingDeliveryCount,
+      terminalDeliveryFailureCount: parsed.terminalDeliveryFailureCount,
     };
   }
 
   /** Acknowledge one leased delivery with an exact terminal outcome. */
   async ackAgentDelivery(request: DeliveryAckRequest): Promise<DeliveryAckResult> {
     assertAckRequest(request);
-    const response = await this.post(request, {
+    const { response, text } = await this.post(request, {
       kind: "ack_agent_delivery",
       signal_id: request.signalId.toLowerCase(),
       lease_id: request.leaseId.toLowerCase(),
@@ -511,9 +652,9 @@ export class DeliveryCommandClient {
       outcome: request.outcome,
       last_error_code: request.lastErrorCode,
     }, "delivery acknowledgement");
-    if (!response.ok) throw await refusal(response);
+    if (!response.ok) throw refusal(response, text);
     parseAckSuccess(
-      await this.successBody(response, "delivery acknowledgement"),
+      successBody(response, text, "delivery acknowledgement"),
       {
         signalId: request.signalId.toLowerCase(),
         outcome: request.outcome,

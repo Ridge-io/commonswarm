@@ -174,6 +174,22 @@ function checkedTimestamp(value: unknown, field: string): string {
   return value;
 }
 
+/**
+ * A delivery marker that is present but not exactly 1 is a malformed
+ * advertisement, never a legacy downgrade. Absent means the capability is
+ * simply not offered.
+ */
+function deliveryCapabilityMarker(
+  row: Record<string, unknown>,
+  key: string,
+): boolean {
+  if (row[key] === undefined) return false;
+  if (row[key] !== 1) {
+    throw new Error("signal read returned a malformed delivery capability marker");
+  }
+  return true;
+}
+
 function signalReadCapabilities(value: unknown): SignalReadCapabilities {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return {
@@ -187,8 +203,8 @@ function signalReadCapabilities(value: unknown): SignalReadCapabilities {
   return {
     senderOwnerRelation: row.sender_owner_relation === 1,
     cursorAfter: row.cursor_after === 1,
-    deliveryClaim: row.delivery_claim === 1,
-    deliveryAck: row.delivery_ack === 1,
+    deliveryClaim: deliveryCapabilityMarker(row, "delivery_claim"),
+    deliveryAck: deliveryCapabilityMarker(row, "delivery_ack"),
   };
 }
 
