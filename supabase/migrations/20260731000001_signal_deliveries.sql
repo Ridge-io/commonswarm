@@ -112,7 +112,7 @@ SECURITY INVOKER
 SET search_path = pg_catalog
 AS $$
 BEGIN
-  IF NEW.to_agent_principal_id IS NOT NULL THEN
+  IF NEW.to_agent_principal_id IS NOT NULL AND NEW.kind IN ('ask', 'note') THEN
     INSERT INTO swarm.signal_deliveries (
       signal_id,
       workspace_id,
@@ -137,7 +137,7 @@ CREATE TRIGGER signals_enqueue_delivery
   EXECUTE FUNCTION swarm.enqueue_signal_delivery();
 
 -- ---------------------------------------------------------------------------
--- 3. Backfill live direct-agent signals
+-- 3. Backfill live direct-agent signals (ask and note only)
 -- ---------------------------------------------------------------------------
 
 INSERT INTO swarm.signal_deliveries (
@@ -153,11 +153,12 @@ SELECT
   s.created_at
 FROM swarm.signals AS s
 WHERE s.to_agent_principal_id IS NOT NULL
+  AND s.kind IN ('ask', 'note')
   AND s.until > statement_timestamp()
 ON CONFLICT DO NOTHING;
 
 -- ---------------------------------------------------------------------------
--- 4. Assert every live direct-agent signal has a delivery row
+-- 4. Assert every live direct-agent ask/note signal has a delivery row
 -- ---------------------------------------------------------------------------
 
 DO $$
@@ -167,6 +168,7 @@ BEGIN
   SELECT count(*)::integer INTO missing
   FROM swarm.signals AS s
   WHERE s.to_agent_principal_id IS NOT NULL
+    AND s.kind IN ('ask', 'note')
     AND s.until > statement_timestamp()
     AND NOT EXISTS (
       SELECT 1

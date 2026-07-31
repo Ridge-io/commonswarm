@@ -5138,6 +5138,9 @@ async function handleTransaction(
     const ignoredIdentity = forgedActorDetail(body);
     await afterStep(4);
 
+    const isDeliveryCommand =
+      kind === CLAIM_AGENT_INBOX_KIND || kind === ACK_AGENT_DELIVERY_KIND;
+
     if (Object.hasOwn(body, "from")) {
       await insertAudit(tx, {
         auth,
@@ -5194,10 +5197,10 @@ async function handleTransaction(
           ? body.workspace_id
           : null,
         outcome: "authz",
-        reason: "forbidden",
+        reason: isDeliveryCommand ? "delivery_unavailable" : "forbidden",
         detail: ignoredIdentity,
       });
-      return { status: 403, body: { error: "forbidden" } };
+      return { status: 403, body: { error: isDeliveryCommand ? "delivery_unavailable" : "forbidden" } };
     }
     await afterStep(5);
 
@@ -5209,10 +5212,10 @@ async function handleTransaction(
         workspaceId: route.workspaceId,
         streamId: route.streamId,
         outcome: "revocation",
-        reason: "forbidden",
+        reason: isDeliveryCommand ? "delivery_unavailable" : "forbidden",
         detail: ignoredIdentity,
       });
-      return { status: 403, body: { error: "forbidden" } };
+      return { status: 403, body: { error: isDeliveryCommand ? "delivery_unavailable" : "forbidden" } };
     }
     const validation = validateCommand(body.command);
     const configRows = await tx<{ value: unknown }[]>`
@@ -5292,11 +5295,6 @@ async function handleTransaction(
     // refuses sibling/principal targets; this only opens the door to the check.
     const isAgentTokenRevoke =
       validation.command.kind === "revoke_agent_token";
-    // Durable delivery claim/ack are authorised by exact-recipient agent auth
-    // and the delivery lease capability, not by a mint-time scope string.
-    const isDeliveryCommand =
-      validation.command.kind === CLAIM_AGENT_INBOX_KIND ||
-      validation.command.kind === ACK_AGENT_DELIVERY_KIND;
     if (isRenewal && auth.agent === null) {
       await insertAudit(tx, {
         auth,

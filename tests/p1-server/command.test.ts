@@ -6018,17 +6018,43 @@ test("durable-delivery: trigger enqueue ask/note; broadcast and direct-human do 
       (humanDirect.body.signal as Record<string, unknown>).id,
     );
 
+    // Directed working-on signal is rejected at command validation with 400 invalid_request.
+    const directedWorkingOn = await issueSignal(f, f.uaJwt, {
+      kind: "post_signal",
+      signal_kind: "working-on",
+      body: "dd-enqueue-working-on-directed",
+      to_user_id: null,
+      to_agent_principal_id: receiver.principalId,
+      in_reply_to: null,
+      about: "dd-enqueue",
+    });
+    assert.equal(directedWorkingOn.status, 400);
+
+    // Broadcast working-on signal is accepted (200) but does not enqueue in swarm.signal_deliveries.
+    const broadcastWorkingOn = await issueSignal(f, f.uaJwt, {
+      kind: "post_signal",
+      signal_kind: "working-on",
+      body: "dd-enqueue-working-on-broadcast",
+      to_user_id: null,
+      about: "dd-enqueue",
+    });
+    assert.equal(broadcastWorkingOn.status, 200, broadcastWorkingOn.text);
+    const broadcastWorkingOnId = String(
+      (broadcastWorkingOn.body.signal as Record<string, unknown>).id,
+    );
+
     const rows = await sql<{ signal_id: string; recipient: string }[]>`
       SELECT signal_id, recipient_agent_principal_id AS recipient
       FROM swarm.signal_deliveries
-      WHERE signal_id = ANY(${[askId, noteId, broadcastId, humanId]}::uuid[])
+      WHERE signal_id = ANY(${[askId, noteId, broadcastId, humanId, broadcastWorkingOnId]}::uuid[])
       ORDER BY signal_id
     `;
     const ids = new Set(rows.map((r) => r.signal_id));
     assert.ok(ids.has(askId), "ask enqueued");
     assert.ok(ids.has(noteId), "note enqueued");
-    assert.equal(ids.has(broadcastId), false, "broadcast does not enqueue");
+    assert.equal(ids.has(broadcastId), false, "broadcast note does not enqueue");
     assert.equal(ids.has(humanId), false, "direct-human does not enqueue");
+    assert.equal(ids.has(broadcastWorkingOnId), false, "broadcast working_on does not enqueue");
     for (const row of rows) {
       assert.equal(row.recipient, receiver.principalId);
     }
@@ -6332,6 +6358,7 @@ test("durable-delivery: wrong principal/lease, revoked token, delivery_unavailab
       f.workspaceA,
     );
     assert.equal(foreignClaim.status, 403);
+    assert.equal(foreignClaim.body.error, "delivery_unavailable");
 
     // Human cannot claim.
     const humanClaim = await issueDelivery(f, f.uaJwt, {
@@ -6339,6 +6366,7 @@ test("durable-delivery: wrong principal/lease, revoked token, delivery_unavailab
       listener_instance_id: randomUUID(),
     });
     assert.equal(humanClaim.status, 403);
+    assert.equal(humanClaim.body.error, "delivery_unavailable");
 
     // Revoked token cannot claim.
     await sql`
@@ -6350,10 +6378,8 @@ test("durable-delivery: wrong principal/lease, revoked token, delivery_unavailab
       kind: "claim_agent_inbox",
       listener_instance_id: randomUUID(),
     });
-    assert.ok(
-      revokedClaim.status === 401 || revokedClaim.status === 403,
-      revokedClaim.text,
-    );
+    assert.equal(revokedClaim.status, 403);
+    assert.equal(revokedClaim.body.error, "delivery_unavailable");
   });
 });
 
@@ -7268,7 +7294,7 @@ test("durable-delivery: negative controls (stale lease ack, expired ack TTL, rev
     assert.equal(staleAck.status, 403);
     assert.equal(staleAck.body.error, "delivery_unavailable");
 
-    // 4. Revoked principal claim/ack -> 403 forbidden
+    // 4. Revoked principal / removed owner membership claim/ack -> 403 delivery_unavailable
     const agentToRevoke = await createFixtureAgent(f, f.ua, "dd-rev-principal");
     await sql`
       UPDATE swarm.agent_principals
@@ -7281,17 +7307,42 @@ test("durable-delivery: negative controls (stale lease ack, expired ack TTL, rev
       limit: 10,
     });
     assert.equal(revClaim.status, 403);
-    assert.equal(revClaim.body.error, "forbidden");
+    assert.equal(revClaim.body.error, "delivery_unavailable");
 
-    // 5. Read-definer performs no mutations control
-    const tokenHash = new Uint8Array(32);
+    // Removed owner membership claim refusal -> 403 delivery_unavailable
+    const agentOwnerRemoved = await createFixtureAgent(f, f.ua, "dd-owner-removed");
+    await sql`
+      UPDATE swarm.memberships
+      SET revoked_at = statement_timestamp()
+      WHERE workspace_id = ${f.workspaceA}::uuid
+        AND user_id = ${f.ua}::uuid
+    `;
+    const ownerRevClaim = await issueDelivery(f, agentOwnerRemoved.token, {
+      kind: "claim_agent_inbox",
+      listener_instance_id: randomUUID(),
+      limit: 10,
+    });
+    assert.equal(ownerRevClaim.status, 403);
+    assert.equal(ownerRevClaim.body.error, "delivery_unavailable");
+
+    // Restore workspace membership for subsequent test cleanup
+    await sql`
+      UPDATE swarm.memberships
+      SET revoked_at = NULL
+      WHERE workspace_id = ${f.workspaceA}::uuid
+        AND user_id = ${f.ua}::uuid
+    `;
+
+    // 5. Read-definer performs no mutations control with a valid token hash
+    const rawTokenBytes = randomBytes(32);
+    const validTokenHash = createHash("sha256").update(rawTokenBytes).digest();
     const [{ count: beforeDelCount }] = await sql<{ count: string | number }[]>`
       SELECT count(*) AS count FROM swarm.signal_deliveries
     `;
     const [{ count: beforeSigCount }] = await sql<{ count: string | number }[]>`
       SELECT count(*) AS count FROM swarm.signals
     `;
-    await sql`SELECT * FROM swarm.agent_delivery_read_context(${tokenHash}, ${f.workspaceA}::uuid)`;
+    await sql`SELECT * FROM swarm.agent_delivery_read_context(${validTokenHash}, ${f.workspaceA}::uuid)`;
     const [{ count: afterDelCount }] = await sql<{ count: string | number }[]>`
       SELECT count(*) AS count FROM swarm.signal_deliveries
     `;
@@ -7300,6 +7351,18 @@ test("durable-delivery: negative controls (stale lease ack, expired ack TTL, rev
     `;
     assert.equal(beforeDelCount, afterDelCount, "read-definer does not mutate signal_deliveries");
     assert.equal(beforeSigCount, afterSigCount, "read-definer does not mutate signals");
+
+    // 6. Bearer audit leak check: audit log details/reasons never contain raw Bearer strings
+    const auditRows = await sql<{ detail: string | null; reason: string | null }[]>`
+      SELECT detail, reason
+      FROM swarm.audit_log
+      WHERE command_kind IN ('claim_agent_inbox', 'ack_agent_delivery')
+      LIMIT 50
+    `;
+    for (const row of auditRows) {
+      const text = `${row.detail ?? ""} ${row.reason ?? ""}`;
+      assert.equal(text.includes("Bearer"), false, "audit log does not leak Bearer token headers");
+    }
   });
 });
 
@@ -7308,6 +7371,7 @@ test("durable-delivery: causal migration backfill enqueues pre-existing direct a
     const receiver = await createFixtureAgent(f, f.ua, "dd-backfill-rec");
     const preExistingId1 = randomUUID();
     const preExistingId2 = randomUUID();
+    const preExistingId3 = randomUUID();
 
     // Insert direct signals directly into swarm.signals (simulating pre-migration DB state)
     await sql`
@@ -7317,7 +7381,8 @@ test("durable-delivery: causal migration backfill enqueues pre-existing direct a
         about, kind, body, until, created_at
       ) VALUES
         (${preExistingId1}::uuid, ${f.workspaceA}::uuid, ${f.ua}::uuid, 'user', NULL, ${receiver.principalId}::uuid, NULL, 'pre-mig-1', 'ask', 'pre-mig-body-1', statement_timestamp() + interval '1 day', statement_timestamp()),
-        (${preExistingId2}::uuid, ${f.workspaceA}::uuid, ${f.ua}::uuid, 'user', NULL, ${receiver.principalId}::uuid, NULL, 'pre-mig-2', 'note', 'pre-mig-body-2', statement_timestamp() + interval '1 day', statement_timestamp())
+        (${preExistingId2}::uuid, ${f.workspaceA}::uuid, ${f.ua}::uuid, 'user', NULL, ${receiver.principalId}::uuid, NULL, 'pre-mig-2', 'note', 'pre-mig-body-2', statement_timestamp() + interval '1 day', statement_timestamp()),
+        (${preExistingId3}::uuid, ${f.workspaceA}::uuid, ${f.ua}::uuid, 'user', NULL, ${receiver.principalId}::uuid, NULL, 'pre-mig-3', 'working-on', 'pre-mig-body-3', statement_timestamp() + interval '1 day', statement_timestamp())
     `;
 
     // Read Section 3 backfill SQL from migration file and execute
@@ -7327,17 +7392,17 @@ test("durable-delivery: causal migration backfill enqueues pre-existing direct a
     assert.ok(backfillMatch && backfillMatch[1], "Section 3 backfill SQL extracted from migration file");
     await sql.unsafe(backfillMatch[1]);
 
-    // Verify all pre-existing direct signals exist in swarm.signal_deliveries
+    // Verify ask and note signals exist in swarm.signal_deliveries, but working-on does not
     const deliveries = await sql<{ signal_id: string; acked_at: Date | null; attempt_count: number }[]>`
       SELECT signal_id::text, acked_at, attempt_count
       FROM swarm.signal_deliveries
-      WHERE signal_id IN (${preExistingId1}::uuid, ${preExistingId2}::uuid)
+      WHERE signal_id IN (${preExistingId1}::uuid, ${preExistingId2}::uuid, ${preExistingId3}::uuid)
     `;
-    assert.equal(deliveries.length, 2, "all pre-existing direct agent signals were enqueued by backfill");
-    for (const d of deliveries) {
-      assert.equal(d.acked_at, null);
-      assert.equal(d.attempt_count, 0);
-    }
+    assert.equal(deliveries.length, 2, "pre-existing ask and note signals enqueued by backfill; working-on excluded");
+    const deliveryIds = new Set(deliveries.map((d) => d.signal_id));
+    assert.ok(deliveryIds.has(preExistingId1));
+    assert.ok(deliveryIds.has(preExistingId2));
+    assert.equal(deliveryIds.has(preExistingId3), false, "pre-existing working-on signal excluded from backfill");
   });
 });
 
