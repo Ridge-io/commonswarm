@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm, stat } from "node:fs/promises";
+import { chmod, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -854,6 +854,110 @@ test("promptIsolated init error closes handle exactly once without double close"
   await assert.rejects(promptPromise, /canary failed/);
   assert.equal(handleCloseCount, 1);
 
+  await rm(cwd, { recursive: true, force: true }).catch(() => undefined);
+});
+
+test("releaseOpenCodeHome failure records home in retainedHomes and preserves model tracking", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "cswarm-oc-worker-"));
+  let capturedHome: string | undefined;
+  const adapter = new OpenCodeListenerModel({
+    cwd,
+    allowMissingAuth: true,
+    open: async (options) => {
+      capturedHome = options.isolatedHome;
+      const sub = await mkdtemp(join(options.isolatedHome!, "sub-"));
+      await writeFile(join(sub, "lock"), "lock");
+      await chmod(sub, 0o000);
+      await chmod(options.isolatedHome!, 0o500);
+      throw new Error("open failed");
+    },
+  });
+
+  await assert.rejects(adapter.start(), /open failed/);
+  assert.equal(typeof capturedHome, "string");
+  assert.ok(adapter.getRetainedHomes().includes(capturedHome!));
+
+  await chmod(capturedHome!, 0o700).catch(() => undefined);
+  await rm(capturedHome!, { recursive: true, force: true }).catch(() => undefined);
+  await rm(cwd, { recursive: true, force: true }).catch(() => undefined);
+});
+
+test("performClose active isolate close failure records handle.home in retainedHomes", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "cswarm-oc-worker-"));
+  let isolateHome: string | undefined;
+  let releasePrompt: (() => void) | undefined;
+  const promptGate = new Promise<void>((r) => {
+    releasePrompt = r;
+  });
+  const timeoutErr = new AcpHostError(
+    "child_exit_timeout",
+    "child process did not exit after SIGKILL within 5000ms deadline",
+  );
+  const adapter = new OpenCodeListenerModel({
+    cwd,
+    allowMissingAuth: true,
+    pendingOpenWaitMs: 2_000,
+    open: async (options) => {
+      isolateHome = options.isolatedHome;
+      return {
+        session: {
+          async enablePromptsAfterCanary() {},
+          async openWorkCwd() {},
+          async prompt() {
+            await promptGate;
+            return { message: "w", stopReason: "end_turn" as const, updates: [] };
+          },
+          cancel() {},
+        },
+        child: {},
+        executable: process.execPath,
+        args: ["acp", "--pure"],
+        env: {},
+        home: options.isolatedHome ?? "/tmp/w",
+        async close() {
+          throw timeoutErr;
+        },
+      } as unknown as OpenCodeAcpHandle;
+    },
+  });
+
+  const promptPromise = adapter.prompt(
+    {
+      id: "sig_iso",
+      workspace_id: "ws_1",
+      from: "usr_1",
+      from_kind: "user",
+      to: "usr_1",
+      to_agent: null,
+      in_reply_to: null,
+      about: null,
+      kind: "ask",
+      body: "hello",
+      until: new Date().toISOString(),
+      created_at: new Date().toISOString(),
+      sender_owner_relation: "cross_owner",
+    },
+    "isolated",
+    "prompt text",
+  );
+
+  for (let i = 0; i < 50 && !isolateHome; i += 1) {
+    await new Promise((r) => setTimeout(r, 5));
+  }
+  assert.equal(typeof isolateHome, "string");
+
+  const closePromise = adapter.close();
+  void promptPromise.catch(() => undefined);
+  void closePromise.catch(() => undefined);
+
+  await new Promise((r) => setTimeout(r, 30));
+  releasePrompt?.();
+
+  await assert.rejects(closePromise, /child process did not exit/);
+  assert.ok(adapter.getRetainedHomes().includes(isolateHome!));
+
+  await chmod(isolateHome!, 0o700).catch(() => undefined);
+  await rm(isolateHome!, { recursive: true, force: true }).catch(() => undefined);
   await rm(cwd, { recursive: true, force: true }).catch(() => undefined);
 });
 

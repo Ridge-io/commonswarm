@@ -206,8 +206,14 @@ export class OpenCodeListenerModel implements ListenerModel {
       try {
         await worker.close();
         if (workerHome) {
-          this.workerHome = null;
-          await releaseOpenCodeHome(workerHome, this.instanceId).catch(() => undefined);
+          try {
+            await releaseOpenCodeHome(workerHome, this.instanceId);
+            this.workerHome = null;
+          } catch (relErr) {
+            failures.push(asError(relErr));
+            this.retainedHomes.push(workerHome);
+            this.workerHome = null;
+          }
         }
       } catch (error) {
         failures.push(asError(error));
@@ -226,7 +232,9 @@ export class OpenCodeListenerModel implements ListenerModel {
         await handle.close();
       } catch (error) {
         failures.push(asError(error));
-        // Isolate home retained by host open path when terminate fails.
+        if (handle.home) {
+          this.retainedHomes.push(handle.home);
+        }
       }
     }
 
@@ -247,7 +255,13 @@ export class OpenCodeListenerModel implements ListenerModel {
     if (entry.phase === "pre-spawn" || !entry.openPromise) {
       this.pendingOpens.delete(entry.home);
       if (entry.home === this.workerHome) this.workerHome = null;
-      await releaseOpenCodeHome(entry.home, entry.instanceId);
+      try {
+        await releaseOpenCodeHome(entry.home, entry.instanceId);
+      } catch (e) {
+        this.retainedHomes.push(entry.home);
+        entry.markSettled(e);
+        throw e;
+      }
       entry.markSettled();
       return;
     }
@@ -323,17 +337,29 @@ export class OpenCodeListenerModel implements ListenerModel {
 
   private async releaseWorkerHomeIfOwned(): Promise<void> {
     const home = this.workerHome;
-    this.workerHome = null;
     if (!home) return;
-    await releaseOpenCodeHome(home, this.instanceId);
+    try {
+      await releaseOpenCodeHome(home, this.instanceId);
+      this.workerHome = null;
+    } catch (e) {
+      this.retainedHomes.push(home);
+      this.workerHome = null;
+      throw e;
+    }
   }
 
   private async abandonWorkerHome(): Promise<void> {
     const home = this.workerHome;
-    this.workerHome = null;
     if (!home) return;
     this.pendingOpens.delete(home);
-    await releaseOpenCodeHome(home, this.instanceId);
+    try {
+      await releaseOpenCodeHome(home, this.instanceId);
+      this.workerHome = null;
+    } catch (e) {
+      this.retainedHomes.push(home);
+      this.workerHome = null;
+      throw e;
+    }
   }
 
   private assertOpen(generation: number): void {
@@ -455,7 +481,11 @@ export class OpenCodeListenerModel implements ListenerModel {
         if ((openError as any)?.code === "child_exit_timeout") {
           this.retainedHomes.push(home);
         } else {
-          await releaseOpenCodeHome(home, this.instanceId).catch(() => undefined);
+          try {
+            await releaseOpenCodeHome(home, this.instanceId);
+          } catch {
+            this.retainedHomes.push(home);
+          }
         }
         pending.markSettled(openError);
         throw openError;
@@ -543,7 +573,11 @@ export class OpenCodeListenerModel implements ListenerModel {
         this.assertOpen(generation);
       } catch (error) {
         this.pendingOpens.delete(home);
-        await releaseOpenCodeHome(home, isolatedInstanceId);
+        try {
+          await releaseOpenCodeHome(home, isolatedInstanceId);
+        } catch {
+          this.retainedHomes.push(home);
+        }
         pending.markSettled();
         home = null;
         throw error;
@@ -573,7 +607,11 @@ export class OpenCodeListenerModel implements ListenerModel {
         if ((openError as any)?.code === "child_exit_timeout") {
           this.retainedHomes.push(home);
         } else {
-          await releaseOpenCodeHome(home, isolatedInstanceId).catch(() => undefined);
+          try {
+            await releaseOpenCodeHome(home, isolatedInstanceId);
+          } catch {
+            this.retainedHomes.push(home);
+          }
         }
         pending.markSettled(openError);
         home = null;
@@ -606,7 +644,11 @@ export class OpenCodeListenerModel implements ListenerModel {
         const currentHome = home;
         if (pending.phase === "pre-spawn") {
           this.pendingOpens.delete(currentHome);
-          await releaseOpenCodeHome(currentHome, isolatedInstanceId).catch(() => undefined);
+          try {
+            await releaseOpenCodeHome(currentHome, isolatedInstanceId);
+          } catch {
+            this.retainedHomes.push(currentHome);
+          }
           pending.markSettled();
           home = null;
         }
@@ -629,7 +671,11 @@ export class OpenCodeListenerModel implements ListenerModel {
         }
         await rm(cwd, { recursive: true, force: true }).catch(() => undefined);
         if (home && closeOk) {
-          await releaseOpenCodeHome(home, isolatedInstanceId);
+          try {
+            await releaseOpenCodeHome(home, isolatedInstanceId);
+          } catch {
+            this.retainedHomes.push(home);
+          }
         }
       } else {
         await rm(cwd, { recursive: true, force: true }).catch(() => undefined);

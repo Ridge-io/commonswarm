@@ -243,8 +243,8 @@ export async function releaseOpenCodeHome(
   try {
     await rm(home, { recursive: true, force: true });
   } catch {
-    await chmod(home, 0o700).catch(() => undefined);
-    await rm(home, { recursive: true, force: true }).catch(() => undefined);
+    await chmod(home, 0o700);
+    await rm(home, { recursive: true, force: true });
   }
 }
 
@@ -766,7 +766,12 @@ export async function openOpenCodeAcpSession(
   let childStarted = false;
   const disposeHome = async () => {
     if (createdHome || options.disposeHomeOnClose === true) {
-      await rm(home!, { recursive: true, force: true }).catch(() => undefined);
+      try {
+        await rm(home!, { recursive: true, force: true });
+      } catch {
+        await chmod(home!, 0o700);
+        await rm(home!, { recursive: true, force: true });
+      }
     }
   };
 
