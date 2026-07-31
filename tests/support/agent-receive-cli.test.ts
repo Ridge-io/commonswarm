@@ -13,6 +13,7 @@ import { cloudTarget } from "../../src/cloud/config.js";
 import {
   askWaitJsonPayload,
   BoundedSignalIdSet,
+  compareSignalCursor,
   followHttpDetails,
   formatFollowFrame,
   isFatalFollowError,
@@ -21,12 +22,14 @@ import {
   nextFollowBackoffMs,
   nextWaitSleepMs,
   parseRetryAfterMs,
+  parseSignalRecord,
   parseWaitSeconds,
   pollForSignals,
   postSignalTargets,
   readSignals,
   resolveSignalRecipient,
   runInboxFollow,
+  SIGNAL_FOLLOW_PAGE_LIMIT,
   SIGNAL_FOLLOW_POLL_MS,
   SIGNAL_FOLLOW_POST_EMIT_MS,
   SIGNAL_READ_TIMEOUT_MS,
@@ -37,9 +40,11 @@ import {
   SignalTransportError,
   signalReadJsonPayload,
   waitDeadlineMs,
+  type FollowArmRequest,
   type FollowFrame,
   type SignalDirectory,
 } from "../../src/cloud/signals.js";
+import { describeMintRenewal } from "../../src/cloud/renewal.js";
 
 const WORKSPACE = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const USER = "11111111-1111-4111-8111-111111111111";
@@ -706,4 +711,153 @@ test("readSignals keeps plain Error taxonomy while carrying Retry-After for foll
       return true;
     },
   );
+});
+
+// ---------------------------------------------------------------------------
+// Lossless follow cursor, tolerant parse, honest renewal copy
+// ---------------------------------------------------------------------------
+
+test("parseSignalRecord ignores unknown fields and fails closed on bad required data", () => {
+  const base = row();
+  const parsed = parseSignalRecord({
+    ...base,
+    future_enum: "whatever",
+    extra_nested: { a: 1 },
+  });
+  assert.equal(parsed.id, base.id);
+  assert.equal(parsed.body, base.body);
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(parsed, "future_enum"),
+    false,
+  );
+
+  // Absent optional fields from an older edge normalize to null.
+  const legacy = parseSignalRecord({
+    id: base.id,
+    workspace_id: base.workspace_id,
+    from: base.from,
+    from_kind: base.from_kind,
+    to: null,
+    about: null,
+    kind: "note",
+    body: "hello",
+    until: base.until,
+    created_at: base.created_at,
+  });
+  assert.equal(legacy.to_agent, null);
+  assert.equal(legacy.in_reply_to, null);
+
+  // Present-but-invalid optional UUID fails closed.
+  assert.throws(
+    () => parseSignalRecord({ ...base, to_agent: "not-a-uuid" }),
+    /malformed to_agent/,
+  );
+  // Unknown kind fails closed (not silently coerced).
+  assert.throws(
+    () => parseSignalRecord({ ...base, kind: "redirect" }),
+    /malformed signal data/,
+  );
+});
+
+test("compareSignalCursor orders by created_at then id", () => {
+  assert.ok(
+    compareSignalCursor(
+      { created_at: "2026-07-24T00:00:00.000Z", id: "a" },
+      { created_at: "2026-07-24T00:00:01.000Z", id: "a" },
+    ) < 0,
+  );
+  assert.ok(
+    compareSignalCursor(
+      { created_at: "2026-07-24T00:00:00.000Z", id: "b" },
+      { created_at: "2026-07-24T00:00:00.000Z", id: "a" },
+    ) > 0,
+  );
+  assert.equal(
+    compareSignalCursor(
+      { created_at: "2026-07-24T00:00:00.000Z", id: SIGNAL },
+      { created_at: "2026-07-24T00:00:00.000Z", id: SIGNAL },
+    ),
+    0,
+  );
+});
+
+test("follow pages a backlog larger than one page without dropping older rows", async () => {
+  assert.equal(SIGNAL_FOLLOW_PAGE_LIMIT, 100);
+  const page1 = [
+    row({
+      id: "11111111-1111-4111-8111-111111111101",
+      created_at: "2026-07-24T00:00:01.000Z",
+      body: "old-1",
+    }),
+    row({
+      id: "11111111-1111-4111-8111-111111111102",
+      created_at: "2026-07-24T00:00:02.000Z",
+      body: "old-2",
+    }),
+  ];
+  const page2 = [
+    row({
+      id: "11111111-1111-4111-8111-111111111103",
+      created_at: "2026-07-24T00:00:03.000Z",
+      body: "new-3",
+    }),
+  ];
+  const frames: FollowFrame[] = [];
+  const requests: FollowArmRequest[] = [];
+  const controller = new AbortController();
+  let arms = 0;
+  const stop = await runInboxFollow({
+    workspaceId: WORKSPACE,
+    pageLimit: 2,
+    now: () => 1_700_000_000_000,
+    random: () => 0,
+    sleep: async () => {
+      // Cancel once the idle poll would run (backlog drained).
+      if (arms >= 3) controller.abort();
+    },
+    signal: controller.signal,
+    arm: async (page) => {
+      requests.push(page);
+      arms += 1;
+      if (arms === 1) {
+        assert.equal(page.after, null);
+        assert.equal(page.limit, 2);
+        return page1;
+      }
+      if (arms === 2) {
+        assert.deepEqual(page.after, {
+          created_at: "2026-07-24T00:00:02.000Z",
+          id: "11111111-1111-4111-8111-111111111102",
+        });
+        return page2;
+      }
+      // Idle rearm after drain.
+      assert.deepEqual(page.after, {
+        created_at: "2026-07-24T00:00:03.000Z",
+        id: "11111111-1111-4111-8111-111111111103",
+      });
+      return [];
+    },
+    emit: (frame) => frames.push(frame),
+  });
+  assert.equal(stop.reason, "cancelled");
+  assert.equal(frames[0]?.type, "ready");
+  const bodies = frames
+    .filter((f): f is Extract<FollowFrame, { type: "signal" }> =>
+      f.type === "signal"
+    )
+    .map((f) => f.signal.body);
+  assert.deepEqual(bodies, ["old-1", "old-2", "new-3"]);
+  assert.ok(requests.length >= 3, "expected catch-up pages then idle rearm");
+});
+
+test("describeMintRenewal states process and local-state conditions, not unconditional self-renewal", () => {
+  const renewable = describeMintRenewal(true, 30);
+  assert.match(renewable, /remains running and secure local state is available/);
+  assert.match(renewable, /30 days/);
+  assert.match(renewable, /stopped or idle CLI cannot renew it/);
+  assert.doesNotMatch(renewable, /renews itself, so the agent keeps working/i);
+
+  const noExpiry = describeMintRenewal(false, 30);
+  assert.match(noExpiry, /does not renew itself/);
 });

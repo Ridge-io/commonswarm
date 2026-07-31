@@ -84,12 +84,16 @@ cswarm inbox --kind ask --follow --ndjson
   `--json`; the one-shot contracts remain unchanged.
 - The first frame is `{"type":"ready",...}` and appears only after an
   authenticated read succeeds.
-- Signal frames are ordered oldest-first. A bounded in-process ID set suppresses
-  repeat rows during that process; restarting remains honestly at least once.
-- The receiver re-arms after every read. Transport failures, `429`, and `5xx`
-  retry with capped jittered backoff and `Retry-After`; authentication,
-  authorization, protocol, malformed-response, and credential-horizon failures
-  stop.
+- Signal frames are ordered oldest-first. Catch-up and live pages use an
+  ascending keyset cursor (`after` created_at+id) with page size up to 100 so a
+  backlog larger than one page is drained rather than truncated to the newest
+  page. A bounded in-process ID set suppresses repeat rows during that process;
+  restarting remains honestly at least once.
+- The receiver re-arms after every read. A full page rearms immediately to
+  finish drain; an empty/partial page uses the idle poll. Transport failures,
+  `429`, and `5xx` retry with capped jittered backoff and `Retry-After`;
+  authentication, authorization, protocol, malformed-response, and
+  credential-horizon failures stop.
 - An agent credential session asks for its current bearer before every arm, so
   an active receiver can rotate on time when secure local state is available.
 - This is a receiver stream, not model wake. A host adapter or wrapper must keep

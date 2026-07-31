@@ -66,6 +66,28 @@ export const RENEWAL_HORIZON_DEFAULT_MS = 30 * 24 * 60 * 60 * 1_000;
 export const RENEWAL_HORIZON_MAX_MS = 90 * 24 * 60 * 60 * 1_000;
 
 /**
+ * Honest mint narration for operators. The bearer is short; the horizon is the
+ * month-long human checkpoint. Never claim unconditional self-renewal: rotation
+ * only happens while a cswarm process is alive and secure local state exists.
+ */
+export function describeMintRenewal(
+  hasExpiry: boolean,
+  horizonDays: number,
+): string {
+  if (!hasExpiry) {
+    return "This credential does not renew itself; re-issue one by hand when it expires.\n";
+  }
+  const days = Number.isFinite(horizonDays) && horizonDays > 0
+    ? Math.round(horizonDays)
+    : Math.round(RENEWAL_HORIZON_DEFAULT_MS / 86_400_000);
+  return (
+    "While a cswarm process remains running and secure local state is available, " +
+    "this credential rotates before expiry. A person is asked to authorise it again in " +
+    `${days} days. A stopped or idle CLI cannot renew it.\n`
+  );
+}
+
+/**
  * Successors one grant authorises.
  *
  * 800 is not a round number picked for comfort — it is the 30-day horizon expressed in

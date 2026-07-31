@@ -48,6 +48,7 @@ import {
 } from "./cloud/agent-credential.js";
 import {
   AgentCredentialSession,
+  describeMintRenewal,
   RENEWAL_HORIZON_DEFAULT_MS,
   RENEWAL_HORIZON_MAX_MS,
   RENEWAL_MAX_SUCCESSORS_DEFAULT,
@@ -1424,11 +1425,10 @@ async function runToken(args: Arguments): Promise<void> {
      matter what the server can do. The grant is no longer part of this test because it is no
      longer a separate thing that can fail — a mint that returned a token created one. */
   process.stderr.write(
-    expiresAt !== null
-      ? `This credential renews itself, so the agent keeps working without anyone re-issuing it. A person is asked to authorise it again in ${
-        Math.round(horizonMs / 86_400_000)
-      } days.\n`
-      : "This credential does not renew itself; re-issue one by hand when it expires.\n",
+    describeMintRenewal(
+      expiresAt !== null,
+      Math.round(horizonMs / 86_400_000),
+    ),
   );
   printJson(agentCredentialArtifact({
     principalId,
@@ -2395,9 +2395,15 @@ async function runInboxFollowCommand(args: Arguments): Promise<void> {
   const selected = await commandWorkspaceAndCredential(args, cloud, {
     validateHumanWorkspace: true,
   });
+  // Follow always pages ascending with a keyset cursor. --limit only caps each
+  // page; a backlog larger than one page is drained, not truncated to newest-N.
+  const pageLimit = args.optional("limit") === undefined
+    ? undefined
+    : integer(args, "limit", { minimum: 1, maximum: 100 });
   const queryBase = {
     workspaceId: selected.selectedWorkspace,
     inbox: true as const,
+    ascending: true as const,
     ...(args.optional("about") === undefined
       ? {}
       : { about: signalText(args.required("about"), "about") }),
@@ -2407,9 +2413,6 @@ async function runInboxFollowCommand(args: Arguments): Promise<void> {
     ...(args.optional("since") === undefined
       ? {}
       : { since: args.required("since") }),
-    ...(args.optional("limit") === undefined
-      ? {}
-      : { limit: integer(args, "limit", { minimum: 1, maximum: 100 }) }),
     includeStale: args.has("include-stale"),
   };
 
@@ -2421,19 +2424,27 @@ async function runInboxFollowCommand(args: Arguments): Promise<void> {
     const stop = await runInboxFollow({
       workspaceId: selected.selectedWorkspace,
       signal: controller.signal,
+      ...(pageLimit === undefined ? {} : { pageLimit }),
       isCredentialFailure: (error) =>
         isFollowCredentialFailure(error) ||
         error instanceof RenewalReauthorisationRequired ||
         error instanceof RenewalRevoked,
-      arm: async () => {
+      arm: async ({ after, limit }) => {
         // Renewal is checked on every arm for agent credentials; humans reuse
         // the session bearer already resolved for this process.
         const credential: SignalCredential = selected.session
           ? { kind: "agent", token: await selected.session.bearer() }
           : signalCredentialOf(selected);
-        return await readSignals(cloud, credential, queryBase, {
-          signal: controller.signal,
-        });
+        return await readSignals(
+          cloud,
+          credential,
+          {
+            ...queryBase,
+            limit,
+            ...(after === null ? {} : { after }),
+          },
+          { signal: controller.signal },
+        );
       },
       emit: (frame) => {
         process.stdout.write(`${formatFollowFrame(frame)}\n`);

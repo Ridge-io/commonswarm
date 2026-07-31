@@ -34,6 +34,12 @@ export type SignalCredential =
   | { kind: "human"; accessToken: string; userId: string }
   | { kind: "agent"; token: string };
 
+/** Keyset high-water for lossless follow pagination (created_at, id). */
+export interface SignalCursor {
+  created_at: string;
+  id: string;
+}
+
 export interface SignalQuery {
   workspaceId: string;
   inbox: boolean;
@@ -42,6 +48,18 @@ export interface SignalQuery {
   /** Filter replies correlated to this signal id. */
   in_reply_to?: string;
   since?: string;
+  /**
+   * Strict keyset lower bound: return rows after this (created_at, id).
+   * Implies ascending order. Used by the follow stream to page a backlog
+   * without the newest-N window silently dropping older rows.
+   */
+  after?: SignalCursor;
+  /**
+   * Oldest-first order. Follow catch-up uses this so a backlog larger than
+   * --limit is drained page by page instead of truncated to the newest page.
+   * One-shot inbox/feed keep the default (newest first).
+   */
+  ascending?: boolean;
   limit?: number;
   includeStale?: boolean;
 }
@@ -67,6 +85,11 @@ export const SIGNAL_FOLLOW_SEEN_MAX = 1_024;
  * prompt relative to idle without a zero-delay request storm.
  */
 export const SIGNAL_FOLLOW_POST_EMIT_MS = 250;
+/**
+ * Follow drain page size. Uses the server maximum so a burst larger than the
+ * historical default of 50 is still walked to completion page by page.
+ */
+export const SIGNAL_FOLLOW_PAGE_LIMIT = 100;
 
 /**
  * HTTP failure for follow classification tests and helpers. The shared one-shot
@@ -123,7 +146,17 @@ function checkedTimestamp(value: unknown, field: string): string {
   return value;
 }
 
-function signalRecord(value: unknown): SignalRecord {
+/**
+ * Parse one signal row.
+ *
+ * Forward-compatible: unknown top-level fields are ignored so a newer edge can
+ * add columns without killing old clients. Absent optional known fields
+ * (to_agent, in_reply_to) normalize to null so an older edge still parses.
+ *
+ * Fail-closed: required identity/body/kind/time fields must be well-formed;
+ * a present optional UUID that is not a UUID is refused rather than coerced.
+ */
+export function parseSignalRecord(value: unknown): SignalRecord {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error("signal read returned a malformed row");
   }
@@ -160,6 +193,56 @@ function signalRecord(value: unknown): SignalRecord {
     until: checkedTimestamp(row.until, "until"),
     created_at: checkedTimestamp(row.created_at, "created_at"),
   };
+}
+
+/** @deprecated Use parseSignalRecord — kept as an internal alias. */
+const signalRecord = parseSignalRecord;
+
+/** Compare (created_at, id) keyset cursors: <0 before, 0 equal, >0 after. */
+export function compareSignalCursor(
+  a: SignalCursor,
+  b: SignalCursor,
+): number {
+  const byTime = Date.parse(a.created_at) - Date.parse(b.created_at);
+  if (byTime !== 0) return byTime;
+  if (a.id < b.id) return -1;
+  if (a.id > b.id) return 1;
+  return 0;
+}
+
+function checkedAfter(value: SignalCursor | undefined): SignalCursor | undefined {
+  if (value === undefined) return undefined;
+  return {
+    created_at: checkedTimestamp(value.created_at, "after.created_at"),
+    id: checkedUuid(value.id, "after.id"),
+  };
+}
+
+/** Strictly after the keyset cursor (used after a gte lower bound). */
+function rowsAfterCursor(
+  rows: readonly SignalRecord[],
+  after: SignalCursor | undefined,
+): SignalRecord[] {
+  if (after === undefined) return [...rows];
+  return rows.filter((row) =>
+    compareSignalCursor(
+      { created_at: row.created_at, id: row.id },
+      after,
+    ) > 0
+  );
+}
+
+function sortSignals(
+  rows: readonly SignalRecord[],
+  ascending: boolean,
+): SignalRecord[] {
+  return [...rows].sort((a, b) => {
+    const cmp = compareSignalCursor(
+      { created_at: a.created_at, id: a.id },
+      { created_at: b.created_at, id: b.id },
+    );
+    return ascending ? cmp : -cmp;
+  });
 }
 
 /** Parse Retry-After as delta-seconds or HTTP-date into a delay in ms. */
@@ -381,10 +464,18 @@ async function humanSignals(
   if (query.in_reply_to !== undefined) {
     url.searchParams.set("in_reply_to", `eq.${query.in_reply_to}`);
   }
-  if (query.since !== undefined) {
+  const ascending = query.ascending === true || query.after !== undefined;
+  // Keyset pages use gte on created_at then filter strictly-after client-side so
+  // same-timestamp rows with a later id are not lost.
+  if (query.after !== undefined) {
+    url.searchParams.set("created_at", `gte.${query.after.created_at}`);
+  } else if (query.since !== undefined) {
     url.searchParams.set("created_at", `gte.${query.since}`);
   }
-  url.searchParams.set("order", "created_at.desc,id.desc");
+  url.searchParams.set(
+    "order",
+    ascending ? "created_at.asc,id.asc" : "created_at.desc,id.desc",
+  );
   url.searchParams.set("limit", String(query.limit));
   let result: { response: Response; body: unknown } | null;
   try {
@@ -409,7 +500,8 @@ async function humanSignals(
   if (!Array.isArray(body)) {
     throw new Error("signal read returned malformed JSON");
   }
-  return body.map(signalRecord);
+  const parsed = body.map(parseSignalRecord);
+  return sortSignals(rowsAfterCursor(parsed, query.after), ascending);
 }
 
 async function agentSignals(
@@ -435,6 +527,15 @@ async function agentSignals(
         kind: query.kind ?? null,
         in_reply_to: query.in_reply_to ?? null,
         since: query.since ?? null,
+        // Cursor shape is additive and only sent when the follow path needs it,
+        // so one-shot agents keep talking to an older edge without 400s.
+        ...(query.ascending === true || query.after !== undefined
+          ? {
+            after_created_at: query.after?.created_at ?? null,
+            after_id: query.after?.id ?? null,
+            ascending: true,
+          }
+          : {}),
         limit: query.limit,
         include_stale: query.includeStale ?? false,
       }),
@@ -458,8 +559,10 @@ async function agentSignals(
   ) {
     throw new Error("signal read returned malformed JSON");
   }
-  return ((body as Record<string, unknown>).signals as unknown[])
-    .map(signalRecord);
+  const ascending = query.ascending === true || query.after !== undefined;
+  const parsed = ((body as Record<string, unknown>).signals as unknown[])
+    .map(parseSignalRecord);
+  return sortSignals(rowsAfterCursor(parsed, query.after), ascending);
 }
 
 export interface SignalMember {
@@ -734,6 +837,7 @@ export async function readSignals(
     throw new Error("in_reply_to must be a signal UUID");
   }
   const options = normalizeReadOptions(fetcherOrOptions);
+  const after = checkedAfter(query.after);
   const normalized: SignalQuery = {
     ...query,
     workspaceId: query.workspaceId.toLowerCase(),
@@ -742,6 +846,8 @@ export async function readSignals(
       : { in_reply_to: query.in_reply_to.toLowerCase() }),
     limit: checkedLimit(query.limit),
     since: checkedSince(query.since),
+    ...(after === undefined ? {} : { after }),
+    ascending: query.ascending === true || after !== undefined,
     includeStale: query.includeStale ?? false,
   };
   return credential.kind === "human"
@@ -1084,14 +1190,28 @@ function isAbortError(error: unknown): boolean {
     (error.name === "AbortError" || /aborted/i.test(error.message));
 }
 
+/** One page request from the follow loop to the caller's arm. */
+export interface FollowArmRequest {
+  /** Strict keyset high-water; null on the first catch-up page. */
+  after: SignalCursor | null;
+  /** Page size; full pages drain immediately without the idle poll. */
+  limit: number;
+}
+
 /**
  * Long-running inbox receive loop. Caller supplies `arm`, which must refresh
- * credentials (AgentCredentialSession.bearer when agent) and perform one read.
+ * credentials (AgentCredentialSession.bearer when agent) and perform one read
+ * page. The loop walks a backlog with an ascending keyset cursor so a burst
+ * larger than one page cannot be silently truncated to the newest N rows.
  * Emits ready only after the first successful arm. Does not ack rows.
  */
 export async function runInboxFollow(options: {
   workspaceId: string;
-  arm: () => Promise<SignalRecord[]>;
+  /**
+   * Fetch one ascending page after the cursor. Legacy zero-arg arms still work
+   * (extra args are ignored) but cannot express lossless pagination alone.
+   */
+  arm: (page: FollowArmRequest) => Promise<SignalRecord[]>;
   emit: (frame: FollowFrame) => void;
   /**
    * Optional side-effect sleep hook for tests (e.g. advance a fake clock).
@@ -1104,6 +1224,7 @@ export async function runInboxFollow(options: {
   signal?: AbortSignal;
   pollMs?: number;
   postEmitMs?: number;
+  pageLimit?: number;
   seen?: BoundedSignalIdSet;
   /** Optional classifier for credential refusal/horizon failures from arm(). */
   isCredentialFailure?: (error: unknown) => boolean;
@@ -1113,6 +1234,7 @@ export async function runInboxFollow(options: {
   const random = options.random ?? Math.random;
   const pollMs = options.pollMs ?? SIGNAL_FOLLOW_POLL_MS;
   const postEmitMs = options.postEmitMs ?? SIGNAL_FOLLOW_POST_EMIT_MS;
+  const pageLimit = options.pageLimit ?? SIGNAL_FOLLOW_PAGE_LIMIT;
   const seen = options.seen ?? new BoundedSignalIdSet();
   const isCredentialFailure = options.isCredentialFailure ??
     isFollowCredentialFailure;
@@ -1120,6 +1242,7 @@ export async function runInboxFollow(options: {
 
   let ready = false;
   let attempt = 0;
+  let after: SignalCursor | null = null;
 
   const cancelled = (): boolean => abort?.aborted === true;
 
@@ -1163,7 +1286,7 @@ export async function runInboxFollow(options: {
     if (cancelled()) return { reason: "cancelled" };
 
     try {
-      const rows = await options.arm();
+      const rows = await options.arm({ after, limit: pageLimit });
       attempt = 0;
 
       if (!ready) {
@@ -1177,11 +1300,7 @@ export async function runInboxFollow(options: {
       }
 
       // Oldest first so a multi-row arm is deterministic for consumers.
-      const ordered = [...rows].sort((a, b) => {
-        const byTime = Date.parse(a.created_at) - Date.parse(b.created_at);
-        if (byTime !== 0) return byTime;
-        return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
-      });
+      const ordered = sortSignals(rows, true);
 
       let emitted = false;
       for (const signal of ordered) {
@@ -1195,8 +1314,19 @@ export async function runInboxFollow(options: {
         emitted = true;
       }
 
-      // Always space rearms: short floor after emissions, slowed idle otherwise.
-      const wait = await sleepInterruptible(emitted ? postEmitMs : pollMs);
+      // Advance the keyset even when every row was a duplicate so a full page
+      // of already-seen ids cannot pin the cursor and spin.
+      if (ordered.length > 0) {
+        const last = ordered[ordered.length - 1]!;
+        after = { created_at: last.created_at, id: last.id };
+      }
+
+      // Full page => more backlog may exist; drain without the idle poll.
+      const fullPage = rows.length >= pageLimit;
+      const waitMs = fullPage
+        ? (emitted ? postEmitMs : 0)
+        : (emitted ? postEmitMs : pollMs);
+      const wait = await sleepInterruptible(waitMs);
       if (wait === "cancelled") return { reason: "cancelled" };
     } catch (error) {
       if (cancelled() || isAbortError(error)) {
