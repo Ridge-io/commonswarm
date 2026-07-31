@@ -61,8 +61,7 @@ this document.
 ## Non-negotiable invariants
 
 1. `swarm.signals` stays append-only. Delivery state lives in a separate mutable table.
-2. Only direct signals with a typed `to_agent_principal_id` enqueue delivery rows. Broadcasts and
-   direct-human signals do not fan out into agent deliveries.
+2. Only direct typed-recipient `ask` and `note` signals (`NEW.kind IN ('ask', 'note')` with `to_agent_principal_id IS NOT NULL`) enqueue delivery rows. Directed `working-on` signals are rejected at command validation today. Broadcasts, direct-human signals, and non-ask/note kinds do not fan out into agent deliveries. Any future signal kind requires an explicit migration, spec update, client decision, and tests.
 3. Enqueue is in the same database transaction as signal insertion.
 4. Claim and acknowledgement run at the authenticated command boundary, never through the public
    read edge.
@@ -158,12 +157,15 @@ status, logs, audit detail, or the read edge.
 ## Transactional enqueue and backfill
 
 An `AFTER INSERT` security-invoker trigger on `swarm.signals` inserts one delivery row when
-`NEW.to_agent_principal_id IS NOT NULL`. Its function fully qualifies every relation and pins its
-`search_path` to `pg_catalog`; it cannot be redirected through caller-controlled names. The trigger
-is the invariant boundary: old command edges, new command edges, and any future controlled insert
-path all enqueue identically. It uses `ON CONFLICT DO NOTHING` only for migration/replay
-idempotence. The inserting `swarm_command` role receives the narrow INSERT privilege needed by the
-trigger; there is no security-definer bypass.
+`NEW.to_agent_principal_id IS NOT NULL AND NEW.kind IN ('ask', 'note')`. Its function fully qualifies
+every relation and pins its `search_path` to `pg_catalog`; it cannot be redirected through
+caller-controlled names. The trigger is the invariant boundary: old command edges, new command
+edges, and any future controlled insert path all enqueue identically for direct `ask` and `note`
+signals. It uses `ON CONFLICT DO NOTHING` only for migration/replay idempotence. Directed
+`working-on` signals are rejected at command validation today, while any future signal kind
+requires an explicit migration, spec update, client decision, and test suite additions. The
+inserting `swarm_command` role receives the narrow INSERT privilege needed by the trigger; there is
+no security-definer bypass.
 
 The migration enumerates every non-superuser role with effective INSERT on `swarm.signals` and
 aborts unless that role can also INSERT `swarm.signal_deliveries`. This converts a future grant
@@ -174,8 +176,8 @@ Migration order is deliberately:
 
 1. create table, constraints, grants, and indexes;
 2. create the enqueue function and trigger;
-3. backfill direct agent signals whose `until` is still in the future;
-4. assert no live direct agent signal lacks a delivery row;
+3. backfill direct agent `ask` and `note` signals whose `until` is still in the future;
+4. assert no live direct agent `ask` or `note` signal lacks a delivery row;
 5. assert the signal-inserter/delivery-inserter role set is identical;
 6. create the terminal-row purge function and named daily retention schedule.
 
