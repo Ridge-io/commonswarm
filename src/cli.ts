@@ -2558,7 +2558,7 @@ export function listenerHostLimits(provider: ListenerStatus["provider"]): string
       "OpenCode same-owner: private 0700 home is auth-only + forced-ask config, not a project-config firewall.",
       "Project allow lists are defeated only by OPENCODE_DISABLE_PROJECT_CONFIG=1 plus a verified debug config --pure effective-config probe before spawn.",
       "The deny canary proves host reject + correlated terminal deny only; it does not prove steady-state --permissions allow behavior.",
-      "Cross-owner/unknown turns use a fresh auth-only home and empty cwd, then remove them after the turn.",
+      "Cross-owner/unknown turns use a fresh auth-only home and empty cwd, removed after verified close (or retained on shutdown failure).",
     ].join(" ");
   }
   return [

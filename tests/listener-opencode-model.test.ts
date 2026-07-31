@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, stat } from "node:fs/promises";
+import { mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -232,7 +232,7 @@ test("close during gated isolate open waits for settle; home remains until verif
   });
   let isolatedHome: string | undefined;
   let childLive = false;
-  let closedAfterLive = false;
+  let handleCloseCount = 0;
   const adapter = new OpenCodeListenerModel({
     cwd,
     allowMissingAuth: true,
@@ -277,7 +277,7 @@ test("close during gated isolate open waits for settle; home remains until verif
         env: {},
         home: options.isolatedHome ?? "/tmp/y",
         async close() {
-          if (childLive) closedAfterLive = true;
+          handleCloseCount += 1;
         },
       } as unknown as OpenCodeAcpHandle;
     },
@@ -298,11 +298,69 @@ test("close during gated isolate open waits for settle; home remains until verif
   await new Promise((r) => setTimeout(r, 30));
   await stat(isolatedHome!);
   releaseOpen?.();
-  await assert.rejects(isolatedPrompt, /cancelled during open|closed|pending/i).catch(() => undefined);
-  await closePromise.catch(() => undefined);
-  // After settle + verified close, home may be released.
-  assert.equal(closedAfterLive, true);
+  await assert.rejects(isolatedPrompt, /cancelled during open|closed/i);
+  await closePromise;
+  assert.equal(handleCloseCount, 1);
+  // After settle + verified close, home must be absent on disk.
   await assert.rejects(() => stat(isolatedHome!), /ENOENT/);
+  await rm(cwd, { recursive: true, force: true }).catch(() => undefined);
+});
+
+test("close during gated worker open waits for settle; home remains until verified close", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "cswarm-oc-worker-"));
+  let releaseOpen: (() => void) | undefined;
+  const gate = new Promise<void>((resolve) => {
+    releaseOpen = resolve;
+  });
+  let workerHome: string | undefined;
+  let childLive = false;
+  let handleCloseCount = 0;
+  const adapter = new OpenCodeListenerModel({
+    cwd,
+    allowMissingAuth: true,
+    pendingOpenWaitMs: 2_000,
+    open: async (options) => {
+      workerHome = options.isolatedHome;
+      childLive = true;
+      await gate;
+      return {
+        session: {
+          async enablePromptsAfterCanary() {
+            await options.permissionCallback?.(REQUEST);
+          },
+          async openWorkCwd() {},
+          async prompt() {
+            return { message: "w", stopReason: "end_turn" as const, updates: [] };
+          },
+          cancel() {},
+        },
+        child: {},
+        executable: process.execPath,
+        args: ["acp", "--pure"],
+        env: {},
+        home: options.isolatedHome ?? "/tmp/w",
+        async close() {
+          handleCloseCount += 1;
+        },
+      } as unknown as OpenCodeAcpHandle;
+    },
+  });
+  const startPromise = adapter.start();
+  for (let i = 0; i < 50 && !workerHome; i += 1) {
+    await new Promise((r) => setTimeout(r, 5));
+  }
+  assert.equal(typeof workerHome, "string");
+  assert.equal(childLive, true);
+  await stat(workerHome!);
+  const closePromise = adapter.close();
+  await new Promise((r) => setTimeout(r, 30));
+  await stat(workerHome!);
+  releaseOpen?.();
+  await assert.rejects(startPromise, /cancelled during open|closed|listener model is closed/i);
+  await closePromise;
+  assert.equal(handleCloseCount, 1);
+  await assert.rejects(() => stat(workerHome!), /ENOENT/);
+  await rm(cwd, { recursive: true, force: true }).catch(() => undefined);
 });
 
 test("pending open that never settles retains home and fails close", async () => {
@@ -326,8 +384,10 @@ test("pending open that never settles retains home and fails close", async () =>
   await assert.rejects(() => adapter.close(), /pending_open_timeout|retain/i);
   await stat(workerHome!);
   assert.ok(adapter.getRetainedHomes().includes(workerHome!));
-  // Unblock process exit: leave start hanging is ok for test end.
-  void startPromise;
+  // Clean retained temp artifact after proof
+  await rm(workerHome!, { recursive: true, force: true }).catch(() => undefined);
+  await rm(cwd, { recursive: true, force: true }).catch(() => undefined);
+  void startPromise.catch(() => undefined);
 });
 
 test("allowMissingAuth is explicit — not implied by fake open alone", async () => {

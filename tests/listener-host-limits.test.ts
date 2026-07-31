@@ -20,6 +20,7 @@ test("listenerHostLimits opencode states DISABLE_PROJECT_CONFIG probe, not priva
   );
   assert.match(text, /does not prove steady-state/);
   assert.match(text, /--permissions allow|allow behavior/);
+  assert.match(text, /removed after verified close \(or retained on shutdown failure\)/);
 });
 
 test("listenerHostLimits grok does not claim OpenCode project-config disable", () => {
