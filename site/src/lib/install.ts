@@ -22,7 +22,13 @@
  * the address below is the same file the repo reviews. Verify against the
  * DEPLOYED site, not the source — `curl -fsSL https://commonswarm.com/install.sh`
  * must return the installer, with a positive control proving the check can fail.
+ *
+ * THE PINNED VERSION IS NOT TYPED HERE EITHER. The version halves of these commands
+ * come from lib/release.ts, which reads the repo-root package.json — a bump touches
+ * that one field and nothing on this page.
  */
+import { CLI_VERSION } from "./release.ts";
+
 export const INSTALL_HOST = "commonswarm.com";
 
 /** The one line a stranger is asked to run. Everything else is a variation. */
@@ -30,10 +36,12 @@ export const INSTALL_CMD = `curl -fsSL https://${INSTALL_HOST}/install.sh | sh`;
 
 /**
  * Pin a version instead of taking latest. `CSWARM_VERSION` is read by the
- * installer itself; it is not a flag we invented for the page.
+ * installer itself; it is not a flag we invented for the page. The version is
+ * the shipping CLI version from lib/release.ts (root package.json); the pipe
+ * order and the variable name must not be rearranged.
  */
 export const INSTALL_CMD_PINNED =
-  `curl -fsSL https://${INSTALL_HOST}/install.sh | CSWARM_VERSION=0.1.4 sh`;
+  `curl -fsSL https://${INSTALL_HOST}/install.sh | CSWARM_VERSION=${CLI_VERSION} sh`;
 
 /** Install somewhere other than ~/.local/bin. Also the installer's own variable. */
 export const INSTALL_CMD_DIR =

@@ -1,0 +1,15 @@
+# stale-artifact mutation control (red) — 2026-07-31T20:48:19Z
+
+## mutate built /download to a stale version (0.1.4 -> 0.1.3), same package.json
+CSWARM_VERSION=0.1.3 sh
+cswarm 0.1.3 (protocol 0.1.0)
+
+## same gate rerun against the stale artifact
+exit=1
+✖ download version gate: clean built /download carries exactly the shipping version (1.241208ms)
+✖ download version gate: a deliberately mutated artifact is rejected (0.322084ms)
+ℹ pass 0
+ℹ fail 2
+✖ failing tests:
+✖ download version gate: clean built /download carries exactly the shipping version (1.241208ms)
+✖ download version gate: a deliberately mutated artifact is rejected (0.322084ms)

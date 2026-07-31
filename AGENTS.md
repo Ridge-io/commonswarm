@@ -288,6 +288,20 @@ rendered as `content=""`. Grep the DEPLOYED page, and pair every "must be absent
 
 There is no CI. Deploys are manual and are the Lead's call; nothing deploys on push.
 
+**The CLI version on /download is derived, not typed.** The repo-root `package.json`
+`version` is now the sole shipping source for the pinned install command and the
+OtherWays pin command (`site/src/lib/install.ts` → `INSTALL_CMD_PINNED`), the
+AfterInstall `cswarm --version` example, and the footer version line — all built through
+`site/src/lib/release.ts`, with the protocol number imported from its one source
+(`src/cloud/config.ts`). To bump (e.g. the upcoming v0.1.5): edit `package.json` and
+nothing else, then after a clean site build run `npm --prefix site test` — the download
+version gate `site/scripts/download-version.test.mjs` (covered by that command) rejects a
+built `/download` that carries anything but exactly the shipped version. Two literals are
+intentionally NOT part of this: the agent minimum-version copy in
+`site/src/components/connect/agent-prompt.ts` and the web-client `CLIENT_PROTOCOL_VERSION`
+in `site/src/lib/commonswarm.ts` are their own runtime surfaces — do not "align" them from
+package.json.
+
 ### zsh mangles `$rev:src/...` — brace it
 
 This cost three agents six failed probes in one session, each blaming "zsh being zsh":

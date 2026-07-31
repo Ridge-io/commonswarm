@@ -1,0 +1,13 @@
+# clean site build + download gate (green) — 2026-07-31T20:47:55Z
+
+## npm --prefix site test (download gate portion + summary)
+
+✔ download version gate: clean built /download carries exactly the shipping version (1.448ms)
+✔ download version gate: a deliberately mutated artifact is rejected (0.176292ms)
+ℹ tests 2
+ℹ pass 2
+ℹ fail 0
+
+## built artifact /download version surfaces
+CSWARM_VERSION=0.1.4 sh
+cswarm 0.1.4 (protocol 0.1.0)

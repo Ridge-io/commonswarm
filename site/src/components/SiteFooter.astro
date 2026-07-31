@@ -68,11 +68,13 @@
  * both surfaces on the shared routes prevents policy links from drifting by entry point.
  */
 
-/* `?raw` rather than fs.readFileSync: Vite resolves these at compile time, relative to THIS
- * file. readFileSync + import.meta.url does not work here — by the time the frontmatter runs
- * it lives in dist/.prerender/chunks/, so the relative path pointed at site/src/cloud/. */
-import pkgSource from "../../../package.json?raw";
-import cloudConfigSource from "../../../src/cloud/config.ts?raw";
+/* The one place the shipping version is composed for the site: lib/release.ts. It reads the
+ * repo-root package.json (the CLI field `cswarm --version` is built from) and imports
+ * CLIENT_PROTOCOL_VERSION from src/cloud/config.ts, and THROWS at build time if either is
+ * unreadable. Importing it here instead of re-deriving the two reads is the whole point —
+ * the footer, the /download version example and the pinned installer command now share one
+ * module, so a bump cannot leave one of them stale. */
+import { CLI_VERSION_LINE } from "../lib/release.ts";
 
 import Wordmark from "./Wordmark.astro";
 
@@ -86,50 +88,24 @@ const REPO = "https://github.com/Ridge-io/cloud-swarm";
  * fact a footer on a pre-launch developer tool has earned the right to state, and the only
  * honest way to state it is to derive it.
  *
- *   cswarm 0.0.1   <- package.json "version" at the repo root, which is what
- *                     packageVersion() feeds CLI_BUILD_VERSION (src/cli.ts:140)
- *   protocol 0.1.0 <- CLIENT_PROTOCOL_VERSION (src/cloud/config.ts:3)
+ *   cswarm <v> (protocol <p>)  <- repo-root package.json "version" (also what
+ *                                CLI_BUILD_VERSION, src/cli.ts, is fed from) + the
+ *                                CLIENT_PROTOCOL_VERSION constant (src/cloud/config.ts:3)
  *
- * Rendered in the same shape the binary prints for `--version` (src/cli.ts:246 and :1737):
- * `cswarm <v> (protocol <p>)`. Checked against the built CLI on the day this was written:
- *   $ node dist/cli.js --version   ->  coswarm 0.0.1 (protocol 0.1.0)
+ * Rendered in the same shape the binary prints for `--version` (src/cli.ts): both places
+ * compose `cswarm ${CLI_BUILD_VERSION} (protocol ${CLIENT_PROTOCOL_VERSION})`, so the
+ * shape here matches the binary's. `versionLine` below is CLI_VERSION_LINE from
+ * lib/release.ts, which derives BOTH values from their one source each and throws at
+ * build time if either reads empty — so this can never silently ship a blank or a stale
+ * version. A hard-coded string would have gone stale on the next bump; a build error is
+ * cheaper than a footer that lies about which binary is current.
  *
- * NOTE THE MISMATCH ON THE LINE ABOVE, IT IS DELIBERATE. That is the output as measured, under
- * the old binary name; nobody has re-run `--version` on a renamed build. The literal prefix in
- * `versionLine` below reads `cswarm`, and that was not assumed from the rename — it was read
- * off the two places the binary composes the string, which have MOVED since this note was
- * written: src/cli.ts:248 and :1804 (the note's old :246 and :1737 are stale line numbers for
- * the same two sites). Both now build `cswarm ${CLI_BUILD_VERSION} (protocol
- * ${CLIENT_PROTOCOL_VERSION})`, so the shape below still matches the binary's.
- *
- * Only the prefix is a literal here; both NUMBERS stay derived at build time from
- * package.json and config.ts, and both still throw if they read empty — so the part that
- * could silently go stale did not change.
- *
- * Both reads throw at BUILD time if they come back empty, so this can never silently ship a
- * blank or a stale version. A hard-coded string would have gone stale on the next bump; a
- * build error is cheaper than a footer that lies about which binary is current.
+ * The reads used to live in this file as `?raw` imports (package.json + a regex over
+ * config.ts) — that is DEAD (2026-07-31): both moved into lib/release.ts so the site
+ * derives the version exactly once, and the release gate proves a clean /download build
+ * carries what it derives.
  */
-const cliVersion: unknown = JSON.parse(pkgSource).version;
-
-const protocolVersion = cloudConfigSource.match(
-  /CLIENT_PROTOCOL_VERSION\s*=\s*"([^"]+)"/
-)?.[1];
-
-if (typeof cliVersion !== "string" || !cliVersion) {
-  throw new Error(
-    "SiteFooter: could not read `version` from the repo-root package.json. The footer states " +
-      "the shipping CLI version and must not render a blank or a guess."
-  );
-}
-if (!protocolVersion) {
-  throw new Error(
-    "SiteFooter: could not read CLIENT_PROTOCOL_VERSION from src/cloud/config.ts. Either the " +
-      "constant moved or its shape changed; fix the read rather than hard-coding the number."
-  );
-}
-
-const versionLine = `cswarm ${cliVersion} (protocol ${protocolVersion})`;
+const versionLine = CLI_VERSION_LINE;
 
 const COLUMNS = [
   {
