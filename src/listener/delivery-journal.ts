@@ -60,9 +60,9 @@ function isValidIsoTimestamp(value: unknown): value is string {
     return false;
   }
 
-  if (match[7] !== undefined && match[8] !== undefined) {
-    const offsetHour = Math.abs(parseInt(match[7], 10));
-    const offsetMin = parseInt(match[8], 10);
+  if (match[8] !== undefined && match[9] !== undefined) {
+    const offsetHour = Math.abs(parseInt(match[8], 10));
+    const offsetMin = parseInt(match[9], 10);
     if (offsetHour > 23 || offsetMin < 0 || offsetMin > 59) {
       return false;
     }

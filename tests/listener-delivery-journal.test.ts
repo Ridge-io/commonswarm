@@ -1549,3 +1549,120 @@ test("17. Fractional timestamp precision (3- and 9-digit) and immediate post-wri
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("18. All five timestamp fields accept 1- and 9-digit fractional offset timestamps, non-fraction offset, and positive Z; reject 10-digit fractions", async () => {
+  const dir = await makeTempDir();
+  try {
+    const timestampFields = [
+      "updatedAt",
+      "claimCreatedAt",
+      "claimLastAttemptAt",
+      "leasedUntil",
+      "preparedAt",
+    ] as const;
+
+    const validTimestamps = [
+      "2026-07-31T12:00:00.123+05:30",
+      "2026-07-31T12:00:00.1-04:00",
+      "2026-07-31T12:00:00.123456789+05:30",
+      "2026-07-31T12:00:00.123456789-04:00",
+      "2026-07-31T12:00:00.123Z",
+      "2026-07-31T12:00:00+05:30",
+    ];
+
+    for (const field of timestampFields) {
+      for (const validTs of validTimestamps) {
+        const fullRecord: any = {
+          version: 1,
+          workspaceId: WORKSPACE_ID,
+          principalId: PRINCIPAL_ID,
+          listenerInstanceId: INSTANCE_ID_1,
+          nextClaimOrdinal: 1,
+          active: {
+            phase: "ack_pending",
+            claimOrdinal: 0,
+            claimCommandId: claimCommandId(INSTANCE_ID_1, 0),
+            claimCreatedAt: "2026-07-31T01:00:00.000Z",
+            claimLastAttemptAt: "2026-07-31T02:00:00.000Z",
+            signalId: SIGNAL_ID,
+            leaseId: LEASE_ID,
+            leasedUntil: "2026-07-31T23:00:00.000Z",
+            ack: {
+              commandId: ackCommandId(LEASE_ID),
+              outcome: "replied",
+              lastErrorCode: null,
+              preparedAt: "2026-07-31T03:00:00.000Z",
+            },
+          },
+          updatedAt: "2026-07-31T04:00:00.000Z",
+        };
+
+        if (field === "updatedAt") {
+          fullRecord.updatedAt = validTs;
+        } else if (field === "claimCreatedAt") {
+          fullRecord.active.claimCreatedAt = validTs;
+          fullRecord.active.leasedUntil = "2026-07-31T23:59:59.000Z";
+        } else if (field === "claimLastAttemptAt") {
+          fullRecord.active.claimLastAttemptAt = validTs;
+        } else if (field === "leasedUntil") {
+          fullRecord.active.claimCreatedAt = "2026-07-31T00:00:01.000Z";
+          fullRecord.active.leasedUntil = validTs;
+        } else if (field === "preparedAt") {
+          fullRecord.active.ack.preparedAt = validTs;
+        }
+
+        assert.doesNotThrow(
+          () => parseJournalRecord(JSON.stringify(fullRecord), WORKSPACE_ID, PRINCIPAL_ID),
+          `Field ${field} with timestamp ${validTs} must be accepted`,
+        );
+      }
+
+      // Rejection of 10-digit fraction for all five fields
+      const invalidTenDigitTs = "2026-07-31T12:00:00.1234567890+05:30";
+      const invalidRecord: any = {
+        version: 1,
+        workspaceId: WORKSPACE_ID,
+        principalId: PRINCIPAL_ID,
+        listenerInstanceId: INSTANCE_ID_1,
+        nextClaimOrdinal: 1,
+        active: {
+          phase: "ack_pending",
+          claimOrdinal: 0,
+          claimCommandId: claimCommandId(INSTANCE_ID_1, 0),
+          claimCreatedAt: "2026-07-31T12:00:00.000Z",
+          claimLastAttemptAt: "2026-07-31T12:01:00.000Z",
+          signalId: SIGNAL_ID,
+          leaseId: LEASE_ID,
+          leasedUntil: "2026-07-31T13:00:00.000Z",
+          ack: {
+            commandId: ackCommandId(LEASE_ID),
+            outcome: "replied",
+            lastErrorCode: null,
+            preparedAt: "2026-07-31T12:02:00.000Z",
+          },
+        },
+        updatedAt: "2026-07-31T12:00:00.000Z",
+      };
+
+      if (field === "updatedAt") {
+        invalidRecord.updatedAt = invalidTenDigitTs;
+      } else if (field === "claimCreatedAt") {
+        invalidRecord.active.claimCreatedAt = invalidTenDigitTs;
+      } else if (field === "claimLastAttemptAt") {
+        invalidRecord.active.claimLastAttemptAt = invalidTenDigitTs;
+      } else if (field === "leasedUntil") {
+        invalidRecord.active.leasedUntil = invalidTenDigitTs;
+      } else if (field === "preparedAt") {
+        invalidRecord.active.ack.preparedAt = invalidTenDigitTs;
+      }
+
+      assert.throws(
+        () => parseJournalRecord(JSON.stringify(invalidRecord), WORKSPACE_ID, PRINCIPAL_ID),
+        (err: Error) => err.message === "stored delivery journal is malformed",
+        `Field ${field} with 10-digit fractional offset timestamp must be rejected`,
+      );
+    }
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
