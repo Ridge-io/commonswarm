@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { test } from "node:test";
+import { PendingRefreshGate } from "../../lib/pending-refresh";
 
 const dashboard = await readFile(new URL("./LiveDashboard.astro", import.meta.url), "utf8");
 const connect = await readFile(
@@ -73,33 +74,111 @@ test("visible channels poll for fresh signals and preserve readable state on fai
  * or the agent first connects. Consumption that happens in ANOTHER session must clear
  * the row without a full workspace reopen, so the refresh rides the existing signal
  * poll at a slower cooldown, only while something is pending, and never disturbs the
- * feed or the dialog. The guards below pin the shape, not the timing.
+ * feed or the dialog.
+ *
+ * CAUSAL, NOT SOURCE-MATCHED: the race tests below import and drive the same
+ * PendingRefreshGate class the dashboard constructs. The race being pinned: a slow
+ * refresh for workspace A is in flight when the user switches to workspace B — B's
+ * refresh must start immediately, A's late completion must not free B's ownership,
+ * and nothing A carries may be applied over B's state. The regexes at the end only
+ * pin that the dashboard is wired to this class; they make no causal claim.
  */
-test("pending access refreshes itself on the live poll, cooled down and guarded", () => {
-  assert.match(dashboard, /PENDING_REFRESH_COOLDOWN_MS = 12_000/);
-  assert.match(dashboard, /pendingRefreshInFlight/);
-  assert.match(dashboard, /pendingRefreshAttemptedAt/);
+test("pending-refresh gate: a slow old-workspace request cannot block or clear the new one", () => {
+  const gate = new PendingRefreshGate(12_000);
+  const t0 = 100_000;
+  assert.equal(gate.tryAcquire("A", 1, t0, true), true, "A owns its refresh");
+  // The user switches workspaces mid-flight; openWorkspace resets the cooldown.
+  gate.resetCooldown();
+  assert.equal(
+    gate.tryAcquire("B", 2, t0 + 50, true),
+    true,
+    "B refreshes immediately — it never waits behind A's slow request",
+  );
+  gate.release("A", 1);
+  assert.equal(
+    gate.tryAcquire("B", 2, t0 + 100, true),
+    false,
+    "A's late completion did not free the gate: B's refresh is still owned",
+  );
+  gate.release("B", 2);
+  assert.equal(
+    gate.tryAcquire("B", 2, t0 + 12_101, true),
+    true,
+    "once B finishes and the cooldown passes, B can refresh again",
+  );
+});
+
+test("pending-refresh gate: generations of one workspace stay ordered", () => {
+  const gate = new PendingRefreshGate(12_000);
+  const t0 = 200_000;
+  assert.equal(gate.tryAcquire("A", 1, t0, true), true);
+  // Same workspace, newer generation (reopened): the new generation takes the gate.
+  gate.resetCooldown();
+  assert.equal(gate.tryAcquire("A", 2, t0 + 50, true), true);
+  gate.release("A", 1);
+  assert.equal(
+    gate.tryAcquire("A", 2, t0 + 100, true),
+    false,
+    "the older generation's completion cannot free the newer generation's slot",
+  );
+});
+
+test("pending-refresh gate: no-pending, duplicate, and cooldown suppression", () => {
+  const gate = new PendingRefreshGate(12_000);
+  const t0 = 300_000;
+  assert.equal(gate.tryAcquire("A", 1, t0, false), false, "nothing pending: no fetch");
+  assert.equal(gate.tryAcquire("A", 1, t0, true), true);
+  assert.equal(
+    gate.tryAcquire("A", 1, t0 + 1, true),
+    false,
+    "the same refresh does not duplicate while in flight",
+  );
+  gate.release("A", 1);
+  assert.equal(
+    gate.tryAcquire("A", 1, t0 + 6_000, true),
+    false,
+    "released but inside the cooldown: no refetch",
+  );
+  assert.equal(
+    gate.tryAcquire("A", 1, t0 + 12_001, true),
+    true,
+    "the cooldown passing re-arms the refresh",
+  );
+});
+
+test("the dashboard is wired to the gate with the apply guard intact", () => {
   assert.match(
     dashboard,
-    /const hasPendingAccess = \(\): boolean =>/,
-    "no refresh work happens while nothing is pending",
+    /import \{ PendingRefreshGate \} from "\.\.\/\.\.\/lib\/pending-refresh"/,
+  );
+  assert.match(
+    dashboard,
+    /new PendingRefreshGate\(PENDING_REFRESH_COOLDOWN_MS\)/,
+    "the dashboard drives the same class the race tests drive",
   );
   const refresh = dashboard.slice(
     dashboard.indexOf("const refreshPendingAccess = async"),
     dashboard.indexOf('document.addEventListener("visibilitychange"'),
   );
-  assert.match(refresh, /pendingMemberInvites\(workspaceId\)/);
-  assert.match(refresh, /agentAccessStatuses\(workspaceId\)/);
   assert.match(
     refresh,
-    /if \(version !== requestVersion \|\| workspaceId !== activeWorkspaceId\) return/,
-    "a stale completion must not overwrite the workspace the user moved to",
+    /pendingRefreshGate\.tryAcquire\(\s*workspaceId,\s*version,\s*Date\.now\(\),\s*hasPendingAccess\(\),?\s*\)/,
+    "acquisition carries the (workspace, generation) identity and the pending check",
   );
-  assert.match(refresh, /renderPendingAccess\(\)/);
+  assert.match(
+    refresh,
+    /if \(version !== requestVersion \|\| workspaceId !== activeWorkspaceId\) return;[\s\S]*pendingInvites = nextInvites/,
+    "a stale completion applies nothing — the guard runs before any assignment",
+  );
+  assert.match(
+    refresh,
+    /\} finally \{[\s\S]*pendingRefreshGate\.release\(workspaceId, version\)/,
+    "ownership is always released, and only by its holder",
+  );
   assert.match(
     dashboard,
     /void refreshPendingAccess\(workspaceId, version\)/,
-    "the refresh rides the healthy signal poll",
+    "the refresh still rides the healthy signal poll",
   );
   const openWorkspace = dashboard.slice(
     dashboard.indexOf("const openWorkspace ="),
@@ -107,8 +186,13 @@ test("pending access refreshes itself on the live poll, cooled down and guarded"
   );
   assert.match(
     openWorkspace,
-    /pendingRefreshAttemptedAt = 0/,
-    "the cooldown resets with the workspace, like the roster catch-up's",
+    /pendingRefreshGate\.resetCooldown\(\)/,
+    "a workspace switch re-arms the refresh for the fresh workspace",
+  );
+  assert.doesNotMatch(
+    dashboard,
+    /pendingRefreshInFlight|pendingRefreshAttemptedAt/,
+    "the boolean flag pair is gone — ownership is the gate's",
   );
 });
 

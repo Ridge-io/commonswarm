@@ -548,6 +548,7 @@ import SampleNotice from "./SampleNotice.astro";
     type PendingMemberInvite,
   } from "../../lib/commonswarm";
   import { memberInviteUrl } from "../../lib/member-invite";
+  import { PendingRefreshGate } from "../../lib/pending-refresh";
 
   interface Workspace {
     id: string;
@@ -624,8 +625,11 @@ import SampleNotice from "./SampleNotice.astro";
     let liveFeedInFlight = false;
     let rosterRefreshInFlight = false;
     let rosterRefreshAttemptedAt = 0;
-    let pendingRefreshInFlight = false;
-    let pendingRefreshAttemptedAt = 0;
+    /* Ownership of the pending-access refresh lives in the gate, not in flags:
+       (workspaceId, version) pairs, so a slow request from the workspace the
+       user just left can neither block nor clear the fresh one. */
+    const PENDING_REFRESH_COOLDOWN_MS = 12_000;
+    const pendingRefreshGate = new PendingRefreshGate(PENDING_REFRESH_COOLDOWN_MS);
     let rosterFilter = "";
     /* Catch-up queues UNKNOWN principals here and settles CONFIRMED-absent ones there.
        Both are per workspace session; openWorkspace clears them. */
@@ -645,6 +649,16 @@ import SampleNotice from "./SampleNotice.astro";
     const SIGNAL_PAGE_SIZE = 50;
     const SIGNAL_FETCH_SIZE = SIGNAL_PAGE_SIZE + 1;
 
+    /* The very first content panel of the page's life. Focus is NOT moved to its
+       heading: on a fresh load Chromium classifies the first programmatic focus
+       as :focus-visible and paints a ring around a headline the reader never
+       asked for, and there is no earlier context for assistive technology to
+       lose — the heading is the document's natural start. Every LATER panel
+       transition is a response to something the user did, so the focus move
+       happens there with a plain focus() and the platform's own heuristic:
+       keyboard users see the ring, pointer users do not. */
+    let bootPanelPresented = false;
+
     const showPanel = (
       name: "loading" | "signed-out" | "create" | "workspace-error" | "channel",
     ): void => {
@@ -656,17 +670,15 @@ import SampleNotice from "./SampleNotice.astro";
       const root = one<HTMLElement>(".dashboard__root");
       root?.setAttribute("aria-busy", name === "loading" ? "true" : "false");
       if (previous !== name && name !== "loading") {
+        const moveFocus = bootPanelPresented;
+        bootPanelPresented = true;
+        if (!moveFocus) return;
         window.requestAnimationFrame(() => {
           const visible = panel(name);
           const heading = visible?.querySelector<HTMLElement>("h1, h2");
           if (!heading) return;
           heading.tabIndex = -1;
-          /* focusVisible:false — the focus MOVE is for assistive technology; the
-             painted ring is not wanted here. Without this, the very first
-             programmatic focus of a page load matches :focus-visible in Chromium
-             and the gateway headline opens wearing a focus ring it was never
-             given, which reads as a rendering bug rather than as affordance. */
-          heading.focus({ preventScroll: true, focusVisible: false });
+          heading.focus({ preventScroll: true });
         });
       }
     };
@@ -1644,9 +1656,11 @@ import SampleNotice from "./SampleNotice.astro";
      * cooldown, only while something is actually pending, and only re-renders the rail
      * list; it never touches the feed, the dialog, or an open add-agent view. A failure
      * retries at the next cooldown, silently — same doctrine as the signal refresh.
+     *
+     * Ownership is the gate's, and it is (workspaceId, version)-scoped: a slow request
+     * started under the previous workspace holds no slot here, applies nothing when it
+     * settles, and its finally cannot free the fresh workspace's ownership.
      */
-    const PENDING_REFRESH_COOLDOWN_MS = 12_000;
-
     const hasPendingAccess = (): boolean =>
       pendingInvites.length > 0 ||
       accessStatuses.some(
@@ -1660,16 +1674,26 @@ import SampleNotice from "./SampleNotice.astro";
       workspaceId: string,
       version: number,
     ): Promise<void> => {
-      if (pendingRefreshInFlight || sampleMode) return;
-      if (!hasPendingAccess()) return;
-      if (Date.now() - pendingRefreshAttemptedAt < PENDING_REFRESH_COOLDOWN_MS) return;
-      pendingRefreshInFlight = true;
-      pendingRefreshAttemptedAt = Date.now();
+      if (sampleMode) return;
+      /* Acquiring also records the attempt. A stale owner — another workspace, or
+         an older generation of this one — is replaced here rather than waited on. */
+      if (
+        !pendingRefreshGate.tryAcquire(
+          workspaceId,
+          version,
+          Date.now(),
+          hasPendingAccess(),
+        )
+      ) {
+        return;
+      }
       try {
         const [nextInvites, nextStatuses] = await Promise.all([
           pendingMemberInvites(workspaceId),
           agentAccessStatuses(workspaceId),
         ]);
+        /* A request that settles after the user moved on applies nothing: its
+           generation and workspace no longer match the live ones. */
         if (version !== requestVersion || workspaceId !== activeWorkspaceId) return;
         pendingInvites = nextInvites;
         accessStatuses = nextStatuses;
@@ -1677,7 +1701,7 @@ import SampleNotice from "./SampleNotice.astro";
       } catch {
         // Stay silent and retryable; the last good list remains on screen.
       } finally {
-        pendingRefreshInFlight = false;
+        pendingRefreshGate.release(workspaceId, version);
       }
     };
 
@@ -1816,7 +1840,7 @@ import SampleNotice from "./SampleNotice.astro";
          let it outlive its data. The refresh cooldown resets with the workspace. */
       closeRosterDialog();
       rosterRefreshAttemptedAt = 0;
-      pendingRefreshAttemptedAt = 0;
+      pendingRefreshGate.resetCooldown();
       unknownAgentCandidates.clear();
       settledUnknownAgents.clear();
       const keepShell = app.dataset.state === "channel";
@@ -2524,9 +2548,10 @@ import SampleNotice from "./SampleNotice.astro";
         renderPendingAccess();
       });
       window.requestAnimationFrame(() => {
-        /* Programmatic after an async event, not a user gesture — same
-           focusVisible suppression as showPanel's heading focus. */
-        one<HTMLElement>("[data-channel-name]")?.focus({ preventScroll: true, focusVisible: false });
+        /* A plain focus(): the platform's heuristic decides the ring — this runs
+           after the prompt completes, so a keyboard user following the flow sees
+           where focus landed and a pointer user is not decorated. */
+        one<HTMLElement>("[data-channel-name]")?.focus({ preventScroll: true });
       });
     });
 
@@ -3249,6 +3274,9 @@ import SampleNotice from "./SampleNotice.astro";
     display: inline-flex;
     align-items: center;
     gap: var(--s-2);
+    /* Same flex-child floor as the choice copy: the chip must be allowed to give
+       up width (and let the actions row wrap below 34rem) rather than hold it. */
+    min-inline-size: 0;
     color: var(--success);
     font-size: var(--t-2xs);
     font-weight: var(--weight-semibold);
@@ -3639,6 +3667,10 @@ import SampleNotice from "./SampleNotice.astro";
   .dashboard__choice > span:first-child {
     display: grid;
     gap: var(--s-1);
+    /* A flex child's automatic minimum is its content's min-content width; without
+       this, one long unbreakable string in the copy could hold the row open past
+       the viewport at 320px instead of wrapping. */
+    min-inline-size: 0;
   }
 
   .dashboard__choice strong {

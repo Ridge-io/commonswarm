@@ -766,9 +766,13 @@ const {
   /* The head is the question the form asks ("Name your agent."). In the done and
      blocked states the visible panel already carries its own eyebrow and title —
      "Your agent prompt is ready." / the blocked reason — so the question would
-     sit above the answer as a stale, contradictory heading. */
+     sit above the answer as a stale, contradictory heading. Loading hides it too:
+     the terminal state after a session check is often blocked, and a head that
+     shows for the loading frame only to vanish a beat later is a flash, not
+     context. In ready and working the head stays — it is the live question. */
   .ac[data-state="done"] .ac__head,
-  .ac[data-state="blocked"] .ac__head {
+  .ac[data-state="blocked"] .ac__head,
+  .ac[data-state="loading"] .ac__head {
     display: none;
   }
 

@@ -179,10 +179,61 @@ test("panel changes expose busy state and move focus only on real transitions", 
   assert.match(source, /querySelector<HTMLElement>\("h1, h2"\)/);
   assert.match(
     source,
-    /heading\.focus\(\{ preventScroll: true, focusVisible: false \}\)/,
-    "script-driven panel focus must move the AT anchor without painting a " +
-      ":focus-visible ring around the headline on every fresh load",
+    /const moveFocus = bootPanelPresented;[\s\S]*bootPanelPresented = true;[\s\S]*if \(!moveFocus\) return;/,
+    "the boot presentation skips the focus move — a fresh load must not paint " +
+      "a :focus-visible ring around the headline",
   );
+  assert.match(
+    source,
+    /heading\.focus\(\{ preventScroll: true \}\)/,
+    "later transitions move focus plainly: the platform heuristic shows the " +
+      "ring to keyboard users and not to pointer users",
+  );
+  assert.doesNotMatch(
+    source,
+    /focusVisible/,
+    "focus visibility is never suppressed — it is the platform's call",
+  );
+});
+
+/*
+ * The boot-skip ordering, replayed as a pure model of the flag logic the regexes
+ * above pin to the source (same precedent as the header-roster catch-up model):
+ * the first content panel never takes focus; every later one does.
+ */
+test("boot panel focus ordering: first content panel skips, later panels focus", () => {
+  let bootPanelPresented = false;
+  const decisions: Array<{ panel: string; focused: boolean }> = [];
+  const showPanel = (previous: string, name: string) => {
+    if (previous !== name && name !== "loading") {
+      const moveFocus = bootPanelPresented;
+      bootPanelPresented = true;
+      if (!moveFocus) {
+        decisions.push({ panel: name, focused: false });
+        return;
+      }
+      decisions.push({ panel: name, focused: true });
+    }
+  };
+
+  showPanel("loading", "signed-out"); // boot presentation
+  showPanel("signed-out", "create"); // signed in, no workspaces yet
+  showPanel("create", "channel"); // workspace created
+  assert.deepEqual(decisions, [
+    { panel: "signed-out", focused: false },
+    { panel: "create", focused: true },
+    { panel: "channel", focused: true },
+  ]);
+
+  // A signed-in boot with an existing workspace: loading -> channel is the skip.
+  bootPanelPresented = false;
+  decisions.length = 0;
+  showPanel("loading", "channel");
+  showPanel("channel", "workspace-error");
+  assert.deepEqual(decisions, [
+    { panel: "channel", focused: false },
+    { panel: "workspace-error", focused: true },
+  ]);
 });
 
 /*
