@@ -3,6 +3,7 @@
  */
 
 import { isAbsolute, join } from "node:path";
+import { types } from "node:util";
 import {
   readSecureJsonFile,
   writeSecureJsonFile,
@@ -180,34 +181,45 @@ function assertPlainObject(
   input: unknown,
   allowedKeys: string[],
   requiredKeys: string[],
+  errMessage = "delivery journal mutation rejected",
 ): Record<string, unknown> {
-  if (typeof input !== "object" || input === null || Array.isArray(input)) {
-    throw new Error("delivery journal mutation rejected");
-  }
-  const proto = Object.getPrototypeOf(input);
-  if (proto !== Object.prototype && proto !== null) {
-    throw new Error("delivery journal mutation rejected");
-  }
-  if (Object.getOwnPropertySymbols(input).length > 0) {
-    throw new Error("delivery journal mutation rejected");
-  }
-  const ownProps = Object.getOwnPropertyNames(input);
-  const allowedSet = new Set(allowedKeys);
-  for (const prop of ownProps) {
-    if (!allowedSet.has(prop)) {
-      throw new Error("delivery journal mutation rejected");
+  try {
+    if (typeof input !== "object" || input === null || Array.isArray(input)) {
+      throw new Error(errMessage);
     }
-    const desc = Object.getOwnPropertyDescriptor(input, prop);
-    if (!desc || !desc.enumerable || desc.get !== undefined || desc.set !== undefined) {
-      throw new Error("delivery journal mutation rejected");
+    if (types.isProxy(input)) {
+      throw new Error(errMessage);
     }
-  }
-  for (const req of requiredKeys) {
-    if (!ownProps.includes(req)) {
-      throw new Error("delivery journal mutation rejected");
+    const proto = Object.getPrototypeOf(input);
+    if (proto !== Object.prototype && proto !== null) {
+      throw new Error(errMessage);
     }
+    if (Object.getOwnPropertySymbols(input).length > 0) {
+      throw new Error(errMessage);
+    }
+    const ownProps = Object.getOwnPropertyNames(input);
+    const allowedSet = new Set(allowedKeys);
+    for (const prop of ownProps) {
+      if (!allowedSet.has(prop)) {
+        throw new Error(errMessage);
+      }
+      const desc = Object.getOwnPropertyDescriptor(input, prop);
+      if (!desc || !desc.enumerable || desc.get !== undefined || desc.set !== undefined) {
+        throw new Error(errMessage);
+      }
+    }
+    for (const req of requiredKeys) {
+      if (!ownProps.includes(req)) {
+        throw new Error(errMessage);
+      }
+    }
+    return input as Record<string, unknown>;
+  } catch (err) {
+    if (err instanceof Error && err.message === errMessage) {
+      throw err;
+    }
+    throw new Error(errMessage);
   }
-  return input as Record<string, unknown>;
 }
 
 export function parseJournalRecord(
@@ -507,7 +519,7 @@ export function parseJournalRecord(
   return row as unknown as ListenerDeliveryJournalRecord;
 }
 
-export class FileListenerDeliveryJournal implements ListenerDeliveryJournal {
+class FileListenerDeliveryJournal implements ListenerDeliveryJournal {
   readonly instanceDirectory: string;
   readonly journalPath: string;
 
@@ -519,12 +531,38 @@ export class FileListenerDeliveryJournal implements ListenerDeliveryJournal {
       stateDirectory?: string;
     },
   ) {
-    if (!UUID_RE.test(options.workspaceId) || !UUID_RE.test(options.principalId)) {
-      throw new Error("delivery journal workspace and principal ids must be UUIDs");
+    assertPlainObject(
+      options,
+      ["profileId", "workspaceId", "principalId", "stateDirectory"],
+      ["profileId", "workspaceId", "principalId"],
+      "delivery journal configuration rejected",
+    );
+
+    if (
+      typeof options.profileId !== "string" ||
+      !options.profileId ||
+      options.profileId.includes("\0") ||
+      typeof options.workspaceId !== "string" ||
+      !UUID_RE.test(options.workspaceId) ||
+      typeof options.principalId !== "string" ||
+      !UUID_RE.test(options.principalId)
+    ) {
+      throw new Error("delivery journal configuration rejected");
     }
+
+    if (options.stateDirectory !== undefined) {
+      if (
+        typeof options.stateDirectory !== "string" ||
+        options.stateDirectory.length === 0 ||
+        options.stateDirectory.includes("\0")
+      ) {
+        throw new Error("delivery journal configuration rejected");
+      }
+    }
+
     const root = options.stateDirectory ?? defaultListenerStateDirectory();
     if (!isAbsolute(root)) {
-      throw new Error("listener state directory must be absolute");
+      throw new Error("delivery journal configuration rejected");
     }
     this.instanceDirectory = join(root, listenerInstanceKey(options));
     this.journalPath = join(this.instanceDirectory, "delivery-journal.json");
@@ -613,6 +651,7 @@ export class FileListenerDeliveryJournal implements ListenerDeliveryJournal {
       input,
       ["signalId", "leaseId", "leasedUntil", "now"],
       ["signalId", "leaseId", "leasedUntil"],
+      "delivery journal mutation rejected",
     );
 
     if (
@@ -680,6 +719,7 @@ export class FileListenerDeliveryJournal implements ListenerDeliveryJournal {
       input,
       ["outcome", "lastErrorCode", "preparedAt", "now"],
       ["outcome", "lastErrorCode"],
+      "delivery journal mutation rejected",
     );
 
     if (
@@ -792,6 +832,7 @@ export async function openListenerDeliveryJournal(
     options,
     ["profileId", "workspaceId", "principalId", "proposedListenerInstanceId", "stateDirectory", "now"],
     ["profileId", "workspaceId", "principalId", "proposedListenerInstanceId"],
+    "delivery journal configuration rejected",
   );
 
   if (
@@ -806,6 +847,16 @@ export async function openListenerDeliveryJournal(
     !UUID_RE.test(options.proposedListenerInstanceId)
   ) {
     throw new Error("delivery journal configuration rejected");
+  }
+
+  if (options.stateDirectory !== undefined) {
+    if (
+      typeof options.stateDirectory !== "string" ||
+      options.stateDirectory.length === 0 ||
+      options.stateDirectory.includes("\0")
+    ) {
+      throw new Error("delivery journal configuration rejected");
+    }
   }
 
   const nowTimestamp = options.now ?? new Date().toISOString();

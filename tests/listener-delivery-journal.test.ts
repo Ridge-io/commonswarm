@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { lstat, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -9,6 +9,7 @@ import {
   openListenerDeliveryJournal,
   parseJournalRecord,
 } from "../src/listener/delivery-journal.js";
+import { listenerInstanceKey } from "../src/listener/file-store.js";
 
 const WORKSPACE_ID = "11111111-1111-4111-8111-111111111111";
 const PRINCIPAL_ID = "22222222-2222-4222-8222-222222222222";
@@ -167,7 +168,7 @@ test("3. Schema, phase, null-field invariants, and malformed/oversized file reje
       claimCreatedAt: "2026-07-31T12:00:00.000Z",
       claimLastAttemptAt: null,
       signalId: null,
-      leaseId: LEASE_ID, // Violation!
+      leaseId: LEASE_ID,
       leasedUntil: null,
       ack: null,
     };
@@ -183,7 +184,7 @@ test("3. Schema, phase, null-field invariants, and malformed/oversized file reje
       claimLastAttemptAt: "2026-07-31T12:00:01.000Z",
       signalId: SIGNAL_ID,
       leaseId: LEASE_ID,
-      leasedUntil: "2026-07-31T12:00:00.000Z", // Violation: leasedUntil <= claimCreatedAt
+      leasedUntil: "2026-07-31T12:00:00.000Z",
       ack: null,
     };
     assert.throws(() => parseJournalRecord(JSON.stringify(badLeasedTime)));
@@ -236,7 +237,7 @@ test("4. Record lease idempotence and hostile mismatch controls", async () => {
       async () => {
         await journal.recordLease({
           signalId: SIGNAL_ID,
-          leaseId: "88888888-8888-4888-8888-888888888888", // hostile lease ID
+          leaseId: "88888888-8888-4888-8888-888888888888",
           leasedUntil: tLease,
           now: t0,
         });
@@ -514,7 +515,7 @@ test("8. Crash-boundary re-open after reserve, attempt, lease, ACK prepare, and 
       stateDirectory: dir,
       now: t0,
     });
-    assert.equal(reOpen5.listenerInstanceId, INSTANCE_ID_2); // Fresh generation!
+    assert.equal(reOpen5.listenerInstanceId, INSTANCE_ID_2);
     assert.equal(reOpen5.record.active, null);
     assert.equal(reOpen5.record.nextClaimOrdinal, 0);
   } finally {
@@ -522,12 +523,16 @@ test("8. Crash-boundary re-open after reserve, attempt, lease, ACK prepare, and 
   }
 });
 
-test("9. File/directory permissions and symlink controls", async () => {
+test("9. Required filesystem causality: wrong-mode dir/file, symlinks, and atomic replacement controls", async () => {
   const dir = await makeTempDir();
   try {
     const t0 = "2026-07-31T12:00:00.000Z";
+    const profileId = "test-profile-causality";
+    const instKey = listenerInstanceKey({ profileId, workspaceId: WORKSPACE_ID, principalId: PRINCIPAL_ID });
+    const targetInstDir = join(dir, instKey);
+
     const { journal } = await openListenerDeliveryJournal({
-      profileId: "test-profile",
+      profileId,
       workspaceId: WORKSPACE_ID,
       principalId: PRINCIPAL_ID,
       proposedListenerInstanceId: INSTANCE_ID_1,
@@ -535,6 +540,7 @@ test("9. File/directory permissions and symlink controls", async () => {
       now: t0,
     });
 
+    // 9a. Normal permissions check
     const dirStat = await lstat(journal.instanceDirectory);
     assert.equal(dirStat.isDirectory(), true);
     assert.equal(dirStat.isSymbolicLink(), false);
@@ -545,22 +551,115 @@ test("9. File/directory permissions and symlink controls", async () => {
     assert.equal(fileStat.isSymbolicLink(), false);
     assert.equal(fileStat.mode & 0o777, 0o600);
 
-    // Symlink attack control
-    const symlinkPath = join(dir, "symlink-dir");
-    const targetFile = join(dir, "target.json");
-    await writeFile(targetFile, "{}");
-    await symlink(targetFile, symlinkPath);
+    // 9b. Instance-directory symlink attack control
+    const symlinkStateDir = join(dir, "symlink-state-dir");
+    const realStateDir = join(dir, "real-state-dir");
+    await mkdir(realStateDir, { mode: 0o700 });
 
-    await assert.rejects(async () => {
-      await openListenerDeliveryJournal({
-        profileId: "test-profile-symlink",
-        workspaceId: WORKSPACE_ID,
-        principalId: PRINCIPAL_ID,
-        proposedListenerInstanceId: INSTANCE_ID_1,
-        stateDirectory: symlinkPath,
-        now: t0,
-      });
-    });
+    const symlinkInstDir = join(symlinkStateDir, instKey);
+    const realInstDir = join(realStateDir, instKey);
+    await mkdir(realInstDir, { mode: 0o700 });
+    await mkdir(symlinkStateDir, { mode: 0o700 });
+    await symlink(realInstDir, symlinkInstDir);
+
+    await assert.rejects(
+      async () => {
+        await openListenerDeliveryJournal({
+          profileId,
+          workspaceId: WORKSPACE_ID,
+          principalId: PRINCIPAL_ID,
+          proposedListenerInstanceId: INSTANCE_ID_1,
+          stateDirectory: symlinkStateDir,
+          now: t0,
+        });
+      },
+      (err: Error) => err.message.includes("not a real directory"),
+    );
+
+    // 9c. Journal-file symlink attack control
+    const symlinkFileStateDir = join(dir, "symlink-file-state-dir");
+    const targetSymlinkInstDir = join(symlinkFileStateDir, instKey);
+    await mkdir(targetSymlinkInstDir, { recursive: true, mode: 0o700 });
+
+    const fakeTargetFile = join(symlinkFileStateDir, "outside-target.json");
+    await writeFile(fakeTargetFile, "{}", { mode: 0o600 });
+    const symlinkJournalFile = join(targetSymlinkInstDir, "delivery-journal.json");
+    await symlink(fakeTargetFile, symlinkJournalFile);
+
+    await assert.rejects(
+      async () => {
+        const { journal: symlinkJ } = await openListenerDeliveryJournal({
+          profileId,
+          workspaceId: WORKSPACE_ID,
+          principalId: PRINCIPAL_ID,
+          proposedListenerInstanceId: INSTANCE_ID_1,
+          stateDirectory: symlinkFileStateDir,
+          now: t0,
+        });
+        await symlinkJ.read();
+      },
+      (err: Error) => err.message.includes("not a regular file"),
+    );
+
+    // 9d. Wrong-mode existing directory control (0755 instead of 0700)
+    const wrongModeStateDir = join(dir, "wrong-mode-state-dir");
+    const wrongModeInstDir = join(wrongModeStateDir, instKey);
+    await mkdir(wrongModeInstDir, { recursive: true, mode: 0o755 });
+    await chmod(wrongModeInstDir, 0o755);
+
+    await assert.rejects(
+      async () => {
+        await openListenerDeliveryJournal({
+          profileId,
+          workspaceId: WORKSPACE_ID,
+          principalId: PRINCIPAL_ID,
+          proposedListenerInstanceId: INSTANCE_ID_1,
+          stateDirectory: wrongModeStateDir,
+          now: t0,
+        });
+      },
+      (err: Error) => err.message.includes("must be mode 0700"),
+    );
+
+    // 9e. Wrong-mode existing file control (0644 instead of 0600)
+    const wrongFileStateDir = join(dir, "wrong-file-state-dir");
+    const wrongFileInstDir = join(wrongFileStateDir, instKey);
+    await mkdir(wrongFileInstDir, { recursive: true, mode: 0o700 });
+    const wrongModeJournalFile = join(wrongFileInstDir, "delivery-journal.json");
+    await writeFile(wrongModeJournalFile, JSON.stringify({
+      version: 1,
+      workspaceId: WORKSPACE_ID,
+      principalId: PRINCIPAL_ID,
+      listenerInstanceId: INSTANCE_ID_1,
+      nextClaimOrdinal: 0,
+      active: null,
+      updatedAt: t0,
+    }), { mode: 0o644 });
+    await chmod(wrongModeJournalFile, 0o644);
+
+    await assert.rejects(
+      async () => {
+        const { journal: wrongFileJ } = await openListenerDeliveryJournal({
+          profileId,
+          workspaceId: WORKSPACE_ID,
+          principalId: PRINCIPAL_ID,
+          proposedListenerInstanceId: INSTANCE_ID_1,
+          stateDirectory: wrongFileStateDir,
+          now: t0,
+        });
+        await wrongFileJ.read();
+      },
+      (err: Error) => err.message.includes("must be mode 0600"),
+    );
+
+    // 9f. Atomic replacement causality: write replaces file atomically and maintains 0600 mode
+    const contentBefore = await readFile(journal.journalPath, "utf8");
+    await journal.reserveClaim(t0);
+    const contentAfter = await readFile(journal.journalPath, "utf8");
+    assert.notEqual(contentBefore, contentAfter);
+
+    const postWriteStat = await lstat(journal.journalPath);
+    assert.equal(postWriteStat.mode & 0o777, 0o600);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -612,7 +711,7 @@ test("10. Serialized positive metadata exists, while known bearer/body/owner/pro
   }
 });
 
-test("11. Public mutation inputs reject non-plain objects, getters, symbols, extra keys", async () => {
+test("11. Public mutation inputs reject non-plain objects, proxies, getters, symbols, extra keys, and pre-path non-strings", async () => {
   const dir = await makeTempDir();
   try {
     const t0 = "2026-07-31T12:00:00.000Z";
@@ -628,7 +727,74 @@ test("11. Public mutation inputs reject non-plain objects, getters, symbols, ext
 
     await journal.reserveClaim(t0);
 
-    // 11a. Class instance input
+    const initialContent = await readFile(journal.journalPath, "utf8");
+
+    // 11a. Proxy hiding an extra property
+    const proxyTarget = {
+      signalId: SIGNAL_ID,
+      leaseId: LEASE_ID,
+      leasedUntil: tLease,
+      secretBearerToken: "ATTACKER_SECRET_BEARER_TOKEN",
+    };
+    const proxyHidingExtra = new Proxy(proxyTarget, {
+      ownKeys() {
+        return ["signalId", "leaseId", "leasedUntil"];
+      },
+      getOwnPropertyDescriptor(target, prop) {
+        if (prop === "secretBearerToken") return undefined;
+        return Object.getOwnPropertyDescriptor(target, prop);
+      },
+    });
+
+    await assert.rejects(
+      async () => {
+        await journal.recordLease(proxyHidingExtra as any);
+      },
+      (err: Error) => err.message === "delivery journal mutation rejected",
+    );
+
+    // Assert disk file is byte-identical and unaffected!
+    const postProxyContent = await readFile(journal.journalPath, "utf8");
+    assert.equal(initialContent, postProxyContent);
+
+    // 11b. Proxy with a trap throwing attacker sentinel text
+    const throwingProxy = new Proxy({
+      signalId: SIGNAL_ID,
+      leaseId: LEASE_ID,
+      leasedUntil: tLease,
+    }, {
+      ownKeys() {
+        throw new Error("ATTACKER_SENTINEL_SECRET_PAYLOAD_LEAK");
+      },
+      get(target, prop) {
+        throw new Error("ATTACKER_SENTINEL_SECRET_PAYLOAD_LEAK");
+      },
+    });
+
+    try {
+      await journal.recordLease(throwingProxy as any);
+      assert.fail("Should have rejected throwing Proxy");
+    } catch (err) {
+      assert.equal((err as Error).message, "delivery journal mutation rejected");
+      assert.equal((err as Error).message.includes("ATTACKER_SENTINEL"), false);
+    }
+
+    // 11c. Revoked proxy control
+    const revocable = Proxy.revocable({
+      signalId: SIGNAL_ID,
+      leaseId: LEASE_ID,
+      leasedUntil: tLease,
+    }, {});
+    revocable.revoke();
+
+    await assert.rejects(
+      async () => {
+        await journal.recordLease(revocable.proxy as any);
+      },
+      (err: Error) => err.message === "delivery journal mutation rejected",
+    );
+
+    // 11d. Class instance input
     class CustomLeaseInput {
       signalId = SIGNAL_ID;
       leaseId = LEASE_ID;
@@ -641,7 +807,7 @@ test("11. Public mutation inputs reject non-plain objects, getters, symbols, ext
       (err: Error) => err.message === "delivery journal mutation rejected",
     );
 
-    // 11b. Input with getter
+    // 11e. Input with getter
     const getterInput = {
       get signalId() {
         return SIGNAL_ID;
@@ -656,7 +822,7 @@ test("11. Public mutation inputs reject non-plain objects, getters, symbols, ext
       (err: Error) => err.message === "delivery journal mutation rejected",
     );
 
-    // 11c. Input with symbol
+    // 11f. Input with symbol
     const symbolInput = {
       signalId: SIGNAL_ID,
       leaseId: LEASE_ID,
@@ -670,7 +836,7 @@ test("11. Public mutation inputs reject non-plain objects, getters, symbols, ext
       (err: Error) => err.message === "delivery journal mutation rejected",
     );
 
-    // 11d. Input with toJSON method
+    // 11g. Input with toJSON method
     const toJsonInput = {
       signalId: SIGNAL_ID,
       leaseId: LEASE_ID,
@@ -686,7 +852,7 @@ test("11. Public mutation inputs reject non-plain objects, getters, symbols, ext
       (err: Error) => err.message === "delivery journal mutation rejected",
     );
 
-    // 11e. Input with unknown extra key
+    // 11h. Input with unknown extra key
     const extraInput = {
       signalId: SIGNAL_ID,
       leaseId: LEASE_ID,
@@ -699,6 +865,25 @@ test("11. Public mutation inputs reject non-plain objects, getters, symbols, ext
       },
       (err: Error) => err.message === "delivery journal mutation rejected",
     );
+
+    // 11i. Pre-path type check: non-string stateDirectory passed to openListenerDeliveryJournal
+    await assert.rejects(
+      async () => {
+        await openListenerDeliveryJournal({
+          profileId: "test-profile",
+          workspaceId: WORKSPACE_ID,
+          principalId: PRINCIPAL_ID,
+          proposedListenerInstanceId: INSTANCE_ID_1,
+          stateDirectory: 12345 as any,
+          now: t0,
+        });
+      },
+      (err: Error) => err.message === "delivery journal configuration rejected",
+    );
+
+    // Ensure final state on disk is still byte-identical!
+    const finalContent = await readFile(journal.journalPath, "utf8");
+    assert.equal(initialContent, finalContent);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
