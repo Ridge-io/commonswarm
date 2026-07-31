@@ -18,6 +18,9 @@ export const DELIVERY_LEASE_MS = 15 * 60 * 1000;
 export const DELIVERY_MAX_ATTEMPTS = 10;
 export const DELIVERY_CLAIM_DEFAULT_LIMIT = 10;
 export const DELIVERY_CLAIM_MAX_LIMIT = 100;
+export const DELIVERY_CLAIM_RATE_LIMIT_PER_MINUTE = 120;
+export const DELIVERY_ACK_RATE_LIMIT_PER_MINUTE = 240;
+export const DELIVERY_MAX_OUTSTANDING_LEASES = 100;
 
 export const DELIVERY_ACK_OUTCOMES = [
   "replied",
@@ -64,6 +67,7 @@ export interface DeliveryClaimLedgerResponse {
   event_ids: [];
   delivery_refs: DeliveryLedgerRef[];
   pending_delivery_count: number;
+  terminal_delivery_failure_count: number;
 }
 
 export interface DeliveryAckLedgerResponse {
@@ -117,6 +121,17 @@ export async function claimAgentInbox(
     limit: number;
   },
 ): Promise<DeliveryClaimLedgerResponse> {
+  // 1. Hold a row lock on the exact recipient agent principal row FOR UPDATE
+  // to serialize concurrent claimers for the same principal.
+  await tx`
+    SELECT principal_id
+    FROM swarm.agent_principals
+    WHERE workspace_id = ${args.workspaceId}::uuid
+      AND principal_id = ${args.recipientPrincipalId}::uuid
+      AND revoked_at IS NULL
+    FOR UPDATE
+  `;
+
   // 2. Reset this recipient's stale leases without acknowledging them.
   await tx`
     UPDATE swarm.signal_deliveries
@@ -156,7 +171,8 @@ export async function claimAgentInbox(
   `;
 
   // 4. Terminalize remaining unleased, signal-live rows at the ten-attempt ceiling.
-  await tx`
+  // Count rows newly failed in this transaction.
+  const poisonRows = await tx<{ signal_id: string }[]>`
     UPDATE swarm.signal_deliveries AS d
     SET
       acked_at = statement_timestamp(),
@@ -174,11 +190,27 @@ export async function claimAgentInbox(
       AND d.acked_at IS NULL
       AND d.lease_id IS NULL
       AND d.attempt_count >= ${DELIVERY_MAX_ATTEMPTS}
-      AND s.until > statement_timestamp()
+      AND (s.until IS NULL OR s.until > statement_timestamp())
+    RETURNING d.signal_id
   `;
+  const terminalDeliveryFailureCount = poisonRows.length;
 
-  // 5. Select candidates oldest-first with FOR UPDATE SKIP LOCKED; write leases.
-  const claimed = await tx<{
+  // 5. Count currently live active leases for this principal and compute slots.
+  const activeLeaseRows = await tx<{ active: string | number }[]>`
+    SELECT count(*)::int AS active
+    FROM swarm.signal_deliveries
+    WHERE workspace_id = ${args.workspaceId}::uuid
+      AND recipient_agent_principal_id = ${args.recipientPrincipalId}::uuid
+      AND acked_at IS NULL
+      AND lease_id IS NOT NULL
+      AND leased_until > statement_timestamp()
+  `;
+  const activeLiveLeases = Number(activeLeaseRows[0]?.active ?? 0);
+  const slots = Math.max(0, DELIVERY_MAX_OUTSTANDING_LEASES - activeLiveLeases);
+  const effectiveLimit = Math.min(args.limit, slots);
+
+  // 6. Select candidate rows with LIMIT effectiveLimit and FOR UPDATE SKIP LOCKED.
+  const claimed = effectiveLimit <= 0 ? [] : await tx<{
     signal_id: string;
     lease_id: string;
     leased_until: Date;
@@ -197,7 +229,7 @@ export async function claimAgentInbox(
         AND d.attempt_count < ${DELIVERY_MAX_ATTEMPTS}
         AND s.until > statement_timestamp()
       ORDER BY d.enqueued_at ASC, d.signal_id ASC
-      LIMIT ${args.limit}
+      LIMIT ${effectiveLimit}
       FOR UPDATE OF d SKIP LOCKED
     ),
     updated AS (
@@ -258,7 +290,7 @@ export async function claimAgentInbox(
     ORDER BY s.created_at ASC, s.id ASC
   `;
 
-  // 6. Exact live-unacked count (unacked + immutable signal still live).
+  // 7. Exact live-unacked count (unacked + immutable signal still live).
   const countRows = await tx<{ pending: string | number }[]>`
     SELECT count(*)::int AS pending
     FROM swarm.signal_deliveries AS d
@@ -282,6 +314,7 @@ export async function claimAgentInbox(
       sender_owner_relation: row.sender_owner_relation,
     })),
     pending_delivery_count: pending,
+    terminal_delivery_failure_count: terminalDeliveryFailureCount,
   };
 }
 
@@ -568,11 +601,18 @@ export function parseClaimLedger(value: unknown): DeliveryClaimLedgerResponse | 
       sender_owner_relation: ref.sender_owner_relation,
     });
   }
+  let terminalFailureCount = 0;
+  if ("terminal_delivery_failure_count" in body && body.terminal_delivery_failure_count !== undefined) {
+    const val = body.terminal_delivery_failure_count;
+    if (!Number.isSafeInteger(val) || (val as number) < 0) return null;
+    terminalFailureCount = val as number;
+  }
   return {
     ok: true,
     event_ids: [],
     delivery_refs: refs,
     pending_delivery_count: body.pending_delivery_count as number,
+    terminal_delivery_failure_count: terminalFailureCount,
   };
 }
 

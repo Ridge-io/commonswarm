@@ -252,6 +252,7 @@ Claim response shape:
 
 ```json
 {
+  "ok": true,
   "status": "accepted",
   "capabilities": {
     "delivery_claim": 1,
@@ -266,9 +267,26 @@ Claim response shape:
       "sender_owner_relation": "same_owner|cross_owner|unknown"
     }
   ],
-  "pending_delivery_count": 1
+  "pending_delivery_count": 1,
+  "terminal_delivery_failure_count": 0
 }
 ```
+
+### Abuse Bounds and Outer Transaction Order
+
+1. **Per-Principal Rate Limits**:
+   - Claim rate limit: `DELIVERY_CLAIM_RATE_LIMIT_PER_MINUTE = 120` per workspace and recipient agent principal (`delivery:claim:principal:<workspace_uuid>:<principal_uuid>`).
+   - ACK rate limit: `DELIVERY_ACK_RATE_LIMIT_PER_MINUTE = 240` per workspace and recipient agent principal (`delivery:ack:principal:<workspace_uuid>:<principal_uuid>`).
+   - Rate bucket enforcement precedes idempotency lookup (abuse-accounting mutation precedes delivery-state mutation). On breach, returns HTTP 429 `{ error: "rate_limited", limit, resets_at, message }` with `Retry-After` header. First refusal in a window writes audit log and security alert; subsequent refusals write no audit/alert.
+
+2. **Concurrency-Safe Live-Lease Ceiling**:
+   - `DELIVERY_MAX_OUTSTANDING_LEASES = 100` live unacknowledged leases per recipient principal across all listeners/tokens.
+   - Exact recipient `agent_principals` row is locked `FOR UPDATE` in fresh claim transactions before cleanup/count/claim.
+   - At ceiling capacity, returns `200 accepted` with `deliveries: []` and truthful `pending_delivery_count`.
+
+3. **Poison Visibility**:
+   - `terminal_delivery_failure_count` reports the number of delivery rows newly terminalized as `failed_terminal/delivery_attempts_exhausted` in that claim transaction.
+   - Emits `delivery_attempts_exhausted` security alert when positive. Replays reproduce the count from the body-free idempotency ledger without emitting secondary alerts.
 
 ### `ack_agent_delivery`
 

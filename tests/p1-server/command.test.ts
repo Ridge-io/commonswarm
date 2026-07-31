@@ -91,6 +91,7 @@ type WireCommandWithSignal = WireCommand | SignalCommand;
 
 interface CommandResponse {
   status: number;
+  headers?: Headers;
   text: string;
   body: Record<string, unknown>;
 }
@@ -5926,7 +5927,7 @@ type DeliveryCommand =
     lease_id: string;
     listener_instance_id: string;
     outcome: "replied" | "observed" | "expired" | "failed_terminal";
-    last_error_code: string | null;
+    last_error_code?: string | null;
   };
 
 async function issueDelivery(
@@ -5963,6 +5964,7 @@ async function issueDelivery(
   const text = await response.text();
   return {
     status: response.status,
+    headers: response.headers,
     text,
     body: JSON.parse(text) as Record<string, unknown>,
   };
@@ -6381,6 +6383,130 @@ test("durable-delivery: wrong principal/lease, revoked token, delivery_unavailab
     });
     assert.equal(revokedClaim.status, 403);
     assert.equal(revokedClaim.body.error, "delivery_unavailable");
+
+    // Claim rate limit, 429 metadata, Retry-After header, privacy, single alert/audit, cross-principal isolation
+    const rateAgent = await createFixtureAgent(f, f.ua, "dd-rate-agent-1");
+    const otherAgent = await createFixtureAgent(f, f.ua, "dd-rate-agent-2");
+
+    // 1. Seed current-minute claim rate bucket at count 120 for rateAgent
+    const bucketKey = `delivery:claim:principal:${f.workspaceA}:${rateAgent.principalId}`;
+    await sql`
+      INSERT INTO swarm.rate_buckets (bucket_key, window_start, count)
+      VALUES (${bucketKey}, date_trunc('minute', statement_timestamp()), 120)
+      ON CONFLICT (bucket_key, window_start) DO UPDATE SET count = 120
+    `;
+
+    // Seed an actual deliverable signal to prove refused claim makes NO lease mutation
+    const secretBody = "secret-prompt-content-xyz123";
+    const privacySignal = await issueSignal(f, f.uaJwt, {
+      kind: "post_signal",
+      signal_kind: "ask",
+      body: secretBody,
+      to_user_id: null,
+      to_agent_principal_id: rateAgent.principalId,
+      in_reply_to: null,
+      about: "privacy-test",
+    });
+    assert.equal(privacySignal.status, 200);
+    const privacySigId = String((privacySignal.body.signal as Record<string, unknown>).id);
+
+    // 2. Request 121 returns HTTP 429 rate_limited with Retry-After header and metadata
+    const cmdId121 = randomUUID();
+    const listener121 = randomUUID();
+    const claim121 = await issueDelivery(
+      f,
+      rateAgent.token,
+      {
+        kind: "claim_agent_inbox",
+        listener_instance_id: listener121,
+        limit: 10,
+      },
+      cmdId121,
+    );
+    assert.equal(claim121.status, 429, claim121.text);
+    assert.equal(claim121.body.error, "rate_limited");
+    assert.equal(claim121.body.limit, 120);
+    assert.ok(typeof claim121.body.resets_at === "string");
+    assert.ok(typeof claim121.body.message === "string");
+
+    // Assert resets_at is the next DB minute boundary
+    const resetsAtDate = new Date(claim121.body.resets_at as string);
+    assert.equal(resetsAtDate.getUTCSeconds(), 0, "resets_at is at minute boundary");
+    assert.equal(resetsAtDate.getUTCMilliseconds(), 0, "resets_at ms is 0");
+
+    const retryAfter = claim121.headers?.get("retry-after");
+    assert.ok(retryAfter, "Retry-After header is present");
+    const retrySec = Number(retryAfter);
+    assert.ok(retrySec >= 1 && retrySec <= 60, `Retry-After ${retrySec} is between 1 and 60`);
+
+    // Causality: refused claim makes NO lease mutation on deliverable signal
+    const [privacyDelRow] = await sql<{ lease_id: string | null; attempt_count: number }[]>`
+      SELECT lease_id, attempt_count FROM swarm.signal_deliveries
+      WHERE signal_id = ${privacySigId}::uuid
+    `;
+    assert.equal(privacyDelRow?.lease_id, null, "refused claim makes no lease mutation");
+    assert.equal(privacyDelRow?.attempt_count, 0, "refused claim makes no attempt count mutation");
+
+    // Privacy assertion: assert response, audit, and alert contain NONE of known markers
+    const forbiddenMarkers = [
+      rateAgent.token,
+      "Bearer",
+      secretBody,
+      listener121,
+      privacySigId,
+      f.ua,
+    ];
+
+    const bodyStr = JSON.stringify(claim121.body);
+    for (const marker of forbiddenMarkers) {
+      assert.equal(bodyStr.includes(marker), false, `response contains forbidden marker: ${marker}`);
+    }
+
+    // 4. Second refused request 122 also returns 429
+    const claim122 = await issueDelivery(f, rateAgent.token, {
+      kind: "claim_agent_inbox",
+      listener_instance_id: randomUUID(),
+      limit: 10,
+    });
+    assert.equal(claim122.status, 429, claim122.text);
+
+    // 5. Refused command 121 makes NO idempotency key row
+    const [idemRow] = await sql<{ command_id: string }[]>`
+      SELECT command_id FROM swarm.idempotency_keys WHERE command_id = ${cmdId121}
+    `;
+    assert.equal(idemRow, undefined, "refused command makes no idempotency row");
+
+    // 6. Exactly ONE audit row and ONE security alert row written for refusal despite 2 refused calls
+    const auditRows = await sql<{ audit_id: string; detail: string | null }[]>`
+      SELECT audit_id, detail FROM swarm.audit_log
+      WHERE workspace_id = ${f.workspaceA}::uuid
+        AND command_kind = 'claim_agent_inbox'
+        AND outcome = 'rate_limit'
+        AND reason = 'delivery_claim_rate_limited'
+    `;
+    assert.equal(auditRows.length, 1, "exactly one rate limit refusal audit written");
+    const auditText = JSON.stringify(auditRows[0]);
+    for (const marker of forbiddenMarkers) {
+      assert.equal(auditText.includes(marker), false, `audit contains forbidden marker: ${marker}`);
+    }
+
+    const alertRows = await sql<{ alert_id: string; detail: unknown }[]>`
+      SELECT alert_id, detail FROM swarm.security_alerts
+      WHERE kind = 'delivery_claim_rate_limit'
+    `;
+    assert.equal(alertRows.length, 1, "exactly one rate limit security alert written");
+    const alertText = JSON.stringify(alertRows[0]);
+    for (const marker of forbiddenMarkers) {
+      assert.equal(alertText.includes(marker), false, `alert contains forbidden marker: ${marker}`);
+    }
+
+    // 7. ACK bucket and different principal stay usable
+    const otherClaim = await issueDelivery(f, otherAgent.token, {
+      kind: "claim_agent_inbox",
+      listener_instance_id: randomUUID(),
+      limit: 10,
+    });
+    assert.equal(otherClaim.status, 200, "other principal claim is unblocked");
   });
 });
 
@@ -6549,16 +6675,59 @@ test("durable-delivery: stale lease requeues; signal TTL expires once; tenth cla
           updated_at = statement_timestamp() - interval '2 seconds'
       WHERE signal_id = ${poisonId}::uuid
     `;
-    const afterPoison = await issueDelivery(f, receiver.token, {
-      kind: "claim_agent_inbox",
-      listener_instance_id: randomUUID(),
-      limit: 50,
-    });
+    const afterPoisonCid = randomUUID();
+    const afterPoisonInstId = randomUUID();
+    const afterPoison = await issueDelivery(
+      f,
+      receiver.token,
+      {
+        kind: "claim_agent_inbox",
+        listener_instance_id: afterPoisonInstId,
+        limit: 50,
+      },
+      afterPoisonCid,
+    );
     assert.equal(afterPoison.status, 200, afterPoison.text);
+    assert.equal(afterPoison.body.terminal_delivery_failure_count, 1, "terminal_delivery_failure_count is 1 on terminalizing claim");
     const stillDelivered = (afterPoison.body.deliveries as Array<
       Record<string, unknown>
     >).some((d) => (d.signal as Record<string, unknown>).id === poisonId);
     assert.equal(stillDelivered, false, "no further claims after poison");
+
+    // Exactly one security alert emitted for delivery_attempts_exhausted
+    const alertRows = await sql<{ alert_id: string }[]>`
+      SELECT alert_id FROM swarm.security_alerts
+      WHERE kind = 'delivery_attempts_exhausted'
+    `;
+    assert.equal(alertRows.length, 1, "exactly one delivery_attempts_exhausted alert written");
+
+    // Exact idempotency replay reproduces terminal_delivery_failure_count 1 without emitting a second alert
+    const afterPoisonReplay = await issueDelivery(
+      f,
+      receiver.token,
+      {
+        kind: "claim_agent_inbox",
+        listener_instance_id: afterPoisonInstId,
+        limit: 50,
+      },
+      afterPoisonCid,
+    );
+    assert.equal(afterPoisonReplay.status, 200);
+    assert.equal(afterPoisonReplay.body.terminal_delivery_failure_count, 1, "replay reproduces failure count 1");
+    const alertRowsAfterReplay = await sql<{ alert_id: string }[]>`
+      SELECT alert_id FROM swarm.security_alerts
+      WHERE kind = 'delivery_attempts_exhausted'
+    `;
+    assert.equal(alertRowsAfterReplay.length, 1, "no second security alert on replay");
+
+    // Subsequent new claim returns terminal_delivery_failure_count 0
+    const subsequentClaim = await issueDelivery(f, receiver.token, {
+      kind: "claim_agent_inbox",
+      listener_instance_id: randomUUID(),
+      limit: 50,
+    });
+    assert.equal(subsequentClaim.status, 200);
+    assert.equal(subsequentClaim.body.terminal_delivery_failure_count, 0, "subsequent claim returns 0 terminal failures");
     const [poisonRow] = await sql<{
       ack_outcome: string | null;
       last_error_code: string | null;
@@ -6651,12 +6820,33 @@ test("durable-delivery: active-lease TTL race; backlog >100 oldest-first; RLS/gr
     assert.equal(raceAck.status, 200, raceAck.text);
     assert.equal(raceAck.body.outcome, "replied");
 
-    // Backlog > 100 with identical created_at/enqueued_at drains by signal_id UUID order.
+    // Direct note signal claim coverage
+    const noteReceiver = await createFixtureAgent(f, f.ua, "dd-note-receiver");
+    const notePost = await issueSignal(f, f.uaJwt, {
+      kind: "post_signal",
+      signal_kind: "note",
+      body: "dd-direct-note-coverage",
+      to_user_id: null,
+      to_agent_principal_id: noteReceiver.principalId,
+      in_reply_to: null,
+      about: "dd-note-test",
+    });
+    assert.equal(notePost.status, 200);
+    const noteClaim = await issueDelivery(f, noteReceiver.token, {
+      kind: "claim_agent_inbox",
+      listener_instance_id: randomUUID(),
+      limit: 10,
+    });
+    assert.equal(noteClaim.status, 200, noteClaim.text);
+    const noteDels = noteClaim.body.deliveries as Array<Record<string, unknown>>;
+    assert.equal(noteDels.length, 1, "direct note signal is claimed");
+
+    // Backlog >= 150 with identical created_at/enqueued_at drains by signal_id UUID order.
     const bulkIds: string[] = [];
     const fixedTs = new Date().toISOString();
     const fixedUntil = new Date(Date.now() + 86400000).toISOString();
     const values = [];
-    for (let i = 0; i < 105; i++) {
+    for (let i = 0; i < 150; i++) {
       const id = randomUUID();
       bulkIds.push(id);
       values.push({
@@ -6684,19 +6874,139 @@ test("durable-delivery: active-lease TTL race; backlog >100 oldest-first; RLS/gr
       WHERE signal_id = ANY(${bulkIds}::uuid[])
         AND acked_at IS NULL
     `;
-    assert.equal(Number(bulkCount), 105);
+    assert.equal(Number(bulkCount), 150);
 
-    // Page 1 (limit 100)
-    const page1 = await issueDelivery(f, receiver.token, {
+    // Causal row-lock concurrency cap test: hold agent_principals FOR UPDATE lock
+    let releaseLock!: () => void;
+    const lockAcquiredPromise = new Promise<void>((resolve) => {
+      sql.begin(async (tx) => {
+        await tx`
+          SELECT 1 FROM swarm.agent_principals
+          WHERE workspace_id = ${f.workspaceA}::uuid
+            AND principal_id = ${receiver.principalId}::uuid
+          FOR UPDATE
+        `;
+        resolve();
+        await new Promise<void>((rel) => {
+          releaseLock = rel;
+        });
+      });
+    });
+
+    await lockAcquiredPromise;
+
+    const instId1 = randomUUID();
+    const instId2 = randomUUID();
+
+    // Launch 2 concurrent HTTP limit:100 claims while row lock is held
+    const claimPromise1 = issueDelivery(f, receiver.token, {
+      kind: "claim_agent_inbox",
+      listener_instance_id: instId1,
+      limit: 100,
+    });
+    const claimPromise2 = issueDelivery(f, receiver.token, {
+      kind: "claim_agent_inbox",
+      listener_instance_id: instId2,
+      limit: 100,
+    });
+
+    // Wait 100ms to ensure both HTTP requests are blocked waiting on row lock
+    await new Promise((r) => setTimeout(r, 100));
+
+    // Explicitly assert both claim promises are still unsettled while principal row lock is held
+    const pendingSentinel = Symbol("pending");
+    const isPending1 = await Promise.race([claimPromise1, Promise.resolve(pendingSentinel)]) === pendingSentinel;
+    const isPending2 = await Promise.race([claimPromise2, Promise.resolve(pendingSentinel)]) === pendingSentinel;
+    assert.equal(isPending1, true, "claimPromise1 is unsettled while principal row lock is held");
+    assert.equal(isPending2, true, "claimPromise2 is unsettled while principal row lock is held");
+
+    // Release row lock
+    releaseLock();
+
+    // Both claim HTTP requests resolve
+    const [cRes1, cRes2] = await Promise.all([claimPromise1, claimPromise2]);
+    assert.equal(cRes1.status, 200, cRes1.text);
+    assert.equal(cRes2.status, 200, cRes2.text);
+
+    const p1Part1Raw = cRes1.body.deliveries as Array<Record<string, unknown>>;
+    const p1Part2Raw = cRes2.body.deliveries as Array<Record<string, unknown>>;
+
+    // Combined claimed deliveries count across both requests is EXACTLY 100
+    assert.equal(p1Part1Raw.length + p1Part2Raw.length, 100, "combined deliveries claimed across concurrent requests is exactly 100");
+
+    // No duplicate signal IDs claimed
+    const set1 = new Set(p1Part1Raw.map((d) => String((d.signal as Record<string, unknown>).id)));
+    for (const d of p1Part2Raw) {
+      const sigId = String((d.signal as Record<string, unknown>).id);
+      assert.equal(set1.has(sigId), false, "no duplicate signal IDs claimed across concurrent requests");
+    }
+
+    const page1InstId = randomUUID();
+    const p1Part1: Array<Record<string, unknown> & { instId: string }> = p1Part1Raw.map((d) => ({ ...d, instId: instId1 }));
+    const p1Part2: Array<Record<string, unknown> & { instId: string }> = p1Part2Raw.map((d) => ({ ...d, instId: instId2 }));
+    const p1 = [...p1Part1, ...p1Part2];
+
+    // Page 2 (limit 100) before ACK gets 0 deliveries due to 100 live-lease ceiling
+    const page2Cap = await issueDelivery(f, receiver.token, {
       kind: "claim_agent_inbox",
       listener_instance_id: randomUUID(),
       limit: 100,
     });
-    assert.equal(page1.status, 200, page1.text);
-    const p1 = page1.body.deliveries as Array<Record<string, unknown>>;
-    assert.equal(p1.length, 100);
+    assert.equal(page2Cap.status, 200, page2Cap.text);
+    const p2Cap = page2Cap.body.deliveries as Array<Record<string, unknown>>;
+    assert.equal(p2Cap.length, 0, "second claim gets 0 deliveries due to 100-lease ceiling");
+    assert.equal(page2Cap.body.pending_delivery_count, 150, "pending count remains 150");
 
-    // Page 2 (limit 100 -> remaining 5)
+    // DB active live lease count is exactly 100
+    const [actRow] = await sql<{ count: string | number }[]>`
+      SELECT count(*)::int AS count FROM swarm.signal_deliveries
+      WHERE workspace_id = ${f.workspaceA}::uuid
+        AND recipient_agent_principal_id = ${receiver.principalId}::uuid
+        AND acked_at IS NULL
+        AND lease_id IS NOT NULL
+        AND leased_until > statement_timestamp()
+    `;
+    assert.equal(Number(actRow?.count), 100, "DB active live lease count is exactly 100");
+
+    // ACK 1 delivery
+    const ackSigId = String((p1[0]!.signal as Record<string, unknown>).id);
+    const ackLeaseId = String(p1[0]!.lease_id);
+    const ackRes = await issueDelivery(f, receiver.token, {
+      kind: "ack_agent_delivery",
+      listener_instance_id: p1[0]!.instId,
+      signal_id: ackSigId,
+      lease_id: ackLeaseId,
+      outcome: "observed",
+      last_error_code: null,
+    });
+    assert.equal(ackRes.status, 200);
+
+    // Next claim gets 1 delivery
+    const page1Freed = await issueDelivery(f, receiver.token, {
+      kind: "claim_agent_inbox",
+      listener_instance_id: page1InstId,
+      limit: 100,
+    });
+    assert.equal(page1Freed.status, 200);
+    const p1FreedRaw = page1Freed.body.deliveries as Array<Record<string, unknown>>;
+    assert.equal(p1FreedRaw.length, 1, "next claim gets 1 freed slot");
+    assert.equal(page1Freed.body.pending_delivery_count, 149);
+    const p1Freed: Array<Record<string, unknown> & { instId: string }> = p1FreedRaw.map((d) => ({ ...d, instId: page1InstId }));
+
+    // ACK remaining active deliveries from p1 and p1Freed so p2 can claim remaining 49
+    const remainingP1 = [...p1.slice(1), ...p1Freed];
+    for (const del of remainingP1) {
+      await issueDelivery(f, receiver.token, {
+        kind: "ack_agent_delivery",
+        listener_instance_id: del.instId,
+        signal_id: String((del.signal as Record<string, unknown>).id),
+        lease_id: String(del.lease_id),
+        outcome: "observed",
+        last_error_code: null,
+      });
+    }
+
+    // Page 2 (limit 100 -> remaining 49) after ACKs
     const page2 = await issueDelivery(f, receiver.token, {
       kind: "claim_agent_inbox",
       listener_instance_id: randomUUID(),
@@ -6704,10 +7014,10 @@ test("durable-delivery: active-lease TTL race; backlog >100 oldest-first; RLS/gr
     });
     assert.equal(page2.status, 200, page2.text);
     const p2 = page2.body.deliveries as Array<Record<string, unknown>>;
-    assert.equal(p2.length, 5);
+    assert.equal(p2.length, 49);
 
-    // Verify deterministic signal_id UUID order across all 105 drained deliveries when timestamps match.
-    const allClaimedIds = [...p1, ...p2].map((d) =>
+    // Verify deterministic signal_id UUID order across all 150 drained deliveries when timestamps match.
+    const allClaimedIds = [...p1, ...p1Freed, ...p2].map((d) =>
       String((d.signal as Record<string, unknown>).id)
     );
     const expectedUuidOrder = [...bulkIds].sort();
@@ -6839,19 +7149,20 @@ test("durable-delivery: active-lease TTL race; backlog >100 oldest-first; RLS/gr
       assert.equal(Number(purged70?.n), 0, "70-day terminal row is purged under 60-day retention via zero-argument production function");
 
       // 70-day-old unacked row is NEVER purged.
+      const unackedId = String((p2[0]!.signal as Record<string, unknown>).id);
       await sql`ALTER TABLE swarm.signals DISABLE TRIGGER signals_append_only`;
       try {
         await sql`
           UPDATE swarm.signals
           SET created_at = statement_timestamp() - interval '70 days',
               until = statement_timestamp() - interval '65 days'
-          WHERE id = ${bulkIds[1]}::uuid
+          WHERE id = ${unackedId}::uuid
         `;
         await sql`
           UPDATE swarm.signal_deliveries
           SET enqueued_at = statement_timestamp() - interval '70 days',
               updated_at = statement_timestamp() - interval '70 days'
-          WHERE signal_id = ${bulkIds[1]}::uuid
+          WHERE signal_id = ${unackedId}::uuid
         `;
       } finally {
         await sql`ALTER TABLE swarm.signals ENABLE TRIGGER signals_append_only`;
@@ -6859,7 +7170,7 @@ test("durable-delivery: active-lease TTL race; backlog >100 oldest-first; RLS/gr
       await sql`SELECT swarm.purge_terminal_signal_deliveries()`;
       const [keptUnacked] = await sql<{ n: string | number }[]>`
         SELECT count(*) AS n FROM swarm.signal_deliveries
-        WHERE signal_id = ${bulkIds[1]}::uuid AND acked_at IS NULL
+        WHERE signal_id = ${unackedId}::uuid AND acked_at IS NULL
       `;
       assert.equal(Number(keptUnacked?.n), 1, "unacked 70-day row is never purged regardless of age");
     } finally {
@@ -7419,6 +7730,81 @@ test("durable-delivery: concurrent identical ack calls serialize and both resolv
       last_error_code: "local_effect_failed",
     });
     assert.equal(conflictAck.status, 409, conflictAck.text);
+
+    // ACK rate limit, replay order, and claim/ACK bucket independence
+    const ackBucketKey = `delivery:ack:principal:${f.workspaceA}:${receiver.principalId}`;
+    await sql`
+      INSERT INTO swarm.rate_buckets (bucket_key, window_start, count)
+      VALUES (${ackBucketKey}, date_trunc('minute', statement_timestamp()), 239)
+      ON CONFLICT (bucket_key, window_start) DO UPDATE SET count = 239
+    `;
+
+    // ACK 240 succeeds
+    const ackCid240 = randomUUID();
+    const ack240 = await issueDelivery(
+      f,
+      receiver.token,
+      {
+        kind: "ack_agent_delivery",
+        listener_instance_id: instId,
+        signal_id: signalId,
+        lease_id: leaseId,
+        outcome: "replied",
+        last_error_code: null,
+      },
+      ackCid240,
+    );
+    assert.equal(ack240.status, 200, ack240.text);
+
+    // Exact accepted-command replay after bucket saturation returns 429
+    const saturatedReplay = await issueDelivery(
+      f,
+      receiver.token,
+      {
+        kind: "ack_agent_delivery",
+        listener_instance_id: instId,
+        signal_id: signalId,
+        lease_id: leaseId,
+        outcome: "replied",
+        last_error_code: null,
+      },
+      ackCid240,
+    );
+    assert.equal(saturatedReplay.status, 429, "replay during saturation returns 429");
+
+    // Remove current bucket row; same command replays 200
+    await sql`DELETE FROM swarm.rate_buckets WHERE bucket_key = ${ackBucketKey}`;
+    const clearedReplay = await issueDelivery(
+      f,
+      receiver.token,
+      {
+        kind: "ack_agent_delivery",
+        listener_instance_id: instId,
+        signal_id: signalId,
+        lease_id: leaseId,
+        outcome: "replied",
+        last_error_code: null,
+      },
+      ackCid240,
+    );
+    assert.equal(clearedReplay.status, 200, "replay after bucket clear resolves 200");
+
+    // Saturated claim bucket cannot block ACK
+    const claimBucketKey = `delivery:claim:principal:${f.workspaceA}:${receiver.principalId}`;
+    await sql`
+      INSERT INTO swarm.rate_buckets (bucket_key, window_start, count)
+      VALUES (${claimBucketKey}, date_trunc('minute', statement_timestamp()), 150)
+      ON CONFLICT (bucket_key, window_start) DO UPDATE SET count = 150
+    `;
+    const unblockedAck = await issueDelivery(f, receiver.token, {
+      kind: "ack_agent_delivery",
+      listener_instance_id: instId,
+      signal_id: signalId,
+      lease_id: leaseId,
+      outcome: "replied",
+      last_error_code: null,
+    });
+    assert.equal(unblockedAck.status, 200, "ACK is not blocked by saturated claim bucket");
   });
 });
 

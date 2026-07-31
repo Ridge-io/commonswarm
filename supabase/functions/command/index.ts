@@ -20,10 +20,13 @@ import {
   CLAIM_AGENT_INBOX_KIND,
   claimAgentInbox,
   DELIVERY_ACK_OUTCOMES,
+  DELIVERY_ACK_RATE_LIMIT_PER_MINUTE,
   DELIVERY_CAPABILITIES,
   DELIVERY_CLAIM_DEFAULT_LIMIT,
   DELIVERY_CLAIM_MAX_LIMIT,
+  DELIVERY_CLAIM_RATE_LIMIT_PER_MINUTE,
   DELIVERY_CLIENT_ERROR_CODES,
+  DELIVERY_MAX_OUTSTANDING_LEASES,
   hydrateDeliveryRefs,
   parseClaimLedger,
   type AckAgentDeliveryCommand,
@@ -801,6 +804,7 @@ interface PreparedWorkspace {
 
 interface HttpResult {
   status: number;
+  headers?: Record<string, string>;
   body: Record<string, unknown>;
 }
 
@@ -882,12 +886,17 @@ async function afterStep(step: number): Promise<void> {
   }
 }
 
-function json(status: number, body: Record<string, unknown>): Response {
+function json(
+  status: number,
+  body: Record<string, unknown>,
+  headers?: Record<string, string>,
+): Response {
   return new Response(JSON.stringify(body), {
     status,
     headers: {
       "content-type": "application/json; charset=utf-8",
       "cache-control": "no-store",
+      ...(headers ?? {}),
     },
   });
 }
@@ -3862,6 +3871,95 @@ async function incrementRateBucket(
   };
 }
 
+async function checkDeliveryRateLimit(
+  tx: Sql,
+  auth: AuthContext,
+  workspaceId: string,
+  principalId: string,
+  operation: "claim" | "ack",
+): Promise<{ allowed: true } | { allowed: false; result: HttpResult }> {
+  const limit = operation === "claim"
+    ? DELIVERY_CLAIM_RATE_LIMIT_PER_MINUTE
+    : DELIVERY_ACK_RATE_LIMIT_PER_MINUTE;
+  const bucketKey = `delivery:${operation}:principal:${workspaceId}:${principalId}`;
+
+  const rows = await tx<{ count: number; resets_at: Date; retry_after_seconds: number }[]>`
+    INSERT INTO swarm.rate_buckets (bucket_key, window_start, count)
+    VALUES (
+      ${bucketKey},
+      date_trunc('minute', statement_timestamp()),
+      1
+    )
+    ON CONFLICT (bucket_key, window_start) DO UPDATE
+    SET count = LEAST(swarm.rate_buckets.count + 1, ${limit + 2})
+    RETURNING
+      count,
+      window_start + interval '1 minute' AS resets_at,
+      GREATEST(
+        1,
+        LEAST(
+          60,
+          CEIL(EXTRACT(EPOCH FROM (window_start + interval '1 minute' - statement_timestamp())))
+        )
+      )::int AS retry_after_seconds
+  `;
+  const row = rows[0];
+  if (!row) throw new Error("delivery rate bucket did not return a row");
+  const count = Number(row.count);
+  const resetsAtIso = row.resets_at.toISOString();
+  const retryAfterSec = Number(row.retry_after_seconds);
+  if (count > limit) {
+    if (count === limit + 1) {
+      const auditReason = operation === "claim"
+        ? "delivery_claim_rate_limited"
+        : "delivery_ack_rate_limited";
+      await insertAudit(tx, {
+        auth,
+        commandKind: operation === "claim" ? CLAIM_AGENT_INBOX_KIND : ACK_AGENT_DELIVERY_KIND,
+        workspaceId,
+        outcome: "rate_limit",
+        reason: auditReason,
+      });
+
+      const alertKind = operation === "claim"
+        ? "delivery_claim_rate_limit"
+        : "delivery_ack_rate_limit";
+      await tx`
+        INSERT INTO swarm.security_alerts (kind, subject, detail)
+        VALUES (
+          ${alertKind},
+          'agent',
+          ${tx.json({
+            workspace_id: workspaceId,
+            recipient_principal_id: principalId,
+            operation,
+            limit,
+            resets_at: resetsAtIso,
+          })}::jsonb
+        )
+      `;
+    }
+
+    return {
+      allowed: false,
+      result: {
+        status: 429,
+        headers: {
+          "retry-after": String(retryAfterSec),
+        },
+        body: {
+          error: "rate_limited",
+          limit,
+          resets_at: resetsAtIso,
+          message: "Rate limit exceeded. Please retry after the reset window.",
+        },
+      },
+    };
+  }
+
+  return { allowed: true };
+}
+
 async function enforceSignalRate(
   tx: Sql,
   auth: AuthContext,
@@ -5360,6 +5458,24 @@ async function handleTransaction(
     const hash = requestHash(auth.actor, command);
     await afterStep(6);
 
+    if (kind === CLAIM_AGENT_INBOX_KIND || kind === ACK_AGENT_DELIVERY_KIND) {
+      const agent = auth.agent;
+      if (agent === null) {
+        return { status: 403, body: { error: "delivery_unavailable" } };
+      }
+      const operation = kind === CLAIM_AGENT_INBOX_KIND ? "claim" : "ack";
+      const rateCheck = await checkDeliveryRateLimit(
+        tx,
+        auth,
+        route.workspaceId,
+        agent.principal_id,
+        operation,
+      );
+      if (!rateCheck.allowed) {
+        return rateCheck.result;
+      }
+    }
+
     /**
      * Set only when this request is the SAME caller retrying a renewal whose
      * successor was never delivered. It unlocks two things that are otherwise
@@ -5452,6 +5568,7 @@ async function handleTransaction(
               capabilities: DELIVERY_CAPABILITIES,
               deliveries,
               pending_delivery_count: ledger.pending_delivery_count,
+              terminal_delivery_failure_count: ledger.terminal_delivery_failure_count,
               event_ids: [],
               events: [],
               min_client_version: minClientVersion,
@@ -5690,13 +5807,27 @@ async function handleTransaction(
         });
         return { status: 403, body: { error: "delivery_unavailable" } };
       }
+      if (ledger.terminal_delivery_failure_count > 0) {
+        await tx`
+          INSERT INTO swarm.security_alerts (kind, subject, detail)
+          VALUES (
+            'delivery_attempts_exhausted',
+            'agent',
+            ${tx.json({
+              workspace_id: route.workspaceId,
+              recipient_principal_id: agent.principal_id,
+              terminal_delivery_failure_count: ledger.terminal_delivery_failure_count,
+            })}::jsonb
+          )
+        `;
+      }
       await insertAudit(tx, {
         auth,
         commandKind: kind,
         workspaceId: route.workspaceId,
         streamId: route.streamId,
         outcome: "accepted",
-        detail: ignoredIdentity,
+        detail: `terminal_delivery_failure_count=${ledger.terminal_delivery_failure_count}`,
         hash,
       });
       return {
@@ -5707,6 +5838,7 @@ async function handleTransaction(
           capabilities: DELIVERY_CAPABILITIES,
           deliveries,
           pending_delivery_count: ledger.pending_delivery_count,
+          terminal_delivery_failure_count: ledger.terminal_delivery_failure_count,
           event_ids: [],
           events: [],
           min_client_version: minClientVersion,
@@ -6239,6 +6371,7 @@ async function resolveLedgerRace(error: LedgerRace): Promise<HttpResult> {
           capabilities: DELIVERY_CAPABILITIES,
           deliveries,
           pending_delivery_count: ledger.pending_delivery_count,
+          terminal_delivery_failure_count: ledger.terminal_delivery_failure_count,
           event_ids: [],
           events: [],
           min_client_version: minClientVersion,
@@ -6364,12 +6497,12 @@ async function handlePostRequest(request: Request): Promise<Response> {
       verifiedHuman,
       agentTokenHash,
     );
-    return json(result.status, result.body);
+    return json(result.status, result.body, result.headers);
   } catch (error) {
     if (error instanceof LedgerRace) {
       try {
         const result = await resolveLedgerRace(error);
-        return json(result.status, result.body);
+        return json(result.status, result.body, result.headers);
       } catch (raceError) {
         console.error("command race resolution failed", safeError(raceError));
       }
