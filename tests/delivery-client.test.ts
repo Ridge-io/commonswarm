@@ -16,6 +16,8 @@ import {
 } from "../src/cloud/config.js";
 import {
   DeliveryCommandClient,
+  DELIVERY_COMMAND_ID_PATTERN,
+  DELIVERY_COMMAND_ID_RE,
   DELIVERY_FAILED_TERMINAL_CODES,
   DeliveryHttpError,
   DeliveryProtocolError,
@@ -466,6 +468,40 @@ test("outer relation normalizes absent, hostile, or cross inner relations to out
       return true;
     },
   );
+
+  // 5. Inner same_owner vs outer cross_owner (outer is authoritative)
+  const sameInnerCrossOuter = claimBody({
+    deliveries: [
+      delivery({
+        signal: signal({ sender_owner_relation: "same_owner" }),
+        sender_owner_relation: "cross_owner",
+      }),
+    ],
+  });
+  const client5 = new DeliveryCommandClient(
+    target,
+    capturingFetch([], () => jsonResponse(200, sameInnerCrossOuter)),
+  );
+  const result5 = await client5.claimAgentInbox(claimRequest());
+  assert.equal(result5.deliveries[0]!.senderOwnerRelation, "cross_owner");
+  assert.equal(result5.deliveries[0]!.signal.sender_owner_relation, "cross_owner");
+
+  // 6. Inner same_owner vs outer unknown (outer is authoritative)
+  const sameInnerUnknownOuter = claimBody({
+    deliveries: [
+      delivery({
+        signal: signal({ sender_owner_relation: "same_owner" }),
+        sender_owner_relation: "unknown",
+      }),
+    ],
+  });
+  const client6 = new DeliveryCommandClient(
+    target,
+    capturingFetch([], () => jsonResponse(200, sameInnerUnknownOuter)),
+  );
+  const result6 = await client6.claimAgentInbox(claimRequest());
+  assert.equal(result6.deliveries[0]!.senderOwnerRelation, "unknown");
+  assert.equal(result6.deliveries[0]!.signal.sender_owner_relation, "unknown");
 });
 
 test("strict component-semantic RFC3339 validation rejects non-leap Feb 29 and hour 24", async () => {
@@ -945,24 +981,51 @@ test("ack rejects an echo that does not repeat the requested signal id or outcom
   }
 });
 
+test("command id validator uses unexported private regex authority and exported pattern is string", async () => {
+  // 1. Exported pattern is string
+  assert.equal(typeof DELIVERY_COMMAND_ID_RE, "string");
+  assert.equal(typeof DELIVERY_COMMAND_ID_PATTERN, "string");
+  assert.equal(Object.isFrozen(DELIVERY_COMMAND_ID_RE), true);
+
+  // 2. checkedCommandId uses unexported private validator and cannot be bypassed
+  const client = new DeliveryCommandClient(
+    target,
+    capturingFetch([], () => jsonResponse(200, claimBody())),
+  );
+  await assert.rejects(
+    client.claimAgentInbox(claimRequest({ commandId: "invalid!" })),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.equal(
+        (error as Error).message,
+        "a delivery command id must be 8..72 characters of [A-Za-z0-9_-]",
+      );
+      return true;
+    },
+  );
+});
+
 test("delivery marker present as 0, 2, string, or null rejects; total absence remains false/false/null", async () => {
   const credentials = { kind: "agent" as const, token: TOKEN };
   const malformedMarkers = [0, 2, "1", null, false];
   for (const marker of malformedMarkers) {
-    await assert.rejects(
-      readAgentSignalPage(
-        target,
-        credentials,
-        { workspaceId: WORKSPACE, inbox: true },
-        {
-          fetcher: (async () => jsonResponse(200, {
-            signals: [signal()],
-            capabilities: { delivery_claim: marker },
-          })) as typeof fetch,
-        },
-      ),
-      /malformed delivery capability marker/,
-    );
+    for (const key of ["delivery_claim", "delivery_ack"]) {
+      await assert.rejects(
+        readAgentSignalPage(
+          target,
+          credentials,
+          { workspaceId: WORKSPACE, inbox: true },
+          {
+            fetcher: (async () => jsonResponse(200, {
+              signals: [signal()],
+              capabilities: { [key]: marker },
+            })) as typeof fetch,
+          },
+        ),
+        /malformed delivery capability marker/,
+        `${key}: ${String(marker)}`,
+      );
+    }
   }
 
   const legacy = await readAgentSignalPage(
@@ -1036,21 +1099,23 @@ test("delivery marker present as 0, 2, string, or null rejects; total absence re
     ["string", "3"],
   ];
   for (const [label, count] of malformedCountBodies) {
-    const body: Record<string, unknown> = {
-      signals: [signal()],
-      capabilities: { delivery_claim: 1 },
-    };
-    if (count !== undefined) body.pending_delivery_count = count;
-    await assert.rejects(
-      readAgentSignalPage(
-        target,
-        credentials,
-        { workspaceId: WORKSPACE, inbox: true },
-        { fetcher: (async () => jsonResponse(200, body)) as typeof fetch },
-      ),
-      /malformed pending_delivery_count/,
-      `count ${label}`,
-    );
+    for (const caps of [{ delivery_claim: 1 }, { delivery_ack: 1 }, { delivery_claim: 1, delivery_ack: 1 }]) {
+      const body: Record<string, unknown> = {
+        signals: [signal()],
+        capabilities: caps,
+      };
+      if (count !== undefined) body.pending_delivery_count = count;
+      await assert.rejects(
+        readAgentSignalPage(
+          target,
+          credentials,
+          { workspaceId: WORKSPACE, inbox: true },
+          { fetcher: (async () => jsonResponse(200, body)) as typeof fetch },
+        ),
+        /malformed pending_delivery_count/,
+        `count ${label} for caps ${JSON.stringify(caps)}`,
+      );
+    }
   }
 });
 
