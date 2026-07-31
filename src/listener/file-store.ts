@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
+import { types as utilTypes } from "node:util";
 import {
   readSecureJsonFile,
   writeSecureJsonFile,
@@ -335,7 +336,17 @@ function rejectWrite(): never {
  * an explicit canonical v2 projection so the caller object is never written.
  */
 function serializeEffectRecord(record: ListenerEffectRecord): string {
-  if (!record || typeof record !== "object" || Array.isArray(record)) {
+  if (!record || typeof record !== "object") {
+    rejectWrite();
+  }
+  // Reject any Proxy (including revoked) before any trap-capable reflection:
+  // an ownKeys/getOwnPropertyDescriptor trap can hide a configurable sentinel,
+  // and a throwing trap could surface an attacker-controlled error. isProxy is
+  // the one safe check — it never runs a trap and does not throw on revoke.
+  if (utilTypes.isProxy(record)) {
+    rejectWrite();
+  }
+  if (Array.isArray(record)) {
     rejectWrite();
   }
   const prototype = Object.getPrototypeOf(record);

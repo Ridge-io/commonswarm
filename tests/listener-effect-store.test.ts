@@ -167,6 +167,22 @@ async function assertNoFile(path: string): Promise<void> {
   assert.equal(info, null);
 }
 
+async function assertRejectedGeneric(
+  write: () => Promise<unknown>,
+  ...sentinels: string[]
+): Promise<void> {
+  await assert.rejects(write, (error: Error) => {
+    assert.equal(error.message, "listener effect write rejected");
+    for (const sentinel of sentinels) {
+      assert.ok(
+        !error.message.includes(sentinel),
+        `the rejection must not echo sentinel: ${sentinel}`,
+      );
+    }
+    return true;
+  });
+}
+
 const malformed = /stored listener effect is malformed/;
 
 /** Representative sensitive fields that must never enter an effect record. */
@@ -553,5 +569,72 @@ test("write-boundary failures use one generic message and echo no key or value",
     "listener effect write rejected",
     "listener effect write rejected",
   ]);
+  await assertNoFile(path);
+});
+
+test("a proxy that hides an own extra is rejected with the generic message and no file", async () => {
+  const { store, path } = await forbidStore("cswarm-effect-proxyhide-");
+  const sentinel = "sentinel_bearer_hidden_by_ownkeys";
+  const target = v2AskRow() as unknown as Record<string, unknown>;
+  target.listenerBearer = sentinel;
+  const proxy = new Proxy(target, {
+    ownKeys(t) {
+      return Reflect.ownKeys(t).filter((key) => key !== "listenerBearer");
+    },
+    getOwnPropertyDescriptor(t, key) {
+      if (key === "listenerBearer") return undefined;
+      return Reflect.getOwnPropertyDescriptor(t, key);
+    },
+  });
+  assert.ok(
+    !Reflect.ownKeys(proxy).includes("listenerBearer"),
+    "control: the ownKeys trap genuinely hides the sentinel from reflection",
+  );
+  assert.ok(
+    !JSON.stringify(proxy).includes(sentinel),
+    "control: a naive serialization would erase the hidden sentinel",
+  );
+  await assertRejectedGeneric(
+    () => store.write(proxy as unknown as ListenerEffectRecord),
+    sentinel,
+  );
+  await assertNoFile(path);
+});
+
+test("a proxy reflection trap throwing a sentinel error never runs before rejection", async () => {
+  const { store, path } = await forbidStore("cswarm-effect-proxythrow-");
+  const sentinel = "sentinel_error_c42f";
+  let trapInvoked = false;
+  const proxy = new Proxy(
+    v2AskRow() as unknown as Record<string, unknown>,
+    {
+      getPrototypeOf() {
+        trapInvoked = true;
+        throw new Error(`leaked ${sentinel}`);
+      },
+      ownKeys() {
+        trapInvoked = true;
+        throw new Error(`leaked ${sentinel}`);
+      },
+    },
+  );
+  await assertRejectedGeneric(
+    () => store.write(proxy as unknown as ListenerEffectRecord),
+    sentinel,
+  );
+  assert.equal(trapInvoked, false, "the isProxy gate must reject before any trap runs");
+  await assertNoFile(path);
+});
+
+test("a revoked proxy is rejected with the generic message and no file", async () => {
+  const { store, path } = await forbidStore("cswarm-effect-proxyrevoke-");
+  const { proxy, revoke } = Proxy.revocable(
+    v2AskRow() as unknown as Record<string, unknown>,
+    {},
+  );
+  revoke();
+  await assertRejectedGeneric(
+    () => store.write(proxy as unknown as ListenerEffectRecord),
+  );
   await assertNoFile(path);
 });
