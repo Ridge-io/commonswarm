@@ -658,6 +658,74 @@ test("missing, fractional, negative, or unsafe terminal failure count rejects; v
   assert.equal(posRes.terminalDeliveryFailureCount, 4);
 });
 
+test("claim rejects all malformed response envelopes, delivery rows, and count bounds in causal regression loop", async () => {
+  const rejections: Array<[string, Record<string, unknown>]> = [
+    ["status rejected", claimBody({ status: "rejected" })],
+    ["ok false", claimBody({ ok: false })],
+    ["capabilities missing", claimBody({ capabilities: undefined })],
+    ["capabilities not an object", claimBody({ capabilities: "not-an-object" })],
+    ["delivery_claim marker off", claimBody({
+      capabilities: { delivery_claim: 0, delivery_ack: 1, sender_owner_relation: 1 },
+    })],
+    ["delivery_ack marker off", claimBody({
+      capabilities: { delivery_claim: 1, delivery_ack: 0, sender_owner_relation: 1 },
+    })],
+    ["sender_owner_relation marker off", claimBody({
+      capabilities: { delivery_claim: 1, delivery_ack: 1, sender_owner_relation: 0 },
+    })],
+    ["deliveries missing", claimBody({ deliveries: undefined })],
+    ["deliveries not an array", claimBody({ deliveries: "nope" })],
+    ["malformed delivery row", claimBody({ deliveries: ["not-an-object"] })],
+    ["malformed lease id", claimBody({
+      deliveries: [delivery({ lease_id: "not-a-uuid" })],
+    })],
+    ["malformed leased_until", claimBody({
+      deliveries: [delivery({ leased_until: "tomorrow-ish" })],
+    })],
+    ["malformed relation", claimBody({
+      deliveries: [delivery({ sender_owner_relation: "enemy" })],
+    })],
+    ["signal workspace mismatch", claimBody({
+      deliveries: [delivery({ signal: signal({ workspace_id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb" }) })],
+    })],
+    ["signal recipient mismatch", claimBody({
+      deliveries: [delivery({ signal: signal({ to_agent: AGENT.replace("2", "9") }) })],
+    })],
+    ["non-direct signal kind", claimBody({
+      deliveries: [delivery({ signal: signal({ kind: "working-on" }) })],
+    })],
+    ["malformed signal row", claimBody({
+      deliveries: [{ lease_id: LEASE, leased_until: FUTURE, sender_owner_relation: "same_owner" }],
+    })],
+    ["pending count missing", claimBody({ pending_delivery_count: undefined })],
+    ["negative pending count", claimBody({ pending_delivery_count: -1 })],
+    ["fractional pending count", claimBody({ pending_delivery_count: 1.5 })],
+    ["unsafe pending count", claimBody({ pending_delivery_count: 9_007_199_254_740_992 })],
+    ["string pending count", claimBody({ pending_delivery_count: "1" })],
+    ["pending count smaller than deliveries", claimBody({ pending_delivery_count: 0 })],
+    ["terminal failure count missing", claimBody({ terminal_delivery_failure_count: undefined })],
+    ["negative terminal failure count", claimBody({ terminal_delivery_failure_count: -1 })],
+    ["fractional terminal failure count", claimBody({ terminal_delivery_failure_count: 1.5 })],
+    ["unsafe terminal failure count", claimBody({ terminal_delivery_failure_count: 9_007_199_254_740_992 })],
+    ["string terminal failure count", claimBody({ terminal_delivery_failure_count: "0" })],
+  ];
+
+  for (const [label, body] of rejections) {
+    const client = new DeliveryCommandClient(
+      target,
+      capturingFetch([], () => jsonResponse(200, body)),
+    );
+    await assert.rejects(
+      client.claimAgentInbox(claimRequest()),
+      (error: unknown) => {
+        assert.ok(error instanceof DeliveryProtocolError, `${label}: expected DeliveryProtocolError, got ${String(error)}`);
+        return true;
+      },
+      label,
+    );
+  }
+});
+
 test("vocabularies are unexported Sets backed by exported frozen tuples, resisting prototype add bypass", () => {
   // 1. Exported tuples are frozen arrays, not Sets
   assert.equal(Array.isArray(DELIVERY_SERVER_ERROR_CODES), true);
