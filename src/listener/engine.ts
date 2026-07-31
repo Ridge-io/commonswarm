@@ -152,10 +152,12 @@ function failureCode(error: unknown, fallback: string): string {
   return fallback;
 }
 
+/** A durable version-2 ask effect: signalKind is closed to asks here. */
 function newRecord(signal: SignalRecord, now: number): ListenerEffectRecord {
   return {
-    version: 1,
+    version: 2,
     signalId: signal.id.toLowerCase(),
+    signalKind: "ask",
     effectOrdinal: 0,
     commandId: listenerReplyCommandId(signal.id),
     askBody: signal.body,

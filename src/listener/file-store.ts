@@ -5,10 +5,12 @@ import {
   readSecureJsonFile,
   writeSecureJsonFile,
 } from "../cloud/storage.js";
+import type { SenderOwnerRelation } from "../cloud/command-client.js";
 import type {
   ListenerEffectRecord,
   ListenerEffectState,
   ListenerEffectStore,
+  ListenerSignalKind,
 } from "./types.js";
 
 const UUID_RE =
@@ -23,8 +25,10 @@ const STATES = new Set<ListenerEffectState>([
   "done",
   "expired",
   "failed",
+  "observed",
 ]);
 const RELATIONS = new Set(["same_owner", "cross_owner", "unknown"]);
+const SIGNAL_KINDS = new Set<ListenerSignalKind>(["ask", "note"]);
 
 /** Default secure state root for long-lived listener metadata and effects. */
 export function defaultListenerStateDirectory(): string {
@@ -63,7 +67,17 @@ function nullableString(value: unknown, max: number): value is string | null {
     (typeof value === "string" && value.length <= max);
 }
 
-function parseEffect(raw: string, expectedId: string): ListenerEffectRecord {
+/**
+ * Parse and validate one stored effect in memory. Version-1 ask files are
+ * upcast to the version-2 shape with `signalKind: "ask"` — the durable file
+ * is never rewritten on read, and the upcast only adds the discriminator.
+ * Cross-field invariants fail closed: a note can never carry reply/post
+ * effects, `observed` is terminal and note-only, and version 1 is ask-only.
+ */
+export function parseListenerEffectRecord(
+  raw: string,
+  expectedId: string,
+): ListenerEffectRecord {
   let value: unknown;
   try {
     value = JSON.parse(raw);
@@ -75,10 +89,28 @@ function parseEffect(raw: string, expectedId: string): ListenerEffectRecord {
   }
   const row = value as Record<string, unknown>;
   if (
-    row.version !== 1 ||
+    typeof row.version !== "number" ||
+    (row.version !== 1 && row.version !== 2) ||
     typeof row.signalId !== "string" ||
     row.signalId.toLowerCase() !== expectedId ||
-    !UUID_RE.test(row.signalId) ||
+    !UUID_RE.test(row.signalId)
+  ) {
+    throw new Error("stored listener effect is malformed");
+  }
+  if (row.version === 1) {
+    // A real version-1 file never carried `signalKind`; it is ask-only, and
+    // `observed` did not exist then. Reject both so a foreign/note-shaped row
+    // cannot masquerade as a v1 ask.
+    if ("signalKind" in row || row.state === "observed") {
+      throw new Error("stored listener effect is malformed");
+    }
+    return upcastV1Ask(row);
+  }
+  return parseV2Record(row);
+}
+
+function upcastV1Ask(row: Record<string, unknown>): ListenerEffectRecord {
+  if (
     row.effectOrdinal !== 0 ||
     typeof row.commandId !== "string" ||
     !COMMAND_ID_RE.test(row.commandId) ||
@@ -105,7 +137,119 @@ function parseEffect(raw: string, expectedId: string): ListenerEffectRecord {
   if (row.replySignalId !== null && !UUID_RE.test(row.replySignalId)) {
     throw new Error("stored listener effect is malformed");
   }
+  // Preserve every v1 value exactly; only the schema version and the new
+  // discriminator change, so the durable ask body/command identity is intact.
+  return {
+    ...(row as unknown as Omit<ListenerEffectRecord, "version" | "signalKind">),
+    version: 2,
+    signalKind: "ask",
+  } as ListenerEffectRecord;
+}
+
+function parseV2Record(row: Record<string, unknown>): ListenerEffectRecord {
+  const signalKind = row.signalKind;
+  if (
+    typeof signalKind !== "string" ||
+    !SIGNAL_KINDS.has(signalKind as ListenerSignalKind) ||
+    row.effectOrdinal !== 0 ||
+    typeof row.askBody !== "string" ||
+    row.askBody.length < 1 ||
+    row.askBody.length > 2_000 ||
+    typeof row.askUntil !== "string" ||
+    !Number.isFinite(Date.parse(row.askUntil)) ||
+    typeof row.senderOwnerRelation !== "string" ||
+    !RELATIONS.has(row.senderOwnerRelation) ||
+    typeof row.state !== "string" ||
+    !STATES.has(row.state as ListenerEffectState) ||
+    !integer(row.promptAttempts) ||
+    !integer(row.postAttempts) ||
+    !nullableString(row.replyBody, 2_000) ||
+    typeof row.replyTruncated !== "boolean" ||
+    !nullableString(row.replySignalId, 64) ||
+    !nullableString(row.failureCode, 96) ||
+    typeof row.updatedAt !== "string" ||
+    !Number.isFinite(Date.parse(row.updatedAt))
+  ) {
+    throw new Error("stored listener effect is malformed");
+  }
+  if (signalKind === "note") {
+    // A direct note never enters the model: a terminal observed effect with
+    // zero prompt/post attempts, no reply body or reply signal, and no reply
+    // command id. Anything else is an invalid mixed state and fails closed.
+    if (
+      typeof row.commandId !== "string" ||
+      row.commandId !== "" ||
+      row.state !== "observed" ||
+      row.promptAttempts !== 0 ||
+      row.postAttempts !== 0 ||
+      row.replyBody !== null ||
+      row.replyTruncated !== false ||
+      row.replySignalId !== null ||
+      row.failureCode !== null
+    ) {
+      throw new Error("stored listener effect is malformed");
+    }
+  } else {
+    // Asks keep the deterministic reply command id and never carry the
+    // note-only observed state.
+    if (
+      typeof row.commandId !== "string" ||
+      !COMMAND_ID_RE.test(row.commandId) ||
+      row.state === "observed"
+    ) {
+      throw new Error("stored listener effect is malformed");
+    }
+    if (row.replySignalId !== null && !UUID_RE.test(row.replySignalId)) {
+      throw new Error("stored listener effect is malformed");
+    }
+  }
   return row as unknown as ListenerEffectRecord;
+}
+
+/**
+ * The terminal v2 effect a direct note receives before server ack in the
+ * later claim/ack runtime: causal durability with zero model or reply effects.
+ */
+export function newObservedNoteRecord(input: {
+  signalId: string;
+  body: string;
+  until: string;
+  senderOwnerRelation: SenderOwnerRelation;
+  updatedAt: string;
+}): ListenerEffectRecord {
+  if (!UUID_RE.test(input.signalId)) {
+    throw new Error("listener note signal id must be a UUID");
+  }
+  if (input.body.length < 1 || input.body.length > 2_000) {
+    throw new Error("listener note body is invalid");
+  }
+  if (!Number.isFinite(Date.parse(input.until))) {
+    throw new Error("listener note until is not a timestamp");
+  }
+  if (!RELATIONS.has(input.senderOwnerRelation)) {
+    throw new Error("listener note sender relation is invalid");
+  }
+  if (!Number.isFinite(Date.parse(input.updatedAt))) {
+    throw new Error("listener note updatedAt is not a timestamp");
+  }
+  return {
+    version: 2,
+    signalId: input.signalId.toLowerCase(),
+    signalKind: "note",
+    effectOrdinal: 0,
+    commandId: "",
+    askBody: input.body,
+    askUntil: input.until,
+    senderOwnerRelation: input.senderOwnerRelation,
+    state: "observed",
+    promptAttempts: 0,
+    postAttempts: 0,
+    replyBody: null,
+    replyTruncated: false,
+    replySignalId: null,
+    failureCode: null,
+    updatedAt: input.updatedAt,
+  };
 }
 
 /** One secure atomic file per immutable signal effect. */
@@ -133,13 +277,13 @@ export class FileListenerEffectStore implements ListenerEffectStore {
       join(this.effectsDirectory, `${id}.json`),
       MAX_EFFECT_BYTES,
     );
-    return raw === null ? null : parseEffect(raw, id);
+    return raw === null ? null : parseListenerEffectRecord(raw, id);
   }
 
   async write(record: ListenerEffectRecord): Promise<void> {
     const id = this.checkedId(record.signalId);
     const serialized = JSON.stringify(record);
-    parseEffect(serialized, id);
+    parseListenerEffectRecord(serialized, id);
     if (Buffer.byteLength(serialized, "utf8") > MAX_EFFECT_BYTES) {
       throw new Error("listener effect is too large");
     }
