@@ -6740,6 +6740,8 @@ test("durable-delivery: active-lease TTL race; backlog >100 oldest-first; RLS/gr
       UPDATE swarm.signal_deliveries
       SET acked_at = statement_timestamp() - interval '29 days',
           ack_outcome = 'observed',
+          last_lease_id = COALESCE(last_lease_id, gen_random_uuid()),
+          last_leased_by = COALESCE(last_leased_by, gen_random_uuid()),
           lease_id = NULL, leased_by = NULL, leased_until = NULL,
           delivered_at = COALESCE(delivered_at, statement_timestamp() - interval '29 days'),
           updated_at = statement_timestamp()

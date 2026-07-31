@@ -60,6 +60,16 @@ CREATE TABLE swarm.signal_deliveries (
   CHECK (
     last_error_code IS NULL
     OR last_error_code ~ '^[a-z][a-z0-9_]{0,63}$'
+  ),
+  CHECK (num_nonnulls(last_lease_id, last_leased_by) IN (0, 2)),
+  CHECK (
+    acked_at IS NOT NULL
+    OR (last_lease_id IS NULL AND last_leased_by IS NULL)
+  ),
+  CHECK (
+    acked_at IS NULL
+    OR ack_outcome = 'expired'
+    OR (last_lease_id IS NOT NULL AND last_leased_by IS NOT NULL)
   )
 );
 
