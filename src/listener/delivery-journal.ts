@@ -18,7 +18,60 @@ const UUID_RE =
 const COMMAND_ID_RE = /^[A-Za-z0-9_-]{8,72}$/;
 const MAX_JOURNAL_BYTES = 8192;
 const ISO_8601_RE =
-  /^\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/;
+  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|([+-]\d{2}):(\d{2}))$/;
+
+function isLeapYear(year: number): boolean {
+  return (year % 4 === 0 && year % 100 !== 0) || (year % 400 === 0);
+}
+
+function daysInMonth(year: number, month: number): number {
+  switch (month) {
+    case 1: case 3: case 5: case 7: case 8: case 10: case 12:
+      return 31;
+    case 4: case 6: case 9: case 11:
+      return 30;
+    case 2:
+      return isLeapYear(year) ? 29 : 28;
+    default:
+      return 0;
+  }
+}
+
+function isValidIsoTimestamp(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  const match = ISO_8601_RE.exec(value);
+  if (!match) return false;
+
+  const year = parseInt(match[1]!, 10);
+  const month = parseInt(match[2]!, 10);
+  const day = parseInt(match[3]!, 10);
+  const hour = parseInt(match[4]!, 10);
+  const minute = parseInt(match[5]!, 10);
+  const second = parseInt(match[6]!, 10);
+
+  if (
+    month < 1 || month > 12 ||
+    day < 1 || day > daysInMonth(year, month) ||
+    hour < 0 || hour > 23 ||
+    minute < 0 || minute > 59 ||
+    second < 0 || second > 59
+  ) {
+    return false;
+  }
+
+  if (match[7] !== undefined && match[8] !== undefined) {
+    const offsetHour = Math.abs(parseInt(match[7], 10));
+    const offsetMin = parseInt(match[8], 10);
+    if (offsetHour > 23 || offsetMin < 0 || offsetMin > 59) {
+      return false;
+    }
+  }
+
+  const ms = Date.parse(value);
+  if (!Number.isFinite(ms)) return false;
+
+  return true;
+}
 
 export interface ListenerActiveClaim {
   phase: "claim_pending" | "leased" | "ack_pending";
@@ -173,24 +226,6 @@ export function ackCommandId(leaseId: string): string {
   return id;
 }
 
-function isValidIsoTimestamp(value: unknown): value is string {
-  if (typeof value !== "string") return false;
-  if (!ISO_8601_RE.test(value)) return false;
-  const ms = Date.parse(value);
-  if (!Number.isFinite(ms)) return false;
-
-  const d = new Date(ms);
-  const year = parseInt(value.slice(0, 4), 10);
-  const month = parseInt(value.slice(5, 7), 10);
-  const day = parseInt(value.slice(8, 10), 10);
-
-  if (value.endsWith("Z")) {
-    if (d.getUTCFullYear() !== year) return false;
-    if (d.getUTCMonth() + 1 !== month) return false;
-    if (d.getUTCDate() !== day) return false;
-  }
-  return true;
-}
 
 function assertPlainObject(
   input: unknown,

@@ -1116,3 +1116,161 @@ test("13. TOCTOU deferred-read snapshot controls for open, recordLease, and prep
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("14. Causal defect table for numeric offset timestamps across all record fields and valid offset controls", async () => {
+  const dir = await makeTempDir();
+  try {
+    // 14a. Causal defect reproduction across all 5 timestamp fields with invalid offset timestamps
+    const defectCases = [
+      { field: "updatedAt", invalidOffsetTs: "2025-02-29T12:00:00+01:00" },
+      { field: "claimCreatedAt", invalidOffsetTs: "2026-02-30T12:00:00-05:00" },
+      { field: "claimLastAttemptAt", invalidOffsetTs: "2025-02-29T12:00:00+01:00" },
+      { field: "leasedUntil", invalidOffsetTs: "2030-02-30T12:00:00+01:00" },
+      { field: "preparedAt", invalidOffsetTs: "2025-02-29T12:00:00+01:00" },
+    ];
+
+    for (const c of defectCases) {
+      const fullRecord: any = {
+        version: 1,
+        workspaceId: WORKSPACE_ID,
+        principalId: PRINCIPAL_ID,
+        listenerInstanceId: INSTANCE_ID_1,
+        nextClaimOrdinal: 1,
+        active: {
+          phase: "ack_pending",
+          claimOrdinal: 0,
+          claimCommandId: claimCommandId(INSTANCE_ID_1, 0),
+          claimCreatedAt: "2026-07-31T12:00:00.000Z",
+          claimLastAttemptAt: "2026-07-31T12:01:00.000Z",
+          signalId: SIGNAL_ID,
+          leaseId: LEASE_ID,
+          leasedUntil: "2026-07-31T13:00:00.000Z",
+          ack: {
+            commandId: ackCommandId(LEASE_ID),
+            outcome: "replied",
+            lastErrorCode: null,
+            preparedAt: "2026-07-31T12:02:00.000Z",
+          },
+        },
+        updatedAt: "2026-07-31T12:00:00.000Z",
+      };
+
+      if (c.field === "updatedAt") {
+        fullRecord.updatedAt = c.invalidOffsetTs;
+      } else if (c.field === "claimCreatedAt") {
+        fullRecord.active.claimCreatedAt = c.invalidOffsetTs;
+      } else if (c.field === "claimLastAttemptAt") {
+        fullRecord.active.claimLastAttemptAt = c.invalidOffsetTs;
+      } else if (c.field === "leasedUntil") {
+        fullRecord.active.leasedUntil = c.invalidOffsetTs;
+      } else if (c.field === "preparedAt") {
+        fullRecord.active.ack.preparedAt = c.invalidOffsetTs;
+      }
+
+      assert.throws(
+        () => parseJournalRecord(JSON.stringify(fullRecord), WORKSPACE_ID, PRINCIPAL_ID),
+        (err: Error) => err.message === "stored delivery journal is malformed",
+        `Field ${c.field} with invalid offset timestamp ${c.invalidOffsetTs} must be rejected`,
+      );
+    }
+
+    // 14b. Valid controls for leap-day Z, positive offset, and negative offset
+    const validLeapDayTimestamps = [
+      "2024-02-29T12:00:00Z",
+      "2024-02-29T12:00:00+01:00",
+      "2024-02-29T12:00:00-05:00",
+    ];
+
+    for (const validTs of validLeapDayTimestamps) {
+      const validLeapRecord: any = {
+        version: 1,
+        workspaceId: WORKSPACE_ID,
+        principalId: PRINCIPAL_ID,
+        listenerInstanceId: INSTANCE_ID_1,
+        nextClaimOrdinal: 0,
+        active: null,
+        updatedAt: validTs,
+      };
+      assert.doesNotThrow(
+        () => parseJournalRecord(JSON.stringify(validLeapRecord), WORKSPACE_ID, PRINCIPAL_ID),
+        `Valid leap-day timestamp ${validTs} must be accepted`,
+      );
+    }
+
+    // 14c. Valid controls for ordinary timestamps with Z, +00:00, and a nonzero offset
+    const validOrdinaryTimestamps = [
+      "2026-07-31T12:00:00Z",
+      "2026-07-31T12:00:00+00:00",
+      "2026-07-31T12:00:00-05:00",
+      "2026-07-31T12:00:00+02:00",
+    ];
+
+    for (const validTs of validOrdinaryTimestamps) {
+      const validOrdRecord: any = {
+        version: 1,
+        workspaceId: WORKSPACE_ID,
+        principalId: PRINCIPAL_ID,
+        listenerInstanceId: INSTANCE_ID_1,
+        nextClaimOrdinal: 0,
+        active: null,
+        updatedAt: validTs,
+      };
+      assert.doesNotThrow(
+        () => parseJournalRecord(JSON.stringify(validOrdRecord), WORKSPACE_ID, PRINCIPAL_ID),
+        `Valid timestamp ${validTs} must be accepted`,
+      );
+    }
+
+    // 14d. Transition methods using valid offset timestamps where surrounding chronology is valid
+    const tInit = "2026-07-31T12:00:00+02:00";
+    const tReserve = "2026-07-31T12:01:00+02:00";
+    const tAttempt = "2026-07-31T12:02:00+02:00";
+    const tLeaseUntil = "2026-07-31T13:00:00+02:00";
+    const tAckPrepared = "2026-07-31T12:05:00+02:00";
+    const tClear = "2026-07-31T12:10:00+02:00";
+
+    const { journal } = await openListenerDeliveryJournal({
+      profileId: "test-profile-offset-transitions",
+      workspaceId: WORKSPACE_ID,
+      principalId: PRINCIPAL_ID,
+      proposedListenerInstanceId: INSTANCE_ID_1,
+      stateDirectory: dir,
+      now: tInit,
+    });
+
+    const recInit = await journal.read();
+    assert.equal(recInit.updatedAt, tInit);
+
+    const claim = await journal.reserveClaim(tReserve);
+    assert.equal(claim.claimCreatedAt, tReserve);
+
+    await journal.recordClaimAttempt(tAttempt);
+    const recAttempt = await journal.read();
+    assert.equal(recAttempt.active?.claimLastAttemptAt, tAttempt);
+
+    await journal.recordLease({
+      signalId: SIGNAL_ID,
+      leaseId: LEASE_ID,
+      leasedUntil: tLeaseUntil,
+      now: tAttempt,
+    });
+    const recLease = await journal.read();
+    assert.equal(recLease.active?.leasedUntil, tLeaseUntil);
+
+    await journal.prepareAck({
+      outcome: "replied",
+      lastErrorCode: null,
+      preparedAt: tAckPrepared,
+      now: tAckPrepared,
+    });
+    const recAck = await journal.read();
+    assert.equal(recAck.active?.ack?.preparedAt, tAckPrepared);
+
+    await journal.clearActive(tClear);
+    const recClear = await journal.read();
+    assert.equal(recClear.active, null);
+    assert.equal(recClear.updatedAt, tClear);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
