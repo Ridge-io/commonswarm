@@ -1,36 +1,64 @@
-# RED run — on-disk deletion of ONE version surface, gate red — 2026-07-31
+# RED runs — two causal controls, gate + probe go red, byte-identical restores — 2026-07-31
 
-Demonstrates the four-surface predicate is not vacuous at the artifact level: with three
-surfaces left byte-intact, deleting only the AfterInstall output line in the BUILT
-`site/dist/download/index.html` turns the gate red. (The four individual deletion
-controls live inside the gate itself — see the green run and the test file.)
+Excerpts. Both controls mutate a BUILT artifact on disk; each mutation is proven to have
+been fully reversed with `cmp` while both the restored file and its backup exist. No
+source file is ever modified.
 
-## mutate the built /download (only the AfterInstall output line)
+## RED 1 — deleting one of the four /download version surfaces turns the gate red
 
-    perl -0pi -e 's#<span class="ui-code__line">cswarm 0\.1\.4 \(protocol 0\.1\.0\)</span>#<span class="ui-code__line"></span>#' site/dist/download/index.html
+With three surfaces left byte-intact on the BUILT `site/dist/download/index.html`, delete
+only the AfterInstall output line:
+
+    $ perl -0pi -e 's#<span class="ui-code__line">cswarm 0\.1\.4 \(protocol 0\.1\.0\)</span>#<span class="ui-code__line"></span>#' \
+      site/dist/download/index.html
 
     afterinstall output count -> 0   (removed)
     footer line count         -> 1   (still present)
     visible pin + copy payload      (still present — untouched)
 
-## same gate, standalone, against the mutated artifact
+Same gate, standalone, against the mutated artifact:
 
-    node --import tsx --test site/scripts/download-version.test.mjs
+    $ node --import tsx --test site/scripts/download-version.test.mjs
     exit=1
     ℹ tests 6
     ℹ pass  0
     ℹ fail  6
 
-Every green-path assertion now fails because the page is missing one of the four surfaces.
+Restore, proven byte-identical while both files exist:
 
-## restore, proven byte-identical while both files exist
+    $ cp /tmp/ev-dl-backup.html site/dist/download/index.html
+    $ cmp site/dist/download/index.html /tmp/ev-dl-backup.html   -> identical (cmp exit 0)
+    $ sha256sum site/dist/download/index.html
+    17998fb01cd8af66104a47a3527e361b791945a787dca8521e58774a923a5aa7  site/dist/download/index.html
 
-    cp /tmp/dl-backup.html site/dist/download/index.html
-    cmp site/dist/download/index.html /tmp/dl-backup.html   -> identical (cmp exits 0)
-    sha256sum site/dist/download/index.html                 -> 17998fb01cd8af66104a47a3527e361b791945a787dca8521e58774a923a5aa7
+Gate rerun against the restored artifact:
 
-## gate rerun against the restored artifact
+    exit=0; ℹ tests 6; ℹ pass 6; ℹ fail 0
 
-    ℹ tests 6
-    ℹ pass  6
-    ℹ fail  0
+## RED 2 — a forbidden sentinel injected into an emitted bundle turns the rg probe red
+
+The discriminating sentinel probe (green log) must be able to fail. Inject
+`build:command-core` into a real emitted browser bundle, probe, restore, re-probe:
+
+    target bundle: site/dist/_astro/LiveDashboard.astro_astro_type_script_index_0_lang.J5bGi8lo.js
+    $ cp <bundle> /tmp/ev-bundle-backup.js
+    backup sha256: 2ad304bafa7eb2af21c9d0a9ce111e745597f81f28f19fd22039c357f74fb56f
+    $ printf '\n/*EV-PROBE*/(0,console.log)("build:command-core");' >> <bundle>
+
+    probe after injection:
+    $ rg -l -e 'build:command-core' -e 'test:p1-server' -e 'node:crypto' site/dist/_astro --glob '*.js' | wc -l
+    1                <- RED: the probe finds the injected sentinel
+
+Restore, proven byte-identical:
+
+    $ cp /tmp/ev-bundle-backup.js <bundle>
+    $ cmp <bundle> /tmp/ev-bundle-backup.js               -> identical (cmp exit 0)
+    sha256 restored: 2ad304bafa7eb2af21c9d0a9ce111e745597f81f28f19fd22039c357f74fb56f
+
+    re-probe:
+    $ rg -l -e 'build:command-core' -e 'test:p1-server' -e 'node:crypto' site/dist/_astro --glob '*.js' | wc -l
+    0                <- GREEN again
+
+The rg probe therefore discriminates: 0 on the clean build, 1 on an injected sentinel,
+0 after a byte-identical restore. The superseded `grep -c` form (literal `|`) could not
+fail and is not evidence.
