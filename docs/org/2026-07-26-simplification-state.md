@@ -197,7 +197,7 @@ still built on the retired authority framing. See the vocabulary table in
   `install.sh`'s default target 404s.~~ The missing repository still does not exist, but it
   is no longer the default and the blocker is **dead**. `install.sh` now defaults to public
   `Ridge-io/cloud-swarm`; `https://commonswarm.com/install.sh` installs the checksummed
-  `cswarm 0.1.3` release. `CSWARM_BASE_URL` remains the test override.
+  `cswarm 0.1.4` release. `CSWARM_BASE_URL` remains the test override.
 - **The name `coswarm` collides** with a shipping self-hosted PaaS that owns `coswarm.dev`.
   **RESOLVED 2026-07-27:** the operator renamed the product to **CommonSwarm**, the binary
   to **`cswarm`**, and the domain to `commonswarm.com`.

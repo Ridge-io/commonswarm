@@ -1,7 +1,8 @@
 # Agent receive MVP
 
 **Status:** v0.1.2 blocking-receive baseline, v0.1.3 resilient host-neutral
-stream, and v0.1.4 durable Grok ACP listener release candidate, 2026-07-30
+stream, and v0.1.4 durable Grok ACP listener released and production-verified,
+2026-07-30
 **Owner:** Lead7
 **Supersedes:** `P3-1-SIGNALS-BRIEF.md` only where that brief says
 agent-principal targeting is out of scope and an agent inbox is its owner's

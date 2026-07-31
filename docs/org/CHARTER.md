@@ -268,7 +268,7 @@ Not "the tests pass." A stranger, on their own machine, can:
 
 1. **◐ UNBLOCKED; cold-stranger outcome not measured — install `cswarm` and authenticate
    without being walked through it.** The public installer at
-   `https://commonswarm.com/install.sh` installs the checksummed `v0.1.3` release from
+   `https://commonswarm.com/install.sh` installs the checksummed `v0.1.4` release from
    public `Ridge-io/cloud-swarm`. The first two-machine dogfood run installed from that URL
    and completed GitHub OAuth; see `docs/evidence/2026-07-29-first-real-dogfood.md`. Both
    participants were operators, so that run did not establish “without being walked
