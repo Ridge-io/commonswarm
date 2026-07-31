@@ -13,8 +13,10 @@ import { cloudTarget } from "../../src/cloud/config.js";
 import {
   askWaitJsonPayload,
   BoundedSignalIdSet,
+  followHttpDetails,
   formatFollowFrame,
   isFatalFollowError,
+  isFollowCredentialFailure,
   isRetryableFollowError,
   nextFollowBackoffMs,
   nextWaitSleepMs,
@@ -26,6 +28,7 @@ import {
   resolveSignalRecipient,
   runInboxFollow,
   SIGNAL_FOLLOW_POLL_MS,
+  SIGNAL_FOLLOW_POST_EMIT_MS,
   SIGNAL_READ_TIMEOUT_MS,
   SIGNAL_WAIT_POLL_MS,
   SignalHttpError,
@@ -331,8 +334,12 @@ test("ask wait JSON returns ask plus reply or explicit timed_out success", () =>
 // ---------------------------------------------------------------------------
 
 test("follow backoff is exponential with jitter and respects Retry-After", () => {
-  assert.ok(SIGNAL_FOLLOW_POLL_MS > SIGNAL_WAIT_POLL_MS || SIGNAL_FOLLOW_POLL_MS >= 1_000);
-  assert.ok(SIGNAL_FOLLOW_POLL_MS >= 1_000, "follow poll must not be faster than 1Hz");
+  assert.ok(
+    SIGNAL_FOLLOW_POLL_MS > SIGNAL_WAIT_POLL_MS,
+    "follow idle poll must be slower than the wait path's 1Hz",
+  );
+  assert.ok(SIGNAL_FOLLOW_POST_EMIT_MS > 0);
+  assert.ok(SIGNAL_FOLLOW_POST_EMIT_MS < SIGNAL_FOLLOW_POLL_MS);
   // Fixed random = 0.5 => jitter factor 0.75 on the exponential base.
   assert.equal(nextFollowBackoffMs(1, null, () => 0.5), 375);
   assert.equal(nextFollowBackoffMs(2, null, () => 0.5), 750);
@@ -566,14 +573,13 @@ test("follow removes its abort listener after every completed idle poll", async 
 test("follow secret/credential absence never emits ready", async () => {
   const frames: FollowFrame[] = [];
   const secretMissing = new Error("agent credential secret is absent");
+  assert.equal(isFollowCredentialFailure(secretMissing), true);
   const stop = await runInboxFollow({
     workspaceId: WORKSPACE,
     now: () => 1_700_000_000_000,
     sleep: async () => {
       throw new Error("sleep must not run when secret is absent");
     },
-    isCredentialFailure: (error) =>
-      error instanceof Error && /secret is absent/.test(error.message),
     arm: async () => {
       throw secretMissing;
     },
@@ -584,7 +590,98 @@ test("follow secret/credential absence never emits ready", async () => {
   assert.equal(stop.error, secretMissing);
 });
 
-test("readSignals surfaces typed HTTP status for follow classification", async () => {
+test("follow cancels during retry backoff and clears the delay timer", async () => {
+  const frames: FollowFrame[] = [];
+  const controller = new AbortController();
+  let arms = 0;
+  let sleeps = 0;
+  const started = Date.now();
+  const stop = await runInboxFollow({
+    workspaceId: WORKSPACE,
+    now: () => 1_700_000_000_000,
+    random: () => 0,
+    signal: controller.signal,
+    arm: async () => {
+      arms += 1;
+      if (arms === 1) return [];
+      // After ready, a long Retry-After would hang if cancel did not clear timers.
+      throw new SignalHttpError(429, 30_000);
+    },
+    sleep: async (ms) => {
+      sleeps += 1;
+      // First sleep is the empty idle rearm; second is the 429 backoff.
+      if (sleeps >= 2 || ms >= 30_000) controller.abort();
+    },
+    emit: (frame) => frames.push(frame),
+  });
+  const elapsed = Date.now() - started;
+  assert.equal(stop.reason, "cancelled");
+  assert.equal(frames[0]?.type, "ready");
+  assert.ok(frames.some((f) => f.type === "retrying"));
+  assert.ok(
+    elapsed < 5_000,
+    `cancel during backoff must not wait out Retry-After; elapsed ${elapsed}ms`,
+  );
+});
+
+test("follow recovers from 429 using Retry-After delay and rearm", async () => {
+  const frames: FollowFrame[] = [];
+  const sleeps: number[] = [];
+  let arms = 0;
+  const controller = new AbortController();
+  const stop = await runInboxFollow({
+    workspaceId: WORKSPACE,
+    now: () => 1_700_000_000_000,
+    random: () => 0,
+    signal: controller.signal,
+    sleep: async (ms) => {
+      sleeps.push(ms);
+    },
+    arm: async () => {
+      arms += 1;
+      if (arms === 1) return [];
+      if (arms === 2) throw new SignalHttpError(429, 5_000);
+      if (arms === 3) return [row()];
+      controller.abort();
+      return [];
+    },
+    emit: (frame) => frames.push(frame),
+  });
+  assert.equal(stop.reason, "cancelled");
+  assert.equal(frames[0]?.type, "ready");
+  const retry = frames.find((f) => f.type === "retrying");
+  assert.ok(retry && retry.type === "retrying");
+  assert.equal(retry.reason, "http_429");
+  assert.equal(retry.delay_ms, 5_000);
+  assert.ok(sleeps.includes(5_000));
+  assert.ok(frames.some((f) => f.type === "signal"));
+});
+
+test("follow rearm after signal uses post-emit spacing not zero delay", async () => {
+  const sleeps: number[] = [];
+  let arms = 0;
+  const controller = new AbortController();
+  await runInboxFollow({
+    workspaceId: WORKSPACE,
+    now: () => 1_700_000_000_000,
+    postEmitMs: 40,
+    pollMs: 200,
+    signal: controller.signal,
+    sleep: async (ms) => {
+      sleeps.push(ms);
+      if (arms >= 2) controller.abort();
+    },
+    arm: async () => {
+      arms += 1;
+      return arms === 1 ? [row()] : [];
+    },
+    emit: () => {},
+  });
+  assert.ok(sleeps.includes(40), `expected post-emit delay; sleeps=${sleeps.join(",")}`);
+  assert.ok(!sleeps.includes(0));
+});
+
+test("readSignals keeps plain Error taxonomy while carrying Retry-After for follow", async () => {
   const target = cloudTarget("https://cloud.example.test", "anon-key");
   const fetcher = (async () =>
     new Response(null, {
@@ -599,9 +696,13 @@ test("readSignals surfaces typed HTTP status for follow classification", async (
       { fetcher },
     ),
     (error: unknown) => {
-      assert.ok(error instanceof SignalHttpError);
-      assert.equal(error.status, 500);
-      assert.equal(error.retryAfterMs, 3_000);
+      assert.ok(error instanceof Error);
+      assert.equal(error.name, "Error");
+      assert.match(error.message, /HTTP 500/);
+      const details = followHttpDetails(error);
+      assert.equal(details?.status, 500);
+      assert.equal(details?.retryAfterMs, 3_000);
+      assert.equal(isRetryableFollowError(error), true);
       return true;
     },
   );

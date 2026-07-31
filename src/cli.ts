@@ -112,6 +112,7 @@ import {
 import {
   askWaitJsonPayload,
   formatFollowFrame,
+  isFollowCredentialFailure,
   parseWaitSeconds,
   pollForSignals,
   postSignalTargets,
@@ -2421,6 +2422,7 @@ async function runInboxFollowCommand(args: Arguments): Promise<void> {
       workspaceId: selected.selectedWorkspace,
       signal: controller.signal,
       isCredentialFailure: (error) =>
+        isFollowCredentialFailure(error) ||
         error instanceof RenewalReauthorisationRequired ||
         error instanceof RenewalRevoked,
       arm: async () => {
