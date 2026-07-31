@@ -118,8 +118,8 @@ and a fresh re-read still passes — so the mutation was causal and left no arti
 - `npm --prefix site test` → **82 tests, 82 pass, 0 fail** (72 before this repair; ten new
   tests: four added to the download-version gate's six, three module-exercise, two
   lockfile-gate, one browser-bundle scan — see counts below).
-- Four surface-deletion mutations: each turns the built predicate red (three in-memory,
-  plus the standalone on-disk demonstration below).
+- Four in-memory surface-deletion mutations (one per surface); the AfterInstall arm is
+  additionally demonstrated on disk below.
 - Lockfile-version mutation: turns the alignment gate red; on-disk digest verified
   unchanged.
 - Emitted-browser-JS sentinel probe: discriminating `rg` probe (each sentinel 0,
