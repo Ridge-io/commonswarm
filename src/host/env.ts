@@ -52,10 +52,6 @@ export function sanitizeChildEnv(
     if (key.startsWith("SWARM_")) continue;
     out[key] = value;
   }
-  // Ensure PATH exists so the child can resolve helpers if needed.
-  if (!out.PATH && typeof process.env.PATH === "string") {
-    // PATH is allowlisted; only fill when parent map omitted it intentionally empty.
-  }
   return out;
 }
 

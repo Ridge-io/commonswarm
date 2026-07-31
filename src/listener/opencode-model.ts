@@ -33,6 +33,11 @@ export interface OpenCodeListenerModelOptions {
   permissionMode?: ListenerPermissionMode;
   env?: NodeJS.ProcessEnv;
   open?: OpenOpenCodeSession;
+  /**
+   * Explicit test-only: allow missing OpenCode auth when preparing homes.
+   * Must not be implied by injecting a fake `open`.
+   */
+  allowMissingAuth?: boolean;
 }
 
 function allowOnceOrDeny(request: PermissionRequest): PermissionDecision {
@@ -45,16 +50,22 @@ function allowOnceOrDeny(request: PermissionRequest): PermissionDecision {
 /**
  * OpenCode-backed listener model.
  *
- * Same-owner asks share one worker session on a private auth+forced-ask home.
- * Cross-owner/unknown asks get a brand-new auth-only home + empty cwd and never
- * enter the worker's context. Provider code never interprets ownership.
+ * Same-owner asks share one worker session. The deny canary always runs on a
+ * fresh empty temp cwd (never the user repo), then the same child opens a work
+ * session on the real cwd. Cross-owner/unknown turns get a brand-new auth-only
+ * home + empty cwd and are tracked in an in-flight set until closed.
+ * Provider code never interprets ownership.
+ *
+ * Steady-state `--permissions allow` only selects allow_once *after* the deny
+ * canary; the canary itself never proves allow mode.
  */
 export class OpenCodeListenerModel implements ListenerModel {
   private readonly openSession: OpenOpenCodeSession;
   private readonly permissionMode: ListenerPermissionMode;
   private worker: OpenCodeAcpHandle | null = null;
   private workerHome: string | null = null;
-  private isolated: OpenCodeAcpHandle | null = null;
+  /** All in-flight isolated handles (concurrent cross-owner asks). */
+  private readonly inFlight = new Set<OpenCodeAcpHandle>();
   private workerCanary = true;
   private closed = false;
 
@@ -89,18 +100,25 @@ export class OpenCodeListenerModel implements ListenerModel {
 
   cancel(): void {
     this.worker?.session.cancel();
-    this.isolated?.session.cancel();
+    for (const handle of this.inFlight) {
+      try {
+        handle.session.cancel();
+      } catch {
+        // best-effort
+      }
+    }
   }
 
   async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
     this.cancel();
-    const handles = [this.worker, this.isolated].filter(
-      (value): value is OpenCodeAcpHandle => value !== null,
-    );
+    const handles = [
+      this.worker,
+      ...this.inFlight,
+    ].filter((value): value is OpenCodeAcpHandle => value !== null);
     this.worker = null;
-    this.isolated = null;
+    this.inFlight.clear();
     await Promise.all(handles.map((handle) => handle.close().catch(() => undefined)));
     if (this.workerHome) {
       const home = this.workerHome;
@@ -114,8 +132,9 @@ export class OpenCodeListenerModel implements ListenerModel {
     const home = await prepareOpenCodeIsolatedHome({
       env: this.options.env ?? process.env,
       ...(this.options.model ? { model: this.options.model } : {}),
-      // Fake open paths in pure tests may omit a real auth file.
-      allowMissingAuth: this.options.open !== undefined,
+      ...(this.options.allowMissingAuth === true
+        ? { allowMissingAuth: true }
+        : {}),
     });
     this.workerHome = home;
     return home;
@@ -126,34 +145,45 @@ export class OpenCodeListenerModel implements ListenerModel {
     if (this.worker) return this.worker;
     this.workerCanary = true;
     const home = await this.ensureWorkerHome();
+    // Canary never runs inside the real repo — empty temp cwd only.
+    const canaryCwd = await mkdtemp(join(tmpdir(), "cswarm-opencode-canary-"));
+    await chmod(canaryCwd, 0o700);
     const permissionCallback: PermissionCallback = (request) =>
       this.workerCanary || this.permissionMode === "deny"
         ? defaultPermissionCallback(request)
         : allowOnceOrDeny(request);
-    const handle = await this.openSession({
-      cwd: this.options.cwd,
-      permissionCallback,
-      isolatedHome: home,
-      disposeHomeOnClose: false,
-      ...(this.options.executable ? { executable: this.options.executable } : {}),
-      ...(this.options.model ? { model: this.options.model } : {}),
-      ...(this.options.env ? { env: this.options.env } : {}),
-      clientName: "cswarm-listener",
-    });
+    let handle: OpenCodeAcpHandle | null = null;
     try {
+      handle = await this.openSession({
+        cwd: canaryCwd,
+        permissionCallback,
+        isolatedHome: home,
+        disposeHomeOnClose: false,
+        ...(this.options.executable ? { executable: this.options.executable } : {}),
+        ...(this.options.model ? { model: this.options.model } : {}),
+        ...(this.options.env ? { env: this.options.env } : {}),
+        ...(this.options.allowMissingAuth === true
+          ? { allowMissingAuth: true }
+          : {}),
+        clientName: "cswarm-listener",
+      });
       await handle.session.enablePromptsAfterCanary();
+      // Same child: open a work session on the real cwd without re-probing tools there.
+      await handle.session.openWorkCwd(this.options.cwd);
       this.workerCanary = false;
       this.worker = handle;
       return handle;
     } catch (error) {
-      await handle.close().catch(() => undefined);
+      await handle?.close().catch(() => undefined);
       throw error;
+    } finally {
+      await rm(canaryCwd, { recursive: true, force: true }).catch(() => undefined);
     }
   }
 
   /**
    * Fresh auth-only 0700 home + empty 0700 cwd for every cross-owner/unknown turn.
-   * Both are removed after the turn; never reuses the worker home or cwd.
+   * Tracked in `inFlight` so close/cancel reaches concurrent isolates.
    */
   private async promptIsolated(prompt: string): Promise<ListenerPromptResult> {
     const cwd = await mkdtemp(join(tmpdir(), "cswarm-opencode-cwd-"));
@@ -164,7 +194,9 @@ export class OpenCodeListenerModel implements ListenerModel {
       home = await prepareOpenCodeIsolatedHome({
         env: this.options.env ?? process.env,
         ...(this.options.model ? { model: this.options.model } : {}),
-        allowMissingAuth: this.options.open !== undefined,
+        ...(this.options.allowMissingAuth === true
+          ? { allowMissingAuth: true }
+          : {}),
       });
       handle = await this.openSession({
         cwd,
@@ -174,15 +206,17 @@ export class OpenCodeListenerModel implements ListenerModel {
         ...(this.options.executable ? { executable: this.options.executable } : {}),
         ...(this.options.model ? { model: this.options.model } : {}),
         ...(this.options.env ? { env: this.options.env } : {}),
+        ...(this.options.allowMissingAuth === true
+          ? { allowMissingAuth: true }
+          : {}),
         clientName: "cswarm-isolated-listener",
       });
-      this.isolated = handle;
+      this.inFlight.add(handle);
       await handle.session.enablePromptsAfterCanary();
       return await handle.session.prompt(prompt);
     } finally {
-      if (this.isolated === handle) this.isolated = null;
+      if (handle) this.inFlight.delete(handle);
       await handle?.close().catch(() => undefined);
-      // Only the exact directories we created are removed.
       await rm(cwd, { recursive: true, force: true }).catch(() => undefined);
       if (home) {
         await rm(home, { recursive: true, force: true }).catch(() => undefined);

@@ -32,6 +32,7 @@ import {
   parseOpenCodeVersionOutput,
   prepareOpenCodeIsolatedHome,
   readValidatedOpenCodeAuth,
+  resolveOpenCodeExecutable,
   sanitizeChildEnv,
 } from "../src/host/index.js";
 
@@ -182,6 +183,7 @@ describe("OpenCode ACP host core (pure)", () => {
     );
     assert.equal(env.HOME, home);
     assert.equal(env.XDG_DATA_HOME, join(home, "xdg-data"));
+    assert.equal(env.OPENCODE_DISABLE_PROJECT_CONFIG, "1");
     assert.equal(env.SWARM_CLOUD_ANON_KEY, undefined);
     assert.equal(env.OPENAI_API_KEY, undefined);
     assert.equal(env.TOKEN, undefined);
@@ -254,6 +256,13 @@ describe("OpenCode ACP host core (pure)", () => {
     assert.equal(config.permission.edit, "ask");
     await rm(home, { recursive: true, force: true });
     await rm(sourceRoot, { recursive: true, force: true });
+  });
+
+
+  test("resolveOpenCodeExecutable requires absolute realpath (no bare ambiguous spawn)", () => {
+    const abs = resolveOpenCodeExecutable("/Users/yulanbot/.opencode/bin/opencode");
+    assert.equal(abs.startsWith("/"), true);
+    assert.throws(() => resolveOpenCodeExecutable("no-such-opencode-binary-zzzz"), /not found|not executable/);
   });
 
   test("canary requires permission request AND denied tool result (negative + positive)", async () => {

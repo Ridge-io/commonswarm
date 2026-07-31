@@ -58,6 +58,16 @@ export function buildListenerChildArgs(spec: ListenerChildSpec): string[] {
       "--effort is not supported for --provider opencode (no measured mapping)",
     );
   }
+  const opencodeExe = spec.opencodeExecutable ??
+    (provider === "opencode" ? spec.executable : undefined);
+  if (provider === "opencode") {
+    // Detached supervisors must not resolve ambiguous bare "opencode" on PATH.
+    if (!opencodeExe || !opencodeExe.startsWith("/")) {
+      throw new Error(
+        "detached --provider opencode requires an absolute --opencode-executable path",
+      );
+    }
+  }
   return [
     ...listenerNodeExecArgv(spec.nodeExecArgv ?? []),
     spec.entrypoint,
@@ -82,11 +92,8 @@ export function buildListenerChildArgs(spec: ListenerChildSpec): string[] {
     ...(provider === "grok" && spec.executable
       ? ["--grok-executable", spec.executable]
       : []),
-    ...(provider === "opencode" && spec.opencodeExecutable
-      ? ["--opencode-executable", spec.opencodeExecutable]
-      : []),
-    ...(provider === "opencode" && spec.executable && !spec.opencodeExecutable
-      ? ["--opencode-executable", spec.executable]
+    ...(provider === "opencode" && opencodeExe
+      ? ["--opencode-executable", opencodeExe]
       : []),
     ...(spec.model ? ["--model", spec.model] : []),
     ...(provider === "grok" && spec.effort ? ["--effort", spec.effort] : []),

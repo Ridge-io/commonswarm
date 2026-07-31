@@ -2,18 +2,29 @@
  * OpenCode ACP subprocess core — measured against opencode 1.18.10.
  *
  * Spawn shape: `opencode acp --pure`
- * Never passes provider credentials on argv/env. Auth is file-based under a
- * private 0700 home (auth-only copy + generated ask/deny config). Real prompts
- * stay blocked until the shared ACP permission-boundary canary passes.
+ * Project config merge is defeated only by OPENCODE_DISABLE_PROJECT_CONFIG=1
+ * (measured via `debug config --pure`), not by a private HOME alone.
+ * Auth is file-based under a private 0700 home (auth-only copy + generated
+ * forced-ask config). Real prompts stay blocked until the shared ACP
+ * permission-boundary canary passes.
  */
 
-import { spawn, execFile, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { accessSync, constants as fsConstants } from "node:fs";
+import {
+  spawn,
+  execFile,
+  type ChildProcessWithoutNullStreams,
+} from "node:child_process";
+import {
+  accessSync,
+  constants as fsConstants,
+  realpathSync,
+} from "node:fs";
 import {
   chmod,
   lstat,
   mkdir,
   mkdtemp,
+  readdir,
   readFile,
   rm,
   writeFile,
@@ -38,7 +49,7 @@ import {
 
 export type OpenCodeAcpOpenOptions = {
   cwd: string;
-  /** Absolute path or bare name resolved via PATH. Default: "opencode". */
+  /** Absolute realpath to opencode. Bare names are resolved once at open. */
   executable?: string;
   model?: string;
   permissionCallback?: PermissionCallback;
@@ -47,6 +58,8 @@ export type OpenCodeAcpOpenOptions = {
   env?: NodeJS.ProcessEnv;
   /** Skip version gate (tests only). */
   skipVersionCheck?: boolean;
+  /** Skip effective-config project-disable probe (tests only). */
+  skipConfigProbe?: boolean;
   clientName?: string;
   clientVersion?: string;
   /** When true, prompts are enabled without canary (tests only). */
@@ -54,11 +67,16 @@ export type OpenCodeAcpOpenOptions = {
   /**
    * Private absolute home already prepared with auth + safe config.
    * When omitted, open builds a temporary auth-only home and removes it on close
-   * only if this open path created it (listener owns long-lived homes).
+   * when this open path created it or disposeHomeOnClose is set.
    */
   isolatedHome?: string;
   /** When true, remove isolatedHome on close (single-shot cross-owner open). */
   disposeHomeOnClose?: boolean;
+  /**
+   * Explicit test-only: allow missing OpenCode auth when preparing homes.
+   * Production paths must leave this unset/false.
+   */
+  allowMissingAuth?: boolean;
 };
 
 export type OpenCodeAcpHandle = {
@@ -72,9 +90,16 @@ export type OpenCodeAcpHandle = {
 };
 
 const MAX_OPENCODE_AUTH_BYTES = 256 * 1024;
+const OPENCODE_HOME_PREFIX = "cswarm-opencode-home-";
+const CHILD_EXIT_WAIT_MS = 3_000;
+const CHILD_KILL_WAIT_MS = 1_000;
+const STALE_HOME_MAX_AGE_MS = 60 * 60 * 1000;
 
-/** Resolve an executable path and refuse non-files / non-executables. */
-export function resolveOpenCodeExecutable(executable = "opencode"): string {
+/** Resolve bare or relative executable to one absolute realpath (same for probe + spawn). */
+export function resolveOpenCodeExecutable(
+  executable = "opencode",
+  pathEnv?: string,
+): string {
   if (isAbsolute(executable) || executable.includes("/")) {
     const abs = resolvePath(executable);
     try {
@@ -82,9 +107,27 @@ export function resolveOpenCodeExecutable(executable = "opencode"): string {
     } catch {
       throw new AcpHostError("executable_missing", `not executable: ${abs}`);
     }
-    return abs;
+    try {
+      return realpathSync(abs);
+    } catch {
+      return abs;
+    }
   }
-  return executable;
+  const pathValue = pathEnv ?? process.env.PATH ?? "";
+  for (const dir of pathValue.split(":")) {
+    if (!dir) continue;
+    const candidate = join(dir, executable);
+    try {
+      accessSync(candidate, fsConstants.X_OK);
+      return realpathSync(candidate);
+    } catch {
+      // try next
+    }
+  }
+  throw new AcpHostError(
+    "executable_missing",
+    `opencode executable not found on PATH: ${executable}`,
+  );
 }
 
 /** Parse `opencode --version` stdout. Measured target is exactly 1.18.10. */
@@ -93,17 +136,23 @@ export function parseOpenCodeVersionOutput(stdout: string): string | null {
   return m?.[1] ?? null;
 }
 
-/** Run `executable --version` and refuse anything other than the measured version. */
+/** Run absolute executable --version with the same env the child will use. */
 export async function assertOpenCodeMeasuredVersion(
   executable: string,
-  expected = OPENCODE_MEASURED_VERSION,
-  timeoutMs = ACP_VERSION_CHECK_TIMEOUT_MS,
+  options?: {
+    expected?: string;
+    timeoutMs?: number;
+    env?: NodeJS.ProcessEnv | Record<string, string | undefined>;
+  },
 ): Promise<string> {
+  const expected = options?.expected ?? OPENCODE_MEASURED_VERSION;
+  const timeoutMs = options?.timeoutMs ?? ACP_VERSION_CHECK_TIMEOUT_MS;
+  const env = sanitizeChildEnv(options?.env ?? process.env);
   const stdout = await new Promise<string>((resolve, reject) => {
     execFile(
       executable,
       ["--version"],
-      { timeout: timeoutMs, encoding: "utf8", env: sanitizeChildEnv(process.env) },
+      { timeout: timeoutMs, encoding: "utf8", env },
       (err, out, stderr) => {
         if (err) {
           reject(
@@ -148,7 +197,7 @@ export function buildOpenCodeForcedPermissionConfig(): Record<string, "ask"> {
   return permission;
 }
 
-/** Generated opencode.json that ambient project allow cannot soften. */
+/** Generated opencode.json (global config under private XDG). */
 export function buildOpenCodeSafeConfigJson(options?: {
   model?: string;
 }): string {
@@ -164,7 +213,6 @@ export function buildOpenCodeSafeConfigJson(options?: {
 
 /**
  * Validate OpenCode auth.json: owned, 0600, regular file, bounded, valid JSON.
- * Returns the raw bytes when present; throws structured AcpHostError otherwise.
  */
 export async function readValidatedOpenCodeAuth(
   sourceAuthPath: string,
@@ -238,17 +286,18 @@ export function resolveOpenCodeAuthSourcePath(
 /**
  * Prepare a private 0700 home: auth-only copy under XDG data + forced-ask config.
  * Does not copy project rules, MCPs, sessions, or user allow lists.
+ * ★ Private home alone does not disable project config merge — callers must set
+ * OPENCODE_DISABLE_PROJECT_CONFIG and verify via assertOpenCodeEffectiveConfig.
  */
 export async function prepareOpenCodeIsolatedHome(options: {
   env?: NodeJS.ProcessEnv | Record<string, string | undefined>;
   model?: string;
-  /** When set, write into this absolute empty directory instead of mkdtemp. */
   home?: string;
-  /** Tests may skip missing auth when a fake open path is used. */
+  /** Explicit test-only; production must not set this. */
   allowMissingAuth?: boolean;
 }): Promise<string> {
   const home = options.home ??
-    await mkdtemp(join(tmpdir(), "cswarm-opencode-home-"));
+    await mkdtemp(join(tmpdir(), OPENCODE_HOME_PREFIX));
   if (!isAbsolute(home)) {
     throw new AcpHostError(
       "isolated_home_invalid",
@@ -300,7 +349,10 @@ export async function prepareOpenCodeIsolatedHome(options: {
   }
 }
 
-/** Sanitized child env pointing only at the private home XDG layout. */
+/**
+ * Sanitized child env for OpenCode. Forces OPENCODE_DISABLE_PROJECT_CONFIG=1
+ * after the allowlist so parent cannot unset it via a non-allowlisted path.
+ */
 export function buildOpenCodeChildEnv(
   parent: NodeJS.ProcessEnv | Record<string, string | undefined>,
   home: string,
@@ -311,97 +363,280 @@ export function buildOpenCodeChildEnv(
       "isolated OpenCode home must be absolute",
     );
   }
+  const base = sanitizeChildEnv(parent);
   return {
-    ...sanitizeChildEnv(parent),
+    ...base,
     HOME: home,
     XDG_CONFIG_HOME: join(home, "xdg-config"),
     XDG_DATA_HOME: join(home, "xdg-data"),
     XDG_CACHE_HOME: join(home, "xdg-cache"),
     XDG_STATE_HOME: join(home, "xdg-state"),
+    // Measured 1.18.10: private home alone still merges project opencode.json.
+    OPENCODE_DISABLE_PROJECT_CONFIG: "1",
   };
 }
 
 /**
- * Open an OpenCode ACP host session: version-check, prepare home if needed,
- * spawn `acp --pure`, initialize, session/new. Real prompts stay blocked until
- * session.enablePromptsAfterCanary().
+ * Positive control: with a hostile project allow-all opencode.json as cwd,
+ * effective `debug config --pure` must still show our forced-ask permissions.
+ */
+export async function assertOpenCodeEffectiveConfig(options: {
+  executable: string;
+  env: NodeJS.ProcessEnv | Record<string, string>;
+  timeoutMs?: number;
+}): Promise<{ permission: Record<string, unknown> }> {
+  const hostile = await mkdtemp(join(tmpdir(), "cswarm-opencode-hostile-"));
+  try {
+    await chmod(hostile, 0o700);
+    await writeFile(
+      join(hostile, "opencode.json"),
+      `${JSON.stringify({
+        permission: {
+          bash: "allow",
+          edit: "allow",
+          write: "allow",
+          "*": "allow",
+        },
+      }, null, 2)}\n`,
+      { mode: 0o600 },
+    );
+    const stdout = await new Promise<string>((resolve, reject) => {
+      execFile(
+        options.executable,
+        ["debug", "config", "--pure"],
+        {
+          timeout: options.timeoutMs ?? ACP_VERSION_CHECK_TIMEOUT_MS,
+          encoding: "utf8",
+          env: options.env as NodeJS.ProcessEnv,
+          cwd: hostile,
+        },
+        (err, out, stderr) => {
+          if (err) {
+            reject(
+              new AcpHostError(
+                "opencode_config_probe_failed",
+                `debug config --pure failed: ${err.message}${stderr ? ` (${stderr.trim().slice(0, 200)})` : ""}`,
+              ),
+            );
+            return;
+          }
+          resolve(out);
+        },
+      );
+    });
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(stdout);
+    } catch {
+      throw new AcpHostError(
+        "opencode_config_probe_failed",
+        "debug config --pure returned non-JSON",
+      );
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new AcpHostError(
+        "opencode_config_probe_failed",
+        "debug config --pure returned a non-object",
+      );
+    }
+    const permission = (parsed as { permission?: unknown }).permission;
+    if (!permission || typeof permission !== "object" || Array.isArray(permission)) {
+      throw new AcpHostError(
+        "opencode_config_probe_failed",
+        "debug config --pure missing permission map",
+      );
+    }
+    const map = permission as Record<string, unknown>;
+    // Hostile project wants allow; we must not observe allow on bash/*.
+    if (map.bash === "allow" || map["*"] === "allow") {
+      throw new AcpHostError(
+        "opencode_project_config_active",
+        "effective OpenCode config still merges project allow permissions; OPENCODE_DISABLE_PROJECT_CONFIG failed",
+      );
+    }
+    if (map.bash !== "ask" && map["*"] !== "ask") {
+      throw new AcpHostError(
+        "opencode_config_probe_failed",
+        "effective OpenCode config lacks forced-ask permissions",
+      );
+    }
+    return { permission: map };
+  } finally {
+    await rm(hostile, { recursive: true, force: true }).catch(() => undefined);
+  }
+}
+
+/** Remove stale cswarm-opencode-home-* dirs under tmpdir (auth-copy safety net). */
+export async function sweepStaleOpenCodeHomes(options?: {
+  maxAgeMs?: number;
+  now?: number;
+}): Promise<number> {
+  const maxAgeMs = options?.maxAgeMs ?? STALE_HOME_MAX_AGE_MS;
+  const now = options?.now ?? Date.now();
+  const root = tmpdir();
+  let removed = 0;
+  let entries: string[];
+  try {
+    entries = await readdir(root);
+  } catch {
+    return 0;
+  }
+  for (const name of entries) {
+    if (!name.startsWith(OPENCODE_HOME_PREFIX)) continue;
+    const full = join(root, name);
+    try {
+      const st = await lstat(full);
+      if (!st.isDirectory() || st.isSymbolicLink()) continue;
+      if (now - st.mtimeMs < maxAgeMs) continue;
+      await rm(full, { recursive: true, force: true });
+      removed += 1;
+    } catch {
+      // best-effort
+    }
+  }
+  return removed;
+}
+
+function waitForChildExit(
+  child: ChildProcessWithoutNullStreams,
+  timeoutMs: number,
+): Promise<void> {
+  if (child.exitCode !== null || child.signalCode !== null) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(), timeoutMs);
+    child.once("exit", () => {
+      clearTimeout(timer);
+      resolve();
+    });
+  });
+}
+
+/** SIGTERM then SIGKILL; always await exit within bounds. */
+export async function terminateOpenCodeChild(
+  child: ChildProcessWithoutNullStreams,
+): Promise<void> {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  try {
+    child.kill("SIGTERM");
+  } catch {
+    // already dead
+  }
+  await waitForChildExit(child, CHILD_EXIT_WAIT_MS);
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  try {
+    child.kill("SIGKILL");
+  } catch {
+    // already dead
+  }
+  await waitForChildExit(child, CHILD_KILL_WAIT_MS);
+}
+
+/**
+ * Open an OpenCode ACP host session: resolve absolute executable, version-check
+ * and effective-config probe with the same env, spawn `acp --pure`.
  */
 export async function openOpenCodeAcpSession(
   options: OpenCodeAcpOpenOptions,
 ): Promise<OpenCodeAcpHandle> {
-  const executable = resolveOpenCodeExecutable(options.executable ?? "opencode");
-  if (!options.skipVersionCheck) {
-    await assertOpenCodeMeasuredVersion(executable);
-  }
-  const args = buildOpenCodeAcpArgs();
+  await sweepStaleOpenCodeHomes().catch(() => 0);
+
+  const pathEnv = (options.env ?? process.env).PATH;
+  const executable = resolveOpenCodeExecutable(
+    options.executable ?? "opencode",
+    typeof pathEnv === "string" ? pathEnv : undefined,
+  );
+
   let home = options.isolatedHome;
   let createdHome = false;
   if (!home) {
     home = await prepareOpenCodeIsolatedHome({
       env: options.env ?? process.env,
       ...(options.model ? { model: options.model } : {}),
+      ...(options.allowMissingAuth === true ? { allowMissingAuth: true } : {}),
     });
     createdHome = true;
   }
+
   const env = buildOpenCodeChildEnv(options.env ?? process.env, home);
-  const child = spawn(executable, args, {
-    stdio: ["pipe", "pipe", "pipe"],
-    env,
-    cwd: options.cwd,
-  }) as ChildProcessWithoutNullStreams;
-
-  if (!child.stdin || !child.stdout) {
-    child.kill("SIGKILL");
-    if (createdHome || options.disposeHomeOnClose) {
-      await rm(home, { recursive: true, force: true }).catch(() => undefined);
+  const disposeHome = async () => {
+    if (createdHome || options.disposeHomeOnClose === true) {
+      await rm(home!, { recursive: true, force: true }).catch(() => undefined);
     }
-    throw new AcpHostError("spawn_failed", "child missing stdio pipes");
-  }
-  // Provider stderr may contain prompt text — drain, never log.
-  child.stderr.on("data", () => undefined);
-  child.stderr.resume();
-
-  let sessionRef: AcpHostSession | null = null;
-  const transport = createBoundTransport({
-    readable: child.stdout,
-    writable: child.stdin,
-    requestTimeoutMs: options.requestTimeoutMs ?? ACP_DEFAULT_REQUEST_TIMEOUT_MS,
-    getSession: () => sessionRef,
-    onChildExit: (handler) => {
-      child.on("exit", (code, signal) => handler(code, signal));
-    },
-  });
+  };
 
   try {
-    const session = await AcpHostSession.connect({
-      transport,
-      cwd: options.cwd,
-      permissionCallback: options.permissionCallback,
-      events: options.events,
-      requestTimeoutMs: options.requestTimeoutMs,
-      clientName: options.clientName,
-      clientVersion: options.clientVersion,
-      promptsEnabled: options.promptsEnabled,
-    });
-    sessionRef = session;
-
-    const close = async () => {
-      await session.close();
-      if (!child.killed) {
-        child.kill("SIGTERM");
-      }
-      if (createdHome || options.disposeHomeOnClose === true) {
-        await rm(home!, { recursive: true, force: true }).catch(() => undefined);
-      }
-    };
-
-    return { session, child, executable, args, env, home, close };
-  } catch (err) {
-    transport.close();
-    if (!child.killed) child.kill("SIGKILL");
-    if (createdHome || options.disposeHomeOnClose === true) {
-      await rm(home, { recursive: true, force: true }).catch(() => undefined);
+    if (!options.skipVersionCheck) {
+      await assertOpenCodeMeasuredVersion(executable, {
+        env,
+      });
     }
+    if (!options.skipConfigProbe) {
+      await assertOpenCodeEffectiveConfig({ executable, env });
+    }
+
+    const args = buildOpenCodeAcpArgs();
+    const child = spawn(executable, args, {
+      stdio: ["pipe", "pipe", "pipe"],
+      env,
+      cwd: options.cwd,
+    }) as ChildProcessWithoutNullStreams;
+
+    if (!child.stdin || !child.stdout) {
+      await terminateOpenCodeChild(child);
+      await disposeHome();
+      throw new AcpHostError("spawn_failed", "child missing stdio pipes");
+    }
+    // Provider stderr may contain prompt text — drain, never log.
+    child.stderr.on("data", () => undefined);
+    child.stderr.resume();
+
+    let sessionRef: AcpHostSession | null = null;
+    const transport = createBoundTransport({
+      readable: child.stdout,
+      writable: child.stdin,
+      requestTimeoutMs: options.requestTimeoutMs ?? ACP_DEFAULT_REQUEST_TIMEOUT_MS,
+      getSession: () => sessionRef,
+      onChildExit: (handler) => {
+        child.on("exit", (code, signal) => handler(code, signal));
+      },
+    });
+
+    try {
+      const session = await AcpHostSession.connect({
+        transport,
+        cwd: options.cwd,
+        permissionCallback: options.permissionCallback,
+        events: options.events,
+        requestTimeoutMs: options.requestTimeoutMs,
+        clientName: options.clientName,
+        clientVersion: options.clientVersion,
+        promptsEnabled: options.promptsEnabled,
+      });
+      sessionRef = session;
+
+      const close = async () => {
+        try {
+          await session.close();
+        } finally {
+          try {
+            await terminateOpenCodeChild(child);
+          } finally {
+            await disposeHome();
+          }
+        }
+      };
+
+      return { session, child, executable, args, env, home, close };
+    } catch (err) {
+      transport.close();
+      await terminateOpenCodeChild(child);
+      await disposeHome();
+      throw err;
+    }
+  } catch (err) {
+    await disposeHome();
     throw err;
   }
 }

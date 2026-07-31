@@ -5,10 +5,16 @@
  * Never auto-allow because of child or global config — only an injected
  * callback may select allow_*.
  *
- * Ambient Grok hooks (pre_tool_use / stop hooks loaded by the child from the
- * user's environment) sit *outside* this boundary. Passing the host canary
- * proves only that *this* host answers request_permission with deny-by-default;
- * it does not prove hooks will not act independently.
+ * Ambient provider hooks/rules that the child loads from a user environment
+ * sit *outside* this ACP boundary. The host canary proves only that *this*
+ * host answers request_permission with deny-by-default and then observes a
+ * correlated structured deny update for that toolCallId.
+ *
+ * A private HOME alone does **not** defeat project-level OpenCode config;
+ * OpenCode 1.18.10 still merges project permissions unless
+ * `OPENCODE_DISABLE_PROJECT_CONFIG` is set and verified. Steady-state
+ * `--permissions allow` is a separate local opt-in after the deny canary —
+ * the canary does not prove allow_once behaviour.
  */
 
 import type {

@@ -79,6 +79,17 @@ function asStopReason(value: unknown): AcpStopReason {
   );
 }
 
+/** True when the host selected reject_* or cancelled the permission request. */
+function isHostRejectDecision(
+  decision: import("./types.js").PermissionDecision,
+  options: import("./types.js").PermissionOption[],
+): boolean {
+  if (decision.outcome === "cancelled") return true;
+  if (decision.outcome !== "selected") return false;
+  const chosen = options.find((opt) => opt.optionId === decision.optionId);
+  return chosen?.kind === "reject_once" || chosen?.kind === "reject_always";
+}
+
 function updateKind(raw: unknown): SessionUpdateKind {
   switch (raw) {
     case "agent_message_chunk":
@@ -96,9 +107,19 @@ function updateKind(raw: unknown): SessionUpdateKind {
 /**
  * One host↔agent ACP session. Sequential prompts only; cancel is a notification.
  */
+/** Bounded structured terminal statuses that count as a host-correlated deny. */
+const CANARY_TERMINAL_DENY_STATUSES = new Set([
+  "rejected",
+  "denied",
+  "cancelled",
+  "canceled",
+  "failed",
+  "error",
+]);
+
 export class AcpHostSession {
   private readonly transport: AcpTransport;
-  private readonly cwd: string;
+  private cwd: string;
   private readonly permissionCallback: PermissionCallback;
   private readonly events: HostSessionEvents;
   private readonly requestTimeoutMs: number;
@@ -107,13 +128,24 @@ export class AcpHostSession {
   private promptsEnabled: boolean;
   private promptInFlight = false;
   private closed = false;
+  /**
+   * Canary denial is host-authored only: we record toolCallIds we ourselves
+   * rejected, then accept a bounded structured terminal status on that same id.
+   * Provider free-text / error-body regex never unlocks prompts.
+   */
   private canaryState: {
     sawPermissionRequest: boolean;
     sawDeniedToolResult: boolean;
-  } = { sawPermissionRequest: false, sawDeniedToolResult: false };
+    rejectedToolCallIds: Set<string>;
+  } = {
+    sawPermissionRequest: false,
+    sawDeniedToolResult: false,
+    rejectedToolCallIds: new Set(),
+  };
 
   private constructor(options: AcpSessionConnectOptions) {
     this.transport = options.transport;
+    // Mutable so openWorkCwd can retarget after a canary on an empty temp cwd.
     this.cwd = assertAbsoluteExistingCwd(options.cwd);
     this.permissionCallback = resolvePermissionCallback(options.permissionCallback);
     this.events = options.events ?? {};
@@ -167,11 +199,14 @@ export class AcpHostSession {
   }
 
   /**
-   * Permission-boundary canary. Drives an internal probe prompt that must
-   * produce (1) a session/request_permission and (2) a denied tool result
-   * before real prompts unlock.
+   * Permission-boundary canary. Drives a side-effect-free probe that must
+   * produce (1) a session/request_permission we answer with reject and
+   * (2) a structured tool_call(_update) for that same toolCallId with a
+   * bounded terminal deny status — never provider free-text matching.
    *
-   * Ambient Grok hooks remain outside this boundary — see permission.ts.
+   * Ambient provider hooks remain outside this boundary — see permission.ts.
+   * Steady-state `--permissions allow` is not proven by a deny-only canary;
+   * allow_once is only selected after this gate, by the listener model.
    */
   async enablePromptsAfterCanary(options?: {
     probeText?: string;
@@ -182,7 +217,7 @@ export class AcpHostSession {
     if (!result.passed) {
       throw new AcpPermissionCanaryError(
         result.reason ??
-          "permission-boundary canary failed: need permission request + denied tool result",
+          "permission-boundary canary failed: need host reject + correlated terminal tool status",
       );
     }
     this.promptsEnabled = true;
@@ -191,6 +226,16 @@ export class AcpHostSession {
   /** Test/helper: force-enable prompts without canary (never used by production open path). */
   forceEnablePromptsForTests(): void {
     this.promptsEnabled = true;
+  }
+
+  /** Reset the canary gate (used after session/load fallback to session/new). */
+  private resetPromptGate(): void {
+    this.promptsEnabled = false;
+    this.canaryState = {
+      sawPermissionRequest: false,
+      sawDeniedToolResult: false,
+      rejectedToolCallIds: new Set(),
+    };
   }
 
   async runPermissionBoundaryCanary(options?: {
@@ -203,10 +248,15 @@ export class AcpHostSession {
     reason?: string;
     stopReason?: AcpStopReason;
   }> {
-    this.canaryState = { sawPermissionRequest: false, sawDeniedToolResult: false };
+    this.canaryState = {
+      sawPermissionRequest: false,
+      sawDeniedToolResult: false,
+      rejectedToolCallIds: new Set(),
+    };
+    // Harmless sentinel: no file paths, no project mutation instructions.
     const probe =
       options?.probeText ??
-      "cswarm-permission-boundary-canary: request a tool permission then stop";
+      "cswarm-permission-boundary-canary-v2: if your policy requires a tool permission request, issue one for a no-op check only; do not create, edit, delete, or read any project files; stop after the permission path. Sentinel=CSWARM_CANARY_NOOP";
     try {
       const promptResult = await this.promptInternal(probe, {
         timeoutMs: options?.timeoutMs,
@@ -231,6 +281,20 @@ export class AcpHostSession {
         reason: err instanceof Error ? err.message : String(err),
       };
     }
+  }
+
+  /**
+   * After a successful canary on a throwaway cwd, open a new ACP session on the
+   * real work cwd without re-probing tools in that tree. Same child/host
+   * permission path remains in force.
+   */
+  async openWorkCwd(cwd: string): Promise<void> {
+    this.assertOpen();
+    if (!this.promptsEnabled) {
+      throw new AcpPromptsBlockedError();
+    }
+    this.cwd = assertAbsoluteExistingCwd(cwd);
+    await this.newSession();
   }
 
   async prompt(text: string, options?: { timeoutMs?: number }): Promise<PromptResult> {
@@ -274,6 +338,8 @@ export class AcpHostSession {
       this.sessionId = result.sessionId;
       return { sessionId: result.sessionId, loaded: true };
     } catch {
+      // Fallback session/new is a new agent context: re-canary before real prompts.
+      this.resetPromptGate();
       await this.newSession();
       return { sessionId: this.sessionId!, loaded: false };
     }
@@ -446,20 +512,16 @@ export class AcpHostSession {
     const status = typeof update.status === "string" ? update.status : undefined;
     const toolKind = typeof update.kind === "string" ? update.kind : undefined;
 
-    // Denied tool result observation for the canary.
+    // Canary deny arm: only our prior reject of this toolCallId + bounded status.
+    // Never scan provider content bodies (unbounded / spoofable).
     if (
       (kind === "tool_call_update" || kind === "tool_call") &&
+      toolCallId &&
       status &&
-      /den(y|ied)|reject|blocked|cancelled|error/i.test(status)
+      this.canaryState.rejectedToolCallIds.has(toolCallId) &&
+      CANARY_TERMINAL_DENY_STATUSES.has(status.toLowerCase())
     ) {
       this.canaryState.sawDeniedToolResult = true;
-    }
-    // Some agents report denial via content text rather than status.
-    if (kind === "tool_call_update" && Array.isArray(update.content)) {
-      const blob = JSON.stringify(update.content);
-      if (/permission denied|rejected|not allowed|deny/i.test(blob)) {
-        this.canaryState.sawDeniedToolResult = true;
-      }
     }
 
     const detail = sanitizeUpdateDetail({
@@ -530,9 +592,13 @@ export class AcpHostSession {
       });
     }
 
-    // Trust the injected callback when present; default never selects allow_*.
-    // Denied-tool canary signal comes only from agent tool_call(_update) status,
-    // not from the host decision alone — the canary must observe both arms.
+    // Record host-authored rejects for canary correlation (never allow_*).
+    if (toolCallId && isHostRejectDecision(decision, options)) {
+      this.canaryState.rejectedToolCallIds.add(toolCallId);
+    }
+
+    // Denied-tool canary signal requires a later structured terminal update
+    // for the same toolCallId — not the host decision alone.
     const result = permissionDecisionToResult(decision);
     this.transport.respond(id, result);
   }

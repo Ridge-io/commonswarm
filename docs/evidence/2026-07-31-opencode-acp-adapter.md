@@ -1,8 +1,8 @@
 # OpenCode ACP second host adapter — design & measurement
 
-Date: 2026-07-31  
-Lane: A2 (Slate)  
-Base: `origin/main` `d8bd531fc9b3e8c6aca7de5976d51e2dbc834c48`  
+Date: 2026-07-31
+Lane: A2 (Slate) + Aegis remediation
+Base: `origin/main` `d8bd531fc9b3e8c6aca7de5976d51e2dbc834c48`
 Measured host: **OpenCode CLI 1.18.10** (`opencode acp --pure`)
 
 ## Decision (operator / Lead7)
@@ -12,75 +12,80 @@ live empty-cwd / 0700-home Kimi K3 probe passed the existing forced-deny canary
 (`permission=true`, `deniedTool=true`). Codex app-server remains unselected because
 zero-tool behavior is unproven on this machine.
 
+## Superseded claim (DEAD)
+
+~~A private 0700 home alone prevents project `opencode.json` allow lists from applying.~~
+**SUPERSEDED — DEAD.** Measured on 1.18.10: with a hostile project
+`permission.bash=allow` and only a private XDG home + forced-ask global config,
+`opencode debug config --pure` still resolves **allow**. Project merge is defeated
+only when `OPENCODE_DISABLE_PROJECT_CONFIG=1` is set; the adapter sets that env var
+and positively verifies via `debug config --pure` before spawn.
+
 ## Architecture
 
 Reuse the provider-neutral ACP stack:
 
 - `AcpTransport` / `AcpHostSession` (initialize, session/new, sequential prompt, cancel,
-  permission canary)
-- `ListenerModel` / `ListenerEngine` / runtime / supervisor (one-principal exclusion,
-  durable replay, relation-based mode selection)
+  host-correlated permission canary)
+- `ListenerModel` / `ListenerEngine` / runtime / supervisor
 
-Provider-specific code lives only in:
+Provider-specific code:
 
 | File | Role |
 |---|---|
-| `src/host/opencode.ts` | spawn, version pin, home prep, auth validation, forced-ask config |
-| `src/listener/opencode-model.ts` | same-owner worker vs per-turn cross-owner isolation |
-| CLI / detach wiring | `--provider opencode`, `--opencode-executable` |
+| `src/host/opencode.ts` | realpath pin, env, home, config probe, spawn, terminate |
+| `src/listener/opencode-model.ts` | canary empty cwd → openWorkCwd; in-flight set |
+| CLI / detach | `--provider opencode`, absolute `--opencode-executable` |
 
-**Provider code never reads or reinterprets `sender_owner_relation`.** The engine alone
-chooses `worker` vs `isolated` mode from the server-stamped relation.
+**Provider code never reads or reinterprets `sender_owner_relation`.**
 
 ## Spawn & pin
 
 ```
-opencode acp --pure
+<absolute-realpath> acp --pure
 ```
 
-- Version gate: exact `1.18.10` via `opencode --version`.
-- No `--effort` mapping is measured for OpenCode; the CLI rejects `--effort` with
-  `--provider opencode` rather than silently ignoring it.
-- Optional model is written only into the generated private `opencode.json`, never argv.
+- Version gate: exact `1.18.10` via the same absolute executable and child env.
+- `OPENCODE_DISABLE_PROJECT_CONFIG=1` always forced in child env.
+- Effective-config probe: `debug config --pure` with a hostile project allow-all cwd
+  must not show `bash`/`*` = allow.
+- No `--effort` mapping; CLI rejects `--effort` with `--provider opencode`.
+- Detached start requires an absolute `--opencode-executable` (bare `opencode` refused).
 
 ## Homes & auth
 
-- **Worker (same-owner):** private 0700 home with:
-  - auth-only copy of `XDG_DATA_HOME/opencode/auth.json` (or default
-    `~/.local/share/opencode/auth.json`)
-  - generated `xdg-config/opencode/opencode.json` with every known 1.18.10 tool forced to
-    `"ask"` plus `"*": "ask"` so ambient/project allow lists cannot bypass ACP
-- **Cross-owner / unknown:** brand-new auth-only 0700 home **and** empty 0700 cwd per turn;
-  both removed after the turn. Never reuses the worker home or cwd.
-- Auth checks: regular file, not symlink, uid match, mode `0600`, size bound, valid JSON.
+- Worker: private 0700 home, auth-only copy, generated forced-ask config.
+- Canary: empty temp 0700 cwd (never the user repo); then `openWorkCwd(workCwd)`.
+- Cross-owner: fresh home + empty cwd per turn; tracked in an in-flight Set.
+- Auth: regular file, not symlink, uid match, mode `0600`, size bound, valid JSON.
+- `allowMissingAuth` is explicit test-only — not implied by injecting a fake opener.
+- Close: try/finally, SIGTERM → wait → SIGKILL, await exit, remove credential home.
+- Stale-home sweep removes old `cswarm-opencode-home-*` under tmpdir.
+
+## Canary (host-correlated only)
+
+1. Host receives `session/request_permission`.
+2. Host selects reject_* (or cancelled) and records `toolCallId`.
+3. Agent emits `tool_call` / `tool_call_update` with that **same** `toolCallId` and a
+   bounded structured status in
+   `{rejected,denied,cancelled,canceled,failed,error}`.
+4. Provider free-text / content-body regex never unlocks prompts.
+
+Steady-state `--permissions allow` only selects `allow_once` *after* this deny canary.
+The canary does not prove allow mode.
 
 ## Forced tools (1.18.10)
 
 `bash`, `glob`, `read`, `grep`, `webfetch`, `websearch`, `write`, `edit`, `task`,
 `apply_patch`, `todowrite`, `question`, `skill`, `execute`, `external_directory`, `*`.
 
-## Permissions
+## Live verification (1.18.10)
 
-- Default deny (host `reject_once` / cancel).
-- Same-owner `allow_once` only after explicit local `--permissions allow`, and only after
-  the canary has already passed under deny.
-- Ready only after permission-request **and** denied-tool-result canary.
-- CommonSwarm credentials never appear in argv, env, status, logs, or host frames
-  (`sanitizeChildEnv` allowlist).
-
-## Tests (pure, named in `npm test`)
-
-- `tests/host-acp-opencode.test.ts` — argv/env/config, version parse, auth safety, home
-  prep, canary pass/fail (including half-canary negative control), secret absence with
-  causal denylist control.
-- `tests/listener-opencode-model.test.ts` — canary-before-allow, same-owner persistence,
-  fresh cross-owner homes/cwds, zero allowed hostile tools, cancel, closed/one-winner.
+See `docs/evidence/2026-07-31-opencode-project-config-disable.md` for the measured
+hostile-project probe (project allow disabled; no sentinel file side effect).
 
 ## Not established
 
-- End-to-end live OpenCode model turn through `cswarm listen` on production (this slice is
-  pure + wiring; Lead7 already measured canary probe separately).
-- OpenCode tool surface after 1.18.10 (version pin refuses drift; wildcard asks for unknown
-  names but new tool kinds still need re-measure).
-- Concurrent multi-listener exclusion beyond existing principal-key file store (unchanged).
-- Codex app-server zero-tool proof (still open if revisited).
+- End-to-end production `cswarm listen --provider opencode` on a customer workspace.
+- Tool surface after 1.18.10 (version pin refuses other builds).
+- Codex app-server zero-tool proof (still unselected).

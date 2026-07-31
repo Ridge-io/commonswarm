@@ -55,7 +55,7 @@ test("detached argv is public-only and strips ambient Node hooks", () => {
   ]);
 });
 
-test("opencode detached argv pins provider and rejects effort", () => {
+test("opencode detached argv pins provider, requires absolute executable, rejects effort", () => {
   const args = buildListenerChildArgs({
     ...SPEC,
     provider: "opencode",
@@ -65,6 +65,7 @@ test("opencode detached argv pins provider and rejects effort", () => {
   });
   assert.equal(args[args.indexOf("--provider") + 1], "opencode");
   assert.ok(args.includes("--opencode-executable"));
+  assert.equal(args[args.indexOf("--opencode-executable") + 1], "/opt/opencode");
   assert.equal(args.includes("--effort"), false);
   assert.equal(args.includes("--grok-executable"), false);
   assert.throws(
@@ -73,8 +74,19 @@ test("opencode detached argv pins provider and rejects effort", () => {
         ...SPEC,
         provider: "opencode",
         effort: "low",
+        opencodeExecutable: "/opt/opencode",
       }),
     /effort.*opencode/i,
+  );
+  assert.throws(
+    () =>
+      buildListenerChildArgs({
+        ...SPEC,
+        provider: "opencode",
+        effort: undefined,
+        opencodeExecutable: "opencode",
+      }),
+    /absolute --opencode-executable/i,
   );
 });
 

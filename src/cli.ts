@@ -133,6 +133,7 @@ import {
   type SignalDirectory,
   type ResolvedSignalRecipient,
 } from "./cloud/signals.js";
+import { resolveOpenCodeExecutable } from "./host/opencode.js";
 import {
   FileListenerEffectStore,
   GrokListenerModel,
@@ -2586,7 +2587,7 @@ function renderListenerStatus(status: ListenerStatus): string {
 }
 
 function listenerFailureMessage(code: string): string {
-  if (code === "version_refused" || code === "acp_version_error") {
+  if (code === "version_refused") {
     return "the listener requires a measured host CLI version (Grok 0.2.117 or OpenCode 1.18.10); run the provider --version and install the pinned build before retrying";
   }
   if (code === "grok_auth_missing") {
@@ -2598,8 +2599,12 @@ function listenerFailureMessage(code: string): string {
   if (code === "opencode_auth_missing") {
     return "OpenCode is not signed in for detached use; authenticate OpenCode, then retry listen start";
   }
-  if (code.startsWith("opencode_auth_")) {
-    return `OpenCode's local login artifact failed its safety check (${code}); re-authenticate and ensure the auth file is an owned 0600 regular file under XDG data`;
+  if (
+    code.startsWith("opencode_auth_") ||
+    code === "opencode_project_config_active" ||
+    code === "opencode_config_probe_failed"
+  ) {
+    return `OpenCode host safety check failed (${code}); re-authenticate and ensure OPENCODE_DISABLE_PROJECT_CONFIG keeps project allow from merging`;
   }
   if (
     code === "sender_relation_capability_missing" ||
@@ -2610,7 +2615,7 @@ function listenerFailureMessage(code: string): string {
   if (code === "credential_stopped") {
     return "the agent credential expired, was revoked, or reached its renewal horizon; ask the signed-in workspace owner for a new onboarding prompt";
   }
-  if (code === "permission_canary_failed" || code === "acp_permission_canary_error") {
+  if (code === "permission_canary_failed") {
     return "the host did not prove that CommonSwarm controls ACP tool permissions; no model prompt was delivered";
   }
   if (code === "process_exit") {
@@ -2842,6 +2847,11 @@ async function runListenStart(args: Arguments): Promise<void> {
       token: agent.token,
       expiresAt: agent.expiresAt,
     }));
+    const opencodeExecutable = provider === "opencode"
+      ? resolveOpenCodeExecutable(
+        args.optional("opencode-executable") ?? "opencode",
+      )
+      : undefined;
     const child = await spawnDetachedListener({
       spec: {
         entrypoint,
@@ -2859,8 +2869,8 @@ async function runListenStart(args: Arguments): Promise<void> {
         ...(args.optional("grok-executable")
           ? { executable: args.required("grok-executable") }
           : {}),
-        ...(args.optional("opencode-executable")
-          ? { opencodeExecutable: args.required("opencode-executable") }
+        ...(opencodeExecutable
+          ? { opencodeExecutable }
           : {}),
       },
       credentialArtifact: artifact,
@@ -2893,7 +2903,7 @@ async function runListenStart(args: Arguments): Promise<void> {
     return;
   }
   const hostNote = provider === "opencode"
-    ? "The same-owner OpenCode worker uses a private 0700 home with auth-only copy and forced-ask tool config; ambient project allow lists do not apply. Cross-owner turns use a fresh auth-only home and empty cwd that are removed after each turn.\n"
+    ? "The same-owner OpenCode worker uses a private 0700 home with auth-only copy, forced-ask tool config, and OPENCODE_DISABLE_PROJECT_CONFIG (verified via debug config --pure) so project allow lists cannot merge. The deny canary runs on an empty temp cwd, not your repo. Cross-owner turns use a fresh auth-only home and empty cwd that are removed after each turn. Steady-state --permissions allow is a separate local opt-in after the deny canary.\n"
     : "The same-owner Grok worker may load ambient user hooks outside CommonSwarm's ACP permission boundary; cmux integration hooks are disabled. Cross-owner turns use a clean temporary home with no user hooks or local context.\n";
   process.stdout.write(
     `${
