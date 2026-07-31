@@ -288,6 +288,26 @@ rendered as `content=""`. Grep the DEPLOYED page, and pair every "must be absent
 
 There is no CI. Deploys are manual and are the Lead's call; nothing deploys on push.
 
+**The CLI version on /download is derived, not typed.** The repo-root `package.json`
+`version` is the sole shipping source for the pinned install command
+(`site/src/lib/release.ts` → `INSTALL_CMD_PINNED`), the AfterInstall `cswarm --version`
+example, and the footer version line — all built through `site/src/lib/release.ts`, with
+the protocol number imported from its one source (`src/cloud/config.ts`). To bump (e.g.
+the upcoming v0.1.5): **no site string is edited**, but a real npm release syncs the root
+manifest AND its lockfile — normal release work updates both `package.json` and
+`package-lock.json` (prefer `npm version --no-git-tag-version <version>` or the repo's
+final release procedure), and a pure gate
+(`site/scripts/release-lockfile.test.mjs`, covered by `npm --prefix site test`) rejects a
+tree whose `package.json.version`, `package-lock.json.version`, and
+`package-lock.json.packages[""].version` disagree. After a clean site build run
+`npm --prefix site test` — the download gate `site/scripts/download-version.test.mjs`
+(covered by that command) rejects a built `/download` that is missing or misrendering any
+of the four version surfaces (pinned copy payload, visible pin, AfterInstall output line,
+footer line). Two literals are intentionally NOT part of this: the agent minimum-version
+copy in `site/src/components/connect/agent-prompt.ts` and the web-client
+`CLIENT_PROTOCOL_VERSION` in `site/src/lib/commonswarm.ts` are their own runtime
+surfaces — do not "align" them from package.json.
+
 ### zsh mangles `$rev:src/...` — brace it
 
 This cost three agents six failed probes in one session, each blaming "zsh being zsh":

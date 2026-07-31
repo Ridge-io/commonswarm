@@ -1,0 +1,88 @@
+# GREEN run — release gate, repaired tree — 2026-07-31 (evidence corrected)
+
+Excerpts, not the full runs. The full `npm --prefix site test` total is recorded
+separately (82 tests, 82 pass), and the root gates separately at the end of the
+evidence doc.
+
+## clean site build — ONE unambiguous command, from the repo root
+
+    cd site && rm -rf dist && npm run build
+
+(The previous record showed `rm -rf site/dist && npm run build` — ambiguous: from
+`site/` it removes `site/site/dist`, and from the repo root `npm run build` builds the
+CLI, not the site. The command above is what was actually executed; it resolves only
+from the repo root, which is exactly how `cd site && …` is read.)
+
+`rm -rf dist` is load-bearing: the clean must be real or stale files survive.
+
+    build exit=0
+    8 page(s) built in 720ms
+
+Old `node:crypto` externalization warning ABSENT, with a positive control on the SAME
+log (a real successful build log always prints `built in`). `grep -c` prints an explicit
+0 for a no-match, so the absence is a number, not a silenced command:
+
+    $ grep -c 'externalized for browser compatibility' <build log>      -> 0   (absent)
+    $ grep -c 'built in'                        <build log>      -> 3   (same-log positive control)
+
+## emitted browser JS — DISCRIMINATING sentinel probe
+
+Scan `site/dist/_astro/*.js` for root-only release metadata that used to leak in via
+`agent-prompt.ts -> install.ts -> release.ts -> root package.json / src/cloud/config.ts`.
+`rg` applies the alternation as a REGEX; `-l` lists matching files; piping to `wc -l`
+prints an explicit count (0 for no matches). The probe is enumerated per sentinel and
+combined:
+
+    $ for s in 'build:command-core' 'test:p1-server' 'node:crypto'; do
+    >   echo "$s -> $(rg -l -e "$s" site/dist/_astro --glob '*.js' | wc -l | tr -d ' ') file(s)"
+    > done
+    build:command-core -> 0 file(s)
+    test:p1-server -> 0 file(s)
+    node:crypto -> 0 file(s)
+
+    $ rg -l -e 'build:command-core' -e 'test:p1-server' -e 'node:crypto' site/dist/_astro --glob '*.js' | wc -l
+    0
+
+POSITIVE CONTROL, same probe shape — the scanner reads real emitted JS (a string that
+must be in the built bundles):
+
+    $ rg -l 'navigator.clipboard' site/dist/_astro --glob '*.js' | wc -l
+    3
+
+(The old record used `grep -c 'build:command-core|test:p1-server|node:crypto'` — basic
+grep treats `|` as LITERAL text, so that probe reported 0 even when a sentinel was
+present. It is superseded; the mutation that proves the rg probe CAN turn red is in the
+red log.)
+
+## built /download four version surfaces (each exactly once)
+
+    afterinstall output:  <span class="ui-code__line">cswarm 0.1.4 (protocol 0.1.0)</span>   -> 1
+    footer line:          <span class="mono ft__version-str"...>cswarm 0.1.4 (protocol 0.1.0)</span>  -> 1
+    visible pin:          $ </span>curl -fsSL https://commonswarm.com/install.sh | CSWARM_VERSION=0.1.4 sh  -> 1
+    copy payload:         data-copy="curl -fsSL https://commonswarm.com/install.sh | CSWARM_VERSION=0.1.4 sh"  -> 1
+
+## download version gate, standalone (`node --import tsx --test site/scripts/download-version.test.mjs`)
+
+This is an EXCERPT of one test file against the restored artifact, not the full site run.
+
+    exit=0
+    ℹ tests 6
+    ℹ pass  6
+    ℹ fail  0
+
+✔ download version gate: clean built /download carries all four shipping-version surfaces
+✔ download version gate: a deliberately mutated stale artifact is rejected
+✔ deletion control: removing only the AfterInstall output line turns the gate red
+✔ deletion control: removing only the footer shipping-version line turns the gate red
+✔ deletion control: removing only the visible pinned command turns the gate red
+✔ deletion control: removing only the pinned command's data-copy payload turns the gate red
+
+## FULL site test total — `npm --prefix site test`
+
+    exit=0
+    ℹ tests 82
+    ℹ pass  82
+    ℹ fail  0
+
+(root `npm test` 241/241, `npm run check:tests`, root `npm run build`, and
+`git diff --check` all green — see the evidence doc for each verdict.)

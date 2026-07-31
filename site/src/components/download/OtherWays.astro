@@ -51,6 +51,7 @@ import Card from "../ui/Card.astro";
 import CodeBlock from "../ui/CodeBlock.astro";
 import Badge from "../ui/Badge.astro";
 import { INSTALL_CMD_DIR } from "../../lib/install.ts";
+import { INSTALL_CMD_PINNED } from "../../lib/release.ts";
 
 interface Props {
   /** The same install command shown at the top of the page. */
@@ -60,9 +61,12 @@ interface Props {
 const { cmd } = Astro.props;
 
 /* Derived from the one command, so a change at the top of the page cannot leave this
-   variant behind pointing at a different host. */
+   variant behind pointing at a different host. The pinned variant is NOT derived here
+   and NOT imported from lib/install.ts: it lives in lib/release.ts, where the version
+   halves sit next to the version they pin (install.ts must stay browser-safe for
+   agent-prompt.ts, so release.ts imports the host from it, never the reverse). */
 const readCmd = cmd.replace(/\|\s*sh$/, "| less");
-const pinCmd = cmd.replace(/\|\s*sh$/, "| CSWARM_VERSION=0.1.4 sh");
+const pinCmd = INSTALL_CMD_PINNED;
 const dirCmd = INSTALL_CMD_DIR;
 const sourceCmd = `git clone https://github.com/Ridge-io/cloud-swarm.git
 cd cloud-swarm
