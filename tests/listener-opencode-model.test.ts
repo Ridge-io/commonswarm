@@ -4,18 +4,26 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import type { SignalRecord } from "../src/cloud/command-client.js";
-import type {
-  OpenCodeAcpHandle,
-  OpenCodeAcpOpenOptions,
+import {
+  prepareOpenCodeIsolatedHome,
+  type OpenCodeAcpHandle,
+  type OpenCodeAcpOpenOptions,
 } from "../src/host/opencode.js";
-import type {
-  PermissionDecision,
-  PermissionRequest,
+import {
+  AcpHostError,
+  type PermissionDecision,
+  type PermissionRequest,
 } from "../src/host/types.js";
 import {
   OpenCodeListenerModel,
   type OpenOpenCodeSession,
 } from "../src/listener/index.js";
+import {
+  listenerPaths,
+  runListenerSupervisor,
+} from "../src/listener/index.js";
+import { runListenerRuntime } from "../src/listener/index.js";
+import { cloudTarget } from "../src/cloud/config.js";
 
 const REQUEST: PermissionRequest = {
   sessionId: "session",
@@ -329,4 +337,187 @@ test("one-winner: closed model rejects new prompts", async () => {
     () => adapter.prompt(SIGNAL, "worker", "nope"),
     /closed/,
   );
+});
+
+test("cancel during deferred ensureWorkerHome releases registered home", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "cswarm-oc-worker-"));
+  let releasePrepare: (() => void) | undefined;
+  const gate = new Promise<void>((resolve) => {
+    releasePrepare = resolve;
+  });
+  let capturedHome: string | undefined;
+  const adapter = new OpenCodeListenerModel({
+    cwd,
+    allowMissingAuth: true,
+    prepareHome: async (options) => {
+      await gate;
+      const home = await prepareOpenCodeIsolatedHome(options);
+      capturedHome = home;
+      return home;
+    },
+    open: fakeOpen([]),
+  });
+  const startPromise = adapter.start();
+  // Cancel while prepare is still gated (before home is registered).
+  adapter.cancel();
+  releasePrepare?.();
+  await assert.rejects(startPromise, /cancelled during open|closed/);
+  assert.equal(typeof capturedHome, "string");
+  // After registration+assert failure path, home must be released (absent).
+  await assert.rejects(() => stat(capturedHome!), /ENOENT/);
+});
+
+test("close child_exit_timeout retains worker home; runtime+supervisor fail", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "cswarm-oc-worker-"));
+  let workerHome: string | undefined;
+  const dyingClose = async () => {
+    throw new AcpHostError(
+      "child_exit_timeout",
+      "OpenCode child did not exit after SIGTERM and SIGKILL",
+    );
+  };
+  const adapter = new OpenCodeListenerModel({
+    cwd,
+    allowMissingAuth: true,
+    open: async (options) => {
+      workerHome = options.isolatedHome;
+      return {
+        session: {
+          async enablePromptsAfterCanary() {
+            await options.permissionCallback?.(REQUEST);
+          },
+          async openWorkCwd() {},
+          async prompt() {
+            return { message: "ok", stopReason: "end_turn" as const, updates: [] };
+          },
+          cancel() {},
+        },
+        child: {},
+        executable: process.execPath,
+        args: ["acp", "--pure"],
+        env: {},
+        home: options.isolatedHome ?? cwd,
+        close: dyingClose,
+      } as unknown as OpenCodeAcpHandle;
+    },
+  });
+  await adapter.start();
+  assert.equal(typeof workerHome, "string");
+  await assert.rejects(() => adapter.close(), /child_exit_timeout|did not exit/);
+  await stat(workerHome!);
+  assert.ok(adapter.getRetainedHomes().includes(workerHome!));
+
+  // Runtime escalates close failure to fatal (does not swallow).
+  const controller = new AbortController();
+  let homeFromRuntime: string | undefined;
+  const stop = await runListenerRuntime({
+    target: cloudTarget("https://cloud.example.test", "anon"),
+    workspaceId: SIGNAL.workspace_id,
+    principalId: SIGNAL.to_agent!,
+    credentialSession: { async bearer() { return "t"; } },
+    store: {
+      async read() { return null; },
+      async write() {},
+    },
+    model: new OpenCodeListenerModel({
+      cwd,
+      allowMissingAuth: true,
+      open: async (options) => {
+        homeFromRuntime = options.isolatedHome;
+        return {
+          session: {
+            async enablePromptsAfterCanary() {
+              await options.permissionCallback?.(REQUEST);
+            },
+            async openWorkCwd() {},
+            async prompt() {
+              return { message: "ok", stopReason: "end_turn" as const, updates: [] };
+            },
+            cancel() {},
+          },
+          child: {},
+          executable: process.execPath,
+          args: ["acp", "--pure"],
+          env: {},
+          home: options.isolatedHome ?? cwd,
+          close: dyingClose,
+        } as unknown as OpenCodeAcpHandle;
+      },
+    }),
+    signal: controller.signal,
+    sleep: async () => {
+      controller.abort();
+    },
+    readPage: async () => ({
+      signals: [],
+      capabilities: { senderOwnerRelation: true, cursorAfter: true },
+      legacyCursorFallback: false,
+      rawCount: 0,
+      nextCursor: null,
+      malformedRows: 0,
+    }),
+  });
+  assert.equal(stop.reason, "fatal");
+  if (stop.reason === "fatal") {
+    assert.equal(
+      (stop.error as Error & { code?: string }).code,
+      "child_exit_timeout",
+    );
+  }
+  assert.equal(typeof homeFromRuntime, "string");
+  await stat(homeFromRuntime!);
+
+  // Supervisor records failed status with child_exit_timeout code.
+  const paths3 = listenerPaths({
+    profileId: "p3",
+    workspaceId: SIGNAL.workspace_id,
+    principalId: SIGNAL.to_agent!,
+    stateDirectory: await mkdtemp(join(tmpdir(), "cswarm-oc-state3-")),
+  });
+  let homeExact: string | undefined;
+  const status3 = await runListenerSupervisor({
+    paths: paths3,
+    profileId: "p3",
+    workspaceId: SIGNAL.workspace_id,
+    principalId: SIGNAL.to_agent!,
+    provider: "opencode",
+    run: async () => {
+      const model = new OpenCodeListenerModel({
+        cwd,
+        allowMissingAuth: true,
+        open: async (options) => {
+          homeExact = options.isolatedHome;
+          return {
+            session: {
+              async enablePromptsAfterCanary() {
+                await options.permissionCallback?.(REQUEST);
+              },
+              async openWorkCwd() {},
+              async prompt() {
+                return {
+                  message: "ok",
+                  stopReason: "end_turn" as const,
+                  updates: [],
+                };
+              },
+              cancel() {},
+            },
+            child: {},
+            executable: process.execPath,
+            args: ["acp", "--pure"],
+            env: {},
+            home: options.isolatedHome ?? cwd,
+            close: dyingClose,
+          } as unknown as OpenCodeAcpHandle;
+        },
+      });
+      await model.start();
+      await model.close(); // throws → supervisor catch → failed
+      return { reason: "cancelled" as const };
+    },
+  });
+  assert.equal(status3.state, "failed");
+  assert.equal(status3.lastErrorCode, "child_exit_timeout");
+  assert.equal(typeof homeExact, "string");
+  await stat(homeExact!);
 });

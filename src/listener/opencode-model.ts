@@ -13,6 +13,7 @@ import {
 import { defaultPermissionCallback } from "../host/permission.js";
 import {
   AcpChildExitError,
+  AcpHostError,
   type PermissionCallback,
   type PermissionDecision,
   type PermissionRequest,
@@ -41,6 +42,8 @@ export interface OpenCodeListenerModelOptions {
    * Must not be implied by injecting a fake `open`.
    */
   allowMissingAuth?: boolean;
+  /** Test-only home preparer (defaults to prepareOpenCodeIsolatedHome). */
+  prepareHome?: typeof prepareOpenCodeIsolatedHome;
 }
 
 function allowOnceOrDeny(request: PermissionRequest): PermissionDecision {
@@ -50,26 +53,30 @@ function allowOnceOrDeny(request: PermissionRequest): PermissionDecision {
     : defaultPermissionCallback(request);
 }
 
+function asError(error: unknown): Error {
+  return error instanceof Error ? error : new Error(String(error));
+}
+
 /**
  * OpenCode-backed listener model.
  *
- * Same-owner asks share one worker session. The deny canary always runs on a
- * fresh empty temp cwd (never the user repo), then the same child opens a work
- * session on the real cwd. Cross-owner/unknown turns get a brand-new auth-only
- * home + empty cwd and are tracked in an in-flight set until closed.
- *
- * close/cancel also covers home-preparation and openSession races via a
- * generation counter and preparing-homes set — not only already-open workers.
+ * Close releases each home only after its handle.close() succeeds. A
+ * child_exit_timeout (or any close failure) is rethrown and that home is
+ * retained on disk for escalation. Preparing homes are registered before
+ * cancel checks so a race cannot strand an auth copy as an untracked path.
  */
 export class OpenCodeListenerModel implements ListenerModel {
   private readonly openSession: OpenOpenCodeSession;
+  private readonly prepareHome: typeof prepareOpenCodeIsolatedHome;
   private readonly permissionMode: ListenerPermissionMode;
   private readonly instanceId = randomUUID();
   private worker: OpenCodeAcpHandle | null = null;
   private workerHome: string | null = null;
+  /** Worker home retained after a failed close (not deleted). */
+  private retainedHomes: string[] = [];
   /** All in-flight isolated handles (concurrent cross-owner asks). */
   private readonly inFlight = new Set<OpenCodeAcpHandle>();
-  /** Homes being prepared that are not yet bound to a handle. */
+  /** Homes being prepared that are not yet bound to a successful session. */
   private readonly preparingHomes = new Map<string, string>();
   private openGeneration = 0;
   private workerCanary = true;
@@ -79,7 +86,13 @@ export class OpenCodeListenerModel implements ListenerModel {
 
   constructor(private readonly options: OpenCodeListenerModelOptions) {
     this.openSession = options.open ?? openOpenCodeAcpSession;
+    this.prepareHome = options.prepareHome ?? prepareOpenCodeIsolatedHome;
     this.permissionMode = options.permissionMode ?? "deny";
+  }
+
+  /** Homes retained after a failed close (for tests / operator recovery). */
+  getRetainedHomes(): readonly string[] {
+    return this.retainedHomes;
   }
 
   /** Initialize worker + deny canary before the listener reports ready. */
@@ -100,8 +113,17 @@ export class OpenCodeListenerModel implements ListenerModel {
       return await worker.session.prompt(prompt);
     } catch (error) {
       if (error instanceof AcpChildExitError) {
-        await worker.close().catch(() => undefined);
-        if (this.worker === worker) this.worker = null;
+        try {
+          await worker.close();
+          if (this.worker === worker) {
+            this.worker = null;
+            await this.releaseWorkerHomeIfOwned();
+          }
+        } catch (closeError) {
+          if (this.worker === worker) this.worker = null;
+          // Retain home; surface the close failure (may be child_exit_timeout).
+          throw closeError;
+        }
       }
       throw error;
     }
@@ -124,16 +146,47 @@ export class OpenCodeListenerModel implements ListenerModel {
     if (this.closed) return;
     this.closed = true;
     this.removeExitCleanup();
-    // cancel() bumps generation and cancels open + in-flight sessions.
     this.cancel();
-    const handles = [
-      this.worker,
-      ...this.inFlight,
-    ].filter((value): value is OpenCodeAcpHandle => value !== null);
+
+    const worker = this.worker;
+    const workerHome = this.workerHome;
+    const isolates = [...this.inFlight];
     this.worker = null;
     this.inFlight.clear();
-    await Promise.all(handles.map((handle) => handle.close().catch(() => undefined)));
-    // Release homes still mid-prepare (openSession/home race).
+
+    const failures: Error[] = [];
+    let workerCloseOk = true;
+
+    if (worker) {
+      try {
+        await worker.close();
+      } catch (error) {
+        workerCloseOk = false;
+        failures.push(asError(error));
+        if (workerHome) {
+          // Retain the precise home for failed terminate/close.
+          this.retainedHomes.push(workerHome);
+          this.workerHome = null;
+        }
+      }
+    }
+
+    if (workerCloseOk && workerHome) {
+      this.workerHome = null;
+      await releaseOpenCodeHome(workerHome, this.instanceId).catch(() => undefined);
+    }
+
+    for (const handle of isolates) {
+      try {
+        await handle.close();
+      } catch (error) {
+        failures.push(asError(error));
+        // Isolate homes with disposeHomeOnClose are retained by opencode.ts when
+        // terminate fails; we must not force-delete them here.
+      }
+    }
+
+    // Mid-prepare homes (no live child): safe to release on close.
     const preparing = [...this.preparingHomes.entries()];
     this.preparingHomes.clear();
     await Promise.all(
@@ -141,14 +194,30 @@ export class OpenCodeListenerModel implements ListenerModel {
         releaseOpenCodeHome(home, instanceId).catch(() => undefined)
       ),
     );
-    await this.abandonWorkerHome();
+
+    if (failures.length > 0) {
+      const first = failures[0]!;
+      if (failures.length === 1) throw first;
+      throw new AcpHostError(
+        first instanceof AcpHostError ? first.code : "close_failed",
+        `listener model close failed (${failures.length}): ${first.message}`,
+      );
+    }
   }
 
-  /** Drop workerHome synchronously on failure so auth copies never strand. */
+  private async releaseWorkerHomeIfOwned(): Promise<void> {
+    const home = this.workerHome;
+    this.workerHome = null;
+    if (!home) return;
+    await releaseOpenCodeHome(home, this.instanceId);
+  }
+
+  /** Drop workerHome on open/canary failure (no child yet, or failed open). */
   private async abandonWorkerHome(): Promise<void> {
     const home = this.workerHome;
     this.workerHome = null;
     if (!home) return;
+    this.preparingHomes.delete(home);
     await releaseOpenCodeHome(home, this.instanceId);
   }
 
@@ -183,7 +252,7 @@ export class OpenCodeListenerModel implements ListenerModel {
       instanceId: this.instanceId,
       pid: process.pid,
     });
-    const home = await prepareOpenCodeIsolatedHome({
+    const home = await this.prepareHome({
       env: this.options.env ?? process.env,
       owner,
       ...(this.options.model ? { model: this.options.model } : {}),
@@ -191,9 +260,18 @@ export class OpenCodeListenerModel implements ListenerModel {
         ? { allowMissingAuth: true }
         : {}),
     });
-    this.assertOpen(generation);
+    // Register before cancel checks so a concurrent cancel cannot strand an
+    // untracked auth home (caller would otherwise see home=null).
     this.workerHome = home;
     this.preparingHomes.set(home, this.instanceId);
+    try {
+      this.assertOpen(generation);
+    } catch (error) {
+      this.workerHome = null;
+      this.preparingHomes.delete(home);
+      await releaseOpenCodeHome(home, this.instanceId);
+      throw error;
+    }
     return home;
   }
 
@@ -238,8 +316,23 @@ export class OpenCodeListenerModel implements ListenerModel {
       if (home) this.preparingHomes.delete(home);
       return handle;
     } catch (error) {
-      await handle?.close().catch(() => undefined);
-      await this.abandonWorkerHome();
+      // Open/canary failure: drop handle; only abandon home if close is clean.
+      if (handle) {
+        try {
+          await handle.close();
+          await this.abandonWorkerHome();
+        } catch (closeError) {
+          // Retain home after failed close.
+          if (home) {
+            this.retainedHomes.push(home);
+            this.workerHome = null;
+            this.preparingHomes.delete(home);
+          }
+          throw closeError;
+        }
+      } else {
+        await this.abandonWorkerHome();
+      }
       if (home) this.preparingHomes.delete(home);
       throw error;
     } finally {
@@ -249,8 +342,6 @@ export class OpenCodeListenerModel implements ListenerModel {
 
   /**
    * Fresh auth-only 0700 home + empty 0700 cwd for every cross-owner/unknown turn.
-   * Tracked in `inFlight` so close/cancel reaches concurrent isolates and
-   * mid-prepare homes.
    */
   private async promptIsolated(prompt: string): Promise<ListenerPromptResult> {
     if (this.closed) throw new Error("listener model is closed");
@@ -261,7 +352,7 @@ export class OpenCodeListenerModel implements ListenerModel {
     let home: string | null = null;
     let handle: OpenCodeAcpHandle | null = null;
     try {
-      home = await prepareOpenCodeIsolatedHome({
+      home = await this.prepareHome({
         env: this.options.env ?? process.env,
         owner: buildOpenCodeHomeOwner({
           role: "isolated",
@@ -273,8 +364,16 @@ export class OpenCodeListenerModel implements ListenerModel {
           ? { allowMissingAuth: true }
           : {}),
       });
+      // Register before assert so cancel cannot strand an untracked home.
       this.preparingHomes.set(home, isolatedInstanceId);
-      this.assertOpen(generation);
+      try {
+        this.assertOpen(generation);
+      } catch (error) {
+        this.preparingHomes.delete(home);
+        await releaseOpenCodeHome(home, isolatedInstanceId);
+        home = null;
+        throw error;
+      }
       handle = await this.openSession({
         cwd,
         permissionCallback: defaultPermissionCallback,
@@ -299,9 +398,22 @@ export class OpenCodeListenerModel implements ListenerModel {
       throw error;
     } finally {
       if (handle) this.inFlight.delete(handle);
-      await handle?.close().catch(() => undefined);
+      let closeOk = true;
+      if (handle) {
+        try {
+          await handle.close();
+        } catch (closeError) {
+          closeOk = false;
+          if (home) {
+            this.retainedHomes.push(home);
+            home = null; // do not release below
+          }
+          await rm(cwd, { recursive: true, force: true }).catch(() => undefined);
+          throw closeError;
+        }
+      }
       await rm(cwd, { recursive: true, force: true }).catch(() => undefined);
-      if (home) {
+      if (home && closeOk) {
         await releaseOpenCodeHome(home, isolatedInstanceId);
       }
     }
