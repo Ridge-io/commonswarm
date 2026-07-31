@@ -29,6 +29,24 @@ const STATES = new Set<ListenerEffectState>([
 ]);
 const RELATIONS = new Set(["same_owner", "cross_owner", "unknown"]);
 const SIGNAL_KINDS = new Set<ListenerSignalKind>(["ask", "note"]);
+const V1_EFFECT_KEYS = new Set([
+  "version",
+  "signalId",
+  "effectOrdinal",
+  "commandId",
+  "askBody",
+  "askUntil",
+  "senderOwnerRelation",
+  "state",
+  "promptAttempts",
+  "postAttempts",
+  "replyBody",
+  "replyTruncated",
+  "replySignalId",
+  "failureCode",
+  "updatedAt",
+]);
+const V2_EFFECT_KEYS = new Set([...V1_EFFECT_KEYS, "signalKind"]);
 
 /** Default secure state root for long-lived listener metadata and effects. */
 export function defaultListenerStateDirectory(): string {
@@ -67,12 +85,26 @@ function nullableString(value: unknown, max: number): value is string | null {
     (typeof value === "string" && value.length <= max);
 }
 
+/** Fail closed on any key outside the exact set for the record version. */
+function rejectUnknownKeys(
+  row: Record<string, unknown>,
+  allowed: Set<string>,
+): void {
+  for (const key of Object.keys(row)) {
+    if (!allowed.has(key)) {
+      throw new Error("stored listener effect is malformed");
+    }
+  }
+}
+
 /**
  * Parse and validate one stored effect in memory. Version-1 ask files are
  * upcast to the version-2 shape with `signalKind: "ask"` — the durable file
  * is never rewritten on read, and the upcast only adds the discriminator.
  * Cross-field invariants fail closed: a note can never carry reply/post
  * effects, `observed` is terminal and note-only, and version 1 is ask-only.
+ * The schema is closed: any key outside the exact version key set is rejected,
+ * so lease ids, bearers, or other sensitive state can never read as an effect.
  */
 export function parseListenerEffectRecord(
   raw: string,
@@ -98,6 +130,7 @@ export function parseListenerEffectRecord(
     throw new Error("stored listener effect is malformed");
   }
   if (row.version === 1) {
+    rejectUnknownKeys(row, V1_EFFECT_KEYS);
     // A real version-1 file never carried `signalKind`; it is ask-only, and
     // `observed` did not exist then. Reject both so a foreign/note-shaped row
     // cannot masquerade as a v1 ask.
@@ -106,6 +139,7 @@ export function parseListenerEffectRecord(
     }
     return upcastV1Ask(row);
   }
+  rejectUnknownKeys(row, V2_EFFECT_KEYS);
   return parseV2Record(row);
 }
 
@@ -139,11 +173,25 @@ function upcastV1Ask(row: Record<string, unknown>): ListenerEffectRecord {
   }
   // Preserve every v1 value exactly; only the schema version and the new
   // discriminator change, so the durable ask body/command identity is intact.
+  // Never spread the raw row: every key is validated above and rebuilt here.
   return {
-    ...(row as unknown as Omit<ListenerEffectRecord, "version" | "signalKind">),
     version: 2,
+    signalId: row.signalId as string,
     signalKind: "ask",
-  } as ListenerEffectRecord;
+    effectOrdinal: 0,
+    commandId: row.commandId as string,
+    askBody: row.askBody as string,
+    askUntil: row.askUntil as string,
+    senderOwnerRelation: row.senderOwnerRelation as SenderOwnerRelation,
+    state: row.state as ListenerEffectState,
+    promptAttempts: row.promptAttempts as number,
+    postAttempts: row.postAttempts as number,
+    replyBody: row.replyBody as string | null,
+    replyTruncated: row.replyTruncated as boolean,
+    replySignalId: row.replySignalId as string | null,
+    failureCode: row.failureCode as string | null,
+    updatedAt: row.updatedAt as string,
+  };
 }
 
 function parseV2Record(row: Record<string, unknown>): ListenerEffectRecord {
@@ -203,7 +251,26 @@ function parseV2Record(row: Record<string, unknown>): ListenerEffectRecord {
       throw new Error("stored listener effect is malformed");
     }
   }
-  return row as unknown as ListenerEffectRecord;
+  // Never return the raw row: rebuild from validated fields so an unknown key
+  // cannot leak into the in-memory record after the key-set gate above.
+  return {
+    version: 2,
+    signalId: row.signalId as string,
+    signalKind: signalKind as ListenerSignalKind,
+    effectOrdinal: 0,
+    commandId: row.commandId as string,
+    askBody: row.askBody as string,
+    askUntil: row.askUntil as string,
+    senderOwnerRelation: row.senderOwnerRelation as SenderOwnerRelation,
+    state: row.state as ListenerEffectState,
+    promptAttempts: row.promptAttempts as number,
+    postAttempts: row.postAttempts as number,
+    replyBody: row.replyBody as string | null,
+    replyTruncated: row.replyTruncated as boolean,
+    replySignalId: row.replySignalId as string | null,
+    failureCode: row.failureCode as string | null,
+    updatedAt: row.updatedAt as string,
+  };
 }
 
 /**

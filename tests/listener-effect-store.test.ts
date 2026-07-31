@@ -137,7 +137,23 @@ function parse(raw: unknown): ListenerEffectRecord {
   return parseListenerEffectRecord(JSON.stringify(raw), SIGNAL_ID);
 }
 
+function tagged(
+  record: object,
+  key: string,
+  value: unknown,
+): ListenerEffectRecord {
+  return { ...record, [key]: value } as unknown as ListenerEffectRecord;
+}
+
 const malformed = /stored listener effect is malformed/;
+
+/** Representative sensitive fields that must never enter an effect record. */
+const forbiddenExtras: Array<[string, string]> = [
+  ["lease_id", "lsn_test_lease"],
+  ["listenerBearer", "sentinel"],
+  ["prompt", "do not persist the model prompt"],
+  ["ackCommandId", "reply_aaaaaaaaaaaa4aaa8aaaaaaaaaaaaaaa_0"],
+];
 
 test("v1 records upcast to v2 ask records with every durable field preserved", () => {
   const source = v1Row({
@@ -314,4 +330,76 @@ test("ask records cannot carry the note-only observed state", () => {
   assert.throws(() => parse(v1Row({ state: "observed" })), malformed);
   // A healthy ask record still parses once observed is in the state vocabulary.
   assert.deepEqual(parse(v2AskRow()), v2AskRow());
+});
+
+test("v1 and v2 parsers reject forbidden extras instead of returning them", () => {
+  for (const [key, value] of forbiddenExtras) {
+    assert.throws(
+      () => parse(v1Row({ [key]: value })),
+      malformed,
+      `v1 extra ${key} must be rejected`,
+    );
+    assert.throws(
+      () => parse({ ...v2AskRow(), [key]: value }),
+      malformed,
+      `v2 extra ${key} must be rejected`,
+    );
+  }
+});
+
+test("an on-disk file with a forbidden extra fails on read for v1 and v2", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cswarm-effect-forbid-read-"));
+  const store = new FileListenerEffectStore({
+    profileId: "profile-test",
+    workspaceId: "11111111-1111-4111-8111-111111111111",
+    principalId: "22222222-2222-4222-8222-222222222222",
+    stateDirectory: root,
+  });
+  const path = join(store.instanceDirectory, "effects", `${SIGNAL_ID}.json`);
+  for (const [key, value] of forbiddenExtras) {
+    await writeSecureJsonFile(path, JSON.stringify(v1Row({ [key]: value })));
+    await assert.rejects(
+      () => store.read(SIGNAL_ID),
+      malformed,
+      `v1 file with extra ${key} must fail on read`,
+    );
+  }
+  for (const [key, value] of forbiddenExtras) {
+    await writeSecureJsonFile(path, JSON.stringify(tagged(v2AskRow(), key, value)));
+    await assert.rejects(
+      () => store.read(SIGNAL_ID),
+      malformed,
+      `v2 file with extra ${key} must fail on read`,
+    );
+  }
+});
+
+test("a rejected write with a forbidden extra creates no file for v1 and v2", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cswarm-effect-forbid-write-"));
+  const store = new FileListenerEffectStore({
+    profileId: "profile-test",
+    workspaceId: "11111111-1111-4111-8111-111111111111",
+    principalId: "22222222-2222-4222-8222-222222222222",
+    stateDirectory: root,
+  });
+  const path = join(store.instanceDirectory, "effects", `${SIGNAL_ID}.json`);
+  for (const [key, value] of forbiddenExtras) {
+    await assert.rejects(
+      () => store.write(tagged(v1Row(), key, value)),
+      malformed,
+      `v1 extra ${key} must fail on write`,
+    );
+  }
+  for (const [key, value] of forbiddenExtras) {
+    await assert.rejects(
+      () => store.write(tagged(v2AskRow(), key, value)),
+      malformed,
+      `v2 extra ${key} must fail on write`,
+    );
+  }
+  const info = await stat(path).catch((error: NodeJS.ErrnoException) => {
+    assert.equal(error.code, "ENOENT");
+    return null;
+  });
+  assert.equal(info, null);
 });
