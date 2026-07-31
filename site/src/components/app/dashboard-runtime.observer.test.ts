@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
+import { BootFocusGate } from "../../lib/boot-focus";
 
 const cwd = process.cwd();
 const siteRoot = fs.existsSync(path.join(cwd, "src", "components", "app"))
@@ -177,7 +178,76 @@ test("panel changes expose busy state and move focus only on real transitions", 
   assert.match(source, /aria-busy/);
   assert.match(source, /previous !== name && name !== "loading"/);
   assert.match(source, /querySelector<HTMLElement>\("h1, h2"\)/);
-  assert.match(source, /heading\.focus\(\{ preventScroll: true \}\)/);
+  assert.match(
+    source,
+    /if \(!panelBootFocus\.allowsFocus\(\)\) return;/,
+    "the boot presentation skips the focus move — a fresh load must not paint " +
+      "a :focus-visible ring around the headline",
+  );
+  assert.match(
+    source,
+    /heading\.focus\(\{ preventScroll: true \}\)/,
+    "later transitions move focus plainly: the platform heuristic shows the " +
+      "ring to keyboard users and not to pointer users",
+  );
+  assert.doesNotMatch(
+    dashboard,
+    /focusVisible/,
+    "focus visibility is never suppressed anywhere — it is the platform's call",
+  );
+});
+
+/*
+ * CAUSAL, NOT A COPIED MODEL: this drives the same BootFocusGate class the
+ * dashboard constructs for both surfaces (panel headings, the auth email field).
+ * The regexes after it only pin that wiring.
+ */
+test("boot focus gate: first presentation skips, every later presentation moves", () => {
+  const gate = new BootFocusGate();
+  assert.equal(
+    gate.allowsFocus(),
+    false,
+    "the boot presentation of a surface takes no scripted focus",
+  );
+  assert.equal(
+    gate.allowsFocus(),
+    true,
+    "the first user-driven transition moves focus",
+  );
+  assert.equal(
+    gate.allowsFocus(),
+    true,
+    "and every transition after that",
+  );
+  /* Two surfaces are independent gates: the auth form consuming its boot skip
+     must not also consume the panel's, or the boot panel would refocus. */
+  const panel = new BootFocusGate();
+  const auth = new BootFocusGate();
+  assert.equal(auth.allowsFocus(), false, "auth boot presentation skips");
+  assert.equal(panel.allowsFocus(), false, "panel boot presentation still skips");
+  assert.equal(panel.allowsFocus(), true, "panel's next transition moves");
+  assert.equal(auth.allowsFocus(), true, "auth's next transition moves");
+});
+
+test("the dashboard wires one boot gate per scripted-focus surface", () => {
+  assert.match(
+    dashboard,
+    /import \{ BootFocusGate \} from "\.\.\/\.\.\/lib\/boot-focus"/,
+  );
+  assert.match(dashboard, /const panelBootFocus = new BootFocusGate\(\)/);
+  assert.match(dashboard, /const authBootFocus = new BootFocusGate\(\)/);
+  const authView = between(dashboard, "const showAuthView =", "const createStorageKey =");
+  assert.match(
+    authView,
+    /name === "choices" && authBootFocus\.allowsFocus\(\)/,
+    "the email field is focused only when the gate allows — boot skips, " +
+      "user-driven choices presentations focus; email-sent never consumes",
+  );
+  assert.match(
+    authView,
+    /one<HTMLInputElement>\("#dashboard-email"\)\?\.focus\(\)/,
+    "and when it does focus, it is a plain platform-heuristic focus",
+  );
 });
 
 /*
@@ -243,7 +313,13 @@ test("dashboard blocks an in-flight mint but Done and Back can finish a visible 
   assert.match(close, /if \(keepConnectCredentialVisible\(\)\) return/);
   assert.match(close, /connect\?\.dataset\.state === "done"[\s\S]*connect\.finishPrompt\("back"\)/);
   assert.match(signout, /if \(keepConnectCredentialVisible\(\)\) return/);
-  assert.match(signout, /requestVersion \+= 1;[\s\S]*activeWorkspaceId = ""/);
+  assert.match(signout, /requestVersion \+= 1;[\s\S]*resetWorkspaceSessionState\(\)/);
+  const reset = between(
+    dashboard,
+    "const resetWorkspaceSessionState =",
+    "armLiveFeed =",
+  );
+  assert.match(reset, /activeWorkspaceId = ""/);
   assert.match(
     openWorkspace,
     /if \(connectState === "done"\)[\s\S]*pendingWorkspaceId = workspaceId;[\s\S]*connect\?\.finishPrompt\("back"\)/,
