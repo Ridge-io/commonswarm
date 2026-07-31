@@ -5423,6 +5423,9 @@ async function handleTransaction(
           detail: ignoredIdentity,
           hash,
         });
+        if (!matches) {
+          return { status: 409, body: { error: "command_id_conflict" } };
+        }
         if (kind === CLAIM_AGENT_INBOX_KIND && auth.agent !== null) {
           const ledger = parseClaimLedger(existing.response);
           if (ledger === null) {
@@ -5633,7 +5636,7 @@ async function handleTransaction(
       // select another recipient. Step 1 of the claim order is complete.
       const agent = auth.agent;
       if (agent === null) {
-        return { status: 403, body: { error: "forbidden" } };
+        return { status: 403, body: { error: "delivery_unavailable" } };
       }
       const ledger = await claimAgentInbox(tx, {
         workspaceId: route.workspaceId,
@@ -5712,7 +5715,7 @@ async function handleTransaction(
     if (command.kind === ACK_AGENT_DELIVERY_KIND) {
       const agent = auth.agent;
       if (agent === null) {
-        return { status: 403, body: { error: "forbidden" } };
+        return { status: 403, body: { error: "delivery_unavailable" } };
       }
       const result = await ackAgentDelivery(tx, {
         workspaceId: route.workspaceId,

@@ -345,12 +345,18 @@ async function handle(
         s.to_agent, s.in_reply_to,
         CASE
           WHEN s.from_kind = 'user'
+           AND author_member.user_id IS NOT NULL
            AND s."from" = ${agent.owner_user_id}::uuid THEN 'same_owner'
+          WHEN s.from_kind = 'user'
+           AND author_member.user_id IS NOT NULL THEN 'cross_owner'
           WHEN s.from_kind = 'agent'
+           AND author.principal_id IS NOT NULL
+           AND author_member.user_id IS NOT NULL
            AND author.owner_user_id = ${agent.owner_user_id}::uuid
             THEN 'same_owner'
-          WHEN s.from_kind = 'user'
-            OR author.principal_id IS NOT NULL THEN 'cross_owner'
+          WHEN s.from_kind = 'agent'
+           AND author.principal_id IS NOT NULL
+           AND author_member.user_id IS NOT NULL THEN 'cross_owner'
           ELSE 'unknown'
         END AS sender_owner_relation
       FROM swarm_read.signals AS s
@@ -358,6 +364,10 @@ async function handle(
         ON s.from_kind = 'agent'
        AND author.workspace_id = s.workspace_id
        AND author.principal_id = s."from"
+       AND author.revoked_at IS NULL
+      LEFT JOIN swarm_read.member_profiles AS author_member
+        ON author_member.workspace_id = s.workspace_id
+       AND author_member.user_id = COALESCE(author.owner_user_id, CASE WHEN s.from_kind = 'user' THEN s."from" END)
       WHERE s.workspace_id = ${body.workspace_id}::uuid
         AND (
           (s."to" IS NULL AND s.to_agent IS NULL)

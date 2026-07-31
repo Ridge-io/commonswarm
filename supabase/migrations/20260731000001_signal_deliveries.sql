@@ -190,14 +190,10 @@ DECLARE
   missing text[] := ARRAY[]::text[];
 BEGIN
   FOR role_name IN
-    SELECT DISTINCT grantee::text
-    FROM information_schema.role_table_grants
-    WHERE table_schema = 'swarm'
-      AND table_name = 'signals'
-      AND privilege_type = 'INSERT'
-      AND grantee::text NOT IN (
-        SELECT rolname FROM pg_catalog.pg_roles WHERE rolsuper
-      )
+    SELECT rolname::text
+    FROM pg_catalog.pg_roles
+    WHERE NOT rolsuper
+      AND has_table_privilege(rolname, 'swarm.signals', 'INSERT')
   LOOP
     IF NOT has_table_privilege(role_name, 'swarm.signal_deliveries', 'INSERT') THEN
       missing := array_append(missing, role_name);
@@ -297,6 +293,7 @@ DECLARE
   v_principal_workspace_id uuid;
   v_run_id uuid;
   v_device_id uuid;
+  v_lineage_id uuid;
   v_token_revoked_at timestamptz;
   v_principal_revoked_at timestamptz;
   v_run_ended_at timestamptz;
@@ -355,6 +352,7 @@ BEGIN
     p.workspace_id,
     t.run_id,
     r.device_id,
+    t.lineage_id,
     t.revoked_at,
     p.revoked_at,
     r.ended_at,
@@ -368,6 +366,7 @@ BEGIN
     v_principal_workspace_id,
     v_run_id,
     v_device_id,
+    v_lineage_id,
     v_token_revoked_at,
     v_principal_revoked_at,
     v_run_ended_at,
@@ -408,7 +407,8 @@ BEGIN
       v_principal_id,
       v_run_id,
       v_device_id,
-      v_owner_user_id
+      v_owner_user_id,
+      v_lineage_id
     ];
     IF EXISTS (
       SELECT 1
@@ -420,6 +420,8 @@ BEGIN
           OR (rt.kind = 'run' AND rt.target_id = v_run_id)
           OR (rt.kind = 'device' AND rt.target_id = v_device_id)
           OR (rt.kind = 'membership' AND rt.target_id = v_owner_user_id)
+          OR (rt.kind = 'lineage' AND rt.target_id = v_lineage_id)
+          OR (rt.kind = 'family' AND rt.target_id = v_lineage_id)
         )
     ) THEN
       v_revoked := true;

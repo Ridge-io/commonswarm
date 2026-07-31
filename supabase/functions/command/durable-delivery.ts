@@ -225,13 +225,20 @@ export async function claimAgentInbox(
       u.leased_until,
       CASE
         WHEN s.from_kind = 'user'
+         AND author_member.user_id IS NOT NULL
          AND s.from_principal = ${args.receiverOwnerUserId}::uuid
           THEN 'same_owner'
+        WHEN s.from_kind = 'user'
+         AND author_member.user_id IS NOT NULL
+          THEN 'cross_owner'
         WHEN s.from_kind = 'agent'
+         AND author.principal_id IS NOT NULL
+         AND author_member.user_id IS NOT NULL
          AND author.owner_user_id = ${args.receiverOwnerUserId}::uuid
           THEN 'same_owner'
-        WHEN s.from_kind = 'user'
-          OR author.principal_id IS NOT NULL
+        WHEN s.from_kind = 'agent'
+         AND author.principal_id IS NOT NULL
+         AND author_member.user_id IS NOT NULL
           THEN 'cross_owner'
         ELSE 'unknown'
       END::text AS sender_owner_relation
@@ -243,6 +250,11 @@ export async function claimAgentInbox(
       ON s.from_kind = 'agent'
      AND author.workspace_id = s.workspace_id
      AND author.principal_id = s.from_principal
+     AND author.revoked_at IS NULL
+    LEFT JOIN swarm.memberships AS author_member
+      ON author_member.workspace_id = s.workspace_id
+     AND author_member.user_id = COALESCE(author.owner_user_id, CASE WHEN s.from_kind = 'user' THEN s.from_principal END)
+     AND author_member.revoked_at IS NULL
     ORDER BY s.created_at ASC, s.id ASC
   `;
 
@@ -371,6 +383,7 @@ export async function ackAgentDelivery(
   },
 ): Promise<AckResult> {
   // Already acked with same outcome → idempotent even after lease cleared.
+  // Lock row FOR UPDATE so concurrent identical ack calls serialize cleanly.
   const existing = await tx<{
     ack_outcome: string | null;
     acked_at: Date | null;
@@ -380,6 +393,7 @@ export async function ackAgentDelivery(
     WHERE workspace_id = ${args.workspaceId}::uuid
       AND signal_id = ${args.signalId}::uuid
       AND recipient_agent_principal_id = ${args.recipientPrincipalId}::uuid
+    FOR UPDATE
     LIMIT 1
   `;
   const row = existing[0];
@@ -435,7 +449,36 @@ export async function ackAgentDelivery(
       AND leased_until > statement_timestamp()
     RETURNING signal_id
   `;
-  if (updated.length === 0) return { status: "unavailable" };
+  if (updated.length === 0) {
+    // Post-update re-read: if a concurrent identical ack won the update race, resolve idempotently.
+    const reread = await tx<{
+      ack_outcome: string | null;
+      acked_at: Date | null;
+    }[]>`
+      SELECT ack_outcome, acked_at
+      FROM swarm.signal_deliveries
+      WHERE workspace_id = ${args.workspaceId}::uuid
+        AND signal_id = ${args.signalId}::uuid
+        AND recipient_agent_principal_id = ${args.recipientPrincipalId}::uuid
+      LIMIT 1
+    `;
+    const r = reread[0];
+    if (r && r.acked_at !== null) {
+      if (r.ack_outcome === args.outcome) {
+        return {
+          status: "idempotent",
+          response: {
+            ok: true,
+            event_ids: [],
+            signal_id: args.signalId,
+            outcome: args.outcome,
+          },
+        };
+      }
+      return { status: "conflict" };
+    }
+    return { status: "unavailable" };
+  }
   return {
     status: "accepted",
     response: {
