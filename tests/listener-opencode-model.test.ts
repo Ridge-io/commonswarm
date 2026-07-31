@@ -674,6 +674,189 @@ test("process signal handler close failure is memoized so later runtime close se
   await rm(cwd, { recursive: true, force: true }).catch(() => undefined);
 });
 
+test("openSession failure with AcpChildExitError releases home directory (child is dead)", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "cswarm-oc-worker-"));
+  let workerHome: string | undefined;
+  const deadErr = new AcpChildExitError(1, null);
+  const adapter = new OpenCodeListenerModel({
+    cwd,
+    allowMissingAuth: true,
+    open: async (options) => {
+      workerHome = options.isolatedHome;
+      await Promise.resolve();
+      throw deadErr;
+    },
+  });
+  await assert.rejects(adapter.start(), /child exited/);
+  assert.equal(typeof workerHome, "string");
+  assert.ok(!adapter.getRetainedHomes().includes(workerHome!));
+  await assert.rejects(stat(workerHome!), /ENOENT/);
+  await rm(cwd, { recursive: true, force: true }).catch(() => undefined);
+});
+
+test("worker prompt AcpChildExitError plus close timeout retains home and surfaces cleanup failure", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "cswarm-oc-worker-"));
+  let workerHome: string | undefined;
+  const timeoutErr = new AcpHostError(
+    "child_exit_timeout",
+    "child process did not exit after SIGKILL within 5000ms deadline",
+  );
+  const adapter = new OpenCodeListenerModel({
+    cwd,
+    allowMissingAuth: true,
+    open: async (options) => {
+      workerHome = options.isolatedHome;
+      return {
+        session: {
+          async enablePromptsAfterCanary() {},
+          async openWorkCwd() {},
+          async prompt() {
+            throw new AcpChildExitError(1, null);
+          },
+          cancel() {},
+        },
+        child: {},
+        executable: process.execPath,
+        args: ["acp", "--pure"],
+        env: {},
+        home: options.isolatedHome ?? "/tmp/w",
+        async close() {
+          throw timeoutErr;
+        },
+      } as unknown as OpenCodeAcpHandle;
+    },
+  });
+  await adapter.start();
+  const dummySignal = {
+    id: "sig_1",
+    workspace_id: "ws_1",
+    from: "usr_1",
+    from_kind: "user" as const,
+    to: "usr_1",
+    to_agent: null,
+    in_reply_to: null,
+    about: null,
+    kind: "ask" as const,
+    body: "hello",
+    until: new Date().toISOString(),
+    created_at: new Date().toISOString(),
+    sender_owner_relation: "same_owner" as const,
+  };
+
+  const promptPromise = adapter.prompt(dummySignal, "worker", "test prompt");
+  void promptPromise.catch(() => undefined);
+  await assert.rejects(promptPromise, /child process did not exit/);
+  assert.ok(adapter.getRetainedHomes().includes(workerHome!));
+  await stat(workerHome!);
+
+  await adapter.close();
+  assert.ok(adapter.getRetainedHomes().includes(workerHome!));
+
+  await rm(workerHome!, { recursive: true, force: true }).catch(() => undefined);
+  await rm(cwd, { recursive: true, force: true }).catch(() => undefined);
+});
+
+test("ensureWorker openWorkCwd failure plus cleanup timeout surfaces cleanup failure and retains home", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "cswarm-oc-worker-"));
+  let workerHome: string | undefined;
+  const timeoutErr = new AcpHostError(
+    "child_exit_timeout",
+    "child process did not exit after SIGKILL within 5000ms deadline",
+  );
+  const adapter = new OpenCodeListenerModel({
+    cwd,
+    allowMissingAuth: true,
+    open: async (options) => {
+      workerHome = options.isolatedHome;
+      return {
+        session: {
+          async enablePromptsAfterCanary() {},
+          async openWorkCwd() {
+            throw new Error("openWorkCwd RPC failed");
+          },
+          async prompt() {
+            return { message: "w", stopReason: "end_turn" as const, updates: [] };
+          },
+          cancel() {},
+        },
+        child: {},
+        executable: process.execPath,
+        args: ["acp", "--pure"],
+        env: {},
+        home: options.isolatedHome ?? "/tmp/w",
+        async close() {
+          throw timeoutErr;
+        },
+      } as unknown as OpenCodeAcpHandle;
+    },
+  });
+
+  const startPromise = adapter.start();
+  void startPromise.catch(() => undefined);
+  await assert.rejects(startPromise, /child process did not exit/);
+  assert.ok(adapter.getRetainedHomes().includes(workerHome!));
+  await stat(workerHome!);
+
+  await rm(workerHome!, { recursive: true, force: true }).catch(() => undefined);
+  await rm(cwd, { recursive: true, force: true }).catch(() => undefined);
+});
+
+test("promptIsolated init error closes handle exactly once without double close", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "cswarm-oc-worker-"));
+  let handleCloseCount = 0;
+  const adapter = new OpenCodeListenerModel({
+    cwd,
+    allowMissingAuth: true,
+    open: async (options) => {
+      return {
+        session: {
+          async enablePromptsAfterCanary() {
+            throw new Error("canary failed");
+          },
+          async openWorkCwd() {},
+          async prompt() {
+            return { message: "w", stopReason: "end_turn" as const, updates: [] };
+          },
+          cancel() {},
+        },
+        child: {},
+        executable: process.execPath,
+        args: ["acp", "--pure"],
+        env: {},
+        home: options.isolatedHome ?? "/tmp/w",
+        async close() {
+          handleCloseCount += 1;
+        },
+      } as unknown as OpenCodeAcpHandle;
+    },
+  });
+
+  const promptPromise = adapter.prompt(
+    {
+      id: "sig_2",
+      workspace_id: "ws_1",
+      from: "usr_2",
+      from_kind: "user",
+      to: "usr_1",
+      to_agent: null,
+      in_reply_to: null,
+      about: null,
+      kind: "ask",
+      body: "hello",
+      until: new Date().toISOString(),
+      created_at: new Date().toISOString(),
+      sender_owner_relation: "cross_owner",
+    },
+    "isolated",
+    "isolated prompt",
+  );
+  void promptPromise.catch(() => undefined);
+  await assert.rejects(promptPromise, /canary failed/);
+  assert.equal(handleCloseCount, 1);
+
+  await rm(cwd, { recursive: true, force: true }).catch(() => undefined);
+});
+
 test("allowMissingAuth is explicit — not implied by fake open alone", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "cswarm-oc-worker-"));
   const records: Parameters<typeof fakeOpen>[0] = [];

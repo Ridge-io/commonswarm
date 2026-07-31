@@ -35,6 +35,8 @@ export interface ListenerEffectStore {
   write(record: ListenerEffectRecord): Promise<void>;
 }
 
+export type ListenerPermissionMode = "deny" | "allow";
+
 export type ListenerPromptMode = "worker" | "isolated";
 
 export interface ListenerPromptResult {

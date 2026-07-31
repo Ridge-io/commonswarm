@@ -2551,41 +2551,95 @@ function listenerProvider(args: Arguments): ListenerProviderId {
   return provider;
 }
 
-/** Provider-aware host limit copy for listen status JSON. */
-export function listenerHostLimits(provider: ListenerStatus["provider"]): string {
+/** Structured host limit copy for listen status JSON. */
+export type ListenerHostLimits = {
+  config_isolation: string;
+  deny_canary_scope: string;
+  steady_allow_unproven: string;
+  cross_owner_isolation: string;
+  credential_home_cleanup: string;
+  human_copy: string;
+  toString(): string;
+};
+
+export function listenerHostLimits(
+  provider: ListenerStatus["provider"],
+): ListenerHostLimits {
   if (provider === "opencode") {
-    return [
-      "OpenCode same-owner: private 0700 home is auth-only + forced-ask config, not a project-config firewall.",
-      "Project allow lists are defeated only by OPENCODE_DISABLE_PROJECT_CONFIG=1 plus a verified debug config --pure effective-config probe before spawn.",
-      "The deny canary proves host reject + correlated terminal deny only; it does not prove steady-state --permissions allow behavior.",
-      "Cross-owner/unknown turns use a fresh auth-only home and empty cwd, removed after verified close (or retained on shutdown failure).",
+    const config_isolation =
+      "OpenCode same-owner: private 0700 home is auth-only + forced-ask config, not a project-config firewall. Project allow lists are defeated only by OPENCODE_DISABLE_PROJECT_CONFIG=1 plus a verified debug config --pure effective-config probe before spawn.";
+    const deny_canary_scope =
+      "The deny canary proves host reject + correlated terminal deny only.";
+    const steady_allow_unproven =
+      "It does not prove steady-state --permissions allow behavior.";
+    const cross_owner_isolation =
+      "Cross-owner/unknown turns use a fresh auth-only home and empty cwd.";
+    const credential_home_cleanup =
+      "Removed after verified close (or retained on shutdown failure).";
+    const human_copy = [
+      config_isolation,
+      deny_canary_scope,
+      steady_allow_unproven,
+      cross_owner_isolation,
     ].join(" ");
+    return {
+      config_isolation,
+      deny_canary_scope,
+      steady_allow_unproven,
+      cross_owner_isolation,
+      credential_home_cleanup,
+      human_copy,
+      toString() {
+        return human_copy;
+      },
+    };
   }
-  return [
-    "Same-owner Grok workers may load ambient user hooks outside CommonSwarm's ACP permission boundary;",
-    "cmux integration hooks are disabled for the listener child.",
-    "Isolated cross-owner turns use a clean temporary home and empty cwd.",
-    "The deny canary does not prove steady-state --permissions allow behavior.",
+  const config_isolation =
+    "Same-owner Grok workers may load ambient user hooks outside CommonSwarm's ACP permission boundary; cmux integration hooks are disabled for the listener child.";
+  const deny_canary_scope =
+    "The deny canary proves host reject + correlated terminal deny only.";
+  const steady_allow_unproven =
+    "The deny canary does not prove steady-state --permissions allow behavior.";
+  const cross_owner_isolation =
+    "Isolated cross-owner turns use a clean temporary home and empty cwd.";
+  const credential_home_cleanup =
+    "Temporary isolated home removed after verified turn close.";
+  const human_copy = [
+    config_isolation,
+    cross_owner_isolation,
+    steady_allow_unproven,
   ].join(" ");
+  return {
+    config_isolation,
+    deny_canary_scope,
+    steady_allow_unproven,
+    cross_owner_isolation,
+    credential_home_cleanup,
+    human_copy,
+    toString() {
+      return human_copy;
+    },
+  };
 }
 
 function listenerStatusJson(
   status: ListenerStatus,
   permissionMode?: ListenerPermissionMode,
 ): Record<string, unknown> {
+  const mode = permissionMode ?? status.permissionMode;
   return {
     ...status,
-    ...(permissionMode
+    ...(mode
       ? {
-        permission_mode: permissionMode,
-        same_owner_delivery: permissionMode === "allow"
+        permission_mode: mode,
+        same_owner_delivery: mode === "allow"
           ? "worker session; tool requests allowed once"
           : "worker session; tool requests denied",
         cross_owner_delivery:
           "fresh tool-denied session; all tool requests denied",
       }
       : {}),
-    host_limits: listenerHostLimits(status.provider),
+    host_limits: listenerHostLimits(status.provider).toString(),
   };
 }
 
@@ -2751,6 +2805,7 @@ async function runConfiguredListener(options: {
       workspaceId: options.workspaceId,
       principalId: options.principalId,
       provider: options.provider,
+      permissionMode: options.permissionMode,
       run: async (signal, onEvent) =>
         await runListenerRuntime({
           target: options.cloud,

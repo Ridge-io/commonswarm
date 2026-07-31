@@ -10,7 +10,15 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 test("listenerHostLimits opencode states DISABLE_PROJECT_CONFIG probe, not private-home alone", () => {
-  const text = listenerHostLimits("opencode");
+  const limits = listenerHostLimits("opencode");
+  assert.equal(typeof limits.config_isolation, "string");
+  assert.equal(typeof limits.deny_canary_scope, "string");
+  assert.equal(typeof limits.steady_allow_unproven, "string");
+  assert.equal(typeof limits.cross_owner_isolation, "string");
+  assert.equal(typeof limits.credential_home_cleanup, "string");
+  assert.equal(typeof limits.human_copy, "string");
+
+  const text = limits.human_copy;
   assert.match(text, /OPENCODE_DISABLE_PROJECT_CONFIG/);
   assert.match(text, /effective-config probe|debug config --pure/);
   assert.match(text, /not a project-config firewall|private 0700 home is auth-only/i);
@@ -20,11 +28,18 @@ test("listenerHostLimits opencode states DISABLE_PROJECT_CONFIG probe, not priva
   );
   assert.match(text, /does not prove steady-state/);
   assert.match(text, /--permissions allow|allow behavior/);
-  assert.match(text, /removed after verified close \(or retained on shutdown failure\)/);
+  assert.match(limits.credential_home_cleanup, /retained on shutdown failure/);
 });
 
 test("listenerHostLimits grok does not claim OpenCode project-config disable", () => {
-  const text = listenerHostLimits("grok");
+  const limits = listenerHostLimits("grok");
+  assert.equal(typeof limits.config_isolation, "string");
+  assert.equal(typeof limits.deny_canary_scope, "string");
+  assert.equal(typeof limits.steady_allow_unproven, "string");
+  assert.equal(typeof limits.cross_owner_isolation, "string");
+  assert.equal(typeof limits.credential_home_cleanup, "string");
+
+  const text = limits.human_copy;
   assert.doesNotMatch(text, /OPENCODE_DISABLE_PROJECT_CONFIG/);
   assert.match(text, /Grok|ambient/i);
   assert.match(text, /does not prove steady-state/);

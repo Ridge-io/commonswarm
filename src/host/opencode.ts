@@ -821,15 +821,20 @@ export async function openOpenCodeAcpSession(
       });
       sessionRef = session;
 
+      let closePromise: Promise<void> | null = null;
       const close = async () => {
-        try {
-          await session.close();
-        } finally {
-          // Only dispose the credential home after a verified child exit.
-          // A hung child after SIGKILL retains the home for escalation.
-          await terminateOpenCodeChild(child);
-          await disposeHome();
-        }
+        if (closePromise) return closePromise;
+        closePromise = (async () => {
+          try {
+            await session.close();
+          } finally {
+            // Only dispose the credential home after a verified child exit.
+            // A hung child after SIGKILL retains the home for escalation.
+            await terminateOpenCodeChild(child);
+            await disposeHome();
+          }
+        })();
+        return closePromise;
       };
 
       return { session, child, executable, args, env, home, close };

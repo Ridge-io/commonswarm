@@ -25,6 +25,8 @@ const CONTROL_TIMEOUT_MS = 2_000;
 const START_LOCK_WAIT_MS = 2_000;
 const START_LOCK_STALE_MS = 10_000;
 
+import type { ListenerPermissionMode } from "./types.js";
+
 export type ListenerStatusState =
   | "starting"
   | "ready"
@@ -38,6 +40,7 @@ export interface ListenerStatus {
   version: 1;
   instanceId: string;
   provider: ListenerProviderId;
+  permissionMode?: ListenerPermissionMode;
   profileId: string;
   workspaceId: string;
   principalId: string;

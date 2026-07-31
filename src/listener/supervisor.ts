@@ -15,6 +15,8 @@ import type {
   ListenerRuntimeStop,
 } from "./runtime.js";
 
+import type { ListenerPermissionMode } from "./types.js";
+
 export interface ListenerSupervisorOptions {
   paths: ListenerPaths;
   profileId: string;
@@ -22,6 +24,7 @@ export interface ListenerSupervisorOptions {
   principalId: string;
   /** Host adapter id recorded in status metadata only. Default: grok. */
   provider?: ListenerProviderId;
+  permissionMode?: ListenerPermissionMode;
   now?: () => number;
   run: (
     signal: AbortSignal,
@@ -61,6 +64,7 @@ export async function runListenerSupervisor(
     version: 1,
     instanceId: randomUUID(),
     provider: options.provider ?? "grok",
+    ...(options.permissionMode ? { permissionMode: options.permissionMode } : {}),
     profileId: options.profileId,
     workspaceId: options.workspaceId.toLowerCase(),
     principalId: options.principalId.toLowerCase(),

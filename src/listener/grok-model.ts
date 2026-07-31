@@ -23,12 +23,13 @@ import {
 } from "../host/types.js";
 import type {
   ListenerModel,
+  ListenerPermissionMode,
   ListenerPromptMode,
   ListenerPromptResult,
 } from "./types.js";
 import type { SignalRecord } from "../cloud/command-client.js";
 
-export type ListenerPermissionMode = "deny" | "allow";
+export type { ListenerPermissionMode };
 export type OpenGrokSession = (
   options: GrokAcpOpenOptions,
 ) => Promise<GrokAcpHandle>;
