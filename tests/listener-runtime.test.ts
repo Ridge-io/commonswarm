@@ -88,6 +88,8 @@ function page(
     capabilities: {
       senderOwnerRelation: true,
       cursorAfter: true,
+      deliveryClaim: false,
+      deliveryAck: false,
     },
     legacyCursorFallback: false,
     rawCount: signals.length,
@@ -95,6 +97,7 @@ function page(
       ? { created_at: last.created_at, id: last.id }
       : null,
     malformedRows: 0,
+    pendingDeliveryCount: null,
     ...options,
   };
 }
@@ -113,6 +116,8 @@ test("runtime refuses old edges before starting or prompting a model", async () 
         capabilities: {
           senderOwnerRelation: false,
           cursorAfter: true,
+          deliveryClaim: false,
+          deliveryAck: false,
         },
       }),
   });

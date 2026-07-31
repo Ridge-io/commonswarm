@@ -1245,11 +1245,17 @@ test("close child_exit_timeout retains worker home; runtime+supervisor fail", as
     },
     readPage: async () => ({
       signals: [],
-      capabilities: { senderOwnerRelation: true, cursorAfter: true },
+      capabilities: {
+        senderOwnerRelation: true,
+        cursorAfter: true,
+        deliveryClaim: false,
+        deliveryAck: false,
+      },
       legacyCursorFallback: false,
       rawCount: 0,
       nextCursor: null,
       malformedRows: 0,
+      pendingDeliveryCount: null,
     }),
   });
   assert.equal(stop.reason, "fatal");
