@@ -313,7 +313,13 @@ test("dashboard blocks an in-flight mint but Done and Back can finish a visible 
   assert.match(close, /if \(keepConnectCredentialVisible\(\)\) return/);
   assert.match(close, /connect\?\.dataset\.state === "done"[\s\S]*connect\.finishPrompt\("back"\)/);
   assert.match(signout, /if \(keepConnectCredentialVisible\(\)\) return/);
-  assert.match(signout, /requestVersion \+= 1;[\s\S]*activeWorkspaceId = ""/);
+  assert.match(signout, /requestVersion \+= 1;[\s\S]*resetWorkspaceSessionState\(\)/);
+  const reset = between(
+    dashboard,
+    "const resetWorkspaceSessionState =",
+    "armLiveFeed =",
+  );
+  assert.match(reset, /activeWorkspaceId = ""/);
   assert.match(
     openWorkspace,
     /if \(connectState === "done"\)[\s\S]*pendingWorkspaceId = workspaceId;[\s\S]*connect\?\.finishPrompt\("back"\)/,

@@ -50,6 +50,7 @@ test("the header control is one stack button with a dialog relationship", () => 
     "aria-controls ties the button to the dialog it opens",
   );
   assert.match(dashboard, /data-header-agent-stack/);
+  assert.match(dashboard, /data-header-roster-summary/);
   assert.match(
     dashboard,
     /view and manage agents/,
@@ -59,6 +60,30 @@ test("the header control is one stack button with a dialog relationship", () => 
     dashboard,
     /\.dashboard__roster-stack[\s\S]*margin-inline-start:\s*-0\.5rem/,
     "the stack overlaps its uniform circular initials",
+  );
+});
+
+test("pending access keeps the header management door reachable before the first agent", () => {
+  const header = dashboard.slice(
+    dashboard.indexOf("const renderHeaderRoster ="),
+    dashboard.indexOf("const renderDialogRoster ="),
+  );
+  assert.match(
+    header,
+    /const show = agents\.length > 0 \|\| pendingTotal > 0;/,
+    "a zero-agent workspace with a pending invite still exposes the only mobile door",
+  );
+  assert.match(header, /pendingTotal[^\n]*pending/);
+  assert.match(header, /pending access/);
+
+  const pending = dashboard.slice(
+    dashboard.indexOf("const renderPendingAccess ="),
+    dashboard.indexOf("const signalPage ="),
+  );
+  assert.match(
+    pending,
+    /renderHeaderRoster\(total\);/,
+    "every pending-state transition shows or hides the door without a workspace reopen",
   );
 });
 
@@ -122,7 +147,12 @@ test("the dialog cannot outlive its workspace or session", () => {
       'one<HTMLButtonElement>("[data-add-agent]")?.addEventListener("click", openAgentChoice)',
     ),
   );
-  assert.match(signout, /closeRosterDialog\(\)/);
+  assert.match(signout, /resetWorkspaceSessionState\(\)/);
+  const reset = dashboard.slice(
+    dashboard.indexOf("const resetWorkspaceSessionState ="),
+    dashboard.indexOf("armLiveFeed =", dashboard.indexOf("const resetWorkspaceSessionState =")),
+  );
+  assert.match(reset, /closeRosterDialog\(\)/);
 });
 
 test("the dialog is a bottom sheet at mobile widths", () => {

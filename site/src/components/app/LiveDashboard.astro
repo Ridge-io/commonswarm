@@ -240,15 +240,15 @@ import SampleNotice from "./SampleNotice.astro";
           <header class="dashboard__channel-head">
             <div class="dashboard__channel-titleblock">
               <p class="dashboard__channel-kicker">Workspace channel</p>
-              <h1 id="dashboard-channel-title" data-channel-name>Workspace</h1>
+              <h1 id="dashboard-channel-title" data-channel-name tabindex="-1">Workspace</h1>
             </div>
 
             {/* The header agent roster: ONE control, the Slack-style members stack.
                 Activating it opens the management dialog (Add an agent first, then the
-                full roster with Remove). Hidden whenever there are no agents — the empty
-                channel carries that CTA, and two doors to the same flow would be the same
-                news twice. The stack initials are decorative; the accessible name carries
-                the count and the action. */}
+                full roster with Remove and any pending access). It remains reachable when
+                access is pending even before the first agent arrives; that is the only
+                mobile door to review or cancel an invite. The stack initials are
+                decorative; the accessible name carries both active and pending counts. */}
             <div class="dashboard__channel-roster" data-header-roster hidden>
               <button
                 class="dashboard__roster-button"
@@ -260,7 +260,7 @@ import SampleNotice from "./SampleNotice.astro";
                 aria-label="0 agents — view and manage agents"
               >
                 <span class="dashboard__roster-stack" data-header-agent-stack aria-hidden="true"></span>
-                <span class="dashboard__roster-count" data-agent-count aria-hidden="true">0</span>
+                <span class="dashboard__roster-count" data-header-roster-summary aria-hidden="true">0</span>
               </button>
             </div>
 
@@ -510,6 +510,31 @@ import SampleNotice from "./SampleNotice.astro";
         data-dialog-agent-list
       ></ul>
       <p class="dashboard__form-error" data-agent-error role="alert" hidden></p>
+
+      {/* Pending access lives here only where the rail's own details are hidden:
+          at ≤52rem this dialog is the ONLY reachable pending surface, so the
+          section must exist — and at desktop the rail keeps it and the dialog
+          stays quiet, so there is never a second, competing control. Both lists
+          render from the same pendingAccessRows call, so they cannot disagree. */}
+      <section
+        class="dashboard__roster-dialog-pending"
+        data-dialog-access-section
+        aria-labelledby="dashboard-roster-pending-title"
+        hidden
+      >
+        <h3
+          class="dashboard__roster-dialog-pending-title"
+          id="dashboard-roster-pending-title"
+        >
+          Pending access
+          <span class="dashboard__roster-dialog-pending-count" data-dialog-access-count>0</span>
+        </h3>
+        <ul
+          class="dashboard__agent-list dashboard__roster-dialog-pending-list"
+          data-dialog-access-list
+        ></ul>
+        <p class="dashboard__form-error" data-dialog-access-error role="alert" hidden></p>
+      </section>
     </div>
   </dialog>
 </live-dashboard>
@@ -550,6 +575,7 @@ import SampleNotice from "./SampleNotice.astro";
   import { memberInviteUrl } from "../../lib/member-invite";
   import { PendingRefreshGate } from "../../lib/pending-refresh";
   import { BootFocusGate } from "../../lib/boot-focus";
+  import { pendingAccessRows, shouldPollPendingAccess } from "../../lib/pending-access";
 
   interface Workspace {
     id: string;
@@ -1017,115 +1043,149 @@ import SampleNotice from "./SampleNotice.astro";
       }
     };
 
+    /*
+     * ONE row model, TWO lists. The rail's Pending access details (desktop) and the
+     * Agents dialog section (the only reachable surface at ≤52rem) both render from
+     * a single pendingAccessRows call, so they can never disagree about content,
+     * order, or wording — the lists are mirrors of one state, never two states.
+     * Each list's Cancel closures capture that list's own error slot, and each row
+     * carries the exact id its cancel command needs, so a Cancel always reaches the
+     * right revoke with the right invitation/token id.
+     */
+    const currentPendingAccessRows = () =>
+      pendingAccessRows(
+        pendingInvites,
+        accessStatuses,
+        (userId) => people.get(userId) ?? "Workspace member",
+        Date.now(),
+        (iso) => formatTime(iso).relative,
+      );
+
     const renderPendingAccess = (): void => {
-      const list = one<HTMLUListElement>("[data-access-list]");
+      const rows = currentPendingAccessRows();
+      const total = rows.length;
+      const railList = one<HTMLUListElement>("[data-access-list]");
+      const dialogList = one<HTMLUListElement>("[data-dialog-access-list]");
+      const active = document.activeElement;
+      const focusedPending =
+        active instanceof HTMLButtonElement &&
+          (railList?.contains(active) || dialogList?.contains(active)) &&
+          active.dataset.pendingKind && active.dataset.pendingId
+          ? {
+              surface: dialogList?.contains(active) ? "dialog" as const : "rail" as const,
+              kind: active.dataset.pendingKind,
+              id: active.dataset.pendingId,
+            }
+          : null;
+
       const count = one<HTMLElement>("[data-access-count]");
       const details = one<HTMLDetailsElement>("[data-access-details]");
-      const now = Date.now();
-      const pendingAgents = accessStatuses.filter((access) =>
-        access.firstUsedAt === null &&
-        access.revokedAt === null &&
-        new Date(access.expiresAt).getTime() > now
-      );
-      const total = pendingInvites.length + pendingAgents.length;
       if (count) count.textContent = String(total);
       if (details) {
         details.hidden = sampleMode || total === 0;
         if (details.hidden) details.open = false;
       }
-      if (!list) return;
-      list.replaceChildren();
 
-      const cancelButton = (
-        label: string,
-        cancel: (button: HTMLButtonElement) => Promise<void>,
-      ): HTMLButtonElement => {
-        const button = document.createElement("button");
-        button.type = "button";
-        button.className = "dashboard__text-button";
-        button.textContent = "Cancel";
-        button.setAttribute("aria-label", `Cancel ${label}`);
-        button.addEventListener("click", () => void cancel(button));
-        return button;
+      const dialogSection = one<HTMLElement>("[data-dialog-access-section]");
+      const dialogCount = one<HTMLElement>("[data-dialog-access-count]");
+      if (dialogCount) dialogCount.textContent = String(total);
+      if (dialogSection) dialogSection.hidden = sampleMode || total === 0;
+
+      const buildRows = (errorTarget: HTMLElement | null): DocumentFragment => {
+        const fragment = document.createDocumentFragment();
+        for (const row of rows) {
+          const item = document.createElement("li");
+          item.className = "dashboard__agent dashboard__pending-access-row";
+          const copy = document.createElement("span");
+          copy.className = "dashboard__agent-copy";
+          const title = document.createElement("strong");
+          title.textContent = row.title;
+          const state = document.createElement("span");
+          state.textContent = row.state;
+          copy.append(title, state);
+          const button = document.createElement("button");
+          button.type = "button";
+          button.className = "dashboard__text-button";
+          button.textContent = "Cancel";
+          button.dataset.pendingKind = row.kind;
+          button.dataset.pendingId = row.id;
+          button.setAttribute("aria-label", row.cancelLabel);
+          button.addEventListener("click", async () => {
+            if (!session) return;
+            if (errorTarget) {
+              errorTarget.hidden = true;
+              errorTarget.textContent = "";
+            }
+            button.disabled = true;
+            try {
+              if (row.kind === "invite") {
+                await revokeWorkspaceInvitation(session, uuid(), row.workspaceId, row.id);
+              } else {
+                await revokeAgentToken(session, uuid(), row.workspaceId, row.id);
+              }
+              /* The reload closes the dialog and re-renders both lists from the
+                 fresh state. The row that held focus is gone, so hand focus to
+                 the door that reopens the roster — or to the empty channel's
+                 Add door when no agents remain — instead of dropping it on
+                 <body>. Same pattern as the roster Remove path. */
+              await openWorkspace(row.workspaceId);
+              const door = agents.length > 0
+                ? one<HTMLButtonElement>("[data-roster-open]")
+                : one<HTMLButtonElement>("[data-add-agent]");
+              door?.focus({ preventScroll: true });
+            } catch (error) {
+              if (errorTarget) {
+                errorTarget.textContent = readableError(error);
+                errorTarget.hidden = false;
+              }
+            } finally {
+              button.disabled = false;
+            }
+          });
+          item.append(copy, button);
+          fragment.append(item);
+        }
+        return fragment;
       };
 
-      for (const invitation of pendingInvites) {
-        const row = document.createElement("li");
-        row.className = "dashboard__agent";
-        const copy = document.createElement("span");
-        copy.className = "dashboard__agent-copy";
-        const title = document.createElement("strong");
-        title.textContent = invitation.email;
-        const state = document.createElement("span");
-        state.textContent = `Teammate invite · expires ${formatTime(invitation.expiresAt).relative}`;
-        copy.append(title, state);
-        row.append(
-          copy,
-          cancelButton(`invite for ${invitation.email}`, async (button) => {
-            if (!session) return;
-            button.disabled = true;
-            try {
-              await revokeWorkspaceInvitation(
-                session,
-                uuid(),
-                invitation.workspaceId,
-                invitation.invitationId,
-              );
-              await openWorkspace(invitation.workspaceId);
-            } catch (error) {
-              const target = one<HTMLElement>("[data-access-error]");
-              if (target) {
-                target.textContent = readableError(error);
-                target.hidden = false;
-              }
-            } finally {
-              button.disabled = false;
-            }
-          }),
-        );
-        list.append(row);
-      }
+      railList?.replaceChildren(buildRows(one("[data-access-error]")));
+      dialogList?.replaceChildren(buildRows(one("[data-dialog-access-error]")));
 
-      for (const access of pendingAgents) {
-        const row = document.createElement("li");
-        row.className = "dashboard__agent";
-        const copy = document.createElement("span");
-        copy.className = "dashboard__agent-copy";
-        const title = document.createElement("strong");
-        title.textContent = access.agentName;
-        const state = document.createElement("span");
-        const owner = people.get(access.ownerUserId) ?? "Workspace member";
-        state.textContent =
-          `${access.model ?? "Model not specified"} · owned by ${owner} · expires ${
-            formatTime(access.expiresAt).relative
-          }`;
-        copy.append(title, state);
-        row.append(
-          copy,
-          cancelButton(`access for ${access.agentName}`, async (button) => {
-            if (!session) return;
-            button.disabled = true;
-            try {
-              await revokeAgentToken(
-                session,
-                uuid(),
-                access.workspaceId,
-                access.tokenId,
-              );
-              await openWorkspace(access.workspaceId);
-            } catch (error) {
-              const target = one<HTMLElement>("[data-access-error]");
-              if (target) {
-                target.textContent = readableError(error);
-                target.hidden = false;
-              }
-            } finally {
-              button.disabled = false;
-            }
-          }),
+      /* Pending access is itself a reason to expose the header management door,
+         including in a brand-new zero-agent workspace on mobile. Resync before
+         focus repair so a newly-valid fallback door is already visible. */
+      renderHeaderRoster(total);
+
+      /* A background refresh replaces DOM nodes even when the rows are unchanged.
+         Preserve the focused Cancel by semantic identity. If that row genuinely
+         disappeared, move focus to a stable control instead of dropping it behind
+         a modal or onto <body>. */
+      if (focusedPending) {
+        const focusList = focusedPending.surface === "dialog" ? dialogList : railList;
+        const replacement = Array.from(
+          focusList?.querySelectorAll<HTMLButtonElement>(
+            "[data-pending-kind][data-pending-id]",
+          ) ?? [],
+        ).find((candidate) =>
+          candidate.dataset.pendingKind === focusedPending.kind &&
+          candidate.dataset.pendingId === focusedPending.id
         );
-        list.append(row);
+        if (replacement) {
+          replacement.focus({ preventScroll: true });
+        } else if (focusedPending.surface === "dialog") {
+          one<HTMLButtonElement>("[data-add-agent-dialog]")?.focus({ preventScroll: true });
+        } else if (total > 0) {
+          one<HTMLDetailsElement>("[data-access-details]")
+            ?.querySelector<HTMLElement>("summary")
+            ?.focus({ preventScroll: true });
+        } else {
+          /* The title is present in every channel subview. Unlike Add an agent it
+             stays visible while invite/connect is open, so it is the only safe
+             zero-row rail fallback across the complete flow. */
+          one<HTMLElement>("[data-channel-name]")?.focus({ preventScroll: true });
+        }
       }
+      syncPendingPoll();
     };
 
     const signalPage = async (
@@ -1238,11 +1298,12 @@ import SampleNotice from "./SampleNotice.astro";
      */
     const HEADER_STACK_LIMIT = 3;
 
-    const renderHeaderRoster = (): void => {
+    const renderHeaderRoster = (pendingTotal = currentPendingAccessRows().length): void => {
       const wrap = one<HTMLElement>("[data-header-roster]");
       const stack = one<HTMLElement>("[data-header-agent-stack]");
       const button = one<HTMLButtonElement>("[data-roster-open]");
-      const show = agents.length > 0;
+      const summary = one<HTMLElement>("[data-header-roster-summary]");
+      const show = agents.length > 0 || pendingTotal > 0;
       if (wrap) wrap.hidden = !show;
       one<HTMLElement>(".dashboard__channel")?.classList.toggle(
         "dashboard__channel--roster",
@@ -1251,10 +1312,18 @@ import SampleNotice from "./SampleNotice.astro";
       for (const count of all<HTMLElement>("[data-agent-count]")) {
         count.textContent = String(agents.length);
       }
+      if (summary) summary.textContent = pendingTotal > 0
+        ? `${agents.length} · ${pendingTotal} pending`
+        : String(agents.length);
       if (button) {
+        button.classList.toggle("dashboard__roster-button--pending", pendingTotal > 0);
+        const agentLabel = `${agents.length} ${agents.length === 1 ? "agent" : "agents"}`;
+        const pendingLabel = pendingTotal > 0
+          ? ` and ${pendingTotal} pending access ${pendingTotal === 1 ? "item" : "items"}`
+          : "";
         button.setAttribute(
           "aria-label",
-          `${agents.length} ${agents.length === 1 ? "agent" : "agents"} — view and manage agents`,
+          `${agentLabel}${pendingLabel} — view and manage agents`,
         );
       }
       if (!stack) return;
@@ -1652,13 +1721,12 @@ import SampleNotice from "./SampleNotice.astro";
 
     /*
      * Pending access is where the inviter WAITS: a teammate invite or an agent key sits
-     * there until it is consumed or cancelled. The two-second signal poll already runs
-     * while the feed is visible, so consumption should show up without a full workspace
-     * reopen — a teammate redeeming their invite in another browser is exactly the moment
-     * the inviter is watching this list. The refresh piggybacks on that poll at a slower
-     * cooldown, only while something is actually pending, and only re-renders the rail
-     * list; it never touches the feed, the dialog, or an open add-agent view. A failure
-     * retries at the next cooldown, silently — same doctrine as the signal refresh.
+     * there until it is consumed or cancelled. Feed refreshes opportunistically request
+     * the same catch-up while a channel is visible, but the dedicated pending poll owns
+     * the cadence in every view — especially a new workspace with no agents and therefore
+     * no feed poll. The shared cooldown keeps both triggers cheap. A successful refresh
+     * re-renders the mirrored rail and dialog lists without touching the feed or an open
+     * add-agent view; failure stays silent and retries on the next cooldown.
      *
      * Ownership is the gate's, and it is (workspaceId, version)-scoped: a slow request
      * started under the previous workspace holds no slot here, applies nothing when it
@@ -1705,6 +1773,130 @@ import SampleNotice from "./SampleNotice.astro";
         // Stay silent and retryable; the last good list remains on screen.
       } finally {
         pendingRefreshGate.release(workspaceId, version);
+      }
+    };
+
+    /*
+     * The pending-access poll: the fix for the empty-workspace stale row. The signal
+     * feed's two-second cadence only arms in feed views, which is exactly why the
+     * FIRST invite in a NEW workspace never cleared — the inviter sits in no-agents,
+     * no interval runs, and the redemption they are waiting for has no fetch to ride.
+     * This poll owes nothing to the channel view: it runs while — and only while —
+     * pending access exists, the tab is visible, and a workspace is open. When the
+     * last pending row clears it stops, so it never becomes background noise. The
+     * tick is cheap; the gate's cooldown decides when an actual fetch happens. The
+     * Live chip stays out of this: liveness of the FEED is a different claim.
+     */
+    const PENDING_POLL_TICK_MS = 4_000;
+    let pendingPollTimer: number | undefined;
+
+    const syncPendingPoll = (): void => {
+      const should = shouldPollPendingAccess({
+        sampleMode,
+        activeWorkspaceId,
+        visible: document.visibilityState === "visible",
+        hasPending: hasPendingAccess(),
+      });
+      if (should && pendingPollTimer === undefined) {
+        pendingPollTimer = window.setInterval(() => {
+          /* Time alone can retire an unused key. In that case no network request is
+             needed (or allowed by the gate), but the stale row must disappear and
+             this interval must disarm itself. Rendering recomputes expiry and then
+             calls syncPendingPoll, which clears this timer. */
+          if (!hasPendingAccess()) {
+            renderPendingAccess();
+            return;
+          }
+          void refreshPendingAccess(activeWorkspaceId, requestVersion);
+        }, PENDING_POLL_TICK_MS);
+      } else if (!should && pendingPollTimer !== undefined) {
+        window.clearInterval(pendingPollTimer);
+        pendingPollTimer = undefined;
+      }
+    };
+
+    /** Clear every workspace-scoped value when auth identity or availability changes. */
+    const resetWorkspaceSessionState = (): void => {
+      closeRosterDialog();
+      one<SecretHoldingAgentConnect>("agent-connect")?.clearPrompt(false);
+      connectFocusObserver?.disconnect();
+      connectFocusObserver = null;
+      activeWorkspaceId = "";
+      pendingWorkspaceId = "";
+      workspaces = [];
+      agents = [];
+      members = [];
+      pendingInvites = [];
+      accessStatuses = [];
+      people = new Map();
+      signals = [];
+      signalCursor = null;
+      signalHasMore = false;
+      signalCutoff = "";
+      channelLoadError = "";
+      livePromptPrincipalId = "";
+      freshInviteLink = "";
+      inviteIntent = null;
+      activeCreate = null;
+      rosterFilter = "";
+      unknownAgentCandidates.clear();
+      settledUnknownAgents.clear();
+      previousSignalIds = new Set();
+      feedWasEmpty = false;
+      liveFeedInFlight = false;
+      rosterRefreshInFlight = false;
+      rosterRefreshAttemptedAt = 0;
+      window.clearTimeout(signalExpiryTimer);
+      signalExpiryTimer = undefined;
+      window.clearInterval(liveFeedTimer);
+      liveFeedTimer = undefined;
+      pendingRefreshGate.resetCooldown();
+      syncPendingPoll();
+
+      /* Auth changes are a privacy boundary, not merely a panel change. Remove the
+         prior account's names, invite emails, agent rows, and signal bodies from
+         the DOM before the signed-out/create surface is presented. */
+      renderMembers();
+      renderRoster();
+      for (const list of all<HTMLElement>(
+        "[data-workspace-list], [data-access-list], [data-dialog-access-list], [data-feed-list]",
+      )) {
+        list.replaceChildren();
+      }
+      for (const target of all<HTMLElement>(
+        "[data-channel-name], [data-channel-id], [data-invite-link], [data-channel-receipt]",
+      )) {
+        target.textContent = "";
+      }
+      for (const target of all<HTMLElement>("[data-account-name], [data-rail-account]")) {
+        target.textContent = "Your account";
+      }
+      const emptyTitle = one<HTMLElement>("[data-feed-empty-title]");
+      if (emptyTitle) emptyTitle.textContent = "Waiting for your agents’ first updates.";
+      const rosterSearch = one<HTMLInputElement>("[data-roster-search]");
+      if (rosterSearch) rosterSearch.value = "";
+      const inviteEmail = one<HTMLInputElement>("[data-invite-email]");
+      if (inviteEmail) inviteEmail.value = "";
+      const inviteResult = one<HTMLElement>("[data-invite-result]");
+      if (inviteResult) inviteResult.hidden = true;
+      const receipt = one<HTMLElement>("[data-channel-receipt]");
+      if (receipt) receipt.hidden = true;
+      const accessDetails = one<HTMLDetailsElement>("[data-access-details]");
+      if (accessDetails) {
+        accessDetails.open = false;
+        accessDetails.hidden = true;
+      }
+      const dialogAccess = one<HTMLElement>("[data-dialog-access-section]");
+      if (dialogAccess) dialogAccess.hidden = true;
+      for (const count of all<HTMLElement>("[data-access-count], [data-dialog-access-count]")) {
+        count.textContent = "0";
+      }
+      for (const error of all<HTMLElement>(
+        "[data-access-error], [data-dialog-access-error], [data-agent-error], " +
+          "[data-member-error], [data-feed-error]",
+      )) {
+        error.textContent = "";
+        error.hidden = true;
       }
     };
 
@@ -1778,10 +1970,15 @@ import SampleNotice from "./SampleNotice.astro";
       if (document.visibilityState !== "visible") {
         window.clearInterval(liveFeedTimer);
         liveFeedTimer = undefined;
+        syncPendingPoll();
         return;
       }
       void refreshLatestSignals();
       armLiveFeed();
+      /* Coming back to the tab is exactly when a redemption has likely happened;
+         catch up now rather than a tick later. */
+      void refreshPendingAccess(activeWorkspaceId, requestVersion);
+      syncPendingPoll();
     });
 
     const renderChannel = (workspace: Workspace, pending = false): void => {
@@ -1854,6 +2051,9 @@ import SampleNotice from "./SampleNotice.astro";
       members = [];
       pendingInvites = [];
       accessStatuses = [];
+      /* Disarm the previous workspace's pending timer before this workspace's
+         request begins. A failed load must not leave a no-op interval behind. */
+      syncPendingPoll();
       people = new Map();
       signals = [];
       signalCursor = null;
@@ -2067,6 +2267,7 @@ import SampleNotice from "./SampleNotice.astro";
       signalHasMore = false;
       signalCursor = null;
       signalCutoff = "";
+      syncPendingPoll();
       const now = Date.now();
       workspaces = [
         { id: "sample-design-studio", name: "Design studio" },
@@ -2134,6 +2335,7 @@ import SampleNotice from "./SampleNotice.astro";
         if (version !== requestVersion) return;
         renderedAuthUserId = session?.user.id ?? "";
         if (!session) {
+          resetWorkspaceSessionState();
           showAuthView("choices");
           showPanel("signed-out");
           return;
@@ -2145,6 +2347,7 @@ import SampleNotice from "./SampleNotice.astro";
         workspaces = await workspaceMemberships();
         if (version !== requestVersion) return;
         if (workspaces.length === 0) {
+          resetWorkspaceSessionState();
           const pending = readCreateIntent(session.user.id);
           renderCreate(session);
           if (pending) await createFromIntent(session, pending);
@@ -2160,6 +2363,7 @@ import SampleNotice from "./SampleNotice.astro";
         if (session) {
           renderWorkspaceError(session, error);
         } else {
+          resetWorkspaceSessionState();
           showAuthView("choices");
           showPanel("signed-out");
           authError(readableError(error));
@@ -2304,21 +2508,12 @@ import SampleNotice from "./SampleNotice.astro";
       button.addEventListener("click", async () => {
         if (keepConnectCredentialVisible()) return;
         button.disabled = true;
-        closeRosterDialog();
-        one<SecretHoldingAgentConnect>("agent-connect")?.clearPrompt(false);
         if (session) clearCreateIntent(session.user.id);
         requestVersion += 1;
-        activeWorkspaceId = "";
         renderedAuthUserId = "";
-        window.clearTimeout(signalExpiryTimer);
-        signalExpiryTimer = undefined;
+        resetWorkspaceSessionState();
         await signOut();
         session = null;
-        workspaces = [];
-        agents = [];
-        people = new Map();
-        signals = [];
-        pendingWorkspaceId = "";
         showAuthView("choices");
         showPanel("signed-out");
         button.disabled = false;
@@ -2561,6 +2756,7 @@ import SampleNotice from "./SampleNotice.astro";
     const queueAuthReload = (nextSession: Session | null): void => {
       const nextUserId = nextSession?.user.id ?? "";
       if (nextUserId === renderedAuthUserId || authReloadQueued) return;
+      resetWorkspaceSessionState();
       renderedAuthUserId = nextUserId;
       requestVersion += 1;
       authReloadQueued = true;
@@ -3139,6 +3335,17 @@ import SampleNotice from "./SampleNotice.astro";
     padding: var(--s-2) var(--s-3);
   }
 
+  /* Pending rows have copy first and an action second (unlike roster rows, whose
+     first cell is an avatar). Give the action its intrinsic width so "Cancel"
+     stays horizontal while the identity copy takes the remaining space. */
+  .dashboard__pending-access-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .dashboard__pending-access-row > .dashboard__text-button {
+    white-space: nowrap;
+  }
+
   .dashboard__agent-avatar,
   .dashboard__message-avatar {
     inline-size: 2rem;
@@ -3338,6 +3545,10 @@ import SampleNotice from "./SampleNotice.astro";
     border-color: var(--border-strong);
   }
 
+  .dashboard__roster-button--pending {
+    border-color: color-mix(in oklab, var(--accent) 45%, var(--border));
+  }
+
   .dashboard__roster-button:focus-visible {
     outline: none;
     box-shadow: var(--focus-ring);
@@ -3457,6 +3668,64 @@ import SampleNotice from "./SampleNotice.astro";
     max-block-size: min(46svh, 20rem);
     overflow: auto;
     margin-inline: calc(var(--s-2) * -1);
+  }
+
+  /* Pending access in the dialog exists only where the rail's own details are
+     hidden. At desktop the rail keeps the control and the dialog does not
+     duplicate it; at ≤52rem this section is the ONLY reachable pending surface.
+     The [hidden] case (nothing pending, or sample) stays hidden by the global
+     [hidden] rule in every width. */
+  .dashboard__roster-dialog-pending {
+    display: none;
+  }
+
+  /* The dialog becomes a column so the body can scroll when the pending section
+     makes the content taller than the sheet. Scoped to [open]: an unscoped
+     display would override the UA's dialog:not([open]){display:none} and show
+     the dialog permanently. */
+  .dashboard__roster-dialog[open] {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .dashboard__roster-dialog-body {
+    min-block-size: 0;
+    overflow-y: auto;
+  }
+
+  .dashboard__roster-dialog-pending-title {
+    margin: 0;
+    display: flex;
+    align-items: baseline;
+    gap: var(--s-2);
+    color: var(--text);
+    font-size: var(--t-sm);
+    font-weight: var(--weight-semibold);
+  }
+
+  .dashboard__roster-dialog-pending-count {
+    color: var(--text-muted);
+    font-size: var(--t-xs);
+    font-weight: var(--weight-medium);
+  }
+
+  .dashboard__roster-dialog-pending-list {
+    max-block-size: 12rem;
+    overflow: auto;
+    margin-inline: calc(var(--s-2) * -1);
+  }
+
+  .dashboard__roster-dialog-pending-list .dashboard__agent {
+    border-radius: var(--radius-sm);
+  }
+
+  @media (max-width: 52rem) {
+    .dashboard__roster-dialog-pending {
+      display: grid;
+      gap: var(--s-2);
+      padding-block-start: var(--s-3);
+      border-block-start: 1px solid var(--border);
+    }
   }
 
   .dashboard__roster-dialog-list .dashboard__agent {
