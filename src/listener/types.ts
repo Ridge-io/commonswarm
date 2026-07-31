@@ -3,6 +3,13 @@ import type {
   SignalRecord,
 } from "../cloud/command-client.js";
 
+/**
+ * The closed signal family a durable effect records. Asks keep the v1
+ * deterministic reply path; notes are direct signals the listener observes
+ * with zero model/reply effects at all.
+ */
+export type ListenerSignalKind = "ask" | "note";
+
 export type ListenerEffectState =
   | "received"
   | "prompting"
@@ -10,11 +17,23 @@ export type ListenerEffectState =
   | "posting"
   | "done"
   | "expired"
-  | "failed";
+  | "failed"
+  | "observed";
 
+/**
+ * Schema version 2: the v1 ask file plus a closed `signalKind` discriminator.
+ *
+ * Version 1 files stay readable and upcast in memory to signalKind "ask"
+ * without a re-write. `state: "observed"` is a terminal, note-only state:
+ * an observed note carries zero prompt/post attempts, no reply body or reply
+ * signal, and an empty `commandId` because it has no reply command. The
+ * cross-field invariants behind those words live in `parseListenerEffectRecord`;
+ * the type alone does not encode them (§ Listener integration).
+ */
 export interface ListenerEffectRecord {
-  version: 1;
+  version: 2;
   signalId: string;
+  signalKind: ListenerSignalKind;
   effectOrdinal: 0;
   commandId: string;
   askBody: string;
