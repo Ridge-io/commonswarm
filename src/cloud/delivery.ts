@@ -476,10 +476,10 @@ function boundedDeliveryErrorCode(body: unknown): string {
 }
 
 /** Refusal body parsed against the allowlist; Retry-After via signal semantics. */
-async function refusal(
+function refusal(
   response: Response,
   text: string,
-): Promise<DeliveryHttpError> {
+): DeliveryHttpError {
   let code = DELIVERY_UNKNOWN_ERROR_CODE;
   try {
     code = boundedDeliveryErrorCode(JSON.parse(text));

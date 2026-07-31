@@ -604,6 +604,37 @@ test("claim maps bounded HTTP refusals without body or bearer leakage", async ()
   );
 });
 
+test("refusal throws a synchronous DeliveryHttpError instance and not a Promise for claim and ACK", async () => {
+  const refusalClient = new DeliveryCommandClient(
+    target,
+    capturingFetch([], () => jsonResponse(403, { error: "forbidden" })),
+  );
+
+  // Direct try/catch probe for claim refusal
+  let claimCaught: unknown = null;
+  try {
+    await refusalClient.claimAgentInbox(claimRequest());
+  } catch (err) {
+    claimCaught = err;
+  }
+  assert.ok(claimCaught !== null, "claim refusal must throw");
+  assert.ok(claimCaught instanceof DeliveryHttpError, "claim refusal must throw a DeliveryHttpError instance");
+  assert.ok(!(claimCaught instanceof Promise), "claim refusal must not throw a Promise instance");
+  assert.equal((claimCaught as Error).name, "DeliveryHttpError");
+
+  // Direct try/catch probe for ACK refusal
+  let ackCaught: unknown = null;
+  try {
+    await refusalClient.ackAgentDelivery(ackRequest());
+  } catch (err) {
+    ackCaught = err;
+  }
+  assert.ok(ackCaught !== null, "ACK refusal must throw");
+  assert.ok(ackCaught instanceof DeliveryHttpError, "ACK refusal must throw a DeliveryHttpError instance");
+  assert.ok(!(ackCaught instanceof Promise), "ACK refusal must not throw a Promise instance");
+  assert.equal((ackCaught as Error).name, "DeliveryHttpError");
+});
+
 test("ack sends the exact shape with explicit null and parses the echo", async () => {
   const captures: CapturedRequest[] = [];
   const client = new DeliveryCommandClient(
