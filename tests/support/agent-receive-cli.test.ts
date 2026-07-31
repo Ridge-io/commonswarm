@@ -6,6 +6,7 @@
  * ★ THIS FILE IS NAMED IN `npm test` — a hand-run or typecheck-only pass is not a gate.
  */
 import assert from "node:assert/strict";
+import { getEventListeners } from "node:events";
 import { test } from "node:test";
 import type { SignalRecord } from "../../src/cloud/command-client.js";
 import { cloudTarget } from "../../src/cloud/config.js";
@@ -535,6 +536,31 @@ test("follow cancellation during idle poll stops cleanly", async () => {
   assert.equal(frames[0]?.type, "ready");
   assert.equal(frames.some((f) => f.type === "signal"), false);
   assert.equal(arms, 1);
+});
+
+test("follow removes its abort listener after every completed idle poll", async () => {
+  const controller = new AbortController();
+  let arms = 0;
+  const stop = await runInboxFollow({
+    workspaceId: WORKSPACE,
+    pollMs: 1,
+    sleep: async () => {},
+    signal: controller.signal,
+    arm: async () => {
+      assert.equal(
+        getEventListeners(controller.signal, "abort").length,
+        0,
+        "the prior poll left an abort listener behind",
+      );
+      arms += 1;
+      if (arms === 4) controller.abort();
+      return [];
+    },
+    emit: () => undefined,
+  });
+  assert.equal(stop.reason, "cancelled");
+  assert.equal(arms, 4);
+  assert.equal(getEventListeners(controller.signal, "abort").length, 0);
 });
 
 test("follow secret/credential absence never emits ready", async () => {

@@ -1056,16 +1056,23 @@ export async function runInboxFollow(options: {
       await sleep(ms);
       return cancelled() ? "cancelled" : "ok";
     }
-    await Promise.race([
-      sleep(ms),
-      new Promise<void>((resolve) => {
-        if (abort.aborted) {
-          resolve();
-          return;
-        }
-        abort.addEventListener("abort", () => resolve(), { once: true });
-      }),
-    ]);
+    let onAbort: (() => void) | null = null;
+    const aborted = new Promise<void>((resolve) => {
+      onAbort = () => resolve();
+      if (abort.aborted) {
+        resolve();
+        return;
+      }
+      abort.addEventListener("abort", onAbort, { once: true });
+    });
+    try {
+      await Promise.race([sleep(ms), aborted]);
+    } finally {
+      // A long-lived follow process sleeps thousands of times. When the timer
+      // wins the race, `{ once: true }` does not remove an un-fired listener;
+      // doing it here prevents one listener accumulating per poll.
+      if (onAbort !== null) abort.removeEventListener("abort", onAbort);
+    }
     return cancelled() ? "cancelled" : "ok";
   };
 
