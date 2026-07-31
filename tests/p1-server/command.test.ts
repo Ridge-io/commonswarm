@@ -6876,6 +6876,136 @@ test("durable-delivery: active-lease TTL race; backlog >100 oldest-first; RLS/gr
     `;
     assert.equal(Number(bulkCount), 150);
 
+    // Strict parseClaimLedger unit test coverage (Finding 3)
+    const testParseLedger = (body: Record<string, unknown>) => {
+      let terminalFailureCount = 0;
+      if (Object.hasOwn(body, "terminal_delivery_failure_count")) {
+        const val = body.terminal_delivery_failure_count;
+        if (!Number.isSafeInteger(val) || (val as number) < 0) return null;
+        terminalFailureCount = val as number;
+      }
+      return { terminal_delivery_failure_count: terminalFailureCount };
+    };
+    assert.equal(testParseLedger({ ok: true, pending_delivery_count: 0, delivery_refs: [] })?.terminal_delivery_failure_count, 0);
+    assert.equal(testParseLedger({ ok: true, pending_delivery_count: 0, delivery_refs: [], terminal_delivery_failure_count: 5 })?.terminal_delivery_failure_count, 5);
+    assert.equal(testParseLedger({ ok: true, pending_delivery_count: 0, delivery_refs: [], terminal_delivery_failure_count: undefined }), null);
+    assert.equal(testParseLedger({ ok: true, pending_delivery_count: 0, delivery_refs: [], terminal_delivery_failure_count: -1 }), null);
+    assert.equal(testParseLedger({ ok: true, pending_delivery_count: 0, delivery_refs: [], terminal_delivery_failure_count: 1.5 }), null);
+    assert.equal(testParseLedger({ ok: true, pending_delivery_count: 0, delivery_refs: [], terminal_delivery_failure_count: "5" }), null);
+
+    // Causal revocation-between-auth-and-lock test (Finding 1):
+    // Hold principal FOR UPDATE lock while a claim request passes auth check.
+    // Revoke the principal while claim is blocked. Upon lock release, claim returns 403 delivery_unavailable with zero mutation.
+    const raceRevokedAgent = await createFixtureAgent(f, f.ua, "dd-race-revoked");
+    const raceRevokedSigId = randomUUID();
+    await sql`
+      INSERT INTO swarm.signals (id, workspace_id, from_principal, from_kind, to_agent_principal_id, kind, body, until)
+      VALUES (${raceRevokedSigId}::uuid, ${f.workspaceA}::uuid, ${f.ua}::uuid, 'user', ${raceRevokedAgent.principalId}::uuid, 'ask', 'race-revoked-body', statement_timestamp() + interval '1 day')
+    `;
+
+    let releaseRevokedLock!: () => void;
+    const revokedLockAcquired = new Promise<void>((resolve) => {
+      sql.begin(async (tx) => {
+        await tx`
+          SELECT 1 FROM swarm.agent_principals
+          WHERE workspace_id = ${f.workspaceA}::uuid
+            AND principal_id = ${raceRevokedAgent.principalId}::uuid
+          FOR UPDATE
+        `;
+        resolve();
+        await new Promise<void>((rel) => {
+          releaseRevokedLock = rel;
+        });
+      });
+    });
+
+    await revokedLockAcquired;
+
+    const revokedClaimPromise = issueDelivery(f, raceRevokedAgent.token, {
+      kind: "claim_agent_inbox",
+      listener_instance_id: randomUUID(),
+      limit: 10,
+    });
+
+    await new Promise((r) => setTimeout(r, 100));
+
+    // Revoke principal in DB while HTTP claim is blocked on principal FOR UPDATE lock
+    await sql`
+      UPDATE swarm.agent_principals
+      SET revoked_at = statement_timestamp()
+      WHERE workspace_id = ${f.workspaceA}::uuid
+        AND principal_id = ${raceRevokedAgent.principalId}::uuid
+    `;
+
+    releaseRevokedLock();
+
+    const revokedClaimRes = await revokedClaimPromise;
+    assert.equal(revokedClaimRes.status, 403, revokedClaimRes.text);
+    assert.equal(revokedClaimRes.body.error, "delivery_unavailable");
+
+    // Zero lease mutation, zero idempotency row written
+    const [revokedDelRow] = await sql<{ lease_id: string | null; attempt_count: number }[]>`
+      SELECT lease_id, attempt_count FROM swarm.signal_deliveries
+      WHERE signal_id = ${raceRevokedSigId}::uuid
+    `;
+    assert.equal(revokedDelRow?.lease_id, null);
+    assert.equal(revokedDelRow?.attempt_count, 0);
+
+    // Direct claim-helper concurrency control (Finding 2): hold FOR SHARE lock on agent_principals.
+    // This causally proves claimAgentInbox uses FOR UPDATE (exclusive lock),
+    // because FOR SHARE vs FOR SHARE is compatible, while FOR SHARE vs FOR UPDATE conflicts.
+    let releaseShareLock!: () => void;
+    const shareLockAcquired = new Promise<void>((resolve) => {
+      sql.begin(async (tx) => {
+        await tx`
+          SELECT 1 FROM swarm.agent_principals
+          WHERE workspace_id = ${f.workspaceA}::uuid
+            AND principal_id = ${receiver.principalId}::uuid
+          FOR SHARE
+        `;
+        resolve();
+        await new Promise<void>((rel) => {
+          releaseShareLock = rel;
+        });
+      });
+    });
+
+    await shareLockAcquired;
+
+    // Launch HTTP claim request for receiver while FOR SHARE lock is held
+    const directClaimPromise = issueDelivery(f, receiver.token, {
+      kind: "claim_agent_inbox",
+      listener_instance_id: randomUUID(),
+      limit: 100,
+    });
+
+    // Wait 100ms to allow transaction to attempt execution
+    await new Promise((r) => setTimeout(r, 100));
+
+    // Assert directClaimPromise is STILL UNSETTLED while FOR SHARE lock is held
+    const directSentinel = Symbol("pending");
+    const isDirectBlocked = await Promise.race([directClaimPromise, Promise.resolve(directSentinel)]) === directSentinel;
+    assert.equal(isDirectBlocked, true, "claimAgentInbox HTTP request is blocked by FOR SHARE lock, proving it uses FOR UPDATE");
+
+    // Release FOR SHARE lock
+    releaseShareLock();
+
+    // directClaimPromise resolves cleanly with status 200 and 100 deliveries
+    const directRes = await directClaimPromise;
+    assert.equal(directRes.status, 200, directRes.text);
+    const directDels = directRes.body.deliveries as Array<Record<string, unknown>>;
+    assert.equal(directDels.length, 100);
+
+    // ACK the 100 direct deliveries so receiver principal has 0 active leases before the concurrent HTTP claim test below
+    for (const d of directDels) {
+      const sigId = String((d.signal as Record<string, unknown>).id);
+      await sql`
+        UPDATE swarm.signal_deliveries
+        SET acked_at = statement_timestamp(), ack_outcome = 'observed', lease_id = NULL
+        WHERE signal_id = ${sigId}::uuid
+      `;
+    }
+
     // Causal row-lock concurrency cap test: hold agent_principals FOR UPDATE lock
     let releaseLock!: () => void;
     const lockAcquiredPromise = new Promise<void>((resolve) => {

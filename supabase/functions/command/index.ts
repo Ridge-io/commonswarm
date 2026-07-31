@@ -5762,6 +5762,9 @@ async function handleTransaction(
         listenerInstanceId: command.listener_instance_id,
         limit: command.limit,
       });
+      if (ledger === null) {
+        return { status: 403, body: { error: "delivery_unavailable" } };
+      }
       const inserted = await tx<{ command_id: string }[]>`
         INSERT INTO swarm.idempotency_keys (
           principal_kind, principal_id, command_id,

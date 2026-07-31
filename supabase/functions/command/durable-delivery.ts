@@ -120,17 +120,19 @@ export async function claimAgentInbox(
     listenerInstanceId: string;
     limit: number;
   },
-): Promise<DeliveryClaimLedgerResponse> {
+): Promise<DeliveryClaimLedgerResponse | null> {
   // 1. Hold a row lock on the exact recipient agent principal row FOR UPDATE
-  // to serialize concurrent claimers for the same principal.
-  await tx`
-    SELECT principal_id
+  const principalRows = await tx<{ principal_id: string; revoked_at: Date | null }[]>`
+    SELECT principal_id, revoked_at
     FROM swarm.agent_principals
     WHERE workspace_id = ${args.workspaceId}::uuid
       AND principal_id = ${args.recipientPrincipalId}::uuid
-      AND revoked_at IS NULL
     FOR UPDATE
   `;
+  const principalRow = principalRows[0];
+  if (!principalRow || principalRow.revoked_at !== null) {
+    return null;
+  }
 
   // 2. Reset this recipient's stale leases without acknowledging them.
   await tx`
@@ -602,8 +604,8 @@ export function parseClaimLedger(value: unknown): DeliveryClaimLedgerResponse | 
     });
   }
   let terminalFailureCount = 0;
-  if ("terminal_delivery_failure_count" in body && body.terminal_delivery_failure_count !== undefined) {
-    const val = body.terminal_delivery_failure_count;
+  if (Object.hasOwn(body, "terminal_delivery_failure_count")) {
+    const val = (body as Record<string, unknown>).terminal_delivery_failure_count;
     if (!Number.isSafeInteger(val) || (val as number) < 0) return null;
     terminalFailureCount = val as number;
   }
