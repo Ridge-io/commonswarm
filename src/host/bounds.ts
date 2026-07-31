@@ -18,7 +18,12 @@ export const ACP_PROTOCOL_VERSION = 1;
 
 /**
  * Every OpenCode 1.18.10 tool name the host forces through ask/deny config.
- * The wildcard covers future tools so ambient project allow cannot bypass ACP.
+ *
+ * Project-level allow merging is stopped by OPENCODE_DISABLE_PROJECT_CONFIG
+ * (verified via `debug config --pure`), not by this list or by a private home.
+ * The wildcard is a secondary belt: once project merge is disabled, `*` keeps
+ * unknown tool names on the ask path so ambient/global allow cannot soft-open
+ * new tools without an ACP permission request.
  */
 export const OPENCODE_FORCED_PERMISSION_TOOLS = [
   "bash",

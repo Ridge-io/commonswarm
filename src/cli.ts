@@ -2551,6 +2551,24 @@ function listenerProvider(args: Arguments): ListenerProviderId {
   return provider;
 }
 
+/** Provider-aware host limit copy for listen status JSON. */
+export function listenerHostLimits(provider: ListenerStatus["provider"]): string {
+  if (provider === "opencode") {
+    return [
+      "OpenCode same-owner: private 0700 home is auth-only + forced-ask config, not a project-config firewall.",
+      "Project allow lists are defeated only by OPENCODE_DISABLE_PROJECT_CONFIG=1 plus a verified debug config --pure effective-config probe before spawn.",
+      "The deny canary proves host reject + correlated terminal deny only; it does not prove steady-state --permissions allow behavior.",
+      "Cross-owner/unknown turns use a fresh auth-only home and empty cwd, then remove them after the turn.",
+    ].join(" ");
+  }
+  return [
+    "Same-owner Grok workers may load ambient user hooks outside CommonSwarm's ACP permission boundary;",
+    "cmux integration hooks are disabled for the listener child.",
+    "Isolated cross-owner turns use a clean temporary home and empty cwd.",
+    "The deny canary does not prove steady-state --permissions allow behavior.",
+  ].join(" ");
+}
+
 function listenerStatusJson(
   status: ListenerStatus,
   permissionMode?: ListenerPermissionMode,
@@ -2564,11 +2582,10 @@ function listenerStatusJson(
           ? "worker session; tool requests allowed once"
           : "worker session; tool requests denied",
         cross_owner_delivery:
-          "fresh strict-sandbox session; all tool requests denied",
+          "fresh tool-denied session; all tool requests denied",
       }
       : {}),
-    host_limits:
-      "Same-owner workers may load ambient provider hooks outside CommonSwarm's ACP permission boundary unless the adapter uses a private home; isolated cross-owner turns always use a clean temporary home and empty cwd.",
+    host_limits: listenerHostLimits(status.provider),
   };
 }
 

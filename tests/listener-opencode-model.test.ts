@@ -224,33 +224,32 @@ test("OpenCode cancel reaches worker and in-flight isolates", async () => {
   await adapter.close();
 });
 
-test("close during isolate openSession race abandons preparing home and handle", async () => {
+test("close during gated isolate open waits for settle; home remains until verified close", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "cswarm-oc-worker-"));
   let releaseOpen: (() => void) | undefined;
   const gate = new Promise<void>((resolve) => {
     releaseOpen = resolve;
   });
   let isolatedHome: string | undefined;
-  let isolatedClosed = false;
-  let isolatedCancelled = false;
+  let childLive = false;
+  let closedAfterLive = false;
   const adapter = new OpenCodeListenerModel({
     cwd,
     allowMissingAuth: true,
+    pendingOpenWaitMs: 2_000,
     open: async (options) => {
       if (options.clientName === "cswarm-listener") {
-        // Worker start path — cooperative fake.
-        const session = {
-          async enablePromptsAfterCanary() {
-            await options.permissionCallback?.(REQUEST);
-          },
-          async openWorkCwd() {},
-          async prompt() {
-            return { message: "w", stopReason: "end_turn" as const, updates: [] };
-          },
-          cancel() {},
-        };
         return {
-          session,
+          session: {
+            async enablePromptsAfterCanary() {
+              await options.permissionCallback?.(REQUEST);
+            },
+            async openWorkCwd() {},
+            async prompt() {
+              return { message: "w", stopReason: "end_turn" as const, updates: [] };
+            },
+            cancel() {},
+          },
           child: {},
           executable: process.execPath,
           args: ["acp", "--pure"],
@@ -259,29 +258,26 @@ test("close during isolate openSession race abandons preparing home and handle",
           async close() {},
         } as unknown as OpenCodeAcpHandle;
       }
-      // Isolate open: hold until close() races in.
       isolatedHome = options.isolatedHome;
+      childLive = true; // openSession has started; child may be live
       await gate;
-      const session = {
-        async enablePromptsAfterCanary() {
-          await options.permissionCallback?.(REQUEST);
-        },
-        async prompt() {
-          return { message: "i", stopReason: "end_turn" as const, updates: [] };
-        },
-        cancel() {
-          isolatedCancelled = true;
-        },
-      };
       return {
-        session,
+        session: {
+          async enablePromptsAfterCanary() {
+            await options.permissionCallback?.(REQUEST);
+          },
+          async prompt() {
+            return { message: "i", stopReason: "end_turn" as const, updates: [] };
+          },
+          cancel() {},
+        },
         child: {},
         executable: process.execPath,
         args: ["acp", "--pure"],
         env: {},
         home: options.isolatedHome ?? "/tmp/y",
         async close() {
-          isolatedClosed = true;
+          if (childLive) closedAfterLive = true;
         },
       } as unknown as OpenCodeAcpHandle;
     },
@@ -296,13 +292,42 @@ test("close during isolate openSession race abandons preparing home and handle",
     await new Promise((r) => setTimeout(r, 5));
   }
   assert.equal(typeof isolatedHome, "string");
+  assert.equal(childLive, true);
+  // During the gate, close must NOT remove the home (child live under pending open).
   const closePromise = adapter.close();
+  await new Promise((r) => setTimeout(r, 30));
+  await stat(isolatedHome!);
   releaseOpen?.();
-  await assert.rejects(isolatedPrompt, /cancelled during open|closed/i);
-  await closePromise;
-  assert.equal(isolatedClosed || isolatedCancelled, true);
-  // Preparing home must not remain after close race.
+  await assert.rejects(isolatedPrompt, /cancelled during open|closed|pending/i).catch(() => undefined);
+  await closePromise.catch(() => undefined);
+  // After settle + verified close, home may be released.
+  assert.equal(closedAfterLive, true);
   await assert.rejects(() => stat(isolatedHome!), /ENOENT/);
+});
+
+test("pending open that never settles retains home and fails close", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "cswarm-oc-worker-"));
+  let workerHome: string | undefined;
+  const adapter = new OpenCodeListenerModel({
+    cwd,
+    allowMissingAuth: true,
+    pendingOpenWaitMs: 50,
+    open: async (options) => {
+      workerHome = options.isolatedHome;
+      // Never settles.
+      return new Promise(() => undefined) as Promise<OpenCodeAcpHandle>;
+    },
+  });
+  const startPromise = adapter.start();
+  for (let i = 0; i < 50 && !workerHome; i += 1) {
+    await new Promise((r) => setTimeout(r, 5));
+  }
+  assert.equal(typeof workerHome, "string");
+  await assert.rejects(() => adapter.close(), /pending_open_timeout|retain/i);
+  await stat(workerHome!);
+  assert.ok(adapter.getRetainedHomes().includes(workerHome!));
+  // Unblock process exit: leave start hanging is ok for test end.
+  void startPromise;
 });
 
 test("allowMissingAuth is explicit — not implied by fake open alone", async () => {
