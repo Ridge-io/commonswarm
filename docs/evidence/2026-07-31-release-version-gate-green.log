@@ -1,13 +1,53 @@
-# clean site build + download gate (green) — 2026-07-31T20:47:55Z
+# GREEN run — release gate, repaired tree — 2026-07-31
 
-## npm --prefix site test (download gate portion + summary)
+Excerpts, not the full runs. The full `npm --prefix site test` total is recorded separately
+(82 tests, 82 pass), and the root gates separately at the end of the evidence doc.
 
-✔ download version gate: clean built /download carries exactly the shipping version (1.448ms)
-✔ download version gate: a deliberately mutated artifact is rejected (0.176292ms)
-ℹ tests 2
-ℹ pass 2
-ℹ fail 0
+## clean site build — `rm -rf site/dist && npm run build` (site/)
 
-## built artifact /download version surfaces
-CSWARM_VERSION=0.1.4 sh
-cswarm 0.1.4 (protocol 0.1.0)
+`rm -rf site/dist` is load-bearing: the clean must be real or stale files survive.
+
+The old `node:crypto` externalization warning must be ABSENT, paired with a positive
+control on the SAME invocation (a real successful build log always prints `built in`):
+
+    grep -c 'externalized for browser compatibility' <build log>   -> 0   (absent)
+    grep -c 'built in'                        <build log>   -> 3   (control)
+
+build exit=0; 8 pages built.
+
+## emitted browser JS — sentinel scan with positive control
+
+Scan `site/dist/_astro/*.js` for root-only release metadata that used to leak in via
+`agent-prompt.ts -> install.ts -> release.ts -> root package.json / src/cloud/config.ts`:
+
+    grep -c 'build:command-core|test:p1-server|node:crypto' site/dist/_astro/*.js
+        -> 0 files          (absent)
+    grep -c 'navigator.clipboard' site/dist/_astro/*.js
+        -> 3 files          (positive control: the scanner reads real emitted JS)
+
+## built /download four version surfaces (each exactly once)
+
+    afterinstall output:  <span class="ui-code__line">cswarm 0.1.4 (protocol 0.1.0)</span>   -> 1
+    footer line:          <span class="mono ft__version-str"...>cswarm 0.1.4 (protocol 0.1.0)</span>  -> 1
+    visible pin:          $ </span>curl -fsSL https://commonswarm.com/install.sh | CSWARM_VERSION=0.1.4 sh  -> 1
+    copy payload:         data-copy="curl -fsSL https://commonswarm.com/install.sh | CSWARM_VERSION=0.1.4 sh"  -> 1
+
+## download version gate, standalone (`node --import tsx --test site/scripts/download-version.test.mjs`)
+
+This is an EXCERPT of one test file against the restored artifact, not the full site run.
+
+✔ download version gate: clean built /download carries all four shipping-version surfaces (1.391166ms)
+✔ download version gate: a deliberately mutated stale artifact is rejected (0.186416ms)
+✔ deletion control: removing only the AfterInstall output line turns the gate red (0.172375ms)
+✔ deletion control: removing only the footer shipping-version line turns the gate red (0.146167ms)
+✔ deletion control: removing only the visible pinned command turns the gate red (0.143ms)
+✔ deletion control: removing only the pinned command's data-copy payload turns the gate red (0.139208ms)
+
+## FULL site test total — `npm --prefix site test`
+
+    ℹ tests 82
+    ℹ pass  82
+    ℹ fail  0
+
+(root `npm test` 241/241, `npm run check:tests`, root `npm run build`, and
+`git diff --check` all green — see the evidence doc for each verdict.)

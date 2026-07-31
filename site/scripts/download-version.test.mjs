@@ -12,15 +12,28 @@ import { fileURLToPath } from "node:url";
  * two hard-coded literals that rotted the moment the next bump landed. This gate DERIVES
  * the expected version from the shipping source (repo-root package.json) and the protocol
  * from its one source (src/cloud/config.ts), then requires the built artifact to carry
- * EXACTLY those values — and nothing else — on both /download version surfaces:
+ * EXACTLY those values on FOUR independently-scoped surfaces, each in its own stable
+ * output context:
  *
- *   • the pinned install command  (OtherWays.astro <- lib/install.ts INSTALL_CMD_PINNED,
- *                                   which takes its version from lib/release.ts)
- *   • the `cswarm --version` example (AfterInstall.astro <- lib/release.ts CLI_VERSION_LINE)
+ *   1. the AfterInstall `cswarm --version` example in its output block
+ *      (AfterInstall.astro <- lib/release.ts CLI_VERSION_LINE, rendered as a code line);
+ *   2. the footer shipping-version line in the footer's version span
+ *      (SiteFooter.astro <- lib/release.ts CLI_VERSION_LINE);
+ *   3. the visible pinned install command in the "pin a version" code block
+ *      (OtherWays.astro <- lib/release.ts INSTALL_CMD_PINNED, rendered as the line text);
+ *   4. the pinned command's `data-copy` payload on the copy button
+ *      (CodeBlock.astro's data-copy attribute, same INSTALL_CMD_PINNED value).
  *
- * A bump touches repo-root package.json alone; a build that still renders the old version
- * fails this gate, and the mutation test below proves the gate can tell a stale artifact
- * apart from the clean one rather than passing vacuously.
+ * FOUR SURFACES, NOT TWO. The old gate reduced everything to a value set, so removing the
+ * AfterInstall output line "passed" because the footer carries the same string, and removing
+ * the copy payload "passed" because the visible pin still shows it. Each surface here has
+ * its own scoped count, and a deletion mutation that removes exactly one of them while the
+ * other three stay intact must turn the predicate red — one test per surface below.
+ *
+ * "A bump touches package.json alone" is FALSE and the superseded phrasing is gone: a real
+ * npm release bumps the root manifest AND its lockfile (see release-lockfile.test.mjs).
+ * Here the site renders what the repo-root package.json ships; the lockfile, not this test,
+ * is what keeps the two in step.
  *
  * Picked up by `npm --prefix site test` through the site test script's
  * `scripts/*.test.mjs` glob. Requires a prior site build — it reads `site/dist`.
@@ -55,56 +68,71 @@ function protocolVersion() {
 
 const CLI_VERSION = shippingCliVersion();
 const PROTOCOL_VERSION = protocolVersion();
-const EXPECTED_LINE = `${CLI_VERSION} (protocol ${PROTOCOL_VERSION})`;
+const VERSION_LINE = `cswarm ${CLI_VERSION} (protocol ${PROTOCOL_VERSION})`;
+const PINNED_CMD =
+  `curl -fsSL https://commonswarm.com/install.sh | CSWARM_VERSION=${CLI_VERSION} sh`;
 
-/** The two /download version surfaces, extracted from built HTML as DISTINCT values.
- *  The page renders the same line twice (footer + AfterInstall example), so a set, not a
- *  count, is the shape of the truth. */
-function versionSurfaces(html) {
+function countLiteral(haystack, needle) {
+  return haystack.split(needle).length - 1;
+}
+
+function countRegex(haystack, re) {
+  return (haystack.match(re) ?? []).length;
+}
+
+const FOOTER_SPAN_RE = new RegExp(
+  `<span class="mono ft__version-str"[^>]*>cswarm ${escapeRegex(CLI_VERSION)} \\(protocol ${escapeRegex(PROTOCOL_VERSION)}\\)</span>`,
+);
+
+function escapeRegex(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** The four /download version surfaces as INDEPENDENT scoped counts over the built HTML. */
+function surfaceCounts(html) {
   return {
-    pins: new Set(
-      [...html.matchAll(/CSWARM_VERSION=([0-9]+(?:\.[0-9]+)*) sh/g)].map((m) => m[1]),
+    /** 1: AfterInstall `cswarm --version` example, in its code-line output span. */
+    afterInstallOutputLine: countLiteral(html, `<span class="ui-code__line">${VERSION_LINE}</span>`),
+    /** 2: footer shipping-version line, in the footer's version span. */
+    footerShippingVersionLine: countRegex(html, FOOTER_SPAN_RE),
+    /** 3: visible pinned install command, as the pin code block's line text. */
+    visiblePinnedCommand: countLiteral(
+      html,
+      `<span class="ui-code__prompt" aria-hidden="true">$ </span>${PINNED_CMD}</span>`,
     ),
-    lines: new Set(
-      [...html.matchAll(/cswarm ([0-9]+(?:\.[0-9]+)*) \(protocol ([0-9]+(?:\.[0-9]+)*)\)/g)].map(
-        (m) => `${m[1]} (protocol ${m[2]})`,
-      ),
-    ),
+    /** 4: pinned command's data-copy payload on the copy button. */
+    pinnedCopyPayload: countLiteral(html, `data-copy="${PINNED_CMD}"`),
   };
 }
 
-/** The gate. True only when the artifact carries exactly the shipping version surfaces. */
+/**
+ * The gate. True only when all four surfaces are present exactly once — a page that renders
+ * the version from any other source (or drops any one surface) fails.
+ */
 function downloadCarriesShippedVersion(html) {
-  const { pins, lines } = versionSurfaces(html);
-  return (
-    pins.size === 1 && pins.has(CLI_VERSION) && lines.size === 1 && lines.has(EXPECTED_LINE)
-  );
+  return Object.values(surfaceCounts(html)).every((count) => count === 1);
 }
 
-test("download version gate: clean built /download carries exactly the shipping version", () => {
+const SURFACE_KEYS = Object.keys(surfaceCounts(""));
+
+test("download version gate: clean built /download carries all four shipping-version surfaces", () => {
   const html = readFileSync(DIST_DOWNLOAD, "utf8");
-  const { pins, lines } = versionSurfaces(html);
+  const counts = surfaceCounts(html);
+  for (const key of SURFACE_KEYS) {
+    assert.equal(
+      counts[key],
+      1,
+      `${key} must appear exactly once on the clean built /download, found ${counts[key]}`,
+    );
+  }
   assert.equal(
-    pins.size,
-    1,
-    `pinned install command must render one version, found ${[...pins].join(", ")}`,
-  );
-  assert.ok(
-    pins.has(CLI_VERSION),
-    `pinned install command must render the shipped version ${CLI_VERSION}, found ${[...pins].join(", ")}`,
-  );
-  assert.equal(
-    lines.size,
-    1,
-    `cswarm --version example must render one version line, found ${[...lines].join(", ")}`,
-  );
-  assert.ok(
-    lines.has(EXPECTED_LINE),
-    `cswarm --version example must render ${EXPECTED_LINE}, found ${[...lines].join(", ")}`,
+    downloadCarriesShippedVersion(html),
+    true,
+    "the clean artifact must satisfy the four-surface predicate",
   );
 });
 
-test("download version gate: a deliberately mutated artifact is rejected", () => {
+test("download version gate: a deliberately mutated stale artifact is rejected", () => {
   const html = readFileSync(DIST_DOWNLOAD, "utf8");
   assert.equal(
     downloadCarriesShippedVersion(html),
@@ -118,4 +146,62 @@ test("download version gate: a deliberately mutated artifact is rejected", () =>
     false,
     `the gate must reject an artifact that renders ${other} while package.json ships ${CLI_VERSION}`,
   );
+});
+
+/*
+ * DELETION MUTATION CONTROLS — one per surface. Removing exactly one surface (while the
+ * other three stay byte-intact) must flip the predicate from green to red. Each control
+ * proves BOTH directions: the targeted surface count drops to 0 while the other three sit
+ * at 1 (so the mutation removed precisely what it claims), and the predicate turns red.
+ */
+
+function assertTargetedDeletion(html, missingKey) {
+  const counts = surfaceCounts(html);
+  for (const key of SURFACE_KEYS) {
+    const expected = key === missingKey ? 0 : 1;
+    assert.equal(
+      counts[key],
+      expected,
+      `${key}: expected ${expected} after deleting only ${missingKey}, found ${counts[key]}`,
+    );
+  }
+  assert.equal(
+    downloadCarriesShippedVersion(html),
+    false,
+    `the predicate must turn red when only ${missingKey} is deleted`,
+  );
+}
+
+test("deletion control: removing only the AfterInstall output line turns the gate red", () => {
+  const html = readFileSync(DIST_DOWNLOAD, "utf8");
+  const mutated = html.replace(
+    `<span class="ui-code__line">${VERSION_LINE}</span>`,
+    `<span class="ui-code__line"></span>`,
+  );
+  assert.notEqual(mutated, html, "the mutation must change the artifact");
+  assertTargetedDeletion(mutated, "afterInstallOutputLine");
+});
+
+test("deletion control: removing only the footer shipping-version line turns the gate red", () => {
+  const html = readFileSync(DIST_DOWNLOAD, "utf8");
+  const mutated = html.replace(FOOTER_SPAN_RE, `<span class="mono ft__version-str"></span>`);
+  assert.notEqual(mutated, html, "the mutation must change the artifact");
+  assertTargetedDeletion(mutated, "footerShippingVersionLine");
+});
+
+test("deletion control: removing only the visible pinned command turns the gate red", () => {
+  const html = readFileSync(DIST_DOWNLOAD, "utf8");
+  const mutated = html.replace(
+    `<span class="ui-code__prompt" aria-hidden="true">$ </span>${PINNED_CMD}</span>`,
+    `<span class="ui-code__prompt" aria-hidden="true">$ </span></span>`,
+  );
+  assert.notEqual(mutated, html, "the mutation must change the artifact");
+  assertTargetedDeletion(mutated, "visiblePinnedCommand");
+});
+
+test("deletion control: removing only the pinned command's data-copy payload turns the gate red", () => {
+  const html = readFileSync(DIST_DOWNLOAD, "utf8");
+  const mutated = html.replace(`data-copy="${PINNED_CMD}"`, `data-copy=""`);
+  assert.notEqual(mutated, html, "the mutation must change the artifact");
+  assertTargetedDeletion(mutated, "pinnedCopyPayload");
 });

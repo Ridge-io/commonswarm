@@ -23,25 +23,19 @@
  * DEPLOYED site, not the source — `curl -fsSL https://commonswarm.com/install.sh`
  * must return the installer, with a positive control proving the check can fail.
  *
- * THE PINNED VERSION IS NOT TYPED HERE EITHER. The version halves of these commands
- * come from lib/release.ts, which reads the repo-root package.json — a bump touches
- * that one field and nothing on this page.
+ * THIS FILE MUST STAY BROWSER-SAFE. `agent-prompt.ts` imports `INSTALL_CMD` from
+ * here, and that module becomes part of the AgentConnect browser bundle. So no
+ * import from `lib/release.ts` — release.ts reads the repo-root package.json and
+ * src/cloud/config.ts (which pulls node:crypto), and both would leak into the
+ * emitted browser JS. The import direction is one-way: release.ts imports the
+ * browser-safe constants from HERE, never the reverse. The pinned variant
+ * (INSTALL_CMD_PINNED) therefore lives with the version in release.ts, which
+ * composes it from this file's INSTALL_HOST.
  */
-import { CLI_VERSION } from "./release.ts";
-
 export const INSTALL_HOST = "commonswarm.com";
 
 /** The one line a stranger is asked to run. Everything else is a variation. */
 export const INSTALL_CMD = `curl -fsSL https://${INSTALL_HOST}/install.sh | sh`;
-
-/**
- * Pin a version instead of taking latest. `CSWARM_VERSION` is read by the
- * installer itself; it is not a flag we invented for the page. The version is
- * the shipping CLI version from lib/release.ts (root package.json); the pipe
- * order and the variable name must not be rearranged.
- */
-export const INSTALL_CMD_PINNED =
-  `curl -fsSL https://${INSTALL_HOST}/install.sh | CSWARM_VERSION=${CLI_VERSION} sh`;
 
 /** Install somewhere other than ~/.local/bin. Also the installer's own variable. */
 export const INSTALL_CMD_DIR =

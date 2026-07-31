@@ -1,15 +1,36 @@
-# stale-artifact mutation control (red) — 2026-07-31T20:48:19Z
+# RED run — on-disk deletion of ONE version surface, gate red — 2026-07-31
 
-## mutate built /download to a stale version (0.1.4 -> 0.1.3), same package.json
-CSWARM_VERSION=0.1.3 sh
-cswarm 0.1.3 (protocol 0.1.0)
+Demonstrates the four-surface predicate is not vacuous at the artifact level: with three
+surfaces left byte-intact, deleting only the AfterInstall output line in the BUILT
+`site/dist/download/index.html` turns the gate red. (The four individual deletion
+controls live inside the gate itself — see the green run and the test file.)
 
-## same gate rerun against the stale artifact
-exit=1
-✖ download version gate: clean built /download carries exactly the shipping version (1.241208ms)
-✖ download version gate: a deliberately mutated artifact is rejected (0.322084ms)
-ℹ pass 0
-ℹ fail 2
-✖ failing tests:
-✖ download version gate: clean built /download carries exactly the shipping version (1.241208ms)
-✖ download version gate: a deliberately mutated artifact is rejected (0.322084ms)
+## mutate the built /download (only the AfterInstall output line)
+
+    perl -0pi -e 's#<span class="ui-code__line">cswarm 0\.1\.4 \(protocol 0\.1\.0\)</span>#<span class="ui-code__line"></span>#' site/dist/download/index.html
+
+    afterinstall output count -> 0   (removed)
+    footer line count         -> 1   (still present)
+    visible pin + copy payload      (still present — untouched)
+
+## same gate, standalone, against the mutated artifact
+
+    node --import tsx --test site/scripts/download-version.test.mjs
+    exit=1
+    ℹ tests 6
+    ℹ pass  0
+    ℹ fail  6
+
+Every green-path assertion now fails because the page is missing one of the four surfaces.
+
+## restore, proven byte-identical while both files exist
+
+    cp /tmp/dl-backup.html site/dist/download/index.html
+    cmp site/dist/download/index.html /tmp/dl-backup.html   -> identical (cmp exits 0)
+    sha256sum site/dist/download/index.html                 -> 17998fb01cd8af66104a47a3527e361b791945a787dca8521e58774a923a5aa7
+
+## gate rerun against the restored artifact
+
+    ℹ tests 6
+    ℹ pass  6
+    ℹ fail  0
