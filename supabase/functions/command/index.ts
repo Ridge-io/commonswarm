@@ -6310,6 +6310,25 @@ async function handleTransaction(
 async function resolveLedgerRace(error: LedgerRace): Promise<HttpResult> {
   return await db.begin(async (tx) => {
     await setTransaction(tx);
+
+    if (
+      (error.commandKind === CLAIM_AGENT_INBOX_KIND ||
+        error.commandKind === ACK_AGENT_DELIVERY_KIND) &&
+      error.auth.agent !== null
+    ) {
+      const op = error.commandKind === CLAIM_AGENT_INBOX_KIND ? "claim" : "ack";
+      const rateRes = await checkDeliveryRateLimit(
+        tx,
+        error.auth,
+        error.workspaceId,
+        error.auth.agent.principal_id,
+        op,
+      );
+      if (!rateRes.allowed) {
+        return rateRes.result;
+      }
+    }
+
     const configRows = await tx<{ value: unknown }[]>`
       SELECT value FROM swarm.config WHERE key = 'min_client_version' LIMIT 1
     `;

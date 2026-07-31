@@ -6388,29 +6388,46 @@ test("durable-delivery: wrong principal/lease, revoked token, delivery_unavailab
     const rateAgent = await createFixtureAgent(f, f.ua, "dd-rate-agent-1");
     const otherAgent = await createFixtureAgent(f, f.ua, "dd-rate-agent-2");
 
-    // 1. Seed current-minute claim rate bucket at count 120 for rateAgent
-    const bucketKey = `delivery:claim:principal:${f.workspaceA}:${rateAgent.principalId}`;
+    // 1. Seed rate bucket count = 119 to test exact 119 -> 120 -> 121 boundary (Finding 5)
+    const rateBucketKey = `delivery:claim:principal:${f.workspaceA}:${rateAgent.principalId}`;
+    const minuteBucketStart = new Date(new Date().setUTCSeconds(0, 0));
     await sql`
-      INSERT INTO swarm.rate_buckets (bucket_key, window_start, count)
-      VALUES (${bucketKey}, date_trunc('minute', statement_timestamp()), 120)
-      ON CONFLICT (bucket_key, window_start) DO UPDATE SET count = 120
+      INSERT INTO swarm.rate_buckets (key, window_start, count)
+      VALUES (${rateBucketKey}, ${minuteBucketStart}, 119)
+      ON CONFLICT (key) DO UPDATE SET count = 119
     `;
 
-    // Seed an actual deliverable signal to prove refused claim makes NO lease mutation
-    const secretBody = "secret-prompt-content-xyz123";
+    // 1. Seed deliverable signal with expanded secret sentinels (Finding 6)
+    const secretBody = "secret-body-content-xyz123";
+    const secretAbout = "secret-about-topic-abc";
+    const secretReplyId = randomUUID();
     const privacySignal = await issueSignal(f, f.uaJwt, {
       kind: "post_signal",
       signal_kind: "ask",
       body: secretBody,
       to_user_id: null,
       to_agent_principal_id: rateAgent.principalId,
-      in_reply_to: null,
-      about: "privacy-test",
+      in_reply_to: secretReplyId,
+      about: secretAbout,
     });
     assert.equal(privacySignal.status, 200);
     const privacySigId = String((privacySignal.body.signal as Record<string, unknown>).id);
 
-    // 2. Request 121 returns HTTP 429 rate_limited with Retry-After header and metadata
+    // 2. Request 120 succeeds (HTTP 200) at rate limit boundary
+    const listener120 = randomUUID();
+    const claim120 = await issueDelivery(
+      f,
+      rateAgent.token,
+      {
+        kind: "claim_agent_inbox",
+        listener_instance_id: listener120,
+        limit: 10,
+      },
+      randomUUID(),
+    );
+    assert.equal(claim120.status, 200, claim120.text);
+
+    // 3. Request 121 exceeds rate limit (HTTP 429 rate_limited)
     const cmdId121 = randomUUID();
     const listener121 = randomUUID();
     const claim121 = await issueDelivery(
@@ -6439,19 +6456,20 @@ test("durable-delivery: wrong principal/lease, revoked token, delivery_unavailab
     const retrySec = Number(retryAfter);
     assert.ok(retrySec >= 1 && retrySec <= 60, `Retry-After ${retrySec} is between 1 and 60`);
 
-    // Causality: refused claim makes NO lease mutation on deliverable signal
+    // Causality: refused claim 121 makes NO lease mutation on deliverable signal
     const [privacyDelRow] = await sql<{ lease_id: string | null; attempt_count: number }[]>`
       SELECT lease_id, attempt_count FROM swarm.signal_deliveries
       WHERE signal_id = ${privacySigId}::uuid
     `;
-    assert.equal(privacyDelRow?.lease_id, null, "refused claim makes no lease mutation");
-    assert.equal(privacyDelRow?.attempt_count, 0, "refused claim makes no attempt count mutation");
+    assert.equal(privacyDelRow?.attempt_count, 1, "request 120 incremented attempt count once");
 
-    // Privacy assertion: assert response, audit, and alert contain NONE of known markers
+    // Expanded privacy assertion: assert response, audit, and alert contain NONE of known secret markers (Finding 6)
     const forbiddenMarkers = [
       rateAgent.token,
       "Bearer",
       secretBody,
+      secretAbout,
+      secretReplyId,
       listener121,
       privacySigId,
       f.ua,
@@ -6694,12 +6712,33 @@ test("durable-delivery: stale lease requeues; signal TTL expires once; tenth cla
     >).some((d) => (d.signal as Record<string, unknown>).id === poisonId);
     assert.equal(stillDelivered, false, "no further claims after poison");
 
-    // Exactly one security alert emitted for delivery_attempts_exhausted
-    const alertRows = await sql<{ alert_id: string }[]>`
-      SELECT alert_id FROM swarm.security_alerts
+    // Pending count excludes failed row
+    const [unackedPendingCount] = await sql<{ count: string | number }[]>`
+      SELECT count(*) AS count FROM swarm.signal_deliveries
+      WHERE workspace_id = ${f.workspaceA}::uuid
+        AND recipient_agent_principal_id = ${receiver.principalId}::uuid
+        AND acked_at IS NULL
+    `;
+    assert.equal(Number(afterPoison.body.pending_delivery_count), Number(unackedPendingCount.count), "pending_delivery_count excludes failed row");
+
+    // Exactly one security alert emitted for delivery_attempts_exhausted with exact body-free detail (Finding 7)
+    const alertRows = await sql<{ alert_id: string; detail: unknown }[]>`
+      SELECT alert_id, detail FROM swarm.security_alerts
       WHERE kind = 'delivery_attempts_exhausted'
     `;
     assert.equal(alertRows.length, 1, "exactly one delivery_attempts_exhausted alert written");
+    const alertDetail = alertRows[0]!.detail as Record<string, unknown>;
+    assert.equal(alertDetail.workspace_id, f.workspaceA);
+    assert.equal(alertDetail.recipient_principal_id, receiver.principalId);
+    assert.equal(alertDetail.terminal_delivery_failure_count, 1);
+    assert.equal(JSON.stringify(alertDetail).includes("dd-poison"), false, "alert detail excludes signal body");
+
+    // Audit log has outcome accepted
+    const auditRows = await sql<{ outcome: string; reason: string | null }[]>`
+      SELECT outcome, reason FROM swarm.audit_log
+      WHERE command_id = ${afterPoisonCid}::uuid
+    `;
+    assert.equal(auditRows[0]?.outcome, "accepted");
 
     // Exact idempotency replay reproduces terminal_delivery_failure_count 1 without emitting a second alert
     const afterPoisonReplay = await issueDelivery(

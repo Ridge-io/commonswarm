@@ -234,19 +234,11 @@ Agent-only request:
 
 The fresh claim transaction follows this order; implementations may not reorder the steps:
 
-1. authenticate the exact agent/workspace and resolve an idempotency replay before fresh mutation;
-2. lock/reset this recipient's stale leases, clearing lease fields and incrementing expiry metadata
-   without acknowledging them;
-3. terminalize **unleased** rows whose immutable signal TTL elapsed as `expired`;
-4. terminalize remaining unleased, signal-live rows at the ten-attempt ceiling as
-   `failed_terminal/delivery_attempts_exhausted`;
-5. select signal-live, unleased, below-ceiling candidates oldest-first with
-   `FOR UPDATE SKIP LOCKED`, write their leases, and store body-free replay references;
-6. compute the exact live-unacked count, commit, then hydrate immutable bodies for the authenticated
-   response.
-
-An unexpired lease is never stolen or TTL-terminalized by a competing claim. This explicit order is
-the mutation control for the H5 failure class.
+1. authenticate the exact agent/workspace and charge the per-principal rate limit bucket (abuse accounting precedes idempotency replay);
+2. resolve idempotency replay from `swarm.idempotency_keys` before fresh delivery state mutation;
+3. lock recipient `agent_principals` row `FOR UPDATE`, reset stale leases, terminalize TTL-expired signals, and terminalize poison signals at the 10-attempt ceiling;
+4. select candidate delivery rows `FOR UPDATE SKIP LOCKED`, write fresh lease fields, and insert body-free idempotency ledger row;
+5. hydrate immutable signal bodies for the authenticated response and return.
 
 Claim response shape:
 
@@ -274,14 +266,16 @@ Claim response shape:
 
 ### Abuse Bounds and Outer Transaction Order
 
+Note: The specific boundary constants below (`120/min` claim limit, `240/min` ACK limit, `100` live lease ceiling) are analytically reasoned operational bounds for abuse prevention, not empirically load-tested capacity limits.
+
 1. **Per-Principal Rate Limits**:
    - Claim rate limit: `DELIVERY_CLAIM_RATE_LIMIT_PER_MINUTE = 120` per workspace and recipient agent principal (`delivery:claim:principal:<workspace_uuid>:<principal_uuid>`).
    - ACK rate limit: `DELIVERY_ACK_RATE_LIMIT_PER_MINUTE = 240` per workspace and recipient agent principal (`delivery:ack:principal:<workspace_uuid>:<principal_uuid>`).
-   - Rate bucket enforcement precedes idempotency lookup (abuse-accounting mutation precedes delivery-state mutation). On breach, returns HTTP 429 `{ error: "rate_limited", limit, resets_at, message }` with `Retry-After` header. First refusal in a window writes audit log and security alert; subsequent refusals write no audit/alert.
+   - Rate bucket enforcement precedes idempotency lookup (abuse-accounting mutation precedes delivery-state mutation). On breach, returns HTTP 429 `{ error: "rate_limited", limit, resets_at, message }` with `Retry-After` header. Re-charging occurs at the start of `resolveLedgerRace` for delivery claim/ACK races. First refusal in a window writes audit log and security alert; subsequent refusals write no audit/alert.
 
 2. **Concurrency-Safe Live-Lease Ceiling**:
    - `DELIVERY_MAX_OUTSTANDING_LEASES = 100` live unacknowledged leases per recipient principal across all listeners/tokens.
-   - Exact recipient `agent_principals` row is locked `FOR UPDATE` in fresh claim transactions before cleanup/count/claim.
+   - Exact recipient `agent_principals` row is locked `FOR UPDATE` in fresh claim transactions before cleanup/count/claim regardless of revoked state.
    - At ceiling capacity, returns `200 accepted` with `deliveries: []` and truthful `pending_delivery_count`.
 
 3. **Poison Visibility**:
