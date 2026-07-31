@@ -5435,6 +5435,7 @@ async function handleTransaction(
           const deliveries = await hydrateDeliveryRefs(tx, {
             workspaceId: route.workspaceId,
             recipientPrincipalId: auth.agent.principal_id,
+            recipientOwnerUserId: auth.agent.owner_user_id,
             refs: ledger.delivery_refs,
           });
           if (deliveries === null) {
@@ -5446,6 +5447,7 @@ async function handleTransaction(
           return {
             status: 200,
             body: {
+              ok: true,
               status: "accepted",
               capabilities: DELIVERY_CAPABILITIES,
               deliveries,
@@ -5672,6 +5674,7 @@ async function handleTransaction(
       const deliveries = await hydrateDeliveryRefs(tx, {
         workspaceId: route.workspaceId,
         recipientPrincipalId: agent.principal_id,
+        recipientOwnerUserId: agent.owner_user_id,
         refs: ledger.delivery_refs,
       });
       if (deliveries === null) {
@@ -5699,6 +5702,7 @@ async function handleTransaction(
       return {
         status: 200,
         body: {
+          ok: true,
           status: "accepted",
           capabilities: DELIVERY_CAPABILITIES,
           deliveries,
@@ -6171,6 +6175,11 @@ async function handleTransaction(
 async function resolveLedgerRace(error: LedgerRace): Promise<HttpResult> {
   return await db.begin(async (tx) => {
     await setTransaction(tx);
+    const configRows = await tx<{ value: unknown }[]>`
+      SELECT value FROM swarm.config WHERE key = 'min_client_version' LIMIT 1
+    `;
+    const minClientVersion =
+      typeof configRows[0]?.value === "string" ? configRows[0].value : "0.1.0";
     const rows = await tx<
       {
         workspace_id: string;
@@ -6216,6 +6225,7 @@ async function resolveLedgerRace(error: LedgerRace): Promise<HttpResult> {
       const deliveries = await hydrateDeliveryRefs(tx, {
         workspaceId: error.workspaceId,
         recipientPrincipalId: error.auth.agent.principal_id,
+        recipientOwnerUserId: error.auth.agent.owner_user_id,
         refs: ledger.delivery_refs,
       });
       if (deliveries === null) {
@@ -6224,12 +6234,14 @@ async function resolveLedgerRace(error: LedgerRace): Promise<HttpResult> {
       return {
         status: 200,
         body: {
+          ok: true,
           status: "accepted",
           capabilities: DELIVERY_CAPABILITIES,
           deliveries,
           pending_delivery_count: ledger.pending_delivery_count,
           event_ids: [],
           events: [],
+          min_client_version: minClientVersion,
         },
       };
     }
@@ -6246,11 +6258,13 @@ async function resolveLedgerRace(error: LedgerRace): Promise<HttpResult> {
       return {
         status: 200,
         body: {
+          ok: true,
           status: "accepted",
           signal_id: response.signal_id,
           outcome: response.outcome,
           event_ids: [],
           events: [],
+          min_client_version: minClientVersion,
         },
       };
     }

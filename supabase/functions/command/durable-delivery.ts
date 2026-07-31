@@ -295,6 +295,7 @@ export async function hydrateDeliveryRefs(
   args: {
     workspaceId: string;
     recipientPrincipalId: string;
+    recipientOwnerUserId?: string | null;
     refs: DeliveryLedgerRef[];
   },
 ): Promise<HydratedDelivery[] | null> {
@@ -313,6 +314,7 @@ export async function hydrateDeliveryRefs(
     body: string;
     until: Date;
     created_at: Date;
+    sender_owner_relation: SenderOwnerRelation;
   }[]>`
     SELECT
       s.id,
@@ -326,8 +328,38 @@ export async function hydrateDeliveryRefs(
       s.kind,
       s.body,
       s.until,
-      s.created_at
+      s.created_at,
+      CASE
+        WHEN s.from_kind = 'user'
+         AND author_member.user_id IS NOT NULL
+         AND ${args.recipientOwnerUserId ?? null}::uuid IS NOT NULL
+         AND s.from_principal = ${args.recipientOwnerUserId ?? null}::uuid
+          THEN 'same_owner'
+        WHEN s.from_kind = 'user'
+         AND author_member.user_id IS NOT NULL
+          THEN 'cross_owner'
+        WHEN s.from_kind = 'agent'
+         AND author.principal_id IS NOT NULL
+         AND author_member.user_id IS NOT NULL
+         AND ${args.recipientOwnerUserId ?? null}::uuid IS NOT NULL
+         AND author.owner_user_id = ${args.recipientOwnerUserId ?? null}::uuid
+          THEN 'same_owner'
+        WHEN s.from_kind = 'agent'
+         AND author.principal_id IS NOT NULL
+         AND author_member.user_id IS NOT NULL
+          THEN 'cross_owner'
+        ELSE 'unknown'
+      END::text AS sender_owner_relation
     FROM swarm.signals AS s
+    LEFT JOIN swarm.agent_principals AS author
+      ON s.from_kind = 'agent'
+     AND author.workspace_id = s.workspace_id
+     AND author.principal_id = s.from_principal
+     AND author.revoked_at IS NULL
+    LEFT JOIN swarm.memberships AS author_member
+      ON author_member.workspace_id = s.workspace_id
+     AND author_member.user_id = COALESCE(author.owner_user_id, CASE WHEN s.from_kind = 'user' THEN s.from_principal END)
+     AND author_member.revoked_at IS NULL
     WHERE s.workspace_id = ${args.workspaceId}::uuid
       AND s.to_agent_principal_id = ${args.recipientPrincipalId}::uuid
       AND s.id = ANY (${signalIds}::uuid[])
@@ -354,7 +386,7 @@ export async function hydrateDeliveryRefs(
       },
       lease_id: ref.lease_id,
       leased_until: ref.leased_until,
-      sender_owner_relation: ref.sender_owner_relation,
+      sender_owner_relation: signal.sender_owner_relation,
     });
   }
   return hydrated;

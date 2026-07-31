@@ -5935,6 +5935,7 @@ async function issueDelivery(
   command: DeliveryCommand,
   id = commandId(command.kind),
   workspaceId = f.workspaceA,
+  stream: Record<string, unknown> = { kind: "workspace" },
 ): Promise<CommandResponse> {
   const credential = f.credentials.get(token);
   assert.ok(credential, "test credential is registered");
@@ -5955,7 +5956,7 @@ async function issueDelivery(
       command_id: id,
       client_version: "0.1.0",
       workspace_id: workspaceId,
-      stream: { kind: "workspace" },
+      stream,
       command,
     }),
   });
@@ -6791,6 +6792,12 @@ test("durable-delivery: active-lease TTL race; backlog >100 oldest-first; RLS/gr
     `;
     assert.equal(Number(survived29?.n), 1, "29-day terminal row survives 30-day floor purge");
 
+    // Capture pre-test retention config value
+    const [initialConfigRow] = await sql<{ value: unknown }[]>`
+      SELECT value FROM swarm.config WHERE key = 'delivery_retention_days'
+    `;
+    const initialConfigVal = initialConfigRow ? JSON.stringify(initialConfigRow.value) : null;
+
     // Configured retention = 60 days via swarm.config.
     await sql`
       INSERT INTO swarm.config (key, value)
@@ -6856,12 +6863,16 @@ test("durable-delivery: active-lease TTL race; backlog >100 oldest-first; RLS/gr
       `;
       assert.equal(Number(keptUnacked?.n), 1, "unacked 70-day row is never purged regardless of age");
     } finally {
-      // Restore default config retention
-      await sql`
-        INSERT INTO swarm.config (key, value)
-        VALUES ('delivery_retention_days', '30'::jsonb)
-        ON CONFLICT (key) DO UPDATE SET value = '30'::jsonb
-      `;
+      // Restore initial config retention
+      if (initialConfigVal !== null) {
+        await sql`
+          INSERT INTO swarm.config (key, value)
+          VALUES ('delivery_retention_days', ${initialConfigVal}::jsonb)
+          ON CONFLICT (key) DO UPDATE SET value = ${initialConfigVal}::jsonb
+        `;
+      } else {
+        await sql`DELETE FROM swarm.config WHERE key = 'delivery_retention_days'`;
+      }
     }
 
     // Migration-style role assertion: execute exact PL/pgSQL block extracted from migration file.
@@ -7001,11 +7012,13 @@ test("durable-delivery: relation matrix on claim matches read; cursor path still
     assert.ok(orphanReadSig);
     assert.equal(orphanReadSig.sender_owner_relation, "unknown", "read_agent_feed returns unknown for orphan/revoked author");
 
+    const claimCid = randomUUID();
+    const listenerInstId = randomUUID();
     const claim = await issueDelivery(f, receiver.token, {
       kind: "claim_agent_inbox",
-      listener_instance_id: randomUUID(),
+      listener_instance_id: listenerInstId,
       limit: 100,
-    });
+    }, claimCid);
     assert.equal(claim.status, 200, claim.text);
     const byId = new Map(
       (claim.body.deliveries as Array<Record<string, unknown>>).map((d) => [
@@ -7025,6 +7038,30 @@ test("durable-delivery: relation matrix on claim matches read; cursor path still
         false,
       );
     }
+
+    // Causal Replay Test: Revoke sameOwnerSibling author AFTER initial claim and replay same command_id (claimCid)
+    await sql`
+      UPDATE swarm.agent_principals
+      SET revoked_at = statement_timestamp()
+      WHERE principal_id = ${sameOwnerSibling.principalId}::uuid
+    `;
+    const claimReplayAfterRevoke = await issueDelivery(f, receiver.token, {
+      kind: "claim_agent_inbox",
+      listener_instance_id: listenerInstId,
+      limit: 100,
+    }, claimCid);
+    assert.equal(claimReplayAfterRevoke.status, 200, claimReplayAfterRevoke.text);
+    const byIdReplay = new Map(
+      (claimReplayAfterRevoke.body.deliveries as Array<Record<string, unknown>>).map((d) => [
+        String((d.signal as Record<string, unknown>).id),
+        d,
+      ]),
+    );
+    assert.equal(
+      byIdReplay.get(ids[1]!)?.sender_owner_relation,
+      "unknown",
+      "claim idempotency replay dynamically recomputes sender_owner_relation to unknown when author is revoked post-claim",
+    );
 
     // Read transaction never needs swarm_command: pending count present.
     assert.equal(typeof read.body.pending_delivery_count, "number");
@@ -7076,6 +7113,44 @@ test("durable-delivery: claim idempotency mismatch (listener, limit, workspace, 
     );
     assert.equal(mismatchLimit.status, 409, mismatchLimit.text);
     assert.equal(mismatchLimit.body.error, "command_id_conflict");
+
+    // Create repo stream in workspaceA to test valid same-workspace stream mismatch
+    const repoInstId = randomUUID();
+    const repoMapId = randomUUID();
+    const repoStreamId = randomUUID();
+    await sql`
+      INSERT INTO swarm.github_installations (installation_row_id, workspace_id, github_installation_id)
+      VALUES (${repoInstId}::uuid, ${f.workspaceA}::uuid, ${Math.floor(Math.random() * 1000000000)})
+    `;
+    await sql`
+      INSERT INTO swarm.repositories (
+        repo_mapping_id, workspace_id, github_repository_id,
+        installation_row_id, full_name, default_branch, landing_authority_user_id
+      ) VALUES (
+        ${repoMapId}::uuid, ${f.workspaceA}::uuid, ${Math.floor(Math.random() * 1000000000)},
+        ${repoInstId}::uuid, 'test/repo-mismatch', 'main', ${f.ua}::uuid
+      )
+    `;
+    await sql`
+      INSERT INTO swarm.streams (stream_id, workspace_id, kind, repo_mapping_id)
+      VALUES (${repoStreamId}::uuid, ${f.workspaceA}::uuid, 'repo', ${repoMapId}::uuid)
+    `;
+
+    // Mismatched stream -> 409 command_id_conflict
+    const mismatchStream = await issueDelivery(
+      f,
+      receiver.token,
+      {
+        kind: "claim_agent_inbox",
+        listener_instance_id: instId,
+        limit: 10,
+      },
+      cmdId,
+      f.workspaceA,
+      { kind: "repo", repo_mapping_id: repoMapId },
+    );
+    assert.equal(mismatchStream.status, 409, mismatchStream.text);
+    assert.equal(mismatchStream.body.error, "command_id_conflict");
 
     // Generic foreign workspace route refusal -> 403 delivery_unavailable
     const mismatchWorkspace = await issueDelivery(
@@ -7680,9 +7755,11 @@ test("durable-delivery: negative controls (stale lease ack, expired ack TTL, rev
     const auditRows = await sql<{ detail: string | null; reason: string | null }[]>`
       SELECT detail, reason
       FROM swarm.audit_log
-      WHERE command_kind IN ('claim_agent_inbox', 'ack_agent_delivery')
-      LIMIT 50
+      WHERE credential_id = ${receiver.tokenId}::uuid
+        AND workspace_id = ${f.workspaceA}::uuid
+        AND command_kind IN ('claim_agent_inbox', 'ack_agent_delivery')
     `;
+    assert.ok(auditRows.length > 0, "positive control: attributable audit log rows exist for test receiver");
     for (const row of auditRows) {
       const text = `${row.detail ?? ""} ${row.reason ?? ""}`;
       assert.equal(text.includes("Bearer"), false, "audit log does not leak Bearer token headers");
@@ -8112,7 +8189,8 @@ test("durable-delivery: table and function privilege boundaries (swarm_command D
       DO $$
       BEGIN
         IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'dd_test_child_priv_role') THEN
-          CREATE ROLE dd_test_child_priv_role INHERIT ROLE swarm_read;
+          CREATE ROLE dd_test_child_priv_role INHERIT;
+          GRANT swarm_read TO dd_test_child_priv_role;
         END IF;
       END $$;
     `);
@@ -8125,10 +8203,69 @@ test("durable-delivery: table and function privilege boundaries (swarm_command D
       await sql.unsafe(`DROP ROLE IF EXISTS dd_test_child_priv_role;`);
     }
 
-    // 5. pg_cron schedule check
-    const [cronJob] = await sql<{ jobname: string; schedule: string }[]>`
-      SELECT jobname, schedule FROM cron.job WHERE jobname = 'swarm-purge-terminal-signal-deliveries'
+    // 5. Function EXECUTE privilege checks (has_function_privilege) across roles
+    // Functions to test:
+    // f1: swarm.enqueue_signal_delivery()
+    // f2: swarm.purge_terminal_signal_deliveries(integer)
+    // f3: swarm.agent_delivery_read_context(bytea, uuid)
+    const checkFuncExec = async (role: string, fnSig: string) => {
+      const [res] = await sql<{ allowed: boolean }[]>`
+        SELECT has_function_privilege(${role}, ${fnSig}, 'EXECUTE') AS allowed
+      `;
+      return res?.allowed ?? false;
+    };
+
+    const funcF1 = "swarm.enqueue_signal_delivery()";
+    const funcF2 = "swarm.purge_terminal_signal_deliveries(integer)";
+    const funcF3 = "swarm.agent_delivery_read_context(bytea, uuid)";
+
+    // anon / authenticated / public: NONE for all three functions
+    for (const role of ["anon", "authenticated", "public"]) {
+      assert.equal(await checkFuncExec(role, funcF1), false, `role ${role} is denied EXECUTE on ${funcF1}`);
+      assert.equal(await checkFuncExec(role, funcF2), false, `role ${role} is denied EXECUTE on ${funcF2}`);
+      assert.equal(await checkFuncExec(role, funcF3), false, `role ${role} is denied EXECUTE on ${funcF3}`);
+    }
+
+    // swarm_read: context ONLY (f3 = true, f1 = false, f2 = false)
+    assert.equal(await checkFuncExec("swarm_read", funcF1), false, "swarm_read is denied EXECUTE on enqueue_signal_delivery()");
+    assert.equal(await checkFuncExec("swarm_read", funcF2), false, "swarm_read is denied EXECUTE on purge_terminal_signal_deliveries()");
+    assert.equal(await checkFuncExec("swarm_read", funcF3), true, "swarm_read has EXECUTE on agent_delivery_read_context()");
+
+    // swarm_command: NONE for all three functions
+    assert.equal(await checkFuncExec("swarm_command", funcF1), false, "swarm_command is denied EXECUTE on enqueue_signal_delivery()");
+    assert.equal(await checkFuncExec("swarm_command", funcF2), false, "swarm_command is denied EXECUTE on purge_terminal_signal_deliveries()");
+    assert.equal(await checkFuncExec("swarm_command", funcF3), false, "swarm_command is denied EXECUTE on agent_delivery_read_context()");
+
+    // swarm_admin: ALL three functions
+    assert.equal(await checkFuncExec("swarm_admin", funcF1), true, "swarm_admin has EXECUTE on enqueue_signal_delivery()");
+    assert.equal(await checkFuncExec("swarm_admin", funcF2), true, "swarm_admin has EXECUTE on purge_terminal_signal_deliveries()");
+    assert.equal(await checkFuncExec("swarm_admin", funcF3), true, "swarm_admin has EXECUTE on agent_delivery_read_context()");
+
+    // Inherited child of swarm_read: context ONLY
+    await sql.unsafe(`
+      DO $$
+      BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'dd_test_child_priv_role') THEN
+          CREATE ROLE dd_test_child_priv_role INHERIT;
+          GRANT swarm_read TO dd_test_child_priv_role;
+        END IF;
+      END $$;
+    `);
+    try {
+      assert.equal(await checkFuncExec("dd_test_child_priv_role", funcF1), false, "inherited child of swarm_read is denied EXECUTE on enqueue_signal_delivery()");
+      assert.equal(await checkFuncExec("dd_test_child_priv_role", funcF2), false, "inherited child of swarm_read is denied EXECUTE on purge_terminal_signal_deliveries()");
+      assert.equal(await checkFuncExec("dd_test_child_priv_role", funcF3), true, "inherited child of swarm_read inherits EXECUTE on agent_delivery_read_context()");
+    } finally {
+      await sql.unsafe(`DROP ROLE IF EXISTS dd_test_child_priv_role;`);
+    }
+
+    // 6. pg_cron schedule, active status, and zero-argument command check
+    const [cronJob] = await sql<{ jobname: string; schedule: string; active: boolean; command: string }[]>`
+      SELECT jobname, schedule, active, command FROM cron.job WHERE jobname = 'swarm-purge-terminal-signal-deliveries'
     `;
-    assert.equal(cronJob?.schedule, "23 4 * * *");
+    assert.ok(cronJob, "cron job swarm-purge-terminal-signal-deliveries exists");
+    assert.equal(cronJob?.schedule, "23 4 * * *", "cron schedule is '23 4 * * *'");
+    assert.equal(cronJob?.active, true, "cron job active is true");
+    assert.equal(cronJob?.command, "SELECT swarm.purge_terminal_signal_deliveries()", "cron command is zero-argument SELECT swarm.purge_terminal_signal_deliveries()");
   });
 });
