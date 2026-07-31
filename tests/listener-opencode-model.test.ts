@@ -578,6 +578,102 @@ test("openSession failure propagating child_exit_timeout retains home directory 
   await rm(cwd, { recursive: true, force: true }).catch(() => undefined);
 });
 
+test("concurrent model.close() calls share single performClose; handle closed once; both receive exact error", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "cswarm-oc-worker-"));
+  let handleCloseCount = 0;
+  const timeoutErr = new AcpHostError(
+    "child_exit_timeout",
+    "child process did not exit after SIGKILL within 5000ms deadline",
+  );
+  const adapter = new OpenCodeListenerModel({
+    cwd,
+    allowMissingAuth: true,
+    open: async (options) => {
+      return {
+        session: {
+          async enablePromptsAfterCanary() {},
+          async openWorkCwd() {},
+          async prompt() {
+            return { message: "w", stopReason: "end_turn" as const, updates: [] };
+          },
+          cancel() {},
+        },
+        child: {},
+        executable: process.execPath,
+        args: ["acp", "--pure"],
+        env: {},
+        home: options.isolatedHome ?? "/tmp/w",
+        async close() {
+          handleCloseCount += 1;
+          await Promise.resolve();
+          throw timeoutErr;
+        },
+      } as unknown as OpenCodeAcpHandle;
+    },
+  });
+  await adapter.start();
+
+  const c1 = adapter.close();
+  const c2 = adapter.close();
+  void c1.catch(() => undefined);
+  void c2.catch(() => undefined);
+
+  await assert.rejects(c1, /child process did not exit/);
+  await assert.rejects(c2, /child process did not exit/);
+  assert.equal(handleCloseCount, 1);
+
+  await assert.rejects(adapter.close(), /child process did not exit/);
+  assert.equal(handleCloseCount, 1);
+
+  await rm(cwd, { recursive: true, force: true }).catch(() => undefined);
+});
+
+test("process signal handler close failure is memoized so later runtime close sees exact error", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "cswarm-oc-worker-"));
+  let handleCloseCount = 0;
+  const timeoutErr = new AcpHostError(
+    "child_exit_timeout",
+    "child process did not exit after SIGKILL within 5000ms deadline",
+  );
+  const adapter = new OpenCodeListenerModel({
+    cwd,
+    allowMissingAuth: true,
+    open: async (options) => {
+      return {
+        session: {
+          async enablePromptsAfterCanary() {},
+          async openWorkCwd() {},
+          async prompt() {
+            return { message: "w", stopReason: "end_turn" as const, updates: [] };
+          },
+          cancel() {},
+        },
+        child: {},
+        executable: process.execPath,
+        args: ["acp", "--pure"],
+        env: {},
+        home: options.isolatedHome ?? "/tmp/w",
+        async close() {
+          handleCloseCount += 1;
+          await Promise.resolve();
+          throw timeoutErr;
+        },
+      } as unknown as OpenCodeAcpHandle;
+    },
+  });
+  await adapter.start();
+
+  process.emit("SIGTERM");
+
+  const runtimeClose = adapter.close();
+  void runtimeClose.catch(() => undefined);
+
+  await assert.rejects(runtimeClose, /child process did not exit/);
+  assert.equal(handleCloseCount, 1);
+
+  await rm(cwd, { recursive: true, force: true }).catch(() => undefined);
+});
+
 test("allowMissingAuth is explicit — not implied by fake open alone", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "cswarm-oc-worker-"));
   const records: Parameters<typeof fakeOpen>[0] = [];

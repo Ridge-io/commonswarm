@@ -164,8 +164,15 @@ export class OpenCodeListenerModel implements ListenerModel {
     }
   }
 
+  private closePromise: Promise<void> | null = null;
+
   async close(): Promise<void> {
-    if (this.closed) return;
+    if (this.closePromise) return this.closePromise;
+    this.closePromise = this.performClose();
+    return this.closePromise;
+  }
+
+  private async performClose(): Promise<void> {
     this.closed = true;
     this.removeExitCleanup();
     this.cancel();
@@ -342,7 +349,7 @@ export class OpenCodeListenerModel implements ListenerModel {
   }
 
   private readonly onProcessSignal = (): void => {
-    void this.close();
+    void this.close().catch(() => undefined);
   };
 
   private async ensureWorkerHome(generation: number): Promise<{ home: string; pending: PendingOpen }> {
