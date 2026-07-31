@@ -658,22 +658,28 @@ test("missing, fractional, negative, or unsafe terminal failure count rejects; v
   assert.equal(posRes.terminalDeliveryFailureCount, 4);
 });
 
-test("vocabularies are runtime-frozen and attacker-selected error codes collapse", () => {
-  // Test mutation resistance of exported Sets
-  assert.throws(
-    () => { (DELIVERY_SERVER_ERROR_CODES as any).add("attacker_selected_code"); },
-    TypeError,
-    "DELIVERY_SERVER_ERROR_CODES.add must throw TypeError",
-  );
-  assert.throws(
-    () => { (DELIVERY_FAILED_TERMINAL_CODES as any).add("attacker_selected_code"); },
-    TypeError,
-    "DELIVERY_FAILED_TERMINAL_CODES.add must throw TypeError",
-  );
-  assert.equal(DELIVERY_SERVER_ERROR_CODES.has("attacker_selected_code"), false);
-  assert.equal(DELIVERY_FAILED_TERMINAL_CODES.has("attacker_selected_code"), false);
-  assert.equal(DELIVERY_SERVER_ERROR_CODES.has("delivery_unavailable"), true);
-  assert.equal(DELIVERY_FAILED_TERMINAL_CODES.has("provider_refused"), true);
+test("vocabularies are unexported Sets backed by exported frozen tuples, resisting prototype add bypass", () => {
+  // 1. Exported tuples are frozen arrays, not Sets
+  assert.equal(Array.isArray(DELIVERY_SERVER_ERROR_CODES), true);
+  assert.equal(Array.isArray(DELIVERY_FAILED_TERMINAL_CODES), true);
+  assert.equal(Object.isFrozen(DELIVERY_SERVER_ERROR_CODES), true);
+  assert.equal(Object.isFrozen(DELIVERY_FAILED_TERMINAL_CODES), true);
+  assert.equal(DELIVERY_SERVER_ERROR_CODES.includes("delivery_unavailable"), true);
+  assert.equal(DELIVERY_FAILED_TERMINAL_CODES.includes("provider_refused"), true);
+  assert.equal(DELIVERY_SERVER_ERROR_CODES.includes("attacker_selected_code"), false);
+  assert.equal(DELIVERY_FAILED_TERMINAL_CODES.includes("attacker_selected_code"), false);
+
+  // 2. Control test: prove why no Set instance is exported.
+  // Set.prototype.add.call bypasses own-property overrides on a Set object,
+  // which is why removing exported Set instances entirely is required.
+  const dummySet = new Set(["valid_code"]);
+  Object.defineProperty(dummySet, "add", {
+    value: () => { throw new TypeError("Cannot mutate"); },
+  });
+  assert.throws(() => dummySet.add("attacker"), TypeError);
+  // Set.prototype.add.call bypasses the own 'add' property:
+  Set.prototype.add.call(dummySet, "attacker_selected_code");
+  assert.equal(dummySet.has("attacker_selected_code"), true, "Control: Set.prototype.add.call bypasses own property overrides");
 });
 
 test("429 Retry-After produces bounded retry metadata without reflecting raw body", async () => {
@@ -845,7 +851,7 @@ test("ack enforces explicit-null and failed-terminal code rules before the round
     "provider_refused",
   );
   assert.equal(result.outcome, "failed_terminal");
-  assert.equal(DELIVERY_FAILED_TERMINAL_CODES.has("credential_unavailable"), true);
+  assert.equal(DELIVERY_FAILED_TERMINAL_CODES.includes("credential_unavailable"), true);
 });
 
 test("ack rejects an echo that does not repeat the requested signal id or outcome", async () => {

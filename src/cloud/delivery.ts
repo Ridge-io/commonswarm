@@ -27,38 +27,35 @@ const DELIVERY_ACK_OUTCOMES = new Set<DeliveryOutcome>([
   "failed_terminal",
 ]);
 
-function makeFrozenSet<T>(values: Iterable<T>): ReadonlySet<T> {
-  const set = new Set(values);
-  Object.defineProperty(set, "add", {
-    value: () => {
-      throw new TypeError("Cannot mutate frozen Set");
-    },
-    writable: false,
-    configurable: false,
-  });
-  Object.defineProperty(set, "delete", {
-    value: () => {
-      throw new TypeError("Cannot mutate frozen Set");
-    },
-    writable: false,
-    configurable: false,
-  });
-  Object.defineProperty(set, "clear", {
-    value: () => {
-      throw new TypeError("Cannot mutate frozen Set");
-    },
-    writable: false,
-    configurable: false,
-  });
-  return Object.freeze(set);
-}
-
 /** Per-request deadline covering fetch and the response body read. */
 export const DELIVERY_REQUEST_TIMEOUT_MS = 30_000;
 /** Mirrors the command edge's command_id bound so a typo fails before the round trip. */
 export const DELIVERY_COMMAND_ID_RE = /^[A-Za-z0-9_-]{8,72}$/;
 
-export const DELIVERY_FAILED_TERMINAL_CODES: ReadonlySet<string> = makeFrozenSet([
+const FAILED_TERMINAL_CODES_SET = new Set([
+  "provider_refused",
+  "local_effect_failed",
+  "host_session_failed",
+  "credential_unavailable",
+]);
+
+const SERVER_ERROR_CODES_SET = new Set([
+  "unauthenticated",
+  "fresh_auth_required",
+  "invalid_request",
+  "payload_too_large",
+  "forbidden",
+  "delivery_unavailable",
+  "delivery_ack_conflict",
+  "command_id_conflict",
+  "rate_limited",
+  "upgrade_required",
+  "temporarily_unavailable",
+  "internal_error",
+]);
+
+/** Allowed client failure codes for failed_terminal outcomes. */
+export const DELIVERY_FAILED_TERMINAL_CODES: readonly string[] = Object.freeze([
   "provider_refused",
   "local_effect_failed",
   "host_session_failed",
@@ -66,7 +63,7 @@ export const DELIVERY_FAILED_TERMINAL_CODES: ReadonlySet<string> = makeFrozenSet
 ]);
 
 /** The bounded client-visible server error vocabulary; anything else collapses. */
-export const DELIVERY_SERVER_ERROR_CODES: ReadonlySet<string> = makeFrozenSet([
+export const DELIVERY_SERVER_ERROR_CODES: readonly string[] = Object.freeze([
   "unauthenticated",
   "fresh_auth_required",
   "invalid_request",
@@ -535,7 +532,7 @@ function assertAckRequest(request: DeliveryAckRequest): void {
   if (request.outcome === "failed_terminal") {
     if (
       typeof request.lastErrorCode !== "string" ||
-      !DELIVERY_FAILED_TERMINAL_CODES.has(request.lastErrorCode)
+      !FAILED_TERMINAL_CODES_SET.has(request.lastErrorCode)
     ) {
       throw new Error(
         "a failed_terminal acknowledgement requires one of provider_refused, local_effect_failed, host_session_failed, credential_unavailable",
@@ -556,7 +553,7 @@ function boundedDeliveryErrorCode(body: unknown): string {
   const error = (body as Record<string, unknown>).error;
   if (
     typeof error === "string" &&
-    DELIVERY_SERVER_ERROR_CODES.has(error)
+    SERVER_ERROR_CODES_SET.has(error)
   ) {
     return error;
   }
