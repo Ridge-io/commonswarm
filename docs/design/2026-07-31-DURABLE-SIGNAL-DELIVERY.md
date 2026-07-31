@@ -476,7 +476,7 @@ Causal negative controls must show failures when each of these is removed or wea
 
 ## Explicitly not established yet
 
-- Migration/command/read implementation has not been written or applied.
+- Migration/command/read implementation is implemented in codebase; not yet production-applied until rollout.
 - The 15-minute lease has not been load-tested against real provider tail latency.
 - The ten-claim poison ceiling and 30-day terminal retention floor have not been production-load
   tested; both are fixed server constants/config floors for the first measured rollout.
