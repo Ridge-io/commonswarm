@@ -6540,13 +6540,29 @@ test("durable-delivery: stale lease requeues; signal TTL expires once; tenth cla
     const [poisonRow] = await sql<{
       ack_outcome: string | null;
       last_error_code: string | null;
+      last_lease_id: string | null;
+      last_leased_by: string | null;
     }[]>`
-      SELECT ack_outcome, last_error_code
+      SELECT ack_outcome, last_error_code, last_lease_id, last_leased_by
       FROM swarm.signal_deliveries
       WHERE signal_id = ${poisonId}::uuid
     `;
     assert.equal(poisonRow?.ack_outcome, "failed_terminal");
     assert.equal(poisonRow?.last_error_code, "delivery_attempts_exhausted");
+    assert.equal(poisonRow?.last_lease_id, null, "poison row leaves no invented last_lease_id");
+    assert.equal(poisonRow?.last_leased_by, null, "poison row leaves no invented last_leased_by");
+
+    // Client ACK attempt on poison-terminalized row cannot be replayed.
+    const poisonReack = await issueDelivery(f, receiver.token, {
+      kind: "ack_agent_delivery",
+      signal_id: poisonId,
+      lease_id: randomUUID(),
+      listener_instance_id: randomUUID(),
+      outcome: "replied",
+      last_error_code: null,
+    });
+    assert.equal(poisonReack.status, 409, "poison row cannot be replayed as a client ACK");
+    assert.equal(poisonReack.body.error, "delivery_ack_conflict");
   });
 });
 

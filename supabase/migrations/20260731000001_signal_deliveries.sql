@@ -68,8 +68,9 @@ CREATE TABLE swarm.signal_deliveries (
   ),
   CHECK (
     acked_at IS NULL
-    OR ack_outcome = 'expired'
     OR (last_lease_id IS NOT NULL AND last_leased_by IS NOT NULL)
+    OR ack_outcome = 'expired'
+    OR (ack_outcome = 'failed_terminal' AND last_error_code = 'delivery_attempts_exhausted')
   )
 );
 

@@ -162,8 +162,6 @@ export async function claimAgentInbox(
       acked_at = statement_timestamp(),
       ack_outcome = 'failed_terminal',
       last_error_code = 'delivery_attempts_exhausted',
-      last_lease_id = COALESCE(d.last_lease_id, d.lease_id, gen_random_uuid()),
-      last_leased_by = COALESCE(d.last_leased_by, d.leased_by, gen_random_uuid()),
       lease_id = NULL,
       leased_by = NULL,
       leased_until = NULL,
@@ -404,6 +402,8 @@ export async function ackAgentDelivery(
   if (!row) return { status: "unavailable" };
   if (row.acked_at !== null) {
     if (
+      row.last_lease_id !== null &&
+      row.last_leased_by !== null &&
       row.ack_outcome === args.outcome &&
       row.last_lease_id === args.leaseId &&
       row.last_leased_by === args.listenerInstanceId
@@ -477,6 +477,8 @@ export async function ackAgentDelivery(
     const r = reread[0];
     if (r && r.acked_at !== null) {
       if (
+        r.last_lease_id !== null &&
+        r.last_leased_by !== null &&
         r.ack_outcome === args.outcome &&
         r.last_lease_id === args.leaseId &&
         r.last_leased_by === args.listenerInstanceId

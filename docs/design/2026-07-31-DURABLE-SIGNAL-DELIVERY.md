@@ -91,6 +91,8 @@ CREATE TABLE swarm.signal_deliveries (
   lease_id uuid,
   leased_by uuid,
   leased_until timestamptz,
+  last_lease_id uuid,
+  last_leased_by uuid,
   attempt_count integer NOT NULL DEFAULT 0,
   lease_expiry_count integer NOT NULL DEFAULT 0,
   last_lease_expired_at timestamptz,
@@ -114,14 +116,28 @@ CREATE TABLE swarm.signal_deliveries (
   ),
   CHECK (ack_outcome IS NULL OR ack_outcome IN
     ('replied', 'observed', 'expired', 'failed_terminal')),
-  CHECK (last_error_code IS NULL OR last_error_code ~ '^[a-z][a-z0-9_]{0,63}$')
+  CHECK (last_error_code IS NULL OR last_error_code ~ '^[a-z][a-z0-9_]{0,63}$'),
+  CHECK (num_nonnulls(last_lease_id, last_leased_by) IN (0, 2)),
+  CHECK (
+    acked_at IS NOT NULL
+    OR (last_lease_id IS NULL AND last_leased_by IS NULL)
+  ),
+  CHECK (
+    acked_at IS NULL
+    OR (last_lease_id IS NOT NULL AND last_leased_by IS NOT NULL)
+    OR ack_outcome = 'expired'
+    OR (ack_outcome = 'failed_terminal' AND last_error_code = 'delivery_attempts_exhausted')
+  )
 );
 ```
 
 Additional constraints in the migration:
 
+- `last_lease_id` and `last_leased_by` record terminal client ACK lease identity and are paired (both NULL or both non-NULL).
+- An unacked row (`acked_at IS NULL`) never holds a `last_lease_id` / `last_leased_by` pair.
+- Terminal rows (`acked_at IS NOT NULL`) store the exact client ACK `lease_id` and `leased_by` pair, with NULL permitted ONLY for server-owned automatic terminalization paths (`ack_outcome = 'expired'` from TTL cleanup or `failed_terminal` with `last_error_code = 'delivery_attempts_exhausted'`).
 - `ack_outcome` is null exactly when `acked_at` is null.
-- Acked rows have all lease fields cleared.
+- Acked rows have active lease fields (`lease_id`, `leased_by`, `leased_until`) cleared.
 - `leased_until` must be later than `updated_at` when a lease is present.
 - `last_lease_expired_at` is null exactly while `lease_expiry_count` is zero.
 - The primary unacked index orders by recipient, workspace, enqueue time, then signal UUID and is
