@@ -1345,6 +1345,10 @@ export function isFatalFollowError(error: unknown): boolean {
  */
 export function isFollowCredentialFailure(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
+  const http = followHttpDetails(error);
+  if (http?.status === 401 || http?.status === 403) {
+    return true;
+  }
   if (
     error.name === "RenewalReauthorisationRequired" ||
     error.name === "RenewalRevoked"

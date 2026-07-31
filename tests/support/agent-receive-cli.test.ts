@@ -481,7 +481,7 @@ test("follow emits retrying after ready when a later 500 occurs, then recovers",
   assert.ok(frames.some((f) => f.type === "signal"));
 });
 
-test("follow stops on fatal 4xx without retrying", async () => {
+test("follow stops on non-credential fatal 4xx without retrying", async () => {
   const frames: FollowFrame[] = [];
   let arms = 0;
   const stop = await runInboxFollow({
@@ -492,14 +492,14 @@ test("follow stops on fatal 4xx without retrying", async () => {
     },
     arm: async () => {
       arms += 1;
-      throw new SignalHttpError(403);
+      throw new SignalHttpError(400);
     },
     emit: (frame) => frames.push(frame),
   });
   assert.equal(stop.reason, "fatal_http");
   assert.equal(frames.length, 0);
   assert.equal(arms, 1);
-  assert.match(stop.error?.message ?? "", /HTTP 403/);
+  assert.match(stop.error?.message ?? "", /HTTP 400/);
 });
 
 test("follow rearm after signal and suppresses duplicate live rows", async () => {
@@ -594,6 +594,28 @@ test("follow secret/credential absence never emits ready", async () => {
   assert.equal(stop.reason, "credential");
   assert.equal(frames.length, 0);
   assert.equal(stop.error, secretMissing);
+});
+
+test("follow classifies agent read 401/403 as credential stop", async () => {
+  for (const status of [401, 403]) {
+    const refusal = new SignalHttpError(status);
+    assert.equal(isFollowCredentialFailure(refusal), true);
+    const stop = await runInboxFollow({
+      workspaceId: WORKSPACE,
+      now: () => 1_700_000_000_000,
+      sleep: async () => {
+        throw new Error("sleep must not run after credential refusal");
+      },
+      arm: async () => {
+        throw refusal;
+      },
+      emit: () => {
+        throw new Error("credential refusal must not emit ready");
+      },
+    });
+    assert.equal(stop.reason, "credential");
+    assert.equal(stop.error, refusal);
+  }
 });
 
 test("follow cancels during retry backoff and clears the delay timer", async () => {

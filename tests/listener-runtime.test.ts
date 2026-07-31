@@ -6,6 +6,7 @@ import type {
   AgentSignalPage,
   SignalCursor,
 } from "../src/cloud/signals.js";
+import { SignalHttpError } from "../src/cloud/signals.js";
 import {
   runListenerRuntime,
   type ListenerEffectRecord,
@@ -122,6 +123,24 @@ test("runtime refuses old edges before starting or prompting a model", async () 
   );
   assert.equal(model.starts, 0);
   assert.equal(model.prompts.length, 0);
+  assert.equal(model.closes, 1);
+});
+
+test("runtime reports agent read revocation as a credential stop", async () => {
+  const model = new FakeModel();
+  const stop = await runListenerRuntime({
+    target: cloudTarget("https://cloud.example.test", "anon"),
+    workspaceId: WORKSPACE_ID,
+    principalId: PRINCIPAL_ID,
+    credentialSession: { async bearer() { return "token"; } },
+    store: new MemoryStore(),
+    model,
+    readPage: async () => {
+      throw new SignalHttpError(403);
+    },
+  });
+  assert.equal(stop.reason, "credential");
+  assert.equal(model.starts, 0);
   assert.equal(model.closes, 1);
 });
 
@@ -316,4 +335,3 @@ test("runtime emits only bounded malformed-row metadata", async () => {
     ],
   );
 });
-
