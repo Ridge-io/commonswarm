@@ -542,6 +542,64 @@ test("sendSignal first winner: a 5xx body rejection survives a later caller abor
   assert.notEqual(caught.name, "AbortError");
 });
 
+test("sendSignal turns a synchronous fetch throw into the generic transport error without deferring invocation", async () => {
+  // Real, instrumented timers: this test must prove the internal deadline timer
+  // is cleared so it cannot keep the process alive. Mock timers cannot carry
+  // that proof — a leaked mock timer holds nothing.
+  const realSetTimeout = globalThis.setTimeout;
+  const realClearTimeout = globalThis.clearTimeout;
+  let activeTimers = 0;
+  globalThis.setTimeout = ((...args: Parameters<typeof setTimeout>) => {
+    activeTimers += 1;
+    return realSetTimeout(...args);
+  }) as typeof setTimeout;
+  globalThis.clearTimeout = ((...args: Parameters<typeof clearTimeout>) => {
+    activeTimers -= 1;
+    return realClearTimeout(...args);
+  }) as typeof clearTimeout;
+  try {
+    let calls = 0;
+    const throwingFetcher = ((_input: unknown, init?: RequestInit) => {
+      calls += 1;
+      assert.ok(
+        init?.signal instanceof AbortSignal,
+        "the synchronous throw must still see the effective AbortSignal",
+      );
+      throw new Error("sync network down");
+    }) as typeof fetch;
+
+    const counted = countingSignal();
+    const client = new ThinCommandClient(TARGET, throwingFetcher);
+    const pending = client.sendSignal(signalPostRequest(counted.signal));
+    assert.equal(
+      calls,
+      1,
+      "the throwing fetcher must be invoked immediately inside sendSignal, never deferred",
+    );
+
+    const caught = await pending.then(() => null, (error: unknown) => error);
+    assert.ok(
+      caught instanceof CommandTransportError,
+      "a synchronous throw must become the generic transport error, got: " +
+        String(caught),
+    );
+    assert.equal(caught.message, "signal request failed before a response");
+    assert.notEqual(caught.name, "AbortError");
+    assert.notEqual(caught.message, "signal request timed out");
+
+    assert.equal(counted.adds(), 1, "one caller listener was attached");
+    assert.equal(counted.removes(), 1, "the caller listener was removed");
+    assert.equal(
+      activeTimers,
+      0,
+      "the internal deadline timer must be cleared so it cannot keep the process alive",
+    );
+  } finally {
+    globalThis.setTimeout = realSetTimeout;
+    globalThis.clearTimeout = realClearTimeout;
+  }
+});
+
 test("sendSignal removes its caller-abort listener on every outcome", async (t) => {
   t.mock.timers.enable({ apis: ["setTimeout"] });
 

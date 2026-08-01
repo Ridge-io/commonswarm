@@ -894,23 +894,40 @@ export class ThinCommandClient {
       // Each phase handles its tagged winner directly. Mutable signal/timer
       // state is never reread after the race, so a later caller abort or timer
       // tick cannot replace a work outcome that won first.
-      const fetchOutcome = await raceSignalDeadline(
-        this.fetcher(commandEndpoint(this.target), {
-          method: "POST",
-          headers: {
-            authorization: `Bearer ${request.credential}`,
-            apikey: this.target.anonKey,
-            "content-type": "application/json",
-          },
-          body: JSON.stringify({
-            command_id: commandId,
-            client_version: CLIENT_PROTOCOL_VERSION,
-            workspace_id: request.workspaceId,
-            stream: { kind: "workspace" },
-            command,
+      // Invoke the fetcher immediately inside a narrow try. A custom fetch that
+      // throws synchronously must become a rejected work promise so the tagged
+      // race classifies it as the generic pre-response transport failure — the
+      // frozen contract is that every ordinary pre-response failure, sync or
+      // async, is CommandTransportError("signal request failed before a
+      // response"). Promise.resolve keeps the native promise identity for async
+      // fetchers; Promise.resolve().then(() => fetcher(...)) is deliberately
+      // avoided because deferring the invocation could start a fetch after an
+      // immediate caller cancellation and would change the established timing.
+      let fetchWork: Promise<Response>;
+      try {
+        fetchWork = Promise.resolve(
+          this.fetcher(commandEndpoint(this.target), {
+            method: "POST",
+            headers: {
+              authorization: `Bearer ${request.credential}`,
+              apikey: this.target.anonKey,
+              "content-type": "application/json",
+            },
+            body: JSON.stringify({
+              command_id: commandId,
+              client_version: CLIENT_PROTOCOL_VERSION,
+              workspace_id: request.workspaceId,
+              stream: { kind: "workspace" },
+              command,
+            }),
+            signal: controller.signal,
           }),
-          signal: controller.signal,
-        }),
+        );
+      } catch (error) {
+        fetchWork = Promise.reject(error);
+      }
+      const fetchOutcome = await raceSignalDeadline(
+        fetchWork,
         deadline,
         callerSignal === undefined ? undefined : callerAbort,
       );
