@@ -52,6 +52,17 @@ export interface ListenerStatus {
   stoppedAt: string | null;
   lastSignalId: string | null;
   lastErrorCode: string | null;
+  // Metadata-only delivery fields (§13). Required nullable fields for every
+  // in-memory producer; readListenerStatus normalizes old version-1 disk JSON
+  // that omits them to null without rewriting bytes, and writeListenerStatus
+  // refuses a write that omits any of them, so every new status file carries
+  // all six keys.
+  deliveryMode: "durable_claim" | "cursor_fallback" | null;
+  pendingDeliveryCount: number | null;
+  lastTerminalDeliveryFailureCount: number | null;
+  lastTerminalDeliveryFailureAt: string | null;
+  lastClaimAt: string | null;
+  lastAckAt: string | null;
   logPath: string;
 }
 
@@ -99,6 +110,58 @@ export function listenerPaths(options: {
   };
 }
 
+const STATUS_DELIVERY_MODES = new Set(["durable_claim", "cursor_fallback"]);
+const STATUS_ALLOWED_KEYS = new Set([
+  "version",
+  "instanceId",
+  "provider",
+  "permissionMode",
+  "profileId",
+  "workspaceId",
+  "principalId",
+  "pid",
+  "state",
+  "startedAt",
+  "readyAt",
+  "updatedAt",
+  "stoppedAt",
+  "lastSignalId",
+  "lastErrorCode",
+  "logPath",
+  "deliveryMode",
+  "pendingDeliveryCount",
+  "lastTerminalDeliveryFailureCount",
+  "lastTerminalDeliveryFailureAt",
+  "lastClaimAt",
+  "lastAckAt",
+]);
+// Sensitive aliases are rejected by name, not silently dropped, so a status
+// file can never smuggle a lease capability, command ID, credential, or body.
+const STATUS_SENSITIVE_KEYS = new Set([
+  "leaseId",
+  "lease_id",
+  "claimCommandId",
+  "claim_command_id",
+  "ackCommandId",
+  "ack_command_id",
+  "bearer",
+  "token",
+  "body",
+  "prompt",
+  "reply",
+  "owner",
+  "ownerId",
+  "owner_id",
+]);
+const STATUS_DELIVERY_KEYS = [
+  "deliveryMode",
+  "pendingDeliveryCount",
+  "lastTerminalDeliveryFailureCount",
+  "lastTerminalDeliveryFailureAt",
+  "lastClaimAt",
+  "lastAckAt",
+] as const;
+
 function parseStatus(raw: string): ListenerStatus {
   let value: unknown;
   try {
@@ -110,9 +173,25 @@ function parseStatus(raw: string): ListenerStatus {
     throw new Error("stored listener status is malformed");
   }
   const row = value as Record<string, unknown>;
+  for (const key of Object.keys(row)) {
+    if (STATUS_SENSITIVE_KEYS.has(key)) {
+      throw new Error("stored listener status contains a forbidden field");
+    }
+    if (!STATUS_ALLOWED_KEYS.has(key)) {
+      throw new Error("stored listener status is malformed");
+    }
+  }
   const nullableUuid = (candidate: unknown) =>
     candidate === null ||
     (typeof candidate === "string" && UUID_RE.test(candidate));
+  const nullableCount = (candidate: unknown) =>
+    candidate === null ||
+    (typeof candidate === "number" &&
+      Number.isSafeInteger(candidate) &&
+      candidate >= 0);
+  const nullableTimestamp = (candidate: unknown) =>
+    candidate === null ||
+    (typeof candidate === "string" && Number.isFinite(Date.parse(candidate)));
   if (
     row.version !== 1 ||
     typeof row.instanceId !== "string" ||
@@ -140,11 +219,37 @@ function parseStatus(raw: string): ListenerStatus {
       (typeof row.lastErrorCode === "string" &&
         /^[a-z0-9_-]{1,96}$/.test(row.lastErrorCode))) ||
     typeof row.logPath !== "string" ||
-    !isAbsolute(row.logPath)
+    !isAbsolute(row.logPath) ||
+    !(row.deliveryMode === undefined ||
+      row.deliveryMode === null ||
+      (typeof row.deliveryMode === "string" &&
+        STATUS_DELIVERY_MODES.has(row.deliveryMode))) ||
+    !(row.pendingDeliveryCount === undefined ||
+      nullableCount(row.pendingDeliveryCount)) ||
+    !(row.lastTerminalDeliveryFailureCount === undefined ||
+      nullableCount(row.lastTerminalDeliveryFailureCount)) ||
+    !(row.lastTerminalDeliveryFailureAt === undefined ||
+      nullableTimestamp(row.lastTerminalDeliveryFailureAt)) ||
+    !(row.lastClaimAt === undefined ||
+      nullableTimestamp(row.lastClaimAt)) ||
+    !(row.lastAckAt === undefined ||
+      nullableTimestamp(row.lastAckAt))
   ) {
     throw new Error("stored listener status is malformed");
   }
-  return row as unknown as ListenerStatus;
+  // Old version-1 files predate the delivery fields: normalize the absent
+  // keys to null in memory without rewriting the stored bytes.
+  return {
+    ...(row as unknown as ListenerStatus),
+    deliveryMode: (row.deliveryMode ?? null) as ListenerStatus["deliveryMode"],
+    pendingDeliveryCount: (row.pendingDeliveryCount ?? null) as number | null,
+    lastTerminalDeliveryFailureCount:
+      (row.lastTerminalDeliveryFailureCount ?? null) as number | null,
+    lastTerminalDeliveryFailureAt:
+      (row.lastTerminalDeliveryFailureAt ?? null) as string | null,
+    lastClaimAt: (row.lastClaimAt ?? null) as string | null,
+    lastAckAt: (row.lastAckAt ?? null) as string | null,
+  };
 }
 
 export async function writeListenerStatus(
@@ -152,6 +257,13 @@ export async function writeListenerStatus(
   status: ListenerStatus,
 ): Promise<void> {
   const serialized = JSON.stringify(status);
+  // New writes always carry all six delivery fields, even when null.
+  const parsed = JSON.parse(serialized) as Record<string, unknown>;
+  for (const key of STATUS_DELIVERY_KEYS) {
+    if (!(key in parsed)) {
+      throw new Error("listener status is missing delivery metadata fields");
+    }
+  }
   parseStatus(serialized);
   await writeSecureJsonFile(paths.statusPath, serialized);
 }
@@ -179,10 +291,45 @@ export async function appendListenerEvent(
     "attempt",
     "delay_ms",
     "index",
+    "delivery_mode",
+    "pending_delivery_count",
+    "terminal_delivery_failure_count",
+    "outcome",
+  ]);
+  const deliveryModes = new Set(["durable_claim", "cursor_fallback"]);
+  const deliveryOutcomes = new Set([
+    "replied",
+    "observed",
+    "expired",
+    "failed_terminal",
   ]);
   for (const [key, value] of Object.entries(event)) {
     if (!allowed.has(key)) {
       throw new Error(`listener event field is not allowed: ${key}`);
+    }
+    if (
+      key === "delivery_mode" &&
+      !(value === null ||
+        (typeof value === "string" && deliveryModes.has(value)))
+    ) {
+      throw new Error("listener event delivery mode is not allowed");
+    }
+    if (
+      (key === "pending_delivery_count" ||
+        key === "terminal_delivery_failure_count") &&
+      !(value === null ||
+        (typeof value === "number" &&
+          Number.isSafeInteger(value) &&
+          value >= 0))
+    ) {
+      throw new Error("listener event delivery count is not allowed");
+    }
+    if (
+      key === "outcome" &&
+      !(value === null ||
+        (typeof value === "string" && deliveryOutcomes.has(value)))
+    ) {
+      throw new Error("listener event outcome is not allowed");
     }
     if (
       typeof value === "string" &&
@@ -316,6 +463,12 @@ export async function startListenerControlServer(options: {
   paths: ListenerPaths;
   status: () => ListenerStatus;
   stop: () => void;
+  /**
+   * Runs exactly once, after prepareSocket has rejected a live listener and
+   * before bind/listen, while starting.lock is still held. A loser that
+   * discovers a live socket never invokes it.
+   */
+  initialize?: () => Promise<void> | void;
 }): Promise<{ close: () => Promise<void> }> {
   const releaseStartupLock = await startupLock(options.paths);
   const server = createServer((socket) => {
@@ -348,6 +501,9 @@ export async function startListenerControlServer(options: {
   });
   try {
     await prepareSocket(options.paths);
+    if (options.initialize) {
+      await options.initialize();
+    }
     await new Promise<void>((resolve, reject) => {
       const onError = (error: Error) => {
         server.off("listening", onListening);
@@ -364,6 +520,17 @@ export async function startListenerControlServer(options: {
     if (process.platform !== "win32") {
       await chmod(options.paths.socketPath, 0o600);
     }
+  } catch (error) {
+    // Leave no live server behind when prepare/initialize/listen fails. Only
+    // clean up a socket this server actually bound: a loser that discovers a
+    // live socket in prepareSocket must not delete the winner's socket.
+    if (server.listening) {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      if (process.platform !== "win32") {
+        await unlink(options.paths.socketPath).catch(() => undefined);
+      }
+    }
+    throw error;
   } finally {
     await releaseStartupLock();
   }
