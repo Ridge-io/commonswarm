@@ -442,20 +442,23 @@ async function startupLock(
 }
 
 async function prepareSocket(paths: ListenerPaths): Promise<void> {
-  if (process.platform === "win32") return;
-  const uid = typeof process.getuid === "function" ? process.getuid() : process.pid;
-  const directory = join("/tmp", `cswarm-control-${uid}`);
-  await ensureSecureStateDirectory(directory);
+  if (process.platform !== "win32") {
+    const uid = typeof process.getuid === "function" ? process.getuid() : process.pid;
+    const directory = join("/tmp", `cswarm-control-${uid}`);
+    await ensureSecureStateDirectory(directory);
+  }
   try {
     await queryListenerControl(paths, "status");
     throw new ListenerAlreadyRunningError();
   } catch (error) {
     if (error instanceof ListenerAlreadyRunningError) throw error;
-    await unlink(paths.socketPath).catch((unlinkError) => {
-      if ((unlinkError as NodeJS.ErrnoException).code !== "ENOENT") {
-        throw unlinkError;
-      }
-    });
+    if (process.platform !== "win32") {
+      await unlink(paths.socketPath).catch((unlinkError) => {
+        if ((unlinkError as NodeJS.ErrnoException).code !== "ENOENT") {
+          throw unlinkError;
+        }
+      });
+    }
   }
 }
 

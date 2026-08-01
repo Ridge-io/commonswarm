@@ -474,6 +474,44 @@ test("control initialize runs after live-socket rejection and before listen", as
   }
 });
 
+test("control initialize never runs on win32 when a live listener control socket exists", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cswarm-control-test-"));
+  const occupied = paths(root);
+  const winner = await startListenerControlServer({
+    paths: occupied,
+    status: () => statusFor(occupied, "ready"),
+    stop: () => undefined,
+  });
+
+  let loserInitializeCalls = 0;
+  const platformDescriptor = Object.getOwnPropertyDescriptor(process, "platform");
+  try {
+    if (platformDescriptor) {
+      Object.defineProperty(process, "platform", {
+        ...platformDescriptor,
+        value: "win32",
+      });
+    }
+    await assert.rejects(
+      startListenerControlServer({
+        paths: occupied,
+        status: () => statusFor(occupied, "ready"),
+        stop: () => undefined,
+        initialize: async () => {
+          loserInitializeCalls += 1;
+        },
+      }),
+      (error: unknown) => error instanceof ListenerAlreadyRunningError,
+    );
+    assert.equal(loserInitializeCalls, 0);
+  } finally {
+    if (platformDescriptor) {
+      Object.defineProperty(process, "platform", platformDescriptor);
+    }
+    await winner.close();
+  }
+});
+
 test("supervisor carries one prepare-selected instance UUID through status, events, and run", async () => {
   const root = await mkdtemp(join(tmpdir(), "cswarm-control-test-"));
   const target = paths(root);
