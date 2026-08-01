@@ -8847,18 +8847,144 @@ test("durable-delivery: table and function privilege boundaries (swarm_command D
 interface BlockedBackend {
   pid: number;
   query: string;
+  state: string;
+  waitEventType: string | null;
+  waitEvent: string | null;
   blockingPids: number[];
 }
 
+type SettlementOutcome =
+  | { kind: "fulfilled"; value: unknown }
+  | { kind: "rejected"; error: unknown };
+
 /**
- * Poll pg_stat_activity (bounded, five-second maximum) for active backends that
- * are blocked on a lock, whose current query matches queryPattern and whose
- * pg_blocking_pids includes every pid in blockerPids. With transitiveBlockers,
- * a backend also matches when its direct blockers' blockers include the pid —
- * the two-claim queue chains the second claim on the first (tuple wait), so
- * both are queued behind the principal holder. Returns the matching backends or
- * throws with bounded diagnostics. Exact backend PIDs are matched, never
- * global pg_locks counts, loops, or fixed sleeps.
+ * Convert a promise into a never-rejecting settlement arm: the derived promise
+ * always RESOLVES with the outcome, so a Promise.race that loses it can never
+ * produce an unhandled rejection while the original promise stays retained for
+ * later cleanup.
+ */
+function settlementOutcome(promise: Promise<unknown>): Promise<SettlementOutcome> {
+  return new Promise((resolve) => {
+    promise.then(
+      (value) => resolve({ kind: "fulfilled", value }),
+      (error) => resolve({ kind: "rejected", error }),
+    );
+  });
+}
+
+/** True when a postgres.js promise rejected because its statement was cancelled. */
+function isStatementCancelled(error: unknown): boolean {
+  return (error as { code?: unknown })?.code === "57014";
+}
+
+/** One-line, cause-safe description of an unknown error for diagnostics. */
+function describeError(error: unknown): string {
+  if (error instanceof Error) {
+    const code = (error as { code?: unknown }).code;
+    return `${error.name}: ${error.message}${code === undefined ? "" : ` (${String(code)})`}`;
+  }
+  return String(error);
+}
+
+/** Collapse whitespace and bound the length of a query for diagnostics. */
+function boundedQueryExcerpt(query: string, maxLength = 160): string {
+  const collapsed = query.replace(/\s+/g, " ").trim();
+  return collapsed.length <= maxLength ? collapsed : `${collapsed.slice(0, maxLength)}…`;
+}
+
+interface BackendActivityRow {
+  pid: string | number;
+  query: string;
+  state: string;
+  wait_event_type: string | null;
+  wait_event: string | null;
+  blocking: (string | number)[] | null;
+}
+
+function mapActivityRows(rows: BackendActivityRow[]): BlockedBackend[] {
+  return rows.map((row) => ({
+    pid: Number(row.pid),
+    query: row.query,
+    state: row.state,
+    waitEventType: row.wait_event_type,
+    waitEvent: row.wait_event,
+    blockingPids: (Array.isArray(row.blocking) ? row.blocking : []).map(Number),
+  }));
+}
+
+/**
+ * One bounded pg_stat_activity poll. The poll query itself is cancelled at the
+ * remaining absolute deadline so no SQL work is ever detached, and it is raced
+ * against the must-remain-pending settlement arms so an early fulfillment or
+ * rejection fails the observation immediately. The cancel timer is cleared on
+ * every exit. Returns the observed rows, "cancelled" when the deadline cut the
+ * query, or "settled" with the arm that settled first.
+ */
+async function runBlockedBackendsPoll(
+  pendingArms: Promise<SettlementOutcome>[],
+  remainingMs: number,
+): Promise<
+  | { kind: "rows"; rows: BlockedBackend[] }
+  | { kind: "cancelled" }
+  | { kind: "settled"; outcome: SettlementOutcome }
+> {
+  const query = sql<BackendActivityRow[]>`
+    SELECT
+      a.pid::int AS pid,
+      a.query::text AS query,
+      a.state::text AS state,
+      a.wait_event_type::text AS wait_event_type,
+      a.wait_event::text AS wait_event,
+      COALESCE(pg_blocking_pids(a.pid), '{}') AS blocking
+    FROM pg_stat_activity AS a
+    WHERE a.datname = current_database()
+      AND a.pid <> pg_backend_pid()
+      AND a.state = 'active'
+      AND a.wait_event_type = 'Lock'
+  `;
+  let cancelTimer: NodeJS.Timeout | null = null;
+  try {
+    cancelTimer = setTimeout(() => query.cancel(), Math.max(1, remainingMs));
+    const winner = await Promise.race([
+      query.then((rows) => ({ kind: "rows" as const, rows: mapActivityRows(rows) })),
+      ...pendingArms.map((arm) =>
+        arm.then((outcome) => ({ kind: "arm" as const, outcome }))
+      ),
+    ]);
+    if (winner.kind === "arm") {
+      // A must-remain-pending promise settled: cancel the in-flight poll query
+      // so no SQL work is left detached, and let the caller fail the
+      // observation with the labelled outcome.
+      query.cancel();
+      return { kind: "settled", outcome: winner.outcome };
+    }
+    return { kind: "rows", rows: winner.rows };
+  } catch (error) {
+    if (isStatementCancelled(error)) return { kind: "cancelled" };
+    throw error;
+  } finally {
+    if (cancelTimer !== null) clearTimeout(cancelTimer);
+  }
+}
+
+/**
+ * Poll pg_stat_activity for active backends blocked on a lock whose current
+ * query matches queryPattern and whose pg_blocking_pids includes every pid in
+ * blockerPids. With transitiveBlockers, a backend also matches when its direct
+ * blockers' blockers include the pid — the two-claim queue chains the second
+ * claim on the first (tuple wait), so both are queued behind the principal
+ * holder.
+ *
+ * ONE monotonic absolute deadline bounds the entire observation, including SQL
+ * time and retry delay — it is never reset per poll — and every pending poll
+ * query is itself cancelled at the remaining deadline. Promises given in
+ * mustRemainPending must stay pending until the observation succeeds: an early
+ * fulfillment or rejection fails immediately and labelled instead of waiting
+ * for the outer test timeout. On failure the message enumerates the full last
+ * observed candidate set — exact PID, whitespace-bounded query, state,
+ * wait-event type/event and blocker PIDs — never only the rows that matched.
+ * Exact backend PIDs are matched, never global pg_locks counts, loops, or
+ * fixed sleeps.
  */
 async function waitForBlockedBackends(opts: {
   queryPattern: RegExp;
@@ -8867,50 +8993,65 @@ async function waitForBlockedBackends(opts: {
   label: string;
   deadlineMs?: number;
   transitiveBlockers?: boolean;
+  /** Promises that must stay pending until the observation succeeds. */
+  mustRemainPending?: Array<Promise<unknown>>;
 }): Promise<BlockedBackend[]> {
   const deadlineMs = opts.deadlineMs ?? 5000;
-  const start = Date.now();
-  let last: BlockedBackend[] = [];
-  while (Date.now() - start < deadlineMs) {
-    const lockWaiters = await sql<{
-      pid: string | number;
-      query: string;
-      blocking: (string | number)[] | null;
-    }[]>`
-      SELECT
-        a.pid::int AS pid,
-        a.query::text AS query,
-        COALESCE(pg_blocking_pids(a.pid), '{}') AS blocking
-      FROM pg_stat_activity AS a
-      WHERE a.datname = current_database()
-        AND a.pid <> pg_backend_pid()
-        AND a.state = 'active'
-        AND a.wait_event_type = 'Lock'
-    `;
-    const all = lockWaiters.map((r) => ({
-      pid: Number(r.pid),
-      query: r.query,
-      blockingPids: (Array.isArray(r.blocking) ? r.blocking : []).map(Number),
-    }));
-    const blockingByPid = new Map(all.map((b) => [b.pid, b.blockingPids]));
-    const matches = all.filter((b) => {
-      if (!opts.queryPattern.test(b.query)) return false;
-      return opts.blockerPids.every((bp) => {
-        if (b.blockingPids.includes(bp)) return true;
+  const absoluteDeadline = Date.now() + deadlineMs;
+  const pendingArms = (opts.mustRemainPending ?? []).map((promise) =>
+    settlementOutcome(promise)
+  );
+  // The full latest observed candidate set, kept for diagnostics — never only
+  // the rows that matched.
+  let lastObserved: BlockedBackend[] = [];
+  while (true) {
+    const remaining = absoluteDeadline - Date.now();
+    if (remaining <= 0) break;
+    const poll = await runBlockedBackendsPoll(pendingArms, remaining);
+    if (poll.kind === "settled") {
+      if (poll.outcome.kind === "rejected") {
+        throw new Error(
+          `${opts.label}: expected ${opts.minCount} blocked backend(s) matching ${opts.queryPattern} with blockers [${opts.blockerPids.join(",")}] within ${deadlineMs}ms, but a must-remain-pending promise REJECTED before the observation succeeded: ${describeError(poll.outcome.error)}`,
+          { cause: poll.outcome.error },
+        );
+      }
+      throw new Error(
+        `${opts.label}: expected ${opts.minCount} blocked backend(s) matching ${opts.queryPattern} with blockers [${opts.blockerPids.join(",")}] within ${deadlineMs}ms, but a must-remain-pending promise FULFILLED before the observation succeeded`,
+      );
+    }
+    if (poll.kind === "cancelled") break;
+    const all = poll.rows;
+    lastObserved = all;
+    const blockingByPid = new Map(all.map((backend) => [backend.pid, backend.blockingPids]));
+    const matches = all.filter((backend) => {
+      if (!opts.queryPattern.test(backend.query)) return false;
+      return opts.blockerPids.every((blockerPid) => {
+        if (backend.blockingPids.includes(blockerPid)) return true;
         if (opts.transitiveBlockers === true) {
-          return b.blockingPids.some((blk) =>
-            (blockingByPid.get(blk) ?? []).includes(bp)
+          return backend.blockingPids.some((direct) =>
+            (blockingByPid.get(direct) ?? []).includes(blockerPid)
           );
         }
         return false;
       });
     });
-    last = matches;
     if (matches.length >= opts.minCount) return matches;
+    if (Date.now() >= absoluteDeadline) break;
     await delay(50);
   }
   throw new Error(
-    `${opts.label}: expected ${opts.minCount} blocked backend(s) matching ${opts.queryPattern} with blockers [${opts.blockerPids.join(",")}] within ${deadlineMs}ms; observed=${JSON.stringify(last.map((b) => ({ pid: b.pid, blocking: b.blockingPids, query: b.query.slice(0, 80) })))}`,
+    `${opts.label}: expected ${opts.minCount} blocked backend(s) matching ${opts.queryPattern} with blockers [${opts.blockerPids.join(",")}] within ${deadlineMs}ms; last observed candidates: ${
+      lastObserved.length === 0
+        ? "[]"
+        : JSON.stringify(lastObserved.map((backend) => ({
+          pid: backend.pid,
+          query: boundedQueryExcerpt(backend.query),
+          state: backend.state,
+          waitEventType: backend.waitEventType,
+          waitEvent: backend.waitEvent,
+          blockingPids: backend.blockingPids,
+        })))
+    }`,
   );
 }
 
@@ -8920,58 +9061,189 @@ interface RetainedLock {
   done: Promise<unknown>;
 }
 
+interface LabelledCleanup {
+  label: string;
+  promise: Promise<unknown>;
+}
+
+/**
+ * Await a marker promise by racing it against the transaction that carries it.
+ * Early fulfillment or rejection of the transaction is an immediate labelled
+ * failure carrying the original error — never a wait until the outer test
+ * timeout. The original transaction promise is retained for later cleanup.
+ */
+async function awaitMarkerBeforeSettlement(
+  marker: Promise<void>,
+  transaction: Promise<unknown>,
+  label: string,
+): Promise<void> {
+  const outcome = settlementOutcome(transaction);
+  const winner = await Promise.race([
+    marker.then(() => "marker" as const),
+    outcome,
+  ]);
+  if (winner === "marker") return;
+  if (winner.kind === "rejected") {
+    throw new Error(
+      `${label}: the transaction rejected before its marker: ${describeError(winner.error)}`,
+      { cause: winner.error },
+    );
+  }
+  throw new Error(`${label}: the transaction completed before its marker`);
+}
+
+/**
+ * Await every started promise and inspect EVERY settlement. A cleanup rejection
+ * fails the test with a labelled cause. If the test body and the cleanup both
+ * failed, throw one AggregateError that preserves the primary failure and every
+ * cleanup failure — a cleanup error never replaces or erases the body error,
+ * and a body error never hides cleanup failure.
+ */
+async function settleCleanupTruthfully(
+  primaryFailure: unknown,
+  entries: LabelledCleanup[],
+): Promise<void> {
+  const settlements = await Promise.allSettled(entries.map((entry) => entry.promise));
+  const cleanupFailures: Array<{ label: string; reason: unknown }> = [];
+  for (let index = 0; index < settlements.length; index++) {
+    const settlement = settlements[index]!;
+    if (settlement.status === "rejected") {
+      cleanupFailures.push({ label: entries[index]!.label, reason: settlement.reason });
+    }
+  }
+  if (cleanupFailures.length === 0) return;
+  const causes: Error[] = [];
+  if (primaryFailure instanceof Error) {
+    causes.push(primaryFailure);
+  } else if (primaryFailure !== null && primaryFailure !== undefined) {
+    causes.push(new Error(`primary failure: ${String(primaryFailure)}`));
+  }
+  for (const failure of cleanupFailures) {
+    causes.push(
+      new Error(
+        `${failure.label} cleanup rejected: ${describeError(failure.reason)}`,
+        { cause: failure.reason },
+      ),
+    );
+  }
+  throw new AggregateError(
+    causes,
+    `${cleanupFailures.length} cleanup promise(s) rejected${
+      primaryFailure === null || primaryFailure === undefined
+        ? " (the test body did not fail)"
+        : " while the test body also failed"
+    }; every cause is preserved above`,
+  );
+}
+
+const PRINCIPAL_LOCK_ACQUIRE_DEADLINE_MS = 5000;
+
 /**
  * Open a retained transaction that locks the exact principal row in the given
  * mode and suspends until release() is called. Returns the transaction's exact
  * backend PID. The lock mode is a test-controlled lever for building the lock
  * queues the Phase B contracts require; production code never changes.
+ *
+ * Startup races readiness against BOTH the transaction's own settlement and a
+ * real bounded deadline, and the deadline is cleared on every exit. A
+ * transaction that rejects or completes before its ready marker fails
+ * immediately with its own error attached — never after a stale five-second
+ * timer. The release gate is defined before any work can time out, so cleanup
+ * is always callable and idempotent; on deadline the exact pending lock query
+ * is cancelled with a bounded mechanism and settlement is retained and awaited,
+ * so no transaction is ever left able to acquire the lock and wait on an
+ * unreachable gate.
  */
 async function retainPrincipalRowLock(
   principalId: string,
   workspaceId: string,
   mode: "FOR UPDATE" | "FOR SHARE",
 ): Promise<RetainedLock> {
-  let release: () => void = () => {};
   let markReady: () => void = () => {};
   const ready = new Promise<void>((r) => {
     markReady = r;
   });
+  // The release gate exists before the transaction starts; the deadline path
+  // can always open it, and opening it twice is a no-op.
+  let openGate: () => void = () => {};
+  const gate = new Promise<void>((r) => {
+    openGate = r;
+  });
+  const release = (): void => {
+    openGate();
+  };
   let pid = 0;
+  // The exact pending lock query, captured so the deadline path can cancel it
+  // with a bounded mechanism instead of leaving it blocked behind us. A no-op
+  // placeholder keeps cancellation unconditional and idempotent before the
+  // query is issued (and avoids TS narrowing a closure-assigned let to null).
+  let pendingLockQuery: { cancel: () => void } = { cancel: () => {} };
   const done = sql.begin(async (tx) => {
     const p = await tx<{ pid: string | number }[]>`SELECT pg_backend_pid() AS pid`;
     pid = Number(p[0]?.pid);
-    if (mode === "FOR UPDATE") {
-      await tx`
+    const lockQuery = mode === "FOR UPDATE"
+      ? tx`
         SELECT principal_id, revoked_at
         FROM swarm.agent_principals
         WHERE workspace_id = ${workspaceId}::uuid
           AND principal_id = ${principalId}::uuid
         FOR UPDATE
-      `;
-    } else {
-      await tx`
+      `
+      : tx`
         SELECT principal_id, revoked_at
         FROM swarm.agent_principals
         WHERE workspace_id = ${workspaceId}::uuid
           AND principal_id = ${principalId}::uuid
         FOR SHARE
       `;
-    }
+    pendingLockQuery = lockQuery;
+    await lockQuery;
+    pendingLockQuery = { cancel: () => {} };
     markReady();
-    await new Promise<void>((r) => {
-      release = r;
-    });
+    await gate;
     return null;
   });
-  await Promise.race([
-    ready,
-    delay(5000).then(() => {
+  // Never-rejecting settlement arm: the startup race can lose to it without an
+  // unhandled rejection, and the transaction's original error stays attached.
+  const settled = settlementOutcome(done);
+  let deadlineTimer: NodeJS.Timeout | null = null;
+  const deadline = new Promise<"deadline">((resolve) => {
+    deadlineTimer = setTimeout(
+      () => resolve("deadline"),
+      PRINCIPAL_LOCK_ACQUIRE_DEADLINE_MS,
+    );
+  });
+  try {
+    const outcome = await Promise.race([
+      ready.then(() => "ready" as const),
+      settled,
+      deadline,
+    ]);
+    if (outcome === "ready") return { pid, release, done };
+    if (outcome === "deadline") {
+      // Release every gate already created (idempotent), cancel the exact known
+      // pending query, and retain/await settlement: never return while a
+      // transaction could later acquire the lock and wait on an unreachable
+      // gate.
+      release();
+      pendingLockQuery.cancel();
+      await Promise.allSettled([done]);
       throw new Error(
-        `retainPrincipalRowLock(${mode}) did not lock the principal row within 5s`,
+        `retainPrincipalRowLock(${mode}) did not lock the principal row within ${PRINCIPAL_LOCK_ACQUIRE_DEADLINE_MS}ms; the retained transaction was released and its pending lock query cancelled`,
       );
-    }),
-  ]);
-  return { pid, release: () => release(), done };
+    }
+    if (outcome.kind === "rejected") {
+      throw new Error(
+        `retainPrincipalRowLock(${mode}) transaction failed before becoming ready: ${describeError(outcome.error)}`,
+        { cause: outcome.error },
+      );
+    }
+    throw new Error(
+      `retainPrincipalRowLock(${mode}) transaction completed before becoming ready`,
+    );
+  } finally {
+    if (deadlineTimer !== null) clearTimeout(deadlineTimer);
+  }
 }
 
 test("durable-delivery: Phase B revocation wins in exact queue order", { timeout: 30_000 }, async () => {
@@ -9044,31 +9316,37 @@ test("durable-delivery: Phase B revocation wins in exact queue order", { timeout
       return null;
     });
     let claimC: Promise<CommandResponse> | null = null;
+    let bodyError: unknown = null;
     try {
-      // 4. Prove B's exact UPDATE is blocked by A.
+      // 4. Prove B's exact UPDATE is blocked by A. B must remain pending the
+      //    whole time: an early settlement fails immediately and labelled.
       const bBlocked = await waitForBlockedBackends({
         queryPattern: /UPDATE swarm\.agent_principals/,
         blockerPids: [a.pid],
         minCount: 1,
         label: "raw revocation UPDATE blocked by the principal holder",
+        mustRemainPending: [bDone],
       });
       assert.equal(bBlocked[0]?.pid, bPid, "the blocked backend is transaction B");
 
       // 5. Start public claim C while the revocation remains uncommitted.
-      claimC = issueDelivery(f, agent.token, {
+      const claimCPromise = issueDelivery(f, agent.token, {
         kind: "claim_agent_inbox",
         listener_instance_id: listener,
         limit: 10,
       }, claimCId);
+      claimC = claimCPromise;
 
       // 6. Prove C reached the production principal SELECT ... FOR UPDATE after
       //    authentication and its initial idempotency lookup (both precede
-      //    claimAgentInbox step 1 in the handler), and is queued behind B.
+      //    claimAgentInbox step 1 in the handler), and is queued behind B. C
+      //    must remain pending until observed blocked.
       const cBlocked = await waitForBlockedBackends({
         queryPattern: /FROM swarm\.agent_principals/,
         blockerPids: [bPid],
         minCount: 1,
         label: "public claim C queued on the production principal lock behind B",
+        mustRemainPending: [claimCPromise],
       });
       assert.match(
         cBlocked[0]?.query ?? "",
@@ -9085,7 +9363,10 @@ test("durable-delivery: Phase B revocation wins in exact queue order", { timeout
       // 7. Release A; await B commit, then C. Never await B before releasing A.
       a.release();
       await a.done;
-      await bUpdated;
+      // B's UPDATE marker is raced against B's own settlement: a failure before
+      // the marker is immediate and labelled, never a wait for the outer
+      // timeout.
+      await awaitMarkerBeforeSettlement(bUpdated, bDone, "transaction B UPDATE marker");
       releaseB();
       await bDone;
       const cRes = await claimC;
@@ -9112,13 +9393,16 @@ test("durable-delivery: Phase B revocation wins in exact queue order", { timeout
         WHERE principal_id = ${agent.principalId}::uuid
       `;
       assert.ok(revokedRow[0]?.revoked_at !== null, "the principal is revoked in the database");
+    } catch (error) {
+      bodyError = error;
+      throw error;
     } finally {
       a.release();
       releaseB();
-      await Promise.allSettled([
-        a.done,
-        bDone,
-        claimC ?? Promise.resolve(null),
+      await settleCleanupTruthfully(bodyError, [
+        { label: "principal holder A", promise: a.done },
+        { label: "revocation transaction B", promise: bDone },
+        { label: "public claim C", promise: claimC ?? Promise.resolve(null) },
       ]);
     }
   });
@@ -9164,13 +9448,16 @@ test("durable-delivery: Phase B lock strength — FOR SHARE holder blocks the pr
       });
       return claimLedger;
     });
+    let bodyError: unknown = null;
     try {
       // The production principal-lock query must block on the FOR SHARE holder.
+      // The direct claim must remain pending until observed blocked.
       const blocked = await waitForBlockedBackends({
         queryPattern: /FROM swarm\.agent_principals/,
         blockerPids: [holder.pid],
         minCount: 1,
         label: "FOR SHARE holder blocks the direct claim",
+        mustRemainPending: [claim],
       });
       assert.equal(
         blocked[0]?.pid,
@@ -9199,9 +9486,15 @@ test("durable-delivery: Phase B lock strength — FOR SHARE holder blocks the pr
         last_error_code: null,
       });
       assert.equal(acked.status, 200, acked.text);
+    } catch (error) {
+      bodyError = error;
+      throw error;
     } finally {
       holder.release();
-      await Promise.allSettled([holder.done, claim]);
+      await settleCleanupTruthfully(bodyError, [
+        { label: "FOR SHARE holder", promise: holder.done },
+        { label: "direct claim", promise: claim },
+      ]);
     }
   });
 });
@@ -9273,6 +9566,7 @@ test("durable-delivery: Phase B concurrent cap — two claims behind one princip
       });
       return ledger2;
     });
+    let bodyError: unknown = null;
     try {
       // 3. Prove both production lock queries are blocked by A. The lock queue
       //    chains: the second claim waits on the first claim's tuple lock, so
@@ -9283,6 +9577,7 @@ test("durable-delivery: Phase B concurrent cap — two claims behind one princip
         minCount: 2,
         label: "both direct claims block on the principal FOR UPDATE holder",
         transitiveBlockers: true,
+        mustRemainPending: [claim1, claim2],
       });
       assert.deepEqual(
         new Set(blocked.map((b) => b.pid)),
@@ -9412,9 +9707,16 @@ test("durable-delivery: Phase B concurrent cap — two claims behind one princip
         0,
         "claim at capacity returns zero deliveries",
       );
+    } catch (error) {
+      bodyError = error;
+      throw error;
     } finally {
       a.release();
-      await Promise.allSettled([a.done, claim1, claim2]);
+      await settleCleanupTruthfully(bodyError, [
+        { label: "principal holder A", promise: a.done },
+        { label: "direct claim 1", promise: claim1 },
+        { label: "direct claim 2", promise: claim2 },
+      ]);
     }
   });
 });
@@ -9571,4 +9873,317 @@ test("durable-delivery: Phase B independent sequential 101 boundary", async () =
       assert.equal(ack.status, 200, ack.text);
     }
   });
+});
+
+// ---------------------------------------------------------------------------
+// Phase B harness safety repair — bounded causal controls that would have
+// failed on the frozen base 5a331658: pre-ready retained-transaction rejection
+// must surface promptly with its own error and leak no backend; premature
+// marker/request settlement must fail fast and labelled instead of waiting for
+// the outer 30-second timeout; a wrong observation pattern must enumerate the
+// real observed backend instead of observed=[]; and cleanup adjudication must
+// be truthful and preserve primary + cleanup failures together.
+// ---------------------------------------------------------------------------
+
+test("durable-delivery: Phase B harness control — pre-ready retained-transaction rejection surfaces promptly and leaks no backend", { timeout: 30_000 }, async () => {
+  await scenario(async (f) => {
+    const agent = await createFixtureAgent(f, f.ua, "dd-pb-harness-pre-ready");
+    // Hold the principal row FOR UPDATE (awaited ready, so the lock is
+    // guaranteed held) so the second retained transaction's lock query blocks
+    // and it can never reach its ready marker.
+    const holder = await retainPrincipalRowLock(agent.principalId, f.workspaceA, "FOR UPDATE");
+    // Start a second retained attempt WITHOUT awaiting it: its transaction runs
+    // immediately and blocks behind the holder.
+    const started = Date.now();
+    const retainedAttempt = retainPrincipalRowLock(agent.principalId, f.workspaceA, "FOR UPDATE");
+    let bodyError: unknown = null;
+    try {
+      // Locate the retained transaction's backend by its exact lock query.
+      const blocked = await waitForBlockedBackends({
+        queryPattern: /FROM swarm\.agent_principals/,
+        blockerPids: [],
+        minCount: 1,
+        label: "pre-ready control: retained lock transaction is blocked",
+      });
+      const retainedPid = blocked[0]!.pid;
+      assert.ok(retainedPid > 0, "retained backend PID observed");
+      assert.notEqual(
+        retainedPid,
+        holder.pid,
+        "the blocked backend is the retained transaction, not the holder",
+      );
+
+      // Cancel the exact backend: a real pre-ready rejection carrying the
+      // transaction's own error.
+      const [cancelled] = await sql<{ cancelled: boolean }[]>`
+        SELECT pg_cancel_backend(${retainedPid}::int) AS cancelled
+      `;
+      assert.equal(cancelled?.cancelled, true, "pg_cancel_backend reached the retained backend");
+
+      await assert.rejects(
+        retainedAttempt,
+        (error: unknown) => {
+          const elapsed = Date.now() - started;
+          assert.ok(
+            elapsed < 4000,
+            `pre-ready rejection surfaced after ${elapsed}ms — it must be prompt, not the stale 5s timeout`,
+          );
+          const chain: string[] = [];
+          let current: unknown = error;
+          while (current instanceof Error) {
+            chain.push(`${current.name}: ${current.message}`);
+            current = (current as { cause?: unknown }).cause;
+          }
+          assert.ok(
+            chain.some((entry) => /57014|canceling statement/i.test(entry)),
+            `the surfaced failure must carry the transaction's own cancellation error; got: ${chain.join(" | ")}`,
+          );
+          return true;
+        },
+      );
+
+      // The cancelled transaction left no backend behind: nothing may remain
+      // blocked on the principal lock query.
+      await assert.rejects(
+        waitForBlockedBackends({
+          queryPattern: /FROM swarm\.agent_principals/,
+          blockerPids: [],
+          minCount: 1,
+          label: "pre-ready control: zero residual backends",
+          deadlineMs: 1200,
+        }),
+        (error: unknown) => {
+          assert.match(String(error), /last observed candidates: \[\]/);
+          return true;
+        },
+      );
+    } catch (error) {
+      bodyError = error;
+      throw error;
+    } finally {
+      // retainedAttempt is deliberately rejected and its rejection was already
+      // asserted by the control above, so it is NOT a cleanup entry here.
+      holder.release();
+      await settleCleanupTruthfully(bodyError, [
+        { label: "principal holder", promise: holder.done },
+      ]);
+    }
+  });
+});
+
+test("durable-delivery: Phase B harness control — premature marker and request settlement fail fast with labels", { timeout: 30_000 }, async () => {
+  await scenario(async (f) => {
+    const agent = await createFixtureAgent(f, f.ua, "dd-pb-harness-premature");
+
+    // ARM A — the marker race: a transaction that REJECTS before its marker
+    // (the body throws before markUpdated is ever reached) must surface the
+    // original rejection promptly and labelled, not wait for the outer
+    // 30-second timeout.
+    let markUpdated: () => void = () => {};
+    const updated = new Promise<void>((r) => {
+      markUpdated = r;
+    });
+    const failing = sql.begin(async (tx) => {
+      await tx`
+        UPDATE swarm.agent_principals
+        SET revoked_at = statement_timestamp()
+        WHERE workspace_id = ${f.workspaceA}::uuid
+          AND principal_id = ${agent.principalId}::uuid
+      `;
+      throw new Error("synthetic pre-marker rejection");
+    });
+    const startedA = Date.now();
+    await assert.rejects(
+      awaitMarkerBeforeSettlement(updated, failing, "premature marker control"),
+      (error: unknown) => {
+        const elapsed = Date.now() - startedA;
+        assert.ok(
+          elapsed < 4000,
+          `premature marker rejection surfaced after ${elapsed}ms, not the outer 30s timeout`,
+        );
+        const message = String(error);
+        assert.match(message, /premature marker control/);
+        assert.match(message, /rejected before its marker/);
+        assert.match(message, /synthetic pre-marker rejection/);
+        return true;
+      },
+    );
+    // Retained for cleanup; it has already rejected, so allSettled observes it.
+    await Promise.allSettled([failing]);
+
+    // ARM B — the observation barrier: a public claim that FULFILLS before it
+    // is observed blocked must fail the observation fast and labelled, and the
+    // prematurely settled request stays retained and observable (no detached
+    // rejection, nothing leaked).
+    const prematureAgent = await createFixtureAgent(f, f.ua, "dd-pb-harness-premature-b");
+    const prematureClaim = issueDelivery(f, prematureAgent.token, {
+      kind: "claim_agent_inbox",
+      listener_instance_id: randomUUID(),
+      limit: 10,
+    });
+    const startedB = Date.now();
+    await assert.rejects(
+      waitForBlockedBackends({
+        queryPattern: /FROM swarm\.agent_principals/,
+        blockerPids: [999_999_999],
+        minCount: 1,
+        label: "premature claim observation control",
+        deadlineMs: 5000,
+        mustRemainPending: [prematureClaim],
+      }),
+      (error: unknown) => {
+        const elapsed = Date.now() - startedB;
+        assert.ok(
+          elapsed < 4000,
+          `premature claim fulfillment surfaced after ${elapsed}ms, not the outer 30s timeout`,
+        );
+        const message = String(error);
+        assert.match(message, /premature claim observation control/);
+        assert.match(message, /FULFILLED before the observation succeeded/);
+        return true;
+      },
+    );
+    const response = await prematureClaim;
+    assert.equal(response.status, 200, response.text);
+    assert.deepEqual(response.body.deliveries, []);
+  });
+});
+
+test("durable-delivery: Phase B harness control — wrong observation pattern reports the real blocked backend, never observed=[]", { timeout: 30_000 }, async () => {
+  await scenario(async (f) => {
+    const agent = await createFixtureAgent(f, f.ua, "dd-pb-harness-diagnostics");
+    const listener = randomUUID();
+
+    // A real blocked backend: FOR SHARE holder blocks the production claim's
+    // FOR UPDATE principal lock.
+    const holder = await retainPrincipalRowLock(agent.principalId, f.workspaceA, "FOR SHARE");
+    let claimPid = 0;
+    const claim = sql.begin(async (tx) => {
+      const p = await tx<{ pid: string | number }[]>`SELECT pg_backend_pid() AS pid`;
+      claimPid = Number(p[0]?.pid);
+      await claimAgentInbox(tx, {
+        workspaceId: f.workspaceA,
+        recipientPrincipalId: agent.principalId,
+        receiverOwnerUserId: f.ua,
+        listenerInstanceId: listener,
+        limit: 10,
+      });
+      return null;
+    });
+    let bodyError: unknown = null;
+    try {
+      // First a CORRECT observation so the real blocked backend's pid is known.
+      const blocked = await waitForBlockedBackends({
+        queryPattern: /FROM swarm\.agent_principals/,
+        blockerPids: [holder.pid],
+        minCount: 1,
+        label: "diagnostics control: real blocked backend",
+        mustRemainPending: [claim],
+      });
+      const realPid = blocked[0]!.pid;
+      assert.equal(realPid, claimPid, "the observed backend is the exact claim backend");
+      assert.match(blocked[0]!.query, /FOR UPDATE/);
+
+      // Now a deliberately WRONG pattern + blocker on a SHORT diagnostic
+      // deadline: it must fail on the deadline and the message must enumerate
+      // the real observed row — exact pid, bounded query, state, wait event,
+      // and blocker PIDs — never observed=[].
+      const started = Date.now();
+      await assert.rejects(
+        waitForBlockedBackends({
+          queryPattern: /definitely_not_the_blocked_query/,
+          blockerPids: [999_999_999],
+          minCount: 1,
+          label: "wrong-pattern diagnostics control",
+          deadlineMs: 1500,
+          mustRemainPending: [claim],
+        }),
+        (error: unknown) => {
+          const elapsed = Date.now() - started;
+          assert.ok(
+            elapsed >= 1200 && elapsed < 8000,
+            `wrong-pattern observation took ${elapsed}ms; it must fail on the short diagnostic deadline`,
+          );
+          const message = String(error);
+          assert.match(message, /wrong-pattern diagnostics control/);
+          assert.ok(
+            message.includes(String(realPid)),
+            `message must name the real blocked pid ${realPid}: ${message}`,
+          );
+          assert.match(message, /state[": ]+active/);
+          assert.match(message, /Lock/);
+          assert.ok(
+            message.includes(String(holder.pid)),
+            `message must name the blocker pid ${holder.pid}: ${message}`,
+          );
+          assert.doesNotMatch(message, /observed=\[\]/);
+          return true;
+        },
+      );
+    } catch (error) {
+      bodyError = error;
+      throw error;
+    } finally {
+      holder.release();
+      await settleCleanupTruthfully(bodyError, [
+        { label: "FOR SHARE holder", promise: holder.done },
+        { label: "blocked direct claim", promise: claim },
+      ]);
+    }
+  });
+});
+
+test("durable-delivery: Phase B harness control — cleanup adjudication is truthful and preserves primary plus cleanup failures", async () => {
+  // ARM A — a cleanup-only rejection turns the adjudicator red with its label.
+  await assert.rejects(
+    settleCleanupTruthfully(null, [
+      {
+        label: "synthetic cleanup",
+        promise: Promise.reject(new Error("synthetic cleanup failure A")),
+      },
+    ]),
+    (error: unknown) => {
+      assert.ok(error instanceof AggregateError, "cleanup failure surfaces as AggregateError");
+      const texts = (error.errors as Error[]).map((entry) => `${entry.name}: ${entry.message}`);
+      assert.ok(
+        texts.some((text) =>
+          text.includes("synthetic cleanup") && text.includes("synthetic cleanup failure A")
+        ),
+        `cleanup failure must carry its labelled cause: ${texts.join(" | ")}`,
+      );
+      return true;
+    },
+  );
+
+  // ARM B — a simultaneous primary and cleanup rejection preserves BOTH.
+  const primary = new Error("synthetic primary failure B");
+  await assert.rejects(
+    settleCleanupTruthfully(primary, [
+      {
+        label: "synthetic cleanup",
+        promise: Promise.reject(new Error("synthetic cleanup failure B")),
+      },
+    ]),
+    (error: unknown) => {
+      assert.ok(error instanceof AggregateError, "combined failure surfaces as AggregateError");
+      const texts = (error.errors as Error[]).map((entry) => `${entry.name}: ${entry.message}`);
+      assert.ok(
+        texts.some((text) => text.includes("synthetic primary failure B")),
+        `primary failure must be preserved: ${texts.join(" | ")}`,
+      );
+      assert.ok(
+        texts.some((text) =>
+          text.includes("synthetic cleanup") && text.includes("synthetic cleanup failure B")
+        ),
+        `cleanup failure must not be hidden: ${texts.join(" | ")}`,
+      );
+      return true;
+    },
+  );
+
+  // Positive control — clean cleanup never throws.
+  await settleCleanupTruthfully(null, [
+    { label: "clean holder", promise: Promise.resolve(null) },
+    { label: "clean claim", promise: Promise.resolve("ok") },
+  ]);
 });
