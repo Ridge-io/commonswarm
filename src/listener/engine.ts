@@ -37,6 +37,19 @@ export interface ListenerEngineOptions {
   maxPostAttempts?: number;
   isRetryablePromptError?: (error: unknown) => boolean;
   /**
+   * Closed credential-loss classifier for reply-posting errors, matching the
+   * established follow API. It runs only for non-HTTP errors: typed
+   * CommandHttpError is decided by status alone, so server-controlled message
+   * text never reaches name/wording classification. When it returns true the
+   * engine restores exact `reply_ready` with a null failure code and rethrows
+   * the identical poster error so the runtime can stop as credential loss
+   * instead of terminalizing the effect. If the classifier itself throws, the
+   * engine restores the same resumable record and rethrows the classifier's
+   * exception so a classifier defect cannot strand the record in `posting`.
+   * Undefined preserves the previous source-compatible behavior.
+   */
+  isCredentialFailure?: (error: unknown) => boolean;
+  /**
    * Caller cancellation, distinct from the internal transport deadlines. An
    * abort here surfaces as a genuine AbortError and restores the resumable
    * record; it never writes a terminal failure and never leaves the engine.
@@ -132,10 +145,15 @@ function untilMs(signal: SignalRecord): number {
   return Date.parse(signal.until);
 }
 
+/**
+ * A genuine cancellation. Name-only: arbitrary `aborted`/`cancelled` message
+ * text is untrusted and must never become cancellation; caller signal state is
+ * adjudicated explicitly where it matters. Typed CommandHttpError never reaches
+ * this helper because the post catch handles HTTP first and its name is never
+ * `AbortError`.
+ */
 function isAbort(error: unknown): boolean {
-  return error instanceof Error &&
-    !(error instanceof CommandHttpError) &&
-    (error.name === "AbortError" || /aborted|cancelled/i.test(error.message));
+  return error instanceof Error && error.name === "AbortError";
 }
 
 /** A genuine cancellation error; never persisted as a failure code. */
@@ -211,6 +229,8 @@ export class ListenerEngine {
   private readonly maxPromptAttempts: number;
   private readonly maxPostAttempts: number;
   private readonly retryablePrompt: (error: unknown) => boolean;
+  private readonly isCredentialFailure:
+    ((error: unknown) => boolean) | undefined;
   private readonly signal: AbortSignal | undefined;
 
   constructor(private readonly options: ListenerEngineOptions) {
@@ -220,6 +240,7 @@ export class ListenerEngine {
     this.maxPostAttempts = options.maxPostAttempts ?? LISTENER_MAX_POST_ATTEMPTS;
     this.retryablePrompt = options.isRetryablePromptError ??
       defaultRetryablePromptError;
+    this.isCredentialFailure = options.isCredentialFailure;
     this.signal = options.signal;
     if (!Number.isSafeInteger(this.maxPromptAttempts) || this.maxPromptAttempts < 1) {
       throw new Error("maxPromptAttempts must be a positive integer");
@@ -417,11 +438,16 @@ export class ListenerEngine {
       });
       return { status: "done", record };
     } catch (error) {
-      // Typed HTTP errors outrank message heuristics: CommandHttpError.message
-      // may carry untrusted server text, so an HTTP failure is never classified
-      // as cancellation. A 401/403 is a credential escape: restore the exact
-      // resumable record for the future runtime and never persist
-      // failed/http_401 or failed/http_403.
+      // Frozen post-catch order: typed HTTP first with the existing closed
+      // behavior, then the optional credential classifier for non-HTTP errors,
+      // then genuine abort/expiry/retry/terminal exactly as before.
+      //
+      // CommandHttpError.message may carry untrusted server text, so an HTTP
+      // failure is never classified as cancellation or credential loss by
+      // wording. A 401/403 is a credential escape: restore the exact resumable
+      // record for the future runtime and never persist failed/http_401 or
+      // failed/http_403. Other HTTP errors skip the classifier and continue to
+      // the typed retry/terminal logic below.
       if (error instanceof CommandHttpError) {
         if (error.status === 401 || error.status === 403) {
           await this.write({
@@ -431,9 +457,39 @@ export class ListenerEngine {
           });
           throw error;
         }
-      } else if (isAbort(error)) {
-        await this.write({ ...record, state: "reply_ready", failureCode: "cancelled" });
-        throw error;
+      } else {
+        // Non-HTTP errors only: the optional closed classifier recognizes
+        // credential loss. On true, restore the exact resumable record (reply
+        // body, command id, truncation flag, reply signal id, and the already-
+        // incremented postAttempts all survive the spread) and rethrow the
+        // identical poster error. If the classifier itself throws, restore the
+        // same record and rethrow the classifier's own exception so a defect
+        // cannot strand the record in `posting`.
+        if (this.isCredentialFailure !== undefined) {
+          let credential = false;
+          try {
+            credential = this.isCredentialFailure(error);
+          } catch (classifierError) {
+            await this.write({
+              ...record,
+              state: "reply_ready",
+              failureCode: null,
+            });
+            throw classifierError;
+          }
+          if (credential) {
+            await this.write({
+              ...record,
+              state: "reply_ready",
+              failureCode: null,
+            });
+            throw error;
+          }
+        }
+        if (isAbort(error)) {
+          await this.write({ ...record, state: "reply_ready", failureCode: "cancelled" });
+          throw error;
+        }
       }
       if (this.now() >= untilMs(signal)) {
         record = await this.write({

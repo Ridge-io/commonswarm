@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { SignalRecord } from "../src/cloud/command-client.js";
+import {
+  CommandHttpError,
+  type SignalRecord,
+} from "../src/cloud/command-client.js";
 import { cloudTarget } from "../src/cloud/config.js";
+import {
+  RenewalReauthorisationRequired,
+  RenewalRevoked,
+} from "../src/cloud/renewal.js";
 import type {
   AgentSignalPage,
   SignalCursor,
@@ -403,4 +410,352 @@ test("runtime emits only bounded malformed-row metadata", async () => {
       ["index", "ts", "type"],
     ],
   );
+});
+
+test("default poster credential failures stop as credential with the identical error and no reply fetch", async () => {
+  const families = [
+    new RenewalReauthorisationRequired(
+      "horizon_reached",
+      null,
+      "renewal reauthorisation required",
+    ),
+    new RenewalRevoked("forbidden", "credential revoked"),
+    new Error("reply credential secret is absent from the store"),
+  ] as const;
+  for (const [index, thrown] of families.entries()) {
+    const model = new FakeModel();
+    const store = new MemoryStore();
+    let bearerCalls = 0;
+    let fetchCalls = 0;
+    const theAsk = ask(
+      `aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaac${index}`,
+      "2026-07-30T00:00:01.000Z",
+    );
+    const stop = await runListenerRuntime({
+      target: cloudTarget("https://cloud.example.test", "anon"),
+      workspaceId: WORKSPACE_ID,
+      principalId: PRINCIPAL_ID,
+      credentialSession: {
+        async bearer() {
+          bearerCalls += 1;
+          if (bearerCalls === 1) return "token";
+          throw thrown;
+        },
+      },
+      store,
+      model,
+      // A reply fetch would call this; credential acquisition fails first.
+      fetcher: (async () => {
+        fetchCalls += 1;
+        throw new Error("reply fetch must never run");
+      }) as typeof fetch,
+      sleep: async () => undefined,
+      readPage: async () => page([theAsk]),
+    });
+    assert.equal(stop.reason, "credential");
+    assert.equal(
+      stop.reason === "credential" && stop.error,
+      thrown,
+      "the identical credential error must escape",
+    );
+    assert.equal(fetchCalls, 0, "no reply fetch may occur");
+    const record = await store.read(theAsk.id);
+    assert.ok(record);
+    assert.equal(record.state, "reply_ready");
+    assert.equal(record.failureCode, null);
+    assert.equal(record.postAttempts, 1);
+    assert.equal(model.closes, 1);
+  }
+});
+
+test("an injected poster throwing typed 401 with hostile text stops as credential, never cancelled", async () => {
+  const model = new FakeModel();
+  const store = new MemoryStore();
+  const theAsk = ask(
+    "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaad0",
+    "2026-07-30T00:00:01.000Z",
+  );
+  const thrown = new CommandHttpError(401, "server says operation cancelled");
+  const stop = await runListenerRuntime({
+    target: cloudTarget("https://cloud.example.test", "anon"),
+    workspaceId: WORKSPACE_ID,
+    principalId: PRINCIPAL_ID,
+    credentialSession: { async bearer() { return "token"; } },
+    store,
+    model,
+    sleep: async () => undefined,
+    readPage: async () => page([theAsk]),
+    poster: {
+      async post() {
+        throw thrown;
+      },
+    },
+  });
+  assert.equal(stop.reason, "credential", "typed 401 must stop as credential");
+  assert.equal(stop.reason === "credential" && stop.error, thrown);
+  const record = await store.read(theAsk.id);
+  assert.ok(record);
+  assert.equal(record.state, "reply_ready");
+  assert.equal(record.failureCode, null);
+});
+
+test("the default-post HTTP 401/403 path stops as credential, not fatal or cancelled", async () => {
+  for (const status of [401, 403]) {
+    const model = new FakeModel();
+    const store = new MemoryStore();
+    const statusIds: Record<number, string> = {
+      401: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa04",
+      403: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa05",
+    };
+    const theAsk = ask(
+      statusIds[status]!,
+      "2026-07-30T00:00:01.000Z",
+    );
+    const stop = await runListenerRuntime({
+      target: cloudTarget("https://cloud.example.test", "anon"),
+      workspaceId: WORKSPACE_ID,
+      principalId: PRINCIPAL_ID,
+      credentialSession: { async bearer() { return "token"; } },
+      store,
+      model,
+      sleep: async () => undefined,
+      readPage: async () => page([theAsk]),
+      fetcher: (async () =>
+        new Response(
+          JSON.stringify({ message: "server says operation cancelled" }),
+          {
+            status,
+            headers: { "content-type": "application/json" },
+          },
+        )) as typeof fetch,
+    });
+    assert.equal(stop.reason, "credential", `status ${status}`);
+    const record = await store.read(theAsk.id);
+    assert.ok(record);
+    assert.equal(record.state, "reply_ready", `status ${status}`);
+    assert.equal(record.failureCode, null, `status ${status}`);
+  }
+});
+
+test("a trusted injected poster receives the same closed runtime credential classification", async () => {
+  const model = new FakeModel();
+  const store = new MemoryStore();
+  const theAsk = ask(
+    "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaf0",
+    "2026-07-30T00:00:01.000Z",
+  );
+  const thrown = new RenewalRevoked("forbidden", "credential revoked mid-reply");
+  const stop = await runListenerRuntime({
+    target: cloudTarget("https://cloud.example.test", "anon"),
+    workspaceId: WORKSPACE_ID,
+    principalId: PRINCIPAL_ID,
+    credentialSession: { async bearer() { return "token"; } },
+    store,
+    model,
+    sleep: async () => undefined,
+    readPage: async () => page([theAsk]),
+    poster: {
+      async post() {
+        throw thrown;
+      },
+    },
+  });
+  assert.equal(stop.reason, "credential");
+  assert.equal(stop.reason === "credential" && stop.error, thrown);
+  const record = await store.read(theAsk.id);
+  assert.ok(record);
+  assert.equal(record.state, "reply_ready");
+  assert.equal(record.failureCode, null);
+});
+
+test("an explicitly already-aborted runtime stays cancelled even for credential-shaped errors", async () => {
+  const model = new FakeModel();
+  const store = new MemoryStore();
+  const controller = new AbortController();
+  const theAsk = ask(
+    "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaab00",
+    "2026-07-30T00:00:01.000Z",
+  );
+  const thrown = new RenewalRevoked("forbidden", "credential revoked");
+  const stop = await runListenerRuntime({
+    target: cloudTarget("https://cloud.example.test", "anon"),
+    workspaceId: WORKSPACE_ID,
+    principalId: PRINCIPAL_ID,
+    credentialSession: { async bearer() { return "token"; } },
+    store,
+    model,
+    signal: controller.signal,
+    sleep: async () => undefined,
+    readPage: async () => page([theAsk]),
+    poster: {
+      async post() {
+        // A credential-shaped error surfaces after the caller already aborted:
+        // the exact abort state is authoritative, so the stop is cancelled.
+        controller.abort();
+        throw thrown;
+      },
+    },
+  });
+  assert.equal(stop.reason, "cancelled");
+  assert.notEqual(stop.reason, "credential");
+  const record = await store.read(theAsk.id);
+  assert.ok(record);
+  assert.equal(record.state, "reply_ready");
+  assert.equal(record.failureCode, null);
+});
+
+test("runtime classifies noncredential secret wording only by the closed fleet convention", async () => {
+  // Exact fleet wording is credential loss and stops resumable.
+  const model = new FakeModel();
+  const store = new MemoryStore();
+  const exact = ask(
+    "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaab01",
+    "2026-07-30T00:00:01.000Z",
+  );
+  const exactStop = await runListenerRuntime({
+    target: cloudTarget("https://cloud.example.test", "anon"),
+    workspaceId: WORKSPACE_ID,
+    principalId: PRINCIPAL_ID,
+    credentialSession: { async bearer() { return "token"; } },
+    store,
+    model,
+    sleep: async () => undefined,
+    readPage: async () => page([exact]),
+    poster: {
+      async post() {
+        throw new Error("reply credential secret is absent from the store");
+      },
+    },
+  });
+  assert.equal(exactStop.reason, "credential");
+  assert.equal((await store.read(exact.id))?.state, "reply_ready");
+
+  // Different wording is an ordinary terminal failure, not credential loss.
+  const model2 = new FakeModel();
+  const store2 = new MemoryStore();
+  const controller = new AbortController();
+  const events: ListenerRuntimeEvent[] = [];
+  const other = ask(
+    "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaab02",
+    "2026-07-30T00:00:01.000Z",
+  );
+  let reads = 0;
+  const otherStop = await runListenerRuntime({
+    target: cloudTarget("https://cloud.example.test", "anon"),
+    workspaceId: WORKSPACE_ID,
+    principalId: PRINCIPAL_ID,
+    credentialSession: { async bearer() { return "token"; } },
+    store: store2,
+    model: model2,
+    signal: controller.signal,
+    onEvent: (event) => events.push(event),
+    sleep: async () => undefined,
+    readPage: async () => {
+      reads += 1;
+      if (reads === 1) return page([other]);
+      controller.abort();
+      return page([]);
+    },
+    poster: {
+      async post() {
+        throw new Error("reply credential is missing");
+      },
+    },
+  });
+  assert.equal(otherStop.reason, "cancelled", "never a credential stop");
+  const failed = events.find(
+    (event) => event.type === "effect" && event.signalId === other.id,
+  );
+  assert.ok(failed && failed.type === "effect");
+  assert.equal(failed.status, "failed");
+  assert.equal(failed.failureCode, "error");
+});
+
+test("the default poster forwards the runtime caller signal and stays bounded", async () => {
+  const model = new FakeModel();
+  const store = new MemoryStore();
+  const controller = new AbortController();
+  const theAsk = ask(
+    "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaab03",
+    "2026-07-30T00:00:01.000Z",
+  );
+  let requestSignal: AbortSignal | undefined;
+  let fetchStarted: (() => void) | undefined;
+  const started = new Promise<void>((resolve) => {
+    fetchStarted = resolve;
+  });
+  const fetcher = (async (_url: string | URL | Request, init?: RequestInit) => {
+    requestSignal = init?.signal ?? undefined;
+    fetchStarted?.();
+    // Never settles and ignores abort: only caller cancellation bounds it.
+    return new Promise<Response>(() => {});
+  }) as typeof fetch;
+  const stopPromise = runListenerRuntime({
+    target: cloudTarget("https://cloud.example.test", "anon"),
+    workspaceId: WORKSPACE_ID,
+    principalId: PRINCIPAL_ID,
+    credentialSession: { async bearer() { return "token"; } },
+    store,
+    model,
+    signal: controller.signal,
+    fetcher,
+    sleep: async () => undefined,
+    readPage: async () => page([theAsk]),
+  });
+  await started;
+  controller.abort();
+  const stop = await Promise.race([
+    stopPromise,
+    new Promise<never>((_, reject) => {
+      const timer = setTimeout(
+        () => reject(new Error("runtime did not settle after caller abort")),
+        2000,
+      );
+      timer.unref();
+    }),
+  ]);
+  assert.equal(stop.reason, "cancelled");
+  assert.equal(
+    requestSignal?.aborted,
+    true,
+    "the effective request signal must abort with the caller",
+  );
+  const record = await store.read(theAsk.id);
+  assert.ok(record);
+  assert.equal(record.state, "reply_ready", "the effect must remain resumable");
+});
+
+test("an already-aborted runtime caller never starts the reply fetch and stays resumable", async () => {
+  const model = new FakeModel();
+  const store = new MemoryStore();
+  const controller = new AbortController();
+  const theAsk = ask(
+    "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaab04",
+    "2026-07-30T00:00:01.000Z",
+  );
+  let fetchCalls = 0;
+  model.prompt = async () => {
+    controller.abort();
+    return { message: "reply", stopReason: "end_turn" as const };
+  };
+  const stop = await runListenerRuntime({
+    target: cloudTarget("https://cloud.example.test", "anon"),
+    workspaceId: WORKSPACE_ID,
+    principalId: PRINCIPAL_ID,
+    credentialSession: { async bearer() { return "token"; } },
+    store,
+    model,
+    signal: controller.signal,
+    fetcher: (async () => {
+      fetchCalls += 1;
+      throw new Error("no reply fetch after an already-aborted caller");
+    }) as typeof fetch,
+    sleep: async () => undefined,
+    readPage: async () => page([theAsk]),
+  });
+  assert.equal(stop.reason, "cancelled");
+  assert.equal(fetchCalls, 0, "no reply fetch may occur");
+  const record = await store.read(theAsk.id);
+  assert.ok(record);
+  assert.equal(record.state, "reply_ready", "the effect must remain resumable");
 });

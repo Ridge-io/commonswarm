@@ -1,4 +1,5 @@
 import {
+  CommandHttpError,
   ThinCommandClient,
   type SignalRecord,
 } from "../cloud/command-client.js";
@@ -92,9 +93,34 @@ export type ListenerRuntimeStop =
   | { reason: "credential"; error: Error }
   | { reason: "fatal"; error: Error };
 
+/**
+ * Name-only cancellation recognition, plus the explicit caller signal state
+ * adjudicated by callers. Arbitrary `aborted`/`cancelled` message substrings
+ * are untrusted and must never become cancellation; typed HTTP errors can
+ * never be cancellation because of their text.
+ */
 function isAbort(error: unknown): boolean {
-  return error instanceof Error &&
-    (error.name === "AbortError" || /aborted|cancelled/i.test(error.message));
+  return error instanceof Error && error.name === "AbortError";
+}
+
+/**
+ * Closed credential-loss predicate shared by the read and engine catches and
+ * injected into the engine seam; runtime exposes no override. Typed HTTP is
+ * decided by status alone (401/403), renewal errors by their exact classes,
+ * and every other non-HTTP value delegates to the established fleet predicate,
+ * so typed HTTP 5xx/409 text can never fall through to wording.
+ */
+function isCredentialLoss(error: unknown): boolean {
+  if (error instanceof CommandHttpError) {
+    return error.status === 401 || error.status === 403;
+  }
+  if (
+    error instanceof RenewalReauthorisationRequired ||
+    error instanceof RenewalRevoked
+  ) {
+    return true;
+  }
+  return isFollowCredentialFailure(error);
 }
 
 function asError(error: unknown): Error {
@@ -149,12 +175,16 @@ export async function runListenerRuntime(
   const abort = options.signal;
   const client = new ThinCommandClient(options.target, options.fetcher);
   const poster: ListenerReplyPoster = options.poster ?? {
-    post: async ({ signal, body, commandId }) => {
+    post: async ({ signal, body, commandId, abortSignal }) => {
       const credential = await options.credentialSession.bearer();
       const result = await client.sendSignal({
         workspaceId: options.workspaceId,
         credential,
         commandId,
+        // The engine-provided caller signal becomes the transport's caller
+        // signal; no second signal is constructed and the command envelope is
+        // unchanged.
+        ...(abortSignal === undefined ? {} : { signal: abortSignal }),
         command: {
           kind: "post_signal",
           signal_kind: "note",
@@ -173,6 +203,11 @@ export async function runListenerRuntime(
     model: options.model,
     poster,
     now,
+    // The runtime caller signal is cancellation only; the closed credential
+    // predicate is wired into the engine seam so credential loss during reply
+    // posting stops as credential instead of terminalizing the effect.
+    ...(options.signal === undefined ? {} : { signal: options.signal }),
+    isCredentialFailure: isCredentialLoss,
   });
   let malformedWarnings = 0;
   const readPage = options.readPage ?? (async (input) =>
@@ -244,16 +279,20 @@ export async function runListenerRuntime(
         requireCapabilities(page);
         readAttempt = 0;
       } catch (error) {
-        if (abort?.aborted || isAbort(error)) {
+        // Exact caller abort state is authoritative, then the closed credential
+        // predicate, then name-only AbortError. This preserves an explicit
+        // caller abort that already won while preventing hostile error message
+        // text from impersonating cancellation.
+        if (abort?.aborted) {
           stop = { reason: "cancelled" };
           break;
         }
-        if (
-          isFollowCredentialFailure(error) ||
-          error instanceof RenewalReauthorisationRequired ||
-          error instanceof RenewalRevoked
-        ) {
+        if (isCredentialLoss(error)) {
           stop = { reason: "credential", error: asError(error) };
+          break;
+        }
+        if (isAbort(error)) {
+          stop = { reason: "cancelled" };
           break;
         }
         if (isRetryableFollowError(error)) {
@@ -299,7 +338,15 @@ export async function runListenerRuntime(
         try {
           result = await engine.process(signal);
         } catch (error) {
-          if (abort?.aborted || isAbort(error)) {
+          if (abort?.aborted) {
+            stop = { reason: "cancelled" };
+            break;
+          }
+          if (isCredentialLoss(error)) {
+            stop = { reason: "credential", error: asError(error) };
+            break;
+          }
+          if (isAbort(error)) {
             stop = { reason: "cancelled" };
             break;
           }
