@@ -245,7 +245,7 @@ The fresh claim transaction follows this exact normative step ordering; implemen
 9. compute effective limit (`min(request.limit, slots)`);
 10. select candidate delivery rows `FOR UPDATE SKIP LOCKED` bounded by effective limit and write fresh lease fields;
 11. count exact live-unacked pending delivery count;
-12. write body-free idempotency ledger row / replay response;
+12. write the body-free idempotency ledger row;
 13. hydrate immutable signal bodies for the authenticated response and return.
 
 Claim response shape:

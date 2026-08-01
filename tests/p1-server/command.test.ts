@@ -6500,6 +6500,7 @@ test("durable-delivery: wrong principal/lease, revoked token, delivery_unavailab
     const auditRows = await sql<{ audit_id: string; detail: string | null }[]>`
       SELECT audit_id, detail FROM swarm.audit_log
       WHERE workspace_id = ${f.workspaceA}::uuid
+        AND actor_agent_principal = ${rateAgent.principalId}::uuid
         AND command_kind = 'claim_agent_inbox'
         AND outcome = 'rate_limit'
         AND reason = 'delivery_claim_rate_limited'
@@ -6509,15 +6510,41 @@ test("durable-delivery: wrong principal/lease, revoked token, delivery_unavailab
     for (const marker of forbiddenMarkers) {
       assert.equal(auditText.includes(marker), false, `audit contains forbidden marker: ${marker}`);
     }
+    // The audit projection holds only audit_id and detail, and the rate-limit
+    // audit writes no detail, so the row is null/body-free on top of the
+    // forbidden-marker check.
+    assert.equal(auditRows[0]?.detail, null, "rate-limit audit detail is null/body-free");
 
+    // The security alert intentionally carries private correlation fields
+    // (workspace id and recipient principal id), so its forbidden list
+    // excludes exactly those two while keeping every credential/body/about/
+    // listener/signal/owner/token/run/command marker.
+    const alertForbiddenMarkers = forbiddenMarkers.filter(
+      (marker) => marker !== rateAgent.principalId && marker !== f.workspaceA,
+    );
     const alertRows = await sql<{ alert_id: string; detail: unknown }[]>`
       SELECT alert_id, detail FROM swarm.security_alerts
       WHERE kind = 'delivery_claim_rate_limit'
         AND detail->>'recipient_principal_id' = ${rateAgent.principalId}
     `;
     assert.equal(alertRows.length, 1, "exactly one rate limit security alert written");
+    const alertDetail = alertRows[0]!.detail as Record<string, unknown>;
+    assert.deepEqual(
+      Object.keys(alertDetail).sort(),
+      ["limit", "operation", "recipient_principal_id", "resets_at", "workspace_id"],
+      "alert detail key set is exactly the allowed correlation projection",
+    );
+    assert.equal(alertDetail.workspace_id, f.workspaceA);
+    assert.equal(alertDetail.recipient_principal_id, rateAgent.principalId);
+    assert.equal(alertDetail.operation, "claim");
+    assert.equal(alertDetail.limit, 120);
+    assert.equal(
+      alertDetail.resets_at,
+      claim121.body.resets_at,
+      "alert resets_at equals the refusal response's resets_at",
+    );
     const alertText = JSON.stringify(alertRows[0]);
-    for (const marker of forbiddenMarkers) {
+    for (const marker of alertForbiddenMarkers) {
       assert.equal(alertText.includes(marker), false, `alert contains forbidden marker: ${marker}`);
     }
 
@@ -6924,6 +6951,124 @@ test("durable-delivery: active-lease TTL race; backlog >100 oldest-first; RLS/gr
     `;
     assert.equal(Number(bulkCount), 150);
 
+    // Oldest-first coverage: identical created_at/enqueued_at means claim order
+    // is the database's own UUID order, so sort the 150 ids in the database
+    // instead of assuming JavaScript lexical ordering matches PostgreSQL.
+    const orderedIds = (
+      await sql<{ id: string }[]>`
+        SELECT id::text AS id
+        FROM swarm.signals
+        WHERE id = ANY(${bulkIds}::uuid[])
+        ORDER BY id
+      `
+    ).map((row) => row.id);
+    assert.equal(orderedIds.length, 150, "database returns all 150 bulk ids");
+
+    // Claim exactly 100 through the public delivery command.
+    const bulkInst1 = randomUUID();
+    const bulkClaim1 = await issueDelivery(f, receiver.token, {
+      kind: "claim_agent_inbox",
+      listener_instance_id: bulkInst1,
+      limit: 100,
+    });
+    assert.equal(bulkClaim1.status, 200, bulkClaim1.text);
+    assert.equal(bulkClaim1.body.pending_delivery_count, 150);
+    const bulkDels1 = bulkClaim1.body.deliveries as Array<Record<string, unknown>>;
+    assert.equal(bulkDels1.length, 100, "first claim of the 150 backlog returns exactly 100");
+    const bulkClaimed1 = bulkDels1.map((delivery) =>
+      String((delivery.signal as Record<string, unknown>).id)
+    );
+    assert.deepEqual(
+      bulkClaimed1,
+      orderedIds.slice(0, 100),
+      "first 100 returned ids equal the first 100 database-UUID-sorted ids in order",
+    );
+    assert.equal(new Set(bulkClaimed1).size, 100, "first claim returns 100 unique ids");
+
+    // Claim again at capacity: 200 with zero deliveries, and the full ordered
+    // unacked snapshot is unchanged by the no-op claim.
+    const bulkSnapshot = async () =>
+      await sql<Record<string, unknown>[]>`
+        SELECT *
+        FROM swarm.signal_deliveries
+        WHERE recipient_agent_principal_id = ${receiver.principalId}::uuid
+          AND acked_at IS NULL
+        ORDER BY signal_id
+      `;
+    const snapshotBeforeNoop = await bulkSnapshot();
+    const bulkClaim2 = await issueDelivery(f, receiver.token, {
+      kind: "claim_agent_inbox",
+      listener_instance_id: randomUUID(),
+      limit: 100,
+    });
+    assert.equal(bulkClaim2.status, 200, bulkClaim2.text);
+    assert.equal(
+      (bulkClaim2.body.deliveries as unknown[]).length,
+      0,
+      "claim at capacity returns zero deliveries",
+    );
+    assert.equal(bulkClaim2.body.pending_delivery_count, 150);
+    assert.deepEqual(
+      await bulkSnapshot(),
+      snapshotBeforeNoop,
+      "no-op capacity claim leaves the full ordered delivery snapshot unchanged",
+    );
+
+    // ACK the exact 100 through the public ACK command with each returned
+    // lease id and the same listener identity; never raw-terminalize rows.
+    for (const delivery of bulkDels1) {
+      const acked = await issueDelivery(f, receiver.token, {
+        kind: "ack_agent_delivery",
+        signal_id: String((delivery.signal as Record<string, unknown>).id),
+        lease_id: String(delivery.lease_id),
+        listener_instance_id: bulkInst1,
+        outcome: "observed",
+        last_error_code: null,
+      });
+      assert.equal(acked.status, 200, acked.text);
+      assert.equal(acked.body.outcome, "observed");
+    }
+
+    // Claim limit 100 again: exactly the remaining 50 in exact order, with no
+    // duplicate across batches.
+    const bulkInst3 = randomUUID();
+    const bulkClaim3 = await issueDelivery(f, receiver.token, {
+      kind: "claim_agent_inbox",
+      listener_instance_id: bulkInst3,
+      limit: 100,
+    });
+    assert.equal(bulkClaim3.status, 200, bulkClaim3.text);
+    assert.equal(bulkClaim3.body.pending_delivery_count, 50);
+    const bulkDels3 = bulkClaim3.body.deliveries as Array<Record<string, unknown>>;
+    assert.equal(bulkDels3.length, 50, "second claim returns the remaining 50");
+    const bulkClaimed3 = bulkDels3.map((delivery) =>
+      String((delivery.signal as Record<string, unknown>).id)
+    );
+    assert.deepEqual(
+      bulkClaimed3,
+      orderedIds.slice(100),
+      "remaining 50 ids equal the last 50 database-UUID-sorted ids in order",
+    );
+    assert.equal(
+      new Set([...bulkClaimed1, ...bulkClaimed3]).size,
+      150,
+      "no duplicate ids across batches",
+    );
+
+    // ACK the 50 through the public command path so the fixture is bounded.
+    for (const delivery of bulkDels3) {
+      const acked = await issueDelivery(f, receiver.token, {
+        kind: "ack_agent_delivery",
+        signal_id: String((delivery.signal as Record<string, unknown>).id),
+        lease_id: String(delivery.lease_id),
+        listener_instance_id: bulkInst3,
+        outcome: "observed",
+        last_error_code: null,
+      });
+      assert.equal(acked.status, 200, acked.text);
+      assert.equal(acked.body.outcome, "observed");
+    }
+
     // RLS: assert relrowsecurity AND relforcerowsecurity on swarm.signal_deliveries.
     const [sec] = await sql<{ rls: boolean; force_rls: boolean }[]>`
       SELECT relrowsecurity AS rls, relforcerowsecurity AS force_rls
@@ -7049,8 +7194,30 @@ test("durable-delivery: active-lease TTL race; backlog >100 oldest-first; RLS/gr
       `;
       assert.equal(Number(purged70?.n), 0, "70-day terminal row is purged under 60-day retention via zero-argument production function");
 
-      // 70-day-old unacked row is NEVER purged.
-      const unackedId = bulkIds[1]!;
+      // 70-day-old unacked row is NEVER purged. The 150 bulk rows were drained
+      // and acked by the oldest-first coverage above, so this probe uses a
+      // dedicated fresh unacked signal instead of a bulk row.
+      const unackedSigId = randomUUID();
+      await sql`
+        INSERT INTO swarm.signals (
+          id, workspace_id, from_principal, from_kind, to_user_id,
+          to_agent_principal_id, in_reply_to, about, kind, body, until, created_at
+        ) VALUES (
+          ${unackedSigId}::uuid,
+          ${f.workspaceA}::uuid,
+          ${f.ua}::uuid,
+          'user',
+          NULL,
+          ${receiver.principalId}::uuid,
+          NULL,
+          'dd-unacked-probe',
+          'ask',
+          'dd-unacked-probe-body',
+          ${new Date(Date.now() + 86400000).toISOString()},
+          ${new Date().toISOString()}
+        )
+      `;
+      const unackedId = unackedSigId;
       await sql`ALTER TABLE swarm.signals DISABLE TRIGGER signals_append_only`;
       try {
         await sql`
