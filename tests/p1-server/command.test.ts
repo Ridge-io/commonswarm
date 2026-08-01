@@ -27,6 +27,11 @@ import {
   type EventEnvelope,
   type TaskState,
 } from "../../src/protocol/index.js";
+import {
+  claimAgentInbox,
+  DELIVERY_MAX_OUTSTANDING_LEASES,
+  type DeliveryClaimLedgerResponse,
+} from "../../supabase/functions/command/durable-delivery.js";
 
 interface LocalEnvironment {
   API_URL: string;
@@ -8829,5 +8834,741 @@ test("durable-delivery: table and function privilege boundaries (swarm_command D
     assert.equal(cronJob?.schedule, "23 4 * * *", "cron schedule is '23 4 * * *'");
     assert.equal(cronJob?.active, true, "cron job active is true");
     assert.equal(cronJob?.command, "SELECT swarm.purge_terminal_signal_deliveries()", "cron command is zero-argument SELECT swarm.purge_terminal_signal_deliveries()");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase B — revocation in exact queue order, lock strength, and the
+// 100-live-lease ceiling (base 3039cce13dbb8d70d3c09e0fc75030df4287deec).
+// Bound: this file only. The production claimAgentInbox helper is imported and
+// called directly for the lock/cap contracts — never cloned.
+// ---------------------------------------------------------------------------
+
+interface BlockedBackend {
+  pid: number;
+  query: string;
+  blockingPids: number[];
+}
+
+/**
+ * Poll pg_stat_activity (bounded, five-second maximum) for active backends that
+ * are blocked on a lock, whose current query matches queryPattern and whose
+ * pg_blocking_pids includes every pid in blockerPids. With transitiveBlockers,
+ * a backend also matches when its direct blockers' blockers include the pid —
+ * the two-claim queue chains the second claim on the first (tuple wait), so
+ * both are queued behind the principal holder. Returns the matching backends or
+ * throws with bounded diagnostics. Exact backend PIDs are matched, never
+ * global pg_locks counts, loops, or fixed sleeps.
+ */
+async function waitForBlockedBackends(opts: {
+  queryPattern: RegExp;
+  blockerPids: number[];
+  minCount: number;
+  label: string;
+  deadlineMs?: number;
+  transitiveBlockers?: boolean;
+}): Promise<BlockedBackend[]> {
+  const deadlineMs = opts.deadlineMs ?? 5000;
+  const start = Date.now();
+  let last: BlockedBackend[] = [];
+  while (Date.now() - start < deadlineMs) {
+    const lockWaiters = await sql<{
+      pid: string | number;
+      query: string;
+      blocking: (string | number)[] | null;
+    }[]>`
+      SELECT
+        a.pid::int AS pid,
+        a.query::text AS query,
+        COALESCE(pg_blocking_pids(a.pid), '{}') AS blocking
+      FROM pg_stat_activity AS a
+      WHERE a.datname = current_database()
+        AND a.pid <> pg_backend_pid()
+        AND a.state = 'active'
+        AND a.wait_event_type = 'Lock'
+    `;
+    const all = lockWaiters.map((r) => ({
+      pid: Number(r.pid),
+      query: r.query,
+      blockingPids: (Array.isArray(r.blocking) ? r.blocking : []).map(Number),
+    }));
+    const blockingByPid = new Map(all.map((b) => [b.pid, b.blockingPids]));
+    const matches = all.filter((b) => {
+      if (!opts.queryPattern.test(b.query)) return false;
+      return opts.blockerPids.every((bp) => {
+        if (b.blockingPids.includes(bp)) return true;
+        if (opts.transitiveBlockers === true) {
+          return b.blockingPids.some((blk) =>
+            (blockingByPid.get(blk) ?? []).includes(bp)
+          );
+        }
+        return false;
+      });
+    });
+    last = matches;
+    if (matches.length >= opts.minCount) return matches;
+    await delay(50);
+  }
+  throw new Error(
+    `${opts.label}: expected ${opts.minCount} blocked backend(s) matching ${opts.queryPattern} with blockers [${opts.blockerPids.join(",")}] within ${deadlineMs}ms; observed=${JSON.stringify(last.map((b) => ({ pid: b.pid, blocking: b.blockingPids, query: b.query.slice(0, 80) })))}`,
+  );
+}
+
+interface RetainedLock {
+  pid: number;
+  release: () => void;
+  done: Promise<unknown>;
+}
+
+/**
+ * Open a retained transaction that locks the exact principal row in the given
+ * mode and suspends until release() is called. Returns the transaction's exact
+ * backend PID. The lock mode is a test-controlled lever for building the lock
+ * queues the Phase B contracts require; production code never changes.
+ */
+async function retainPrincipalRowLock(
+  principalId: string,
+  workspaceId: string,
+  mode: "FOR UPDATE" | "FOR SHARE",
+): Promise<RetainedLock> {
+  let release: () => void = () => {};
+  let markReady: () => void = () => {};
+  const ready = new Promise<void>((r) => {
+    markReady = r;
+  });
+  let pid = 0;
+  const done = sql.begin(async (tx) => {
+    const p = await tx<{ pid: string | number }[]>`SELECT pg_backend_pid() AS pid`;
+    pid = Number(p[0]?.pid);
+    if (mode === "FOR UPDATE") {
+      await tx`
+        SELECT principal_id, revoked_at
+        FROM swarm.agent_principals
+        WHERE workspace_id = ${workspaceId}::uuid
+          AND principal_id = ${principalId}::uuid
+        FOR UPDATE
+      `;
+    } else {
+      await tx`
+        SELECT principal_id, revoked_at
+        FROM swarm.agent_principals
+        WHERE workspace_id = ${workspaceId}::uuid
+          AND principal_id = ${principalId}::uuid
+        FOR SHARE
+      `;
+    }
+    markReady();
+    await new Promise<void>((r) => {
+      release = r;
+    });
+    return null;
+  });
+  await Promise.race([
+    ready,
+    delay(5000).then(() => {
+      throw new Error(
+        `retainPrincipalRowLock(${mode}) did not lock the principal row within 5s`,
+      );
+    }),
+  ]);
+  return { pid, release: () => release(), done };
+}
+
+test("durable-delivery: Phase B revocation wins in exact queue order", { timeout: 30_000 }, async () => {
+  await scenario(async (f) => {
+    const agent = await createFixtureAgent(f, f.ua, "dd-pb-revoke");
+    const listener = randomUUID();
+    const claimCId = commandId("claim_agent_inbox");
+    const posted = await issueSignal(f, f.uaJwt, {
+      kind: "post_signal",
+      signal_kind: "ask",
+      body: "dd-pb-revoke-signal",
+      to_user_id: null,
+      to_agent_principal_id: agent.principalId,
+      in_reply_to: null,
+      about: "dd-pb-revoke",
+    });
+    assert.equal(posted.status, 200, posted.text);
+    const signalId = String((posted.body.signal as Record<string, unknown>).id);
+
+    // 1. Snapshot the delivery row and prove the idempotency row is absent.
+    const deliveryRowSql = `
+      SELECT
+        signal_id, workspace_id, recipient_agent_principal_id, enqueued_at,
+        lease_id, leased_by, leased_until, last_lease_id, last_leased_by,
+        attempt_count, lease_expiry_count, last_lease_expired_at,
+        delivered_at, acked_at, ack_outcome, last_error_code, updated_at
+      FROM swarm.signal_deliveries
+      WHERE signal_id = '${signalId}'::uuid
+        AND recipient_agent_principal_id = '${agent.principalId}'::uuid
+    `;
+    const snapshot = await sql.unsafe<Record<string, unknown>[]>(deliveryRowSql);
+    assert.equal(snapshot.length, 1, "delivery row exists");
+    const idemCount = async () => {
+      const rows = await sql<{ n: string | number }[]>`
+        SELECT count(*)::int AS n FROM swarm.idempotency_keys
+        WHERE principal_kind = 'agent'
+          AND principal_id = ${agent.principalId}
+          AND command_id = ${claimCId}
+      `;
+      return Number(rows[0]?.n ?? 0);
+    };
+    assert.equal(await idemCount(), 0, "idempotency row absent before the race");
+
+    // 2. Transaction A locks the exact principal FOR UPDATE; retain it.
+    const a = await retainPrincipalRowLock(agent.principalId, f.workspaceA, "FOR UPDATE");
+
+    // 3. Transaction B records its PID, executes the principal revocation
+    //    UPDATE, and queues behind A. Raw transaction B proves the row-order
+    //    contract, not the entire public revoke-command state machine.
+    let bPid = 0;
+    let markBUpdated: () => void = () => {};
+    const bUpdated = new Promise<void>((r) => {
+      markBUpdated = r;
+    });
+    let releaseB: () => void = () => {};
+    const bGate = new Promise<void>((r) => {
+      releaseB = r;
+    });
+    const bDone = sql.begin(async (tx) => {
+      const p = await tx<{ pid: string | number }[]>`SELECT pg_backend_pid() AS pid`;
+      bPid = Number(p[0]?.pid);
+      await tx`
+        UPDATE swarm.agent_principals
+        SET revoked_at = statement_timestamp()
+        WHERE workspace_id = ${f.workspaceA}::uuid
+          AND principal_id = ${agent.principalId}::uuid
+      `;
+      markBUpdated();
+      await bGate;
+      return null;
+    });
+    let claimC: Promise<CommandResponse> | null = null;
+    try {
+      // 4. Prove B's exact UPDATE is blocked by A.
+      const bBlocked = await waitForBlockedBackends({
+        queryPattern: /UPDATE swarm\.agent_principals/,
+        blockerPids: [a.pid],
+        minCount: 1,
+        label: "raw revocation UPDATE blocked by the principal holder",
+      });
+      assert.equal(bBlocked[0]?.pid, bPid, "the blocked backend is transaction B");
+
+      // 5. Start public claim C while the revocation remains uncommitted.
+      claimC = issueDelivery(f, agent.token, {
+        kind: "claim_agent_inbox",
+        listener_instance_id: listener,
+        limit: 10,
+      }, claimCId);
+
+      // 6. Prove C reached the production principal SELECT ... FOR UPDATE after
+      //    authentication and its initial idempotency lookup (both precede
+      //    claimAgentInbox step 1 in the handler), and is queued behind B.
+      const cBlocked = await waitForBlockedBackends({
+        queryPattern: /FROM swarm\.agent_principals/,
+        blockerPids: [bPid],
+        minCount: 1,
+        label: "public claim C queued on the production principal lock behind B",
+      });
+      assert.match(
+        cBlocked[0]?.query ?? "",
+        /FOR UPDATE/,
+        "C is blocked on the production principal FOR UPDATE lock query",
+      );
+      assert.equal(
+        cBlocked[0]?.blockingPids.includes(bPid),
+        true,
+        "B is among C's blocker PIDs",
+      );
+      assert.equal(await idemCount(), 0, "no idempotency row while claim C is queued");
+
+      // 7. Release A; await B commit, then C. Never await B before releasing A.
+      a.release();
+      await a.done;
+      await bUpdated;
+      releaseB();
+      await bDone;
+      const cRes = await claimC;
+
+      // 8. C returns exact 403 {"error":"delivery_unavailable"}.
+      assert.equal(cRes.status, 403, cRes.text);
+      assert.deepEqual(
+        cRes.body,
+        { error: "delivery_unavailable" },
+        "exact 403 delivery_unavailable body",
+      );
+
+      // 9. Delivery lease/attempt fields remain byte-for-byte unchanged and no
+      //    idempotency row appears.
+      const after = await sql.unsafe<Record<string, unknown>[]>(deliveryRowSql);
+      assert.deepEqual(
+        JSON.parse(JSON.stringify(after)),
+        JSON.parse(JSON.stringify(snapshot)),
+        "delivery row is byte-for-byte unchanged after the revoked claim",
+      );
+      assert.equal(await idemCount(), 0, "no idempotency row appears after the race");
+      const revokedRow = await sql<{ revoked_at: Date | null }[]>`
+        SELECT revoked_at FROM swarm.agent_principals
+        WHERE principal_id = ${agent.principalId}::uuid
+      `;
+      assert.ok(revokedRow[0]?.revoked_at !== null, "the principal is revoked in the database");
+    } finally {
+      a.release();
+      releaseB();
+      await Promise.allSettled([
+        a.done,
+        bDone,
+        claimC ?? Promise.resolve(null),
+      ]);
+    }
+  });
+});
+
+test("durable-delivery: Phase B lock strength — FOR SHARE holder blocks the production principal-lock claim", { timeout: 30_000 }, async () => {
+  await scenario(async (f) => {
+    const agent = await createFixtureAgent(f, f.ua, "dd-pb-lock-strength");
+    const listener = randomUUID();
+    const posted = await issueSignal(f, f.uaJwt, {
+      kind: "post_signal",
+      signal_kind: "ask",
+      body: "dd-pb-lock-strength-signal",
+      to_user_id: null,
+      to_agent_principal_id: agent.principalId,
+      in_reply_to: null,
+      about: "dd-pb-lock-strength",
+    });
+    assert.equal(posted.status, 200, posted.text);
+    const signalId = String((posted.body.signal as Record<string, unknown>).id);
+    const enqueued = await sql<{ n: string | number }[]>`
+      SELECT count(*)::int AS n FROM swarm.signal_deliveries
+      WHERE signal_id = ${signalId}::uuid
+        AND recipient_agent_principal_id = ${agent.principalId}::uuid
+    `;
+    assert.equal(Number(enqueued[0]?.n), 1, "signal enqueued");
+
+    // Hold the principal row FOR SHARE — strictly weaker than the production
+    // FOR UPDATE. A FOR SHARE holder blocks the claim only if the production
+    // lock is at least FOR UPDATE strength.
+    const holder = await retainPrincipalRowLock(agent.principalId, f.workspaceA, "FOR SHARE");
+    let claimPid = 0;
+    let claimLedger: DeliveryClaimLedgerResponse | null = null;
+    const claim = sql.begin(async (tx) => {
+      const p = await tx<{ pid: string | number }[]>`SELECT pg_backend_pid() AS pid`;
+      claimPid = Number(p[0]?.pid);
+      claimLedger = await claimAgentInbox(tx, {
+        workspaceId: f.workspaceA,
+        recipientPrincipalId: agent.principalId,
+        receiverOwnerUserId: f.ua,
+        listenerInstanceId: listener,
+        limit: 10,
+      });
+      return claimLedger;
+    });
+    try {
+      // The production principal-lock query must block on the FOR SHARE holder.
+      const blocked = await waitForBlockedBackends({
+        queryPattern: /FROM swarm\.agent_principals/,
+        blockerPids: [holder.pid],
+        minCount: 1,
+        label: "FOR SHARE holder blocks the direct claim",
+      });
+      assert.equal(
+        blocked[0]?.pid,
+        claimPid,
+        "the blocked backend is the exact claim backend PID",
+      );
+      assert.match(
+        blocked[0]?.query ?? "",
+        /FOR UPDATE/,
+        "the blocked query is the production principal FOR UPDATE lock",
+      );
+      // Release and await the claim.
+      holder.release();
+      await holder.done;
+      const ledger = await claim;
+      assert.ok(ledger, "claim completes after the FOR SHARE holder releases");
+      assert.equal(ledger.delivery_refs.length, 1, "claim leases exactly the pending signal");
+      assert.equal(ledger.delivery_refs[0]?.signal_id, signalId, "the leased signal is the posted one");
+      // Tidy: ack the lease through the public path.
+      const acked = await issueDelivery(f, agent.token, {
+        kind: "ack_agent_delivery",
+        signal_id: signalId,
+        lease_id: String(ledger.delivery_refs[0]!.lease_id),
+        listener_instance_id: listener,
+        outcome: "observed",
+        last_error_code: null,
+      });
+      assert.equal(acked.status, 200, acked.text);
+    } finally {
+      holder.release();
+      await Promise.allSettled([holder.done, claim]);
+    }
+  });
+});
+
+test("durable-delivery: Phase B concurrent cap — two claims behind one principal holder yield exactly 100 live leases", { timeout: 30_000 }, async () => {
+  await scenario(async (f) => {
+    assert.equal(DELIVERY_MAX_OUTSTANDING_LEASES, 100, "the cap constant is 100, never 120");
+    const capAgent = await createFixtureAgent(f, f.ua, "dd-pb-cap");
+    // At least 150 pending rows, all schema-valid direct signals (the trigger
+    // enqueues them).
+    const values: Record<string, unknown>[] = [];
+    const until = new Date(Date.now() + 86400000).toISOString();
+    for (let i = 0; i < 150; i++) {
+      values.push({
+        id: randomUUID(),
+        workspace_id: f.workspaceA,
+        from_principal: f.ua,
+        from_kind: "user",
+        to_user_id: null,
+        to_agent_principal_id: capAgent.principalId,
+        in_reply_to: null,
+        about: "dd-pb-cap",
+        kind: "ask",
+        body: `pb-cap-${i}`,
+        until,
+        created_at: new Date().toISOString(),
+      });
+    }
+    await sql`INSERT INTO swarm.signals ${sql(values)}`;
+    const pending = await sql<{ n: string | number }[]>`
+      SELECT count(*)::int AS n FROM swarm.signal_deliveries
+      WHERE workspace_id = ${f.workspaceA}::uuid
+        AND recipient_agent_principal_id = ${capAgent.principalId}::uuid
+        AND acked_at IS NULL
+    `;
+    assert.equal(Number(pending[0]?.n), 150, "150 pending delivery rows");
+
+    // 1. Transaction A holds its principal row FOR UPDATE.
+    const a = await retainPrincipalRowLock(capAgent.principalId, f.workspaceA, "FOR UPDATE");
+
+    // 2. Two retained direct claims, distinct listeners, limit 100, PIDs recorded.
+    const listener1 = randomUUID();
+    const listener2 = randomUUID();
+    let pid1 = 0;
+    let pid2 = 0;
+    let ledger1: DeliveryClaimLedgerResponse | null = null;
+    let ledger2: DeliveryClaimLedgerResponse | null = null;
+    const claim1 = sql.begin(async (tx) => {
+      const p = await tx<{ pid: string | number }[]>`SELECT pg_backend_pid() AS pid`;
+      pid1 = Number(p[0]?.pid);
+      ledger1 = await claimAgentInbox(tx, {
+        workspaceId: f.workspaceA,
+        recipientPrincipalId: capAgent.principalId,
+        receiverOwnerUserId: f.ua,
+        listenerInstanceId: listener1,
+        limit: 100,
+      });
+      return ledger1;
+    });
+    const claim2 = sql.begin(async (tx) => {
+      const p = await tx<{ pid: string | number }[]>`SELECT pg_backend_pid() AS pid`;
+      pid2 = Number(p[0]?.pid);
+      ledger2 = await claimAgentInbox(tx, {
+        workspaceId: f.workspaceA,
+        recipientPrincipalId: capAgent.principalId,
+        receiverOwnerUserId: f.ua,
+        listenerInstanceId: listener2,
+        limit: 100,
+      });
+      return ledger2;
+    });
+    try {
+      // 3. Prove both production lock queries are blocked by A. The lock queue
+      //    chains: the second claim waits on the first claim's tuple lock, so
+      //    the check is transitive (blockers, or blockers' blockers, include A).
+      const blocked = await waitForBlockedBackends({
+        queryPattern: /FROM swarm\.agent_principals/,
+        blockerPids: [a.pid],
+        minCount: 2,
+        label: "both direct claims block on the principal FOR UPDATE holder",
+        transitiveBlockers: true,
+      });
+      assert.deepEqual(
+        new Set(blocked.map((b) => b.pid)),
+        new Set([pid1, pid2]),
+        "both blocked backends are exactly the two claim backends",
+      );
+      for (const b of blocked) {
+        assert.match(
+          b.query,
+          /FOR UPDATE/,
+          "the blocked query is the production principal FOR UPDATE lock",
+        );
+      }
+
+      // 4. Release A and await both claims to completion.
+      a.release();
+      await a.done;
+      const l1 = await claim1;
+      const l2 = await claim2;
+      assert.ok(l1 && l2, "both claims complete after the holder releases");
+
+      // 5. Combined references equal exactly 100; signal and lease IDs unique;
+      //    every ref carries the sender_owner_relation capability field.
+      const allRefs = [...l1.delivery_refs, ...l2.delivery_refs];
+      assert.equal(
+        allRefs.length,
+        100,
+        "combined references equal exactly 100 — the cap is 100, never 120",
+      );
+      assert.equal(
+        new Set(allRefs.map((r) => r.signal_id)).size,
+        allRefs.length,
+        "signal ids are unique across both claims",
+      );
+      assert.equal(
+        new Set(allRefs.map((r) => r.lease_id)).size,
+        allRefs.length,
+        "lease ids are unique across both claims",
+      );
+      for (const ref of allRefs) {
+        assert.ok(
+          ref.sender_owner_relation === "same_owner" ||
+            ref.sender_owner_relation === "cross_owner" ||
+            ref.sender_owner_relation === "unknown",
+          "every delivery ref carries the sender_owner_relation capability field",
+        );
+      }
+      // DB active live leases equal exactly 100.
+      const live = await sql<{ n: string | number }[]>`
+        SELECT count(*)::int AS n FROM swarm.signal_deliveries
+        WHERE workspace_id = ${f.workspaceA}::uuid
+          AND recipient_agent_principal_id = ${capAgent.principalId}::uuid
+          AND acked_at IS NULL
+          AND lease_id IS NOT NULL
+          AND leased_until > statement_timestamp()
+      `;
+      assert.equal(Number(live[0]?.n), 100, "DB active live leases equal exactly 100");
+      // Every live tuple has all three lease fields populated.
+      const partialLease = await sql<{ n: string | number }[]>`
+        SELECT count(*)::int AS n FROM swarm.signal_deliveries
+        WHERE workspace_id = ${f.workspaceA}::uuid
+          AND recipient_agent_principal_id = ${capAgent.principalId}::uuid
+          AND acked_at IS NULL
+          AND lease_id IS NOT NULL
+          AND num_nonnulls(lease_id, leased_by, leased_until) <> 3
+      `;
+      assert.equal(Number(partialLease[0]?.n), 0, "every live lease tuple has all three lease fields");
+      // leased_by matches its claim's listener.
+      const leaseRows = await sql<{ lease_id: string; leased_by: string }[]>`
+        SELECT lease_id::text AS lease_id, leased_by::text AS leased_by
+        FROM swarm.signal_deliveries
+        WHERE workspace_id = ${f.workspaceA}::uuid
+          AND recipient_agent_principal_id = ${capAgent.principalId}::uuid
+          AND acked_at IS NULL
+          AND lease_id IS NOT NULL
+      `;
+      const byLease = new Map(leaseRows.map((r) => [r.lease_id, r.leased_by]));
+      for (const ref of l1.delivery_refs) {
+        assert.equal(
+          byLease.get(String(ref.lease_id)),
+          listener1,
+          `lease ${ref.lease_id} is held by listener 1`,
+        );
+      }
+      for (const ref of l2.delivery_refs) {
+        assert.equal(
+          byLease.get(String(ref.lease_id)),
+          listener2,
+          `lease ${ref.lease_id} is held by listener 2`,
+        );
+      }
+      // No row has attempt_count > 1.
+      const retried = await sql<{ n: string | number }[]>`
+        SELECT count(*)::int AS n FROM swarm.signal_deliveries
+        WHERE workspace_id = ${f.workspaceA}::uuid
+          AND recipient_agent_principal_id = ${capAgent.principalId}::uuid
+          AND attempt_count > 1
+      `;
+      assert.equal(Number(retried[0]?.n), 0, "no delivery row has attempt_count > 1");
+
+      // 6. The remaining 50 rows are unleased with attempt count zero.
+      const unleased = await sql<{ n: string | number }[]>`
+        SELECT count(*)::int AS n FROM swarm.signal_deliveries
+        WHERE workspace_id = ${f.workspaceA}::uuid
+          AND recipient_agent_principal_id = ${capAgent.principalId}::uuid
+          AND acked_at IS NULL
+          AND lease_id IS NULL
+          AND attempt_count = 0
+      `;
+      assert.equal(Number(unleased[0]?.n), 50, "remaining 50 rows are unleased with attempt count zero");
+
+      // The public claim path still exposes all three capability fields at
+      // capacity (claim at capacity returns zero deliveries but carries them).
+      const pubCap = await issueDelivery(f, capAgent.token, {
+        kind: "claim_agent_inbox",
+        listener_instance_id: randomUUID(),
+        limit: 100,
+      });
+      assert.equal(pubCap.status, 200, pubCap.text);
+      assert.deepEqual(
+        pubCap.body.capabilities,
+        { delivery_claim: 1, delivery_ack: 1, sender_owner_relation: 1 },
+        "public claim exposes all three capability fields",
+      );
+      assert.equal(
+        (pubCap.body.deliveries as unknown[]).length,
+        0,
+        "claim at capacity returns zero deliveries",
+      );
+    } finally {
+      a.release();
+      await Promise.allSettled([a.done, claim1, claim2]);
+    }
+  });
+});
+
+test("durable-delivery: Phase B independent sequential 101 boundary", async () => {
+  await scenario(async (f) => {
+    const agent = await createFixtureAgent(f, f.ua, "dd-pb-seq101");
+    const values: Record<string, unknown>[] = [];
+    const until = new Date(Date.now() + 86400000).toISOString();
+    for (let i = 0; i < 101; i++) {
+      values.push({
+        id: randomUUID(),
+        workspace_id: f.workspaceA,
+        from_principal: f.ua,
+        from_kind: "user",
+        to_user_id: null,
+        to_agent_principal_id: agent.principalId,
+        in_reply_to: null,
+        about: "dd-pb-seq101",
+        kind: "ask",
+        body: `pb-seq101-${i}`,
+        until,
+        created_at: new Date().toISOString(),
+      });
+    }
+    await sql`INSERT INTO swarm.signals ${sql(values)}`;
+
+    // 1. Public claim limit 100 returns exactly 100 and pending count 101.
+    const inst1 = randomUUID();
+    const claim1 = await issueDelivery(f, agent.token, {
+      kind: "claim_agent_inbox",
+      listener_instance_id: inst1,
+      limit: 100,
+    });
+    assert.equal(claim1.status, 200, claim1.text);
+    assert.equal(
+      (claim1.body.deliveries as unknown[]).length,
+      100,
+      "claim limit 100 returns exactly 100 deliveries",
+    );
+    assert.equal(claim1.body.pending_delivery_count, 101, "pending count is 101");
+
+    // 2. Snapshot all 101 ordered rows: signal/lease/listener/deadline,
+    //    attempt, ACK state, and the one unleased signal.
+    const snapshotRows = async () =>
+      await sql<Record<string, unknown>[]>`
+        SELECT
+          d.signal_id::text AS signal_id,
+          d.lease_id::text AS lease_id,
+          d.leased_by::text AS leased_by,
+          d.leased_until::text AS leased_until,
+          d.attempt_count,
+          d.acked_at::text AS acked_at,
+          d.ack_outcome,
+          d.delivered_at::text AS delivered_at,
+          d.updated_at::text AS updated_at,
+          s.until::text AS signal_until
+        FROM swarm.signal_deliveries AS d
+        JOIN swarm.signals AS s
+          ON s.id = d.signal_id
+         AND s.workspace_id = d.workspace_id
+        WHERE d.workspace_id = ${f.workspaceA}::uuid
+          AND d.recipient_agent_principal_id = ${agent.principalId}::uuid
+        ORDER BY d.signal_id
+      `;
+    const snapshot1 = await snapshotRows();
+    assert.equal(snapshot1.length, 101, "snapshot covers all 101 rows");
+    const unleasedRows = snapshot1.filter((r) => r.lease_id === null);
+    assert.equal(unleasedRows.length, 1, "exactly one unleased row after the first claim");
+    const unleasedSignalId = String(unleasedRows[0]!.signal_id);
+
+    // 3. A second public claim at capacity returns 200 with deliveries:[] and
+    //    pending count 101.
+    const claim2 = await issueDelivery(f, agent.token, {
+      kind: "claim_agent_inbox",
+      listener_instance_id: randomUUID(),
+      limit: 100,
+    });
+    assert.equal(claim2.status, 200, claim2.text);
+    assert.deepEqual(claim2.body.deliveries, [], "claim at capacity returns deliveries:[]");
+    assert.equal(claim2.body.pending_delivery_count, 101, "pending count remains 101");
+
+    // 4. The second claim changes no delivery row.
+    assert.deepEqual(
+      await snapshotRows(),
+      snapshot1,
+      "the capacity claim leaves the full ordered snapshot unchanged",
+    );
+
+    // 5. ACK one returned live lease through the public ACK path.
+    const claim1Dels = claim1.body.deliveries as Array<Record<string, unknown>>;
+    const first = claim1Dels[0]!;
+    const acked = await issueDelivery(f, agent.token, {
+      kind: "ack_agent_delivery",
+      signal_id: String((first.signal as Record<string, unknown>).id),
+      lease_id: String(first.lease_id),
+      listener_instance_id: inst1,
+      outcome: "observed",
+      last_error_code: null,
+    });
+    assert.equal(acked.status, 200, acked.text);
+
+    // 6. A third public claim returns exactly the previously unleased signal
+    //    and pending count 100.
+    const inst3 = randomUUID();
+    const claim3 = await issueDelivery(f, agent.token, {
+      kind: "claim_agent_inbox",
+      listener_instance_id: inst3,
+      limit: 100,
+    });
+    assert.equal(claim3.status, 200, claim3.text);
+    const dels3 = claim3.body.deliveries as Array<Record<string, unknown>>;
+    assert.equal(dels3.length, 1, "third claim returns exactly one delivery");
+    assert.equal(
+      String((dels3[0]!.signal as Record<string, unknown>).id),
+      unleasedSignalId,
+      "the third claim returns exactly the previously unleased signal",
+    );
+    assert.equal(claim3.body.pending_delivery_count, 100, "pending count is 100");
+
+    // 7. DB active live leases return to exactly 100.
+    const live = await sql<{ n: string | number }[]>`
+      SELECT count(*)::int AS n FROM swarm.signal_deliveries
+      WHERE workspace_id = ${f.workspaceA}::uuid
+        AND recipient_agent_principal_id = ${agent.principalId}::uuid
+        AND acked_at IS NULL
+        AND lease_id IS NOT NULL
+        AND leased_until > statement_timestamp()
+    `;
+    assert.equal(Number(live[0]?.n), 100, "DB active live leases return to exactly 100");
+
+    // Bounded cleanup: ACK all 100 remaining live leases through the public
+    // ACK path. Never raw-terminalize rows.
+    for (const d of claim1Dels.slice(1)) {
+      const ack = await issueDelivery(f, agent.token, {
+        kind: "ack_agent_delivery",
+        signal_id: String((d.signal as Record<string, unknown>).id),
+        lease_id: String(d.lease_id),
+        listener_instance_id: inst1,
+        outcome: "observed",
+        last_error_code: null,
+      });
+      assert.equal(ack.status, 200, ack.text);
+    }
+    for (const d of dels3) {
+      const ack = await issueDelivery(f, agent.token, {
+        kind: "ack_agent_delivery",
+        signal_id: String((d.signal as Record<string, unknown>).id),
+        lease_id: String(d.lease_id),
+        listener_instance_id: inst3,
+        outcome: "observed",
+        last_error_code: null,
+      });
+      assert.equal(ack.status, 200, ack.text);
+    }
   });
 });
