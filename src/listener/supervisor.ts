@@ -17,6 +17,9 @@ import type {
 
 import type { ListenerPermissionMode } from "./types.js";
 
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
 export interface ListenerSupervisorOptions {
   paths: ListenerPaths;
   profileId: string;
@@ -26,9 +29,16 @@ export interface ListenerSupervisorOptions {
   provider?: ListenerProviderId;
   permissionMode?: ListenerPermissionMode;
   now?: () => number;
+  /**
+   * Runs under starting.lock after the live-socket rejection check, before
+   * the socket can answer. Receives the one proposed UUID and selects the
+   * durable instance UUID (e.g. by opening the delivery journal).
+   */
+  prepare?: (proposedInstanceId: string) => Promise<{ instanceId: string }>;
   run: (
     signal: AbortSignal,
     onEvent: (event: ListenerRuntimeEvent) => void,
+    listenerInstanceId: string,
   ) => Promise<ListenerRuntimeStop>;
 }
 
@@ -60,9 +70,10 @@ export async function runListenerSupervisor(
   const now = options.now ?? Date.now;
   const startedAt = iso(now);
   const controller = new AbortController();
+  const proposedInstanceId = randomUUID();
   let status: ListenerStatus = {
     version: 1,
-    instanceId: randomUUID(),
+    instanceId: proposedInstanceId,
     provider: options.provider ?? "grok",
     ...(options.permissionMode ? { permissionMode: options.permissionMode } : {}),
     profileId: options.profileId,
@@ -76,6 +87,12 @@ export async function runListenerSupervisor(
     stoppedAt: null,
     lastSignalId: null,
     lastErrorCode: null,
+    deliveryMode: null,
+    pendingDeliveryCount: null,
+    lastTerminalDeliveryFailureCount: null,
+    lastTerminalDeliveryFailureAt: null,
+    lastClaimAt: null,
+    lastAckAt: null,
     logPath: options.paths.logPath,
   };
   let writes = Promise.resolve();
@@ -99,6 +116,7 @@ export async function runListenerSupervisor(
     persist();
   };
 
+  const prepare = options.prepare;
   const control = await startListenerControlServer({
     paths: options.paths,
     status: () => structuredClone(status),
@@ -107,6 +125,22 @@ export async function runListenerSupervisor(
       transition("stopping");
       controller.abort();
     },
+    // Selected under starting.lock, after the live-socket rejection and
+    // before the socket can answer, before any status/event persistence.
+    initialize: prepare
+      ? async () => {
+        const selected = await prepare(proposedInstanceId);
+        if (
+          !selected ||
+          typeof selected !== "object" ||
+          typeof selected.instanceId !== "string" ||
+          !UUID_RE.test(selected.instanceId)
+        ) {
+          throw new Error("listener prepare returned an invalid instance id");
+        }
+        status = { ...status, instanceId: selected.instanceId };
+      }
+      : undefined,
   });
   persist();
   log({
@@ -156,7 +190,11 @@ export async function runListenerSupervisor(
   };
 
   try {
-    const stop = await options.run(controller.signal, onEvent);
+    const stop = await options.run(
+      controller.signal,
+      onEvent,
+      status.instanceId,
+    );
     const stoppedAt = iso(now);
     if (stop.reason === "cancelled") {
       transition("stopped", {

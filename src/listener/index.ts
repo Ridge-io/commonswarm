@@ -6,4 +6,5 @@ export * from "./opencode-model.js";
 export * from "./runtime.js";
 export * from "./control.js";
 export * from "./supervisor.js";
+export * from "./delivery-journal.js";
 export * from "./detach.js";
