@@ -3,6 +3,7 @@ import { execFileSync, spawn } from "node:child_process";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { performance } from "node:perf_hooks";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
@@ -8858,6 +8859,18 @@ type SettlementOutcome =
   | { kind: "rejected"; error: unknown };
 
 /**
+ * Records, for the causal control, how many polls cancelled their in-flight
+ * postgres.js query after a must-remain-pending arm won, and how many of those
+ * had the cancellation settlement observed BEFORE the poll returned. A fixed
+ * implementation has awaitedCancels === cancelledPolls; a mutant that drops the
+ * await leaves awaitedCancels at zero regardless of later settlement.
+ */
+interface PollSettlementProbe {
+  cancelledPolls: number;
+  awaitedCancels: number;
+}
+
+/**
  * Convert a promise into a never-rejecting settlement arm: the derived promise
  * always RESOLVES with the outcome, so a Promise.race that loses it can never
  * produce an unhandled rejection while the original promise stays retained for
@@ -8923,6 +8936,7 @@ function mapActivityRows(rows: BackendActivityRow[]): BlockedBackend[] {
 async function runBlockedBackendsPoll(
   pendingArms: Promise<SettlementOutcome>[],
   remainingMs: number,
+  settlementProbe?: PollSettlementProbe,
 ): Promise<
   | { kind: "rows"; rows: BlockedBackend[] }
   | { kind: "cancelled" }
@@ -8942,6 +8956,20 @@ async function runBlockedBackendsPoll(
       AND a.state = 'active'
       AND a.wait_event_type = 'Lock'
   `;
+  // Exact settlement observation of the in-flight query: when a
+  // must-remain-pending arm wins, the fixed path cancels the query AND awaits
+  // its settlement before returning. The probe records whether that await
+  // actually ran, so the causal control can discriminate a mutant that drops
+  // it. Both handlers resolve, so no derived rejection is ever unhandled.
+  let querySettled = false;
+  query.then(
+    () => {
+      querySettled = true;
+    },
+    () => {
+      querySettled = true;
+    },
+  );
   let cancelTimer: NodeJS.Timeout | null = null;
   try {
     cancelTimer = setTimeout(() => query.cancel(), Math.max(1, remainingMs));
@@ -8952,10 +8980,17 @@ async function runBlockedBackendsPoll(
       ),
     ]);
     if (winner.kind === "arm") {
-      // A must-remain-pending promise settled: cancel the in-flight poll query
-      // so no SQL work is left detached, and let the caller fail the
-      // observation with the labelled outcome.
+      // A must-remain-pending promise settled: cancel the EXACT in-flight
+      // postgres.js query and AWAIT its settlement before returning, so the
+      // poll's SQL work is never left detached. The original Query is observed
+      // with allSettled, which absorbs the cancellation rejection without any
+      // derived unhandled rejection.
       query.cancel();
+      await Promise.allSettled([query]);
+      if (settlementProbe !== undefined) {
+        settlementProbe.cancelledPolls += 1;
+        if (querySettled) settlementProbe.awaitedCancels += 1;
+      }
       return { kind: "settled", outcome: winner.outcome };
     }
     return { kind: "rows", rows: winner.rows };
@@ -8995,9 +9030,15 @@ async function waitForBlockedBackends(opts: {
   transitiveBlockers?: boolean;
   /** Promises that must stay pending until the observation succeeds. */
   mustRemainPending?: Array<Promise<unknown>>;
+  /** Optional probe recording poll-query cancellation settlement. */
+  settlementProbe?: PollSettlementProbe;
 }): Promise<BlockedBackend[]> {
   const deadlineMs = opts.deadlineMs ?? 5000;
-  const absoluteDeadline = Date.now() + deadlineMs;
+  // ONE monotonic absolute deadline bounds the entire observation, including
+  // SQL time and retry delay. It is never reset per poll, and each pending
+  // poll query is itself cancelled at the remaining time.
+  const monotonicStart = performance.now();
+  const absoluteDeadline = monotonicStart + deadlineMs;
   const pendingArms = (opts.mustRemainPending ?? []).map((promise) =>
     settlementOutcome(promise)
   );
@@ -9005,9 +9046,9 @@ async function waitForBlockedBackends(opts: {
   // the rows that matched.
   let lastObserved: BlockedBackend[] = [];
   while (true) {
-    const remaining = absoluteDeadline - Date.now();
+    const remaining = absoluteDeadline - performance.now();
     if (remaining <= 0) break;
-    const poll = await runBlockedBackendsPoll(pendingArms, remaining);
+    const poll = await runBlockedBackendsPoll(pendingArms, remaining, opts.settlementProbe);
     if (poll.kind === "settled") {
       if (poll.outcome.kind === "rejected") {
         throw new Error(
@@ -9036,8 +9077,13 @@ async function waitForBlockedBackends(opts: {
       });
     });
     if (matches.length >= opts.minCount) return matches;
-    if (Date.now() >= absoluteDeadline) break;
-    await delay(50);
+    // Recomputed after every poll: sleep only what remains of the monotonic
+    // absolute deadline — min(50ms, remaining) — and never sleep at all when
+    // no time remains, so no retry overshoots the advertised bound by a fixed
+    // interval.
+    const sleepMs = Math.min(50, Math.max(0, absoluteDeadline - performance.now()));
+    if (sleepMs <= 0) break;
+    await delay(sleepMs);
   }
   throw new Error(
     `${opts.label}: expected ${opts.minCount} blocked backend(s) matching ${opts.queryPattern} with blockers [${opts.blockerPids.join(",")}] within ${deadlineMs}ms; last observed candidates: ${
@@ -9095,12 +9141,18 @@ async function awaitMarkerBeforeSettlement(
 /**
  * Await every started promise and inspect EVERY settlement. A cleanup rejection
  * fails the test with a labelled cause. If the test body and the cleanup both
- * failed, throw one AggregateError that preserves the primary failure and every
- * cleanup failure — a cleanup error never replaces or erases the body error,
- * and a body error never hides cleanup failure.
+ * failed, throw one AggregateError that preserves BOTH: the primary failure by
+ * EXACT identity — whatever value the body threw: an Error, null, undefined, a
+ * string, a number, a symbol, or an arbitrary object — followed by every
+ * cleanup failure, each labelled without replacing its cause. A cleanup error
+ * never replaces or erases the body error, and a body error never hides a
+ * cleanup failure. With clean cleanup the function returns silently and the
+ * original throw continues unchanged through the calling catch { throw } path.
+ * Primary presence is carried by the { failed, value } record, never by a
+ * null/undefined sentinel.
  */
 async function settleCleanupTruthfully(
-  primaryFailure: unknown,
+  primaryFailure: { failed: boolean; value: unknown },
   entries: LabelledCleanup[],
 ): Promise<void> {
   const settlements = await Promise.allSettled(entries.map((entry) => entry.promise));
@@ -9112,11 +9164,12 @@ async function settleCleanupTruthfully(
     }
   }
   if (cleanupFailures.length === 0) return;
-  const causes: Error[] = [];
-  if (primaryFailure instanceof Error) {
-    causes.push(primaryFailure);
-  } else if (primaryFailure !== null && primaryFailure !== undefined) {
-    causes.push(new Error(`primary failure: ${String(primaryFailure)}`));
+  // errors[] begins with the EXACT original primary value by identity when the
+  // body failed — never a wrapper, never a null/undefined sentinel — followed
+  // by each labelled cleanup failure whose cause is preserved unchanged.
+  const causes: unknown[] = [];
+  if (primaryFailure.failed) {
+    causes.push(primaryFailure.value);
   }
   for (const failure of cleanupFailures) {
     causes.push(
@@ -9129,11 +9182,62 @@ async function settleCleanupTruthfully(
   throw new AggregateError(
     causes,
     `${cleanupFailures.length} cleanup promise(s) rejected${
-      primaryFailure === null || primaryFailure === undefined
-        ? " (the test body did not fail)"
-        : " while the test body also failed"
+      primaryFailure.failed
+        ? " while the test body also failed"
+        : " (the test body did not fail)"
     }; every cause is preserved above`,
   );
+}
+
+/**
+ * Adjudicate one retained lock attempt in the cleanup of every path: observe
+ * its EXACT settlement and, when it escaped as a lock (it fulfilled instead of
+ * staying blocked), release its gate and await its `done` BEFORE surfacing
+ * anything, so no backend is ever left waiting on an unreachable gate. An
+ * expected, verified cancellation normalizes to a fulfilled cleanup arm; any
+ * other rejection and any unexpected fulfillment become labelled cleanup
+ * failures combined with the primary failure. Never exclude a started promise
+ * merely because the success path already asserted its expected rejection.
+ */
+async function settleRetainedAttempt(
+  attempt: Promise<unknown>,
+  opts: {
+    label: string;
+    /** The success path verified the attempt's expected cancellation. */
+    cancellationVerified: boolean;
+    /** The test deliberately released the blocker, so a fulfilled attempt is the intended settlement. */
+    fulfillmentExpected: boolean;
+  },
+  escapedPids?: number[],
+): Promise<LabelledCleanup[]> {
+  const outcome = await settlementOutcome(attempt);
+  if (outcome.kind === "rejected") {
+    if (opts.cancellationVerified) {
+      return [{ label: `${opts.label} (verified cancellation)`, promise: Promise.resolve(null) }];
+    }
+    return [{ label: opts.label, promise: Promise.reject(outcome.error) }];
+  }
+  const escaped = outcome.value as RetainedLock;
+  escapedPids?.push(escaped.pid);
+  escaped.release();
+  const done = await settlementOutcome(escaped.done);
+  if (done.kind === "rejected") {
+    return [{
+      label: `${opts.label} escaped lock`,
+      promise: Promise.reject(done.error),
+    }];
+  }
+  if (opts.fulfillmentExpected) {
+    return [{ label: `${opts.label} escaped lock`, promise: Promise.resolve(null) }];
+  }
+  return [{
+    label: `${opts.label} escaped lock`,
+    promise: Promise.reject(
+      new Error(
+        `retained lock attempt fulfilled instead of remaining blocked (backend pid ${escaped.pid})`,
+      ),
+    ),
+  }];
 }
 
 const PRINCIPAL_LOCK_ACQUIRE_DEADLINE_MS = 5000;
@@ -9316,7 +9420,8 @@ test("durable-delivery: Phase B revocation wins in exact queue order", { timeout
       return null;
     });
     let claimC: Promise<CommandResponse> | null = null;
-    let bodyError: unknown = null;
+    let bodyFailed = false;
+    let bodyValue: unknown = undefined;
     try {
       // 4. Prove B's exact UPDATE is blocked by A. B must remain pending the
       //    whole time: an early settlement fails immediately and labelled.
@@ -9394,16 +9499,20 @@ test("durable-delivery: Phase B revocation wins in exact queue order", { timeout
       `;
       assert.ok(revokedRow[0]?.revoked_at !== null, "the principal is revoked in the database");
     } catch (error) {
-      bodyError = error;
+      bodyFailed = true;
+      bodyValue = error;
       throw error;
     } finally {
       a.release();
       releaseB();
-      await settleCleanupTruthfully(bodyError, [
-        { label: "principal holder A", promise: a.done },
-        { label: "revocation transaction B", promise: bDone },
-        { label: "public claim C", promise: claimC ?? Promise.resolve(null) },
-      ]);
+      await settleCleanupTruthfully(
+        { failed: bodyFailed, value: bodyValue },
+        [
+          { label: "principal holder A", promise: a.done },
+          { label: "revocation transaction B", promise: bDone },
+          { label: "public claim C", promise: claimC ?? Promise.resolve(null) },
+        ],
+      );
     }
   });
 });
@@ -9448,7 +9557,8 @@ test("durable-delivery: Phase B lock strength — FOR SHARE holder blocks the pr
       });
       return claimLedger;
     });
-    let bodyError: unknown = null;
+    let bodyFailed = false;
+    let bodyValue: unknown = undefined;
     try {
       // The production principal-lock query must block on the FOR SHARE holder.
       // The direct claim must remain pending until observed blocked.
@@ -9487,14 +9597,18 @@ test("durable-delivery: Phase B lock strength — FOR SHARE holder blocks the pr
       });
       assert.equal(acked.status, 200, acked.text);
     } catch (error) {
-      bodyError = error;
+      bodyFailed = true;
+      bodyValue = error;
       throw error;
     } finally {
       holder.release();
-      await settleCleanupTruthfully(bodyError, [
-        { label: "FOR SHARE holder", promise: holder.done },
-        { label: "direct claim", promise: claim },
-      ]);
+      await settleCleanupTruthfully(
+        { failed: bodyFailed, value: bodyValue },
+        [
+          { label: "FOR SHARE holder", promise: holder.done },
+          { label: "direct claim", promise: claim },
+        ],
+      );
     }
   });
 });
@@ -9566,7 +9680,8 @@ test("durable-delivery: Phase B concurrent cap — two claims behind one princip
       });
       return ledger2;
     });
-    let bodyError: unknown = null;
+    let bodyFailed = false;
+    let bodyValue: unknown = undefined;
     try {
       // 3. Prove both production lock queries are blocked by A. The lock queue
       //    chains: the second claim waits on the first claim's tuple lock, so
@@ -9708,15 +9823,19 @@ test("durable-delivery: Phase B concurrent cap — two claims behind one princip
         "claim at capacity returns zero deliveries",
       );
     } catch (error) {
-      bodyError = error;
+      bodyFailed = true;
+      bodyValue = error;
       throw error;
     } finally {
       a.release();
-      await settleCleanupTruthfully(bodyError, [
-        { label: "principal holder A", promise: a.done },
-        { label: "direct claim 1", promise: claim1 },
-        { label: "direct claim 2", promise: claim2 },
-      ]);
+      await settleCleanupTruthfully(
+        { failed: bodyFailed, value: bodyValue },
+        [
+          { label: "principal holder A", promise: a.done },
+          { label: "direct claim 1", promise: claim1 },
+          { label: "direct claim 2", promise: claim2 },
+        ],
+      );
     }
   });
 });
@@ -9885,25 +10004,98 @@ test("durable-delivery: Phase B independent sequential 101 boundary", async () =
 // be truthful and preserve primary + cleanup failures together.
 // ---------------------------------------------------------------------------
 
-test("durable-delivery: Phase B harness control — pre-ready retained-transaction rejection surfaces promptly and leaks no backend", { timeout: 30_000 }, async () => {
+test("durable-delivery: Phase B harness control — pre-ready retained-transaction rejection surfaces promptly, is retained on every path, and leaks no backend", { timeout: 30_000 }, async () => {
   await scenario(async (f) => {
     const agent = await createFixtureAgent(f, f.ua, "dd-pb-harness-pre-ready");
     // Hold the principal row FOR UPDATE (awaited ready, so the lock is
-    // guaranteed held) so the second retained transaction's lock query blocks
+    // guaranteed held) so a second retained transaction's lock query blocks
     // and it can never reach its ready marker.
     const holder = await retainPrincipalRowLock(agent.principalId, f.workspaceA, "FOR UPDATE");
-    // Start a second retained attempt WITHOUT awaiting it: its transaction runs
-    // immediately and blocks behind the holder.
-    const started = Date.now();
-    const retainedAttempt = retainPrincipalRowLock(agent.principalId, f.workspaceA, "FOR UPDATE");
-    let bodyError: unknown = null;
-    try {
-      // Locate the retained transaction's backend by its exact lock query.
-      const blocked = await waitForBlockedBackends({
+
+    // ARM — the observation FAILS before the retained attempt's PID is ever
+    // named. The failure-path cleanup must still retain the started attempt:
+    // it settles as an escaped lock whose gate is released and awaited, and no
+    // backend remains waiting on an unreachable gate. It uses its own agent so
+    // it never contends with the main holder's row.
+    const armAgent = await createFixtureAgent(f, f.ua, "dd-pb-harness-pre-ready-arm");
+    // PIDs whose deferred transactions settled and released on the failure
+    // path: the ARM holder and the escaped lock the retained attempt returned.
+    const settledPids: number[] = [];
+    await assert.rejects(
+      (async () => {
+        const armHolder = await retainPrincipalRowLock(armAgent.principalId, f.workspaceA, "FOR UPDATE");
+        settledPids.push(armHolder.pid);
+        const armAttempt = retainPrincipalRowLock(armAgent.principalId, f.workspaceA, "FOR UPDATE");
+        let armFailure: { failed: boolean; value: unknown } = { failed: false, value: undefined };
+        try {
+          await waitForBlockedBackends({
+            queryPattern: /definitely_not_a_matching_query/,
+            blockerPids: [armHolder.pid],
+            minCount: 1,
+            label: "pre-ready control: observation fails before the retained PID is observed",
+            deadlineMs: 700,
+            mustRemainPending: [armAttempt],
+          });
+          throw new Error("pre-ready control: the wrong-pattern observation was not expected to succeed");
+        } catch (error) {
+          armFailure = { failed: true, value: error };
+          throw error;
+        } finally {
+          // The failure path retains armAttempt: release the holder, observe
+          // the attempt's exact settlement, and release+await any escaped lock
+          // so nothing is left waiting on an unreachable gate.
+          armHolder.release();
+          await settleCleanupTruthfully(armFailure, [
+            { label: "ARM principal holder", promise: armHolder.done },
+            ...(await settleRetainedAttempt(armAttempt, {
+              label: "ARM retained attempt",
+              cancellationVerified: false,
+              fulfillmentExpected: true,
+            }, settledPids)),
+          ]);
+        }
+      })(),
+      (error: unknown) => {
+        assert.match(String(error), /pre-ready control: observation fails before the retained PID is observed/);
+        assert.ok(
+          settledPids.length >= 2,
+          `the retained attempt on the failure path must settle and release along with its holder; observed PIDs: ${settledPids.join(",")}`,
+        );
+        return true;
+      },
+    );
+    // No backend remains after the failed observation and its cleanup.
+    await assert.rejects(
+      waitForBlockedBackends({
         queryPattern: /FROM swarm\.agent_principals/,
         blockerPids: [],
         minCount: 1,
+        label: "pre-ready control: zero residual backends after the failed observation",
+        deadlineMs: 1200,
+      }),
+      (error: unknown) => {
+        assert.match(String(error), /last observed candidates: \[\]/);
+        return true;
+      },
+    );
+
+    // Success path: a second retained attempt blocks behind the holder and is
+    // cancelled with its own error surfaced promptly, no backend left behind.
+    const started = Date.now();
+    let cancellationVerified = false;
+    const retainedAttempt = retainPrincipalRowLock(agent.principalId, f.workspaceA, "FOR UPDATE");
+    let bodyFailed = false;
+    let bodyValue: unknown = undefined;
+    try {
+      // The retained attempt is a must-remain-pending arm of the observation
+      // AND the holder PID is the expected blocker: an early settlement or a
+      // wrong blocker fails the observation immediately and labelled.
+      const blocked = await waitForBlockedBackends({
+        queryPattern: /FROM swarm\.agent_principals/,
+        blockerPids: [holder.pid],
+        minCount: 1,
         label: "pre-ready control: retained lock transaction is blocked",
+        mustRemainPending: [retainedAttempt],
       });
       const retainedPid = blocked[0]!.pid;
       assert.ok(retainedPid > 0, "retained backend PID observed");
@@ -9941,6 +10133,8 @@ test("durable-delivery: Phase B harness control — pre-ready retained-transacti
           return true;
         },
       );
+      // The success path has now verified the attempt's expected cancellation.
+      cancellationVerified = true;
 
       // The cancelled transaction left no backend behind: nothing may remain
       // blocked on the principal lock query.
@@ -9958,15 +10152,26 @@ test("durable-delivery: Phase B harness control — pre-ready retained-transacti
         },
       );
     } catch (error) {
-      bodyError = error;
+      bodyFailed = true;
+      bodyValue = error;
       throw error;
     } finally {
-      // retainedAttempt is deliberately rejected and its rejection was already
-      // asserted by the control above, so it is NOT a cleanup entry here.
+      // retainedAttempt is NEVER excluded on any path: the verified
+      // cancellation normalizes to a clean arm; an early/unexpected rejection
+      // or an escaped fulfillment becomes a labelled cleanup failure combined
+      // with the primary failure, and any escaped lock is released and awaited.
       holder.release();
-      await settleCleanupTruthfully(bodyError, [
-        { label: "principal holder", promise: holder.done },
-      ]);
+      await settleCleanupTruthfully(
+        { failed: bodyFailed, value: bodyValue },
+        [
+          { label: "principal holder", promise: holder.done },
+          ...(await settleRetainedAttempt(retainedAttempt, {
+            label: "retained attempt",
+            cancellationVerified,
+            fulfillmentExpected: false,
+          })),
+        ],
+      );
     }
   });
 });
@@ -10022,6 +10227,7 @@ test("durable-delivery: Phase B harness control — premature marker and request
       limit: 10,
     });
     const startedB = Date.now();
+    const pollSettlementProbe: PollSettlementProbe = { cancelledPolls: 0, awaitedCancels: 0 };
     await assert.rejects(
       waitForBlockedBackends({
         queryPattern: /FROM swarm\.agent_principals/,
@@ -10030,6 +10236,7 @@ test("durable-delivery: Phase B harness control — premature marker and request
         label: "premature claim observation control",
         deadlineMs: 5000,
         mustRemainPending: [prematureClaim],
+        settlementProbe: pollSettlementProbe,
       }),
       (error: unknown) => {
         const elapsed = Date.now() - startedB;
@@ -10042,6 +10249,18 @@ test("durable-delivery: Phase B harness control — premature marker and request
         assert.match(message, /FULFILLED before the observation succeeded/);
         return true;
       },
+    );
+    // The poll query whose arm won was cancelled AND its settlement was awaited
+    // before the observation returned: a tracked mutant that drops the await
+    // leaves awaitedCancels at zero while cancelledPolls still increments.
+    assert.ok(
+      pollSettlementProbe.cancelledPolls >= 1,
+      `the premature fulfillment must win at least one poll; probe: ${JSON.stringify(pollSettlementProbe)}`,
+    );
+    assert.equal(
+      pollSettlementProbe.awaitedCancels,
+      pollSettlementProbe.cancelledPolls,
+      `every cancelled poll query must be awaited before return; probe: ${JSON.stringify(pollSettlementProbe)}`,
     );
     const response = await prematureClaim;
     assert.equal(response.status, 200, response.text);
@@ -10070,7 +10289,8 @@ test("durable-delivery: Phase B harness control — wrong observation pattern re
       });
       return null;
     });
-    let bodyError: unknown = null;
+    let bodyFailed = false;
+    let bodyValue: unknown = undefined;
     try {
       // First a CORRECT observation so the real blocked backend's pid is known.
       const blocked = await waitForBlockedBackends({
@@ -10121,22 +10341,27 @@ test("durable-delivery: Phase B harness control — wrong observation pattern re
         },
       );
     } catch (error) {
-      bodyError = error;
+      bodyFailed = true;
+      bodyValue = error;
       throw error;
     } finally {
       holder.release();
-      await settleCleanupTruthfully(bodyError, [
-        { label: "FOR SHARE holder", promise: holder.done },
-        { label: "blocked direct claim", promise: claim },
-      ]);
+      await settleCleanupTruthfully(
+        { failed: bodyFailed, value: bodyValue },
+        [
+          { label: "FOR SHARE holder", promise: holder.done },
+          { label: "blocked direct claim", promise: claim },
+        ],
+      );
     }
   });
 });
 
-test("durable-delivery: Phase B harness control — cleanup adjudication is truthful and preserves primary plus cleanup failures", async () => {
-  // ARM A — a cleanup-only rejection turns the adjudicator red with its label.
+test("durable-delivery: Phase B harness control — cleanup adjudication preserves exact primary identity and labelled cleanup causes", async () => {
+  // ARM A — a cleanup-only rejection (no primary) turns the adjudicator red
+  // with exactly one labelled cause and no fabricated primary.
   await assert.rejects(
-    settleCleanupTruthfully(null, [
+    settleCleanupTruthfully({ failed: false, value: undefined }, [
       {
         label: "synthetic cleanup",
         promise: Promise.reject(new Error("synthetic cleanup failure A")),
@@ -10144,46 +10369,67 @@ test("durable-delivery: Phase B harness control — cleanup adjudication is trut
     ]),
     (error: unknown) => {
       assert.ok(error instanceof AggregateError, "cleanup failure surfaces as AggregateError");
-      const texts = (error.errors as Error[]).map((entry) => `${entry.name}: ${entry.message}`);
-      assert.ok(
-        texts.some((text) =>
-          text.includes("synthetic cleanup") && text.includes("synthetic cleanup failure A")
-        ),
-        `cleanup failure must carry its labelled cause: ${texts.join(" | ")}`,
-      );
+      const errors = (error as AggregateError).errors;
+      assert.equal(errors.length, 1, "a no-primary cleanup failure adds exactly one labelled cause");
+      const labelled = errors[0] as Error;
+      assert.match(labelled.message, /synthetic cleanup/);
+      assert.match(labelled.message, /synthetic cleanup failure A/);
       return true;
     },
   );
 
-  // ARM B — a simultaneous primary and cleanup rejection preserves BOTH.
-  const primary = new Error("synthetic primary failure B");
-  await assert.rejects(
-    settleCleanupTruthfully(primary, [
-      {
-        label: "synthetic cleanup",
-        promise: Promise.reject(new Error("synthetic cleanup failure B")),
+  // ARM B — every primary kind (Error, arbitrary object, string, number,
+  // symbol, null, undefined) survives the adjudicator by EXACT identity in
+  // AggregateError.errors while the cleanup rejection stays labelled and its
+  // cause is preserved unchanged. Reverting to the old null/undefined sentinel
+  // or the old non-Error wrapper turns every one of these red.
+  const primaries: Array<{ label: string; value: unknown }> = [
+    { label: "error", value: new Error("synthetic primary failure B") },
+    { label: "object", value: { arbitrary: "primary identity" } },
+    { label: "string", value: "primary-string-identity" },
+    { label: "number", value: 42 },
+    { label: "symbol", value: Symbol("primary-identity") },
+    { label: "null", value: null },
+    { label: "undefined", value: undefined },
+  ];
+  for (const primary of primaries) {
+    const cleanupRejection = new Error(`synthetic cleanup failure ${primary.label}`);
+    await assert.rejects(
+      settleCleanupTruthfully({ failed: true, value: primary.value }, [
+        { label: "synthetic cleanup", promise: Promise.reject(cleanupRejection) },
+      ]),
+      (error: unknown) => {
+        assert.ok(error instanceof AggregateError, "combined failure surfaces as AggregateError");
+        const errors = (error as AggregateError).errors;
+        assert.equal(
+          errors[0],
+          primary.value,
+          `primary ${primary.label} must be preserved by exact identity`,
+        );
+        const labelled = errors[1] as Error;
+        assert.ok(labelled instanceof Error, "cleanup failure carries a labelled Error");
+        assert.match(
+          labelled.message,
+          new RegExp(`synthetic cleanup failure ${primary.label}`),
+          "the labelled cleanup cause text is preserved",
+        );
+        assert.equal(
+          labelled.cause,
+          cleanupRejection,
+          "the labelled cleanup preserves the exact rejection by cause identity",
+        );
+        return true;
       },
-    ]),
-    (error: unknown) => {
-      assert.ok(error instanceof AggregateError, "combined failure surfaces as AggregateError");
-      const texts = (error.errors as Error[]).map((entry) => `${entry.name}: ${entry.message}`);
-      assert.ok(
-        texts.some((text) => text.includes("synthetic primary failure B")),
-        `primary failure must be preserved: ${texts.join(" | ")}`,
-      );
-      assert.ok(
-        texts.some((text) =>
-          text.includes("synthetic cleanup") && text.includes("synthetic cleanup failure B")
-        ),
-        `cleanup failure must not be hidden: ${texts.join(" | ")}`,
-      );
-      return true;
-    },
-  );
+    );
+  }
 
-  // Positive control — clean cleanup never throws.
-  await settleCleanupTruthfully(null, [
+  // Clean-cleanup positive controls — the adjudicator stays silent, so the
+  // original throw continues unchanged through the calling catch { throw }.
+  await settleCleanupTruthfully({ failed: false, value: undefined }, [
     { label: "clean holder", promise: Promise.resolve(null) },
     { label: "clean claim", promise: Promise.resolve("ok") },
+  ]);
+  await settleCleanupTruthfully({ failed: true, value: 42 }, [
+    { label: "clean holder", promise: Promise.resolve(null) },
   ]);
 });
