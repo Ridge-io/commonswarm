@@ -407,3 +407,225 @@ test("file effect store uses secure atomic files and round-trips records", async
   assert.equal((await stat(store.instanceDirectory)).mode & 0o777, 0o700);
 });
 
+test("post 401 and post 403 restore reply_ready and rethrow the exact error", async () => {
+  for (const [status, id] of [
+    [401, "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbb01"],
+    [403, "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbb02"],
+  ] as const) {
+    const store = new MemoryStore();
+    const ask = signal(id);
+    const thrown = new CommandHttpError(status);
+    const engine = new ListenerEngine({
+      store,
+      now: () => Date.parse("2026-07-30T01:00:00.000Z"),
+      model: model(async () => ({ message: "stable reply", stopReason: "end_turn" })),
+      poster: poster(async () => {
+        throw thrown;
+      }),
+    });
+    let caught: unknown = null;
+    await engine.process(ask).catch((error: unknown) => {
+      caught = error;
+    });
+    assert.equal(caught, thrown, "the exact CommandHttpError must escape");
+    const record = await store.read(ask.id);
+    assert.ok(record);
+    assert.equal(record.state, "reply_ready");
+    assert.equal(record.replyBody, "stable reply");
+    assert.equal(record.commandId, listenerReplyCommandId(ask.id));
+    assert.equal(record.postAttempts, 1);
+    assert.equal(record.failureCode, null);
+    assert.notEqual(record.failureCode, `http_${status}`);
+  }
+});
+
+test("an already-aborted signal before the prompt starts no model or post effect", async () => {
+  const controller = new AbortController();
+  controller.abort();
+  const store = new MemoryStore();
+  const ask = signal("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbb03");
+  let modelCalls = 0;
+  let postCalls = 0;
+  const engine = new ListenerEngine({
+    store,
+    signal: controller.signal,
+    now: () => Date.parse("2026-07-30T01:00:00.000Z"),
+    model: model(async () => {
+      modelCalls += 1;
+      return { message: "x", stopReason: "end_turn" };
+    }),
+    poster: poster(async () => {
+      postCalls += 1;
+      return { signalId: REPLY_ID };
+    }),
+  });
+  let caught: unknown = null;
+  await engine.process(ask).catch((error: unknown) => {
+    caught = error;
+  });
+  assert.ok(caught instanceof Error);
+  assert.equal(caught.name, "AbortError");
+  assert.equal(modelCalls, 0);
+  assert.equal(postCalls, 0);
+  const record = await store.read(ask.id);
+  assert.ok(record);
+  assert.equal(record.state, "received");
+});
+
+test("an already-aborted signal before the reply post restores reply_ready", async () => {
+  const controller = new AbortController();
+  const store = new MemoryStore();
+  const ask = signal("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbb04");
+  let modelCalls = 0;
+  let postCalls = 0;
+  const engine = new ListenerEngine({
+    store,
+    signal: controller.signal,
+    now: () => Date.parse("2026-07-30T01:00:00.000Z"),
+    model: model(async () => {
+      modelCalls += 1;
+      return { message: "stable", stopReason: "end_turn" };
+    }),
+    poster: poster(async () => {
+      postCalls += 1;
+      throw new CommandTransportError("response lost");
+    }),
+  });
+  const pending = await engine.process(ask);
+  assert.equal(pending.status, "retry_pending");
+  assert.equal(modelCalls, 1);
+  assert.equal(postCalls, 1);
+
+  controller.abort();
+  let caught: unknown = null;
+  await engine.process(ask).catch((error: unknown) => {
+    caught = error;
+  });
+  assert.ok(caught instanceof Error);
+  assert.equal(caught.name, "AbortError");
+  assert.equal(modelCalls, 1, "no new prompt after abort");
+  assert.equal(postCalls, 1, "no new post after abort");
+  const record = await store.read(ask.id);
+  assert.equal(record?.state, "reply_ready");
+  assert.equal(record?.postAttempts, 1);
+});
+
+test("provider cancelled after caller abort restores received; without abort it stays terminal", async () => {
+  const plain = new ListenerEngine({
+    store: new MemoryStore(),
+    now: () => Date.parse("2026-07-30T01:00:00.000Z"),
+    model: {
+      async prompt() {
+        return { message: "", stopReason: "cancelled" as const };
+      },
+    },
+    poster: poster(async () => ({ signalId: REPLY_ID })),
+  });
+  const terminal = await plain.process(
+    signal("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbb05"),
+  );
+  assert.equal(terminal.status, "failed");
+  assert.equal(
+    terminal.status === "failed" && terminal.record.failureCode,
+    "model_cancelled",
+  );
+
+  const controller = new AbortController();
+  const store = new MemoryStore();
+  let postCalls = 0;
+  const aborted = new ListenerEngine({
+    store,
+    signal: controller.signal,
+    now: () => Date.parse("2026-07-30T01:00:00.000Z"),
+    model: {
+      async prompt() {
+        controller.abort();
+        return { message: "", stopReason: "cancelled" as const };
+      },
+    },
+    poster: poster(async () => {
+      postCalls += 1;
+      return { signalId: REPLY_ID };
+    }),
+  });
+  const ask = signal("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbb06");
+  let caught: unknown = null;
+  await aborted.process(ask).catch((error: unknown) => {
+    caught = error;
+  });
+  assert.ok(caught instanceof Error);
+  assert.equal(caught.name, "AbortError");
+  assert.equal(postCalls, 0);
+  const record = await store.read(ask.id);
+  assert.equal(record?.state, "received");
+  assert.notEqual(record?.failureCode, "model_cancelled");
+});
+
+test("the engine passes its caller signal to the reply poster as abortSignal", async () => {
+  const controller = new AbortController();
+  const store = new MemoryStore();
+  const ask = signal("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbb07");
+  let seen: AbortSignal | undefined;
+  const engine = new ListenerEngine({
+    store,
+    signal: controller.signal,
+    now: () => Date.parse("2026-07-30T01:00:00.000Z"),
+    model: model(async () => ({ message: "reply", stopReason: "end_turn" })),
+    poster: {
+      async post(input) {
+        seen = input.abortSignal;
+        return { signalId: REPLY_ID };
+      },
+    },
+  });
+  const result = await engine.process(ask);
+  assert.equal(result.status, "done");
+  assert.equal(seen, controller.signal);
+});
+
+test("abort during prompt or post restores the resumable record and escapes", async () => {
+  const promptStore = new MemoryStore();
+  const promptEngine = new ListenerEngine({
+    store: promptStore,
+    now: () => Date.parse("2026-07-30T01:00:00.000Z"),
+    model: {
+      async prompt() {
+        const error = new Error("host turn cancelled");
+        error.name = "AbortError";
+        throw error;
+      },
+    },
+    poster: poster(async () => ({ signalId: REPLY_ID })),
+  });
+  const promptAsk = signal("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbb08");
+  let caughtPrompt: unknown = null;
+  await promptEngine.process(promptAsk).catch((error: unknown) => {
+    caughtPrompt = error;
+  });
+  assert.ok(caughtPrompt instanceof Error);
+  assert.equal(caughtPrompt.name, "AbortError");
+  assert.equal((await promptStore.read(promptAsk.id))?.state, "received");
+
+  const postStore = new MemoryStore();
+  const postEngine = new ListenerEngine({
+    store: postStore,
+    now: () => Date.parse("2026-07-30T01:00:00.000Z"),
+    model: model(async () => ({ message: "reply", stopReason: "end_turn" })),
+    poster: {
+      async post() {
+        const error = new Error("post cancelled");
+        error.name = "AbortError";
+        throw error;
+      },
+    },
+  });
+  const postAsk = signal("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbb09");
+  let caughtPost: unknown = null;
+  await postEngine.process(postAsk).catch((error: unknown) => {
+    caughtPost = error;
+  });
+  assert.ok(caughtPost instanceof Error);
+  assert.equal(caughtPost.name, "AbortError");
+  assert.equal((await postStore.read(postAsk.id))?.state, "reply_ready");
+});
+

@@ -36,6 +36,12 @@ export interface ListenerEngineOptions {
   maxPromptAttempts?: number;
   maxPostAttempts?: number;
   isRetryablePromptError?: (error: unknown) => boolean;
+  /**
+   * Caller cancellation, distinct from the internal transport deadlines. An
+   * abort here surfaces as a genuine AbortError and restores the resumable
+   * record; it never writes a terminal failure and never leaves the engine.
+   */
+  signal?: AbortSignal;
 }
 
 /** Stable server idempotency key for one reply effect. */
@@ -131,6 +137,13 @@ function isAbort(error: unknown): boolean {
     (error.name === "AbortError" || /aborted|cancelled/i.test(error.message));
 }
 
+/** A genuine cancellation error; never persisted as a failure code. */
+function abortError(): Error {
+  const error = new Error("listener operation cancelled");
+  error.name = "AbortError";
+  return error;
+}
+
 function defaultRetryablePromptError(error: unknown): boolean {
   return error instanceof AcpTimeoutError ||
     error instanceof AcpChildExitError ||
@@ -197,6 +210,7 @@ export class ListenerEngine {
   private readonly maxPromptAttempts: number;
   private readonly maxPostAttempts: number;
   private readonly retryablePrompt: (error: unknown) => boolean;
+  private readonly signal: AbortSignal | undefined;
 
   constructor(private readonly options: ListenerEngineOptions) {
     this.now = options.now ?? Date.now;
@@ -205,6 +219,7 @@ export class ListenerEngine {
     this.maxPostAttempts = options.maxPostAttempts ?? LISTENER_MAX_POST_ATTEMPTS;
     this.retryablePrompt = options.isRetryablePromptError ??
       defaultRetryablePromptError;
+    this.signal = options.signal;
     if (!Number.isSafeInteger(this.maxPromptAttempts) || this.maxPromptAttempts < 1) {
       throw new Error("maxPromptAttempts must be a positive integer");
     }
@@ -254,6 +269,17 @@ export class ListenerEngine {
       return { status: "failed", record };
     }
 
+    // Caller already cancelled before the prompt: restore the resumable record
+    // and start no later effect.
+    if (this.signal?.aborted) {
+      record = await this.write({
+        ...record,
+        state: "received",
+        failureCode: "cancelled",
+      });
+      throw abortError();
+    }
+
     const mode: ListenerPromptMode = record.senderOwnerRelation === "same_owner"
       ? "worker"
       : "isolated";
@@ -289,6 +315,16 @@ export class ListenerEngine {
     }
 
     if (prompted.stopReason === "refusal" || prompted.stopReason === "cancelled") {
+      // A provider cancellation that lands after an explicit caller abort is a
+      // cancellation, not a terminal failure: restore received and escape.
+      if (prompted.stopReason === "cancelled" && this.signal?.aborted) {
+        record = await this.write({
+          ...record,
+          state: "received",
+          failureCode: "cancelled",
+        });
+        throw abortError();
+      }
       record = await this.write({
         ...record,
         state: "failed",
@@ -324,6 +360,16 @@ export class ListenerEngine {
     current: ListenerEffectRecord,
   ): Promise<ListenerProcessResult> {
     let record = current;
+    // Caller already cancelled before the reply post: restore the resumable
+    // record and start no later effect.
+    if (this.signal?.aborted) {
+      record = await this.write({
+        ...record,
+        state: "reply_ready",
+        failureCode: "cancelled",
+      });
+      throw abortError();
+    }
     if (this.now() >= untilMs(signal)) {
       record = await this.write({
         ...record,
@@ -360,6 +406,7 @@ export class ListenerEngine {
         signal,
         body: replyBody,
         commandId: record.commandId,
+        ...(this.signal === undefined ? {} : { abortSignal: this.signal }),
       });
       record = await this.write({
         ...record,
@@ -371,6 +418,19 @@ export class ListenerEngine {
     } catch (error) {
       if (isAbort(error)) {
         await this.write({ ...record, state: "reply_ready", failureCode: "cancelled" });
+        throw error;
+      }
+      // Credential escape: a refused reply post restores the exact resumable
+      // record for the future runtime and is never terminal http_401/http_403.
+      if (
+        error instanceof CommandHttpError &&
+        (error.status === 401 || error.status === 403)
+      ) {
+        await this.write({
+          ...record,
+          state: "reply_ready",
+          failureCode: null,
+        });
         throw error;
       }
       if (this.now() >= untilMs(signal)) {

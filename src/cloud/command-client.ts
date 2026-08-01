@@ -163,11 +163,25 @@ export interface SignalRecord {
   sender_owner_relation?: SenderOwnerRelation;
 }
 
+/**
+ * Production deadline for one signal post, covering fetch, response headers,
+ * AND response-body settlement. The listener runtime budgets this exact value
+ * for reply posting, so it must stay the single exported source of truth and
+ * must not drift from the delivery constant or a second hard-coded literal.
+ */
+export const SIGNAL_REQUEST_TIMEOUT_MS = 30_000;
+
 export interface PostSignalRequest {
   workspaceId: string;
   command: PostSignalCommand;
   credential: string;
   commandId?: string;
+  /**
+   * Caller cancellation, distinct from the internal request deadline. A caller
+   * abort surfaces as a genuine AbortError; the internal deadline surfaces as
+   * CommandTransportError("signal request timed out"). Never serialized.
+   */
+  signal?: AbortSignal;
 }
 
 export interface PostSignalResult {
@@ -504,6 +518,38 @@ async function parsedJson(response: Response): Promise<unknown> {
   }
 }
 
+/** A genuine cancellation error that is never wrapped as a transport failure. */
+function signalAbortError(): Error {
+  const error = new Error("signal request aborted by the caller");
+  error.name = "AbortError";
+  return error;
+}
+
+/**
+ * Bounded race for one signal-post phase (fetch or body read). The internal
+ * deadline stays live through response-body consumption, so a provider or fake
+ * that ignores the abort signal still settles at the deadline; merely calling
+ * controller.abort() is not enough. Both arms are handled so no arm can become
+ * an unhandled rejection after the race has settled.
+ */
+async function raceSignalDeadline<T>(
+  work: Promise<T>,
+  deadline: Promise<void>,
+): Promise<T> {
+  const settled = await Promise.race([
+    work.then(
+      (value) => ({ value }),
+      (error) => ({ error }),
+    ),
+    deadline.then(() => ({ deadline: true })),
+  ]);
+  if ("deadline" in settled) {
+    throw new CommandTransportError("signal request timed out");
+  }
+  if ("error" in settled) throw settled.error;
+  return settled.value;
+}
+
 export class ThinCommandClient {
   private readonly projections = new Map<string, TaskState>();
 
@@ -799,77 +845,110 @@ export class ThinCommandClient {
         ? {}
         : { until_ms: request.command.until_ms }),
     };
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 30_000);
-    let response: Response;
-    try {
-      response = await this.fetcher(commandEndpoint(this.target), {
-        method: "POST",
-        headers: {
-          authorization: `Bearer ${request.credential}`,
-          apikey: this.target.anonKey,
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({
-          command_id: commandId,
-          client_version: CLIENT_PROTOCOL_VERSION,
-          workspace_id: request.workspaceId,
-          stream: { kind: "workspace" },
-          command,
-        }),
-        signal: controller.signal,
-      });
-    } catch (error) {
-      if ((error as Error).name === "AbortError") {
-        throw new CommandTransportError("signal request timed out");
-      }
-      throw new CommandTransportError(
-        "signal request failed before a response",
-      );
-    } finally {
-      clearTimeout(timer);
+    const callerSignal = request.signal;
+    if (callerSignal?.aborted) {
+      throw signalAbortError();
     }
-
-    let raw: unknown;
+    const controller = new AbortController();
+    let deadlineFired = false;
+    let releaseDeadline: (() => void) | undefined;
+    const deadline = new Promise<void>((resolve) => {
+      releaseDeadline = resolve;
+    });
+    const timer = setTimeout(() => {
+      deadlineFired = true;
+      controller.abort();
+      releaseDeadline?.();
+    }, SIGNAL_REQUEST_TIMEOUT_MS);
+    const onCallerAbort = () => controller.abort();
+    callerSignal?.addEventListener("abort", onCallerAbort);
+    // Cover the window where the caller signal aborts between the entry check
+    // and the listener attachment; an abort event never fires after the fact.
+    if (callerSignal?.aborted) controller.abort();
     try {
-      raw = await parsedJson(response);
-    } catch (error) {
-      if (response.status >= 500) {
+      let response: Response;
+      try {
+        response = await raceSignalDeadline(
+          this.fetcher(commandEndpoint(this.target), {
+            method: "POST",
+            headers: {
+              authorization: `Bearer ${request.credential}`,
+              apikey: this.target.anonKey,
+              "content-type": "application/json",
+            },
+            body: JSON.stringify({
+              command_id: commandId,
+              client_version: CLIENT_PROTOCOL_VERSION,
+              workspace_id: request.workspaceId,
+              stream: { kind: "workspace" },
+              command,
+            }),
+            signal: controller.signal,
+          }),
+          deadline,
+        );
+      } catch (error) {
+        if (callerSignal?.aborted && !deadlineFired) {
+          throw signalAbortError();
+        }
+        if (deadlineFired) {
+          throw new CommandTransportError("signal request timed out");
+        }
+        throw new CommandTransportError(
+          "signal request failed before a response",
+        );
+      }
+
+      let raw: unknown;
+      try {
+        raw = await raceSignalDeadline(parsedJson(response), deadline);
+      } catch (error) {
+        if (callerSignal?.aborted && !deadlineFired) {
+          throw signalAbortError();
+        }
+        if (deadlineFired) {
+          throw new CommandTransportError("signal request timed out");
+        }
+        if (response.status >= 500) {
+          throw new CommandHttpError(
+            response.status,
+            `signal failed (HTTP ${response.status})`,
+          );
+        }
+        throw error;
+      }
+      if (!response.ok) {
+        const error = raw && typeof raw === "object" && !Array.isArray(raw)
+          ? raw as Record<string, unknown>
+          : {};
         throw new CommandHttpError(
           response.status,
-          `signal failed (HTTP ${response.status})`,
+          typeof error.message === "string"
+            ? error.message
+            : `signal failed (HTTP ${response.status}): ${
+              typeof error.error === "string" ? error.error : "unknown_error"
+            }`,
         );
       }
-      throw error;
-    }
-    if (!response.ok) {
-      const error = raw && typeof raw === "object" && !Array.isArray(raw)
-        ? raw as Record<string, unknown>
-        : {};
-      throw new CommandHttpError(
-        response.status,
-        typeof error.message === "string"
-          ? error.message
-          : `signal failed (HTTP ${response.status}): ${
-            typeof error.error === "string" ? error.error : "unknown_error"
-          }`,
-      );
-    }
-    const body = responseBody(raw);
-    if (body.status !== "accepted" || body.signal === undefined) {
-      throw new Error("signal endpoint accepted without a signal receipt");
-    }
-    if (body.min_client_version !== undefined) {
-      const order = compareVersion(CLIENT_PROTOCOL_VERSION, body.min_client_version);
-      if (order === null) {
-        throw new Error("server returned a malformed min_client_version");
+      const body = responseBody(raw);
+      if (body.status !== "accepted" || body.signal === undefined) {
+        throw new Error("signal endpoint accepted without a signal receipt");
       }
-      if (order < 0) {
-        throw new Error(
-          `client upgrade required (minimum ${body.min_client_version})`,
-        );
+      if (body.min_client_version !== undefined) {
+        const order = compareVersion(CLIENT_PROTOCOL_VERSION, body.min_client_version);
+        if (order === null) {
+          throw new Error("server returned a malformed min_client_version");
+        }
+        if (order < 0) {
+          throw new Error(
+            `client upgrade required (minimum ${body.min_client_version})`,
+          );
+        }
       }
+      return { httpStatus: response.status, response: body };
+    } finally {
+      clearTimeout(timer);
+      callerSignal?.removeEventListener("abort", onCallerAbort);
     }
-    return { httpStatus: response.status, response: body };
   }
 }

@@ -13,6 +13,13 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { CloudTarget } from "../../src/cloud/config.js";
 import {
+  CommandHttpError,
+  CommandTransportError,
+  SIGNAL_REQUEST_TIMEOUT_MS,
+  ThinCommandClient,
+  type PostSignalRequest,
+} from "../../src/cloud/command-client.js";
+import {
   readAgentSignalMembers,
   readSignals,
   settleSignalStatus,
@@ -72,6 +79,376 @@ function headersThenHangingBody(observed: AbortSignal[]): typeof fetch {
     } as unknown as Response;
   }) as typeof fetch;
 }
+
+function signalPostRequest(signal?: AbortSignal): PostSignalRequest {
+  return {
+    workspaceId: WORKSPACE_ID,
+    credential: "test-agent-credential",
+    command: {
+      kind: "post_signal",
+      signal_kind: "note",
+      body: "runtime reply",
+      to_user_id: null,
+      to_agent_principal_id: null,
+      in_reply_to: "33333333-3333-4333-8333-333333333333",
+      about: null,
+    },
+    ...(signal === undefined ? {} : { signal }),
+  };
+}
+
+function signalReceipt(): Record<string, unknown> {
+  return {
+    ok: true,
+    status: "accepted",
+    event_ids: [],
+    signal: {
+      id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      workspace_id: WORKSPACE_ID,
+      from: "44444444-4444-4444-8444-444444444444",
+      from_kind: "agent",
+      to: null,
+      to_agent: null,
+      in_reply_to: null,
+      about: null,
+      kind: "note",
+      body: "runtime reply",
+      until: "2026-08-30T00:00:00.000Z",
+      created_at: "2026-07-30T00:00:00.000Z",
+    },
+  };
+}
+
+function signalPostSuccess(observed: AbortSignal[]): typeof fetch {
+  return (async (_input, init) => {
+    const signal = init?.signal;
+    assert.ok(
+      signal instanceof AbortSignal,
+      "sendSignal must propagate one effective AbortSignal",
+    );
+    observed.push(signal);
+    return {
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify(signalReceipt()),
+    } as unknown as Response;
+  }) as typeof fetch;
+}
+
+/** Headers arrive immediately; the body never settles and ignores abort. */
+function signalHeadersThenHangingBody(observed: AbortSignal[]): typeof fetch {
+  return (async (_input, init) => {
+    const signal = init?.signal;
+    assert.ok(
+      signal instanceof AbortSignal,
+      "the signal post must propagate an AbortSignal",
+    );
+    observed.push(signal);
+    return {
+      ok: true,
+      status: 200,
+      text: async () => await new Promise<never>(() => {}),
+    } as unknown as Response;
+  }) as typeof fetch;
+}
+
+/** Fetch never settles, but rejects with AbortError when its signal aborts. */
+function signalHangingFetch(observed: AbortSignal[]): typeof fetch {
+  return (async (_input, init) => {
+    const signal = init?.signal;
+    assert.ok(
+      signal instanceof AbortSignal,
+      "the signal post must propagate an AbortSignal",
+    );
+    observed.push(signal);
+    return await new Promise<Response>((_resolve, reject) => {
+      const fail = () => {
+        const error = new Error("aborted");
+        error.name = "AbortError";
+        reject(error);
+      };
+      if (signal.aborted) {
+        fail();
+      } else {
+        signal.addEventListener("abort", fail, { once: true });
+      }
+    });
+  }) as typeof fetch;
+}
+
+/** Headers arrive immediately; the body hangs but honours abort like a real read. */
+function signalHeadersThenAbortableBody(observed: AbortSignal[]): typeof fetch {
+  return (async (_input, init) => {
+    const signal = init?.signal;
+    assert.ok(
+      signal instanceof AbortSignal,
+      "the signal post must propagate an AbortSignal",
+    );
+    observed.push(signal);
+    return {
+      ok: true,
+      status: 200,
+      text: async () =>
+        await new Promise<never>((_resolve, reject) => {
+          const fail = () => {
+            const error = new Error("aborted");
+            error.name = "AbortError";
+            reject(error);
+          };
+          if (signal.aborted) {
+            fail();
+          } else {
+            signal.addEventListener("abort", fail, { once: true });
+          }
+        }),
+    } as unknown as Response;
+  }) as typeof fetch;
+}
+
+function signalRefusal(observed: AbortSignal[]): typeof fetch {
+  return (async (_input, init) => {
+    const signal = init?.signal;
+    assert.ok(signal instanceof AbortSignal);
+    observed.push(signal);
+    return {
+      ok: false,
+      status: 500,
+      text: async () => JSON.stringify({ error: "boom" }),
+    } as unknown as Response;
+  }) as typeof fetch;
+}
+
+function signalMalformedBody(observed: AbortSignal[]): typeof fetch {
+  return (async (_input, init) => {
+    const signal = init?.signal;
+    assert.ok(signal instanceof AbortSignal);
+    observed.push(signal);
+    return {
+      ok: true,
+      status: 200,
+      text: async () => "not json at all",
+    } as unknown as Response;
+  }) as typeof fetch;
+}
+
+function signalRejectingFetch(observed: AbortSignal[]): typeof fetch {
+  return (async (_input, init) => {
+    const signal = init?.signal;
+    assert.ok(signal instanceof AbortSignal);
+    observed.push(signal);
+    throw new Error("network down");
+  }) as typeof fetch;
+}
+
+/** Wraps a caller signal so add/removeEventListener calls can be counted. */
+function countingSignal(): {
+  signal: AbortSignal;
+  adds: () => number;
+  removes: () => number;
+  abort: () => void;
+} {
+  const controller = new AbortController();
+  const signal = controller.signal;
+  let adds = 0;
+  let removes = 0;
+  const add = signal.addEventListener.bind(signal);
+  const remove = signal.removeEventListener.bind(signal);
+  Object.defineProperty(signal, "addEventListener", {
+    configurable: true,
+    value: (
+      type: string,
+      listener: EventListenerOrEventListenerObject,
+      options?: AddEventListenerOptions,
+    ) => {
+      adds += 1;
+      add(type, listener, options);
+    },
+  });
+  Object.defineProperty(signal, "removeEventListener", {
+    configurable: true,
+    value: (
+      type: string,
+      listener: EventListenerOrEventListenerObject,
+      options?: EventListenerOptions,
+    ) => {
+      removes += 1;
+      remove(type, listener, options);
+    },
+  });
+  return {
+    signal,
+    adds: () => adds,
+    removes: () => removes,
+    abort: () => controller.abort(),
+  };
+}
+
+test("sendSignal keeps one deadline through response-body settlement", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const observed: AbortSignal[] = [];
+  const client = new ThinCommandClient(
+    TARGET,
+    signalHeadersThenHangingBody(observed),
+  );
+  const pending = client.sendSignal(signalPostRequest());
+
+  // Let the fetch resolve so the response-body race is the only live arm.
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(observed.length, 1, "the signal post reached the fetcher");
+  const marker = Symbol("still pending");
+  t.mock.timers.tick(SIGNAL_REQUEST_TIMEOUT_MS - 1);
+  const early = await Promise.race([
+    pending.then(() => "settled", () => "settled"),
+    Promise.resolve(marker),
+  ]);
+  assert.equal(
+    early,
+    marker,
+    "the deadline must not fire before SIGNAL_REQUEST_TIMEOUT_MS",
+  );
+
+  t.mock.timers.tick(1);
+  await assert.rejects(pending, {
+    name: "CommandTransportError",
+    message: "signal request timed out",
+  });
+  assert.equal(
+    observed[0]!.aborted,
+    true,
+    "the deadline must abort the request signal",
+  );
+});
+
+test("sendSignal caller abort during fetch is AbortError, never CommandTransportError", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const observed: AbortSignal[] = [];
+  const client = new ThinCommandClient(TARGET, signalHangingFetch(observed));
+  const caller = new AbortController();
+  const pending = client.sendSignal(signalPostRequest(caller.signal));
+
+  assert.equal(observed.length, 1, "the signal post reached the fetcher");
+  caller.abort();
+  const caught = await pending.then(() => null, (error: unknown) => error);
+  assert.ok(caught instanceof Error);
+  assert.equal(caught.name, "AbortError");
+  assert.equal(caught instanceof CommandTransportError, false);
+  assert.equal(observed[0]!.aborted, true);
+});
+
+test("sendSignal caller abort during body settlement is AbortError", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const observed: AbortSignal[] = [];
+  const client = new ThinCommandClient(
+    TARGET,
+    signalHeadersThenAbortableBody(observed),
+  );
+  const caller = new AbortController();
+  const pending = client.sendSignal(signalPostRequest(caller.signal));
+
+  await Promise.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(observed.length, 1, "headers arrived");
+  caller.abort();
+  const caught = await pending.then(() => null, (error: unknown) => error);
+  assert.ok(caught instanceof Error);
+  assert.equal(caught.name, "AbortError");
+  assert.equal(caught instanceof CommandTransportError, false);
+});
+
+test("sendSignal removes its caller-abort listener on every outcome", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+
+  // Success.
+  {
+    const counted = countingSignal();
+    const client = new ThinCommandClient(TARGET, signalPostSuccess([]));
+    const result = await client.sendSignal(signalPostRequest(counted.signal));
+    assert.equal(result.response.status, "accepted");
+    assert.equal(counted.adds(), 1);
+    assert.equal(counted.removes(), 1);
+  }
+
+  // HTTP refusal.
+  {
+    const counted = countingSignal();
+    const client = new ThinCommandClient(TARGET, signalRefusal([]));
+    await assert.rejects(
+      client.sendSignal(signalPostRequest(counted.signal)),
+      CommandHttpError,
+    );
+    assert.equal(counted.adds(), 1);
+    assert.equal(counted.removes(), 1);
+  }
+
+  // Malformed 2xx body.
+  {
+    const counted = countingSignal();
+    const client = new ThinCommandClient(TARGET, signalMalformedBody([]));
+    await assert.rejects(
+      client.sendSignal(signalPostRequest(counted.signal)),
+      /non-JSON/,
+    );
+    assert.equal(counted.adds(), 1);
+    assert.equal(counted.removes(), 1);
+  }
+
+  // Transport failure before a response.
+  {
+    const counted = countingSignal();
+    const client = new ThinCommandClient(TARGET, signalRejectingFetch([]));
+    await assert.rejects(
+      client.sendSignal(signalPostRequest(counted.signal)),
+      { name: "CommandTransportError" },
+    );
+    assert.equal(counted.adds(), 1);
+    assert.equal(counted.removes(), 1);
+  }
+
+  // Caller abort during fetch.
+  {
+    const counted = countingSignal();
+    const client = new ThinCommandClient(TARGET, signalHangingFetch([]));
+    const pending = client.sendSignal(signalPostRequest(counted.signal));
+    counted.abort();
+    await assert.rejects(pending, { name: "AbortError" });
+    assert.equal(counted.adds(), 1);
+    assert.equal(counted.removes(), 1);
+  }
+
+  // Internal deadline during a body that ignores abort.
+  {
+    const counted = countingSignal();
+    const client = new ThinCommandClient(
+      TARGET,
+      signalHeadersThenHangingBody([]),
+    );
+    const pending = client.sendSignal(signalPostRequest(counted.signal));
+    await Promise.resolve();
+    await Promise.resolve();
+    t.mock.timers.tick(SIGNAL_REQUEST_TIMEOUT_MS);
+    await assert.rejects(pending, {
+      name: "CommandTransportError",
+      message: "signal request timed out",
+    });
+    assert.equal(counted.adds(), 1);
+    assert.equal(counted.removes(), 1);
+  }
+
+  // Already aborted before the call: no listener is ever attached.
+  {
+    const counted = countingSignal();
+    counted.abort();
+    const client = new ThinCommandClient(TARGET, signalPostSuccess([]));
+    await assert.rejects(
+      client.sendSignal(signalPostRequest(counted.signal)),
+      { name: "AbortError" },
+    );
+    assert.equal(counted.adds(), 0);
+    assert.equal(counted.removes(), 0);
+  }
+});
 
 test("D-034: every signal fetch aborts at the 30 second application deadline", async (t) => {
   t.mock.timers.enable({ apis: ["setTimeout"] });
