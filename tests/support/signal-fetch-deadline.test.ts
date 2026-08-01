@@ -34,6 +34,28 @@ const TARGET: CloudTarget = {
   profileId: "test-profile",
 };
 
+/**
+ * Real-time bound for promises that must settle without the mocked 30-second
+ * deadline. If a settlement arm is deleted, the pending promise never settles
+ * and the test fails after one real second instead of hanging the whole suite.
+ * Captured before mock timers replace globalThis.setTimeout/clearTimeout.
+ */
+const REAL_SET_TIMEOUT = globalThis.setTimeout;
+const REAL_CLEAR_TIMEOUT = globalThis.clearTimeout;
+
+async function boundedRealWait<T>(
+  pending: Promise<T>,
+  label: string,
+): Promise<T | string> {
+  let handle: ReturnType<typeof setTimeout> | undefined;
+  const bound = new Promise<string>((resolve) => {
+    handle = REAL_SET_TIMEOUT(() => resolve(`still pending after ${label}`), 1_000);
+  });
+  return Promise.race([pending, bound]).finally(() => {
+    if (handle !== undefined) REAL_CLEAR_TIMEOUT(handle);
+  });
+}
+
 function hangingFetch(observed: AbortSignal[]): typeof fetch {
   return (async (_input, init) => {
     const signal = init?.signal;
@@ -355,6 +377,66 @@ test("sendSignal caller abort during body settlement is AbortError", async (t) =
   assert.ok(caught instanceof Error);
   assert.equal(caught.name, "AbortError");
   assert.equal(caught instanceof CommandTransportError, false);
+});
+
+test("sendSignal caller abort settles an abort-ignoring pending fetch as AbortError without the deadline", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const observed: AbortSignal[] = [];
+  const client = new ThinCommandClient(TARGET, ignoringAbortFetch(observed));
+  const caller = new AbortController();
+  const pending = client.sendSignal(signalPostRequest(caller.signal));
+
+  assert.equal(observed.length, 1, "the signal post reached the fetcher");
+  caller.abort();
+  const caught = await boundedRealWait(
+    pending.then(() => null, (error: unknown) => error),
+    "caller abort during an abort-ignoring fetch",
+  );
+  assert.ok(
+    caught instanceof Error,
+    "the pending fetch must reject promptly without the 30-second timer; got: " +
+      String(caught),
+  );
+  assert.equal(caught.name, "AbortError");
+  assert.equal(caught instanceof CommandTransportError, false);
+  assert.equal(
+    observed[0]!.aborted,
+    true,
+    "the effective request signal must be aborted",
+  );
+});
+
+test("sendSignal caller abort settles an abort-ignoring pending body as AbortError without the deadline", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const observed: AbortSignal[] = [];
+  const client = new ThinCommandClient(
+    TARGET,
+    signalHeadersThenHangingBody(observed),
+  );
+  const caller = new AbortController();
+  const pending = client.sendSignal(signalPostRequest(caller.signal));
+
+  // Let the fetch resolve so the response-body race is the only live arm.
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(observed.length, 1, "headers arrived");
+  caller.abort();
+  const caught = await boundedRealWait(
+    pending.then(() => null, (error: unknown) => error),
+    "caller abort during an abort-ignoring body",
+  );
+  assert.ok(
+    caught instanceof Error,
+    "the pending body must reject promptly without the 30-second timer; got: " +
+      String(caught),
+  );
+  assert.equal(caught.name, "AbortError");
+  assert.equal(caught instanceof CommandTransportError, false);
+  assert.equal(
+    observed[0]!.aborted,
+    true,
+    "the effective request signal must be aborted",
+  );
 });
 
 test("sendSignal removes its caller-abort listener on every outcome", async (t) => {

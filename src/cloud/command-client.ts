@@ -525,28 +525,44 @@ function signalAbortError(): Error {
   return error;
 }
 
+type SignalRaceArm<T> =
+  | { kind: "value"; value: T }
+  | { kind: "error"; error: unknown }
+  | { kind: "deadline" }
+  | { kind: "callerAbort" };
+
 /**
- * Bounded race for one signal-post phase (fetch or body read). The internal
- * deadline stays live through response-body consumption, so a provider or fake
- * that ignores the abort signal still settles at the deadline; merely calling
- * controller.abort() is not enough. Both arms are handled so no arm can become
- * an unhandled rejection after the race has settled.
+ * Bounded race for one signal-post phase (fetch or body read). Three arms: the
+ * phase's own settlement, the internal deadline, and caller cancellation. The
+ * internal deadline stays live through response-body consumption, so a provider
+ * or fake that ignores the abort signal still settles at the deadline; caller
+ * cancellation settles the currently pending phase promptly even when the phase
+ * ignores the effective signal. Every arm is handled so no arm can become an
+ * unhandled rejection after the race has settled.
  */
 async function raceSignalDeadline<T>(
   work: Promise<T>,
   deadline: Promise<void>,
+  callerAbort: Promise<void> | undefined,
 ): Promise<T> {
-  const settled = await Promise.race([
+  const arms: Array<Promise<SignalRaceArm<T>>> = [
     work.then(
-      (value) => ({ value }),
-      (error) => ({ error }),
+      (value) => ({ kind: "value", value }),
+      (error) => ({ kind: "error", error }),
     ),
-    deadline.then(() => ({ deadline: true })),
-  ]);
-  if ("deadline" in settled) {
+    deadline.then(() => ({ kind: "deadline" })),
+  ];
+  if (callerAbort !== undefined) {
+    arms.push(callerAbort.then(() => ({ kind: "callerAbort" })));
+  }
+  const settled = await Promise.race(arms);
+  if (settled.kind === "callerAbort") {
+    throw signalAbortError();
+  }
+  if (settled.kind === "deadline") {
     throw new CommandTransportError("signal request timed out");
   }
-  if ("error" in settled) throw settled.error;
+  if (settled.kind === "error") throw settled.error;
   return settled.value;
 }
 
@@ -855,16 +871,29 @@ export class ThinCommandClient {
     const deadline = new Promise<void>((resolve) => {
       releaseDeadline = resolve;
     });
+    let releaseCallerAbort: (() => void) | undefined;
+    const callerAbort = new Promise<void>((resolve) => {
+      releaseCallerAbort = resolve;
+    });
     const timer = setTimeout(() => {
       deadlineFired = true;
       controller.abort();
       releaseDeadline?.();
     }, SIGNAL_REQUEST_TIMEOUT_MS);
-    const onCallerAbort = () => controller.abort();
+    // One caller listener for the whole request: it aborts the effective
+    // controller AND settles the pending phase, even when the fetch or body
+    // ignores the effective signal. Removed in the single outer finally.
+    const onCallerAbort = () => {
+      controller.abort();
+      releaseCallerAbort?.();
+    };
     callerSignal?.addEventListener("abort", onCallerAbort);
     // Cover the window where the caller signal aborts between the entry check
     // and the listener attachment; an abort event never fires after the fact.
-    if (callerSignal?.aborted) controller.abort();
+    if (callerSignal?.aborted) {
+      controller.abort();
+      releaseCallerAbort?.();
+    }
     try {
       let response: Response;
       try {
@@ -886,6 +915,7 @@ export class ThinCommandClient {
             signal: controller.signal,
           }),
           deadline,
+          callerSignal === undefined ? undefined : callerAbort,
         );
       } catch (error) {
         if (callerSignal?.aborted && !deadlineFired) {
@@ -901,7 +931,11 @@ export class ThinCommandClient {
 
       let raw: unknown;
       try {
-        raw = await raceSignalDeadline(parsedJson(response), deadline);
+        raw = await raceSignalDeadline(
+          parsedJson(response),
+          deadline,
+          callerSignal === undefined ? undefined : callerAbort,
+        );
       } catch (error) {
         if (callerSignal?.aborted && !deadlineFired) {
           throw signalAbortError();

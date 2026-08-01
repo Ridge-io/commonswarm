@@ -134,6 +134,7 @@ function untilMs(signal: SignalRecord): number {
 
 function isAbort(error: unknown): boolean {
   return error instanceof Error &&
+    !(error instanceof CommandHttpError) &&
     (error.name === "AbortError" || /aborted|cancelled/i.test(error.message));
 }
 
@@ -416,21 +417,22 @@ export class ListenerEngine {
       });
       return { status: "done", record };
     } catch (error) {
-      if (isAbort(error)) {
+      // Typed HTTP errors outrank message heuristics: CommandHttpError.message
+      // may carry untrusted server text, so an HTTP failure is never classified
+      // as cancellation. A 401/403 is a credential escape: restore the exact
+      // resumable record for the future runtime and never persist
+      // failed/http_401 or failed/http_403.
+      if (error instanceof CommandHttpError) {
+        if (error.status === 401 || error.status === 403) {
+          await this.write({
+            ...record,
+            state: "reply_ready",
+            failureCode: null,
+          });
+          throw error;
+        }
+      } else if (isAbort(error)) {
         await this.write({ ...record, state: "reply_ready", failureCode: "cancelled" });
-        throw error;
-      }
-      // Credential escape: a refused reply post restores the exact resumable
-      // record for the future runtime and is never terminal http_401/http_403.
-      if (
-        error instanceof CommandHttpError &&
-        (error.status === 401 || error.status === 403)
-      ) {
-        await this.write({
-          ...record,
-          state: "reply_ready",
-          failureCode: null,
-        });
         throw error;
       }
       if (this.now() >= untilMs(signal)) {

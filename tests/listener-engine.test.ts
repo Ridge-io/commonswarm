@@ -348,7 +348,9 @@ test("refusal, blank output, and HTTP 409 become terminal failures", async () =>
     now: () => Date.parse("2026-07-30T01:00:00.000Z"),
     model: model(async () => ({ message: "reply", stopReason: "end_turn" })),
     poster: poster(async () => {
-      throw new CommandHttpError(409);
+      // Cancellation-looking server text must still terminalize as http_409,
+      // never escape as a caller cancellation.
+      throw new CommandHttpError(409, "server says operation cancelled");
     }),
   });
   const result = await conflict.process(
@@ -414,7 +416,9 @@ test("post 401 and post 403 restore reply_ready and rethrow the exact error", as
   ] as const) {
     const store = new MemoryStore();
     const ask = signal(id);
-    const thrown = new CommandHttpError(status);
+    // Cancellation-looking server text must never be classified as a caller
+    // abort: the credential escape stays resumable with an exact null code.
+    const thrown = new CommandHttpError(status, "server says operation cancelled");
     const engine = new ListenerEngine({
       store,
       now: () => Date.parse("2026-07-30T01:00:00.000Z"),
@@ -436,6 +440,33 @@ test("post 401 and post 403 restore reply_ready and rethrow the exact error", as
     assert.equal(record.postAttempts, 1);
     assert.equal(record.failureCode, null);
     assert.notEqual(record.failureCode, `http_${status}`);
+  }
+});
+
+test("HTTP 429 and 5xx with cancellation-looking text stay retryable, never cancellation", async () => {
+  for (const [status, id] of [
+    [429, "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbb10"],
+    [503, "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbb11"],
+  ] as const) {
+    const store = new MemoryStore();
+    const ask = signal(id);
+    const engine = new ListenerEngine({
+      store,
+      now: () => Date.parse("2026-07-30T01:00:00.000Z"),
+      model: model(async () => ({ message: "stable reply", stopReason: "end_turn" })),
+      poster: poster(async () => {
+        // Cancellation-looking server text must not turn a bounded retryable
+        // status into a caller cancellation.
+        throw new CommandHttpError(status, "server says operation cancelled");
+      }),
+    });
+    const result = await engine.process(ask);
+    assert.equal(result.status, "retry_pending");
+    assert.equal(result.status === "retry_pending" && result.phase, "post");
+    const record = await store.read(ask.id);
+    assert.ok(record);
+    assert.equal(record.state, "reply_ready");
+    assert.equal(record.failureCode, `http_${status}`);
   }
 });
 
