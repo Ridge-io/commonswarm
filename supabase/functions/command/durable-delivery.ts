@@ -5,7 +5,7 @@
  * Bodies never enter delivery metadata, the idempotency ledger, or audit detail.
  * Fresh and replay responses hydrate immutable signals after exact-recipient auth.
  */
-import type postgres from "npm:postgres@3.4.9";
+import type postgres from "postgres";
 
 type Sql = postgres.TransactionSql<Record<string, unknown>>;
 

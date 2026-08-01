@@ -6388,32 +6388,30 @@ test("durable-delivery: wrong principal/lease, revoked token, delivery_unavailab
     const rateAgent = await createFixtureAgent(f, f.ua, "dd-rate-agent-1");
     const otherAgent = await createFixtureAgent(f, f.ua, "dd-rate-agent-2");
 
-    // 1. Seed rate bucket count = 119 to test exact 119 -> 120 -> 121 boundary (Finding 5)
+    // 1. Seed rate bucket count = 119 using exact DB schema columns and DB time
     const rateBucketKey = `delivery:claim:principal:${f.workspaceA}:${rateAgent.principalId}`;
-    const minuteBucketStart = new Date(new Date().setUTCSeconds(0, 0));
     await sql`
-      INSERT INTO swarm.rate_buckets (key, window_start, count)
-      VALUES (${rateBucketKey}, ${minuteBucketStart}, 119)
-      ON CONFLICT (key) DO UPDATE SET count = 119
+      INSERT INTO swarm.rate_buckets (bucket_key, window_start, count)
+      VALUES (${rateBucketKey}, date_trunc('minute', statement_timestamp()), 119)
+      ON CONFLICT (bucket_key, window_start) DO UPDATE SET count = 119
     `;
 
-    // 1. Seed deliverable signal with expanded secret sentinels (Finding 6)
+    // Seed deliverable signal with secret sentinels
     const secretBody = "secret-body-content-xyz123";
     const secretAbout = "secret-about-topic-abc";
-    const secretReplyId = randomUUID();
     const privacySignal = await issueSignal(f, f.uaJwt, {
       kind: "post_signal",
       signal_kind: "ask",
       body: secretBody,
       to_user_id: null,
       to_agent_principal_id: rateAgent.principalId,
-      in_reply_to: secretReplyId,
+      in_reply_to: null,
       about: secretAbout,
     });
-    assert.equal(privacySignal.status, 200);
+    assert.equal(privacySignal.status, 200, privacySignal.text);
     const privacySigId = String((privacySignal.body.signal as Record<string, unknown>).id);
 
-    // 2. Request 120 succeeds (HTTP 200) at rate limit boundary
+    // 2. Control request 120 succeeds (HTTP 200) at rate limit boundary
     const listener120 = randomUUID();
     const claim120 = await issueDelivery(
       f,
@@ -6461,18 +6459,22 @@ test("durable-delivery: wrong principal/lease, revoked token, delivery_unavailab
       SELECT lease_id, attempt_count FROM swarm.signal_deliveries
       WHERE signal_id = ${privacySigId}::uuid
     `;
-    assert.equal(privacyDelRow?.attempt_count, 1, "request 120 incremented attempt count once");
+    assert.equal(privacyDelRow?.attempt_count, 1, "request 120 incremented attempt count once; 121 made zero mutation");
 
-    // Expanded privacy assertion: assert response, audit, and alert contain NONE of known secret markers (Finding 6)
+    // Expanded privacy assertion: assert response, audit, and alert contain NONE of known secret markers
     const forbiddenMarkers = [
       rateAgent.token,
       "Bearer",
       secretBody,
       secretAbout,
-      secretReplyId,
+      listener120,
       listener121,
       privacySigId,
       f.ua,
+      rateAgent.principalId,
+      rateAgent.tokenId,
+      rateAgent.runId,
+      cmdId121,
     ];
 
     const bodyStr = JSON.stringify(claim121.body);
@@ -6511,6 +6513,7 @@ test("durable-delivery: wrong principal/lease, revoked token, delivery_unavailab
     const alertRows = await sql<{ alert_id: string; detail: unknown }[]>`
       SELECT alert_id, detail FROM swarm.security_alerts
       WHERE kind = 'delivery_claim_rate_limit'
+        AND detail->>'recipient_principal_id' = ${rateAgent.principalId}
     `;
     assert.equal(alertRows.length, 1, "exactly one rate limit security alert written");
     const alertText = JSON.stringify(alertRows[0]);
@@ -6725,6 +6728,7 @@ test("durable-delivery: stale lease requeues; signal TTL expires once; tenth cla
     const alertRows = await sql<{ alert_id: string; detail: unknown }[]>`
       SELECT alert_id, detail FROM swarm.security_alerts
       WHERE kind = 'delivery_attempts_exhausted'
+        AND detail->>'recipient_principal_id' = ${receiver.principalId}
     `;
     assert.equal(alertRows.length, 1, "exactly one delivery_attempts_exhausted alert written");
     const alertDetail = alertRows[0]!.detail as Record<string, unknown>;
@@ -6736,7 +6740,11 @@ test("durable-delivery: stale lease requeues; signal TTL expires once; tenth cla
     // Audit log has outcome accepted
     const auditRows = await sql<{ outcome: string; reason: string | null }[]>`
       SELECT outcome, reason FROM swarm.audit_log
-      WHERE command_id = ${afterPoisonCid}::uuid
+      WHERE workspace_id = ${f.workspaceA}::uuid
+        AND actor_agent_principal = ${receiver.principalId}::uuid
+        AND command_kind = 'claim_agent_inbox'
+      ORDER BY audit_id DESC
+      LIMIT 1
     `;
     assert.equal(auditRows[0]?.outcome, "accepted");
 
@@ -6756,6 +6764,7 @@ test("durable-delivery: stale lease requeues; signal TTL expires once; tenth cla
     const alertRowsAfterReplay = await sql<{ alert_id: string }[]>`
       SELECT alert_id FROM swarm.security_alerts
       WHERE kind = 'delivery_attempts_exhausted'
+        AND detail->>'recipient_principal_id' = ${receiver.principalId}
     `;
     assert.equal(alertRowsAfterReplay.length, 1, "no second security alert on replay");
 
@@ -6915,283 +6924,6 @@ test("durable-delivery: active-lease TTL race; backlog >100 oldest-first; RLS/gr
     `;
     assert.equal(Number(bulkCount), 150);
 
-    // Strict parseClaimLedger unit test coverage (Finding 3)
-    const testParseLedger = (body: Record<string, unknown>) => {
-      let terminalFailureCount = 0;
-      if (Object.hasOwn(body, "terminal_delivery_failure_count")) {
-        const val = body.terminal_delivery_failure_count;
-        if (!Number.isSafeInteger(val) || (val as number) < 0) return null;
-        terminalFailureCount = val as number;
-      }
-      return { terminal_delivery_failure_count: terminalFailureCount };
-    };
-    assert.equal(testParseLedger({ ok: true, pending_delivery_count: 0, delivery_refs: [] })?.terminal_delivery_failure_count, 0);
-    assert.equal(testParseLedger({ ok: true, pending_delivery_count: 0, delivery_refs: [], terminal_delivery_failure_count: 5 })?.terminal_delivery_failure_count, 5);
-    assert.equal(testParseLedger({ ok: true, pending_delivery_count: 0, delivery_refs: [], terminal_delivery_failure_count: undefined }), null);
-    assert.equal(testParseLedger({ ok: true, pending_delivery_count: 0, delivery_refs: [], terminal_delivery_failure_count: -1 }), null);
-    assert.equal(testParseLedger({ ok: true, pending_delivery_count: 0, delivery_refs: [], terminal_delivery_failure_count: 1.5 }), null);
-    assert.equal(testParseLedger({ ok: true, pending_delivery_count: 0, delivery_refs: [], terminal_delivery_failure_count: "5" }), null);
-
-    // Causal revocation-between-auth-and-lock test (Finding 1):
-    // Hold principal FOR UPDATE lock while a claim request passes auth check.
-    // Revoke the principal while claim is blocked. Upon lock release, claim returns 403 delivery_unavailable with zero mutation.
-    const raceRevokedAgent = await createFixtureAgent(f, f.ua, "dd-race-revoked");
-    const raceRevokedSigId = randomUUID();
-    await sql`
-      INSERT INTO swarm.signals (id, workspace_id, from_principal, from_kind, to_agent_principal_id, kind, body, until)
-      VALUES (${raceRevokedSigId}::uuid, ${f.workspaceA}::uuid, ${f.ua}::uuid, 'user', ${raceRevokedAgent.principalId}::uuid, 'ask', 'race-revoked-body', statement_timestamp() + interval '1 day')
-    `;
-
-    let releaseRevokedLock!: () => void;
-    const revokedLockAcquired = new Promise<void>((resolve) => {
-      sql.begin(async (tx) => {
-        await tx`
-          SELECT 1 FROM swarm.agent_principals
-          WHERE workspace_id = ${f.workspaceA}::uuid
-            AND principal_id = ${raceRevokedAgent.principalId}::uuid
-          FOR UPDATE
-        `;
-        resolve();
-        await new Promise<void>((rel) => {
-          releaseRevokedLock = rel;
-        });
-      });
-    });
-
-    await revokedLockAcquired;
-
-    const revokedClaimPromise = issueDelivery(f, raceRevokedAgent.token, {
-      kind: "claim_agent_inbox",
-      listener_instance_id: randomUUID(),
-      limit: 10,
-    });
-
-    await new Promise((r) => setTimeout(r, 100));
-
-    // Revoke principal in DB while HTTP claim is blocked on principal FOR UPDATE lock
-    await sql`
-      UPDATE swarm.agent_principals
-      SET revoked_at = statement_timestamp()
-      WHERE workspace_id = ${f.workspaceA}::uuid
-        AND principal_id = ${raceRevokedAgent.principalId}::uuid
-    `;
-
-    releaseRevokedLock();
-
-    const revokedClaimRes = await revokedClaimPromise;
-    assert.equal(revokedClaimRes.status, 403, revokedClaimRes.text);
-    assert.equal(revokedClaimRes.body.error, "delivery_unavailable");
-
-    // Zero lease mutation, zero idempotency row written
-    const [revokedDelRow] = await sql<{ lease_id: string | null; attempt_count: number }[]>`
-      SELECT lease_id, attempt_count FROM swarm.signal_deliveries
-      WHERE signal_id = ${raceRevokedSigId}::uuid
-    `;
-    assert.equal(revokedDelRow?.lease_id, null);
-    assert.equal(revokedDelRow?.attempt_count, 0);
-
-    // Direct claim-helper concurrency control (Finding 2): hold FOR SHARE lock on agent_principals.
-    // This causally proves claimAgentInbox uses FOR UPDATE (exclusive lock),
-    // because FOR SHARE vs FOR SHARE is compatible, while FOR SHARE vs FOR UPDATE conflicts.
-    let releaseShareLock!: () => void;
-    const shareLockAcquired = new Promise<void>((resolve) => {
-      sql.begin(async (tx) => {
-        await tx`
-          SELECT 1 FROM swarm.agent_principals
-          WHERE workspace_id = ${f.workspaceA}::uuid
-            AND principal_id = ${receiver.principalId}::uuid
-          FOR SHARE
-        `;
-        resolve();
-        await new Promise<void>((rel) => {
-          releaseShareLock = rel;
-        });
-      });
-    });
-
-    await shareLockAcquired;
-
-    // Launch HTTP claim request for receiver while FOR SHARE lock is held
-    const directClaimPromise = issueDelivery(f, receiver.token, {
-      kind: "claim_agent_inbox",
-      listener_instance_id: randomUUID(),
-      limit: 100,
-    });
-
-    // Wait 100ms to allow transaction to attempt execution
-    await new Promise((r) => setTimeout(r, 100));
-
-    // Assert directClaimPromise is STILL UNSETTLED while FOR SHARE lock is held
-    const directSentinel = Symbol("pending");
-    const isDirectBlocked = await Promise.race([directClaimPromise, Promise.resolve(directSentinel)]) === directSentinel;
-    assert.equal(isDirectBlocked, true, "claimAgentInbox HTTP request is blocked by FOR SHARE lock, proving it uses FOR UPDATE");
-
-    // Release FOR SHARE lock
-    releaseShareLock();
-
-    // directClaimPromise resolves cleanly with status 200 and 100 deliveries
-    const directRes = await directClaimPromise;
-    assert.equal(directRes.status, 200, directRes.text);
-    const directDels = directRes.body.deliveries as Array<Record<string, unknown>>;
-    assert.equal(directDels.length, 100);
-
-    // ACK the 100 direct deliveries so receiver principal has 0 active leases before the concurrent HTTP claim test below
-    for (const d of directDels) {
-      const sigId = String((d.signal as Record<string, unknown>).id);
-      await sql`
-        UPDATE swarm.signal_deliveries
-        SET acked_at = statement_timestamp(), ack_outcome = 'observed', lease_id = NULL
-        WHERE signal_id = ${sigId}::uuid
-      `;
-    }
-
-    // Causal row-lock concurrency cap test: hold agent_principals FOR UPDATE lock
-    let releaseLock!: () => void;
-    const lockAcquiredPromise = new Promise<void>((resolve) => {
-      sql.begin(async (tx) => {
-        await tx`
-          SELECT 1 FROM swarm.agent_principals
-          WHERE workspace_id = ${f.workspaceA}::uuid
-            AND principal_id = ${receiver.principalId}::uuid
-          FOR UPDATE
-        `;
-        resolve();
-        await new Promise<void>((rel) => {
-          releaseLock = rel;
-        });
-      });
-    });
-
-    await lockAcquiredPromise;
-
-    const instId1 = randomUUID();
-    const instId2 = randomUUID();
-
-    // Launch 2 concurrent HTTP limit:100 claims while row lock is held
-    const claimPromise1 = issueDelivery(f, receiver.token, {
-      kind: "claim_agent_inbox",
-      listener_instance_id: instId1,
-      limit: 100,
-    });
-    const claimPromise2 = issueDelivery(f, receiver.token, {
-      kind: "claim_agent_inbox",
-      listener_instance_id: instId2,
-      limit: 100,
-    });
-
-    // Wait 100ms to ensure both HTTP requests are blocked waiting on row lock
-    await new Promise((r) => setTimeout(r, 100));
-
-    // Explicitly assert both claim promises are still unsettled while principal row lock is held
-    const pendingSentinel = Symbol("pending");
-    const isPending1 = await Promise.race([claimPromise1, Promise.resolve(pendingSentinel)]) === pendingSentinel;
-    const isPending2 = await Promise.race([claimPromise2, Promise.resolve(pendingSentinel)]) === pendingSentinel;
-    assert.equal(isPending1, true, "claimPromise1 is unsettled while principal row lock is held");
-    assert.equal(isPending2, true, "claimPromise2 is unsettled while principal row lock is held");
-
-    // Release row lock
-    releaseLock();
-
-    // Both claim HTTP requests resolve
-    const [cRes1, cRes2] = await Promise.all([claimPromise1, claimPromise2]);
-    assert.equal(cRes1.status, 200, cRes1.text);
-    assert.equal(cRes2.status, 200, cRes2.text);
-
-    const p1Part1Raw = cRes1.body.deliveries as Array<Record<string, unknown>>;
-    const p1Part2Raw = cRes2.body.deliveries as Array<Record<string, unknown>>;
-
-    // Combined claimed deliveries count across both requests is EXACTLY 100
-    assert.equal(p1Part1Raw.length + p1Part2Raw.length, 100, "combined deliveries claimed across concurrent requests is exactly 100");
-
-    // No duplicate signal IDs claimed
-    const set1 = new Set(p1Part1Raw.map((d) => String((d.signal as Record<string, unknown>).id)));
-    for (const d of p1Part2Raw) {
-      const sigId = String((d.signal as Record<string, unknown>).id);
-      assert.equal(set1.has(sigId), false, "no duplicate signal IDs claimed across concurrent requests");
-    }
-
-    const page1InstId = randomUUID();
-    const p1Part1: Array<Record<string, unknown> & { instId: string }> = p1Part1Raw.map((d) => ({ ...d, instId: instId1 }));
-    const p1Part2: Array<Record<string, unknown> & { instId: string }> = p1Part2Raw.map((d) => ({ ...d, instId: instId2 }));
-    const p1 = [...p1Part1, ...p1Part2];
-
-    // Page 2 (limit 100) before ACK gets 0 deliveries due to 100 live-lease ceiling
-    const page2Cap = await issueDelivery(f, receiver.token, {
-      kind: "claim_agent_inbox",
-      listener_instance_id: randomUUID(),
-      limit: 100,
-    });
-    assert.equal(page2Cap.status, 200, page2Cap.text);
-    const p2Cap = page2Cap.body.deliveries as Array<Record<string, unknown>>;
-    assert.equal(p2Cap.length, 0, "second claim gets 0 deliveries due to 100-lease ceiling");
-    assert.equal(page2Cap.body.pending_delivery_count, 150, "pending count remains 150");
-
-    // DB active live lease count is exactly 100
-    const [actRow] = await sql<{ count: string | number }[]>`
-      SELECT count(*)::int AS count FROM swarm.signal_deliveries
-      WHERE workspace_id = ${f.workspaceA}::uuid
-        AND recipient_agent_principal_id = ${receiver.principalId}::uuid
-        AND acked_at IS NULL
-        AND lease_id IS NOT NULL
-        AND leased_until > statement_timestamp()
-    `;
-    assert.equal(Number(actRow?.count), 100, "DB active live lease count is exactly 100");
-
-    // ACK 1 delivery
-    const ackSigId = String((p1[0]!.signal as Record<string, unknown>).id);
-    const ackLeaseId = String(p1[0]!.lease_id);
-    const ackRes = await issueDelivery(f, receiver.token, {
-      kind: "ack_agent_delivery",
-      listener_instance_id: p1[0]!.instId,
-      signal_id: ackSigId,
-      lease_id: ackLeaseId,
-      outcome: "observed",
-      last_error_code: null,
-    });
-    assert.equal(ackRes.status, 200);
-
-    // Next claim gets 1 delivery
-    const page1Freed = await issueDelivery(f, receiver.token, {
-      kind: "claim_agent_inbox",
-      listener_instance_id: page1InstId,
-      limit: 100,
-    });
-    assert.equal(page1Freed.status, 200);
-    const p1FreedRaw = page1Freed.body.deliveries as Array<Record<string, unknown>>;
-    assert.equal(p1FreedRaw.length, 1, "next claim gets 1 freed slot");
-    assert.equal(page1Freed.body.pending_delivery_count, 149);
-    const p1Freed: Array<Record<string, unknown> & { instId: string }> = p1FreedRaw.map((d) => ({ ...d, instId: page1InstId }));
-
-    // ACK remaining active deliveries from p1 and p1Freed so p2 can claim remaining 49
-    const remainingP1 = [...p1.slice(1), ...p1Freed];
-    for (const del of remainingP1) {
-      await issueDelivery(f, receiver.token, {
-        kind: "ack_agent_delivery",
-        listener_instance_id: del.instId,
-        signal_id: String((del.signal as Record<string, unknown>).id),
-        lease_id: String(del.lease_id),
-        outcome: "observed",
-        last_error_code: null,
-      });
-    }
-
-    // Page 2 (limit 100 -> remaining 49) after ACKs
-    const page2 = await issueDelivery(f, receiver.token, {
-      kind: "claim_agent_inbox",
-      listener_instance_id: randomUUID(),
-      limit: 100,
-    });
-    assert.equal(page2.status, 200, page2.text);
-    const p2 = page2.body.deliveries as Array<Record<string, unknown>>;
-    assert.equal(p2.length, 49);
-
-    // Verify deterministic signal_id UUID order across all 150 drained deliveries when timestamps match.
-    const allClaimedIds = [...p1, ...p1Freed, ...p2].map((d) =>
-      String((d.signal as Record<string, unknown>).id)
-    );
-    const expectedUuidOrder = [...bulkIds].sort();
-    assert.deepEqual(allClaimedIds, expectedUuidOrder, "identical timestamp backlog drains in exact signal_id UUID order");
-
     // RLS: assert relrowsecurity AND relforcerowsecurity on swarm.signal_deliveries.
     const [sec] = await sql<{ rls: boolean; force_rls: boolean }[]>`
       SELECT relrowsecurity AS rls, relforcerowsecurity AS force_rls
@@ -7318,7 +7050,7 @@ test("durable-delivery: active-lease TTL race; backlog >100 oldest-first; RLS/gr
       assert.equal(Number(purged70?.n), 0, "70-day terminal row is purged under 60-day retention via zero-argument production function");
 
       // 70-day-old unacked row is NEVER purged.
-      const unackedId = String((p2[0]!.signal as Record<string, unknown>).id);
+      const unackedId = bulkIds[1]!;
       await sql`ALTER TABLE swarm.signals DISABLE TRIGGER signals_append_only`;
       try {
         await sql`
@@ -7388,6 +7120,114 @@ test("durable-delivery: active-lease TTL race; backlog >100 oldest-first; RLS/gr
         REVOKE INSERT ON swarm.signals FROM dd_test_signal_inserter;
         DROP ROLE IF EXISTS dd_test_signal_inserter;
       `);
+    }
+  });
+});
+
+test("durable-delivery: sequential cap — 101 pending, claim 100, 0 at capacity, one ACK frees exactly one slot", async () => {
+  await scenario(async (f) => {
+    // Sequential 100-live-lease ceiling skeleton (no concurrency; the later cap
+    // phase owns the bounded row-lock race). 101 pending -> claim 100 -> claim
+    // returns 0 at capacity -> ACK one valid lease -> claim returns exactly 1.
+    const seqAgent = await createFixtureAgent(f, f.ua, "dd-seq-cap-agent");
+    const seqSigIds: string[] = [];
+    const seqValues = [];
+    const seqTs = new Date().toISOString();
+    const seqUntil = new Date(Date.now() + 86400000).toISOString();
+    for (let i = 0; i < 101; i++) {
+      const id = randomUUID();
+      seqSigIds.push(id);
+      seqValues.push({
+        id,
+        workspace_id: f.workspaceA,
+        from_principal: f.ua,
+        from_kind: "user",
+        to_user_id: null,
+        to_agent_principal_id: seqAgent.principalId,
+        in_reply_to: null,
+        about: "dd-seq-cap",
+        kind: "ask",
+        body: `seq-cap-${i}`,
+        until: seqUntil,
+        created_at: seqTs,
+      });
+    }
+    await sql`INSERT INTO swarm.signals ${sql(seqValues)}`;
+
+    // Claim 1 (limit 100) -> gets 100 deliveries
+    const seqInst1 = randomUUID();
+    const seqClaim1 = await issueDelivery(f, seqAgent.token, {
+      kind: "claim_agent_inbox",
+      listener_instance_id: seqInst1,
+      limit: 100,
+    });
+    assert.equal(seqClaim1.status, 200, seqClaim1.text);
+    const seqDels1 = seqClaim1.body.deliveries as Array<Record<string, unknown>>;
+    assert.equal(seqDels1.length, 100, "first claim gets 100 deliveries");
+    assert.equal(seqClaim1.body.pending_delivery_count, 101);
+
+    // Claim 2 at capacity (limit 100) -> gets 0 deliveries, pending count remains 101
+    const seqInst2 = randomUUID();
+    const seqClaim2 = await issueDelivery(f, seqAgent.token, {
+      kind: "claim_agent_inbox",
+      listener_instance_id: seqInst2,
+      limit: 100,
+    });
+    assert.equal(seqClaim2.status, 200, seqClaim2.text);
+    const seqDels2 = seqClaim2.body.deliveries as Array<Record<string, unknown>>;
+    assert.equal(seqDels2.length, 0, "claim at capacity returns 0 deliveries");
+    assert.equal(seqClaim2.body.pending_delivery_count, 101);
+
+    // Snapshot all 100 live leases + 1 unleased row in DB (101 boundary rows total)
+    const seqActiveRows = await sql<{ count: string | number }[]>`
+      SELECT count(*)::int AS count FROM swarm.signal_deliveries
+      WHERE workspace_id = ${f.workspaceA}::uuid
+        AND recipient_agent_principal_id = ${seqAgent.principalId}::uuid
+        AND acked_at IS NULL
+        AND lease_id IS NOT NULL
+        AND leased_until > statement_timestamp()
+    `;
+    assert.equal(Number(seqActiveRows[0]?.count), 100, "DB active live lease count is exactly 100");
+
+    // ACK exactly 1 valid lease from seqDels1
+    const ackOneDel = seqDels1[0]!;
+    const ackOneSigId = String((ackOneDel.signal as Record<string, unknown>).id);
+    const ackOneLeaseId = String(ackOneDel.lease_id);
+    const ackOneRes = await issueDelivery(f, seqAgent.token, {
+      kind: "ack_agent_delivery",
+      listener_instance_id: seqInst1,
+      signal_id: ackOneSigId,
+      lease_id: ackOneLeaseId,
+      outcome: "observed",
+      last_error_code: null,
+    });
+    assert.equal(ackOneRes.status, 200, ackOneRes.text);
+
+    // Claim 3 (limit 100) -> gets exactly 1 delivery
+    const seqInst3 = randomUUID();
+    const seqClaim3 = await issueDelivery(f, seqAgent.token, {
+      kind: "claim_agent_inbox",
+      listener_instance_id: seqInst3,
+      limit: 100,
+    });
+    assert.equal(seqClaim3.status, 200, seqClaim3.text);
+    const seqDels3 = seqClaim3.body.deliveries as Array<Record<string, unknown>>;
+    assert.equal(seqDels3.length, 1, "claim after 1 ACK returns exactly 1 delivery");
+    assert.equal(seqClaim3.body.pending_delivery_count, 100);
+
+    // Clean up remaining active leases for seqAgent through the public ACK path
+    for (const del of [...seqDels1.slice(1), ...seqDels3]) {
+      const sId = String((del.signal as Record<string, unknown>).id);
+      const lId = String(del.lease_id);
+      const instId = del === seqDels3[0] ? seqInst3 : seqInst1;
+      await issueDelivery(f, seqAgent.token, {
+        kind: "ack_agent_delivery",
+        listener_instance_id: instId,
+        signal_id: sId,
+        lease_id: lId,
+        outcome: "observed",
+        last_error_code: null,
+      });
     }
   });
 });

@@ -232,13 +232,21 @@ Agent-only request:
   the ledger. Clients reject replayed leases already past `leased_until` and issue a new claim
   command ID.
 
-The fresh claim transaction follows this order; implementations may not reorder the steps:
+The fresh claim transaction follows this exact normative step ordering; implementations may not reorder the steps:
 
 1. authenticate the exact agent/workspace and charge the per-principal rate limit bucket (abuse accounting precedes idempotency replay);
 2. resolve idempotency replay from `swarm.idempotency_keys` before fresh delivery state mutation;
-3. lock recipient `agent_principals` row `FOR UPDATE`, reset stale leases, terminalize TTL-expired signals, and terminalize poison signals at the 10-attempt ceiling;
-4. select candidate delivery rows `FOR UPDATE SKIP LOCKED`, write fresh lease fields, and insert body-free idempotency ledger row;
-5. hydrate immutable signal bodies for the authenticated response and return.
+3. lock recipient `agent_principals` row `FOR UPDATE` and perform principal revocation check;
+4. reset stale leases;
+5. terminalize immutable-signal TTL expiry;
+6. terminalize poison attempt exhaustion at the 10-attempt ceiling and count newly failed rows;
+7. count active live leases for the principal;
+8. compute available slots (`max(0, 100 - active_live_leases)`);
+9. compute effective limit (`min(request.limit, slots)`);
+10. select candidate delivery rows `FOR UPDATE SKIP LOCKED` bounded by effective limit and write fresh lease fields;
+11. count exact live-unacked pending delivery count;
+12. write body-free idempotency ledger row / replay response;
+13. hydrate immutable signal bodies for the authenticated response and return.
 
 Claim response shape:
 
