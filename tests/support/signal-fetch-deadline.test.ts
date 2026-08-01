@@ -439,6 +439,109 @@ test("sendSignal caller abort settles an abort-ignoring pending body as AbortErr
   );
 });
 
+test("sendSignal first winner: an already-rejected fetch survives a later caller abort", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const observed: AbortSignal[] = [];
+  const fetcher = (async (_input: unknown, init?: RequestInit) => {
+    const signal = init?.signal;
+    assert.ok(signal instanceof AbortSignal);
+    observed.push(signal);
+    return await Promise.reject(new Error("network down first"));
+  }) as typeof fetch;
+  const client = new ThinCommandClient(TARGET, fetcher);
+  const caller = new AbortController();
+  const pending = client.sendSignal(signalPostRequest(caller.signal));
+
+  // One microtask lets the already-rejected work arm win the race; the public
+  // promise cannot have settled yet, so the caller abort lands strictly after
+  // the winner was chosen and must not reclassify it.
+  await Promise.resolve();
+  caller.abort();
+  const caught = await boundedRealWait(
+    pending.then(() => null, (error: unknown) => error),
+    "first-winner pre-response failure",
+  );
+  assert.ok(caught instanceof CommandTransportError, "got: " + String(caught));
+  assert.equal(caught.message, "signal request failed before a response");
+  assert.notEqual(caught.name, "AbortError");
+  assert.notEqual(caught.message, "signal request timed out");
+});
+
+test("sendSignal first winner: a fetch rejection survives a later internal deadline", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const observed: AbortSignal[] = [];
+  let rejectFetch: ((error: unknown) => void) | undefined;
+  const fetcher = (async (_input: unknown, init?: RequestInit) => {
+    const signal = init?.signal;
+    assert.ok(signal instanceof AbortSignal);
+    observed.push(signal);
+    return await new Promise<Response>((_resolve, reject) => {
+      rejectFetch = reject;
+    });
+  }) as typeof fetch;
+  const client = new ThinCommandClient(TARGET, fetcher);
+  const pending = client.sendSignal(signalPostRequest());
+  assert.equal(observed.length, 1, "the signal post reached the fetcher");
+
+  rejectFetch!(new Error("network down first"));
+  // One microtask lets the work arm win; the timer is advanced only after the
+  // winner was chosen, so the deadline must not reclassify it as a timeout.
+  await Promise.resolve();
+  t.mock.timers.tick(SIGNAL_REQUEST_TIMEOUT_MS);
+  const caught = await pending.then(() => null, (error: unknown) => error);
+  assert.ok(caught instanceof CommandTransportError, "got: " + String(caught));
+  assert.equal(caught.message, "signal request failed before a response");
+  assert.notEqual(caught.message, "signal request timed out");
+});
+
+test("sendSignal first winner: a 5xx body rejection survives a later caller abort", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const observed: AbortSignal[] = [];
+  let rejectBody: ((error: unknown) => void) | undefined;
+  const fetcher = (async (_input: unknown, init?: RequestInit) => {
+    const signal = init?.signal;
+    assert.ok(signal instanceof AbortSignal);
+    observed.push(signal);
+    return {
+      ok: false,
+      status: 500,
+      text: async () =>
+        await new Promise<string>((_resolve, reject) => {
+          rejectBody = reject;
+        }),
+    } as unknown as Response;
+  }) as typeof fetch;
+  const client = new ThinCommandClient(TARGET, fetcher);
+  const caller = new AbortController();
+  const pending = client.sendSignal(signalPostRequest(caller.signal));
+
+  // Let the headers arrive and the body read begin before forcing its failure.
+  for (let index = 0; index < 10 && rejectBody === undefined; index += 1) {
+    await Promise.resolve();
+  }
+  assert.equal(observed.length, 1, "headers arrived");
+  assert.ok(rejectBody !== undefined, "the body read started");
+  rejectBody(new Error("body stream broke"));
+  // The body failure hops text() -> parsedJson's catch -> the race work arm
+  // (settled after three microtasks); the public promise settles two hops
+  // later. Four microtasks therefore land strictly after the body work arm won
+  // and strictly before public settlement, so the caller abort must not
+  // reclassify the typed HTTP failure.
+  await Promise.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
+  caller.abort();
+  const caught = await boundedRealWait(
+    pending.then(() => null, (error: unknown) => error),
+    "first-winner 5xx body failure",
+  );
+  assert.ok(caught instanceof CommandHttpError, "got: " + String(caught));
+  assert.equal(caught.status, 500);
+  assert.equal(caught.message, "signal failed (HTTP 500)");
+  assert.notEqual(caught.name, "AbortError");
+});
+
 test("sendSignal removes its caller-abort listener on every outcome", async (t) => {
   t.mock.timers.enable({ apis: ["setTimeout"] });
 

@@ -537,14 +537,16 @@ type SignalRaceArm<T> =
  * internal deadline stays live through response-body consumption, so a provider
  * or fake that ignores the abort signal still settles at the deadline; caller
  * cancellation settles the currently pending phase promptly even when the phase
- * ignores the effective signal. Every arm is handled so no arm can become an
- * unhandled rejection after the race has settled.
+ * ignores the effective signal. The winning arm is returned as an explicit tag
+ * rather than thrown, so once a winner is chosen it is final: no later mutable
+ * signal or timer state may reclassify the outcome at catch time. Every arm is
+ * handled so no arm can become an unhandled rejection after the race settles.
  */
 async function raceSignalDeadline<T>(
   work: Promise<T>,
   deadline: Promise<void>,
   callerAbort: Promise<void> | undefined,
-): Promise<T> {
+): Promise<SignalRaceArm<T>> {
   const arms: Array<Promise<SignalRaceArm<T>>> = [
     work.then(
       (value) => ({ kind: "value", value }),
@@ -555,15 +557,7 @@ async function raceSignalDeadline<T>(
   if (callerAbort !== undefined) {
     arms.push(callerAbort.then(() => ({ kind: "callerAbort" })));
   }
-  const settled = await Promise.race(arms);
-  if (settled.kind === "callerAbort") {
-    throw signalAbortError();
-  }
-  if (settled.kind === "deadline") {
-    throw new CommandTransportError("signal request timed out");
-  }
-  if (settled.kind === "error") throw settled.error;
-  return settled.value;
+  return await Promise.race(arms);
 }
 
 export class ThinCommandClient {
@@ -866,7 +860,6 @@ export class ThinCommandClient {
       throw signalAbortError();
     }
     const controller = new AbortController();
-    let deadlineFired = false;
     let releaseDeadline: (() => void) | undefined;
     const deadline = new Promise<void>((resolve) => {
       releaseDeadline = resolve;
@@ -875,82 +868,86 @@ export class ThinCommandClient {
     const callerAbort = new Promise<void>((resolve) => {
       releaseCallerAbort = resolve;
     });
+    // The terminal arm settles BEFORE the effective controller is aborted, so
+    // an abort-aware fetch/body rejection cannot win the race merely because
+    // controller.abort() dispatches synchronously: the internal deadline still
+    // wins as the exact timeout and caller cancellation still wins as AbortError.
     const timer = setTimeout(() => {
-      deadlineFired = true;
-      controller.abort();
       releaseDeadline?.();
-    }, SIGNAL_REQUEST_TIMEOUT_MS);
-    // One caller listener for the whole request: it aborts the effective
-    // controller AND settles the pending phase, even when the fetch or body
-    // ignores the effective signal. Removed in the single outer finally.
-    const onCallerAbort = () => {
       controller.abort();
+    }, SIGNAL_REQUEST_TIMEOUT_MS);
+    // One caller listener for the whole request: it settles the pending phase
+    // AND aborts the effective controller, even when the fetch or body ignores
+    // the effective signal. Removed in the single outer finally.
+    const onCallerAbort = () => {
       releaseCallerAbort?.();
+      controller.abort();
     };
     callerSignal?.addEventListener("abort", onCallerAbort);
     // Cover the window where the caller signal aborts between the entry check
     // and the listener attachment; an abort event never fires after the fact.
     if (callerSignal?.aborted) {
-      controller.abort();
       releaseCallerAbort?.();
+      controller.abort();
     }
     try {
-      let response: Response;
-      try {
-        response = await raceSignalDeadline(
-          this.fetcher(commandEndpoint(this.target), {
-            method: "POST",
-            headers: {
-              authorization: `Bearer ${request.credential}`,
-              apikey: this.target.anonKey,
-              "content-type": "application/json",
-            },
-            body: JSON.stringify({
-              command_id: commandId,
-              client_version: CLIENT_PROTOCOL_VERSION,
-              workspace_id: request.workspaceId,
-              stream: { kind: "workspace" },
-              command,
-            }),
-            signal: controller.signal,
+      // Each phase handles its tagged winner directly. Mutable signal/timer
+      // state is never reread after the race, so a later caller abort or timer
+      // tick cannot replace a work outcome that won first.
+      const fetchOutcome = await raceSignalDeadline(
+        this.fetcher(commandEndpoint(this.target), {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${request.credential}`,
+            apikey: this.target.anonKey,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            command_id: commandId,
+            client_version: CLIENT_PROTOCOL_VERSION,
+            workspace_id: request.workspaceId,
+            stream: { kind: "workspace" },
+            command,
           }),
-          deadline,
-          callerSignal === undefined ? undefined : callerAbort,
-        );
-      } catch (error) {
-        if (callerSignal?.aborted && !deadlineFired) {
-          throw signalAbortError();
-        }
-        if (deadlineFired) {
-          throw new CommandTransportError("signal request timed out");
-        }
+          signal: controller.signal,
+        }),
+        deadline,
+        callerSignal === undefined ? undefined : callerAbort,
+      );
+      if (fetchOutcome.kind === "callerAbort") {
+        throw signalAbortError();
+      }
+      if (fetchOutcome.kind === "deadline") {
+        throw new CommandTransportError("signal request timed out");
+      }
+      if (fetchOutcome.kind === "error") {
         throw new CommandTransportError(
           "signal request failed before a response",
         );
       }
+      const response = fetchOutcome.value;
 
-      let raw: unknown;
-      try {
-        raw = await raceSignalDeadline(
-          parsedJson(response),
-          deadline,
-          callerSignal === undefined ? undefined : callerAbort,
-        );
-      } catch (error) {
-        if (callerSignal?.aborted && !deadlineFired) {
-          throw signalAbortError();
-        }
-        if (deadlineFired) {
-          throw new CommandTransportError("signal request timed out");
-        }
+      const bodyOutcome = await raceSignalDeadline(
+        parsedJson(response),
+        deadline,
+        callerSignal === undefined ? undefined : callerAbort,
+      );
+      if (bodyOutcome.kind === "callerAbort") {
+        throw signalAbortError();
+      }
+      if (bodyOutcome.kind === "deadline") {
+        throw new CommandTransportError("signal request timed out");
+      }
+      if (bodyOutcome.kind === "error") {
         if (response.status >= 500) {
           throw new CommandHttpError(
             response.status,
             `signal failed (HTTP ${response.status})`,
           );
         }
-        throw error;
+        throw bodyOutcome.error;
       }
+      const raw = bodyOutcome.value;
       if (!response.ok) {
         const error = raw && typeof raw === "object" && !Array.isArray(raw)
           ? raw as Record<string, unknown>
