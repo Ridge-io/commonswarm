@@ -232,6 +232,60 @@ behaviour: a valid unexpired authenticated JWT is rejected.
 4. The error is also **misleading**: an empty-email submission returned the identical
    "unauthenticated" message, so the UI cannot distinguish a validation failure from an auth failure.
 
+### ROOT CAUSE — found by measurement, and it is worse than a broken invite
+
+The decisive probe was Supabase's own user endpoint, called with the correct anon key:
+
+```
+GET /auth/v1/user
+403 {"code":403,"error_code":"session_not_found",
+     "msg":"Session from session_id claim in JWT does not exist"}
+```
+
+**The access token is cryptographically valid and unexpired, but the session it references no longer
+exists in the auth database.** Signature checks pass; existence checks fail.
+
+That single fact explains every symptom:
+
+| Path | Verifies | Result |
+|---|---|---|
+| Reads (`/rest/v1/...`, PostgREST) | JWT **signature** only | **200 — works**, reinforcing the illusion |
+| Writes (`/functions/v1/command`) | calls `auth.getUser()`, which checks the **session exists** | **401 unauthenticated** |
+
+The token itself is sound — `alg: ES256`, `kid` matches the project JWKS exactly, not expired. The
+problem is not signing configuration.
+
+**And the client never notices.** `site/src/lib/commonswarm.ts:91-96`:
+
+```ts
+export async function currentSession(): Promise<Session | null> {
+  const { data } = await c.auth.getSession();   // reads localStorage; does NOT contact the server
+  return data.session ?? null;
+}
+```
+
+`getSession()` is a local-storage read by design. The app never calls `getUser()` to validate, and
+the command path surfaces a 401 as a raw `unauthenticated` string with no special handling
+(`commonswarm.ts:360-372`).
+
+**Measured consequence — the state is permanent, not transient.** After a full page reload:
+
+```
+still shows signed in (Sign out present)  : true
+shows the sign-in form                    : false
+dead token still stored                   : true
+/auth/v1/user                             : still 403 session_not_found
+```
+
+So a user whose session is invalidated — signed out elsewhere, session rotated, revoked — lands in a
+**split-brain state with no way out**: the UI insists they are signed in, the feed keeps loading, and
+every action fails with a message that tells them they are not signed in. Reloading does not help.
+The only escape is to guess that "Sign out" is the fix.
+
+**Fix direction (not implemented — diagnosis only):** validate the session with `getUser()` on app
+load and treat a 401/`session_not_found` from any command as a dead session — sign out and prompt
+re-authentication rather than leaving the UI in a state it cannot recover from.
+
 ### Consequence for Stage Q
 
 The second-human invite, pending-access clearing, and remove/revoke checks **cannot be exercised**
