@@ -1517,3 +1517,66 @@ before it landed. It records the gate; each lane must still record its own two a
 
 ~~Any prose that names Grok as a required review arm, or that reads "BOTH Grok and Google
 Gemini via `agy`" as the current gate, is superseded; use D-036.~~
+
+## D-037 — a host that cannot pipe stdin cannot onboard an agent, and the site says otherwise · OPEN
+
+**Found by:** the operator, 2026-08-03, on a second physical machine with a real Codex CLI
+**Owner:** operator decision required · **Severity:** P1 product gap (not a code defect)
+**Measured on:** production v0.1.4; the v0.1.5 delta does not touch this path
+
+A teammate opened a valid invite and let a **Codex-hosted** agent run the generated connect prompt.
+The installer worked (`cswarm 0.1.2` → `0.1.4`). Then:
+
+```
+cswarm working-on "…" --agent-token-stdin        (PTY)
+  -> --agent-token-stdin requires a piped secret; it is never accepted as a command-line argument
+
+cswarm working-on "…" --agent-token-stdin        (non-PTY retry)
+  -> agent credential must be swm_agt_ followed by 32 base64url-encoded random bytes
+```
+
+The agent then **stopped and reported**, rather than improvising.
+
+**Nothing malfunctioned.** `src/cli.ts:558-562` deliberately refuses a TTY so a credential can never
+be reached from argv, and `site/src/components/connect/agent-prompt.ts:87-88` instructs the agent in
+advance: *"If your host cannot write to a running process's stdin separately, stop instead of
+improvising."* Codex obeyed exactly. The credential never touched argv, a file, or a log. **The
+safety design worked.**
+
+**The gap is that there is no supported alternative.** Measured: `--agent-token-stdin` is the only
+agent-credential input the CLI accepts — no environment variable, no file path, no other flag. So a
+host that cannot write to a running process's separate stdin channel cannot onboard **at all**; the
+outcome is a correct stop, not a degraded path.
+
+Meanwhile `site/src/components/app/LiveDashboard.astro` advertises **"Send one link. They connect
+their agent."** For this host class that sentence is not true today.
+
+**This is the D-023 shape.** That incident was availability copy in git asserting a deployment state
+reality did not deliver, and it cost real damage before anyone caught it. The lesson recorded then —
+*"availability copy asserts deployment state and lives in git, so nothing fails when the deployment
+moves"* — applies here with "deployment state" replaced by "supported host set".
+
+**Not established, and each matters to the disposition:**
+
+- whether **Grok CLI** or **Claude Code** succeed on the identical path. Only Codex was tried, and
+  the v0.1.4 measured path was Grok — so this may be a known-narrow supported set rather than a
+  regression. **One hour on the second machine converts a guess into a supported-hosts list.**
+- whether the non-PTY failure was EOF or a mismatch between the prompt's instructions and Codex's
+  process model. The error text is consistent with an empty read; the cause was not isolated.
+- whether any part of the undeployed v0.1.5 changes it. `git log origin/main..HEAD --
+  site/src/components/connect/agent-prompt.ts` is **empty**; the onboarding path is byte-unchanged by
+  this release.
+
+**Ruling required before the v0.1.5 freeze.** The options, with the recommendation stated:
+
+1. **Measure the matrix first** (Grok, Claude Code), then **scope the copy to the measured set**.
+   Recommended. It is the only option that makes the sentence true rather than quieter.
+2. Document the limitation on the connect surface without measuring — cheaper, but writes a
+   supported-set claim we have not tested, which is how D-023 happened.
+3. **Do NOT add a new credential channel under freeze pressure.** An env var or file path is a new
+   secret-handling surface designed in a hurry, and it would reopen the credential-escape review
+   (Runtime A2) that has just closed. A real design — for example a short-lived pairing code
+   exchanged over HTTPS, sidestepping stdin entirely — belongs in 0.1.6.
+
+Full measurement trail: `docs/evidence/2026-08-02-v015-execution/stage-q-authenticated-qa.md`,
+section QA-011.
