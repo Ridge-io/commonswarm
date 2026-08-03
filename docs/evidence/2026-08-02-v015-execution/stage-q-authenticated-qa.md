@@ -324,3 +324,69 @@ revocation) and the failure is total and silent.
 
 Unblocked. With a live session the invite path completes, so the second-human consumption,
 pending-access clearing, and remove/revoke checks can now proceed.
+
+## QA-011 — a Codex-hosted agent cannot complete onboarding. Severity: MAJOR (product gap, not a code defect)
+
+Found by the operator on a **second physical machine** with a real agent CLI — the first time this
+path has been exercised end to end. It is not reproducible from this machine and no automated test
+covers it.
+
+### What happened
+
+The teammate opened the invite, and the connect prompt drove a Codex agent through setup. It got
+further than expected and then stopped:
+
+1. Node v25.9.0 — fine.
+2. `cswarm 0.1.2` detected, below the required 0.1.4.
+3. Ran the published installer; upgraded to **`cswarm 0.1.4 (protocol 0.1.0)`** — the install path
+   works.
+4. `cswarm working-on "…" --agent-token-stdin` in a PTY →
+   `--agent-token-stdin requires a piped secret; it is never accepted as a command-line argument`
+5. Retried on the host's non-PTY session →
+   `agent credential must be swm_agt_ followed by 32 base64url-encoded random bytes`
+   (the pipe existed but delivered nothing usable — EOF rather than the secret)
+6. The agent **stopped and reported**, rather than improvising.
+
+### The agent did the right thing, and so did the CLI
+
+This is not a malfunction. `src/cli.ts:558-562` deliberately refuses a TTY: a credential must never
+be reachable from argv. And `site/src/components/connect/agent-prompt.ts:87-88` instructs the agent
+in advance:
+
+> "…do not use echo, printf, or a heredoc to construct a command containing it. **If your host cannot
+> write to a running process's stdin separately, stop instead of improvising.**"
+
+Codex followed that instruction exactly. The safety design worked as intended — the credential never
+reached argv, a file, or a log.
+
+### But the product consequence is real
+
+**`--agent-token-stdin` is the only credential input the CLI accepts.** Measured: no env var, no
+file, no alternative flag exists (`grep` over `src/cli.ts` and `src/cloud/` finds a single option and
+no `CSWARM_AGENT_TOKEN`-style path).
+
+So any host that cannot write to a running process's separate stdin channel **cannot onboard an
+agent at all** — there is no fallback, only a correct stop. The site advertises "Send one link. They
+connect their agent," and for this host class that is not achievable today.
+
+Codex is not a fringe host: it is one of the CLIs this project itself runs, and the host matrix
+treats it as first-class.
+
+### What this does NOT establish
+
+- Whether the non-PTY attempt failed because the host closed stdin immediately (EOF) or because the
+  prompt's instructions do not map onto Codex's actual process model. The error text is consistent
+  with an empty read; the cause was not isolated.
+- Whether Grok CLI or Claude Code succeed on the same path — only Codex was tried. The v0.1.4
+  measured path was Grok, so this may be a known-narrow supported set rather than a regression.
+- Whether anything in the undeployed v0.1.5 changes it. Runtime A2/B/C/D and the second host adapter
+  are all in this area and were **not** deployed during this test — the laptop installed the public
+  0.1.4.
+
+### Why it matters for the release
+
+The release ships listener and host-adapter work whose entire purpose is agents receiving asks. If a
+first-class host cannot complete onboarding, that work is unreachable for those users regardless of
+how correct it is. This needs an operator decision before the freeze: is a stdin-only credential
+channel the intended permanent constraint, or does a host that cannot provide one need a supported
+path?
