@@ -3506,6 +3506,17 @@ import SampleNotice from "./SampleNotice.astro";
     padding: var(--s-2) var(--s-3);
   }
 
+  [data-member-list] > .dashboard__agent {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  [data-member-list] > .dashboard__agent > span {
+    min-inline-size: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
   /* Pending rows have copy first and an action second (unlike roster rows, whose
      first cell is an avatar). Give the action its intrinsic width so "Cancel"
      stays horizontal while the identity copy takes the remaining space. */
@@ -3900,6 +3911,7 @@ import SampleNotice from "./SampleNotice.astro";
   }
 
   .dashboard__roster-dialog-list .dashboard__agent {
+    grid-template-columns: auto minmax(0, 1fr) auto;
     border-radius: var(--radius-sm);
   }
 
