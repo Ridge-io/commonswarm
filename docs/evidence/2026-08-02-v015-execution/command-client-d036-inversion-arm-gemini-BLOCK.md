@@ -67,3 +67,48 @@ if (response.status === 401 && error.error === "fresh_auth_required") {
 ---
 
 **VERDICT**: BLOCK — static analysis performed only; runtime tests, network simulation, and live backend execution were NOT verified.
+
+---
+
+# Lead adjudication of this arm's two MAJOR findings
+
+## Finding 1 — CONFIRMED, fixed at `0d88ef1`
+
+Verified in source before dispatching anything. `command-client.ts:958-965` threw the body's own
+error for a 4xx whose body could not be parsed, reaching `CommandHttpError` only at `>= 500`.
+
+Consequence traced, not assumed: `isRetryablePostError` returns **true** for
+`CommandTransportError`, and Runtime A2's credential escape keys on `CommandHttpError` 401/403. So a
+**401 with an unparseable body** — a dropped connection mid-body, or a proxy returning HTML — was
+classified as a retryable transport failure, never reached the credential escape, and terminalized.
+That is the exact failure A2 exists to prevent, reachable through a path the status check never saw.
+
+**The fix is one character**: `>= 500` → `>= 400`. Plus 100 lines of tests. The caller-abort ordering
+was left untouched, as instructed (verified: zero references to it in the diff).
+
+**Proven to discriminate by the Lead**, not read from the worker's report. Reverting the single
+character and running the focused file:
+
+```
+tests 18 | pass 15 | fail 3
+✖ sendSignal keeps a 401 body-read failure as a typed HTTP error
+✖ sendSignal keeps a non-JSON 403 as a typed HTTP error
+✖ sendSignal keeps a 429 interrupted body as a retryable typed HTTP error
+```
+
+Restored byte-identically; tree clean.
+
+## Finding 2 — REJECTED
+
+The claim that abort-induced rejections can override explicit caller cancellation does not hold.
+`onCallerAbort` (`:882-885`) calls `releaseCallerAbort()` **before** `controller.abort()`, so the
+caller-abort arm's continuation is queued ahead of the fetch rejection and wins `Promise.race`. The
+comment at `:879-881` documents that ordering as deliberate, for precisely this reason. Changing it
+would break the invariant it protects, so the fix contract explicitly forbade touching it.
+
+## Why this arm mattered
+
+The exact arm passed this file clean. This inversion found a real defect on the credential path —
+the mechanism the release's headline work depends on. **One arm would have shipped it.** That is the
+concrete case for D-036's two-arm rule, and the first time in this release the two arms have
+disagreed on a substantive finding.
