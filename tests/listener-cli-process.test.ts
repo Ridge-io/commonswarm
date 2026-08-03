@@ -10,14 +10,16 @@ import {
   rm,
   writeFile,
 } from "node:fs/promises";
-import { createServer } from "node:http";
+import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
 import { cloudTarget } from "../src/cloud/config.js";
 import {
   listenerPaths,
+  readListenerStatus,
   writeListenerStatus,
+  type ListenerPaths,
   type ListenerStatus,
 } from "../src/listener/index.js";
 
@@ -69,6 +71,51 @@ async function waitFor(
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   throw new Error(`condition did not become true within ${timeoutMs}ms`);
+}
+
+function listenerProcessIsAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ESRCH") return false;
+    if ((error as NodeJS.ErrnoException).code === "EPERM") return true;
+    throw error;
+  }
+}
+
+async function waitForListenerProcessExit(
+  pid: number,
+  directory: string,
+  timeoutMs = 10_000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!listenerProcessIsAlive(pid)) return;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  if (!listenerProcessIsAlive(pid)) return;
+  throw new Error(
+    `listener process ${pid} did not exit within ${timeoutMs}ms before removing ${directory}`,
+  );
+}
+
+async function stopAndWaitForDetachedListener(
+  args: string[],
+  paths: ListenerPaths,
+): Promise<void> {
+  await runCli(args).catch(() => undefined);
+  const status = await readListenerStatus(paths);
+  if (status) {
+    await waitForListenerProcessExit(status.pid, paths.instanceDirectory);
+  }
+}
+
+async function closeTestServer(server: Server): Promise<void> {
+  await new Promise<void>((resolveClose) => {
+    server.close(() => resolveClose());
+    server.closeAllConnections();
+  });
 }
 
 function fakeGrokSource(): string {
@@ -378,6 +425,12 @@ test("detached CLI completes durable claim reply ACK with one startup UUID and n
     "--state-dir",
     root,
   ];
+  const paths = listenerPaths({
+    profileId: cloudTarget(url, "public-anon").profileId,
+    workspaceId,
+    principalId,
+    stateDirectory: root,
+  });
 
   try {
     const startArgs = [
@@ -531,12 +584,6 @@ test("detached CLI completes durable claim reply ACK with one startup UUID and n
       true,
     );
 
-    const paths = listenerPaths({
-      profileId: cloudTarget(url, "public-anon").profileId,
-      workspaceId,
-      principalId,
-      stateDirectory: root,
-    });
     const safeLog = await readFile(paths.logPath, "utf8");
     const safeStatus = await readFile(paths.statusPath, "utf8");
     const journal = JSON.parse(
@@ -567,15 +614,18 @@ test("detached CLI completes durable claim reply ACK with one startup UUID and n
       );
     }
   } finally {
-    await runCli([
-      "listen",
-      "stop",
-      ...common,
-      "--principal-id",
-      principalId,
-      "--json",
-    ]).catch(() => undefined);
-    await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
+    try {
+      await stopAndWaitForDetachedListener([
+        "listen",
+        "stop",
+        ...common,
+        "--principal-id",
+        principalId,
+        "--json",
+      ], paths);
+    } finally {
+      await closeTestServer(server);
+    }
     await rm(root, { recursive: true, force: true });
     await rm(workerCwd, { recursive: true, force: true });
   }
@@ -673,6 +723,12 @@ test("detached CLI cursor fallback still receives and replies", async () => {
     "--state-dir",
     root,
   ];
+  const paths = listenerPaths({
+    profileId: cloudTarget(url, "public-anon").profileId,
+    workspaceId,
+    principalId,
+    stateDirectory: root,
+  });
 
   try {
     const started = await runCli([
@@ -699,15 +755,18 @@ test("detached CLI cursor fallback still receives and replies", async () => {
     );
     assert.doesNotMatch(started.stdout + started.stderr, /swm_agt_/);
   } finally {
-    await runCli([
-      "listen",
-      "stop",
-      ...common,
-      "--principal-id",
-      principalId,
-      "--json",
-    ]).catch(() => undefined);
-    await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
+    try {
+      await stopAndWaitForDetachedListener([
+        "listen",
+        "stop",
+        ...common,
+        "--principal-id",
+        principalId,
+        "--json",
+      ], paths);
+    } finally {
+      await closeTestServer(server);
+    }
     await rm(root, { recursive: true, force: true });
     await rm(workerCwd, { recursive: true, force: true });
   }
@@ -866,6 +925,12 @@ test("detached CLI reports missing Grok login without starting a model", async (
     "--state-dir",
     root,
   ];
+  const paths = listenerPaths({
+    profileId: cloudTarget(url, "public-anon").profileId,
+    workspaceId,
+    principalId,
+    stateDirectory: root,
+  });
 
   try {
     const started = await runCli([
@@ -895,25 +960,22 @@ test("detached CLI reports missing Grok login without starting a model", async (
     assert.equal(statusJson.state, "failed");
     assert.equal(statusJson.lastErrorCode, "grok_auth_missing");
 
-    const paths = listenerPaths({
-      profileId: cloudTarget(url, "public-anon").profileId,
-      workspaceId,
-      principalId,
-      stateDirectory: root,
-    });
     const safeLog = await readFile(paths.logPath, "utf8");
     const safeStatus = await readFile(paths.statusPath, "utf8");
     assert.doesNotMatch(safeLog + safeStatus, /swm_agt_/);
   } finally {
-    await runCli([
-      "listen",
-      "stop",
-      ...common,
-      "--principal-id",
-      principalId,
-      "--json",
-    ]).catch(() => undefined);
-    await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
+    try {
+      await stopAndWaitForDetachedListener([
+        "listen",
+        "stop",
+        ...common,
+        "--principal-id",
+        principalId,
+        "--json",
+      ], paths);
+    } finally {
+      await closeTestServer(server);
+    }
     await rm(root, { recursive: true, force: true });
   }
 });
