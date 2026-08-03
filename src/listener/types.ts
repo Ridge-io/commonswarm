@@ -82,6 +82,11 @@ export interface ListenerReplyPoster {
     signal: SignalRecord;
     body: string;
     commandId: string;
+    /**
+     * Caller cancellation, distinct from the internal transport deadlines. The
+     * poster wires it into its transport; it is never persisted, logged, or sent.
+     */
+    abortSignal?: AbortSignal;
   }): Promise<{ signalId: string }>;
 }
 

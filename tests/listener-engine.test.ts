@@ -10,6 +10,11 @@ import {
 } from "../src/cloud/command-client.js";
 import { AcpTimeoutError } from "../src/host/types.js";
 import {
+  RenewalReauthorisationRequired,
+  RenewalRevoked,
+} from "../src/cloud/renewal.js";
+import { isFollowCredentialFailure } from "../src/cloud/signals.js";
+import {
   FileListenerEffectStore,
   ListenerEngine,
   buildListenerPrompt,
@@ -348,7 +353,9 @@ test("refusal, blank output, and HTTP 409 become terminal failures", async () =>
     now: () => Date.parse("2026-07-30T01:00:00.000Z"),
     model: model(async () => ({ message: "reply", stopReason: "end_turn" })),
     poster: poster(async () => {
-      throw new CommandHttpError(409);
+      // Cancellation-looking server text must still terminalize as http_409,
+      // never escape as a caller cancellation.
+      throw new CommandHttpError(409, "server says operation cancelled");
     }),
   });
   const result = await conflict.process(
@@ -405,5 +412,464 @@ test("file effect store uses secure atomic files and round-trips records", async
   await store.write(record);
   assert.deepEqual(await store.read(ask.id), record);
   assert.equal((await stat(store.instanceDirectory)).mode & 0o777, 0o700);
+});
+
+test("post 401 and post 403 restore reply_ready and rethrow the exact error", async () => {
+  for (const [status, id] of [
+    [401, "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbb01"],
+    [403, "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbb02"],
+  ] as const) {
+    const store = new MemoryStore();
+    const ask = signal(id);
+    // Cancellation-looking server text must never be classified as a caller
+    // abort: the credential escape stays resumable with an exact null code.
+    const thrown = new CommandHttpError(status, "server says operation cancelled");
+    const engine = new ListenerEngine({
+      store,
+      now: () => Date.parse("2026-07-30T01:00:00.000Z"),
+      model: model(async () => ({ message: "stable reply", stopReason: "end_turn" })),
+      poster: poster(async () => {
+        throw thrown;
+      }),
+    });
+    let caught: unknown = null;
+    await engine.process(ask).catch((error: unknown) => {
+      caught = error;
+    });
+    assert.equal(caught, thrown, "the exact CommandHttpError must escape");
+    const record = await store.read(ask.id);
+    assert.ok(record);
+    assert.equal(record.state, "reply_ready");
+    assert.equal(record.replyBody, "stable reply");
+    assert.equal(record.commandId, listenerReplyCommandId(ask.id));
+    assert.equal(record.postAttempts, 1);
+    assert.equal(record.failureCode, null);
+    assert.notEqual(record.failureCode, `http_${status}`);
+  }
+});
+
+test("HTTP 429 and 5xx with cancellation-looking text stay retryable, never cancellation", async () => {
+  for (const [status, id] of [
+    [429, "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbb10"],
+    [503, "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbb11"],
+  ] as const) {
+    const store = new MemoryStore();
+    const ask = signal(id);
+    const engine = new ListenerEngine({
+      store,
+      now: () => Date.parse("2026-07-30T01:00:00.000Z"),
+      model: model(async () => ({ message: "stable reply", stopReason: "end_turn" })),
+      poster: poster(async () => {
+        // Cancellation-looking server text must not turn a bounded retryable
+        // status into a caller cancellation.
+        throw new CommandHttpError(status, "server says operation cancelled");
+      }),
+    });
+    const result = await engine.process(ask);
+    assert.equal(result.status, "retry_pending");
+    assert.equal(result.status === "retry_pending" && result.phase, "post");
+    const record = await store.read(ask.id);
+    assert.ok(record);
+    assert.equal(record.state, "reply_ready");
+    assert.equal(record.failureCode, `http_${status}`);
+  }
+});
+
+test("an already-aborted signal before the prompt starts no model or post effect", async () => {
+  const controller = new AbortController();
+  controller.abort();
+  const store = new MemoryStore();
+  const ask = signal("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbb03");
+  let modelCalls = 0;
+  let postCalls = 0;
+  const engine = new ListenerEngine({
+    store,
+    signal: controller.signal,
+    now: () => Date.parse("2026-07-30T01:00:00.000Z"),
+    model: model(async () => {
+      modelCalls += 1;
+      return { message: "x", stopReason: "end_turn" };
+    }),
+    poster: poster(async () => {
+      postCalls += 1;
+      return { signalId: REPLY_ID };
+    }),
+  });
+  let caught: unknown = null;
+  await engine.process(ask).catch((error: unknown) => {
+    caught = error;
+  });
+  assert.ok(caught instanceof Error);
+  assert.equal(caught.name, "AbortError");
+  assert.equal(modelCalls, 0);
+  assert.equal(postCalls, 0);
+  const record = await store.read(ask.id);
+  assert.ok(record);
+  assert.equal(record.state, "received");
+});
+
+test("an already-aborted signal before the reply post restores reply_ready", async () => {
+  const controller = new AbortController();
+  const store = new MemoryStore();
+  const ask = signal("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbb04");
+  let modelCalls = 0;
+  let postCalls = 0;
+  const engine = new ListenerEngine({
+    store,
+    signal: controller.signal,
+    now: () => Date.parse("2026-07-30T01:00:00.000Z"),
+    model: model(async () => {
+      modelCalls += 1;
+      return { message: "stable", stopReason: "end_turn" };
+    }),
+    poster: poster(async () => {
+      postCalls += 1;
+      throw new CommandTransportError("response lost");
+    }),
+  });
+  const pending = await engine.process(ask);
+  assert.equal(pending.status, "retry_pending");
+  assert.equal(modelCalls, 1);
+  assert.equal(postCalls, 1);
+
+  controller.abort();
+  let caught: unknown = null;
+  await engine.process(ask).catch((error: unknown) => {
+    caught = error;
+  });
+  assert.ok(caught instanceof Error);
+  assert.equal(caught.name, "AbortError");
+  assert.equal(modelCalls, 1, "no new prompt after abort");
+  assert.equal(postCalls, 1, "no new post after abort");
+  const record = await store.read(ask.id);
+  assert.equal(record?.state, "reply_ready");
+  assert.equal(record?.postAttempts, 1);
+});
+
+test("provider cancelled after caller abort restores received; without abort it stays terminal", async () => {
+  const plain = new ListenerEngine({
+    store: new MemoryStore(),
+    now: () => Date.parse("2026-07-30T01:00:00.000Z"),
+    model: {
+      async prompt() {
+        return { message: "", stopReason: "cancelled" as const };
+      },
+    },
+    poster: poster(async () => ({ signalId: REPLY_ID })),
+  });
+  const terminal = await plain.process(
+    signal("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbb05"),
+  );
+  assert.equal(terminal.status, "failed");
+  assert.equal(
+    terminal.status === "failed" && terminal.record.failureCode,
+    "model_cancelled",
+  );
+
+  const controller = new AbortController();
+  const store = new MemoryStore();
+  let postCalls = 0;
+  const aborted = new ListenerEngine({
+    store,
+    signal: controller.signal,
+    now: () => Date.parse("2026-07-30T01:00:00.000Z"),
+    model: {
+      async prompt() {
+        controller.abort();
+        return { message: "", stopReason: "cancelled" as const };
+      },
+    },
+    poster: poster(async () => {
+      postCalls += 1;
+      return { signalId: REPLY_ID };
+    }),
+  });
+  const ask = signal("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbb06");
+  let caught: unknown = null;
+  await aborted.process(ask).catch((error: unknown) => {
+    caught = error;
+  });
+  assert.ok(caught instanceof Error);
+  assert.equal(caught.name, "AbortError");
+  assert.equal(postCalls, 0);
+  const record = await store.read(ask.id);
+  assert.equal(record?.state, "received");
+  assert.notEqual(record?.failureCode, "model_cancelled");
+});
+
+test("the engine passes its caller signal to the reply poster as abortSignal", async () => {
+  const controller = new AbortController();
+  const store = new MemoryStore();
+  const ask = signal("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbb07");
+  let seen: AbortSignal | undefined;
+  const engine = new ListenerEngine({
+    store,
+    signal: controller.signal,
+    now: () => Date.parse("2026-07-30T01:00:00.000Z"),
+    model: model(async () => ({ message: "reply", stopReason: "end_turn" })),
+    poster: {
+      async post(input) {
+        seen = input.abortSignal;
+        return { signalId: REPLY_ID };
+      },
+    },
+  });
+  const result = await engine.process(ask);
+  assert.equal(result.status, "done");
+  assert.equal(seen, controller.signal);
+});
+
+test("abort during prompt or post restores the resumable record and escapes", async () => {
+  const promptStore = new MemoryStore();
+  const promptEngine = new ListenerEngine({
+    store: promptStore,
+    now: () => Date.parse("2026-07-30T01:00:00.000Z"),
+    model: {
+      async prompt() {
+        const error = new Error("host turn cancelled");
+        error.name = "AbortError";
+        throw error;
+      },
+    },
+    poster: poster(async () => ({ signalId: REPLY_ID })),
+  });
+  const promptAsk = signal("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbb08");
+  let caughtPrompt: unknown = null;
+  await promptEngine.process(promptAsk).catch((error: unknown) => {
+    caughtPrompt = error;
+  });
+  assert.ok(caughtPrompt instanceof Error);
+  assert.equal(caughtPrompt.name, "AbortError");
+  assert.equal((await promptStore.read(promptAsk.id))?.state, "received");
+
+  const postStore = new MemoryStore();
+  const postEngine = new ListenerEngine({
+    store: postStore,
+    now: () => Date.parse("2026-07-30T01:00:00.000Z"),
+    model: model(async () => ({ message: "reply", stopReason: "end_turn" })),
+    poster: {
+      async post() {
+        const error = new Error("post cancelled");
+        error.name = "AbortError";
+        throw error;
+      },
+    },
+  });
+  const postAsk = signal("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbb09");
+  let caughtPost: unknown = null;
+  await postEngine.process(postAsk).catch((error: unknown) => {
+    caughtPost = error;
+  });
+  assert.ok(caughtPost instanceof Error);
+  assert.equal(caughtPost.name, "AbortError");
+  assert.equal((await postStore.read(postAsk.id))?.state, "reply_ready");
+});
+
+// A closed credential classifier mirroring the runtime seam: typed HTTP is
+// decided by status alone, renewal errors by their exact classes, and other
+// values by the established fleet predicate.
+function closedCredentialFailure(error: unknown): boolean {
+  if (error instanceof CommandHttpError) {
+    return error.status === 401 || error.status === 403;
+  }
+  if (
+    error instanceof RenewalReauthorisationRequired ||
+    error instanceof RenewalRevoked
+  ) {
+    return true;
+  }
+  return isFollowCredentialFailure(error);
+}
+
+test("post credential-classified errors restore exact reply_ready and rethrow by identity", async () => {
+  const credentialErrors = [
+    new RenewalReauthorisationRequired(
+      "horizon_reached",
+      null,
+      "renewal reauthorisation required",
+    ),
+    new RenewalRevoked("forbidden", "credential revoked"),
+    new Error("reply credential secret is absent from the store"),
+  ] as const;
+  for (const [index, thrown] of credentialErrors.entries()) {
+    const store = new MemoryStore();
+    const ask = signal(`bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbb${20 + index}`);
+    const engine = new ListenerEngine({
+      store,
+      now: () => Date.parse("2026-07-30T01:00:00.000Z"),
+      model: model(async () => ({
+        message: "stable reply",
+        stopReason: "end_turn",
+      })),
+      poster: poster(async () => {
+        throw thrown;
+      }),
+      isCredentialFailure: closedCredentialFailure,
+    });
+    let caught: unknown = null;
+    await engine.process(ask).catch((error: unknown) => {
+      caught = error;
+    });
+    assert.equal(caught, thrown, "the exact poster error must escape by identity");
+    const record = await store.read(ask.id);
+    assert.ok(record);
+    assert.equal(record.state, "reply_ready");
+    assert.equal(record.failureCode, null);
+    assert.equal(record.replyBody, "stable reply");
+    assert.equal(record.commandId, listenerReplyCommandId(ask.id));
+    assert.equal(record.postAttempts, 1);
+    assert.notEqual(record.state, "posting");
+    assert.notEqual(record.state, "failed");
+  }
+});
+
+test("credential errors whose message contains cancelled are escapes, never aborts", async () => {
+  const credentialErrors = [
+    new RenewalRevoked("forbidden", "credential revoked; operation cancelled"),
+    new Error("secret is absent; operation cancelled"),
+  ] as const;
+  for (const [index, thrown] of credentialErrors.entries()) {
+    const store = new MemoryStore();
+    const ask = signal(`bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbb${30 + index}`);
+    const engine = new ListenerEngine({
+      store,
+      now: () => Date.parse("2026-07-30T01:00:00.000Z"),
+      model: model(async () => ({
+        message: "stable reply",
+        stopReason: "end_turn",
+      })),
+      poster: poster(async () => {
+        throw thrown;
+      }),
+      isCredentialFailure: closedCredentialFailure,
+    });
+    let caught: unknown = null;
+    await engine.process(ask).catch((error: unknown) => {
+      caught = error;
+    });
+    assert.equal(caught, thrown);
+    const record = await store.read(ask.id);
+    assert.ok(record);
+    assert.equal(record.state, "reply_ready");
+    assert.equal(record.failureCode, null, "must be credential escape, not cancelled");
+    assert.notEqual(record.failureCode, "cancelled");
+  }
+});
+
+test("typed HTTP errors never reach the credential classifier", async () => {
+  const cases: Array<[status: number, expected: "retry_pending" | "failed"]> = [
+    [500, "retry_pending"],
+    [409, "failed"],
+  ];
+  for (const [index, [status, expected]] of cases.entries()) {
+    const store = new MemoryStore();
+    const ask = signal(`bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbb${40 + index}`);
+    let classifierCalls = 0;
+    const engine = new ListenerEngine({
+      store,
+      now: () => Date.parse("2026-07-30T01:00:00.000Z"),
+      model: model(async () => ({
+        message: "stable reply",
+        stopReason: "end_turn",
+      })),
+      poster: poster(async () => {
+        // Hostile text that would match the fleet credential wording must
+        // never reach the classifier: typed HTTP taxonomy decides.
+        throw new CommandHttpError(status, "secret is absent; operation cancelled");
+      }),
+      isCredentialFailure: (error: unknown) => {
+        classifierCalls += 1;
+        return closedCredentialFailure(error);
+      },
+    });
+    const result = await engine.process(ask);
+    assert.equal(classifierCalls, 0, "HTTP errors skip the classifier entirely");
+    assert.equal(result.status, expected);
+    const record = await store.read(ask.id);
+    assert.ok(record);
+    if (expected === "retry_pending") {
+      assert.equal(result.status === "retry_pending" && result.phase, "post");
+      assert.equal(record.state, "reply_ready");
+      assert.equal(record.failureCode, "http_500");
+    } else {
+      assert.equal(record.state, "failed");
+      assert.equal(record.failureCode, "http_409");
+    }
+  }
+});
+
+test("a throwing credential classifier restores the record and rethrows its own exception", async () => {
+  const store = new MemoryStore();
+  const ask = signal("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbb50");
+  const classifierError = new Error("classifier defect");
+  const engine = new ListenerEngine({
+    store,
+    now: () => Date.parse("2026-07-30T01:00:00.000Z"),
+    model: model(async () => ({
+      message: "stable reply",
+      stopReason: "end_turn",
+    })),
+    poster: poster(async () => {
+      throw new Error("ordinary post failure");
+    }),
+    isCredentialFailure: () => {
+      throw classifierError;
+    },
+  });
+  let caught: unknown = null;
+  await engine.process(ask).catch((error: unknown) => {
+    caught = error;
+  });
+  assert.equal(caught, classifierError, "the classifier's own exception escapes");
+  const record = await store.read(ask.id);
+  assert.ok(record);
+  assert.equal(record.state, "reply_ready", "the record must not strand in posting");
+  assert.equal(record.failureCode, null);
+  assert.equal(record.postAttempts, 1);
+});
+
+test("ordinary noncredential message text cannot impersonate credential loss or cancellation", async () => {
+  const ordinaryErrors = [
+    new Error("operation aborted"),
+    new Error("operation cancelled"),
+    new Error("RenewalRevoked: forbidden"),
+    // Outside the fleet wording: no exact "secret is absent".
+    new Error("reply credential secret absent from store"),
+  ] as const;
+  for (const [index, thrown] of ordinaryErrors.entries()) {
+    const store = new MemoryStore();
+    const ask = signal(`bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbb${60 + index}`);
+    const engine = new ListenerEngine({
+      store,
+      now: () => Date.parse("2026-07-30T01:00:00.000Z"),
+      model: model(async () => ({
+        message: "stable reply",
+        stopReason: "end_turn",
+      })),
+      poster: poster(async () => {
+        throw thrown;
+      }),
+      isCredentialFailure: closedCredentialFailure,
+    });
+    let caught: unknown = null;
+    const result = await engine.process(ask).catch((error: unknown) => {
+      caught = error;
+    });
+    assert.equal(caught, null, "must not escape as credential or abort");
+    assert.ok(result);
+    assert.equal(result.status, "failed");
+    assert.equal(
+      result.status === "failed" && result.record.failureCode,
+      "error",
+    );
+    assert.equal(
+      result.status === "failed" && result.record.state,
+      "failed",
+    );
+    assert.notEqual(
+      result.status === "failed" && result.record.failureCode,
+      "cancelled",
+    );
+  }
 });
 
