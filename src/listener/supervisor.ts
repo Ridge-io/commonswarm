@@ -182,10 +182,78 @@ export async function runListenerSupervisor(
       });
       return;
     }
+    if (event.type === "malformed_row") {
+      log({
+        ts: event.ts,
+        event: "listener_malformed_row",
+        index: event.index,
+      });
+      return;
+    }
+    if (event.type === "delivery_mode") {
+      status = {
+        ...status,
+        deliveryMode: event.mode,
+        pendingDeliveryCount: event.pendingDeliveryCount,
+        updatedAt: event.ts,
+      };
+      persist();
+      log({
+        ts: event.ts,
+        event: "listener_delivery_mode",
+        delivery_mode: event.mode,
+        pending_delivery_count: event.pendingDeliveryCount,
+      });
+      return;
+    }
+    if (event.type === "delivery_claim") {
+      status = {
+        ...status,
+        pendingDeliveryCount: event.pendingDeliveryCount,
+        lastClaimAt: event.ts,
+        updatedAt: event.ts,
+      };
+      persist();
+      log({
+        ts: event.ts,
+        event: "listener_delivery_claim",
+        signal_id: event.signalId,
+        pending_delivery_count: event.pendingDeliveryCount,
+        terminal_delivery_failure_count: event.terminalDeliveryFailureCount,
+      });
+      return;
+    }
+    if (event.type === "delivery_terminal_failures") {
+      if (!Number.isSafeInteger(event.count) || event.count <= 0) {
+        throw new Error("listener terminal delivery failure count must be positive");
+      }
+      status = {
+        ...status,
+        lastTerminalDeliveryFailureCount: event.count,
+        lastTerminalDeliveryFailureAt: event.ts,
+        updatedAt: event.ts,
+      };
+      persist();
+      log({
+        ts: event.ts,
+        event: "listener_delivery_terminal_failures",
+        terminal_delivery_failure_count: event.count,
+      });
+      return;
+    }
+    status = {
+      ...status,
+      lastAckAt: event.ts,
+      pendingDeliveryCount: null,
+      lastSignalId: event.signalId,
+      updatedAt: event.ts,
+    };
+    persist();
     log({
       ts: event.ts,
-      event: "listener_malformed_row",
-      index: event.index,
+      event: "listener_delivery_ack",
+      signal_id: event.signalId,
+      outcome: event.outcome,
     });
   };
 
