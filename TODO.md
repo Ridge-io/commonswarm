@@ -523,6 +523,27 @@ Claude Code are **unmeasured**. Needs an operator ruling before v0.1.5 freeze �
 Any new credential channel belongs in 0.1.6 with a real design (e.g. a short-lived pairing code over
 HTTPS), **not** bolted on under freeze pressure, which would reopen the credential-escape review.
 
+### Agent self-identifies its host/model; the human only optionally names it
+
+Operator direction 2026-08-03. Full design note with the traced current behaviour and the constraints
+worth importing: `docs/design/2026-08-03-AGENT-SELF-IDENTIFY.md`.
+
+Short version: the `model` field is already optional end-to-end and already degrades to "Model not
+specified" — the annoyance is that a human is *asked* at all. Take the local swarm's `detectHost()`
+pattern (`swarm/src/hooks.ts:16`): runtime environment authoritative, config files as fallback, and
+**`null` when it cannot tell**.
+
+Import the scar along with the code. That function refuses to read `CLAUDE_CODE_ENTRYPOINT` because
+it is inherited by every child process, so a codex or grok agent spawned from a Claude session would
+be misdetected — *"mislabelling a family is worse than not knowing it."* Our listener spawns child
+processes, so that trap applies directly: **if a signal can leak across a spawn, it is not evidence.**
+
+Keep this as display metadata. `sender_owner_relation` is the field carrying authority, and this
+release already fixed a replay that could change it — do not let the two blur.
+
+Open question for the operator: can an agent change its reported model after joining, or is it fixed
+at principal creation? Fixed matches the current schema; mutable is more truthful but adds surface.
+
 ### Carried from the earlier plan
 
 - Credential-lifetime copy ("lasts a few hours" → the 30-day rotating reality)
