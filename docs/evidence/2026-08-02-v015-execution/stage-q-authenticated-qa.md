@@ -88,16 +88,41 @@ Four `<h1>` elements exist in the DOM, but three belong to other SPA states and 
 `display:none` on an ancestor section, which removes them from the accessibility tree. Checked
 rather than assumed, because "multiple H1s" is a real smell when the hiding is only visual.
 
-## Not yet established — the largest remaining gap
+## COLD-BROWSER WEB SIGN-IN — **PASS**. The previously-unproven leg is now proven.
 
-The **cold-browser sign-in** has not been exercised. A note in the production feed from five days ago
-records the same gap in the operators' own words:
+The production feed carried this, five days old, in the operators' own words:
 
 > "Next unproven leg is the WEB sign-in at /start — cswarm login only exercised the loopback redirect
 > arm, not the commonswarm.com one."
 
-Testing it requires either signing out of the operator's live session or driving a fresh browser
-profile. That is an operator decision, not mine to take unilaterally, and it is pending.
+**That leg now works end to end.** Measured, in a browser context that started with no session:
+
+| Stage | Evidence |
+|---|---|
+| Before sign-in | `document.cookie` empty; no "Ridgeio"/"Langridge" text; no Sign out control |
+| Operator completed GitHub OAuth (`tom@ridge.io`) | — |
+| After | signed in as **Ridgeio**; all 3 workspaces load; feed renders |
+
+**Session isolation confirmed**: the signed-in context holds `document.cookie` empty and its auth in
+`localStorage` under `sb-<ref>-auth-token` — a separate browser context from the operator's original
+tab, so this was a genuine cold sign-in and not a shared session. The operator's original session was
+never disturbed; a fresh context was used specifically to avoid signing them out.
+
+This is the single highest-risk item in the release closing: signup is open to strangers
+(`SWARM_SELF_SERVE=1`) and sign-in has no fallback path if it breaks.
+
+## Navigation and affordances — reachable
+
+The agent roster opens from the header control (`aria-label="2 agents — view and manage agents"`) and
+exposes **Add an agent**. The create-workspace, invite-link, copy-invite-link, and add-agent controls
+all exist in the DOM behind SPA panels (`dashboard__gateway`, `dashboard__connect-view`,
+`dashboard__invite-result`, `dashboard__roster-dialog`) rather than being absent — checked, because
+"the button isn't there" and "the button is behind a panel" are different bugs.
+
+Note for the create-workspace path: this account already holds **three** workspaces and the signup
+copy advertises "up to three workspaces, no card". Whether creation is correctly gated at the limit,
+or simply unreachable, is **not yet established** — it needs an account below the limit to
+discriminate, so it is not concluded here either way.
 
 Also still to run: workspace creation, add-own-agent with automatic prompt completion, live feed
 update within five seconds, second-human invite consumption with pending-access clearing,
