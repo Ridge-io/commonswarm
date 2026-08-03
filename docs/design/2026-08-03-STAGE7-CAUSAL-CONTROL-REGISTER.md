@@ -1,12 +1,13 @@
 # Stage 7 causal-control register
 
-Status: inventory only; no control was run while producing this register.
+Status: inventory plus three executed local security controls; the other seven domains remain
+inventory-only and blind.
 
 This register separates two facts that the old Stage 7 wording combined:
 
-- the release evidence records **12 independently selectable mutant/test pairs**; and
-- **0 of the 10 named Stage 7 domains has a recorded domain-valid causal control**. All 10 domains
-  are blind at this gate.
+- the release evidence records **15 independently selectable mutant/test pairs**; and
+- **3 of the 10 named Stage 7 domains have a recorded domain-valid causal control**. The other 7
+  domains are blind at this gate.
 
 The second count is the release decision. A control for a nearby invariant is not credited to a
 domain it does not cause. In particular, the Phase B controls discriminate the database harness,
@@ -90,15 +91,15 @@ not a causal control.
 | Response-loss replay | **No** | No recorded mutation that mints a new body/ID or prompts again after a lost response. The recorded 4xx-body mutants below change error taxonomy only. | Observer: `tests/listener-engine.test.ts` — `lost response replays the persisted body/id without prompting again`. | None. | None recorded. | No | **No control recorded — gate is blind here.** |
 | Persist-before-ACK | **No** | No recorded reversed-order mutation. Runtime C records RED-before-GREEN and static ordering review, but not an exact mutation run for this domain. | Observers in `tests/listener-runtime.test.ts`: `a durable note is persisted and reread before prepareAck and network ACK` and `a durable ask reaches done, then persists prepareAck before replied ACK`. | None. | None recorded for reversed ordering. | No | **No control recorded — gate is blind here.** |
 | Note with zero prompts | **No** | No recorded mutation that calls the model/poster for a durable note. | Observer: `tests/listener-runtime.test.ts` — `cursor fallback observes direct notes without model or reply effects`; the durable-note observer above also checks ordering. | None. | None recorded. | No | **No control recorded — gate is blind here.** |
-| Cross-owner zero-tool isolation | **No** | No recorded mutation that gives a cross-owner turn tools/context. The real two-human canary remains operator-blocked and is not a local mutant. | No exact zero-tool isolation test is recorded in the cited evidence/contracts. | None. | None recorded. | No | **No control recorded — gate is blind here.** |
-| Privacy/no-body | **No** | No recorded mutation that inserts a body/private sentinel into delivery metadata. Phase C checks privacy while mutating recharge, so its red is not a privacy discriminator. | Observer: `tests/listener-cli-process.test.ts` — `detached CLI completes durable claim reply ACK with one startup UUID and no secret leakage`; Phase C has response/alert sentinels. | None. | None recorded for a body leak. | Mixed | **No control recorded — gate is blind here.** |
-| Credential absence | **No** | No recorded mutation that exposes a credential in argv, environment, status, logs, or host frames. Runtime A2's mutants below change credential-loss handling, not credential exposure. | Same detached CLI leakage observer as privacy/no-body. | None. | None recorded for credential exposure. | No | **No control recorded — gate is blind here.** |
+| Cross-owner zero-tool isolation | **Yes** | `src/listener/engine.ts`: change the mode guard from `record.senderOwnerRelation === "same_owner"` to `record.senderOwnerRelation !== "unknown"`, making `cross_owner` select the tool-capable worker. | `tests/listener-engine.test.ts` — `sender relation selects worker only for exact same_owner` | `run_one_control 30 'tests/listener-engine.test.ts' 'sender relation selects worker only for exact same_owner'` | Named `AssertionError`: actual modes `['worker', 'worker', 'isolated']`, expected `['worker', 'isolated', 'isolated']`. | No | **Local relation gate discriminates.** The real two-human canary remains operator-blocked and unproved. |
+| Privacy/no-body | **Yes** | `src/listener/delivery-journal.ts`: at the final `ack_pending` write, replace the validated `serialized` bytes with `JSON.stringify({ ...record, signal_body: "PRIVATE_BODY_SENTINEL" })`. | `tests/listener-delivery-journal.test.ts` — `10. Serialized positive metadata exists, while known bearer/body/owner/prompt/reply sentinels are absent` | `run_one_control 30 'tests/listener-delivery-journal.test.ts' '10. Serialized positive metadata exists, while known bearer/body/owner/prompt/reply sentinels are absent'` | Named `AssertionError`: `Sentinel key "signal_body" must be absent`; actual `true`, expected `false`. | No | **Delivery-journal metadata no-body surface discriminates.** Audit, alert, and error-response surfaces were not mutated. |
+| Credential absence | **Yes** | `src/listener/control.ts`: change event serialization from `JSON.stringify(event)` to `JSON.stringify({ ...event, credential: "swm_agt_" + "A".repeat(43) })`. | `tests/listener-control.test.ts` — `supervisor becomes ready, stops through the socket, and logs metadata only` | `run_one_control 30 'tests/listener-control.test.ts' 'supervisor becomes ready, stops through the socket, and logs metadata only'` | Named `doesNotMatch` failure prints log rows containing `"credential":"swm_agt_A…"`. | No | **Event-log credential-absence surface discriminates.** Separate argv, environment, status, and host-frame mutants were not run. |
 
-Coverage total: **0 domains with recorded controls; 10 domains blind**.
+Coverage total: **3 domains with recorded controls; 7 domains blind**.
 
 ## Recorded mutant/test register
 
-These 12 rows preserve what the release evidence actually established. They are runnable and useful,
+These 15 rows preserve what the release evidence actually established. They are runnable and useful,
 but they do not substitute for any blind domain above. The counting rule is one independently
 selectable exact test per row; shared mutants therefore appear once for each independently runnable
 named assertion.
@@ -117,13 +118,18 @@ named assertion.
 | CC-1 | A 401 whose body read fails remains a typed HTTP error. | `src/cloud/command-client.ts`: change `response.status >= 400` back to `response.status >= 500`. | `tests/support/signal-fetch-deadline.test.ts` — `sendSignal keeps a 401 body-read failure as a typed HTTP error` | `run_one_control 90 'tests/support/signal-fetch-deadline.test.ts' 'sendSignal keeps a 401 body-read failure as a typed HTTP error'` | `caught instanceof CommandHttpError` fails; evidence records `CommandTransportError` instead. | No | `docs/evidence/2026-08-02-v015-execution/command-client-d036-inversion-arm-gemini-BLOCK.md` §Lead adjudication; `docs/evidence/2026-08-02-v015-execution/cc-4xx-body-fix.md` §RED discrimination. |
 | CC-2 | A non-JSON 403 remains a typed HTTP error. | Same exact `>= 400` to `>= 500` threshold mutant as CC-1. | `tests/support/signal-fetch-deadline.test.ts` — `sendSignal keeps a non-JSON 403 as a typed HTTP error` | `run_one_control 90 'tests/support/signal-fetch-deadline.test.ts' 'sendSignal keeps a non-JSON 403 as a typed HTTP error'` | `caught instanceof CommandHttpError` fails; evidence records a bare non-JSON `Error` instead. | No | Same sources as CC-1. |
 | CC-3 | A 429 whose body read is interrupted remains retryable typed HTTP. | Same exact `>= 400` to `>= 500` threshold mutant as CC-1. | `tests/support/signal-fetch-deadline.test.ts` — `sendSignal keeps a 429 interrupted body as a retryable typed HTTP error` | `run_one_control 90 'tests/support/signal-fetch-deadline.test.ts' 'sendSignal keeps a 429 interrupted body as a retryable typed HTTP error'` | `caught instanceof CommandHttpError` fails; evidence records `CommandTransportError` instead. | No | Same sources as CC-1. |
+| SEC-1 | Cross-owner delivery selects only an isolated, tool-denied prompt mode. | `src/listener/engine.ts`: change `record.senderOwnerRelation === "same_owner"` to `record.senderOwnerRelation !== "unknown"`. | `tests/listener-engine.test.ts` — `sender relation selects worker only for exact same_owner` | `run_one_control 30 'tests/listener-engine.test.ts' 'sender relation selects worker only for exact same_owner'` | Named mode-array assertion prints cross-owner actual `worker` where expected `isolated`. | No | `docs/evidence/2026-08-02-v015-execution/security-causal-controls.md` §1. |
+| SEC-2 | Delivery-journal metadata contains no body/private sentinel. | `src/listener/delivery-journal.ts`: at the final `ack_pending` write, replace `serialized` with `JSON.stringify({ ...record, signal_body: "PRIVATE_BODY_SENTINEL" })`. | `tests/listener-delivery-journal.test.ts` — `10. Serialized positive metadata exists, while known bearer/body/owner/prompt/reply sentinels are absent` | `run_one_control 30 'tests/listener-delivery-journal.test.ts' '10. Serialized positive metadata exists, while known bearer/body/owner/prompt/reply sentinels are absent'` | Named assertion prints `Sentinel key "signal_body" must be absent`, actual `true`, expected `false`. | No | `docs/evidence/2026-08-02-v015-execution/security-causal-controls.md` §2. |
+| SEC-3 | Listener event logs contain no credential-shaped value. | `src/listener/control.ts`: change `JSON.stringify(event)` to `JSON.stringify({ ...event, credential: "swm_agt_" + "A".repeat(43) })`. | `tests/listener-control.test.ts` — `supervisor becomes ready, stops through the socket, and logs metadata only` | `run_one_control 30 'tests/listener-control.test.ts' 'supervisor becomes ready, stops through the socket, and logs metadata only'` | Named `doesNotMatch` assertion prints `"credential":"swm_agt_A…"` in every log row. | No | `docs/evidence/2026-08-02-v015-execution/security-causal-controls.md` §3. |
 
-Recorded runnable total: **12**. Required-domain credit: **0 of 10**.
+Recorded runnable total: **15**. Required-domain credit: **3 of 10**.
 
 ## What this register does not establish
 
-This inventory did not run a mutant, test, database command, build, edge check, or production probe.
-It does not establish that any recorded control still discriminates at the release SHA, that any
-observer is green, that the local/hosted database behaves correctly, or that any blind domain is
-safe. It does not establish deployment, production behavior, real-load capacity, the real
-cross-owner canary, or release readiness.
+SEC-1 through SEC-3 establish only the exact local mutations and observers recorded above. They do
+not establish the other seven blind domains, database behavior, hosted or production behavior,
+real-load capacity, the real two-human cross-owner canary, or release readiness. SEC-2 covers the
+delivery-journal metadata surface, not every audit/alert/error-response surface. SEC-3
+covers event-log credential absence, not independent discrimination for argv, environment, status,
+or host frames. No database command, edge check, or production probe was run for these controls, and
+nothing was deployed.
