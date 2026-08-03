@@ -104,6 +104,16 @@ Also prove:
   poison ceiling, response-loss replay, persist-before-ACK, note-with-zero-prompts, cross-owner
   zero-tool isolation, privacy/no-body, and credential absence.
 
+**HOW causal controls must be run (binding, added 2026-08-03):** per-test, never whole-file.
+`--test-name-pattern="<exact test name>"` + `--test-concurrency=1` + an **external wall-clock
+watchdog** (no `timeout`/`gtimeout` on this machine; use background-and-kill). `--test-timeout` alone
+is insufficient — Node enforces it with a timer in the same process, and a microtask-starved loop
+never reaches the timers phase. **A hang is not evidence; only a printed named failure is. A green
+mutant is a mandatory stop.** Measured basis: `runtime-c-fixture-repair-VERIFIED-PARTIAL.md` — the
+runtime file wedges whole under the A2 mutant but its control returns a clean 0-pass/1-fail per-test.
+The ten domains above are domains, not controls: before Stage 7, each needs a row naming its mutant
+(file + exact edit), the test that must print red, the invocation, and the expected named failure.
+
 Run `test:uxtest` if the final union affects its journey; otherwise record it as explicitly skipped
 and unestablished.
 
