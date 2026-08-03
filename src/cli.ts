@@ -331,7 +331,7 @@ Usage:
   cswarm invite [--url <url> --anon-key <key>] [--workspace-id <uuid>] --email <email>
   cswarm member remove <full-user-id|exact-name> --confirm <same-selector> [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--json]
   cswarm accept --link-stdin [--name <name>] [--no-browser] [--json]
-  cswarm accept <cswarm://accept/...> [--name <name>] [--no-browser] [--json]  # unsafe: shell history/process list
+  cswarm accept <https://...#invite=...|cswarm://accept/...> [--name <name>] [--no-browser] [--json]  # unsafe: shell history/process list
   cswarm accept --invitation-token-stdin [--url <url> --anon-key <key>]
   cswarm accept <invitation-token> [--url <url> --anon-key <key>]  # unsafe: shell history/process list
   cswarm principal create [--url <url> --anon-key <key>] [--workspace-id <uuid>] --name <name>
@@ -1262,7 +1262,7 @@ async function runAccept(args: Arguments): Promise<void> {
   }
   if (args.positionals.length !== 2) {
     throw new Error(
-      "accept expects one swm_inv_ capability or cswarm://accept/<invite-link>",
+      "accept expects one https://...#invite=<payload> link, cswarm://accept/<payload>, or swm_inv_ invitation capability",
     );
   }
   const parsed = parseAcceptPositional(args.positionals[1]!);

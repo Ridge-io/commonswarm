@@ -13,6 +13,13 @@ const ANSI_ESCAPE_GLOBAL_RE = /\u001b\[[0-?]*[ -/]*[@-~]/g;
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const STRICT_BASE64URL_RE = /^[A-Za-z0-9_-]+$/;
+const RAW_BASE64_PAYLOAD_CANDIDATE_RE = /^[A-Za-z0-9+/_=-]+$/;
+const CURRENT_INVITE_SCHEME = "cswarm://accept/";
+const RETIRED_INVITE_SCHEME = "coswarm://accept/";
+const INVITE_WRAPPER_ERROR =
+  "invite link wrapper is not recognized; use https://commonswarm.com/invite#invite=<payload> or cswarm://accept/<payload>";
+const ACCEPT_INPUT_ERROR =
+  "accept input was not recognized; use an https://...#invite=<payload> link, cswarm://accept/<payload>, or a swm_inv_ invitation capability";
 
 export const PRODUCTION_CLOUD_ORIGIN =
   "https://ukezjcnxjvkpkeezxaew.supabase.co";
@@ -174,13 +181,35 @@ export function encodeInviteLink(payload: InviteLinkPayload): string {
   if (Buffer.byteLength(JSON.stringify(validated), "utf8") > MAX_LINK_PAYLOAD_BYTES) {
     throw new Error("invite link payload is too large");
   }
-  return `cswarm://accept/${encoded}`;
+  return `${CURRENT_INVITE_SCHEME}${encoded}`;
+}
+
+function encodedInvitePayload(value: string): string {
+  for (const scheme of [CURRENT_INVITE_SCHEME, RETIRED_INVITE_SCHEME]) {
+    if (value.startsWith(scheme)) return value.slice(scheme.length);
+  }
+  if (/^https?:\/\//i.test(value)) {
+    let parsed: URL;
+    try {
+      parsed = new URL(value);
+    } catch {
+      throw new Error(INVITE_WRAPPER_ERROR);
+    }
+    for (const parameter of parsed.hash.slice(1).split("&")) {
+      const separator = parameter.indexOf("=");
+      const name = separator === -1 ? parameter : parameter.slice(0, separator);
+      if (name === "invite") {
+        return separator === -1 ? "" : parameter.slice(separator + 1);
+      }
+    }
+    throw new Error(INVITE_WRAPPER_ERROR);
+  }
+  if (RAW_BASE64_PAYLOAD_CANDIDATE_RE.test(value)) return value;
+  throw new Error(INVITE_WRAPPER_ERROR);
 }
 
 export function decodeInviteLink(value: string): InviteLinkPayload {
-  const encoded = value.startsWith("cswarm://accept/")
-    ? value.slice("cswarm://accept/".length)
-    : value;
+  const encoded = encodedInvitePayload(value);
   return validatedPayload(strictDecodedPayload(encoded));
 }
 
@@ -188,7 +217,11 @@ export function parseAcceptPositional(value: string): ParsedAcceptInput {
   if (INVITATION_TOKEN_RE.test(value)) {
     return { mode: "token", token: value };
   }
-  if (value.startsWith("cswarm://accept/")) {
+  if (
+    value.startsWith(CURRENT_INVITE_SCHEME) ||
+    value.startsWith(RETIRED_INVITE_SCHEME) ||
+    /^https?:\/\//i.test(value)
+  ) {
     return { mode: "link", payload: decodeInviteLink(value) };
   }
   if (STRICT_BASE64URL_RE.test(value)) {
@@ -198,9 +231,7 @@ export function parseAcceptPositional(value: string): ParsedAcceptInput {
       // Raw base64url is accepted only when it is a complete v1 payload.
     }
   }
-  throw new Error(
-    "accept expects a swm_inv_ invitation capability or cswarm://accept/<invite-link>; use --link-stdin for the safe link form",
-  );
+  throw new Error(`${ACCEPT_INPUT_ERROR}; use --link-stdin to keep the link out of shell history`);
 }
 
 function loopback(target: CloudTarget): boolean {
