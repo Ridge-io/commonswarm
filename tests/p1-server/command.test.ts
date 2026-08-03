@@ -10507,3 +10507,848 @@ test("durable-delivery: Phase B harness control — cleanup adjudication preserv
     { label: "clean holder", promise: Promise.resolve(null) },
   ]);
 });
+
+// ---------------------------------------------------------------------------
+// Phase C — prove the delivery-rate recharge at resolveLedgerRace by holding
+// the initial ledger lookup, mapping both original charges to exact request
+// PIDs, staging the ACK-row/principal releases, and retaining the losing
+// claim's queued rate probe so the resolver recharge is directly observable.
+// ---------------------------------------------------------------------------
+
+interface PhaseCRateProbe extends RetainedLock {
+  acquired: Promise<number>;
+}
+
+interface PhaseCSafeResponse {
+  status: number;
+  error: string | null;
+}
+
+interface PhaseCRaceResult {
+  mode: "allowed" | "denied";
+  windowStart: string;
+  resolverObserved: boolean;
+  holderPids: { ledger: number; ackRow: number; principal: number };
+  requestPids: { ack: number; claim: number; resolver: number | null };
+  probePids: { ack: number; claim: number };
+  ack: CommandResponse;
+  claim: CommandResponse;
+  ackProbeCount: number;
+  claimProbeCount: number;
+  ackBucketCount: number;
+  claimBucketCount: number;
+  signalBUnchanged: boolean;
+  ledgerRows: Array<{
+    principal_kind: string;
+    principal_id: string;
+    command_id: string;
+    workspace_id: string;
+    stream_id: string;
+    request_hash: string;
+    response: Record<string, unknown>;
+  }>;
+  audits: Array<{
+    command_kind: string;
+    workspace_id: string | null;
+    stream_id: string | null;
+    outcome: string;
+    reason: string | null;
+    detail: string | null;
+    request_hash: string | null;
+  }>;
+  alerts: Array<{ kind: string; subject: string; detail: Record<string, unknown> }>;
+  expectedAckHash: string;
+  expectedClaimHash: string;
+  signalAId: string;
+  signalBId: string;
+  leaseId: string;
+  ackListener: string;
+  claimListener: string;
+  privateSentinels: string[];
+}
+
+/** Retain ACCESS EXCLUSIVE on the exact shared-ledger table until release. */
+async function retainPhaseCLedgerTableLock(): Promise<RetainedLock> {
+  let markReady: () => void = () => {};
+  const ready = new Promise<void>((resolve) => {
+    markReady = resolve;
+  });
+  let openGate: () => void = () => {};
+  const gate = new Promise<void>((resolve) => {
+    openGate = resolve;
+  });
+  let pid = 0;
+  const done = sql.begin(async (tx) => {
+    const rows = await tx<{ pid: string | number }[]>`SELECT pg_backend_pid() AS pid`;
+    pid = Number(rows[0]?.pid);
+    await tx.unsafe("LOCK TABLE swarm.idempotency_keys IN ACCESS EXCLUSIVE MODE");
+    markReady();
+    await gate;
+    return null;
+  });
+  await awaitMarkerBeforeSettlement(ready, done, "Phase C ledger table holder ready");
+  return { pid, release: openGate, done };
+}
+
+/** Retain FOR UPDATE on the exact live ACK tuple until release. */
+async function retainPhaseCAckRowLock(
+  workspaceId: string,
+  principalId: string,
+  signalId: string,
+): Promise<RetainedLock> {
+  let markReady: () => void = () => {};
+  const ready = new Promise<void>((resolve) => {
+    markReady = resolve;
+  });
+  let openGate: () => void = () => {};
+  const gate = new Promise<void>((resolve) => {
+    openGate = resolve;
+  });
+  let pid = 0;
+  const done = sql.begin(async (tx) => {
+    const rows = await tx<{ pid: string | number }[]>`SELECT pg_backend_pid() AS pid`;
+    pid = Number(rows[0]?.pid);
+    const locked = await tx<{ signal_id: string }[]>`
+      SELECT signal_id::text AS signal_id
+      FROM swarm.signal_deliveries
+      WHERE workspace_id = ${workspaceId}::uuid
+        AND recipient_agent_principal_id = ${principalId}::uuid
+        AND signal_id = ${signalId}::uuid
+      FOR UPDATE
+    `;
+    assert.equal(locked.length, 1, "Phase C ACK holder locked the exact live tuple");
+    markReady();
+    await gate;
+    return null;
+  });
+  await awaitMarkerBeforeSettlement(ready, done, "Phase C ACK-row holder ready");
+  return { pid, release: openGate, done };
+}
+
+/** Start one retained exact-window probe that exposes its PID before blocking. */
+async function startPhaseCRateProbe(opts: {
+  mode: "ack_noop" | "claim_allowed_noop" | "claim_denied_saturator";
+  bucketKey: string;
+  windowStart: string;
+}): Promise<PhaseCRateProbe> {
+  let markPidReady: () => void = () => {};
+  const pidReady = new Promise<void>((resolve) => {
+    markPidReady = resolve;
+  });
+  let markAcquired: (count: number) => void = () => {};
+  const acquired = new Promise<number>((resolve) => {
+    markAcquired = resolve;
+  });
+  let openGate: () => void = () => {};
+  const gate = new Promise<void>((resolve) => {
+    openGate = resolve;
+  });
+  let pid = 0;
+  const done = sql.begin(async (tx) => {
+    const rows = await tx<{ pid: string | number }[]>`SELECT pg_backend_pid() AS pid`;
+    pid = Number(rows[0]?.pid);
+    markPidReady();
+    const result = opts.mode === "claim_denied_saturator"
+      ? await tx<{ count: string | number }[]>`
+        /* phase_c_claim_denied_rate_probe */
+        INSERT INTO swarm.rate_buckets (bucket_key, window_start, count)
+        VALUES (${opts.bucketKey}, ${opts.windowStart}::timestamptz, 1)
+        ON CONFLICT (bucket_key, window_start) DO UPDATE
+        SET count = LEAST(swarm.rate_buckets.count + 1, 122)
+        RETURNING count
+      `
+      : opts.mode === "claim_allowed_noop"
+      ? await tx<{ count: string | number }[]>`
+        /* phase_c_claim_allowed_rate_probe */
+        INSERT INTO swarm.rate_buckets (bucket_key, window_start, count)
+        VALUES (${opts.bucketKey}, ${opts.windowStart}::timestamptz, 0)
+        ON CONFLICT (bucket_key, window_start) DO UPDATE
+        SET count = swarm.rate_buckets.count
+        RETURNING count
+      `
+      : await tx<{ count: string | number }[]>`
+        /* phase_c_ack_rate_probe */
+        INSERT INTO swarm.rate_buckets (bucket_key, window_start, count)
+        VALUES (${opts.bucketKey}, ${opts.windowStart}::timestamptz, 0)
+        ON CONFLICT (bucket_key, window_start) DO UPDATE
+        SET count = swarm.rate_buckets.count
+        RETURNING count
+      `;
+    const count = Number(result[0]?.count);
+    if (!Number.isInteger(count)) throw new Error(`Phase C rate probe returned invalid count ${String(result[0]?.count)}`);
+    markAcquired(count);
+    await gate;
+    return count;
+  });
+  await awaitMarkerBeforeSettlement(pidReady, done, `Phase C ${opts.mode} PID ready`);
+  return { pid, release: openGate, done, acquired };
+}
+
+/** Await a probe marker without losing an early transaction failure. */
+async function awaitPhaseCProbeAcquired(
+  probe: PhaseCRateProbe,
+  label: string,
+): Promise<number> {
+  const winner = await Promise.race([
+    probe.acquired.then((count) => ({ kind: "acquired" as const, count })),
+    settlementOutcome(probe.done),
+  ]);
+  if (winner.kind === "acquired") return winner.count;
+  if (winner.kind === "rejected") {
+    throw new Error(`${label}: probe rejected before acquisition: ${describeError(winner.error)}`, {
+      cause: winner.error,
+    });
+  }
+  throw new Error(`${label}: probe completed before its acquisition marker`);
+}
+
+/** Enter a DB minute with the binding specification's minimum safe remainder. */
+async function awaitPhaseCMinuteWindow(): Promise<string> {
+  const deadline = performance.now() + 20_000;
+  let lastRemaining = -1;
+  while (performance.now() < deadline) {
+    const rows = await sql<{ window_start: Date; remaining_seconds: string | number }[]>`
+      SELECT
+        date_trunc('minute', statement_timestamp()) AS window_start,
+        extract(epoch FROM (
+          date_trunc('minute', statement_timestamp()) + interval '1 minute'
+          - statement_timestamp()
+        )) AS remaining_seconds
+    `;
+    const row = rows[0];
+    if (!row) throw new Error("Phase C minute barrier returned no row");
+    lastRemaining = Number(row.remaining_seconds);
+    if (lastRemaining >= 15) return row.window_start.toISOString();
+    const remainingMs = Math.max(0, deadline - performance.now());
+    if (remainingMs <= 0) break;
+    await delay(Math.min(100, remainingMs));
+  }
+  throw new Error(`Phase C DB-clock barrier did not find >=15 seconds remaining; last=${lastRemaining}`);
+}
+
+/** Record only the bounded status/error summary used to race resolver observation. */
+function phaseCSafeResponse(promise: Promise<CommandResponse>): Promise<PhaseCSafeResponse> {
+  return promise.then(
+    (response) => ({
+      status: response.status,
+      error: typeof response.body.error === "string" ? response.body.error : null,
+    }),
+    () => ({ status: 0, error: "request_rejected" }),
+  );
+}
+
+/** Prove both request transactions began and reached the ledger query in one DB minute. */
+async function assertPhaseCRequestWindow(
+  requestPids: number[],
+  windowStart: string,
+): Promise<void> {
+  const rows = await sql<{
+    pid: string | number;
+    xact_window: Date | null;
+    query_window: Date | null;
+  }[]>`
+    SELECT
+      pid::int AS pid,
+      date_trunc('minute', xact_start) AS xact_window,
+      date_trunc('minute', query_start) AS query_window
+    FROM pg_stat_activity
+    WHERE pid = ANY(${requestPids}::int[])
+    ORDER BY pid
+  `;
+  assert.equal(rows.length, 2, "both exact request backends remain visible at the ledger barrier");
+  for (const row of rows) {
+    assert.equal(row.xact_window?.toISOString(), windowStart, `request ${row.pid} xact_start stays in the recorded DB minute`);
+    assert.equal(row.query_window?.toISOString(), windowStart, `request ${row.pid} query_start stays in the recorded DB minute`);
+  }
+}
+
+/** Execute one complete allowed/denied resolver-recharge topology. */
+async function runPhaseCRechargeRace(
+  f: Fixture,
+  mode: "allowed" | "denied",
+): Promise<PhaseCRaceResult> {
+  const agent = await createFixtureAgent(f, f.ua, `dd-pc-recharge-${mode}`);
+  const ackListener = randomUUID();
+  const claimListener = randomUUID();
+  const bodyA = `dd-pc-${mode}-signal-a-${randomUUID()}`;
+  const bodyB = `dd-pc-${mode}-signal-b-${randomUUID()}`;
+  const aboutA = `dd-pc-${mode}-about-a-${randomUUID()}`;
+  const aboutB = `dd-pc-${mode}-about-b-${randomUUID()}`;
+
+  const postA = await issueSignal(f, f.uaJwt, {
+    kind: "post_signal",
+    signal_kind: "ask",
+    body: bodyA,
+    to_user_id: null,
+    to_agent_principal_id: agent.principalId,
+    in_reply_to: null,
+    about: aboutA,
+  });
+  assert.equal(postA.status, 200, postA.text);
+  const signalAId = String((postA.body.signal as Record<string, unknown>).id);
+  const initialClaim = await issueDelivery(f, agent.token, {
+    kind: "claim_agent_inbox",
+    listener_instance_id: ackListener,
+    limit: 10,
+  });
+  assert.equal(initialClaim.status, 200, initialClaim.text);
+  const liveA = (initialClaim.body.deliveries as Array<Record<string, unknown>>).find(
+    (delivery) => (delivery.signal as Record<string, unknown>).id === signalAId,
+  );
+  assert.ok(liveA, "fixture retains signal A's live ACK tuple");
+  const leaseId = String(liveA.lease_id);
+
+  const postB = await issueSignal(f, f.uaJwt, {
+    kind: "post_signal",
+    signal_kind: "ask",
+    body: bodyB,
+    to_user_id: null,
+    to_agent_principal_id: agent.principalId,
+    in_reply_to: null,
+    about: aboutB,
+  });
+  assert.equal(postB.status, 200, postB.text);
+  const signalBId = String((postB.body.signal as Record<string, unknown>).id);
+  const signalBSnapshot = await sql<Record<string, unknown>[]>`
+    SELECT *
+    FROM swarm.signal_deliveries
+    WHERE signal_id = ${signalBId}::uuid
+      AND recipient_agent_principal_id = ${agent.principalId}::uuid
+  `;
+  assert.equal(signalBSnapshot.length, 1, "signal B has one delivery row");
+  assert.equal(signalBSnapshot[0]?.lease_id, null, "signal B begins unleased");
+  assert.equal(signalBSnapshot[0]?.attempt_count, 0, "signal B begins at attempt_count zero");
+  const tokenRows = await sql<{ first_used_at: Date | null }[]>`
+    SELECT first_used_at
+    FROM swarm.agent_tokens
+    WHERE token_id = ${agent.tokenId}::uuid
+  `;
+  assert.ok(tokenRows[0]?.first_used_at !== null, "fixture token is past concurrent first-use authentication");
+
+  const sharedCommandId = commandId(`phase_c_${mode}`);
+  const ackCommand: DeliveryCommand = {
+    kind: "ack_agent_delivery",
+    signal_id: signalAId,
+    lease_id: leaseId,
+    listener_instance_id: ackListener,
+    outcome: "observed",
+    last_error_code: null,
+  };
+  const claimCommand: DeliveryCommand = {
+    kind: "claim_agent_inbox",
+    listener_instance_id: claimListener,
+    limit: 10,
+  };
+  const actor = f.credentials.get(agent.token)?.actor;
+  assert.ok(actor, "Phase C fixture actor is registered");
+  const expectedAckHash = requestHash(actor, ackCommand as unknown as Command);
+  const expectedClaimHash = requestHash(actor, claimCommand as unknown as Command);
+  const ackBucketKey = `delivery:ack:principal:${f.workspaceA}:${agent.principalId}`;
+  const claimBucketKey = `delivery:claim:principal:${f.workspaceA}:${agent.principalId}`;
+  await sql`
+    DELETE FROM swarm.rate_buckets
+    WHERE bucket_key IN (${ackBucketKey}, ${claimBucketKey})
+  `;
+  const ledgerBefore = await sql<{ n: string | number }[]>`
+    SELECT count(*)::int AS n
+    FROM swarm.idempotency_keys
+    WHERE principal_kind = 'agent'
+      AND principal_id = ${agent.principalId}
+      AND command_id = ${sharedCommandId}
+  `;
+  assert.equal(Number(ledgerBefore[0]?.n), 0, "shared ledger begins absent");
+  const auditWatermarkRows = await sql<{ id: string | number }[]>`
+    SELECT COALESCE(max(audit_id), 0) AS id FROM swarm.audit_log
+  `;
+  const alertWatermarkRows = await sql<{ id: string | number }[]>`
+    SELECT COALESCE(max(alert_id), 0) AS id FROM swarm.security_alerts
+  `;
+  const auditWatermark = Number(auditWatermarkRows[0]?.id ?? 0);
+  const alertWatermark = Number(alertWatermarkRows[0]?.id ?? 0);
+  const windowStart = await awaitPhaseCMinuteWindow();
+  if (mode === "denied") {
+    await sql`
+      INSERT INTO swarm.rate_buckets (bucket_key, window_start, count)
+      VALUES (${claimBucketKey}, ${windowStart}::timestamptz, 119)
+    `;
+  }
+
+  let ledgerHolder: RetainedLock | null = null;
+  let ackRowHolder: RetainedLock | null = null;
+  let principalHolder: RetainedLock | null = null;
+  let ackProbe: PhaseCRateProbe | null = null;
+  let claimProbe: PhaseCRateProbe | null = null;
+  let ackPromise: Promise<CommandResponse> | null = null;
+  let claimPromise: Promise<CommandResponse> | null = null;
+  let bodyFailure: { failed: boolean; value: unknown } = { failed: false, value: undefined };
+  try {
+    ledgerHolder = await retainPhaseCLedgerTableLock();
+    ackRowHolder = await retainPhaseCAckRowLock(f.workspaceA, agent.principalId, signalAId);
+    principalHolder = await retainPrincipalRowLock(agent.principalId, f.workspaceA, "FOR UPDATE");
+
+    ackPromise = issueDelivery(f, agent.token, ackCommand, sharedCommandId);
+    claimPromise = issueDelivery(f, agent.token, claimCommand, sharedCommandId);
+    const initialLedgerBlocked = await waitForBlockedBackends({
+      queryPattern: /FROM swarm\.idempotency_keys/,
+      blockerPids: [ledgerHolder.pid],
+      minCount: 2,
+      label: `Phase C ${mode}: both initial ledger lookups blocked only by L`,
+      mustRemainPending: [ackPromise, claimPromise],
+    });
+    assert.equal(initialLedgerBlocked.length, 2, "exactly two initial ledger lookups are blocked");
+    assert.equal(new Set(initialLedgerBlocked.map((row) => row.pid)).size, 2, "initial ledger lookups use distinct backend PIDs");
+    for (const backend of initialLedgerBlocked) {
+      assert.deepEqual(backend.blockingPids, [ledgerHolder.pid], `initial request ${backend.pid} is blocked only by L`);
+    }
+    const initialRequestPids = initialLedgerBlocked.map((row) => row.pid);
+
+    ackProbe = await startPhaseCRateProbe({
+      mode: "ack_noop",
+      bucketKey: ackBucketKey,
+      windowStart,
+    });
+    claimProbe = await startPhaseCRateProbe({
+      mode: mode === "allowed" ? "claim_allowed_noop" : "claim_denied_saturator",
+      bucketKey: claimBucketKey,
+      windowStart,
+    });
+    const ackProbeBlocked = await waitForBlockedBackends({
+      queryPattern: /phase_c_ack_rate_probe/,
+      blockerPids: [],
+      minCount: 1,
+      label: `Phase C ${mode}: ACK rate probe maps its original charge`,
+      mustRemainPending: [ackPromise, claimPromise, ackProbe.done, claimProbe.done],
+    });
+    assert.equal(ackProbeBlocked.length, 1, "one exact ACK probe backend is blocked");
+    assert.equal(ackProbeBlocked[0]?.pid, ackProbe.pid, "ACK probe PID is exact");
+    assert.equal(ackProbeBlocked[0]?.blockingPids.length, 1, "ACK probe has exactly one request blocker");
+    const ackRequestPid = ackProbeBlocked[0]!.blockingPids[0]!;
+    assert.ok(initialRequestPids.includes(ackRequestPid), "ACK probe maps to one initial request PID");
+    const claimProbePattern = mode === "allowed"
+      ? /phase_c_claim_allowed_rate_probe/
+      : /phase_c_claim_denied_rate_probe/;
+    const claimProbeBlocked = await waitForBlockedBackends({
+      queryPattern: claimProbePattern,
+      blockerPids: [],
+      minCount: 1,
+      label: `Phase C ${mode}: claim rate probe maps its original charge`,
+      mustRemainPending: [ackPromise, claimPromise, ackProbe.done, claimProbe.done],
+    });
+    assert.equal(claimProbeBlocked.length, 1, "one exact claim probe backend is blocked");
+    assert.equal(claimProbeBlocked[0]?.pid, claimProbe.pid, "claim probe PID is exact");
+    assert.equal(claimProbeBlocked[0]?.blockingPids.length, 1, "claim probe has exactly one request blocker");
+    const claimRequestPid = claimProbeBlocked[0]!.blockingPids[0]!;
+    assert.ok(initialRequestPids.includes(claimRequestPid), "claim probe maps to one initial request PID");
+    assert.notEqual(ackRequestPid, claimRequestPid, "distinct exact rate buckets map both request PIDs");
+    assert.deepEqual(
+      new Set([ackRequestPid, claimRequestPid]),
+      new Set(initialRequestPids),
+      "rate probes account for both initial requests with no hidden serialization",
+    );
+    await assertPhaseCRequestWindow(initialRequestPids, windowStart);
+
+    ledgerHolder.release();
+    await ledgerHolder.done;
+    const ackAtRow = await waitForBlockedBackends({
+      queryPattern: /FROM swarm\.signal_deliveries/,
+      blockerPids: [ackRowHolder.pid],
+      minCount: 1,
+      label: `Phase C ${mode}: mapped ACK reaches exact A row`,
+      mustRemainPending: [ackPromise, claimPromise, ackProbe.done, claimProbe.done],
+    });
+    assert.equal(ackAtRow[0]?.pid, ackRequestPid, "mapped ACK request is behind A");
+    assert.deepEqual(ackAtRow[0]?.blockingPids, [ackRowHolder.pid], "mapped ACK is blocked only by A");
+    const claimAtPrincipal = await waitForBlockedBackends({
+      queryPattern: /FROM swarm\.agent_principals/,
+      blockerPids: [principalHolder.pid],
+      minCount: 1,
+      label: `Phase C ${mode}: mapped claim reaches exact P row`,
+      mustRemainPending: [ackPromise, claimPromise, ackProbe.done, claimProbe.done],
+    });
+    assert.equal(claimAtPrincipal[0]?.pid, claimRequestPid, "mapped claim request is behind P");
+    assert.deepEqual(claimAtPrincipal[0]?.blockingPids, [principalHolder.pid], "mapped claim is blocked only by P");
+    const ledgerWhileBlocked = await sql<{ n: string | number }[]>`
+      SELECT count(*)::int AS n
+      FROM swarm.idempotency_keys
+      WHERE principal_kind = 'agent'
+        AND principal_id = ${agent.principalId}
+        AND command_id = ${sharedCommandId}
+    `;
+    assert.equal(Number(ledgerWhileBlocked[0]?.n), 0, "shared ledger remains absent while ACK and claim are behind A/P");
+
+    ackRowHolder.release();
+    await ackRowHolder.done;
+    const ack = await ackPromise;
+    const ackProbeCount = await awaitPhaseCProbeAcquired(ackProbe, `Phase C ${mode} ACK probe acquisition`);
+    assert.equal(ackProbeCount, 1, "ACK probe sees the committed original charge exactly once");
+    ackProbe.release();
+    await ackProbe.done;
+    const committedLedger = await sql<{ n: string | number }[]>`
+      SELECT count(*)::int AS n
+      FROM swarm.idempotency_keys
+      WHERE principal_kind = 'agent'
+        AND principal_id = ${agent.principalId}
+        AND command_id = ${sharedCommandId}
+    `;
+    assert.equal(Number(committedLedger[0]?.n), 1, "ACK winner ledger is committed before P releases");
+    const claimStillAtPrincipal = await waitForBlockedBackends({
+      queryPattern: /FROM swarm\.agent_principals/,
+      blockerPids: [principalHolder.pid],
+      minCount: 1,
+      label: `Phase C ${mode}: claim remains behind P after ACK commit`,
+      mustRemainPending: [claimPromise, claimProbe.done],
+    });
+    assert.equal(claimStillAtPrincipal[0]?.pid, claimRequestPid, "exact claim PID remains behind P");
+
+    principalHolder.release();
+    await principalHolder.done;
+    const claimProbeCount = await awaitPhaseCProbeAcquired(claimProbe, `Phase C ${mode} claim probe acquisition`);
+    assert.equal(
+      claimProbeCount,
+      mode === "allowed" ? 0 : 120,
+      "queued claim-rate gate acquires the rolled-back original charge's exact bucket state",
+    );
+    const claimSummary = phaseCSafeResponse(claimPromise);
+    const resolverObservation = waitForBlockedBackends({
+      queryPattern: /INSERT INTO swarm\.rate_buckets/,
+      blockerPids: [claimProbe.pid],
+      minCount: 1,
+      label: `Phase C ${mode}: resolveLedgerRace recharge blocked behind claim probe`,
+      deadlineMs: 1500,
+    });
+    const observationOutcome = resolverObservation.then(
+      (rows) => ({ kind: "observed" as const, rows }),
+      (error) => ({ kind: "observation_error" as const, error }),
+    );
+    const responseOutcome = claimSummary.then((summary) => ({ kind: "response" as const, summary }));
+    const lateWinner = await Promise.race([observationOutcome, responseOutcome]);
+    let resolverObserved = false;
+    let resolverPid: number | null = null;
+    if (lateWinner.kind === "observed") {
+      resolverObserved = true;
+      resolverPid = lateWinner.rows[0]?.pid ?? null;
+      assert.equal(lateWinner.rows.length, 1, "one exact resolver recharge query is blocked");
+      assert.deepEqual(lateWinner.rows[0]?.blockingPids, [claimProbe.pid], "resolver recharge is blocked only by the retained claim probe");
+    } else if (lateWinner.kind === "observation_error") {
+      throw lateWinner.error;
+    } else {
+      const settledObservation = await observationOutcome;
+      if (settledObservation.kind === "observed") {
+        resolverObserved = true;
+        resolverPid = settledObservation.rows[0]?.pid ?? null;
+      }
+    }
+    claimProbe.release();
+    await claimProbe.done;
+    const claim = await claimPromise;
+    await Promise.allSettled([claimSummary, observationOutcome]);
+
+    const bucketRows = await sql<{ bucket_key: string; count: string | number }[]>`
+      SELECT bucket_key, count
+      FROM swarm.rate_buckets
+      WHERE bucket_key IN (${ackBucketKey}, ${claimBucketKey})
+        AND window_start = ${windowStart}::timestamptz
+      ORDER BY bucket_key
+    `;
+    const bucketCounts = new Map(bucketRows.map((row) => [row.bucket_key, Number(row.count)]));
+    const signalBAfter = await sql<Record<string, unknown>[]>`
+      SELECT *
+      FROM swarm.signal_deliveries
+      WHERE signal_id = ${signalBId}::uuid
+        AND recipient_agent_principal_id = ${agent.principalId}::uuid
+    `;
+    const ledgerRows = await sql<PhaseCRaceResult["ledgerRows"]>`
+      SELECT
+        principal_kind, principal_id, command_id,
+        workspace_id::text AS workspace_id,
+        stream_id::text AS stream_id,
+        request_hash, response
+      FROM swarm.idempotency_keys
+      WHERE principal_kind = 'agent'
+        AND principal_id = ${agent.principalId}
+        AND command_id = ${sharedCommandId}
+      ORDER BY created_at
+    `;
+    const audits = await sql<PhaseCRaceResult["audits"]>`
+      SELECT
+        command_kind,
+        workspace_id::text AS workspace_id,
+        stream_id::text AS stream_id,
+        outcome, reason, detail, request_hash
+      FROM swarm.audit_log
+      WHERE audit_id > ${auditWatermark}
+      ORDER BY audit_id
+    `;
+    const alerts = await sql<PhaseCRaceResult["alerts"]>`
+      SELECT kind, subject, detail
+      FROM swarm.security_alerts
+      WHERE alert_id > ${alertWatermark}
+      ORDER BY alert_id
+    `;
+    const result: PhaseCRaceResult = {
+      mode,
+      windowStart,
+      resolverObserved,
+      holderPids: {
+        ledger: ledgerHolder.pid,
+        ackRow: ackRowHolder.pid,
+        principal: principalHolder.pid,
+      },
+      requestPids: { ack: ackRequestPid, claim: claimRequestPid, resolver: resolverPid },
+      probePids: { ack: ackProbe.pid, claim: claimProbe.pid },
+      ack,
+      claim,
+      ackProbeCount,
+      claimProbeCount,
+      ackBucketCount: bucketCounts.get(ackBucketKey) ?? 0,
+      claimBucketCount: bucketCounts.get(claimBucketKey) ?? 0,
+      signalBUnchanged: JSON.stringify(signalBAfter) === JSON.stringify(signalBSnapshot),
+      ledgerRows,
+      audits,
+      alerts,
+      expectedAckHash,
+      expectedClaimHash,
+      signalAId,
+      signalBId,
+      leaseId,
+      ackListener,
+      claimListener,
+      privateSentinels: [
+        agent.token,
+        agent.tokenId,
+        agent.runId,
+        f.ua,
+        agent.principalId,
+        f.workspaceA,
+        sharedCommandId,
+        signalAId,
+        signalBId,
+        leaseId,
+        ackListener,
+        claimListener,
+        bodyA,
+        bodyB,
+        aboutA,
+        aboutB,
+      ],
+    };
+    console.log(`PHASE_C_TOPOLOGY ${JSON.stringify({
+      mode,
+      windowStart,
+      holders: result.holderPids,
+      requests: result.requestPids,
+      probes: result.probePids,
+      initialLedgerQueries: initialLedgerBlocked.map((row) => boundedQueryExcerpt(row.query)),
+      ackRowQuery: boundedQueryExcerpt(ackAtRow[0]!.query),
+      claimPrincipalQuery: boundedQueryExcerpt(claimAtPrincipal[0]!.query),
+    })}`);
+    console.log(`PHASE_C_RESULT ${JSON.stringify({
+      mode,
+      resolverObserved,
+      ackStatus: ack.status,
+      claimStatus: claim.status,
+      claimError: typeof claim.body.error === "string" ? claim.body.error : null,
+      ackProbeCount,
+      claimProbeCount,
+      ackBucketCount: result.ackBucketCount,
+      claimBucketCount: result.claimBucketCount,
+      auditCount: audits.length,
+      alertCount: alerts.length,
+    })}`);
+    return result;
+  } catch (error) {
+    bodyFailure = { failed: true, value: error };
+    throw error;
+  } finally {
+    ledgerHolder?.release();
+    ackRowHolder?.release();
+    principalHolder?.release();
+    ackProbe?.release();
+    claimProbe?.release();
+    await settleCleanupTruthfully(bodyFailure, [
+      { label: "Phase C ledger holder L", promise: ledgerHolder?.done ?? Promise.resolve(null) },
+      { label: "Phase C ACK-row holder A", promise: ackRowHolder?.done ?? Promise.resolve(null) },
+      { label: "Phase C principal holder P", promise: principalHolder?.done ?? Promise.resolve(null) },
+      { label: "Phase C ACK rate probe", promise: ackProbe?.done ?? Promise.resolve(null) },
+      { label: "Phase C claim rate probe", promise: claimProbe?.done ?? Promise.resolve(null) },
+      { label: "Phase C ACK HTTP request", promise: ackPromise ?? Promise.resolve(null) },
+      { label: "Phase C claim HTTP request", promise: claimPromise ?? Promise.resolve(null) },
+    ]);
+  }
+}
+
+function assertPhaseCCommonWinner(result: PhaseCRaceResult): void {
+  assert.deepEqual(result.ack.body, {
+    status: "accepted",
+    ok: true,
+    event_ids: [],
+    signal_id: result.signalAId,
+    outcome: "observed",
+  }, "ACK returns the exact normal accepted body");
+  assert.equal(result.signalBUnchanged, true, "signal B remains byte-for-byte unchanged");
+  assert.equal(result.ledgerRows.length, 1, "exactly one shared ledger row survives");
+  const ledger = result.ledgerRows[0]!;
+  assert.deepEqual({
+    principal_kind: ledger.principal_kind,
+    principal_id: ledger.principal_id,
+    command_id: ledger.command_id,
+    workspace_id: ledger.workspace_id,
+    stream_id: ledger.stream_id,
+    request_hash: ledger.request_hash,
+  }, {
+    principal_kind: "agent",
+    principal_id: result.privateSentinels[4],
+    command_id: result.privateSentinels[6],
+    workspace_id: result.privateSentinels[5],
+    stream_id: result.audits[0]?.stream_id,
+    request_hash: result.expectedAckHash,
+  }, "shared ledger identity and hash match the ACK winner");
+  assert.deepEqual(ledger.response, {
+    ok: true,
+    event_ids: [],
+    signal_id: result.signalAId,
+    outcome: "observed",
+  }, "shared ledger stores the exact body-free ACK winner response");
+  const ledgerText = JSON.stringify(ledger.response);
+  for (const sentinel of [
+    result.signalBId,
+    result.claimListener,
+    result.privateSentinels[13],
+    result.privateSentinels[15],
+  ]) {
+    assert.equal(ledgerText.includes(sentinel), false, `ACK ledger forbids losing-claim sentinel ${sentinel}`);
+  }
+}
+
+test("durable-delivery: Phase C resolveLedgerRace recharge — allowed losing claim is recharged once", { timeout: 30_000 }, async () => {
+  await scenario(async (f) => {
+    const result = await runPhaseCRechargeRace(f, "allowed");
+    assert.deepEqual({
+      resolverObserved: result.resolverObserved,
+      ackStatus: result.ack.status,
+      claimStatus: result.claim.status,
+      claimError: result.claim.body.error,
+      ackProbeCount: result.ackProbeCount,
+      claimProbeCount: result.claimProbeCount,
+      ackBucketCount: result.ackBucketCount,
+      claimBucketCount: result.claimBucketCount,
+      auditCount: result.audits.length,
+      alertCount: result.alerts.length,
+    }, {
+      resolverObserved: true,
+      ackStatus: 200,
+      claimStatus: 409,
+      claimError: "command_id_conflict",
+      ackProbeCount: 1,
+      claimProbeCount: 0,
+      ackBucketCount: 1,
+      claimBucketCount: 1,
+      auditCount: 2,
+      alertCount: 0,
+    }, "allowed recharge reaches the late resolver topology and charges exactly once");
+    assert.deepEqual(result.claim.body, { error: "command_id_conflict" }, "allowed loser returns exact 409 conflict body");
+    assertPhaseCCommonWinner(result);
+    assert.deepEqual(Array.from(result.audits), [
+      {
+        command_kind: "ack_agent_delivery",
+        workspace_id: result.privateSentinels[5],
+        stream_id: result.ledgerRows[0]!.stream_id,
+        outcome: "accepted",
+        reason: null,
+        detail: null,
+        request_hash: result.expectedAckHash,
+      },
+      {
+        command_kind: "claim_agent_inbox",
+        workspace_id: result.privateSentinels[5],
+        stream_id: result.ledgerRows[0]!.stream_id,
+        outcome: "conflict",
+        reason: "command_id_conflict",
+        detail: "resolved concurrent idempotency race",
+        request_hash: result.expectedClaimHash,
+      },
+    ], "allowed path writes exactly ACK accepted plus resolver conflict audits");
+  });
+});
+
+test("durable-delivery: Phase C resolveLedgerRace recharge — denied losing claim is rate-limited", { timeout: 30_000 }, async () => {
+  await scenario(async (f) => {
+    const result = await runPhaseCRechargeRace(f, "denied");
+    assert.deepEqual({
+      resolverObserved: result.resolverObserved,
+      ackStatus: result.ack.status,
+      claimStatus: result.claim.status,
+      claimError: result.claim.body.error,
+      ackProbeCount: result.ackProbeCount,
+      claimProbeCount: result.claimProbeCount,
+      ackBucketCount: result.ackBucketCount,
+      claimBucketCount: result.claimBucketCount,
+      auditCount: result.audits.length,
+      alertCount: result.alerts.length,
+    }, {
+      resolverObserved: true,
+      ackStatus: 200,
+      claimStatus: 429,
+      claimError: "rate_limited",
+      ackProbeCount: 1,
+      claimProbeCount: 120,
+      ackBucketCount: 1,
+      claimBucketCount: 121,
+      auditCount: 2,
+      alertCount: 1,
+    }, "denied recharge reaches the late resolver topology and crosses the exact rate boundary");
+    const expectedReset = new Date(new Date(result.windowStart).getTime() + 60_000).toISOString();
+    assert.deepEqual(result.claim.body, {
+      error: "rate_limited",
+      limit: 120,
+      resets_at: expectedReset,
+      message: "Rate limit exceeded. Please retry after the reset window.",
+    }, "denied loser returns the exact rate-limit response for the recorded DB window");
+    const retryAfter = Number(result.claim.headers?.get("retry-after"));
+    assert.ok(Number.isInteger(retryAfter) && retryAfter >= 1 && retryAfter <= 60, `Retry-After is an integer 1..60, got ${String(result.claim.headers?.get("retry-after"))}`);
+    assertPhaseCCommonWinner(result);
+    assert.deepEqual(Array.from(result.audits), [
+      {
+        command_kind: "ack_agent_delivery",
+        workspace_id: result.privateSentinels[5],
+        stream_id: result.ledgerRows[0]!.stream_id,
+        outcome: "accepted",
+        reason: null,
+        detail: null,
+        request_hash: result.expectedAckHash,
+      },
+      {
+        command_kind: "claim_agent_inbox",
+        workspace_id: result.privateSentinels[5],
+        stream_id: null,
+        outcome: "rate_limit",
+        reason: "delivery_claim_rate_limited",
+        detail: null,
+        request_hash: null,
+      },
+    ], "denied path writes exactly ACK accepted plus body-free claim rate-limit audits");
+    assert.equal(result.alerts.length, 1, "one delivery-claim rate-limit alert is written");
+    assert.equal(result.alerts[0]?.kind, "delivery_claim_rate_limit");
+    assert.equal(result.alerts[0]?.subject, "agent");
+    assert.deepEqual(
+      Object.keys(result.alerts[0]!.detail).sort(),
+      ["limit", "operation", "recipient_principal_id", "resets_at", "workspace_id"],
+      "alert carries only the exact allowed correlation keys",
+    );
+    assert.deepEqual(result.alerts[0]!.detail, {
+      workspace_id: result.privateSentinels[5],
+      recipient_principal_id: result.privateSentinels[4],
+      operation: "claim",
+      limit: 120,
+      resets_at: expectedReset,
+    });
+    const responseText = JSON.stringify(result.claim.body);
+    for (const sentinel of result.privateSentinels) {
+      assert.equal(responseText.includes(sentinel), false, `denied response forbids private sentinel ${sentinel}`);
+    }
+    const alertText = JSON.stringify(result.alerts[0]!.detail);
+    for (const sentinel of result.privateSentinels.filter((_, index) => index !== 4 && index !== 5)) {
+      assert.equal(alertText.includes(sentinel), false, `denied alert forbids non-correlation sentinel ${sentinel}`);
+    }
+  });
+});
