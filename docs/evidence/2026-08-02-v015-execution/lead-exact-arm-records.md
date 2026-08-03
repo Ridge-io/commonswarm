@@ -86,10 +86,13 @@ Static and diff-level review only. I ran the pure gates myself for A2 but did no
 suites, the mutant runs, or the red-then-green proofs recorded by the workers — those counts are read
 from their reports. No arm here establishes deployment, production behaviour, or real-load capacity.
 
-**The production delta still has only ONE arm.** `production-delta-exact-review-PASS-1-major.md` is
-an exact arm at that scope; no cross-family inversion has run over the full
-`origin/main..freeze` production/edge/migration delta. Under D-036 one arm is never sufficient, so
-that inversion must run before the release is landed.
+~~**The production delta still has only ONE arm.** … that inversion must run before the release is
+landed.~~ **Dead as of 2026-08-03**: the cross-family inversion ran over
+`origin/main..HEAD -- supabase/` and is on disk as
+`production-delta-d036-inversion-arm-gemini-PASS.md` (PASS, no CRITICAL). Caveat kept honest: that
+inversion covered `supabase/` only, so `src/cloud/command-client.ts` has an exact arm at delta scope
+but no inversion at delta scope. Stage 7b must therefore be scoped to the full
+`origin/main..freeze` delta rather than to whatever moved most recently.
 
 ---
 

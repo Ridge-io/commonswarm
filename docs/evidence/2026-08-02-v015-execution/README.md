@@ -32,6 +32,13 @@ two arms are one exact review (Codex or Claude) plus one different-family invers
 | `delivery-review-fix-PASS.md` | All four findings corrected at `df2f4c9`, red-then-green | **PASS** |
 | `delivery-review-fix-d036-inversion-arm-gemini-PASS.md` | D-036 inversion arm on `df2f4c9` | **PASS** |
 | `lead-exact-arm-records.md` | The Lead's D-036 **exact arms** for ab1b240 / 5f5018a / e3dc295 / df2f4c9, written down after the fact | **PASS** ×4 |
+| `runtime-c-PASS.md` | Runtime C at `f30974a` (builder report) | worker record |
+| `runtime-c-fixture-repair-VERIFIED-PARTIAL.md` | Lead's independent mutant test of work item 1 | **PARTIAL** |
+| `runtime-c-d036-inversion-arm-gemini-PASS.md` | D-036 inversion arm on `f30974a` | **PASS** |
+| `runtime-d-PASS.md` | Runtime D at `0f5bbcf` (builder report) | worker record |
+| `runtime-d-d036-inversion-arm-gemini-PASS.md` | D-036 inversion arm on `0f5bbcf` | **PASS** |
+| `production-delta-d036-inversion-arm-gemini-PASS.md` | Inversion arm on the full production surface | **PASS** |
+| `stage-q-authenticated-qa.md` | Stage Q production QA (in progress) | 1 finding, authenticated half open |
 | `production-baseline-pre-deploy.md` | Production state recorded before any mutation | baseline |
 
 Binding contracts each PASS above cites now live in `docs/design/contracts/` — they were previously
@@ -72,9 +79,15 @@ enumerate the controls rather than counting them approximately.
 
 ## What this directory does not establish
 
-Runtime C/D, the version freeze to 0.1.5, the full exact-SHA gate, the release-candidate two-arm
-review, landing to `main`, deployment, production behaviour, the authenticated production QA journey,
-the real two-human cross-owner canary, or the longevity canaries.
+~~Runtime C/D,~~ *(both accepted 2026-08-03 — dead)* the version freeze to 0.1.5, the full exact-SHA
+gate, the release-candidate two-arm review, landing to `main`, deployment, production behaviour, the
+**authenticated** production QA journey, the real two-human cross-owner canary, or the longevity
+canaries.
+
+**M4 verdict, 2026-08-03: DO-NOT-FREEZE yet.** Open before Stage 6: the authenticated QA session
+(operator-assisted), QA-008's fix landing, Lane R reconciliation, and this index staying current.
+The discriminator M4 gave for what must be pre-freeze is worth repeating: **anything whose failure
+would require a code change**, because only those restart the review chain.
 
 ~~**Known open gap at time of writing:** every D-036 arm recorded above is scoped to a *test* delta.
 The production/edge/migration code the release will deploy is under separate review; until that lands
