@@ -100,12 +100,15 @@ Also prove:
 - root, `site/public`, and built `site/dist` installers are byte-identical;
 - all four independent `/download` 0.1.5 surfaces occur exactly once;
 - browser bundle has its known positive sentinel and none of the root-only sentinels;
-- execute the **12 recorded controls** exactly as enumerated in
+- ~~execute the **12 recorded controls**; **0 of the 10 required domains has a recorded
+  domain-valid control and all 10 are blind**~~ — **dead (2026-08-03):** the Stage 7 control lane
+  added seven exact mutant/test pairs and closed six of the seven previously blind domains;
+- execute the **22 recorded controls** exactly as enumerated in
   `docs/design/2026-08-03-STAGE7-CAUSAL-CONTROL-REGISTER.md`, including its binding per-test,
-  concurrency, watchdog, named-red, and exclusive-slot rules. That register also records the
-  release-blocking coverage truth: **0 of the 10 required domains has a recorded domain-valid
-  control; all 10 are blind.** Running the 12 nearby controls must not be reported as closing those
-  blind domains.
+  concurrency, watchdog, named-red, and exclusive-slot rules. That register records the current
+  release coverage truth: **9 of the 10 required domains have a recorded domain-valid control;
+  claim one-winner remains blind after its exact mutant stayed green and triggered the mandatory
+  stop.** Do not report that domain as closed.
 
 Run `test:uxtest` if the final union affects its journey; otherwise record it as explicitly skipped
 and unestablished.
