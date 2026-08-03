@@ -7166,10 +7166,10 @@ test("durable-delivery: active-lease TTL race; backlog >100 oldest-first; RLS/gr
     assert.equal(Number(survived29?.n), 1, "29-day terminal row survives 30-day floor purge");
 
     // Capture pre-test retention config value
-    const [initialConfigRow] = await sql<{ value: unknown }[]>`
-      SELECT value FROM swarm.config WHERE key = 'delivery_retention_days'
+    const [initialConfigRow] = await sql<{ value: string }[]>`
+      SELECT value::text AS value FROM swarm.config WHERE key = 'delivery_retention_days'
     `;
-    const initialConfigVal = initialConfigRow ? JSON.stringify(initialConfigRow.value) : null;
+    const initialConfigVal = initialConfigRow ? initialConfigRow.value : null;
 
     // Configured retention = 60 days via swarm.config.
     await sql`
@@ -7263,8 +7263,8 @@ test("durable-delivery: active-lease TTL race; backlog >100 oldest-first; RLS/gr
       if (initialConfigVal !== null) {
         await sql`
           INSERT INTO swarm.config (key, value)
-          VALUES ('delivery_retention_days', ${initialConfigVal}::jsonb)
-          ON CONFLICT (key) DO UPDATE SET value = ${initialConfigVal}::jsonb
+          VALUES ('delivery_retention_days', ${initialConfigVal}::text::jsonb)
+          ON CONFLICT (key) DO UPDATE SET value = ${initialConfigVal}::text::jsonb
         `;
       } else {
         await sql`DELETE FROM swarm.config WHERE key = 'delivery_retention_days'`;
