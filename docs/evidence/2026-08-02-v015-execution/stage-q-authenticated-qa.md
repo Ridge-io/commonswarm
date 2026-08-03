@@ -508,3 +508,29 @@ not surfaced. Product voice says output should say what happened, what is now tr
 next — "That link has expired. Request a new one." would satisfy all three.
 
 Not established: whether the same silence applies to other `error_code` values on that redirect.
+
+## Disposable fixture — NOT cleaned up, and it cannot be from here
+
+The checklist requires "cleanup every disposable fixture". One remains, recorded rather than quietly
+dropped:
+
+```
+auth user: cswarm-qa-1785795113@web-library.net   (created 2026-08-03 via magic link)
+```
+
+**What it holds:** nothing. The session landed on "Name your workspace" and no workspace was created,
+so it is an orphan auth user with no workspace, no agents, no signals, no delivery rows.
+
+**Why I did not remove it:** self-serve account deletion is explicitly a **post-MVP** item (`TODO.md`,
+and the master plan's deferred list), so no product path exists. Removing it directly needs a
+service-role key, and `site/.env` correctly contains **zero** service-role markers — that key must
+never live where the site can reach it. So this is an operator/admin action, not one I can or should
+take.
+
+**Disposition:** operator to delete the auth user at their convenience. Low urgency — it owns nothing
+and can do nothing — but it should not silently become permanent test residue, and "cleanup every
+disposable fixture" is a checklist line that should not be reported as met when it is not.
+
+A second, related fixture from earlier: the invite minted to `<employer-b-address REDACTED 2026-08-10>`
+was created expressly to be destroyed by the stale-client test. It was **not** consumed (the burn
+test stopped pre-auth), so it remains a live one-time capability until it expires. Same disposition.
