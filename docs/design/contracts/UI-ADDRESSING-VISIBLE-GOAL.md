@@ -103,6 +103,14 @@ back, not a sentence in the UI.
 
 Site suite baseline, measured on this branch at `44f8ec5`: **`npm --prefix site test` → 113/113.**
 
+**Build before you measure anything, including the baseline.** In a fresh clone with no `site/dist`,
+the same suite reports **113 tests / 101 pass / 12 fail**. Those 12 are not defects and not yours —
+several tests assert against *built output*, so with no `dist` they fail. `rm -rf site/dist &&
+npm --prefix site run build` first, and the suite is 113/113. I measured both numbers in your clone
+before writing this. If you ever see 101, you are testing a tree that was never built; if you see a
+count that disagrees with your source, suspect a **stale** `dist` — Astro does not clean, and that has
+produced a false pass in this repo before.
+
 Your acceptance is **113 → N where N > 113**, with the new tests failing against the pre-change code.
 Write the test, watch it go red, then fix it. A test that has never been red proves nothing.
 
