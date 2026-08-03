@@ -1,9 +1,5 @@
 import postgres from "npm:postgres@3.4.9";
 import {
-  agentCredentialRevoked,
-  loadAgentCredential,
-} from "../_shared/agent-auth.ts";
-import {
   extractSafeDiagnostics,
   formatReadFailureLog,
   newRequestId,
@@ -53,11 +49,30 @@ interface MemberReadRequest {
   workspace_id: string;
 }
 
-/** Explicit read-contract capability markers for agent-authenticated signals. */
+/**
+ * Explicit read-contract capability markers for agent-authenticated signals.
+ * delivery_claim/ack advertise that the command edge supports the durable path;
+ * cursor_after remains so old clients keep the ascending-cursor fallback.
+ */
 const SIGNAL_CAPABILITIES = {
   sender_owner_relation: 1,
   cursor_after: 1,
+  delivery_claim: 1,
+  delivery_ack: 1,
 } as const;
+
+interface ReadAgentContext {
+  token_id: string;
+  principal_id: string;
+  owner_user_id: string;
+  principal_workspace_id: string;
+  run_id: string;
+  device_id: string;
+  first_use: boolean;
+  membership_revoked_at: Date | null;
+  is_revoked: boolean;
+  pending_delivery_count: number;
+}
 
 function json(status: number, body: Record<string, unknown>): Response {
   return new Response(JSON.stringify(body), {
@@ -229,27 +244,36 @@ async function handle(
   return await db.begin(async (tx) => {
     setPhase("session_setup");
     await tx.unsafe("SET TRANSACTION ISOLATION LEVEL READ COMMITTED");
-    await tx.unsafe("SET LOCAL ROLE swarm_command");
-    await tx.unsafe("SET LOCAL search_path = swarm, pg_catalog");
+    // Spec: the read transaction never assumes swarm_command. Start as
+    // swarm_read and authenticate/count through the narrow SECURITY DEFINER.
+    await tx.unsafe("SET LOCAL ROLE swarm_read");
+    await tx.unsafe("SET LOCAL search_path = swarm_read, swarm, pg_catalog");
     await tx.unsafe("SET LOCAL lock_timeout = '5s'");
 
     setPhase("credential_lookup");
-    const agent = await loadAgentCredential(tx, tokenHash);
-    if (agent === null) return json(401, { error: "unauthenticated" });
-
-    setPhase("membership");
-    const membershipRows = await tx<{ revoked_at: Date | null }[]>`
-      SELECT revoked_at
-      FROM swarm.memberships
-      WHERE workspace_id = ${agent.principal_workspace_id}::uuid
-        AND user_id = ${agent.owner_user_id}::uuid
-      LIMIT 1
+    const contextRows = await tx<ReadAgentContext[]>`
+      SELECT
+        token_id,
+        principal_id,
+        owner_user_id,
+        principal_workspace_id,
+        run_id,
+        device_id,
+        first_use,
+        membership_revoked_at,
+        is_revoked,
+        pending_delivery_count
+      FROM swarm.agent_delivery_read_context(
+        ${tokenHash},
+        ${body.workspace_id}::uuid
+      )
     `;
-    const membership = membershipRows[0];
-    if (
-      membership === undefined ||
-      await agentCredentialRevoked(tx, agent, membership.revoked_at)
-    ) {
+    const agent = contextRows[0];
+    if (agent === undefined) {
+      return json(401, { error: "unauthenticated" });
+    }
+    setPhase("membership");
+    if (agent.is_revoked) {
       return json(403, { error: "forbidden" });
     }
 
@@ -259,6 +283,7 @@ async function handle(
         : json(200, {
           signals: [],
           capabilities: SIGNAL_CAPABILITIES,
+          pending_delivery_count: 0,
         });
     }
 
@@ -273,7 +298,8 @@ async function handle(
         true
       )
     `;
-    await tx.unsafe("SET LOCAL ROLE swarm_read");
+    // Stay as swarm_read for membership-gated views. The definer already
+    // stamped first-use; this path never elevates to swarm_command.
     await tx.unsafe("SET LOCAL search_path = swarm_read, auth, pg_catalog");
     if (body.resource === "members") {
       const members = await tx<Record<string, unknown>[]>`
@@ -319,12 +345,18 @@ async function handle(
         s.to_agent, s.in_reply_to,
         CASE
           WHEN s.from_kind = 'user'
+           AND author_member.user_id IS NOT NULL
            AND s."from" = ${agent.owner_user_id}::uuid THEN 'same_owner'
+          WHEN s.from_kind = 'user'
+           AND author_member.user_id IS NOT NULL THEN 'cross_owner'
           WHEN s.from_kind = 'agent'
+           AND author.principal_id IS NOT NULL
+           AND author_member.user_id IS NOT NULL
            AND author.owner_user_id = ${agent.owner_user_id}::uuid
             THEN 'same_owner'
-          WHEN s.from_kind = 'user'
-            OR author.principal_id IS NOT NULL THEN 'cross_owner'
+          WHEN s.from_kind = 'agent'
+           AND author.principal_id IS NOT NULL
+           AND author_member.user_id IS NOT NULL THEN 'cross_owner'
           ELSE 'unknown'
         END AS sender_owner_relation
       FROM swarm_read.signals AS s
@@ -332,6 +364,10 @@ async function handle(
         ON s.from_kind = 'agent'
        AND author.workspace_id = s.workspace_id
        AND author.principal_id = s."from"
+       AND author.revoked_at IS NULL
+      LEFT JOIN swarm_read.member_profiles AS author_member
+        ON author_member.workspace_id = s.workspace_id
+       AND author_member.user_id = COALESCE(author.owner_user_id, CASE WHEN s.from_kind = 'user' THEN s."from" END)
       WHERE s.workspace_id = ${body.workspace_id}::uuid
         AND (
           (s."to" IS NULL AND s.to_agent IS NULL)
@@ -375,6 +411,7 @@ async function handle(
     return json(200, {
       signals: rows,
       capabilities: SIGNAL_CAPABILITIES,
+      pending_delivery_count: agent.pending_delivery_count,
     });
   });
 }

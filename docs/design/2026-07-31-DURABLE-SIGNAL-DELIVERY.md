@@ -1,7 +1,6 @@
 # Durable direct-signal delivery and acknowledgement
 
-Status: revised after adversarial security review; ready for implementation, with no production
-mutation yet
+Status: revised after adversarial security review; implemented in codebase; not yet production-applied until rollout
 
 Date: 2026-07-31
 
@@ -61,8 +60,7 @@ this document.
 ## Non-negotiable invariants
 
 1. `swarm.signals` stays append-only. Delivery state lives in a separate mutable table.
-2. Only direct signals with a typed `to_agent_principal_id` enqueue delivery rows. Broadcasts and
-   direct-human signals do not fan out into agent deliveries.
+2. Only direct typed-recipient `ask` and `note` signals (`NEW.kind IN ('ask', 'note')` with `to_agent_principal_id IS NOT NULL`) enqueue delivery rows. Directed `working-on` signals are rejected at command validation today. Broadcasts, direct-human signals, and non-ask/note kinds do not fan out into agent deliveries. Any future signal kind requires an explicit migration, spec update, client decision, and tests.
 3. Enqueue is in the same database transaction as signal insertion.
 4. Claim and acknowledgement run at the authenticated command boundary, never through the public
    read edge.
@@ -91,6 +89,8 @@ CREATE TABLE swarm.signal_deliveries (
   lease_id uuid,
   leased_by uuid,
   leased_until timestamptz,
+  last_lease_id uuid,
+  last_leased_by uuid,
   attempt_count integer NOT NULL DEFAULT 0,
   lease_expiry_count integer NOT NULL DEFAULT 0,
   last_lease_expired_at timestamptz,
@@ -114,14 +114,28 @@ CREATE TABLE swarm.signal_deliveries (
   ),
   CHECK (ack_outcome IS NULL OR ack_outcome IN
     ('replied', 'observed', 'expired', 'failed_terminal')),
-  CHECK (last_error_code IS NULL OR last_error_code ~ '^[a-z][a-z0-9_]{0,63}$')
+  CHECK (last_error_code IS NULL OR last_error_code ~ '^[a-z][a-z0-9_]{0,63}$'),
+  CHECK (num_nonnulls(last_lease_id, last_leased_by) IN (0, 2)),
+  CHECK (
+    acked_at IS NOT NULL
+    OR (last_lease_id IS NULL AND last_leased_by IS NULL)
+  ),
+  CHECK (
+    acked_at IS NULL
+    OR (last_lease_id IS NOT NULL AND last_leased_by IS NOT NULL)
+    OR ack_outcome = 'expired'
+    OR (ack_outcome = 'failed_terminal' AND last_error_code = 'delivery_attempts_exhausted')
+  )
 );
 ```
 
 Additional constraints in the migration:
 
+- `last_lease_id` and `last_leased_by` record terminal client ACK lease identity and are paired (both NULL or both non-NULL).
+- An unacked row (`acked_at IS NULL`) never holds a `last_lease_id` / `last_leased_by` pair.
+- Terminal rows (`acked_at IS NOT NULL`) store the exact client ACK `lease_id` and `leased_by` pair, with NULL permitted ONLY for server-owned automatic terminalization paths (`ack_outcome = 'expired'` from TTL cleanup or `failed_terminal` with `last_error_code = 'delivery_attempts_exhausted'`).
 - `ack_outcome` is null exactly when `acked_at` is null.
-- Acked rows have all lease fields cleared.
+- Acked rows have active lease fields (`lease_id`, `leased_by`, `leased_until`) cleared.
 - `leased_until` must be later than `updated_at` when a lease is present.
 - `last_lease_expired_at` is null exactly while `lease_expiry_count` is zero.
 - The primary unacked index orders by recipient, workspace, enqueue time, then signal UUID and is
@@ -142,12 +156,15 @@ status, logs, audit detail, or the read edge.
 ## Transactional enqueue and backfill
 
 An `AFTER INSERT` security-invoker trigger on `swarm.signals` inserts one delivery row when
-`NEW.to_agent_principal_id IS NOT NULL`. Its function fully qualifies every relation and pins its
-`search_path` to `pg_catalog`; it cannot be redirected through caller-controlled names. The trigger
-is the invariant boundary: old command edges, new command edges, and any future controlled insert
-path all enqueue identically. It uses `ON CONFLICT DO NOTHING` only for migration/replay
-idempotence. The inserting `swarm_command` role receives the narrow INSERT privilege needed by the
-trigger; there is no security-definer bypass.
+`NEW.to_agent_principal_id IS NOT NULL AND NEW.kind IN ('ask', 'note')`. Its function fully qualifies
+every relation and pins its `search_path` to `pg_catalog`; it cannot be redirected through
+caller-controlled names. The trigger is the invariant boundary: old command edges, new command
+edges, and any future controlled insert path all enqueue identically for direct `ask` and `note`
+signals. It uses `ON CONFLICT DO NOTHING` only for migration/replay idempotence. Directed
+`working-on` signals are rejected at command validation today, while any future signal kind
+requires an explicit migration, spec update, client decision, and test suite additions. The
+inserting `swarm_command` role receives the narrow INSERT privilege needed by the trigger; there is
+no security-definer bypass.
 
 The migration enumerates every non-superuser role with effective INSERT on `swarm.signals` and
 aborts unless that role can also INSERT `swarm.signal_deliveries`. This converts a future grant
@@ -158,8 +175,8 @@ Migration order is deliberately:
 
 1. create table, constraints, grants, and indexes;
 2. create the enqueue function and trigger;
-3. backfill direct agent signals whose `until` is still in the future;
-4. assert no live direct agent signal lacks a delivery row;
+3. backfill direct agent `ask` and `note` signals whose `until` is still in the future;
+4. assert no live direct agent `ask` or `note` signal lacks a delivery row;
 5. assert the signal-inserter/delivery-inserter role set is identical;
 6. create the terminal-row purge function and named daily retention schedule.
 
@@ -215,26 +232,27 @@ Agent-only request:
   the ledger. Clients reject replayed leases already past `leased_until` and issue a new claim
   command ID.
 
-The fresh claim transaction follows this order; implementations may not reorder the steps:
+The fresh claim transaction follows this exact normative step ordering; implementations may not reorder the steps:
 
-1. authenticate the exact agent/workspace and resolve an idempotency replay before fresh mutation;
-2. lock/reset this recipient's stale leases, clearing lease fields and incrementing expiry metadata
-   without acknowledging them;
-3. terminalize **unleased** rows whose immutable signal TTL elapsed as `expired`;
-4. terminalize remaining unleased, signal-live rows at the ten-attempt ceiling as
-   `failed_terminal/delivery_attempts_exhausted`;
-5. select signal-live, unleased, below-ceiling candidates oldest-first with
-   `FOR UPDATE SKIP LOCKED`, write their leases, and store body-free replay references;
-6. compute the exact live-unacked count, commit, then hydrate immutable bodies for the authenticated
-   response.
-
-An unexpired lease is never stolen or TTL-terminalized by a competing claim. This explicit order is
-the mutation control for the H5 failure class.
+1. authenticate the exact agent/workspace and charge the per-principal rate limit bucket (abuse accounting precedes idempotency replay);
+2. resolve idempotency replay from `swarm.idempotency_keys` before fresh delivery state mutation;
+3. lock recipient `agent_principals` row `FOR UPDATE` and perform principal revocation check;
+4. reset stale leases;
+5. terminalize immutable-signal TTL expiry;
+6. terminalize poison attempt exhaustion at the 10-attempt ceiling and count newly failed rows;
+7. count active live leases for the principal;
+8. compute available slots (`max(0, 100 - active_live_leases)`);
+9. compute effective limit (`min(request.limit, slots)`);
+10. select candidate delivery rows `FOR UPDATE SKIP LOCKED` bounded by effective limit and write fresh lease fields;
+11. count exact live-unacked pending delivery count;
+12. write the body-free idempotency ledger row;
+13. hydrate immutable signal bodies for the authenticated response and return.
 
 Claim response shape:
 
 ```json
 {
+  "ok": true,
   "status": "accepted",
   "capabilities": {
     "delivery_claim": 1,
@@ -249,9 +267,28 @@ Claim response shape:
       "sender_owner_relation": "same_owner|cross_owner|unknown"
     }
   ],
-  "pending_delivery_count": 1
+  "pending_delivery_count": 1,
+  "terminal_delivery_failure_count": 0
 }
 ```
+
+### Abuse Bounds and Outer Transaction Order
+
+Note: The specific boundary constants below (`120/min` claim limit, `240/min` ACK limit, `100` live lease ceiling) are analytically reasoned operational bounds for abuse prevention, not empirically load-tested capacity limits.
+
+1. **Per-Principal Rate Limits**:
+   - Claim rate limit: `DELIVERY_CLAIM_RATE_LIMIT_PER_MINUTE = 120` per workspace and recipient agent principal (`delivery:claim:principal:<workspace_uuid>:<principal_uuid>`).
+   - ACK rate limit: `DELIVERY_ACK_RATE_LIMIT_PER_MINUTE = 240` per workspace and recipient agent principal (`delivery:ack:principal:<workspace_uuid>:<principal_uuid>`).
+   - Rate bucket enforcement precedes idempotency lookup (abuse-accounting mutation precedes delivery-state mutation). On breach, returns HTTP 429 `{ error: "rate_limited", limit, resets_at, message }` with `Retry-After` header. Re-charging occurs at the start of `resolveLedgerRace` for delivery claim/ACK races. First refusal in a window writes audit log and security alert; subsequent refusals write no audit/alert.
+
+2. **Concurrency-Safe Live-Lease Ceiling**:
+   - `DELIVERY_MAX_OUTSTANDING_LEASES = 100` live unacknowledged leases per recipient principal across all listeners/tokens.
+   - Exact recipient `agent_principals` row is locked `FOR UPDATE` in fresh claim transactions before cleanup/count/claim regardless of revoked state.
+   - At ceiling capacity, returns `200 accepted` with `deliveries: []` and truthful `pending_delivery_count`.
+
+3. **Poison Visibility**:
+   - `terminal_delivery_failure_count` reports the number of delivery rows newly terminalized as `failed_terminal/delivery_attempts_exhausted` in that claim transaction.
+   - Emits `delivery_attempts_exhausted` security alert when positive. Replays reproduce the count from the body-free idempotency ledger without emitting secondary alerts.
 
 ### `ack_agent_delivery`
 
@@ -459,7 +496,7 @@ Causal negative controls must show failures when each of these is removed or wea
 
 ## Explicitly not established yet
 
-- Migration/command/read implementation has not been written or applied.
+- Migration/command/read implementation is implemented in codebase; not yet production-applied until rollout.
 - The 15-minute lease has not been load-tested against real provider tail latency.
 - The ten-claim poison ceiling and 30-day terminal retention floor have not been production-load
   tested; both are fixed server constants/config floors for the first measured rollout.
