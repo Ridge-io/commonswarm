@@ -262,6 +262,20 @@ function signalRejectingFetch(observed: AbortSignal[]): typeof fetch {
   }) as typeof fetch;
 }
 
+function signalResponseWithBody(
+  status: number,
+  text: () => Promise<string>,
+): typeof fetch {
+  return (async (_input, init) => {
+    assert.ok(init?.signal instanceof AbortSignal);
+    return {
+      ok: status >= 200 && status < 300,
+      status,
+      text,
+    } as unknown as Response;
+  }) as typeof fetch;
+}
+
 /** Wraps a caller signal so add/removeEventListener calls can be counted. */
 function countingSignal(): {
   signal: AbortSignal;
@@ -540,6 +554,92 @@ test("sendSignal first winner: a 5xx body rejection survives a later caller abor
   assert.equal(caught.status, 500);
   assert.equal(caught.message, "signal failed (HTTP 500)");
   assert.notEqual(caught.name, "AbortError");
+});
+
+test("sendSignal keeps a 401 body-read failure as a typed HTTP error", async () => {
+  const client = new ThinCommandClient(
+    TARGET,
+    signalResponseWithBody(401, async () => {
+      throw new Error("body stream broke");
+    }),
+  );
+
+  const caught = await client.sendSignal(signalPostRequest()).then(
+    () => null,
+    (error: unknown) => error,
+  );
+  assert.ok(caught instanceof CommandHttpError, "got: " + String(caught));
+  assert.equal(caught.status, 401);
+  assert.equal(caught instanceof CommandTransportError, false);
+});
+
+test("sendSignal keeps a non-JSON 403 as a typed HTTP error", async () => {
+  const client = new ThinCommandClient(
+    TARGET,
+    signalResponseWithBody(403, async () => "<html>forbidden</html>"),
+  );
+
+  const caught = await client.sendSignal(signalPostRequest()).then(
+    () => null,
+    (error: unknown) => error,
+  );
+  assert.ok(caught instanceof CommandHttpError, "got: " + String(caught));
+  assert.equal(caught.status, 403);
+  assert.equal(caught instanceof CommandTransportError, false);
+});
+
+test("sendSignal keeps a 429 interrupted body as a retryable typed HTTP error", async () => {
+  const client = new ThinCommandClient(
+    TARGET,
+    signalResponseWithBody(429, async () => {
+      throw new Error("body stream interrupted");
+    }),
+  );
+
+  const caught = await client.sendSignal(signalPostRequest()).then(
+    () => null,
+    (error: unknown) => error,
+  );
+  assert.ok(caught instanceof CommandHttpError, "got: " + String(caught));
+  assert.equal(caught.status, 429);
+  assert.equal(caught instanceof CommandTransportError, false);
+});
+
+test("sendSignal preserves a sub-400 body-read failure as transport", async () => {
+  const client = new ThinCommandClient(
+    TARGET,
+    signalResponseWithBody(399, async () => {
+      throw new Error("body stream interrupted");
+    }),
+  );
+
+  const caught = await client.sendSignal(signalPostRequest()).then(
+    () => null,
+    (error: unknown) => error,
+  );
+  assert.ok(caught instanceof CommandTransportError, "got: " + String(caught));
+  assert.equal(
+    caught.message,
+    "command response was interrupted before its outcome could be read",
+  );
+  assert.equal(caught instanceof CommandHttpError, false);
+});
+
+test("sendSignal preserves typed HTTP precedence for a 503 body-read failure", async () => {
+  const client = new ThinCommandClient(
+    TARGET,
+    signalResponseWithBody(503, async () => {
+      throw new Error("body stream interrupted");
+    }),
+  );
+
+  const caught = await client.sendSignal(signalPostRequest()).then(
+    () => null,
+    (error: unknown) => error,
+  );
+  assert.ok(caught instanceof CommandHttpError, "got: " + String(caught));
+  assert.equal(caught.status, 503);
+  assert.equal(caught.message, "signal failed (HTTP 503)");
 });
 
 test("sendSignal turns a synchronous fetch throw into the generic transport error without deferring invocation", async () => {

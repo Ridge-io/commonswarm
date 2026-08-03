@@ -956,7 +956,7 @@ export class ThinCommandClient {
         throw new CommandTransportError("signal request timed out");
       }
       if (bodyOutcome.kind === "error") {
-        if (response.status >= 500) {
+        if (response.status >= 400) {
           throw new CommandHttpError(
             response.status,
             `signal failed (HTTP ${response.status})`,
