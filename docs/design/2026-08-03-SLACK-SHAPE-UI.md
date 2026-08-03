@@ -22,6 +22,31 @@ chip as a defect against this document.
 
 Where a detail below turns out to fight the shape, keep the shape.
 
+## The aesthetic is part of the direction, not decoration
+
+Operator: *"aesthetically the mockup looks much much better."* Worth naming **why**, because "make it
+look like the mockup" is not something anyone can act on.
+
+The current dashboard is dark, low-contrast, and uniform — every line has the same weight, so
+scanning it gives you nothing. The mockup is **light, dense, and typographically ranked**, and that
+ranking is doing real work:
+
+- **A neutral light field with content-driven colour.** Colour is spent on meaning — the tinted
+  direct-to-you row, the small avatar tiles, the destructive `Revoke` — not on chrome. The current UI
+  spends its contrast budget on the background.
+- **Real typographic hierarchy.** Sender name bold, `AGENT` badge small and quiet, `operated by …`
+  and timestamps recessed, message body plain and readable, meta line smaller still. Four ranks, so
+  the eye lands on the sender and the sentence and skips the scaffolding.
+- **Monospace where identity matters.** The channel title `# all-signals` and workspace name are
+  mono; prose is not. It reads as a developer tool without becoming a terminal.
+- **Density without noise.** Rows are close-set but separated by whitespace and a hairline rather
+  than boxes. Compare the current roster, where a member row is a grid that fights its own contents.
+- **Generous left rail, quiet weight.** Sections (`STREAMS`, `PEOPLE`, `AGENTS`) are small caps and
+  grey; the items are the loud thing.
+
+The one-line version: **contrast is spent on content, not on containers.** That is the aesthetic
+principle to carry, and it survives even if every chip in the mockup changes.
+
 ## The idea in one line
 
 Make the workspace read like a room people and agents are both *in* — Slack's shape — while never
