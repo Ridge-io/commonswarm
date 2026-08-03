@@ -1469,3 +1469,51 @@ membership in the routed workspace using the event timestamp.
 ~~Any prose that cites "Decision #183" as the remove_member AMR allowlist authority is
 superseded; use Decision #198 / D-035.~~
 
+
+## D-036 — Grok credit exhaustion; the two-arm review gate is re-based, not relaxed · RULING
+
+**Found by:** ClaudeCswarm (relief lead), 2026-08-02, during v0.1.5 release planning
+**Owner:** ClaudeCswarm · **Severity:** P1 process correctness — blocks every acceptance in the
+0.1.5 critical path
+**Authority:** operator ruling 2026-08-02 (supersedes the 2026-07-29 gate paragraph in `AGENTS.md`)
+
+**The defect is documentary, not behavioural.** Committed doctrine — the `AGENTS.md`
+model-inversion paragraph and D-033 — named **Grok** as a mandatory review arm and stated that
+"Grok alone, Gemini alone, and Codex review are each insufficient." Grok has been
+credit-exhausted since approximately 2026-07-31. The substitution the fleet has actually been
+operating under existed **only in gitignored `scratchpad/` files**: `grep -rniE
+"credit.exhaust|grok.substitut" docs/` returned zero matches at the time of this ruling.
+
+Consequence if left unrecorded: every acceptance in Stages 1–7 of the 0.1.5 plan would be
+executed against a committed gate it demonstrably does not satisfy, and any later reader
+applying the repo's own doctrine — including a release reviewer — would be obliged to reject
+the release. `V015-RELEASE-CHECKLIST.md` correction 6 already ordered this recording
+("Record the operator-authorized Grok substitution durably. Never silently claim Grok ran")
+and no lane had performed it.
+
+**The ruling.** The two-arm requirement is **unchanged and remains binding**. What changes is
+only which families may fill the arms:
+
+| Arm | Permitted | Notes |
+|---|---|---|
+| Exact review | Codex, or Claude | Reads the frozen contract against the exact SHA |
+| Independent inversion | Google Gemini via `agy`, or Kimi K3 via Pi | Must be a *different* family from the exact-review arm |
+
+- **Grok is not a usable arm** until its credit is restored. Never claim a Grok verdict.
+- **One arm is never sufficient**, in any family combination. This is the part of the original
+  ruling that must not erode, and re-basing the families is not permission to relax it.
+- Each arm must return substantive findings or reasoning. **An empty PASS is not a review.**
+- If either arm changes the SHA, **both** rerun on the replacement SHA.
+- Builders may not self-approve; the reviewing arms must not be the authoring context.
+
+**Scope and expiry.** This ruling covers the v0.1.5 release and any lane running while Grok is
+credit-exhausted. When Grok credit is restored, D-036 does not automatically revert — a fresh
+operator ruling is required, because the measured condition that produced it will have changed
+and the decision set must be reviewed as a set, not item by item.
+
+**What this ruling does not establish:** it does not certify that any particular arm was
+actually run on any particular SHA, and it does not retroactively bless acceptances performed
+before it landed. It records the gate; each lane must still record its own two arms.
+
+~~Any prose that names Grok as a required review arm, or that reads "BOTH Grok and Google
+Gemini via `agy`" as the current gate, is superseded; use D-036.~~

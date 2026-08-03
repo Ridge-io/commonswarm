@@ -155,16 +155,27 @@ The distilled operative rules. Full doctrine, with the incidents that produced i
   unsafe in combination.
 - **Corrections go in the artifact, not in a message.** A correction in chat never reaches
   whoever pulls the repo tomorrow. Keep the superseded line, marked dead.
-- **Current model-inversion gate (operator ruling, 2026-07-29): every swarm mate runs
-  BOTH Grok and Google Gemini via `agy` on the exact SHA, instead of Claude.** The
-  operator removed Claude from the required review path after the headless/shared-account
-  path hit its token limit; Quarry's interactive Claude seat remains live, so do not widen
-  that measured condition into "all Claude is unavailable." Do not wait for or claim a
-  Claude verdict. If either required review changes the SHA, both rerun on the replacement
-  SHA. D-032's Grok-alone exception is **dead for work not already merged**; see D-033.
-  A different-family verdict is necessary but no longer sufficient: neither Grok alone,
-  Gemini alone, Codex, nor an optional Claude read substitutes for the required pair. Each
-  arm must return substantive findings or reasoning; an empty PASS is not a review.
+- **Current model-inversion gate (operator ruling, 2026-08-02 — D-036): every SHA-changing
+  lane runs BOTH an exact review and an independent cross-family inversion on the exact
+  SHA. Grok is credit-exhausted and is NOT a usable arm.** The permitted pairing is one
+  exact-review arm (Codex or Claude) plus one inversion arm from a *different* family
+  (Google Gemini via `agy`, or Kimi K3 via Pi). Both arms are still required — the
+  two-arm rule itself is unchanged and is the part that must not erode. Each arm must
+  return substantive findings or reasoning; **an empty PASS is not a review**, and no
+  single arm of any family substitutes for the pair. If either arm changes the SHA, both
+  rerun on the replacement SHA. See D-036 for the measured condition and its scope.
+  ~~Superseded (2026-07-29 ruling, now dead): "every swarm mate runs BOTH Grok and Google
+  Gemini via `agy` on the exact SHA, instead of Claude… neither Grok alone, Gemini alone,
+  Codex, nor an optional Claude read substitutes for the required pair."~~ That line named
+  Grok as a mandatory arm; Grok has no credit, so following it literally makes every lane
+  unreviewable. D-032's Grok-alone exception remains dead. Do not read this change as
+  permission to review with one arm.
+
+- **Durable by default.** Anything an operator or the system reads back later — audit rows,
+  queued or in-flight work, resolved config, delivery state — must live in Postgres, never in
+  process memory alone. Edge functions are serverless and per-invocation: an in-memory `Map`
+  is not shared between invocations and does not survive a redeploy. RAM is acceptable only
+  as a cache in front of a durable store, or for genuinely re-derivable state.
 
 State what you did **not** establish alongside what you did.
 
