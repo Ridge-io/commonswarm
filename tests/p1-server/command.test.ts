@@ -8870,6 +8870,22 @@ interface PollSettlementProbe {
   awaitedCancels: number;
 }
 
+type BlockedBackendsPollResult =
+  | { kind: "rows"; rows: BlockedBackend[] }
+  | { kind: "cancelled" }
+  | { kind: "settled"; outcome: SettlementOutcome };
+
+/** Test-only timing boundary that makes the absolute-deadline control causal. */
+interface BlockedBackendsTimingControl {
+  now: () => number;
+  sleep: (ms: number) => Promise<void>;
+  poll?: (
+    pendingArms: Promise<SettlementOutcome>[],
+    remainingMs: number,
+    settlementProbe?: PollSettlementProbe,
+  ) => Promise<BlockedBackendsPollResult>;
+}
+
 /**
  * Convert a promise into a never-rejecting settlement arm: the derived promise
  * always RESOLVES with the outcome, so a Promise.race that loses it can never
@@ -8937,11 +8953,7 @@ async function runBlockedBackendsPoll(
   pendingArms: Promise<SettlementOutcome>[],
   remainingMs: number,
   settlementProbe?: PollSettlementProbe,
-): Promise<
-  | { kind: "rows"; rows: BlockedBackend[] }
-  | { kind: "cancelled" }
-  | { kind: "settled"; outcome: SettlementOutcome }
-> {
+): Promise<BlockedBackendsPollResult> {
   const query = sql<BackendActivityRow[]>`
     SELECT
       a.pid::int AS pid,
@@ -9032,12 +9044,17 @@ async function waitForBlockedBackends(opts: {
   mustRemainPending?: Array<Promise<unknown>>;
   /** Optional probe recording poll-query cancellation settlement. */
   settlementProbe?: PollSettlementProbe;
+  /** Test-only causal control; omitted paths retain the real clock, sleep, and SQL poll. */
+  timingControl?: BlockedBackendsTimingControl;
 }): Promise<BlockedBackend[]> {
   const deadlineMs = opts.deadlineMs ?? 5000;
+  const monotonicNow = opts.timingControl?.now ?? (() => performance.now());
+  const sleep = opts.timingControl?.sleep ?? ((ms: number) => delay(ms));
+  const pollBlockedBackends = opts.timingControl?.poll ?? runBlockedBackendsPoll;
   // ONE monotonic absolute deadline bounds the entire observation, including
   // SQL time and retry delay. It is never reset per poll, and each pending
   // poll query is itself cancelled at the remaining time.
-  const monotonicStart = performance.now();
+  const monotonicStart = monotonicNow();
   const absoluteDeadline = monotonicStart + deadlineMs;
   const pendingArms = (opts.mustRemainPending ?? []).map((promise) =>
     settlementOutcome(promise)
@@ -9046,9 +9063,9 @@ async function waitForBlockedBackends(opts: {
   // the rows that matched.
   let lastObserved: BlockedBackend[] = [];
   while (true) {
-    const remaining = absoluteDeadline - performance.now();
+    const remaining = absoluteDeadline - monotonicNow();
     if (remaining <= 0) break;
-    const poll = await runBlockedBackendsPoll(pendingArms, remaining, opts.settlementProbe);
+    const poll = await pollBlockedBackends(pendingArms, remaining, opts.settlementProbe);
     if (poll.kind === "settled") {
       if (poll.outcome.kind === "rejected") {
         throw new Error(
@@ -9081,9 +9098,9 @@ async function waitForBlockedBackends(opts: {
     // absolute deadline — min(50ms, remaining) — and never sleep at all when
     // no time remains, so no retry overshoots the advertised bound by a fixed
     // interval.
-    const sleepMs = Math.min(50, Math.max(0, absoluteDeadline - performance.now()));
+    const sleepMs = Math.min(50, Math.max(0, absoluteDeadline - monotonicNow()));
     if (sleepMs <= 0) break;
-    await delay(sleepMs);
+    await sleep(sleepMs);
   }
   throw new Error(
     `${opts.label}: expected ${opts.minCount} blocked backend(s) matching ${opts.queryPattern} with blockers [${opts.blockerPids.join(",")}] within ${deadlineMs}ms; last observed candidates: ${
@@ -10303,6 +10320,63 @@ test("durable-delivery: Phase B harness control — wrong observation pattern re
       const realPid = blocked[0]!.pid;
       assert.equal(realPid, claimPid, "the observed backend is the exact claim backend");
       assert.match(blocked[0]!.query, /FOR UPDATE/);
+
+      // Deterministic causal deadline arm. The synthetic poll returns the real
+      // blocked row without spending wall-clock time, while the injected
+      // monotonic clock advances only at the sleep boundary. The helper must
+      // therefore request exactly 50ms and then the recomputed final 25ms.
+      // The sleep boundary rejects any request beyond remaining time or after
+      // expiry. A Date.now() check bypasses this clock; a fixed delay(50)
+      // bypasses this sleep boundary. Either predecessor defect turns this
+      // named control red without relying on scheduler timing.
+      const timingStart = 10_000;
+      const timingDeadlineMs = 75;
+      const timingDeadline = timingStart + timingDeadlineMs;
+      let timingNow = timingStart;
+      const requestedSleeps: number[] = [];
+      await assert.rejects(
+        waitForBlockedBackends({
+          queryPattern: /definitely_not_the_timing_control_query/,
+          blockerPids: [999_999_999],
+          minCount: 1,
+          label: "wrong-pattern deadline-bound control",
+          deadlineMs: timingDeadlineMs,
+          mustRemainPending: [claim],
+          timingControl: {
+            now: () => timingNow,
+            sleep: async (sleepMs) => {
+              const remaining = timingDeadline - timingNow;
+              assert.ok(
+                remaining > 0,
+                `no sleep may be requested once no time remains; requested ${sleepMs}ms with ${remaining}ms remaining`,
+              );
+              assert.ok(
+                sleepMs <= remaining,
+                `requested sleep ${sleepMs}ms exceeds recomputed remaining time ${remaining}ms`,
+              );
+              requestedSleeps.push(sleepMs);
+              timingNow += sleepMs;
+            },
+            poll: async () => ({ kind: "rows", rows: [blocked[0]!] }),
+          },
+        }),
+        (error: unknown) => {
+          const message = String(error);
+          assert.match(message, /wrong-pattern deadline-bound control/);
+          assert.ok(message.includes(String(realPid)));
+          return true;
+        },
+      );
+      assert.deepEqual(
+        requestedSleeps,
+        [50, 25],
+        "every sleep must be clamped to the recomputed monotonic remaining time",
+      );
+      assert.equal(
+        timingNow,
+        timingDeadline,
+        "the final bounded sleep reaches, but never crosses, the absolute deadline",
+      );
 
       // Now a deliberately WRONG pattern + blocker on a SHORT diagnostic
       // deadline: it must fail on the deadline and the message must enumerate
