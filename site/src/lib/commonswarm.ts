@@ -76,6 +76,7 @@ export function deployment(): Deployment | null {
 }
 
 let cached: SupabaseClient | null = null;
+let deadSession = false;
 
 /** One client per page. Returns null when the build has no backend configured. */
 export function client(): SupabaseClient | null {
@@ -88,11 +89,35 @@ export function client(): SupabaseClient | null {
   return cached;
 }
 
+/** Signals that the saved login no longer names a server-side session. */
+export class SessionExpired extends Error {
+  override name = "SessionExpired";
+  constructor() {
+    super("Your session expired — sign in again.");
+  }
+}
+
+async function clearDeadSession(c: SupabaseClient): Promise<void> {
+  deadSession = true;
+  await c.auth.signOut({ scope: "local" });
+}
+
 export async function currentSession(): Promise<Session | null> {
   const c = client();
   if (!c) return null;
   const { data } = await c.auth.getSession();
-  return data.session ?? null;
+  const session = data.session ?? null;
+  if (!session) {
+    if (deadSession) throw new SessionExpired();
+    return null;
+  }
+  const { data: userData, error } = await c.auth.getUser();
+  if (error || !userData.user || userData.user.id !== session.user.id) {
+    await clearDeadSession(c);
+    throw new SessionExpired();
+  }
+  deadSession = false;
+  return session;
 }
 
 /**
@@ -184,6 +209,7 @@ export async function signInWithEmail(
 }
 
 export async function signOut(): Promise<void> {
+  deadSession = false;
   await client()?.auth.signOut();
 }
 
@@ -368,8 +394,14 @@ async function postCommand(
     } catch {
       body = { error: "unreadable_response" };
     }
+    if (response.status === 401 && body.error === "unauthenticated") {
+      const c = client();
+      if (c) await clearDeadSession(c);
+      throw new SessionExpired();
+    }
     return { status: response.status, body };
-  } catch {
+  } catch (error) {
+    if (error instanceof SessionExpired) throw error;
     if (unknownOutcome) throw new CommandOutcomeUnknown(unknownOutcome);
     if (deadline.controller.signal.aborted) {
       throw new WorkspaceOutcomeUnknown(
@@ -395,6 +427,16 @@ export interface CreatedMemberInvite {
   workspaceName: string;
   inviterDisplayName: string;
   inviterUserId: string | null;
+}
+
+/** Keeps invite input failures distinct from authentication failures. */
+export function inviteEmailValidationMessage(email: string): string | null {
+  const value = email.trim();
+  if (!value) return "Enter the teammate’s email first.";
+  if (!/^[^\s@]+@[^\s@]+$/.test(value)) {
+    return "Enter a valid email address for your teammate.";
+  }
+  return null;
 }
 
 /** Creates one fresh, one-use teammate invitation; its token exists only in this response. */

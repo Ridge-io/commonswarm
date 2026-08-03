@@ -357,7 +357,7 @@ import SampleNotice from "./SampleNotice.astro";
                   agent they control. You never need to text them a live agent key.
                 </p>
               </div>
-              <form class="dashboard__invite-form" data-invite-form>
+              <form class="dashboard__invite-form" data-invite-form novalidate>
                 <label for="dashboard-invite-email">Their email</label>
                 <input
                   id="dashboard-invite-email"
@@ -550,6 +550,7 @@ import SampleNotice from "./SampleNotice.astro";
     EmailRateLimited,
     NoDeployment,
     FreshLoginRequired,
+    SessionExpired,
     SignupRefused,
     WorkspaceOutcomeUnknown,
     WorkspaceLimitReached,
@@ -559,6 +560,7 @@ import SampleNotice from "./SampleNotice.astro";
     currentSession,
     deployment,
     inviteWorkspaceMember,
+    inviteEmailValidationMessage,
     pendingMemberInvites,
     revokeAgentToken,
     revokeWorkspaceInvitation,
@@ -2471,6 +2473,15 @@ import SampleNotice from "./SampleNotice.astro";
         await openWorkspace(workspaces[0]!.id);
       } catch (error) {
         if (version !== requestVersion) return;
+        if (error instanceof SessionExpired) {
+          session = null;
+          renderedAuthUserId = "";
+          resetWorkspaceSessionState();
+          showAuthView("choices");
+          showPanel("signed-out");
+          authError(error.message);
+          return;
+        }
         if (session) {
           renderWorkspaceError(session, error);
         } else {
@@ -2645,9 +2656,10 @@ import SampleNotice from "./SampleNotice.astro";
       const submit = one<HTMLButtonElement>("[data-invite-submit]");
       const error = one<HTMLElement>("[data-invite-error]");
       const email = emailInput?.value.trim() ?? "";
-      if (!email) {
+      const emailValidationMessage = inviteEmailValidationMessage(email);
+      if (emailValidationMessage) {
         if (error) {
-          error.textContent = "Enter the teammate’s email first.";
+          error.textContent = emailValidationMessage;
           error.hidden = false;
         }
         emailInput?.focus();
