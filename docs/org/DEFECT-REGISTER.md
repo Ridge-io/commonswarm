@@ -1601,3 +1601,73 @@ moves"* — applies here with "deployment state" replaced by "supported host set
 
 Full measurement trail: `docs/evidence/2026-08-02-v015-execution/stage-q-authenticated-qa.md`,
 section QA-011.
+
+## D-038 — the product emits a link its own CLI cannot parse, and blames the payload · OPEN
+
+**Found by:** Wren (laptop seat), 2026-08-03, during the invite burn test
+**Owner:** operator decision on severity · **Severity:** P1 first-run path for every new collaborator
+**Verified independently by the Lead against the release branch**
+
+### The mismatch
+
+| Side | Form |
+|---|---|
+| What the product generates | `https://commonswarm.com/invite#invite=<payload>` (`site/src/lib/member-invite.ts:176`) |
+| What the CLI accepts | `cswarm://accept/<payload>` or a bare `swm_inv_` capability (`src/cloud/invite-link.ts:191-202`) |
+| `cswarm://` forms anywhere in the site | **none** — grep over `site/src/` returns zero |
+
+The web form is correct *for a browser* — `/invite` consumes it, and that path works (a real second
+human joined through it this session). The gap is that **the product never emits the form its own CLI
+accepts**, so there is no path from "the link you were sent" to "the command the README documents".
+
+### The error is wrong about the cause
+
+`decodeInviteLink` (`src/cloud/invite-link.ts:181-183`) strips `cswarm://accept/` **if present** and
+otherwise passes **the whole string** to the strict base64url check. A full https URL therefore fails
+on its own colons, slashes and hash, and the user is told:
+
+```
+invite link payload must be strict unpadded base64url
+```
+
+That blames the payload encoding. The payload was fine; the **wrapper** was wrong. The message points
+at nothing actionable, offers no hint to convert the form, and no hint to open it in a browser
+instead.
+
+### Why this is more than a papercut
+
+The dashboard promises *"Send one link. They connect their agent."* The link the product hands out
+cannot be given to an agent. **The Lead reproduced the user reflex without noticing**: asked to mint
+an invite for the laptop, I copied the web link from the dashboard and sent it — exactly what any
+human would do. Wren then hit the misleading error and had to hand-convert the form to
+`cswarm://accept/<payload>` before `0.1.4` parsed it immediately.
+
+This plausibly contributes to D-037 (the Codex agent that stopped during onboarding): an agent handed
+the web link and told to `cswarm accept` gets a false explanation about encoding.
+
+### Second order — the scheme was renamed too
+
+`0.0.1` accepts only `coswarm://accept/`; `0.1.4` accepts only `cswarm://accept/`. **Each rejects the
+other's form with the same misleading base64url error.** A saved link, an old runbook, or shell
+history can hold a link that one installed client parses happily and the other calls corrupt.
+
+### Suggested order, per Wren and endorsed
+
+1. **The error message first.** It is on every new collaborator's first run and actively misleads.
+   Detect an `http(s)://…/invite#invite=` wrapper and say so — "this is the web link; open it in a
+   browser, or use the `cswarm://accept/` form" — rather than accusing the payload.
+2. Then decide whether the product should also emit a CLI-form link, or whether `/invite` should show
+   one for the agent path.
+3. The stale-client scheme skew is real but needs both an old installed binary *and* an old-form
+   link; lower.
+
+### Not established
+
+Whether a **completed** `0.0.1` acceptance consumes the invite or registers a device wrongly. The
+burn test reached the GitHub OAuth stage on both clients and **stopped there** — Wren declined to
+authenticate as the disposable address, correctly. The capability was **not** spent by that touch,
+because redemption happens post-auth. **The residual risk lives entirely in the post-auth step and is
+unmeasured. Do not record this as cleared.**
+
+Minor, same test: both clients print "Signing you in with GitHub, opening your browser" even with
+`--no-browser`. The flag works — the URL is printed as documented — only the narration contradicts it.
