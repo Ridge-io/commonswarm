@@ -40,6 +40,7 @@ two arms are one exact review (Codex or Claude) plus one different-family invers
 | `production-delta-d036-inversion-arm-gemini-PASS.md` | Inversion arm on the full production surface | **PASS** |
 | `stage-q-authenticated-qa.md` | Stage Q production QA (in progress) | **QA-008, QA-009, QA-010 (MAJOR), QA-011 (MAJOR)**; GitHub-OAuth sign-in proven, magic link outstanding |
 | `qa-010-test-gating.md` | QA-010 regressions moved into the gated site suite (89 → 94) | **PASS** |
+| `site-gate-coverage.md` | Site gate-coverage observer + six orphaned email tests wired in (94 → 113) | **PASS** |
 | `production-baseline-pre-deploy.md` | Production state recorded before any mutation | baseline |
 
 Binding contracts each PASS above cites now live in `docs/design/contracts/` — they were previously
@@ -70,7 +71,17 @@ isolation preserves the other file's counts.
 `codex exec` appends piped stdin as a `<stdin>` block and blocks until it closes. Check CPU time, not
 process existence.
 
-**4. A guard grep that is too broad blocks real work.** `pgrep -f 'supabase|postgres|deno'`
+**4. The ungated-test pattern is systemic — four occurrences, two distinct shapes.** Shape one is
+in-tree but unmatched by a glob; the root suite has guarded this since D-030, and the site suite now
+does too (`site/scripts/test-gate-coverage.test.mjs`, self-gating because it matches its own
+pattern). Shape two is never committed at all, because a goal contract sent the deliverable to
+gitignored `scratchpad/`. The acceptance that catches **both** is *"the counted total must move
+N→M"* — a run reporting the old number **is** the defect. Enumerating rather than assuming found the
+fourth occurrence before it could hide: six real assertions in `site/emails/` that no suite reached,
+guarding email templates while magic-link sign-in was an open QA item. All six passed once wired in,
+so no rot had set in — but nothing would have told us.
+
+**5. A guard grep that is too broad blocks real work.** `pgrep -f 'supabase|postgres|deno'`
 false-positives on other fleets sharing this machine. Match precisely
 (`test:p1-server|test:p1-local|supabase functions serve`).
 
