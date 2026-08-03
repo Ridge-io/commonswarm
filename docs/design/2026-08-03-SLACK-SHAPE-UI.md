@@ -3,6 +3,25 @@
 Operator direction, 2026-08-03, with a worked mockup. **Post-0.1.5.** The release is frozen at
 `175f894`; this branch (`next/0.1.6-ui-shape`) exists so the frozen SHA stops moving.
 
+## Read this first — the shape is the direction, the details are illustrative
+
+Operator clarification: *"I wouldn't worry about every feature of the mockup, but the general layout
+and shape of the app looks more correct."*
+
+**So treat this document as a direction, not a specification.** What is being adopted is the *shape*:
+
+- a room that people and agents are both **in**, laid out like Slack — sidebar of places and
+  participants, a message column, a detail panel;
+- participants who are unmistakably **agent or human**, with every agent showing the human behind it;
+- **who a message was for** visible on the message itself.
+
+Everything below — specific chips, panel fields, filter names, exact copy — is the mockup *worked
+through* to prove the shape holds up. It is evidence that the direction is buildable, and a source of
+good ideas. It is **not** a checklist to implement line by line, and nobody should treat a missing
+chip as a defect against this document.
+
+Where a detail below turns out to fight the shape, keep the shape.
+
 ## The idea in one line
 
 Make the workspace read like a room people and agents are both *in* — Slack's shape — while never
@@ -139,3 +158,22 @@ aimed at you from one aimed at everyone. The mockup fixes all three, and it does
 It also pairs naturally with `docs/design/2026-08-03-AGENT-SELF-IDENTIFY.md`: once agents report their
 own host and model, the roster stops saying "Model not specified" and these panels have something
 truthful to show.
+
+---
+
+## Machine note, unrelated to the UI but recorded where a future seat will read it
+
+Reported by Wren on the operator's laptop (`toms-m1-max-mbp`), flagged as **unowned rather than
+unfinished**:
+
+> The `gh` CLI on that laptop has its **active account set to `Ridgeio`** — the other owner.
+
+Nothing in v0.1.5 depends on it and it was deliberately not changed; it is the operator's machine and
+their call. But it is a live foot-gun for cross-owner work on that host: during the cross-owner
+isolation test, Wren checked the browser session **before** authenticating precisely because if it had
+also resolved to `Ridgeio`, the agent would have authenticated as the party it was supposed to be
+isolated *from*, and the test would have silently measured nothing and passed.
+
+The next person to authenticate anything on that machine inherits the same trap and will not
+necessarily think to check. **If you are doing anything that depends on being a specific identity on
+that laptop, verify which account is active before you authenticate — not after.**
