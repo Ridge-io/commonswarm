@@ -670,6 +670,11 @@ test("the Agents dialog carries a mobile-presented Pending access section fed by
     /\.dashboard__pending-access-row\s*>\s*\.dashboard__text-button\s*\{[\s\S]*white-space:\s*nowrap/,
     "the pending-row action keeps Cancel horizontal at rail and phone widths",
   );
+  assert.match(
+    dashboard,
+    /(?:^|\})\s*\.dashboard__text-button\s*\{[^}]*white-space:\s*nowrap/m,
+    "the shared text-button rule keeps member Remove actions horizontal in constrained columns",
+  );
 
   /* Mobile presentation: the section displays only at ≤52rem; desktop keeps the rail. */
   assert.match(
