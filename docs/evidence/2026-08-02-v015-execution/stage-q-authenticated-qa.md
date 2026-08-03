@@ -338,7 +338,17 @@ revocation) and the failure is total and silent.
 Unblocked. With a live session the invite path completes, so the second-human consumption,
 pending-access clearing, and remove/revoke checks can now proceed.
 
-## QA-011 — a Codex-hosted agent cannot complete onboarding. Severity: MAJOR (product gap, not a code defect)
+## QA-011 — the connect prompt's wording stops compliant agents. Severity: MAJOR (documentation defect)
+
+> **CORRECTED 2026-08-03.** The original heading — *"a Codex-hosted agent cannot complete
+> onboarding"* — is **dead**, and so is the host-boundary framing beneath it. Measured on the laptop:
+> **Claude Code 2.1.220 and Codex CLI 0.145.0 both CAN** write to a running process's separate stdin.
+> There is no host-capability boundary.
+>
+> The prompt forbids `printf` **"to construct a command containing it"** — i.e. in argv. It does not
+> forbid piping. `README.md:133-135` documents builtin-`printf`-into-pipe as *the* collaborator path.
+> I read the qualifier out of the sentence and propagated that misreading into this file, D-037, and
+> the laptop brief. See D-037 for the corrected finding.
 
 Found by the operator on a **second physical machine** with a real agent CLI — the first time this
 path has been exercised end to end. It is not reproducible from this machine and no automated test

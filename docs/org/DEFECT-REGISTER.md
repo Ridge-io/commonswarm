@@ -1518,7 +1518,26 @@ before it landed. It records the gate; each lane must still record its own two a
 ~~Any prose that names Grok as a required review arm, or that reads "BOTH Grok and Google
 Gemini via `agy`" as the current gate, is superseded; use D-036.~~
 
-## D-037 — a host that cannot pipe stdin cannot onboard an agent, and the site says otherwise · OPEN
+## D-037 — the connect prompt's credential wording stops compliant agents unnecessarily · OPEN
+
+> **CORRECTED 2026-08-03, and the correction is the finding.** This entry originally read *"a host
+> that cannot pipe stdin cannot onboard an agent, and the site says otherwise"*. **That framing was
+> wrong and is dead.** It rested on my misreading of the connect prompt, which I then propagated into
+> the evidence file, this register, and the laptop worker's brief.
+>
+> The prompt says: *"Do not use echo, printf, or a heredoc **to construct a command containing
+> it**."* The qualifier is load-bearing — it forbids putting the credential **into argv**. It does
+> **not** forbid `printf '%s' "$VAR" | cswarm --link-stdin`, where the secret travels through the
+> pipe and never appears in a command. `README.md:133-135` documents precisely that pattern, with
+> the comment *"Keep the invite capability out of argv/history."* `printf` is a shell builtin, so
+> nothing enters argv, the process list, or disk. **It satisfies the exact property the CLI
+> enforces.**
+>
+> Measured on the laptop by Wren, using the product's own documented method with a non-secret
+> sentinel: **Claude Code 2.1.220 CAN** write to a running process's separate stdin, and **Codex CLI
+> 0.145.0 CAN** (verified by running Codex itself, not inferred). The parser advanced through empty →
+> base64url decode → JSON parse → schema validation, which proves stdin delivery works and only a
+> real link was missing. **There is no host-capability boundary.**
 
 **Found by:** the operator, 2026-08-03, on a second physical machine with a real Codex CLI
 **Owner:** operator decision required · **Severity:** P1 product gap (not a code defect)
@@ -1543,13 +1562,15 @@ advance: *"If your host cannot write to a running process's stdin separately, st
 improvising."* Codex obeyed exactly. The credential never touched argv, a file, or a log. **The
 safety design worked.**
 
-**The gap is that there is no supported alternative.** Measured: `--agent-token-stdin` is the only
-agent-credential input the CLI accepts — no environment variable, no file path, no other flag. So a
-host that cannot write to a running process's separate stdin channel cannot onboard **at all**; the
-outcome is a correct stop, not a degraded path.
+**The actual defect is a documentation conflict.** An agent that reads the connect prompt strictly
+stops; an agent that follows `README.md` succeeds. The Codex agent that failed did exactly what the
+prompt appeared to say — and so did I, when I wrote this entry. Two documents describe the same
+security property and only one of them is followable.
 
-Meanwhile `site/src/components/app/LiveDashboard.astro` advertises **"Send one link. They connect
-their agent."** For this host class that sentence is not true today.
+**The dashboard sentence is probably fine as written.** If the README is authoritative, the supported
+set is *every host with a shell*, and no scoping is needed. Do not narrow that copy until this is
+settled — narrowing it on the strength of the original misreading would have been a self-inflicted
+product regression.
 
 **This is the D-023 shape.** That incident was availability copy in git asserting a deployment state
 reality did not deliver, and it cost real damage before anyone caught it. The lesson recorded then —
@@ -1569,10 +1590,10 @@ moves"* — applies here with "deployment state" replaced by "supported host set
 
 **Ruling required before the v0.1.5 freeze.** The options, with the recommendation stated:
 
-1. **Measure the matrix first** (Grok, Claude Code), then **scope the copy to the measured set**.
-   Recommended. It is the only option that makes the sentence true rather than quieter.
-2. Document the limitation on the connect surface without measuring — cheaper, but writes a
-   supported-set claim we have not tested, which is how D-023 happened.
+1. **Fix the connect prompt's wording** so it forbids what it means — a credential in argv, a URL,
+   shell history, source, or a log — and explicitly *permits* the README's builtin-`printf`-into-pipe
+   pattern. Recommended: it is a copy change that unblocks every host with a shell.
+2. Reconcile the prompt and `README.md` so one is authoritative, and say which.
 3. **Do NOT add a new credential channel under freeze pressure.** An env var or file path is a new
    secret-handling surface designed in a hurry, and it would reopen the credential-escape review
    (Runtime A2) that has just closed. A real design — for example a short-lived pairing code

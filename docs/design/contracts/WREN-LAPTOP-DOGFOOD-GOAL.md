@@ -47,9 +47,13 @@ For each, report:
 3. how far onboarding got, and the **exact error text** if it stopped;
 4. whether it completed `cswarm working-on` and then a `cswarm feed` read.
 
-**Do not work around it.** No `printf`, no heredoc, no temp file, no named pipe — the connect prompt
-forbids these and a workaround would measure the wrong thing. If a host cannot do it cleanly, that is
-the result.
+~~**Do not work around it.** No `printf`, no heredoc, no temp file, no named pipe — the connect
+prompt forbids these…~~ **CORRECTED 2026-08-03 — this instruction was wrong.** The prompt forbids
+`printf` *"to construct a command containing it"*, meaning in argv. Piping a shell variable into
+stdin with a builtin `printf` is the method `README.md:133-135` documents, and it keeps the secret out
+of argv, the process list, and disk. **Use it.** Still forbidden, and this is the real line: a temp
+file, a named pipe on disk, the credential in a command string, a URL, shell history, source, or a
+log.
 
 **Why it matters:** one host failing is a footnote; three failing is a product boundary. The answer
 determines whether the dashboard copy is scoped to a measured supported set or left as-is.
