@@ -38,7 +38,8 @@ two arms are one exact review (Codex or Claude) plus one different-family invers
 | `runtime-d-PASS.md` | Runtime D at `0f5bbcf` (builder report) | worker record |
 | `runtime-d-d036-inversion-arm-gemini-PASS.md` | D-036 inversion arm on `0f5bbcf` | **PASS** |
 | `production-delta-d036-inversion-arm-gemini-PASS.md` | Inversion arm on the full production surface | **PASS** |
-| `stage-q-authenticated-qa.md` | Stage Q production QA (in progress) | 1 finding, authenticated half open |
+| `stage-q-authenticated-qa.md` | Stage Q production QA (in progress) | **QA-008, QA-009, QA-010 (MAJOR), QA-011 (MAJOR)**; GitHub-OAuth sign-in proven, magic link outstanding |
+| `qa-010-test-gating.md` | QA-010 regressions moved into the gated site suite (89 → 94) | **PASS** |
 | `production-baseline-pre-deploy.md` | Production state recorded before any mutation | baseline |
 
 Binding contracts each PASS above cites now live in `docs/design/contracts/` — they were previously

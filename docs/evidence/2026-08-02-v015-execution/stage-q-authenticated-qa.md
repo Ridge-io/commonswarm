@@ -88,7 +88,20 @@ Four `<h1>` elements exist in the DOM, but three belong to other SPA states and 
 `display:none` on an ancestor section, which removes them from the accessibility tree. Checked
 rather than assumed, because "multiple H1s" is a real smell when the hiding is only visual.
 
-## COLD-BROWSER WEB SIGN-IN — **PASS**. The previously-unproven leg is now proven.
+## COLD-BROWSER WEB SIGN-IN — **the GitHub OAuth arm is proven. Magic link is NOT.**
+
+> **CORRECTION, 2026-08-03.** This heading previously read *"PASS. The previously-unproven leg is now
+> proven"*, and commit `582d5e0` claimed it closed "the release's highest-risk gap". **Both
+> overstated what was measured, and are dead.** What I actually drove was **GitHub OAuth only**. The
+> magic-link arm — the passwordless path offered *first* on `/start`, and the one an emailed stranger
+> is most likely to use — was never completed in this cold-browser context. The operator separately
+> reported a magic-link sign-in working on their laptop, but that is a different machine, a different
+> account, and not a measurement I made.
+>
+> This is the same failure as QA-010's wrong headline, one degree milder: generalising from the arm I
+> ran to the whole leg. The body below always disclosed it; the headline did not, and a later reader
+> would reasonably have struck magic-link QA as done. `V015-RELEASE-CHECKLIST.md` §6 still requires
+> "cold-browser magic-link completion" — it is **outstanding**.
 
 The production feed carried this, five days old, in the operators' own words:
 
