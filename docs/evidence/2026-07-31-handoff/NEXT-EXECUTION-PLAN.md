@@ -1,5 +1,8 @@
 # Detailed continuation plan and specifications
 
+> **Correction, 2026-08-03.** This document names the listener adapter boundary `ListenerHostAdapter`. **No such symbol exists in the tree** — the real boundary is `ListenerModel` at `src/listener/types.ts:71`, a single `prompt()` method, with adapters `grok-model.ts` and `opencode-model.ts`. Anyone grepping the name written here gets a confident zero, which is exactly the failure mode this repo's doctrine warns about. The superseded name is left in place below rather than rewritten, because this is a historical record; use `ListenerModel` when acting.
+
+
 Snapshot: **2026-07-31 08:57 CDT**  
 Status: proposed continuation plan; no lane below is currently assigned or running.
 

@@ -500,3 +500,40 @@ Fail-closed is the right SAFETY behaviour and the wrong AVAILABILITY outcome —
 feature availability *is* the point, so it counts as a defect.
 
 </details>
+
+## Post-MVP — operator-deferred (recorded 2026-08-03, do not work during v0.1.5)
+
+These are deferred by explicit operator decision, not forgotten. Recorded here so the deferral is
+re-readable rather than living in a session someone has to reconstruct.
+
+### Legal — all of it, operator-owned
+
+Activation, counsel review, DMCA filing, and trademark search are deferred post-MVP. The Terms and
+Privacy pages remain **drafts** and the site says so plainly ("drafts published for review (not yet
+in force)") — that copy is honest and must not be quietly upgraded to sound binding. Open items
+inside the deferral: the elapsed proposed-effective date (27 Jul 2026), and the factual errors
+recorded in the handoff (GitHub-only auth, the static/no-third-party claim, missing Resend,
+`~/.CommonSwarm` → `~/.cswarm`, GitHub-derived identity). **Do not activate anything.**
+
+### D-037 — supported agent hosts
+
+A host that cannot write to a running process's separate stdin cannot onboard an agent, because
+`--agent-token-stdin` is the only credential input the CLI accepts. Measured on Codex; Grok and
+Claude Code are **unmeasured**. Needs an operator ruling before v0.1.5 freeze — see the register.
+Any new credential channel belongs in 0.1.6 with a real design (e.g. a short-lived pairing code over
+HTTPS), **not** bolted on under freeze pressure, which would reopen the credential-escape review.
+
+### Carried from the earlier plan
+
+- Credential-lifetime copy ("lasts a few hours" → the 30-day rotating reality)
+- 30-day wall-clock canary completion
+- Telemetry decision; self-serve export/delete; realtime wake hints; rich avatars; billing
+
+### From the QM comparative analysis (`docs/design/2026-08-02-QM-COMPARATIVE-ANALYSIS.md`)
+
+- **CI** — genuinely valuable and deliberately not done during a release freeze, because it changes
+  the gating mechanism itself
+- Shadow deliveries (enqueue-but-don't-send, for production dry-runs)
+- Tape/replay determinism for host adapters — revisit when adapter #3 lands
+- Reviewer-depth scaling — deferred because it licenses *shallower* review at the moment the flat
+  gate is the protection
