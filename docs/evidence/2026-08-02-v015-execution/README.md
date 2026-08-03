@@ -28,7 +28,9 @@ two arms are one exact review (Codex or Claude) plus one different-family invers
 | `server-phase-c-PASS.md` | Phase C at `e3dc295` | **PASS** |
 | `server-phase-c-d036-inversion-arm-gemini-PASS.md` | D-036 inversion arm on `e3dc295` | **PASS** |
 | `union-db-suites-PASS.md` | All DB suites on the merged union `8852ce8` | **PASS** |
-| `production-delta-exact-review-PASS-1-major.md` | Exact review of the ~1,932-line production/edge/migration delta | **PASS**, 1 MAJOR + 3 MINOR open |
+| `production-delta-exact-review-PASS-1-major.md` | Exact review of the ~1,932-line production/edge/migration delta | **PASS**, 1 MAJOR + 3 MINOR |
+| `delivery-review-fix-PASS.md` | All four findings corrected at `df2f4c9`, red-then-green | **PASS** |
+| `delivery-review-fix-d036-inversion-arm-gemini-PASS.md` | D-036 inversion arm on `df2f4c9` | **PASS** |
 | `production-baseline-pre-deploy.md` | Production state recorded before any mutation | baseline |
 
 Binding contracts each PASS above cites now live in `docs/design/contracts/` — they were previously
@@ -81,10 +83,13 @@ statically and returned PASS with no CRITICAL. The migration was proven additive
 destructive `ALTER`, no type narrowing, no existing-row rewrite — with forced RLS, and `PUBLIC`,
 `anon`, `authenticated`, and `swarm_read` given **no table authority**.
 
-**Open before freeze:** that review left one MAJOR and three MINOR findings, all in new-in-0.1.5
-delivery surface. The MAJOR is that a claim replay can return a **different** `sender_owner_relation`
-than the original claim, because hydration recomputes the relation instead of returning the value the
-ledger already stored. Since that field drives host wake and tool policy, an idempotent replay could
-silently change an isolation decision. All four are being corrected before the version freeze, while
-there is still no deployed client to break. The cross-family inversion arm on this delta has not yet
-run.
+**All four findings are now corrected at `df2f4c9`**, both D-036 arms PASS. The MAJOR was that a
+claim replay could return a **different** `sender_owner_relation` than the original claim, because
+hydration recomputed the relation instead of returning the value the ledger already stored — and that
+field drives host wake and tool policy, so an idempotent replay could silently change an isolation
+decision. Each correction was proven RED before and GREEN after (4 targeted tests, 0/4 -> 4/4). The
+migration was not touched, so its additive/RLS finding still stands.
+
+Worth keeping: finding 4 named two separate call sites, and the fix removed the delivery markers from
+the shared capability constant instead of patching each site — so the foreign-workspace path stopped
+advertising automatically. Solve at the layer all paths flow through.
