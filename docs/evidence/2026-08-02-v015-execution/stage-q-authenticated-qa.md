@@ -127,3 +127,51 @@ discriminate, so it is not concluded here either way.
 Also still to run: workspace creation, add-own-agent with automatic prompt completion, live feed
 update within five seconds, second-human invite consumption with pending-access clearing,
 remove/revoke with history remaining attributable, and focused keyboard/accessibility controls.
+
+## QA-009 — one root cause behind the visible layout breakage
+
+The operator observed "a lot of little spacing issues and UI stuff". Measuring rather than
+cataloguing impressions, the visible breakage traces to **one** structural cause, not many:
+
+**`li.dashboard__agent` holds three children in a two-column grid.**
+
+Measured in the roster dialog:
+
+```
+grid-template-columns: 76.7031px 277.297px     (2 columns)
+grid-template-rows:    42.1094px 44px          (2 rows -- auto-created, not authored)
+children: 3            avatar(32px) | copy(277px) | Remove button(77px)
+
+avatar   x=502  y=391
+copy     x=591  y=386
+button   x=502  y=441   <- auto-placed onto row 2, column 1
+row height 114px        <- against ~44px of actual content
+```
+
+The third child has no column, so the grid creates an implicit second row and the action lands
+**underneath the avatar**, left of the name it belongs to. Every agent row costs ~70px of dead
+vertical space and reads as broken alignment.
+
+This is the same defect as QA-008 seen from the other side. In the sidebar the row is narrow, so the
+starved action column made the label wrap character-by-character; in the dialog the row is wide, so
+the action wraps to a second grid row instead. **One cause, two symptoms**, which is why fixing only
+the sidebar symptom (`white-space: nowrap`) did not fix either fully.
+
+**Correction:** give the row a third track — `grid-template-columns: auto minmax(0, 1fr) auto` — so
+avatar, copy, and action occupy one row. Expected: row height 114px → ~44px, the action aligns
+right, and the avatar column collapses from 76.7px (currently dictated by the button's width) to the
+avatar's own 32px, which also pulls the name leftwards into alignment.
+
+### Honest note on method
+
+A broad automated sweep for "grid whose children exceed its column count" returned 12 hits. **Ten
+were false positives** — single-column lists where multiple rows is simply correct vertical stacking
+(`dashboard__workspace-list`, `dashboard__message-body`, and similar). Only `dashboard__agent`
+(2 columns, 3 children) and the QA-008 tap target are real. Recorded because an inflated finding
+count is its own kind of wrong, and a reader should know the detector was noisy rather than trusting
+"12 layout issues found".
+
+**Not established:** whether other spacing inconsistencies exist that this structural check cannot
+see — kerning, rhythm, inconsistent scale steps, and hierarchy are judgement calls that a geometry
+probe does not measure. A dedicated design pass would be a separate piece of work from this
+correctness QA.
