@@ -1,4 +1,24 @@
-# An observed test failure that did not reproduce — recorded, not dismissed
+# An observed test failure that did not reproduce — **now identified**
+
+> **RESOLVED 2026-08-03.** The flake below has a name and a mechanism. A later lane (D-038) hit it
+> **twice** — once in a full run, once in an immediate isolated rerun — which is stronger evidence
+> than my single occurrence. It is:
+>
+> **`tests/listener-cli-process.test.ts:584` — "detached CLI cursor fallback still receives and
+> replies"**, failing with `ENOTEMPTY` while recursively removing its temporary listener directory.
+>
+> **Mechanism, read from the source at `:701-713`:** the `finally` block runs
+> `listen stop` and then immediately `rm(root, { recursive: true, force: true })`. It **requests** the
+> detached listener to stop but never **waits for the child process to exit**, so the removal can race
+> a listener still writing into that directory. `force: true` suppresses *not found* — it does not
+> suppress `ENOTEMPTY` from a concurrent writer.
+>
+> This is "pushed ≠ landed" one layer out, and the same shape as the swarm lesson that *"they left the
+> swarm"* is a claim about a registry while *"resources are freed"* is a claim about processes.
+> **Stop requested is not exited.**
+>
+> No product code is implicated — this is test teardown. But it makes the release gate
+> non-deterministic, which is why it is being fixed rather than tolerated.
 
 ## What happened
 
