@@ -31,6 +31,7 @@ two arms are one exact review (Codex or Claude) plus one different-family invers
 | `production-delta-exact-review-PASS-1-major.md` | Exact review of the ~1,932-line production/edge/migration delta | **PASS**, 1 MAJOR + 3 MINOR |
 | `delivery-review-fix-PASS.md` | All four findings corrected at `df2f4c9`, red-then-green | **PASS** |
 | `delivery-review-fix-d036-inversion-arm-gemini-PASS.md` | D-036 inversion arm on `df2f4c9` | **PASS** |
+| `lead-exact-arm-records.md` | The Lead's D-036 **exact arms** for ab1b240 / 5f5018a / e3dc295 / df2f4c9, written down after the fact | **PASS** ×4 |
 | `production-baseline-pre-deploy.md` | Production state recorded before any mutation | baseline |
 
 Binding contracts each PASS above cites now live in `docs/design/contracts/` — they were previously
@@ -77,9 +78,12 @@ the real two-human cross-owner canary, or the longevity canaries.
 
 ~~**Known open gap at time of writing:** every D-036 arm recorded above is scoped to a *test* delta.
 The production/edge/migration code the release will deploy is under separate review; until that lands
-here, it is unreviewed.~~ **Closed 2026-08-03** by
+here, it is unreviewed.~~ **Partially closed 2026-08-03** by
 `production-delta-exact-review-PASS-1-major.md`, which reviewed the full ~1,932-insertion delta
-statically and returned PASS with no CRITICAL. The migration was proven additive — no `DROP`, no
+statically and returned PASS with no CRITICAL. ~~Closed.~~ That is **one arm, not two**: no
+cross-family inversion has run at that scope. The Gemini inversions on file cover the four
+corrections and the per-lane test deltas only. Under D-036 one arm is never sufficient, so the
+full-delta inversion must run before landing. The migration was proven additive — no `DROP`, no
 destructive `ALTER`, no type narrowing, no existing-row rewrite — with forced RLS, and `PUBLIC`,
 `anon`, `authenticated`, and `swarm_read` given **no table authority**.
 
