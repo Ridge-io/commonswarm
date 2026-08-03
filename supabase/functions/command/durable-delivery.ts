@@ -421,7 +421,7 @@ export async function hydrateDeliveryRefs(
       },
       lease_id: ref.lease_id,
       leased_until: ref.leased_until,
-      sender_owner_relation: signal.sender_owner_relation,
+      sender_owner_relation: ref.sender_owner_relation,
     });
   }
   return hydrated;
@@ -468,13 +468,13 @@ export async function ackAgentDelivery(
   const row = existing[0];
   if (!row) return { status: "unavailable" };
   if (row.acked_at !== null) {
-    if (
+    const identityMatches =
       row.last_lease_id !== null &&
       row.last_leased_by !== null &&
-      row.ack_outcome === args.outcome &&
       row.last_lease_id === args.leaseId &&
-      row.last_leased_by === args.listenerInstanceId
-    ) {
+      row.last_leased_by === args.listenerInstanceId;
+    if (!identityMatches) return { status: "unavailable" };
+    if (row.ack_outcome === args.outcome) {
       return {
         status: "idempotent",
         response: {
@@ -543,13 +543,13 @@ export async function ackAgentDelivery(
     `;
     const r = reread[0];
     if (r && r.acked_at !== null) {
-      if (
+      const identityMatches =
         r.last_lease_id !== null &&
         r.last_leased_by !== null &&
-        r.ack_outcome === args.outcome &&
         r.last_lease_id === args.leaseId &&
-        r.last_leased_by === args.listenerInstanceId
-      ) {
+        r.last_leased_by === args.listenerInstanceId;
+      if (!identityMatches) return { status: "unavailable" };
+      if (r.ack_outcome === args.outcome) {
         return {
           status: "idempotent",
           response: {

@@ -57,6 +57,10 @@ interface MemberReadRequest {
 const SIGNAL_CAPABILITIES = {
   sender_owner_relation: 1,
   cursor_after: 1,
+} as const;
+
+const HOME_INBOX_SIGNAL_CAPABILITIES = {
+  ...SIGNAL_CAPABILITIES,
   delivery_claim: 1,
   delivery_ack: 1,
 } as const;
@@ -410,7 +414,9 @@ async function handle(
     `;
     return json(200, {
       signals: rows,
-      capabilities: SIGNAL_CAPABILITIES,
+      capabilities: body.inbox
+        ? HOME_INBOX_SIGNAL_CAPABILITIES
+        : SIGNAL_CAPABILITIES,
       pending_delivery_count: agent.pending_delivery_count,
     });
   });

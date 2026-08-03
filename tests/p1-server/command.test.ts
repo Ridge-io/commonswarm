@@ -2074,6 +2074,19 @@ test("wake-relation-contract: sender_owner_relation matrix, capabilities, and cu
       delivery_ack: 1,
     });
     assert.equal(typeof matrix.body.pending_delivery_count, "number");
+
+    const homeFeed = await agentSignalRead(
+      receiver.token,
+      f.workspaceA,
+      false,
+      null,
+      { after_created_at: null, after_id: null, limit: 100 },
+    );
+    assert.equal(homeFeed.status, 200, homeFeed.text);
+    assert.deepEqual(homeFeed.body.capabilities, {
+      sender_owner_relation: 1,
+      cursor_after: 1,
+    });
     const byId = new Map(
       (matrix.body.signals as Array<Record<string, unknown>>)
         .map((row) => [String(row.id), row]),
@@ -2152,8 +2165,6 @@ test("wake-relation-contract: sender_owner_relation matrix, capabilities, and cu
     assert.deepEqual(foreignRead.body.capabilities, {
       sender_owner_relation: 1,
       cursor_after: 1,
-      delivery_claim: 1,
-      delivery_ack: 1,
     });
 
     // Authorship cannot be forged via the read request body.
@@ -6833,8 +6844,8 @@ test("durable-delivery: stale lease requeues; signal TTL expires once; tenth cla
       outcome: "replied",
       last_error_code: null,
     });
-    assert.equal(poisonReack.status, 409, "poison row cannot be replayed as a client ACK");
-    assert.equal(poisonReack.body.error, "delivery_ack_conflict");
+    assert.equal(poisonReack.status, 403, "poison row does not expose terminal delivery existence");
+    assert.equal(poisonReack.body.error, "delivery_unavailable");
   });
 });
 
@@ -7552,8 +7563,8 @@ test("durable-delivery: relation matrix on claim matches read; cursor path still
     );
     assert.equal(
       byIdReplay.get(ids[1]!)?.sender_owner_relation,
-      "unknown",
-      "claim idempotency replay dynamically recomputes sender_owner_relation to unknown when author is revoked post-claim",
+      "same_owner",
+      "claim idempotency replay preserves the claim-time sender_owner_relation after author revocation",
     );
 
     // Read transaction never needs swarm_command: pending count present.
@@ -7561,7 +7572,7 @@ test("durable-delivery: relation matrix on claim matches read; cursor path still
   });
 });
 
-test("durable-delivery: claim idempotency mismatch (listener, limit, workspace, stream) returns 409", async () => {
+test("durable-delivery: claim idempotency mismatch and workspace-only delivery routes", async () => {
   await scenario(async (f) => {
     const receiver = await createFixtureAgent(f, f.ua, "dd-idemp-mismatch");
     const cmdId = randomUUID();
@@ -7629,21 +7640,65 @@ test("durable-delivery: claim idempotency mismatch (listener, limit, workspace, 
       VALUES (${repoStreamId}::uuid, ${f.workspaceA}::uuid, 'repo', ${repoMapId}::uuid)
     `;
 
-    // Mismatched stream -> 409 command_id_conflict
-    const mismatchStream = await issueDelivery(
+    const posted = await issueSignal(f, f.uaJwt, {
+      kind: "post_signal",
+      signal_kind: "ask",
+      body: "workspace-only-delivery-route",
+      to_user_id: null,
+      to_agent_principal_id: receiver.principalId,
+      in_reply_to: null,
+      about: "dd-workspace-route",
+    });
+    assert.equal(posted.status, 200, posted.text);
+    const signalId = String(
+      (posted.body.signal as Record<string, unknown>).id,
+    );
+    const claimForAck = await issueDelivery(f, receiver.token, {
+      kind: "claim_agent_inbox",
+      listener_instance_id: instId,
+      limit: 10,
+    });
+    assert.equal(claimForAck.status, 200, claimForAck.text);
+    const claimed = (claimForAck.body.deliveries as Array<Record<string, unknown>>)
+      .find((delivery) =>
+        (delivery.signal as Record<string, unknown>).id === signalId
+      );
+    assert.ok(claimed);
+
+    const repoAck = await issueDelivery(
+      f,
+      receiver.token,
+      {
+        kind: "ack_agent_delivery",
+        signal_id: signalId,
+        lease_id: String(claimed.lease_id),
+        listener_instance_id: instId,
+        outcome: "replied",
+        last_error_code: null,
+      },
+      randomUUID(),
+      f.workspaceA,
+      { kind: "repo", repo_mapping_id: repoMapId },
+    );
+    const repoClaim = await issueDelivery(
       f,
       receiver.token,
       {
         kind: "claim_agent_inbox",
-        listener_instance_id: instId,
+        listener_instance_id: randomUUID(),
         limit: 10,
       },
-      cmdId,
+      randomUUID(),
       f.workspaceA,
       { kind: "repo", repo_mapping_id: repoMapId },
     );
-    assert.equal(mismatchStream.status, 409, mismatchStream.text);
-    assert.equal(mismatchStream.body.error, "command_id_conflict");
+    assert.deepEqual(
+      [repoClaim.status, repoAck.status],
+      [403, 403],
+      `delivery commands must reject repo routes: claim=${repoClaim.text} ack=${repoAck.text}`,
+    );
+    assert.equal(repoClaim.body.error, "delivery_unavailable");
+    assert.equal(repoAck.body.error, "delivery_unavailable");
 
     // Generic foreign workspace route refusal -> 403 delivery_unavailable
     const mismatchWorkspace = await issueDelivery(
@@ -8517,7 +8572,7 @@ test("durable-delivery: replay JSON byte-equivalence and hydration tamper refusa
   });
 });
 
-test("durable-delivery: terminal ack identity requires exact lease and listener match on re-ack", async () => {
+test("durable-delivery: terminal ack hides wrong identity and conflicts only on matching identity", async () => {
   await scenario(async (f) => {
     const receiver = await createFixtureAgent(f, f.ua, "dd-ack-identity");
     const post = await issueSignal(f, f.uaJwt, {
@@ -8574,7 +8629,7 @@ test("durable-delivery: terminal ack identity requires exact lease and listener 
     assert.equal(reAckSameIdentity.status, 200, reAckSameIdentity.text);
     assert.equal(reAckSameIdentity.body.outcome, "replied");
 
-    // 2. Re-ack with NEW command_id, SAME outcome, DIFFERENT lease_id -> 409 delivery_ack_conflict
+    // 2. Re-ack with NEW command_id, SAME outcome, DIFFERENT lease_id -> unavailable
     const reAckDiffLease = await issueDelivery(
       f,
       receiver.token,
@@ -8588,10 +8643,10 @@ test("durable-delivery: terminal ack identity requires exact lease and listener 
       },
       randomUUID(),
     );
-    assert.equal(reAckDiffLease.status, 409, reAckDiffLease.text);
-    assert.equal(reAckDiffLease.body.error, "delivery_ack_conflict");
+    assert.equal(reAckDiffLease.status, 403, reAckDiffLease.text);
+    assert.equal(reAckDiffLease.body.error, "delivery_unavailable");
 
-    // 3. Re-ack with NEW command_id, SAME outcome, DIFFERENT listener_instance_id -> 409 delivery_ack_conflict
+    // 3. Re-ack with NEW command_id, SAME outcome, DIFFERENT listener_instance_id -> unavailable
     const reAckDiffListener = await issueDelivery(
       f,
       receiver.token,
@@ -8605,8 +8660,8 @@ test("durable-delivery: terminal ack identity requires exact lease and listener 
       },
       randomUUID(),
     );
-    assert.equal(reAckDiffListener.status, 409, reAckDiffListener.text);
-    assert.equal(reAckDiffListener.body.error, "delivery_ack_conflict");
+    assert.equal(reAckDiffListener.status, 403, reAckDiffListener.text);
+    assert.equal(reAckDiffListener.body.error, "delivery_unavailable");
   });
 });
 

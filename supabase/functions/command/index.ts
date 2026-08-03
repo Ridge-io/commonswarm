@@ -692,6 +692,8 @@ const WORKSPACE_COMMAND_KINDS = [
   ...CONNECT_COMMAND_KINDS,
   "revoke_agent_token",
   RENEW_AGENT_TOKEN_KIND,
+  CLAIM_AGENT_INBOX_KIND,
+  ACK_AGENT_DELIVERY_KIND,
 ] as const;
 const P0_AGENT_SCOPES = [
   "create",
