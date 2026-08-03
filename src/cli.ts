@@ -141,6 +141,7 @@ import {
   OpenCodeListenerModel,
   effectiveListenerStatus,
   listenerPaths,
+  openListenerDeliveryJournal,
   runListenerRuntime,
   runListenerSupervisor,
   spawnDetachedListener,
@@ -148,6 +149,7 @@ import {
   waitForListenerReady,
   type ListenerPermissionMode,
   type ListenerProviderId,
+  type ListenerDeliveryJournal,
   type ListenerStatus,
 } from "./listener/index.js";
 
@@ -2631,6 +2633,14 @@ export function listenerStatusJson(
   const mode = permissionMode ?? status.permissionMode;
   return {
     ...status,
+    deliveryMode: status.deliveryMode ?? null,
+    pendingDeliveryCount: status.pendingDeliveryCount ?? null,
+    lastTerminalDeliveryFailureCount:
+      status.lastTerminalDeliveryFailureCount ?? null,
+    lastTerminalDeliveryFailureAt:
+      status.lastTerminalDeliveryFailureAt ?? null,
+    lastClaimAt: status.lastClaimAt ?? null,
+    lastAckAt: status.lastAckAt ?? null,
     ...(mode
       ? {
         permission_mode: mode,
@@ -2646,7 +2656,7 @@ export function listenerStatusJson(
 }
 
 function renderListenerStatus(status: ListenerStatus): string {
-  return [
+  const lines = [
     `Listener ${status.state} for agent ${status.principalId}.`,
     `Provider: ${status.provider}; process: ${status.pid}; started: ${status.startedAt}.`,
     status.readyAt ? `Ready since: ${status.readyAt}.` : "Not ready yet.",
@@ -2656,7 +2666,28 @@ function renderListenerStatus(status: ListenerStatus): string {
     status.lastErrorCode
       ? `Last status code: ${status.lastErrorCode}.`
       : "No listener error is recorded.",
-  ].join("\n");
+  ];
+  if (status.deliveryMode === "durable_claim") {
+    lines.push("Delivery mode: durable claim and acknowledgement.");
+  } else if (status.deliveryMode === "cursor_fallback") {
+    lines.push("Delivery mode: cursor fallback.");
+  } else {
+    lines.push("Delivery mode has not been reported yet.");
+  }
+  if (status.pendingDeliveryCount !== null) {
+    lines.push(
+      `Pending deliveries reported by the service: ${status.pendingDeliveryCount}.`,
+    );
+  }
+  if (
+    status.lastTerminalDeliveryFailureCount !== null &&
+    status.lastTerminalDeliveryFailureCount > 0
+  ) {
+    lines.push(
+      `The last claim reported ${status.lastTerminalDeliveryFailureCount} terminal delivery failures; they remain recorded, and the listener will keep receiving.`,
+    );
+  }
+  return lines.join("\n");
 }
 
 function listenerFailureMessage(code: string): string {
@@ -2798,6 +2829,8 @@ async function runConfiguredListener(options: {
   const onProcessSignal = () => {
     void stopListener(paths);
   };
+  let selectedJournal: ListenerDeliveryJournal | undefined;
+  let selectedListenerInstanceId: string | undefined;
   process.on("SIGINT", onProcessSignal);
   process.on("SIGTERM", onProcessSignal);
   try {
@@ -2808,8 +2841,31 @@ async function runConfiguredListener(options: {
       principalId: options.principalId,
       provider: options.provider,
       permissionMode: options.permissionMode,
-      run: async (signal, onEvent) =>
-        await runListenerRuntime({
+      prepare: async (proposedInstanceId) => {
+        const selected = await openListenerDeliveryJournal({
+          profileId: options.cloud.profileId,
+          workspaceId: options.workspaceId,
+          principalId: options.principalId,
+          proposedListenerInstanceId: proposedInstanceId,
+          ...(options.stateDirectory
+            ? { stateDirectory: options.stateDirectory }
+            : {}),
+        });
+        selectedJournal = selected.journal;
+        selectedListenerInstanceId = selected.listenerInstanceId;
+        return { instanceId: selected.listenerInstanceId };
+      },
+      run: async (signal, onEvent, listenerInstanceId) => {
+        if (
+          selectedJournal === undefined ||
+          selectedListenerInstanceId === undefined ||
+          listenerInstanceId !== selectedListenerInstanceId
+        ) {
+          throw new Error(
+            "listener delivery journal was not selected for this instance",
+          );
+        }
+        return await runListenerRuntime({
           target: options.cloud,
           workspaceId: options.workspaceId,
           principalId: options.principalId,
@@ -2818,7 +2874,10 @@ async function runConfiguredListener(options: {
           model,
           signal,
           onEvent,
-        }),
+          listenerInstanceId,
+          deliveryJournal: selectedJournal,
+        });
+      },
     });
   } finally {
     process.off("SIGINT", onProcessSignal);

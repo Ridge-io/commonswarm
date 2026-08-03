@@ -15,7 +15,11 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
 import { cloudTarget } from "../src/cloud/config.js";
-import { listenerPaths } from "../src/listener/index.js";
+import {
+  listenerPaths,
+  writeListenerStatus,
+  type ListenerStatus,
+} from "../src/listener/index.js";
 
 const AGENT_MESSAGE =
   "Agent credential minted. It is bound to this task and run so the agent's work stays scoped and attributable.";
@@ -206,7 +210,7 @@ process.stdin.on("data", (chunk) => {
 `;
 }
 
-test("detached CLI receives, isolates, replies, reports status, and stops", async () => {
+test("detached CLI completes durable claim reply ACK with one startup UUID and no secret leakage", async () => {
   const root = await mkdtemp(join(tmpdir(), "cswarm-cli-listener-"));
   const workerCwd = await mkdtemp(join(tmpdir(), "cswarm-cli-worker-"));
   const grokPath = join(root, "fake-grok.mjs");
@@ -226,6 +230,7 @@ test("detached CLI receives, isolates, replies, reports status, and stops", asyn
   const tokenId = randomUUID();
   const runId = randomUUID();
   const token = `swm_agt_${"A".repeat(43)}`;
+  const secretSentinel = "runtime-d-secret-sentinel";
   const artifact = JSON.stringify({
     message: AGENT_MESSAGE,
     status: "accepted",
@@ -246,7 +251,7 @@ test("detached CLI receives, isolates, replies, reports status, and stops", asyn
       in_reply_to: null,
       about: null,
       kind: "ask",
-      body: "same-owner test ask",
+      body: `same-owner test ask ${secretSentinel}`,
       until: new Date(Date.now() + 10 * 60_000).toISOString(),
       created_at: new Date(Date.now() - 2_000).toISOString(),
       sender_owner_relation: "same_owner",
@@ -261,13 +266,17 @@ test("detached CLI receives, isolates, replies, reports status, and stops", asyn
       in_reply_to: null,
       about: null,
       kind: "ask",
-      body: "cross-owner test ask",
+      body: `cross-owner test ask ${secretSentinel}`,
       until: new Date(Date.now() + 10 * 60_000).toISOString(),
       created_at: new Date(Date.now() - 1_000).toISOString(),
       sender_owner_relation: "cross_owner",
     },
   ];
   const posts: Array<Record<string, unknown>> = [];
+  const claims: Array<Record<string, unknown>> = [];
+  const acknowledgements: Array<Record<string, unknown>> = [];
+  const acknowledgedSignalIds = new Set<string>();
+  const leaseIds = asks.map(() => randomUUID());
   const authHeaders: string[] = [];
   const server = createServer(async (request, response) => {
     let body = "";
@@ -276,15 +285,65 @@ test("detached CLI receives, isolates, replies, reports status, and stops", asyn
     if (request.url === "/functions/v1/read") {
       response.writeHead(200, { "content-type": "application/json" });
       response.end(JSON.stringify({
-        signals: asks,
-        capabilities: { sender_owner_relation: 1, cursor_after: 1 },
+        signals: [],
+        capabilities: {
+          sender_owner_relation: 1,
+          cursor_after: 1,
+          delivery_claim: 1,
+          delivery_ack: 1,
+        },
+        pending_delivery_count: asks.length - acknowledgedSignalIds.size,
       }));
       return;
     }
     if (request.url === "/functions/v1/command") {
       const parsed = JSON.parse(body) as Record<string, unknown>;
-      posts.push(parsed);
       const command = parsed.command as Record<string, unknown>;
+      if (command.kind === "claim_agent_inbox") {
+        claims.push(parsed);
+        const index = asks.findIndex((ask) =>
+          !acknowledgedSignalIds.has(ask.id)
+        );
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify({
+          status: "accepted",
+          ok: true,
+          capabilities: {
+            delivery_claim: 1,
+            delivery_ack: 1,
+            sender_owner_relation: 1,
+          },
+          deliveries: index === -1
+            ? []
+            : [{
+              signal: asks[index],
+              lease_id: leaseIds[index],
+              leased_until: new Date(Date.now() + 10 * 60_000).toISOString(),
+              sender_owner_relation: asks[index]!.sender_owner_relation,
+            }],
+          pending_delivery_count: asks.length - acknowledgedSignalIds.size,
+          terminal_delivery_failure_count: 0,
+          event_ids: [],
+          events: [],
+          min_client_version: "0.1.0",
+        }));
+        return;
+      }
+      if (command.kind === "ack_agent_delivery") {
+        acknowledgements.push(parsed);
+        acknowledgedSignalIds.add(String(command.signal_id));
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify({
+          status: "accepted",
+          ok: true,
+          event_ids: [],
+          events: [],
+          signal_id: command.signal_id,
+          outcome: command.outcome,
+        }));
+        return;
+      }
+      posts.push(parsed);
       response.writeHead(200, { "content-type": "application/json" });
       response.end(JSON.stringify({
         status: "accepted",
@@ -357,7 +416,8 @@ test("detached CLI receives, isolates, replies, reports status, and stops", asyn
     assert.equal(startJson.state, "ready");
     assert.equal(startJson.principalId, principalId);
 
-    await waitFor(() => posts.length === 2);
+    await waitFor(() => acknowledgements.length === 2);
+    assert.equal(posts.length, 2);
     assert.equal(
       posts.every((post) =>
         typeof post.command_id === "string" &&
@@ -373,6 +433,17 @@ test("detached CLI receives, isolates, replies, reports status, and stops", asyn
     );
     assert.equal(authHeaders.every((header) => header === `Bearer ${token}`), true);
 
+    const deliveryCommands = [...claims, ...acknowledgements];
+    assert.ok(claims.length >= 2);
+    assert.equal(acknowledgements.length, 2);
+    const deliveryInstanceIds = deliveryCommands.map((entry) =>
+      String((entry.command as Record<string, unknown>).listener_instance_id)
+    );
+    assert.equal(
+      deliveryInstanceIds.every((instanceId) => instanceId === startJson.instanceId),
+      true,
+    );
+
     const status = await runCli([
       "listen",
       "status",
@@ -382,7 +453,11 @@ test("detached CLI receives, isolates, replies, reports status, and stops", asyn
       "--json",
     ]);
     assert.equal(status.code, 0, status.stderr);
-    assert.equal((JSON.parse(status.stdout) as Record<string, unknown>).state, "ready");
+    const statusJson = JSON.parse(status.stdout) as Record<string, unknown>;
+    assert.equal(statusJson.state, "ready");
+    assert.equal(statusJson.instanceId, startJson.instanceId);
+    assert.equal(statusJson.deliveryMode, "durable_claim");
+    assert.equal(typeof statusJson.lastAckAt, "string");
 
     const stopped = await runCli([
       "listen",
@@ -464,8 +539,33 @@ test("detached CLI receives, isolates, replies, reports status, and stops", asyn
     });
     const safeLog = await readFile(paths.logPath, "utf8");
     const safeStatus = await readFile(paths.statusPath, "utf8");
-    assert.doesNotMatch(safeLog, /same-owner test ask|cross-owner test ask|swm_agt_/);
-    assert.doesNotMatch(safeStatus, /same-owner test ask|cross-owner test ask|swm_agt_/);
+    const journal = JSON.parse(
+      await readFile(join(paths.instanceDirectory, "delivery-journal.json"), "utf8"),
+    ) as Record<string, unknown>;
+    assert.equal(journal.listenerInstanceId, startJson.instanceId);
+    const userAndMetadataOutput = [
+      ...starts.flatMap((result) => [result.stdout, result.stderr]),
+      status.stdout,
+      status.stderr,
+      safeLog,
+      safeStatus,
+    ].join("\n");
+    for (const sensitive of [
+      secretSentinel,
+      token,
+      "same-owner test ask",
+      "cross-owner test ask",
+      "fake listener reply",
+      ...asks.map((ask) => ask.from),
+      ...leaseIds,
+      ...deliveryCommands.map((entry) => String(entry.command_id)),
+    ]) {
+      assert.equal(
+        userAndMetadataOutput.includes(sensitive),
+        false,
+        `sensitive value reached output: ${sensitive}`,
+      );
+    }
   } finally {
     await runCli([
       "listen",
@@ -478,6 +578,243 @@ test("detached CLI receives, isolates, replies, reports status, and stops", asyn
     await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
     await rm(root, { recursive: true, force: true });
     await rm(workerCwd, { recursive: true, force: true });
+  }
+});
+
+test("detached CLI cursor fallback still receives and replies", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cswarm-cli-cursor-fallback-"));
+  const workerCwd = await mkdtemp(join(tmpdir(), "cswarm-cli-cursor-worker-"));
+  const grokPath = join(root, "fake-grok.mjs");
+  const providerHome = join(root, "provider-home");
+  await writeFile(grokPath, fakeGrokSource(), { mode: 0o700 });
+  await chmod(grokPath, 0o700);
+  await mkdir(providerHome, { mode: 0o700 });
+  await writeFile(
+    join(providerHome, "auth.json"),
+    JSON.stringify({ access_token: "fake-local-login" }),
+    { mode: 0o600 },
+  );
+
+  const workspaceId = randomUUID();
+  const principalId = randomUUID();
+  const token = `swm_agt_${"C".repeat(43)}`;
+  const artifact = JSON.stringify({
+    message: AGENT_MESSAGE,
+    status: "accepted",
+    principal_id: principalId,
+    token_id: randomUUID(),
+    run_id: randomUUID(),
+    agent_token: token,
+    expires_at: new Date(Date.now() + 60 * 60_000).toISOString(),
+  });
+  const ask = {
+    id: randomUUID(),
+    workspace_id: workspaceId,
+    from: randomUUID(),
+    from_kind: "agent",
+    to: null,
+    to_agent: principalId,
+    in_reply_to: null,
+    about: null,
+    kind: "ask",
+    body: "cursor fallback test ask",
+    until: new Date(Date.now() + 10 * 60_000).toISOString(),
+    created_at: new Date(Date.now() - 1_000).toISOString(),
+    sender_owner_relation: "same_owner",
+  };
+  const posts: Array<Record<string, unknown>> = [];
+  const server = createServer(async (request, response) => {
+    let body = "";
+    for await (const chunk of request) body += chunk.toString();
+    if (request.url === "/functions/v1/read") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({
+        signals: [ask],
+        capabilities: { sender_owner_relation: 1, cursor_after: 1 },
+      }));
+      return;
+    }
+    if (request.url === "/functions/v1/command") {
+      const parsed = JSON.parse(body) as Record<string, unknown>;
+      posts.push(parsed);
+      const command = parsed.command as Record<string, unknown>;
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({
+        status: "accepted",
+        ok: true,
+        event_ids: [],
+        signal: {
+          ...ask,
+          id: randomUUID(),
+          kind: "note",
+          body: command.body,
+          in_reply_to: command.in_reply_to,
+          sender_owner_relation: undefined,
+        },
+      }));
+      return;
+    }
+    response.writeHead(404);
+    response.end();
+  });
+  await new Promise<void>((resolveListen) =>
+    server.listen(0, "127.0.0.1", resolveListen)
+  );
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+  const url = `http://127.0.0.1:${address.port}`;
+  const common = [
+    "--url",
+    url,
+    "--anon-key",
+    "public-anon",
+    "--workspace-id",
+    workspaceId,
+    "--state-dir",
+    root,
+  ];
+
+  try {
+    const started = await runCli([
+      "listen",
+      "start",
+      "--agent-token-stdin",
+      ...common,
+      "--cwd",
+      workerCwd,
+      "--grok-executable",
+      grokPath,
+      "--json",
+    ], {
+      stdin: artifact,
+      env: { GROK_HOME: providerHome },
+    });
+    assert.equal(started.code, 0, started.stderr);
+    const startJson = JSON.parse(started.stdout) as Record<string, unknown>;
+    assert.equal(startJson.deliveryMode, "cursor_fallback");
+    await waitFor(() => posts.length === 1);
+    assert.equal(
+      (posts[0]!.command as Record<string, unknown>).in_reply_to,
+      ask.id,
+    );
+    assert.doesNotMatch(started.stdout + started.stderr, /swm_agt_/);
+  } finally {
+    await runCli([
+      "listen",
+      "stop",
+      ...common,
+      "--principal-id",
+      principalId,
+      "--json",
+    ]).catch(() => undefined);
+    await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
+    await rm(root, { recursive: true, force: true });
+    await rm(workerCwd, { recursive: true, force: true });
+  }
+});
+
+test("listen status distinguishes delivery modes and null zero positive counts", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cswarm-cli-delivery-status-"));
+  const workspaceId = randomUUID();
+  const principalId = randomUUID();
+  const url = "https://status.example.test";
+  const paths = listenerPaths({
+    profileId: cloudTarget(url, "public-anon").profileId,
+    workspaceId,
+    principalId,
+    stateDirectory: root,
+  });
+  const ts = "2026-08-03T00:00:00.000Z";
+  const base: ListenerStatus = {
+    version: 1,
+    instanceId: randomUUID(),
+    provider: "grok",
+    profileId: cloudTarget(url, "public-anon").profileId,
+    workspaceId,
+    principalId,
+    pid: process.pid,
+    state: "ready",
+    startedAt: ts,
+    readyAt: ts,
+    updatedAt: ts,
+    stoppedAt: null,
+    lastSignalId: null,
+    lastErrorCode: null,
+    deliveryMode: "durable_claim",
+    pendingDeliveryCount: null,
+    lastTerminalDeliveryFailureCount: null,
+    lastTerminalDeliveryFailureAt: null,
+    lastClaimAt: null,
+    lastAckAt: null,
+    logPath: paths.logPath,
+  };
+  const args = [
+    "listen",
+    "status",
+    "--url",
+    url,
+    "--anon-key",
+    "public-anon",
+    "--workspace-id",
+    workspaceId,
+    "--principal-id",
+    principalId,
+    "--state-dir",
+    root,
+  ];
+
+  try {
+    await writeListenerStatus(paths, base);
+    const unknown = await runCli(args);
+    assert.equal(unknown.code, 0, unknown.stderr);
+    assert.match(unknown.stdout, /Delivery mode: durable claim and acknowledgement\./);
+    assert.doesNotMatch(unknown.stdout, /Pending deliveries reported by the service:/);
+    assert.doesNotMatch(unknown.stdout, /terminal delivery failures/);
+
+    await writeListenerStatus(paths, {
+      ...base,
+      pendingDeliveryCount: 0,
+      lastTerminalDeliveryFailureCount: 0,
+    });
+    const zero = await runCli(args);
+    assert.equal(zero.code, 0, zero.stderr);
+    assert.match(zero.stdout, /Pending deliveries reported by the service: 0\./);
+    assert.doesNotMatch(zero.stdout, /terminal delivery failures/);
+
+    await writeListenerStatus(paths, {
+      ...base,
+      pendingDeliveryCount: 2,
+      lastTerminalDeliveryFailureCount: 3,
+      lastTerminalDeliveryFailureAt: ts,
+      lastClaimAt: ts,
+    });
+    const positive = await runCli(args);
+    assert.equal(positive.code, 0, positive.stderr);
+    assert.match(positive.stdout, /Pending deliveries reported by the service: 2\./);
+    assert.match(
+      positive.stdout,
+      /The last claim reported 3 terminal delivery failures; they remain recorded, and the listener will keep receiving\./,
+    );
+    assert.equal(
+      positive.stdout.match(/terminal delivery failures/g)?.length,
+      1,
+    );
+
+    await writeListenerStatus(paths, {
+      ...base,
+      deliveryMode: "cursor_fallback",
+      pendingDeliveryCount: null,
+      lastTerminalDeliveryFailureCount: null,
+      lastTerminalDeliveryFailureAt: null,
+      lastClaimAt: null,
+    });
+    const fallback = await runCli(args);
+    assert.equal(fallback.code, 0, fallback.stderr);
+    assert.match(fallback.stdout, /Delivery mode: cursor fallback\./);
+    assert.doesNotMatch(fallback.stdout, /Pending deliveries reported by the service:/);
+    assert.doesNotMatch(fallback.stdout, /terminal delivery failures/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
   }
 });
 

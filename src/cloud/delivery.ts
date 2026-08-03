@@ -90,7 +90,10 @@ export type DeliveryOutcome =
 export interface DeliveryRow {
   /** Immutable signal the server hydrated for this claim. */
   signal: SignalRecord;
-  /** Row-scoped lease capability; never logged or persisted client-side. */
+  /**
+   * Row-scoped lease capability. Transport never logs or persists it; the
+   * secure listener journal intentionally may persist it for exact ACK recovery.
+   */
   leaseId: string;
   /** Server lease deadline; the runtime slice decides refusal on replay. */
   leasedUntil: string;

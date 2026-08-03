@@ -241,19 +241,29 @@ export async function runListenerSupervisor(
       });
       return;
     }
-    status = {
-      ...status,
-      lastAckAt: event.ts,
-      pendingDeliveryCount: null,
-      lastSignalId: event.signalId,
-      updatedAt: event.ts,
-    };
-    persist();
+    if (event.type === "delivery_ack") {
+      status = {
+        ...status,
+        lastAckAt: event.ts,
+        pendingDeliveryCount: null,
+        lastSignalId: event.signalId,
+        updatedAt: event.ts,
+      };
+      persist();
+      log({
+        ts: event.ts,
+        event: "listener_delivery_ack",
+        signal_id: event.signalId,
+        outcome: event.outcome,
+      });
+      return;
+    }
+    const unknown = event as unknown as { ts?: unknown };
     log({
-      ts: event.ts,
-      event: "listener_delivery_ack",
-      signal_id: event.signalId,
-      outcome: event.outcome,
+      ts: typeof unknown.ts === "string" && Number.isFinite(Date.parse(unknown.ts))
+        ? unknown.ts
+        : iso(now),
+      event: "listener_malformed_event",
     });
   };
 

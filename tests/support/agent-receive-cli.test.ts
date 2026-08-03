@@ -6,10 +6,21 @@
  * ★ THIS FILE IS NAMED IN `npm test` — a hand-run or typecheck-only pass is not a gate.
  */
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { getEventListeners } from "node:events";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
+import { listenerStatusJson } from "../../src/cli.js";
 import type { SignalRecord } from "../../src/cloud/command-client.js";
 import { cloudTarget } from "../../src/cloud/config.js";
+import {
+  listenerPaths,
+  runListenerSupervisor,
+  type ListenerRuntimeEvent,
+  type ListenerStatus,
+} from "../../src/listener/index.js";
 import {
   askWaitJsonPayload,
   BoundedSignalIdSet,
@@ -1139,4 +1150,78 @@ test("describeMintRenewal states process and local-state conditions, not uncondi
 
   const noExpiry = describeMintRenewal(false, 30);
   assert.match(noExpiry, /does not renew itself/);
+});
+
+test("legacy listener status JSON normalizes exactly six delivery fields to null", () => {
+  const status = {
+    version: 1,
+    instanceId: randomUUID(),
+    provider: "grok",
+    profileId: "profile-legacy-status",
+    workspaceId: WORKSPACE,
+    principalId: AGENT,
+    pid: process.pid,
+    state: "ready",
+    startedAt: "2026-08-03T00:00:00.000Z",
+    readyAt: "2026-08-03T00:00:01.000Z",
+    updatedAt: "2026-08-03T00:00:01.000Z",
+    stoppedAt: null,
+    lastSignalId: null,
+    lastErrorCode: null,
+    logPath: "/tmp/listener.log",
+  } as unknown as ListenerStatus;
+
+  const json = listenerStatusJson(status);
+  const deliveryFields = [
+    "deliveryMode",
+    "pendingDeliveryCount",
+    "lastTerminalDeliveryFailureCount",
+    "lastTerminalDeliveryFailureAt",
+    "lastClaimAt",
+    "lastAckAt",
+  ];
+  assert.deepEqual(
+    Object.fromEntries(deliveryFields.map((field) => [field, json[field]])),
+    Object.fromEntries(deliveryFields.map((field) => [field, null])),
+  );
+  assert.equal(Object.hasOwn(json, "delivery_mode"), false);
+  assert.equal(Object.hasOwn(json, "pending_delivery_count"), false);
+});
+
+test("unrecognized supervisor runtime events never become delivery ACKs", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cswarm-supervisor-unknown-event-"));
+  const workspaceId = randomUUID();
+  const principalId = randomUUID();
+  const paths = listenerPaths({
+    profileId: "profile-unknown-event",
+    workspaceId,
+    principalId,
+    stateDirectory: root,
+  });
+  const ts = "2026-08-03T00:00:00.000Z";
+
+  try {
+    const status = await runListenerSupervisor({
+      paths,
+      profileId: "profile-unknown-event",
+      workspaceId,
+      principalId,
+      run: async (_signal, onEvent) => {
+        onEvent({
+          type: "future_delivery_event",
+          signalId: randomUUID(),
+          outcome: "replied",
+          ts,
+        } as unknown as ListenerRuntimeEvent);
+        return { reason: "cancelled" };
+      },
+    });
+    assert.equal(status.lastAckAt, null);
+    assert.equal(status.lastSignalId, null);
+    const log = await readFile(paths.logPath, "utf8");
+    assert.doesNotMatch(log, /listener_delivery_ack/);
+    assert.match(log, /listener_malformed_event/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
