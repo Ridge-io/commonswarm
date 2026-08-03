@@ -403,3 +403,40 @@ first-class host cannot complete onboarding, that work is unreachable for those 
 how correct it is. This needs an operator decision before the freeze: is a stdin-only credential
 channel the intended permanent constraint, or does a host that cannot provide one need a supported
 path?
+
+## Live-feed latency — structurally satisfied, not end-to-end measured
+
+The checklist requires the feed to update "within five seconds". Measured from the source rather
+than claimed:
+
+```
+site/src/components/app/LiveDashboard.astro:1941
+  liveFeedTimer = window.setInterval(() => void refreshLatestSignals(), 2_000);
+```
+
+A 2-second poll means the five-second bound is **achievable by construction** — worst case is one
+poll interval plus request time. Recorded as a structural PASS.
+
+**Not established end-to-end.** Proving it properly means generating a signal and timing its
+appearance, which needs a second actor (an agent or a second human). I could not create one solo, so
+the observed latency was never measured. This is a structural argument, not a stopwatch.
+
+## Pending-access refresh cadence — relevant to QA-006, and slower than the feed
+
+Separately measured, because QA-006 (pending-access freshness) is an open issue:
+
+```
+:1817  PENDING_POLL_TICK_MS                     4_000
+:666   PENDING_REFRESH_ACTIVE_COOLDOWN_MS      12_000
+:667   PENDING_REFRESH_DISCOVERY_COOLDOWN_MS   30_000
+```
+
+So a newly-invited member's pending access can take up to **~30 seconds** to surface or clear on the
+discovery path — six times the feed's bound. That is not necessarily wrong; pending access is a
+rarer event than a feed update and a 30-second cooldown is a reasonable load trade. But it is worth
+stating plainly, because "pending access clears" tested impatiently will read as a failure when it is
+actually a cooldown. **Whoever runs the second-human invite check should wait at least 30 seconds
+before concluding anything.**
+
+Not established: whether the observed clearing time matches these constants in practice, which again
+needs the second account.
