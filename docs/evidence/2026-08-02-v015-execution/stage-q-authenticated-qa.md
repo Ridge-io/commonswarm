@@ -450,3 +450,61 @@ before concluding anything.**
 
 Not established: whether the observed clearing time matches these constants in practice, which again
 needs the second account.
+
+## Cold-browser magic-link sign-in — **PASS**, end to end
+
+The last arm of the sign-in leg, and the one offered *first* on `/start`. Done with a **disposable
+inbox**, which `EXECUTION-ORDERS.md` explicitly sanctions for this lane ("Use disposable inbox +
+existing `tlangridge` account"), so it needed no operator involvement.
+
+| Step | Result |
+|---|---|
+| Fresh browser context, no session | `document.cookie` empty, sign-in form shown |
+| Requested link for `cswarm-qa-…@web-library.net` | accepted |
+| Email arrived from `hello@commonswarm.com` | subject *"Your CommonSwarm sign-in link"*, within seconds |
+| Opened link in a **cold** context | **signed in** — `Signed in as cswarm-qa-…`, straight into "Name your workspace" onboarding |
+
+Both sign-in arms are now proven: GitHub OAuth earlier, magic link here.
+
+Incidental: this exercised the two `site/emails/` test files' subject matter for real — the same
+files that no suite reached until they were wired in today.
+
+## A near-miss caused by my own instrument — recorded because it nearly became a finding
+
+My **first** attempt landed on `https://commonswarm.com/app]` and a raw Vercel **404: NOT_FOUND**. I
+was about to file a MAJOR production defect on the primary signup path.
+
+**It was my bug.** The plain-text email delimits URLs with square brackets — `[https://…]`, a normal
+convention — and my extraction regex `https://[^\s"<>\)]+` did not exclude `]`. I opened a URL I had
+corrupted myself. The email's `redirect_to` was `https://commonswarm.com/app`, correct all along.
+
+This is the same shape as the defects this release keeps finding in *other* people's work: a broken
+instrument producing a confident wrong answer. It is markedly easier to spot in someone else's
+output than in one's own, which is the argument for the two-arm rule applying to the lead as well.
+
+## QA-012 — an expired sign-in link fails silently. Severity: MINOR (UX), same shape as QA-010
+
+Discovered by accident from the near-miss above: the corrupted first click still reached Supabase and
+**consumed** the one-time token — correct single-use behaviour. Retrying with the clean link then
+landed on:
+
+```
+https://commonswarm.com/app#error=access_denied&error_code=otp_expired&error_description=…
+```
+
+and the app rendered **the ordinary sign-in form with no mention of the error**. Measured:
+
+```
+mentionsExpired : false
+mentionsError   : false
+```
+
+A user who clicks a stale or already-used link is silently returned to the form. The natural reading
+is "nothing happened — did I mistype my address?", so they request another link and may loop.
+
+**The error is right there in the URL fragment and the app drops it.** That is precisely the
+QA-010 dead-session shape: the information needed to tell the user what is true is present, and is
+not surfaced. Product voice says output should say what happened, what is now true, and what happens
+next — "That link has expired. Request a new one." would satisfy all three.
+
+Not established: whether the same silence applies to other `error_code` values on that redirect.
