@@ -2,7 +2,7 @@
 
 Worker: **Bastion** (Codex). Lane: listener Runtime C.
 Clone: `/Users/yulanbot/Developer/Ridge.io/cloud-swarm` · Branch: `lead7/mvp-release-0.1.5`
-**Frozen base: `0988697fd399f9f9da811f9d5e4e4710e842045b`** — by SHA, not "the integrated base".
+**Frozen base: `0c785dc3ebc40be74023abb5006a5d955a19f48d`** — by SHA, not "the integrated base".
 
 Read completely before starting: root `AGENTS.md`,
 `docs/design/contracts/RUNTIME-A2-CREDENTIAL-ESCAPE-GOAL.md`,
@@ -64,13 +64,13 @@ is the single highest-value thing in this lane.
 Prove it: apply the A2 classifier mutant (`this.isCredentialFailure = undefined` in `engine.ts`),
 show the runtime file now prints a **named** failure and terminates, then restore `engine.ts`.
 
-Prove the restore with `git diff --exit-code 0988697 -- src/listener/engine.ts` and confirm no
+Prove the restore with `git diff --exit-code 0c785dc -- src/listener/engine.ts` and confirm no
 untracked backup files. Do **not** assert `git status` is clean — your own legitimate edits to
 `tests/listener-runtime.test.ts` are present at that moment, so a clean status is unsatisfiable and
 asserting it would send you chasing a phantom.
 
 **Commit-time proof, required in your result file:** after committing, show
-`git diff 0988697..HEAD --stat -- src/listener/engine.ts src/cloud/command-client.ts src/cloud/delivery.ts src/listener/delivery-journal.ts`
+`git diff 0c785dc..HEAD --stat -- src/listener/engine.ts src/cloud/command-client.ts src/cloud/delivery.ts src/listener/delivery-journal.ts`
 is **empty**. No other gate catches an imperfect restore riding into your one commit.
 
 ## Work item 2 — the durable runtime
