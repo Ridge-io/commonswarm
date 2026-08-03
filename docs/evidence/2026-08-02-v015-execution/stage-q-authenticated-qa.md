@@ -176,7 +176,18 @@ see — kerning, rhythm, inconsistent scale steps, and hierarchy are judgement c
 probe does not measure. A dedicated design pass would be a separate piece of work from this
 correctness QA.
 
-## QA-010 — **the teammate invite flow is broken in production today.** Severity: MAJOR
+## QA-010 — dead sessions are undetectable and unrecoverable. Severity: MAJOR
+
+> **CORRECTION, 2026-08-03.** The original heading read *"the teammate invite flow is broken in
+> production today"*. That was **wrong and is dead**. Once the operator signed out and back in, the
+> invite flow worked first try: HTTP **200**, invitation created, link returned. The invite feature is
+> **fine**.
+>
+> What is actually broken is narrower and, in one respect, worse: **the app cannot detect or recover
+> from a session that no longer exists**, and in that state *every* write fails while the UI insists
+> the user is signed in. I generalised from one broken symptom to a broken feature before testing the
+> healthy case. The corrected finding is below; the diagnosis of the mechanism was right, the headline
+> was not.
 
 Attempting to create a teammate invite from a fully signed-in owner session fails with a user-facing
 error:
@@ -286,8 +297,30 @@ The only escape is to guess that "Sign out" is the fix.
 load and treat a 401/`session_not_found` from any command as a dead session — sign out and prompt
 re-authentication rather than leaving the UI in a state it cannot recover from.
 
+### Confirmed by the healthy-session control
+
+With a freshly re-authenticated session (`/auth/v1/user` → **200**), the identical flow succeeded:
+
+```
+POST /functions/v1/command  ->  200
+{"status":"accepted","ok":true,"invitation_id":"7f96881e-...","event_ids":[...]}
+```
+
+An invite link was returned and the Copy control appeared. **This is the control that discriminates
+a broken feature from a broken session**, and it is the one I should have run before writing the
+first version of this finding.
+
+### What remains true, and why it still matters
+
+The invite feature works. The defect is that a dead session is **invisible and permanent**: reads
+keep succeeding (PostgREST checks only the signature), every write fails with "unauthenticated", the
+UI never offers re-authentication, and a full page reload does not clear it. Any user whose session
+is invalidated elsewhere is trapped until they guess that "Sign out" is the remedy.
+
+Severity stays MAJOR: the trigger is ordinary (sign out on another device, session rotation,
+revocation) and the failure is total and silent.
+
 ### Consequence for Stage Q
 
-The second-human invite, pending-access clearing, and remove/revoke checks **cannot be exercised**
-until this is resolved — the flow they depend on does not complete. They are blocked, not passed and
-not skipped.
+Unblocked. With a live session the invite path completes, so the second-human consumption,
+pending-access clearing, and remove/revoke checks can now proceed.
