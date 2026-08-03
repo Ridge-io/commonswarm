@@ -175,3 +175,65 @@ count is its own kind of wrong, and a reader should know the detector was noisy 
 see — kerning, rhythm, inconsistent scale steps, and hierarchy are judgement calls that a geometry
 probe does not measure. A dedicated design pass would be a separate piece of work from this
 correctness QA.
+
+## QA-010 — **the teammate invite flow is broken in production today.** Severity: MAJOR
+
+Attempting to create a teammate invite from a fully signed-in owner session fails with a user-facing
+error:
+
+> "CommonSwarm did not create the invitation (unauthenticated)."
+
+This is the flow the product page advertises as *"Send one link. They connect their agent."*
+
+### Measured, not inferred
+
+| Probe | Result |
+|---|---|
+| Session identity | signed in as **Ridgeio** (owner), workspaces and feed load |
+| Token claims (secret never printed) | `role: authenticated`, `aud: authenticated`, `sub` present, **not expired — 2,786 s remaining** |
+| Reads via PostgREST (`/rest/v1/...`) | **200** — members, agents, signals, pending_invitations all succeed |
+| Invite write → `/functions/v1/command` | **401 `{"error":"unauthenticated"}`** |
+| Authorization header sent? | **yes** |
+
+So: the same session that successfully reads every workspace resource is rejected by the `command`
+edge function. Reads go to PostgREST and work; the write goes to the edge function and 401s.
+
+The client is not at fault — `site/src/lib/commonswarm.ts:349-355` sends
+`authorization: Bearer <session.access_token>` plus `apikey: <anon>`, which is correct.
+
+### Where it fails, in the source we have
+
+`supabase/functions/command/index.ts:6478-6494` takes the human path for any bearer not prefixed
+`swm_agt_`, and requires **both** calls to succeed:
+
+```ts
+authClient.auth.getUser(credential)
+authClient.auth.getClaims(credential)
+...
+if (error || claimsError || !data.user || !claimsData?.claims) -> 401 "unauthenticated"
+```
+
+A failure in **either** yields the same undifferentiated 401. `getClaims` is the newer API relied on
+for D-035's fresh-auth AMR checks, and it depends on JWT signing-key configuration.
+
+**Stated as uncertainty, not conclusion:** production runs command **v15** (the v0.1.4 deploy); the
+lines above are from the undeployed tree. I have not read the deployed source, so I cannot say which
+of the two calls fails, or whether the deployed code is identical. What is established is the
+behaviour: a valid unexpired authenticated JWT is rejected.
+
+### Why this matters for the release
+
+1. **It is pre-existing, not caused by this release.** Our v0.1.5 changes are not deployed —
+   production is v0.1.4. We did not break this.
+2. **But the same code path ships in v0.1.5**, so unless something in the delta changes it, the
+   release will ship the same defect.
+3. Every *human-initiated* command shares this path — invite, remove member, revoke agent — so the
+   blast radius is likely wider than invites alone. Not yet measured.
+4. The error is also **misleading**: an empty-email submission returned the identical
+   "unauthenticated" message, so the UI cannot distinguish a validation failure from an auth failure.
+
+### Consequence for Stage Q
+
+The second-human invite, pending-access clearing, and remove/revoke checks **cannot be exercised**
+until this is resolved — the flow they depend on does not complete. They are blocked, not passed and
+not skipped.
