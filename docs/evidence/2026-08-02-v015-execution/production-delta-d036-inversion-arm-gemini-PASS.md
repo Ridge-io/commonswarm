@@ -1,46 +1,13 @@
- spectacle
+# D-036 inversion arm — full production surface (`origin/main..HEAD -- supabase/`)
 
- spectacle
+> **Artifact disclosure, added 2026-08-03.** The raw model output opened with **43 lines of the word
+> "spectacle" repeated** before any real content. Those lines are stripped below; they are recorded
+> here rather than silently removed, because an evidence file that launders its own source is not
+> evidence. The substantive body that follows is verbatim. A reader is entitled to weigh the
+> degenerate preamble when judging the review's reliability — the Lead independently executed the
+> function this review flagged rather than resting on it, and found the stated cause was wrong while
+> the symptom was real.
 
- spectacle
-
- spectacle
-
- spectacle
-
- spectacle
-
- spectacle
-
- spectacle
-
- spectacle
-
- spectacle
-
- spectacle
-
- spectacle
-
- spectacle
-
- spectacle
-
- spectacle
-
- spectacle
-
- spectacle
-
- spectacle
-
- spectacle
-
- spectacle
-
- spectacle
-
- spectacle
 ### Prioritized Findings & Inversion Audit
 
 Below is the independent cross-family inversion audit (ruling D-036) evaluating the release delta target `origin/main..HEAD` on `supabase/`.

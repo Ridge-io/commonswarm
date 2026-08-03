@@ -90,3 +90,71 @@ from their reports. No arm here establishes deployment, production behaviour, or
 an exact arm at that scope; no cross-family inversion has run over the full
 `origin/main..freeze` production/edge/migration delta. Under D-036 one arm is never sufficient, so
 that inversion must run before the release is landed.
+
+---
+
+# Second batch — added 2026-08-03 after the M4 checkpoint
+
+> **The same correction, a second time.** M3 caught me claiming "both arms" for `df2f4c9` when only
+> one was on disk. M4 caught the identical thing for `f30974a`, `0f5bbcf`, and `9f0c5a1`. Commit
+> `b7cdb5b` says "Runtime C accepted (both arms)" while its diff adds only the inversion arm. Writing
+> the finding down at M3 did not stop me repeating it, which is worth recording plainly: the fix was
+> a habit, not a document. These three arms were performed at the time; they were not written down.
+
+## `f30974a` — Runtime C · **PASS**
+
+Contract: `docs/design/contracts/RUNTIME-C-GOAL.md`. Delta `b7a0866..f30974a`, three files.
+
+- **Frozen files provably untouched**: `git diff b7a0866..f30974a --stat -- src/listener/engine.ts
+  src/cloud/command-client.ts src/cloud/delivery.ts src/listener/delivery-journal.ts` → empty. Run by
+  me, not read from the report.
+- **Scope exact**: `runtime.ts +768`, `supervisor.ts +72`, `tests/listener-runtime.test.ts +1179`.
+  The optional `durable-runtime.ts` was not created — correct, since it was permitted only if needed.
+- **Gates re-run by me**: root `npm test` 365/365 at the time of review.
+- **Work item 1 verified independently and found PARTIAL** — see
+  `runtime-c-fixture-repair-VERIFIED-PARTIAL.md`. The named control prints red per-test; the whole
+  file still wedges under the mutant from cumulative leakage. Not a product defect (unmutated: green
+  in ~2s). This is the one place the worker's claim was narrower than the goal, and it was caught by
+  applying the mutant rather than reading the report.
+- **Host-switch reachability**: recorded as unreachable, no teardown API added — the correct outcome
+  for a case that cannot occur.
+
+## `0f5bbcf` — Runtime D · **PASS**
+
+Contract: `docs/design/contracts/RUNTIME-D-GOAL.md`. Delta `b7cdb5b..0f5bbcf`, five files.
+
+- **Frozen files untouched**: diff over `engine.ts`, `runtime.ts`, `command-client.ts`,
+  `delivery-journal.ts` → empty.
+- **Scope exact**: the five authorized files, 524 insertions.
+- **`src/cloud/delivery.ts` was permitted for a comment only** — I read the diff rather than assuming:
+  a three-line JSDoc clarification on `DeliveryRow.leaseId` plus a missing trailing newline. Nothing
+  functional. This was worth checking precisely because "comment only" is easy to overrun.
+- **The reducer hardening landed as specified**: unknown listener events take the bounded-metadata
+  path instead of being silently logged as an ACK by fallthrough.
+- **Gates re-run by me**: `npm test` 365/365.
+
+## `9f0c5a1` — config restore fix · **PASS**
+
+Contract: `docs/design/contracts/CONFIG-RESTORE-FIX-GOAL.md`.
+
+> **My error in that contract:** it directed the worker's deliverable to gitignored `scratchpad/`,
+> which is the exact anti-pattern `AGENTS.md` names and which this release has already corrected
+> twice. The evidence below is therefore the Lead's own measurement, taken directly against the
+> database.
+
+- **Scope**: one file, five lines (`git show --stat 9f0c5a1`). `git show 9f0c5a1 -- supabase/ src/`
+  → empty, so neither the migration nor production code moved.
+- **The fix is correct in kind**: `SELECT value::text` and restore that text with a single `::jsonb`
+  cast, replacing a `JSON.stringify` of an already-parsed value. It round-trips instead of re-encoding.
+- **Measured against the live local database, after the fix**:
+  - `SELECT key, value, jsonb_typeof(value) FROM swarm.config WHERE key='delivery_retention_days'`
+    → `delivery_retention_days | 30 | number` (was the string `"\"30\""`).
+  - `SELECT swarm.purge_terminal_signal_deliveries();` — the no-argument cron path that previously
+    failed with `invalid input syntax for type integer: ""30""` — now **succeeds**.
+
+## Standing note
+
+Runtime C, Runtime D, and the config fix each also carry a cross-family inversion arm on disk
+(`runtime-c-d036-inversion-arm-gemini-PASS.md`, `runtime-d-d036-inversion-arm-gemini-PASS.md`, and
+the inversion recorded in the config-fix worker's own gate list). With the records above, every
+landed SHA in this release now has both arms **written down**, not merely asserted.
