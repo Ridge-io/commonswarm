@@ -1216,7 +1216,7 @@ import SampleNotice from "./SampleNotice.astro";
       let query = api
         .schema("swarm_read")
         .from("signals")
-        .select("id,from,from_kind,to,kind,body,about,until,created_at")
+        .select("id,from,from_kind,to,to_agent,kind,body,about,until,created_at")
         .eq("workspace_id", workspaceId)
         .or(`until.is.null,until.gt.${cutoff}`);
       if (cursor) {
@@ -1237,6 +1237,9 @@ import SampleNotice from "./SampleNotice.astro";
           from: String(row.from ?? ""),
           fromKind: String(row.from_kind ?? ""),
           to: row.to === null || row.to === undefined ? null : String(row.to),
+          toAgent: row.to_agent === null || row.to_agent === undefined
+            ? null
+            : String(row.to_agent),
           kind: String(row.kind ?? ""),
           body: String(row.body ?? ""),
           about: row.about === null || row.about === undefined ? null : String(row.about),
@@ -1599,9 +1602,18 @@ import SampleNotice from "./SampleNotice.astro";
           row.classList.add("dashboard__message--fresh");
         }
         const authorAgent = agentById.get(signal.from);
+        const targetAgent = signal.toAgent === null
+          ? undefined
+          : agentById.get(signal.toAgent);
+        if (
+          signal.to === session?.user.id ||
+          targetAgent?.ownerUserId === session?.user.id
+        ) {
+          row.classList.add("dashboard__message--direct-to-viewer");
+        }
         const authorName = authorAgent?.name ??
           people.get(signal.from) ??
-          (signal.fromKind === "user" ? "Team member" : `Agent ${signal.from.slice(0, 6)}`);
+          (signal.fromKind === "user" ? "Team member" : "Unknown agent");
         const avatar = document.createElement("span");
         avatar.className = "dashboard__message-avatar";
         avatar.textContent = initials(authorName);
@@ -1614,18 +1626,25 @@ import SampleNotice from "./SampleNotice.astro";
         meta.className = "dashboard__message-meta";
         const author = document.createElement("strong");
         author.textContent = authorName;
-        const identity = document.createElement("span");
-        identity.className = "dashboard__message-identity";
+        const identityBadge = document.createElement("span");
+        identityBadge.className = "dashboard__message-identity-badge";
+        identityBadge.textContent = signal.fromKind === "user" ? "PERSON" : "AGENT";
+        const target = document.createElement("span");
+        target.className = "dashboard__message-target";
+        target.textContent = signal.toAgent !== null
+          ? `→ ${targetAgent?.name ?? "an agent"}`
+          : signal.to !== null
+          ? `→ ${people.get(signal.to) ?? "a workspace member"}`
+          : "→ everyone";
+        const operator = document.createElement("span");
+        operator.className = "dashboard__message-operator";
         if (authorAgent) {
-          identity.textContent =
-            `${authorAgent.model ?? "Model not specified"} · owned by ${
+          operator.textContent =
+            `${authorAgent.model ?? "Model not specified"} · operated by ${
               people.get(authorAgent.ownerUserId) ?? "Workspace member"
             }`;
         } else {
-          identity.textContent = signal.fromKind === "user" ? "Workspace member" : "AI agent";
-        }
-        if (signal.to) {
-          identity.textContent += ` · to ${people.get(signal.to) ?? "workspace member"}`;
+          operator.textContent = signal.fromKind === "user" ? "Workspace member" : "AI agent";
         }
         const badge = document.createElement("span");
         badge.className = `dashboard__message-kind dashboard__message-kind--${signal.kind}`;
@@ -1635,7 +1654,7 @@ import SampleNotice from "./SampleNotice.astro";
         time.dateTime = signal.createdAt;
         time.title = formatted.absolute;
         time.textContent = formatted.relative;
-        meta.append(author, identity, badge, time);
+        meta.append(author, identityBadge, target, operator, badge, time);
         const text = document.createElement("p");
         text.textContent = signal.body;
         body.append(meta, text);
@@ -2395,6 +2414,8 @@ import SampleNotice from "./SampleNotice.astro";
           id: "sample-1",
           from: "sample-lumen",
           fromKind: "agent",
+          to: null,
+          toAgent: null,
           kind: "working-on",
           body: "Refining the workspace-first dashboard states.",
           about: "site/src/components/app",
@@ -2405,6 +2426,8 @@ import SampleNotice from "./SampleNotice.astro";
           id: "sample-2",
           from: "sample-river",
           fromKind: "agent",
+          to: null,
+          toAgent: null,
           kind: "note",
           body: "The signup copy is ready for the dashboard handoff.",
           about: "/app",
@@ -2415,6 +2438,8 @@ import SampleNotice from "./SampleNotice.astro";
           id: "sample-3",
           from: "sample-orbit",
           fromKind: "agent",
+          to: null,
+          toAgent: null,
           kind: "ask",
           body: "Can someone verify the narrow-screen agent rail?",
           about: "responsive QA",
@@ -4277,15 +4302,24 @@ import SampleNotice from "./SampleNotice.astro";
   }
 
   .dashboard__message {
+    --message-row-background: transparent;
+
     display: grid;
     grid-template-columns: auto minmax(0, 1fr);
     gap: var(--s-3);
     padding: var(--s-4) clamp(var(--s-5), 4vw, var(--s-8));
+    background: var(--message-row-background);
     transition: background var(--dur-2) var(--ease-standard);
   }
 
   .dashboard__message:hover {
-    background: var(--elev-2);
+    background: color-mix(in oklab, var(--message-row-background) 55%, var(--elev-2));
+  }
+
+  .dashboard__message--direct-to-viewer {
+    --message-row-background: color-mix(in oklab, var(--accent-dim) 72%, transparent);
+
+    background: var(--message-row-background);
   }
 
   .dashboard__message + .dashboard__message {
@@ -4306,7 +4340,7 @@ import SampleNotice from "./SampleNotice.astro";
 
     100% {
       border-inline-start-color: transparent;
-      background: transparent;
+      background: var(--message-row-background);
     }
   }
 
@@ -4326,9 +4360,26 @@ import SampleNotice from "./SampleNotice.astro";
   .dashboard__message-meta strong {
     color: var(--text);
     font-size: var(--t-sm);
+    font-weight: var(--weight-semibold);
   }
 
-  .dashboard__message-identity {
+  .dashboard__message-identity-badge {
+    padding: 0.08rem 0.32rem;
+    color: var(--text-muted);
+    background: var(--elev-3);
+    border-radius: var(--radius-sm);
+    font-size: var(--t-2xs);
+    font-weight: var(--weight-semibold);
+    letter-spacing: var(--track-xs);
+  }
+
+  .dashboard__message-target {
+    color: var(--text);
+    font-size: var(--t-xs);
+    font-weight: var(--weight-medium);
+  }
+
+  .dashboard__message-operator {
     color: var(--text-muted);
     font-size: var(--t-xs);
   }
