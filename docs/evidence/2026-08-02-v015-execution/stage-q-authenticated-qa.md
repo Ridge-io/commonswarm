@@ -50,6 +50,44 @@ break and the `auto` column takes its intrinsic width. Alternatively size the gr
 layout. Whether member management should be reachable on mobile is a product question, recorded here
 rather than assumed to be a defect.
 
+## Cold-browser signed-out state — PASS, and a security-positive result
+
+Driven in a **fresh browser context** (separate cookie jar) so the operator's live session was never
+disturbed — deliberately, rather than signing them out.
+
+`/start` redirects to `/app`, and `/app` renders the signed-out state correctly:
+
+```
+document.cookie                 -> empty
+mentions "Ridgeio"              -> false
+mentions "Langridge"            -> false
+"Sign out" present              -> false
+```
+
+**An unauthenticated browser sees no other user's data.** That is the isolation property that
+matters most on this page, and it holds.
+
+Both sign-in methods are offered: magic link ("No password. The link returns you to this page.") and
+"Sign in with GitHub". The legal footer is honest about the deferred-legal decision — Terms and
+Privacy are labelled *"drafts published for review (not yet in force)"* rather than presented as
+binding.
+
+## Accessibility and validation — PASS
+
+| Check | Result |
+|---|---|
+| Email input | `type=email`, `required`, label "Email address", `autocomplete="email"` |
+| Skip link | present (`Skip to content`) |
+| Tab order | logical: skip link → brand → email → send-link → GitHub → Terms → Privacy |
+| Images missing `alt` | 0 |
+| Visible `<h1>` count | 1 |
+| Empty submit | blocked: "Please fill out this field." |
+| Invalid email | blocked: "Please include an '@' in the email address." |
+
+Four `<h1>` elements exist in the DOM, but three belong to other SPA states and are hidden by
+`display:none` on an ancestor section, which removes them from the accessibility tree. Checked
+rather than assumed, because "multiple H1s" is a real smell when the hiding is only visual.
+
 ## Not yet established — the largest remaining gap
 
 The **cold-browser sign-in** has not been exercised. A note in the production feed from five days ago
