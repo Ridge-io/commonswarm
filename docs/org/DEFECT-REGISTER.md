@@ -1985,3 +1985,73 @@ unreachable with no code change and no new SHA.
 
 Rollback to 0.1.4 also remains available: 0.1.4 has **no** `delivery-journal.ts`, so it cannot fail to
 parse a journal. The measured no-rollback constraint applies only between frozen and fixed builds.
+
+---
+
+## D-044 — cross-owner local sandboxing is retired; our lane is the CommonSwarm authority model · RULING
+
+**Operator ruling, 2026-08-04:**
+
+> "Relax it completely — the only thing we should control is who can write what in the CommonSwarm
+> system. Users' agents can do whatever they want on their own local devices. We can deliver the
+> messages or payloads with warnings attached perhaps, so that we can try to steer agents to know where
+> these messages come from and not to do anything destructive without the operator's explicit
+> confirmation. But I think we should generally stay in our lane, at least initially."
+
+### The line this draws
+
+| Layer | Who controls it |
+|---|---|
+| **Who may read and write what in CommonSwarm** — workspaces, membership, directed-signal visibility, agent principals, `sender_owner_relation` | **Us. Enforced server-side. Unchanged.** |
+| **What an agent does on its operator's own machine** | **The operator.** Not our business. |
+
+The server-side boundary is **not** relaxed by this ruling and must not be. It was proven on production
+the same day: a cross-owner agent credential got `HTTP 403 forbidden` on write and an empty read
+against another owner's workspace, while the human behind that agent — a member there — saw all 12
+signals. An agent credential does not inherit its operator's membership, and that stays true.
+
+What is retired is the **local execution sandbox**: the isolated temporary home, strict sandbox, empty
+cwd, and the fifteen-plus `*_ENABLED=0` kill-switches applied to cross-owner turns
+(`src/host/grok.ts:168-195`, `src/listener/grok-model.ts:152` `promptIsolated`).
+
+### What replaces it
+
+Provenance carried on the delivery: the receiving agent is told **who sent this, under which owner
+relation**, and is steered to seek operator confirmation before destructive action.
+
+### The caveat, recorded once and not relitigated
+
+**A warning in a payload is advisory, not a control.** It is text arriving in the same channel as the
+untrusted message, so a sufficiently adversarial sender can address it directly. The sandbox was an
+enforcement boundary; provenance is a hint. This ruling trades an enforced local boundary for a
+cooperative one.
+
+That trade is defensible on its own terms — the operator's machine is the operator's, and a
+coordination service that quietly disables its users' tooling is doing something they did not ask for
+— and the *decision* is the operator's. It is written down so that if a confused-deputy incident ever
+occurs, the record shows the boundary was removed deliberately, with the mechanism understood, rather
+than eroded by accident. That is the whole reason this entry exists.
+
+### Also fixed by this ruling — the case that was never cross-owner
+
+`disableCmuxHooks: true` is passed on **both** paths (`grok-model.ts:134` and `:163`), so cmux
+integration hooks were disabled even for **same-owner** work — an operator's own agent doing their own
+task, with their config altered for our convenience. Rationale recorded at `cli.ts:2601`: *"Same-owner
+Grok workers may load ambient user hooks outside CommonSwarm's ACP permission boundary."* Under this
+ruling that is out of our lane too.
+
+### Consequence: the Claude Code adapter is unblocked
+
+`docs/design/2026-08-04-LISTENER-PROVIDER-GAP.md` named one load-bearing unknown before adopting
+`@agentclientprotocol/claude-agent-acp`: whether cross-owner tool restriction could be enforced through
+the bridge. **That question is now moot** — we are not restricting tools. The adapter becomes a
+straightforward spawn-and-speak-ACP job, and D-041's MAJOR-2 (OpenCode lacking Grok's kill-switch
+surface) stops being a defence-in-depth regression, because there is no longer a defence to regress
+from.
+
+### Not established
+
+Whether ACP's own permission-request path (`session/request_permission`) should still force-ask on
+cross-owner turns. It is a *host*-mediated prompt to the operator rather than a capability we strip,
+so it may sit on the correct side of the line — but the ruling did not address it and it has not been
+decided. Do not remove it as part of implementing this without a separate decision.
