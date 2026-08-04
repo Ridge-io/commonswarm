@@ -520,6 +520,29 @@ import "../../styles/tokens.css";
             </section>
           </div>
         </section>
+
+        <aside
+          class="dashboard__entity-panel"
+          data-entity-panel
+          aria-labelledby="dashboard-entity-panel-title"
+          hidden
+        >
+          <header class="dashboard__entity-panel-head">
+            <p>Profile</p>
+            <button
+              class="dashboard__icon-button"
+              type="button"
+              data-entity-panel-close
+              aria-label="Close profile panel"
+              title="Close profile panel"
+            >
+              <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+                <path d="M6 6l12 12M18 6L6 18"></path>
+              </svg>
+            </button>
+          </header>
+          <div class="dashboard__entity-panel-body" data-entity-panel-body></div>
+        </aside>
       </div>
     </section>
   </div>
@@ -646,6 +669,7 @@ import "../../styles/tokens.css";
   import { isInviteSubmitCurrent } from "../../lib/invite-submit";
   import { PendingRefreshGate } from "../../lib/pending-refresh";
   import { BootFocusGate } from "../../lib/boot-focus";
+  import { agentEntityView, truncateEntityId } from "../../lib/entity-panel";
   import {
     filterSignals,
     signalCounts,
@@ -692,6 +716,10 @@ import "../../styles/tokens.css";
     createdAt: string;
     id: string;
   }
+
+  type EntityRef =
+    | { kind: "agent"; id: string }
+    | { kind: "person"; id: string };
 
   const app = document.querySelector<HTMLElement>("live-dashboard");
 
@@ -763,6 +791,8 @@ import "../../styles/tokens.css";
     let freshInviteId = "";
     let freshInviteWorkspaceId = "";
     let inviteIntent: { email: string; commandId: string } | null = null;
+    let entityPanelOrigin: HTMLElement | null = null;
+    let selectedEntity: EntityRef | null = null;
 
     const SIGNAL_PAGE_SIZE = 50;
     const SIGNAL_FETCH_SIZE = SIGNAL_PAGE_SIZE + 1;
@@ -1373,6 +1403,212 @@ import "../../styles/tokens.css";
       node.classList.add("dashboard__avatar--tinted");
     };
 
+    const entityDate = (value: string): string => {
+      const date = new Date(value);
+      return Number.isNaN(date.getTime())
+        ? value
+        : new Intl.DateTimeFormat(undefined, {
+            dateStyle: "medium",
+            timeStyle: "short",
+          }).format(date);
+    };
+
+    function closeEntityPanel(restoreFocus = true): void {
+      const panel = one<HTMLElement>("[data-entity-panel]");
+      if (!panel || panel.hidden) return;
+      panel.hidden = true;
+      one<HTMLElement>(".dashboard__frame")?.classList.remove(
+        "dashboard__frame--entity-panel",
+      );
+      selectedEntity = null;
+      if (restoreFocus && entityPanelOrigin?.isConnected) {
+        entityPanelOrigin.focus({ preventScroll: true });
+      }
+      entityPanelOrigin = null;
+    }
+
+    function entityControl(
+      label: string,
+      entity: EntityRef,
+      className: string,
+    ): HTMLButtonElement {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = className;
+      button.textContent = label;
+      button.dataset.entityKind = entity.kind;
+      button.dataset.entityId = entity.id;
+      button.addEventListener("click", () => openEntityPanel(entity, button));
+      return button;
+    }
+
+    const appendEntityField = (
+      list: HTMLDListElement,
+      term: string,
+      value: string,
+    ): void => {
+      const label = document.createElement("dt");
+      label.textContent = term;
+      const detail = document.createElement("dd");
+      detail.textContent = value;
+      list.append(label, detail);
+    };
+
+    const appendEntityId = (
+      list: HTMLDListElement,
+      term: string,
+      value: string,
+    ): void => {
+      const label = document.createElement("dt");
+      label.textContent = term;
+      const detail = document.createElement("dd");
+      if (value === "Not available") {
+        detail.textContent = value;
+      } else {
+        const disclosure = document.createElement("details");
+        disclosure.className = "dashboard__entity-id";
+        const summary = document.createElement("summary");
+        summary.textContent = truncateEntityId(value);
+        summary.title = value;
+        const full = document.createElement("code");
+        full.textContent = value;
+        disclosure.append(summary, full);
+        detail.append(disclosure);
+      }
+      list.append(label, detail);
+    };
+
+    function renderEntityPanel(): void {
+      const body = one<HTMLElement>("[data-entity-panel-body]");
+      if (!body || !selectedEntity) return;
+      body.replaceChildren();
+
+      const identity = document.createElement("div");
+      identity.className = "dashboard__entity-identity";
+      const avatar = document.createElement("span");
+      avatar.className = "dashboard__entity-avatar";
+      avatar.setAttribute("aria-hidden", "true");
+      const headingWrap = document.createElement("div");
+      const heading = document.createElement("h2");
+      heading.id = "dashboard-entity-panel-title";
+      const identityBadge = document.createElement("span");
+      identityBadge.className = "dashboard__entity-badge";
+
+      if (selectedEntity.kind === "agent") {
+        const agent = agents.find((candidate) => candidate.principalId === selectedEntity?.id);
+        if (!agent) {
+          closeEntityPanel(false);
+          return;
+        }
+        const status = accessStatuses.find(
+          (candidate) => candidate.principalId === agent.principalId,
+        );
+        const details = agentEntityView(
+          agent,
+          status,
+          people.get(agent.ownerUserId) ?? "Workspace member",
+          entityDate,
+        );
+        avatar.textContent = initials(details.name);
+        markAgentAvatar(avatar, details.principalId);
+        heading.textContent = details.name;
+        identityBadge.textContent = "AGENT";
+        headingWrap.append(heading, identityBadge);
+        identity.append(avatar, headingWrap);
+        body.append(identity);
+
+        if (details.revoked) {
+          const revoked = document.createElement("p");
+          revoked.className = "dashboard__entity-revoked";
+          revoked.textContent = `Access revoked · ${details.revokedAt}`;
+          body.append(revoked);
+        }
+
+        const info = document.createElement("section");
+        info.className = "dashboard__entity-section";
+        const infoTitle = document.createElement("h3");
+        infoTitle.textContent = "Info";
+        const ownerLine = document.createElement("p");
+        ownerLine.append(
+          "operated by ",
+          entityControl(
+            details.ownerName,
+            { kind: "person", id: details.ownerUserId },
+            "dashboard__entity-link",
+          ),
+        );
+        const infoList = document.createElement("dl");
+        appendEntityField(infoList, "Model", details.model);
+        appendEntityId(infoList, "Principal ID", details.principalId);
+        info.append(infoTitle, ownerLine, infoList);
+
+        const runtime = document.createElement("section");
+        runtime.className = "dashboard__entity-section";
+        const runtimeTitle = document.createElement("h3");
+        runtimeTitle.textContent = "Runtime";
+        const runtimeList = document.createElement("dl");
+        appendEntityId(runtimeList, "Token ID", details.tokenId);
+        appendEntityField(runtimeList, "Issued", details.issuedAt);
+        appendEntityField(runtimeList, "Expires", details.expiresAt);
+        appendEntityField(runtimeList, "First used", details.firstUsedAt);
+        appendEntityField(runtimeList, "Revoked", details.revokedAt);
+        runtime.append(runtimeTitle, runtimeList);
+        body.append(info, runtime);
+      } else {
+        const member = members.find((candidate) => candidate.userId === selectedEntity?.id);
+        if (!member) {
+          closeEntityPanel(false);
+          return;
+        }
+        avatar.textContent = initials(member.name);
+        heading.textContent = member.name;
+        identityBadge.textContent = "PERSON";
+        headingWrap.append(heading, identityBadge);
+        identity.append(avatar, headingWrap);
+
+        const related = document.createElement("section");
+        related.className = "dashboard__entity-section";
+        const relatedTitle = document.createElement("h3");
+        relatedTitle.textContent = "Agents";
+        const relatedList = document.createElement("ul");
+        relatedList.className = "dashboard__entity-agent-list";
+        const operatedAgents = agents.filter((agent) => agent.ownerUserId === member.userId);
+        if (operatedAgents.length === 0) {
+          const empty = document.createElement("li");
+          empty.textContent = "No agents";
+          relatedList.append(empty);
+        } else {
+          for (const agent of operatedAgents) {
+            const item = document.createElement("li");
+            item.append(entityControl(
+              agent.name,
+              { kind: "agent", id: agent.principalId },
+              "dashboard__entity-agent-link",
+            ));
+            relatedList.append(item);
+          }
+        }
+        related.append(relatedTitle, relatedList);
+        body.append(identity, related);
+      }
+    }
+
+    function openEntityPanel(entity: EntityRef, trigger: HTMLElement): void {
+      const panel = one<HTMLElement>("[data-entity-panel]");
+      if (!panel) return;
+      if (!panel.contains(trigger)) entityPanelOrigin = trigger;
+      selectedEntity = entity;
+      panel.hidden = false;
+      one<HTMLElement>(".dashboard__frame")?.classList.add(
+        "dashboard__frame--entity-panel",
+      );
+      renderEntityPanel();
+      window.requestAnimationFrame(() => {
+        one<HTMLButtonElement>("[data-entity-panel-close]")
+          ?.focus({ preventScroll: true });
+      });
+    }
+
     /* The rail mirrors participants as presence/navigation only. A person owns the nested
        agent rows below them; agents whose owner is outside the current member roster stay
        visible in one trailing, honestly labelled fallback group. The scrolling list owns
@@ -1892,24 +2128,61 @@ import "../../styles/tokens.css";
         const meta = document.createElement("header");
         meta.className = "dashboard__message-meta";
         const author = document.createElement("strong");
-        author.textContent = authorName;
+        const authorEntity = authorAgent
+          ? { kind: "agent" as const, id: authorAgent.principalId }
+          : signal.fromKind === "user" && people.has(signal.from)
+          ? { kind: "person" as const, id: signal.from }
+          : null;
+        if (authorEntity) {
+          author.append(entityControl(
+            authorName,
+            authorEntity,
+            "dashboard__message-entity dashboard__message-author",
+          ));
+        } else {
+          author.textContent = authorName;
+        }
         const identityBadge = document.createElement("span");
         identityBadge.className = "dashboard__message-identity-badge";
         identityBadge.textContent = signal.fromKind === "user" ? "PERSON" : "AGENT";
         const target = document.createElement("span");
         target.className = "dashboard__message-target";
-        target.textContent = signal.toAgent !== null
-          ? `→ ${targetAgent?.name ?? "an agent"}`
-          : signal.to !== null
-          ? `→ ${people.get(signal.to) ?? "a workspace member"}`
-          : "→ everyone";
+        target.append("→ ");
+        if (signal.toAgent !== null && targetAgent) {
+          target.append(entityControl(
+            targetAgent.name,
+            { kind: "agent", id: targetAgent.principalId },
+            "dashboard__message-entity",
+          ));
+        } else if (signal.to !== null && people.has(signal.to)) {
+          target.append(entityControl(
+            people.get(signal.to)!,
+            { kind: "person", id: signal.to },
+            "dashboard__message-entity",
+          ));
+        } else {
+          target.append(
+            signal.toAgent !== null
+              ? "an agent"
+              : signal.to !== null
+              ? "a workspace member"
+              : "everyone",
+          );
+        }
         const operator = document.createElement("span");
         operator.className = "dashboard__message-operator";
         if (authorAgent) {
-          operator.textContent =
-            `${authorAgent.model ?? "Model not specified"} · operated by ${
-              people.get(authorAgent.ownerUserId) ?? "Workspace member"
-            }`;
+          operator.append(`${authorAgent.model ?? "Model not specified"} · operated by `);
+          const ownerName = people.get(authorAgent.ownerUserId);
+          if (ownerName) {
+            operator.append(entityControl(
+              ownerName,
+              { kind: "person", id: authorAgent.ownerUserId },
+              "dashboard__message-entity",
+            ));
+          } else {
+            operator.append("Workspace member");
+          }
         } else {
           operator.textContent = signal.fromKind === "user" ? "Workspace member" : "AI agent";
         }
@@ -2129,6 +2402,7 @@ import "../../styles/tokens.css";
 
     /** Clear every workspace-scoped value when auth identity or availability changes. */
     const resetWorkspaceSessionState = (): void => {
+      closeEntityPanel(false);
       closeWorkspaceMenu();
       closeRosterDialog();
       one<SecretHoldingAgentConnect>("agent-connect")?.clearPrompt(false);
@@ -2354,6 +2628,7 @@ import "../../styles/tokens.css";
     const openWorkspace = async (workspaceId: string): Promise<void> => {
       const selected = workspaces.find((workspace) => workspace.id === workspaceId);
       if (!selected) return;
+      closeEntityPanel(false);
       closeWorkspaceMenu();
       const changesWorkspace = activeWorkspaceId !== selected.id;
       if (changesWorkspace) {
@@ -2705,6 +2980,44 @@ import "../../styles/tokens.css";
         { principalId: "sample-river", name: "River", model: "GPT-5", ownerUserId: "sample-owner" },
         { principalId: "sample-orbit", name: "Orbit", model: "Claude", ownerUserId: "sample-owner" },
         { principalId: "sample-lumen", name: "Lumen", model: "Gemini", ownerUserId: "sample-member" },
+      ];
+      accessStatuses = [
+        {
+          workspaceId: "sample-design-studio",
+          principalId: "sample-river",
+          ownerUserId: "sample-owner",
+          agentName: "River",
+          model: "GPT-5",
+          tokenId: "sample-token-river-8c51b6a2",
+          issuedAt: new Date(now - 50 * 60_000).toISOString(),
+          expiresAt: new Date(now + 7 * 60 * 60_000).toISOString(),
+          firstUsedAt: null,
+          revokedAt: null,
+        },
+        {
+          workspaceId: "sample-design-studio",
+          principalId: "sample-orbit",
+          ownerUserId: "sample-owner",
+          agentName: "Orbit",
+          model: "Claude",
+          tokenId: "sample-token-orbit-745a329f",
+          issuedAt: new Date(now - 90 * 60_000).toISOString(),
+          expiresAt: new Date(now + 6 * 60 * 60_000).toISOString(),
+          firstUsedAt: new Date(now - 82 * 60_000).toISOString(),
+          revokedAt: new Date(now - 12 * 60_000).toISOString(),
+        },
+        {
+          workspaceId: "sample-design-studio",
+          principalId: "sample-lumen",
+          ownerUserId: "sample-member",
+          agentName: "Lumen",
+          model: "Gemini",
+          tokenId: "sample-token-lumen-33a97cd1",
+          issuedAt: new Date(now - 70 * 60_000).toISOString(),
+          expiresAt: new Date(now + 6 * 60 * 60_000).toISOString(),
+          firstUsedAt: new Date(now - 68 * 60_000).toISOString(),
+          revokedAt: null,
+        },
       ];
       signals = [
         {
@@ -3167,6 +3480,16 @@ import "../../styles/tokens.css";
     });
     one<HTMLButtonElement>("[data-roster-open]")?.addEventListener("click", openRosterDialog);
     one<HTMLButtonElement>("[data-roster-close]")?.addEventListener("click", closeRosterDialog);
+    one<HTMLButtonElement>("[data-entity-panel-close]")?.addEventListener(
+      "click",
+      () => closeEntityPanel(true),
+    );
+    document.addEventListener("keydown", (event) => {
+      const panel = one<HTMLElement>("[data-entity-panel]");
+      if (event.key !== "Escape" || !panel || panel.hidden) return;
+      event.preventDefault();
+      closeEntityPanel(true);
+    });
     one<HTMLButtonElement>("[data-add-agent-dialog]")?.addEventListener("click", () => {
       closeRosterDialog();
       openAgentChoice();
@@ -3733,6 +4056,10 @@ import "../../styles/tokens.css";
     border-radius: 0;
     background: var(--surface);
     box-shadow: none;
+  }
+
+  .dashboard__frame--entity-panel {
+    grid-template-columns: var(--dashboard-rail) minmax(0, 1fr) minmax(18rem, 22rem);
   }
 
   .dashboard__sample-notice:not([hidden]) + .dashboard__frame {
@@ -4341,6 +4668,193 @@ import "../../styles/tokens.css";
     display: grid;
     grid-template-rows: auto minmax(0, 1fr);
     background: var(--surface);
+  }
+
+  .dashboard__entity-panel {
+    min-inline-size: 0;
+    max-block-size: 100svh;
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    overflow: hidden;
+    background: var(--surface-3);
+    border-inline-start: 1px solid var(--border);
+  }
+
+  .dashboard__entity-panel-head {
+    min-block-size: 4rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--s-3);
+    padding: var(--s-3) var(--s-4);
+    border-block-end: 1px solid var(--border);
+  }
+
+  .dashboard__entity-panel-head p {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--t-xs);
+    font-weight: var(--weight-semibold);
+    letter-spacing: var(--track-eyebrow);
+    text-transform: uppercase;
+  }
+
+  .dashboard__entity-panel-body {
+    min-block-size: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  .dashboard__entity-identity {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: center;
+    gap: var(--s-3);
+    padding: var(--s-6) var(--s-4);
+  }
+
+  .dashboard__entity-avatar {
+    inline-size: 3rem;
+    block-size: 3rem;
+    display: grid;
+    place-items: center;
+    color: var(--text);
+    background: var(--surface-2);
+    border: 1px solid var(--border-strong);
+    border-radius: 50%;
+    font-family: var(--font-mono);
+    font-size: var(--t-xs);
+    font-weight: var(--weight-semibold);
+  }
+
+  .dashboard__entity-avatar.dashboard__avatar--tinted {
+    background: color-mix(in oklab, hsl(var(--avatar-hue) 58% 48%) 20%, var(--surface-2));
+    border-color: color-mix(in oklab, hsl(var(--avatar-hue) 70% 58%) 52%, var(--border));
+  }
+
+  .dashboard__entity-identity h2 {
+    margin: 0;
+    color: var(--text);
+    font-size: var(--t-lg);
+    line-height: var(--lh-lg);
+    overflow-wrap: anywhere;
+  }
+
+  .dashboard__entity-badge {
+    color: var(--text-muted);
+    font-size: var(--t-2xs);
+    font-weight: var(--weight-semibold);
+    letter-spacing: var(--track-xs);
+  }
+
+  .dashboard__entity-revoked {
+    margin: 0 var(--s-4) var(--s-4);
+    padding: var(--s-3);
+    color: var(--danger);
+    background: var(--danger-dim);
+    border: 1px solid color-mix(in oklab, var(--danger) 42%, var(--border));
+    border-radius: var(--radius-sm);
+    font-size: var(--t-xs);
+    font-weight: var(--weight-semibold);
+  }
+
+  .dashboard__entity-section {
+    display: grid;
+    gap: var(--s-3);
+    padding: var(--s-5) var(--s-4);
+    border-block-start: 1px solid var(--border);
+  }
+
+  .dashboard__entity-section h3 {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--t-2xs);
+    font-weight: var(--weight-semibold);
+    letter-spacing: var(--track-eyebrow);
+    text-transform: uppercase;
+  }
+
+  .dashboard__entity-section > p {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--t-sm);
+  }
+
+  .dashboard__entity-link,
+  .dashboard__entity-agent-link,
+  .dashboard__message-entity {
+    padding: 0;
+    color: inherit;
+    background: transparent;
+    border: 0;
+    font: inherit;
+    font-weight: inherit;
+    text-decoration: underline;
+    text-decoration-color: color-mix(in oklab, currentColor 40%, transparent);
+    text-underline-offset: 0.16em;
+    cursor: pointer;
+  }
+
+  .dashboard__entity-link:hover,
+  .dashboard__entity-agent-link:hover,
+  .dashboard__message-entity:hover {
+    color: var(--accent-bright);
+    text-decoration-color: currentColor;
+  }
+
+  .dashboard__entity-link:focus-visible,
+  .dashboard__entity-agent-link:focus-visible,
+  .dashboard__message-entity:focus-visible {
+    outline: none;
+    box-shadow: var(--focus-ring);
+  }
+
+  .dashboard__entity-section dl {
+    display: grid;
+    grid-template-columns: minmax(6rem, auto) minmax(0, 1fr);
+    gap: var(--s-2) var(--s-3);
+    margin: 0;
+    font-size: var(--t-xs);
+  }
+
+  .dashboard__entity-section dt {
+    color: var(--text-muted);
+  }
+
+  .dashboard__entity-section dd {
+    min-inline-size: 0;
+    margin: 0;
+    color: var(--text);
+    overflow-wrap: anywhere;
+  }
+
+  .dashboard__entity-id summary {
+    inline-size: fit-content;
+    color: var(--text);
+    font-family: var(--font-mono);
+    cursor: pointer;
+  }
+
+  .dashboard__entity-id code {
+    display: block;
+    margin-block-start: var(--s-2);
+    color: var(--text-muted);
+    font-size: var(--t-2xs);
+    overflow-wrap: anywhere;
+  }
+
+  .dashboard__entity-agent-list {
+    display: grid;
+    gap: var(--s-2);
+    padding: 0;
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--t-sm);
+    list-style: none;
+  }
+
+  .dashboard__entity-agent-link {
+    color: var(--text);
   }
 
   .dashboard__channel-head {
@@ -5195,6 +5709,21 @@ import "../../styles/tokens.css";
       grid-template-rows: auto minmax(0, 1fr);
       border: 0;
       border-radius: 0;
+    }
+
+    .dashboard__frame--entity-panel {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .dashboard__entity-panel {
+      position: fixed;
+      z-index: 8;
+      inset-block: 0;
+      inset-inline-end: 0;
+      inline-size: min(92vw, 22rem);
+      max-block-size: 100svh;
+      border-inline-start: 1px solid var(--border-strong);
+      box-shadow: var(--shadow-lg);
     }
 
     .dashboard__sample-notice {

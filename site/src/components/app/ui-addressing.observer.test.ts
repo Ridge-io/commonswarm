@@ -49,7 +49,7 @@ test("built feed gives every row a literal identity badge and explicit readable 
     "dashboard__message-target",
     "AGENT",
     "PERSON",
-    "→ everyone",
+    "everyone",
     "an agent",
     "workspace member",
   ]) {
@@ -57,14 +57,18 @@ test("built feed gives every row a literal identity badge and explicit readable 
   }
   assert.match(
     renderFeed,
-    /signal\.toAgent !== null[\s\S]*targetAgent\?\.name \?\? "an agent"[\s\S]*signal\.to !== null[\s\S]*people\.get\(signal\.to\) \?\? "a workspace member"[\s\S]*"→ everyone"/,
+    /target\.append\("→ "\)[\s\S]*signal\.toAgent !== null && targetAgent[\s\S]*targetAgent\.name[\s\S]*signal\.to !== null && people\.has\(signal\.to\)[\s\S]*people\.get\(signal\.to\)![\s\S]*"an agent"[\s\S]*"a workspace member"[\s\S]*"everyone"/,
   );
 });
 
 test("agent feed attribution says operated by and retires owned by in that renderer", () => {
   assert.ok(builtAssets.includes("operated by"));
   assert.doesNotMatch(renderFeed, /owned by/);
-  assert.match(renderFeed, /people\.get\(authorAgent\.ownerUserId\) \?\? "Workspace member"/);
+  assert.match(renderFeed, /const ownerName = people\.get\(authorAgent\.ownerUserId\)/);
+  assert.match(
+    renderFeed,
+    /if \(ownerName\)[\s\S]*\{ kind: "person", id: authorAgent\.ownerUserId \}[\s\S]*operator\.append\("Workspace member"\)/,
+  );
 });
 
 test("direct-to-viewer rows ship a distinct tint for people and their operated agents", () => {
