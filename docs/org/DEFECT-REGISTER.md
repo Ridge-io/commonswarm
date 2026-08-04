@@ -1671,3 +1671,67 @@ unmeasured. Do not record this as cleared.**
 
 Minor, same test: both clients print "Signing you in with GitHub, opening your browser" even with
 `--no-browser`. The flag works — the URL is printed as documented — only the narration contradicts it.
+
+---
+
+## D-039 — the inversion arm must differ from the AUTHOR's family, not merely from Claude · RULING
+
+**Operator ruling, 2026-08-03:** *"If it was written by Codex have a Claude Op. 5 agent review it,
+not Gemini."*
+
+### What changes
+
+D-036 named the permitted pairing as one exact-review arm (Codex or Claude) plus one inversion arm
+from *"a different family (Google Gemini via `agy`, or Kimi K3 via Pi)"*. Read literally, that fixed
+the inversion arm to a short list of vendors regardless of who wrote the code.
+
+**The governing property is independence from the AUTHOR, not membership of a particular vendor
+list.** Most of v0.1.5 was written by Codex workers. For Codex-authored code, a **Claude Opus 5 arm
+is a genuine cross-family inversion** and is now the required one. Gemini is not to be used as the
+inversion arm for Codex-authored code.
+
+The two-arm rule itself is unchanged and still must not erode. This narrows *which* arm is
+acceptable; it does not permit reviewing with one.
+
+### Why the literal reading was actively worse, measured on this release
+
+Gemini ran as the inversion arm at full delta scope and returned a substantive ~40 KB review. Every
+one of its three most serious findings was traced to source and refuted (see
+`docs/evidence/2026-08-02-v015-execution/stage7b-two-arm-delta-review.md`).
+
+**Its file:line citations were fabricated.** It cited `src/cloud/delivery.ts:125-188` for a method
+that is type declarations at that range, and `src/listener/delivery-journal.ts:790-835` for a function
+that is lease/ACK code there. The prose described real code shapes; the coordinates pointed elsewhere.
+
+That failure mode is worse than a weak review in both directions at once: a reviewer who *trusts* the
+coordinates edits working code, and a reviewer who *spot-checks only* the coordinates discards a
+review that was partly legitimate. A gate whose output must itself be re-verified line by line is
+doing a fraction of the work it appears to do.
+
+### Second, independent reason the ruling is right
+
+The arm nearly could not run at all. Measured 2026-08-03: Kimi via Pi has **no API key configured**;
+Grok remains credit-exhausted per D-036; and `agy` **refused two successive security-framed prompts**
+before accepting a correctness framing, then failed again on headless tool permissions. Of the two
+arms D-036 permits, one was unusable and the other was one refusal away from producing a false
+"release blocked".
+
+A gate that depends on a single external vendor's willingness to perform the task is a gate with a
+single point of failure that is **outside our control and gives no warning**. Claude Opus 5 as the
+inversion arm for Codex-authored code removes that dependency for the common case.
+
+### Standing method note this produced
+
+`agy` answered a neutral control prompt with `ARM ALIVE` while refusing the review. **That probe is
+the only thing that distinguished a declining arm from a dead command** — both produce an empty
+result, and the honest-looking conclusion from silence alone ("the arm is down, we are blocked") was
+the wrong one. Any arm returning nothing must be probed with a trivial prompt before its silence is
+interpreted.
+
+### Not established
+
+Whether Gemini's remaining lower-severity findings contain anything real; they were read and
+triaged in severity order, and only the top three were traced to source in full. Whether a Claude arm
+carries its own systematic blind spots on Codex-authored code — that is the obvious risk of this
+ruling and it is **not** measured. The ruling trades a known, measured failure mode for an unmeasured
+one, which is a reasonable trade only while the two-arm rule stands.
