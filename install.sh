@@ -154,9 +154,19 @@ esac
 # went on telling every new user they could not have the thing they could now have. If the
 # flag is ever turned off again, `cswarm new` prints "not open on this deployment yet" and
 # this paragraph has to come back with it.
-printf '\nNext, if you have an invite link:\n\n  cswarm accept --link-stdin\n\n'
-printf 'Paste the link when prompted -- passing it as an argument would leave a live\n'
-printf 'capability in your shell history.\n'
+# The mechanism here was WRONG until 2026-08-04 and it broke the primary onboarding path.
+# It said "cswarm accept --link-stdin" then "Paste the link when prompted". There is no
+# prompt: --link-stdin reads stdin and REFUSES a TTY ("--link-stdin requires an invite link
+# to be piped on stdin"), so paste-then-Ctrl-D does not work either. A stranger holding an
+# invite link and following this text was stopped at the first instruction. Found by a
+# second-machine dogfood on production, not by any test -- nothing here is executed by a gate.
+# The stated REASON was always right and is kept; only the method was fiction. Piping is also
+# what README.md documents.
+printf '\nNext, if you have an invite link:\n\n'
+printf '  read -r LINK    # paste the link, then press Enter\n'
+printf '  printf %%s "$LINK" | cswarm accept --link-stdin\n\n'
+printf 'The link is piped in rather than passed as an argument, because an argument would\n'
+printf 'leave a live capability in your shell history and in the process list.\n'
 printf '\nNo invite? Make your own workspace. It is free and takes no card:\n\n'
 printf '  https://commonswarm.com/app\n\n'
 # `<project name>`, not `<workspace name>`: that is the placeholder `cswarm --help` prints
