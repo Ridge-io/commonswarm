@@ -1805,10 +1805,47 @@ from pushing to `main` unattended; it was created for a different reason and it 
 defect from reaching `main`. Recorded because it is the clearest evidence in this repo that the
 one-human control earns its friction.
 
-### Not established
+### Companion defects — ALL FOUR NOW VERIFIED BY THE LEAD (2026-08-03)
 
-The Opus arm's second self-verified finding — that the OpenCode worker child runs its whole life with
-a deleted cwd (`opencode-model.ts:450/465/511`, `finally` at `:536-538`) — is **MAJOR and not yet
-verified by the Lead**. Four further MAJORs and several MINORs in that review came from delegated
-sub-audits and are **second-hand**; the arm flagged them as needing confirmation and they have not
-been confirmed. None of them are cleared.
+~~"Four further MAJORs came from delegated sub-audits and are second-hand… none of them are
+cleared."~~ **Superseded — every one was traced to source and confirmed:**
+
+- **MAJOR-1 — the OpenCode worker child runs its entire life with an unlinked cwd. CONFIRMED.**
+  `opencode-model.ts:450` mkdtemps `canaryCwd`; `:465` opens the session with `cwd: canaryCwd`, which
+  `host/opencode.ts` passes to `spawn` as the **OS process cwd**; `:511` calls `openWorkCwd`, but
+  `host/session.ts:296-303` only assigns `this.cwd` and re-issues `newSession()` — **no respawn, no
+  chdir**; and the `finally` at `:536-538` `rm -rf`s the directory **on the success path**. The
+  child's cwd is unlinked for its whole life. The defect is verified; the downstream consequence
+  (relative paths resolving at `/`) is inferred POSIX behaviour.
+
+- **MAJOR-3 — an unclassifiable failure code is a second, easier route into D-040's brick.
+  CONFIRMED, and more severe than reported.** `runtime.ts:283` throws
+  `"listener terminal effect has an unknown failure classification"` when `failureCode` matches
+  neither `/prompt|acp|child|host|session/i` nor `/post|http_|transport|reply_body/i` nor the three
+  literals. `engine.ts:179-183` derives that code as `error.name.toLowerCase()`, so **any plain
+  `Error` yields `"error"`** and a `TypeError` yields `"typeerror"` — neither matches. The throw is a
+  plain `Error`, so it is neither retryable nor credential loss and lands on `reason: "fatal"` with
+  the journal still at `leased`. **This reaches the identical permanent-brick state without requiring
+  a stop or a 15-minute wait** — one unclassified error is enough. It is arguably the more likely
+  trigger of the two.
+
+- **MAJOR-4 — mid-run lease expiry is reported as credential loss. CONFIRMED.** The `staleUnavailable`
+  escape (`runtime.ts:608-613`) requires `startupAckPending && active.ack.commandId ===
+  startupAckCommandId` — the ACK must have been pending **at process start**. The identical condition
+  arising mid-run misses it and falls to `isDeliveryCredentialLoss` (`:198-201`), which is true for
+  **any** 403. The runtime stops with `reason: "credential"` and the operator is told to
+  re-authenticate a credential that is perfectly valid.
+
+- **MAJOR-2 — OpenCode cross-owner isolation rests on one mechanism where Grok uses three. CONFIRMED.**
+  `host/grok.ts:187-200` sets `GROK_MEMORY=0`, `GROK_SUBAGENTS=0`, `GROK_LSP_TOOLS=0`,
+  `GROK_WRITE_FILE=0`, `GROK_WEB_FETCH=0` plus `GROK_SANDBOX`. `buildOpenCodeChildEnv`
+  (`host/opencode.ts:479`) sets **no equivalent**, so cross-owner isolation depends solely on the ACP
+  forced-ask path. A defence-in-depth regression, not a demonstrated leak — the forced-ask map does
+  enumerate every tool plus `*` and fails closed.
+
+### Still not established
+
+The delegated MINORs beyond m-1/m-2/m-3 were not individually traced. m-1 (`durable-delivery.ts:424`
+returns the caller's `sender_owner_relation` and discards the computed one) is **latent, not live**:
+`owner_user_id` is never updated anywhere, so no ownership transfer exists to exploit it. It becomes a
+real cross-owner hole the day such a feature ships.
