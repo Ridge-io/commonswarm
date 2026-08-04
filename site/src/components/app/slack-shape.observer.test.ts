@@ -263,6 +263,16 @@ test("loaded-signal filters and counts classify person, agent, and broadcast tar
   assert.deepEqual(signalCounts(signals), { broadcastCount: 1, directCount: 3 });
   assert.equal(signalIsDirectToViewer(signals[2]!, "viewer", agentById), true);
   assert.equal(signalIsDirectToViewer(signals[3]!, "viewer", agentById), false);
+
+  const sampleStart = dashboard.indexOf("const renderSample =");
+  const sampleEnd = dashboard.indexOf("const boot =", sampleStart);
+  assert.notEqual(sampleStart, -1, "sample-render start anchor must resolve");
+  assert.notEqual(sampleEnd, -1, "sample-render end anchor must resolve");
+  assert.doesNotMatch(
+    dashboard.slice(sampleStart, sampleEnd),
+    /toAgent:\s*"[^"]+",[\s\S]{0,120}?kind:\s*"working-on"/,
+    "sample data must not present the command protocol's rejected directed working-on shape",
+  );
 });
 
 test("sidebar counts come from loaded signals and the shipped field stays light", () => {

@@ -82,7 +82,8 @@ The new `slack-shape.observer.test.ts` was strengthened during exact review befo
 patterns for counts and filters became executable mixed-target behavior checks, sign-out clearing
 was pinned with explicit participant-list and count clearing, workspace transitions were required to
 refresh signal counts even on empty and error paths, and a Chrome geometry fixture now proves that 3
-and 50 agents occupy the same rail height while the 50-row list scrolls.
+and 50 agents occupy the same rail height while the 50-row list scrolls. The directed sample row now
+uses a protocol-valid `note` kind, with an assertion rejecting directed `working-on` sample data.
 
 ## Render inspection
 
