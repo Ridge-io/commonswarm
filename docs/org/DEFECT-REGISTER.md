@@ -1671,3 +1671,181 @@ unmeasured. Do not record this as cleared.**
 
 Minor, same test: both clients print "Signing you in with GitHub, opening your browser" even with
 `--no-browser`. The flag works — the URL is printed as documented — only the narration contradicts it.
+
+---
+
+## D-039 — the inversion arm must differ from the AUTHOR's family, not merely from Claude · RULING
+
+**Operator ruling, 2026-08-03:** *"If it was written by Codex have a Claude Op. 5 agent review it,
+not Gemini."*
+
+### What changes
+
+D-036 named the permitted pairing as one exact-review arm (Codex or Claude) plus one inversion arm
+from *"a different family (Google Gemini via `agy`, or Kimi K3 via Pi)"*. Read literally, that fixed
+the inversion arm to a short list of vendors regardless of who wrote the code.
+
+**The governing property is independence from the AUTHOR, not membership of a particular vendor
+list.** Most of v0.1.5 was written by Codex workers. For Codex-authored code, a **Claude Opus 5 arm
+is a genuine cross-family inversion** and is now the required one. Gemini is not to be used as the
+inversion arm for Codex-authored code.
+
+The two-arm rule itself is unchanged and still must not erode. This narrows *which* arm is
+acceptable; it does not permit reviewing with one.
+
+### Why the literal reading was actively worse, measured on this release
+
+Gemini ran as the inversion arm at full delta scope and returned a substantive ~40 KB review. Every
+one of its three most serious findings was traced to source and refuted (see
+`docs/evidence/2026-08-02-v015-execution/stage7b-two-arm-delta-review.md`).
+
+**Its file:line citations were fabricated.** It cited `src/cloud/delivery.ts:125-188` for a method
+that is type declarations at that range, and `src/listener/delivery-journal.ts:790-835` for a function
+that is lease/ACK code there. The prose described real code shapes; the coordinates pointed elsewhere.
+
+That failure mode is worse than a weak review in both directions at once: a reviewer who *trusts* the
+coordinates edits working code, and a reviewer who *spot-checks only* the coordinates discards a
+review that was partly legitimate. A gate whose output must itself be re-verified line by line is
+doing a fraction of the work it appears to do.
+
+### Second, independent reason the ruling is right
+
+The arm nearly could not run at all. Measured 2026-08-03: Kimi via Pi has **no API key configured**;
+Grok remains credit-exhausted per D-036; and `agy` **refused two successive security-framed prompts**
+before accepting a correctness framing, then failed again on headless tool permissions. Of the two
+arms D-036 permits, one was unusable and the other was one refusal away from producing a false
+"release blocked".
+
+A gate that depends on a single external vendor's willingness to perform the task is a gate with a
+single point of failure that is **outside our control and gives no warning**. Claude Opus 5 as the
+inversion arm for Codex-authored code removes that dependency for the common case.
+
+### Standing method note this produced
+
+`agy` answered a neutral control prompt with `ARM ALIVE` while refusing the review. **That probe is
+the only thing that distinguished a declining arm from a dead command** — both produce an empty
+result, and the honest-looking conclusion from silence alone ("the arm is down, we are blocked") was
+the wrong one. Any arm returning nothing must be probed with a trivial prompt before its silence is
+interpreted.
+
+### Not established
+
+Whether Gemini's remaining lower-severity findings contain anything real; they were read and
+triaged in severity order, and only the top three were traced to source in full. Whether a Claude arm
+carries its own systematic blind spots on Codex-authored code — that is the obvious risk of this
+ruling and it is **not** measured. The ruling trades a known, measured failure mode for an unmeasured
+one, which is a reasonable trade only while the two-arm rule stands.
+
+---
+
+## D-040 — a stop during processing permanently bricks the listener after the lease expires · SHIP-BLOCKER
+
+**Found 2026-08-03 by the independent Claude Opus 5 inversion arm mandated by D-039, on the frozen
+release SHA `175f894`, during Stage 7b. Severity CRITICAL. v0.1.5 must not ship with this.**
+
+Gemini, the arm D-036 named, reviewed the same delta at the same scope and **did not find it**. D-039
+was ruled hours earlier for unrelated reasons; it paid for itself immediately.
+
+### The failure
+
+Stop a listener while it is working a signal, then restart more than 15 minutes later (the lease TTL).
+`listen start` reports success and then dies, permanently, on every subsequent start.
+
+### The chain — eleven links, each verified by the Lead against the frozen tree
+
+1. The `leased` phase spans the **entire model turn**, so a listener stopped during ordinary work is
+   very likely to be in it. This is not an edge case.
+2. The cancel path sets `stop = { reason: "cancelled" }` (`runtime.ts:1032`, `:1036`) and **never
+   calls `clearActive`**. Decisive check: the last `clearActive` in the file is line **997**; the
+   cancel handlers begin at **1028** and the `finally` at **1145** only cancels and closes the model.
+3. The journal restores `active` verbatim on restart, **including the stored instance id**
+   (`delivery-journal.ts:1028-1034`).
+4. The runtime therefore replays the **stored** `claimCommandId` (`delivery-journal.ts:842`).
+5. Idempotency does its job: the server returns the **stored ledger row** for that command id
+   (`command/index.ts:5545-5578`, `durable-delivery.ts:423`) — carrying the original, now-past
+   `leased_until`.
+6. The client parses that response and calls `checkedLiveLease(leasedUntil, now)` unconditionally
+   (`delivery.ts:400`), which **rejects the client's own replay** and raises `DeliveryProtocolError`.
+7. `DeliveryProtocolError` is **not retryable** — `isRetryableDeliveryError` admits only
+   `DeliveryTransportError` and `DeliveryHttpError` 429/5xx (`runtime.ts:204-208`).
+8. It is **not credential loss** either — that predicate admits only `DeliveryHttpError` 401/403
+   (`runtime.ts:200-202`).
+9. So it falls to `stop = { reason: "fatal" }` (`runtime.ts:1038`).
+10. **Repair logic for exactly this state exists and is unreachable.** The block that clears a stale
+    `leased` recovery is gated `if (deliveryMode === "cursor_fallback" && recovery !== null)`
+    (`runtime.ts:766`). In `durable_claim` mode it can never run.
+11. **v0.1.5 is always in `durable_claim`**: `return deliveryClaim && deliveryAck ? "durable_claim" :
+    "cursor_fallback"` (`runtime.ts:367`), and the same function *throws* if the configuration is
+    absent — so a v0.1.5 server, which advertises both, always yields `durable_claim`.
+
+`ready` fires before this block, which is why `listen start` **reports success and then dies** — the
+worst shape for an operator, because the CLI says it worked.
+
+### Why every gate we have missed it
+
+Root suite 376/376, p1-cli 143/143, p1-local 4/4, p1-server 69/69, all green on this SHA. The bug
+needs a **stop during the leased phase plus a >15-minute wall-clock gap plus a restart**. Nothing in
+the suites composes those three, and the Stage 7 causal-control register's stale-lease control
+exercises the *server's* requeue, not the *client's* refusal to accept its own replay.
+
+**This is the strongest available argument that a green suite is not a substitute for an independent
+reader.** Twenty-two causal controls and five green gates did not see it; one arm reading the code did.
+
+### The fix, and what it costs
+
+Small in code: make the existing repair block reachable from `durable_claim`. **Not** small in
+process — it changes the release SHA, so per D-036/D-039 the full Stage 7 gate and **both** review
+arms rerun on the replacement SHA. There is no version of this that ships `175f894`.
+
+### An unplanned control that worked
+
+The push to `main` was refused by the `swarm-1human-main` ruleset (`required_linear_history`, zero
+bypass actors) roughly an hour before this finding landed. That rule exists to keep a swarm of agents
+from pushing to `main` unattended; it was created for a different reason and it stopped a bricking
+defect from reaching `main`. Recorded because it is the clearest evidence in this repo that the
+one-human control earns its friction.
+
+### Companion defects — ALL FOUR NOW VERIFIED BY THE LEAD (2026-08-03)
+
+~~"Four further MAJORs came from delegated sub-audits and are second-hand… none of them are
+cleared."~~ **Superseded — every one was traced to source and confirmed:**
+
+- **MAJOR-1 — the OpenCode worker child runs its entire life with an unlinked cwd. CONFIRMED.**
+  `opencode-model.ts:450` mkdtemps `canaryCwd`; `:465` opens the session with `cwd: canaryCwd`, which
+  `host/opencode.ts` passes to `spawn` as the **OS process cwd**; `:511` calls `openWorkCwd`, but
+  `host/session.ts:296-303` only assigns `this.cwd` and re-issues `newSession()` — **no respawn, no
+  chdir**; and the `finally` at `:536-538` `rm -rf`s the directory **on the success path**. The
+  child's cwd is unlinked for its whole life. The defect is verified; the downstream consequence
+  (relative paths resolving at `/`) is inferred POSIX behaviour.
+
+- **MAJOR-3 — an unclassifiable failure code is a second, easier route into D-040's brick.
+  CONFIRMED, and more severe than reported.** `runtime.ts:283` throws
+  `"listener terminal effect has an unknown failure classification"` when `failureCode` matches
+  neither `/prompt|acp|child|host|session/i` nor `/post|http_|transport|reply_body/i` nor the three
+  literals. `engine.ts:179-183` derives that code as `error.name.toLowerCase()`, so **any plain
+  `Error` yields `"error"`** and a `TypeError` yields `"typeerror"` — neither matches. The throw is a
+  plain `Error`, so it is neither retryable nor credential loss and lands on `reason: "fatal"` with
+  the journal still at `leased`. **This reaches the identical permanent-brick state without requiring
+  a stop or a 15-minute wait** — one unclassified error is enough. It is arguably the more likely
+  trigger of the two.
+
+- **MAJOR-4 — mid-run lease expiry is reported as credential loss. CONFIRMED.** The `staleUnavailable`
+  escape (`runtime.ts:608-613`) requires `startupAckPending && active.ack.commandId ===
+  startupAckCommandId` — the ACK must have been pending **at process start**. The identical condition
+  arising mid-run misses it and falls to `isDeliveryCredentialLoss` (`:198-201`), which is true for
+  **any** 403. The runtime stops with `reason: "credential"` and the operator is told to
+  re-authenticate a credential that is perfectly valid.
+
+- **MAJOR-2 — OpenCode cross-owner isolation rests on one mechanism where Grok uses three. CONFIRMED.**
+  `host/grok.ts:187-200` sets `GROK_MEMORY=0`, `GROK_SUBAGENTS=0`, `GROK_LSP_TOOLS=0`,
+  `GROK_WRITE_FILE=0`, `GROK_WEB_FETCH=0` plus `GROK_SANDBOX`. `buildOpenCodeChildEnv`
+  (`host/opencode.ts:479`) sets **no equivalent**, so cross-owner isolation depends solely on the ACP
+  forced-ask path. A defence-in-depth regression, not a demonstrated leak — the forced-ask map does
+  enumerate every tool plus `*` and fails closed.
+
+### Still not established
+
+The delegated MINORs beyond m-1/m-2/m-3 were not individually traced. m-1 (`durable-delivery.ts:424`
+returns the caller's `sender_owner_relation` and discards the computed one) is **latent, not live**:
+`owner_user_id` is never updated anywhere, so no ownership transfer exists to exploit it. It becomes a
+real cross-owner hole the day such a feature ships.

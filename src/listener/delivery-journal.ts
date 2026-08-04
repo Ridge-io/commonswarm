@@ -17,6 +17,7 @@ import {
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const COMMAND_ID_RE = /^[A-Za-z0-9_-]{8,72}$/;
+const SIGNAL_FINGERPRINT_RE = /^[0-9a-f]{64}$/;
 const MAX_JOURNAL_BYTES = 8192;
 const ISO_8601_RE =
   /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,9}))?(?:Z|([+-]\d{2}):(\d{2}))$/;
@@ -83,6 +84,8 @@ export interface ListenerActiveClaim {
   signalId: string | null;
   leaseId: string | null;
   leasedUntil: string | null;
+  /** Digest of the authoritative immutable signal fields recorded with the lease. */
+  signalFingerprint?: string | null;
   ack: null | {
     commandId: string;
     outcome: "replied" | "observed" | "expired" | "failed_terminal";
@@ -110,6 +113,7 @@ export interface RecordLeaseInput {
   signalId: string;
   leaseId: string;
   leasedUntil: string;
+  signalFingerprint?: string;
   now?: string;
 }
 
@@ -170,6 +174,7 @@ const ALLOWED_ACTIVE_KEYS = new Set([
   "signalId",
   "leaseId",
   "leasedUntil",
+  "signalFingerprint",
   "ack",
 ]);
 
@@ -394,8 +399,11 @@ export function parseJournalRecord(
   }
 
   const activeProps = Object.getOwnPropertyNames(row.active);
+  const legacyWithoutFingerprint =
+    activeProps.length === ALLOWED_ACTIVE_KEYS.size - 1 &&
+    !activeProps.includes("signalFingerprint");
   if (
-    activeProps.length !== ALLOWED_ACTIVE_KEYS.size ||
+    (!legacyWithoutFingerprint && activeProps.length !== ALLOWED_ACTIVE_KEYS.size) ||
     !activeProps.every((p) => ALLOWED_ACTIVE_KEYS.has(p))
   ) {
     throw new Error("stored delivery journal is malformed");
@@ -456,6 +464,7 @@ export function parseJournalRecord(
       active.signalId !== null ||
       active.leaseId !== null ||
       active.leasedUntil !== null ||
+      (active.signalFingerprint !== undefined && active.signalFingerprint !== null) ||
       active.ack !== null
     ) {
       throw new Error("stored delivery journal is malformed");
@@ -486,6 +495,15 @@ export function parseJournalRecord(
       !isValidIsoTimestamp(active.leasedUntil) ||
       Date.parse(active.leasedUntil as string) <=
         Date.parse(active.claimCreatedAt as string)
+    ) {
+      throw new Error("stored delivery journal is malformed");
+    }
+
+    if (
+      active.signalFingerprint !== undefined &&
+      active.signalFingerprint !== null &&
+      (typeof active.signalFingerprint !== "string" ||
+        !SIGNAL_FINGERPRINT_RE.test(active.signalFingerprint))
     ) {
       throw new Error("stored delivery journal is malformed");
     }
@@ -699,6 +717,7 @@ class FileListenerDeliveryJournal implements ListenerDeliveryJournal {
         signalId: null,
         leaseId: null,
         leasedUntil: null,
+        signalFingerprint: null,
         ack: null,
       };
 
@@ -748,7 +767,7 @@ class FileListenerDeliveryJournal implements ListenerDeliveryJournal {
   async recordLease(input: RecordLeaseInput): Promise<void> {
     assertPlainObject(
       input,
-      ["signalId", "leaseId", "leasedUntil", "now"],
+      ["signalId", "leaseId", "leasedUntil", "signalFingerprint", "now"],
       ["signalId", "leaseId", "leasedUntil"],
       "delivery journal mutation rejected",
     );
@@ -758,7 +777,10 @@ class FileListenerDeliveryJournal implements ListenerDeliveryJournal {
       !UUID_RE.test(input.signalId) ||
       typeof input.leaseId !== "string" ||
       !UUID_RE.test(input.leaseId) ||
-      !isValidIsoTimestamp(input.leasedUntil)
+      !isValidIsoTimestamp(input.leasedUntil) ||
+      (input.signalFingerprint !== undefined &&
+        (typeof input.signalFingerprint !== "string" ||
+          !SIGNAL_FINGERPRINT_RE.test(input.signalFingerprint)))
     ) {
       throw new Error("delivery journal mutation rejected");
     }
@@ -805,6 +827,7 @@ class FileListenerDeliveryJournal implements ListenerDeliveryJournal {
         signalId: canonicalSignalId,
         leaseId: canonicalLeaseId,
         leasedUntil: leasedUntilSnapshot,
+        signalFingerprint: input.signalFingerprint ?? null,
       };
 
       const updatedRecord: ListenerDeliveryJournalRecord = {

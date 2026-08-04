@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,6 +11,7 @@ import {
 import { cloudTarget } from "../src/cloud/config.js";
 import {
   DeliveryHttpError,
+  DeliveryProtocolError,
   DeliveryTransportError,
   type DeliveryClaimResult,
   type DeliveryRow,
@@ -140,6 +141,7 @@ class MemoryDeliveryJournal {
     signalId: string;
     leaseId: string;
     leasedUntil: string;
+    signalFingerprint?: string;
     now?: string;
   }) {
     this.calls.push("lease");
@@ -151,6 +153,7 @@ class MemoryDeliveryJournal {
       signalId: input.signalId,
       leaseId: input.leaseId,
       leasedUntil: input.leasedUntil,
+      signalFingerprint: input.signalFingerprint ?? null,
     };
     this.record.updatedAt = input.now ?? new Date().toISOString();
   }
@@ -254,6 +257,7 @@ class RecordingStore extends MemoryStore {
 
 function leasedActive(input: {
   signalId: string;
+  signal?: SignalRecord;
   leaseId?: string;
   leasedUntil?: string;
   phase?: "leased" | "ack_pending";
@@ -274,6 +278,15 @@ function leasedActive(input: {
     signalId: input.signalId,
     leaseId,
     leasedUntil: input.leasedUntil ?? "2026-07-30T00:15:00.000Z",
+    signalFingerprint: input.signal
+      ? createHash("sha256").update(JSON.stringify([
+        input.signal.id.toLowerCase(),
+        input.signal.kind,
+        input.signal.body,
+        input.signal.until,
+        input.signal.sender_owner_relation ?? "unknown",
+      ])).digest("hex")
+      : null,
     ack: phase === "ack_pending"
       ? {
         commandId: ackCommandId(leaseId),
@@ -655,6 +668,7 @@ test("claim-pending recovery replays the exact persisted command without reservi
     store: new MemoryStore(),
     model: new FakeModel(),
     signal: controller.signal,
+    now: () => Date.parse("2026-07-30T00:00:02.000Z"),
     sleep: async () => undefined,
     readPage: async () => {
       reads += 1;
@@ -667,6 +681,74 @@ test("claim-pending recovery replays the exact persisted command without reservi
   assert.equal(journal.calls.includes("reserve"), false);
   assert.equal(journal.record.nextClaimOrdinal, 8);
   assert.equal(journal.record.active, null);
+});
+
+test("C-1 composition: stale claim_pending clears before durable replay", async () => {
+  const active: ListenerActiveClaim = {
+    phase: "claim_pending",
+    claimOrdinal: 7,
+    claimCommandId: claimCommandId(
+      "44444444-4444-4444-8444-444444444444",
+      7,
+    ),
+    claimCreatedAt: "2026-07-30T00:00:00.000Z",
+    claimLastAttemptAt: "2026-07-30T00:00:01.000Z",
+    signalId: null,
+    leaseId: null,
+    leasedUntil: null,
+    ack: null,
+  };
+  const journal = new MemoryDeliveryJournal(active);
+  const controller = new AbortController();
+  const ids: string[] = [];
+  let reads = 0;
+  const stop = await runListenerRuntime({
+    target: cloudTarget("https://cloud.example.test", "anon"),
+    workspaceId: WORKSPACE_ID,
+    principalId: PRINCIPAL_ID,
+    listenerInstanceId: journal.record.listenerInstanceId,
+    deliveryJournal: journal,
+    deliveryClient: {
+      async claimAgentInbox(request) {
+        ids.push(request.commandId);
+        if (request.commandId === active.claimCommandId) {
+          throw new DeliveryProtocolError(
+            "stored replay returned an already expired lease",
+          );
+        }
+        return claimResult([], 0);
+      },
+      async ackAgentDelivery() { throw new Error("ack must not run"); },
+    },
+    credentialSession: { async bearer() { return "token"; } },
+    store: new MemoryStore(),
+    model: new FakeModel(),
+    signal: controller.signal,
+    now: () => Date.parse("2026-07-30T00:16:00.000Z"),
+    sleep: async () => undefined,
+    readPage: async () => {
+      reads += 1;
+      if (reads > 2) controller.abort();
+      return durablePage();
+    },
+  });
+  assert.equal(
+    stop.reason,
+    "cancelled",
+    "C-1 stale claim_pending must clear instead of fatally replaying an expired lease",
+  );
+  assert.deepEqual(ids, [
+    claimCommandId(journal.record.listenerInstanceId, 8),
+  ]);
+  assert.deepEqual(journal.calls.slice(0, 7), [
+    "read",
+    "clear",
+    "read",
+    "reserve",
+    "attempt",
+    "clear",
+    "read",
+  ]);
 });
 
 test("a claimed lease is persisted before any effect work begins", async () => {
@@ -722,6 +804,435 @@ test("a claimed lease is persisted before any effect work begins", async () => {
     "attempt",
     "lease",
   ]);
+});
+
+test("C-1: an expired durable leased claim without an effect clears and re-claims", async () => {
+  const signalId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaad1";
+  const active = leasedActive({
+    signalId,
+    leasedUntil: "2026-07-30T00:01:00.000Z",
+  });
+  const journal = new MemoryDeliveryJournal(active);
+  const controller = new AbortController();
+  const claimIds: string[] = [];
+  const stop = await runListenerRuntime({
+    target: cloudTarget("https://cloud.example.test", "anon"),
+    workspaceId: WORKSPACE_ID,
+    principalId: PRINCIPAL_ID,
+    listenerInstanceId: journal.record.listenerInstanceId,
+    deliveryJournal: journal,
+    deliveryClient: {
+      async claimAgentInbox(request) {
+        claimIds.push(request.commandId);
+        if (request.commandId === active.claimCommandId) {
+          throw new DeliveryProtocolError("stored replay lease is no longer live");
+        }
+        controller.abort();
+        return claimResult([], 0);
+      },
+      async ackAgentDelivery() { throw new Error("ACK must not run"); },
+    },
+    credentialSession: { async bearer() { return "token"; } },
+    store: new MemoryStore(),
+    model: new FakeModel(),
+    signal: controller.signal,
+    now: () => Date.parse("2026-07-30T00:02:31.000Z"),
+    sleep: async () => undefined,
+    readPage: async () => durablePage([], 1),
+  });
+  assert.equal(
+    stop.reason,
+    "cancelled",
+    "C-1 stale durable lease must recover instead of stopping fatally",
+  );
+  assert.equal(claimIds.includes(active.claimCommandId), false);
+  assert.equal(journal.record.active, null);
+});
+
+test("C-1: an expired durable leased claim with a terminal effect ACKs before clearing", async () => {
+  const directNote = note(
+    "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaad2",
+    "2026-07-30T00:00:01.000Z",
+  );
+  const active = leasedActive({
+    signalId: directNote.id,
+    signal: directNote,
+    leasedUntil: "2026-07-30T00:01:00.000Z",
+  });
+  const journal = new MemoryDeliveryJournal(active);
+  const store = new MemoryStore();
+  await store.write(newObservedNoteRecord({
+    signalId: directNote.id,
+    body: directNote.body,
+    until: directNote.until,
+    senderOwnerRelation: "same_owner",
+    updatedAt: "2026-07-30T00:00:02.000Z",
+  }));
+  const controller = new AbortController();
+  let ackCalls = 0;
+  const stop = await runListenerRuntime({
+    target: cloudTarget("https://cloud.example.test", "anon"),
+    workspaceId: WORKSPACE_ID,
+    principalId: PRINCIPAL_ID,
+    listenerInstanceId: journal.record.listenerInstanceId,
+    deliveryJournal: journal,
+    deliveryClient: {
+      async claimAgentInbox() {
+        throw new DeliveryProtocolError("expired claim replay must not run");
+      },
+      async ackAgentDelivery(request) {
+        ackCalls += 1;
+        controller.abort();
+        return { httpStatus: 200, signalId: request.signalId, outcome: request.outcome };
+      },
+    },
+    credentialSession: { async bearer() { return "token"; } },
+    store,
+    model: new FakeModel(),
+    signal: controller.signal,
+    now: () => Date.parse("2026-07-30T00:02:31.000Z"),
+    sleep: async () => undefined,
+    readPage: async () => durablePage([], 1),
+  });
+  assert.equal(
+    stop.reason,
+    "cancelled",
+    "C-1 terminal durable recovery must ACK instead of replaying the expired claim",
+  );
+  assert.equal(ackCalls, 1);
+  assert.equal(journal.record.active, null);
+});
+
+test("C-1 review: recovered terminal effects must match authoritative signal fields before ACK", async () => {
+  const directNote = note(
+    "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaad9",
+    "2026-07-30T00:00:01.000Z",
+  );
+  const active = leasedActive({
+    signalId: directNote.id,
+    leasedUntil: "2026-07-30T00:01:00.000Z",
+  });
+  const journal = new MemoryDeliveryJournal(active);
+  const store = new MemoryStore();
+  await store.write(newObservedNoteRecord({
+    signalId: directNote.id,
+    body: "stale content under the same signal id",
+    until: directNote.until,
+    senderOwnerRelation: "same_owner",
+    updatedAt: "2026-07-30T00:00:02.000Z",
+  }));
+  const controller = new AbortController();
+  let ackCalls = 0;
+  let claimCalls = 0;
+  const stop = await runListenerRuntime({
+    target: cloudTarget("https://cloud.example.test", "anon"),
+    workspaceId: WORKSPACE_ID,
+    principalId: PRINCIPAL_ID,
+    listenerInstanceId: journal.record.listenerInstanceId,
+    deliveryJournal: journal,
+    deliveryClient: {
+      async claimAgentInbox() {
+        claimCalls += 1;
+        controller.abort();
+        return claimResult([], 0);
+      },
+      async ackAgentDelivery(request) {
+        ackCalls += 1;
+        controller.abort();
+        return { httpStatus: 200, signalId: request.signalId, outcome: request.outcome };
+      },
+    },
+    credentialSession: { async bearer() { return "token"; } },
+    store,
+    model: new FakeModel(),
+    signal: controller.signal,
+    now: () => Date.parse("2026-07-30T00:02:31.000Z"),
+    sleep: async () => undefined,
+    readPage: async () => durablePage([], 1),
+  });
+  assert.equal(stop.reason, "cancelled");
+  assert.equal(
+    ackCalls,
+    0,
+    "C-1 recovered terminal effect with mismatched immutable fields must not be ACKed",
+  );
+  assert.equal(claimCalls, 1);
+});
+
+test("C-1 composition: an expired leased claim with a resumable effect re-claims and finishes", async () => {
+  const claimedAsk = ask(
+    "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaad4",
+    "2026-07-30T00:00:01.000Z",
+  );
+  const active = leasedActive({
+    signalId: claimedAsk.id,
+    leasedUntil: "2026-07-30T00:01:00.000Z",
+  });
+  const journal = new MemoryDeliveryJournal(active);
+  const store = new MemoryStore();
+  store.records.set(claimedAsk.id, {
+    version: 2,
+    signalId: claimedAsk.id,
+    signalKind: "ask",
+    effectOrdinal: 0,
+    commandId: "reply_aaaaaaaaaaaa4aaa8aaaaaaaaaaaaad4_0",
+    askBody: claimedAsk.body,
+    askUntil: claimedAsk.until,
+    senderOwnerRelation: "same_owner",
+    state: "received",
+    promptAttempts: 0,
+    postAttempts: 0,
+    replyBody: null,
+    replyTruncated: false,
+    replySignalId: null,
+    failureCode: "cancelled",
+    updatedAt: "2026-07-30T00:00:02.000Z",
+  });
+  const controller = new AbortController();
+  const model = new FakeModel();
+  let claimCalls = 0;
+  let ackCalls = 0;
+  const stop = await runListenerRuntime({
+    target: cloudTarget("https://cloud.example.test", "anon"),
+    workspaceId: WORKSPACE_ID,
+    principalId: PRINCIPAL_ID,
+    listenerInstanceId: journal.record.listenerInstanceId,
+    deliveryJournal: journal,
+    deliveryClient: {
+      async claimAgentInbox() {
+        claimCalls += 1;
+        return claimResult([{
+          signal: claimedAsk,
+          leaseId: "55555555-5555-4555-8555-5555555555d4",
+          leasedUntil: "2026-07-30T00:15:00.000Z",
+          senderOwnerRelation: "same_owner",
+        }], 1);
+      },
+      async ackAgentDelivery(request) {
+        ackCalls += 1;
+        controller.abort();
+        return { httpStatus: 200, signalId: request.signalId, outcome: request.outcome };
+      },
+    },
+    credentialSession: { async bearer() { return "token"; } },
+    store,
+    model,
+    signal: controller.signal,
+    now: () => Date.parse("2026-07-30T00:02:31.000Z"),
+    sleep: async () => undefined,
+    readPage: async () => durablePage([], 1),
+    poster: {
+      async post() {
+        return { signalId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbd4" };
+      },
+    },
+  });
+  assert.equal(
+    stop.reason,
+    "cancelled",
+    `C-1 resumable recovery must not classify a nonterminal effect as terminal${
+      stop.reason === "fatal" ? `: ${stop.error.message}` : ""
+    }`,
+  );
+  assert.equal(claimCalls, 1);
+  assert.equal(ackCalls, 1);
+  assert.equal(model.prompts.length, 1);
+  assert.equal((await store.read(claimedAsk.id))?.state, "done");
+  assert.equal(journal.record.active, null);
+});
+
+test("C-1 composition: a live leased claim with a resumable effect replays immediately", async () => {
+  const claimedAsk = ask(
+    "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaad5",
+    "2026-07-30T00:00:01.000Z",
+  );
+  const active = leasedActive({
+    signalId: claimedAsk.id,
+    leasedUntil: "2026-07-30T00:15:00.000Z",
+  });
+  const journal = new MemoryDeliveryJournal(active);
+  const store = new MemoryStore();
+  store.records.set(claimedAsk.id, {
+    version: 2,
+    signalId: claimedAsk.id,
+    signalKind: "ask",
+    effectOrdinal: 0,
+    commandId: "reply_aaaaaaaaaaaa4aaa8aaaaaaaaaaaaad5_0",
+    askBody: claimedAsk.body,
+    askUntil: claimedAsk.until,
+    senderOwnerRelation: "same_owner",
+    state: "prompting",
+    promptAttempts: 1,
+    postAttempts: 0,
+    replyBody: null,
+    replyTruncated: false,
+    replySignalId: null,
+    failureCode: null,
+    updatedAt: "2026-07-30T00:00:02.000Z",
+  });
+  const controller = new AbortController();
+  const model = new FakeModel();
+  const claimIds: string[] = [];
+  let ackCalls = 0;
+  const stop = await runListenerRuntime({
+    target: cloudTarget("https://cloud.example.test", "anon"),
+    workspaceId: WORKSPACE_ID,
+    principalId: PRINCIPAL_ID,
+    listenerInstanceId: journal.record.listenerInstanceId,
+    deliveryJournal: journal,
+    deliveryClient: {
+      async claimAgentInbox(request) {
+        claimIds.push(request.commandId);
+        return claimResult([{
+          signal: claimedAsk,
+          leaseId: active.leaseId!,
+          leasedUntil: active.leasedUntil!,
+          senderOwnerRelation: "same_owner",
+        }], 1);
+      },
+      async ackAgentDelivery(request) {
+        ackCalls += 1;
+        controller.abort();
+        return { httpStatus: 200, signalId: request.signalId, outcome: request.outcome };
+      },
+    },
+    credentialSession: { async bearer() { return "token"; } },
+    store,
+    model,
+    signal: controller.signal,
+    now: () => Date.parse("2026-07-30T00:02:31.000Z"),
+    sleep: async () => {
+      controller.abort();
+    },
+    readPage: async () => durablePage([], 1),
+    poster: {
+      async post() {
+        return { signalId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbd5" };
+      },
+    },
+  });
+  assert.equal(stop.reason, "cancelled");
+  assert.deepEqual(
+    claimIds,
+    [active.claimCommandId],
+    "C-1 live durable recovery must replay the stored claim immediately",
+  );
+  assert.equal(ackCalls, 1);
+  assert.equal(model.prompts.length, 1);
+  assert.equal((await store.read(claimedAsk.id))?.state, "done");
+  assert.equal(journal.record.active, null);
+});
+
+test("C-1 composition: an unverified terminal-shaped effect does not brick recovery", async () => {
+  const claimedAsk = ask(
+    "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaad6",
+    "2026-07-30T00:00:01.000Z",
+  );
+  const active = leasedActive({
+    signalId: claimedAsk.id,
+    leasedUntil: "2026-07-30T00:01:00.000Z",
+  });
+  const journal = new MemoryDeliveryJournal(active);
+  const store = new MemoryStore();
+  store.records.set(claimedAsk.id, {
+    version: 2,
+    signalId: claimedAsk.id,
+    signalKind: "ask",
+    effectOrdinal: 0,
+    commandId: "reply_aaaaaaaaaaaa4aaa8aaaaaaaaaaaaad6_0",
+    askBody: claimedAsk.body,
+    askUntil: claimedAsk.until,
+    senderOwnerRelation: "same_owner",
+    state: "done",
+    promptAttempts: 1,
+    postAttempts: 1,
+    replyBody: "reply",
+    replyTruncated: false,
+    replySignalId: null,
+    failureCode: null,
+    updatedAt: "2026-07-30T00:00:02.000Z",
+  });
+  const controller = new AbortController();
+  let claimCalls = 0;
+  const stop = await runListenerRuntime({
+    target: cloudTarget("https://cloud.example.test", "anon"),
+    workspaceId: WORKSPACE_ID,
+    principalId: PRINCIPAL_ID,
+    listenerInstanceId: journal.record.listenerInstanceId,
+    deliveryJournal: journal,
+    deliveryClient: {
+      async claimAgentInbox() {
+        claimCalls += 1;
+        controller.abort();
+        return claimResult([], 0);
+      },
+      async ackAgentDelivery() { throw new Error("unverified effect must not ACK"); },
+    },
+    credentialSession: { async bearer() { return "token"; } },
+    store,
+    model: new FakeModel(),
+    signal: controller.signal,
+    now: () => Date.parse("2026-07-30T00:02:31.000Z"),
+    sleep: async () => undefined,
+    readPage: async () => durablePage([], 1),
+  });
+  assert.equal(
+    stop.reason,
+    "cancelled",
+    "C-1 unverified terminal-shaped effects must recover instead of stopping fatally",
+  );
+  assert.equal(claimCalls, 1);
+  assert.equal(journal.record.active, null);
+});
+
+test("MAJOR-3: failureCode error ACKs local_effect_failed and the runtime survives", async () => {
+  const journal = new MemoryDeliveryJournal();
+  const controller = new AbortController();
+  const model = new FakeModel();
+  model.prompt = async () => {
+    throw new Error("ordinary model failure");
+  };
+  const claimedAsk = ask(
+    "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaad3",
+    "2026-07-30T00:00:01.000Z",
+  );
+  let ackCode: string | null = null;
+  const stop = await runListenerRuntime({
+    target: cloudTarget("https://cloud.example.test", "anon"),
+    workspaceId: WORKSPACE_ID,
+    principalId: PRINCIPAL_ID,
+    listenerInstanceId: journal.record.listenerInstanceId,
+    deliveryJournal: journal,
+    deliveryClient: {
+      async claimAgentInbox() {
+        return claimResult([{
+          signal: claimedAsk,
+          leaseId: "55555555-5555-4555-8555-5555555555d3",
+          leasedUntil: "2026-07-30T00:15:00.000Z",
+          senderOwnerRelation: "same_owner",
+        }], 1);
+      },
+      async ackAgentDelivery(request) {
+        ackCode = request.lastErrorCode;
+        controller.abort();
+        return { httpStatus: 200, signalId: request.signalId, outcome: request.outcome };
+      },
+    },
+    credentialSession: { async bearer() { return "token"; } },
+    store: new MemoryStore(),
+    model,
+    signal: controller.signal,
+    now: () => Date.parse("2026-07-30T00:00:00.000Z"),
+    sleep: async () => undefined,
+    readPage: async () => durablePage([], 1),
+  });
+  assert.equal(
+    stop.reason,
+    "cancelled",
+    "MAJOR-3 unknown failure classification must not brick the listener",
+  );
+  assert.equal(ackCode, "local_effect_failed");
+  assert.equal(journal.record.active, null);
 });
 
 test("a durable note is persisted and reread before prepareAck and network ACK", async () => {
@@ -958,7 +1469,7 @@ test("ack_pending recovery retries one deterministic ACK body and clears only af
   assert.equal(journal.record.active, null);
 });
 
-test("only an expired startup ack_pending exact delivery_unavailable clears stale state", async () => {
+test("MAJOR-4: delivery_unavailable at exact lease expiry clears stale state", async () => {
   const directNote = note(
     "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa19",
     "2026-07-30T00:00:01.000Z",
@@ -1001,7 +1512,7 @@ test("only an expired startup ack_pending exact delivery_unavailable clears stal
     store,
     model: new FakeModel(),
     signal: controller.signal,
-    now: () => Date.parse("2026-07-30T00:02:00.000Z"),
+    now: () => Date.parse("2026-07-30T00:01:00.000Z"),
     sleep: async () => undefined,
     readPage: async () => {
       reads += 1;
@@ -1017,8 +1528,55 @@ test("only an expired startup ack_pending exact delivery_unavailable clears stal
       });
     },
   });
-  assert.equal(stop.reason, "cancelled");
+  assert.equal(
+    stop.reason,
+    "cancelled",
+    "MAJOR-4 exact lease deadline must be stale rather than credential loss",
+  );
   assert.equal(journal.record.active, null);
+});
+
+test("MAJOR-4: delivery_unavailable before lease expiry remains credential loss", async () => {
+  const directNote = note(
+    "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaad4",
+    "2026-07-30T00:00:01.000Z",
+  );
+  const active = leasedActive({
+    signalId: directNote.id,
+    phase: "ack_pending",
+    outcome: "observed",
+    leasedUntil: "2026-07-30T00:15:00.000Z",
+  });
+  const journal = new MemoryDeliveryJournal(active);
+  const store = new MemoryStore();
+  await store.write(newObservedNoteRecord({
+    signalId: directNote.id,
+    body: directNote.body,
+    until: directNote.until,
+    senderOwnerRelation: "same_owner",
+    updatedAt: "2026-07-30T00:00:02.000Z",
+  }));
+  const stop = await runListenerRuntime({
+    target: cloudTarget("https://cloud.example.test", "anon"),
+    workspaceId: WORKSPACE_ID,
+    principalId: PRINCIPAL_ID,
+    listenerInstanceId: journal.record.listenerInstanceId,
+    deliveryJournal: journal,
+    deliveryClient: {
+      async claimAgentInbox() { throw new Error("claim must not run"); },
+      async ackAgentDelivery() {
+        throw new DeliveryHttpError(403, "delivery_unavailable", "unavailable");
+      },
+    },
+    credentialSession: { async bearer() { return "token"; } },
+    store,
+    model: new FakeModel(),
+    now: () => Date.parse("2026-07-30T00:02:00.000Z"),
+    sleep: async () => undefined,
+    readPage: async () => durablePage([], 1),
+  });
+  assert.equal(stop.reason, "credential");
+  assert.equal(journal.record.active?.phase, "ack_pending");
 });
 
 test("ACK-only rollback waits past a recovered nonterminal lease before clearing and rewinding", async () => {
@@ -1192,7 +1750,7 @@ test("a lease beyond the fixed server maximum fails before effect work", async (
   assert.equal(journal.record.active?.phase, "claim_pending");
 });
 
-test("a later live ACK cannot inherit stale-403 clearing from startup recovery", async () => {
+test("MAJOR-4: a mid-run expired lease 403 clears stale state without credential stop", async () => {
   const oldNote = note(
     "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa23",
     "2026-07-30T00:00:01.000Z",
@@ -1273,10 +1831,13 @@ test("a later live ACK cannot inherit stale-403 clearing from startup recovery",
       return durablePage([], 1);
     },
   });
-  assert.equal(stop.reason, "credential");
-  assert.equal(clears, 1);
-  assert.equal(journal.record.active?.phase, "ack_pending");
-  assert.equal(journal.record.active?.signalId, newNote.id);
+  assert.equal(
+    stop.reason,
+    "cancelled",
+    "MAJOR-4 mid-run stale delivery_unavailable must not report credential loss",
+  );
+  assert.equal(clears, 2);
+  assert.equal(journal.record.active, null);
 });
 
 test("runtime refuses old edges before starting or prompting a model", async () => {

@@ -5,8 +5,8 @@
  * Project config merge is defeated only by OPENCODE_DISABLE_PROJECT_CONFIG=1
  * (measured via `debug config --pure`), not by a private HOME alone.
  * Auth is file-based under a private 0700 home (auth-only copy + generated
- * forced-ask config). Real prompts stay blocked until the shared ACP
- * permission-boundary canary passes.
+ * forced-ask config). Worker prompts stay blocked until the shared ACP canary;
+ * hard-denied isolated prompts use the measured exact effective-config gate.
  */
 
 import {
@@ -77,6 +77,12 @@ export type OpenCodeAcpOpenOptions = {
   clientVersion?: string;
   /** When true, prompts are enabled without canary (tests only). */
   promptsEnabled?: boolean;
+  /**
+   * Hard-deny every tool through OpenCode's measured env permission surface.
+   * The exact effective-config probe replaces the incompatible dynamic canary:
+   * OpenCode removes hard-denied tools before the model can request one.
+   */
+  denyTools?: boolean;
   /**
    * Private absolute home already prepared with auth + safe config.
    * When omitted, open builds a temporary auth-only home and removes it on close
@@ -479,6 +485,7 @@ export async function prepareOpenCodeIsolatedHome(options: {
 export function buildOpenCodeChildEnv(
   parent: NodeJS.ProcessEnv | Record<string, string | undefined>,
   home: string,
+  options?: { denyTools?: boolean },
 ): Record<string, string> {
   if (!isAbsolute(home)) {
     throw new AcpHostError(
@@ -496,6 +503,9 @@ export function buildOpenCodeChildEnv(
     XDG_STATE_HOME: join(home, "xdg-state"),
     // Measured 1.18.10: private home alone still merges project opencode.json.
     OPENCODE_DISABLE_PROJECT_CONFIG: "1",
+    ...(options?.denyTools === true
+      ? { OPENCODE_PERMISSION: '{"*":"deny"}' }
+      : {}),
   };
 }
 
@@ -507,6 +517,7 @@ export async function assertOpenCodeEffectiveConfig(options: {
   executable: string;
   env: NodeJS.ProcessEnv | Record<string, string>;
   timeoutMs?: number;
+  denyTools?: boolean;
 }): Promise<{ permission: Record<string, unknown> }> {
   const hostile = await mkdtemp(join(tmpdir(), "cswarm-opencode-hostile-"));
   try {
@@ -570,10 +581,33 @@ export async function assertOpenCodeEffectiveConfig(options: {
       );
     }
     const map = permission as Record<string, unknown>;
-    assertForcedAskPermissionMap(map);
+    if (options.denyTools === true) {
+      assertHardDenyPermissionMap(map);
+    } else {
+      assertForcedAskPermissionMap(map);
+    }
     return { permission: map };
   } finally {
     await rm(hostile, { recursive: true, force: true }).catch(() => undefined);
+  }
+}
+
+/** The measured hard-deny config must end in wildcard deny. */
+export function assertHardDenyPermissionMap(map: Record<string, unknown>): void {
+  const keys = Object.keys(map);
+  for (const [tool, value] of Object.entries(map)) {
+    if (value === "allow") {
+      throw new AcpHostError(
+        "opencode_project_config_active",
+        `effective OpenCode hard-deny config contains per-tool allow for ${tool}`,
+      );
+    }
+  }
+  if (map["*"] !== "deny" || keys[keys.length - 1] !== "*") {
+    throw new AcpHostError(
+      "opencode_config_probe_failed",
+      "effective OpenCode config is missing the final hard-deny wildcard",
+    );
   }
 }
 
@@ -762,7 +796,11 @@ export async function openOpenCodeAcpSession(
     createdHome = true;
   }
 
-  const env = buildOpenCodeChildEnv(options.env ?? process.env, home);
+  const env = buildOpenCodeChildEnv(
+    options.env ?? process.env,
+    home,
+    { denyTools: options.denyTools === true },
+  );
   let childStarted = false;
   const disposeHome = async () => {
     if (createdHome || options.disposeHomeOnClose === true) {
@@ -782,7 +820,11 @@ export async function openOpenCodeAcpSession(
       });
     }
     if (!options.skipConfigProbe) {
-      await assertOpenCodeEffectiveConfig({ executable, env });
+      await assertOpenCodeEffectiveConfig({
+        executable,
+        env,
+        denyTools: options.denyTools === true,
+      });
     }
 
     const args = buildOpenCodeAcpArgs();
@@ -822,7 +864,10 @@ export async function openOpenCodeAcpSession(
         requestTimeoutMs: options.requestTimeoutMs,
         clientName: options.clientName,
         clientVersion: options.clientVersion,
-        promptsEnabled: options.promptsEnabled,
+        // A verified hard-deny removes every tool from the request, so the
+        // dynamic tool canary cannot run. The exact effective-config probe
+        // above is the positive control for this independently denied path.
+        promptsEnabled: options.denyTools === true || options.promptsEnabled,
       });
       sessionRef = session;
 

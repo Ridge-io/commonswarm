@@ -23,6 +23,7 @@ import {
   AcpPromptsBlockedError,
   OPENCODE_FORCED_PERMISSION_TOOLS,
   OPENCODE_MEASURED_VERSION,
+  assertHardDenyPermissionMap,
   buildOpenCodeAcpArgs,
   buildOpenCodeChildEnv,
   buildOpenCodeForcedPermissionConfig,
@@ -199,6 +200,31 @@ describe("OpenCode ACP host core (pure)", () => {
     assert.equal(sanitized.SWARM_X, undefined);
     assert.equal(sanitized.SECRET_TOKEN, undefined);
     assert.equal(sanitized.PATH, "/bin");
+  });
+
+  test("MAJOR-2: cross-owner child env hard-denies tools while same-owner does not", () => {
+    const home = "/tmp/cswarm-oc-home-example";
+    const sameOwner = buildOpenCodeChildEnv({ PATH: "/usr/bin" }, home);
+    const crossOwner = buildOpenCodeChildEnv(
+      { PATH: "/usr/bin", OPENCODE_PERMISSION: '{"*":"allow"}' },
+      home,
+      { denyTools: true },
+    );
+    assert.equal(
+      sameOwner.OPENCODE_PERMISSION,
+      undefined,
+      "MAJOR-2 same-owner worker must not inherit a tool restriction",
+    );
+    assert.equal(
+      crossOwner.OPENCODE_PERMISSION,
+      '{"*":"deny"}',
+      "MAJOR-2 cross-owner child must carry OpenCode's verified hard-deny surface",
+    );
+    assert.throws(
+      () => assertHardDenyPermissionMap({ bash: "allow", "*": "deny" }),
+      /per-tool allow/,
+      "MAJOR-2 hard-deny probe must reject any surviving per-tool allow",
+    );
   });
 
   test("auth validation requires owned 0600 regular bounded JSON", async () => {

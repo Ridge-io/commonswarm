@@ -339,9 +339,9 @@ async function handle(
     const afterId = body.cursor_mode ? (body.after_id ?? null) : null;
     const useAfterCursor = afterCreatedAt !== null && afterId !== null;
     // Relation is computed solely from the authenticated receiver's owner and
-    // the server-stamped author. Do NOT filter author.revoked_at: a revoked
-    // same-owner author remains same_owner so host policy still wakes. An
-    // agent row the membership-gated view cannot resolve is unknown.
+    // the server-stamped author. Filter author.revoked_at so a revoked agent
+    // author cannot resolve into an ownership relation and falls to unknown.
+    // An agent row the membership-gated view cannot resolve is also unknown.
     const rows = await tx<Record<string, unknown>[]>`
       SELECT
         s.id, s.workspace_id, s."from", s.from_kind, s."to",

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { chmod, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import test from "node:test";
 import type { SignalRecord } from "../src/cloud/command-client.js";
 import {
@@ -70,6 +70,9 @@ function fakeOpen(records: Array<{
     } as (typeof records)[number];
     records.push(record);
     const session = {
+      get arePromptsEnabled() {
+        return options.denyTools === true;
+      },
       async enablePromptsAfterCanary() {
         record.canaryDecision = await options.permissionCallback?.(REQUEST);
       },
@@ -122,6 +125,10 @@ test("OpenCode worker canary denies on empty cwd then openWorkCwd retargets", as
   assert.notEqual(records[0]?.options.cwd, cwd);
   assert.equal(records[0]?.workCwd, cwd);
   assert.equal(records[0]?.options.disposeHomeOnClose, false);
+  await assert.doesNotReject(
+    stat(records[0]!.options.cwd),
+    "MAJOR-1 worker process cwd must exist for the lifetime of its handle",
+  );
 
   const result = await adapter.prompt(SIGNAL, "worker", "work");
   assert.equal(result.message, "reply:work");
@@ -134,6 +141,11 @@ test("OpenCode worker canary denies on empty cwd then openWorkCwd retargets", as
   assert.deepEqual(records[0]?.prompts, ["work", "again"]);
   await adapter.close();
   assert.equal(records[0]?.closed, true);
+  await assert.rejects(
+    stat(records[0]!.options.cwd),
+    /ENOENT/,
+    "MAJOR-1 worker canary cwd must be removed after the handle closes",
+  );
 });
 
 test("ensureWorker canary failure abandons workerHome without later close()", async () => {
@@ -193,11 +205,9 @@ test("OpenCode cross-owner turns get fresh homes/cwds and always deny tools", as
   assert.notEqual(cwds[0], cwds[1]);
   assert.notEqual(cwds[0], cwd);
   for (const isolated of records.slice(1)) {
+    assert.equal(isolated.options.denyTools, true);
     assert.equal(isolated.options.disposeHomeOnClose, true);
-    assert.deepEqual(isolated.canaryDecision, {
-      outcome: "selected",
-      optionId: "deny",
-    });
+    assert.equal(isolated.canaryDecision, undefined);
     assert.deepEqual(isolated.promptDecision, {
       outcome: "selected",
       optionId: "deny",
@@ -209,6 +219,52 @@ test("OpenCode cross-owner turns get fresh homes/cwds and always deny tools", as
     records.every((r) => !("sender_owner_relation" in (r.options as object))),
     true,
   );
+  assert.equal(records[0]?.options.denyTools, undefined);
+  await adapter.close();
+});
+
+test("MAJOR-2 composition: hard-denied OpenCode isolates do not run a tool-dependent canary", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "cswarm-oc-worker-"));
+  let canaryCalls = 0;
+  let promptCalls = 0;
+  const adapter = new OpenCodeListenerModel({
+    cwd,
+    permissionMode: "allow",
+    allowMissingAuth: true,
+    open: async (options) => ({
+      session: {
+        get arePromptsEnabled() {
+          return options.denyTools === true;
+        },
+        async enablePromptsAfterCanary() {
+          canaryCalls += 1;
+          throw new Error("hard-denied child exposes no tool for the canary");
+        },
+        async prompt() {
+          promptCalls += 1;
+          assert.equal(options.denyTools, true);
+          return { message: "isolated reply", stopReason: "end_turn", updates: [] };
+        },
+        cancel() {},
+      },
+      child: {},
+      executable: "/usr/bin/opencode",
+      args: ["acp", "--pure"],
+      env: {},
+      home: options.isolatedHome!,
+      async close() {},
+    }) as unknown as OpenCodeAcpHandle,
+  });
+  await assert.doesNotReject(
+    adapter.prompt(
+      { ...SIGNAL, sender_owner_relation: "cross_owner" },
+      "isolated",
+      "remote",
+    ),
+    "MAJOR-2 hard-denied isolates must not depend on a canary whose tools are filtered out",
+  );
+  assert.equal(canaryCalls, 0);
+  assert.equal(promptCalls, 1);
   await adapter.close();
 });
 
@@ -557,6 +613,7 @@ test("close during in-flight open propagates exact child_exit_timeout cleanup fa
 test("openSession failure propagating child_exit_timeout retains home directory in model", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "cswarm-oc-worker-"));
   let workerHome: string | undefined;
+  let workerCwd: string | undefined;
   const timeoutErr = new AcpHostError(
     "child_exit_timeout",
     "child process did not exit after SIGKILL within 5000ms deadline",
@@ -566,6 +623,7 @@ test("openSession failure propagating child_exit_timeout retains home directory 
     allowMissingAuth: true,
     open: async (options) => {
       workerHome = options.isolatedHome;
+      workerCwd = options.cwd;
       await Promise.resolve();
       throw timeoutErr;
     },
@@ -574,6 +632,16 @@ test("openSession failure propagating child_exit_timeout retains home directory 
   assert.equal(typeof workerHome, "string");
   assert.ok(adapter.getRetainedHomes().includes(workerHome!));
   await stat(workerHome!);
+  await assert.doesNotReject(
+    stat(workerCwd!),
+    "MAJOR-1 child_exit_timeout must retain the cwd of a possibly live child",
+  );
+  assert.equal(
+    relative(workerHome!, workerCwd!).startsWith(".."),
+    false,
+    "MAJOR-1 retained child cwd must stay inside the owner-marked home for eventual sweep",
+  );
+  await rm(workerCwd!, { recursive: true, force: true }).catch(() => undefined);
   await rm(workerHome!, { recursive: true, force: true }).catch(() => undefined);
   await rm(cwd, { recursive: true, force: true }).catch(() => undefined);
 });
@@ -801,7 +869,7 @@ test("ensureWorker openWorkCwd failure plus cleanup timeout surfaces cleanup fai
   await rm(cwd, { recursive: true, force: true }).catch(() => undefined);
 });
 
-test("promptIsolated init error closes handle exactly once without double close", async () => {
+test("promptIsolated prompt error closes handle exactly once without double close", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "cswarm-oc-worker-"));
   let handleCloseCount = 0;
   const adapter = new OpenCodeListenerModel({
@@ -810,12 +878,10 @@ test("promptIsolated init error closes handle exactly once without double close"
     open: async (options) => {
       return {
         session: {
-          async enablePromptsAfterCanary() {
-            throw new Error("canary failed");
-          },
+          async enablePromptsAfterCanary() {},
           async openWorkCwd() {},
           async prompt() {
-            return { message: "w", stopReason: "end_turn" as const, updates: [] };
+            throw new Error("isolated prompt failed");
           },
           cancel() {},
         },
@@ -851,7 +917,7 @@ test("promptIsolated init error closes handle exactly once without double close"
     "isolated prompt",
   );
   void promptPromise.catch(() => undefined);
-  await assert.rejects(promptPromise, /canary failed/);
+  await assert.rejects(promptPromise, /isolated prompt failed/);
   assert.equal(handleCloseCount, 1);
 
   await rm(cwd, { recursive: true, force: true }).catch(() => undefined);
@@ -875,6 +941,76 @@ test("releaseOpenCodeHome failure records home in retainedHomes and surfaces exa
 
   await chmod(parent, 0o700).catch(() => undefined);
   await rm(parent, { recursive: true, force: true }).catch(() => undefined);
+});
+
+test("MAJOR-1 review: canary cwd creation failure releases the prepared worker home", async () => {
+  const parent = await mkdtemp(join(tmpdir(), "cswarm-oc-canary-init-"));
+  const workerHome = join(parent, "worker-home");
+  await writeFile(workerHome, "not a directory");
+  const adapter = new OpenCodeListenerModel({
+    cwd: parent,
+    allowMissingAuth: true,
+    prepareHome: async () => workerHome,
+  });
+
+  await assert.rejects(adapter.start(), /ENOTDIR|not a directory/i);
+  await assert.rejects(
+    stat(workerHome),
+    /ENOENT/,
+    "MAJOR-1 pre-handle canary cwd failure must release its prepared worker home",
+  );
+
+  await rm(parent, { recursive: true, force: true }).catch(() => undefined);
+});
+
+test("MAJOR-1 review: close during canary cwd preparation cannot start an untracked worker", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "cswarm-oc-worker-"));
+  let workerHome: string | undefined;
+  let releasePreparation: (() => void) | undefined;
+  const preparationGate = new Promise<void>((resolve) => {
+    releasePreparation = resolve;
+  });
+  let markPreparationStarted: (() => void) | undefined;
+  const preparationStarted = new Promise<void>((resolve) => {
+    markPreparationStarted = resolve;
+  });
+  let openCalls = 0;
+  const records: Parameters<typeof fakeOpen>[0] = [];
+  const open = fakeOpen(records);
+  const adapter = new OpenCodeListenerModel({
+    cwd,
+    allowMissingAuth: true,
+    prepareHome: async (options) => {
+      workerHome = await prepareOpenCodeIsolatedHome(options);
+      return workerHome;
+    },
+    prepareWorkerCwd: async (home) => {
+      const prepared = await mkdtemp(join(home, "canary-cwd-"));
+      await chmod(prepared, 0o700);
+      markPreparationStarted?.();
+      await preparationGate;
+      return prepared;
+    },
+    open: async (options) => {
+      openCalls += 1;
+      return await open(options);
+    },
+  });
+
+  const startPromise = adapter.start();
+  void startPromise.catch(() => undefined);
+  await preparationStarted;
+  await adapter.close();
+  await assert.rejects(stat(workerHome!), /ENOENT/);
+  releasePreparation?.();
+  await assert.rejects(startPromise, /cancelled during open|closed/);
+  assert.equal(
+    openCalls,
+    0,
+    "MAJOR-1 close during canary cwd preparation must not start an untracked worker",
+  );
+
+  await rm(cwd, { recursive: true, force: true }).catch(() => undefined);
 });
 
 test("promptIsolated finalizer home deletion failure surfaces exact error to caller", async () => {

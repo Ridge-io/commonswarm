@@ -44,6 +44,8 @@ export interface OpenCodeListenerModelOptions {
   allowMissingAuth?: boolean;
   /** Test-only home preparer (defaults to prepareOpenCodeIsolatedHome). */
   prepareHome?: typeof prepareOpenCodeIsolatedHome;
+  /** Test-only worker canary-cwd preparer. */
+  prepareWorkerCwd?: (home: string) => Promise<string>;
   /** Test-only bound for waiting on in-progress opens during close (ms). */
   pendingOpenWaitMs?: number;
 }
@@ -85,6 +87,7 @@ type PendingOpen = {
 export class OpenCodeListenerModel implements ListenerModel {
   private readonly openSession: OpenOpenCodeSession;
   private readonly prepareHome: typeof prepareOpenCodeIsolatedHome;
+  private readonly prepareWorkerCwd: (home: string) => Promise<string>;
   private readonly permissionMode: ListenerPermissionMode;
   private readonly pendingOpenWaitMs: number;
   private readonly instanceId = randomUUID();
@@ -104,6 +107,11 @@ export class OpenCodeListenerModel implements ListenerModel {
   constructor(private readonly options: OpenCodeListenerModelOptions) {
     this.openSession = options.open ?? openOpenCodeAcpSession;
     this.prepareHome = options.prepareHome ?? prepareOpenCodeIsolatedHome;
+    this.prepareWorkerCwd = options.prepareWorkerCwd ?? (async (home) => {
+      const cwd = await mkdtemp(join(home, "canary-cwd-"));
+      await chmod(cwd, 0o700);
+      return cwd;
+    });
     this.permissionMode = options.permissionMode ?? "deny";
     this.pendingOpenWaitMs = options.pendingOpenWaitMs ?? DEFAULT_PENDING_OPEN_WAIT_MS;
   }
@@ -447,22 +455,32 @@ export class OpenCodeListenerModel implements ListenerModel {
     if (this.worker) return this.worker;
     const generation = this.openGeneration;
     this.workerCanary = true;
-    const canaryCwd = await mkdtemp(join(tmpdir(), "cswarm-opencode-canary-"));
-    await chmod(canaryCwd, 0o700);
     const permissionCallback: PermissionCallback = (request) =>
       this.workerCanary || this.permissionMode === "deny"
         ? defaultPermissionCallback(request)
         : allowOnceOrDeny(request);
     let handle: OpenCodeAcpHandle | null = null;
     let home: string | null = null;
+    let canaryCwd: string | null = null;
     let pending: PendingOpen | null = null;
+    let canaryCwdOwnedByHandle = false;
+    let retainCanaryCwd = false;
     try {
       const homeRes = await this.ensureWorkerHome(generation);
       home = homeRes.home;
       pending = homeRes.pending;
       this.assertOpen(generation);
+      canaryCwd = await this.prepareWorkerCwd(home);
+      this.assertOpen(generation);
+      if (this.pendingOpens.get(home) !== pending) {
+        throw new AcpHostError(
+          "cancelled_during_open",
+          "listener model cancelled during worker preparation",
+        );
+      }
+      const ownedCanaryCwd = canaryCwd;
       const openPromise = this.openSession({
-        cwd: canaryCwd,
+        cwd: ownedCanaryCwd,
         permissionCallback,
         isolatedHome: home,
         disposeHomeOnClose: false,
@@ -480,6 +498,23 @@ export class OpenCodeListenerModel implements ListenerModel {
 
       try {
         handle = await openPromise;
+        const closeWorker = handle.close.bind(handle);
+        let closePromise: Promise<void> | null = null;
+        handle.close = async () => {
+          closePromise ??= (async () => {
+            try {
+              await closeWorker();
+            } catch (error) {
+              if ((error as { code?: unknown })?.code !== "child_exit_timeout") {
+                await rm(ownedCanaryCwd, { recursive: true, force: true }).catch(() => undefined);
+              }
+              throw error;
+            }
+            await rm(ownedCanaryCwd, { recursive: true, force: true }).catch(() => undefined);
+          })();
+          return await closePromise;
+        };
+        canaryCwdOwnedByHandle = true;
         pending.handle = handle;
       } catch (openError) {
         this.pendingOpens.delete(home);
@@ -487,6 +522,7 @@ export class OpenCodeListenerModel implements ListenerModel {
         let finalOpenErr = openError;
         if ((openError as any)?.code === "child_exit_timeout") {
           this.retainedHomes.push(home);
+          retainCanaryCwd = true;
         } else {
           try {
             await releaseOpenCodeHome(home, this.instanceId);
@@ -530,11 +566,21 @@ export class OpenCodeListenerModel implements ListenerModel {
       if (pending && this.pendingOpens.has(home!)) {
         this.pendingOpens.delete(home!);
         if (this.workerHome === home) this.workerHome = null;
+        if (handle === null && home !== null) {
+          try {
+            await releaseOpenCodeHome(home, this.instanceId);
+          } catch (cleanupErr) {
+            this.retainedHomes.push(home);
+            finalErr = cleanupErr;
+          }
+        }
         pending.markSettled(finalErr);
       }
       throw finalErr;
     } finally {
-      await rm(canaryCwd, { recursive: true, force: true }).catch(() => undefined);
+      if (canaryCwd !== null && !canaryCwdOwnedByHandle && !retainCanaryCwd) {
+        await rm(canaryCwd, { recursive: true, force: true }).catch(() => undefined);
+      }
     }
   }
 
@@ -595,6 +641,7 @@ export class OpenCodeListenerModel implements ListenerModel {
       const openPromise = this.openSession({
         cwd,
         permissionCallback: defaultPermissionCallback,
+        denyTools: true,
         isolatedHome: home,
         disposeHomeOnClose: true,
         ...(this.options.executable ? { executable: this.options.executable } : {}),
@@ -635,10 +682,9 @@ export class OpenCodeListenerModel implements ListenerModel {
       }
 
       this.inFlight.add(handle);
-      await handle.session.enablePromptsAfterCanary();
-      if (this.closed || this.cancelled || generation !== this.openGeneration) {
-        await this.performSingleOwnerCleanup(handle, home, isolatedInstanceId, pending, true);
-      }
+      // OpenCode 1.18.10 removes hard-denied tools from the model request, so
+      // a tool-dependent dynamic canary cannot run on this child. The host
+      // enables prompts only after its exact hard-deny effective-config probe.
 
       this.pendingOpens.delete(home);
       pending.markSettled();

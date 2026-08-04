@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   CommandHttpError,
   SIGNAL_REQUEST_TIMEOUT_MS,
@@ -280,7 +281,21 @@ function ackForTerminalEffect(
   if (/post|http_|transport|reply_body/i.test(code)) {
     return { outcome: "failed_terminal", lastErrorCode: "local_effect_failed" };
   }
-  throw new Error("listener terminal effect has an unknown failure classification");
+  return { outcome: "failed_terminal", lastErrorCode: "local_effect_failed" };
+}
+
+function isAckableTerminalEffect(
+  record: ListenerEffectRecord,
+  now: () => number,
+): boolean {
+  return (record.state === "done" &&
+      record.signalKind === "ask" &&
+      !!record.replySignalId) ||
+    (record.state === "observed" && record.signalKind === "note") ||
+    (record.state === "expired" &&
+      record.signalKind === "ask" &&
+      Date.parse(record.askUntil) <= now()) ||
+    (record.state === "failed" && record.signalKind === "ask");
 }
 
 function effectPhaseBudget(record: ListenerEffectRecord | null): number {
@@ -376,6 +391,47 @@ function sameEffectSignal(
     record.askBody === signal.body &&
     record.askUntil === signal.until &&
     record.senderOwnerRelation === (signal.sender_owner_relation ?? "unknown");
+}
+
+/** Bind recovered effects to the immutable fields from the authoritative lease. */
+function immutableSignalFingerprint(
+  signalId: string,
+  signalKind: string,
+  body: string,
+  until: string,
+  senderOwnerRelation: string,
+): string {
+  return createHash("sha256").update(JSON.stringify([
+    signalId,
+    signalKind,
+    body,
+    until,
+    senderOwnerRelation,
+  ])).digest("hex");
+}
+
+function signalFingerprint(signal: SignalRecord): string {
+  return immutableSignalFingerprint(
+    signal.id.toLowerCase(),
+    signal.kind,
+    signal.body,
+    signal.until,
+    signal.sender_owner_relation ?? "unknown",
+  );
+}
+
+function sameRecoveredEffect(
+  active: NonNullable<ListenerDeliveryJournalRecord["active"]>,
+  effect: ListenerEffectRecord,
+): boolean {
+  return typeof active.signalFingerprint === "string" &&
+    active.signalFingerprint === immutableSignalFingerprint(
+      effect.signalId,
+      effect.signalKind,
+      effect.askBody,
+      effect.askUntil,
+      effect.senderOwnerRelation,
+    );
 }
 
 async function observeFallbackNote(
@@ -475,10 +531,6 @@ export async function runListenerRuntime(
     ? options.deliveryClient ?? new DeliveryCommandClient(options.target, options.fetcher)
     : null;
   let journalSnapshot = initialJournal;
-  const startupAckPending = initialJournal?.active?.phase === "ack_pending";
-  const startupAckCommandId = startupAckPending
-    ? initialJournal!.active!.ack!.commandId
-    : null;
   const warnedClaimCommands = new Set<string>();
   const client = new ThinCommandClient(options.target, options.fetcher);
   const poster: ListenerReplyPoster = options.poster ?? {
@@ -605,9 +657,7 @@ export async function runListenerRuntime(
         });
         return null;
       } catch (error) {
-        const staleUnavailable = startupAckPending &&
-          active.ack.commandId === startupAckCommandId &&
-          now() > Date.parse(active.leasedUntil) &&
+        const staleUnavailable = now() >= Date.parse(active.leasedUntil) &&
           error instanceof DeliveryHttpError &&
           error.status === 403 &&
           error.code === "delivery_unavailable";
@@ -763,12 +813,16 @@ export async function runListenerRuntime(
         continue;
       }
 
-      if (deliveryMode === "cursor_fallback" && recovery !== null) {
-        if (recovery.phase === "leased" && page.capabilities.deliveryAck) {
+      if (recovery?.phase === "leased") {
+        if (page.capabilities.deliveryAck) {
           const terminal = recovery.signalId === null
             ? null
             : await options.store.read(recovery.signalId);
-          if (terminal !== null) {
+          if (
+            terminal !== null &&
+            sameRecoveredEffect(recovery, terminal) &&
+            isAckableTerminalEffect(terminal, now)
+          ) {
             try {
               const mapped = ackForTerminalEffect(terminal, now);
               await options.deliveryJournal!.prepareAck({
@@ -790,27 +844,51 @@ export async function runListenerRuntime(
             }
           }
         }
-        const horizon = recovery.phase === "claim_pending"
-          ? recovery.claimLastAttemptAt === null
-            ? now()
-            : Date.parse(recovery.claimLastAttemptAt) +
-              LISTENER_DELIVERY_MAX_LEASE_MS + LISTENER_DELIVERY_SAFETY_MARGIN_MS
-          : Date.parse(recovery.leasedUntil!) + LISTENER_DELIVERY_SAFETY_MARGIN_MS;
-        await sleep(Math.max(0, horizon - now()), abort);
-        if (abort?.aborted) {
-          stop = { reason: "cancelled" };
-          break;
-        }
-        if (now() >= horizon) {
-          try {
-            await options.deliveryJournal!.clearActive(eventTime(now));
-            after = null;
-          } catch (error) {
-            stop = { reason: "fatal", error: asError(error) };
+        const leasedUntilMs = Date.parse(recovery.leasedUntil!);
+        if (deliveryMode !== "durable_claim" || now() >= leasedUntilMs) {
+          const horizon = leasedUntilMs + LISTENER_DELIVERY_SAFETY_MARGIN_MS;
+          await sleep(Math.max(0, horizon - now()), abort);
+          if (abort?.aborted) {
+            stop = { reason: "cancelled" };
             break;
           }
+          if (now() >= horizon) {
+            try {
+              await options.deliveryJournal!.clearActive(eventTime(now));
+              after = null;
+            } catch (error) {
+              stop = { reason: "fatal", error: asError(error) };
+              break;
+            }
+          }
+          continue;
         }
-        continue;
+        // A still-live durable lease falls through to exact command replay.
+      }
+
+      if (recovery?.phase === "claim_pending") {
+        const horizon = recovery.claimLastAttemptAt === null
+          ? now()
+          : Date.parse(recovery.claimLastAttemptAt) +
+            LISTENER_DELIVERY_MAX_LEASE_MS + LISTENER_DELIVERY_SAFETY_MARGIN_MS;
+        if (deliveryMode !== "durable_claim" || now() >= horizon) {
+          await sleep(Math.max(0, horizon - now()), abort);
+          if (abort?.aborted) {
+            stop = { reason: "cancelled" };
+            break;
+          }
+          if (now() >= horizon) {
+            try {
+              await options.deliveryJournal!.clearActive(eventTime(now));
+              after = null;
+            } catch (error) {
+              stop = { reason: "fatal", error: asError(error) };
+              break;
+            }
+          }
+          continue;
+        }
+        // A recent durable attempt falls through to exact command replay.
       }
 
       if (deliveryMode === "durable_claim") {
@@ -930,6 +1008,7 @@ export async function runListenerRuntime(
               signalId: claimed.signal.id,
               leaseId: claimed.leaseId,
               leasedUntil: claimed.leasedUntil,
+              signalFingerprint: signalFingerprint(authoritativeSignal(claimed)),
               now: eventTime(now),
             });
           } catch (error) {
