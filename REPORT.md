@@ -80,8 +80,9 @@ new bounded list uses separate sidebar hooks and contains no Remove or Add manag
 
 The new `slack-shape.observer.test.ts` was strengthened during exact review before landing: source
 patterns for counts and filters became executable mixed-target behavior checks, sign-out clearing
-was pinned, and a Chrome geometry fixture now proves that 3 and 50 agents occupy the same rail
-height while the 50-row list scrolls.
+was pinned with explicit participant-list and count clearing, workspace transitions were required to
+refresh signal counts even on empty and error paths, and a Chrome geometry fixture now proves that 3
+and 50 agents occupy the same rail height while the 50-row list scrolls.
 
 ## Render inspection
 

@@ -172,17 +172,25 @@ test("the workspace shell is grouped as streams, people, and bounded agent navig
   assert.match(dashboard, /const renderSidebarParticipants =/);
   assert.match(dashboard, /renderSidebarParticipants\(\);/);
   const privacyResetStart = dashboard.indexOf("const resetWorkspaceSessionState");
+  const privacyResetEnd = dashboard.indexOf("armLiveFeed =", privacyResetStart);
+  assert.notEqual(privacyResetStart, -1, "privacy-reset start anchor must resolve");
+  assert.notEqual(privacyResetEnd, -1, "privacy-reset end anchor must resolve");
   const privacyReset = dashboard.slice(
     privacyResetStart,
-    dashboard.indexOf("armLiveFeed =", privacyResetStart),
+    privacyResetEnd,
   );
   for (const selector of [
     "data-sidebar-workspace-name",
+    "data-sidebar-people-list",
+    "data-sidebar-agent-list",
+    "data-sidebar-people-count",
+    "data-sidebar-agent-count",
     "data-broadcast-count",
     "data-direct-count",
   ]) {
     assert.ok(privacyReset.includes(selector), `privacy reset must clear ${selector}`);
   }
+  assert.match(privacyReset, /renderRoster\(\);/);
 });
 
 test("three and fifty agents occupy the same rendered rail height", async () => {
@@ -261,6 +269,19 @@ test("sidebar counts come from loaded signals and the shipped field stays light"
   assert.match(dashboard, /const \{ broadcastCount, directCount \} = signalCounts\(signals\);/);
   assert.match(dashboard, /broadcastTarget\.textContent = String\(broadcastCount\)/);
   assert.match(dashboard, /directTarget\.textContent = String\(directCount\)/);
+  const renderChannelStart = dashboard.indexOf("const renderChannel =");
+  const renderChannelEnd = dashboard.indexOf("const resetInviteSubmitControl", renderChannelStart);
+  assert.notEqual(renderChannelStart, -1, "channel-render start anchor must resolve");
+  assert.notEqual(renderChannelEnd, -1, "channel-render end anchor must resolve");
+  const renderChannel = dashboard.slice(
+    renderChannelStart,
+    renderChannelEnd,
+  );
+  assert.match(
+    renderChannel,
+    /renderSignalCounts\(\);/,
+    "every pending, empty, and failed workspace render must replace the prior workspace's counts",
+  );
   assert.ok(builtAssets.includes("dashboard__workspace-summary"));
   assert.ok(builtAssets.includes("dashboard__feed-filters"));
   assert.match(

@@ -1675,6 +1675,14 @@ import SampleNotice from "./SampleNotice.astro";
       return "Update";
     };
 
+    const renderSignalCounts = (): void => {
+      const { broadcastCount, directCount } = signalCounts(signals);
+      const broadcastTarget = one<HTMLElement>("[data-broadcast-count]");
+      const directTarget = one<HTMLElement>("[data-direct-count]");
+      if (broadcastTarget) broadcastTarget.textContent = String(broadcastCount);
+      if (directTarget) directTarget.textContent = String(directCount);
+    };
+
     const renderFeed = (): void => {
       window.clearTimeout(signalExpiryTimer);
       signalExpiryTimer = undefined;
@@ -1698,11 +1706,7 @@ import SampleNotice from "./SampleNotice.astro";
       const list = one<HTMLOListElement>("[data-feed-list]");
       const count = one<HTMLElement>("[data-update-count]");
       const more = one<HTMLElement>("[data-feed-more]");
-      const { broadcastCount, directCount } = signalCounts(signals);
-      const broadcastTarget = one<HTMLElement>("[data-broadcast-count]");
-      const directTarget = one<HTMLElement>("[data-direct-count]");
-      if (broadcastTarget) broadcastTarget.textContent = String(broadcastCount);
-      if (directTarget) directTarget.textContent = String(directCount);
+      renderSignalCounts();
       if (count) {
         count.textContent = `${signals.length}${signalHasMore ? "+" : ""} ${
           signals.length === 1 && !signalHasMore ? "update" : "updates"
@@ -2056,7 +2060,8 @@ import SampleNotice from "./SampleNotice.astro";
       renderMembers();
       renderRoster();
       for (const list of all<HTMLElement>(
-        "[data-workspace-list], [data-access-list], [data-dialog-access-list], [data-feed-list]",
+        "[data-workspace-list], [data-access-list], [data-dialog-access-list], [data-feed-list], " +
+          "[data-sidebar-people-list], [data-sidebar-agent-list]",
       )) {
         list.replaceChildren();
       }
@@ -2067,6 +2072,11 @@ import SampleNotice from "./SampleNotice.astro";
         target.textContent = "";
       }
       for (const count of all<HTMLElement>("[data-broadcast-count], [data-direct-count]")) {
+        count.textContent = "0";
+      }
+      for (const count of all<HTMLElement>(
+        "[data-sidebar-people-count], [data-sidebar-agent-count]",
+      )) {
         count.textContent = "0";
       }
       for (const target of all<HTMLElement>("[data-account-name], [data-rail-account]")) {
@@ -2190,6 +2200,7 @@ import SampleNotice from "./SampleNotice.astro";
         target.textContent = workspace.name;
       }
       if (id) id.textContent = workspace.id;
+      renderSignalCounts();
       const refresh = one<HTMLButtonElement>("[data-refresh]");
       if (refresh) refresh.hidden = sampleMode || agents.length === 0;
       const count = one<HTMLElement>("[data-update-count]");
