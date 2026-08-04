@@ -8,6 +8,12 @@ Frozen control: `175f894f7e3a3e9ec822b5a187331fee7fccd3c5`
 
 Candidate: `de848ee5f213e200e6265a99b84a0cf084f25996`
 
+D-041 treatment rerun base: `f483d2a37a1f9d4e90e451bd3891a039545bdbe7`, plus the
+uncommitted exact-review repairs later committed by this change. Exact runtime source SHA-256 used by
+the final build: `9bc514c0c2b02e0e5a42ccd410f9a3b5ba5521af29f3041f698da03508cd658a`;
+the resulting `dist/listener/runtime.js` SHA-256 was
+`f41b4bf3335fb090027ef41440f348679dd2a7d5ebad9f336781a7f433dff09a`.
+
 ## Outcome
 
 **This drill does not clear the release gate.**
@@ -17,7 +23,7 @@ The frozen control reproduced D-040 in a real detached listener: the journal was
 `listener_ready` before failing with `deliveryprotocolerror`. The journal remained `leased`; there
 was no ACK and no reply. The negative control therefore discriminated.
 
-The candidate result was **not established**. One candidate attempt killed the supervisor in the
+The candidate result is still **not established**. One candidate attempt killed the supervisor in the
 small interval after `delivery-journal.json` was readable but before `delivery-journal.lock` was
 unlinked. Restart then measured a frozen file lock, not D-040 recovery. After the harness was
 corrected to require the write lock to be absent while the journal still read `leased`, the next
@@ -28,6 +34,78 @@ until the desired answer appeared.
 The downgrade hazard was also **not established**. The candidate journal did contain the new
 `signalFingerprint` field, but the frozen-parser attempt copied the same leftover lock and returned
 `unclean_exit` before a parser verdict could be observed.
+
+The D-041 treatment rerun used the corrected lock-aware harness against the fixed runtime, after a
+fresh local database reset and build. It stopped earlier: the real OpenCode listener failed its
+permission canary before `ready`, so the journal remained inactive and the harness never reached a
+lease, kill, or restart. The contract says to report this boundary rather than tune until a desired
+answer appears. Raw evidence is recorded below.
+
+## D-041 treatment rerun — stopped before lease
+
+Artifact root:
+`/var/folders/bb/7n7qfbls651d80fs4r9wdyk40000gn/T/d040-treatment-emOn0W`
+
+The local database was reset from the fixed tree and every migration through
+`20260731000001_signal_deliveries.sql` applied. `npm run build` then built the fixed runtime. The
+edge functions were served from that same tree with the real environment file:
+
+```text
+SWARM_ENV=test
+SWARM_SELF_SERVE=1
+```
+
+The served copy alone used the drill's 8-second `DELIVERY_LEASE_MS`. After the run, the source was
+restored to `15 * 60 * 1000`, `git diff -- supabase/functions/command/durable-delivery.ts` was empty,
+and no edge-function server or listener process remained. The harness's `baseEnv` explicitly set
+`NODE_OPTIONS=--max-old-space-size=4096`, so the CLI, detached listener, and model child inherited it.
+
+Real setup succeeded through the direct ask. The durable identifiers were:
+
+```text
+AUTH_USER_CREATE_HTTP=200
+AUTH_USER_ID=37a33533-5434-4939-ab18-09478b5ad0f2
+ARM=treatment
+TREE=/private/tmp/claude-501/-Users-yulanbot-Developer-Ridge-io-cloud-swarm/b59fa26b-a455-4f86-883e-94d463540b55/scratchpad/d041-fix
+SHA=f483d2a37a1f9d4e90e451bd3891a039545bdbe7
+LEASE_OVERRIDE_MS=8000
+TARGET_CREDENTIAL_EXPIRY_SOURCE=swarm.agent_tokens.expires_at
+TARGET_CREDENTIAL_EXPIRES_AT=2026-08-04T15:35:14.165Z
+direct_ask_signal_id=49617484-e5ae-42bc-8392-2ac6032e792f
+```
+
+Exact `listen start` output:
+
+```text
+===== initial listen start =====
+exit=1 signal=none
+--- stdout ---
+<empty>
+--- stderr ---
+cswarm: the listener did not become ready within two minutes; check network access and host login, then retry
+```
+
+The listener-owned event log gives the exact internal stop:
+
+```jsonl
+{"ts":"2026-08-04T14:35:14.894Z","event":"listener_starting","instance_id":"ad21a2fb-7010-4691-9949-d16335b5dc01","pid":88695}
+{"ts":"2026-08-04T14:35:14.941Z","event":"listener_delivery_mode","delivery_mode":"durable_claim","pending_delivery_count":1}
+{"ts":"2026-08-04T14:37:16.760Z","event":"listener_failed","failure_code":"permission_canary_failed"}
+```
+
+Exact final status and journal:
+
+```json
+{"version":1,"instanceId":"ad21a2fb-7010-4691-9949-d16335b5dc01","provider":"opencode","permissionMode":"allow","profileId":"a43416c82b48dcd84545dfdc","workspaceId":"04100000-0000-4000-8000-000000000002","principalId":"a678c3c8-d382-5b25-a575-7d14ed50cd93","pid":88695,"state":"failed","startedAt":"2026-08-04T14:35:14.884Z","readyAt":null,"updatedAt":"2026-08-04T14:37:16.761Z","stoppedAt":"2026-08-04T14:37:16.760Z","lastSignalId":null,"lastErrorCode":"permission_canary_failed","deliveryMode":"durable_claim","pendingDeliveryCount":1,"lastTerminalDeliveryFailureCount":null,"lastTerminalDeliveryFailureAt":null,"lastClaimAt":null,"lastAckAt":null,"logPath":"/var/folders/bb/7n7qfbls651d80fs4r9wdyk40000gn/T/d040-treatment-emOn0W/listener-state/9827837b20915530e46f767844d0cd2079d1ae8dd0e19f515e581aa38353b786/events.ndjson"}
+```
+
+```json
+{"version":1,"workspaceId":"04100000-0000-4000-8000-000000000002","principalId":"a678c3c8-d382-5b25-a575-7d14ed50cd93","listenerInstanceId":"ad21a2fb-7010-4691-9949-d16335b5dc01","nextClaimOrdinal":0,"active":null,"updatedAt":"2026-08-04T14:35:14.889Z"}
+```
+
+This run establishes that the corrected harness did not recreate its old leftover-lock artifact:
+there was never an active journal or journal lock to confuse with product recovery. It does **not**
+establish the treatment outcome, because the provider canary prevented the required leased state.
 
 ## Real setup
 

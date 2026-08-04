@@ -184,8 +184,14 @@ function failureCode(error: unknown, fallback: string): string {
   return fallback;
 }
 
-/** A durable version-2 ask effect: signalKind is closed to asks here. */
-function newRecord(signal: SignalRecord, now: number): ListenerEffectRecord {
+/** Build the deterministic ask start used for first processing or corrupt-effect repair. */
+export function newReceivedAskRecord(
+  signal: SignalRecord,
+  now: number,
+): ListenerEffectRecord {
+  if (signal.kind !== "ask") {
+    throw new Error("listener ask effect requires an ask signal");
+  }
   return {
     version: 2,
     signalId: signal.id.toLowerCase(),
@@ -256,7 +262,7 @@ export class ListenerEngine {
     }
     let record = await this.options.store.read(signal.id);
     if (record === null) {
-      record = newRecord(signal, this.now());
+      record = newReceivedAskRecord(signal, this.now());
       await this.options.store.write(record);
     } else if (!integrityMatches(record, signal)) {
       record = await this.write({

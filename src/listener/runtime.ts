@@ -33,7 +33,7 @@ import type {
   ListenerDeliveryJournal,
   ListenerDeliveryJournalRecord,
 } from "./delivery-journal.js";
-import { ListenerEngine } from "./engine.js";
+import { ListenerEngine, newReceivedAskRecord } from "./engine.js";
 import { newObservedNoteRecord } from "./file-store.js";
 import type {
   ListenerEffectRecord,
@@ -465,6 +465,45 @@ async function observeFallbackNote(
   return persisted;
 }
 
+async function readOrReplaceUnreadableEffect(
+  store: ListenerEffectStore,
+  signal: SignalRecord,
+  now: () => number,
+): Promise<ListenerEffectRecord | null> {
+  try {
+    return await store.read(signal.id);
+  } catch {
+    // Retry before replacement so one transient read does not discard a valid
+    // effect. The signal came from the authoritative read/claim response.
+  }
+  try {
+    return await store.read(signal.id);
+  } catch {
+    const replacement = signal.kind === "note"
+      ? newObservedNoteRecord({
+        signalId: signal.id,
+        body: signal.body,
+        until: signal.until,
+        senderOwnerRelation: signal.sender_owner_relation ?? "unknown",
+        updatedAt: eventTime(now),
+      })
+      : {
+        ...newReceivedAskRecord(signal, now()),
+        state: "failed" as const,
+        failureCode: "local_effect_corrupt",
+      };
+    // A corrupt ask may have posted already, but its exact reply body/receipt
+    // is no longer knowable. Terminalize the local-effect failure instead of
+    // prompting a different reply under the same idempotency command id.
+    await store.write(replacement);
+    const repaired = await store.read(signal.id);
+    if (repaired === null || !sameEffectSignal(repaired, signal)) {
+      throw new Error("unreadable listener effect could not be replaced");
+    }
+    return repaired;
+  }
+}
+
 async function closeBeforeStart(
   model: ListenerRuntimeModel,
   error: Error,
@@ -786,7 +825,9 @@ export async function runListenerRuntime(
 
       const recovery = currentJournalRecord?.active ?? null;
       if (recovery?.phase === "ack_pending") {
-        if (page.capabilities.deliveryAck) {
+        const horizon = Date.parse(recovery.leasedUntil!) +
+          LISTENER_DELIVERY_SAFETY_MARGIN_MS;
+        if (page.capabilities.deliveryAck && now() < horizon) {
           const ackStop = await sendPreparedAck(recovery);
           if (ackStop !== null) {
             stop = ackStop;
@@ -799,25 +840,35 @@ export async function runListenerRuntime(
           await sleep(pollMs, abort);
           continue;
         }
-        const horizon = Date.parse(recovery.leasedUntil!) +
-          LISTENER_DELIVERY_SAFETY_MARGIN_MS;
         await sleep(Math.max(0, horizon - now()), abort);
         if (abort?.aborted) {
           stop = { reason: "cancelled" };
           break;
         }
         if (now() >= horizon) {
-          await options.deliveryJournal!.clearActive(eventTime(now));
-          after = null;
+          try {
+            await options.deliveryJournal!.clearActive(eventTime(now));
+            after = null;
+          } catch (error) {
+            stop = { reason: "fatal", error: asError(error) };
+            break;
+          }
         }
         continue;
       }
 
       if (recovery?.phase === "leased") {
         if (page.capabilities.deliveryAck) {
-          const terminal = recovery.signalId === null
-            ? null
-            : await options.store.read(recovery.signalId);
+          let terminal: ListenerEffectRecord | null = null;
+          if (recovery.signalId !== null) {
+            try {
+              terminal = await options.store.read(recovery.signalId);
+            } catch {
+              // An unreadable effect cannot safely be ACKed. Treat it exactly
+              // like a missing effect so stale-lease clearing remains reachable.
+              terminal = null;
+            }
+          }
           if (
             terminal !== null &&
             sameRecoveredEffect(recovery, terminal) &&
@@ -1023,7 +1074,11 @@ export async function runListenerRuntime(
         const signal = authoritativeSignal(claimed);
         let terminal: ListenerEffectRecord | null = null;
         try {
-          const existing = await options.store.read(signal.id);
+          const existing = await readOrReplaceUnreadableEffect(
+            options.store,
+            signal,
+            now,
+          );
           if (existing !== null && !sameEffectSignal(existing, signal)) {
             throw new Error("stored listener effect does not match the authoritative delivery");
           }
@@ -1160,6 +1215,7 @@ export async function runListenerRuntime(
         }
         if (signal.kind === "note") {
           try {
+            await readOrReplaceUnreadableEffect(options.store, signal, now);
             const record = await observeFallbackNote(options.store, signal, now);
             options.onEvent?.({
               type: "effect",
@@ -1177,6 +1233,7 @@ export async function runListenerRuntime(
         if (signal.kind !== "ask") continue;
         let result: ListenerProcessResult;
         try {
+          await readOrReplaceUnreadableEffect(options.store, signal, now);
           result = await engine.process(signal);
         } catch (error) {
           if (abort?.aborted) {
