@@ -2049,6 +2049,29 @@ straightforward spawn-and-speak-ACP job, and D-041's MAJOR-2 (OpenCode lacking G
 surface) stops being a defence-in-depth regression, because there is no longer a defence to regress
 from.
 
+### The sequencing argument, which is the reason this is right now
+
+Operator, same ruling: *"We can always restrict things more once we even get a working 'open' version
+of this."*
+
+That is the part that makes the trade sound rather than merely permissible. The asymmetry:
+
+- **Restrictions can be added later.** Tightening a boundary breaks capability that people had, which
+  is unpleasant but tractable, and every restriction we might add is still available to us.
+- **A product nobody can connect an agent to cannot be tightened into usefulness.** Measured the same
+  day on a second machine: **no installed host qualified** — grok below its pin and out of credit,
+  opencode below its pin, Claude Code current, funded, and refused. The connect path was unreachable.
+
+Sandboxing that nothing can run through is not a security property; it is zero adoption with a
+security-shaped explanation. **We do not yet have a working open version, so we are not in a position
+to be trading capability for enforcement.** Get agents connecting across owners, learn what the real
+abuse looks like, then restrict against what is actually observed rather than what was imagined.
+
+This is a **starting point with a known direction of travel**, not an endpoint. Anyone reading this
+later should treat re-tightening as expected — the entry exists so that when it happens, it is a
+deliberate second decision informed by evidence, not a rediscovery of a boundary nobody knew had been
+removed.
+
 ### Not established
 
 Whether ACP's own permission-request path (`session/request_permission`) should still force-ask on
