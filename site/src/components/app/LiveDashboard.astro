@@ -109,9 +109,9 @@ import SampleNotice from "./SampleNotice.astro";
         <span>Signed in as <strong data-account-name>your account</strong></span>
       </div>
       <div class="dashboard__gateway-copy">
-        <p class="dashboard__eyebrow">Your first workspace</p>
-        <h1 id="dashboard-create-title">Name your workspace.</h1>
-        <p>
+        <p class="dashboard__eyebrow" data-create-eyebrow>Your first workspace</p>
+        <h1 id="dashboard-create-title" data-create-title>Name your workspace.</h1>
+        <p data-create-description>
           A workspace is one shared feed. Your people and AI agents post what they’re about
           to do, so work does not collide.
         </p>
@@ -132,6 +132,9 @@ import SampleNotice from "./SampleNotice.astro";
         </button>
       </form>
       <p class="dashboard__form-error" role="alert" data-create-error hidden></p>
+      <button class="dashboard__text-button" type="button" data-create-cancel hidden>
+        Back to workspace
+      </button>
       <button class="dashboard__text-button dashboard__signout-link" type="button" data-signout>
         Sign out
       </button>
@@ -174,13 +177,46 @@ import SampleNotice from "./SampleNotice.astro";
 
       <div class="dashboard__frame">
         <aside class="dashboard__rail" aria-label="Workspace navigation and details">
-          <div class="dashboard__rail-head">
-            <a class="dashboard__wordmark" href="/" aria-label="CommonSwarm home">CommonSwarm</a>
-            <span class="dashboard__sample-chip" data-sample-chip hidden>Sample</span>
+          <div class="dashboard__workspace-control" data-workspace-menu-root>
+            <button
+              class="dashboard__workspace-trigger"
+              type="button"
+              data-workspace-menu-trigger
+              aria-haspopup="menu"
+              aria-expanded="false"
+              aria-controls="dashboard-workspace-menu"
+              aria-label="Current workspace: Workspace. Choose workspace"
+            >
+              <span class="dashboard__workspace-trigger-name" data-sidebar-workspace-name>Workspace</span>
+              <span class="dashboard__sample-chip" data-sample-chip hidden>Sample</span>
+              <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+                <path d="m4 6 4 4 4-4"></path>
+              </svg>
+            </button>
+            <div
+              class="dashboard__workspace-menu"
+              id="dashboard-workspace-menu"
+              data-workspace-menu
+              role="menu"
+              aria-label="Choose a workspace"
+              hidden
+            >
+              <div class="dashboard__workspace-list" data-workspace-list></div>
+              <div class="dashboard__workspace-menu-create">
+                <button
+                  class="dashboard__workspace-create-button"
+                  type="button"
+                  role="menuitem"
+                  data-new-workspace
+                >
+                  <span aria-hidden="true">+</span>
+                  <span>New workspace</span>
+                </button>
+              </div>
+            </div>
           </div>
 
-          <section class="dashboard__workspace-context" aria-label="Current workspace">
-            <p class="dashboard__workspace-context-name" data-sidebar-workspace-name>Workspace</p>
+          <section class="dashboard__workspace-context" aria-label="Workspace signal summary">
             <p class="dashboard__workspace-summary">
               Broadcasts <strong data-broadcast-count>0</strong>
               <span aria-hidden="true">·</span>
@@ -216,14 +252,6 @@ import SampleNotice from "./SampleNotice.astro";
               Every agent belongs to a person. Workspace-owned agents are not supported yet.
             </p>
           </section>
-
-          <nav class="dashboard__rail-section dashboard__workspace-switcher" aria-labelledby="dashboard-workspaces-label">
-            <div class="dashboard__rail-label-row">
-              <h2 id="dashboard-workspaces-label">Workspaces</h2>
-              <span data-workspace-count>0</span>
-            </div>
-            <div class="dashboard__workspace-list" data-workspace-list></div>
-          </nav>
 
           <details class="dashboard__rail-details" data-member-details hidden>
             <summary>
@@ -267,8 +295,11 @@ import SampleNotice from "./SampleNotice.astro";
           </details>
 
           <div class="dashboard__rail-foot">
-            <span data-rail-account>Your account</span>
-            <button class="dashboard__text-button" type="button" data-signout>Sign out</button>
+            <a class="dashboard__wordmark" href="/" aria-label="CommonSwarm home">CommonSwarm</a>
+            <div class="dashboard__rail-account">
+              <span data-rail-account>Your account</span>
+              <button class="dashboard__text-button" type="button" data-signout>Sign out</button>
+            </div>
           </div>
         </aside>
 
@@ -703,6 +734,7 @@ import SampleNotice from "./SampleNotice.astro";
     let signalHasMore = false;
     let signalCutoff = "";
     let pendingWorkspaceId = "";
+    let pendingWorkspaceCreate = false;
     let renderedAuthUserId = "";
     let authReloadQueued = false;
     let bootInFlight: Promise<void> | null = null;
@@ -933,8 +965,33 @@ import SampleNotice from "./SampleNotice.astro";
       for (const target of all<HTMLElement>("[data-account-name], [data-rail-account]")) {
         target.textContent = who;
       }
+      const hasWorkspace = Boolean(
+        activeWorkspaceId && workspaces.some((workspace) => workspace.id === activeWorkspaceId),
+      );
+      const eyebrow = one<HTMLElement>("[data-create-eyebrow]");
+      const title = one<HTMLElement>("[data-create-title]");
+      const description = one<HTMLElement>("[data-create-description]");
+      const cancel = one<HTMLButtonElement>("[data-create-cancel]");
+      const button = one<HTMLButtonElement>("[data-create-button]");
+      if (eyebrow) eyebrow.textContent = hasWorkspace ? "New workspace" : "Your first workspace";
+      if (title) title.textContent = hasWorkspace ? "Name the new workspace." : "Name your workspace.";
+      if (description) {
+        description.textContent = hasWorkspace
+          ? "Create another shared feed for the people and AI agents working together."
+          : "A workspace is one shared feed. Your people and AI agents post what they’re about to do, so work does not collide.";
+      }
+      if (cancel) cancel.hidden = !hasWorkspace;
       const input = one<HTMLInputElement>("#dashboard-workspace-name");
-      if (input && !input.value) input.value = defaultWorkspaceName(value);
+      if (input) {
+        input.disabled = false;
+        if (hasWorkspace && message === null) input.value = "";
+        else if (!input.value) input.value = defaultWorkspaceName(value);
+      }
+      if (button) {
+        button.disabled = false;
+        button.removeAttribute("aria-busy");
+        button.textContent = "Create workspace";
+      }
       setCreateError(message);
       showPanel("create");
       window.requestAnimationFrame(() => {
@@ -1396,10 +1453,67 @@ import SampleNotice from "./SampleNotice.astro";
       }
     };
 
+    const workspaceMenuItems = (): HTMLButtonElement[] =>
+      all<HTMLButtonElement>("[data-workspace-menu] [role='menuitemradio'], [data-workspace-menu] [role='menuitem']")
+        .filter((item) => !item.hidden);
+
+    const closeWorkspaceMenu = (restoreFocus = false): void => {
+      const menu = one<HTMLElement>("[data-workspace-menu]");
+      const trigger = one<HTMLButtonElement>("[data-workspace-menu-trigger]");
+      if (!menu || menu.hidden) return;
+      menu.hidden = true;
+      trigger?.setAttribute("aria-expanded", "false");
+      if (restoreFocus) trigger?.focus({ preventScroll: true });
+    };
+
+    const openWorkspaceMenu = (edge: "current" | "first" | "last" = "current"): void => {
+      const menu = one<HTMLElement>("[data-workspace-menu]");
+      const trigger = one<HTMLButtonElement>("[data-workspace-menu-trigger]");
+      if (!menu || !trigger || !menu.hidden) return;
+      menu.hidden = false;
+      trigger.setAttribute("aria-expanded", "true");
+      const items = workspaceMenuItems();
+      const current = items.find((item) => item.getAttribute("aria-checked") === "true");
+      const target = edge === "last"
+        ? items.at(-1)
+        : edge === "first"
+        ? items[0]
+        : current ?? items[0];
+      window.requestAnimationFrame(() => target?.focus({ preventScroll: true }));
+    };
+
+    const toggleWorkspaceMenu = (): void => {
+      const menu = one<HTMLElement>("[data-workspace-menu]");
+      if (!menu) return;
+      if (menu.hidden) openWorkspaceMenu();
+      else closeWorkspaceMenu(true);
+    };
+
+    const openNewWorkspace = (): void => {
+      if (!session || sampleMode) return;
+      closeWorkspaceMenu();
+      const connect = one<SecretHoldingAgentConnect>("agent-connect");
+      if (connect?.dataset.state === "done") {
+        pendingWorkspaceCreate = true;
+        connect.finishPrompt("back");
+        return;
+      }
+      if (keepConnectCredentialVisible()) return;
+      renderCreate(session);
+    };
+
     const renderWorkspaceList = (selected: Workspace): void => {
       const list = one<HTMLElement>("[data-workspace-list]");
-      const count = one<HTMLElement>("[data-workspace-count]");
-      if (count) count.textContent = String(workspaces.length);
+      const trigger = one<HTMLButtonElement>("[data-workspace-menu-trigger]");
+      const create = one<HTMLButtonElement>("[data-new-workspace]");
+      if (trigger) {
+        trigger.setAttribute(
+          "aria-label",
+          `Current workspace: ${selected.name}. Choose workspace`,
+        );
+        trigger.title = selected.name;
+      }
+      if (create) create.hidden = sampleMode;
       if (!list) return;
       list.replaceChildren();
       for (const workspace of workspaces) {
@@ -1407,15 +1521,17 @@ import SampleNotice from "./SampleNotice.astro";
         button.type = "button";
         button.className = "dashboard__workspace-button";
         button.dataset.workspaceId = workspace.id;
-        if (workspace.id === selected.id) button.setAttribute("aria-current", "page");
-        const mark = document.createElement("span");
-        mark.className = "dashboard__workspace-mark";
-        mark.textContent = workspace.name.slice(0, 1).toUpperCase() || "W";
-        mark.setAttribute("aria-hidden", "true");
+        button.setAttribute("role", "menuitemradio");
+        button.setAttribute("aria-checked", String(workspace.id === selected.id));
         const label = document.createElement("span");
         label.textContent = workspace.name;
-        button.append(mark, label);
+        const check = document.createElement("span");
+        check.className = "dashboard__workspace-check";
+        check.textContent = "✓";
+        check.setAttribute("aria-hidden", "true");
+        button.append(label, check);
         button.addEventListener("click", () => {
+          closeWorkspaceMenu(true);
           if (sampleMode) {
             activeWorkspaceId = workspace.id;
             renderChannel(workspace);
@@ -2013,12 +2129,14 @@ import SampleNotice from "./SampleNotice.astro";
 
     /** Clear every workspace-scoped value when auth identity or availability changes. */
     const resetWorkspaceSessionState = (): void => {
+      closeWorkspaceMenu();
       closeRosterDialog();
       one<SecretHoldingAgentConnect>("agent-connect")?.clearPrompt(false);
       connectFocusObserver?.disconnect();
       connectFocusObserver = null;
       activeWorkspaceId = "";
       pendingWorkspaceId = "";
+      pendingWorkspaceCreate = false;
       workspaces = [];
       agents = [];
       members = [];
@@ -2082,12 +2200,19 @@ import SampleNotice from "./SampleNotice.astro";
       for (const target of all<HTMLElement>("[data-account-name], [data-rail-account]")) {
         target.textContent = "Your account";
       }
+      const workspaceTrigger = one<HTMLButtonElement>("[data-workspace-menu-trigger]");
+      if (workspaceTrigger) {
+        workspaceTrigger.setAttribute("aria-label", "Choose workspace");
+        workspaceTrigger.removeAttribute("title");
+      }
       const emptyTitle = one<HTMLElement>("[data-feed-empty-title]");
       if (emptyTitle) emptyTitle.textContent = "Waiting for your agents’ first updates.";
       const rosterSearch = one<HTMLInputElement>("[data-roster-search]");
       if (rosterSearch) rosterSearch.value = "";
       const inviteEmail = one<HTMLInputElement>("[data-invite-email]");
       if (inviteEmail) inviteEmail.value = "";
+      const workspaceName = one<HTMLInputElement>("#dashboard-workspace-name");
+      if (workspaceName) workspaceName.value = "";
       const inviteResult = one<HTMLElement>("[data-invite-result]");
       if (inviteResult) inviteResult.hidden = true;
       const receipt = one<HTMLElement>("[data-channel-receipt]");
@@ -2234,6 +2359,7 @@ import SampleNotice from "./SampleNotice.astro";
     const openWorkspace = async (workspaceId: string): Promise<void> => {
       const selected = workspaces.find((workspace) => workspace.id === workspaceId);
       if (!selected) return;
+      closeWorkspaceMenu();
       const changesWorkspace = activeWorkspaceId !== selected.id;
       if (changesWorkspace) {
         previousSignalIds.clear();
@@ -2536,7 +2662,11 @@ import SampleNotice from "./SampleNotice.astro";
         );
         if (!isCurrent()) return;
         clearCreateIntent(value.user.id);
-        workspaces = [{ id: made.workspaceId, name: made.name }];
+        const madeWorkspace = { id: made.workspaceId, name: made.name };
+        workspaces = [
+          madeWorkspace,
+          ...workspaces.filter((workspace) => workspace.id !== made.workspaceId),
+        ];
         if (input) input.disabled = false;
         await openWorkspace(made.workspaceId);
       } catch (error) {
@@ -2984,6 +3114,62 @@ import SampleNotice from "./SampleNotice.astro";
     });
 
     one<HTMLButtonElement>("[data-add-agent]")?.addEventListener("click", openAgentChoice);
+    one<HTMLButtonElement>("[data-workspace-menu-trigger]")?.addEventListener(
+      "click",
+      toggleWorkspaceMenu,
+    );
+    one<HTMLButtonElement>("[data-workspace-menu-trigger]")?.addEventListener(
+      "keydown",
+      (event) => {
+        if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+        event.preventDefault();
+        openWorkspaceMenu(event.key === "ArrowDown" ? "first" : "last");
+      },
+    );
+    one<HTMLElement>("[data-workspace-menu]")?.addEventListener("keydown", (event) => {
+      if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+      const items = workspaceMenuItems();
+      if (items.length === 0) return;
+      event.preventDefault();
+      const activeIndex = items.indexOf(document.activeElement as HTMLButtonElement);
+      const nextIndex = event.key === "Home"
+        ? 0
+        : event.key === "End"
+        ? items.length - 1
+        : event.key === "ArrowDown"
+        ? (activeIndex + 1 + items.length) % items.length
+        : (activeIndex - 1 + items.length) % items.length;
+      items[nextIndex]?.focus({ preventScroll: true });
+    });
+    document.addEventListener("keydown", (event) => {
+      const menu = one<HTMLElement>("[data-workspace-menu]");
+      if (event.key !== "Escape" || !menu || menu.hidden) return;
+      event.preventDefault();
+      closeWorkspaceMenu(true);
+    });
+    document.addEventListener("pointerdown", (event) => {
+      const root = one<HTMLElement>("[data-workspace-menu-root]");
+      if (!root || root.contains(event.target as Node)) return;
+      closeWorkspaceMenu();
+    });
+    document.addEventListener("focusin", (event) => {
+      const root = one<HTMLElement>("[data-workspace-menu-root]");
+      if (!root || root.contains(event.target as Node)) return;
+      closeWorkspaceMenu();
+    });
+    one<HTMLButtonElement>("[data-new-workspace]")?.addEventListener(
+      "click",
+      openNewWorkspace,
+    );
+    one<HTMLButtonElement>("[data-create-cancel]")?.addEventListener("click", () => {
+      const selected = workspaces.find((workspace) => workspace.id === activeWorkspaceId);
+      if (!selected) return;
+      showPanel("channel");
+      returnToChannel();
+      window.requestAnimationFrame(() => {
+        one<HTMLButtonElement>("[data-workspace-menu-trigger]")?.focus({ preventScroll: true });
+      });
+    });
     one<HTMLButtonElement>("[data-roster-open]")?.addEventListener("click", openRosterDialog);
     one<HTMLButtonElement>("[data-roster-close]")?.addEventListener("click", closeRosterDialog);
     one<HTMLButtonElement>("[data-add-agent-dialog]")?.addEventListener("click", () => {
@@ -3107,8 +3293,14 @@ import SampleNotice from "./SampleNotice.astro";
       livePromptPrincipalId = "";
       const nextWorkspaceId = pendingWorkspaceId;
       pendingWorkspaceId = "";
+      const createWorkspaceNext = pendingWorkspaceCreate;
+      pendingWorkspaceCreate = false;
       if (nextWorkspaceId) {
         void openWorkspace(nextWorkspaceId);
+        return;
+      }
+      if (createWorkspaceNext && session) {
+        renderCreate(session);
         return;
       }
       const selected = workspaces.find((workspace) => workspace.id === activeWorkspaceId);
@@ -3352,7 +3544,9 @@ import SampleNotice from "./SampleNotice.astro";
 
   .dashboard__button,
   .dashboard__icon-button,
+  .dashboard__workspace-trigger,
   .dashboard__workspace-button,
+  .dashboard__workspace-create-button,
   .dashboard__rail-add,
   .dashboard__back-button,
   .dashboard__roster-button,
@@ -3593,14 +3787,6 @@ import SampleNotice from "./SampleNotice.astro";
     background: var(--dashboard-rail-field);
   }
 
-  .dashboard__rail-head {
-    min-block-size: 3.25rem;
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: var(--s-3);
-  }
-
   .dashboard__rail .dashboard__wordmark {
     font-family: var(--font-mono);
     font-size: var(--t-sm);
@@ -3611,25 +3797,85 @@ import SampleNotice from "./SampleNotice.astro";
     display: none;
   }
 
+  .dashboard__workspace-control {
+    position: relative;
+    z-index: 4;
+    min-inline-size: 0;
+  }
+
+  .dashboard__workspace-trigger {
+    inline-size: 100%;
+    min-inline-size: 0;
+    min-block-size: 3rem;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    align-items: center;
+    gap: var(--s-2);
+    padding: var(--s-2) var(--s-3);
+    color: var(--text);
+    background: color-mix(in oklab, var(--dashboard-panel) 72%, transparent);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
+    text-align: start;
+    cursor: pointer;
+    transition:
+      background var(--dur-2) var(--ease-standard),
+      border-color var(--dur-2) var(--ease-standard);
+  }
+
+  .dashboard__workspace-trigger:hover,
+  .dashboard__workspace-trigger[aria-expanded="true"] {
+    background: var(--dashboard-panel);
+    border-color: color-mix(in oklab, var(--accent) 45%, var(--border));
+  }
+
+  .dashboard__workspace-trigger:focus-visible {
+    outline: none;
+    box-shadow: var(--focus-ring);
+  }
+
+  .dashboard__workspace-trigger-name {
+    min-inline-size: 0;
+    overflow: hidden;
+    font-family: var(--font-mono);
+    font-size: var(--t-base);
+    font-weight: var(--weight-semibold);
+    letter-spacing: -0.035em;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .dashboard__workspace-trigger svg {
+    fill: none;
+    stroke: currentColor;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    stroke-width: 1.6;
+    transition: transform var(--dur-2) var(--ease-standard);
+  }
+
+  .dashboard__workspace-trigger[aria-expanded="true"] svg {
+    transform: rotate(180deg);
+  }
+
+  .dashboard__workspace-menu {
+    position: absolute;
+    inset-block-start: calc(100% + var(--s-2));
+    inset-inline: 0;
+    z-index: 6;
+    min-inline-size: 15rem;
+    padding: var(--s-2);
+    background: var(--dashboard-panel);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
+    box-shadow: 0 1rem 2.5rem color-mix(in oklab, var(--text) 14%, transparent);
+  }
+
   .dashboard__workspace-context {
     display: grid;
     gap: var(--s-1);
-    padding: var(--s-4) var(--s-2) var(--s-5);
+    padding: var(--s-3) var(--s-2) var(--s-4);
     border-block-end: 1px solid var(--border);
-  }
-
-  .dashboard__workspace-context-name {
-    min-inline-size: 0;
-    margin: 0;
-    overflow: hidden;
-    color: var(--text);
-    font-family: var(--font-mono);
-    font-size: var(--t-lg);
-    font-weight: var(--weight-semibold);
-    letter-spacing: -0.035em;
-    line-height: var(--lh-lg);
-    text-overflow: ellipsis;
-    white-space: nowrap;
   }
 
   .dashboard__workspace-summary {
@@ -3880,54 +4126,80 @@ import SampleNotice from "./SampleNotice.astro";
     display: grid;
     gap: var(--s-1);
     max-block-size: min(40svh, 20rem);
-    overflow: auto;
+    overflow-y: auto;
+    overscroll-behavior: contain;
   }
 
-  .dashboard__workspace-button {
+  .dashboard__workspace-button,
+  .dashboard__workspace-create-button {
     min-inline-size: 0;
     min-block-size: 2.25rem;
     display: grid;
-    grid-template-columns: auto minmax(0, 1fr);
     align-items: center;
-    gap: var(--s-3);
-    padding: var(--s-1) var(--s-2);
+    gap: var(--s-2);
+    padding: var(--s-2) var(--s-3);
     color: var(--text-muted);
     background: transparent;
     border: 1px solid transparent;
-    border-radius: var(--radius);
+    border-radius: var(--radius-sm);
     text-align: start;
     cursor: pointer;
   }
 
-  .dashboard__workspace-button > span:last-child {
+  .dashboard__workspace-button {
+    inline-size: 100%;
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .dashboard__workspace-button > span:first-child {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
-  .dashboard__workspace-button:hover {
+  .dashboard__workspace-button:hover,
+  .dashboard__workspace-create-button:hover {
     color: var(--text);
     background: var(--elev-2);
   }
 
-  .dashboard__workspace-button[aria-current="page"] {
-    color: var(--text);
-    background: color-mix(in oklab, var(--text) 6%, transparent);
-    border-color: transparent;
+  .dashboard__workspace-button:focus-visible,
+  .dashboard__workspace-create-button:focus-visible {
+    outline: none;
+    box-shadow: var(--focus-ring);
   }
 
-  .dashboard__workspace-mark {
-    inline-size: 1.55rem;
-    block-size: 1.55rem;
-    display: grid;
-    place-items: center;
-    color: var(--text-muted);
-    background: transparent;
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
+  .dashboard__workspace-button[aria-checked="true"] {
+    color: var(--text);
+    background: color-mix(in oklab, var(--text) 6%, transparent);
+  }
+
+  .dashboard__workspace-check {
+    color: var(--accent);
+    opacity: 0;
+  }
+
+  .dashboard__workspace-button[aria-checked="true"] .dashboard__workspace-check {
+    opacity: 1;
+  }
+
+  .dashboard__workspace-menu-create {
+    margin-block-start: var(--s-2);
+    padding-block-start: var(--s-2);
+    border-block-start: 1px solid var(--border);
+  }
+
+  .dashboard__workspace-create-button {
+    inline-size: 100%;
+    grid-template-columns: auto minmax(0, 1fr);
+    color: var(--text);
+    font-weight: var(--weight-medium);
+  }
+
+  .dashboard__workspace-create-button > span:first-child {
+    color: var(--accent);
     font-family: var(--font-mono);
-    font-size: var(--t-xs);
-    font-weight: var(--weight-semibold);
+    font-size: var(--t-base);
   }
 
   .dashboard__agent-list {
@@ -4041,9 +4313,7 @@ import SampleNotice from "./SampleNotice.astro";
   }
 
   .dashboard__rail-foot {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
+    display: grid;
     gap: var(--s-3);
     /* The agents section used to flex:1 the footer to the bottom; with the roster moved
        to the header dialog, the footer's own margin does the pinning now. */
@@ -4052,6 +4322,20 @@ import SampleNotice from "./SampleNotice.astro";
     border-block-start: 1px solid var(--border);
     color: var(--text-muted);
     font-size: var(--t-xs);
+  }
+
+  .dashboard__rail-account {
+    min-inline-size: 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--s-3);
+  }
+
+  .dashboard__rail-account > span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .dashboard__channel {
@@ -4931,11 +5215,6 @@ import SampleNotice from "./SampleNotice.astro";
       border-block-end: 1px solid var(--border);
     }
 
-    .dashboard__rail-head {
-      min-block-size: 0;
-      align-items: center;
-    }
-
     .dashboard__rail-section {
       padding: 0;
       border: 0;
@@ -4948,9 +5227,22 @@ import SampleNotice from "./SampleNotice.astro";
     }
 
     .dashboard__rail-label-row,
-    .dashboard__rail-details,
-    .dashboard__rail-foot {
+    .dashboard__rail-details {
       display: none;
+    }
+
+    .dashboard__rail-foot {
+      display: contents;
+    }
+
+    .dashboard__rail-account {
+      display: none;
+    }
+
+    .dashboard__rail-foot > .dashboard__wordmark {
+      grid-column: 2;
+      grid-row: 1;
+      justify-self: end;
     }
 
     .dashboard__workspace-context,
@@ -4959,20 +5251,10 @@ import SampleNotice from "./SampleNotice.astro";
       display: none;
     }
 
-    .dashboard__workspace-switcher {
-      grid-column: 2;
-    }
-
-    .dashboard__workspace-list {
-      display: flex;
-      max-block-size: none;
-      overflow-x: auto;
-      overflow-y: hidden;
-    }
-
-    .dashboard__workspace-button {
-      flex: none;
-      max-inline-size: 12rem;
+    .dashboard__workspace-control {
+      grid-column: 1;
+      grid-row: 1;
+      inline-size: min(100%, 20rem);
     }
 
     .dashboard__channel-head {
@@ -5056,16 +5338,14 @@ import SampleNotice from "./SampleNotice.astro";
       gap: var(--s-3);
     }
 
-    .dashboard__workspace-switcher {
+    .dashboard__workspace-control {
+      inline-size: 100%;
+    }
+
+    .dashboard__rail-foot > .dashboard__wordmark {
       grid-column: 1;
-    }
-
-    .dashboard__rail-head {
-      justify-content: space-between;
-    }
-
-    .dashboard__workspace-button {
-      max-inline-size: 10rem;
+      grid-row: 2;
+      justify-self: start;
     }
 
     .dashboard__channel-head {
