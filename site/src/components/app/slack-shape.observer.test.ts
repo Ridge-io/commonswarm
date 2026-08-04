@@ -326,7 +326,7 @@ test("loaded-signal filters and counts classify person, agent, and broadcast tar
   );
 });
 
-test("sidebar counts come from loaded signals and the shipped field stays light", () => {
+test("sidebar counts come from loaded signals and the shared field ships both schemes", () => {
   assert.match(dashboard, /const \{ broadcastCount, directCount \} = signalCounts\(signals\);/);
   assert.match(dashboard, /broadcastTarget\.textContent = String\(broadcastCount\)/);
   assert.match(dashboard, /directTarget\.textContent = String\(directCount\)/);
@@ -347,8 +347,14 @@ test("sidebar counts come from loaded signals and the shipped field stays light"
   assert.ok(builtAssets.includes("dashboard__feed-filters"));
   assert.match(
     builtAssets,
-    /\.dashboard\{[^}]*--dashboard-field:#f7f6f2[^}]*--dashboard-ink:#1d1c1d/,
-    "the dashboard owns a stable neutral light field even when the OS prefers dark",
+    /\.dashboard\{[^}]*background:var\(--bg\)/,
+    "the dashboard field follows the shared semantic background",
+  );
+  assert.match(builtAssets, /@media\s*\(prefers-color-scheme:\s*dark\)/);
+  assert.doesNotMatch(
+    dashboard,
+    /--dashboard-(?:field|panel|rail-field|ink|muted|faint|line|direct)\s*:/,
+    "the retired fixed-light palette must not return",
   );
 });
 

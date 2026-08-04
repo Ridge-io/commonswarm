@@ -14,6 +14,7 @@
 
 import AgentConnect from "../connect/AgentConnect.astro";
 import SampleNotice from "./SampleNotice.astro";
+import "../../styles/tokens.css";
 ---
 
 <live-dashboard class="dashboard" data-state="loading">
@@ -3356,43 +3357,11 @@ import SampleNotice from "./SampleNotice.astro";
 <style is:global>
   .dashboard {
     --dashboard-rail: 18.5rem;
-    --dashboard-field: #f7f6f2;
-    --dashboard-panel: #ffffff;
-    --dashboard-rail-field: #f1f0ec;
-    --dashboard-ink: #1d1c1d;
-    --dashboard-muted: #616061;
-    --dashboard-faint: #777578;
-    --dashboard-line: #e3e1dc;
-    --dashboard-direct: #edf6fc;
-    --bg: var(--dashboard-field);
-    --elev-0: var(--dashboard-field);
-    --elev-1: var(--dashboard-panel);
-    --elev-2: var(--dashboard-panel);
-    --elev-3: #f2f1ed;
-    --elev-4: var(--dashboard-panel);
-    --text: var(--dashboard-ink);
-    --text-muted: var(--dashboard-muted);
-    --text-faint: var(--dashboard-faint);
-    --border: var(--dashboard-line);
-    --border-strong: #cbc8c1;
-    --border-interactive: #6f6d70;
-    --accent: #1264a3;
-    --accent-hover: #0b4f84;
-    --accent-bright: #1264a3;
-    --accent-dim: #e5f1f8;
-    --accent-ink: #ffffff;
-    --success: #237b4b;
-    --success-dim: #dff3e7;
-    --warning: #8b5a16;
-    --warning-dim: #f9edcf;
-    --danger: #b42318;
-    --danger-dim: #fbe8e6;
     position: relative;
     display: block;
     min-block-size: 100svh;
     color: var(--text);
     background: var(--bg);
-    color-scheme: light;
     isolation: isolate;
   }
 
@@ -3584,8 +3553,8 @@ import SampleNotice from "./SampleNotice.astro";
   }
 
   .dashboard__button--primary:hover:not(:disabled) {
-    background: var(--accent-hover);
-    border-color: var(--accent-hover);
+    background: var(--accent-bright);
+    border-color: var(--accent-bright);
   }
 
   .dashboard__button--secondary {
@@ -3748,7 +3717,7 @@ import SampleNotice from "./SampleNotice.astro";
   .dashboard__product {
     min-block-size: 100svh;
     padding: 0;
-    background: var(--dashboard-field);
+    background: var(--bg);
   }
 
   .dashboard__sample-notice {
@@ -3762,7 +3731,7 @@ import SampleNotice from "./SampleNotice.astro";
     overflow: hidden;
     border: 0;
     border-radius: 0;
-    background: var(--dashboard-panel);
+    background: var(--surface);
     box-shadow: none;
   }
 
@@ -3778,7 +3747,7 @@ import SampleNotice from "./SampleNotice.astro";
     padding: var(--s-5) var(--s-4) var(--s-4);
     overflow-y: auto;
     border-inline-end: 1px solid var(--border);
-    background: var(--dashboard-rail-field);
+    background: var(--bg-raised);
   }
 
   .dashboard__rail .dashboard__wordmark {
@@ -3807,7 +3776,7 @@ import SampleNotice from "./SampleNotice.astro";
     gap: var(--s-2);
     padding: var(--s-2) var(--s-3);
     color: var(--text);
-    background: color-mix(in oklab, var(--dashboard-panel) 72%, transparent);
+    background: color-mix(in oklab, var(--surface) 72%, transparent);
     border: 1px solid var(--border-strong);
     border-radius: var(--radius);
     text-align: start;
@@ -3819,7 +3788,7 @@ import SampleNotice from "./SampleNotice.astro";
 
   .dashboard__workspace-trigger:hover,
   .dashboard__workspace-trigger[aria-expanded="true"] {
-    background: var(--dashboard-panel);
+    background: var(--surface);
     border-color: color-mix(in oklab, var(--accent) 45%, var(--border));
   }
 
@@ -3859,7 +3828,7 @@ import SampleNotice from "./SampleNotice.astro";
     z-index: 6;
     min-inline-size: 15rem;
     padding: var(--s-2);
-    background: var(--dashboard-panel);
+    background: var(--surface-3);
     border: 1px solid var(--border-strong);
     border-radius: var(--radius);
     box-shadow: 0 1rem 2.5rem color-mix(in oklab, var(--text) 14%, transparent);
@@ -4079,7 +4048,7 @@ import SampleNotice from "./SampleNotice.astro";
     display: grid;
     place-items: center;
     color: var(--text);
-    background: var(--dashboard-panel);
+    background: var(--surface);
     border: 1px solid var(--border-strong);
     border-radius: 50%;
     font-family: var(--font-mono);
@@ -4088,7 +4057,7 @@ import SampleNotice from "./SampleNotice.astro";
   }
 
   .dashboard__sidebar-agent-avatar.dashboard__avatar--tinted {
-    background: color-mix(in oklab, hsl(var(--avatar-hue) 58% 48%) 18%, var(--dashboard-panel));
+    background: color-mix(in oklab, hsl(var(--avatar-hue) 58% 48%) 18%, var(--surface));
     border-color: color-mix(in oklab, hsl(var(--avatar-hue) 70% 42%) 50%, var(--border));
   }
 
@@ -4103,7 +4072,7 @@ import SampleNotice from "./SampleNotice.astro";
     inset-block-end: -0.08rem;
     inline-size: 0.52rem;
     block-size: 0.52rem;
-    border: 2px solid var(--dashboard-rail-field);
+    border: 2px solid var(--bg-raised);
     border-radius: 50%;
     background: var(--success);
   }
@@ -4371,7 +4340,7 @@ import SampleNotice from "./SampleNotice.astro";
     min-inline-size: 0;
     display: grid;
     grid-template-rows: auto minmax(0, 1fr);
-    background: var(--dashboard-panel);
+    background: var(--surface);
   }
 
   .dashboard__channel-head {
@@ -5019,7 +4988,7 @@ import SampleNotice from "./SampleNotice.astro";
     align-items: center;
     min-block-size: 3.25rem;
     padding-inline: clamp(var(--s-5), 4vw, var(--s-8));
-    background: color-mix(in oklab, var(--dashboard-panel) 94%, transparent);
+    background: color-mix(in oklab, var(--surface) 94%, transparent);
     border-block-end: 1px solid var(--border);
     backdrop-filter: blur(12px);
   }
@@ -5098,7 +5067,7 @@ import SampleNotice from "./SampleNotice.astro";
   }
 
   .dashboard__message--direct-to-viewer {
-    --message-row-background: var(--dashboard-direct);
+    --message-row-background: var(--accent-dim);
 
     background: var(--message-row-background);
   }
