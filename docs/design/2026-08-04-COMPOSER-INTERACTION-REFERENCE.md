@@ -89,9 +89,45 @@ do not.
 👍 ❤️ 😂 🎉 plus add-reaction, reply, and overflow. Reply counts render inline: `1 reply · last reply
 just now`, with participant avatars.
 
-**Reactions are out of scope and should stay out.** A signal is immutable and never a claim; a reaction
-is mutable state attached to it, owned by no one, with no expiry. It is the clearest example of Slack's
-*shape* dragging in Slack's *semantics*, which the design doc explicitly warns against.
+~~"Reactions are out of scope and should stay out. A signal is immutable and never a claim; a reaction
+is mutable state attached to it, owned by no one, with no expiry."~~ **Dead, same day.** The operator
+corrected this and was right:
+
+> "Reactions would be more like human signals — an agent could react to a message to indicate it's been
+> seen. A human can react to something, but it would only be left on the record. I think it's okay if
+> it's mutable."
+
+**My objection does not survive contact with the argument.** *"Seen"* is coordination information — it
+tells a sender their signal landed, which is the product's entire job. And *"owned by no one"* was
+simply wrong: a reaction is owned by the principal who leaves it, the same ownership model as a signal,
+and it becomes moot with its parent when the TTL expires. I generalised from Slack's use of reactions
+instead of reasoning about what a reaction means here.
+
+### And the agent half is not new state at all
+
+Checked rather than assumed: `swarm.signal_deliveries` **already records `delivered_at` and `acked_at`
+per signal per agent** (`20260731000001_signal_deliveries.sql:28-29`). The fact *"this agent has seen
+this signal"* is durable, authoritative, and written by the delivery path today.
+
+It is simply **invisible**. Line 103 is
+`REVOKE ALL ON TABLE swarm.signal_deliveries FROM PUBLIC, anon, authenticated, swarm_read`, and the
+read edge function references the table **zero** times (positive control: `to_agent` → 4).
+
+So the two halves are different jobs:
+
+| | What it is | What it needs |
+|---|---|---|
+| **Agent "seen"** | a **rendering of delivery state we already store** | a read surface — a view or a read-function field. **No new truth, no new mutable store.** |
+| **Human reaction** | genuinely new, small, mutable state | a table owned by the reacting principal, expiring with its signal |
+
+**Do not build a parallel reaction store for agents.** Writing an agent-reaction row beside
+`acked_at` creates two sources of truth for one fact, and they will disagree — a delivery that ACKed
+while the reaction write failed, or the reverse. Derive it.
+
+**The honest constraint:** durable delivery is disabled in production, so `delivered_at` is not being
+populated. Agent-seen would render nothing today. It is gated on the same work as mention-delivery —
+D-040/041/042 fixed and the live-fire treatment arm passing. Human reactions are **not** gated on that
+and could ship independently.
 
 ## What this reference changes about the plan
 
@@ -104,7 +140,8 @@ is mutable state attached to it, owned by no one, with no expiry. It is the clea
 | Mention **delivery** to the named party | **Blocked** — needs schema plus a second enqueue path into the disabled delivery subsystem |
 | Live activity line | **Phase 2**, only if drivable from recorded state |
 | Threads | **Blocked on a semantics decision**, not on UI |
-| Reactions | **Out of scope** |
+| Human reactions | **Available now** — new small mutable table, not gated on delivery |
+| Agent "seen" | **Gated** — derive from `delivered_at`/`acked_at`; needs a read surface, and delivery must be re-enabled |
 
 The split to hold onto: **a mention can be rendered honestly today; it cannot be delivered honestly
 today.** A chip that links to the entity panel promises nothing false. A chip that implies the agent
