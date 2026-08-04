@@ -1,5 +1,9 @@
 # /goal — D-040: stop the listener bricking, and fix the four confirmed companions
 
+> **Superseded in part by D-044, 2026-08-04:** do not execute this contract's cross-owner sandbox or
+> tool-kill-switch requirements. Every sender relation now uses the operator's worker and cwd with
+> provenance in the prompt. The other historical D-040 requirements remain recorded as shipped work.
+
 Branch: **`fix/v015-d040`**, cut from the frozen release SHA `175f894`.
 
 This is a **release-blocking fix set**. v0.1.5 cannot ship without it. Every defect below was found by

@@ -1,5 +1,9 @@
 # Security-critical causal controls
 
+> **Current-state note, 2026-08-04 (D-044):** the cross-owner zero-tool control below is historical.
+> The operator retired that local boundary; its current regression proves shared worker delivery and
+> provenance. Server-side authority controls remain in force.
+
 Date: 2026-08-03. Worker: Kerb. Frozen base:
 `23f341211e38972d4f1280492aa3be664cc8a4c0`.
 

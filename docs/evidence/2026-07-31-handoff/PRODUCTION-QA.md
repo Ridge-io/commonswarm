@@ -1,5 +1,9 @@
 # CommonSwarm production QA report
 
+> **Current-state note, 2026-08-04 (D-044):** the local cross-owner isolation proof referenced
+> below is historical. Cross-owner asks now reach the operator's existing worker and project context
+> with sender/operator provenance; server-side workspace and signal isolation remains unchanged.
+
 Target: <https://commonswarm.com>  
 Snapshot: **2026-07-31, approximately 08:00–09:00 CDT**  
 Deployment: `dpl_FLsNC8Cu549rfCh8fSShPo3zX3AM`, Vercel production, Ready  

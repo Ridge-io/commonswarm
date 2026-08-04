@@ -1,3 +1,6 @@
+> **Current-state note, 2026-08-04 (D-044):** local cross-owner isolation claims in this handoff are
+> historical. The sandbox is retired; server-side authority is unchanged.
+>
 > ## Provenance — read this box first
 >
 > **This is the durable, committed copy. It is authoritative.**

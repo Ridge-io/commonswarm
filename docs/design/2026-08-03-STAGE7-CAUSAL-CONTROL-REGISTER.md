@@ -1,5 +1,9 @@
 # Stage 7 causal-control register
 
+> **D-044 update, 2026-08-04:** the cross-owner zero-tool isolation control recorded below was
+> deliberately retired. Its replacement regression proves cross-owner turns use the operator's
+> worker and prompt provenance. The server authority controls remain unchanged.
+
 Status: nine domains have executed causal controls; claim one-winner remains blind after its exact
 lock-removal mutant stayed green and triggered the mandatory stop.
 

@@ -1,5 +1,11 @@
 # SWARM CLOUD — canonical specification
 
+> **D-044 operator ruling, 2026-08-04:** the local inbound-authorization sandbox in §2.13 and its
+> phase, launch-test, and review-ledger repetitions are superseded. Cross-owner messages now reach
+> the operator's existing worker and project context with sender/operator provenance and an advisory
+> steer to seek explicit operator confirmation before destructive or irreversible action. The
+> server-side workspace, signal-visibility, principal, and owner-relation authority remains intact.
+
 > **Single self-contained document.** Canonical, consolidated specification for evolving Swarm from a single-machine coordination CLI into a small multi-human cloud service:
 > - **Part I — Cloud service specification** (authority, coordination, security, networking, phases, costs).
 > - **Appendix A — Served board UI design** (Board v2), referenced normative by Part I §4.

@@ -1,5 +1,9 @@
 # /goal — turn Stage 7's causal-control *domains* into actual, runnable controls
 
+> **Superseded in part by D-044, 2026-08-04:** cross-owner zero-tool isolation is retired. Keep the
+> historical enumeration below as evidence; current regressions prove shared worker/cwd delivery and
+> provenance instead.
+
 Worker: **Corbel2** (Codex). Lane: release-gate preparation.
 Clone: `/Users/yulanbot/Developer/Ridge.io/cloud-swarm` · Branch: `lead7/mvp-release-0.1.5`
 **Frozen base: supplied by the launcher as `$FROZEN_BASE`, asserted in preflight.**

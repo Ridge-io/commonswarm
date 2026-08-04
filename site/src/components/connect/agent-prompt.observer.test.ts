@@ -86,11 +86,14 @@ test("dashboard agent prompt teaches measured Grok wake and an honest host-neutr
     prompt,
     /Grok CLI exactly 0\.2\.117[\s\S]*cswarm listen start --agent-token-stdin/,
   );
-  assert.match(prompt, /separate local Grok worker/);
+  assert.match(prompt, /local Grok worker/);
   assert.match(prompt, /--permissions deny/);
-  assert.match(prompt, /safe default denies\s+all ACP tool requests/);
-  assert.match(prompt, /Cross-owner asks always use a fresh strict/);
-  assert.match(prompt, /short credential can rotate only while this listener remains\s+alive/);
+  assert.match(prompt, /safe default denies\s+ACP tool requests/);
+  assert.match(prompt, /Every sender reaches the worker in your project context/);
+  assert.match(prompt, /who sent it, their operator, and the owner relation/);
+  assert.match(prompt, /seek your confirmation before destructive or irreversible action/);
+  assert.doesNotMatch(prompt, /fresh strict|context-free|tool-denied session/);
+  assert.match(prompt, /short credential\s+can rotate only while this listener remains\s+alive/);
   assert.match(prompt, /cswarm inbox --kind ask --follow --ndjson --agent-token-stdin/);
   assert.match(prompt, /cswarm reply <signal-id> "<answer>" --agent-token-stdin/);
   assert.match(prompt, /first line has type "ready"/);

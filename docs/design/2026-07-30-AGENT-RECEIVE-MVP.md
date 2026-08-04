@@ -1,5 +1,9 @@
 # Agent receive MVP
 
+> **D-044 update, 2026-08-04:** the cross-owner local sandbox described below is retired. All sender
+> relations reach the operator's worker and cwd with provenance in the prompt. Server-side workspace
+> and sender-relation authority remains in force.
+
 **Status:** v0.1.2 blocking-receive baseline, v0.1.3 resilient host-neutral
 stream, and v0.1.4 durable Grok ACP listener released and production-verified,
 2026-07-30

@@ -161,6 +161,13 @@ function finishPrompt(hostId, text, optionId) {
     canary,
     option_id: optionId,
     sandbox: process.env.GROK_SANDBOX ?? null,
+    sender_local: text.includes('"name":"Local Agent"'),
+    sender_remote: text.includes('"name":"Remote Agent"'),
+    operator_local: text.includes('"name":"Local Operator"'),
+    operator_remote: text.includes('"name":"Remote Operator"'),
+    relation_same: text.includes('"sender_owner_relation":"same_owner"'),
+    relation_cross: text.includes('"sender_owner_relation":"cross_owner"'),
+    seeks_confirmation: text.includes("seek your operator's explicit confirmation"),
   }) + "\\n");
   send({
     jsonrpc: "2.0",
@@ -325,12 +332,38 @@ test("detached CLI completes durable claim reply ACK with one startup UUID and n
   const acknowledgedSignalIds = new Set<string>();
   const leaseIds = asks.map(() => randomUUID());
   const authHeaders: string[] = [];
+  let directoryReads = 0;
   const server = createServer(async (request, response) => {
     let body = "";
     for await (const chunk of request) body += chunk.toString();
     authHeaders.push(String(request.headers.authorization ?? ""));
     if (request.url === "/functions/v1/read") {
+      const parsed = JSON.parse(body) as Record<string, unknown>;
       response.writeHead(200, { "content-type": "application/json" });
+      if (parsed.resource === "members") {
+        directoryReads += 1;
+        const localOwner = randomUUID();
+        const remoteOwner = randomUUID();
+        response.end(JSON.stringify({
+          members: [
+            { user_id: localOwner, display_name: "Local Operator" },
+            { user_id: remoteOwner, display_name: "Remote Operator" },
+          ],
+          agents: [
+            {
+              principal_id: asks[0]!.from,
+              name: "Local Agent",
+              owner_user_id: localOwner,
+            },
+            {
+              principal_id: asks[1]!.from,
+              name: "Remote Agent",
+              owner_user_id: remoteOwner,
+            },
+          ],
+        }));
+        return;
+      }
       response.end(JSON.stringify({
         signals: [],
         capabilities: {
@@ -539,7 +572,7 @@ test("detached CLI completes durable claim reply ACK with one startup UUID and n
       .split("\n")
       .map((line) => JSON.parse(line) as Record<string, unknown>);
     const spawns = audit.filter((row) => row.event === "spawn");
-    assert.equal(spawns.length, 2);
+    assert.equal(spawns.length, 1);
     assert.equal(
       spawns.some((row) =>
         row.sandbox === null &&
@@ -548,41 +581,36 @@ test("detached CLI completes durable claim reply ACK with one startup UUID and n
       ),
       true,
     );
-    assert.equal(
-      spawns.some((row) =>
-        row.sandbox === "strict" &&
-        typeof row.cwd === "string" &&
-        row.cwd !== canonicalWorkerCwd
-      ),
-      true,
-    );
-    assert.equal(spawns.every((row) => row.cmux_hooks_disabled === "1"), true);
+    assert.equal(spawns.every((row) => row.sandbox === null), true);
+    assert.equal(spawns.every((row) => row.cmux_hooks_disabled === null), true);
     assert.equal(spawns.every((row) => row.has_swarm_env === false), true);
     assert.equal(spawns.every((row) => row.has_secret_env === false), true);
     assert.equal(spawns.every((row) => row.argv_has_secret === false), true);
-    const isolatedSpawn = spawns.find((row) => row.sandbox === "strict");
-    assert.ok(isolatedSpawn);
-    assert.equal(isolatedSpawn.home, isolatedSpawn.grok_home);
-    assert.notEqual(isolatedSpawn.home, process.env.HOME);
-    assert.equal(isolatedSpawn.claude_hooks, "0");
-    assert.equal(isolatedSpawn.cursor_hooks, "0");
-    assert.equal(isolatedSpawn.memory, "0");
-    assert.equal(isolatedSpawn.subagents, "0");
+    assert.equal(spawns[0]?.home, process.env.HOME);
+    assert.equal(spawns[0]?.grok_home, providerHome);
+    assert.equal(spawns[0]?.claude_hooks, null);
+    assert.equal(spawns[0]?.cursor_hooks, null);
+    assert.equal(spawns[0]?.memory, null);
+    assert.equal(spawns[0]?.subagents, null);
     const permissions = audit.filter((row) =>
       row.event === "permission" && row.canary === false
     );
+    assert.equal(directoryReads, asks.length);
+    assert.equal(permissions.length, 2);
     assert.equal(
-      permissions.some((row) =>
+      permissions.every((row) =>
         row.sandbox === null && row.option_id === "allow"
       ),
       true,
     );
-    assert.equal(
-      permissions.some((row) =>
-        row.sandbox === "strict" && row.option_id === "deny"
-      ),
-      true,
-    );
+    const sameOwnerPermission = permissions.find((row) => row.relation_same === true);
+    const crossOwnerPermission = permissions.find((row) => row.relation_cross === true);
+    assert.equal(sameOwnerPermission?.sender_local, true);
+    assert.equal(sameOwnerPermission?.operator_local, true);
+    assert.equal(sameOwnerPermission?.seeks_confirmation, false);
+    assert.equal(crossOwnerPermission?.sender_remote, true);
+    assert.equal(crossOwnerPermission?.operator_remote, true);
+    assert.equal(crossOwnerPermission?.seeks_confirmation, true);
 
     const safeLog = await readFile(paths.logPath, "utf8");
     const safeStatus = await readFile(paths.statusPath, "utf8");
@@ -677,7 +705,20 @@ test("detached CLI cursor fallback still receives and replies", async () => {
     let body = "";
     for await (const chunk of request) body += chunk.toString();
     if (request.url === "/functions/v1/read") {
+      const parsed = JSON.parse(body) as Record<string, unknown>;
       response.writeHead(200, { "content-type": "application/json" });
+      if (parsed.resource === "members") {
+        const ownerId = randomUUID();
+        response.end(JSON.stringify({
+          members: [{ user_id: ownerId, display_name: "Cursor Operator" }],
+          agents: [{
+            principal_id: ask.from,
+            name: "Cursor Sender",
+            owner_user_id: ownerId,
+          }],
+        }));
+        return;
+      }
       response.end(JSON.stringify({
         signals: [ask],
         capabilities: { sender_owner_relation: 1, cursor_after: 1 },

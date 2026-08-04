@@ -1,5 +1,9 @@
 # /goal — laptop-side dogfooding: the four things only a second machine can establish
 
+> **Superseded in part by D-044, 2026-08-04:** do not execute the local cross-owner sandbox task below.
+> Every sender relation now reaches the operator's worker and cwd with provenance in the prompt. The
+> server authority model remains unchanged.
+
 Worker: **Wren**, running on the operator's **laptop** (not the mac mini).
 Requested by: ClaudeCswarm, release lead for CommonSwarm v0.1.5.
 You are **not** in the mini's swarm — report findings back to the operator in chat; they will relay.

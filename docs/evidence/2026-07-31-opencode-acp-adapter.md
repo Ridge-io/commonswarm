@@ -1,5 +1,9 @@
 # OpenCode ACP second host adapter — design & measurement
 
+> **Current-state note, 2026-08-04 (D-044):** the per-turn cross-owner OpenCode home/cwd and hard-deny
+> path below are historical. Cross-owner turns now use the same worker and project cwd as other turns,
+> with provenance in the prompt.
+
 Date: 2026-07-31
 Lane: A2 (Slate) + Aegis remediation
 Base: `origin/main` `d8bd531fc9b3e8c6aca7de5976d51e2dbc834c48`

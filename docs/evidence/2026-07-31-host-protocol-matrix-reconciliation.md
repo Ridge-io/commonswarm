@@ -1,5 +1,9 @@
 # Host protocol matrix reconciliation
 
+> **Current-state note, 2026-08-04 (D-044):** isolation requirements and proofs below describe the
+> earlier decision set. The local cross-owner sandbox is retired; provider work no longer gates on
+> enforcing it.
+
 Date: 2026-07-31
 
 Scope: local read-only version, help, and protocol audit. The reconciliation did not run model

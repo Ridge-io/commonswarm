@@ -1,5 +1,9 @@
 # Adversarial security review — OpenCode ACP adapter + durable signal delivery
 
+> **Current-state note, 2026-08-04 (D-044):** findings about the local cross-owner sandbox describe the
+> reviewed implementation at that date. The sandbox and its kill-switches are now retired by operator
+> ruling; server-side authority is unchanged.
+
 Reviewer: AegisClaude (claude family). Date: 2026-07-31. Read-only; no edits, commits, pushes,
 deploys, or database mutations were made.
 

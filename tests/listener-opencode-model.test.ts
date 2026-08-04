@@ -71,7 +71,7 @@ function fakeOpen(records: Array<{
     records.push(record);
     const session = {
       get arePromptsEnabled() {
-        return options.denyTools === true;
+        return false;
       },
       async enablePromptsAfterCanary() {
         record.canaryDecision = await options.permissionCallback?.(REQUEST);
@@ -124,7 +124,7 @@ test("OpenCode worker canary denies on empty cwd then openWorkCwd retargets", as
   // Canary cwd is not the worker project cwd.
   assert.notEqual(records[0]?.options.cwd, cwd);
   assert.equal(records[0]?.workCwd, cwd);
-  assert.equal(records[0]?.options.disposeHomeOnClose, false);
+  assert.equal("disposeHomeOnClose" in records[0]!.options, false);
   await assert.doesNotReject(
     stat(records[0]!.options.cwd),
     "MAJOR-1 worker process cwd must exist for the lifetime of its handle",
@@ -174,7 +174,7 @@ test("ensureWorker canary failure abandons workerHome without later close()", as
   await adapter2.close();
 });
 
-test("OpenCode cross-owner turns get fresh homes/cwds and always deny tools", async () => {
+test("OpenCode cross-owner turns reuse the operator worker, project cwd, and permission mode", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "cswarm-oc-worker-"));
   const records: Parameters<typeof fakeOpen>[0] = [];
   const adapter = new OpenCodeListenerModel({
@@ -186,7 +186,7 @@ test("OpenCode cross-owner turns get fresh homes/cwds and always deny tools", as
   await adapter.start();
   await adapter.prompt(
     { ...SIGNAL, sender_owner_relation: "cross_owner" },
-    "isolated",
+    "worker",
     "remote one",
   );
   await adapter.prompt(
@@ -195,35 +195,31 @@ test("OpenCode cross-owner turns get fresh homes/cwds and always deny tools", as
       id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaab",
       sender_owner_relation: "unknown",
     },
-    "isolated",
+    "worker",
     "remote two",
   );
-  assert.equal(records.length, 3);
-  const homes = records.slice(1).map((r) => r.options.isolatedHome);
-  const cwds = records.slice(1).map((r) => r.options.cwd);
-  assert.notEqual(homes[0], homes[1]);
-  assert.notEqual(cwds[0], cwds[1]);
-  assert.notEqual(cwds[0], cwd);
-  for (const isolated of records.slice(1)) {
-    assert.equal(isolated.options.denyTools, true);
-    assert.equal(isolated.options.disposeHomeOnClose, true);
-    assert.equal(isolated.canaryDecision, undefined);
-    assert.deepEqual(isolated.promptDecision, {
-      outcome: "selected",
-      optionId: "deny",
-    });
-    assert.equal(isolated.closed, true);
-    await assert.rejects(stat(isolated.options.cwd), /ENOENT/);
-  }
+  assert.equal(records.length, 1);
+  assert.equal(records[0]?.workCwd, cwd);
+  assert.equal("denyTools" in records[0]!.options, false);
+  assert.equal("disposeHomeOnClose" in records[0]!.options, false);
+  assert.deepEqual(records[0]?.canaryDecision, {
+    outcome: "selected",
+    optionId: "deny",
+  });
+  assert.deepEqual(records[0]?.promptDecision, {
+    outcome: "selected",
+    optionId: "allow",
+  });
+  assert.equal(records[0]?.closed, false);
   assert.equal(
     records.every((r) => !("sender_owner_relation" in (r.options as object))),
     true,
   );
-  assert.equal(records[0]?.options.denyTools, undefined);
   await adapter.close();
+  assert.equal(records[0]?.closed, true);
 });
 
-test("MAJOR-2 composition: hard-denied OpenCode isolates do not run a tool-dependent canary", async () => {
+test("cross-owner OpenCode prompts keep the worker ACP canary and request path", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "cswarm-oc-worker-"));
   let canaryCalls = 0;
   let promptCalls = 0;
@@ -234,16 +230,18 @@ test("MAJOR-2 composition: hard-denied OpenCode isolates do not run a tool-depen
     open: async (options) => ({
       session: {
         get arePromptsEnabled() {
-          return options.denyTools === true;
+          return false;
         },
         async enablePromptsAfterCanary() {
           canaryCalls += 1;
-          throw new Error("hard-denied child exposes no tool for the canary");
+          await options.permissionCallback?.(REQUEST);
         },
+        async openWorkCwd() {},
         async prompt() {
           promptCalls += 1;
-          assert.equal(options.denyTools, true);
-          return { message: "isolated reply", stopReason: "end_turn", updates: [] };
+          assert.equal("denyTools" in options, false);
+          await options.permissionCallback?.(REQUEST);
+          return { message: "worker reply", stopReason: "end_turn", updates: [] };
         },
         cancel() {},
       },
@@ -255,20 +253,18 @@ test("MAJOR-2 composition: hard-denied OpenCode isolates do not run a tool-depen
       async close() {},
     }) as unknown as OpenCodeAcpHandle,
   });
-  await assert.doesNotReject(
-    adapter.prompt(
-      { ...SIGNAL, sender_owner_relation: "cross_owner" },
-      "isolated",
-      "remote",
-    ),
-    "MAJOR-2 hard-denied isolates must not depend on a canary whose tools are filtered out",
+  await adapter.start();
+  await adapter.prompt(
+    { ...SIGNAL, sender_owner_relation: "cross_owner" },
+    "worker",
+    "remote",
   );
-  assert.equal(canaryCalls, 0);
+  assert.equal(canaryCalls, 1);
   assert.equal(promptCalls, 1);
   await adapter.close();
 });
 
-test("OpenCode cancel reaches worker and in-flight isolates", async () => {
+test("OpenCode cancel reaches the shared worker", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "cswarm-oc-worker-"));
   const records: Parameters<typeof fakeOpen>[0] = [];
   const adapter = new OpenCodeListenerModel({
@@ -282,85 +278,26 @@ test("OpenCode cancel reaches worker and in-flight isolates", async () => {
   await adapter.close();
 });
 
-test("close during gated isolate open waits for settle; home remains until verified close", async () => {
+test("cross-owner prompts create no second open for close to settle", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "cswarm-oc-worker-"));
-  let releaseOpen: (() => void) | undefined;
-  const gate = new Promise<void>((resolve) => {
-    releaseOpen = resolve;
-  });
-  let isolatedHome: string | undefined;
-  let childLive = false;
-  let handleCloseCount = 0;
+  const records: Parameters<typeof fakeOpen>[0] = [];
   const adapter = new OpenCodeListenerModel({
     cwd,
     allowMissingAuth: true,
     pendingOpenWaitMs: 2_000,
-    open: async (options) => {
-      if (options.clientName === "cswarm-listener") {
-        return {
-          session: {
-            async enablePromptsAfterCanary() {
-              await options.permissionCallback?.(REQUEST);
-            },
-            async openWorkCwd() {},
-            async prompt() {
-              return { message: "w", stopReason: "end_turn" as const, updates: [] };
-            },
-            cancel() {},
-          },
-          child: {},
-          executable: process.execPath,
-          args: ["acp", "--pure"],
-          env: {},
-          home: options.isolatedHome ?? "/tmp/x",
-          async close() {},
-        } as unknown as OpenCodeAcpHandle;
-      }
-      isolatedHome = options.isolatedHome;
-      childLive = true; // openSession has started; child may be live
-      await gate;
-      return {
-        session: {
-          async enablePromptsAfterCanary() {
-            await options.permissionCallback?.(REQUEST);
-          },
-          async prompt() {
-            return { message: "i", stopReason: "end_turn" as const, updates: [] };
-          },
-          cancel() {},
-        },
-        child: {},
-        executable: process.execPath,
-        args: ["acp", "--pure"],
-        env: {},
-        home: options.isolatedHome ?? "/tmp/y",
-        async close() {
-          handleCloseCount += 1;
-        },
-      } as unknown as OpenCodeAcpHandle;
-    },
+    open: fakeOpen(records),
   });
   await adapter.start();
-  const isolatedPrompt = adapter.prompt(
+  await adapter.prompt(
     { ...SIGNAL, sender_owner_relation: "cross_owner" },
-    "isolated",
-    "race",
+    "worker",
+    "remote",
   );
-  for (let i = 0; i < 50 && !isolatedHome; i += 1) {
-    await new Promise((r) => setTimeout(r, 5));
-  }
-  assert.equal(typeof isolatedHome, "string");
-  assert.equal(childLive, true);
-  // During the gate, close must NOT remove the home (child live under pending open).
-  const closePromise = adapter.close();
-  await new Promise((r) => setTimeout(r, 30));
-  await stat(isolatedHome!);
-  releaseOpen?.();
-  await assert.rejects(isolatedPrompt, /cancelled during open|closed/i);
-  await closePromise;
-  assert.equal(handleCloseCount, 1);
-  // After settle + verified close, home must be absent on disk.
-  await assert.rejects(() => stat(isolatedHome!), /ENOENT/);
+  assert.equal(records.length, 1);
+  assert.equal(records[0]?.options.clientName, "cswarm-listener");
+  assert.equal(records[0]?.workCwd, cwd);
+  await adapter.close();
+  assert.equal(records[0]?.closed, true);
   await rm(cwd, { recursive: true, force: true }).catch(() => undefined);
 });
 
@@ -869,7 +806,7 @@ test("ensureWorker openWorkCwd failure plus cleanup timeout surfaces cleanup fai
   await rm(cwd, { recursive: true, force: true }).catch(() => undefined);
 });
 
-test("promptIsolated prompt error closes handle exactly once without double close", async () => {
+test("cross-owner prompt errors leave the shared worker open until listener close", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "cswarm-oc-worker-"));
   let handleCloseCount = 0;
   const adapter = new OpenCodeListenerModel({
@@ -881,7 +818,7 @@ test("promptIsolated prompt error closes handle exactly once without double clos
           async enablePromptsAfterCanary() {},
           async openWorkCwd() {},
           async prompt() {
-            throw new Error("isolated prompt failed");
+            throw new Error("worker prompt failed");
           },
           cancel() {},
         },
@@ -913,11 +850,13 @@ test("promptIsolated prompt error closes handle exactly once without double clos
       created_at: new Date().toISOString(),
       sender_owner_relation: "cross_owner",
     },
-    "isolated",
+    "worker",
     "isolated prompt",
   );
   void promptPromise.catch(() => undefined);
-  await assert.rejects(promptPromise, /isolated prompt failed/);
+  await assert.rejects(promptPromise, /worker prompt failed/);
+  assert.equal(handleCloseCount, 0);
+  await adapter.close();
   assert.equal(handleCloseCount, 1);
 
   await rm(cwd, { recursive: true, force: true }).catch(() => undefined);
@@ -1013,15 +952,14 @@ test("MAJOR-1 review: close during canary cwd preparation cannot start an untrac
   await rm(cwd, { recursive: true, force: true }).catch(() => undefined);
 });
 
-test("promptIsolated finalizer home deletion failure surfaces exact error to caller", async () => {
-  const parent = await mkdtemp(join(tmpdir(), "cswarm-oc-ro-"));
-  const isolateHome = await mkdtemp(join(parent, "iso-"));
+test("cross-owner prompt does not finalize the shared worker home after the turn", async () => {
+  const parent = await mkdtemp(join(tmpdir(), "cswarm-oc-worker-"));
+  let workerHome: string | undefined;
   const adapter = new OpenCodeListenerModel({
     cwd: parent,
     allowMissingAuth: true,
-    prepareHome: async () => isolateHome,
-    open: async () => {
-      await chmod(parent, 0o400);
+    open: async (options) => {
+      workerHome = options.isolatedHome;
       return {
         session: {
           async enablePromptsAfterCanary() {},
@@ -1035,42 +973,26 @@ test("promptIsolated finalizer home deletion failure surfaces exact error to cal
         executable: process.execPath,
         args: ["acp", "--pure"],
         env: {},
-        home: isolateHome,
+        home: options.isolatedHome!,
         async close() {},
       } as unknown as OpenCodeAcpHandle;
     },
   });
 
-  await assert.rejects(
-    adapter.prompt(
-      {
-        id: "sig_iso",
-        workspace_id: "ws_1",
-        from: "usr_1",
-        from_kind: "user",
-        to: "usr_1",
-        to_agent: null,
-        in_reply_to: null,
-        about: null,
-        kind: "ask",
-        body: "hello",
-        until: new Date().toISOString(),
-        created_at: new Date().toISOString(),
-        sender_owner_relation: "cross_owner",
-      },
-      "isolated",
-      "prompt text",
-    ),
-    /EACCES|permission denied/i,
+  await adapter.prompt(
+    { ...SIGNAL, sender_owner_relation: "cross_owner" },
+    "worker",
+    "prompt text",
   );
-
-  assert.ok(adapter.getRetainedHomes().includes(isolateHome));
-
-  await chmod(parent, 0o700).catch(() => undefined);
+  assert.equal(typeof workerHome, "string");
+  await stat(workerHome!);
+  assert.equal(adapter.getRetainedHomes().includes(workerHome!), false);
+  await adapter.close();
+  await assert.rejects(stat(workerHome!), /ENOENT/);
   await rm(parent, { recursive: true, force: true }).catch(() => undefined);
 });
 
-test("performClose active isolate close failure records handle.home in retainedHomes", async () => {
+test("close failure during a cross-owner worker turn retains the shared home", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "cswarm-oc-worker-"));
   let isolateHome: string | undefined;
   let releasePrompt: (() => void) | undefined;
@@ -1125,7 +1047,7 @@ test("performClose active isolate close failure records handle.home in retainedH
       created_at: new Date().toISOString(),
       sender_owner_relation: "cross_owner",
     },
-    "isolated",
+    "worker",
     "prompt text",
   );
 

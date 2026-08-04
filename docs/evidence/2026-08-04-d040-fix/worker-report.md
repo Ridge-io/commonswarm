@@ -1,5 +1,8 @@
 # D-040 listener brick fix report
 
+> **Current-state note, 2026-08-04 (D-044):** this report records the earlier sandbox implementation.
+> Its per-turn isolation and tool-deny controls are now retired; server authority remains unchanged.
+
 Branch: `fix/v015-d040`  
 Base: `175f894f7e3a3e9ec822b5a187331fee7fccd3c5`  
 Fix commit: `de848ee5f213e200e6265a99b84a0cf084f25996` (`fix(listener): prevent durable delivery bricking`)  

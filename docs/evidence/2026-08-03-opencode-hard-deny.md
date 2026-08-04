@@ -1,5 +1,9 @@
 # OpenCode 1.18.10 hard-deny measurement
 
+> **Current-state note, 2026-08-04 (D-044):** the relation-specific hard-deny child measured below
+> is retired. All sender relations now reach the same OpenCode worker, project cwd, and permission
+> path; ACP's host-mediated permission requests remain active.
+
 Date: 2026-08-03  
 Scope: D-040 Fix 5, cross-owner listener turns
 

@@ -6,6 +6,7 @@ import { join } from "node:path";
 import test from "node:test";
 import {
   CommandHttpError,
+  SIGNAL_REQUEST_TIMEOUT_MS,
   type SignalRecord,
 } from "../src/cloud/command-client.js";
 import { cloudTarget } from "../src/cloud/config.js";
@@ -13,6 +14,7 @@ import {
   DeliveryHttpError,
   DeliveryProtocolError,
   DeliveryTransportError,
+  DELIVERY_REQUEST_TIMEOUT_MS,
   type DeliveryClaimResult,
   type DeliveryRow,
 } from "../src/cloud/delivery.js";
@@ -24,9 +26,15 @@ import type {
   AgentSignalPage,
   SignalCursor,
 } from "../src/cloud/signals.js";
-import { SignalHttpError } from "../src/cloud/signals.js";
 import {
-  runListenerRuntime,
+  SIGNAL_READ_TIMEOUT_MS,
+  SignalHttpError,
+} from "../src/cloud/signals.js";
+import { ACP_DEFAULT_REQUEST_TIMEOUT_MS } from "../src/host/bounds.js";
+import {
+  runListenerRuntime as runListenerRuntimeActual,
+  LISTENER_DELIVERY_SAFETY_MARGIN_MS,
+  LISTENER_PROMPT_START_MINIMUM_MS,
   listenerPaths,
   runListenerSupervisor,
   claimCommandId,
@@ -45,6 +53,31 @@ import {
 
 const WORKSPACE_ID = "11111111-1111-4111-8111-111111111111";
 const PRINCIPAL_ID = "22222222-2222-4222-8222-222222222222";
+const SENDER_OPERATOR_ID = "44444444-4444-4444-8444-444444444444";
+
+async function runListenerRuntime(
+  options: Parameters<typeof runListenerRuntimeActual>[0],
+): ReturnType<typeof runListenerRuntimeActual> {
+  return await runListenerRuntimeActual({
+    resolveSenderProvenance: async () => ({
+      senderName: "Avery",
+      operatorId: SENDER_OPERATOR_ID,
+      operatorName: "Morgan",
+    }),
+    ...options,
+  });
+}
+
+test("prompt-start lease budget reserves the provenance directory deadline", () => {
+  assert.equal(
+    LISTENER_PROMPT_START_MINIMUM_MS,
+    SIGNAL_READ_TIMEOUT_MS +
+      ACP_DEFAULT_REQUEST_TIMEOUT_MS +
+      SIGNAL_REQUEST_TIMEOUT_MS +
+      DELIVERY_REQUEST_TIMEOUT_MS +
+      LISTENER_DELIVERY_SAFETY_MARGIN_MS,
+  );
+});
 
 function ask(
   id: string,

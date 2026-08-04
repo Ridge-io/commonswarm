@@ -56,7 +56,18 @@ export interface ListenerEffectStore {
 
 export type ListenerPermissionMode = "deny" | "allow";
 
-export type ListenerPromptMode = "worker" | "isolated";
+export type ListenerPromptMode = "worker";
+
+export interface ListenerSenderProvenance {
+  senderName: string | null;
+  operatorId: string | null;
+  operatorName: string | null;
+}
+
+export interface ListenerSenderProvenanceContext {
+  signal?: AbortSignal;
+  deadlineMs: number;
+}
 
 export interface ListenerPromptResult {
   message: string;
@@ -100,4 +111,3 @@ export type ListenerProcessResult =
     phase: "prompt" | "post";
     record: ListenerEffectRecord;
   };
-

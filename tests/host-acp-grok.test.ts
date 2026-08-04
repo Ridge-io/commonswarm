@@ -243,51 +243,46 @@ describe("Grok ACP host core (pure fake child)", () => {
     assert.equal(isEnvKeyDenied("GROK_HOME"), false);
   });
 
-  test("strict listener env adds constant sandbox/hook/update overrides", () => {
-    const env = buildGrokChildEnv({
-      PATH: "/usr/bin",
-      HOME: "/Users/test",
-      SWARM_AGENT_TOKEN: "secret",
-      XAI_API_KEY: "secret",
-    }, {
-      sandbox: "strict",
-      disableCmuxHooks: true,
-    });
-    assert.deepEqual(env, {
-      PATH: "/usr/bin",
-      HOME: "/Users/test",
-      GROK_DISABLE_AUTOUPDATER: "1",
-      GROK_SANDBOX: "strict",
-      CMUX_GROK_HOOKS_DISABLED: "1",
-    });
-  });
-
-  test("isolated listener env replaces home and disables ambient context scanners", () => {
-    const isolatedHome = "/private/tmp/cswarm-grok-home-test";
+  test("listener env keeps operator home and only pins the updater", () => {
     const env = buildGrokChildEnv({
       PATH: "/usr/bin",
       HOME: "/Users/test",
       GROK_HOME: "/Users/test/.grok-custom",
       SWARM_AGENT_TOKEN: "secret",
       XAI_API_KEY: "secret",
-    }, {
-      sandbox: "strict",
-      isolatedHome,
-      disableCmuxHooks: true,
     });
-    assert.equal(env.HOME, isolatedHome);
-    assert.equal(env.GROK_HOME, isolatedHome);
-    assert.equal(env.XDG_CONFIG_HOME, `${isolatedHome}/xdg-config`);
-    assert.equal(env.GROK_CLAUDE_HOOKS_ENABLED, "0");
-    assert.equal(env.GROK_CURSOR_HOOKS_ENABLED, "0");
-    assert.equal(env.GROK_CLAUDE_RULES_ENABLED, "0");
-    assert.equal(env.GROK_CLAUDE_MCPS_ENABLED, "0");
-    assert.equal(env.GROK_MEMORY, "0");
-    assert.equal(env.GROK_SUBAGENTS, "0");
-    assert.equal(env.GROK_TOOL_SEARCH, "0");
-    assert.equal(env.GROK_LSP_TOOLS, "0");
-    assert.equal(env.GROK_WRITE_FILE, "0");
-    assert.equal(env.GROK_WEB_FETCH, "0");
+    assert.deepEqual(env, {
+      PATH: "/usr/bin",
+      HOME: "/Users/test",
+      GROK_HOME: "/Users/test/.grok-custom",
+      GROK_DISABLE_AUTOUPDATER: "1",
+    });
+  });
+
+  test("listener env does not install sandbox, hook, or tool kill-switches", () => {
+    const env = buildGrokChildEnv({
+      PATH: "/usr/bin",
+      HOME: "/Users/test",
+      GROK_HOME: "/Users/test/.grok-custom",
+      SWARM_AGENT_TOKEN: "secret",
+      XAI_API_KEY: "secret",
+    });
+    assert.equal(env.HOME, "/Users/test");
+    assert.equal(env.GROK_HOME, "/Users/test/.grok-custom");
+    for (const key of [
+      "GROK_SANDBOX",
+      "CMUX_GROK_HOOKS_DISABLED",
+      "GROK_CLAUDE_HOOKS_ENABLED",
+      "GROK_CURSOR_HOOKS_ENABLED",
+      "GROK_MEMORY",
+      "GROK_SUBAGENTS",
+      "GROK_TOOL_SEARCH",
+      "GROK_LSP_TOOLS",
+      "GROK_WRITE_FILE",
+      "GROK_WEB_FETCH",
+    ]) {
+      assert.equal(env[key], undefined, `${key} must not be forced by CommonSwarm`);
+    }
     assert.equal(env.GROK_DISABLE_AUTOUPDATER, "1");
     assert.equal(JSON.stringify(env).includes("secret"), false);
   });

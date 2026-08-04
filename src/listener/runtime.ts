@@ -21,6 +21,7 @@ import {
   isRetryableFollowError,
   nextFollowBackoffMs,
   readAgentSignalPage,
+  SIGNAL_READ_TIMEOUT_MS,
   type AgentSignalPage,
   type SignalCursor,
 } from "../cloud/signals.js";
@@ -41,6 +42,8 @@ import type {
   ListenerModel,
   ListenerProcessResult,
   ListenerReplyPoster,
+  ListenerSenderProvenance,
+  ListenerSenderProvenanceContext,
 } from "./types.js";
 
 export const LISTENER_PAGE_LIMIT = 100;
@@ -53,7 +56,9 @@ export const LISTENER_ACK_ONLY_MINIMUM_MS =
 export const LISTENER_REPLY_ONLY_MINIMUM_MS =
   SIGNAL_REQUEST_TIMEOUT_MS + LISTENER_ACK_ONLY_MINIMUM_MS;
 export const LISTENER_PROMPT_START_MINIMUM_MS =
-  ACP_DEFAULT_REQUEST_TIMEOUT_MS + LISTENER_REPLY_ONLY_MINIMUM_MS;
+  SIGNAL_READ_TIMEOUT_MS +
+  ACP_DEFAULT_REQUEST_TIMEOUT_MS +
+  LISTENER_REPLY_ONLY_MINIMUM_MS;
 export const LISTENER_DELIVERY_RETRY_INITIAL_MS = 500;
 export const LISTENER_DELIVERY_RETRY_MAX_MS = 30_000;
 
@@ -159,6 +164,10 @@ export interface ListenerRuntimeOptions {
   listenerInstanceId?: string;
   deliveryJournal?: ListenerDeliveryJournalClient;
   deliveryClient?: ListenerDeliveryClient;
+  resolveSenderProvenance?: (
+    signal: SignalRecord,
+    context: ListenerSenderProvenanceContext,
+  ) => Promise<ListenerSenderProvenance>;
 }
 
 export type ListenerRuntimeStop =
@@ -605,6 +614,9 @@ export async function runListenerRuntime(
     // predicate is wired into the engine seam so credential loss during reply
     // posting stops as credential instead of terminalizing the effect.
     ...(options.signal === undefined ? {} : { signal: options.signal }),
+    ...(options.resolveSenderProvenance === undefined
+      ? {}
+      : { resolveSenderProvenance: options.resolveSenderProvenance }),
     isCredentialFailure: isCredentialLoss,
   });
   let malformedWarnings = 0;

@@ -1,5 +1,9 @@
 # /goal — build real causal controls for the three security-critical blind domains
 
+> **Superseded in part by D-044, 2026-08-04:** the cross-owner zero-tool isolation control below is
+> retired. Current regressions prove cross-owner turns reach the operator's worker and that provenance
+> reaches the prompt. Server-side authority controls are unchanged.
+
 Worker: **Kerb** (Codex). Lane: closing the worst of the Stage 7 control gap.
 Clone: `/Users/yulanbot/Developer/Ridge.io/cloud-swarm` · Branch: `lead7/mvp-release-0.1.5`
 **Frozen base: supplied by the launcher as `$FROZEN_BASE`, asserted in preflight.**

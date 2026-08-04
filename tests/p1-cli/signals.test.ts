@@ -1033,7 +1033,11 @@ test("fake-server ask/wait/inbox/reply journey with typed agent recipient", asyn
       if (parsed.resource === "members") {
         response.end(JSON.stringify({
           members: [{ user_id: USER, display_name: "Quill" }],
-          agents: [{ principal_id: AGENT, name: "Hermes" }],
+          agents: [{
+            principal_id: AGENT,
+            name: "Hermes",
+            owner_user_id: USER,
+          }],
         }));
         return;
       }
