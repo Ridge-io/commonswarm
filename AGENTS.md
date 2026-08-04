@@ -208,6 +208,52 @@ Reduce safeguards where they only add ceremony; assume agents are intelligent. S
 better. But the safeguards named in the doctrine file as must-survive are load-bearing —
 check that list before removing a check.
 
+## Onboarding: ask for the minimum, detect the rest
+
+Operator direction, 2026-08-04:
+
+> "The onboarding should be simple, the minimum amount of UI elements to convey only what is necessary
+> for the user. Steve Jobs should be proud of our onboarding. Making things simple is difficult, it
+> needs to be intelligent to be simple. We should ask the user for the minimum things and show them the
+> minimum things to get them to the value as simply and cleanly as possible. Avoid excessive extra
+> borders, form fields — we should automatically identify the answers to as many questions as we can,
+> and only ask for what is truly essential. This is how we make the onboarding feel magical — we have
+> AI agents that can go out and answer a lot of these questions automatically without having to ask the
+> user. That's magical, not a long form. Why are we even bothering asking them the tracking language?
+> Isn't that going to be obvious?"
+
+The rules that follow from it:
+
+1. **Every field must justify itself.** For each question on a form, ask: can the system determine
+   this? Can it be defaulted from context the user already gave? Is the answer the same for almost
+   everyone? If yes to any, the field should not exist. "The user might want to change it" is an
+   argument for a setting, not for an onboarding question.
+2. **Detect rather than ask.** We run agents. An agent can inspect its own environment, read the repo,
+   or call an API to answer a question the user would otherwise type. Use that.
+3. **Chrome is not information.** Borders, panels, section headers, and helper text that restate the
+   label all cost attention and add nothing. Remove them.
+4. **Simplicity is an engineering result, not a starting state.** A short form usually means more work
+   behind it, not less. Budget for that.
+5. **Measure onboarding in fields and steps.** If a change adds either, it needs a reason recorded.
+
+### The constraint that keeps this honest
+
+Detection must not guess. `docs/design/2026-08-03-AGENT-SELF-IDENTIFY.md` records the scar from the
+local swarm's `detectHost()`: `CLAUDE_CODE_ENTRYPOINT` is inherited by child processes, so a Codex
+agent spawned from a Claude session detects as claude-code. The comment there reads *"mislabelling a
+family is worse than not knowing it."*
+
+So detection returns a value or it returns nothing. A roster showing "Model not specified" is honest;
+a roster confidently showing the wrong model is worse than the blank, and it will be believed. Removing
+a question is only an improvement if the answer the system supplies is correct — a wrong auto-filled
+answer is worse than the question we removed.
+
+### What this already means here
+
+`docs/design/2026-08-03-AGENT-SELF-IDENTIFY.md` is this principle applied: the human is asked for a
+name, optionally, and nothing else; the agent reports its own host and model; `--model` survives as an
+override rather than a prompt. That doc predates this section and is the worked example.
+
 ## Writing: modifiers and invented contrasts
 
 Applies to everything an agent writes here — chat, commit messages, defect entries, evidence files,
