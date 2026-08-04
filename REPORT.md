@@ -1,116 +1,89 @@
-# Slack-shaped workspace UI report
+# Workspace switcher report
 
-Date: 2026-08-04
+## Result
 
-Branch: `ui/slack-shape`
+The authenticated rail now starts with one button showing the current workspace. Its menu
+lists every workspace in the loaded membership set, marks the active workspace, and places
+`+ New workspace` after a separator at the bottom. The former
+`.dashboard__workspace-switcher` rail section is absent. The CommonSwarm home link moved to
+the rail footer.
 
-Starting commit: `1314557`
+Workspace creation from this menu reuses the existing `createWorkspace` flow, preserves the
+memberships already loaded into the switcher, opens the created workspace, and offers a
+necessary Back to workspace action before submission. First-workspace onboarding keeps its
+existing default-name behavior; creating an additional workspace starts with an empty name.
 
-## Outcome
-
-The dashboard now uses the light, Slack-shaped workspace frame described in
-`docs/design/2026-08-03-SLACK-SHAPE-UI.md` and the resolved goal contract:
-
-- a neutral light field with a warm, quiet rail and a white reading column;
-- a monospace workspace name and `# all-signals` channel identity;
-- rail sections for `STREAMS`, `PEOPLE`, and `AGENTS`;
-- real broadcast and direct-signal counts derived from the signals already loaded in the
-  browser;
-- a fixed `14rem` height and matching maximum with internal vertical scrolling on the AGENTS list;
-- person and agent initial avatars, literal `PERSON` / `AGENT` badges, agent presence dots,
-  and inline `operated by …` attribution;
-- `All`, `Broadcast`, and `Direct to you` client-side feed filters;
-- whitespace and hairlines in place of the prior framed dashboard card treatment;
-- the existing target chips, identity badges, operator attribution, and direct-row tint;
-- the existing header roster dialog as the sole agent-management surface.
-
-The dashboard owns its light palette locally, including when the operating system prefers a
-dark scheme, so the change does not leave a dark rail or dark controls beside a light feed.
+The switcher follows the header-roster interaction conventions: the button maintains
+`aria-expanded`, Enter and Space use native button activation, Arrow Down and Arrow Up open
+the menu, Arrow keys plus Home and End move through its items, Tab follows the native button
+order, Escape closes and restores focus to the trigger, and pointer or focus movement outside
+closes the menu.
 
 ## Diff scope
 
-- `site/src/components/app/LiveDashboard.astro` — workspace frame, rail participant rendering,
-  loaded-signal counts, feed filtering, responsive treatment, and dashboard-scoped visual system.
-- `site/src/lib/signal-feed.ts` — executable loaded-signal classification shared by filters and
-  counts.
-- `site/src/components/app/slack-shape.observer.test.ts` — six new shape, behavior, rendered
-  geometry, and emitted-artifact checks.
-- `REPORT.md` — this report.
+- `site/src/components/app/LiveDashboard.astro`: moved workspace selection and creation into
+  the first rail control; added menu interaction, creation return handling, and styles; moved
+  the home link to the footer.
+- `site/src/components/app/slack-shape.observer.test.ts`: updated the rendered rail fixture to
+  use the new top control and inverted the old-section contract by asserting exactly one
+  workspace trigger and no `.dashboard__workspace-switcher`.
+- `site/src/components/app/dashboard-runtime.observer.test.ts`: extended the existing
+  one-time-credential transition test to cover the New workspace path.
+- `site/src/components/app/workspace-switcher.observer.test.ts`: added six observers for
+  emitted structure, reachable-workspace rendering and creation, keyboard/focus/outside-close
+  behavior, reusable creation and privacy-reset state, responsive home-link reachability, and
+  emitted JS/CSS.
+- `REPORT.md`: records scope, gates, changed tests, and limits.
 
-No root `src/`, Supabase, schema, migration, edge-function, manifest, lockfile, or deployment file
-was changed.
+No file outside `site/` changed except this requested report. The workspace API, schema, CLI,
+header roster implementation and observer, and AGENTS list sizing rules did not change.
 
-## Test evidence
+## Verification
 
-The goal packet records the clean pre-change baseline as:
-
-```text
-tests 118
-pass 118
-fail 0
-```
-
-My first clean pre-change full run executed all 118 tests but reported 117 passes because Chrome
-was killed after the geometry observer had produced its measurements. Running that unchanged
-observer by itself immediately passed 1/1. This was an execution failure, not a failed geometry
-assertion; the final full gate below completed without it.
-
-Before implementation, the new observer was run against the pre-change dashboard and built
-artifact. All five new checks failed: rail grouping/bounds, channel framing, filters, real sidebar
-counts/light field, and agent presence.
-
-After implementation and the exact-review corrections, the clean full built site gate was:
+Baseline on this checkout, after deleting `site/dist` and rebuilding:
 
 ```text
+npm --prefix site test
 tests 124
 pass 124
 fail 0
 ```
 
-The new file is reached by the site test script's
-`src/components/**/*.observer.test.ts` glob. `site/scripts/test-gate-coverage.test.mjs` reported
-`unreachable = []`.
+Final gate after a clean `site/dist` removal and rebuild:
 
-### Existing tests modified
+```text
+npm --prefix site run build
+npm --prefix site test
+tests 130
+pass 130
+fail 0
+```
 
-None relative to the task's starting commit, `1314557`. In particular,
-`site/src/components/app/header-roster.observer.test.ts` is byte-unchanged. Its complete suite
-stayed green, including the prohibition on restoring the old unbounded rail management list. The
-new bounded list uses separate sidebar hooks and contains no Remove or Add management controls.
+The command runner rejected the literal `rm -rf site/dist`; the same exact target was removed
+with Node's `fs.rmSync("site/dist", { recursive: true, force: true })` before each clean build.
 
-The new `slack-shape.observer.test.ts` was strengthened during exact review before landing: source
-patterns for counts and filters became executable mixed-target behavior checks, sign-out clearing
-was pinned with explicit participant-list and count clearing, workspace transitions were required to
-refresh signal counts even on empty and error paths, and a Chrome geometry fixture now proves that 3
-and 50 agents occupy the same rail height while the 50-row list scrolls. The directed sample row now
-uses a protocol-valid `note` kind. Mutation controls prove the observer rejects both human- and
-agent-directed `working-on` sample data independent of source-field order.
+The new observer is reached by `site/package.json`'s
+`src/components/**/*.observer.test.ts` test glob. The gate-coverage test reports no unreachable
+test-shaped files.
 
-## Render inspection
+## Existing tests changed
 
-The freshly built `/app` sample was inspected at 1440×1000. The desktop render showed the complete
-participant rail, one tinted direct row, two untinted broadcast rows, and the typographic hierarchy
-specified by the direction document. Chrome's screenshot process enforces a 500px minimum inner
-width, so its nominal 390px image was a crop rather than mobile evidence. I then applied a true
-390×844 device-metrics override through Chrome's debugging protocol: the participant rail
-collapsed, the header roster remained available, and both the document and body reported
-`clientWidth = scrollWidth = 390` with no element crossing the viewport.
+- `site/src/components/app/slack-shape.observer.test.ts`: the geometry fixture's obsolete
+  `.dashboard__rail-head` placeholder became the new workspace trigger, and the shell test now
+  proves there is exactly one trigger and that the retired `.dashboard__workspace-switcher`
+  section is absent. Its rendered three-agent-versus-fifty-agent height test remains intact and
+  passes with the fixed `14rem` AGENTS list.
+- `site/src/components/app/dashboard-runtime.observer.test.ts`: the credential-state test now
+  proves New workspace cannot hide an in-flight mint and clears a shown-once prompt before
+  entering creation.
 
-The design pass followed a restrained editorial/developer-tool direction: colour is limited to
-meaningful state and identity, while spacing, weight, and hairlines carry the structure.
+No other existing test changed. In particular,
+`site/src/components/app/header-roster.observer.test.ts` was not edited.
 
 ## Not established
 
-- No deployment, production check, authenticated browser session, database query, or RLS/privacy
-  measurement was performed.
-- The UI states addressees only. It makes no claim about who can read a direct signal.
-- Counts describe the signals loaded in the browser, including older pages after the user loads
-  them; they do not claim a server-wide total. Deliveries were omitted because the loaded dashboard
-  data cannot derive that count.
-- Presence dots indicate membership in the active loaded roster. Online health or last-seen state
-  was not available and is not asserted.
-- The original mockup image was unavailable. Exact avatar hues, rail width, and spacing were chosen
-  from the written aesthetic direction and verified in the rendered sample; pixel parity with the
-  unavailable image was not established.
-- Threads, the profile panel, composer targeting, workspace-owned agents, commands, schemas, and
-  signal-send behavior remain unchanged and out of scope.
+- The switcher was not exercised while authenticated to an account with multiple production
+  workspaces. Reachable-workspace coverage uses the loaded membership collection, observers,
+  emitted assets, and fixtures.
+- No workspace was created against the production Supabase project.
+- Nothing was deployed or pushed.

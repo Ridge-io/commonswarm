@@ -306,6 +306,11 @@ test("showPanel must not stamp hidden on AgentConnect nested data-panel surfaces
 
 test("dashboard blocks an in-flight mint but Done and Back can finish a visible prompt", () => {
   const openWorkspace = between(dashboard, "const openWorkspace =", "const openAgentChoice =");
+  const openNewWorkspace = between(
+    dashboard,
+    "const openNewWorkspace =",
+    "const renderWorkspaceList =",
+  );
   const guard = between(
     dashboard,
     "const keepConnectCredentialVisible =",
@@ -333,6 +338,16 @@ test("dashboard blocks an in-flight mint but Done and Back can finish a visible 
   assert.match(
     openWorkspace,
     /if \(connectState === "done"\)[\s\S]*pendingWorkspaceId = workspaceId;[\s\S]*connect\?\.finishPrompt\("back"\)/,
+  );
+  assert.match(
+    openNewWorkspace,
+    /connect\?\.dataset\.state === "done"[\s\S]*pendingWorkspaceCreate = true;[\s\S]*connect\.finishPrompt\("back"\)/,
+    "New workspace must clear a shown-once credential before hiding its result",
+  );
+  assert.match(
+    openNewWorkspace,
+    /if \(keepConnectCredentialVisible\(\)\) return/,
+    "New workspace must not hide an in-flight credential mint",
   );
   assert.match(
     openWorkspace,

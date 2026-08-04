@@ -70,7 +70,9 @@ const renderRailGeometry = async (): Promise<RailGeometry> => {
     </li>`).join("");
   const rail = (name: string, count: number): string => `
     <aside class="dashboard__rail" data-rail="${name}">
-      <div class="dashboard__rail-head">CommonSwarm</div>
+      <div class="dashboard__workspace-control">
+        <button class="dashboard__workspace-trigger">CommonSwarm Build</button>
+      </div>
       <section class="dashboard__rail-section dashboard__rail-section--participants">
         <div class="dashboard__rail-label-row"><h2>AGENTS <span>${count}</span></h2></div>
         <ul class="dashboard__sidebar-agent-list" data-list="${name}">${rows(count)}</ul>
@@ -171,6 +173,16 @@ test("the workspace shell is grouped as streams, people, and bounded agent navig
   );
   assert.match(dashboard, /const renderSidebarParticipants =/);
   assert.match(dashboard, /renderSidebarParticipants\(\);/);
+  assert.equal(
+    [...dashboard.matchAll(/<button\b[^>]*data-workspace-menu-trigger[^>]*>/g)].length,
+    1,
+    "the rail renders one workspace control",
+  );
+  assert.doesNotMatch(
+    dashboard,
+    /dashboard__workspace-switcher/,
+    "the superseded Workspaces rail section must not return beside the top control",
+  );
   const privacyResetStart = dashboard.indexOf("const resetWorkspaceSessionState");
   const privacyResetEnd = dashboard.indexOf("armLiveFeed =", privacyResetStart);
   assert.notEqual(privacyResetStart, -1, "privacy-reset start anchor must resolve");
