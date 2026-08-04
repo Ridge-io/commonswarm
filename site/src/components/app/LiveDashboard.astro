@@ -624,6 +624,12 @@ import SampleNotice from "./SampleNotice.astro";
   import { PendingRefreshGate } from "../../lib/pending-refresh";
   import { BootFocusGate } from "../../lib/boot-focus";
   import {
+    filterSignals,
+    signalCounts,
+    signalIsDirectToViewer,
+    type SignalFilter,
+  } from "../../lib/signal-feed";
+  import {
     pendingAccessRows,
     shouldPollPendingAccess,
     shouldRetireFreshInvite,
@@ -662,8 +668,6 @@ import SampleNotice from "./SampleNotice.astro";
     createdAt: string;
     id: string;
   }
-
-  type SignalFilter = "all" | "broadcast" | "direct-to-you";
 
   const app = document.querySelector<HTMLElement>("live-dashboard");
 
@@ -1671,17 +1675,6 @@ import SampleNotice from "./SampleNotice.astro";
       return "Update";
     };
 
-    const signalIsBroadcast = (signal: Signal): boolean =>
-      signal.to === null && signal.toAgent === null;
-
-    const signalIsDirectToViewer = (signal: Signal, agentById: Map<string, Agent>): boolean => {
-      const viewerId = session?.user.id ?? (sampleMode ? "sample-owner" : "");
-      if (!viewerId) return false;
-      if (signal.to === viewerId) return true;
-      if (signal.toAgent === null) return false;
-      return agentById.get(signal.toAgent)?.ownerUserId === viewerId;
-    };
-
     const renderFeed = (): void => {
       window.clearTimeout(signalExpiryTimer);
       signalExpiryTimer = undefined;
@@ -1705,8 +1698,7 @@ import SampleNotice from "./SampleNotice.astro";
       const list = one<HTMLOListElement>("[data-feed-list]");
       const count = one<HTMLElement>("[data-update-count]");
       const more = one<HTMLElement>("[data-feed-more]");
-      const broadcastCount = signals.filter(signalIsBroadcast).length;
-      const directCount = signals.length - broadcastCount;
+      const { broadcastCount, directCount } = signalCounts(signals);
       const broadcastTarget = one<HTMLElement>("[data-broadcast-count]");
       const directTarget = one<HTMLElement>("[data-direct-count]");
       if (broadcastTarget) broadcastTarget.textContent = String(broadcastCount);
@@ -1733,13 +1725,8 @@ import SampleNotice from "./SampleNotice.astro";
         return;
       }
       const agentById = new Map(agents.map((agent) => [agent.principalId, agent]));
-      const visibleSignals = signals.filter((signal) => {
-        if (signalFilter === "broadcast") return signalIsBroadcast(signal);
-        if (signalFilter === "direct-to-you") {
-          return signalIsDirectToViewer(signal, agentById);
-        }
-        return true;
-      });
+      const viewerId = session?.user.id ?? (sampleMode ? "sample-owner" : "");
+      const visibleSignals = filterSignals(signals, signalFilter, viewerId, agentById);
       for (const button of all<HTMLButtonElement>("[data-feed-filter]")) {
         const active = button.dataset.feedFilter === signalFilter;
         button.setAttribute("aria-pressed", String(active));
@@ -1767,7 +1754,7 @@ import SampleNotice from "./SampleNotice.astro";
             signal.to === session?.user.id ||
             targetAgent?.ownerUserId === session?.user.id
           )) ||
-          signalIsDirectToViewer(signal, agentById)
+          signalIsDirectToViewer(signal, viewerId, agentById)
         ) {
           row.classList.add("dashboard__message--direct-to-viewer");
         }
@@ -2074,9 +2061,13 @@ import SampleNotice from "./SampleNotice.astro";
         list.replaceChildren();
       }
       for (const target of all<HTMLElement>(
-        "[data-channel-name], [data-channel-id], [data-invite-link], [data-channel-receipt]",
+        "[data-channel-name], [data-channel-id], [data-invite-link], [data-channel-receipt], " +
+          "[data-sidebar-workspace-name]",
       )) {
         target.textContent = "";
+      }
+      for (const count of all<HTMLElement>("[data-broadcast-count], [data-direct-count]")) {
+        count.textContent = "0";
       }
       for (const target of all<HTMLElement>("[data-account-name], [data-rail-account]")) {
         target.textContent = "Your account";
@@ -3778,6 +3769,7 @@ import SampleNotice from "./SampleNotice.astro";
   }
 
   .dashboard__sidebar-agent-list {
+    block-size: 14rem;
     max-block-size: 14rem;
     overflow-y: auto;
     overscroll-behavior: contain;

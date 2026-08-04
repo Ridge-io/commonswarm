@@ -16,7 +16,7 @@ The dashboard now uses the light, Slack-shaped workspace frame described in
 - rail sections for `STREAMS`, `PEOPLE`, and `AGENTS`;
 - real broadcast and direct-signal counts derived from the signals already loaded in the
   browser;
-- a fixed `14rem` maximum height and internal vertical scrolling on the AGENTS list;
+- a fixed `14rem` height and matching maximum with internal vertical scrolling on the AGENTS list;
 - person and agent initial avatars, literal `PERSON` / `AGENT` badges, agent presence dots,
   and inline `operated by …` attribution;
 - `All`, `Broadcast`, and `Direct to you` client-side feed filters;
@@ -31,8 +31,10 @@ dark scheme, so the change does not leave a dark rail or dark controls beside a 
 
 - `site/src/components/app/LiveDashboard.astro` — workspace frame, rail participant rendering,
   loaded-signal counts, feed filtering, responsive treatment, and dashboard-scoped visual system.
-- `site/src/components/app/slack-shape.observer.test.ts` — five new shape and emitted-artifact
-  checks.
+- `site/src/lib/signal-feed.ts` — executable loaded-signal classification shared by filters and
+  counts.
+- `site/src/components/app/slack-shape.observer.test.ts` — six new shape, behavior, rendered
+  geometry, and emitted-artifact checks.
 - `REPORT.md` — this report.
 
 No root `src/`, Supabase, schema, migration, edge-function, manifest, lockfile, or deployment file
@@ -57,11 +59,11 @@ Before implementation, the new observer was run against the pre-change dashboard
 artifact. All five new checks failed: rail grouping/bounds, channel framing, filters, real sidebar
 counts/light field, and agent presence.
 
-After implementation, the full built site gate was:
+After implementation and the exact-review corrections, the clean full built site gate was:
 
 ```text
-tests 123
-pass 123
+tests 124
+pass 124
 fail 0
 ```
 
@@ -71,10 +73,15 @@ The new file is reached by the site test script's
 
 ### Existing tests modified
 
-None. In particular, `site/src/components/app/header-roster.observer.test.ts` is byte-unchanged.
-Its complete suite stayed green, including the prohibition on restoring the old unbounded rail
-management list. The new bounded list uses separate sidebar hooks and contains no Remove or Add
-management controls.
+None relative to the task's starting commit, `1314557`. In particular,
+`site/src/components/app/header-roster.observer.test.ts` is byte-unchanged. Its complete suite
+stayed green, including the prohibition on restoring the old unbounded rail management list. The
+new bounded list uses separate sidebar hooks and contains no Remove or Add management controls.
+
+The new `slack-shape.observer.test.ts` was strengthened during exact review before landing: source
+patterns for counts and filters became executable mixed-target behavior checks, sign-out clearing
+was pinned, and a Chrome geometry fixture now proves that 3 and 50 agents occupy the same rail
+height while the 50-row list scrolls.
 
 ## Render inspection
 
