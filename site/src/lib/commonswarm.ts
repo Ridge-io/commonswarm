@@ -808,6 +808,7 @@ export interface Signal {
   from: string;
   fromKind: string;
   to: string | null;
+  toAgent: string | null;
   kind: string;
   body: string;
   about: string | null;
@@ -830,7 +831,7 @@ export async function feed(workspaceId: string, limit = 50): Promise<Signal[]> {
       c
         .schema("swarm_read")
         .from("signals")
-        .select("id,from,from_kind,to,kind,body,about,until,created_at")
+        .select("id,from,from_kind,to,to_agent,kind,body,about,until,created_at")
         .eq("workspace_id", workspaceId)
         .order("created_at", { ascending: false })
         .limit(limit)
@@ -842,6 +843,7 @@ export async function feed(workspaceId: string, limit = 50): Promise<Signal[]> {
     from: String(row.from ?? ""),
     fromKind: String(row.from_kind ?? ""),
     to: row.to === null || row.to === undefined ? null : String(row.to),
+    toAgent: row.to_agent === null || row.to_agent === undefined ? null : String(row.to_agent),
     kind: String(row.kind ?? ""),
     body: String(row.body ?? ""),
     about: row.about === null || row.about === undefined ? null : String(row.about),
