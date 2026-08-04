@@ -1735,3 +1735,80 @@ triaged in severity order, and only the top three were traced to source in full.
 carries its own systematic blind spots on Codex-authored code — that is the obvious risk of this
 ruling and it is **not** measured. The ruling trades a known, measured failure mode for an unmeasured
 one, which is a reasonable trade only while the two-arm rule stands.
+
+---
+
+## D-040 — a stop during processing permanently bricks the listener after the lease expires · SHIP-BLOCKER
+
+**Found 2026-08-03 by the independent Claude Opus 5 inversion arm mandated by D-039, on the frozen
+release SHA `175f894`, during Stage 7b. Severity CRITICAL. v0.1.5 must not ship with this.**
+
+Gemini, the arm D-036 named, reviewed the same delta at the same scope and **did not find it**. D-039
+was ruled hours earlier for unrelated reasons; it paid for itself immediately.
+
+### The failure
+
+Stop a listener while it is working a signal, then restart more than 15 minutes later (the lease TTL).
+`listen start` reports success and then dies, permanently, on every subsequent start.
+
+### The chain — eleven links, each verified by the Lead against the frozen tree
+
+1. The `leased` phase spans the **entire model turn**, so a listener stopped during ordinary work is
+   very likely to be in it. This is not an edge case.
+2. The cancel path sets `stop = { reason: "cancelled" }` (`runtime.ts:1032`, `:1036`) and **never
+   calls `clearActive`**. Decisive check: the last `clearActive` in the file is line **997**; the
+   cancel handlers begin at **1028** and the `finally` at **1145** only cancels and closes the model.
+3. The journal restores `active` verbatim on restart, **including the stored instance id**
+   (`delivery-journal.ts:1028-1034`).
+4. The runtime therefore replays the **stored** `claimCommandId` (`delivery-journal.ts:842`).
+5. Idempotency does its job: the server returns the **stored ledger row** for that command id
+   (`command/index.ts:5545-5578`, `durable-delivery.ts:423`) — carrying the original, now-past
+   `leased_until`.
+6. The client parses that response and calls `checkedLiveLease(leasedUntil, now)` unconditionally
+   (`delivery.ts:400`), which **rejects the client's own replay** and raises `DeliveryProtocolError`.
+7. `DeliveryProtocolError` is **not retryable** — `isRetryableDeliveryError` admits only
+   `DeliveryTransportError` and `DeliveryHttpError` 429/5xx (`runtime.ts:204-208`).
+8. It is **not credential loss** either — that predicate admits only `DeliveryHttpError` 401/403
+   (`runtime.ts:200-202`).
+9. So it falls to `stop = { reason: "fatal" }` (`runtime.ts:1038`).
+10. **Repair logic for exactly this state exists and is unreachable.** The block that clears a stale
+    `leased` recovery is gated `if (deliveryMode === "cursor_fallback" && recovery !== null)`
+    (`runtime.ts:766`). In `durable_claim` mode it can never run.
+11. **v0.1.5 is always in `durable_claim`**: `return deliveryClaim && deliveryAck ? "durable_claim" :
+    "cursor_fallback"` (`runtime.ts:367`), and the same function *throws* if the configuration is
+    absent — so a v0.1.5 server, which advertises both, always yields `durable_claim`.
+
+`ready` fires before this block, which is why `listen start` **reports success and then dies** — the
+worst shape for an operator, because the CLI says it worked.
+
+### Why every gate we have missed it
+
+Root suite 376/376, p1-cli 143/143, p1-local 4/4, p1-server 69/69, all green on this SHA. The bug
+needs a **stop during the leased phase plus a >15-minute wall-clock gap plus a restart**. Nothing in
+the suites composes those three, and the Stage 7 causal-control register's stale-lease control
+exercises the *server's* requeue, not the *client's* refusal to accept its own replay.
+
+**This is the strongest available argument that a green suite is not a substitute for an independent
+reader.** Twenty-two causal controls and five green gates did not see it; one arm reading the code did.
+
+### The fix, and what it costs
+
+Small in code: make the existing repair block reachable from `durable_claim`. **Not** small in
+process — it changes the release SHA, so per D-036/D-039 the full Stage 7 gate and **both** review
+arms rerun on the replacement SHA. There is no version of this that ships `175f894`.
+
+### An unplanned control that worked
+
+The push to `main` was refused by the `swarm-1human-main` ruleset (`required_linear_history`, zero
+bypass actors) roughly an hour before this finding landed. That rule exists to keep a swarm of agents
+from pushing to `main` unattended; it was created for a different reason and it stopped a bricking
+defect from reaching `main`. Recorded because it is the clearest evidence in this repo that the
+one-human control earns its friction.
+
+### Not established
+
+The Opus arm's second self-verified finding — that the OpenCode worker child runs its whole life with
+a deleted cwd (`opencode-model.ts:450/465/511`, `finally` at `:536-538`) — is **MAJOR and not yet
+verified by the Lead**. Four further MAJORs and several MINORs in that review came from delegated
+sub-audits and are **second-hand**; the arm flagged them as needing confirmation and they have not
+been confirmed. None of them are cleared.
