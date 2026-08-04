@@ -208,6 +208,30 @@ Reduce safeguards where they only add ceremony; assume agents are intelligent. S
 better. But the safeguards named in the doctrine file as must-survive are load-bearing —
 check that list before removing a check.
 
+## ⚠️ The Supabase project named `cloud-swarm-dev` IS PRODUCTION
+
+Measured 2026-08-04, end to end:
+
+```
+supabase projects list        -> ukezjcnxjvkpkeezxaew  "cloud-swarm-dev"   (● linked)
+supabase/.temp/project-ref    -> ukezjcnxjvkpkeezxaew
+site/.env PUBLIC_SUPABASE_URL -> https://ukezjc….supabase.co
+curl https://commonswarm.com/start | grep 'commonswarm:url'
+                              -> https://ukezjc….supabase.co     (positive control: 1 match)
+```
+
+**The live site's own deployed meta tag names it.** There is no separate production project. The
+`-dev` suffix is a naming artifact, and it is the most dangerous kind: it invites a reasonable person
+to run `db reset`, apply an untested migration, or "try something" against **the database real users
+are on**.
+
+This is the repo's own *"measure the artifact, not its name"* rule with an unusually sharp edge —
+here the name actively asserts the opposite of the truth. Resolve the ref and check it against the
+live page before any `supabase db push`, `functions deploy`, or anything destructive. Renaming the
+project is an operator action and would be worth doing.
+
+Local development uses `npm run db:start` (Docker, `127.0.0.1:54321`) and never touches this project.
+
 ## Deploying the marketing site
 
 Live: **https://commonswarm.com** (Vercel project `coswarm-site`, scope `ridgedotio`;
