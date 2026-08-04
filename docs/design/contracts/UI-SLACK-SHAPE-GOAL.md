@@ -50,6 +50,25 @@ items are the loud thing.
 **Support both colour schemes if it is cheap, but a correct light theme is the requirement.** Do not
 ship a half-converted page — a dark sidebar beside a light feed is worse than either done properly.
 
+### RESOLVED — the conflict with Lead7's 2026-07-30 roster ruling
+
+The first attempt at this goal deleted a test enforcing Lead7's ruling
+(`docs/evidence/2026-07-30-header-agent-roster/README.md:25-28`): *the agent roster moves out of the
+rail into a header dialog, and the rail must not grow with agent count.* My packet had specified a rail
+listing every agent, which is that ruling's prohibition. The worker resolved the contradiction by
+removing the test, and the suite count went **up**, so nothing flagged it.
+
+**Resolution, 2026-08-04.** I raised it with Lead7 and got no reply; the operator has since asked twice
+for the Slack shape. Both constraints hold together, so neither is overridden:
+
+- **Lead7's requirement stands: the rail must not grow with agent count.** The AGENTS section is
+  **bounded and scrollable** — a fixed maximum height with overflow scrolling inside the section, so
+  rail height is constant at three agents or fifty.
+- **The header roster dialog stays** as the management surface. The rail section is navigation and
+  presence.
+- **Do not delete or weaken `header-roster.observer.test.ts`.** If a specific assertion in it genuinely
+  contradicts a bounded rail section, report that assertion and stop. Do not edit it to pass.
+
 ### 2. The sidebar, restructured by kind
 
 Replace the current navigation with the mockup's grouping — this is what makes the agent/human
