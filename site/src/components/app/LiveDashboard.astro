@@ -518,6 +518,46 @@ import "../../styles/tokens.css";
                 <p class="dashboard__feed-more-error" data-load-older-error role="alert" hidden></p>
               </div>
             </section>
+
+            <form class="dashboard__composer" data-composer hidden>
+              <div class="dashboard__composer-audience">
+                <label for="dashboard-composer-audience">TO</label>
+                <select id="dashboard-composer-audience" data-composer-audience></select>
+                <span data-composer-audience-count>0 agents · 0 people in workspace</span>
+              </div>
+              <div class="dashboard__composer-box">
+                <div
+                  class="dashboard__mention-picker"
+                  data-mention-picker
+                  role="listbox"
+                  aria-label="Mention a person or agent"
+                  hidden
+                ></div>
+                <div class="dashboard__composer-input">
+                  <div class="dashboard__composer-mentions" data-composer-mentions></div>
+                  <textarea
+                    rows="1"
+                    maxlength="2000"
+                    placeholder="What are you about to do?"
+                    aria-label="Signal"
+                    data-composer-input
+                    required
+                  ></textarea>
+                  <button
+                    class="dashboard__composer-send"
+                    type="submit"
+                    data-composer-send
+                    aria-label="Post signal"
+                    title="Post signal"
+                  >
+                    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+                      <path d="m5 12 7-7 7 7M12 5v14"></path>
+                    </svg>
+                  </button>
+                </div>
+              </div>
+              <p class="dashboard__composer-status" data-composer-status role="status" aria-live="polite"></p>
+            </form>
           </div>
         </section>
 
@@ -653,6 +693,7 @@ import "../../styles/tokens.css";
     inviteWorkspaceMember,
     inviteEmailValidationMessage,
     pendingMemberInvites,
+    postBrowserSignal,
     revokeAgentToken,
     revokeWorkspaceInvitation,
     signInWithEmail,
@@ -720,6 +761,8 @@ import "../../styles/tokens.css";
   type EntityRef =
     | { kind: "agent"; id: string }
     | { kind: "person"; id: string };
+
+  type ComposerAudience = { kind: "everyone" } | EntityRef;
 
   const app = document.querySelector<HTMLElement>("live-dashboard");
 
@@ -793,6 +836,11 @@ import "../../styles/tokens.css";
     let inviteIntent: { email: string; commandId: string } | null = null;
     let entityPanelOrigin: HTMLElement | null = null;
     let selectedEntity: EntityRef | null = null;
+    let composerAudience: ComposerAudience = { kind: "everyone" };
+    let composerMentions: EntityRef[] = [];
+    let mentionPickerIndex = 0;
+    let composerIntent: { commandId: string; body: string; audienceKey: string } | null = null;
+    const visualMentions = new Map<string, EntityRef[]>();
 
     const SIGNAL_PAGE_SIZE = 50;
     const SIGNAL_FETCH_SIZE = SIGNAL_PAGE_SIZE + 1;
@@ -856,6 +904,12 @@ import "../../styles/tokens.css";
       }
       for (const section of all<HTMLElement>("[data-channel-view]")) {
         section.hidden = section.dataset.channelView !== name;
+      }
+      const composer = one<HTMLFormElement>("[data-composer]");
+      if (composer) composer.hidden = name !== "feed" && name !== "feed-empty";
+      if (composer?.hidden) {
+        const picker = one<HTMLElement>("[data-mention-picker]");
+        if (picker) picker.hidden = true;
       }
       app.dataset.channelView = name;
       /* The Live chip is true exactly while armLiveFeed is allowed to run. */
@@ -1609,6 +1663,182 @@ import "../../styles/tokens.css";
       });
     }
 
+    const entityName = (entity: EntityRef): string => entity.kind === "agent"
+      ? agents.find((agent) => agent.principalId === entity.id)?.name ?? "Unknown agent"
+      : members.find((member) => member.userId === entity.id)?.name ?? "Workspace member";
+
+    const composerAudienceKey = (audience: ComposerAudience): string =>
+      audience.kind === "everyone" ? "everyone" : `${audience.kind}:${audience.id}`;
+
+    const closeMentionPicker = (): void => {
+      const picker = one<HTMLElement>("[data-mention-picker]");
+      if (picker) picker.hidden = true;
+      mentionPickerIndex = 0;
+    };
+
+    const renderComposerAudience = (): void => {
+      const select = one<HTMLSelectElement>("[data-composer-audience]");
+      const count = one<HTMLElement>("[data-composer-audience-count]");
+      if (!select || !count) return;
+      const selectedKey = composerAudienceKey(composerAudience);
+      select.replaceChildren();
+      const everyone = document.createElement("option");
+      everyone.value = "everyone";
+      everyone.textContent = "Everyone in # all-signals";
+      select.append(everyone);
+      for (const member of members) {
+        const option = document.createElement("option");
+        option.value = `person:${member.userId}`;
+        option.textContent = member.name;
+        select.append(option);
+      }
+      for (const agent of agents) {
+        const option = document.createElement("option");
+        option.value = `agent:${agent.principalId}`;
+        option.textContent = `${agent.name} · agent`;
+        select.append(option);
+      }
+      const selectedExists = Array.from(select.options).some(
+        (option) => option.value === selectedKey,
+      );
+      if (!selectedExists) composerAudience = { kind: "everyone" };
+      select.value = composerAudienceKey(composerAudience);
+      count.textContent = composerAudience.kind === "everyone"
+        ? `${agents.length} ${agents.length === 1 ? "agent" : "agents"} · ${members.length} ${
+            members.length === 1 ? "person" : "people"
+          } in workspace`
+        : composerAudience.kind === "agent"
+        ? "1 agent addressed"
+        : "1 person addressed";
+    };
+
+    const renderComposerMentions = (): void => {
+      const wrap = one<HTMLElement>("[data-composer-mentions]");
+      if (!wrap) return;
+      wrap.replaceChildren();
+      composerMentions.forEach((mention, index) => {
+        const chip = document.createElement("span");
+        chip.className = "dashboard__mention-chip";
+        chip.append(entityControl(
+          `@${entityName(mention)}`,
+          mention,
+          "dashboard__mention-entity",
+        ));
+        const remove = document.createElement("button");
+        remove.type = "button";
+        remove.className = "dashboard__mention-remove";
+        remove.textContent = "×";
+        remove.setAttribute("aria-label", `Remove mention of ${entityName(mention)}`);
+        remove.addEventListener("click", () => {
+          composerMentions.splice(index, 1);
+          renderComposerMentions();
+          one<HTMLTextAreaElement>("[data-composer-input]")?.focus({ preventScroll: true });
+        });
+        chip.append(remove);
+        wrap.append(chip);
+      });
+    };
+
+    const mentionSearch = (): { query: string; start: number } | null => {
+      const input = one<HTMLTextAreaElement>("[data-composer-input]");
+      if (!input) return null;
+      const beforeCursor = input.value.slice(0, input.selectionStart ?? input.value.length);
+      const match = beforeCursor.match(/(?:^|\s)@([^@\s]*)$/);
+      if (!match || match.index === undefined) return null;
+      return {
+        query: match[1]?.toLocaleLowerCase() ?? "",
+        start: match.index + (match[0].startsWith(" ") ? 1 : 0),
+      };
+    };
+
+    const mentionCandidates = (query: string): EntityRef[] => {
+      const selected = new Set(composerMentions.map((mention) => `${mention.kind}:${mention.id}`));
+      const candidates: EntityRef[] = [
+        ...members.map((member) => ({ kind: "person" as const, id: member.userId })),
+        ...agents.map((agent) => ({ kind: "agent" as const, id: agent.principalId })),
+      ];
+      return candidates.filter((candidate) =>
+        !selected.has(`${candidate.kind}:${candidate.id}`) &&
+        entityName(candidate).toLocaleLowerCase().includes(query)
+      );
+    };
+
+    const selectMention = (mention: EntityRef): void => {
+      const input = one<HTMLTextAreaElement>("[data-composer-input]");
+      const search = mentionSearch();
+      if (!input || !search) return;
+      const cursor = input.selectionStart ?? input.value.length;
+      input.value = `${input.value.slice(0, search.start)}${input.value.slice(cursor)}`;
+      input.setSelectionRange(search.start, search.start);
+      composerMentions.push(mention);
+      renderComposerMentions();
+      closeMentionPicker();
+      input.focus({ preventScroll: true });
+      input.dispatchEvent(new Event("input"));
+    };
+
+    const renderMentionPicker = (): void => {
+      const picker = one<HTMLElement>("[data-mention-picker]");
+      const search = mentionSearch();
+      if (!picker || !search) {
+        closeMentionPicker();
+        return;
+      }
+      const candidates = mentionCandidates(search.query);
+      picker.replaceChildren();
+      if (candidates.length === 0) {
+        closeMentionPicker();
+        return;
+      }
+      mentionPickerIndex = Math.min(mentionPickerIndex, candidates.length - 1);
+      candidates.forEach((candidate, index) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.setAttribute("role", "option");
+        button.setAttribute("aria-selected", String(index === mentionPickerIndex));
+        const avatar = document.createElement("span");
+        avatar.className = "dashboard__mention-picker-avatar";
+        avatar.textContent = initials(entityName(candidate));
+        avatar.setAttribute("aria-hidden", "true");
+        if (candidate.kind === "agent") markAgentAvatar(avatar, candidate.id);
+        const copy = document.createElement("span");
+        copy.className = "dashboard__mention-picker-copy";
+        const name = document.createElement("strong");
+        name.textContent = entityName(candidate);
+        copy.append(name);
+        if (candidate.kind === "agent") {
+          const agent = agents.find((entry) => entry.principalId === candidate.id);
+          const detail = document.createElement("span");
+          detail.textContent = `agent · managed by ${
+            agent ? people.get(agent.ownerUserId) ?? "Workspace member" : "Workspace member"
+          }`;
+          copy.append(detail);
+        }
+        button.append(avatar, copy);
+        button.addEventListener("pointerdown", (event) => event.preventDefault());
+        button.addEventListener("click", () => selectMention(candidate));
+        picker.append(button);
+      });
+      picker.hidden = false;
+    };
+
+    const resetComposer = (): void => {
+      composerAudience = { kind: "everyone" };
+      composerMentions = [];
+      composerIntent = null;
+      visualMentions.clear();
+      const input = one<HTMLTextAreaElement>("[data-composer-input]");
+      if (input) {
+        input.value = "";
+        input.style.blockSize = "auto";
+      }
+      const status = one<HTMLElement>("[data-composer-status]");
+      if (status) status.textContent = "";
+      renderComposerAudience();
+      renderComposerMentions();
+      closeMentionPicker();
+    };
+
     /* The rail mirrors participants as presence/navigation only. A person owns the nested
        agent rows below them; agents whose owner is outside the current member roster stay
        visible in one trailing, honestly labelled fallback group. The scrolling list owns
@@ -1787,6 +2017,7 @@ import "../../styles/tokens.css";
       renderSidebarParticipants();
       renderHeaderRoster();
       renderDialogRoster();
+      renderComposerAudience();
     };
 
     /*
@@ -2196,7 +2427,14 @@ import "../../styles/tokens.css";
         time.textContent = formatted.relative;
         meta.append(author, identityBadge, target, operator, badge, time);
         const text = document.createElement("p");
-        text.textContent = signal.body;
+        for (const mention of visualMentions.get(signal.id) ?? []) {
+          text.append(entityControl(
+            `@${entityName(mention)}`,
+            mention,
+            "dashboard__mention-chip dashboard__message-mention",
+          ), " ");
+        }
+        text.append(signal.body);
         body.append(meta, text);
         if (signal.about) {
           const about = document.createElement("code");
@@ -2439,6 +2677,7 @@ import "../../styles/tokens.css";
       liveFeedInFlight = false;
       rosterRefreshInFlight = false;
       rosterRefreshAttemptedAt = 0;
+      resetComposer();
       window.clearTimeout(signalExpiryTimer);
       signalExpiryTimer = undefined;
       window.clearInterval(liveFeedTimer);
@@ -2660,6 +2899,7 @@ import "../../styles/tokens.css";
          affordance here; the stale async handler is forbidden from touching it. */
       resetInviteSubmitControl();
       if (changesWorkspace) {
+        resetComposer();
         resetFreshInviteResult();
         inviteIntent = null;
         const email = one<HTMLInputElement>("[data-invite-email]");
@@ -3497,6 +3737,122 @@ import "../../styles/tokens.css";
     one<HTMLInputElement>("[data-roster-search]")?.addEventListener("input", (event) => {
       rosterFilter = (event.currentTarget as HTMLInputElement).value;
       renderDialogRoster();
+    });
+    one<HTMLSelectElement>("[data-composer-audience]")?.addEventListener(
+      "change",
+      (event) => {
+        const value = (event.currentTarget as HTMLSelectElement).value;
+        if (value === "everyone") {
+          composerAudience = { kind: "everyone" };
+        } else if (value.startsWith("person:")) {
+          composerAudience = { kind: "person", id: value.slice("person:".length) };
+        } else if (value.startsWith("agent:")) {
+          composerAudience = { kind: "agent", id: value.slice("agent:".length) };
+        }
+        composerIntent = null;
+        renderComposerAudience();
+      },
+    );
+    one<HTMLTextAreaElement>("[data-composer-input]")?.addEventListener(
+      "input",
+      (event) => {
+        const input = event.currentTarget as HTMLTextAreaElement;
+        input.style.blockSize = "auto";
+        input.style.blockSize = `${Math.min(input.scrollHeight, 144)}px`;
+        mentionPickerIndex = 0;
+        renderMentionPicker();
+      },
+    );
+    one<HTMLTextAreaElement>("[data-composer-input]")?.addEventListener(
+      "keydown",
+      (event) => {
+        const input = event.currentTarget as HTMLTextAreaElement;
+        const picker = one<HTMLElement>("[data-mention-picker]");
+        if (event.key === "Backspace" && input.value === "" && composerMentions.length > 0) {
+          composerMentions.pop();
+          renderComposerMentions();
+          return;
+        }
+        if (!picker || picker.hidden) return;
+        const search = mentionSearch();
+        const candidates = search ? mentionCandidates(search.query) : [];
+        if (event.key === "Escape") {
+          event.preventDefault();
+          closeMentionPicker();
+        } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+          event.preventDefault();
+          mentionPickerIndex = event.key === "ArrowDown"
+            ? (mentionPickerIndex + 1) % candidates.length
+            : (mentionPickerIndex - 1 + candidates.length) % candidates.length;
+          renderMentionPicker();
+        } else if (event.key === "Enter" && !event.shiftKey && candidates.length > 0) {
+          event.preventDefault();
+          const mention = candidates[mentionPickerIndex];
+          if (mention) selectMention(mention);
+        }
+      },
+    );
+    one<HTMLFormElement>("[data-composer]")?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const input = one<HTMLTextAreaElement>("[data-composer-input]");
+      const send = one<HTMLButtonElement>("[data-composer-send]");
+      const status = one<HTMLElement>("[data-composer-status]");
+      const body = input?.value.trim() ?? "";
+      if (!input || body === "" || !activeWorkspaceId) {
+        input?.focus();
+        return;
+      }
+      const audience = composerAudience;
+      const audienceKey = composerAudienceKey(audience);
+      let intent = composerIntent;
+      if (!intent || intent.body !== body || intent.audienceKey !== audienceKey) {
+        intent = { commandId: uuid(), body, audienceKey };
+        composerIntent = intent;
+      }
+      const mentions = composerMentions.map((mention) => ({ ...mention }));
+      if (send) send.disabled = true;
+      input.disabled = true;
+      if (status) status.textContent = "Posting…";
+      try {
+        const signal: Signal = sampleMode
+          ? {
+              id: `sample-composer-${Date.now()}`,
+              from: "sample-owner",
+              fromKind: "user",
+              to: audience.kind === "person" ? audience.id : null,
+              toAgent: audience.kind === "agent" ? audience.id : null,
+              kind: "note",
+              body,
+              about: null,
+              until: null,
+              createdAt: new Date().toISOString(),
+            }
+          : await postBrowserSignal(
+              session!,
+              intent.commandId,
+              activeWorkspaceId,
+              body,
+              audience.kind === "person" ? audience.id : null,
+              audience.kind === "agent" ? audience.id : null,
+            );
+        visualMentions.set(signal.id, mentions);
+        signals.unshift(signal);
+        composerIntent = null;
+        composerMentions = [];
+        input.value = "";
+        input.style.blockSize = "auto";
+        renderComposerMentions();
+        closeMentionPicker();
+        renderFeed();
+        if (status) status.textContent = "Posted.";
+        input.focus({ preventScroll: true });
+      } catch (caught) {
+        if (!(caught instanceof CommandOutcomeUnknown)) composerIntent = null;
+        if (status) status.textContent = readableError(caught);
+      } finally {
+        if (send) send.disabled = false;
+        input.disabled = false;
+      }
     });
     for (const button of all<HTMLButtonElement>("[data-feed-filter]")) {
       button.addEventListener("click", () => {
@@ -5200,11 +5556,13 @@ import "../../styles/tokens.css";
   .dashboard__channel-body {
     min-block-size: 0;
     display: grid;
-    overflow: auto;
+    grid-template-rows: minmax(0, 1fr) auto;
+    overflow: hidden;
   }
 
   .dashboard__channel-body > [data-channel-view] {
     grid-area: 1 / 1;
+    overflow: auto;
   }
 
   .dashboard__channel-empty {
@@ -5563,6 +5921,257 @@ import "../../styles/tokens.css";
     color: var(--danger);
     font-size: var(--t-sm);
     text-align: center;
+  }
+
+  .dashboard__composer {
+    z-index: 3;
+    grid-row: 2;
+    display: grid;
+    gap: var(--s-2);
+    padding: var(--s-3) clamp(var(--s-5), 4vw, var(--s-8)) var(--s-4);
+    background: var(--surface);
+    border-block-start: 1px solid var(--border);
+  }
+
+  .dashboard__composer-audience {
+    display: flex;
+    align-items: center;
+    gap: var(--s-2);
+    min-inline-size: 0;
+    color: var(--text-muted);
+    font-size: var(--t-xs);
+  }
+
+  .dashboard__composer-audience label {
+    color: var(--text-faint);
+    font-size: var(--t-2xs);
+    font-weight: var(--weight-semibold);
+    letter-spacing: var(--track-xs);
+  }
+
+  .dashboard__composer-audience select {
+    max-inline-size: min(14rem, 44vw);
+    padding: var(--s-1) var(--s-6) var(--s-1) var(--s-2);
+    color: var(--text);
+    background: var(--elev-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-pill);
+    font: inherit;
+    font-weight: var(--weight-semibold);
+  }
+
+  .dashboard__composer-audience [data-composer-audience-count] {
+    min-inline-size: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .dashboard__composer-box {
+    position: relative;
+  }
+
+  .dashboard__composer-input {
+    display: flex;
+    align-items: flex-end;
+    flex-wrap: wrap;
+    gap: var(--s-2);
+    min-block-size: 3.25rem;
+    padding: var(--s-2);
+    background: var(--elev-1);
+    border: 1px solid var(--border-interactive);
+    border-radius: var(--radius);
+    transition: border-color var(--dur-1) var(--ease-standard),
+      box-shadow var(--dur-1) var(--ease-standard);
+  }
+
+  .dashboard__composer-input:focus-within {
+    border-color: var(--accent);
+    box-shadow: var(--focus-ring);
+  }
+
+  .dashboard__composer-mentions {
+    display: contents;
+  }
+
+  .dashboard__mention-chip {
+    display: inline-flex;
+    align-items: center;
+    max-inline-size: 100%;
+    color: var(--accent-bright);
+    background: var(--accent-dim);
+    border: 1px solid color-mix(in oklab, var(--accent) 28%, var(--border));
+    border-radius: var(--radius-pill);
+    font-size: var(--t-xs);
+    font-weight: var(--weight-semibold);
+    vertical-align: baseline;
+  }
+
+  .dashboard__mention-entity,
+  .dashboard__mention-remove,
+  .dashboard__message-mention {
+    padding: 0.18rem var(--s-2);
+    color: inherit;
+    background: transparent;
+    border: 0;
+    font: inherit;
+    cursor: pointer;
+  }
+
+  .dashboard__mention-entity {
+    min-inline-size: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .dashboard__mention-remove {
+    padding-inline-start: 0;
+    color: var(--text-muted);
+    font-size: var(--t-base);
+    line-height: 1;
+  }
+
+  .dashboard__mention-entity:focus-visible,
+  .dashboard__mention-remove:focus-visible,
+  .dashboard__message-mention:focus-visible {
+    outline: none;
+    box-shadow: var(--focus-ring);
+  }
+
+  .dashboard__message-mention {
+    padding-block: 0;
+  }
+
+  .dashboard__composer textarea {
+    flex: 1 1 14rem;
+    min-inline-size: 7rem;
+    min-block-size: 2rem;
+    max-block-size: 9rem;
+    padding: 0.34rem var(--s-2);
+    overflow-y: auto;
+    resize: none;
+    color: var(--text);
+    background: transparent;
+    border: 0;
+    outline: 0;
+    font: inherit;
+    line-height: var(--lh-base);
+  }
+
+  .dashboard__composer textarea::placeholder {
+    color: var(--text-faint);
+  }
+
+  .dashboard__composer-send {
+    flex: 0 0 auto;
+    inline-size: 2.25rem;
+    block-size: 2.25rem;
+    display: grid;
+    place-items: center;
+    padding: 0;
+    color: var(--accent-ink);
+    background: var(--accent);
+    border: 0;
+    border-radius: 50%;
+    cursor: pointer;
+  }
+
+  .dashboard__composer-send:hover {
+    background: var(--accent-bright);
+  }
+
+  .dashboard__composer-send:focus-visible {
+    outline: none;
+    box-shadow: var(--focus-ring);
+  }
+
+  .dashboard__composer-send:disabled {
+    cursor: wait;
+    opacity: 0.55;
+  }
+
+  .dashboard__composer-send svg {
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  .dashboard__composer-status {
+    min-block-size: var(--lh-xs);
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--t-xs);
+    line-height: var(--lh-xs);
+  }
+
+  .dashboard__mention-picker {
+    position: absolute;
+    z-index: 5;
+    inset: auto 0 calc(100% + var(--s-2));
+    max-block-size: 15rem;
+    padding: var(--s-2);
+    overflow-y: auto;
+    background: var(--elev-2);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-lg);
+  }
+
+  .dashboard__mention-picker button {
+    inline-size: 100%;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: center;
+    gap: var(--s-1);
+    padding: var(--s-2) var(--s-3);
+    color: var(--text);
+    background: transparent;
+    border: 0;
+    border-radius: var(--radius-sm);
+    font: inherit;
+    text-align: start;
+    cursor: pointer;
+  }
+
+  .dashboard__mention-picker button[aria-selected="true"],
+  .dashboard__mention-picker button:hover {
+    background: var(--accent-dim);
+  }
+
+  .dashboard__mention-picker button:focus-visible {
+    outline: none;
+    box-shadow: var(--focus-ring);
+  }
+
+  .dashboard__mention-picker strong {
+    font-size: var(--t-sm);
+  }
+
+  .dashboard__mention-picker-copy {
+    min-inline-size: 0;
+    display: grid;
+    gap: var(--s-1);
+  }
+
+  .dashboard__mention-picker-copy > span {
+    color: var(--text-muted);
+    font-size: var(--t-xs);
+  }
+
+  .dashboard__mention-picker-avatar {
+    inline-size: 1.9rem;
+    block-size: 1.9rem;
+    display: grid;
+    place-items: center;
+    color: var(--text);
+    background: var(--elev-3);
+    border: 1px solid var(--border-strong);
+    border-radius: 50%;
+    font-family: var(--font-mono);
+    font-size: var(--t-2xs);
   }
 
   .dashboard__message {

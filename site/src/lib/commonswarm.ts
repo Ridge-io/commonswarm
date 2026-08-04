@@ -816,6 +816,59 @@ export interface Signal {
   createdAt: string;
 }
 
+/** Posts one browser-authored note with either broadcast or one direct addressee. */
+export async function postBrowserSignal(
+  session: Session,
+  commandId: string,
+  workspaceId: string,
+  bodyText: string,
+  toUserId: string | null,
+  toAgentPrincipalId: string | null,
+): Promise<Signal> {
+  const { status, body } = await postCommand(
+    session,
+    commandId,
+    {
+      kind: "post_signal",
+      signal_kind: "note",
+      body: bodyText,
+      to_user_id: toUserId,
+      to_agent_principal_id: toAgentPrincipalId,
+      in_reply_to: null,
+      about: null,
+    },
+    { workspace_id: workspaceId, stream: { kind: "workspace" } },
+    "CommonSwarm lost the signal result. Refresh the feed before posting it again.",
+  );
+  if (status !== 200 || body.status !== "accepted") {
+    throw new Error(
+      status === 403
+        ? "That person or agent is no longer available here. Nothing was posted."
+        : String(body.message ?? `CommonSwarm did not post the signal (HTTP ${status}).`),
+    );
+  }
+  const row = body.signal as Record<string, unknown> | undefined;
+  if (!row || typeof row.id !== "string") {
+    throw new CommandOutcomeUnknown(
+      "CommonSwarm accepted the signal without returning its row. Refresh the feed before posting it again.",
+    );
+  }
+  return {
+    id: row.id,
+    from: String(row.from ?? ""),
+    fromKind: String(row.from_kind ?? "user"),
+    to: row.to === null || row.to === undefined ? null : String(row.to),
+    toAgent: row.to_agent === null || row.to_agent === undefined
+      ? null
+      : String(row.to_agent),
+    kind: String(row.kind ?? "note"),
+    body: String(row.body ?? bodyText),
+    about: row.about === null || row.about === undefined ? null : String(row.about),
+    until: row.until === null || row.until === undefined ? null : String(row.until),
+    createdAt: String(row.created_at ?? new Date().toISOString()),
+  };
+}
+
 /**
  * Reads the shared feed through the swarm_read views, which apply the membership gate in the
  * database. A caller who is not a member of the workspace gets an empty set rather than an
