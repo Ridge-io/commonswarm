@@ -1911,3 +1911,77 @@ The second round's defect was *created by the fix for the first*.
 `kill -9`, real expired lease) and an enumeration-based argument — *every* persisted phase, *every*
 fatal site, reachable-from-restart or not — rather than a reaction to whatever the last reviewer
 happened to name.
+
+---
+
+## D-042 — a mismatched effect bricks the listener; fourth consecutive round, identical shape · SHIP-BLOCKER
+
+**Found 2026-08-04 by a fresh Claude Opus 5 inversion arm on `a7c2544`, verified by the Lead.
+`a7c2544` must not merge.** Gate at that SHA: **395/395**, p1-cli 143/143, p1-local 4/4, p1-server
+69/69, site 113/113, build/check:tests/check:edge all 0, bundle undirtied. **All green, and it bricks.**
+
+### The defect
+
+`runtime.ts:1082-1084`:
+
+```ts
+if (existing !== null && !sameEffectSignal(existing, signal)) {
+  throw new Error("stored listener effect does not match the authoritative delivery");
+}
+```
+
+A bare throw, caught only at `:1165` and turned fatal at `:1173`.
+
+**The D-041 repair cannot help**, because it fires only from a `catch` on the read
+(`runtime.ts:473-478`): `try { return await store.read(signal.id); } catch { … }`. A read that
+**succeeds** returns the record verbatim, so a *readable but mismatched* effect never reaches the
+repair. The repair addresses unreadable effects; this is the readable case.
+
+**And the graceful handler already exists.** `engine.ts:267-274` handles the identical condition
+properly — `signal_integrity_mismatch` → terminal, ACKable, recoverable — **and is unreachable in
+`durable_claim`, the only mode v0.1.5 ships.**
+
+Cycle: claim → effect stored with relation R₁ → crash → the relation changes (every server `CASE`
+joins `AND author.revoked_at IS NULL`, so **revoking an author agent** flips `cross_owner` → `unknown`)
+→ restart → the stale-lease clear **succeeds** → server requeues → `:1082` throws → fatal → repeats
+every ~15.5 minutes, emitting `ready` each time.
+
+**The claimed exit fires correctly and the requeue re-arms the trap.** A recovery that works is not
+the same as a recovery that converges.
+
+### The shape, four times running
+
+| Round | Defect | Green gate at the time |
+|---|---|---|
+| 1 | D-040 — stale lease unrecoverable; repair gated to `cursor_fallback` | 376/376 |
+| 2 | D-041a — the D-040 repair's own read could throw uncaught | 390/390 |
+| 2 | D-041b — `ack_pending` kept D-040's dead-mode gate | 390/390 |
+| 3 | **D-042 — mismatched effect; graceful handler lives in `engine.ts`, unreachable in `durable_claim`** | **395/395** |
+
+**The same defect three of four times: a correct repair exists but is unreachable in the only mode we
+ship.** This is not four unlucky bugs. It is one architectural fact — `durable_claim` was built as a
+parallel path beside `cursor_fallback` and did not inherit its recovery semantics — surfacing wherever
+someone happens to look.
+
+### What the arm confirmed sound, so round 5 is scoped rather than restarted
+
+Both D-041 repairs are correct: all three repair call sites are inside `try`, and `:828-830` computes
+the horizon before the `deliveryAck` guard. `Date.parse` cannot yield NaN (parser `:494-499`). MAJOR-3
+is fixed at `:284`. Out-of-set relations are closed by `checkedRelation`. **26 of the enumeration's 27
+fatal-site verdicts were independently agreed**, every line number verified, and the phase union
+independently confirmed closed. The single disagreement is row `:1173`, whose justification was scoped
+to a still-*unreadable* effect and does not cover the *readable-but-mismatched* case.
+
+**The enumeration was right about almost everything and still missed this**, because its own framing
+inherited the repair's assumption.
+
+### The consequence for shipping
+
+`supabase/functions/read/index.ts:64-65` advertises `delivery_claim: 1, delivery_ack: 1`, and
+`runtime.ts` selects `durable_claim` only when both are advertised. **Withholding the `read`
+function deploy leaves every 0.1.5 client in `cursor_fallback`** — the mode production has run for its
+entire life, whose `engine.ts` path handles this defect class gracefully. All four bricks become
+unreachable with no code change and no new SHA.
+
+Rollback to 0.1.4 also remains available: 0.1.4 has **no** `delivery-journal.ts`, so it cannot fail to
+parse a journal. The measured no-rollback constraint applies only between frozen and fixed builds.
