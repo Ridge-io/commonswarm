@@ -1849,3 +1849,65 @@ The delegated MINORs beyond m-1/m-2/m-3 were not individually traced. m-1 (`dura
 returns the caller's `sender_owner_relation` and discards the computed one) is **latent, not live**:
 `owner_user_id` is never updated anywhere, so no ownership transfer exists to exploit it. It becomes a
 real cross-owner hole the day such a feature ships.
+
+---
+
+## D-041 — the D-040 fix introduces a new brick and leaves D-040's shape in a sibling state · SHIP-BLOCKER
+
+**Found 2026-08-04 by a fresh Claude Opus 5 arm on `de848ee`, verified by the Lead. The candidate must
+not merge.** This is the **third** consecutive round in which the durable-delivery runtime hid a
+permanent-brick defect from a fully green gate (390/390 here).
+
+### D-041a — the rescue code can itself brick the listener · MAJOR
+
+`runtime.ts:820` `await options.store.read(recovery.signalId)` sits **one line outside** the `try`
+that opens at `:826`, and **no `catch` exists anywhere between `:686` and `:1226`** — verified by
+enumerating catch sites across that span and finding none.
+
+In the frozen build this read was gated to `cursor_fallback` and therefore **never executed in
+production**. The D-040 fix promoted it to run on **every restart with a `leased` journal**. A
+malformed or unreadable effect file now throws uncaught, killing the runtime **before** the stale-lease
+clear at `:855-863` can run.
+
+**The code written to rescue the listener from a permanent brick can permanently brick the listener.**
+
+### D-041b — `ack_pending` keeps the exact dead-mode gate that WAS D-040 · MAJOR
+
+The fix made `leased` recoverable and left `ack_pending` untouched. At `:788`:
+
+```
+if (recovery?.phase === "ack_pending") {
+  if (page.capabilities.deliveryAck) { … continue; }   // always taken
+  … clearActive escape at :802-813 …                    // dead in the shipped mode
+```
+
+`classifyDeliveryMode` (`:382`) returns `durable_claim` **only when `deliveryAck` is advertised**, so
+the guard is always true and the only journal-clearing escape is **dead code in the only mode we
+ship** — bit for bit the defect D-040 described. A fatal from `sendPreparedAck` leaves the journal at
+`ack_pending` permanently; `supervisor.ts:283-296` does not auto-retry.
+
+Reachability is lower than D-040's: the arm could not construct the 409 `delivery_ack_conflict`
+(`:678`), and the verify-throw at `:634` needs loss of an effect file that never prunes. **Lower
+reachability is not absence, and D-040 was also "hard to hit" right up until it was described.**
+
+### What the arm cleared, which matters for scoping the next round
+
+- **No way to ACK the wrong signal and no double-ACK.** The `signalFingerprint` binding works.
+- **The relaxed journal parser is tight** — four crafted malformed-record probes were all rejected.
+- **The MAJOR-4 fix does not swallow genuine auth failures** — verified end to end.
+- **C-1 recovery itself is sound.**
+- **The downgrade brick is confirmed by measurement** and is worse than reasoned: it fails inside
+  `openListenerDeliveryJournal`, so a downgraded frozen build **cannot start** to clear the journal it
+  cannot parse. Any rollback plan must account for this.
+
+### The pattern, which is now the more important finding
+
+Three rounds, three permanent-brick defects, **all three invisible to a fully green gate** — 376/376,
+then 390/390. Each was found by a human-directed independent reader and none by any instrument we own.
+The second round's defect was *created by the fix for the first*.
+
+**A green suite on this subsystem carries close to zero information.** The next round must not be
+"fix and re-run the suite". At minimum it needs the completed live-fire drill (real process, real
+`kill -9`, real expired lease) and an enumeration-based argument — *every* persisted phase, *every*
+fatal site, reachable-from-restart or not — rather than a reaction to whatever the last reviewer
+happened to name.
