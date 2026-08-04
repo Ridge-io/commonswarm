@@ -31,11 +31,49 @@ lines and still surfaces its ACP subcommand, and claude's is 13.
 **So this is a protocol gap, not a policy exclusion.** Nothing in the codebase decided Claude Code
 should be unsupported; it simply does not speak the protocol the listener requires.
 
-## Claude Code: the gap is closable, and there is prior art
+## How Buzz does it — prior art, measured
 
-**`@zed-industries/claude-code-acp` is published at v0.16.2.** It is an ACP server that drives Claude
-Code behind it — the same bridge Zed uses. An adapter would spawn the bridge rather than the `claude`
-binary, and the rest of the existing adapter shape should apply.
+Operator asked how `block/buzz` (Block's open-source agent desktop) supports Claude Code and Codex.
+The answer is the mechanism above, and it is worth copying.
+
+**Buzz does not implement adapters. It installs and spawns other people's.** From `crates/buzz-acp`:
+
+- The agent command is configurable — `BUZZ_ACP_AGENT_COMMAND` (default `goose`) plus
+  `BUZZ_ACP_AGENT_ARGS` (default `acp`). It spawns N subprocesses and sends ACP `initialize` to each.
+- Adapters are **ordinary global npm packages, discovered on `PATH`**:
+  - Claude Code → `npm install -g @agentclientprotocol/claude-agent-acp`
+  - Codex → `npm install -g @agentclientprotocol/codex-acp`
+- Goose is spawned directly as `goose acp`.
+
+So Buzz's harness is the same shape as ours: resolve an executable, spawn it, speak ACP. Our
+`grok.ts` and `opencode.ts` already do exactly this. **Adding Claude Code is adopting a published
+adapter, not writing a protocol implementation.**
+
+**Package versions, verified on npm 2026-08-04** — all four exist, and the scope matters:
+
+| Package | Version |
+|---|---|
+| `@agentclientprotocol/claude-agent-acp` | **0.64.2** |
+| `@agentclientprotocol/codex-acp` | **1.1.9** |
+| `@zed-industries/claude-code-acp` | 0.16.2 |
+| `@zed-industries/codex-acp` | 0.16.0 |
+
+~~"`@zed-industries/claude-code-acp` is published at v0.16.2… the same bridge Zed uses."~~ **Superseded
+same day.** That package exists but is the older home; the adapters now live under
+`@agentclientprotocol`, which is two major-ish generations ahead (0.64.2 vs 0.16.2). I named the stale
+one before checking whether a newer scope existed. **Use `@agentclientprotocol/claude-agent-acp`.**
+
+Adopting Codex costs almost nothing extra once Claude Code is done — same mechanism, one more package.
+
+### Installing it during onboarding
+
+Operator direction: make installing the adapter part of onboarding. That matches
+`AGENTS.md` § *Onboarding: ask for the minimum, detect the rest* — the system can see whether the
+adapter is on `PATH`, and a missing dependency it can install is not a question worth asking. The
+honest constraint is that `npm install -g` mutates the user's machine, so it needs consent once, not a
+silent install, and the failure path has to be legible: Buzz's own tracker carries a Windows issue
+where adapter installation fails with `Unknown channel: agentHostClientProxy` and **no adapter files
+are created**, which is the shape of failure to design against.
 
 This matters more than it looks. On the dogfood laptop:
 
