@@ -40,13 +40,18 @@ was changed.
 
 ## Test evidence
 
-The clean pre-change baseline was:
+The goal packet records the clean pre-change baseline as:
 
 ```text
 tests 118
 pass 118
 fail 0
 ```
+
+My first clean pre-change full run executed all 118 tests but reported 117 passes because Chrome
+was killed after the geometry observer had produced its measurements. Running that unchanged
+observer by itself immediately passed 1/1. This was an execution failure, not a failed geometry
+assertion; the final full gate below completed without it.
 
 Before implementation, the new observer was run against the pre-change dashboard and built
 artifact. All five new checks failed: rail grouping/bounds, channel framing, filters, real sidebar
@@ -73,11 +78,13 @@ management controls.
 
 ## Render inspection
 
-The freshly built `/app` sample was inspected at 1440×1000 and at the responsive 500×900 layout.
-The desktop render showed the complete participant rail, one tinted direct row, two untinted
-broadcast rows, and the typographic hierarchy specified by the direction document. At the
-responsive width, the participant rail collapsed while the header roster remained available and
-the feed filters and message content wrapped without horizontal loss.
+The freshly built `/app` sample was inspected at 1440×1000. The desktop render showed the complete
+participant rail, one tinted direct row, two untinted broadcast rows, and the typographic hierarchy
+specified by the direction document. Chrome's screenshot process enforces a 500px minimum inner
+width, so its nominal 390px image was a crop rather than mobile evidence. I then applied a true
+390×844 device-metrics override through Chrome's debugging protocol: the participant rail
+collapsed, the header roster remained available, and both the document and body reported
+`clientWidth = scrollWidth = 390` with no element crossing the viewport.
 
 The design pass followed a restrained editorial/developer-tool direction: colour is limited to
 meaningful state and identity, while spacing, weight, and hairlines carry the structure.
