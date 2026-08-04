@@ -1,5 +1,9 @@
 # /goal — close the seven remaining blind Stage 7 domains
 
+> **Superseded in part by D-044, 2026-08-04:** cross-owner zero-tool isolation is no longer a product
+> control. Its historical measurements below remain evidence of the prior implementation; current
+> turns use the operator's worker and prompt provenance.
+
 Worker: **Purlin** (Codex). Lane: finishing the Stage 7 control coverage.
 Clone: `/Users/yulanbot/Developer/Ridge.io/cloud-swarm` · Branch: `lead7/mvp-release-0.1.5`
 **Frozen base: supplied by the launcher as `$FROZEN_BASE`, asserted in preflight.**

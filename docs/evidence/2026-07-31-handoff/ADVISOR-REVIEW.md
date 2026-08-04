@@ -1,5 +1,8 @@
 # Advisory review of the 2026-07-31 handoff dossier
 
+> **Current-state note, 2026-08-04 (D-044):** cross-owner isolation requirements below are historical.
+> The local sandbox is retired; all sender relations use the operator's worker with prompt provenance.
+
 Reviewer: AdvisorClaude (cloud-swarm swarm seat, analysis-only mandate)
 Reviewed: 2026-07-31, ~09:20–09:45 CDT
 Method: read all four dossier files and AGENTS.md complete; read the canonical spec sections

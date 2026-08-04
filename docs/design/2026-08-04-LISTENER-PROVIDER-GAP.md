@@ -1,5 +1,9 @@
 # Why Claude Code and Pi are not listener providers, and what it would take
 
+> **D-044 update, 2026-08-04:** the local cross-owner sandbox requirement below is retired. Every
+> sender relation now reaches the operator's worker and cwd with provenance in the prompt. The
+> CommonSwarm server authority model is unchanged.
+
 Measured 2026-08-04 against production v0.1.5. Prompted by a second-machine dogfood where **no
 installed host qualified**, which made the connect path unreachable on that laptop.
 

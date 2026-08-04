@@ -1,5 +1,10 @@
 # SWARM CLOUD — specification (final, security-hardened)
 
+> **Superseded in part by D-044, 2026-08-04:** the local inbound-authorization sandbox and its
+> zero-tool launch controls below are historical. Cross-owner messages use the operator's existing
+> worker and project context with provenance and an advisory confirmation steer. Server authority is
+> unchanged.
+
 Status: **agreed and security-reviewed.** Produced by a multi-model process (design/methodology at bottom): a Fable↔Codex adversarial specification loop reached mutual AGREE-EXCELLENT over three rounds; a Kimi K3 (opencode) security-only adversarial pass returned ACCEPTABLE-WITH-FIXES with 23 findings (4 launch-blocking); all 23 fixes are integrated below and mapped in the **Security fix ledger** at the end. This document is fully self-contained. **Revised (coordination model):** after a design conversation with an engineering colleague, the coordination layer was moved to advisory-first (soft where reversible, hard where not — §0 principle), with per-human coordinators and centralized landing (§2.10) and agent-maintained living design specs (§2.11); the diff was re-reviewed by Codex (model inversion).
 
 > Operator gate: nothing in §9 is provisioned until the owner reviews this spec, the §8 bill of materials, and the provisioning inventory (§9 P0 / former "provisioning inventory"). Delivery is phased and each phase ships behind its own §10 launch-blocking tests.

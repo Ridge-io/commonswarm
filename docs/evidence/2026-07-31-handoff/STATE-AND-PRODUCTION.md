@@ -1,5 +1,9 @@
 # Codebase, release, and production state
 
+> **Current-state note, 2026-08-04 (D-044):** the local cross-owner sandbox described in this snapshot
+> is historical. It is now retired; all sender relations use the operator's worker with prompt
+> provenance. Server-side authority remains unchanged.
+
 Snapshot: **2026-07-31 08:57 CDT**  
 Remote head at snapshot: `a21db3f59864c1142d6d270d2aa309f98b75ed07`
 

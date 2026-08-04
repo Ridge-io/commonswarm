@@ -1,5 +1,9 @@
 # v0.1.5 execution evidence — 2026-08-02/03
 
+> **Current-state note, 2026-08-04 (D-044):** `sender_owner_relation` still records server-stamped
+> provenance, but it no longer selects a local host-wake, sandbox, or tool policy. All relations
+> reach the operator's existing worker with sender/operator provenance in the prompt.
+
 Durable evidence for the v0.1.5 release run. `scratchpad/` is gitignored, so anything here is the
 re-readable copy; a completion claim whose evidence cannot be re-read later is not evidence.
 

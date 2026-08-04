@@ -1,5 +1,9 @@
 # D-036 inversion arm — full production surface (`origin/main..HEAD -- supabase/`)
 
+> **Current-state note, 2026-08-04 (D-044):** local cross-owner sandbox claims in this review describe
+> the reviewed SHA. That local boundary is now retired. The server-side authority findings remain
+> historical evidence and were not changed by D-044.
+
 > **Artifact disclosure, added 2026-08-03.** The raw model output opened with **43 lines of the word
 > "spectacle" repeated** before any real content. Those lines are stripped below; they are recorded
 > here rather than silently removed, because an evidence file that launders its own source is not

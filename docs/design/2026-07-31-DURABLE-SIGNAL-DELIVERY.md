@@ -1,5 +1,9 @@
 # Durable direct-signal delivery and acknowledgement
 
+> **D-044 update, 2026-08-04:** references below to an isolated or tool-denied cross-owner path are
+> superseded. Every sender relation uses the operator's worker and cwd; delivery prompts carry sender
+> and operator provenance. Server-side delivery authority is unchanged.
+
 Status: revised after adversarial security review; implemented in codebase; not yet production-applied until rollout
 
 Date: 2026-07-31

@@ -27,6 +27,7 @@ import {
   type PostSignalCommand,
   type PostSignalResult,
   type SignalKind,
+  type SignalRecord,
   type StreamRoute,
 } from "./cloud/command-client.js";
 import {
@@ -141,6 +142,7 @@ import {
   OpenCodeListenerModel,
   effectiveListenerStatus,
   listenerPaths,
+  listenerSenderProvenance,
   openListenerDeliveryJournal,
   runListenerRuntime,
   runListenerSupervisor,
@@ -150,6 +152,7 @@ import {
   type ListenerPermissionMode,
   type ListenerProviderId,
   type ListenerDeliveryJournal,
+  type ListenerSenderProvenanceContext,
   type ListenerStatus,
 } from "./listener/index.js";
 
@@ -2555,11 +2558,11 @@ function listenerProvider(args: Arguments): ListenerProviderId {
 
 /** Structured host limit copy for listen status JSON. */
 export type ListenerHostLimits = {
-  config_isolation: string;
+  host_configuration: string;
   deny_canary_scope: string;
   steady_allow_unproven: string;
-  cross_owner_isolation: string;
-  credential_home_cleanup: string;
+  cross_owner_context: string;
+  local_state_lifecycle: string;
   human_copy: string;
   toString(): string;
 };
@@ -2568,57 +2571,57 @@ export function listenerHostLimits(
   provider: ListenerStatus["provider"],
 ): ListenerHostLimits {
   if (provider === "opencode") {
-    const config_isolation =
-      "OpenCode same-owner: private 0700 home is auth-only + forced-ask config, not a project-config firewall. Project allow lists are defeated only by OPENCODE_DISABLE_PROJECT_CONFIG=1 plus a verified debug config --pure effective-config probe before spawn.";
+    const host_configuration =
+      "The OpenCode worker uses one private 0700 auth/config home and the operator-selected project cwd. OPENCODE_DISABLE_PROJECT_CONFIG=1 plus a verified debug config --pure probe keeps ACP permission requests on the forced-ask path.";
     const deny_canary_scope =
       "The deny canary proves host reject + correlated terminal deny only.";
     const steady_allow_unproven =
       "It does not prove steady-state --permissions allow behavior.";
-    const cross_owner_isolation =
-      "Cross-owner/unknown turns use a fresh auth-only home and empty cwd.";
-    const credential_home_cleanup =
-      "Removed after verified close (or retained on shutdown failure).";
+    const cross_owner_context =
+      "All sender relations reach that same worker and project context; each prompt carries sender and operator provenance.";
+    const local_state_lifecycle =
+      "The worker home is removed after verified close, or retained on shutdown failure.";
     const human_copy = [
-      config_isolation,
+      host_configuration,
       deny_canary_scope,
       steady_allow_unproven,
-      cross_owner_isolation,
-      credential_home_cleanup,
+      cross_owner_context,
+      local_state_lifecycle,
     ].join(" ");
     return {
-      config_isolation,
+      host_configuration,
       deny_canary_scope,
       steady_allow_unproven,
-      cross_owner_isolation,
-      credential_home_cleanup,
+      cross_owner_context,
+      local_state_lifecycle,
       human_copy,
       toString() {
         return human_copy;
       },
     };
   }
-  const config_isolation =
-    "Same-owner Grok workers may load ambient user hooks outside CommonSwarm's ACP permission boundary; cmux integration hooks are disabled for the listener child.";
+  const host_configuration =
+    "The Grok worker uses the operator-selected cwd and local Grok configuration, including user and cmux hooks.";
   const deny_canary_scope =
     "The deny canary proves host reject + correlated terminal deny only.";
   const steady_allow_unproven =
     "The deny canary does not prove steady-state --permissions allow behavior.";
-  const cross_owner_isolation =
-    "Isolated cross-owner turns use a clean temporary home and empty cwd.";
-  const credential_home_cleanup =
-    "Temporary isolated home removed after verified turn close.";
+  const cross_owner_context =
+    "All sender relations reach that same worker and local context; each prompt carries sender and operator provenance.";
+  const local_state_lifecycle =
+    "CommonSwarm does not create a separate Grok home for remote turns.";
   const human_copy = [
-    config_isolation,
-    cross_owner_isolation,
+    host_configuration,
+    cross_owner_context,
     steady_allow_unproven,
-    credential_home_cleanup,
+    local_state_lifecycle,
   ].join(" ");
   return {
-    config_isolation,
+    host_configuration,
     deny_canary_scope,
     steady_allow_unproven,
-    cross_owner_isolation,
-    credential_home_cleanup,
+    cross_owner_context,
+    local_state_lifecycle,
     human_copy,
     toString() {
       return human_copy;
@@ -2647,8 +2650,9 @@ export function listenerStatusJson(
         same_owner_delivery: mode === "allow"
           ? "worker session; tool requests allowed once"
           : "worker session; tool requests denied",
-        cross_owner_delivery:
-          "fresh tool-denied session; all tool requests denied",
+        cross_owner_delivery: mode === "allow"
+          ? "same worker session with sender provenance; tool requests allowed once"
+          : "same worker session with sender provenance; tool requests denied",
       }
       : {}),
     host_limits: listenerHostLimits(status.provider),
@@ -2800,6 +2804,19 @@ async function runConfiguredListener(options: {
     options.workspaceId,
     options.agent,
   );
+  const resolveSenderProvenance = async (
+    signal: SignalRecord,
+    context: ListenerSenderProvenanceContext,
+  ) => {
+    const credential = await credentialSession.bearer();
+    const senderDirectory = await readAgentSignalDirectory(
+      options.cloud,
+      credential,
+      options.workspaceId,
+      context,
+    );
+    return listenerSenderProvenance(signal, senderDirectory);
+  };
   const effectStore = new FileListenerEffectStore({
     profileId: options.cloud.profileId,
     workspaceId: options.workspaceId,
@@ -2876,6 +2893,7 @@ async function runConfiguredListener(options: {
           onEvent,
           listenerInstanceId,
           deliveryJournal: selectedJournal,
+          resolveSenderProvenance,
         });
       },
     });
@@ -3036,8 +3054,8 @@ async function runListenStart(args: Arguments): Promise<void> {
     return;
   }
   const hostNote = provider === "opencode"
-    ? "The same-owner OpenCode worker uses a private 0700 home with auth-only copy, forced-ask tool config, and OPENCODE_DISABLE_PROJECT_CONFIG (verified via debug config --pure) so project allow lists cannot merge. The deny canary runs on an empty temp cwd, not your repo. Cross-owner turns use a fresh auth-only home and empty cwd that are removed after each turn. Steady-state --permissions allow is a separate local opt-in after the deny canary.\n"
-    : "The same-owner Grok worker may load ambient user hooks outside CommonSwarm's ACP permission boundary; cmux integration hooks are disabled. Cross-owner turns use a clean temporary home with no user hooks or local context.\n";
+    ? "The OpenCode worker uses one private auth/config home and your selected project cwd. Every sender reaches that worker with sender and operator provenance in the prompt. Steady-state --permissions allow is a separate local opt-in after the deny canary.\n"
+    : "The Grok worker uses your selected cwd and local Grok configuration, including user and cmux hooks. Every sender reaches that worker with sender and operator provenance in the prompt.\n";
   process.stdout.write(
     `${
       args.has("foreground")
@@ -3048,7 +3066,7 @@ async function runListenStart(args: Arguments): Promise<void> {
         permissionMode === "allow"
           ? "allowed once because you explicitly selected --permissions allow"
           : "denied by default"
-      }. Cross-owner and unknown senders always use fresh tool-denied sessions.\n` +
+      }. The same permission mode applies to every sender relation.\n` +
       "The short credential rotates while this process remains alive and secure local state is available; a person reauthorises after the 30-day horizon.\n" +
       hostNote +
       `Use listen status/stop with --workspace-id ${workspaceId} --principal-id ${principalId} and the same Cloud target.\n`,

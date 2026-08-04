@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, stat } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -99,8 +99,8 @@ test("worker canary always denies before explicit same-owner allow mode", async 
     outcome: "selected",
     optionId: "deny",
   });
-  assert.equal(records[0]?.options.disableCmuxHooks, true);
-  assert.equal(records[0]?.options.sandbox, undefined);
+  assert.equal("disableCmuxHooks" in records[0]!.options, false);
+  assert.equal("sandbox" in records[0]!.options, false);
 
   const result = await adapter.prompt(SIGNAL, "worker", "work");
   assert.equal(result.message, "reply:work");
@@ -112,7 +112,7 @@ test("worker canary always denies before explicit same-owner allow mode", async 
   assert.equal(records[0]?.closed, true);
 });
 
-test("cross-owner turns are fresh strict sessions and always deny tools", async () => {
+test("cross-owner turns reach the operator worker, cwd, home, and permission mode", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "cswarm-worker-test-"));
   const records: Parameters<typeof fakeOpen>[0] = [];
   const adapter = new GrokListenerModel({
@@ -123,36 +123,30 @@ test("cross-owner turns are fresh strict sessions and always deny tools", async 
   await adapter.start();
   await adapter.prompt(
     { ...SIGNAL, sender_owner_relation: "cross_owner" },
-    "isolated",
+    "worker",
     "remote one",
   );
   await adapter.prompt(
     { ...SIGNAL, id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaab" },
-    "isolated",
+    "worker",
     "remote two",
   );
-  assert.equal(records.length, 3);
-  const isolatedHome = records[1]?.options.isolatedHome;
-  assert.equal(typeof isolatedHome, "string");
-  assert.equal(records[2]?.options.isolatedHome, isolatedHome);
-  await stat(isolatedHome!);
-  for (const isolated of records.slice(1)) {
-    assert.equal(isolated.options.sandbox, "strict");
-    assert.equal(isolated.options.disableCmuxHooks, true);
-    assert.notEqual(isolated.options.cwd, cwd);
-    assert.deepEqual(isolated.canaryDecision, {
-      outcome: "selected",
-      optionId: "deny",
-    });
-    assert.deepEqual(isolated.promptDecision, {
-      outcome: "selected",
-      optionId: "deny",
-    });
-    assert.equal(isolated.closed, true);
-    await assert.rejects(stat(isolated.options.cwd), /ENOENT/);
-  }
+  assert.equal(records.length, 1);
+  assert.equal(records[0]?.options.cwd, cwd);
+  assert.equal("isolatedHome" in records[0]!.options, false);
+  assert.equal("sandbox" in records[0]!.options, false);
+  assert.equal("disableCmuxHooks" in records[0]!.options, false);
+  assert.deepEqual(records[0]?.canaryDecision, {
+    outcome: "selected",
+    optionId: "deny",
+  });
+  assert.deepEqual(records[0]?.promptDecision, {
+    outcome: "selected",
+    optionId: "allow",
+  });
+  assert.equal(records[0]?.closed, false);
   await adapter.close();
-  await assert.rejects(stat(isolatedHome!), /ENOENT/);
+  assert.equal(records[0]?.closed, true);
 });
 
 test("listener cancel reaches active host handles without logging prompts", async () => {

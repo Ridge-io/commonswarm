@@ -1,5 +1,10 @@
 # CommonSwarm v0.1.5 release, deployment, and production-verification checklist
 
+> **Superseded in part by D-044, 2026-08-04:** the cross-owner zero-tool release gate below is
+> retired. Cross-owner listener verification now proves the operator's existing worker/project
+> context, sender/operator provenance, and the advisory confirmation steer. Server authority gates
+> remain unchanged.
+
 Status: **NO-GO until server/runtime integration and the versioned exact-SHA gates pass**.  
 Pause re-measurement: Lead root `d7c0b1a59646ae624385d6cd09a919ad0b24c43b`; unaccepted clean
 candidates Runtime A2 `ab1b240334efc62b50027512f64692e15d0e0752` and Server Phase B

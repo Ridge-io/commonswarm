@@ -6,9 +6,8 @@
  * mcpServers []. Child env is allowlisted (see env.ts).
  *
  * Permission boundary: host answers session/request_permission via an injected
- * callback (default reject_once). Ambient Grok hooks loaded by an ordinary worker
- * remain outside this host boundary. Cross-owner listener turns instead receive an
- * isolated home with compatibility scanners disabled, so no user/project hooks load.
+ * callback (default reject_once). The subprocess otherwise uses the operator's
+ * local Grok configuration.
  */
 
 import { spawn, execFile, type ChildProcessWithoutNullStreams } from "node:child_process";
@@ -46,12 +45,6 @@ export type GrokAcpOpenOptions = {
   clientVersion?: string;
   /** When true, prompts are enabled without canary (tests only). */
   promptsEnabled?: boolean;
-  /** Strict sandbox for context-free cross-owner turns. */
-  sandbox?: "strict";
-  /** Clean per-listener home for cross-owner turns (no user/project hooks or rules). */
-  isolatedHome?: string;
-  /** Disable cmux integration hooks inside this subprocess. */
-  disableCmuxHooks?: boolean;
 };
 
 export type GrokAcpHandle = {
@@ -153,54 +146,10 @@ export function buildGrokAcpArgs(options: {
 /** Sanitized Grok env plus host-owned constant safety overrides. */
 export function buildGrokChildEnv(
   parent: NodeJS.ProcessEnv | Record<string, string | undefined>,
-  options: {
-    sandbox?: "strict";
-    isolatedHome?: string;
-    disableCmuxHooks?: boolean;
-  } = {},
 ): Record<string, string> {
-  if (options.isolatedHome && !isAbsolute(options.isolatedHome)) {
-    throw new AcpHostError(
-      "isolated_home_invalid",
-      "isolated Grok home must be absolute",
-    );
-  }
-  const isolated: Record<string, string> = {};
-  if (options.isolatedHome) {
-    Object.assign(isolated, {
-      HOME: options.isolatedHome,
-      GROK_HOME: options.isolatedHome,
-      XDG_CONFIG_HOME: resolvePath(options.isolatedHome, "xdg-config"),
-      XDG_DATA_HOME: resolvePath(options.isolatedHome, "xdg-data"),
-      XDG_CACHE_HOME: resolvePath(options.isolatedHome, "xdg-cache"),
-      XDG_STATE_HOME: resolvePath(options.isolatedHome, "xdg-state"),
-      GROK_CLAUDE_SKILLS_ENABLED: "0",
-      GROK_CLAUDE_RULES_ENABLED: "0",
-      GROK_CLAUDE_AGENTS_ENABLED: "0",
-      GROK_CLAUDE_MCPS_ENABLED: "0",
-      GROK_CLAUDE_HOOKS_ENABLED: "0",
-      GROK_CURSOR_SKILLS_ENABLED: "0",
-      GROK_CURSOR_RULES_ENABLED: "0",
-      GROK_CURSOR_AGENTS_ENABLED: "0",
-      GROK_CURSOR_MCPS_ENABLED: "0",
-      GROK_CURSOR_HOOKS_ENABLED: "0",
-      GROK_MEMORY: "0",
-      GROK_SUBAGENTS: "0",
-      GROK_TOOL_SEARCH: "0",
-      GROK_LSP_TOOLS: "0",
-      GROK_WRITE_FILE: "0",
-      GROK_WEB_FETCH: "0",
-      GROK_DISABLE_AUTOUPDATER: "1",
-    });
-  }
   return {
     ...sanitizeChildEnv(parent),
-    ...isolated,
     GROK_DISABLE_AUTOUPDATER: "1",
-    ...(options.sandbox ? { GROK_SANDBOX: options.sandbox } : {}),
-    ...(options.disableCmuxHooks
-      ? { CMUX_GROK_HOOKS_DISABLED: "1" }
-      : {}),
   };
 }
 
@@ -219,11 +168,7 @@ export async function openGrokAcpSession(
     model: options.model,
     effort: options.effort,
   });
-  const env = buildGrokChildEnv(options.env ?? process.env, {
-    ...(options.sandbox ? { sandbox: options.sandbox } : {}),
-    ...(options.isolatedHome ? { isolatedHome: options.isolatedHome } : {}),
-    ...(options.disableCmuxHooks === true ? { disableCmuxHooks: true } : {}),
-  });
+  const env = buildGrokChildEnv(options.env ?? process.env);
   const child = spawn(executable, args, {
     stdio: ["pipe", "pipe", "pipe"],
     env,

@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 import { chmod, mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   buildOpenCodeHomeOwner,
@@ -93,9 +92,8 @@ export class OpenCodeListenerModel implements ListenerModel {
   private readonly instanceId = randomUUID();
   private worker: OpenCodeAcpHandle | null = null;
   private workerHome: string | null = null;
-  /** Worker/isolate homes retained after failed close or unsettled open. */
+  /** Worker homes retained after failed close or unsettled open. */
   private retainedHomes: string[] = [];
-  private readonly inFlight = new Set<OpenCodeAcpHandle>();
   /** In-progress prepare/open keyed by home path. */
   private readonly pendingOpens = new Map<string, PendingOpen>();
   private openGeneration = 0;
@@ -127,11 +125,10 @@ export class OpenCodeListenerModel implements ListenerModel {
 
   async prompt(
     _signal: SignalRecord,
-    mode: ListenerPromptMode,
+    _mode: ListenerPromptMode,
     prompt: string,
   ): Promise<ListenerPromptResult> {
     if (this.closed) throw new Error("listener model is closed");
-    if (mode === "isolated") return await this.promptIsolated(prompt);
     const worker = await this.ensureWorker();
     try {
       return await worker.session.prompt(prompt);
@@ -161,13 +158,6 @@ export class OpenCodeListenerModel implements ListenerModel {
     this.cancelled = true;
     this.openGeneration += 1;
     this.worker?.session.cancel();
-    for (const handle of this.inFlight) {
-      try {
-        handle.session.cancel();
-      } catch {
-        // best-effort
-      }
-    }
     for (const pending of this.pendingOpens.values()) {
       try {
         pending.handle?.session.cancel();
@@ -206,9 +196,7 @@ export class OpenCodeListenerModel implements ListenerModel {
     // 2) Close known handles; release homes only after verified close.
     const worker = this.worker;
     const workerHome = this.workerHome;
-    const isolates = [...this.inFlight];
     this.worker = null;
-    this.inFlight.clear();
 
     if (worker) {
       try {
@@ -233,17 +221,6 @@ export class OpenCodeListenerModel implements ListenerModel {
     } else if (workerHome) {
       // No handle (prepare-only race already settled above); drop field.
       this.workerHome = null;
-    }
-
-    for (const handle of isolates) {
-      try {
-        await handle.close();
-      } catch (error) {
-        failures.push(asError(error));
-        if (handle.home) {
-          this.retainedHomes.push(handle.home);
-        }
-      }
     }
 
     if (failures.length > 0) {
@@ -313,12 +290,10 @@ export class OpenCodeListenerModel implements ListenerModel {
     home: string,
     instanceId: string,
     pending: PendingOpen,
-    disposeHomeOnClose: boolean,
     causeErr?: unknown,
   ): Promise<void> {
     if (pending.closedByOpenPath) return;
     pending.closedByOpenPath = true;
-    this.inFlight.delete(handle);
     this.pendingOpens.delete(home);
     if (pending.timer) clearTimeout(pending.timer);
 
@@ -483,7 +458,6 @@ export class OpenCodeListenerModel implements ListenerModel {
         cwd: ownedCanaryCwd,
         permissionCallback,
         isolatedHome: home,
-        disposeHomeOnClose: false,
         ...(this.options.executable ? { executable: this.options.executable } : {}),
         ...(this.options.model ? { model: this.options.model } : {}),
         ...(this.options.env ? { env: this.options.env } : {}),
@@ -536,17 +510,17 @@ export class OpenCodeListenerModel implements ListenerModel {
       }
 
       if (this.closed || this.cancelled || generation !== this.openGeneration) {
-        await this.performSingleOwnerCleanup(handle, home, this.instanceId, pending, false);
+        await this.performSingleOwnerCleanup(handle, home, this.instanceId, pending);
       }
 
       await handle.session.enablePromptsAfterCanary();
       if (this.closed || this.cancelled || generation !== this.openGeneration) {
-        await this.performSingleOwnerCleanup(handle, home, this.instanceId, pending, false);
+        await this.performSingleOwnerCleanup(handle, home, this.instanceId, pending);
       }
 
       await handle.session.openWorkCwd(this.options.cwd);
       if (this.closed || this.cancelled || generation !== this.openGeneration) {
-        await this.performSingleOwnerCleanup(handle, home, this.instanceId, pending, false);
+        await this.performSingleOwnerCleanup(handle, home, this.instanceId, pending);
       }
 
       this.pendingOpens.delete(home);
@@ -558,7 +532,7 @@ export class OpenCodeListenerModel implements ListenerModel {
       let finalErr = error;
       if (handle && pending && !pending.closedByOpenPath) {
         try {
-          await this.performSingleOwnerCleanup(handle, home!, this.instanceId, pending, false, error);
+          await this.performSingleOwnerCleanup(handle, home!, this.instanceId, pending, error);
         } catch (cleanupErr) {
           finalErr = cleanupErr;
         }
@@ -584,161 +558,4 @@ export class OpenCodeListenerModel implements ListenerModel {
     }
   }
 
-  private async promptIsolated(prompt: string): Promise<ListenerPromptResult> {
-    if (this.closed) throw new Error("listener model is closed");
-    const generation = this.openGeneration;
-    const cwd = await mkdtemp(join(tmpdir(), "cswarm-opencode-cwd-"));
-    await chmod(cwd, 0o700);
-    const isolatedInstanceId = randomUUID();
-    let home: string | null = null;
-    let handle: OpenCodeAcpHandle | null = null;
-    let pending: PendingOpen | null = null;
-    try {
-      home = await this.prepareHome({
-        env: this.options.env ?? process.env,
-        owner: buildOpenCodeHomeOwner({
-          role: "isolated",
-          instanceId: isolatedInstanceId,
-          pid: process.pid,
-        }),
-        ...(this.options.model ? { model: this.options.model } : {}),
-        ...(this.options.allowMissingAuth === true
-          ? { allowMissingAuth: true }
-          : {}),
-      });
-      let markSettled!: (err?: unknown) => void;
-      const settlePromise = new Promise<void>((resolve, reject) => {
-        markSettled = (err?: unknown) => {
-          if (err) reject(err);
-          else resolve();
-        };
-      });
-      void settlePromise.catch(() => undefined);
-      pending = {
-        home,
-        instanceId: isolatedInstanceId,
-        phase: "pre-spawn",
-        openPromise: null,
-        settlePromise,
-        markSettled,
-      };
-      this.pendingOpens.set(home, pending);
-      try {
-        this.assertOpen(generation);
-      } catch (error) {
-        this.pendingOpens.delete(home);
-        let finalErr = error;
-        try {
-          await releaseOpenCodeHome(home, isolatedInstanceId);
-        } catch (relErr) {
-          this.retainedHomes.push(home);
-          finalErr = relErr;
-        }
-        pending.markSettled(finalErr);
-        home = null;
-        throw finalErr;
-      }
-      const openPromise = this.openSession({
-        cwd,
-        permissionCallback: defaultPermissionCallback,
-        denyTools: true,
-        isolatedHome: home,
-        disposeHomeOnClose: true,
-        ...(this.options.executable ? { executable: this.options.executable } : {}),
-        ...(this.options.model ? { model: this.options.model } : {}),
-        ...(this.options.env ? { env: this.options.env } : {}),
-        ...(this.options.allowMissingAuth === true
-          ? { allowMissingAuth: true }
-          : {}),
-        clientName: "cswarm-isolated-listener",
-      });
-      pending.phase = "opening";
-      pending.openPromise = openPromise;
-      void openPromise.catch(() => undefined);
-
-      try {
-        handle = await openPromise;
-        pending.handle = handle;
-      } catch (openError) {
-        this.pendingOpens.delete(home);
-        let finalOpenErr = openError;
-        if ((openError as any)?.code === "child_exit_timeout") {
-          this.retainedHomes.push(home);
-        } else {
-          try {
-            await releaseOpenCodeHome(home, isolatedInstanceId);
-          } catch (relErr) {
-            this.retainedHomes.push(home);
-            finalOpenErr = relErr;
-          }
-        }
-        pending.markSettled(finalOpenErr);
-        home = null;
-        throw finalOpenErr;
-      }
-
-      if (this.closed || this.cancelled || generation !== this.openGeneration) {
-        await this.performSingleOwnerCleanup(handle, home, isolatedInstanceId, pending, true);
-      }
-
-      this.inFlight.add(handle);
-      // OpenCode 1.18.10 removes hard-denied tools from the model request, so
-      // a tool-dependent dynamic canary cannot run on this child. The host
-      // enables prompts only after its exact hard-deny effective-config probe.
-
-      this.pendingOpens.delete(home);
-      pending.markSettled();
-      return await handle.session.prompt(prompt);
-    } catch (error) {
-      let finalErr = error;
-      if (handle && pending && !pending.closedByOpenPath) {
-        try {
-          await this.performSingleOwnerCleanup(handle, home!, isolatedInstanceId, pending, true, error);
-        } catch (cleanupErr) {
-          finalErr = cleanupErr;
-        }
-      }
-      if (home && pending && this.pendingOpens.has(home)) {
-        const currentHome = home;
-        if (pending.phase === "pre-spawn") {
-          this.pendingOpens.delete(currentHome);
-          try {
-            await releaseOpenCodeHome(currentHome, isolatedInstanceId);
-          } catch {
-            this.retainedHomes.push(currentHome);
-          }
-          pending.markSettled();
-          home = null;
-        }
-      }
-      throw finalErr;
-    } finally {
-      if (handle && this.inFlight.has(handle)) {
-        this.inFlight.delete(handle);
-        let closeOk = true;
-        try {
-          await handle.close();
-        } catch (closeError) {
-          closeOk = false;
-          if (home) {
-            this.retainedHomes.push(home);
-            home = null;
-          }
-          await rm(cwd, { recursive: true, force: true }).catch(() => undefined);
-          throw closeError;
-        }
-        await rm(cwd, { recursive: true, force: true }).catch(() => undefined);
-        if (home && closeOk) {
-          try {
-            await releaseOpenCodeHome(home, isolatedInstanceId);
-          } catch (relErr) {
-            this.retainedHomes.push(home);
-            throw relErr;
-          }
-        }
-      } else {
-        await rm(cwd, { recursive: true, force: true }).catch(() => undefined);
-      }
-    }
-  }
 }

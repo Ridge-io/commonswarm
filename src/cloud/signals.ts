@@ -774,6 +774,8 @@ export interface SignalMember {
 export interface SignalAgent {
   principal_id: string;
   name: string;
+  /** Added by the current read edge; absent on older compatible deployments. */
+  owner_user_id?: string;
 }
 
 /** Live members and agents available as signal targets in one workspace. */
@@ -797,6 +799,9 @@ function parseAgentMemberRow(value: unknown): SignalAgent {
   return {
     principal_id: checkedUuid(row.principal_id, "agent principal_id"),
     name: row.name,
+    ...(row.owner_user_id === undefined
+      ? {}
+      : { owner_user_id: checkedUuid(row.owner_user_id, "agent owner_user_id") }),
   };
 }
 
@@ -818,11 +823,12 @@ export async function readAgentSignalDirectory(
   target: CloudTarget,
   token: string,
   workspaceId: string,
-  fetcher: typeof fetch = fetch,
+  fetcherOrOptions: typeof fetch | SignalReadOptions = fetch,
 ): Promise<SignalDirectory> {
+  const options = normalizeReadOptions(fetcherOrOptions);
   let result: { response: Response; body: unknown } | null;
   try {
-    result = await fetchSignalRead(fetcher, readEndpoint(target), {
+    result = await fetchSignalRead(options.fetcher, readEndpoint(target), {
       method: "POST",
       headers: {
         authorization: `Bearer ${token}`,
@@ -833,7 +839,8 @@ export async function readAgentSignalDirectory(
         resource: "members",
         workspace_id: workspaceId,
       }),
-    });
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+    }, perReadTimeoutMs(options));
   } catch (error) {
     if (error instanceof SignalReadTimeoutError) {
       throw new Error("member read could not reach the cloud service");
