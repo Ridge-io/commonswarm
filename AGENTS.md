@@ -208,6 +208,39 @@ Reduce safeguards where they only add ceremony; assume agents are intelligent. S
 better. But the safeguards named in the doctrine file as must-survive are load-bearing —
 check that list before removing a check.
 
+## Writing: modifiers and invented contrasts
+
+Applies to everything an agent writes here — chat, commit messages, defect entries, evidence files,
+design docs — not only product copy.
+
+**Avoid unnecessary modifiers and invented contrasts.**
+
+Prefer the plain noun or verb when it carries the full meaning. Write "my recommendation," not "my
+actual recommendation"; "the reason," not "the real reason"; "the issue," not "the key issue," unless
+the distinction is substantive.
+
+Before using words such as *actual, real, true, clear, honest, genuine, main, key, important*, check
+whether they add information. If removing the word leaves the meaning unchanged, remove it.
+
+Do not use modifiers merely to create emphasis, rhythm, or a sense of decisiveness. They often
+introduce an unintended implication that the other items were not real, honest, important, or
+recommended.
+
+Do not invent an opposing view for rhetorical contrast. Avoid constructions such as "it is X, not Y,"
+"this is about X rather than Y," or "the issue is not Y" unless Y was actually raised, clearly
+implied, or is a genuinely plausible alternative that must be distinguished.
+
+Never imply that someone suggested, believed, or argued something that no one introduced. Do not
+manufacture strawmen to make an explanation sound sharper.
+
+Default to the shortest precise formulation that states the point directly.
+
+**Why this is in the engineering brief rather than the style guide.** This repo's doctrine turns on
+stating what was and was not established. Rhetorical intensifiers corrode that: "the real finding" ranks
+findings that were never compared, and "measured, not assumed" implies someone assumed. Both put a
+claim in the record that nobody made and no one checked. The habit that produces the flourish is the
+same one that produces an overstated verdict.
+
 ## ⚠️ The Supabase project named `cloud-swarm-dev` IS PRODUCTION
 
 Measured 2026-08-04, end to end:
