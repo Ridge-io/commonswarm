@@ -83,7 +83,8 @@ patterns for counts and filters became executable mixed-target behavior checks, 
 was pinned with explicit participant-list and count clearing, workspace transitions were required to
 refresh signal counts even on empty and error paths, and a Chrome geometry fixture now proves that 3
 and 50 agents occupy the same rail height while the 50-row list scrolls. The directed sample row now
-uses a protocol-valid `note` kind, with an assertion rejecting directed `working-on` sample data.
+uses a protocol-valid `note` kind. Mutation controls prove the observer rejects both human- and
+agent-directed `working-on` sample data independent of source-field order.
 
 ## Render inspection
 

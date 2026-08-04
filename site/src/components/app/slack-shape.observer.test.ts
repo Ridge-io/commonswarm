@@ -268,10 +268,41 @@ test("loaded-signal filters and counts classify person, agent, and broadcast tar
   const sampleEnd = dashboard.indexOf("const boot =", sampleStart);
   assert.notEqual(sampleStart, -1, "sample-render start anchor must resolve");
   assert.notEqual(sampleEnd, -1, "sample-render end anchor must resolve");
-  assert.doesNotMatch(
-    dashboard.slice(sampleStart, sampleEnd),
-    /toAgent:\s*"[^"]+",[\s\S]{0,120}?kind:\s*"working-on"/,
-    "sample data must not present the command protocol's rejected directed working-on shape",
+  const sample = dashboard.slice(sampleStart, sampleEnd);
+  const assertProtocolValidSamples = (source: string): void => {
+    const objects = Array.from(source.matchAll(/{\s*id:\s*"sample-\d+"[\s\S]*?\n\s*},/g));
+    assert.ok(objects.length > 0, "sample signal objects must resolve");
+    for (const object of objects) {
+      const field = (name: "to" | "toAgent" | "kind"): string | null => {
+        const match = object[0].match(new RegExp(`\\b${name}:\\s*(null|"[^"]*")`));
+        assert.ok(match, `sample signal must expose ${name}`);
+        return match[1] === "null" ? null : JSON.parse(match[1]!);
+      };
+      if (field("kind") === "working-on") {
+        assert.equal(field("to"), null, "working-on sample must not target a person");
+        assert.equal(field("toAgent"), null, "working-on sample must not target an agent");
+      }
+    }
+  };
+  assertProtocolValidSamples(sample);
+
+  const directedShape = `to: null,\n          toAgent: "sample-river",\n          kind: "note",`;
+  assert.ok(sample.includes(directedShape), "directed sample mutation anchor must resolve");
+  assert.throws(
+    () => assertProtocolValidSamples(sample.replace(
+      directedShape,
+      `kind: "working-on",\n          to: "sample-owner",\n          toAgent: null,`,
+    )),
+    /working-on sample must not target a person/,
+    "human-directed working-on must fail independent of field order",
+  );
+  assert.throws(
+    () => assertProtocolValidSamples(sample.replace(
+      directedShape,
+      `kind: "working-on",\n          to: null,\n          toAgent: "sample-river",`,
+    )),
+    /working-on sample must not target an agent/,
+    "agent-directed working-on must fail independent of field order",
   );
 });
 
