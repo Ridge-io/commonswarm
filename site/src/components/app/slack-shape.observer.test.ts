@@ -63,18 +63,26 @@ type RailGeometry = {
 const renderRailGeometry = async (): Promise<RailGeometry> => {
   const directory = await mkdtemp(join(tmpdir(), "commonswarm-slack-rail-"));
   const fixture = join(directory, "index.html");
-  const rows = (count: number): string => Array.from({ length: count }, (_, index) => `
+  const agents = (count: number): string => Array.from({ length: count }, (_, index) => `
     <li class="dashboard__sidebar-agent">
       <span class="dashboard__sidebar-agent-avatar">A${index + 1}</span>
-      <span class="dashboard__sidebar-participant-copy"><strong>Agent ${index + 1}</strong><span>AGENT · operated by Dana</span></span>
+      <span class="dashboard__sidebar-participant-copy"><strong>Agent ${index + 1}</strong><span>AGENT</span></span>
     </li>`).join("");
+  const rows = (count: number): string => `
+    <li class="dashboard__sidebar-owner-group">
+      <div class="dashboard__sidebar-person">
+        <span class="dashboard__sidebar-person-avatar">DR</span>
+        <span class="dashboard__sidebar-participant-copy"><strong>Dana Rivera</strong><span>PERSON · owner</span></span>
+      </div>
+      <ul class="dashboard__sidebar-owner-agents">${agents(count)}</ul>
+    </li>`;
   const rail = (name: string, count: number): string => `
     <aside class="dashboard__rail" data-rail="${name}">
       <div class="dashboard__workspace-control">
         <button class="dashboard__workspace-trigger">CommonSwarm Build</button>
       </div>
       <section class="dashboard__rail-section dashboard__rail-section--participants">
-        <div class="dashboard__rail-label-row"><h2>AGENTS <span>${count}</span></h2></div>
+        <div class="dashboard__rail-label-row"><h2>PEOPLE &amp; AGENTS</h2></div>
         <ul class="dashboard__sidebar-agent-list" data-list="${name}">${rows(count)}</ul>
       </section>
     </aside>`;
@@ -154,22 +162,20 @@ const renderRailGeometry = async (): Promise<RailGeometry> => {
   }
 };
 
-test("the workspace shell is grouped as streams, people, and bounded agent navigation", () => {
+test("the workspace shell groups people with their agents in one bounded list", () => {
   for (const token of [
     "STREAMS",
-    "PEOPLE",
-    "AGENTS",
+    "PEOPLE &amp; AGENTS",
     "# all-signals",
     "Every agent belongs to a person. Workspace-owned agents are not supported yet.",
-    "data-sidebar-people-list",
-    "data-sidebar-agent-list",
+    "data-sidebar-participant-list",
   ]) {
     assert.ok(dashboard.includes(token), `dashboard shell is missing ${token}`);
   }
   assert.match(
     dashboard,
     /\.dashboard__sidebar-agent-list\s*\{[\s\S]*?block-size:\s*14rem;[\s\S]*?max-block-size:\s*14rem;[\s\S]*?overflow-y:\s*auto;/,
-    "the AGENTS rail must have a fixed height, a matching maximum, and its own vertical scroll",
+    "the grouped participant rail must have a fixed height, a matching maximum, and its own vertical scroll",
   );
   assert.match(dashboard, /const renderSidebarParticipants =/);
   assert.match(dashboard, /renderSidebarParticipants\(\);/);
@@ -193,15 +199,17 @@ test("the workspace shell is grouped as streams, people, and bounded agent navig
   );
   for (const selector of [
     "data-sidebar-workspace-name",
-    "data-sidebar-people-list",
-    "data-sidebar-agent-list",
-    "data-sidebar-people-count",
-    "data-sidebar-agent-count",
+    "data-sidebar-participant-list",
     "data-broadcast-count",
     "data-direct-count",
   ]) {
     assert.ok(privacyReset.includes(selector), `privacy reset must clear ${selector}`);
   }
+  assert.doesNotMatch(
+    dashboard,
+    /data-sidebar-(?:people|agent)-(?:list|count)/,
+    "the superseded flat participant lists and duplicate visible counts must stay retired",
+  );
   assert.match(privacyReset, /renderRoster\(\);/);
 });
 

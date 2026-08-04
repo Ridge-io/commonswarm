@@ -234,20 +234,11 @@ import SampleNotice from "./SampleNotice.astro";
             </div>
           </nav>
 
-          <section class="dashboard__rail-section dashboard__rail-section--participants" aria-labelledby="dashboard-people-label">
+          <section class="dashboard__rail-section dashboard__rail-section--participants" aria-labelledby="dashboard-participants-label">
             <div class="dashboard__rail-label-row">
-              <h2 id="dashboard-people-label">PEOPLE <span>(direct)</span></h2>
-              <span data-sidebar-people-count>0</span>
+              <h2 id="dashboard-participants-label">PEOPLE &amp; AGENTS</h2>
             </div>
-            <ul class="dashboard__sidebar-people-list" data-sidebar-people-list></ul>
-          </section>
-
-          <section class="dashboard__rail-section dashboard__rail-section--participants" aria-labelledby="dashboard-agents-label">
-            <div class="dashboard__rail-label-row">
-              <h2 id="dashboard-agents-label">AGENTS <span>(direct)</span></h2>
-              <span data-sidebar-agent-count>0</span>
-            </div>
-            <ul class="dashboard__sidebar-agent-list" data-sidebar-agent-list></ul>
+            <ul class="dashboard__sidebar-agent-list" data-sidebar-participant-list></ul>
             <p class="dashboard__agent-ownership-note">
               Every agent belongs to a person. Workspace-owned agents are not supported yet.
             </p>
@@ -665,6 +656,7 @@ import SampleNotice from "./SampleNotice.astro";
     shouldPollPendingAccess,
     shouldRetireFreshInvite,
   } from "../../lib/pending-access";
+  import { groupParticipantsByOwner } from "../../lib/participant-rail";
 
   interface Workspace {
     id: string;
@@ -1380,47 +1372,16 @@ import SampleNotice from "./SampleNotice.astro";
       node.classList.add("dashboard__avatar--tinted");
     };
 
-    /*
-     * The rail mirrors participants as presence/navigation only. Management stays in the
-     * header dialog, so these rows have no destructive controls. A dedicated scrolling list
-     * owns agent-count growth; the rail itself keeps the same height at every roster size.
-     */
+    /* The rail mirrors participants as presence/navigation only. A person owns the nested
+       agent rows below them; agents whose owner is outside the current member roster stay
+       visible in one trailing, honestly labelled fallback group. The scrolling list owns
+       participant-count growth, so the rail keeps the same height at every roster size. */
     const renderSidebarParticipants = (): void => {
-      const peopleList = one<HTMLUListElement>("[data-sidebar-people-list]");
-      const peopleCount = one<HTMLElement>("[data-sidebar-people-count]");
-      if (peopleCount) peopleCount.textContent = String(members.length);
-      if (peopleList) {
-        peopleList.replaceChildren();
-        for (const member of members) {
-          const row = document.createElement("li");
-          row.className = "dashboard__sidebar-person";
-          const avatar = document.createElement("span");
-          avatar.className = "dashboard__sidebar-person-avatar";
-          avatar.textContent = initials(member.name);
-          avatar.setAttribute("aria-hidden", "true");
-          const copy = document.createElement("span");
-          copy.className = "dashboard__sidebar-participant-copy";
-          const name = document.createElement("strong");
-          name.textContent = member.name;
-          const meta = document.createElement("span");
-          const badge = document.createElement("span");
-          badge.className = "dashboard__sidebar-identity-badge";
-          badge.textContent = "PERSON";
-          const role = document.createElement("span");
-          role.textContent = member.role;
-          meta.append(badge, role);
-          copy.append(name, meta);
-          row.append(avatar, copy);
-          peopleList.append(row);
-        }
-      }
+      const participantList = one<HTMLUListElement>("[data-sidebar-participant-list]");
+      if (!participantList) return;
+      participantList.replaceChildren();
 
-      const agentList = one<HTMLUListElement>("[data-sidebar-agent-list]");
-      const agentCount = one<HTMLElement>("[data-sidebar-agent-count]");
-      if (agentCount) agentCount.textContent = String(agents.length);
-      if (!agentList) return;
-      agentList.replaceChildren();
-      for (const agent of agents) {
+      const buildAgentRow = (agent: Agent): HTMLLIElement => {
         const row = document.createElement("li");
         row.className = "dashboard__sidebar-agent";
         const avatarWrap = document.createElement("span");
@@ -1442,14 +1403,52 @@ import SampleNotice from "./SampleNotice.astro";
         const badge = document.createElement("span");
         badge.className = "dashboard__sidebar-identity-badge";
         badge.textContent = "AGENT";
-        const owner = document.createElement("span");
-        owner.textContent = `operated by ${
-          people.get(agent.ownerUserId) ?? "Workspace member"
-        }`;
-        meta.append(badge, owner);
+        meta.append(badge);
         copy.append(name, meta);
         row.append(avatarWrap, copy);
-        agentList.append(row);
+        return row;
+      };
+
+      for (const group of groupParticipantsByOwner(members, agents)) {
+        const groupItem = document.createElement("li");
+        groupItem.className = "dashboard__sidebar-owner-group";
+        const personRow = document.createElement("div");
+        personRow.className = group.kind === "member"
+          ? "dashboard__sidebar-person"
+          : "dashboard__sidebar-person dashboard__sidebar-person--unresolved";
+
+        if (group.kind === "member") {
+          const avatar = document.createElement("span");
+          avatar.className = "dashboard__sidebar-person-avatar";
+          avatar.textContent = initials(group.member.name);
+          avatar.setAttribute("aria-hidden", "true");
+          const copy = document.createElement("span");
+          copy.className = "dashboard__sidebar-participant-copy";
+          const name = document.createElement("strong");
+          name.textContent = group.member.name;
+          const meta = document.createElement("span");
+          const badge = document.createElement("span");
+          badge.className = "dashboard__sidebar-identity-badge";
+          badge.textContent = "PERSON";
+          const role = document.createElement("span");
+          role.textContent = group.member.role;
+          meta.append(badge, role);
+          copy.append(name, meta);
+          personRow.append(avatar, copy);
+        } else {
+          const marker = document.createElement("span");
+          marker.className = "dashboard__sidebar-unresolved-mark";
+          marker.textContent = "?";
+          marker.setAttribute("aria-hidden", "true");
+          const label = document.createElement("strong");
+          label.textContent = group.label;
+          personRow.append(marker, label);
+        }
+        const nestedAgents = document.createElement("ul");
+        nestedAgents.className = "dashboard__sidebar-owner-agents";
+        for (const agent of group.agents) nestedAgents.append(buildAgentRow(agent));
+        groupItem.append(personRow, nestedAgents);
+        participantList.append(groupItem);
       }
     };
 
@@ -2179,7 +2178,7 @@ import SampleNotice from "./SampleNotice.astro";
       renderRoster();
       for (const list of all<HTMLElement>(
         "[data-workspace-list], [data-access-list], [data-dialog-access-list], [data-feed-list], " +
-          "[data-sidebar-people-list], [data-sidebar-agent-list]",
+          "[data-sidebar-participant-list]",
       )) {
         list.replaceChildren();
       }
@@ -2190,11 +2189,6 @@ import SampleNotice from "./SampleNotice.astro";
         target.textContent = "";
       }
       for (const count of all<HTMLElement>("[data-broadcast-count], [data-direct-count]")) {
-        count.textContent = "0";
-      }
-      for (const count of all<HTMLElement>(
-        "[data-sidebar-people-count], [data-sidebar-agent-count]",
-      )) {
         count.textContent = "0";
       }
       for (const target of all<HTMLElement>("[data-account-name], [data-rail-account]")) {
@@ -4010,19 +4004,12 @@ import SampleNotice from "./SampleNotice.astro";
     text-align: center;
   }
 
-  .dashboard__sidebar-people-list,
   .dashboard__sidebar-agent-list {
     display: grid;
     gap: var(--s-1);
     padding: 0;
     margin: 0;
     list-style: none;
-  }
-
-  .dashboard__sidebar-people-list {
-    max-block-size: 9rem;
-    overflow-y: auto;
-    overscroll-behavior: contain;
   }
 
   .dashboard__sidebar-agent-list {
@@ -4033,6 +4020,24 @@ import SampleNotice from "./SampleNotice.astro";
     scrollbar-gutter: stable;
   }
 
+  .dashboard__sidebar-owner-group,
+  .dashboard__sidebar-owner-agents {
+    min-inline-size: 0;
+    display: grid;
+    gap: 0;
+    padding: 0;
+    margin: 0;
+    list-style: none;
+  }
+
+  .dashboard__sidebar-owner-group + .dashboard__sidebar-owner-group {
+    margin-block-start: var(--s-1);
+  }
+
+  .dashboard__sidebar-owner-agents {
+    padding-inline-start: 1rem;
+  }
+
   .dashboard__sidebar-person,
   .dashboard__sidebar-agent {
     min-inline-size: 0;
@@ -4041,6 +4046,30 @@ import SampleNotice from "./SampleNotice.astro";
     align-items: center;
     gap: var(--s-2);
     padding: var(--s-1) var(--s-2);
+  }
+
+  .dashboard__sidebar-person--unresolved {
+    grid-template-columns: auto minmax(0, 1fr);
+    color: var(--text-muted);
+  }
+
+  .dashboard__sidebar-unresolved-mark {
+    inline-size: 1.75rem;
+    block-size: 1.75rem;
+    display: grid;
+    place-items: center;
+    border: 1px dashed var(--border-strong);
+    border-radius: 50%;
+    font-family: var(--font-mono);
+    font-size: var(--t-xs);
+  }
+
+  .dashboard__sidebar-person--unresolved > strong {
+    overflow: hidden;
+    font-size: var(--t-xs);
+    font-weight: var(--weight-semibold);
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .dashboard__sidebar-person-avatar,
