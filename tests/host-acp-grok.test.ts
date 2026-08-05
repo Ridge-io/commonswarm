@@ -5,7 +5,8 @@
  * silent. No network, no live Grok model prompt, no billable tokens.
  */
 import assert from "node:assert/strict";
-import { EventEmitter } from "node:events";
+import { spawn } from "node:child_process";
+import { EventEmitter, once } from "node:events";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -30,6 +31,7 @@ import {
   openAcpSessionOverStdio,
   parseGrokVersionOutput,
   sanitizeChildEnv,
+  terminateGrokChild,
   type PermissionDecision,
 } from "../src/host/index.js";
 
@@ -180,6 +182,20 @@ function createFakeChild(script: FakeAgentScript = {}) {
 const defaultScript: FakeAgentScript = {};
 
 describe("Grok ACP host core (pure fake child)", () => {
+  test("Grok teardown escalates from ignored SIGTERM to SIGKILL and confirms exit", async () => {
+    const child = spawn(
+      process.execPath,
+      [
+        "-e",
+        "process.on('SIGTERM',()=>{});process.stdout.write('ready\\n');setInterval(()=>{},1000)",
+      ],
+      { stdio: ["pipe", "pipe", "pipe"] },
+    );
+    await once(child.stdout, "data");
+    await terminateGrokChild(child);
+    assert.equal(child.signalCode, "SIGKILL");
+  });
+
   test("buildGrokAcpArgs: --no-leader, stdio, optional model/effort, never always-approve", () => {
     assert.deepEqual(buildGrokAcpArgs({}), ["agent", "--no-leader", "stdio"]);
     assert.deepEqual(buildGrokAcpArgs({ model: "grok-4.5", effort: "low" }), [
@@ -609,6 +625,135 @@ describe("Grok ACP host core (pure fake child)", () => {
       assert.equal(p._meta.yoloMode, false);
       assert.equal(p.cwd, cwd);
       await session.close();
+      fake.close();
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("required permission mode is explicitly selected after session/new", async () => {
+    const cwd = tempCwd();
+    try {
+      const methods: string[] = [];
+      let modeParams: unknown;
+      const fake = createFakeChild({
+        onRequest: async (_id, method, params, api) => {
+          methods.push(method);
+          if (method === "initialize") {
+            api.result({ protocolVersion: 1 });
+            return;
+          }
+          if (method === "session/new") {
+            api.result({
+              sessionId: "s-mode",
+              modes: {
+                currentModeId: "auto",
+                availableModes: [{ id: "auto" }, { id: "default" }],
+              },
+            });
+            return;
+          }
+          if (method === "session/set_mode") {
+            modeParams = params;
+            api.result({});
+          }
+        },
+      });
+      const { session } = await openAcpSessionOverStdio({
+        cwd,
+        requiredModeId: "default",
+        readable: fake.readable,
+        writable: fake.writable,
+        requestTimeoutMs: 5_000,
+      });
+      assert.deepEqual(methods, ["initialize", "session/new", "session/set_mode"]);
+      assert.deepEqual(modeParams, {
+        sessionId: "s-mode",
+        modeId: "default",
+      });
+      await session.close();
+      fake.close();
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("required permission mode fails closed when the adapter omits it", async () => {
+    const cwd = tempCwd();
+    try {
+      const methods: string[] = [];
+      const fake = createFakeChild({
+        onRequest: async (_id, method, _params, api) => {
+          methods.push(method);
+          if (method === "initialize") {
+            api.result({ protocolVersion: 1 });
+            return;
+          }
+          if (method === "session/new") {
+            api.result({
+              sessionId: "s-mode",
+              modes: {
+                currentModeId: "auto",
+                availableModes: [{ id: "auto" }],
+              },
+            });
+          }
+        },
+      });
+      await assert.rejects(
+        () =>
+          openAcpSessionOverStdio({
+            cwd,
+            requiredModeId: "default",
+            readable: fake.readable,
+            writable: fake.writable,
+            requestTimeoutMs: 5_000,
+          }),
+        /required session mode is unavailable: default/,
+      );
+      assert.deepEqual(methods, ["initialize", "session/new"]);
+      fake.close();
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("required permission mode maps a selection refusal to the actionable code", async () => {
+    const cwd = tempCwd();
+    try {
+      const fake = createFakeChild({
+        onRequest: async (_id, method, _params, api) => {
+          if (method === "initialize") {
+            api.result({ protocolVersion: 1 });
+            return;
+          }
+          if (method === "session/new") {
+            api.result({
+              sessionId: "s-mode",
+              modes: { availableModes: [{ id: "default" }] },
+            });
+            return;
+          }
+          if (method === "session/set_mode") {
+            api.error(-32000, "mode refused");
+          }
+        },
+      });
+      await assert.rejects(
+        () =>
+          openAcpSessionOverStdio({
+            cwd,
+            requiredModeId: "default",
+            readable: fake.readable,
+            writable: fake.writable,
+            requestTimeoutMs: 5_000,
+          }),
+        {
+          name: "AcpProtocolError",
+          code: "permission_mode_unavailable",
+          message: "required session mode could not be selected: default",
+        },
+      );
       fake.close();
     } finally {
       rmSync(cwd, { recursive: true, force: true });

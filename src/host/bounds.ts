@@ -16,6 +16,12 @@ export const GROK_MEASURED_VERSION = "0.2.117";
 export const OPENCODE_MEASURED_VERSION = "1.18.10";
 /** Measured claude-agent-acp bridge pin for the Claude Code adapter. */
 export const CLAUDE_ACP_MEASURED_VERSION = "0.64.2";
+/** Claude 0.64.2 manual mode emits host-owned permission requests. */
+export const CLAUDE_PERMISSION_MODE_ID = "default";
+/** Measured codex-acp bridge pin for the Codex adapter. */
+export const CODEX_ACP_MEASURED_VERSION = "1.1.9";
+/** Codex 1.1.9 read-only mode emits host-owned permission requests. */
+export const CODEX_PERMISSION_MODE_ID = "read-only";
 export const ACP_PROTOCOL_VERSION = 1;
 
 /**

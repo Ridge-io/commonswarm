@@ -61,6 +61,16 @@ test("listenerHostLimits claude states measured auth and no temporary lifecycle"
   assert.doesNotMatch(limits.human_copy, /private 0700|isolated|canary cwd/i);
 });
 
+test("listenerHostLimits codex states explicit read-only mode and auth boundary", () => {
+  const limits = listenerHostLimits("codex");
+  assert.match(limits.host_configuration, /codex-acp 1\.1\.9/i);
+  assert.match(limits.host_configuration, /explicitly selects read-only mode/i);
+  assert.match(limits.host_configuration, /API-key variables are stripped/i);
+  assert.match(limits.local_state_lifecycle, /does not create a separate Codex home/i);
+  assert.match(limits.local_state_lifecycle, /temporary worker cwd/i);
+  assert.doesNotMatch(limits.human_copy, /private 0700|isolated|canary cwd/i);
+});
+
 test("bounds.ts does not claim wildcard stops project allow merging", () => {
   const source = readFileSync(
     resolve("src/host/bounds.ts"),

@@ -150,6 +150,55 @@ test("claude detached path validation accepts native Windows absolute paths", ()
   assert.equal(isNativeAbsolutePath("claude-agent-acp", "linux"), false);
 });
 
+test("codex detached argv pins the resolved bridge and rejects unmapped flags", () => {
+  const args = buildListenerChildArgs({
+    ...SPEC,
+    provider: "codex",
+    model: undefined,
+    effort: undefined,
+    codexExecutable: "/opt/codex-acp",
+    executable: undefined,
+  });
+  assert.equal(args[args.indexOf("--provider") + 1], "codex");
+  assert.equal(args[args.indexOf("--codex-executable") + 1], "/opt/codex-acp");
+  assert.equal(args.includes("--grok-executable"), false);
+  assert.equal(args.includes("--opencode-executable"), false);
+  assert.equal(args.includes("--claude-executable"), false);
+  assert.throws(
+    () =>
+      buildListenerChildArgs({
+        ...SPEC,
+        provider: "codex",
+        effort: "low",
+        model: undefined,
+        codexExecutable: "/opt/codex-acp",
+      }),
+    /effort.*codex/i,
+  );
+  assert.throws(
+    () =>
+      buildListenerChildArgs({
+        ...SPEC,
+        provider: "codex",
+        effort: undefined,
+        model: "gpt-5.6-sol",
+        codexExecutable: "/opt/codex-acp",
+      }),
+    /model.*codex/i,
+  );
+  assert.throws(
+    () =>
+      buildListenerChildArgs({
+        ...SPEC,
+        provider: "codex",
+        effort: undefined,
+        model: undefined,
+        codexExecutable: "codex-acp",
+      }),
+    /absolute --codex-executable/i,
+  );
+});
+
 test("credential travels only over child stdin, never argv or env", async () => {
   const secret = `{"agent_token":"swm_agt_${"A".repeat(43)}"}`;
   const stdin = new PassThrough();

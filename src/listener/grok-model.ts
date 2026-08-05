@@ -81,8 +81,11 @@ export class GrokListenerModel implements ListenerModel {
       return await worker.session.prompt(prompt);
     } catch (error) {
       if (error instanceof AcpChildExitError) {
-        await worker.close().catch(() => undefined);
-        if (this.worker === worker) this.worker = null;
+        try {
+          await worker.close();
+        } finally {
+          if (this.worker === worker) this.worker = null;
+        }
       }
       throw error;
     }
@@ -98,7 +101,7 @@ export class GrokListenerModel implements ListenerModel {
     this.cancel();
     const handle = this.worker;
     this.worker = null;
-    await handle?.close().catch(() => undefined);
+    await handle?.close();
   }
 
   private async ensureWorker(): Promise<GrokAcpHandle> {
@@ -124,7 +127,7 @@ export class GrokListenerModel implements ListenerModel {
       this.worker = handle;
       return handle;
     } catch (error) {
-      await handle.close().catch(() => undefined);
+      await handle.close();
       throw error;
     }
   }

@@ -1,4 +1,4 @@
-/** ★ THIS FILE IS NAMED IN `npm test`; all Claude sessions are injected fakes. */
+/** ★ THIS FILE IS NAMED IN `npm test`; all Codex sessions are injected fakes. */
 import assert from "node:assert/strict";
 import { lstat, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -6,9 +6,9 @@ import { join } from "node:path";
 import test from "node:test";
 import type { SignalRecord } from "../src/cloud/command-client.js";
 import type {
-  ClaudeAcpHandle,
-  ClaudeAcpOpenOptions,
-} from "../src/host/claude.js";
+  CodexAcpHandle,
+  CodexAcpOpenOptions,
+} from "../src/host/codex.js";
 import type {
   PermissionDecision,
   PermissionRequest,
@@ -19,9 +19,9 @@ import {
   AcpPermissionCanaryError,
 } from "../src/host/types.js";
 import {
-  ClaudeListenerModel,
+  CodexListenerModel,
   ListenerEngine,
-  type OpenClaudeSession,
+  type OpenCodexSession,
 } from "../src/listener/index.js";
 import type {
   ListenerEffectRecord,
@@ -54,7 +54,7 @@ const SIGNAL = {
 } satisfies SignalRecord;
 
 type Record = {
-  options: ClaudeAcpOpenOptions;
+  options: CodexAcpOpenOptions;
   canaryOptions?: { probeText?: string; timeoutMs?: number };
   canaryDecision?: PermissionDecision;
   promptDecision?: PermissionDecision;
@@ -62,7 +62,7 @@ type Record = {
   cancelled: boolean;
 };
 
-function fakeOpen(records: Record[]): OpenClaudeSession {
+function fakeOpen(records: Record[]): OpenCodexSession {
   return async (options) => {
     const record: Record = { options, closed: false, cancelled: false };
     records.push(record);
@@ -89,20 +89,20 @@ function fakeOpen(records: Record[]): OpenClaudeSession {
     return {
       session,
       child: {},
-      executable: "/opt/claude-agent-acp",
+      executable: "/opt/codex-acp",
       args: [],
       env: {},
       async close() {
         record.closed = true;
       },
-    } as unknown as ClaudeAcpHandle;
+    } as unknown as CodexAcpHandle;
   };
 }
 
-test("Claude worker canary denies before explicit allow mode", async () => {
-  const cwd = await mkdtemp(join(tmpdir(), "cswarm-claude-worker-"));
+test("Codex worker canary denies before explicit allow mode", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "cswarm-codex-worker-"));
   const records: Record[] = [];
-  const adapter = new ClaudeListenerModel({
+  const adapter = new CodexListenerModel({
     cwd,
     permissionMode: "allow",
     open: fakeOpen(records),
@@ -112,8 +112,8 @@ test("Claude worker canary denies before explicit allow mode", async () => {
     outcome: "selected",
     optionId: "deny",
   });
-  assert.match(records[0]?.canaryOptions?.probeText ?? "", /Write tool/);
-  assert.match(records[0]?.canaryOptions?.probeText ?? "", /cswarm-claude-permission-canary/);
+  assert.match(records[0]?.canaryOptions?.probeText ?? "", /shell command/);
+  assert.match(records[0]?.canaryOptions?.probeText ?? "", /cswarm-codex-permission-canary/);
   assert.doesNotMatch(records[0]?.canaryOptions?.probeText ?? "", new RegExp(cwd));
   assert.equal(records[0]?.canaryOptions?.timeoutMs, 30_000);
   const result = await adapter.prompt(SIGNAL, "worker", "work");
@@ -126,10 +126,10 @@ test("Claude worker canary denies before explicit allow mode", async () => {
   assert.equal(records[0]?.closed, true);
 });
 
-test("Claude sender relations share one worker, cwd, and permission mode", async () => {
-  const cwd = await mkdtemp(join(tmpdir(), "cswarm-claude-worker-"));
+test("Codex sender relations share one worker, cwd, and permission mode", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "cswarm-codex-worker-"));
   const records: Record[] = [];
-  const adapter = new ClaudeListenerModel({
+  const adapter = new CodexListenerModel({
     cwd,
     permissionMode: "allow",
     open: fakeOpen(records),
@@ -154,25 +154,25 @@ test("Claude sender relations share one worker, cwd, and permission mode", async
   assert.equal(records[0]?.closed, true);
 });
 
-test("Claude listener cancel reaches the active host handle", async () => {
-  const cwd = await mkdtemp(join(tmpdir(), "cswarm-claude-worker-"));
+test("Codex listener cancel reaches the active host handle", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "cswarm-codex-worker-"));
   const records: Record[] = [];
-  const adapter = new ClaudeListenerModel({ cwd, open: fakeOpen(records) });
+  const adapter = new CodexListenerModel({ cwd, open: fakeOpen(records) });
   await adapter.start();
   adapter.cancel();
   assert.equal(records[0]?.cancelled, true);
   await adapter.close();
 });
 
-test("Claude canary removes a sentinel written before denial and refuses startup", async () => {
-  const cwd = await mkdtemp(join(tmpdir(), "cswarm-claude-worker-"));
+test("Codex canary removes a sentinel written before denial and refuses startup", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "cswarm-codex-worker-"));
   let sentinelPath = "";
   let closed = false;
-  const open: OpenClaudeSession = async (options) => ({
+  const open: OpenCodexSession = async (options) => ({
     session: {
       async enablePromptsAfterCanary(canaryOptions?: { probeText?: string }) {
         const match = canaryOptions?.probeText?.match(
-          /Create the file (\S+) using the Write tool/,
+          /Use a shell command to create (\S+) with content/,
         );
         assert.ok(match?.[1]);
         sentinelPath = match[1];
@@ -185,14 +185,14 @@ test("Claude canary removes a sentinel written before denial and refuses startup
       cancel() {},
     },
     child: {},
-    executable: "/opt/claude-agent-acp",
+    executable: "/opt/codex-acp",
     args: [],
     env: {},
     async close() {
       closed = true;
     },
-  } as unknown as ClaudeAcpHandle);
-  const adapter = new ClaudeListenerModel({ cwd, open });
+  } as unknown as CodexAcpHandle);
+  const adapter = new CodexListenerModel({ cwd, open });
 
   await assert.rejects(
     () => adapter.start(),
@@ -206,34 +206,34 @@ test("Claude canary removes a sentinel written before denial and refuses startup
   );
 });
 
-test("Claude close waits for an opening worker and closes it before installation", async () => {
-  const cwd = await mkdtemp(join(tmpdir(), "cswarm-claude-worker-"));
+test("Codex close waits for an opening worker and closes it before installation", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "cswarm-codex-worker-"));
   const records: Record[] = [];
   let releaseOpen!: () => void;
   const openGate = new Promise<void>((resolve) => {
     releaseOpen = resolve;
   });
   const delegate = fakeOpen(records);
-  const open: OpenClaudeSession = async (options) => {
+  const open: OpenCodexSession = async (options) => {
     await openGate;
     return delegate(options);
   };
-  const adapter = new ClaudeListenerModel({ cwd, open });
+  const adapter = new CodexListenerModel({ cwd, open });
 
   const starting = adapter.start();
   await Promise.resolve();
   const closing = adapter.close();
   releaseOpen();
 
-  await assert.rejects(starting, /closed while the Claude worker was opening/);
+  await assert.rejects(starting, /closed while the Codex worker was opening/);
   await closing;
   assert.equal(records.length, 1);
   assert.equal(records[0]?.closed, true);
   await assert.rejects(() => adapter.prompt(SIGNAL, "worker", "late"), /closed/);
 });
 
-test("Claude close cancels and closes a canary already in flight", async () => {
-  const cwd = await mkdtemp(join(tmpdir(), "cswarm-claude-worker-"));
+test("Codex close cancels and closes a canary already in flight", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "cswarm-codex-worker-"));
   let canaryStarted!: () => void;
   const canaryEntered = new Promise<void>((resolve) => {
     canaryStarted = resolve;
@@ -244,7 +244,7 @@ test("Claude close cancels and closes a canary already in flight", async () => {
   });
   let cancelled = false;
   let closed = false;
-  const open: OpenClaudeSession = async () => ({
+  const open: OpenCodexSession = async () => ({
     session: {
       async enablePromptsAfterCanary() {
         canaryStarted();
@@ -259,27 +259,27 @@ test("Claude close cancels and closes a canary already in flight", async () => {
       },
     },
     child: {},
-    executable: "/opt/claude-agent-acp",
+    executable: "/opt/codex-acp",
     args: [],
     env: {},
     async close() {
       closed = true;
     },
-  } as unknown as ClaudeAcpHandle);
-  const adapter = new ClaudeListenerModel({ cwd, open });
+  } as unknown as CodexAcpHandle);
+  const adapter = new CodexListenerModel({ cwd, open });
 
   const starting = adapter.start();
   await canaryEntered;
   const closing = adapter.close();
 
-  await assert.rejects(starting, /closed while the Claude worker was opening/);
+  await assert.rejects(starting, /closed while the Codex worker was opening/);
   await closing;
   assert.equal(cancelled, true);
   assert.equal(closed, true);
 });
 
-test("Claude close settles opening work before propagating teardown failure", async () => {
-  const cwd = await mkdtemp(join(tmpdir(), "cswarm-claude-worker-"));
+test("Codex close settles opening work before propagating teardown failure", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "cswarm-codex-worker-"));
   let canaryStarted!: () => void;
   const canaryEntered = new Promise<void>((resolve) => {
     canaryStarted = resolve;
@@ -289,7 +289,7 @@ test("Claude close settles opening work before propagating teardown failure", as
     releaseCanary = resolve;
   });
   let closeAttempts = 0;
-  const open: OpenClaudeSession = async () => ({
+  const open: OpenCodexSession = async () => ({
     session: {
       async enablePromptsAfterCanary() {
         canaryStarted();
@@ -303,15 +303,15 @@ test("Claude close settles opening work before propagating teardown failure", as
       },
     },
     child: {},
-    executable: "/opt/claude-agent-acp",
+    executable: "/opt/codex-acp",
     args: [],
     env: {},
     async close() {
       closeAttempts += 1;
       throw new Error("verified teardown failed");
     },
-  } as unknown as ClaudeAcpHandle);
-  const adapter = new ClaudeListenerModel({ cwd, open });
+  } as unknown as CodexAcpHandle);
+  const adapter = new CodexListenerModel({ cwd, open });
 
   const starting = adapter.start();
   await canaryEntered;
@@ -323,7 +323,7 @@ test("Claude close settles opening work before propagating teardown failure", as
   await assert.rejects(() => adapter.prompt(SIGNAL, "worker", "late"), /closed/);
 });
 
-test("D-050: Claude close timeout is runtime-fatal before replacement opens", async () => {
+test("D-050: Codex close timeout is runtime-fatal before replacement opens", async () => {
   class MemoryStore implements ListenerEffectStore {
     private readonly records = new Map<string, ListenerEffectRecord>();
 
@@ -336,15 +336,15 @@ test("D-050: Claude close timeout is runtime-fatal before replacement opens", as
     }
   }
 
-  const cwd = await mkdtemp(join(tmpdir(), "cswarm-claude-d050-"));
+  const cwd = await mkdtemp(join(tmpdir(), "cswarm-codex-d050-"));
   const store = new MemoryStore();
   let opens = 0;
   let closes = 0;
   const timeout = new AcpHostError(
     "child_exit_timeout",
-    "Claude ACP bridge did not exit after SIGTERM and SIGKILL",
+    "Codex ACP bridge did not exit after SIGTERM and SIGKILL",
   );
-  const adapter = new ClaudeListenerModel({
+  const adapter = new CodexListenerModel({
     cwd,
     open: async () => {
       opens += 1;
@@ -357,14 +357,14 @@ test("D-050: Claude close timeout is runtime-fatal before replacement opens", as
           cancel() {},
         },
         child: {},
-        executable: "/opt/claude-agent-acp",
+        executable: "/opt/codex-acp",
         args: [],
         env: {},
         async close() {
           closes += 1;
           throw timeout;
         },
-      } as unknown as ClaudeAcpHandle;
+      } as unknown as CodexAcpHandle;
     },
   });
   await adapter.start();

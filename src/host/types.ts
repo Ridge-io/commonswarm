@@ -90,6 +90,8 @@ export type HostSessionEvents = {
 
 export type HostSessionOptions = {
   cwd: string;
+  /** Provider-measured mode that must be selected after every session/new. */
+  requiredModeId?: string;
   permissionCallback?: PermissionCallback;
   events?: HostSessionEvents;
   requestTimeoutMs?: number;

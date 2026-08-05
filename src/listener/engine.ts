@@ -10,6 +10,7 @@ import {
 } from "../cloud/signals.js";
 import {
   AcpChildExitError,
+  AcpHostError,
   AcpTimeoutError,
 } from "../host/types.js";
 import type {
@@ -451,6 +452,14 @@ export class ListenerEngine {
     } catch (error) {
       if (isAbort(error)) {
         await this.write({ ...record, state: "received", failureCode: "cancelled" });
+        throw error;
+      }
+      if (error instanceof AcpHostError && error.code === "child_exit_timeout") {
+        await this.write({
+          ...record,
+          state: "failed",
+          failureCode: error.code,
+        });
         throw error;
       }
       const retryable = this.retryablePrompt(error) &&

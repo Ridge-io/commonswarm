@@ -11,6 +11,7 @@ import test from "node:test";
 import {
   listenerFailureMessage,
   resolveDetachedClaudeExecutable,
+  resolveDetachedCodexExecutable,
 } from "../../src/cli.js";
 
 function runCli(args: string[]) {
@@ -45,12 +46,16 @@ test("listen start requires an explicit provider before target or credential wor
     result.stderr,
     /npm install -g @agentclientprotocol\/claude-agent-acp@0\.64\.2/,
   );
+  assert.match(
+    result.stderr,
+    /npm install -g @agentclientprotocol\/codex-acp@1\.1\.9/,
+  );
   assert.match(result.stderr, /working-on, note, ask, and feed/);
   assert.match(result.stderr, /detached live receipt needs/i);
   assert.doesNotMatch(result.stderr, /Grok is not signed in|Payment Required/i);
 });
 
-test("unsupported provider error lists the same three remedies", () => {
+test("unsupported provider error lists the same four remedies", () => {
   const result = runCli([
     "listen",
     "start",
@@ -62,10 +67,40 @@ test("unsupported provider error lists the same three remedies", () => {
   ]);
   assert.equal(result.status, 1);
   assert.match(result.stderr, /unsupported --provider/);
-  assert.match(result.stderr, /grok.*opencode.*claude/i);
+  assert.match(result.stderr, /grok.*opencode.*claude.*codex/i);
   assert.match(
     result.stderr,
     /npm install -g @agentclientprotocol\/claude-agent-acp@0\.64\.2/,
+  );
+});
+
+test("Codex startup failures give install and bounded diagnostic remedies", () => {
+  const install = "npm install -g @agentclientprotocol/codex-acp@1.1.9";
+  assert.ok(listenerFailureMessage("executable_missing", "codex").includes(install));
+  assert.ok(listenerFailureMessage("version_refused", "codex").includes(install));
+
+  const ambiguous = listenerFailureMessage("rpc_error", "codex");
+  assert.match(ambiguous, /could not start \(rpc_error\)/i);
+  assert.match(ambiguous, /ChatGPT\/Codex sign-in/i);
+  assert.match(ambiguous, /API-key variables are not forwarded/i);
+
+  const canary = listenerFailureMessage("permission_canary_failed", "codex");
+  assert.match(canary, /read-only ACP permission canary/i);
+  assert.match(canary, /no workspace signal prompt was delivered/i);
+  assert.match(
+    listenerFailureMessage("permission_mode_unavailable", "codex"),
+    /required read-only permission mode.*reinstall codex-acp 1\.1\.9/i,
+  );
+});
+
+test("detached Codex resolution preserves the exact install remedy", () => {
+  assert.throws(
+    () =>
+      resolveDetachedCodexExecutable(
+        "definitely-missing-codex-acp",
+        "/definitely/missing",
+      ),
+    /npm install -g @agentclientprotocol\/codex-acp@1\.1\.9/,
   );
 });
 
@@ -89,6 +124,10 @@ test("Claude startup failures give install and bounded diagnostic remedies", () 
   assert.match(canary, /keychain\/OAuth/i);
   assert.match(canary, /startup canary ran/i);
   assert.match(canary, /no workspace signal prompt was delivered/i);
+  assert.match(
+    listenerFailureMessage("permission_mode_unavailable", "claude"),
+    /required manual permission mode.*reinstall claude-agent-acp 0\.64\.2/i,
+  );
 });
 
 test("detached Claude resolution preserves the exact install remedy", () => {

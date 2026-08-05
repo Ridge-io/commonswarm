@@ -1,8 +1,8 @@
 /**
- * Pure process-boundary coverage for claude-agent-acp 0.64.2.
+ * Pure process-boundary coverage for codex-acp 1.1.9.
  *
  * ★ THIS FILE IS NAMED IN `npm test`; it uses fake bridge executables and no
- * network, Claude session, or billable model prompt.
+ * network, Codex session, or billable model prompt.
  */
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
@@ -21,24 +21,24 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
 import {
-  CLAUDE_ACP_MEASURED_VERSION,
+  CODEX_ACP_MEASURED_VERSION,
   AcpVersionError,
-  assertClaudeMeasuredVersion,
-  buildClaudeAcpArgs,
-  buildClaudeChildEnv,
-  buildClaudeLaunch,
-  openClaudeAcpSession,
-  parseClaudeVersionOutput,
-  resolveClaudeExecutable,
-  terminateClaudeChild,
+  assertCodexMeasuredVersion,
+  buildCodexAcpArgs,
+  buildCodexChildEnv,
+  buildCodexLaunch,
+  openCodexAcpSession,
+  parseCodexVersionOutput,
+  resolveCodexExecutable,
+  terminateCodexChild,
 } from "../src/host/index.js";
 
-async function writeFakeClaudeBridge(
+async function writeFakeCodexBridge(
   root: string,
   protocolVersion = 1,
 ): Promise<{ target: string; shim: string; log: string }> {
-  const target = join(root, `fake-claude-agent-acp-${protocolVersion}.cjs`);
-  const shim = join(root, "claude-agent-acp");
+  const target = join(root, `fake-codex-acp-${protocolVersion}.cjs`);
+  const shim = join(root, "codex-acp");
   const log = join(root, `bridge-${protocolVersion}.ndjson`);
   await writeFile(
     target,
@@ -46,7 +46,7 @@ async function writeFakeClaudeBridge(
       `const fs = require("node:fs");\n` +
       `const log = ${JSON.stringify(log)};\n` +
       `fs.appendFileSync(log, JSON.stringify({ args: process.argv.slice(2), home: process.env.HOME ?? null, swarm: process.env.SWARM_AGENT_TOKEN ?? null, pid: process.pid }) + "\\n");\n` +
-      `if (process.argv[2] === "--version") { process.stdout.write("0.64.2\\n"); process.exit(0); }\n` +
+      `if (process.argv[2] === "--version") { process.stdout.write("@agentclientprotocol/codex-acp 1.1.9\\n"); process.exit(0); }\n` +
       `let buffer = "";\n` +
       `process.stdin.setEncoding("utf8");\n` +
       `process.stdin.on("data", (chunk) => {\n` +
@@ -58,8 +58,8 @@ async function writeFakeClaudeBridge(
       `    const message = JSON.parse(line);\n` +
       `    fs.appendFileSync(log, JSON.stringify({ method: message.method, params: message.params }) + "\\n");\n` +
       `    let result;\n` +
-      `    if (message.method === "initialize") result = { protocolVersion: ${protocolVersion}, agentCapabilities: {}, authMethods: [], _meta: { agentVersion: "0.64.2" } };\n` +
-      `    else if (message.method === "session/new") result = { sessionId: "claude-test-session", modes: { currentModeId: "auto", availableModes: [{ id: "auto" }, { id: "default" }] } };\n` +
+      `    if (message.method === "initialize") result = { protocolVersion: ${protocolVersion}, agentCapabilities: {}, authMethods: [], _meta: { agentVersion: "1.1.9" } };\n` +
+      `    else if (message.method === "session/new") result = { sessionId: "codex-test-session", modes: { currentModeId: "agent", availableModes: [{ id: "agent" }, { id: "read-only" }] } };\n` +
       `    else if (message.method === "session/load") result = { sessionId: message.params.sessionId };\n` +
       `    else if (message.method === "session/set_mode") result = {};\n` +
       `    else if (message.method === "session/prompt") result = { stopReason: "end_turn" };\n` +
@@ -75,25 +75,28 @@ async function writeFakeClaudeBridge(
   return { target, shim, log };
 }
 
-test("Claude bridge args enter ACP mode without flags", () => {
-  assert.deepEqual(buildClaudeAcpArgs(), []);
+test("Codex bridge args enter ACP mode without flags", () => {
+  assert.deepEqual(buildCodexAcpArgs(), []);
 });
 
-test("Claude bridge version parser accepts only the measured bare semver shape", () => {
-  assert.equal(parseClaudeVersionOutput("0.64.2\n"), "0.64.2");
-  assert.equal(parseClaudeVersionOutput("claude-agent-acp 0.64.2\n"), null);
-  assert.equal(parseClaudeVersionOutput("no version"), null);
+test("Codex bridge version parser accepts only the measured package shape", () => {
+  assert.equal(
+    parseCodexVersionOutput("@agentclientprotocol/codex-acp 1.1.9\n"),
+    "1.1.9",
+  );
+  assert.equal(parseCodexVersionOutput("1.1.9\n"), null);
+  assert.equal(parseCodexVersionOutput("no version"), null);
 });
 
-test("Claude child env preserves HOME but strips inherited Claude and credential state", () => {
-  const env = buildClaudeChildEnv({
+test("Codex child env preserves HOME but strips inherited Codex and credential state", () => {
+  const env = buildCodexChildEnv({
     PATH: "/usr/bin",
     HOME: "/Users/test",
     USER: "test",
     LANG: "en_US.UTF-8",
-    CLAUDE_CODE_ENTRYPOINT: "claude",
-    CLAUDE_CODE_SESSION_ID: "session",
-    ANTHROPIC_API_KEY: "secret",
+    CODEX_THREAD_ID: "codex",
+    CODEX_MANAGED_BY_NPM: "session",
+    OPENAI_API_KEY: "secret",
     SWARM_AGENT_TOKEN: "secret",
     NODE_OPTIONS: "--require /tmp/hook.js",
   });
@@ -106,85 +109,85 @@ test("Claude child env preserves HOME but strips inherited Claude and credential
   assert.equal(JSON.stringify(env).includes("secret"), false);
 });
 
-test("Claude executable PATH walk resolves an npm-style shim to one real path", async () => {
-  const root = await mkdtemp(join(tmpdir(), "cswarm-claude-resolve-"));
+test("Codex executable PATH walk resolves an npm-style shim to one real path", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cswarm-codex-resolve-"));
   const target = join(root, "bridge-target");
-  const shim = join(root, "claude-agent-acp");
+  const shim = join(root, "codex-acp");
   try {
     await writeFile(target, "#!/bin/sh\nexit 0\n", { mode: 0o700 });
     await chmod(target, 0o700);
     await symlink(target, shim);
     assert.equal(
-      resolveClaudeExecutable("claude-agent-acp", root),
+      resolveCodexExecutable("codex-acp", root),
       realpathSync(target),
     );
-    assert.equal(resolveClaudeExecutable(shim, "/unused"), realpathSync(target));
+    assert.equal(resolveCodexExecutable(shim, "/unused"), realpathSync(target));
   } finally {
     await rm(root, { recursive: true, force: true });
   }
 });
 
 test("Windows npm shim resolves to one Node-launched package entrypoint", async () => {
-  const root = await mkdtemp(join(tmpdir(), "cswarm-claude-win-shim-"));
+  const root = await mkdtemp(join(tmpdir(), "cswarm-codex-win-shim-"));
   const targetDir = join(
     root,
     "node_modules",
     "@agentclientprotocol",
-    "claude-agent-acp",
+    "codex-acp",
     "dist",
   );
   const target = join(targetDir, "index.js");
-  const shim = join(root, "claude-agent-acp.cmd");
+  const shim = join(root, "codex-acp.cmd");
   try {
     await mkdir(targetDir, { recursive: true });
     await writeFile(
       target,
-      `if (process.argv[2] === "--version") process.stdout.write("0.64.2\\n");\n`,
+      `if (process.argv[2] === "--version") process.stdout.write("@agentclientprotocol/codex-acp 1.1.9\\n");\n`,
     );
     await writeFile(
       shim,
-      `@ECHO off\r\n"%dp0%\\node_modules\\@agentclientprotocol\\claude-agent-acp\\dist\\index.js" %*\r\n`,
+      `@ECHO off\r\n"%dp0%\\node_modules\\@agentclientprotocol\\codex-acp\\dist\\index.js" %*\r\n`,
       { mode: 0o700 },
     );
     await chmod(shim, 0o700);
-    const resolved = resolveClaudeExecutable(shim, "/unused", "win32");
+    const resolved = resolveCodexExecutable(shim, "/unused", "win32");
     assert.equal(resolved, realpathSync(target));
-    assert.deepEqual(buildClaudeLaunch(resolved, [], "win32"), {
+    assert.deepEqual(buildCodexLaunch(resolved, [], "win32"), {
       command: process.execPath,
       args: [resolved],
     });
     assert.equal(
-      await assertClaudeMeasuredVersion(resolved, { platform: "win32" }),
-      CLAUDE_ACP_MEASURED_VERSION,
+      await assertCodexMeasuredVersion(resolved, { platform: "win32" }),
+      CODEX_ACP_MEASURED_VERSION,
     );
   } finally {
     await rm(root, { recursive: true, force: true });
   }
 });
 
-test("Claude version probe uses the supplied spawn environment", async () => {
-  const root = await mkdtemp(join(tmpdir(), "cswarm-claude-version-"));
-  const executable = join(root, "fake-claude-agent-acp.mjs");
+test("Codex version probe uses the supplied spawn environment", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cswarm-codex-version-"));
+  const executable = join(root, "fake-codex-acp.mjs");
   const measuredHome = join(root, "operator-home");
   try {
     await writeFile(
       executable,
       `#!${process.execPath}\n` +
-        `process.stdout.write(process.env.HOME === ${JSON.stringify(measuredHome)} ? "0.64.2\\n" : "0.0.0\\n");\n`,
+        `process.stdout.write(process.env.HOME === ${JSON.stringify(measuredHome)} ? "@agentclientprotocol/codex-acp 1.1.9\\n" : "@agentclientprotocol/codex-acp 0.0.0\\n");\n`,
       { mode: 0o700 },
     );
     await chmod(executable, 0o700);
-    const env = buildClaudeChildEnv({
+    const env = buildCodexChildEnv({
       PATH: process.env.PATH,
       HOME: measuredHome,
       SWARM_AGENT_TOKEN: "must-not-reach-probe",
     });
     assert.equal(
-      await assertClaudeMeasuredVersion(executable, { env }),
-      CLAUDE_ACP_MEASURED_VERSION,
+      await assertCodexMeasuredVersion(executable, { env }),
+      CODEX_ACP_MEASURED_VERSION,
     );
     await assert.rejects(
-      () => assertClaudeMeasuredVersion(executable, { env: { ...env, HOME: "/wrong" } }),
+      () => assertCodexMeasuredVersion(executable, { env: { ...env, HOME: "/wrong" } }),
       (error: unknown) => error instanceof AcpVersionError,
     );
   } finally {
@@ -192,7 +195,7 @@ test("Claude version probe uses the supplied spawn environment", async () => {
   }
 });
 
-test("Claude teardown escalates from ignored SIGTERM to SIGKILL and confirms exit", async () => {
+test("Codex teardown escalates from ignored SIGTERM to SIGKILL and confirms exit", async () => {
   const child = spawn(
     process.execPath,
     [
@@ -202,16 +205,16 @@ test("Claude teardown escalates from ignored SIGTERM to SIGKILL and confirms exi
     { stdio: ["pipe", "pipe", "pipe"] },
   );
   await once(child.stdout, "data");
-  await terminateClaudeChild(child);
+  await terminateCodexChild(child);
   assert.equal(child.signalCode, "SIGKILL");
 });
 
-test("openClaudeAcpSession probes and spawns one realpath with one sanitized env", async () => {
-  const root = await mkdtemp(join(tmpdir(), "cswarm-claude-open-"));
-  const cwd = await mkdtemp(join(tmpdir(), "cswarm-claude-cwd-"));
+test("openCodexAcpSession probes and spawns one realpath with one sanitized env", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cswarm-codex-open-"));
+  const cwd = await mkdtemp(join(tmpdir(), "cswarm-codex-cwd-"));
   try {
-    const fake = await writeFakeClaudeBridge(root);
-    const handle = await openClaudeAcpSession({
+    const fake = await writeFakeCodexBridge(root);
+    const handle = await openCodexAcpSession({
       cwd,
       executable: fake.shim,
       env: {
@@ -225,8 +228,8 @@ test("openClaudeAcpSession probes and spawns one realpath with one sanitized env
     assert.deepEqual(handle.args, []);
     assert.equal(handle.env.HOME, join(root, "operator-home"));
     assert.equal(handle.env.SWARM_AGENT_TOKEN, undefined);
-    assert.deepEqual(await handle.session.load("claude-restored-session"), {
-      sessionId: "claude-restored-session",
+    assert.deepEqual(await handle.session.load("codex-restored-session"), {
+      sessionId: "codex-restored-session",
       loaded: true,
     });
     const rows = (await readFile(fake.log, "utf8"))
@@ -248,8 +251,8 @@ test("openClaudeAcpSession probes and spawns one realpath with one sanitized env
     assert.deepEqual(processRows.map((row) => row.swarm), [null, null]);
     const modeFrames = rows.filter((row) => row.method === "session/set_mode");
     assert.deepEqual(modeFrames.map((row) => row.params), [
-      { sessionId: "claude-test-session", modeId: "default" },
-      { sessionId: "claude-restored-session", modeId: "default" },
+      { sessionId: "codex-test-session", modeId: "read-only" },
+      { sessionId: "codex-restored-session", modeId: "read-only" },
     ]);
     await handle.close();
     assert.ok(handle.child.exitCode !== null || handle.child.signalCode !== null);
@@ -259,14 +262,14 @@ test("openClaudeAcpSession probes and spawns one realpath with one sanitized env
   }
 });
 
-test("openClaudeAcpSession confirms child exit after initialization failure", async () => {
-  const root = await mkdtemp(join(tmpdir(), "cswarm-claude-open-fail-"));
-  const cwd = await mkdtemp(join(tmpdir(), "cswarm-claude-cwd-"));
+test("openCodexAcpSession confirms child exit after initialization failure", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cswarm-codex-open-fail-"));
+  const cwd = await mkdtemp(join(tmpdir(), "cswarm-codex-cwd-"));
   try {
-    const fake = await writeFakeClaudeBridge(root, 99);
+    const fake = await writeFakeCodexBridge(root, 99);
     await assert.rejects(
       () =>
-        openClaudeAcpSession({
+        openCodexAcpSession({
           cwd,
           executable: fake.shim,
           env: { PATH: root, HOME: join(root, "operator-home") },
@@ -291,22 +294,22 @@ test("openClaudeAcpSession confirms child exit after initialization failure", as
   }
 });
 
-test("openClaudeAcpSession converts a post-probe spawn race to spawn_failed", async () => {
-  const root = await mkdtemp(join(tmpdir(), "cswarm-claude-spawn-race-"));
-  const cwd = await mkdtemp(join(tmpdir(), "cswarm-claude-cwd-"));
-  const target = join(root, "vanishing-claude-agent-acp.cjs");
+test("openCodexAcpSession converts a post-probe spawn race to spawn_failed", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cswarm-codex-spawn-race-"));
+  const cwd = await mkdtemp(join(tmpdir(), "cswarm-codex-cwd-"));
+  const target = join(root, "vanishing-codex-acp.cjs");
   try {
     await writeFile(
       target,
       `#!${process.execPath}\n` +
         `require("node:fs").unlinkSync(__filename);\n` +
-        `process.stdout.write("0.64.2\\n");\n`,
+        `process.stdout.write("@agentclientprotocol/codex-acp 1.1.9\\n");\n`,
       { mode: 0o700 },
     );
     await chmod(target, 0o700);
     await assert.rejects(
       () =>
-        openClaudeAcpSession({
+        openCodexAcpSession({
           cwd,
           executable: target,
           env: { PATH: root, HOME: join(root, "operator-home") },
@@ -320,17 +323,17 @@ test("openClaudeAcpSession converts a post-probe spawn race to spawn_failed", as
   }
 });
 
-test("aborting Claude initialization terminates the spawned bridge", async () => {
-  const root = await mkdtemp(join(tmpdir(), "cswarm-claude-abort-open-"));
-  const cwd = await mkdtemp(join(tmpdir(), "cswarm-claude-cwd-"));
-  const target = join(root, "hanging-claude-agent-acp.cjs");
+test("aborting Codex initialization terminates the spawned bridge", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cswarm-codex-abort-open-"));
+  const cwd = await mkdtemp(join(tmpdir(), "cswarm-codex-cwd-"));
+  const target = join(root, "hanging-codex-acp.cjs");
   const log = join(root, "hanging-pid.txt");
   try {
     await writeFile(
       target,
       `#!${process.execPath}\n` +
         `const fs = require("node:fs");\n` +
-        `if (process.argv[2] === "--version") { process.stdout.write("0.64.2\\n"); process.exit(0); }\n` +
+        `if (process.argv[2] === "--version") { process.stdout.write("@agentclientprotocol/codex-acp 1.1.9\\n"); process.exit(0); }\n` +
         `fs.writeFileSync(${JSON.stringify(log)}, String(process.pid));\n` +
         `process.on("SIGTERM", () => process.exit(0));\n` +
         `setInterval(() => {}, 1000);\n`,
@@ -338,7 +341,7 @@ test("aborting Claude initialization terminates the spawned bridge", async () =>
     );
     await chmod(target, 0o700);
     const controller = new AbortController();
-    const opening = openClaudeAcpSession({
+    const opening = openCodexAcpSession({
       cwd,
       executable: target,
       env: { PATH: root, HOME: join(root, "operator-home") },
@@ -367,16 +370,16 @@ test("aborting Claude initialization terminates the spawned bridge", async () =>
   }
 });
 
-test("missing Claude bridge reports executable_missing", () => {
+test("missing Codex bridge reports executable_missing", () => {
   assert.throws(
-    () => resolveClaudeExecutable("no-such-claude-agent-acp-zzzz", "/usr/bin"),
+    () => resolveCodexExecutable("no-such-codex-acp-zzzz", "/usr/bin"),
     /executable_missing|not found on PATH/i,
   );
 });
 
 test("source contains no isolated-home or temporary-cwd lifecycle", async () => {
   const source = await import("node:fs/promises").then(({ readFile }) =>
-    readFile(resolve("src/host/claude.ts"), "utf8")
+    readFile(resolve("src/host/codex.ts"), "utf8")
   );
   assert.doesNotMatch(source, /isolatedHome|mkdtemp|sweepStale|canaryCwd/);
 });

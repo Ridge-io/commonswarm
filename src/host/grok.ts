@@ -56,6 +56,9 @@ export type GrokAcpHandle = {
   close: () => Promise<void>;
 };
 
+const CHILD_EXIT_WAIT_MS = 3_000;
+const CHILD_KILL_WAIT_MS = 1_000;
+
 /**
  * Resolve an executable path and refuse non-files / non-executables.
  */
@@ -153,6 +156,48 @@ export function buildGrokChildEnv(
   };
 }
 
+function waitForChildExit(
+  child: ChildProcessWithoutNullStreams,
+  timeoutMs: number,
+): Promise<void> {
+  if (child.exitCode !== null || child.signalCode !== null) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, timeoutMs);
+    child.once("exit", () => {
+      clearTimeout(timer);
+      resolve();
+    });
+  });
+}
+
+/** Stop Grok with SIGTERM, escalate to SIGKILL, and confirm it exited. */
+export async function terminateGrokChild(
+  child: ChildProcessWithoutNullStreams,
+): Promise<void> {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  try {
+    child.kill("SIGTERM");
+  } catch {
+    // already dead
+  }
+  await waitForChildExit(child, CHILD_EXIT_WAIT_MS);
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  try {
+    child.kill("SIGKILL");
+  } catch {
+    // already dead
+  }
+  await waitForChildExit(child, CHILD_KILL_WAIT_MS);
+  if (child.exitCode === null && child.signalCode === null) {
+    throw new AcpHostError(
+      "child_exit_timeout",
+      "Grok ACP child did not exit after SIGTERM and SIGKILL",
+    );
+  }
+}
+
 /**
  * Open a Grok ACP host session: version-check, spawn, initialize, session/new.
  * Real prompts remain blocked until session.enablePromptsAfterCanary().
@@ -208,17 +253,23 @@ export async function openGrokAcpSession(
     });
     sessionRef = session;
 
+    let closePromise: Promise<void> | null = null;
     const close = async () => {
-      await session.close();
-      if (!child.killed) {
-        child.kill("SIGTERM");
-      }
+      if (closePromise) return closePromise;
+      closePromise = (async () => {
+        try {
+          await session.close();
+        } finally {
+          await terminateGrokChild(child);
+        }
+      })();
+      return closePromise;
     };
 
     return { session, child, executable, args, env, close };
   } catch (err) {
     transport.close();
-    if (!child.killed) child.kill("SIGKILL");
+    await terminateGrokChild(child);
     throw err;
   }
 }
@@ -229,6 +280,7 @@ export async function openGrokAcpSession(
  */
 export async function openAcpSessionOverStdio(options: {
   cwd: string;
+  requiredModeId?: string;
   readable: import("node:stream").Readable;
   writable: import("node:stream").Writable;
   permissionCallback?: PermissionCallback;
@@ -250,6 +302,7 @@ export async function openAcpSessionOverStdio(options: {
   const session = await AcpHostSession.connect({
     transport,
     cwd: options.cwd,
+    requiredModeId: options.requiredModeId,
     permissionCallback: options.permissionCallback,
     events: options.events,
     requestTimeoutMs: options.requestTimeoutMs,

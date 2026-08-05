@@ -3,10 +3,10 @@ import { lstat, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  openClaudeAcpSession,
-  type ClaudeAcpHandle,
-  type ClaudeAcpOpenOptions,
-} from "../host/claude.js";
+  openCodexAcpSession,
+  type CodexAcpHandle,
+  type CodexAcpOpenOptions,
+} from "../host/codex.js";
 import { ACP_CANARY_TIMEOUT_MS } from "../host/bounds.js";
 import { defaultPermissionCallback } from "../host/permission.js";
 import {
@@ -24,22 +24,22 @@ import type {
   ListenerPromptResult,
 } from "./types.js";
 
-export type OpenClaudeSession = (
-  options: ClaudeAcpOpenOptions,
-) => Promise<ClaudeAcpHandle>;
+export type OpenCodexSession = (
+  options: CodexAcpOpenOptions,
+) => Promise<CodexAcpHandle>;
 
-export interface ClaudeListenerModelOptions {
+export interface CodexListenerModelOptions {
   cwd: string;
   executable?: string;
   permissionMode?: ListenerPermissionMode;
   env?: NodeJS.ProcessEnv;
-  open?: OpenClaudeSession;
+  open?: OpenCodexSession;
 }
 
-class ClaudeListenerClosedDuringOpen extends Error {
+class CodexListenerClosedDuringOpen extends Error {
   constructor() {
-    super("listener model closed while the Claude worker was opening");
-    this.name = "ClaudeListenerClosedDuringOpen";
+    super("listener model closed while the Codex worker was opening");
+    this.name = "CodexListenerClosedDuringOpen";
   }
 }
 
@@ -50,20 +50,20 @@ function allowOnceOrDeny(request: PermissionRequest): PermissionDecision {
     : defaultPermissionCallback(request);
 }
 
-/** Claude-backed listener model using one operator-home worker session. */
-export class ClaudeListenerModel implements ListenerModel {
-  private readonly openSession: OpenClaudeSession;
+/** Codex-backed listener model using one operator-home worker session. */
+export class CodexListenerModel implements ListenerModel {
+  private readonly openSession: OpenCodexSession;
   private readonly permissionMode: ListenerPermissionMode;
-  private worker: ClaudeAcpHandle | null = null;
-  private opening: Promise<ClaudeAcpHandle> | null = null;
+  private worker: CodexAcpHandle | null = null;
+  private opening: Promise<CodexAcpHandle> | null = null;
   private openingController: AbortController | null = null;
-  private openingHandle: ClaudeAcpHandle | null = null;
+  private openingHandle: CodexAcpHandle | null = null;
   private workerCanary = true;
   private closed = false;
   private closePromise: Promise<void> | null = null;
 
-  constructor(private readonly options: ClaudeListenerModelOptions) {
-    this.openSession = options.open ?? openClaudeAcpSession;
+  constructor(private readonly options: CodexListenerModelOptions) {
+    this.openSession = options.open ?? openCodexAcpSession;
     this.permissionMode = options.permissionMode ?? "deny";
   }
 
@@ -124,7 +124,7 @@ export class ClaudeListenerModel implements ListenerModel {
         } catch (error) {
           const code = (error as { code?: unknown }).code;
           if (
-            !(error instanceof ClaudeListenerClosedDuringOpen) &&
+            !(error instanceof CodexListenerClosedDuringOpen) &&
             code !== "cancelled" &&
             !openingHandle
           ) {
@@ -146,7 +146,7 @@ export class ClaudeListenerModel implements ListenerModel {
     return this.closePromise;
   }
 
-  private async ensureWorker(): Promise<ClaudeAcpHandle> {
+  private async ensureWorker(): Promise<CodexAcpHandle> {
     if (this.closed) throw new Error("listener model is closed");
     if (this.worker) return this.worker;
     if (this.opening) return this.opening;
@@ -159,7 +159,7 @@ export class ClaudeListenerModel implements ListenerModel {
     }
   }
 
-  private async openWorker(): Promise<ClaudeAcpHandle> {
+  private async openWorker(): Promise<CodexAcpHandle> {
     const controller = new AbortController();
     this.openingController = controller;
     this.workerCanary = true;
@@ -178,9 +178,9 @@ export class ClaudeListenerModel implements ListenerModel {
       });
       this.openingHandle = handle;
       try {
-        if (this.closed) throw new ClaudeListenerClosedDuringOpen();
-        await this.enablePromptsAfterClaudeCanary(handle);
-        if (this.closed) throw new ClaudeListenerClosedDuringOpen();
+        if (this.closed) throw new CodexListenerClosedDuringOpen();
+        await this.enablePromptsAfterCodexCanary(handle);
+        if (this.closed) throw new CodexListenerClosedDuringOpen();
         this.workerCanary = false;
         this.worker = handle;
         return handle;
@@ -195,21 +195,21 @@ export class ClaudeListenerModel implements ListenerModel {
     }
   }
 
-  /** Force Claude's measured Write permission path without changing worker cwd. */
-  private async enablePromptsAfterClaudeCanary(
-    handle: ClaudeAcpHandle,
+  /** Force Codex's measured shell permission path without changing worker cwd. */
+  private async enablePromptsAfterCodexCanary(
+    handle: CodexAcpHandle,
   ): Promise<void> {
     const sentinelPath = join(
       tmpdir(),
-      `cswarm-claude-permission-canary-${process.pid}-${randomUUID()}`,
+      `cswarm-codex-permission-canary-${process.pid}-${randomUUID()}`,
     );
     let sentinelCreated = false;
     try {
       await handle.session.enablePromptsAfterCanary({
         timeoutMs: ACP_CANARY_TIMEOUT_MS,
         probeText:
-          `Create the file ${sentinelPath} using the Write tool with content ` +
-          "CSWARM_CANARY_NOOP. You must use the Write tool. Do nothing else.",
+          `Use a shell command to create ${sentinelPath} with content ` +
+          "CSWARM_CANARY_NOOP. You must use the shell. Do nothing else.",
       });
     } finally {
       try {
@@ -222,7 +222,7 @@ export class ClaudeListenerModel implements ListenerModel {
     }
     if (sentinelCreated) {
       throw new AcpPermissionCanaryError(
-        "Claude bridge wrote the permission canary sentinel before denial",
+        "Codex bridge wrote the permission canary sentinel before denial",
       );
     }
   }
