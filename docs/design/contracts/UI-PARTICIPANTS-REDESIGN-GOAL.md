@@ -36,12 +36,44 @@ belong at that weight in that place.
 **7. No vertical rhythm.** Rows, section label and disclaimer all sit at one indent with even spacing,
 so nothing groups.
 
+## OPERATOR REVISION — flatten it; the nesting was the wrong idea
+
+Second look, from the **deployed** rail with real data (`rail-deployed.png`):
+
+> "I think it's just the nesting here that's weird, maybe that was the wrong idea. Maybe just some
+> indicator of who they belong to is better — otherwise just list agents like we do people and just
+> visually differentiate them."
+
+**This supersedes the indent instruction below.** Looking at the real thing, the indent produces a
+ragged left edge and does not earn its cost — and the visual differentiation it was meant to add is
+**already present and working**: agent avatars are filled magenta with a presence dot, person avatars
+are outlined. That distinction reads instantly. The indentation adds only irregularity.
+
+So:
+
+- **One flat list. Agents sit at the same indent as people.**
+- **Keep the existing avatar differentiation** — filled vs outlined is doing the job.
+- **Put ownership on the agent's own row** as a quiet indicator (`operated by Tom Langridge`, or an
+  equivalent), replacing what the nesting was trying to convey.
+- **Delete the nesting structure**, including whatever observer asserts the parent-child shape. That
+  test is now asserting a design we rejected — say so in your report rather than leaving it.
+
+Everything else in this packet still applies: the badge repetition, presence dots on people, the
+serif, and the disclaimer's weight.
+
+### Also visible in the deployed shot, worth fixing while you are here
+
+- **`PERSON owner` / `PERSON member`** — the badge plus the role is one word too many. The role alone
+  (`owner`, `member`) already implies a person; agents carry their own marker.
+- **A long agent name truncates mid-word**: `tom@thomass-macbook-pr…`. Agents get named after machines
+  and addresses. Truncate somewhere legible, and make the full value reachable.
+
 ## What to build
 
-Make **ownership legible without a caption**:
+~~Make **ownership legible without a caption**~~ — superseded by the revision above.
 
-- **Indent agents under their operator**, or use another structural device that makes the parent-child
-  relation unmistakable at a glance.
+~~- **Indent agents under their operator**, or use another structural device that makes the parent-child
+  relation unmistakable at a glance.~~
 - **Differentiate the two row types** — a person is the heading of a group, an agent is a member of
   one. Different sizes, different weights.
 - **Drop the per-row `AGENT` badge once nesting carries it.** Keep an unmistakable marker of what is
