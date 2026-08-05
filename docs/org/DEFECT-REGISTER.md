@@ -2481,6 +2481,38 @@ token mint** are all flaky together.
 
 **A schema mismatch would fail 100%, not 50%. This is a saturation curve, not a correctness bug.**
 
+### CORRECTION, 2026-08-05 — the failures are NOT connection exhaustion
+
+~~"a bounded resource… the shape of a connection pool at capacity"~~ — **the mechanism is wrong,
+though the concurrency correlation stands.**
+
+Found by **Plumb** on the exact SHA, verified by the Lead against the **deployed** function:
+
+`read/diagnostics.ts` sets `retryable: isRetryableErrorCode(code)`, and `RETRYABLE_CODES` explicitly
+includes **`53300 too_many_connections`**, plus `57P03 cannot_connect_now`, `40001`, `40P01`, `55P03`,
+`57014` and the connection codes.
+
+**That classifier is deployed.** `diagnostics.ts` is present in the downloaded v6, with `53300` and
+`retryable` in it (control: `workspace` appears 15 times, so the search works).
+
+So **if these 500s were pool exhaustion the server would return `retryable: true`.** Wren measured
+`false` on every failure, on both views, across workspaces. **Therefore the failing error is not a
+connection code at all** — it is something unclassified that falls through to non-retryable.
+
+**This is my third hypothesis for this bug and the second to be wrong.** Schema skew: refuted — the
+migration never redefines the views v6 reads. Pool exhaustion: refuted — the server would have said so.
+What survives is Wren's *measurement*: failures are fast, scale with simultaneity rather than rate, and
+affect only authenticated paths. The cause is still unknown.
+
+**And it changes the ruling's premise.** D-052 argues the server is "probably wrong" to send
+`retryable: false` for a transient condition. That rested on the failure being saturation. If the error
+is genuinely unclassified, **the server may be right** and honouring it is correct — which makes
+bounded supervision more important, not less, because the receiver still must not die permanently on a
+condition nobody has identified.
+
+**The request ids Wren captured remain the only handle on the actual error.** Reading them needs
+dashboard access — operator.
+
 ### Our clients amplify it — the part that matters
 
 `retryable: false` is in **every** error body. The client never reads it: `throwSignalHttp`
