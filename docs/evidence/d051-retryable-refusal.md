@@ -1226,10 +1226,9 @@ verdict is not in dispute, the code's design is.
 
 | # | Fact | Call site | How observed |
 |---|---|---|---|
-| 1 | `spawn_failed` is raised for an **OS child-spawn error**, inside a `child.once("error", …)` handler. | `src/host/claude.ts:327` (at 25dabb6) | Read. |
-| 2 | The same code is raised for **missing stdio after `spawn()` returns** — which is not the same as a successful spawn. | `src/host/opencode.ts:798`, `grok.ts:180`, `claude.ts:353` (at 25dabb6) | Read. |
-| 3 | Neither producer preserves the underlying OS error. | same sites | Read: the constructor takes only a code and a literal message. |
-| 4 | `spawn_failed` is not in `TRANSIENT_ACP_CODES`, so it reaches "do not retry" through the closed default. | `src/host/types.ts` | Read. |
+| 1 | `spawn_failed` is raised in **two shapes**: inside a `child.once("error", …)` handler — an OS child-spawn error — and for **missing stdio after `spawn()` returns**, which establishes only that a `ChildProcess` handle came back, not that the spawn succeeded. | Enumerate with `git grep -n spawn_failed -- src/host`; both shapes appear in every ACP host adapter. | Read. Deliberately NOT a file list: the provider set grows, and a snapshot list is wrong the next time one is added — it was already incomplete against `main`, which has a `codex.ts` this branch does not. |
+| 2 | Neither shape preserves the underlying OS error. | same enumeration | Read: `AcpHostError` takes a code and a literal message, and the `error` argument is not carried. |
+| 3 | `spawn_failed` is not in `TRANSIENT_ACP_CODES`, so it reaches "do not retry" through the closed default. | `src/host/types.ts` | Read. |
 
 ## The finding
 

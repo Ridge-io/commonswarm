@@ -1356,10 +1356,12 @@ const RESTART_MATRIX: ReadonlyArray<[string, Error, boolean]> = [
     "the configured executable was not found",
   ), false],
   // false, and this does NOT assert permanence. One code covers two distinct
-  // causes and discards the OS error: a child spawn failure (claude.ts:327,
-  // inside child.once("error") — possibly EAGAIN/EMFILE and transient) and
-  // missing stdio after spawn() RETURNS (opencode.ts:798, grok.ts:180,
-  // claude.ts:353) — which is not the same as a successful spawn.
+  // SHAPES and discards the OS error: a child spawn failure raised inside
+  // child.once("error") — possibly EAGAIN/EMFILE and transient — and missing
+  // stdio after spawn() RETURNS, which establishes only that a ChildProcess
+  // handle came back. Both shapes appear in every ACP host adapter; enumerate
+  // with `git grep -n spawn_failed -- src/host` rather than trusting a file
+  // list, which goes stale the next time a provider is added.
   // The closed default is correct UNTIL the producers preserve or split the
   // cause; the code is under-specified, not the verdict wrong.
   ["acp spawn_failed (mixed causes)", new AcpHostError(
