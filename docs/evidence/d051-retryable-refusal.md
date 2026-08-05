@@ -1147,10 +1147,19 @@ status, which is wrong):
 **Three discards, not two** (Plumb's fifth correction; earlier versions of this
 entry said two, and named the wrong caller as surviving).
 
-Only **one** consumer surfaces anything: `cli.ts:2147` → `signalDirectory`
-(`:1973`) → recipient resolution, which propagates. It is the path that
-resolves a `--to` selector, so a failed directory read there fails the command
-with `member read failed (HTTP 500)` in front of a person.
+**Consumers that propagate — two, and the count is scoped** (Plumb's seventh
+correction; earlier versions said "exactly one" and were one scope too wide):
+
+1. **`cli.ts:2147` → `signalDirectory` (`:1973`) → recipient resolution.** The
+   only *product* path that propagates: resolving a `--to` selector, so a failed
+   directory read fails the command with `member read failed (HTTP 500)` in
+   front of a person.
+2. **`readAgentSignalMembers` (`signals.ts:971-983`), `@deprecated` but
+   exported.** It awaits `readAgentSignalDirectory` and returns
+   `[...directory.members]`, propagating the error unchanged. It has **no
+   in-repo caller outside `tests/support/signal-fetch-deadline.test.ts:816`** —
+   but it is exported, so any consumer of this package gets the propagating
+   behaviour, and a claim scoped to "product paths" silently excludes them.
 
 Everything else is swallowed by design:
 
