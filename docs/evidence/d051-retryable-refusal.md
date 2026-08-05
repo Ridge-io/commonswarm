@@ -1128,9 +1128,21 @@ default is what makes a missed type safe rather than wrong.
 
 `readAgentSignalDirectory` (`signals.ts:937/942/946`) throws untagged plain
 Errors — `member read could not reach the cloud service`, `member read failed
-(HTTP n)`. It has no envelope parsing and no identity tags, so **a transient 500
-there is treated as permanent**. It discards the server's failure detail exactly
-the way the signal read did before D-051.
+(HTTP n)`. It parses no envelope and sets no identity tag, so the server's
+`request_id`, `retryable` and status are all discarded — exactly the way the
+signal read discarded them before D-051.
+
+**That is the whole finding: diagnostic loss.** It is scoped to detail, not to
+retry behaviour.
+
+> ★ ~~**FALSE, and marked dead 2026-08-05 after a second Plumb refutation:**
+> "so **a transient 500 there is treated as permanent**."~~
+>
+> That permanence verdict happens nowhere. A direct CLI call is one-shot by
+> design, which is not a retry decision at all; and in the listener the error is
+> swallowed and replaced by a typed retryable error (see the dead block below).
+> There is no path on which this read is "treated as permanent". The claim was a
+> consequence invented to make the diagnostic loss sound worse than it is.
 
 > ★ ~~**FALSE, written 2026-08-05 and corrected the same day. Kept, marked
 > dead:** "It reaches the engine through `resolveSenderProvenance`, where
@@ -1153,6 +1165,32 @@ the way the signal read did before D-051.
 > later. The lesson is not "check the code" — I had checked it. It is that a
 > causal chain asserted from memory is an unverified claim no matter how
 > recently it was verified, and it went into an evidence file as fact.
+
+## Why two people asserted a consequence neither had traced
+
+Attribution, stated accurately because an inaccurate one is its own defect:
+**Verity wrote the false chain first**, in a message; ClaudeCswarm confirmed it
+independently and echoed it back; Verity then put it in this file. ClaudeCswarm
+has since taken responsibility for the framing, which is generous and not quite
+right — it originated here. Neither of us traced it. Plumb refuted it twice: the
+causal chain, then the permanence verdict that survived the first correction.
+
+The shared error is worth more than either sentence. **We recognised the D-058
+shape — untyped Error meets classifier — and asserted its consequence without
+checking whether the error reaches the classifier at all.** It does not:
+`engine.ts:436-438` swallows it deliberately, with a comment explaining the
+design.
+
+So, for the register: **a defect class is a place to look, never a finding.**
+D-053 tells you to go and read the site; it does not tell you what you will find
+there. Here the site was already correct, on purpose. Pattern-matching a class
+onto a site produces a confident answer about a path nobody walked — the same
+failure as a wrong-target grep, in prose instead of a shell.
+
+And the second refutation is its own lesson: correcting the *mechanism* left the
+*verdict* standing one paragraph above it. A correction has to be checked
+against every claim the original supported, not only the sentence that was
+challenged.
 
 **What is actually true.** The detail loss is real: the directory read parses no
 envelope and sets no identity tag, so `request_id` and `retryable` are
