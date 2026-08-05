@@ -2236,3 +2236,79 @@ The Fable arm and I are both Claude. It caught what I missed (D-045, the cursor-
 endorsed my fix framing. **Only the cross-family arm refuted the framing itself.** That is the
 argument for D-039's pairing rule, restated from the other direction: a same-family reviewer found the
 missing fact; a different-family reviewer found the wrong idea.
+
+
+---
+
+## D-047 — the `read` deploy is a coupled landmine; D-045's trigger is not live · RULING + FREEZE
+
+Found by the Fable planning arm, verified by the Lead against the **downloaded production function**,
+not the repo.
+
+### Correction 1 — I said `read` was "not deployed". It is.
+
+`read` **v6 is deployed and serving**, from 2026-07-31. What I withheld was the *newer* build. The
+distinction matters because the safety property does not come from absence — it comes from **version
+skew**. v6 predates `ecb219c`, the commit that added `delivery_claim`/`delivery_ack`, so it advertises
+neither and every client selects `cursor_fallback`.
+
+`cursor_fallback` holds because an **old version is running**, not because nothing is.
+
+### Correction 2 — D-045's trigger is NOT live in production
+
+D-045 says revoking an author flips `sender_owner_relation` to `unknown`, so a previously-observed note
+stops matching and bricks the listener. **That chain requires the repo's `read`, which is not
+deployed.**
+
+Measured on the downloaded production function:
+
+```
+deployed v6 :223   "…Do NOT filter author.revoked_at: a revoked…"   ← comment, and the code agrees
+deployed v6        `AND author.revoked_at IS NULL`  → 0 occurrences
+repo        :371   `AND author.revoked_at IS NULL`  → present
+```
+
+So under v6 the relation is **stable** across revocation, and the ordinary trigger does not fire.
+D-045 was measured against **repo server code while reasoning about production**, which is the
+"measure the artifact, not its name" rule broken in a way I did not notice: I verified the *client*
+against production and the *server* against the checkout.
+
+**D-045 is not withdrawn.** The client-side defect is real, the code is wrong, and rarer triggers
+remain (principal-row deletion, owner mutation, readable local corruption). Its **severity drops from
+"live in production today" to "latent until the next `read` deploy."**
+
+### The finding that replaces it — the coupled deploy
+
+**One `read` deploy does two independent things at once:**
+
+1. **Advertises `delivery_claim` + `delivery_ack`**, flipping every live 0.1.5 listener from
+   `cursor_fallback` into `durable_claim` — where D-040, D-041a, D-041b and D-042 all live.
+2. **Changes relation semantics**, so every stored effect whose author has since been revoked or whose
+   membership lapsed **mass-mismatches at once** — notes brick via `runtime.ts:454`, asks fail via
+   `engine.ts:346`.
+
+Not a sequence. Simultaneous, on one command, with no per-workspace lever.
+
+### FREEZE — the control that actually holds
+
+**No `read` function deploy until all of the following are true:**
+
+1. The D-046 reconciliation fix has landed through the two-arm gate (D-036/D-039).
+2. The state-space enumeration is re-issued to count fatal *causes* rather than *assignments*.
+3. The live-fire drill's **treatment arm has passed** — it never has, on any build.
+4. A per-workspace enablement lever exists, so the flip is not all-or-nothing.
+
+**This freeze, not tonight's code fix, is what keeps the durable defects unreachable.** A one-site
+patch to the cursor path does not make the durable path safe and must never be described as though it
+does. Scope any claim to *"the cursor path cannot brick"*.
+
+### Also corrected
+
+My cited catch/fatal lines for the note path were **two off**: the catch is `runtime.ts:1239` and the
+fatal assignment `:1240`, not `:1243`/`:1244`. The chain is otherwise as recorded — durable block
+957-1221, note call `:1231`, throw `:454`.
+
+### Not established
+
+Whether the deployed `command` v16 matches the repo. Why the `capability` function POSTs 404 while
+listed ACTIVE. The note read-window bound. None were checked.
