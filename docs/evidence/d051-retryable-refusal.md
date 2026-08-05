@@ -515,3 +515,86 @@ affect this result.** The read and retry path uses global `fetch`
 (`fetchSignalRead`), not `supabase-js`; the only import of that package in
 `src/` is `cloud/auth.ts`. Dependencies were also held constant across arms, so
 the client-behaviour comparison stands either way.
+
+---
+
+# D-056 — OPEN pre-deploy decision: does the follow loop need bounded recovery?
+
+**Status at time of writing (2026-08-05): UNDECIDED.** Recorded here because it
+is a pre-deploy decision that currently exists only in swarm messages, and a
+decision that lives in chat never reaches whoever pulls this repo tomorrow.
+
+## The measurement that raised it
+
+Wren, post-fix: **8 cold starts, 6 reached ready, 2 died before ready — 25%.**
+Each death carried an in-band error line, so these are genuine refusals rather
+than Wren's host reaping processes.
+
+The gap: companion 2 supervises `runListenerSupervisor`, which is
+`cswarm listen start`. Wren measured `cswarm inbox --follow` — the CLI follow
+loop, **which has no supervisor**. So the restart protection landed on the
+durable listener and not on the receiver the connect prompt tells most hosts to
+run.
+
+## The argument for bounded recovery (Verity)
+
+1. **The framing "should we add recovery to a fail-fast tool" is backwards.**
+   The follow loop already had *unbounded* recovery — `isRetryableFollowError`
+   plus backoff retried 5xx forever, which is what produced the 370 frames.
+   84f0882 carved refusals *out* of an existing recovery loop. "Keep its
+   current fail-fast behaviour" is therefore not the status quo; it is a
+   behaviour introduced four commits ago and now measured at 25% never-start.
+2. **The justification for the carve-out is the thing Wren retracted.** The
+   veto was justified by amplification — retries add concurrency, concurrency
+   causes failures. Wren killed the load-dependence. On a flat per-request
+   failure chance, a bounded backed-off retry costs a few requests and does not
+   worsen the failure rate.
+3. **We are obeying a field that may be meaningless.** `retryable: false` may
+   be a false negative from failed `code` extraction (see the section above).
+   A possibly-bogus server field killing the receiver most hosts run is the
+   defect; either half alone would be tolerable.
+4. **"A wrapper can restart it" is the weakest link.** It pushes the exclusion
+   list — cancelled/credential/4xx/malformed, which Plumb and Verity derived
+   independently — into N host integrations, where it will be implemented
+   wrongly or not at all. "Foreground and visible" assumes a human is watching;
+   the connect prompt directs *agent* hosts to `--ndjson`, where the wrapper is
+   whatever the host does with a subprocess, frequently nothing. At 25%, a
+   quarter of agents join and go quiet, which is indistinguishable from
+   working.
+
+**Proposal:** bounded refusal tolerance *inside* the follow loop — N refused
+reads (start at 3) with the existing full-jitter backoff, then stop and emit
+the D-055 terminal frame. This honours the refusal (no immediate retry, the
+part that must not erode), cannot amplify (bounded *and* backed off: ~2-4
+req/min at backoff, against the 13.2/min removed and the ~30/min the rejected
+"fall back to the 2s idle poll" option would have cost), removes the 25%
+cliff, and still dies loudly and machine-readably.
+
+## The argument against (ClaudeCswarm's lean)
+
+The follow CLI is foreground and visible and should die loudly, **provided**
+the D-055 frame makes the failure machine-readable — a wrapper can then decide
+to restart. Supervision belongs in the supervisor, not in every client loop.
+
+## What would settle it
+
+If the operator pulls the `request_id` logs and `retryable: false` turns out to
+be a **real** classification naming a genuinely permanent ceiling, then dying
+immediately is correct and the argument for recovery collapses. That is the
+same single log line that resolves the false-negative question, and it is worth
+getting *before* this decision rather than after.
+
+## Not established
+
+- **Companion 1 (backoff decay) has no production evidence at all.** Wren's A/B
+  measured the retryable veto only. A proposed measurement — maximum `attempt`
+  value seen over a fixed number of reads, both arms, same window — separates
+  them without server cooperation, because pre-fix any success resets the
+  counter so `attempt` cannot exceed the current consecutive-failure run
+  (Wren observed a maximum of 3, exactly what the defect predicts). Caveat
+  given to Wren: at p≈0.5 the decayed counter random-walks (drift is 2p−1,
+  zero at p=0.5), so it separates only slowly and a short window showing no
+  difference is **uninformative, not negative**.
+- Whether the 6 receivers that reached ready then survived: Wren killed them at
+  12s and did not retain the frames, so there is a cold-start death rate but no
+  post-ready survival rate.
