@@ -1135,7 +1135,7 @@ what was claimed and refuted; it makes no claim about a common cause.
 |---|---|---|---|
 | 1 | The directory read never parses the response body, so `request_id` and `retryable` are not captured. | `signals.ts:944-946` | Read: `throw new Error(\`member read failed (HTTP ${response.status})\`)` with no body access. |
 | 2 | The same throw interpolates the HTTP status into the message string. | `signals.ts:946` | Read. Plumb confirmed a raw read carries HTTP 503. |
-| 3 | No identity tag is set on that Error, so no classifier reads its status. | `signals.ts:944-946` vs `:449` | Enumerated: `plainHttpStatus.set` occurs at exactly one site, `:449`, inside `throwSignalHttp`. |
+| 3 | No identity tag is set on that Error, so its status is not available through the typed/identity channel. | `signals.ts:944-946` vs `:449` | Enumerated: `plainHttpStatus.set` occurs at exactly one site, `:449`, inside `throwSignalHttp`. This enumerates TAG SITES, not classifiers — see "what is not established". |
 | 4 | `settleSignalAuthorLabels` converts a rejected directory read into a **fulfilled** promise carrying empty maps. | `signals.ts:1220-1227` | Read: `labels.catch(() => ({users: new Map(), agents: new Map()}))`. Plumb measured a 503 resolving to empty maps. |
 | 5 | All four `signalAuthorLabels` call sites are wrapped by it. | `cli.ts:2191`, `:2231`, `:2294`, `:2398` | Enumerated, all four. |
 | 6 | Empty maps are what `renderSignals` reads for author names. | `signals.ts:1341-1343` | Read. |
@@ -1159,10 +1159,10 @@ for label lookup — nothing downstream of `settleSignalAuthorLabels` can tell
 an empty map — and names degrade to ids in the rendered line. That is what was
 measured. No claim is made here about what a user concludes from it.
 
-**On fact 2 and fact 3 together:** the status survives only inside a message
-string. That is the representation this repo forbids branching on — `.message`
-is presentation, control flow uses types and codes — so the status is readable
-by a person and unusable by a classifier.
+**On facts 2 and 3 together:** the status survives only inside a message string.
+It is therefore not reachable through the typed/identity channel, and in-repo
+policy forbids branching on `.message` (D-053, D-058). Whether any code
+nonetheless parses it is a separate question and is not established.
 
 ## What is not established
 
@@ -1172,6 +1172,11 @@ by a person and unusable by a classifier.
   measurement; every fact above is read from source or probed locally.
 - **What a human user sees end to end when fact 4 fires.** Empty maps reach
   `renderSignals`, but no one has run that path and looked at the output.
+- **Which classifiers, if any, read this Error at all.** Fact 3 enumerates tag
+  sites, not classifiers. No classifier enumeration was done for this path.
+- **Whether any consumer parses the status out of the message string.** In-repo
+  policy forbids it, but policy is not enforcement, and consumers of the
+  exported wrapper (fact 11) are outside this repo's policy entirely.
 - **Whether the same shape exists on other read paths** (`cloudWorkspaceDirectory`,
   `settleSignalStatus`). Not enumerated.
 - **Whether the deliberate display fallback in fact 4 is the right design.** It
@@ -1197,5 +1202,5 @@ Kept so the record is readable without re-deriving it.
 | 6 | `cli.ts:2025` surfaces the status. | All four of its call sites wrap it in `settleSignalAuthorLabels`. | Plumb |
 | 7 | `settleSignalAuthorLabels` "loses everything". | It converts a failure into a success carrying empty maps — indistinguishable from an empty workspace. | ClaudeCswarm |
 | 8 | "Exactly one consumer propagates." | The exported deprecated wrapper also propagates. The information had already been supplied and was dropped while compressing. | Plumb |
-| 9 | The label fallback "reports absence" and "tells the user something untrue". | `renderSignals:1344-1345` falls back to a truthful kind + sender UUID. Failure and no-name are indistinguishable to the **resolver**; the user sees an ID, not a false assertion. | Plumb |
+| 9 | The label fallback "reports absence" and "tells the user something untrue". | `renderSignals:1344-1345` emits `${authorKind} ${signal.from}` and no absence marker. The two internal states are indistinguishable for label lookup. No user-visible claim was measured. | Plumb |
 
