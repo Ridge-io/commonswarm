@@ -1139,7 +1139,8 @@ that were not enumerated.
 | 3 | No identity tag is set on that Error, so no classifier reads its status. | `signals.ts:944-946` vs `:449` | Enumerated: `plainHttpStatus.set` occurs at exactly one site, `:449`, inside `throwSignalHttp`. |
 | 4 | `settleSignalAuthorLabels` converts a rejected directory read into a **fulfilled** promise carrying empty maps. | `signals.ts:1220-1227` | Read: `labels.catch(() => ({users: new Map(), agents: new Map()}))`. Plumb measured a 503 resolving to empty maps. |
 | 5 | All four `signalAuthorLabels` call sites are wrapped by it. | `cli.ts:2191`, `:2231`, `:2294`, `:2398` | Enumerated, all four. |
-| 6 | Empty maps are what `renderSignals` reads for author names. | `signals.ts:1343` | Read. |
+| 6 | Empty maps are what `renderSignals` reads for author names. | `signals.ts:1341-1343` | Read. |
+| 6a | On a lookup miss `renderSignals` falls back to `${authorKind} ${signal.from}` — a truthful kind plus sender UUID. It does **not** assert absence and shows the user nothing false. | `signals.ts:1344-1345` | Read. Plumb found the earlier claim that it tells the user something untrue was false. |
 | 7 | The listener's provenance lookup discards the Error entirely in a bare `catch`. | `engine.ts:434` | Read; the `catch` carries a comment stating the design intent. |
 | 8 | For an **agent** sender, missing provenance throws a typed `SenderProvenanceUnavailableError`, which `defaultRetryablePromptError` classifies retryable. | `engine.ts:453`, `:246-247` | Read. Control: `tests/listener-engine.test.ts` "agent prompts retry without a model turn when operator provenance is unavailable". |
 | 9 | For a **human** sender, `operatorId` is set from `signal.from` regardless of the directory, so the guard at `:453` never fires and the prompt proceeds with null `senderName`/`operatorName`. | `engine.ts:92-99`, `:453` | Read. ClaudeCswarm verified independently on the gate tree. |
@@ -1151,6 +1152,12 @@ that were not enumerated.
 surfaces loudly and retries bounded; on the human path it surfaces nothing and
 the prompt proceeds with degraded labels. Only the second can run indefinitely
 without anyone noticing.
+
+**On facts 4, 6 and 6a together:** the indistinguishability is at the **label
+resolver**, not at the user. Nothing downstream of `settleSignalAuthorLabels`
+can tell "directory unreachable" from "this workspace has no members" — those
+are the same value — but the rendered output degrades to a sender UUID, which is
+truthful and merely less informative. The cost is a lost diagnostic, not a lie.
 
 **On fact 2 and fact 3 together:** the status survives only inside a message
 string. That is the representation this repo forbids branching on — `.message`
@@ -1191,8 +1198,9 @@ each had a true observation underneath, stated at a scope that was wrong.
 | 6 | `cli.ts:2025` surfaces the status. | All four of its call sites wrap it in `settleSignalAuthorLabels`. | Plumb |
 | 7 | `settleSignalAuthorLabels` "loses everything". | It converts a failure into a success carrying empty maps — indistinguishable from an empty workspace. | ClaudeCswarm |
 | 8 | "Exactly one consumer propagates." | The exported deprecated wrapper also propagates. The information had already been supplied and was dropped while compressing. | Plumb |
+| 9 | The label fallback "reports absence" and "tells the user something untrue". | `renderSignals:1344-1345` falls back to a truthful kind + sender UUID. Failure and no-name are indistinguishable to the **resolver**; the user sees an ID, not a false assertion. | Plumb |
 
-Seven of eight were found by a reader who did not write the text. The one Verity
+Eight of nine were found by a reader who did not write the text. The one Verity
 found came from applying a lesson Plumb had given minutes earlier. Two rules
 written during the sequence — "cite the control or mark unverified" and "name
 the layer and the caller" — were each defeated by the next correction.
