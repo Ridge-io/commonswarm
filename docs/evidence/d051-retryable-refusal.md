@@ -1195,10 +1195,24 @@ challenged.
 **What is actually true.** The detail loss is real: the directory read parses no
 envelope and sets no identity tag, so `request_id` and `retryable` are
 discarded. But the consequence is not a failed ask — it is a **blinded** one.
-The failure is discarded twice, once by not parsing the body and again by the
-bare `catch`, so a persistently failing directory read surfaces only as repeated
-`senderprovenanceunavailableerror` with **no server-side handle at all**. An
-operator debugging it has neither a `request_id` nor the status that caused it.
+The failure is discarded twice — once by not parsing the body, again by the bare
+`catch` — so an operator debugging it has neither a `request_id` nor the status
+that caused it.
+
+Scoped, because an unqualified consequence is what went wrong twice already
+(`engine.ts:92-99` and `:453`):
+
+- **Agent sender:** `operatorId` is null without the directory, so
+  `SenderProvenanceUnavailableError` is thrown and the ask retries without a
+  model turn, surfacing as repeated `senderprovenanceunavailableerror`.
+- **Human sender:** `listenerSenderProvenance` sets `operatorId` from
+  `signal.from` regardless of the directory, so the guard does not fire. The
+  prompt proceeds with a null `senderName`/`operatorName` — degraded labels, no
+  error, nothing surfaced at all.
+
+The second case is the quieter one and it is the reason this is worth a register
+entry: a failing directory read can silently downgrade prompt context with no
+signal to anyone.
 
 D-058 changed nothing about it: the `member read` prefix never matched the
 `signal read` regex either. It is a fourth surface of the same shape as D-051,
