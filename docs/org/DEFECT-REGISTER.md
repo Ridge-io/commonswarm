@@ -2895,3 +2895,71 @@ but this is **not a byte-exact reproduction** of the build environment.
 Whether the 6 receivers that reached ready then died inside the 12-second window — Wren killed them at
 12 s and did not retain the frames, so it has cold-start death rate but **not post-ready survival**.
 Nothing about the server-side cause.
+
+---
+
+## D-057 — the restart classifier is default-true, so unrecognised failures restart five times · MAJOR
+
+Found by **Plumb** on exact `e126e00`; verified by the Lead **by execution**, not by reading.
+
+### The question asked, and the better answer returned
+
+I asked whether `e126e00`'s shared predicate changed semantics versus the inline logic it replaced.
+**It did not — Plumb confirmed they are semantically identical.** But it found that *both* are
+**domain-incomplete**, which is the more useful finding: the refactor did not introduce the defect, it
+propagated an existing one to a second caller.
+
+### The mechanism
+
+`isRestartableReadError` (`signals.ts:496-500`) is **default-true**:
+
+```ts
+if (isFollowCredentialFailure(error)) return false;
+if (isFatalFollowError(error)) return false;
+if (isMalformedFollowMessage(error)) return false;
+return true;                     // <- everything it has never heard of
+```
+
+Its three exclusions recognise **signal-read** types only. `isRestartableListenerStop`
+(`runtime.ts:195-199`) delegates **every fatal stop** to it — but the runtime also emits delivery
+errors (7 sites) and ACP startup failures (`:839-842`, where `model.start()` throwing becomes a fatal
+stop).
+
+**Executed against the real predicate:**
+
+```
+DeliveryHttpError 400   restartable = true
+DeliveryHttpError 409   restartable = true
+AcpVersionError         restartable = true
+```
+
+Plumb's fuller matrix adds `delivery_ack_conflict`, `DeliveryProtocolError` on a malformed 2xx,
+`AcpPermissionCanaryError`, and `AcpProtocolError malformed_frame` — all `true`.
+
+So the supervisor performs **up to 5 fresh-model restarts** (`supervisor.ts:354-383`) on a 400
+`invalid_request`, a version mismatch, or a failed permission canary — **contradicting its own stated
+"4xx / malformed / protocol never" boundary**, and repeating persistent delivery commands and provider
+starts that cannot succeed.
+
+### Why the tests did not catch it
+
+`listener-control.test.ts:1129+` covers only `SignalHttpError` and `SignalMalformedError` — the two
+types the predicate already knows. **It misses every cross-domain fatal type**, which is precisely the
+set that fails open.
+
+### Fix
+
+**Closed classification, listener-wide.** A restart decision must not be a default applied to
+unrecognised input. Either enumerate the restartable set explicitly and return `false` otherwise, or
+require every fatal error reaching the supervisor to carry a code we assign.
+
+This is the structural sibling of **D-053** and **D-054**: D-053 was control flow on untrusted *text*,
+D-054 was the server defaulting `retryable:false` for anything it could not classify, and this is our
+own classifier defaulting **true** for anything it does not recognise. **Three instances of one
+principle — an unrecognised input must not silently acquire a decision.**
+
+### Not established
+
+Whether any other caller of `isRestartableReadError` is exposed to the same fail-open default. Whether
+five restarts on a persistent 4xx has caused observable harm in production, as opposed to being a
+latent path.
