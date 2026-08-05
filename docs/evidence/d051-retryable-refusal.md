@@ -783,15 +783,25 @@ requests.
 
 ## One predicate, so the surfaces cannot drift
 
-`isRestartableReadError` in `signals.ts` is now the single source of the
-judgement. Both callers use it:
+> ~~**Superseded 2026-08-05 by D-057, now dead:** "`isRestartableReadError` in
+> `signals.ts` is now the single source of the judgement. Both callers use it…
+> `runtime.ts` no longer imports the three underlying classifiers separately,
+> which is what would have let the two lists drift apart."~~
+>
+> Both claims became FALSE at 2b5e905 and are kept here rather than edited away.
+> The unification was correct as far as it went — Plumb confirmed no regression
+> from it — but the thing it unified was already broken: the predicate was
+> default-true over a domain that does not include delivery or ACP failures. See
+> the D-057 section. `runtime.ts` now owns `isRestartableRuntimeError`, a closed
+> classifier that delegates *only the read-path portion* to
+> `isRestartableReadError`, and it does import other classifiers. The surviving
+> shared-source claims are narrower and specific: `TRANSIENT_ACP_CODES` is
+> shared between the engine and the supervisor, and the follow CLI's exit status
+> shares the read predicate.
 
-- `isRestartableListenerStop` (`runtime.ts`) — the supervisor's bounded restart,
-  which adds only "the stop must be `fatal`" on top.
-- the follow CLI's exit status.
-
-`runtime.ts` no longer imports the three underlying classifiers separately,
-which is what would have let the two lists drift apart.
+The reasoning that motivated the unification still holds — two surfaces
+answering "is this worth another attempt" must not drift — but a shared
+predicate is only as good as its domain, which is the D-057 lesson.
 
 ## Causal control
 
@@ -948,3 +958,95 @@ npm run check:tests -> clean
   today. It is a snapshot of that enumeration, not a proof that no other type
   can reach a fatal stop — but the closed default means a missed type stops the
   listener rather than restarting it.
+
+---
+
+# D-058 — the closed classification was bypassable by wording
+
+**Found by Plumb on 2b5e905. This is D-053 surviving inside the D-057 fix.**
+
+## The bypass
+
+`followHttpDetails` fell back to matching `/^signal read failed \(HTTP (\d+)\)/`
+against the message, and `isTransportFollowMessage` matched exact transport
+prose. `isRestartableRuntimeError` delegates unrecognised errors to the read
+predicate — so the closed default was reachable around, by spelling.
+
+Executed on 2b5e905 with an unrecognised `FutureRuntimeError`:
+
+```
+'some ordinary failure'                          -> false
+'timeout transport connection'                   -> false
+'signal read could not reach the cloud service'  -> TRUE    <- bypass
+'signal read failed (HTTP 500)'                  -> TRUE    <- bypass
+'signal read failed (HTTP 429)'                  -> TRUE    <- bypass
+'signal read failed (HTTP 400)'                  -> false
+```
+
+An unrecognised type acquired a restart decision from its message, contradicting
+the D-057 comment, the closed-classification test, and the D-053 ruling at once.
+
+## Why two people missed it
+
+The D-057 table's `FutureRuntimeError` row supplied only innocuous text.
+ClaudeCswarm independently checked `'timeout transport connection'` — which
+uses retry *words* but not the *colliding spelling* — got `false`, and reported
+the closed default as holding. **Both of us tested that the door was shut
+without trying the key that fits.** Plumb used the exact spelling.
+
+That is the generalisable lesson: an adversarial control must be written by
+someone asking "what input would make this pass wrongly", not by the author
+asking "does my case work".
+
+## The fix
+
+Identity, not prose — and the tags mostly already existed:
+
+- **HTTP:** `plainHttpStatus` has tagged every HTTP failure at construction
+  since before this workstream. The regex was therefore *redundant* for real
+  errors and served only as the bypass. Deleted.
+- **Transport:** added a `plainTransportErrors` WeakSet, tagged by a
+  `plainTransportError()` constructor used at all three throw sites.
+  `isTransportFollowMessage` now checks identity.
+
+## Controls
+
+Adversarial rows in the D-057 table for **both** colliding spellings, including
+the envelope-suffixed form, all asserting `false`.
+
+Positive controls in `agent-receive-cli.test.ts` proving the real tagged paths
+still classify after the regex was deleted — deleting a fallback is only safe if
+the primary works:
+
+- a real HTTP failure through `readSignals` still reports its status for 400,
+  401, 429, 500, 503, and the restart verdict still follows the status;
+- a real transport failure is still recognised;
+- an impostor `Error` constructed with the **identical message string** gets no
+  verdict, asserted alongside the real one in the same test so the pair proves
+  discrimination rather than absence.
+
+Inversion — restore the regex and the prose match:
+
+```
+-> D-057 table red, D-058 impostor test red
+```
+
+## Gates
+
+```
+npm test            -> tests 461, pass 461, fail 0
+npm run test:p1-cli -> tests 152, pass 152, fail 0
+npm run build       -> clean
+npm run check:tests -> clean
+```
+
+## Not established
+
+- Plumb's sweep for other decision-carrying defaults of this shape came back
+  clean; D-054 and D-057 are the whole surface it found. That is a sweep, not a
+  proof.
+- The identity tags are `WeakMap`/`WeakSet` on Error instances, so an error that
+  is serialised and reconstructed — across a process boundary, or through a
+  wrapper that copies only the message — loses its tag and correctly gets no
+  verdict. That is the safe direction, but it means classification depends on
+  the original object surviving.

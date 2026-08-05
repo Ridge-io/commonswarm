@@ -170,6 +170,21 @@ const plainHttpRetryAfterMs = new WeakMap<Error, number | null>();
 const plainHttpStatus = new WeakMap<Error, number>();
 /** The server's failure envelope, carried alongside the status (D-051). */
 const plainHttpEnvelope = new WeakMap<Error, ServerErrorEnvelope>();
+/**
+ * D-058: transport failures are tagged by identity at construction, never
+ * recognised by their wording. The prose match this replaced let any error
+ * spelled "signal read could not reach the cloud service" acquire a transport
+ * verdict — the same untrusted-text control flow D-053 removed elsewhere,
+ * surviving inside the D-057 closed classification.
+ */
+const plainTransportErrors = new WeakSet<Error>();
+
+/** Build the shared plain transport Error, tagged so classification is by identity. */
+function plainTransportError(): Error {
+  const error = new Error("signal read could not reach the cloud service");
+  plainTransportErrors.add(error);
+  return error;
+}
 
 function checkedUuid(value: unknown, field: string): string {
   if (typeof value !== "string" || !UUID_RE.test(value)) {
@@ -437,7 +452,15 @@ function throwSignalHttp(response: Response, body: unknown): never {
   throw error;
 }
 
-/** Status + Retry-After for follow classification (typed or plain shared Errors). */
+/**
+ * Status + Retry-After for follow classification (typed or tagged plain Errors).
+ *
+ * D-058: the message-regex fallback that used to sit here is gone. Every HTTP
+ * failure this module raises is already tagged by identity in `plainHttpStatus`
+ * at construction, so the regex was redundant for real errors and was the one
+ * way an unrecognised error type could acquire a status — and with it a restart
+ * verdict — purely from how it was worded.
+ */
 export function followHttpDetails(
   error: unknown,
 ): { status: number; retryAfterMs: number | null } | null {
@@ -451,12 +474,6 @@ export function followHttpDetails(
         status: mapped,
         retryAfterMs: plainHttpRetryAfterMs.get(error) ?? null,
       };
-    }
-    // Prefix-anchored, not whole-string: the message now carries the server's
-    // error and request_id after the status.
-    const match = error.message.match(/^signal read failed \(HTTP (\d+)\)/);
-    if (match) {
-      return { status: Number(match[1]), retryAfterMs: null };
     }
   }
   return null;
@@ -475,10 +492,14 @@ export function followErrorEnvelope(error: unknown): ServerErrorEnvelope {
   return EMPTY_SERVER_ERROR_ENVELOPE;
 }
 
+/**
+ * D-058: identity only. Was an exact-prose match, so an unrecognised error type
+ * spelled the same way acquired a transport verdict and, through the restart
+ * classifier, a restart it had not earned.
+ */
 function isTransportFollowMessage(error: unknown): boolean {
   return error instanceof SignalTransportError ||
-    (error instanceof Error &&
-      error.message === "signal read could not reach the cloud service");
+    (error instanceof Error && plainTransportErrors.has(error));
 }
 
 /**
@@ -644,7 +665,7 @@ async function fetchSignalRead(
 function mapReadFailure(error: unknown, waitBound: boolean): never {
   if (error instanceof SignalReadTimeoutError) {
     if (waitBound) throw error;
-    throw new Error("signal read could not reach the cloud service");
+    throw plainTransportError();
   }
   throw error;
 }
@@ -701,7 +722,7 @@ async function humanSignals(
     mapReadFailure(error, options.deadlineMs !== undefined);
   }
   if (result === null) {
-    throw new Error("signal read could not reach the cloud service");
+    throw plainTransportError();
   }
   const { response, body } = result;
   if (!response.ok) {
@@ -765,7 +786,7 @@ async function agentSignalPage(
       mapReadFailure(error, options.deadlineMs !== undefined);
     }
     if (result === null) {
-      throw new Error("signal read could not reach the cloud service");
+      throw plainTransportError();
     }
     return result;
   };

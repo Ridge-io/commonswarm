@@ -1269,6 +1269,14 @@ test("D-051: one rejected write does not poison the rest of the supervisor's wri
 // It is also what stops the next error type silently acquiring a restart.
 // ---------------------------------------------------------------------------
 
+/** An error type nobody has classified yet — the D-058 adversary. */
+class FutureRuntimeError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "FutureRuntimeError";
+  }
+}
+
 const RESTART_MATRIX: ReadonlyArray<[string, Error, boolean]> = [
   // --- read path -----------------------------------------------------------
   ["read 500", new SignalHttpError(500), true],
@@ -1334,6 +1342,31 @@ const RESTART_MATRIX: ReadonlyArray<[string, Error, boolean]> = [
   // --- unrecognised: must acquire NO decision ------------------------------
   ["plain TypeError", new TypeError("cannot read property of undefined"), false],
   ["plain Error", new Error("something nobody has classified"), false],
+
+  // --- D-058: the ADVERSARIAL rows. The first version of this table used only
+  // innocuous wording, so it proved the door was shut without trying the key
+  // that fits. An unrecognised type spelled like one of ours must still get no
+  // decision — classification is by identity, never by how an error reads.
+  ["future type, innocuous", new FutureRuntimeError("some ordinary failure"), false],
+  ["future type, retry words", new FutureRuntimeError("timeout transport connection"), false],
+  ["future type spelled as transport", new FutureRuntimeError(
+    "signal read could not reach the cloud service",
+  ), false],
+  ["future type spelled as HTTP 500", new FutureRuntimeError(
+    "signal read failed (HTTP 500)",
+  ), false],
+  ["future type spelled as HTTP 503", new FutureRuntimeError(
+    "signal read failed (HTTP 503)",
+  ), false],
+  ["future type spelled as HTTP 429", new FutureRuntimeError(
+    "signal read failed (HTTP 429)",
+  ), false],
+  ["future type spelled as HTTP 400", new FutureRuntimeError(
+    "signal read failed (HTTP 400)",
+  ), false],
+  ["future type spelled with envelope suffix", new FutureRuntimeError(
+    "signal read failed (HTTP 500): internal_error, request_id 9d1f4b2c",
+  ), false],
 ];
 
 test("D-057: every fatal error type the runtime can emit has an explicit restart verdict", () => {
@@ -1356,14 +1389,11 @@ test("D-057: every fatal error type the runtime can emit has an explicit restart
 test("D-057: classification is closed — an unrecognised failure never restarts", () => {
   // The defect was default-TRUE, so this is the property that failed. Anything
   // the classifier does not recognise must decline, not acquire a restart.
-  class FutureRuntimeError extends Error {
-    constructor() {
-      super("an error type added after this test was written");
-      this.name = "FutureRuntimeError";
-    }
-  }
   assert.equal(
-    isRestartableListenerStop({ reason: "fatal", error: new FutureRuntimeError() }),
+    isRestartableListenerStop({
+      reason: "fatal",
+      error: new FutureRuntimeError("an error type added after this test"),
+    }),
     false,
   );
   assert.equal(

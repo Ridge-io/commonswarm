@@ -31,6 +31,7 @@ import {
   formatFollowFrame,
   isFatalFollowError,
   isFollowCredentialFailure,
+  isRestartableReadError,
   isRetryableFollowError,
   nextFollowBackoffMs,
   nextWaitSleepMs,
@@ -1775,4 +1776,83 @@ test("D-055: the terminal frame distinguishes a refusal from other stops", () =>
   // A stop carrying no error at all still yields a usable message.
   const bare = followStopFrame({ reason: "error" }, 1_700_000_000_000);
   assert.match(bare?.message ?? "", /inbox follow stopped \(error\)/);
+});
+
+// ---------------------------------------------------------------------------
+// D-058: classification is by identity, never by wording. followHttpDetails
+// used to fall back to a message regex and isTransportFollowMessage matched
+// exact prose, so an unrecognised error type spelled like one of ours acquired
+// a status — and through the restart classifier, a restart it had not earned.
+// This is D-053 (control flow on untrusted text) surviving inside the D-057
+// closed classification.
+//
+// The regex is gone. These are the POSITIVE CONTROLS that the real, tagged
+// paths still classify — deleting a fallback is only safe if the primary works.
+// ---------------------------------------------------------------------------
+
+async function readFailure(
+  fetcher: typeof fetch,
+): Promise<Error> {
+  const target = cloudTarget("https://cloud.example.test", "anon-key");
+  try {
+    await readSignals(
+      target,
+      { kind: "agent", token: "swm_agt_" + "A".repeat(43) },
+      { workspaceId: WORKSPACE, inbox: true },
+      { fetcher },
+    );
+  } catch (error) {
+    return error as Error;
+  }
+  throw new Error("expected the stubbed read to reject");
+}
+
+test("D-058: a real HTTP failure still carries its status without the regex", async () => {
+  for (const status of [400, 401, 429, 500, 503]) {
+    const error = await readFailure((async () =>
+      new Response(null, { status })) as typeof fetch);
+    assert.equal(
+      followHttpDetails(error)?.status,
+      status,
+      `HTTP ${status} must still be readable from the identity tag`,
+    );
+    // And the restart verdict follows the status, as before.
+    assert.equal(
+      isRestartableReadError(error),
+      status === 429 || status >= 500,
+      `HTTP ${status} restart verdict`,
+    );
+  }
+});
+
+test("D-058: a real transport failure is still recognised by identity", async () => {
+  // A fetcher that never reaches the service produces the shared plain
+  // transport Error, tagged at construction.
+  const error = await readFailure((async () => {
+    throw new TypeError("fetch failed");
+  }) as typeof fetch);
+  assert.equal(error.message, "signal read could not reach the cloud service");
+  assert.equal(isRetryableFollowError(error), true);
+  assert.equal(isRestartableReadError(error), true);
+});
+
+test("D-058: an impostor spelled exactly like ours gets no verdict", async () => {
+  // The same two spellings, on an error this module did not construct. Before
+  // the fix both were classified; the message is identical to the real one.
+  const real = await readFailure((async () => {
+    throw new TypeError("fetch failed");
+  }) as typeof fetch);
+  const impostor = new Error(real.message);
+  assert.equal(impostor.message, real.message, "the wording is identical");
+  assert.equal(isRetryableFollowError(real), true, "positive control");
+  assert.equal(isRetryableFollowError(impostor), false);
+  assert.equal(isRestartableReadError(impostor), false);
+
+  const httpReal = await readFailure((async () =>
+    new Response(null, { status: 500 })) as typeof fetch);
+  const httpImpostor = new Error(httpReal.message);
+  assert.equal(httpImpostor.message, httpReal.message);
+  assert.equal(followHttpDetails(httpReal)?.status, 500, "positive control");
+  assert.equal(followHttpDetails(httpImpostor), null);
+  assert.equal(isRestartableReadError(httpImpostor), false);
 });
