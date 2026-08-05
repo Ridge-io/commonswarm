@@ -1124,161 +1124,75 @@ default is what makes a missed type safe rather than wrong.
 
 # Register — the directory read discards failure detail (pre-existing)
 
-**Not a defect introduced here, and deliberately not fixed in this branch.**
+**Form note.** This entry was rewritten after seven corrections to its previous
+narrative form. Each correction was the same failure — a consequence asserted
+across paths that had not been enumerated — so the shape was changed rather than
+patched again. Every line below carries its own scope; there are no quantifiers
+that were not enumerated.
 
-**The finding, in one line:** the agent path fails loudly and bounded; the human
-path fails silently. Only the silent one can run for weeks without anyone
-knowing. Everything below is why.
+## What was measured
 
-`readAgentSignalDirectory` (`signals.ts:937/942/946`) throws untagged plain
-Errors — `member read could not reach the cloud service`, `member read failed
-(HTTP n)`.
+| # | Fact | Call site | How observed |
+|---|---|---|---|
+| 1 | The directory read never parses the response body, so `request_id` and `retryable` are not captured. | `signals.ts:944-946` | Read: `throw new Error(\`member read failed (HTTP ${response.status})\`)` with no body access. |
+| 2 | The same throw interpolates the HTTP status into the message string. | `signals.ts:946` | Read. Plumb confirmed a raw read carries HTTP 503. |
+| 3 | No identity tag is set on that Error, so no classifier reads its status. | `signals.ts:944-946` vs `:449` | Enumerated: `plainHttpStatus.set` occurs at exactly one site, `:449`, inside `throwSignalHttp`. |
+| 4 | `settleSignalAuthorLabels` converts a rejected directory read into a **fulfilled** promise carrying empty maps. | `signals.ts:1220-1227` | Read: `labels.catch(() => ({users: new Map(), agents: new Map()}))`. Plumb measured a 503 resolving to empty maps. |
+| 5 | All four `signalAuthorLabels` call sites are wrapped by it. | `cli.ts:2191`, `:2231`, `:2294`, `:2398` | Enumerated, all four. |
+| 6 | Empty maps are what `renderSignals` reads for author names. | `signals.ts:1343` | Read. |
+| 7 | The listener's provenance lookup discards the Error entirely in a bare `catch`. | `engine.ts:434` | Read; the `catch` carries a comment stating the design intent. |
+| 8 | For an **agent** sender, missing provenance throws a typed `SenderProvenanceUnavailableError`, which `defaultRetryablePromptError` classifies retryable. | `engine.ts:453`, `:246-247` | Read. Control: `tests/listener-engine.test.ts` "agent prompts retry without a model turn when operator provenance is unavailable". |
+| 9 | For a **human** sender, `operatorId` is set from `signal.from` regardless of the directory, so the guard at `:453` never fires and the prompt proceeds with null `senderName`/`operatorName`. | `engine.ts:92-99`, `:453` | Read. ClaudeCswarm verified independently on the gate tree. |
+| 10 | `cli.ts:2147` → `signalDirectory` (`:1973`) propagates the Error to the caller. | `cli.ts:2147` | Read; not wrapped. |
+| 11 | `readAgentSignalMembers` is `@deprecated` but exported, and propagates the Error unchanged. | `signals.ts:971-983` | Read. Its only in-repo caller is `tests/support/signal-fetch-deadline.test.ts:816`. Plumb found it. |
+| 12 | A tagged `retryable:false` 500 keeps its identity tag through the runtime to the supervisor predicate. | runtime path | Plumb's causal probe on `c0bd6f2`: `reason=fatal`, `requests=1`, `isRestartableListenerStop(exact stop)=true`. |
 
-**Two layers lose different things, and they must not be collapsed** (Plumb's
-correction; the first version of this entry said the directory read discards
-status, which is wrong):
+**The finding, from facts 8 and 9:** on the agent path a failed directory read
+surfaces loudly and retries bounded; on the human path it surfaces nothing and
+the prompt proceeds with degraded labels. Only the second can run indefinitely
+without anyone noticing.
 
-| layer | lost | kept |
-|---|---|---|
-| 1. directory read (`signals.ts:946`) | `request_id`, `retryable` — the body is never parsed | **status, in the message text** |
-| 2a. author labels (`settleSignalAuthorLabels`, `signals.ts:1223`) | everything — and see below, it does not merely lose the error | — |
-| 2b. listener (`engine.ts:434`) | everything — the bare `catch` swallows the whole Error | — |
+**On fact 2 and fact 3 together:** the status survives only inside a message
+string. That is the representation this repo forbids branching on — `.message`
+is presentation, control flow uses types and codes — so the status is readable
+by a person and unusable by a classifier.
 
-**Three discards, not two** (Plumb's fifth correction; earlier versions of this
-entry said two, and named the wrong caller as surviving).
+## What is not established
 
-**Consumers that propagate — two, and the count is scoped** (Plumb's seventh
-correction; earlier versions said "exactly one" and were one scope too wide):
+- **Whether any consumer outside this repo calls `readAgentSignalMembers`.** It
+  is exported; the enumeration in fact 11 covers in-repo callers only.
+- **Whether a failing directory read has actually occurred in production.** No
+  measurement; every fact above is read from source or probed locally.
+- **What a human user sees end to end when fact 4 fires.** Empty maps reach
+  `renderSignals`, but no one has run that path and looked at the output.
+- **Whether the same shape exists on other read paths** (`cloudWorkspaceDirectory`,
+  `settleSignalStatus`). Not enumerated.
+- **Whether the deliberate display fallback in fact 4 is the right design.** It
+  is deliberate and its cost is now written down; nobody has ruled on it.
 
-1. **`cli.ts:2147` → `signalDirectory` (`:1973`) → recipient resolution.** The
-   only *product* path that propagates: resolving a `--to` selector, so a failed
-   directory read fails the command with `member read failed (HTTP 500)` in
-   front of a person.
-2. **`readAgentSignalMembers` (`signals.ts:971-983`), `@deprecated` but
-   exported.** It awaits `readAgentSignalDirectory` and returns
-   `[...directory.members]`, propagating the error unchanged. It has **no
-   in-repo caller outside `tests/support/signal-fetch-deadline.test.ts:816`** —
-   but it is exported, so any consumer of this package gets the propagating
-   behaviour, and a claim scoped to "product paths" silently excludes them.
+## Why it is not fixed here
 
-Everything else is swallowed by design:
+It predates this workstream, D-058 changed nothing about it, and a fix needs its
+own change with its own control.
 
-- **`cli.ts:2025` `signalAuthorLabels` does NOT survive**, and "swallows" is
-  itself the wrong word for what happens. All four of its call sites (`:2191`,
-  `:2231`, `:2294`, `:2398`) wrap it in `settleSignalAuthorLabels`, whose
-  `.catch()` returns `{users: new Map(), agents: new Map()}`.
+## Correction history
 
-  **It converts a failure into a success.** The caller receives a *fulfilled*
-  promise carrying empty maps, and `renderSignals` (`signals.ts:1343`) reads
-  those maps for author names. So nothing downstream can distinguish
-  **"the directory is unreachable"** from **"this workspace has no members"** —
-  they are the same value. A person sees unlabelled authors either way.
+Kept because seven corrections to one paragraph is evidence about the form of
+that paragraph. Each claim below was made, then refuted; none was fabricated and
+each had a true observation underneath, stated at a scope that was wrong.
 
-  That makes this consumer categorically different from the listener rather
-  than a variation of it: **the listener swallows an error and then makes a
-  decision; the label path swallows an error and reports absence.** Only one of
-  them tells the user something untrue. It is not a bug — it is a deliberate
-  display fallback — but its cost had not been stated anywhere until now.
-- **The listener path** (`cli.ts:2951` → `resolveSenderProvenance`) loses it at
-  `engine.ts:434`.
+| # | Claim | Why wrong | Found by |
+|---|---|---|---|
+| 1 | The directory Error reaches `defaultRetryablePromptError`, which declines it, so an ask fails. | It never reaches that classifier; `engine.ts:434` swallows it and `:453` throws a typed retryable error instead. | Plumb |
+| 2 | "A transient 500 there is treated as permanent." | No layer makes that verdict. Absence of a retry decision is not a decision not to retry — the same conflation as D-054. | Plumb |
+| 3 | The consequence stated without a sender kind. | True for agent senders, silently false for human ones. | Verity |
+| 4 | "Discards status." | Layer 1 keeps status in the message; layer 2 loses it. Two layers were collapsed into one claim. | Plumb |
+| 5 | "A fourth surface of the same **shape** as D-051." | Same family, not the same shape — this branch created the difference by tagging status as identity on the signal read. | Verity |
+| 6 | `cli.ts:2025` surfaces the status. | All four of its call sites wrap it in `settleSignalAuthorLabels`. | Plumb |
+| 7 | `settleSignalAuthorLabels` "loses everything". | It converts a failure into a success carrying empty maps — indistinguishable from an empty workspace. | ClaudeCswarm |
+| 8 | "Exactly one consumer propagates." | The exported deprecated wrapper also propagates. The information had already been supplied and was dropped while compressing. | Plumb |
 
-**Layer 1 preserves the status only in prose**, interpolated into a message
-string — which is exactly the representation this repo now forbids branching on:
-`error.message` is presentation, control flow uses types and codes. So the
-status survives in the one form no caller is permitted to use. That is why
-"preserves status" and "is undiagnosable" are both true at once, and it is the
-same defect shape as the branch itself, one layer up.
-
-Note the asymmetry this branch created: the signal read now **tags** status as
-identity (`plainHttpStatus`); the directory read does not. They no longer fail
-the same way, so any claim of parity between them is dead on arrival — an
-earlier draft of this entry asserted exactly that parity and was wrong.
-
-**The finding is diagnostic loss, scoped to the body fields at the directory
-layer and to everything at the listener layer.** It is not a claim about retry
-behaviour.
-
-> ★ ~~**FALSE, and marked dead 2026-08-05 after a second Plumb refutation:**
-> "so **a transient 500 there is treated as permanent**."~~
->
-> That permanence verdict happens nowhere. A direct CLI call is one-shot by
-> design, which is not a retry decision at all; and in the listener the error is
-> swallowed and replaced by a typed retryable error (see the dead block below).
-> There is no path on which this read is "treated as permanent". The claim was a
-> consequence invented to make the diagnostic loss sound worse than it is.
-
-> ★ ~~**FALSE, written 2026-08-05 and corrected the same day. Kept, marked
-> dead:** "It reaches the engine through `resolveSenderProvenance`, where
-> `defaultRetryablePromptError` — now type-and-code based after D-053 —
-> correctly declines to retry a plain Error. So an ask **fails rather than
-> retrying**."~~
->
-> Refuted by Plumb. The directory Error **never reaches**
-> `defaultRetryablePromptError`. `engine.ts:434` catches it with a bare `catch`
-> that deliberately swallows it, leaving the fallback provenance with
-> `operatorId === null`; `engine.ts:453` then throws a typed
-> `SenderProvenanceUnavailableError`, and `defaultRetryablePromptError:247`
-> returns **true** for that type. So the ask **retries** without a model turn,
-> bounded by `maxPromptAttempts` — the opposite of what I wrote. The existing
-> test `agent prompts retry without a model turn when operator provenance is
-> unavailable` is the control, and it asserts exactly this.
->
-> I had read that test earlier the same day and noted that the plain Error is
-> converted to the typed one, then wrote the opposite into the artifact hours
-> later. The lesson is not "check the code" — I had checked it. It is that a
-> causal chain asserted from memory is an unverified claim no matter how
-> recently it was verified, and it went into an evidence file as fact.
-
-## Why two people asserted a consequence neither had traced
-
-Attribution, stated accurately because an inaccurate one is its own defect:
-**Verity wrote the false chain first**, in a message; ClaudeCswarm confirmed it
-independently and echoed it back; Verity then put it in this file. ClaudeCswarm
-has since taken responsibility for the framing, which is generous and not quite
-right — it originated here. Neither of us traced it. Plumb refuted it twice: the
-causal chain, then the permanence verdict that survived the first correction.
-
-The shared error is worth more than either sentence. **We recognised the D-058
-shape — untyped Error meets classifier — and asserted its consequence without
-checking whether the error reaches the classifier at all.** It does not:
-`engine.ts:434` swallows it deliberately, with a comment explaining the design.
-
-So, for the register: **a defect class is a place to look, never a finding.**
-D-053 tells you to go and read the site; it does not tell you what you will find
-there. Here the site was already correct, on purpose. Pattern-matching a class
-onto a site produces a confident answer about a path nobody walked — the same
-failure as a wrong-target grep, in prose instead of a shell.
-
-And the second refutation is its own lesson: correcting the *mechanism* left the
-*verdict* standing one paragraph above it. A correction has to be checked
-against every claim the original supported, not only the sentence that was
-challenged.
-
-**What is actually true.** The detail loss is real: the directory read parses no
-envelope and sets no identity tag, so `request_id` and `retryable` are
-discarded. But the consequence is not a failed ask — it is a **blinded** one.
-The failure is discarded twice — once by not parsing the body, again by the bare
-`catch` — so an operator debugging it has neither a `request_id` nor the status
-that caused it.
-
-Scoped, because an unqualified consequence is what went wrong twice already
-(`engine.ts:92-99` and `:453`):
-
-- **Agent sender:** `operatorId` is null without the directory, so
-  `SenderProvenanceUnavailableError` is thrown and the ask retries without a
-  model turn, surfacing as repeated `senderprovenanceunavailableerror`.
-- **Human sender:** `listenerSenderProvenance` sets `operatorId` from
-  `signal.from` regardless of the directory, so the guard does not fire. The
-  prompt proceeds with a null `senderName`/`operatorName` — degraded labels, no
-  error, nothing surfaced at all.
-
-The second case is the quieter one and it is the reason this is worth a register
-entry: a failing directory read can silently downgrade prompt context with no
-signal to anyone.
-
-D-058 changed nothing about it: the `member read` prefix never matched the
-`signal read` regex either. It is a fourth surface of the same FAMILY as D-051 —
-server failure detail discarded before anyone can act on it — but not the same
-shape: D-051 was a client retrying through an instruction it never read, and
-this is a client that never captures the instruction at all. It predates this
-workstream, and fixing it belongs in its own change with its own control.
+Seven of eight were found by a reader who did not write the text. The one Verity
+found came from applying a lesson Plumb had given minutes earlier. Two rules
+written during the sequence — "cite the control or mark unverified" and "name
+the layer and the caller" — were each defeated by the next correction.
