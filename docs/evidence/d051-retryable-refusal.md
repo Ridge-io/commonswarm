@@ -761,3 +761,75 @@ Both points defeat the proposal independently.
   already written and tested in `isRestartableListenerStop` — would close that
   without costing a single request. Recorded as a proposal, not built, and not
   part of this decision.
+
+---
+
+# D-056 follow-up — a restartable exit status
+
+**Approved by ClaudeCswarm after the D-056 resolution; built narrow.**
+
+Deciding not to retry left fail-fast as the policy, and a policy is only real if
+something can act on it. D-055 made the terminal condition parseable on stdout,
+which serves any host consuming the NDJSON stream. It does not serve the
+supervisor forms that read only an exit status — a shell `until` loop, a service
+unit, a respawn-on-nonzero runner — and every cswarm failure exited `1`, so none
+of them could tell *"refused, a later attempt may succeed"* from *"credential
+revoked, do not restart"*.
+
+`inbox --follow` now exits **75** (`EXIT_RESTARTABLE`, sysexits `EX_TEMPFAIL`:
+"temporary failure; the user is invited to retry") when the stop is restartable,
+and `1` otherwise. Nothing else changed: same stderr line, same frame, same
+requests.
+
+## One predicate, so the surfaces cannot drift
+
+`isRestartableReadError` in `signals.ts` is now the single source of the
+judgement. Both callers use it:
+
+- `isRestartableListenerStop` (`runtime.ts`) — the supervisor's bounded restart,
+  which adds only "the stop must be `fatal`" on top.
+- the follow CLI's exit status.
+
+`runtime.ts` no longer imports the three underlying classifiers separately,
+which is what would have let the two lists drift apart.
+
+## Causal control
+
+`tests/p1-cli/follow-backoff-e2e.test.ts`, through the real CLI against the
+loopback stub — the same harness, extended to serve any failure status:
+
+| stop | exit |
+|---|---:|
+| refused 500 (`retryable:false`) | **75** |
+| 401 revoked credential | **1** |
+
+The test asserts the two differ, not merely that each matches — if they were
+equal a shell loop could not separate them, which is the entire point.
+
+Both arms must exit naturally: an early `SIGTERM` from the harness replaces the
+status with `null`, which is the quantity under test. The first version of this
+test killed at 3 frames and measured `null`; that is fixed and noted because it
+is the same wrong-target failure mode as D-055.
+
+Inversion — restore `throw stop.error` unconditionally:
+
+```
+-> D-056 test fails: actual 1, expected 75
+```
+
+## Gates
+
+```
+npm test            -> tests 455, pass 455, fail 0
+npm run test:p1-cli -> tests 152, pass 152, fail 0   (was 149 before the e2e harness)
+npm run build       -> clean
+npm run check:tests -> clean
+```
+
+## Not established
+
+- **No supervisor anywhere consumes exit 75 yet.** This makes fail-fast
+  actionable; it does not act on it. Whether the connect prompt should tell
+  hosts to restart on 75 is a separate decision and is not made here.
+- The 25% cold-start figure this was motivated by remains server-side and open,
+  and remains regime-dependent (25 / 50 / 67% across one day).

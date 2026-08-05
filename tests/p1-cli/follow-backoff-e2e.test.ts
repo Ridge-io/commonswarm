@@ -24,6 +24,7 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
+import { EXIT_RESTARTABLE } from "../../src/cli.js";
 
 const WORKSPACE = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const AGENT_TOKEN = `swm_agt_${"A".repeat(43)}`;
@@ -60,6 +61,7 @@ function signalRow(id: string) {
 async function startStub(
   outcomes: readonly boolean[],
   failureBody: Record<string, unknown>,
+  failureStatus = 500,
 ): Promise<{ server: Server; url: string; reads: () => number }> {
   let reads = 0;
   const server = createServer((req, res) => {
@@ -87,7 +89,7 @@ async function startStub(
         );
         return;
       }
-      res.writeHead(500, { "content-type": "application/json" }).end(
+      res.writeHead(failureStatus, { "content-type": "application/json" }).end(
         JSON.stringify(failureBody),
       );
     });
@@ -242,4 +244,44 @@ test("D-051/D-055: a refused read exits without retrying and its last line is a 
   } finally {
     await new Promise<void>((closed) => stub.server.close(() => closed()));
   }
+});
+
+test("D-056: the exit status separates a refusal from a revoked credential", async () => {
+  // A refused 500 — the server said do not retry THIS request, but a later
+  // attempt may still succeed, so a supervisor should restart.
+  const refused = await startStub(
+    [false],
+    {
+      error: "internal_error",
+      request_id: "9d1f4b2c-0000-4000-8000-abcdefabcdef",
+      retryable: false,
+    },
+  );
+  let refusedCode: number | null;
+  try {
+    // Never kill early: SIGTERM would replace the natural exit status with
+    // null, which is the very thing under test. Both arms exit on their own.
+    refusedCode = (await followUntil(refused.url, Number.POSITIVE_INFINITY)).code;
+  } finally {
+    await new Promise<void>((closed) => refused.server.close(() => closed()));
+  }
+
+  // A revoked credential — refuses identically forever; restarting is a spin.
+  const revoked = await startStub(
+    [false],
+    { error: "unauthorized" },
+    401,
+  );
+  let revokedCode: number | null;
+  try {
+    revokedCode = (await followUntil(revoked.url, Number.POSITIVE_INFINITY)).code;
+  } finally {
+    await new Promise<void>((closed) => revoked.server.close(() => closed()));
+  }
+
+  assert.equal(refusedCode, EXIT_RESTARTABLE, "a refusal must be restartable");
+  assert.equal(revokedCode, 1, "a revoked credential must not be restartable");
+  // The control discriminates. If these were equal a shell until-loop would be
+  // unable to tell the two apart, which is the whole point of the change.
+  assert.notEqual(refusedCode, revokedCode);
 });

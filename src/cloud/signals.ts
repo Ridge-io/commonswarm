@@ -481,6 +481,25 @@ function isTransportFollowMessage(error: unknown): boolean {
       error.message === "signal read could not reach the cloud service");
 }
 
+/**
+ * Whether a failed read could plausibly succeed on a later attempt.
+ *
+ * The single source for that judgement. `isRestartableListenerStop` (the
+ * supervisor's bounded restart) and the follow CLI's exit status both call
+ * this, so the two surfaces cannot drift into disagreeing about whether the
+ * same failure is worth trying again.
+ *
+ * A credential refusal and a 4xx will refuse identically forever, and a
+ * malformed body is a protocol defect. Everything else — 5xx, a server
+ * refusal, transport, timeouts — may clear on its own.
+ */
+export function isRestartableReadError(error: unknown): boolean {
+  if (isFollowCredentialFailure(error)) return false;
+  if (isFatalFollowError(error)) return false;
+  if (isMalformedFollowMessage(error)) return false;
+  return true;
+}
+
 /** A malformed body/row: a protocol defect, so repeating the read cannot help. */
 export function isMalformedFollowMessage(error: unknown): boolean {
   if (error instanceof SignalMalformedError) return true;

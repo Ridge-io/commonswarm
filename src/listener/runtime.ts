@@ -18,9 +18,8 @@ import {
 } from "../cloud/delivery.js";
 import {
   decayFollowAttempt,
-  isFatalFollowError,
   isFollowCredentialFailure,
-  isMalformedFollowMessage,
+  isRestartableReadError,
   isRetryableFollowError,
   nextFollowBackoffMs,
   readAgentSignalPage,
@@ -195,10 +194,9 @@ export type ListenerRuntimeStop =
  */
 export function isRestartableListenerStop(stop: ListenerRuntimeStop): boolean {
   if (stop.reason !== "fatal") return false;
-  if (isFollowCredentialFailure(stop.error)) return false;
-  if (isFatalFollowError(stop.error)) return false;
-  if (isMalformedFollowMessage(stop.error)) return false;
-  return true;
+  // Shared with the follow CLI's exit status so the two cannot disagree about
+  // whether the same failure is worth another attempt.
+  return isRestartableReadError(stop.error);
 }
 
 /**
