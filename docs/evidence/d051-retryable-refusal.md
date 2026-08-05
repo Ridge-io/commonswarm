@@ -598,3 +598,113 @@ getting *before* this decision rather than after.
 - Whether the 6 receivers that reached ready then survived: Wren killed them at
   12s and did not retain the frames, so there is a cold-start death rate but no
   post-ready survival rate.
+
+---
+
+# Companion 1 is INERT in current production — and now has end-to-end evidence
+
+**Found by Wren, 2026-08-05, confirmed in the code.**
+
+## The interaction between my own two changes
+
+`attempt += 1` sits *inside* the `isRetryableFollowError` branch of
+`runInboxFollow`. The D-051 veto makes that branch unreachable for a refused
+failure. So:
+
+> Every failure in current production is refused → the veto fires first → the
+> read is fatal → the counter is never touched.
+
+Wren verified the premise rather than assuming it — 30 sequential authenticated
+reads: `200 ×10`, `500 ×20`, and of those twenty failures **`retryable:false`
+×20, `retryable:true` ×0**. There is currently no retryable failure mode on
+this path for the decay to act on.
+
+Consequences, stated plainly:
+
+- **Companion 1 has no effect in production today.** It is insurance for a
+  failure mode that is not occurring — a 429, or a 5xx the server classifies
+  retryable. It is not part of the fix for the current incident.
+- It was therefore **unmeasurable in production**, and Wren's null result is
+  structural, not the weak-signal null I had warned about. Post-fix cannot emit
+  a `retrying` frame at all while every failure is refused, so max-attempt is
+  *undefined* for that arm rather than smaller.
+
+## What Wren's measurement did validate
+
+The **diagnosis**, not the remedy. Paired window, same credential, 112s:
+
+```
+PRE-FIX  fb94d19: 28 retrying frames over 14 failure events
+                  attempt histogram {1: 14, 2: 9, 3: 5}, MAX 3
+POST-FIX 5886fa4: zero retrying frames, immediate exit
+```
+
+A pre-fix ceiling of exactly 3 is what the reset defect predicts: any success
+zeroes the counter, so `attempt` cannot exceed the current consecutive-failure
+streak. Wren correctly keeps this separate from whether decaying by one is the
+right remedy. Treat 3 as observed-ceiling, not proven-ceiling — one window.
+
+## The end-to-end gate that supplies the missing evidence
+
+`tests/p1-cli/follow-backoff-e2e.test.ts` (new; reached by the
+`tests/p1-cli/**/*.test.ts` glob, so `npm run test:p1-cli` runs it — 151 tests
+now, was 149).
+
+It spawns **the real CLI** against a loopback stub and reads its stdout, rather
+than calling a helper. That is deliberate: D-055 shipped a defect every unit
+test missed because the tests called the helper directly while the CLI path
+forgot to. A test that passes against the wrong target is not a test.
+
+The stub serves the retryable failure mode production is not currently
+producing — `retryable: true` 500s — so the decay is reachable:
+
+| arm | scripted outcomes | attempts observed |
+|---|---|---|
+| fixed | fail, fail, fail, **success**, fail | `[1, 2, 3, 3]` |
+| `attempt = 0` inversion | identical | `[1, 2, 3, 1]` |
+
+Both inversions discriminate, each failing only its own test:
+
+```
+restore `attempt = 0`               -> the decay test fails with actual [1,2,3,1]
+remove the terminal frame emission  -> the refusal test fails on unparsed stdout
+```
+
+The second test also covers the veto and D-055 end to end: a refused read
+produces zero retry frames, exits after exactly 2 reads, and its last stdout
+line parses as an `error` frame with `server_refused: true`.
+
+## Failure rate is drifting — read every earlier number as a snapshot
+
+Wren measured the same path at three times today: **25%** (cold-start sample),
+**50%** (interleaved, concurrency 1), **67%** (30-read sample). No single-
+session rate from this incident should be treated as a constant, including the
+ones quoted earlier in this document.
+
+## Request ids for the operator
+
+Eight complete ids, harvested from CLI output now that the client surfaces them
+(collection needs no dashboard; only reading the server log does):
+
+```
+60a897bd-1826-42a6-bbd8-38198fc0cb69
+5bdd7856-7334-45bf-bfa1-ff45af5ac17d
+a94ec2e2-e8bd-44b6-a0a5-7ab7d8489823
+9eb59cf3-70fb-4c2c-94aa-b443f25c5b7d
+5868e561-c742-472c-a207-41a04cebb772
+4a2e76b2-54aa-439e-8444-b5cf0bba7f74
+2e34faad-34df-481a-ad37-ccd4c66610a9
+084ecea1-cde8-492f-ad57-f191d930aa88
+```
+
+What to read in the function log line for any of them:
+
+- `code` **null** and `name` not `PostgresError` → `retryable:false` was a false
+  negative from failed code extraction, never a judgment, and everything
+  downstream of it was reasoning about a default value.
+- `code` **populated** → a real classification, and since the retryable set is
+  small and public (connection classes plus `40001`, `40P01`, `55P03`, `57014`,
+  `53300`, `57P03`), any populated code still yielding `false` sits outside it
+  and names the ceiling directly.
+
+This is also the log line that settles D-056.
