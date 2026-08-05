@@ -124,3 +124,136 @@ New observers cover owner grouping, shared token adoption, entity-panel behavior
 - The rendered work used the built sample workspace. It did not establish behavior with production workspace data, a production revoked credential, or a real browser-authenticated post.
 - The site tests and sample interactions establish DOM, CSS, command shape, focus, and local presentation behavior. They do not establish mention delivery, multi-client mention persistence, notification, or agent acknowledgement.
 - Visual inspection covered a 1440 × 1000 desktop viewport in light and dark. It did not cover every viewport, browser, assistive technology, or OS rendering combination.
+
+---
+
+# Claude listener provider report
+
+Date: 2026-08-04 (America/Chicago)
+Branch: `feat/claude-provider`
+
+## Result
+
+CommonSwarm now accepts an explicit `--provider claude` listener backed by
+`@agentclientprotocol/claude-agent-acp@0.64.2`. The bridge is pinned exactly,
+resolved to one absolute realpath before probe and spawn, version-probed with
+the child environment, and closed with verified SIGTERM → SIGKILL → exit
+teardown.
+
+The listener uses the operator-selected project cwd and normal Claude Code
+home/keychain state. It does not create an isolated home or move a worker into
+a temporary canary cwd. A Claude-specific canary asks the Write tool to target
+a unique `/tmp` sentinel while the host denies permission; the real bridge
+emitted the permission request and correlated denied tool result, and the
+sentinel remained absent. The code removes the sentinel if a future bridge
+writes it before denial.
+
+Omitting `--provider` now fails before target, credential, or provider work.
+The error lists Grok, OpenCode, and Claude with their pinned install/sign-in
+hints, and says that `working-on`, `note`, `ask`, and `feed` work without a
+listener while detached live receipt needs an adapter. The dashboard handoff
+uses `--provider claude`, includes the exact bridge install command, and carries
+the same listener-versus-core-command distinction.
+
+## Diff scope
+
+- Added `src/host/claude.ts` and `src/listener/claude-model.ts`.
+- Added the Claude version bound and host/listener exports.
+- Added Claude to durable status parsing, detached supervisor argv, CLI
+  provider selection, runtime construction, host limits, and failure copy.
+- Added `--claude-executable`; detached starts resolve it before spawning the
+  supervisor. Claude rejects `--model` and `--effort` because no bridge mapping
+  for either was measured.
+- Bumped the CLI manifest and lockfile to 0.1.6. The independent site minimum
+  is also 0.1.6 because its handoff now prints `--provider claude`, which older
+  CLIs reject.
+- Updated the site agent handoff and its observer tests.
+- Added named root tests for the host, model, and explicit CLI provider; the CLI
+  test is also under the `test:p1-cli` glob. Existing detached Grok process
+  tests now select `--provider grok` explicitly.
+- No `supabase/` path changed. No Supabase function or database deployment ran.
+
+## What came from OpenCode
+
+Only these three mechanisms were carried over:
+
+1. PATH walk plus `realpathSync`, so version probe and spawn use one resolved
+   executable.
+2. Version probing with the same sanitized environment used for the ACP child.
+3. Verified SIGTERM → bounded wait → SIGKILL → confirmed-exit teardown.
+
+The OpenCode isolated-home, auth-copy, owner-marker, stale-home sweep,
+forced-config probe, and canary-cwd lifecycle were not copied.
+
+## Verification
+
+Baseline from the goal contract and final result:
+
+- Root `npm test`: 399/399 → **429/429**, 0 failures.
+- `npm run test:p1-cli`: 143/143 → **149/149**, 0 failures.
+- Clean-from-absent site build: 8 routes built.
+- `npm --prefix site test`: **142/142**, 0 failures.
+- `npm run build`: exit 0.
+- `npm run check:tests`: exit 0.
+- `npm run check:edge`: exit 0; command, read, and capability entrypoints checked.
+- `git diff --check`: exit 0.
+- Old allowlist assertion: 0 occurrences of
+  `this release supports --provider grok or --provider opencode`, with 1
+  occurrence of `--provider is required` as the same-file positive control.
+- All three new test files are named by the root `test` script; the provider
+  CLI test is also reached by `test:p1-cli`.
+
+`site/.env` was absent. The site build is evidence for source and rendered
+layout, not a deployable backend-connected artifact. Nothing was deployed.
+
+## Live measurements
+
+The exact global package was installed:
+
+```text
+npm install -g @agentclientprotocol/claude-agent-acp@0.64.2
+command -v: /opt/homebrew/bin/claude-agent-acp
+realpath: /opt/homebrew/lib/node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js
+--version: 0.64.2
+```
+
+Through CommonSwarm's own `openClaudeAcpSession`, a real authenticated bridge
+turn returned:
+
+```json
+{"protocolVersion":1,"version":"0.64.2","stopReason":"end_turn","message":"CLAUDE_ACP_OK"}
+```
+
+Through `ClaudeListenerModel.start()`, the real permission canary passed and
+the model closed with confirmed child exit.
+
+The requested real-workspace `cswarm listen start --provider claude` signal
+journey was not completed. This machine's saved human refresh token was
+rejected, its identified stored agent successor had expired before the run,
+and the other stored successor lacked usable principal/run metadata. I did not
+mint a replacement or change production state. Consequently this run did not
+establish a real signal receipt or a non-null `lastSignalId`.
+
+## Not established
+
+- Claude authentication through `ANTHROPIC_API_KEY`. The sanitizer strips that
+  variable; keychain/OAuth is the measured path.
+- Behavior on a machine with no Claude authentication at all. Failure copy
+  points to Claude Code keychain/OAuth sign-in, but that stranger path was not
+  executed here.
+- Behavior on a machine without Claude Code installed. The bridge embeds the
+  Claude Agent SDK and may not need a separate `claude` binary, but this machine
+  has Claude Code.
+- Claude configurations that rely on `CLAUDE_CONFIG_DIR` instead of normal
+  `HOME`. The measured sanitizer strips every `CLAUDE_*` variable, and this
+  adapter keeps that measured boundary.
+- Forward compatibility with any bridge version other than 0.64.2.
+- Native Windows execution. A pure process-boundary test covers npm's global
+  `.cmd` shim resolution and Node launch shape, but this run used macOS. The
+  shared child-environment allowlist does not establish Windows home, PATH
+  casing, or `SystemRoot` behavior.
+- Publication of the v0.1.6 CLI artifact. This branch was committed without a
+  push as requested. Publish v0.1.6 before deploying the site; otherwise the
+  0.1.6 download pin and minimum-version handoff cannot complete their install.
+- A production workspace signal handled by the Claude listener, or
+  `lastSignalId` persistence from that live service path.

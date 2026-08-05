@@ -8,6 +8,7 @@ import type {
 } from "node:child_process";
 import {
   buildListenerChildArgs,
+  isNativeAbsolutePath,
   listenerNodeExecArgv,
   spawnDetachedListener,
   type ListenerChildSpec,
@@ -88,6 +89,65 @@ test("opencode detached argv pins provider, requires absolute executable, reject
       }),
     /absolute --opencode-executable/i,
   );
+});
+
+test("claude detached argv pins the resolved bridge and rejects unmapped flags", () => {
+  const args = buildListenerChildArgs({
+    ...SPEC,
+    provider: "claude",
+    model: undefined,
+    effort: undefined,
+    claudeExecutable: "/opt/claude-agent-acp",
+    executable: undefined,
+  });
+  assert.equal(args[args.indexOf("--provider") + 1], "claude");
+  assert.equal(
+    args[args.indexOf("--claude-executable") + 1],
+    "/opt/claude-agent-acp",
+  );
+  assert.equal(args.includes("--grok-executable"), false);
+  assert.equal(args.includes("--opencode-executable"), false);
+  assert.throws(
+    () =>
+      buildListenerChildArgs({
+        ...SPEC,
+        provider: "claude",
+        effort: "low",
+        model: undefined,
+        claudeExecutable: "/opt/claude-agent-acp",
+      }),
+    /effort.*claude/i,
+  );
+  assert.throws(
+    () =>
+      buildListenerChildArgs({
+        ...SPEC,
+        provider: "claude",
+        effort: undefined,
+        model: "claude-opus-4-1",
+        claudeExecutable: "/opt/claude-agent-acp",
+      }),
+    /model.*claude/i,
+  );
+  assert.throws(
+    () =>
+      buildListenerChildArgs({
+        ...SPEC,
+        provider: "claude",
+        effort: undefined,
+        model: undefined,
+        claudeExecutable: "claude-agent-acp",
+      }),
+    /absolute --claude-executable/i,
+  );
+});
+
+test("claude detached path validation accepts native Windows absolute paths", () => {
+  const windowsPath = String.raw`C:\Program Files\nodejs\claude-agent-acp.cmd`;
+  assert.equal(isNativeAbsolutePath(windowsPath, "win32"), true);
+  assert.equal(isNativeAbsolutePath("claude-agent-acp.cmd", "win32"), false);
+  assert.equal(isNativeAbsolutePath("/opt/claude-agent-acp", "darwin"), true);
+  assert.equal(isNativeAbsolutePath("claude-agent-acp", "linux"), false);
 });
 
 test("credential travels only over child stdin, never argv or env", async () => {

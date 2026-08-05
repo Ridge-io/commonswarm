@@ -51,6 +51,16 @@ test("listenerHostLimits grok does not claim OpenCode project-config disable", (
   assert.doesNotMatch(text, /clean temporary home|empty cwd|hooks are disabled/);
 });
 
+test("listenerHostLimits claude states measured auth and no temporary lifecycle", () => {
+  const limits = listenerHostLimits("claude");
+  assert.match(limits.host_configuration, /claude-agent-acp 0\.64\.2/i);
+  assert.match(limits.host_configuration, /keychain\/OAuth/i);
+  assert.match(limits.host_configuration, /ANTHROPIC_API_KEY is stripped/);
+  assert.match(limits.local_state_lifecycle, /does not create a separate Claude home/i);
+  assert.match(limits.local_state_lifecycle, /temporary worker cwd/i);
+  assert.doesNotMatch(limits.human_copy, /private 0700|isolated|canary cwd/i);
+});
+
 test("bounds.ts does not claim wildcard stops project allow merging", () => {
   const source = readFileSync(
     resolve("src/host/bounds.ts"),

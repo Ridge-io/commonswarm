@@ -10,27 +10,35 @@ an invite email and a roster filter. No field here is a candidate for removal.
 
 ## The CLI is where the principle is broken
 
-`cswarm listen start` (`src/cli.ts:324`) presents **thirteen** flags:
+~~`cswarm listen start` presents thirteen flags.~~ That audited count is dead;
+the current surface has fourteen after adding the Claude executable override:
 
 ```
 --agent-token-stdin [--url <url> --anon-key <key>] --workspace-id <uuid>
-[--provider grok|opencode] [--cwd <absolute-path>] [--model <model>] [--effort <level>]
+--provider grok|opencode|claude [--cwd <absolute-path>] [--model <model>] [--effort <level>]
 [--permissions deny|allow] [--grok-executable <path>] [--opencode-executable <path>]
-[--foreground] [--json]
+[--claude-executable <path>] [--foreground] [--json]
 ```
+
+**Status correction (2026-08-04):** ~~`--provider` is optional and defaults to
+`grok`~~ — dead. The Claude adapter change makes provider selection explicit;
+uncertain detection now produces a question with three install hints instead of
+choosing a runtime. Executable flags remain overrides after PATH resolution.
 
 This is the surface a person meets when connecting their first agent — the step that decides whether
 the product works for them. Four of these can be answered by the system.
 
 | Flag | Today | Could be | Notes |
 |---|---|---|---|
-| `--provider` | defaults to `"grok"` (`cli.ts:2547`) | **detected** | The environment says which agent CLI is running. `swarm/src/hooks.ts` `detectHost()` is the prior art. A fixed default of `grok` is wrong for every opencode user, and wrong silently. |
+| `--provider` | **required** | detected only with positive evidence | The environment may say which agent CLI is running. `swarm/src/hooks.ts` `detectHost()` is prior art, but inherited variables can mislabel child agents. Until detection is trustworthy, the CLI asks explicitly. |
 | `--workspace-id` | **required** | **detected when unambiguous** | `src/cloud/workspaces.ts:602` already lists a session's workspaces. A user with exactly one workspace is being asked to paste a UUID the system can see. Ask only when the count is greater than one. |
-| `--grok-executable` / `--opencode-executable` | explicit path | **resolved from `PATH`** | Both binaries are normally on `PATH`. Keep the flags as overrides. |
+| provider executable overrides | explicit path | **resolved from `PATH`** | Grok, OpenCode, and Claude binaries are normally on `PATH`. Keep the flags as overrides. |
 | `--model` | explicit | **removed from the prompt** | Already designed: `docs/design/2026-08-03-AGENT-SELF-IDENTIFY.md`. |
 
-Target: **`cswarm listen start --agent-token-stdin`** for the common case, with every other flag
-available as an override.
+~~Target: `cswarm listen start --agent-token-stdin` for the common case.~~ That
+target is dead until provider detection can return positive evidence. Current
+syntax requires `--provider grok|opencode|claude`; other flags remain available
+as overrides.
 
 ## The constraint
 
@@ -40,9 +48,9 @@ family is worse than not knowing it."*
 
 Applied here:
 
-- **`--provider` detected wrongly launches the wrong runtime.** If detection is uncertain, ask. Do not
-  fall back to a fixed `grok`, which is today's behaviour and is a silent wrong answer rather than a
-  question.
+- **`--provider` detected wrongly launches the wrong runtime.** If detection is uncertain, ask.
+  ~~Fall back to a fixed `grok`, which is today's behavior.~~ That behavior is dead; the CLI now
+  requires explicit provider selection.
 - **`--workspace-id` must not be guessed.** Auto-select only at a count of exactly one. Two workspaces
   means asking, because posting a signal into the wrong workspace is visible to the wrong people.
 - **Executable resolution should report what it chose**, so a wrong `PATH` entry is diagnosable.

@@ -14,6 +14,8 @@ export const ACP_CANARY_TIMEOUT_MS = 30_000;
 export const GROK_MEASURED_VERSION = "0.2.117";
 /** Measured OpenCode CLI pin for the second ACP host adapter. */
 export const OPENCODE_MEASURED_VERSION = "1.18.10";
+/** Measured claude-agent-acp bridge pin for the Claude Code adapter. */
+export const CLAUDE_ACP_MEASURED_VERSION = "0.64.2";
 export const ACP_PROTOCOL_VERSION = 1;
 
 /**
