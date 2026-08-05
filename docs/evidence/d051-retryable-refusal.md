@@ -452,9 +452,10 @@ where it is the outer `if (inbox && args.has("follow"))` guard with the ndjson
 enforcement at `:2328-2329` — verified at that SHA. After main's additions
 `:2327` resolves to the `"json"` flag entry instead. It still RESOLVES, to the
 wrong thing, which is the kind a reader believes; found by Plumb on the merge.
-The SHA was recovered with `git log -S 'cli.ts:2327'`, which finds the commit
-that introduced the citation and is therefore by construction the SHA at which
-it was true) and the connect prompt
+The SHA was LOCATED with `git log -S 'cli.ts:2327'` and then INDEPENDENTLY
+VERIFIED by `git show 6d5a478:src/cli.ts`. Those are two steps and the second is
+not optional: `-S` finds where the string was introduced **including if it
+arrived wrong**, so it yields a candidate, not a proof) and the connect prompt
 points non-Grok hosts at it, so the stream is machine-consumed by definition.
 The terminal condition was written as bare text:
 
