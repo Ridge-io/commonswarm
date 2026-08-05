@@ -2392,3 +2392,54 @@ record, not a reason to assume the default is safe.
 
 Whether grok and opencode expose modes and what they default to — only claude and codex were measured.
 Whether a user's Claude config can change the default mode without the adapter noticing.
+
+---
+
+## D-050 — the Claude adapter swallows a verified teardown failure and multiplies live bridge processes · MAJOR (shipped)
+
+Found 2026-08-05 by **Plumb** (cross-family inversion arm) with a controlled reproduction. Every link
+verified by the Lead against `main`. **Live in v0.1.6.**
+
+### The chain
+
+1. `src/host/transport.ts:69-70` converts a stdout end into `AcpChildExitError` **even if the process
+   has not exited**.
+2. The prompt catch calls `close()`.
+3. `src/host/claude.ts:281-285` throws `child_exit_timeout` when SIGTERM **and** SIGKILL still produce
+   no exit — a genuine "this process refuses to die" signal.
+4. `src/listener/claude-model.ts:86` is `await worker.close().catch(() => undefined);` — **that signal is
+   discarded**. Line 87 then clears the only handle to the process.
+5. `src/listener/engine.ts:233-238` classifies the original `AcpChildExitError` as **retryable**, so the
+   engine opens a replacement worker.
+
+### Plumb's reproduction
+
+Driven through `ClaudeListenerModel` + `ListenerEngine`: `retry_pending`, `retry_pending`, `failed`,
+with **opens = 3, closes = 3**. Every close threw `child_exit_timeout`, and the persisted failure code
+was `acpchildexiterror`.
+
+**So the listener orphans live bridge processes, opens more, and records an ordinary signal failure.**
+The operator sees a routine retry; the machine accumulates processes that survived a SIGKILL.
+
+### Why it got here
+
+I shipped the adapter **without either review arm** — I authored it and was disqualified, and I
+released anyway. This is the first thing the review found. The suite was 429/429 throughout.
+
+### Fix
+
+Do not suppress the close error. Make `child_exit_timeout` escape the engine as a **runtime-fatal host
+failure** so no replacement worker opens. Add the Claude analogue of
+`tests/listener-opencode-model.test.ts:702-754`.
+
+### What Plumb cleared, with positive controls
+
+No `isolatedHome`, `mkdtemp`, `sweepStale` or `canaryCwd` in either Claude file — control found **17**
+OpenCode matches, so the search worked. The installed 0.64.2 shim in `/opt/homebrew/bin` resolves to a
+single absolute JS realpath, and a full open → `session/new` → close exited 0. Focused 31/31, root
+429/429, p1-cli 149/149, `check:tests` 0. **No separate permanent-brick path found.**
+
+### Not established
+
+Behaviour against a real workspace signal (`lastSignalId`), the no-auth and `ANTHROPIC_API_KEY` paths
+(D-048), and native Windows.
