@@ -1358,6 +1358,24 @@ export type FollowFrame =
     attempt: number;
     delay_ms: number;
     ts: string;
+  }
+  /**
+   * D-055: the stream's terminal condition. `--ndjson` exists for machine
+   * consumption — the connect prompt points non-Grok hosts at it — so a fatal
+   * stop written as bare text made the stream's LAST word the one line a
+   * wrapper cannot parse. The information was already there; only the
+   * encoding was wrong.
+   */
+  | {
+    type: "error";
+    reason: FollowStopReason;
+    /** Why the server said it failed, when it said anything. */
+    server_error: string | null;
+    request_id: string | null;
+    /** True only when the server explicitly refused a retry. */
+    server_refused: boolean;
+    message: string;
+    ts: string;
   };
 
 export type FollowStopReason =
@@ -1370,6 +1388,28 @@ export type FollowStopReason =
 export interface FollowStop {
   reason: FollowStopReason;
   error?: Error;
+}
+
+/**
+ * The terminal frame for a follow stop that is not a clean cancellation.
+ * Returns null for "cancelled": an operator stop is not an error, and the
+ * stream simply ends.
+ */
+export function followStopFrame(
+  stop: FollowStop,
+  nowMs: number,
+): Extract<FollowFrame, { type: "error" }> | null {
+  if (stop.reason === "cancelled") return null;
+  const envelope = followErrorEnvelope(stop.error);
+  return {
+    type: "error",
+    reason: stop.reason,
+    server_error: envelope.error,
+    request_id: envelope.requestId,
+    server_refused: envelope.retryable === false,
+    message: stop.error?.message ?? `inbox follow stopped (${stop.reason})`,
+    ts: followTs(nowMs),
+  };
 }
 
 /** Bounded FIFO set of signal ids seen during one follow process. */
@@ -1653,6 +1693,17 @@ export async function runInboxFollow(options: {
     return cancelled() ? "cancelled" : "ok";
   };
 
+  /**
+   * D-055: the terminal condition is part of the stream, so the loop that owns
+   * the stream emits it. Leaving this to each caller is what put a bare,
+   * unparseable line at the end of an --ndjson stream.
+   */
+  const stopWith = (stop: FollowStop): FollowStop => {
+    const frame = followStopFrame(stop, now());
+    if (frame) options.emit(frame);
+    return stop;
+  };
+
   while (true) {
     if (cancelled()) return { reason: "cancelled" };
 
@@ -1730,10 +1781,10 @@ export async function runInboxFollow(options: {
         return { reason: "cancelled" };
       }
       if (isCredentialFailure(error)) {
-        return {
+        return stopWith({
           reason: "credential",
           error: error instanceof Error ? error : new Error(String(error)),
-        };
+        });
       }
       if (isAbortError(error)) {
         return { reason: "cancelled" };
@@ -1756,21 +1807,21 @@ export async function runInboxFollow(options: {
         continue;
       }
       if (isMalformedFollowMessage(error)) {
-        return {
+        return stopWith({
           reason: "malformed",
           error: error instanceof Error ? error : new Error(String(error)),
-        };
+        });
       }
       if (isFatalFollowError(error)) {
-        return {
+        return stopWith({
           reason: "fatal_http",
           error: error instanceof Error ? error : new Error(String(error)),
-        };
+        });
       }
-      return {
+      return stopWith({
         reason: "error",
         error: error instanceof Error ? error : new Error(String(error)),
-      };
+      });
     }
   }
 }

@@ -113,6 +113,7 @@ import {
 } from "./cloud/workspaces.js";
 import {
   askWaitJsonPayload,
+  followStopFrame,
   formatFollowFrame,
   isFollowCredentialFailure,
   parseWaitSeconds,
@@ -2518,6 +2519,9 @@ async function runInboxFollowCommand(args: Arguments): Promise<void> {
     if (stop.reason === "cancelled") {
       return;
     }
+    // D-055: the terminal frame is emitted by runInboxFollow through the same
+    // emit callback as the rest of the stream, so it cannot be forgotten here.
+    // This throw is the human-facing exit status, not the machine surface.
     if (stop.error) throw stop.error;
     throw new Error(`inbox follow stopped (${stop.reason})`);
   } finally {

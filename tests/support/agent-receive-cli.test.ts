@@ -27,6 +27,7 @@ import {
   compareSignalCursor,
   decayFollowAttempt,
   followHttpDetails,
+  followStopFrame,
   formatFollowFrame,
   isFatalFollowError,
   isFollowCredentialFailure,
@@ -516,9 +517,13 @@ test("follow stops on non-credential fatal 4xx without retrying", async () => {
     emit: (frame) => frames.push(frame),
   });
   assert.equal(stop.reason, "fatal_http");
-  assert.equal(frames.length, 0);
   assert.equal(arms, 1);
   assert.match(stop.error?.message ?? "", /HTTP 400/);
+  // D-055: no ready and no retrying frame before ready, but the terminal
+  // condition IS in the stream — a receiver that dies before ready is exactly
+  // when a wrapper has nothing else to read.
+  assert.equal(frames.filter((f) => f.type !== "error").length, 0);
+  assert.deepEqual(frames.map((f) => f.type), ["error"]);
 });
 
 test("follow rearm after signal and suppresses duplicate live rows", async () => {
@@ -611,8 +616,15 @@ test("follow secret/credential absence never emits ready", async () => {
     emit: (frame) => frames.push(frame),
   });
   assert.equal(stop.reason, "credential");
-  assert.equal(frames.length, 0);
   assert.equal(stop.error, secretMissing);
+  // No ready, and the terminal frame carries no server detail because this
+  // failure never crossed the network.
+  assert.deepEqual(frames.map((f) => f.type), ["error"]);
+  const terminal = frames[0];
+  assert.ok(terminal?.type === "error");
+  assert.equal(terminal.reason, "credential");
+  assert.equal(terminal.server_refused, false);
+  assert.equal(terminal.request_id, null);
 });
 
 test("follow classifies agent read 401/403 as credential stop", async () => {
@@ -628,8 +640,11 @@ test("follow classifies agent read 401/403 as credential stop", async () => {
       arm: async () => {
         throw refusal;
       },
-      emit: () => {
-        throw new Error("credential refusal must not emit ready");
+      emit: (frame) => {
+        // The terminal error frame is expected; a ready frame is not.
+        if (frame.type !== "error") {
+          throw new Error("credential refusal must not emit ready");
+        }
       },
     });
     assert.equal(stop.reason, "credential");
@@ -1260,6 +1275,7 @@ function d051Body(retryable: boolean | null): string {
 async function d051FollowRun(errorBody: string): Promise<{
   fetches: number;
   retryFrames: number;
+  frames: FollowFrame[];
   stop: Awaited<ReturnType<typeof runInboxFollow>>;
 }> {
   const target = cloudTarget("https://cloud.example.test", "anon-key");
@@ -1306,6 +1322,7 @@ async function d051FollowRun(errorBody: string): Promise<{
   return {
     fetches,
     retryFrames: frames.filter((frame) => frame.type === "retrying").length,
+    frames,
     stop,
   };
 }
@@ -1670,4 +1687,92 @@ test("D-051: a credential verdict off the wire is decided by status, not wording
   });
   assert.equal(isFollowCredentialFailure(wire), false);
   assert.match(wire.message, /secret_is_absent/);
+});
+
+// ---------------------------------------------------------------------------
+// D-055: --ndjson is for machine consumption and the connect prompt points
+// non-Grok hosts at it, so a fatal stop written as bare text made the stream's
+// LAST word the one line a wrapper cannot parse — exactly when it most needs
+// to read it. The information was already there; the encoding was wrong.
+// ---------------------------------------------------------------------------
+
+test("D-055: every line of a refused follow stream parses, including the last", async () => {
+  const run = await d051FollowRun(d051Body(false));
+  assert.equal(run.stop.reason, "error");
+
+  // Only what the follow loop actually EMITTED — appending the terminal frame
+  // by hand here would test the helper and not the stream, which is the whole
+  // defect: the CLI could forget and this would still pass.
+  assert.ok(
+    run.frames.some((frame) => frame.type === "error"),
+    "the terminal condition must be emitted into the stream, not left to the caller",
+  );
+  const stream = run.frames
+    .map((frame) => formatFollowFrame(frame))
+    .join("\n");
+
+  const lines = stream.split("\n");
+  for (const [index, line] of lines.entries()) {
+    assert.doesNotThrow(
+      () => JSON.parse(line),
+      `line ${index + 1} of ${lines.length} must be parseable NDJSON`,
+    );
+  }
+
+  // Positive control: the pre-fix behaviour on the same stream. If a bare
+  // "cswarm: ..." line were still the last word, the loop above would have
+  // to fail — prove that it would.
+  const bareText = "cswarm: signal read failed (HTTP 500): internal_error";
+  assert.throws(() => JSON.parse(bareText));
+
+  const last = JSON.parse(lines[lines.length - 1]!) as Record<string, unknown>;
+  assert.equal(last.type, "error");
+  assert.equal(last.server_refused, true);
+  assert.equal(last.server_error, "internal_error");
+  assert.equal(last.request_id, D051_REQUEST_ID);
+  // A wrapper can read the terminal condition without parsing prose.
+  assert.equal(typeof last.ts, "string");
+});
+
+test("D-055: a clean cancellation ends the stream without an error frame", async () => {
+  assert.equal(followStopFrame({ reason: "cancelled" }, 1_700_000_000_000), null);
+
+  // And the harness's own cancelled run produces no error frame either.
+  const run = await d051FollowRun(d051Body(true));
+  assert.equal(run.stop.reason, "cancelled");
+  assert.equal(followStopFrame(run.stop, 1_700_000_000_000), null);
+  assert.equal(run.frames.some((frame) => frame.type === "error"), false);
+});
+
+test("D-055: the terminal frame distinguishes a refusal from other stops", () => {
+  const refused = followStopFrame({
+    reason: "error",
+    error: new SignalHttpError(500, null, {
+      error: "internal_error",
+      requestId: D051_REQUEST_ID,
+      retryable: false,
+    }),
+  }, 1_700_000_000_000);
+  assert.equal(refused?.server_refused, true);
+  assert.equal(refused?.request_id, D051_REQUEST_ID);
+
+  // A stop with no envelope is still a frame, just without server detail —
+  // server_refused must not be asserted when the server said nothing.
+  for (
+    const reason of ["fatal_http", "malformed", "credential", "error"] as const
+  ) {
+    const frame = followStopFrame(
+      { reason, error: new Error("something local went wrong") },
+      1_700_000_000_000,
+    );
+    assert.equal(frame?.reason, reason);
+    assert.equal(frame?.server_refused, false);
+    assert.equal(frame?.request_id, null);
+    assert.equal(frame?.server_error, null);
+    assert.match(frame?.message ?? "", /something local went wrong/);
+  }
+
+  // A stop carrying no error at all still yields a usable message.
+  const bare = followStopFrame({ reason: "error" }, 1_700_000_000_000);
+  assert.match(bare?.message ?? "", /inbox follow stopped \(error\)/);
 });

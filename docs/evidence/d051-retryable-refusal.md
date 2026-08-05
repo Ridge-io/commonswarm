@@ -427,3 +427,91 @@ judgment. The operator log line carries `name` and `code`; if `code` is null
 and `name` is not `PostgresError`, that is the answer, and it is one log line
 away. This client now obeys that field faithfully — which is correct behaviour,
 and also means a server-side misclassification propagates straight to us.
+
+---
+
+# D-055 — the stream's last word is a frame
+
+**Implementation:** Verity, 2026-08-05, same branch. Found by Wren's parser
+flagging the line UNPARSED during the paired A/B.
+
+`inbox --follow` requires `--ndjson` (`cli.ts:2327`) and the connect prompt
+points non-Grok hosts at it, so the stream is machine-consumed by definition.
+The terminal condition was written as bare text:
+
+```
+cswarm: signal read failed (HTTP 500): internal_error, request_id 5bdd7856-…
+```
+
+A wrapper broke on that line instead of reading a terminal condition. The
+information was already there; only the encoding was wrong.
+
+`FollowFrame` gains an `error` variant carrying `reason`, `server_error`,
+`request_id`, `server_refused` and `message`, built by `followStopFrame`.
+A clean cancellation returns `null` — an operator stop is not an error and the
+stream simply ends.
+
+## Emitted by the loop, not by the caller
+
+First implementation put the emit in `cli.ts`. **The inversion caught that it
+did not gate anything**: removing the CLI's emit left all three D-055 tests
+green, because they exercised `followStopFrame` in isolation. A test that
+passes against the wrong target is not a test.
+
+`runInboxFollow` now emits the terminal frame through the same `emit` callback
+as the rest of the stream, so no caller can forget it, and the CLI's throw is
+left as the human-facing exit status only. That is also the correct ownership:
+the loop owns the stream.
+
+The parse test was rewritten to read only what was actually emitted —
+appending the terminal frame by hand was the same wrong-target defect one
+level up.
+
+## Emitted before ready, on purpose
+
+Three pre-existing tests asserted `frames.length === 0` for fatal-4xx and
+credential stops. That encoded the old contract: nothing at all before `ready`.
+They now assert the stronger one — no `ready` and no `retrying` frame before
+ready, and exactly one terminal `error` frame.
+
+This matters for D-056: Wren measured 2 of 8 cold starts dying **before**
+ready. Suppressing the terminal frame until ready would leave precisely the
+never-started case unparseable, which is the failure that surfaced this.
+
+## Controls
+
+`tests/support/agent-receive-cli.test.ts`: every line of a refused follow
+stream `JSON.parse`s, including the last, with a positive control proving the
+old bare-text line would fail that same loop. Plus: a cancellation emits no
+error frame, and the frame distinguishes a server refusal from a local stop
+(`server_refused`, `request_id`, `server_error` all null/false when the
+failure never crossed the network).
+
+Inversion — removing the emission from `runInboxFollow`:
+
+```
+-> 3 tests red (the two contract tests and the parse test)
+```
+
+## Gates
+
+```
+npm test            -> tests 455, pass 455, fail 0
+npm run test:p1-cli -> tests 149, pass 149, fail 0
+npm run build       -> clean
+npm run check:tests -> clean
+```
+
+## Wren's A/B, for the record
+
+2.45 requests per failure event pre-fix, exactly 1 post-fix. The prediction was
+1 and the falsification condition (non-zero retries on a confirmed refusal with
+a confirmed-new binary) did not occur. Binaries were identified by sha256
+because both report `cswarm 0.1.6`.
+
+Wren's disclosed deviation — copying `dist` plus `package.json` and pointing
+both arms at the laptop's existing `@supabase/supabase-js` 2.110.8 — **does not
+affect this result.** The read and retry path uses global `fetch`
+(`fetchSignalRead`), not `supabase-js`; the only import of that package in
+`src/` is `cloud/auth.ts`. Dependencies were also held constant across arms, so
+the client-behaviour comparison stands either way.
