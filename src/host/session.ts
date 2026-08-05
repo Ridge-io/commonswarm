@@ -121,6 +121,7 @@ export class AcpHostSession {
   private readonly transport: AcpTransport;
   private cwd: string;
   private readonly permissionCallback: PermissionCallback;
+  private readonly requiredModeId: string | undefined;
   private readonly events: HostSessionEvents;
   private readonly requestTimeoutMs: number;
   private sessionId: string | null = null;
@@ -148,6 +149,7 @@ export class AcpHostSession {
     this.transport = options.transport;
     // Mutable so openWorkCwd can retarget after a canary on an empty temp cwd.
     this.cwd = assertAbsoluteExistingCwd(options.cwd);
+    this.requiredModeId = options.requiredModeId;
     this.permissionCallback = resolvePermissionCallback(options.permissionCallback);
     this.events = options.events ?? {};
     this.requestTimeoutMs = options.requestTimeoutMs ?? ACP_DEFAULT_REQUEST_TIMEOUT_MS;
@@ -338,9 +340,11 @@ export class AcpHostSession {
       if (!isRecord(result) || typeof result.sessionId !== "string") {
         // Some agents return empty result on load success — keep requested id.
         this.sessionId = sessionId;
+        await this.applyRequiredMode();
         return { sessionId, loaded: true };
       }
       this.sessionId = result.sessionId;
+      await this.applyRequiredMode();
       return { sessionId: result.sessionId, loaded: true };
     } catch {
       // Fallback session/new is a new agent context: re-canary before real prompts.
@@ -437,6 +441,43 @@ export class AcpHostSession {
       throw new AcpProtocolError("session/new missing sessionId", "invalid_response");
     }
     this.sessionId = result.sessionId;
+    await this.applyRequiredMode(result);
+  }
+
+  /** Select the provider-measured permission mode and fail closed if absent. */
+  private async applyRequiredMode(newSessionResult?: Record<string, unknown>): Promise<void> {
+    const requiredModeId = this.requiredModeId;
+    if (!requiredModeId) return;
+    if (!this.sessionId) {
+      throw new AcpProtocolError("session mode requires an open session", "no_session");
+    }
+    if (newSessionResult) {
+      const modes = isRecord(newSessionResult.modes) ? newSessionResult.modes : null;
+      const availableModes = modes && Array.isArray(modes.availableModes)
+        ? modes.availableModes
+        : [];
+      const available = availableModes.some((mode) =>
+        isRecord(mode) && mode.id === requiredModeId
+      );
+      if (!available) {
+        throw new AcpProtocolError(
+          `required session mode is unavailable: ${requiredModeId}`,
+          "permission_mode_unavailable",
+        );
+      }
+    }
+    try {
+      await this.transport.request(
+        "session/set_mode",
+        { sessionId: this.sessionId, modeId: requiredModeId },
+        this.requestTimeoutMs,
+      );
+    } catch {
+      throw new AcpProtocolError(
+        `required session mode could not be selected: ${requiredModeId}`,
+        "permission_mode_unavailable",
+      );
+    }
   }
 
   private async promptInternal(

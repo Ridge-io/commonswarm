@@ -3,14 +3,21 @@
 > **D-044 update, 2026-08-04:** the local cross-owner sandbox requirement below is retired. Every
 > sender relation now reaches the operator's worker and cwd with provenance in the prompt. The
 > CommonSwarm server authority model is unchanged.
+>
+> **D-049 update, 2026-08-05:** v0.1.6 ships the Claude provider. The implementation lane described
+> by `docs/evidence/2026-08-05-d049-d050/README.md` explicitly selects Claude `default` mode and adds
+> a Codex provider that selects `read-only`; both modes passed the full host deny-correlation canary.
+> Statements below that say Claude was never accepted or that no bridge was run describe the earlier
+> audit and are superseded.
 
 Measured 2026-08-04 against production v0.1.5. Prompted by a second-machine dogfood where **no
 installed host qualified**, which made the connect path unreachable on that laptop.
 
 ## The requirement
 
-`cswarm listen start` rejects anything but `grok` or `opencode` (`src/cli.ts:2547-2552`). That list is
-not a preference — the listener drives its host over **ACP (Agent Client Protocol) on stdio**, and
+~~`cswarm listen start` rejects anything but `grok` or `opencode`.~~ **Superseded:** v0.1.6 added
+Claude, and the 2026-08-05 lane adds Codex. The provider list remains a protocol boundary — the
+listener drives its host over **ACP (Agent Client Protocol) on stdio**, and
 each adapter spawns a process already speaking it:
 
 - `src/host/grok.ts` — spawns the grok binary in its ACP mode, version-checked, then `initialize` and
@@ -70,8 +77,10 @@ one before checking whether a newer scope existed. **Use `@agentclientprotocol/c
 ~~Adopting Codex costs almost nothing extra once Claude Code is done — same mechanism, one more
 package.~~ **Superseded 2026-08-05:** the Codex spike found that an unchanged Claude adapter copy
 fails closed at the listener canary because `codex-acp` starts in `agent` mode. A `read-only` mode
-control did emit permission requests, so implementation cost remains unmeasured. See
-`docs/evidence/2026-08-05-codex-acp/bridge-spike.md`.
+control did emit permission requests, so implementation cost remained unmeasured at that point. See
+`docs/evidence/2026-08-05-codex-acp/bridge-spike.md`. **Resolved later 2026-08-05:** the explicit
+`session/set_mode` contract and the Codex host/listener implementation are measured in
+`docs/evidence/2026-08-05-d049-d050/README.md`.
 
 ### Installing it during onboarding
 

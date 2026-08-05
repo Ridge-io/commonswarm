@@ -13,6 +13,11 @@ import type {
   PermissionRequest,
 } from "../src/host/types.js";
 import {
+  AcpChildExitError,
+  AcpHostError,
+  AcpPermissionCanaryError,
+} from "../src/host/types.js";
+import {
   GrokListenerModel,
   type OpenGrokSession,
 } from "../src/listener/index.js";
@@ -160,4 +165,114 @@ test("listener cancel reaches active host handles without logging prompts", asyn
   adapter.cancel();
   assert.equal(records[0]?.cancelled, true);
   await adapter.close();
+});
+
+test("Grok prompt surfaces child_exit_timeout instead of opening a replacement", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "cswarm-worker-test-"));
+  const timeout = new AcpHostError(
+    "child_exit_timeout",
+    "Grok bridge did not exit after SIGTERM and SIGKILL",
+  );
+  let opens = 0;
+  let closes = 0;
+  const adapter = new GrokListenerModel({
+    cwd,
+    open: async () => {
+      opens += 1;
+      return {
+        session: {
+          async enablePromptsAfterCanary() {},
+          async prompt() {
+            throw new AcpChildExitError(1, null);
+          },
+          cancel() {},
+        },
+        child: {},
+        executable: "grok",
+        args: [],
+        env: {},
+        async close() {
+          closes += 1;
+          throw timeout;
+        },
+      } as unknown as GrokAcpHandle;
+    },
+  });
+  await adapter.start();
+
+  let caught: unknown = null;
+  await adapter.prompt(SIGNAL, "worker", "work").catch((error: unknown) => {
+    caught = error;
+  });
+
+  assert.equal(caught, timeout);
+  assert.equal(opens, 1);
+  assert.equal(closes, 1);
+});
+
+test("Grok runtime close surfaces child_exit_timeout", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "cswarm-worker-test-"));
+  const timeout = new AcpHostError(
+    "child_exit_timeout",
+    "Grok bridge did not exit after SIGTERM and SIGKILL",
+  );
+  const adapter = new GrokListenerModel({
+    cwd,
+    open: async () => ({
+      session: {
+        async enablePromptsAfterCanary() {},
+        async prompt() {
+          throw new Error("unreachable");
+        },
+        cancel() {},
+      },
+      child: {},
+      executable: "grok",
+      args: [],
+      env: {},
+      async close() {
+        throw timeout;
+      },
+    } as unknown as GrokAcpHandle),
+  });
+  await adapter.start();
+
+  await assert.rejects(
+    () => adapter.close(),
+    (error: unknown) => error === timeout,
+  );
+});
+
+test("Grok failed canary surfaces cleanup child_exit_timeout", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "cswarm-worker-test-"));
+  const timeout = new AcpHostError(
+    "child_exit_timeout",
+    "Grok bridge did not exit after SIGTERM and SIGKILL",
+  );
+  const adapter = new GrokListenerModel({
+    cwd,
+    open: async () => ({
+      session: {
+        async enablePromptsAfterCanary() {
+          throw new AcpPermissionCanaryError("canary failed");
+        },
+        async prompt() {
+          throw new Error("unreachable");
+        },
+        cancel() {},
+      },
+      child: {},
+      executable: "grok",
+      args: [],
+      env: {},
+      async close() {
+        throw timeout;
+      },
+    } as unknown as GrokAcpHandle),
+  });
+
+  await assert.rejects(
+    () => adapter.start(),
+    (error: unknown) => error === timeout,
+  );
 });

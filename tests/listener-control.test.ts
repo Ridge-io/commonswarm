@@ -112,6 +112,14 @@ test("Claude is a durable listener status provider", async () => {
   assert.deepEqual(await readListenerStatus(target), status);
 });
 
+test("Codex is a durable listener status provider", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cswarm-control-test-"));
+  const target = paths(root);
+  const status = { ...statusFor(target, "ready"), provider: "codex" as const };
+  await writeListenerStatus(target, status);
+  assert.deepEqual(await readListenerStatus(target), status);
+});
+
 test("lifetime control socket enforces one listener and supports status/stop", async () => {
   const root = await mkdtemp(join(tmpdir(), "cswarm-control-test-"));
   const target = paths(root);

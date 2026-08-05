@@ -136,8 +136,10 @@ import {
 } from "./cloud/signals.js";
 import { resolveOpenCodeExecutable } from "./host/opencode.js";
 import { resolveClaudeExecutable } from "./host/claude.js";
+import { resolveCodexExecutable } from "./host/codex.js";
 import {
   ClaudeListenerModel,
+  CodexListenerModel,
   FileListenerEffectStore,
   GrokListenerModel,
   ListenerStartupError,
@@ -326,7 +328,7 @@ Usage:
   cswarm feed [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--about <ref>] [--kind <kind>] [--since <timestamp>] [--limit <n>] [--include-stale] [--json]
   cswarm inbox [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--kind <kind>] [--about <ref>] [--since <timestamp>] [--limit <n>] [--include-stale] [--wait <seconds>] [--json]
   cswarm inbox --follow --ndjson [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--kind <kind>] [--about <ref>] [--since <timestamp>] [--limit <n>] [--include-stale]
-  cswarm listen start --agent-token-stdin [--url <url> --anon-key <key>] --workspace-id <uuid> --provider grok|opencode|claude [--cwd <absolute-path>] [--model <model>] [--effort <level>] [--permissions deny|allow] [--grok-executable <path>] [--opencode-executable <path>] [--claude-executable <path>] [--foreground] [--json]
+  cswarm listen start --agent-token-stdin [--url <url> --anon-key <key>] --workspace-id <uuid> --provider grok|opencode|claude|codex [--cwd <absolute-path>] [--model <model>] [--effort <level>] [--permissions deny|allow] [--grok-executable <path>] [--opencode-executable <path>] [--claude-executable <path>] [--codex-executable <path>] [--foreground] [--json]
   cswarm listen status [--url <url> --anon-key <key>] --workspace-id <uuid> --principal-id <uuid> [--json]
   cswarm listen stop [--url <url> --anon-key <key>] --workspace-id <uuid> --principal-id <uuid> [--json]
   cswarm new "<project name>" [--url <url> --anon-key <key>] [--json]
@@ -2551,14 +2553,15 @@ function listenerStateDirectory(args: Arguments): string | undefined {
 function listenerProvider(args: Arguments): ListenerProviderId {
   const provider = args.optional("provider");
   const hints =
-    "supported providers: grok — install Grok CLI 0.2.117 and run grok login; opencode — install OpenCode 1.18.10 and authenticate it; claude — npm install -g @agentclientprotocol/claude-agent-acp@0.64.2. You can use working-on, note, ask, and feed now; detached live receipt needs one of these adapters";
+    "supported providers: grok — install Grok CLI 0.2.117 and run grok login; opencode — install OpenCode 1.18.10 and authenticate it; claude — npm install -g @agentclientprotocol/claude-agent-acp@0.64.2; codex — npm install -g @agentclientprotocol/codex-acp@1.1.9. You can use working-on, note, ask, and feed now; detached live receipt needs one of these adapters";
   if (provider === undefined) {
     throw new Error(`--provider is required; ${hints}`);
   }
   if (
     provider !== "grok" &&
     provider !== "opencode" &&
-    provider !== "claude"
+    provider !== "claude" &&
+    provider !== "codex"
   ) {
     throw new Error(
       `unsupported --provider; ${hints}`,
@@ -2576,15 +2579,16 @@ function validateListenerProviderFlags(
       `--effort is not supported for --provider ${provider} (no measured mapping); omit it`,
     );
   }
-  if (provider === "claude" && args.optional("model")) {
+  if ((provider === "claude" || provider === "codex") && args.optional("model")) {
     throw new Error(
-      "--model is not supported for --provider claude (no measured bridge mapping); omit it",
+      `--model is not supported for --provider ${provider} (no measured bridge mapping); omit it`,
     );
   }
   const executableFlags = [
     ["grok", "grok-executable"],
     ["opencode", "opencode-executable"],
     ["claude", "claude-executable"],
+    ["codex", "codex-executable"],
   ] as const;
   for (const [owner, flag] of executableFlags) {
     if (provider !== owner && args.optional(flag)) {
@@ -2648,6 +2652,35 @@ export function listenerHostLimits(
       "All sender relations reach that same worker and local context; each prompt carries sender and operator provenance.";
     const local_state_lifecycle =
       "CommonSwarm does not create a separate Claude home or temporary worker cwd.";
+    const human_copy = [
+      host_configuration,
+      cross_owner_context,
+      steady_allow_unproven,
+      local_state_lifecycle,
+    ].join(" ");
+    return {
+      host_configuration,
+      deny_canary_scope,
+      steady_allow_unproven,
+      cross_owner_context,
+      local_state_lifecycle,
+      human_copy,
+      toString() {
+        return human_copy;
+      },
+    };
+  }
+  if (provider === "codex") {
+    const host_configuration =
+      "The Codex worker uses the operator-selected cwd and normal ChatGPT/Codex auth through codex-acp 1.1.9. CommonSwarm explicitly selects read-only mode after every session/new; API-key variables are stripped by the listener environment sanitizer.";
+    const deny_canary_scope =
+      "The deny canary proves host reject + correlated terminal deny only.";
+    const steady_allow_unproven =
+      "The deny canary does not prove steady-state --permissions allow behavior.";
+    const cross_owner_context =
+      "All sender relations reach that same worker and local context; each prompt carries sender and operator provenance.";
+    const local_state_lifecycle =
+      "CommonSwarm does not create a separate Codex home or temporary worker cwd.";
     const human_copy = [
       host_configuration,
       cross_owner_context,
@@ -2765,6 +2798,9 @@ export function listenerFailureMessage(
   provider?: ListenerProviderId,
 ): string {
   if (code === "version_refused") {
+    if (provider === "codex") {
+      return "the Codex listener requires codex-acp 1.1.9; run npm install -g @agentclientprotocol/codex-acp@1.1.9, then retry";
+    }
     if (provider === "claude") {
       return "the Claude listener requires claude-agent-acp 0.64.2; run npm install -g @agentclientprotocol/claude-agent-acp@0.64.2, then retry";
     }
@@ -2776,6 +2812,15 @@ export function listenerFailureMessage(
   if (code === "executable_missing" && provider === "claude") {
     return "claude-agent-acp is not installed; run npm install -g @agentclientprotocol/claude-agent-acp@0.64.2, then retry";
   }
+  if (code === "executable_missing" && provider === "codex") {
+    return "codex-acp is not installed; run npm install -g @agentclientprotocol/codex-acp@1.1.9, then retry";
+  }
+  if (code === "permission_mode_unavailable" && provider === "claude") {
+    return "the Claude bridge does not expose the required manual permission mode; reinstall claude-agent-acp 0.64.2, then retry";
+  }
+  if (code === "permission_mode_unavailable" && provider === "codex") {
+    return "the Codex bridge does not expose the required read-only permission mode; reinstall codex-acp 1.1.9, then retry";
+  }
   if (
     provider === "claude" &&
     (code === "rpc_error" ||
@@ -2783,6 +2828,14 @@ export function listenerFailureMessage(
       code === "timeout")
   ) {
     return `the Claude bridge could not start (${code}); confirm Claude Code keychain/OAuth sign-in and network access, then retry. ANTHROPIC_API_KEY is not forwarded to detached listeners`;
+  }
+  if (
+    provider === "codex" &&
+    (code === "rpc_error" ||
+      code === "child_exit" ||
+      code === "timeout")
+  ) {
+    return `the Codex bridge could not start (${code}); confirm ChatGPT/Codex sign-in and network access, then retry. API-key variables are not forwarded to detached listeners`;
   }
   if (code === "grok_auth_missing") {
     return "Grok is not signed in for detached use; run grok login, then retry listen start";
@@ -2812,6 +2865,9 @@ export function listenerFailureMessage(
   if (code === "permission_canary_failed") {
     if (provider === "claude") {
       return "the Claude bridge did not complete the ACP permission canary; the startup canary ran, but no workspace signal prompt was delivered. Confirm Claude Code keychain/OAuth sign-in, then retry";
+    }
+    if (provider === "codex") {
+      return "the Codex bridge did not complete the read-only ACP permission canary; no workspace signal prompt was delivered. Confirm ChatGPT/Codex sign-in, then retry";
     }
     return "the host did not prove that CommonSwarm controls ACP tool permissions; no model prompt was delivered";
   }
@@ -2845,6 +2901,32 @@ export function resolveDetachedClaudeExecutable(
         );
       }
       throw new Error(listenerFailureMessage(code, "claude"));
+    }
+    throw error;
+  }
+}
+
+/** Resolve the detached Codex bridge while preserving its install remedy. */
+export function resolveDetachedCodexExecutable(
+  executable = "codex-acp",
+  pathEnv = process.env.PATH,
+): string {
+  try {
+    return resolveCodexExecutable(executable, pathEnv);
+  } catch (error) {
+    const code = (error as { code?: unknown }).code;
+    if (typeof code === "string") {
+      if (
+        isAbsolute(executable) ||
+        executable.includes("/") ||
+        executable.includes("\\")
+      ) {
+        const detail = error instanceof Error ? error.message : code;
+        throw new Error(
+          `could not use --codex-executable: ${detail}; reinstall the measured bridge with npm install -g @agentclientprotocol/codex-acp@1.1.9 if this path should be replaced`,
+        );
+      }
+      throw new Error(listenerFailureMessage(code, "codex"));
     }
     throw error;
   }
@@ -2900,6 +2982,7 @@ async function runConfiguredListener(options: {
   executable?: string;
   opencodeExecutable?: string;
   claudeExecutable?: string;
+  codexExecutable?: string;
   stateDirectory?: string;
 }): Promise<ListenerStatus> {
   if (options.provider === "opencode" && options.effort) {
@@ -2907,14 +2990,14 @@ async function runConfiguredListener(options: {
       "--effort is not supported for --provider opencode (no measured mapping); omit it",
     );
   }
-  if (options.provider === "claude" && options.effort) {
+  if ((options.provider === "claude" || options.provider === "codex") && options.effort) {
     throw new Error(
-      "--effort is not supported for --provider claude (no measured mapping); omit it",
+      `--effort is not supported for --provider ${options.provider} (no measured mapping); omit it`,
     );
   }
-  if (options.provider === "claude" && options.model) {
+  if ((options.provider === "claude" || options.provider === "codex") && options.model) {
     throw new Error(
-      "--model is not supported for --provider claude (no measured bridge mapping); omit it",
+      `--model is not supported for --provider ${options.provider} (no measured bridge mapping); omit it`,
     );
   }
   const paths = listenerPaths({
@@ -2968,6 +3051,16 @@ async function runConfiguredListener(options: {
       permissionMode: options.permissionMode,
       ...(options.claudeExecutable
         ? { executable: options.claudeExecutable }
+        : options.executable
+        ? { executable: options.executable }
+        : {}),
+    })
+    : options.provider === "codex"
+    ? new CodexListenerModel({
+      cwd: options.cwd,
+      permissionMode: options.permissionMode,
+      ...(options.codexExecutable
+        ? { executable: options.codexExecutable }
         : options.executable
         ? { executable: options.executable }
         : {}),
@@ -3052,6 +3145,7 @@ async function runListenStart(args: Arguments): Promise<void> {
     "grok-executable",
     "opencode-executable",
     "claude-executable",
+    "codex-executable",
     "state-dir",
     "foreground",
     "json",
@@ -3114,6 +3208,9 @@ async function runListenStart(args: Arguments): Promise<void> {
       ...(args.optional("claude-executable")
         ? { claudeExecutable: args.required("claude-executable") }
         : {}),
+      ...(args.optional("codex-executable")
+        ? { codexExecutable: args.required("codex-executable") }
+        : {}),
       ...(stateDirectory ? { stateDirectory } : {}),
     });
   } else {
@@ -3139,6 +3236,12 @@ async function runListenStart(args: Arguments): Promise<void> {
         args.optional("claude-executable") ?? "claude-agent-acp",
       );
     }
+    let codexExecutable: string | undefined;
+    if (provider === "codex") {
+      codexExecutable = resolveDetachedCodexExecutable(
+        args.optional("codex-executable") ?? "codex-acp",
+      );
+    }
     const child = await spawnDetachedListener({
       spec: {
         entrypoint,
@@ -3161,6 +3264,9 @@ async function runListenStart(args: Arguments): Promise<void> {
           : {}),
         ...(claudeExecutable
           ? { claudeExecutable }
+          : {}),
+        ...(codexExecutable
+          ? { codexExecutable }
           : {}),
       },
       credentialArtifact: artifact,
@@ -3196,6 +3302,8 @@ async function runListenStart(args: Arguments): Promise<void> {
     ? "The OpenCode worker uses one private auth/config home and your selected project cwd. Every sender reaches that worker with sender and operator provenance in the prompt. Steady-state --permissions allow is a separate local opt-in after the deny canary.\n"
     : provider === "claude"
     ? "The Claude worker uses your selected cwd and normal Claude Code keychain/OAuth state through claude-agent-acp 0.64.2. Every sender reaches that worker with sender and operator provenance in the prompt.\n"
+    : provider === "codex"
+    ? "The Codex worker uses your selected cwd and normal ChatGPT/Codex auth through codex-acp 1.1.9. CommonSwarm selects read-only mode before its deny canary. Every sender reaches that worker with sender and operator provenance in the prompt.\n"
     : "The Grok worker uses your selected cwd and local Grok configuration, including user and cmux hooks. Every sender reaches that worker with sender and operator provenance in the prompt.\n";
   process.stdout.write(
     `${
@@ -3227,6 +3335,7 @@ async function runListenSupervisor(args: Arguments): Promise<void> {
     "grok-executable",
     "opencode-executable",
     "claude-executable",
+    "codex-executable",
     "state-dir",
   ], 1);
   const provider = listenerProvider(args);
@@ -3256,6 +3365,9 @@ async function runListenSupervisor(args: Arguments): Promise<void> {
       : {}),
     ...(args.optional("claude-executable")
       ? { claudeExecutable: args.required("claude-executable") }
+      : {}),
+    ...(args.optional("codex-executable")
+      ? { codexExecutable: args.required("codex-executable") }
       : {}),
     ...(listenerStateDirectory(args)
       ? { stateDirectory: listenerStateDirectory(args) }

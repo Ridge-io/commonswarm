@@ -1,9 +1,9 @@
 /**
- * Claude ACP subprocess core — measured against claude-agent-acp 0.64.2.
+ * Codex ACP subprocess core — measured against codex-acp 1.1.9.
  *
- * Spawn shape: `claude-agent-acp` with no arguments. The bridge speaks ACP
+ * Spawn shape: `codex-acp` with no arguments. The bridge speaks ACP
  * protocolVersion 1 and emits session/request_permission. It uses the
- * operator's normal HOME for Claude Code keychain/OAuth state.
+ * operator's normal HOME for ChatGPT/Codex file-backed auth state.
  */
 
 import {
@@ -28,8 +28,8 @@ import {
 import {
   ACP_DEFAULT_REQUEST_TIMEOUT_MS,
   ACP_VERSION_CHECK_TIMEOUT_MS,
-  CLAUDE_ACP_MEASURED_VERSION,
-  CLAUDE_PERMISSION_MODE_ID,
+  CODEX_ACP_MEASURED_VERSION,
+  CODEX_PERMISSION_MODE_ID,
 } from "./bounds.js";
 import { sanitizeChildEnv } from "./env.js";
 import { AcpHostSession, createBoundTransport } from "./session.js";
@@ -40,9 +40,9 @@ import {
   type PermissionCallback,
 } from "./types.js";
 
-export type ClaudeAcpOpenOptions = {
+export type CodexAcpOpenOptions = {
   cwd: string;
-  /** Absolute realpath to claude-agent-acp. Bare names are resolved once at open. */
+  /** Absolute realpath to codex-acp. Bare names are resolved once at open. */
   executable?: string;
   permissionCallback?: PermissionCallback;
   events?: HostSessionEvents;
@@ -58,7 +58,7 @@ export type ClaudeAcpOpenOptions = {
   promptsEnabled?: boolean;
 };
 
-export type ClaudeAcpHandle = {
+export type CodexAcpHandle = {
   session: AcpHostSession;
   child: ChildProcessWithoutNullStreams;
   executable: string;
@@ -73,7 +73,7 @@ const WINDOWS_NPM_SHIM_MAX_BYTES = 64 * 1024;
 const WINDOWS_NPM_ENTRYPOINT = [
   "node_modules",
   "@agentclientprotocol",
-  "claude-agent-acp",
+  "codex-acp",
   "dist",
   "index.js",
 ] as const;
@@ -85,18 +85,18 @@ function resolveWindowsNpmShim(shim: string): string {
   } catch {
     throw new AcpHostError(
       "executable_missing",
-      `could not read claude-agent-acp npm shim: ${shim}`,
+      `could not read codex-acp npm shim: ${shim}`,
     );
   }
   if (
     Buffer.byteLength(source, "utf8") > WINDOWS_NPM_SHIM_MAX_BYTES ||
     !source.includes(
-      String.raw`"%dp0%\node_modules\@agentclientprotocol\claude-agent-acp\dist\index.js"`,
+      String.raw`"%dp0%\node_modules\@agentclientprotocol\codex-acp\dist\index.js"`,
     )
   ) {
     throw new AcpHostError(
       "executable_missing",
-      `unrecognized claude-agent-acp npm shim: ${shim}`,
+      `unrecognized codex-acp npm shim: ${shim}`,
     );
   }
   const target = join(dirname(shim), ...WINDOWS_NPM_ENTRYPOINT);
@@ -106,12 +106,12 @@ function resolveWindowsNpmShim(shim: string): string {
   } catch {
     throw new AcpHostError(
       "executable_missing",
-      `claude-agent-acp package entrypoint is missing beside npm shim: ${shim}`,
+      `codex-acp package entrypoint is missing beside npm shim: ${shim}`,
     );
   }
 }
 
-function resolvedClaudeCandidate(
+function resolvedCodexCandidate(
   candidate: string,
   platform: NodeJS.Platform,
 ): string {
@@ -123,8 +123,8 @@ function resolvedClaudeCandidate(
 }
 
 /** Resolve bare or relative executable to one absolute realpath for probe and spawn. */
-export function resolveClaudeExecutable(
-  executable = "claude-agent-acp",
+export function resolveCodexExecutable(
+  executable = "codex-acp",
   pathEnv?: string,
   platform: NodeJS.Platform = process.platform,
 ): string {
@@ -139,7 +139,7 @@ export function resolveClaudeExecutable(
       : [abs];
     for (const candidate of candidates) {
       try {
-        return resolvedClaudeCandidate(candidate, platform);
+        return resolvedCodexCandidate(candidate, platform);
       } catch (error) {
         if (error instanceof AcpHostError) throw error;
       }
@@ -155,7 +155,7 @@ export function resolveClaudeExecutable(
     for (const name of names) {
       const candidate = join(dir, name);
       try {
-        return resolvedClaudeCandidate(candidate, platform);
+        return resolvedCodexCandidate(candidate, platform);
       } catch (error) {
         if (error instanceof AcpHostError) throw error;
       }
@@ -163,12 +163,12 @@ export function resolveClaudeExecutable(
   }
   throw new AcpHostError(
     "executable_missing",
-    `claude-agent-acp executable not found on PATH: ${executable}`,
+    `codex-acp executable not found on PATH: ${executable}`,
   );
 }
 
 /** Launch an npm JavaScript entrypoint through Node on native Windows. */
-export function buildClaudeLaunch(
+export function buildCodexLaunch(
   executable: string,
   args: readonly string[],
   platform: NodeJS.Platform = process.platform,
@@ -178,14 +178,16 @@ export function buildClaudeLaunch(
     : { command: executable, args: [...args] };
 }
 
-/** Parse the bridge's measured bare semver version output. */
-export function parseClaudeVersionOutput(stdout: string): string | null {
-  const match = stdout.trim().match(/^(\d+\.\d+\.\d+)$/);
+/** Parse the bridge's measured package-name plus semver output. */
+export function parseCodexVersionOutput(stdout: string): string | null {
+  const match = stdout.trim().match(
+    /^@agentclientprotocol\/codex-acp (\d+\.\d+\.\d+)$/,
+  );
   return match?.[1] ?? null;
 }
 
 /** Run the resolved bridge with the exact environment used for its ACP process. */
-export async function assertClaudeMeasuredVersion(
+export async function assertCodexMeasuredVersion(
   executable: string,
   options?: {
     expected?: string;
@@ -195,10 +197,10 @@ export async function assertClaudeMeasuredVersion(
     platform?: NodeJS.Platform;
   },
 ): Promise<string> {
-  const expected = options?.expected ?? CLAUDE_ACP_MEASURED_VERSION;
+  const expected = options?.expected ?? CODEX_ACP_MEASURED_VERSION;
   const timeoutMs = options?.timeoutMs ?? ACP_VERSION_CHECK_TIMEOUT_MS;
   const env = options?.env ?? sanitizeChildEnv(process.env);
-  const launch = buildClaudeLaunch(executable, ["--version"], options?.platform);
+  const launch = buildCodexLaunch(executable, ["--version"], options?.platform);
   const stdout = await new Promise<string>((resolve, reject) => {
     execFile(
       launch.command,
@@ -219,27 +221,27 @@ export async function assertClaudeMeasuredVersion(
       },
     );
   });
-  const version = parseClaudeVersionOutput(stdout);
+  const version = parseCodexVersionOutput(stdout);
   if (!version) {
     throw new AcpVersionError(
-      `could not parse claude-agent-acp version from: ${stdout.trim().slice(0, 200)}`,
+      `could not parse codex-acp version from: ${stdout.trim().slice(0, 200)}`,
     );
   }
   if (version !== expected) {
     throw new AcpVersionError(
-      `refusing claude-agent-acp ${version}; host core is measured for ${expected} only`,
+      `refusing codex-acp ${version}; host core is measured for ${expected} only`,
     );
   }
   return version;
 }
 
 /** The bridge enters ACP mode with no command-line arguments. */
-export function buildClaudeAcpArgs(): string[] {
+export function buildCodexAcpArgs(): string[] {
   return [];
 }
 
 /** Preserve the normal home while stripping CommonSwarm and credential variables. */
-export function buildClaudeChildEnv(
+export function buildCodexChildEnv(
   parent: NodeJS.ProcessEnv | Record<string, string | undefined>,
 ): Record<string, string> {
   return sanitizeChildEnv(parent);
@@ -262,7 +264,7 @@ function waitForChildExit(
 }
 
 /** Stop the bridge with SIGTERM, escalate to SIGKILL, and confirm it exited. */
-export async function terminateClaudeChild(
+export async function terminateCodexChild(
   child: ChildProcessWithoutNullStreams,
 ): Promise<void> {
   if (child.exitCode !== null || child.signalCode !== null) return;
@@ -282,40 +284,40 @@ export async function terminateClaudeChild(
   if (child.exitCode === null && child.signalCode === null) {
     throw new AcpHostError(
       "child_exit_timeout",
-      "Claude ACP bridge did not exit after SIGTERM and SIGKILL",
+      "Codex ACP bridge did not exit after SIGTERM and SIGKILL",
     );
   }
 }
 
-/** Open the measured Claude bridge, initialize ACP, and create one worker session. */
-export async function openClaudeAcpSession(
-  options: ClaudeAcpOpenOptions,
-): Promise<ClaudeAcpHandle> {
+/** Open the measured Codex bridge, initialize ACP, and create one worker session. */
+export async function openCodexAcpSession(
+  options: CodexAcpOpenOptions,
+): Promise<CodexAcpHandle> {
   const parentEnv = options.env ?? process.env;
   if (options.signal?.aborted) {
     throw new AcpHostError(
       "cancelled",
-      "Claude ACP bridge opening was cancelled",
+      "Codex ACP bridge opening was cancelled",
     );
   }
   const pathEnv = parentEnv.PATH;
-  const executable = resolveClaudeExecutable(
-    options.executable ?? "claude-agent-acp",
+  const executable = resolveCodexExecutable(
+    options.executable ?? "codex-acp",
     typeof pathEnv === "string" ? pathEnv : undefined,
   );
-  const env = buildClaudeChildEnv(parentEnv);
+  const env = buildCodexChildEnv(parentEnv);
   if (!options.skipVersionCheck) {
-    await assertClaudeMeasuredVersion(executable, { env });
+    await assertCodexMeasuredVersion(executable, { env });
   }
   if (options.signal?.aborted) {
     throw new AcpHostError(
       "cancelled",
-      "Claude ACP bridge opening was cancelled",
+      "Codex ACP bridge opening was cancelled",
     );
   }
 
-  const args = buildClaudeAcpArgs();
-  const launch = buildClaudeLaunch(executable, args);
+  const args = buildCodexAcpArgs();
+  const launch = buildCodexLaunch(executable, args);
   const child = spawn(launch.command, launch.args, {
     stdio: ["pipe", "pipe", "pipe"],
     env,
@@ -326,7 +328,7 @@ export async function openClaudeAcpSession(
       reject(
         new AcpHostError(
           "spawn_failed",
-          "failed to spawn the Claude ACP bridge",
+          "failed to spawn the Codex ACP bridge",
         ),
       );
     });
@@ -339,7 +341,7 @@ export async function openClaudeAcpSession(
       reject(
         new AcpHostError(
           "cancelled",
-          "Claude ACP bridge opening was cancelled",
+          "Codex ACP bridge opening was cancelled",
         ),
       );
     };
@@ -352,7 +354,7 @@ export async function openClaudeAcpSession(
   });
 
   if (!child.stdin || !child.stdout) {
-    await terminateClaudeChild(child);
+    await terminateCodexChild(child);
     throw new AcpHostError("spawn_failed", "child missing stdio pipes");
   }
   // Provider stderr may contain prompt text or local paths. Drain, never log.
@@ -375,7 +377,7 @@ export async function openClaudeAcpSession(
       AcpHostSession.connect({
         transport,
         cwd: options.cwd,
-        requiredModeId: CLAUDE_PERMISSION_MODE_ID,
+        requiredModeId: CODEX_PERMISSION_MODE_ID,
         permissionCallback: options.permissionCallback,
         events: options.events,
         requestTimeoutMs: options.requestTimeoutMs,
@@ -396,7 +398,7 @@ export async function openClaudeAcpSession(
         try {
           await session.close();
         } finally {
-          await terminateClaudeChild(child);
+          await terminateCodexChild(child);
         }
       })();
       return closePromise;
@@ -406,9 +408,9 @@ export async function openClaudeAcpSession(
   } catch (error) {
     removeAbortListener();
     transport.close();
-    await terminateClaudeChild(child);
+    await terminateCodexChild(child);
     throw error;
   }
 }
 
-export { CLAUDE_ACP_MEASURED_VERSION, CLAUDE_PERMISSION_MODE_ID };
+export { CODEX_ACP_MEASURED_VERSION, CODEX_PERMISSION_MODE_ID };

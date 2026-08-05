@@ -14,7 +14,7 @@ export interface ListenerChildSpec {
   principalId: string;
   cwd: string;
   permissionMode: "deny" | "allow";
-  provider?: "grok" | "opencode" | "claude";
+  provider?: "grok" | "opencode" | "claude" | "codex";
   stateDirectory?: string;
   /** Grok binary override (provider grok). */
   executable?: string;
@@ -22,8 +22,10 @@ export interface ListenerChildSpec {
   opencodeExecutable?: string;
   /** Claude ACP bridge override (provider claude). */
   claudeExecutable?: string;
+  /** Codex ACP bridge override (provider codex). */
+  codexExecutable?: string;
   model?: string;
-  /** Grok-only; must not be set for opencode or claude. */
+  /** Grok-only; must not be set for opencode, claude, or codex. */
   effort?: string;
   nodeExecArgv?: string[];
 }
@@ -71,15 +73,17 @@ export function buildListenerChildArgs(spec: ListenerChildSpec): string[] {
       `--effort is not supported for --provider ${provider} (no measured mapping)`,
     );
   }
-  if (provider === "claude" && spec.model) {
+  if ((provider === "claude" || provider === "codex") && spec.model) {
     throw new Error(
-      "--model is not supported for --provider claude (no measured bridge mapping)",
+      `--model is not supported for --provider ${provider} (no measured bridge mapping)`,
     );
   }
   const opencodeExe = spec.opencodeExecutable ??
     (provider === "opencode" ? spec.executable : undefined);
   const claudeExe = spec.claudeExecutable ??
     (provider === "claude" ? spec.executable : undefined);
+  const codexExe = spec.codexExecutable ??
+    (provider === "codex" ? spec.executable : undefined);
   if (provider === "opencode") {
     // Detached supervisors must not resolve ambiguous bare "opencode" on PATH.
     if (!opencodeExe || !opencodeExe.startsWith("/")) {
@@ -92,6 +96,13 @@ export function buildListenerChildArgs(spec: ListenerChildSpec): string[] {
     if (!claudeExe || !isNativeAbsolutePath(claudeExe)) {
       throw new Error(
         "detached --provider claude requires an absolute --claude-executable path",
+      );
+    }
+  }
+  if (provider === "codex") {
+    if (!codexExe || !isNativeAbsolutePath(codexExe)) {
+      throw new Error(
+        "detached --provider codex requires an absolute --codex-executable path",
       );
     }
   }
@@ -124,6 +135,9 @@ export function buildListenerChildArgs(spec: ListenerChildSpec): string[] {
       : []),
     ...(provider === "claude" && claudeExe
       ? ["--claude-executable", claudeExe]
+      : []),
+    ...(provider === "codex" && codexExe
+      ? ["--codex-executable", codexExe]
       : []),
     ...(spec.model ? ["--model", spec.model] : []),
     ...(provider === "grok" && spec.effort ? ["--effort", spec.effort] : []),
