@@ -53,7 +53,7 @@ const {
     {eyebrow && <p class="ac__eyebrow">{eyebrow}</p>}
     <h2 class="ac__title">Name your agent.</h2>
     <p class="ac__lead">
-      Add the name and model collaborators will see in the feed.
+      Add the name collaborators will see in the feed.
     </p>
   </header>
 
@@ -99,45 +99,6 @@ const {
       </p>
     </div>
 
-    <div class="ac__field" data-field-wrap="model">
-      <label class="ac__label" for="ac-model">Model</label>
-      <input
-        class="ac__control"
-        id="ac-model"
-        data-field="model"
-        type="text"
-        maxlength="120"
-        autocomplete="off"
-        spellcheck="false"
-        list="ac-models"
-        placeholder="Kimi K3"
-      />
-      <datalist id="ac-models">
-        <option value="Claude"></option>
-        <option value="Codex"></option>
-        <option value="Gemini"></option>
-        <option value="Grok"></option>
-        <option value="Kimi K3"></option>
-      </datalist>
-      <p class="ac__hint">Use the model name you would recognize later.</p>
-    </div>
-
-    <p class="ac__warn" role="note">
-      <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
-        <path
-          d="M12 8.4v4.4M12 16.2h.01M10.3 4.2 2.9 17.4a1.9 1.9 0 0 0 1.7 2.9h14.8a1.9 1.9 0 0 0 1.7-2.9L13.7 4.2a1.9 1.9 0 0 0-3.4 0Z"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="1.6"
-          stroke-linecap="round"
-          stroke-linejoin="round"></path>
-      </svg>
-      <span>
-        The key appears once, on this screen. It is not stored here and cannot be shown again
-        — copy it before you leave. If you lose it, create another.
-      </span>
-    </p>
-
     <p class="ac__form-error" data-slot="form-error" role="alert" hidden></p>
 
     <button class="ac__btn ac__btn--primary" type="submit" data-action="mint">
@@ -171,6 +132,22 @@ const {
         the agent first connects.
       </p>
     </div>
+
+    <p class="ac__warn" role="note">
+      <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+        <path
+          d="M12 8.4v4.4M12 16.2h.01M10.3 4.2 2.9 17.4a1.9 1.9 0 0 0 1.7 2.9h14.8a1.9 1.9 0 0 0 1.7-2.9L13.7 4.2a1.9 1.9 0 0 0-3.4 0Z"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.6"
+          stroke-linecap="round"
+          stroke-linejoin="round"></path>
+      </svg>
+      <span>
+        The key appears once, on this screen. It is not stored here and cannot be shown again
+        — copy it before you leave. If you lose it, create another.
+      </span>
+    </p>
 
     <div class="ac__block">
       <div class="ac__block-bar">
@@ -438,11 +415,9 @@ const {
     #syncNameField() {
       const select = this.#q<HTMLSelectElement>('[data-field="identity"]');
       const nameWrap = this.#q<HTMLElement>('[data-field-wrap="name"]');
-      const modelWrap = this.#q<HTMLElement>('[data-field-wrap="model"]');
-      if (!select || !nameWrap || !modelWrap) return;
+      if (!select || !nameWrap) return;
       const existing = select.value !== "";
       nameWrap.hidden = existing;
-      modelWrap.hidden = existing;
     }
 
     #formError(message: string | null) {
@@ -502,21 +477,13 @@ const {
 
       const select = this.#q<HTMLSelectElement>('[data-field="identity"]');
       const nameField = this.#q<HTMLInputElement>('[data-field="name"]');
-      const modelField = this.#q<HTMLInputElement>('[data-field="model"]');
       const existingId = select?.value ?? "";
       const name = (nameField?.value ?? "").trim();
-      const model = (modelField?.value ?? "").trim();
       if (!existingId && name.length === 0) {
         this.#formError("Name the AI assistant first — collaborators will see this name.");
         nameField?.focus();
         return;
       }
-      if (!existingId && model.length === 0) {
-        this.#formError("Add the model so teammates can tell your agents apart.");
-        modelField?.focus();
-        return;
-      }
-
       /* #busy is owned by #mint()'s wrapper now — it is set before the first await and
          cleared in a finally there, so assigning it again here would be a second source of
          truth for one flag. */
@@ -556,7 +523,6 @@ const {
             identityCommandId,
             this.#workspaceId,
             name,
-            model,
           );
           this.#step("create-identity", "done");
         }
