@@ -2623,3 +2623,71 @@ Companion 1 protects us regardless of what the server claims. Recorded as a serv
 Whether the fix moves the production failure rate — nothing has been measured against production. And
 **after this ships, "zero retries" can mean *honoured* or *dead***; the post-deploy measurement must
 distinguish them. That distinction is Verity's and it is the thing most likely to be misread.
+
+---
+
+## D-053 — control flow decided by matching untrusted text against `error.message` · CLASS RULING
+
+Three instances found in one session by **Plumb**, the third in a place the Lead had explicitly
+cleared. This is one defect class, not three bugs.
+
+### The pattern
+
+**A classifier decides control flow by regex-matching `error.message`, and untrusted text can reach
+that field.** Whoever controls the string controls the branch.
+
+| # | Classifier | Untrusted source | Consequence |
+|---|---|---|---|
+| 1 | `signals.ts:1496` `/aborted/i` | server error body → `describeServerError` → `error.message` | follow **exits silently** as if the operator cancelled |
+| 2 | `signals.ts:1425` `/secret is absent/i` | same path | forged **credential failure** — defended by Verity's contract-shape restriction, 10/10 attacks resisted with a 2/2 positive control |
+| 3 | `engine.ts:238` `/timeout\|temporar\|transport\|child exit\|connection/i` | **the ACP child's own JSON-RPC error message**, copied verbatim at `transport.ts:311-313` | the **provider decides whether we re-prompt it** |
+
+### Instance 3, and why it is the worst of the three
+
+`transport.ts:311-313` takes `rec.error.message` from the child and puts it straight into
+`AcpProtocolError`. `engine.ts:233-238` then matches keywords against it.
+
+Plumb's causal reproduction — **same error type, same `code='rpc_error'`, only the message changed:**
+
+```
+"provider rejected this request"            -> failed
+"connection permanently denied"             -> retry_pending
+"temporary policy violation"                -> retry_pending
+"transport authorization rejected"          -> retry_pending
+"child exit requested by policy"            -> retry_pending
+"request timeout: invalid account"          -> retry_pending
+```
+
+Every one of those is a **permanent** refusal phrased so it matches a retry keyword.
+`engine.ts:456-465` then schedules another model prompt — bounded by `maxPromptAttempts`, but it
+duplicates provider work, cost and load on refusals that will never succeed.
+
+### This is a known ruling that keeps regressing
+
+The A2 credential-escape lane **deliberately removed** message-regex matching from `isAbort`, and the
+Lead's own review of that lane recorded *"isAbort is name-only in both engine and runtime; the message
+regex is gone."* It was removed from two sites. **Three others survived, and one was introduced since.**
+
+### How the Lead cleared instance 3 incorrectly
+
+Verity reported *"`defaultRetryablePromptError`: CHECKED, does NOT need this — no HTTP response reaches
+it, so there is no envelope to read."* That is **true and insufficient.** The Lead accepted "no HTTP
+envelope" as meaning "no untrusted input", which is a different claim. Neither asked what **else** could
+populate that message. The child does.
+
+### Ruling
+
+**Never infer control flow from prose.** Classify on:
+
+- error **type** (`AcpTimeoutError`, `AcpChildExitError`, `SenderProvenanceUnavailableError`);
+- a **stable code** we assign (`AcpHostError.code`), not one the peer supplies;
+- the caller's own **`AbortSignal` state**, which is authoritative for cancellation.
+
+Normalise raw stream failures to a typed transport code at the boundary. **A message is for humans.**
+
+Fix all three instances. Sweep for others — the pattern is the finding, not the instance.
+
+### Not established
+
+Whether other classifiers outside `signals.ts` and `engine.ts` match on messages. Whether the bounded
+`maxPromptAttempts` limits the cost of instance 3 to an acceptable level in practice.
