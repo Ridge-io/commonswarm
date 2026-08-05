@@ -288,6 +288,19 @@ import "../../styles/tokens.css";
 
           <div class="dashboard__rail-foot">
             <a class="dashboard__wordmark" href="/" aria-label="CommonSwarm home">CommonSwarm</a>
+            <button
+              class="dashboard__theme-toggle"
+              type="button"
+              data-theme-toggle
+              aria-label="Theme: System. Activate for light theme"
+              title="Theme: System"
+            >
+              <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+                <circle cx="12" cy="12" r="8.5"></circle>
+                <path d="M12 3.5a8.5 8.5 0 0 1 0 17Z"></path>
+              </svg>
+              <span data-theme-toggle-label>System</span>
+            </button>
             <div class="dashboard__rail-account">
               <span data-rail-account>Your account</span>
               <button class="dashboard__text-button" type="button" data-signout>Sign out</button>
@@ -5013,6 +5026,43 @@ import "../../styles/tokens.css";
     gap: var(--s-3);
   }
 
+  .dashboard__theme-toggle {
+    inline-size: fit-content;
+    min-block-size: 2rem;
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s-2);
+    padding: var(--s-1) var(--s-2);
+    color: var(--text-muted);
+    background: transparent;
+    border: 0;
+    border-radius: var(--radius-sm);
+    font: inherit;
+    cursor: pointer;
+  }
+
+  .dashboard__theme-toggle:hover {
+    color: var(--text);
+    background: var(--surface);
+  }
+
+  .dashboard__theme-toggle:focus-visible {
+    outline: none;
+    box-shadow: var(--focus-ring);
+  }
+
+  .dashboard__theme-toggle svg {
+    flex: none;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.5;
+  }
+
+  .dashboard__theme-toggle path {
+    fill: currentColor;
+    stroke: none;
+  }
+
   .dashboard__rail-account > span {
     overflow: hidden;
     text-overflow: ellipsis;
@@ -6375,6 +6425,12 @@ import "../../styles/tokens.css";
       display: none;
     }
 
+    .dashboard__theme-toggle {
+      grid-column: 2;
+      grid-row: 2;
+      justify-self: end;
+    }
+
     .dashboard__rail-foot > .dashboard__wordmark {
       grid-column: 2;
       grid-row: 1;
@@ -6481,6 +6537,12 @@ import "../../styles/tokens.css";
     .dashboard__rail-foot > .dashboard__wordmark {
       grid-column: 1;
       grid-row: 2;
+      justify-self: start;
+    }
+
+    .dashboard__theme-toggle {
+      grid-column: 1;
+      grid-row: 3;
       justify-self: start;
     }
 
