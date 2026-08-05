@@ -208,6 +208,33 @@ Reduce safeguards where they only add ceremony; assume agents are intelligent. S
 better. But the safeguards named in the doctrine file as must-survive are load-bearing —
 check that list before removing a check.
 
+## `error.message` is presentation. Control flow uses types and codes.
+
+**Never branch on the text of an error.** Classify on a named error class, on a stable code **we**
+assign, or on our own state (a caller's `AbortSignal` is authoritative for cancellation). Normalise
+raw stream failures to a typed code at the boundary.
+
+This is a repo-wide rule because it has now regressed three times, and the third instance was in a
+classifier two reviewers had already cleared. See **D-053**.
+
+The failure mode is always the same: **a classifier regex-matches `error.message`, and untrusted text
+reaches that field, so whoever controls the string controls the branch.** Measured instances:
+
+- a server error body reaching `error.message` made `cswarm inbox --follow` **exit silently as though
+  the operator had cancelled it** — a *nonconforming* server does this by accident, not just a hostile
+  one;
+- the ACP child's own JSON-RPC message is copied verbatim into an error, and a retry classifier matched
+  keywords against it — so **the provider decided whether we re-prompted it.** Same error type, same
+  code, only the prose changed, and the decision flipped.
+
+**"No HTTP response reaches this classifier" is not the same claim as "no untrusted input reaches
+it."** That substitution is how the third instance was cleared by two people. When clearing one of
+these, name every producer that can populate the message.
+
+A sweep exists (`docs/evidence/2026-08-05-d051/`): 9 semantic classifiers across 11 sites, each
+categorised unsafe / structurally-unsafe / local-only with its reason. **Extend it rather than
+re-deriving it**, and if you add a classifier that matches a message, justify it there or use a type.
+
 ## Onboarding: ask for the minimum, detect the rest
 
 Operator direction, 2026-08-04:

@@ -66,3 +66,40 @@ Third one-writer-per-worktree violation by the Lead in one session.
 
 Full 436/149 gates (re-run by the Lead), production outcome, and unbounded huge-body memory behaviour.
 **A replacement SHA requires both arms again.**
+
+---
+
+## Pattern sweep — complete enumeration, exact `84f0882`
+
+**9 semantic `error.message` classifiers across 11 source sites**, every one categorised.
+
+### Unsafe — exploited
+
+1. `signals.ts` `isAbortError` `/aborted/i` — silent cancellation. Reproduced.
+2. `engine.ts` `defaultRetryablePromptError` keyword regex — provider controls retry. Reproduced.
+
+### Guarded today, structurally unsafe
+
+3. `signals.ts` `isFollowCredentialFailure` `/secret is absent/i` — **no producer exists in `src`**
+   (search finds only the classifier and a comment). On this SHA the read-body parser blocks spaces and
+   a typed `CommandHttpError` returns before wording is consulted, so there is **no remaining wire
+   path**. **Replace it with a typed secret-missing error anyway: the next free-form producer reopens
+   it.** A defect that is unreachable by accident is not fixed.
+
+### Safe — local-only strings, each justified
+
+- `followHttpDetails` — parses a locally-created fixed HTTP prefix, ignores the server-supplied suffix.
+- `isTransportFollowMessage` — compares one locally-created exact sentence.
+- `isMalformedFollowMessage` — matches only local parser constants.
+- `storage.ts:457` — the local `readSecureJsonFile` oversize sentinel.
+- `delivery-journal.ts:274` — compares its own static `errMessage`.
+- `delivery-journal.ts:658-659`, `1013-1014` — canonicalise the same local oversize sentinel. **Noted
+  edge:** a user-chosen path containing the phrase changes their local error label to `malformed`, with
+  no authority or retry effect.
+
+Server messages in `command-client`, `auth` and `pending-command` are displayed or wrapped; their
+control classifiers branch on typed class or status **first**.
+
+### Rule this sweep supports, now in `AGENTS.md`
+
+**`error.message` is presentation only. Control flow uses named classes or a stable bounded code.**
