@@ -966,14 +966,23 @@ describe("Grok ACP host core (pure fake child)", () => {
   });
 });
 
-test("D-051: raw stream failures leave the transport with a code we assigned", async () => {
+// SCOPE, narrowed after Plumb measured the gap: this covers ONE path — a
+// `readable` "error" event with a request pending. It does NOT establish that
+// every raw stream failure is normalised. notify/respond/respondError call
+// writeFrame with no asAcpHostError catch, so a synchronous throw from the
+// writable yields a plain Error with code === null. That is unfixed and is the
+// first item of the follow-up lane; whether it is reachable in production is
+// also unestablished. An earlier name here claimed "raw stream failures" in
+// general, which told a reader of the green suite that the boundary was tested.
+test("D-051: a readable error event with a request pending is normalised to an assigned code", async () => {
   const readable = new PassThrough();
   const writable = new PassThrough();
   const transport = new AcpTransport({ readable, writable, handlers: {} });
   try {
     const pending = transport.request("session/prompt", {}, 5_000);
-    // A bare Node stream error — the shape that used to escape untyped and
-    // leave downstream classifiers nothing but its wording to branch on.
+    // A bare Node stream error on the READABLE side — the shape that used to
+    // escape untyped and leave downstream classifiers nothing but its wording
+    // to branch on. The writable side is not covered here; see the scope note.
     const raw = new Error("read ECONNRESET");
     (raw as Error & { code?: string }).code = "ECONNRESET";
     readable.emit("error", raw);

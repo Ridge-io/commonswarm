@@ -362,9 +362,16 @@ Positive control on the same path: `timeout`, `child_exit` and `transport`
 still retry, and `version_refused` / `permission_canary_failed` /
 `protocol_error` still do not.
 
-`tests/host-acp-grok.test.ts` — a bare `ECONNRESET` on the stream leaves the
-transport as `AcpTransportError` with code `transport` and the original
-preserved as `cause`; an `AcpChildExitError` is not re-wrapped.
+`tests/host-acp-grok.test.ts` — a bare `ECONNRESET` **on the readable side, with
+a request pending** leaves the transport as `AcpTransportError` with code
+`transport` and the original preserved as `cause`; an `AcpChildExitError` is not
+re-wrapped.
+
+**Scope, narrowed after Plumb measured it:** that covers one path, not the
+boundary. `notify`, `respond` and `respondError` call `writeFrame` with no
+`asAcpHostError` catch, so a synchronous throw from the writable yields a plain
+`Error` with `code === null`. Unfixed, and first item of the follow-up lane.
+Whether that path is reachable in production is also unestablished.
 
 ### Inversion
 
