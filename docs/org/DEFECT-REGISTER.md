@@ -2443,3 +2443,86 @@ single absolute JS realpath, and a full open → `session/new` → close exited 
 
 Behaviour against a real workspace signal (`lastSignalId`), the no-auth and `ANTHROPIC_API_KEY` paths
 (D-048), and native Windows.
+
+---
+
+## D-051 — authenticated requests saturate a bounded resource, and our own retry loop feeds it · SHIP-BLOCKER (live)
+
+Diagnosed 2026-08-05 by **Wren**, from the laptop, with a dose-response curve. This supersedes the
+schema-skew hypothesis I accepted too quickly.
+
+### The shape
+
+**Failures are fast, not slow.** Twelve authenticated trials on `feed`:
+
+```
+successes: 0.554 0.616 0.958 0.583 0.524 0.576   mean ~0.63s
+failures:  0.298 0.230 0.274 0.232 0.277         mean ~0.26s
+```
+
+Failures return in ~40% of a success's time. **Nothing clusters at 5s, 10s or 30s — there is no
+timeout boundary in the data.** The server refuses almost immediately. One HTTP 503 also appeared.
+
+**Failure rate scales with concurrency**, same credential throughout:
+
+| concurrent | failed |
+|---|---|
+| 2 | 1/6 (17%) |
+| 4 | 7/12 (58%) |
+| 8 | 17/24 (71%) |
+
+And the discriminator: **eight requests sequentially back-to-back all succeed; eight simultaneously,
+7 of 8 fail.** So it is **not rate** — it is **simultaneity**. That rules out simple rate limiting.
+
+**A bounded resource that rejects immediately at its ceiling instead of queueing** — the shape of a
+connection pool at capacity. It explains why unauthenticated probes are perfectly stable (12/12, 6/6):
+they never take a database connection. Everything authenticated does, which is why reads, writes **and
+token mint** are all flaky together.
+
+**A schema mismatch would fail 100%, not 50%. This is a saturation curve, not a correctness bug.**
+
+### Our clients amplify it — the part that matters
+
+`retryable: false` is in **every** error body. The client never reads it: `throwSignalHttp`
+(`src/cloud/signals.ts`) takes the whole `Response` and touches only `.status` and the `retry-after`
+header — **never `response.body`.** So it discards the diagnostic *and* the server's explicit
+do-not-retry instruction in the same line.
+
+Consequently:
+
+- the CLI tells the human *"retry the same signal to resolve its pending outcome"*;
+- the follow receiver retries indefinitely — **370 retry frames in 28 minutes** from one process;
+- **five** `cswarm inbox --follow` processes are alive on that laptop, each polling and each retrying.
+
+**Concurrency causes failures → failures cause retries → retries add concurrency.** A positive
+feedback loop, and every client in the fleet is wired to feed it. The receiver meant to ride out a
+transient outage is instead sustaining it. This also explains the unbounded re-observation loop Wren
+reported yesterday.
+
+### Measured vs inferred, per Wren
+
+**Measured:** failure rate scales with concurrency; failures are fast; five receivers poll
+continuously; the client ignores `retryable: false`. **Inferred, not measured:** that retry traffic
+materially contributes to the saturation. The counterfactual needs those five receivers stopped for two
+minutes — **operator action**, since they are not Wren's processes.
+
+### Fix, in priority order
+
+1. **Honour `retryable: false`.** Parse the body, stop retrying when the server says not to. This
+   breaks the feedback loop and is the highest-value change available.
+2. **Surface the body.** An error path that discards the only diagnostic is its own defect.
+3. Then investigate the pool ceiling itself with the request ids Wren supplied.
+
+### Method note worth keeping
+
+Wren nearly reported a load-balancer hypothesis from a convincing `200 500 200 500` alternation on six
+data points, and said so rather than burying it. The concurrency curve explained it better. Also
+flagged: the concurrency-1 point is three requests and disagrees with the trend — treat 2-8 as the
+signal.
+
+### Not established
+
+Server-side confirmation — pool exhaustion is the shape the client evidence makes, not something read
+from a log. Whether `feed` and `inbox` have different ceilings. **Whether the cap is per-principal or
+global — Wren varied concurrency from one credential only, and if it is per-principal the fix changes
+entirely. That is the cheap next test.**
