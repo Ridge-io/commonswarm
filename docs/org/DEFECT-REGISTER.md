@@ -2526,3 +2526,68 @@ Server-side confirmation — pool exhaustion is the shape the client evidence ma
 from a log. Whether `feed` and `inbox` have different ceilings. **Whether the cap is per-principal or
 global — Wren varied concurrency from one credential only, and if it is per-principal the fix changes
 entirely. That is the cheap next test.**
+
+
+---
+
+## D-052 — honouring `retryable: false` kills receivers; the backoff reset is the better lever · RULING
+
+Found by **Verity** immediately after building the D-051 fix, before it shipped. Every link verified by
+the Lead.
+
+### What the naive fix does
+
+I specified *"do not retry, surface the error instead."* Traced end to end on `84f0882`:
+
+```
+refused 500 -> isRetryableFollowError false -> runtime.ts:806 stop={reason:"fatal"}
+            -> supervisor transition("failed") -> run() returns
+```
+
+**And nothing brings it back.** No restarter exists anywhere in `src/` — no `.plist`, no `.service`,
+and `spawnDetachedListener` spawns once, detached, with no respawn. My own grep for `restart` returned
+five hits that were all `closeBeforeStart`: a false positive that would have let me confirm the wrong
+answer.
+
+So the first refused 500 **permanently kills each receiver**. At Wren's measured rejection rates, five
+receivers plausibly die within minutes and delivery stops until a human intervenes. Pre-fix they were
+degraded but alive. **That is a worse user-visible outcome than slow retries, and it would read as "the
+fix broke everything."**
+
+### The mechanism behind the 370 frames — and why the obvious middle path is worse
+
+`signals.ts:1577` (and the runtime equivalent) sets `attempt = 0` on **every successful read**. An
+intermittently-failing receiver therefore never climbs to the 30 s cap: it rises, succeeds, resets,
+rises again. That is 13.2 requests/min against ~2/min for a receiver sitting at capped backoff.
+
+**The reset is the amplifier's engine.**
+
+It also kills the tempting middle option — *don't retry, but let the idle poll continue*.
+`SIGNAL_FOLLOW_POLL_MS` is 2000, so that is ~30 requests/min: **more** load than the 13/min being
+removed.
+
+### Ruling
+
+Land `84f0882`, with **two companions in the same deploy**:
+
+1. **Fix the backoff reset.** Decay the attempt counter rather than zeroing it, or reset only after N
+   consecutive successes. This cuts amplification ~6× **without depending on the server's `retryable`
+   field at all**, and it keeps working on endpoints that never emit one. It is the most robust part of
+   the change and it was hiding inside the diagnosis.
+2. **Receiver supervision — restart with a cap.** Exponential, bounded, and it must stop and record why
+   after N attempts, so transient saturation recovers while a revoked credential still terminates.
+
+### The server is probably wrong, and that is why the naive fix is dangerous
+
+Honouring `retryable: false` is correct *client* behaviour. But **a pool-exhaustion 500 is transient and
+IS retryable with backoff.** The server asserting otherwise is likely a server defect — so the naive
+fix faithfully obeys an assertion that is wrong, and kills receivers for a condition that would clear.
+
+Companion 1 protects us regardless of what the server claims. Recorded as a server-side item behind the
+**D-047 freeze**.
+
+### Not established
+
+Whether the fix moves the production failure rate — nothing has been measured against production. And
+**after this ships, "zero retries" can mean *honoured* or *dead***; the post-deploy measurement must
+distinguish them. That distinction is Verity's and it is the thing most likely to be misread.
