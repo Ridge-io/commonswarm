@@ -1,6 +1,6 @@
 # UI suite report
 
-All four packets were completed in order on `ui/slack-suite`. The site test baseline was 130 tests. No commit was pushed.
+The first four packets were completed in order on `ui/slack-suite`; the theme-toggle packet was completed on `ui/theme-toggle`. The site test baseline before the suite was 130 tests. No commit was pushed.
 
 ## 1. Rail grouped by owner
 
@@ -108,19 +108,55 @@ Gate: 138 → 142 tests, 0 failures, after a clean site build.
 
 Rendered checks: in the sample workspace, broadcast was the initial audience, the count read `3 agents · 2 people in workspace`, typing `@` opened five person/agent rows, keyboard selection produced a chip, and posting kept the chip in the stream. A direct-agent selection rendered `1 agent addressed`. The composer and picker were inspected in both light and dark at 1440 × 1000. No real backend signal was posted, and the composer was not visually checked at every responsive breakpoint.
 
+## 5. Three-state dashboard theme control
+
+Commit: the fifth commit containing this report.
+
+Scope:
+
+- `site/src/pages/app.astro`
+- `site/src/components/app/LiveDashboard.astro`
+- `site/src/components/app/theme-toggle.observer.test.ts`
+- `REPORT.md`
+
+The dashboard rail has one keyboard-native button that cycles `system` → `light` →
+`dark` → `system`. Its visible and accessible labels name the current state. The choice
+is stored under `commonswarm:theme`. Light and dark set the matching `data-theme` value on
+the document root. System stores the literal `system` preference and removes the attribute,
+leaving the existing `prefers-color-scheme` path live when the OS preference changes.
+
+The stored preference is read and applied synchronously by an inline script in the document
+head. In the built `/app/index.html`, the script closes before the first stylesheet link, so
+a pinned light or dark attribute exists before CSS can paint the page. The observer executes
+that built script for all three stored states, cycles and persists every state, reloads from
+the same storage fixture, and checks the generated head ordering.
+
+`site/src/styles/tokens.css` was not changed. The control uses the existing tokens and adds
+no colour values. `header-roster.observer.test.ts` was not weakened, and
+`.dashboard__sidebar-agent-list` retains its `14rem` block-size and max-block-size.
+
+Gate: 142 → 145 tests, 0 failures, after `rm -rf site/dist`,
+`npm --prefix site run build`, and `npm --prefix site test`. Astro built all eight routes,
+and the site gate reported `unreachable = []`.
+
+Rendered check: this packet was not loaded visually in a browser in both schemes. Its
+evidence is execution of the inline script extracted from the built page plus assertions
+against the built markup and stylesheet order. It did not establish screenshots, a live OS
+scheme change, or production behavior.
+
 ## Existing tests changed
 
 - `site/src/components/app/slack-shape.observer.test.ts` in packet 1: inverted the flat PEOPLE/AGENTS assertions into grouped participant assertions and changed the rendered geometry fixture to the nested owner structure. The three-versus-fifty height comparison and the 14rem bound remain.
 - `site/src/components/app/slack-shape.observer.test.ts` in packet 2: replaced its fixed-light palette assertion with assertions that the shared token import and both scheme paths ship. Feed hierarchy, direct tint, identity, and rail geometry assertions remain.
 - `site/src/components/app/ui-addressing.observer.test.ts` in packet 3: changed source-pattern assertions from text-only target/owner construction to the new button-based DOM assembly. It still requires explicit targets, fallback targets, `operated by`, and direct-to-viewer treatment.
 
-No existing test was changed in packet 4. `header-roster.observer.test.ts` was not changed or deleted and remained green through every gate.
+No existing test was changed in packets 4 or 5. `header-roster.observer.test.ts` was not changed or deleted and remained green through every gate.
 
-New observers cover owner grouping, shared token adoption, entity-panel behavior, and Phase 1 composer/mention behavior. The final site gate reached all test-shaped files.
+New observers cover owner grouping, shared token adoption, entity-panel behavior, Phase 1 composer/mention behavior, and the three-state theme control. The final site gate reached all test-shaped files.
 
 ## Not established across the suite
 
 - No production deployment, push, Supabase mutation, or database test was performed.
 - The rendered work used the built sample workspace. It did not establish behavior with production workspace data, a production revoked credential, or a real browser-authenticated post.
 - The site tests and sample interactions establish DOM, CSS, command shape, focus, and local presentation behavior. They do not establish mention delivery, multi-client mention persistence, notification, or agent acknowledgement.
-- Visual inspection covered a 1440 × 1000 desktop viewport in light and dark. It did not cover every viewport, browser, assistive technology, or OS rendering combination.
+- Visual inspection of the earlier packets covered a 1440 × 1000 desktop viewport in light and dark. The theme-toggle packet itself was not visually loaded in both schemes. The suite did not cover every viewport, browser, assistive technology, or OS rendering combination.

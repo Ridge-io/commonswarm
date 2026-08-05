@@ -20,5 +20,68 @@ const description =
   bareHeader
   bareFooter
 >
+  <script is:inline slot="head" data-theme-bootstrap>
+    (() => {
+      const storageKey = "commonswarm:theme";
+      const preferences = ["system", "light", "dark"];
+      const root = document.documentElement;
+
+      const readPreference = () => {
+        try {
+          const stored = window.localStorage.getItem(storageKey);
+          return preferences.includes(stored) ? stored : "system";
+        } catch {
+          return "system";
+        }
+      };
+
+      const applyPreference = (preference) => {
+        if (preference === "light" || preference === "dark") {
+          root.setAttribute("data-theme", preference);
+          return;
+        }
+        root.removeAttribute("data-theme");
+      };
+
+      const persistPreference = (preference) => {
+        try {
+          window.localStorage.setItem(storageKey, preference);
+        } catch {
+          // The control still works for this page when device storage is unavailable.
+        }
+      };
+
+      let preference = readPreference();
+      applyPreference(preference);
+
+      window.addEventListener("DOMContentLoaded", () => {
+        const control = document.querySelector("[data-theme-toggle]");
+        const label = control?.querySelector("[data-theme-toggle-label]");
+        if (!(control instanceof HTMLButtonElement) || !(label instanceof HTMLElement)) return;
+
+        const render = () => {
+          const next = preferences[(preferences.indexOf(preference) + 1) % preferences.length];
+          const currentLabel = preference[0].toUpperCase() + preference.slice(1);
+          const nextLabel = next[0].toUpperCase() + next.slice(1);
+          label.textContent = currentLabel;
+          control.setAttribute(
+            "aria-label",
+            `Theme: ${currentLabel}. Activate for ${nextLabel.toLowerCase()} theme`,
+          );
+          control.title = `Theme: ${currentLabel}`;
+        };
+
+        control.addEventListener("click", () => {
+          preference = preferences[(preferences.indexOf(preference) + 1) % preferences.length];
+          persistPreference(preference);
+          applyPreference(preference);
+          render();
+        });
+
+        render();
+      });
+    })();
+  </script>
+
   <LiveDashboard />
 </Base>
