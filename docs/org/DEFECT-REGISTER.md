@@ -2757,3 +2757,58 @@ Fix all three instances. Sweep for others — the pattern is the finding, not th
 
 Whether other classifiers outside `signals.ts` and `engine.ts` match on messages. Whether the bounded
 `maxPromptAttempts` limits the cost of instance 3 to an acceptable level in practice.
+
+---
+
+## D-054 — `retryable: false` is the server's DEFAULT for anything unclassified, not a judgement · SHIP-BLOCKER (server, frozen)
+
+Lead found by **Verity**; verified by the Lead **against the deployed v6 source**, not the repo.
+
+```js
+const code = record === null ? null : readStringField(record, "code");   // :87
+retryable: isRetryableErrorCode(code)                                     // :99
+
+function readStringField(record, key) {
+  const value = record[key];
+  if (typeof value !== "string") return null;      // :60
+  ...
+}
+function isRetryableErrorCode(code) {
+  if (code === null) return false;                 // :70
+  ...
+}
+```
+
+**Any thrown value without a top-level string `code` yields `retryable: false`** — regardless of
+whether the condition is transient. The field is not a classification; it is a **default applied to
+everything the classifier could not read.**
+
+### Why this matters more than it looks
+
+1. **It explains the contradiction.** We reasoned that `retryable: false` ruled out connection
+   exhaustion, because the server marks `53300` and the `08xxx` class retryable. That inference was
+   **unsound**: an error that never carries a `code` field is reported non-retryable no matter what it
+   is. `retryable: false` tells us **nothing** about the underlying condition.
+2. **We just taught the client to obey it faithfully.** D-051 makes `retryable: false` a hard veto.
+   Combined with this, **a server-side false negative propagates directly into permanently stopped
+   receivers.**
+3. **It vindicates the bounded supervision decision.** D-052 added restart-with-cap because a receiver
+   must not die permanently on an unidentified condition. That is now the load-bearing safeguard rather
+   than a nicety — without it, an unclassified server error kills every listener.
+
+### The fix is one line, and it is frozen
+
+`read/diagnostics.ts` must distinguish **"classified as non-retryable"** from **"could not classify"**.
+An unknown error should not assert non-retryability. **This sits behind the D-047 freeze** and needs a
+`read` deploy, which is exactly what that freeze forbids without the full gate.
+
+### What answers it immediately
+
+**The operator log line already carries `name` and `code`.** One look at the six request ids Wren
+captured shows whether the failing errors carry a `code` at all. If they do not, this is confirmed and
+the production 500s are unclassified rather than non-retryable. **Dashboard access — operator.**
+
+### Not established
+
+Whether the production failures actually lack a `code`. Whether adding the distinction changes the
+observed failure rate — **it would not**; it changes only what we tell clients about it.
