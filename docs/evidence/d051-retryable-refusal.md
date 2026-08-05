@@ -1128,12 +1128,31 @@ default is what makes a missed type safe rather than wrong.
 
 `readAgentSignalDirectory` (`signals.ts:937/942/946`) throws untagged plain
 Errors — `member read could not reach the cloud service`, `member read failed
-(HTTP n)`. It parses no envelope and sets no identity tag, so the server's
-`request_id`, `retryable` and status are all discarded — exactly the way the
-signal read discarded them before D-051.
+(HTTP n)`.
 
-**That is the whole finding: diagnostic loss.** It is scoped to detail, not to
-retry behaviour.
+**Two layers lose different things, and they must not be collapsed** (Plumb's
+correction; the first version of this entry said the directory read discards
+status, which is wrong):
+
+| layer | lost | kept |
+|---|---|---|
+| directory read (`signals.ts:946`) | `request_id`, `retryable` — the body is never parsed | **status, in the message text** |
+| listener (`engine.ts:436-438`) | everything: the bare `catch` swallows the whole Error | — |
+
+So a **direct CLI caller** (`cli.ts:1979`, `:2025`) does see
+`member read failed (HTTP 500)` and can act on it. Only the **listener** path
+(`cli.ts:2951` → `resolveSenderProvenance`) loses the status as well, and it
+loses it at the second layer rather than the first.
+
+One nuance the branch's own principle sharpens: the status survives as **prose
+for a human, not as data for a classifier**. There is no identity tag, so after
+D-058 nothing classifies on it — deliberately, because classifying on message
+text is the defect D-053 and D-058 removed. The status being readable and the
+status being usable are different properties, and only the first holds here.
+
+**The finding is diagnostic loss, scoped to the body fields at the directory
+layer and to everything at the listener layer.** It is not a claim about retry
+behaviour.
 
 > ★ ~~**FALSE, and marked dead 2026-08-05 after a second Plumb refutation:**
 > "so **a transient 500 there is treated as permanent**."~~
