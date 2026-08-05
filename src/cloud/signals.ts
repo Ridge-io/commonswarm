@@ -494,10 +494,20 @@ function isTransportFollowMessage(error: unknown): boolean {
  * refusal, transport, timeouts — may clear on its own.
  */
 export function isRestartableReadError(error: unknown): boolean {
-  if (isFollowCredentialFailure(error)) return false;
-  if (isFatalFollowError(error)) return false;
-  if (isMalformedFollowMessage(error)) return false;
-  return true;
+  if (error instanceof SignalReadTimeoutError) return true;
+  if (isTransportFollowMessage(error)) return true;
+  const http = followHttpDetails(error);
+  if (http !== null) {
+    // Status alone. The `retryable: false` veto governs an IMMEDIATE retry of
+    // the same request; it does not assert that a later run cannot work, and a
+    // later run is the judgement a restart needs.
+    return http.status === 429 || http.status >= 500;
+  }
+  // D-057: CLOSED. An unrecognised failure acquires no decision. This used to
+  // exclude three known types and return true for everything else, so a plain
+  // TypeError, a delivery 400 and an ACP version mismatch all bought up to
+  // five restarts — verified by execution before the fix.
+  return false;
 }
 
 /** A malformed body/row: a protocol defect, so repeating the read cannot help. */

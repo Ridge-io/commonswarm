@@ -24,7 +24,6 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
-import { EXIT_RESTARTABLE } from "../../src/cli.js";
 
 const WORKSPACE = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const AGENT_TOKEN = `swm_agt_${"A".repeat(43)}`;
@@ -279,9 +278,11 @@ test("D-056: the exit status separates a refusal from a revoked credential", asy
     await new Promise<void>((closed) => revoked.server.close(() => closed()));
   }
 
-  assert.equal(refusedCode, EXIT_RESTARTABLE, "a refusal must be restartable");
+  // LITERAL, not imported from src/cli.ts. 75 is sysexits EX_TEMPFAIL and
+  // supervisors already know it, so it is an EXTERNAL contract: importing the
+  // constant would let it drift to 74 with the test still green while every
+  // shell loop and service unit silently broke. Importing the CLI entrypoint
+  // would also execute main().
+  assert.equal(refusedCode, 75, "a refusal must exit EX_TEMPFAIL (75)");
   assert.equal(revokedCode, 1, "a revoked credential must not be restartable");
-  // The control discriminates. If these were equal a shell until-loop would be
-  // unable to tell the two apart, which is the whole point of the change.
-  assert.notEqual(refusedCode, revokedCode);
 });

@@ -40,8 +40,32 @@ import {
 import {
   SignalHttpError,
   SignalMalformedError,
+  SignalReadTimeoutError,
   SignalTransportError,
 } from "../src/cloud/signals.js";
+import {
+  DeliveryHttpError,
+  DeliveryProtocolError,
+  DeliveryTransportError,
+} from "../src/cloud/delivery.js";
+import {
+  CommandHttpError,
+  CommandTransportError,
+} from "../src/cloud/command-client.js";
+import {
+  AcpChildExitError,
+  AcpPermissionCanaryError,
+  AcpPromptsBlockedError,
+  AcpProtocolError,
+  AcpTimeoutError,
+  AcpTransportError,
+  AcpVersionError,
+} from "../src/host/types.js";
+import {
+  RenewalReauthorisationRequired,
+  RenewalRevoked,
+} from "../src/cloud/renewal.js";
+import { ListenerCapabilityError } from "../src/listener/runtime.js";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -1140,13 +1164,15 @@ test("D-051: the restart classifier separates what can clear from what cannot", 
     }),
     true,
   );
-  // A dead model child is transient — the next attempt builds a fresh one.
+  // D-057 changed this deliberately. An UNTYPED error acquires no decision,
+  // however transient its wording sounds — classification is closed. The typed
+  // form of a dead child, AcpChildExitError, does restart and is in the table.
   assert.equal(
     isRestartableListenerStop({
       reason: "fatal",
       error: new Error("listener model is closed"),
     }),
-    true,
+    false,
   );
 
   // Never: the operator's own stop, a credential that will refuse forever,
@@ -1229,4 +1255,151 @@ test("D-051: one rejected write does not poison the rest of the supervisor's wri
   // And the status file itself kept being persisted through the failure.
   const persisted = await readListenerStatus(target);
   assert.equal(persisted?.state, "failed");
+});
+
+// ---------------------------------------------------------------------------
+// D-057: CLOSED classification. The restart predicate used to exclude three
+// signal-read types and return true for everything else, while the runtime also
+// emits delivery errors and ACP startup failures — so a delivery 400, a 409
+// conflict, a malformed 2xx and a version mismatch each bought up to five
+// restarts of work that cannot succeed. The set that failed open was exactly
+// the set the tests did not cover.
+//
+// This table drives EVERY error type the runtime can reach a fatal stop with.
+// It is also what stops the next error type silently acquiring a restart.
+// ---------------------------------------------------------------------------
+
+const RESTART_MATRIX: ReadonlyArray<[string, Error, boolean]> = [
+  // --- read path -----------------------------------------------------------
+  ["read 500", new SignalHttpError(500), true],
+  ["read 503", new SignalHttpError(503), true],
+  ["read 429", new SignalHttpError(429), true],
+  // A refused 500 still restarts: the veto governs an immediate retry of the
+  // same request, not whether a later run may work.
+  ["read 500 refused", new SignalHttpError(500, null, {
+    error: "internal_error",
+    requestId: "9d1f4b2c-0000-4000-8000-abcdefabcdef",
+    retryable: false,
+  }), true],
+  ["read 400", new SignalHttpError(400), false],
+  ["read 401", new SignalHttpError(401), false],
+  ["read 403", new SignalHttpError(403), false],
+  ["read 404", new SignalHttpError(404), false],
+  ["read 426", new SignalHttpError(426), false],
+  ["read timeout", new SignalReadTimeoutError(), true],
+  ["read transport", new SignalTransportError(), true],
+  ["read malformed", new SignalMalformedError("signal read returned a malformed row"), false],
+  ["secret absent", new Error("agent credential secret is absent"), false],
+
+  // --- delivery ------------------------------------------------------------
+  ["delivery transport", new DeliveryTransportError("unreachable"), true],
+  ["delivery 500", new DeliveryHttpError(500, "delivery_500", "delivery failed (HTTP 500)"), true],
+  ["delivery 503", new DeliveryHttpError(503, "delivery_503", "delivery failed (HTTP 503)"), true],
+  ["delivery 429", new DeliveryHttpError(429, "delivery_429", "delivery failed (HTTP 429)"), true],
+  ["delivery 400", new DeliveryHttpError(400, "delivery_400", "delivery failed (HTTP 400)"), false],
+  ["delivery 401", new DeliveryHttpError(401, "delivery_401", "delivery failed (HTTP 401)"), false],
+  ["delivery 403", new DeliveryHttpError(403, "delivery_403", "delivery failed (HTTP 403)"), false],
+  ["delivery 409 conflict", new DeliveryHttpError(409, "delivery_409", "delivery failed (HTTP 409)"), false],
+  ["delivery protocol", new DeliveryProtocolError("delivery claim returned more than one row"), false],
+
+  // --- command posts -------------------------------------------------------
+  ["command transport", new CommandTransportError("unreachable"), true],
+  ["command 500", new CommandHttpError(500), true],
+  ["command 429", new CommandHttpError(429), true],
+  ["command 400", new CommandHttpError(400), false],
+  ["command 403", new CommandHttpError(403), false],
+
+  // --- ACP host ------------------------------------------------------------
+  ["acp timeout", new AcpTimeoutError("ACP request timed out"), true],
+  ["acp child exit", new AcpChildExitError(1, null), true],
+  ["acp transport", new AcpTransportError(new Error("EPIPE")), true],
+  ["acp version refused", new AcpVersionError("version refused"), false],
+  ["acp canary failed", new AcpPermissionCanaryError("canary failed"), false],
+  ["acp protocol", new AcpProtocolError("bad frame", "malformed_frame"), false],
+  ["acp rpc_error", new AcpProtocolError("provider refused", "rpc_error"), false],
+  ["acp prompts blocked", new AcpPromptsBlockedError(), false],
+
+  // --- runtime's own ------------------------------------------------------
+  ["capability missing", new ListenerCapabilityError(
+    "cursor_capability_missing",
+    "the read service does not support lossless ascending inbox pages",
+  ), false],
+  ["claim did not settle", new Error("delivery claim did not settle"), false],
+  ["lease deadline invalid", new Error("delivery lease deadline is invalid"), false],
+
+  // --- credential horizons -------------------------------------------------
+  ["renewal reauth", new RenewalReauthorisationRequired("horizon_reached", null, "sign in again"), false],
+  ["renewal revoked", new RenewalRevoked("revoked", "the credential was revoked"), false],
+
+  // --- unrecognised: must acquire NO decision ------------------------------
+  ["plain TypeError", new TypeError("cannot read property of undefined"), false],
+  ["plain Error", new Error("something nobody has classified"), false],
+];
+
+test("D-057: every fatal error type the runtime can emit has an explicit restart verdict", () => {
+  const wrong: string[] = [];
+  for (const [name, error, expected] of RESTART_MATRIX) {
+    const actual = isRestartableListenerStop({ reason: "fatal", error });
+    if (actual !== expected) {
+      wrong.push(`${name}: expected ${expected}, got ${actual}`);
+    }
+  }
+  assert.deepEqual(wrong, []);
+
+  // The table must contain both verdicts, or it could pass by being uniform.
+  const restartable = RESTART_MATRIX.filter(([, , expected]) => expected);
+  const terminal = RESTART_MATRIX.filter(([, , expected]) => !expected);
+  assert.ok(restartable.length >= 10, "table must exercise the restartable arm");
+  assert.ok(terminal.length >= 20, "table must exercise the terminal arm");
+});
+
+test("D-057: classification is closed — an unrecognised failure never restarts", () => {
+  // The defect was default-TRUE, so this is the property that failed. Anything
+  // the classifier does not recognise must decline, not acquire a restart.
+  class FutureRuntimeError extends Error {
+    constructor() {
+      super("an error type added after this test was written");
+      this.name = "FutureRuntimeError";
+    }
+  }
+  assert.equal(
+    isRestartableListenerStop({ reason: "fatal", error: new FutureRuntimeError() }),
+    false,
+  );
+  assert.equal(
+    isRestartableListenerStop({ reason: "fatal", error: new Error("") }),
+    false,
+  );
+
+  // Positive control on the same call: the classifier is not simply saying no.
+  assert.equal(
+    isRestartableListenerStop({ reason: "fatal", error: new SignalHttpError(500) }),
+    true,
+  );
+});
+
+test("D-057: a non-restartable delivery failure is not restarted by the supervisor", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cswarm-restart-test-"));
+  const target = paths(root);
+  let runs = 0;
+  const status = await runListenerSupervisor({
+    paths: target,
+    profileId: "profile-restart",
+    workspaceId: randomUUID(),
+    principalId: randomUUID(),
+    restart: { maxAttempts: 3, sleep: async () => {}, random: () => 0 },
+    run: async () => {
+      runs += 1;
+      // Before D-057 this restarted 3 times, repeating a delivery command that
+      // the server had already rejected as invalid.
+      return { reason: "fatal", error: new DeliveryHttpError(400, "delivery_400", "delivery failed (HTTP 400)") };
+    },
+  });
+  assert.equal(runs, 1);
+  assert.equal(status.state, "failed");
+  const events = await readEvents(target);
+  assert.equal(events.some((e) => e.event === "listener_restarting"), false);
+  const failed = events.find((e) => e.event === "listener_failed");
+  assert.equal(failed?.restartable, false);
+  assert.equal(failed?.restart_attempts, 0);
 });

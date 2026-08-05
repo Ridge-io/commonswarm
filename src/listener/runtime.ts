@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import {
   CommandHttpError,
+  CommandTransportError,
   SIGNAL_REQUEST_TIMEOUT_MS,
   ThinCommandClient,
   type SignalRecord,
@@ -32,6 +33,7 @@ import {
   RenewalRevoked,
 } from "../cloud/renewal.js";
 import { ACP_DEFAULT_REQUEST_TIMEOUT_MS } from "../host/bounds.js";
+import { AcpHostError, TRANSIENT_ACP_CODES } from "../host/types.js";
 import type {
   ListenerDeliveryJournal,
   ListenerDeliveryJournalRecord,
@@ -194,9 +196,58 @@ export type ListenerRuntimeStop =
  */
 export function isRestartableListenerStop(stop: ListenerRuntimeStop): boolean {
   if (stop.reason !== "fatal") return false;
-  // Shared with the follow CLI's exit status so the two cannot disagree about
-  // whether the same failure is worth another attempt.
-  return isRestartableReadError(stop.error);
+  return isRestartableRuntimeError(stop.error);
+}
+
+/**
+ * D-057: CLOSED classification over every error type the runtime can reach a
+ * fatal stop with. A restart decision must never be a default applied to
+ * unrecognised input.
+ *
+ * The previous version delegated every fatal stop to the read-path predicate,
+ * which excluded three signal types and returned true for everything else. The
+ * runtime also emits delivery errors and ACP startup failures, so a delivery
+ * 400, a 409 conflict, a malformed 2xx and a version mismatch were all
+ * restartable — the supervisor would repeat delivery commands and provider
+ * starts that cannot succeed, contradicting its own stated boundary. The set
+ * that failed open was exactly the set the tests did not cover.
+ *
+ * Adding a new error type to the runtime now defaults it to "do not restart".
+ * That is the safe direction: a missed restart is a stopped listener an
+ * operator can see, while a wrong restart is work repeated against a server.
+ */
+function isRestartableRuntimeError(error: unknown): boolean {
+  // Delivery: status decides, exactly as on the read path.
+  if (error instanceof DeliveryTransportError) return true;
+  if (error instanceof DeliveryHttpError) {
+    return error.status === 429 || error.status >= 500;
+  }
+  // A malformed 2xx is a protocol defect; repeating it repeats the defect.
+  if (error instanceof DeliveryProtocolError) return false;
+
+  // Command posts: same status rule.
+  if (error instanceof CommandTransportError) return true;
+  if (error instanceof CommandHttpError) {
+    return error.status === 429 || error.status >= 500;
+  }
+
+  // ACP: only codes we assigned at the boundary, never the peer's words.
+  if (error instanceof AcpHostError) return TRANSIENT_ACP_CODES.has(error.code);
+
+  // A capability the read service does not advertise will not appear because
+  // we asked again.
+  if (error instanceof ListenerCapabilityError) return false;
+
+  // Credential horizons are a human checkpoint, never a restart.
+  if (
+    error instanceof RenewalReauthorisationRequired ||
+    error instanceof RenewalRevoked
+  ) {
+    return false;
+  }
+
+  // Read-path failures, themselves closed.
+  return isRestartableReadError(error);
 }
 
 /**

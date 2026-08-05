@@ -97,6 +97,21 @@ export type HostSessionOptions = {
   clientVersion?: string;
 };
 
+/**
+ * Assigned codes whose failure may clear on a later attempt. Codes WE set at
+ * the ACP boundary, never one the peer supplied. Every other code — a version
+ * refusal, a failed permission canary, a protocol defect, blocked prompts —
+ * will fail identically next time.
+ *
+ * Shared by the engine's prompt-retry decision and the supervisor's restart
+ * decision so the two cannot drift into disagreeing about the same failure.
+ */
+export const TRANSIENT_ACP_CODES: ReadonlySet<string> = new Set([
+  "timeout",
+  "child_exit",
+  "transport",
+]);
+
 export class AcpHostError extends Error {
   readonly code: string;
   constructor(code: string, message: string) {

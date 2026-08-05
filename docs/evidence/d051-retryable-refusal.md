@@ -833,3 +833,118 @@ npm run check:tests -> clean
   hosts to restart on 75 is a separate decision and is not made here.
 - The 25% cold-start figure this was motivated by remains server-side and open,
   and remains regime-dependent (25 / 50 / 67% across one day).
+
+---
+
+# D-057 — closed classification, and a derived oracle
+
+**Found by Plumb, confirmed by execution before fixing.** Blocking MAJOR on the
+exit-status commit.
+
+## The defect
+
+`isRestartableReadError` was **default-true**: it excluded three signal-read
+types and returned `true` for everything else. `isRestartableListenerStop`
+delegated *every* fatal stop to it — but the runtime also emits delivery errors
+(the claim/ack paths) and ACP startup failures (`model.start()` throwing).
+
+Verified by running the real predicate rather than reading it:
+
+```
+RESTART  DeliveryHttpError 400          RESTART  AcpVersionError
+RESTART  DeliveryHttpError 409          RESTART  AcpPermissionCanaryError
+RESTART  DeliveryProtocolError          RESTART  AcpProtocolError
+RESTART  plain TypeError
+  stop   SignalHttpError 400            <- positive control: the three types
+  stop   SignalMalformedError              the predicate knew were correct
+```
+
+So the supervisor did up to five fresh-model restarts on a 400 invalid_request
+or a version mismatch, repeating delivery commands and provider starts that
+cannot succeed, and contradicting its own stated 4xx/malformed/protocol
+boundary. **The set that failed open was exactly the set the tests did not
+cover** — `listener-control.test.ts` exercised only `SignalHttpError` and
+`SignalMalformedError`, the two types already known.
+
+## The fix
+
+Closed classification in both layers. An unrecognised failure acquires no
+decision:
+
+- `isRestartableReadError` (signals.ts) now enumerates the restartable read
+  failures — timeout, transport, HTTP 429/5xx — and returns `false` otherwise.
+  A refused 500 still restarts: the `retryable:false` veto governs an
+  *immediate retry of the same request*, not whether a later run may work.
+- `isRestartableRuntimeError` (runtime.ts) covers delivery (status), command
+  posts (status), ACP (`TRANSIENT_ACP_CODES` only), `ListenerCapabilityError`,
+  renewal horizons, then delegates to the read predicate.
+- `TRANSIENT_ACP_CODES` moved to `host/types.ts` and is now shared by the
+  engine's prompt-retry decision and the supervisor's restart decision, so the
+  two cannot drift.
+
+Adding a new error type now defaults it to "do not restart". That is the safe
+direction: a missed restart is a stopped listener an operator can see; a wrong
+restart is work repeated against a server.
+
+## Control
+
+A table of **every** error type the runtime can reach a fatal stop with — 40
+rows across read, delivery, command, ACP, runtime-local, renewal and
+unrecognised — each asserting its verdict. The table also asserts it exercises
+both arms (≥10 restartable, ≥20 terminal) so it cannot pass by being uniform.
+Plus a closed-classification test using an error class defined inside the test,
+and a supervisor test that a `DeliveryHttpError 400` produces zero restarts.
+
+Inversion — restore the default-true predicate and the old delegation:
+
+```
+-> 4 tests red, including all three D-057 tests
+```
+
+One earlier assertion changed deliberately: an untyped
+`Error("listener model is closed")` is no longer restartable. Wording however
+transient does not earn a decision; the typed form, `AcpChildExitError`, does
+restart and is in the table.
+
+## The derived oracle — a second finding, also Plumb's
+
+The D-056 test imported `EXIT_RESTARTABLE` from `src/cli.ts`. Two problems:
+
+1. **The oracle was derived from the implementation.** If the constant drifted
+   75 → 74, the CLI would emit 74, the import would say 74, and the test would
+   stay green while the external contract silently broke. 75 is sysexits
+   `EX_TEMPFAIL` and supervisors already know it — it is an external contract
+   and must be pinned as a literal. It now is.
+2. **Importing `src/cli.ts` executes `main()`.** Plumb saw the usage banner
+   during its run. A test importing a CLI entrypoint and running it is a hazard
+   beyond this assertion. The import is gone.
+
+The redundant `assert.notEqual` was also removed: once both equalities hold
+against a literal that is not 1, it adds nothing. It read as rigour and was a
+no-op.
+
+## The pattern, now three instances
+
+| | defaulting behaviour |
+|---|---|
+| D-053 | control flow on untrusted text — the peer's words steering our branches |
+| D-054 | the *server* defaulting `retryable:false` for what it cannot classify |
+| D-057 | our own classifier defaulting **true** for what it does not recognise |
+
+An unrecognised input must not silently acquire a decision.
+
+## Gates
+
+```
+npm test            -> tests 458, pass 458, fail 0
+npm run test:p1-cli -> tests 152, pass 152, fail 0
+npm run build       -> clean
+npm run check:tests -> clean
+```
+
+## Not established
+
+- The table is complete against the fatal sites enumerated in `runtime.ts`
+  today. It is a snapshot of that enumeration, not a proof that no other type
+  can reach a fatal stop — but the closed default means a missed type stops the
+  listener rather than restarting it.

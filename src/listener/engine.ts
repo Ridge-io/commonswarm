@@ -10,6 +10,7 @@ import {
 } from "../cloud/signals.js";
 import {
   AcpHostError,
+  TRANSIENT_ACP_CODES,
 } from "../host/types.js";
 import type {
   ListenerEffectRecord,
@@ -229,11 +230,6 @@ function abortError(): Error {
   return error;
 }
 
-/**
- * Codes WE assign at the ACP boundary that mean "the same prompt could still
- * succeed". Never a code or a phrase the peer supplied.
- */
-const RETRYABLE_ACP_CODES = new Set(["timeout", "child_exit", "transport"]);
 
 /**
  * D-051 sweep: this used to fall back to
@@ -249,7 +245,7 @@ const RETRYABLE_ACP_CODES = new Set(["timeout", "child_exit", "transport"]);
  */
 function defaultRetryablePromptError(error: unknown): boolean {
   if (error instanceof SenderProvenanceUnavailableError) return true;
-  if (error instanceof AcpHostError) return RETRYABLE_ACP_CODES.has(error.code);
+  if (error instanceof AcpHostError) return TRANSIENT_ACP_CODES.has(error.code);
   return false;
 }
 
