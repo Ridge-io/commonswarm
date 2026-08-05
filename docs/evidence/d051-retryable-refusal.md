@@ -1140,13 +1140,26 @@ status, which is wrong):
 
 | layer | lost | kept |
 |---|---|---|
-| directory read (`signals.ts:946`) | `request_id`, `retryable` — the body is never parsed | **status, in the message text** |
-| listener (`engine.ts:436-438`) | everything: the bare `catch` swallows the whole Error | — |
+| 1. directory read (`signals.ts:946`) | `request_id`, `retryable` — the body is never parsed | **status, in the message text** |
+| 2a. author labels (`settleSignalAuthorLabels`, `signals.ts:1223`) | everything — `.catch()` returns empty maps | — |
+| 2b. listener (`engine.ts:434`) | everything — the bare `catch` swallows the whole Error | — |
 
-So a **direct CLI caller** (`cli.ts:1979`, `:2025`) does see
-`member read failed (HTTP 500)` and can act on it. Only the **listener** path
-(`cli.ts:2951` → `resolveSenderProvenance`) loses the status as well, and it
-loses it at the second layer rather than the first.
+**Three discards, not two** (Plumb's fifth correction; earlier versions of this
+entry said two, and named the wrong caller as surviving).
+
+Only **one** consumer surfaces anything: `cli.ts:2147` → `signalDirectory`
+(`:1973`) → recipient resolution, which propagates. It is the path that
+resolves a `--to` selector, so a failed directory read there fails the command
+with `member read failed (HTTP 500)` in front of a person.
+
+Everything else is swallowed by design:
+
+- **`cli.ts:2025` `signalAuthorLabels` does NOT survive.** All four of its call
+  sites (`:2191`, `:2231`, `:2294`, `:2398`) wrap it in
+  `settleSignalAuthorLabels`, which catches and returns empty maps — display
+  labels are optional context, so degrading them silently is deliberate.
+- **The listener path** (`cli.ts:2951` → `resolveSenderProvenance`) loses it at
+  `engine.ts:434`.
 
 **Layer 1 preserves the status only in prose**, interpolated into a message
 string — which is exactly the representation this repo now forbids branching on:
@@ -1207,8 +1220,7 @@ causal chain, then the permanence verdict that survived the first correction.
 The shared error is worth more than either sentence. **We recognised the D-058
 shape — untyped Error meets classifier — and asserted its consequence without
 checking whether the error reaches the classifier at all.** It does not:
-`engine.ts:436-438` swallows it deliberately, with a comment explaining the
-design.
+`engine.ts:434` swallows it deliberately, with a comment explaining the design.
 
 So, for the register: **a defect class is a place to look, never a finding.**
 D-053 tells you to go and read the site; it does not tell you what you will find
