@@ -12,6 +12,13 @@ import {
   relativeAge,
   relativeExpiry,
 } from "./workspaces.js";
+import {
+  describeServerError,
+  EMPTY_SERVER_ERROR_ENVELOPE,
+  parseServerErrorEnvelope,
+  serverRefusedRetry,
+  type ServerErrorEnvelope,
+} from "./error-envelope.js";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -127,12 +134,18 @@ export const SIGNAL_FOLLOW_PAGE_LIMIT = 100;
 export class SignalHttpError extends Error {
   readonly status: number;
   readonly retryAfterMs: number | null;
+  readonly envelope: ServerErrorEnvelope;
 
-  constructor(status: number, retryAfterMs: number | null = null) {
-    super(`signal read failed (HTTP ${status})`);
+  constructor(
+    status: number,
+    retryAfterMs: number | null = null,
+    envelope: ServerErrorEnvelope = EMPTY_SERVER_ERROR_ENVELOPE,
+  ) {
+    super(describeServerError(`signal read failed (HTTP ${status})`, envelope));
     this.name = "SignalHttpError";
     this.status = status;
     this.retryAfterMs = retryAfterMs;
+    this.envelope = envelope;
   }
 }
 
@@ -155,6 +168,8 @@ export class SignalMalformedError extends Error {
 /** Retry-After attached to plain Errors thrown by the shared read path. */
 const plainHttpRetryAfterMs = new WeakMap<Error, number | null>();
 const plainHttpStatus = new WeakMap<Error, number>();
+/** The server's failure envelope, carried alongside the status (D-051). */
+const plainHttpEnvelope = new WeakMap<Error, ServerErrorEnvelope>();
 
 function checkedUuid(value: unknown, field: string): string {
   if (typeof value !== "string" || !UUID_RE.test(value)) {
@@ -404,13 +419,21 @@ export function parseRetryAfterMs(
   return Math.max(0, Math.min(when - nowMs, SIGNAL_FOLLOW_BACKOFF_MAX_MS));
 }
 
-/** Throw a plain Error so one-shot callers keep the pre-follow failure taxonomy. */
-function throwSignalHttp(response: Response): never {
+/**
+ * Throw a plain Error so one-shot callers keep the pre-follow failure taxonomy.
+ * The body is already parsed by fetchSignalRead; its envelope rides along so
+ * classification can honour `retryable` and the operator sees `request_id`.
+ */
+function throwSignalHttp(response: Response, body: unknown): never {
   const status = response.status;
   const retryAfterMs = parseRetryAfterMs(response.headers.get("retry-after"));
-  const error = new Error(`signal read failed (HTTP ${status})`);
+  const envelope = parseServerErrorEnvelope(body);
+  const error = new Error(
+    describeServerError(`signal read failed (HTTP ${status})`, envelope),
+  );
   plainHttpStatus.set(error, status);
   plainHttpRetryAfterMs.set(error, retryAfterMs);
+  plainHttpEnvelope.set(error, envelope);
   throw error;
 }
 
@@ -429,12 +452,27 @@ export function followHttpDetails(
         retryAfterMs: plainHttpRetryAfterMs.get(error) ?? null,
       };
     }
-    const match = error.message.match(/^signal read failed \(HTTP (\d+)\)$/);
+    // Prefix-anchored, not whole-string: the message now carries the server's
+    // error and request_id after the status.
+    const match = error.message.match(/^signal read failed \(HTTP (\d+)\)/);
     if (match) {
       return { status: Number(match[1]), retryAfterMs: null };
     }
   }
   return null;
+}
+
+/**
+ * The server's failure envelope for an error raised by the read path. Empty
+ * when the failure carried no readable body, which leaves status classification
+ * unchanged.
+ */
+export function followErrorEnvelope(error: unknown): ServerErrorEnvelope {
+  if (error instanceof SignalHttpError) return error.envelope;
+  if (error instanceof Error) {
+    return plainHttpEnvelope.get(error) ?? EMPTY_SERVER_ERROR_ENVELOPE;
+  }
+  return EMPTY_SERVER_ERROR_ENVELOPE;
 }
 
 function isTransportFollowMessage(error: unknown): boolean {
@@ -552,9 +590,9 @@ async function fetchSignalRead(
         return null;
       }
       if (signal.aborted || timedOut) return "timeout";
-      if (!response.ok) {
-        return { response, body: null };
-      }
+      // D-051: failure bodies are read on the same terms as success bodies.
+      // They carry request_id and the server's `retryable` instruction, and
+      // returning body:null here is what discarded both.
       try {
         return { response, body: await response.json() };
       } catch {
@@ -637,7 +675,7 @@ async function humanSignals(
   }
   const { response, body } = result;
   if (!response.ok) {
-    throwSignalHttp(response);
+    throwSignalHttp(response, body);
   }
   if (!Array.isArray(body)) {
     throw new Error("signal read returned malformed JSON");
@@ -709,9 +747,9 @@ async function agentSignalPage(
     cursorRequested &&
     allowLegacyCursorFallback
   ) {
-    const original = result.response;
+    const original = result;
     result = await perform(false);
-    if (!result.response.ok) throwSignalHttp(result.response);
+    if (!result.response.ok) throwSignalHttp(result.response, result.body);
     const fallbackBody = result.body;
     const fallbackCapabilities = fallbackBody &&
         typeof fallbackBody === "object" &&
@@ -727,11 +765,13 @@ async function agentSignalPage(
       };
     // A capable edge rejecting the capability request is a real protocol bug,
     // not an excuse to silently fall back to a lossy newest-N window.
-    if (fallbackCapabilities.cursorAfter) throwSignalHttp(original);
+    if (fallbackCapabilities.cursorAfter) {
+      throwSignalHttp(original.response, original.body);
+    }
     legacyCursorFallback = true;
   }
   const { response, body } = result;
-  if (!response.ok) throwSignalHttp(response);
+  if (!response.ok) throwSignalHttp(response, body);
   if (
     !body ||
     typeof body !== "object" ||
@@ -1385,7 +1425,15 @@ export function nextFollowBackoffMs(
   );
 }
 
+/**
+ * D-051: `retryable: false` is a refusal, and it vetoes retry before status is
+ * consulted. Retrying a rejection at a saturated ceiling is what fed the
+ * concurrency that caused it. The veto is one-directional on purpose —
+ * `retryable: true` does not promote a status we would otherwise refuse to
+ * retry, so a server cannot talk this client into hammering a 401.
+ */
 export function isRetryableFollowError(error: unknown): boolean {
+  if (serverRefusedRetry(followErrorEnvelope(error))) return false;
   if (error instanceof SignalReadTimeoutError) return true;
   if (isTransportFollowMessage(error)) return true;
   const http = followHttpDetails(error);

@@ -40,6 +40,7 @@ import {
   readAgentSignalPage,
   readSignals,
   resolveSignalRecipient,
+  followErrorEnvelope,
   runInboxFollow,
   SIGNAL_FOLLOW_PAGE_LIMIT,
   SIGNAL_FOLLOW_POLL_MS,
@@ -57,6 +58,12 @@ import {
   type SignalDirectory,
 } from "../../src/cloud/signals.js";
 import { describeMintRenewal } from "../../src/cloud/renewal.js";
+import {
+  describeServerError,
+  EMPTY_SERVER_ERROR_ENVELOPE,
+  parseServerErrorEnvelope,
+  serverRefusedRetry,
+} from "../../src/cloud/error-envelope.js";
 
 const WORKSPACE = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const USER = "11111111-1111-4111-8111-111111111111";
@@ -1224,4 +1231,267 @@ test("unrecognized supervisor runtime events never become delivery ACKs", async 
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+// ---------------------------------------------------------------------------
+// D-051: the client amplified a production saturation event by retrying
+// failures the server had explicitly refused. Every error body carries
+// {error, request_id, retryable}; the read path touched only .status, so
+// `retryable: false` was discarded and each rejection became another request.
+// ---------------------------------------------------------------------------
+
+const D051_REQUEST_ID = "9d1f4b2c-0000-4000-8000-abcdefabcdef";
+
+function d051Body(retryable: boolean | null): string {
+  return JSON.stringify({
+    error: "internal_error",
+    request_id: D051_REQUEST_ID,
+    ...(retryable === null ? {} : { retryable }),
+  });
+}
+
+/**
+ * One follow run: the first read succeeds (so the stream is ready and a
+ * `retrying` frame is observable at all), every later read fails with the same
+ * stubbed 500 whose body differs ONLY in `retryable`. Counts requests, because
+ * requests are the thing that fed the saturation.
+ */
+async function d051FollowRun(errorBody: string): Promise<{
+  fetches: number;
+  retryFrames: number;
+  stop: Awaited<ReturnType<typeof runInboxFollow>>;
+}> {
+  const target = cloudTarget("https://cloud.example.test", "anon-key");
+  const frames: FollowFrame[] = [];
+  const controller = new AbortController();
+  let fetches = 0;
+  const fetcher = (async () => {
+    fetches += 1;
+    if (fetches === 1) {
+      return new Response(
+        JSON.stringify({
+          signals: [row()],
+          capabilities: { sender_owner_relation: 1, cursor_after: 1 },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }
+    return new Response(errorBody, {
+      status: 500,
+      headers: { "content-type": "application/json" },
+    });
+  }) as typeof fetch;
+  const stop = await runInboxFollow({
+    workspaceId: WORKSPACE,
+    now: () => 1_700_000_000_000,
+    random: () => 0,
+    pollMs: 0,
+    postEmitMs: 0,
+    // Bounds a retrying arm so the loop cannot spin forever. A refusing arm
+    // never reaches a retry sleep, so this hook cannot mask its behaviour.
+    sleep: async () => {
+      if (fetches >= 4) controller.abort();
+    },
+    signal: controller.signal,
+    arm: async () =>
+      await readSignals(
+        target,
+        { kind: "agent", token: "swm_agt_" + "A".repeat(43) },
+        { workspaceId: WORKSPACE, inbox: true },
+        { fetcher },
+      ),
+    emit: (frame) => frames.push(frame),
+  });
+  return {
+    fetches,
+    retryFrames: frames.filter((frame) => frame.type === "retrying").length,
+    stop,
+  };
+}
+
+test("D-051: retryable:false stops the read loop; the same 500 retries without it", async () => {
+  const refused = await d051FollowRun(d051Body(false));
+  const permitted = await d051FollowRun(d051Body(true));
+  const silent = await d051FollowRun(d051Body(null));
+
+  // The refusal arm: one successful read, one refused read, then nothing.
+  assert.equal(refused.fetches, 2);
+  assert.equal(refused.retryFrames, 0);
+  assert.equal(refused.stop.reason, "error");
+
+  // The permitted arm, identical in every other respect, keeps requesting.
+  assert.equal(permitted.fetches, 4);
+  assert.equal(permitted.retryFrames, 3);
+
+  // An absent field is silence, not refusal: behaviour is unchanged.
+  assert.equal(silent.fetches, 4);
+  assert.equal(silent.retryFrames, 3);
+
+  // The control discriminates. If these were equal the instrument would be
+  // broken and the assertions above would prove nothing.
+  assert.notEqual(refused.fetches, permitted.fetches);
+  assert.notEqual(refused.retryFrames, permitted.retryFrames);
+});
+
+test("D-051: the refusal is surfaced with the server's request_id", async () => {
+  const refused = await d051FollowRun(d051Body(false));
+  const error = refused.stop.error;
+  assert.ok(error instanceof Error);
+  assert.match(error.message, /HTTP 500/);
+  assert.match(error.message, /internal_error/);
+  assert.match(error.message, new RegExp(`request_id ${D051_REQUEST_ID}`));
+  assert.equal(followErrorEnvelope(error).retryable, false);
+  assert.equal(followErrorEnvelope(error).requestId, D051_REQUEST_ID);
+});
+
+test("D-051: readSignals carries the failure envelope off the wire", async () => {
+  const target = cloudTarget("https://cloud.example.test", "anon-key");
+  const fetcher = (async () =>
+    new Response(d051Body(false), {
+      status: 500,
+      headers: { "content-type": "application/json", "retry-after": "3" },
+    })) as typeof fetch;
+  await assert.rejects(
+    readSignals(
+      target,
+      { kind: "agent", token: "swm_agt_" + "A".repeat(43) },
+      { workspaceId: WORKSPACE, inbox: true },
+      { fetcher },
+    ),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      // The pre-existing taxonomy is untouched: plain Error, status and
+      // Retry-After still readable through the prefix-anchored parse.
+      assert.equal(error.name, "Error");
+      assert.equal(followHttpDetails(error)?.status, 500);
+      assert.equal(followHttpDetails(error)?.retryAfterMs, 3_000);
+      assert.equal(followErrorEnvelope(error).error, "internal_error");
+      assert.equal(isRetryableFollowError(error), false);
+      return true;
+    },
+  );
+});
+
+test("D-051: a 500 with no readable body keeps the status-only behaviour", async () => {
+  const target = cloudTarget("https://cloud.example.test", "anon-key");
+  for (const body of [null, "not json at all", "[]", '"a string"']) {
+    const fetcher = (async () =>
+      new Response(body, { status: 500 })) as typeof fetch;
+    await assert.rejects(
+      readSignals(
+        target,
+        { kind: "agent", token: "swm_agt_" + "A".repeat(43) },
+        { workspaceId: WORKSPACE, inbox: true },
+        { fetcher },
+      ),
+      (error: unknown) => {
+        assert.ok(error instanceof Error);
+        assert.equal(error.message, "signal read failed (HTTP 500)");
+        assert.deepEqual(
+          followErrorEnvelope(error),
+          EMPTY_SERVER_ERROR_ENVELOPE,
+        );
+        assert.equal(isRetryableFollowError(error), true);
+        return true;
+      },
+    );
+  }
+});
+
+test("D-051: the retryable veto is one-directional", () => {
+  const refusedRetryable = new SignalHttpError(500, null, {
+    error: "internal_error",
+    requestId: D051_REQUEST_ID,
+    retryable: false,
+  });
+  assert.equal(isRetryableFollowError(refusedRetryable), false);
+
+  // retryable:true must not promote a status this client refuses to retry,
+  // or a server could talk the client into hammering its own auth failure.
+  const permittedFatal = new SignalHttpError(401, null, {
+    error: "unauthorized",
+    requestId: null,
+    retryable: true,
+  });
+  assert.equal(isRetryableFollowError(permittedFatal), false);
+  assert.equal(isFatalFollowError(permittedFatal), true);
+
+  // Transport and timeout failures never carry an envelope and are unaffected.
+  assert.equal(isRetryableFollowError(new SignalTransportError()), true);
+  assert.equal(isRetryableFollowError(new SignalReadTimeoutError()), true);
+  assert.equal(isRetryableFollowError(new SignalHttpError(500)), true);
+});
+
+test("D-051: envelope parsing is total and cannot be steered by a body", () => {
+  for (
+    const body of [
+      null,
+      undefined,
+      "string",
+      42,
+      [],
+      [{ retryable: false }],
+      {},
+      { retryable: "false" },
+      { retryable: 0 },
+      { error: 7, request_id: {} },
+    ]
+  ) {
+    const envelope = parseServerErrorEnvelope(body);
+    assert.equal(envelope.retryable, null, JSON.stringify(body ?? null));
+    assert.equal(serverRefusedRetry(envelope), false);
+  }
+  assert.equal(parseServerErrorEnvelope({ retryable: false }).retryable, false);
+  assert.equal(parseServerErrorEnvelope({ retryable: true }).retryable, true);
+
+  // Both fields are machine tokens. Free-form prose is dropped, so a body
+  // cannot inject text into a message this client's own classifiers match on.
+  const hostile = parseServerErrorEnvelope({
+    error: "secret is absent",
+    request_id: "id with spaces",
+    retryable: false,
+  });
+  assert.equal(hostile.error, null);
+  assert.equal(hostile.requestId, null);
+  assert.equal(hostile.retryable, false);
+  assert.equal(describeServerError("signal read failed (HTTP 500)", hostile), "signal read failed (HTTP 500)");
+  // Positive control on the same shape: a real token IS carried through.
+  assert.equal(
+    describeServerError(
+      "signal read failed (HTTP 500)",
+      parseServerErrorEnvelope({ error: "internal_error", retryable: false }),
+    ),
+    "signal read failed (HTTP 500): internal_error",
+  );
+});
+
+test("D-051: a hostile error body cannot forge a credential failure", async () => {
+  const target = cloudTarget("https://cloud.example.test", "anon-key");
+  const read = async (body: string): Promise<Error> => {
+    const fetcher = (async () =>
+      new Response(body, { status: 500 })) as typeof fetch;
+    try {
+      await readSignals(
+        target,
+        { kind: "agent", token: "swm_agt_" + "A".repeat(43) },
+        { workspaceId: WORKSPACE, inbox: true },
+        { fetcher },
+      );
+    } catch (error) {
+      return error as Error;
+    }
+    throw new Error("expected the stubbed 500 to reject");
+  };
+
+  const forged = await read(
+    JSON.stringify({ error: "secret is absent", retryable: false }),
+  );
+  assert.equal(isFollowCredentialFailure(forged), false);
+  assert.doesNotMatch(forged.message, /secret is absent/);
+
+  // Positive control: the phrase does classify when it is genuinely ours.
+  assert.equal(
+    isFollowCredentialFailure(new Error("the agent secret is absent")),
+    true,
+  );
 });
