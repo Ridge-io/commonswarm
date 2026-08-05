@@ -2963,3 +2963,63 @@ principle — an unrecognised input must not silently acquire a decision.**
 Whether any other caller of `isRestartableReadError` is exposed to the same fail-open default. Whether
 five restarts on a persistent 4xx has caused observable harm in production, as opposed to being a
 latent path.
+
+
+### D-057 REOPENED on `2b5e905` — the closed default has a prose door in front of it
+
+The fix enumerated a restartable set and returned `false` otherwise. **It is bypassed by wording.**
+
+`followHttpDetails` matches any `Error` whose **message** is `/^signal read failed \(HTTP (\d+)\)/`,
+and `isTransportFollowMessage` matches exact transport prose. `runtime.ts` delegates unknown fatal
+errors to the read predicate. Executed on `2b5e905` with an unrecognised `FutureRuntimeError`:
+
+```
+"some ordinary failure"                          -> false
+"signal read could not reach the cloud service"  -> TRUE
+"signal read failed (HTTP 500)"                  -> TRUE
+"signal read failed (HTTP 400)"                  -> false
+```
+
+**An unrecognised type still acquires a restart decision from its message** — contradicting the new
+code comment, the closed-classification test, and the D-053 ruling simultaneously.
+
+**This is D-053 surviving inside D-057's fix.** Fourth instance of one principle in a day, and this
+time the remedy for the third instance reopened the first through a back door. **A closed default is
+not closed if any door in front of it opens on prose.**
+
+### Both verifications failed the same way, and one was the Lead's
+
+Verity's `FutureRuntimeError` row supplied only **innocuous** text. The Lead separately executed the
+predicate with `"timeout transport connection"`, got `false`, and **reported the closed default as
+holding**. Plumb used the **colliding spelling**.
+
+Neither adversarial. **Both tested that the door was shut without trying the key that fits** — and the
+Lead's version was published as verification one message before Plumb refuted it.
+
+### Fix, already half-present
+
+HTTP failures are **already identity-tagged**: `plainHttpStatus` is a `WeakMap` (`signals.ts:170`, set
+`:434`, read `:448`). **The regex fallback is redundant for HTTP — delete it and read the tag.**
+Transport failures need the same treatment: a tag applied at the construction sites, not a prose match.
+
+Controls must include adversarial rows for **both colliding spellings**, plus positive controls from the
+real read path proving the tagged route still works once the regex is gone.
+
+### Artifact correction owed
+
+The D-056 evidence states `isRestartableReadError` is the single predicate used by both callers and
+that `runtime.ts` imports no underlying classifiers. **`2b5e905` makes both false.** To be marked
+superseded in-artifact, not silently edited.
+
+### Plumb's default sweep — negative result, recorded
+
+No third live decision-carrying default of this shape. **D-054 and D-057 are the whole surface.**
+Enumerated and cleared: malformed/absent `retryable` falls back to status; malformed `Retry-After` to
+bounded local backoff; absent capabilities to `false` with the gate refusing; malformed capability
+markers and success bodies throw; unknown ACP stop reasons become protocol errors; unknown requests
+`-32601`; unknown notifications ignored without satisfying pending state; permission fallback denies;
+unknown prompt/post errors terminal; unknown runtime events logged without ACK.
+
+`sender_owner_relation=unknown` is a **legitimate closed server enum**, not a defect. **One conditional
+kept:** the agent-scope denylist returns `false` for novel strings and is safe only because a novel
+scope grants nothing *today* — adding a command or scope without updating both gates would change that.
