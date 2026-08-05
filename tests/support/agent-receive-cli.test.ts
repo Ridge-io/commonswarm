@@ -25,10 +25,13 @@ import {
   askWaitJsonPayload,
   BoundedSignalIdSet,
   compareSignalCursor,
+  decayFollowAttempt,
   followHttpDetails,
+  followStopFrame,
   formatFollowFrame,
   isFatalFollowError,
   isFollowCredentialFailure,
+  isRestartableReadError,
   isRetryableFollowError,
   nextFollowBackoffMs,
   nextWaitSleepMs,
@@ -40,6 +43,7 @@ import {
   readAgentSignalPage,
   readSignals,
   resolveSignalRecipient,
+  followErrorEnvelope,
   runInboxFollow,
   SIGNAL_FOLLOW_PAGE_LIMIT,
   SIGNAL_FOLLOW_POLL_MS,
@@ -57,6 +61,12 @@ import {
   type SignalDirectory,
 } from "../../src/cloud/signals.js";
 import { describeMintRenewal } from "../../src/cloud/renewal.js";
+import {
+  describeServerError,
+  EMPTY_SERVER_ERROR_ENVELOPE,
+  parseServerErrorEnvelope,
+  serverRefusedRetry,
+} from "../../src/cloud/error-envelope.js";
 
 const WORKSPACE = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const USER = "11111111-1111-4111-8111-111111111111";
@@ -508,9 +518,13 @@ test("follow stops on non-credential fatal 4xx without retrying", async () => {
     emit: (frame) => frames.push(frame),
   });
   assert.equal(stop.reason, "fatal_http");
-  assert.equal(frames.length, 0);
   assert.equal(arms, 1);
   assert.match(stop.error?.message ?? "", /HTTP 400/);
+  // D-055: no ready and no retrying frame before ready, but the terminal
+  // condition IS in the stream — a receiver that dies before ready is exactly
+  // when a wrapper has nothing else to read.
+  assert.equal(frames.filter((f) => f.type !== "error").length, 0);
+  assert.deepEqual(frames.map((f) => f.type), ["error"]);
 });
 
 test("follow rearm after signal and suppresses duplicate live rows", async () => {
@@ -603,8 +617,15 @@ test("follow secret/credential absence never emits ready", async () => {
     emit: (frame) => frames.push(frame),
   });
   assert.equal(stop.reason, "credential");
-  assert.equal(frames.length, 0);
   assert.equal(stop.error, secretMissing);
+  // No ready, and the terminal frame carries no server detail because this
+  // failure never crossed the network.
+  assert.deepEqual(frames.map((f) => f.type), ["error"]);
+  const terminal = frames[0];
+  assert.ok(terminal?.type === "error");
+  assert.equal(terminal.reason, "credential");
+  assert.equal(terminal.server_refused, false);
+  assert.equal(terminal.request_id, null);
 });
 
 test("follow classifies agent read 401/403 as credential stop", async () => {
@@ -620,8 +641,11 @@ test("follow classifies agent read 401/403 as credential stop", async () => {
       arm: async () => {
         throw refusal;
       },
-      emit: () => {
-        throw new Error("credential refusal must not emit ready");
+      emit: (frame) => {
+        // The terminal error frame is expected; a ready frame is not.
+        if (frame.type !== "error") {
+          throw new Error("credential refusal must not emit ready");
+        }
       },
     });
     assert.equal(stop.reason, "credential");
@@ -1224,4 +1248,612 @@ test("unrecognized supervisor runtime events never become delivery ACKs", async 
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+// ---------------------------------------------------------------------------
+// D-051: the client amplified a production saturation event by retrying
+// failures the server had explicitly refused. Every error body carries
+// {error, request_id, retryable}; the read path touched only .status, so
+// `retryable: false` was discarded and each rejection became another request.
+// ---------------------------------------------------------------------------
+
+const D051_REQUEST_ID = "9d1f4b2c-0000-4000-8000-abcdefabcdef";
+
+function d051Body(retryable: boolean | null): string {
+  return JSON.stringify({
+    error: "internal_error",
+    request_id: D051_REQUEST_ID,
+    ...(retryable === null ? {} : { retryable }),
+  });
+}
+
+/**
+ * One follow run: the first read succeeds (so the stream is ready and a
+ * `retrying` frame is observable at all), every later read fails with the same
+ * stubbed 500 whose body differs ONLY in `retryable`. Counts requests, because
+ * requests are the thing that fed the saturation.
+ */
+async function d051FollowRun(errorBody: string): Promise<{
+  fetches: number;
+  retryFrames: number;
+  frames: FollowFrame[];
+  stop: Awaited<ReturnType<typeof runInboxFollow>>;
+}> {
+  const target = cloudTarget("https://cloud.example.test", "anon-key");
+  const frames: FollowFrame[] = [];
+  const controller = new AbortController();
+  let fetches = 0;
+  const fetcher = (async () => {
+    fetches += 1;
+    if (fetches === 1) {
+      return new Response(
+        JSON.stringify({
+          signals: [row()],
+          capabilities: { sender_owner_relation: 1, cursor_after: 1 },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }
+    return new Response(errorBody, {
+      status: 500,
+      headers: { "content-type": "application/json" },
+    });
+  }) as typeof fetch;
+  const stop = await runInboxFollow({
+    workspaceId: WORKSPACE,
+    now: () => 1_700_000_000_000,
+    random: () => 0,
+    pollMs: 0,
+    postEmitMs: 0,
+    // Bounds a retrying arm so the loop cannot spin forever. A refusing arm
+    // never reaches a retry sleep, so this hook cannot mask its behaviour.
+    sleep: async () => {
+      if (fetches >= 4) controller.abort();
+    },
+    signal: controller.signal,
+    arm: async () =>
+      await readSignals(
+        target,
+        { kind: "agent", token: "swm_agt_" + "A".repeat(43) },
+        { workspaceId: WORKSPACE, inbox: true },
+        { fetcher },
+      ),
+    emit: (frame) => frames.push(frame),
+  });
+  return {
+    fetches,
+    retryFrames: frames.filter((frame) => frame.type === "retrying").length,
+    frames,
+    stop,
+  };
+}
+
+test("D-051: retryable:false stops the read loop; the same 500 retries without it", async () => {
+  const refused = await d051FollowRun(d051Body(false));
+  const permitted = await d051FollowRun(d051Body(true));
+  const silent = await d051FollowRun(d051Body(null));
+
+  // The refusal arm: one successful read, one refused read, then nothing.
+  assert.equal(refused.fetches, 2);
+  assert.equal(refused.retryFrames, 0);
+  assert.equal(refused.stop.reason, "error");
+
+  // The permitted arm, identical in every other respect, keeps requesting.
+  assert.equal(permitted.fetches, 4);
+  assert.equal(permitted.retryFrames, 3);
+
+  // An absent field is silence, not refusal: behaviour is unchanged.
+  assert.equal(silent.fetches, 4);
+  assert.equal(silent.retryFrames, 3);
+
+  // The control discriminates. If these were equal the instrument would be
+  // broken and the assertions above would prove nothing.
+  assert.notEqual(refused.fetches, permitted.fetches);
+  assert.notEqual(refused.retryFrames, permitted.retryFrames);
+});
+
+test("D-051: the refusal is surfaced with the server's request_id", async () => {
+  const refused = await d051FollowRun(d051Body(false));
+  const error = refused.stop.error;
+  assert.ok(error instanceof Error);
+  assert.match(error.message, /HTTP 500/);
+  assert.match(error.message, /internal_error/);
+  assert.match(error.message, new RegExp(`request_id ${D051_REQUEST_ID}`));
+  assert.equal(followErrorEnvelope(error).retryable, false);
+  assert.equal(followErrorEnvelope(error).requestId, D051_REQUEST_ID);
+});
+
+test("D-051: readSignals carries the failure envelope off the wire", async () => {
+  const target = cloudTarget("https://cloud.example.test", "anon-key");
+  const fetcher = (async () =>
+    new Response(d051Body(false), {
+      status: 500,
+      headers: { "content-type": "application/json", "retry-after": "3" },
+    })) as typeof fetch;
+  await assert.rejects(
+    readSignals(
+      target,
+      { kind: "agent", token: "swm_agt_" + "A".repeat(43) },
+      { workspaceId: WORKSPACE, inbox: true },
+      { fetcher },
+    ),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      // The pre-existing taxonomy is untouched: plain Error, status and
+      // Retry-After still readable — D-058: through the identity tag set at
+      // construction, not through a parse of the message.
+      assert.equal(error.name, "Error");
+      assert.equal(followHttpDetails(error)?.status, 500);
+      assert.equal(followHttpDetails(error)?.retryAfterMs, 3_000);
+      assert.equal(followErrorEnvelope(error).error, "internal_error");
+      assert.equal(isRetryableFollowError(error), false);
+      return true;
+    },
+  );
+});
+
+test("D-051: a 500 with no readable body keeps the status-only behaviour", async () => {
+  const target = cloudTarget("https://cloud.example.test", "anon-key");
+  for (const body of [null, "not json at all", "[]", '"a string"']) {
+    const fetcher = (async () =>
+      new Response(body, { status: 500 })) as typeof fetch;
+    await assert.rejects(
+      readSignals(
+        target,
+        { kind: "agent", token: "swm_agt_" + "A".repeat(43) },
+        { workspaceId: WORKSPACE, inbox: true },
+        { fetcher },
+      ),
+      (error: unknown) => {
+        assert.ok(error instanceof Error);
+        assert.equal(error.message, "signal read failed (HTTP 500)");
+        assert.deepEqual(
+          followErrorEnvelope(error),
+          EMPTY_SERVER_ERROR_ENVELOPE,
+        );
+        assert.equal(isRetryableFollowError(error), true);
+        return true;
+      },
+    );
+  }
+});
+
+test("D-051: the retryable veto is one-directional", () => {
+  const refusedRetryable = new SignalHttpError(500, null, {
+    error: "internal_error",
+    requestId: D051_REQUEST_ID,
+    retryable: false,
+  });
+  assert.equal(isRetryableFollowError(refusedRetryable), false);
+
+  // retryable:true must not promote a status this client refuses to retry,
+  // or a server could talk the client into hammering its own auth failure.
+  const permittedFatal = new SignalHttpError(401, null, {
+    error: "unauthorized",
+    requestId: null,
+    retryable: true,
+  });
+  assert.equal(isRetryableFollowError(permittedFatal), false);
+  assert.equal(isFatalFollowError(permittedFatal), true);
+
+  // Transport and timeout failures never carry an envelope and are unaffected.
+  assert.equal(isRetryableFollowError(new SignalTransportError()), true);
+  assert.equal(isRetryableFollowError(new SignalReadTimeoutError()), true);
+  assert.equal(isRetryableFollowError(new SignalHttpError(500)), true);
+});
+
+test("D-051: envelope parsing is total and cannot be steered by a body", () => {
+  for (
+    const body of [
+      null,
+      undefined,
+      "string",
+      42,
+      [],
+      [{ retryable: false }],
+      {},
+      { retryable: "false" },
+      { retryable: 0 },
+      { error: 7, request_id: {} },
+    ]
+  ) {
+    const envelope = parseServerErrorEnvelope(body);
+    assert.equal(envelope.retryable, null, JSON.stringify(body ?? null));
+    assert.equal(serverRefusedRetry(envelope), false);
+  }
+  assert.equal(parseServerErrorEnvelope({ retryable: false }).retryable, false);
+  assert.equal(parseServerErrorEnvelope({ retryable: true }).retryable, true);
+
+  // Both fields are machine tokens. Free-form prose is dropped, so a body
+  // cannot inject text into a message this client's own classifiers match on.
+  const hostile = parseServerErrorEnvelope({
+    error: "secret is absent",
+    request_id: "id with spaces",
+    retryable: false,
+  });
+  assert.equal(hostile.error, null);
+  assert.equal(hostile.requestId, null);
+  assert.equal(hostile.retryable, false);
+  assert.equal(describeServerError("signal read failed (HTTP 500)", hostile), "signal read failed (HTTP 500)");
+  // Positive control on the same shape: a real token IS carried through.
+  assert.equal(
+    describeServerError(
+      "signal read failed (HTTP 500)",
+      parseServerErrorEnvelope({ error: "internal_error", retryable: false }),
+    ),
+    "signal read failed (HTTP 500): internal_error",
+  );
+});
+
+test("D-051: a hostile error body cannot forge a credential failure", async () => {
+  const target = cloudTarget("https://cloud.example.test", "anon-key");
+  const read = async (body: string): Promise<Error> => {
+    const fetcher = (async () =>
+      new Response(body, { status: 500 })) as typeof fetch;
+    try {
+      await readSignals(
+        target,
+        { kind: "agent", token: "swm_agt_" + "A".repeat(43) },
+        { workspaceId: WORKSPACE, inbox: true },
+        { fetcher },
+      );
+    } catch (error) {
+      return error as Error;
+    }
+    throw new Error("expected the stubbed 500 to reject");
+  };
+
+  const forged = await read(
+    JSON.stringify({ error: "secret is absent", retryable: false }),
+  );
+  assert.equal(isFollowCredentialFailure(forged), false);
+  assert.doesNotMatch(forged.message, /secret is absent/);
+
+  // Positive control: the phrase does classify when it is genuinely ours.
+  assert.equal(
+    isFollowCredentialFailure(new Error("the agent secret is absent")),
+    true,
+  );
+});
+
+// ---------------------------------------------------------------------------
+// D-051 companion 1: the backoff attempt counter decays on success instead of
+// resetting to zero. Zeroing was the amplifier's engine — an intermittently
+// failing receiver climbed, succeeded, reset, and climbed again, so it never
+// reached the 30s cap. 13.2 retry frames/min observed against ~2/min at cap.
+// ---------------------------------------------------------------------------
+
+test("D-051: an isolated success does not wipe the backoff the failures earned", async () => {
+  const frames: FollowFrame[] = [];
+  const controller = new AbortController();
+  let arms = 0;
+  // success, fail, fail, fail, success, fail — the lone success in the middle
+  // is the whole point: under the old reset it wiped three failures of backoff.
+  const outcomes = [true, false, false, false, true, false];
+  await runInboxFollow({
+    workspaceId: WORKSPACE,
+    now: () => 1_700_000_000_000,
+    random: () => 0,
+    pollMs: 0,
+    postEmitMs: 0,
+    sleep: async () => {
+      if (arms >= outcomes.length) controller.abort();
+    },
+    signal: controller.signal,
+    arm: async () => {
+      const ok = outcomes[arms] ?? false;
+      arms += 1;
+      if (!ok) throw new SignalHttpError(500);
+      return arms === 1 ? [row()] : [];
+    },
+    emit: (frame) => frames.push(frame),
+  });
+
+  const retries = frames.filter((frame) => frame.type === "retrying");
+  const attempts = retries.map((frame) =>
+    frame.type === "retrying" ? frame.attempt : -1
+  );
+  // Three failures climb 1,2,3. The success decays 3 -> 2. The next failure
+  // resumes at 3. Under a reset-to-zero it would restart at 1.
+  assert.deepEqual(attempts.slice(0, 4), [1, 2, 3, 3]);
+
+  // The delay is the thing that actually throttles, so assert it directly.
+  // random() === 0 makes the jittered delay exactly half the exponential.
+  const delays = retries.map((frame) =>
+    frame.type === "retrying" ? frame.delay_ms : -1
+  );
+  assert.deepEqual(delays.slice(0, 4), [250, 500, 1_000, 1_000]);
+  assert.notEqual(delays[3], delays[0]);
+});
+
+test("D-051: decay reaches the cap under sustained failure and clears when healthy", () => {
+  // Climb: every failure adds one attempt, and the delay saturates at the cap.
+  assert.equal(nextFollowBackoffMs(7, null, () => 1), 30_000);
+
+  // Decay is one step per success and floors at zero, so a receiver that
+  // recovers is not penalised forever.
+  assert.equal(decayFollowAttempt(3), 2);
+  assert.equal(decayFollowAttempt(1), 0);
+  assert.equal(decayFollowAttempt(0), 0);
+
+  // Drift is (2p - 1) per read. NOTE: the 71%/17% dose-response curve these
+  // rates came from was retracted on 2026-08-05 (time confound; the real shape
+  // is closer to a flat ~50% per request). This asserts the decay MECHANISM at
+  // two rates, not a claim about production. At p near 0.5 it random-walks.
+  const walk = (failureRate: number, reads: number): number => {
+    let attempt = 0;
+    for (let i = 0; i < reads; i += 1) {
+      // Deterministic interleave standing in for the failure rate.
+      const failed = (i % 100) < Math.round(failureRate * 100);
+      attempt = failed ? attempt + 1 : decayFollowAttempt(attempt);
+    }
+    return attempt;
+  };
+  assert.ok(walk(0.71, 400) >= 7, "71% failures must reach the delay cap");
+  assert.equal(walk(0.17, 400), 0, "17% failures must not accumulate backoff");
+});
+
+// ---------------------------------------------------------------------------
+// D-051 companion 3: cancellation is a fact about our own AbortSignal, never
+// about wording. Parsing failure bodies made the old `/aborted/i` message
+// regex reachable from outside — a server answering {"error":"aborted"} would
+// have been read as a clean operator cancel, so a receiver would exit quietly
+// reporting success while having read nothing.
+// ---------------------------------------------------------------------------
+
+test("D-051: an error body saying 'aborted' cannot forge a cancellation", async () => {
+  // 'aborted' is slug-shaped, so the contract-shape filter passes it through
+  // to the message. Type, not text, is what must decide.
+  const inAnyField = [
+    { error: "aborted", request_id: "9d1f4b2c-0000-4000-8000-abcdefabcdef" },
+    { error: "internal_error", request_id: "aborted-9d1f4b2c" },
+    { error: "aborted", request_id: "aborted" },
+  ];
+  for (const envelope of inAnyField) {
+    const run = await d051FollowRun(
+      JSON.stringify({ ...envelope, retryable: false }),
+    );
+    assert.equal(
+      run.stop.reason,
+      "error",
+      `must not be cancelled: ${JSON.stringify(envelope)}`,
+    );
+    assert.notEqual(run.stop.reason, "cancelled");
+    // It is surfaced as a failure with the server's own words intact.
+    assert.match(String(run.stop.error?.message), /HTTP 500/);
+  }
+
+  // Positive control on the same harness: a real caller abort IS a
+  // cancellation, so this is not passing because nothing can cancel.
+  const cancelled = await d051FollowRun(d051Body(true));
+  assert.equal(cancelled.stop.reason, "cancelled");
+});
+
+test("D-051: only a typed AbortError cancels, and our own abort state outranks it", async () => {
+  const controller = new AbortController();
+  let arms = 0;
+  // A plain error whose text mentions aborting is NOT a cancellation.
+  const impostor = await runInboxFollow({
+    workspaceId: WORKSPACE,
+    now: () => 1_700_000_000_000,
+    random: () => 0,
+    pollMs: 0,
+    postEmitMs: 0,
+    sleep: async () => {},
+    signal: controller.signal,
+    arm: async () => {
+      arms += 1;
+      throw new Error("the request was aborted by the remote end");
+    },
+    emit: () => {},
+  });
+  assert.equal(impostor.reason, "error");
+  assert.equal(arms, 1);
+
+  // A typed AbortError is a cancellation.
+  const typed = new AbortController();
+  const abortError = new Error("stopped");
+  abortError.name = "AbortError";
+  const real = await runInboxFollow({
+    workspaceId: WORKSPACE,
+    now: () => 1_700_000_000_000,
+    random: () => 0,
+    pollMs: 0,
+    postEmitMs: 0,
+    sleep: async () => {},
+    signal: typed.signal,
+    arm: async () => {
+      throw abortError;
+    },
+    emit: () => {},
+  });
+  assert.equal(real.reason, "cancelled");
+});
+
+test("D-051: a credential verdict off the wire is decided by status, not wording", () => {
+  // Locally-thrown secret absence still classifies — the wording check is for
+  // errors that never crossed the network.
+  assert.equal(
+    isFollowCredentialFailure(new Error("the agent secret is absent")),
+    true,
+  );
+  assert.equal(isFollowCredentialFailure(new SignalHttpError(401)), true);
+  assert.equal(isFollowCredentialFailure(new SignalHttpError(403)), true);
+
+  // A wire error carrying the phrase must not be promoted to a credential
+  // stop by its text. Status is the only vote it gets.
+  const wire = new SignalHttpError(500, null, {
+    error: "secret_is_absent",
+    requestId: null,
+    retryable: false,
+  });
+  assert.equal(isFollowCredentialFailure(wire), false);
+  assert.match(wire.message, /secret_is_absent/);
+});
+
+// ---------------------------------------------------------------------------
+// D-055: --ndjson is for machine consumption and the connect prompt points
+// non-Grok hosts at it, so a fatal stop written as bare text made the stream's
+// LAST word the one line a wrapper cannot parse — exactly when it most needs
+// to read it. The information was already there; the encoding was wrong.
+// ---------------------------------------------------------------------------
+
+test("D-055: every line of a refused follow stream parses, including the last", async () => {
+  const run = await d051FollowRun(d051Body(false));
+  assert.equal(run.stop.reason, "error");
+
+  // Only what the follow loop actually EMITTED — appending the terminal frame
+  // by hand here would test the helper and not the stream, which is the whole
+  // defect: the CLI could forget and this would still pass.
+  assert.ok(
+    run.frames.some((frame) => frame.type === "error"),
+    "the terminal condition must be emitted into the stream, not left to the caller",
+  );
+  const stream = run.frames
+    .map((frame) => formatFollowFrame(frame))
+    .join("\n");
+
+  const lines = stream.split("\n");
+  for (const [index, line] of lines.entries()) {
+    assert.doesNotThrow(
+      () => JSON.parse(line),
+      `line ${index + 1} of ${lines.length} must be parseable NDJSON`,
+    );
+  }
+
+  // Positive control: the pre-fix behaviour on the same stream. If a bare
+  // "cswarm: ..." line were still the last word, the loop above would have
+  // to fail — prove that it would.
+  const bareText = "cswarm: signal read failed (HTTP 500): internal_error";
+  assert.throws(() => JSON.parse(bareText));
+
+  const last = JSON.parse(lines[lines.length - 1]!) as Record<string, unknown>;
+  assert.equal(last.type, "error");
+  assert.equal(last.server_refused, true);
+  assert.equal(last.server_error, "internal_error");
+  assert.equal(last.request_id, D051_REQUEST_ID);
+  // A wrapper can read the terminal condition without parsing prose.
+  assert.equal(typeof last.ts, "string");
+});
+
+test("D-055: a clean cancellation ends the stream without an error frame", async () => {
+  assert.equal(followStopFrame({ reason: "cancelled" }, 1_700_000_000_000), null);
+
+  // And the harness's own cancelled run produces no error frame either.
+  const run = await d051FollowRun(d051Body(true));
+  assert.equal(run.stop.reason, "cancelled");
+  assert.equal(followStopFrame(run.stop, 1_700_000_000_000), null);
+  assert.equal(run.frames.some((frame) => frame.type === "error"), false);
+});
+
+test("D-055: the terminal frame distinguishes a refusal from other stops", () => {
+  const refused = followStopFrame({
+    reason: "error",
+    error: new SignalHttpError(500, null, {
+      error: "internal_error",
+      requestId: D051_REQUEST_ID,
+      retryable: false,
+    }),
+  }, 1_700_000_000_000);
+  assert.equal(refused?.server_refused, true);
+  assert.equal(refused?.request_id, D051_REQUEST_ID);
+
+  // A stop with no envelope is still a frame, just without server detail —
+  // server_refused must not be asserted when the server said nothing.
+  for (
+    const reason of ["fatal_http", "malformed", "credential", "error"] as const
+  ) {
+    const frame = followStopFrame(
+      { reason, error: new Error("something local went wrong") },
+      1_700_000_000_000,
+    );
+    assert.equal(frame?.reason, reason);
+    assert.equal(frame?.server_refused, false);
+    assert.equal(frame?.request_id, null);
+    assert.equal(frame?.server_error, null);
+    assert.match(frame?.message ?? "", /something local went wrong/);
+  }
+
+  // A stop carrying no error at all still yields a usable message.
+  const bare = followStopFrame({ reason: "error" }, 1_700_000_000_000);
+  assert.match(bare?.message ?? "", /inbox follow stopped \(error\)/);
+});
+
+// ---------------------------------------------------------------------------
+// D-058: classification is by identity, never by wording. followHttpDetails
+// used to fall back to a message regex and isTransportFollowMessage matched
+// exact prose, so an unrecognised error type spelled like one of ours acquired
+// a status — and through the restart classifier, a restart it had not earned.
+// This is D-053 (control flow on untrusted text) surviving inside the D-057
+// closed classification.
+//
+// The regex is gone. These are the POSITIVE CONTROLS that the real, tagged
+// paths still classify — deleting a fallback is only safe if the primary works.
+// ---------------------------------------------------------------------------
+
+async function readFailure(
+  fetcher: typeof fetch,
+): Promise<Error> {
+  const target = cloudTarget("https://cloud.example.test", "anon-key");
+  try {
+    await readSignals(
+      target,
+      { kind: "agent", token: "swm_agt_" + "A".repeat(43) },
+      { workspaceId: WORKSPACE, inbox: true },
+      { fetcher },
+    );
+  } catch (error) {
+    return error as Error;
+  }
+  throw new Error("expected the stubbed read to reject");
+}
+
+test("D-058: a real HTTP failure still carries its status without the regex", async () => {
+  for (const status of [400, 401, 429, 500, 503]) {
+    const error = await readFailure((async () =>
+      new Response(null, { status })) as typeof fetch);
+    assert.equal(
+      followHttpDetails(error)?.status,
+      status,
+      `HTTP ${status} must still be readable from the identity tag`,
+    );
+    // And the restart verdict follows the status, as before.
+    assert.equal(
+      isRestartableReadError(error),
+      status === 429 || status >= 500,
+      `HTTP ${status} restart verdict`,
+    );
+  }
+});
+
+test("D-058: a real transport failure is still recognised by identity", async () => {
+  // A fetcher that never reaches the service produces the shared plain
+  // transport Error, tagged at construction.
+  const error = await readFailure((async () => {
+    throw new TypeError("fetch failed");
+  }) as typeof fetch);
+  assert.equal(error.message, "signal read could not reach the cloud service");
+  assert.equal(isRetryableFollowError(error), true);
+  assert.equal(isRestartableReadError(error), true);
+});
+
+test("D-058: an impostor spelled exactly like ours gets no verdict", async () => {
+  // The same two spellings, on an error this module did not construct. Before
+  // the fix both were classified; the message is identical to the real one.
+  const real = await readFailure((async () => {
+    throw new TypeError("fetch failed");
+  }) as typeof fetch);
+  const impostor = new Error(real.message);
+  assert.equal(impostor.message, real.message, "the wording is identical");
+  assert.equal(isRetryableFollowError(real), true, "positive control");
+  assert.equal(isRetryableFollowError(impostor), false);
+  assert.equal(isRestartableReadError(impostor), false);
+
+  const httpReal = await readFailure((async () =>
+    new Response(null, { status: 500 })) as typeof fetch);
+  const httpImpostor = new Error(httpReal.message);
+  assert.equal(httpImpostor.message, httpReal.message);
+  assert.equal(followHttpDetails(httpReal)?.status, 500, "positive control");
+  assert.equal(followHttpDetails(httpImpostor), null);
+  assert.equal(isRestartableReadError(httpImpostor), false);
 });

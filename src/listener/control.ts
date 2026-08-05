@@ -298,6 +298,10 @@ export async function appendListenerEvent(
     "pending_delivery_count",
     "terminal_delivery_failure_count",
     "outcome",
+    // D-051 companion 2: why a listener is down, and why it stopped trying.
+    "restart_attempts",
+    "restartable",
+    "restarts_exhausted",
   ]);
   const deliveryModes = new Set(["durable_claim", "cursor_fallback"]);
   const deliveryOutcomes = new Set([

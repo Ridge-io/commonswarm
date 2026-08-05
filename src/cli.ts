@@ -113,8 +113,10 @@ import {
 } from "./cloud/workspaces.js";
 import {
   askWaitJsonPayload,
+  followStopFrame,
   formatFollowFrame,
   isFollowCredentialFailure,
+  isRestartableReadError,
   parseWaitSeconds,
   pollForSignals,
   postSignalTargets,
@@ -2520,7 +2522,18 @@ async function runInboxFollowCommand(args: Arguments): Promise<void> {
     if (stop.reason === "cancelled") {
       return;
     }
-    if (stop.error) throw stop.error;
+    // D-055: the terminal frame is emitted by runInboxFollow through the same
+    // emit callback as the rest of the stream, so it cannot be forgotten here.
+    // This throw is the human-facing exit status, not the machine surface.
+    //
+    // D-056: the status also has to be actionable. isRestartableReadError is
+    // the same predicate the supervisor's bounded restart uses, so a shell loop
+    // and the supervisor cannot disagree about whether to try again.
+    if (stop.error) {
+      throw isRestartableReadError(stop.error)
+        ? markRestartable(stop.error)
+        : stop.error;
+    }
     throw new Error(`inbox follow stopped (${stop.reason})`);
   } finally {
     process.off("SIGINT", onAbortSignal);
@@ -3034,7 +3047,12 @@ async function runConfiguredListener(options: {
       ? { stateDirectory: options.stateDirectory }
       : {}),
   });
-  const model = options.provider === "opencode"
+  // A factory, not a value: the supervisor may run the listener more than once
+  // and a model is single-use (runListenerRuntime closes it on every exit, and
+  // every adapter throws "listener model is closed" once closed). Constructing
+  // one here and capturing it would make every restart fail instantly.
+  const newModel = () =>
+    options.provider === "opencode"
     ? new OpenCodeListenerModel({
       cwd: options.cwd,
       permissionMode: options.permissionMode,
@@ -3117,7 +3135,7 @@ async function runConfiguredListener(options: {
           principalId: options.principalId,
           credentialSession,
           store: effectStore,
-          model,
+          model: newModel(),
           signal,
           onEvent,
           listenerInstanceId,
@@ -3764,6 +3782,32 @@ function safeError(error: unknown): string {
  * which is right for a one-line failure and wrong for the reauthorisation notice — that
  * one is a short set of instructions and reads as noise on a single line.
  */
+/**
+ * sysexits EX_TEMPFAIL: "temporary failure; the user is invited to retry".
+ *
+ * D-056: the follow loop correctly dies on a refused read rather than retrying
+ * through the server's instruction, and supervision is the remedy for a process
+ * that exits. But every cswarm failure exited 1, so the supervisor forms that
+ * read only an exit status — a shell until-loop, a service unit, a
+ * respawn-on-nonzero runner — could not tell "refused, a later attempt may
+ * succeed" from "credential revoked, do not restart". The D-055 frame serves
+ * hosts that parse the NDJSON stream; this serves the ones that cannot.
+ */
+export const EXIT_RESTARTABLE = 75;
+
+/** Exit status attached to an error whose failure may clear on a later run. */
+const restartableExit = new WeakMap<Error, number>();
+
+/** Mark an error so the top-level handler exits with EX_TEMPFAIL. */
+function markRestartable(error: Error): Error {
+  restartableExit.set(error, EXIT_RESTARTABLE);
+  return error;
+}
+
+function exitCodeFor(error: unknown): number {
+  return error instanceof Error ? restartableExit.get(error) ?? 1 : 1;
+}
+
 function safeParagraph(message: string): string {
   return message
     .replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, "")
@@ -3824,5 +3868,5 @@ main().catch((error) => {
     return;
   }
   process.stderr.write(`cswarm: ${safeError(error)}\n`);
-  process.exitCode = 1;
+  process.exitCode = exitCodeFor(error);
 });

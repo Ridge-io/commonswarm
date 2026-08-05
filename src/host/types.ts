@@ -99,6 +99,32 @@ export type HostSessionOptions = {
   clientVersion?: string;
 };
 
+/**
+ * Assigned codes whose failure may clear on a later attempt. Codes WE set at
+ * the ACP boundary, never one the peer supplied.
+ *
+ * Membership is opt-in and the default is "do not retry". An omitted code is
+ * PERMANENT, **or** UNSAFE TO REPEAT, **or** UNDER-SPECIFIED — three different
+ * reasons, and collapsing them loses whichever is not named. `spawn_failed` is
+ * the third: one code covers a possibly-transient OS spawn error and a missing
+ * stdio pipe, and discards the OS cause, so no caller can tell which it has.
+ * `child_exit_timeout` is the clearest case of the second: the child may still
+ * be ALIVE, so repeating the work is unsafe rather than merely futile, and it
+ * has no rebuild path either.
+ * ~~Superseded (2026-08-05, dead): "Every other code — a version refusal, a
+ * failed permission canary, a protocol defect, blocked prompts — will fail
+ * identically next time."~~ That was false the moment a code was omitted for
+ * safety rather than futility.
+ *
+ * Shared by the engine's prompt-retry decision and the supervisor's restart
+ * decision so the two cannot drift into disagreeing about the same failure.
+ */
+export const TRANSIENT_ACP_CODES: ReadonlySet<string> = new Set([
+  "timeout",
+  "child_exit",
+  "transport",
+]);
+
 export class AcpHostError extends Error {
   readonly code: string;
   constructor(code: string, message: string) {
@@ -133,6 +159,19 @@ export class AcpChildExitError extends AcpHostError {
     this.name = "AcpChildExitError";
     this.exitCode = exitCode;
     this.signal = signal;
+  }
+}
+
+/**
+ * A raw stream failure normalised at the transport boundary. Node surfaces
+ * these as bare Errors (EPIPE, ECONNRESET, a destroyed pipe), and without a
+ * code of our own the only thing left to classify on is their wording — which
+ * is how provider-supplied text ended up steering retry decisions.
+ */
+export class AcpTransportError extends AcpHostError {
+  constructor(readonly cause: Error) {
+    super("transport", `ACP transport failed: ${cause.message}`);
+    this.name = "AcpTransportError";
   }
 }
 

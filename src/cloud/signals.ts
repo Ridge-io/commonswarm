@@ -12,6 +12,13 @@ import {
   relativeAge,
   relativeExpiry,
 } from "./workspaces.js";
+import {
+  describeServerError,
+  EMPTY_SERVER_ERROR_ENVELOPE,
+  parseServerErrorEnvelope,
+  serverRefusedRetry,
+  type ServerErrorEnvelope,
+} from "./error-envelope.js";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -127,12 +134,18 @@ export const SIGNAL_FOLLOW_PAGE_LIMIT = 100;
 export class SignalHttpError extends Error {
   readonly status: number;
   readonly retryAfterMs: number | null;
+  readonly envelope: ServerErrorEnvelope;
 
-  constructor(status: number, retryAfterMs: number | null = null) {
-    super(`signal read failed (HTTP ${status})`);
+  constructor(
+    status: number,
+    retryAfterMs: number | null = null,
+    envelope: ServerErrorEnvelope = EMPTY_SERVER_ERROR_ENVELOPE,
+  ) {
+    super(describeServerError(`signal read failed (HTTP ${status})`, envelope));
     this.name = "SignalHttpError";
     this.status = status;
     this.retryAfterMs = retryAfterMs;
+    this.envelope = envelope;
   }
 }
 
@@ -155,6 +168,23 @@ export class SignalMalformedError extends Error {
 /** Retry-After attached to plain Errors thrown by the shared read path. */
 const plainHttpRetryAfterMs = new WeakMap<Error, number | null>();
 const plainHttpStatus = new WeakMap<Error, number>();
+/** The server's failure envelope, carried alongside the status (D-051). */
+const plainHttpEnvelope = new WeakMap<Error, ServerErrorEnvelope>();
+/**
+ * D-058: transport failures are tagged by identity at construction, never
+ * recognised by their wording. The prose match this replaced let any error
+ * spelled "signal read could not reach the cloud service" acquire a transport
+ * verdict — the same untrusted-text control flow D-053 removed elsewhere,
+ * surviving inside the D-057 closed classification.
+ */
+const plainTransportErrors = new WeakSet<Error>();
+
+/** Build the shared plain transport Error, tagged so classification is by identity. */
+function plainTransportError(): Error {
+  const error = new Error("signal read could not reach the cloud service");
+  plainTransportErrors.add(error);
+  return error;
+}
 
 function checkedUuid(value: unknown, field: string): string {
   if (typeof value !== "string" || !UUID_RE.test(value)) {
@@ -404,17 +434,33 @@ export function parseRetryAfterMs(
   return Math.max(0, Math.min(when - nowMs, SIGNAL_FOLLOW_BACKOFF_MAX_MS));
 }
 
-/** Throw a plain Error so one-shot callers keep the pre-follow failure taxonomy. */
-function throwSignalHttp(response: Response): never {
+/**
+ * Throw a plain Error so one-shot callers keep the pre-follow failure taxonomy.
+ * The body is already parsed by fetchSignalRead; its envelope rides along so
+ * classification can honour `retryable` and the operator sees `request_id`.
+ */
+function throwSignalHttp(response: Response, body: unknown): never {
   const status = response.status;
   const retryAfterMs = parseRetryAfterMs(response.headers.get("retry-after"));
-  const error = new Error(`signal read failed (HTTP ${status})`);
+  const envelope = parseServerErrorEnvelope(body);
+  const error = new Error(
+    describeServerError(`signal read failed (HTTP ${status})`, envelope),
+  );
   plainHttpStatus.set(error, status);
   plainHttpRetryAfterMs.set(error, retryAfterMs);
+  plainHttpEnvelope.set(error, envelope);
   throw error;
 }
 
-/** Status + Retry-After for follow classification (typed or plain shared Errors). */
+/**
+ * Status + Retry-After for follow classification (typed or tagged plain Errors).
+ *
+ * D-058: the message-regex fallback that used to sit here is gone. Every HTTP
+ * failure this module raises is already tagged by identity in `plainHttpStatus`
+ * at construction, so the regex was redundant for real errors and was the one
+ * way an unrecognised error type could acquire a status — and with it a restart
+ * verdict — purely from how it was worded.
+ */
 export function followHttpDetails(
   error: unknown,
 ): { status: number; retryAfterMs: number | null } | null {
@@ -429,21 +475,72 @@ export function followHttpDetails(
         retryAfterMs: plainHttpRetryAfterMs.get(error) ?? null,
       };
     }
-    const match = error.message.match(/^signal read failed \(HTTP (\d+)\)$/);
-    if (match) {
-      return { status: Number(match[1]), retryAfterMs: null };
-    }
   }
   return null;
 }
 
-function isTransportFollowMessage(error: unknown): boolean {
-  return error instanceof SignalTransportError ||
-    (error instanceof Error &&
-      error.message === "signal read could not reach the cloud service");
+/**
+ * The server's failure envelope for an error raised by the read path. Empty
+ * when the failure carried no readable body, which leaves status classification
+ * unchanged.
+ */
+export function followErrorEnvelope(error: unknown): ServerErrorEnvelope {
+  if (error instanceof SignalHttpError) return error.envelope;
+  if (error instanceof Error) {
+    return plainHttpEnvelope.get(error) ?? EMPTY_SERVER_ERROR_ENVELOPE;
+  }
+  return EMPTY_SERVER_ERROR_ENVELOPE;
 }
 
-function isMalformedFollowMessage(error: unknown): boolean {
+/**
+ * D-058: identity only. Was an exact-prose match, so an unrecognised error type
+ * spelled the same way acquired a transport verdict and, through the restart
+ * classifier, a restart it had not earned.
+ */
+function isTransportFollowMessage(error: unknown): boolean {
+  return error instanceof SignalTransportError ||
+    (error instanceof Error && plainTransportErrors.has(error));
+}
+
+/**
+ * Whether a failed read could plausibly succeed on a later attempt.
+ *
+ * Scope: the READ path only. The follow CLI's exit status calls this directly;
+ * the supervisor's `isRestartableRuntimeError` delegates only its read-path
+ * portion here and decides delivery, command and ACP failures itself. Those two
+ * surfaces therefore agree about read failures by construction, which is the
+ * property worth having.
+ *
+ * ENUMERATED, not excluded (D-057): timeout, transport, and HTTP 429/5xx are
+ * restartable; everything else returns false and acquires no decision. A server
+ * refusal still restarts, because the `retryable: false` veto governs an
+ * IMMEDIATE retry of the same request, not whether a later run may work.
+ *
+ * ~~Superseded (2026-08-05, dead): "The single source for that judgement…so the
+ * two surfaces cannot drift" — false since D-057 gave the runtime its own closed
+ * classifier; and "Everything else — 5xx, a server refusal, transport,
+ * timeouts — may clear on its own", which states the rule by exclusion when it
+ * is now an enumeration.~~
+ */
+export function isRestartableReadError(error: unknown): boolean {
+  if (error instanceof SignalReadTimeoutError) return true;
+  if (isTransportFollowMessage(error)) return true;
+  const http = followHttpDetails(error);
+  if (http !== null) {
+    // Status alone. The `retryable: false` veto governs an IMMEDIATE retry of
+    // the same request; it does not assert that a later run cannot work, and a
+    // later run is the judgement a restart needs.
+    return http.status === 429 || http.status >= 500;
+  }
+  // D-057: CLOSED. An unrecognised failure acquires no decision. This used to
+  // exclude three known types and return true for everything else, so a plain
+  // TypeError, a delivery 400 and an ACP version mismatch all bought up to
+  // five restarts — verified by execution before the fix.
+  return false;
+}
+
+/** A malformed body/row: a protocol defect, so repeating the read cannot help. */
+export function isMalformedFollowMessage(error: unknown): boolean {
   if (error instanceof SignalMalformedError) return true;
   if (!(error instanceof Error)) return false;
   return error.message.startsWith("signal read returned a malformed") ||
@@ -552,9 +649,9 @@ async function fetchSignalRead(
         return null;
       }
       if (signal.aborted || timedOut) return "timeout";
-      if (!response.ok) {
-        return { response, body: null };
-      }
+      // D-051: failure bodies are read on the same terms as success bodies.
+      // They carry request_id and the server's `retryable` instruction, and
+      // returning body:null here is what discarded both.
       try {
         return { response, body: await response.json() };
       } catch {
@@ -576,7 +673,7 @@ async function fetchSignalRead(
 function mapReadFailure(error: unknown, waitBound: boolean): never {
   if (error instanceof SignalReadTimeoutError) {
     if (waitBound) throw error;
-    throw new Error("signal read could not reach the cloud service");
+    throw plainTransportError();
   }
   throw error;
 }
@@ -633,11 +730,11 @@ async function humanSignals(
     mapReadFailure(error, options.deadlineMs !== undefined);
   }
   if (result === null) {
-    throw new Error("signal read could not reach the cloud service");
+    throw plainTransportError();
   }
   const { response, body } = result;
   if (!response.ok) {
-    throwSignalHttp(response);
+    throwSignalHttp(response, body);
   }
   if (!Array.isArray(body)) {
     throw new Error("signal read returned malformed JSON");
@@ -697,7 +794,7 @@ async function agentSignalPage(
       mapReadFailure(error, options.deadlineMs !== undefined);
     }
     if (result === null) {
-      throw new Error("signal read could not reach the cloud service");
+      throw plainTransportError();
     }
     return result;
   };
@@ -709,9 +806,9 @@ async function agentSignalPage(
     cursorRequested &&
     allowLegacyCursorFallback
   ) {
-    const original = result.response;
+    const original = result;
     result = await perform(false);
-    if (!result.response.ok) throwSignalHttp(result.response);
+    if (!result.response.ok) throwSignalHttp(result.response, result.body);
     const fallbackBody = result.body;
     const fallbackCapabilities = fallbackBody &&
         typeof fallbackBody === "object" &&
@@ -727,11 +824,13 @@ async function agentSignalPage(
       };
     // A capable edge rejecting the capability request is a real protocol bug,
     // not an excuse to silently fall back to a lossy newest-N window.
-    if (fallbackCapabilities.cursorAfter) throwSignalHttp(original);
+    if (fallbackCapabilities.cursorAfter) {
+      throwSignalHttp(original.response, original.body);
+    }
     legacyCursorFallback = true;
   }
   const { response, body } = result;
-  if (!response.ok) throwSignalHttp(response);
+  if (!response.ok) throwSignalHttp(response, body);
   if (
     !body ||
     typeof body !== "object" ||
@@ -1317,6 +1416,24 @@ export type FollowFrame =
     attempt: number;
     delay_ms: number;
     ts: string;
+  }
+  /**
+   * D-055: the stream's terminal condition. `--ndjson` exists for machine
+   * consumption — the connect prompt points non-Grok hosts at it — so a fatal
+   * stop written as bare text made the stream's LAST word the one line a
+   * wrapper cannot parse. The information was already there; only the
+   * encoding was wrong.
+   */
+  | {
+    type: "error";
+    reason: FollowStopReason;
+    /** Why the server said it failed, when it said anything. */
+    server_error: string | null;
+    request_id: string | null;
+    /** True only when the server explicitly refused a retry. */
+    server_refused: boolean;
+    message: string;
+    ts: string;
   };
 
 export type FollowStopReason =
@@ -1329,6 +1446,28 @@ export type FollowStopReason =
 export interface FollowStop {
   reason: FollowStopReason;
   error?: Error;
+}
+
+/**
+ * The terminal frame for a follow stop that is not a clean cancellation.
+ * Returns null for "cancelled": an operator stop is not an error, and the
+ * stream simply ends.
+ */
+export function followStopFrame(
+  stop: FollowStop,
+  nowMs: number,
+): Extract<FollowFrame, { type: "error" }> | null {
+  if (stop.reason === "cancelled") return null;
+  const envelope = followErrorEnvelope(stop.error);
+  return {
+    type: "error",
+    reason: stop.reason,
+    server_error: envelope.error,
+    request_id: envelope.requestId,
+    server_refused: envelope.retryable === false,
+    message: stop.error?.message ?? `inbox follow stopped (${stop.reason})`,
+    ts: followTs(nowMs),
+  };
 }
 
 /** Bounded FIFO set of signal ids seen during one follow process. */
@@ -1385,7 +1524,46 @@ export function nextFollowBackoffMs(
   );
 }
 
+/**
+ * D-051: `retryable: false` is a refusal, and it vetoes retry before status is
+ * consulted. Retrying a rejection at a saturated ceiling is what fed the
+ * concurrency that caused it. The veto is one-directional on purpose —
+ * `retryable: true` does not promote a status we would otherwise refuse to
+ * retry, so a server cannot talk this client into hammering a 401.
+ */
+/**
+ * Decay the retry attempt counter after a success rather than zeroing it.
+ *
+ * D-051 companion: a single success used to reset the counter to 0, so an
+ * intermittently-failing receiver never reached the 30s backoff cap — it
+ * climbed, succeeded, reset, and climbed again. That is the amplifier's
+ * engine, and it is why one receiver produced 13.2 retry frames/min where a
+ * receiver sitting at the cap produces ~2.
+ *
+ * Decaying by one makes the steady state track the recent failure RATE rather
+ * than the current streak: the counter drifts by (2p - 1) per read at failure
+ * probability p. A healthy receiver still returns to zero, one step per
+ * success, so health is never penalised for long. This holds whatever the
+ * server says about `retryable`, so it protects the client even on endpoints
+ * that never emit the field.
+ *
+ * ~~Superseded (2026-08-05, now dead): "Against the measured curve that lands
+ * where we want it — at 71% failures (concurrency 8) it climbs to the cap, at
+ * 17% (concurrency 2) it stays pinned at 0."~~ Wren retracted that
+ * dose-response curve the same day: interleaved measurement showed a roughly
+ * even per-request failure chance that load barely moves, and the ascending
+ * curve was a time confound. At p near 0.5 this counter random-walks rather
+ * than converging either way, so do not read the tuning as validated. What
+ * survives the retraction is the defect itself — a success wiping backoff the
+ * failures earned is wrong under ANY failure distribution — and that is the
+ * whole reason this function exists.
+ */
+export function decayFollowAttempt(attempt: number): number {
+  return attempt > 0 ? attempt - 1 : 0;
+}
+
 export function isRetryableFollowError(error: unknown): boolean {
+  if (serverRefusedRetry(followErrorEnvelope(error))) return false;
   if (error instanceof SignalReadTimeoutError) return true;
   if (isTransportFollowMessage(error)) return true;
   const http = followHttpDetails(error);
@@ -1413,8 +1591,13 @@ export function isFatalFollowError(error: unknown): boolean {
 export function isFollowCredentialFailure(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
   const http = followHttpDetails(error);
-  if (http?.status === 401 || http?.status === 403) {
-    return true;
+  if (http !== null) {
+    // It came off the wire, so the status decides and nothing else does.
+    // Returning here keeps the wording check below out of reach of response
+    // text: since D-051 the message can carry server-supplied fields, and an
+    // unanchored phrase test over a message that contains external text is
+    // the same defect as the `/aborted/i` one this sweep removed.
+    return http.status === 401 || http.status === 403;
   }
   if (
     error.name === "RenewalReauthorisationRequired" ||
@@ -1422,6 +1605,7 @@ export function isFollowCredentialFailure(error: unknown): boolean {
   ) {
     return true;
   }
+  // Locally-thrown secret absence only; these errors never cross the network.
   return /secret is absent/i.test(error.message);
 }
 
@@ -1445,9 +1629,22 @@ export function formatFollowFrame(frame: FollowFrame): string {
   return JSON.stringify(frame);
 }
 
+/**
+ * Name-only cancellation recognition, matching runtime.ts `isAbort`.
+ *
+ * The message regex that used to sit here — `/aborted/i.test(error.message)` —
+ * let arbitrary error TEXT impersonate a caller cancellation. D-051 made that
+ * reachable from outside: failure bodies are now parsed, so a server answering
+ * `{"error":"aborted"}` would have produced the message "signal read failed
+ * (HTTP 500): aborted" and been classified as a clean cancel instead of an
+ * error. A receiver would exit quietly, reporting success, having read nothing.
+ *
+ * This is the same defect the A2 credential-escape work removed from the engine
+ * and runtime classifiers; signals.ts kept its copy. Cancellation is a fact
+ * about our own AbortSignal or a typed local abort, never about wording.
+ */
 function isAbortError(error: unknown): boolean {
-  return error instanceof Error &&
-    (error.name === "AbortError" || /aborted/i.test(error.message));
+  return error instanceof Error && error.name === "AbortError";
 }
 
 /** One page request from the follow loop to the caller's arm. */
@@ -1554,6 +1751,17 @@ export async function runInboxFollow(options: {
     return cancelled() ? "cancelled" : "ok";
   };
 
+  /**
+   * D-055: the terminal condition is part of the stream, so the loop that owns
+   * the stream emits it. Leaving this to each caller is what put a bare,
+   * unparseable line at the end of an --ndjson stream.
+   */
+  const stopWith = (stop: FollowStop): FollowStop => {
+    const frame = followStopFrame(stop, now());
+    if (frame) options.emit(frame);
+    return stop;
+  };
+
   while (true) {
     if (cancelled()) return { reason: "cancelled" };
 
@@ -1574,7 +1782,9 @@ export async function runInboxFollow(options: {
           })
         : armResult.nextCursor;
       const canPage = Array.isArray(armResult) ? true : armResult.canPage;
-      attempt = 0;
+      // Decay, never reset: an isolated success between failures must not wipe
+      // the backoff the failures earned. See decayFollowAttempt.
+      attempt = decayFollowAttempt(attempt);
 
       if (!ready) {
         options.emit({
@@ -1622,14 +1832,20 @@ export async function runInboxFollow(options: {
       const wait = await sleepInterruptible(waitMs);
       if (wait === "cancelled") return { reason: "cancelled" };
     } catch (error) {
-      if (cancelled() || isAbortError(error)) {
+      // Precedence mirrors runtime.ts: our own abort state is authoritative,
+      // then the credential predicate, then name-only AbortError. A caller
+      // that did not abort cannot be cancelled by what an error says.
+      if (cancelled()) {
         return { reason: "cancelled" };
       }
       if (isCredentialFailure(error)) {
-        return {
+        return stopWith({
           reason: "credential",
           error: error instanceof Error ? error : new Error(String(error)),
-        };
+        });
+      }
+      if (isAbortError(error)) {
+        return { reason: "cancelled" };
       }
       if (isRetryableFollowError(error)) {
         attempt += 1;
@@ -1649,21 +1865,21 @@ export async function runInboxFollow(options: {
         continue;
       }
       if (isMalformedFollowMessage(error)) {
-        return {
+        return stopWith({
           reason: "malformed",
           error: error instanceof Error ? error : new Error(String(error)),
-        };
+        });
       }
       if (isFatalFollowError(error)) {
-        return {
+        return stopWith({
           reason: "fatal_http",
           error: error instanceof Error ? error : new Error(String(error)),
-        };
+        });
       }
-      return {
+      return stopWith({
         reason: "error",
         error: error instanceof Error ? error : new Error(String(error)),
-      };
+      });
     }
   }
 }

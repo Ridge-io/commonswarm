@@ -10,6 +10,7 @@ import {
   type ListenerProviderId,
   type ListenerStatus,
 } from "./control.js";
+import { isRestartableListenerStop } from "./runtime.js";
 import type {
   ListenerRuntimeEvent,
   ListenerRuntimeStop,
@@ -19,6 +20,56 @@ import type { ListenerPermissionMode } from "./types.js";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+/** Attempts before a repeatedly-failing listener is left down and diagnosable. */
+export const LISTENER_RESTART_MAX_ATTEMPTS = 5;
+/** First restart delay. */
+export const LISTENER_RESTART_INITIAL_MS = 1_000;
+/** Ceiling on the restart delay; wider than the read backoff cap on purpose. */
+export const LISTENER_RESTART_MAX_MS = 60_000;
+
+/**
+ * Bounded restart policy. Bounded is the load-bearing word: an unbounded
+ * restart would recreate the amplification D-051 removed, one process at a
+ * time instead of one request at a time.
+ */
+export interface ListenerRestartPolicy {
+  maxAttempts?: number;
+  initialMs?: number;
+  maxMs?: number;
+  isRestartable?: (stop: ListenerRuntimeStop) => boolean;
+  sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
+  random?: () => number;
+}
+
+/** Full-jitter exponential restart delay; attempt is 1-based. */
+export function nextListenerRestartMs(
+  attempt: number,
+  policy: ListenerRestartPolicy = {},
+  random: () => number = Math.random,
+): number {
+  const initial = policy.initialMs ?? LISTENER_RESTART_INITIAL_MS;
+  const max = policy.maxMs ?? LISTENER_RESTART_MAX_MS;
+  const safeAttempt = Math.max(1, Math.min(attempt, 16));
+  const exp = Math.min(max, initial * (2 ** (safeAttempt - 1)));
+  return Math.floor(exp * (0.5 + random() * 0.5));
+}
+
+async function defaultRestartSleep(
+  ms: number,
+  signal: AbortSignal,
+): Promise<void> {
+  if (ms <= 0 || signal.aborted) return;
+  await new Promise<void>((resolve) => {
+    const finish = () => {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", finish);
+      resolve();
+    };
+    const timer = setTimeout(finish, ms);
+    signal.addEventListener("abort", finish, { once: true });
+  });
+}
 
 export interface ListenerSupervisorOptions {
   paths: ListenerPaths;
@@ -35,11 +86,20 @@ export interface ListenerSupervisorOptions {
    * durable instance UUID (e.g. by opening the delivery journal).
    */
   prepare?: (proposedInstanceId: string) => Promise<{ instanceId: string }>;
+  /**
+   * Called once per attempt, so it MUST construct its own per-attempt
+   * resources. A listener model is single-use — runListenerRuntime closes it
+   * in a finally on every exit, and every adapter refuses to start once
+   * closed — so a captured model would make the second attempt fail
+   * immediately with "listener model is closed".
+   */
   run: (
     signal: AbortSignal,
     onEvent: (event: ListenerRuntimeEvent) => void,
     listenerInstanceId: string,
   ) => Promise<ListenerRuntimeStop>;
+  /** Bounded restart for possibly-transient stops. Default: the constants above. */
+  restart?: ListenerRestartPolicy;
 }
 
 export class ListenerStartupError extends Error {
@@ -96,12 +156,20 @@ export async function runListenerSupervisor(
     logPath: options.paths.logPath,
   };
   let writes = Promise.resolve();
+  // Each link swallows its own failure. Without this a single rejected write
+  // poisons the shared chain, so every LATER status persist and event append
+  // is skipped too — the status file freezes mid-lifecycle and the log loses
+  // exactly the terminal lines that explain why. Observed while building the
+  // restart logging: one disallowed field dropped the listener_failed line.
+  const chain = (work: () => Promise<void>) => {
+    writes = writes.then(work).catch(() => undefined);
+  };
   const persist = () => {
     const snapshot = structuredClone(status);
-    writes = writes.then(() => writeListenerStatus(options.paths, snapshot));
+    chain(() => writeListenerStatus(options.paths, snapshot));
   };
   const log = (event: Record<string, string | number | boolean | null>) => {
-    writes = writes.then(() => appendListenerEvent(options.paths, event));
+    chain(() => appendListenerEvent(options.paths, event));
   };
   const transition = (
     state: ListenerStatus["state"],
@@ -267,12 +335,53 @@ export async function runListenerSupervisor(
     });
   };
 
+  const policy = options.restart ?? {};
+  const maxAttempts = policy.maxAttempts ?? LISTENER_RESTART_MAX_ATTEMPTS;
+  const isRestartable = policy.isRestartable ?? isRestartableListenerStop;
+  const restartSleep = policy.sleep ?? defaultRestartSleep;
+  const restartRandom = policy.random ?? Math.random;
+
   try {
-    const stop = await options.run(
-      controller.signal,
-      onEvent,
-      status.instanceId,
-    );
+    let restarts = 0;
+    let exhausted = false;
+    let eligible = false;
+    let stop: ListenerRuntimeStop;
+    // Each pass is a fresh runtime on the SAME instance id and control socket:
+    // prepare() ran once, so the delivery journal keeps its identity across a
+    // restart. options.run must build its own per-attempt resources — a
+    // listener model is single-use, because runListenerRuntime closes it on
+    // every exit.
+    for (;;) {
+      stop = await options.run(
+        controller.signal,
+        onEvent,
+        status.instanceId,
+      );
+      if (stop.reason === "cancelled" || controller.signal.aborted) break;
+      eligible = isRestartable(stop);
+      if (!eligible) break;
+      if (restarts >= maxAttempts) {
+        exhausted = true;
+        break;
+      }
+      restarts += 1;
+      const delayMs = nextListenerRestartMs(restarts, policy, restartRandom);
+      const restartCode = safeErrorCode(stop.error);
+      log({
+        ts: iso(now),
+        event: "listener_restarting",
+        attempt: restarts,
+        delay_ms: delayMs,
+        failure_code: restartCode,
+      });
+      transition("starting", { readyAt: null, lastErrorCode: restartCode });
+      await restartSleep(delayMs, controller.signal);
+      if (controller.signal.aborted) {
+        stop = { reason: "cancelled" };
+        break;
+      }
+    }
+
     const stoppedAt = iso(now);
     if (stop.reason === "cancelled") {
       transition("stopped", {
@@ -288,10 +397,16 @@ export async function runListenerSupervisor(
         stoppedAt,
         lastErrorCode: code,
       });
+      // Record why it is down and why it stopped trying — a listener left down
+      // after exhausting restarts must be distinguishable from one that was
+      // never eligible for a restart at all.
       log({
         ts: stoppedAt,
         event: "listener_failed",
         failure_code: code,
+        restart_attempts: restarts,
+        restartable: eligible,
+        restarts_exhausted: exhausted,
       });
     }
   } catch (error) {

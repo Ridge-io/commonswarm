@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import {
   CommandHttpError,
+  CommandTransportError,
   SIGNAL_REQUEST_TIMEOUT_MS,
   ThinCommandClient,
   type SignalRecord,
@@ -17,7 +18,9 @@ import {
   type DeliveryOutcome,
 } from "../cloud/delivery.js";
 import {
+  decayFollowAttempt,
   isFollowCredentialFailure,
+  isRestartableReadError,
   isRetryableFollowError,
   nextFollowBackoffMs,
   readAgentSignalPage,
@@ -30,6 +33,7 @@ import {
   RenewalRevoked,
 } from "../cloud/renewal.js";
 import { ACP_DEFAULT_REQUEST_TIMEOUT_MS } from "../host/bounds.js";
+import { AcpHostError, TRANSIENT_ACP_CODES } from "../host/types.js";
 import type {
   ListenerDeliveryJournal,
   ListenerDeliveryJournalRecord,
@@ -174,6 +178,83 @@ export type ListenerRuntimeStop =
   | { reason: "cancelled" }
   | { reason: "credential"; error: Error }
   | { reason: "fatal"; error: Error };
+
+/**
+ * Whether a stopped runtime is worth starting again (D-051 companion 2).
+ *
+ * Honouring `retryable: false` correctly turns a saturation failure into a
+ * terminated receiver. The server computes `retryable` from SQLSTATE, so a
+ * condition that clears on its own still arrives here as fatal — and a bounded
+ * restart is what keeps a receiver from being killed by a transient ceiling.
+ * The immediate veto and this outer recovery are different layers: the client
+ * still does not retry the refused read, and the supervisor may later start a
+ * fresh runtime.
+ *
+ * The line is drawn at "could the same read plausibly succeed later", and it is
+ * drawn by ENUMERATION, not by exclusion — see `isRestartableRuntimeError`.
+ *
+ * ~~Superseded (2026-08-05, dead), both written before D-057 closed the
+ * classification: "nothing in this repo restarts one" — false, this function is
+ * what restarts one, bounded, via `runListenerSupervisor`; and "Everything
+ * else — 5xx, transport, timeouts, a dead model child — is worth a bounded
+ * number of further attempts" — false, an unrecognised failure now returns
+ * false and acquires no decision.~~
+ */
+export function isRestartableListenerStop(stop: ListenerRuntimeStop): boolean {
+  if (stop.reason !== "fatal") return false;
+  return isRestartableRuntimeError(stop.error);
+}
+
+/**
+ * D-057: CLOSED classification over every error type the runtime can reach a
+ * fatal stop with. A restart decision must never be a default applied to
+ * unrecognised input.
+ *
+ * The previous version delegated every fatal stop to the read-path predicate,
+ * which excluded three signal types and returned true for everything else. The
+ * runtime also emits delivery errors and ACP startup failures, so a delivery
+ * 400, a 409 conflict, a malformed 2xx and a version mismatch were all
+ * restartable — the supervisor would repeat delivery commands and provider
+ * starts that cannot succeed, contradicting its own stated boundary. The set
+ * that failed open was exactly the set the tests did not cover.
+ *
+ * Adding a new error type to the runtime now defaults it to "do not restart".
+ * That is the safe direction: a missed restart is a stopped listener an
+ * operator can see, while a wrong restart is work repeated against a server.
+ */
+function isRestartableRuntimeError(error: unknown): boolean {
+  // Delivery: status decides, exactly as on the read path.
+  if (error instanceof DeliveryTransportError) return true;
+  if (error instanceof DeliveryHttpError) {
+    return error.status === 429 || error.status >= 500;
+  }
+  // A malformed 2xx is a protocol defect; repeating it repeats the defect.
+  if (error instanceof DeliveryProtocolError) return false;
+
+  // Command posts: same status rule.
+  if (error instanceof CommandTransportError) return true;
+  if (error instanceof CommandHttpError) {
+    return error.status === 429 || error.status >= 500;
+  }
+
+  // ACP: only codes we assigned at the boundary, never the peer's words.
+  if (error instanceof AcpHostError) return TRANSIENT_ACP_CODES.has(error.code);
+
+  // A capability the read service does not advertise will not appear because
+  // we asked again.
+  if (error instanceof ListenerCapabilityError) return false;
+
+  // Credential horizons are a human checkpoint, never a restart.
+  if (
+    error instanceof RenewalReauthorisationRequired ||
+    error instanceof RenewalRevoked
+  ) {
+    return false;
+  }
+
+  // Read-path failures, themselves closed.
+  return isRestartableReadError(error);
+}
 
 /**
  * Name-only cancellation recognition, plus the explicit caller signal state
@@ -771,7 +852,10 @@ export async function runListenerRuntime(
             ts: eventTime(now),
           });
         }
-        readAttempt = 0;
+        // Decay, never reset — see decayFollowAttempt. Zeroing here let an
+        // intermittently-failing receiver climb, succeed, and climb again
+        // without ever reaching the backoff cap.
+        readAttempt = decayFollowAttempt(readAttempt);
       } catch (error) {
         // Exact caller abort state is authoritative, then the closed credential
         // predicate, then name-only AbortError. This preserves an explicit
