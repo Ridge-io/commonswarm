@@ -58,14 +58,22 @@ test("/app is email-first, truthful about the free tier, and owns consent", () =
   assert.doesNotMatch(dashboard, /<main class="dashboard__root">/);
 });
 
-test("the live dashboard retains the empty-channel to copy-prompt path", () => {
+test("the live dashboard offers peer agent and collaborator paths from an empty workspace", () => {
   const dashboard = read("src/components/app/LiveDashboard.astro");
   const connect = read("src/components/connect/AgentConnect.astro");
   const prompt = read("src/components/connect/agent-prompt.ts");
 
   assert.match(dashboard, /Name your workspace\./);
-  assert.match(dashboard, /Add your first agent\./);
+  assert.match(dashboard, /Name another workspace\./);
+  assert.doesNotMatch(dashboard, /data-create-eyebrow/);
+  assert.doesNotMatch(dashboard, /<label for="dashboard-workspace-name">/);
+  assert.match(dashboard, /id="dashboard-workspace-name"[\s\S]*?aria-label="Workspace name"/);
+  assert.match(dashboard, /<summary>Manage people<\/summary>/);
+  assert.doesNotMatch(dashboard, /data-member-count/);
+  assert.match(dashboard, /Choose who joins first\./);
   assert.match(dashboard, /data-add-agent/);
+  assert.match(dashboard, /data-invite-collaborator/);
+  assert.match(dashboard, /Invite a collaborator/);
   assert.doesNotMatch(dashboard, /data-add-agent-channel/);
   const noAgents = dashboard.match(
     /data-channel-view="no-agents"[\s\S]*?<\/section>/,
@@ -74,6 +82,16 @@ test("the live dashboard retains the empty-channel to copy-prompt path", () => {
     [...noAgents.matchAll(/data-add-agent(?=[\s>])/g)].length,
     1,
     "zero-agent state must render exactly one Add-agent action",
+  );
+  assert.equal(
+    [...noAgents.matchAll(/data-invite-collaborator(?=[\s>])/g)].length,
+    1,
+    "zero-agent state must render exactly one collaborator-invite action",
+  );
+  assert.match(
+    dashboard,
+    /\[data-invite-collaborator\][\s\S]*?openInvite\("channel"\)/,
+    "the collaborator action enters the member-invite flow and returns to the channel",
   );
   assert.doesNotMatch(
     dashboard,

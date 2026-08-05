@@ -7,9 +7,9 @@
  *
  * The workspace view follows the operator's Slack-shaped room model: a rail groups streams,
  * people, and agent presence while the signal feed remains the primary surface. Agent
- * management stays in the header dialog. The rail presence list is deliberately bounded and
- * scrolls inside a fixed maximum height, so three agents and fifty agents occupy the same
- * amount of layout. Files and tasks are absent because they are not CommonSwarm primitives.
+ * management stays in the header dialog. The rail presence list shrinks to its contents and
+ * scrolls inside a fixed maximum height when the roster grows. Files and tasks are absent
+ * because they are not CommonSwarm primitives.
  */
 
 import AgentConnect from "../connect/AgentConnect.astro";
@@ -110,19 +110,17 @@ import "../../styles/tokens.css";
         <span>Signed in as <strong data-account-name>your account</strong></span>
       </div>
       <div class="dashboard__gateway-copy">
-        <p class="dashboard__eyebrow" data-create-eyebrow>Your first workspace</p>
         <h1 id="dashboard-create-title" data-create-title>Name your workspace.</h1>
         <p data-create-description>
-          A workspace is one shared feed. Your people and AI agents post what they’re about
-          to do, so work does not collide.
+          People and AI agents share one feed here.
         </p>
       </div>
       <form class="dashboard__create-form" data-create-form>
-        <label for="dashboard-workspace-name">Workspace name</label>
         <input
           id="dashboard-workspace-name"
           name="workspace-name"
           type="text"
+          aria-label="Workspace name"
           maxlength="80"
           autocomplete="off"
           required
@@ -246,10 +244,7 @@ import "../../styles/tokens.css";
           </section>
 
           <details class="dashboard__rail-details" data-member-details hidden>
-            <summary>
-              <span>Members</span>
-              <span data-member-count>0</span>
-            </summary>
+            <summary>Manage people</summary>
             <div class="dashboard__rail-details-body">
               <ul class="dashboard__agent-list" data-member-list></ul>
               <p class="dashboard__form-error" data-member-error role="alert" hidden></p>
@@ -377,14 +372,18 @@ import "../../styles/tokens.css";
                 <span></span><span></span><span></span>
               </div>
               <p class="dashboard__eyebrow">Workspace ready</p>
-              <h2>Add your first agent.</h2>
+              <h2>Choose who joins first.</h2>
               <p>
-                CommonSwarm writes one prompt for you. Paste it into the AI assistant you
-                already use, and the agent joins this feed.
+                Connect the AI assistant you already use, or invite a person to share the feed.
               </p>
-              <button class="dashboard__button dashboard__button--primary" type="button" data-add-agent>
-                Add an agent
-              </button>
+              <div class="dashboard__empty-actions">
+                <button class="dashboard__button dashboard__button--primary" type="button" data-add-agent>
+                  Add an agent
+                </button>
+                <button class="dashboard__button dashboard__button--primary" type="button" data-invite-collaborator>
+                  Invite a collaborator
+                </button>
+              </div>
             </section>
 
             <section class="dashboard__connect-view dashboard__choice-view" data-channel-view="agent-choice" hidden>
@@ -421,14 +420,14 @@ import "../../styles/tokens.css";
             <section class="dashboard__connect-view dashboard__invite-view" data-channel-view="invite" hidden>
               <button class="dashboard__back-button" type="button" data-close-invite>
                 <span aria-hidden="true">←</span>
-                Back to who runs this agent
+                <span data-close-invite-label>Back to who runs this agent</span>
               </button>
               <div class="dashboard__choice-copy">
-                <p class="dashboard__eyebrow">Invite a teammate</p>
-                <h2>Send one link. They connect their agent.</h2>
+                <p class="dashboard__eyebrow">Invite a collaborator</p>
+                <h2>Bring someone into this workspace.</h2>
                 <p>
-                  Your teammate sees the workspace, signs in, and gets the prompt for an
-                  agent they control. You never need to text them a live agent key.
+                  They join as a person and can share the feed. They can connect an agent
+                  when they are ready.
                 </p>
               </div>
               <form class="dashboard__invite-form" data-invite-form novalidate>
@@ -1058,17 +1057,15 @@ import "../../styles/tokens.css";
       const hasWorkspace = Boolean(
         activeWorkspaceId && workspaces.some((workspace) => workspace.id === activeWorkspaceId),
       );
-      const eyebrow = one<HTMLElement>("[data-create-eyebrow]");
       const title = one<HTMLElement>("[data-create-title]");
       const description = one<HTMLElement>("[data-create-description]");
       const cancel = one<HTMLButtonElement>("[data-create-cancel]");
       const button = one<HTMLButtonElement>("[data-create-button]");
-      if (eyebrow) eyebrow.textContent = hasWorkspace ? "New workspace" : "Your first workspace";
-      if (title) title.textContent = hasWorkspace ? "Name the new workspace." : "Name your workspace.";
+      if (title) title.textContent = hasWorkspace ? "Name another workspace." : "Name your workspace.";
       if (description) {
         description.textContent = hasWorkspace
-          ? "Create another shared feed for the people and AI agents working together."
-          : "A workspace is one shared feed. Your people and AI agents post what they’re about to do, so work does not collide.";
+          ? "Start a separate feed for a different group of people and AI agents."
+          : "People and AI agents share one feed here.";
       }
       if (cancel) cancel.hidden = !hasWorkspace;
       const input = one<HTMLInputElement>("#dashboard-workspace-name");
@@ -1183,9 +1180,7 @@ import "../../styles/tokens.css";
 
     const renderMembers = (): void => {
       const list = one<HTMLUListElement>("[data-member-list]");
-      const count = one<HTMLElement>("[data-member-count]");
       const details = one<HTMLDetailsElement>("[data-member-details]");
-      if (count) count.textContent = String(members.length);
       const me = members.find((member) => member.userId === session?.user.id);
       if (details) {
         details.hidden =
@@ -3034,13 +3029,22 @@ import "../../styles/tokens.css";
       if (status) status.textContent = "The one-use link has been cleared.";
     };
 
-    const openInvite = (): void => {
+    let inviteReturnView: "channel" | "agent-choice" = "agent-choice";
+
+    const openInvite = (returnView: "channel" | "agent-choice"): void => {
       if (sampleMode) return;
+      inviteReturnView = returnView;
       resetFreshInviteResult();
       const error = one<HTMLElement>("[data-invite-error]");
+      const backLabel = one<HTMLElement>("[data-close-invite-label]");
       if (error) {
         error.textContent = "";
         error.hidden = true;
+      }
+      if (backLabel) {
+        backLabel.textContent = returnView === "channel"
+          ? "Back to the channel"
+          : "Back to who runs this agent";
       }
       showChannelView("invite");
       window.requestAnimationFrame(() => {
@@ -3656,6 +3660,10 @@ import "../../styles/tokens.css";
     });
 
     one<HTMLButtonElement>("[data-add-agent]")?.addEventListener("click", openAgentChoice);
+    one<HTMLButtonElement>("[data-invite-collaborator]")?.addEventListener(
+      "click",
+      () => openInvite("channel"),
+    );
     one<HTMLButtonElement>("[data-workspace-menu-trigger]")?.addEventListener(
       "click",
       toggleWorkspaceMenu,
@@ -3869,11 +3877,17 @@ import "../../styles/tokens.css";
     }
     one<HTMLButtonElement>("[data-close-agent-choice]")?.addEventListener("click", returnToChannel);
     one<HTMLButtonElement>("[data-agent-owner-self]")?.addEventListener("click", openConnect);
-    one<HTMLButtonElement>("[data-agent-owner-teammate]")?.addEventListener("click", openInvite);
-    one<HTMLButtonElement>("[data-close-invite]")?.addEventListener("click", openAgentChoice);
+    one<HTMLButtonElement>("[data-agent-owner-teammate]")?.addEventListener(
+      "click",
+      () => openInvite("agent-choice"),
+    );
+    one<HTMLButtonElement>("[data-close-invite]")?.addEventListener("click", () => {
+      if (inviteReturnView === "channel") returnToChannel();
+      else openAgentChoice();
+    });
     one<HTMLButtonElement>("[data-invite-done]")?.addEventListener("click", () => {
       if (one<HTMLButtonElement>("[data-copy-invite]")?.dataset.inviteComplete === "true") {
-        openInvite();
+        openInvite(inviteReturnView);
         return;
       }
       resetFreshInviteResult();
@@ -4263,8 +4277,7 @@ import "../../styles/tokens.css";
     max-inline-size: 38rem;
   }
 
-  .dashboard__email label,
-  .dashboard__create-form label {
+  .dashboard__email label {
     color: var(--text);
     font-size: var(--t-sm);
     font-weight: var(--weight-semibold);
@@ -4379,8 +4392,13 @@ import "../../styles/tokens.css";
     align-items: end;
   }
 
-  .dashboard__create-form label {
-    grid-column: 1 / -1;
+  .dashboard__gateway--create h1 {
+    max-inline-size: 22ch;
+  }
+
+  .dashboard__gateway--create .dashboard__gateway-copy > p:last-child {
+    max-inline-size: 48ch;
+    line-height: var(--lh-sm);
   }
 
   .dashboard__signout-link {
@@ -4639,10 +4657,6 @@ import "../../styles/tokens.css";
     font-weight: var(--weight-medium);
   }
 
-  .dashboard__sidebar-place[aria-current="page"] {
-    background: color-mix(in oklab, var(--text) 6%, transparent);
-  }
-
   .dashboard__sidebar-place-mark {
     color: var(--text-muted);
     font-family: var(--font-mono);
@@ -4659,7 +4673,6 @@ import "../../styles/tokens.css";
   }
 
   .dashboard__sidebar-agent-list {
-    block-size: 14rem;
     max-block-size: 14rem;
     overflow-y: auto;
     overscroll-behavior: contain;
@@ -5587,6 +5600,12 @@ import "../../styles/tokens.css";
     text-wrap: pretty;
   }
 
+  .dashboard__empty-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s-3);
+  }
+
   .dashboard__empty-orbit {
     position: relative;
     inline-size: 4.5rem;
@@ -6459,10 +6478,6 @@ import "../../styles/tokens.css";
     .dashboard__email-row,
     .dashboard__create-form {
       grid-template-columns: 1fr;
-    }
-
-    .dashboard__create-form label {
-      grid-column: 1;
     }
 
     .dashboard__button {

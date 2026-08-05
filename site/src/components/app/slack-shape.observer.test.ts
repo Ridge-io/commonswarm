@@ -65,17 +65,15 @@ const renderRailGeometry = async (): Promise<RailGeometry> => {
   const fixture = join(directory, "index.html");
   const agents = (count: number): string => Array.from({ length: count }, (_, index) => `
     <li class="dashboard__sidebar-agent">
-      <span class="dashboard__sidebar-agent-avatar">A${index + 1}</span>
-      <span class="dashboard__sidebar-participant-copy"><strong>Agent ${index + 1}</strong><span>AGENT</span></span>
+      <span class="dashboard__sidebar-avatar-wrap"><span class="dashboard__sidebar-agent-avatar">A${index + 1}</span></span>
+      <span class="dashboard__sidebar-participant-copy"><strong>Agent ${index + 1}</strong><span>operated by Dana Rivera</span></span>
     </li>`).join("");
   const rows = (count: number): string => `
-    <li class="dashboard__sidebar-owner-group">
-      <div class="dashboard__sidebar-person">
-        <span class="dashboard__sidebar-person-avatar">DR</span>
-        <span class="dashboard__sidebar-participant-copy"><strong>Dana Rivera</strong><span>PERSON · owner</span></span>
-      </div>
-      <ul class="dashboard__sidebar-owner-agents">${agents(count)}</ul>
-    </li>`;
+    <li class="dashboard__sidebar-person">
+      <span class="dashboard__sidebar-person-avatar">DR</span>
+      <span class="dashboard__sidebar-participant-copy"><strong>Dana Rivera</strong><span>owner</span></span>
+    </li>
+    ${agents(count)}`;
   const rail = (name: string, count: number): string => `
     <aside class="dashboard__rail" data-rail="${name}">
       <div class="dashboard__workspace-control">
@@ -102,6 +100,7 @@ const renderRailGeometry = async (): Promise<RailGeometry> => {
         --t-sm: 0.875rem;
         --weight-medium: 500;
         --weight-semibold: 600;
+        --font-sans: Arial, sans-serif;
         --font-mono: monospace;
         --track-eyebrow: 0.08em;
         --lh-xs: 1.2;
@@ -172,10 +171,19 @@ test("the workspace shell groups people with their agents in one bounded list", 
   ]) {
     assert.ok(dashboard.includes(token), `dashboard shell is missing ${token}`);
   }
+  const participantListRules = Array.from(
+    dashboard.matchAll(/\.dashboard__sidebar-agent-list\s*\{([\s\S]*?)\}/g),
+    (match) => match[1],
+  ).join("\n");
   assert.match(
-    dashboard,
-    /\.dashboard__sidebar-agent-list\s*\{[\s\S]*?block-size:\s*14rem;[\s\S]*?max-block-size:\s*14rem;[\s\S]*?overflow-y:\s*auto;/,
-    "the grouped participant rail must have a fixed height, a matching maximum, and its own vertical scroll",
+    participantListRules,
+    /max-block-size:\s*14rem;[\s\S]*?overflow-y:\s*auto;/,
+    "the participant rail must retain its maximum height and its own vertical scroll",
+  );
+  assert.doesNotMatch(
+    participantListRules,
+    /(?:^|\n)\s*block-size:\s*14rem;/,
+    "a short participant list must shrink to its content",
   );
   assert.match(dashboard, /const renderSidebarParticipants =/);
   assert.match(dashboard, /renderSidebarParticipants\(\);/);
@@ -213,18 +221,15 @@ test("the workspace shell groups people with their agents in one bounded list", 
   assert.match(privacyReset, /renderRoster\(\);/);
 });
 
-test("three and fifty agents occupy the same rendered rail height", async () => {
+test("the participant list shrinks when short and scrolls at its cap", async () => {
   const geometry = await renderRailGeometry();
 
-  assert.equal(geometry.three.clientHeight, 224, JSON.stringify(geometry));
-  assert.equal(geometry.fifty.clientHeight, geometry.three.clientHeight, JSON.stringify(geometry));
+  assert.ok(geometry.three.clientHeight < 224, JSON.stringify(geometry));
+  assert.equal(geometry.three.scrollHeight, geometry.three.clientHeight, JSON.stringify(geometry));
+  assert.equal(geometry.fifty.clientHeight, 224, JSON.stringify(geometry));
   assert.ok(geometry.fifty.scrollHeight > geometry.fifty.clientHeight, JSON.stringify(geometry));
   assert.equal(geometry.three.overflowY, "auto", JSON.stringify(geometry));
   assert.equal(geometry.fifty.overflowY, "auto", JSON.stringify(geometry));
-  assert.ok(
-    Math.abs(geometry.three.railHeight - geometry.fifty.railHeight) <= 0.5,
-    JSON.stringify(geometry),
-  );
 });
 
 test("the channel header says what the immutable all-signals stream is", () => {
