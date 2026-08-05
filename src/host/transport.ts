@@ -13,10 +13,20 @@ import {
 } from "./bounds.js";
 import {
   AcpChildExitError,
+  AcpHostError,
   AcpProtocolError,
   AcpTimeoutError,
+  AcpTransportError,
   type JsonRpcId,
 } from "./types.js";
+
+/** Give every raw stream failure a code we assigned before it leaves here. */
+function asAcpHostError(error: unknown): AcpHostError {
+  if (error instanceof AcpHostError) return error;
+  return new AcpTransportError(
+    error instanceof Error ? error : new Error(String(error)),
+  );
+}
 
 export type TransportHandlers = {
   onNotification?: (method: string, params: unknown) => void;
@@ -69,11 +79,13 @@ export class AcpTransport extends EventEmitter {
     options.readable.on("end", () => {
       this.failAll(new AcpChildExitError(this.childExit?.code ?? null, this.childExit?.signal ?? null));
     });
+    // Normalise at the boundary: everything leaving this transport carries a
+    // code we assigned, so no downstream classifier has to read a message.
     options.readable.on("error", (err: Error) => {
-      this.failAll(err);
+      this.failAll(asAcpHostError(err));
     });
     options.writable.on("error", (err: Error) => {
-      this.failAll(err);
+      this.failAll(asAcpHostError(err));
     });
 
     options.onChildExit?.((code, signal) => {
@@ -126,7 +138,7 @@ export class AcpTransport extends EventEmitter {
       } catch (err) {
         clearTimeout(timer);
         this.pending.delete(key);
-        reject(err instanceof Error ? err : new Error(String(err)));
+        reject(asAcpHostError(err));
       }
     });
   }

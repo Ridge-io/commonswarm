@@ -148,9 +148,17 @@ so it never reached the 30s cap. One receiver produced 370 frames in 28 min =
 
 `decayFollowAttempt` subtracts one instead. The counter then drifts by
 `(2p - 1)` per read at failure probability `p`, so the steady state tracks the
-recent failure *rate* rather than the current streak. Against Wren's measured
-curve: at 71% failures (concurrency 8) it climbs to the cap; at 17%
-(concurrency 2) it stays pinned at 0 and a healthy receiver is not penalised.
+recent failure *rate* rather than the current streak, and a healthy receiver
+still returns to zero one step per success.
+
+> ~~Superseded (2026-08-05, now dead): "Against Wren's measured curve: at 71%
+> failures (concurrency 8) it climbs to the cap; at 17% (concurrency 2) it
+> stays pinned at 0."~~ **Wren retracted the dose-response curve the same day.**
+> Interleaved measurement showed a roughly even per-request failure chance that
+> load barely moves; the ascending curve was a time confound. At `p` near 0.5
+> this counter random-walks rather than converging, so the tuning is NOT
+> validated. What survives is the defect: a success wiping backoff the failures
+> earned is wrong under any failure distribution.
 
 This holds regardless of what the server says about `retryable`, so it also
 covers the endpoints that never emit the field.
@@ -295,3 +303,127 @@ loosen the restart bound (+2)          -> 1 test
 - The restart policy's *defaults* (5 attempts, 1s, 60s) are unmeasured
   judgment. Nothing establishes that 5 is the right bound under real
   saturation.
+
+---
+
+# D-051 sweep, third instance — the peer does not vote on our retry policy
+
+**Implementation:** Verity, 2026-08-05, same branch. Requested by ClaudeCswarm
+after Plumb scoped it; I had deferred this one and recorded why, and that
+deferral is now withdrawn.
+
+## The instance
+
+`engine.ts` `defaultRetryablePromptError` fell back to
+`/timeout|temporar|transport|child exit|connection/i` over `error.message`.
+
+`transport.ts:314` wraps a peer RPC error as
+`AcpProtocolError(peerMessage, "rpc_error")` — **the provider's own text,
+verbatim**. So a permanent provider refusal worded with any of those keywords
+("connection to this model is not permitted for your plan") was classified
+retryable, and `engine.ts` scheduled another model prompt: duplicated provider
+work and cost on something that can never succeed.
+
+## Fixed on one principle, not three patches
+
+Classify on error **type**, on a code **we** assign, or on the caller's own
+`AbortSignal`. A message is for humans; it is never a branch.
+
+- `AcpTransportError` (code `transport`) added to `host/types.ts`.
+- `transport.ts` normalises at the boundary: `asAcpHostError` wraps any raw
+  stream failure, so everything leaving the transport carries a code we
+  assigned. Lines 73, 76 (stream `error` events) and 129 (write failure) were
+  the untyped escapes. An already-typed `AcpHostError` passes through unwrapped.
+- `defaultRetryablePromptError` is now type/code only:
+  `SenderProvenanceUnavailableError`, or `AcpHostError` whose code is in
+  `{timeout, child_exit, transport}`. No regex.
+
+Codes we assign that stay permanent: `rpc_error`, `protocol_error`,
+`version_refused`, `permission_canary_failed`, `prompts_blocked`, `closed`,
+`pending_limit`.
+
+## Controls
+
+`tests/listener-engine.test.ts` — four provider refusals, each worded to match
+a retry keyword, must produce `failed` with the model prompted exactly once.
+Positive control on the same path: `timeout`, `child_exit` and `transport`
+still retry, and `version_refused` / `permission_canary_failed` /
+`protocol_error` still do not.
+
+`tests/host-acp-grok.test.ts` — a bare `ECONNRESET` on the stream leaves the
+transport as `AcpTransportError` with code `transport` and the original
+preserved as `cause`; an `AcpChildExitError` is not re-wrapped.
+
+### Inversion
+
+The first inversion I ran was **not faithful** and would have overstated the
+result: it kept the code check ahead of the restored regex, so an
+`AcpProtocolError` never reached the regex and only 1 test went red. Replacing
+the whole function with the true pre-fix implementation:
+
+```
+restore the real pre-fix defaultRetryablePromptError -> 2 tests red
+```
+
+Recorded because the weak inversion looked like a pass.
+
+## The class, closed
+
+| # | site | vector | state |
+|---|---|---|---|
+| 1 | `signals.ts` `isAbortError` | `/aborted/i` → silent cancel | fixed (companion 3) |
+| 2 | `signals.ts` `isFollowCredentialFailure` | `/secret is absent/i` → forged credential stop | fixed (companion 3) |
+| 3 | `engine.ts` `defaultRetryablePromptError` | provider text → duplicate paid prompt | fixed here |
+
+Remaining `error.message` reads in `src/` are display-only
+(`command-client.ts:974`, `host/transport.ts:311`) or match on strings this
+codebase produces locally and that never cross the network
+(`delivery-journal.ts`, `storage.ts`, the `signals.ts` transport/malformed
+equalities). Each was assessed rather than assumed; the table is in the
+companion section above.
+
+## Gates
+
+```
+npm test            -> tests 452, pass 452, fail 0
+npm run test:p1-cli -> tests 149, pass 149, fail 0
+npm run build       -> clean
+npm run check:tests -> clean
+```
+
+## Correction that matters more than any of the above
+
+**Wren retracted the dose-response curve on 2026-08-05.** Interleaved
+measurement showed a roughly even per-request failure chance that load barely
+moves; the ascending curve (17% at 2, 58% at 4, 71% at 8) was a time confound,
+and the per-credential contention hypothesis is dead by Wren's own hand.
+
+That removes the foundation of the D-051 framing. "Concurrency causes failures,
+failures cause retries, retries add concurrency" required failures to scale
+with concurrency. They do not.
+
+What this does and does not mean:
+
+- **The client defects were real and are still worth fixing.** Retrying a
+  request the server refused, wiping earned backoff on one success, letting
+  response text forge a cancellation, and letting a provider bill us for a
+  retry it already refused — each is wrong on its own terms, whatever is
+  happening server-side.
+- **None of this should be expected to move the failure rate.** If failures are
+  a per-request coin flip independent of load, reducing client request volume
+  does not reduce the proportion that fail. Anyone reading a post-deploy
+  improvement as vindication of this change would be reading noise.
+- **The server-side cause remains unknown**, and Wren has explicitly declined
+  to offer a third mechanism after two died. The six `request_id`s plus
+  dashboard access are still the only route to the SQLSTATE.
+
+Also unresolved and worth an operator's attention: the server sends
+`retryable: false` on these. `read/diagnostics.ts` derives that from
+`isRetryableErrorCode(code)`, and `code` comes from `readStringField(error,
+"code")` — **any thrown value without a top-level string `code` yields `null`,
+and `isRetryableErrorCode(null)` is `false`.** So `retryable: false` here may
+be a false negative from failed code extraction rather than a considered
+judgment. The operator log line carries `name` and `code`; if `code` is null
+and `name` is not `PostgresError`, that is the answer, and it is one log line
+away. This client now obeys that field faithfully — which is correct behaviour,
+and also means a server-side misclassification propagates straight to us.

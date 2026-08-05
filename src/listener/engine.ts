@@ -9,8 +9,7 @@ import {
   type SignalDirectory,
 } from "../cloud/signals.js";
 import {
-  AcpChildExitError,
-  AcpTimeoutError,
+  AcpHostError,
 } from "../host/types.js";
 import type {
   ListenerEffectRecord,
@@ -230,12 +229,28 @@ function abortError(): Error {
   return error;
 }
 
+/**
+ * Codes WE assign at the ACP boundary that mean "the same prompt could still
+ * succeed". Never a code or a phrase the peer supplied.
+ */
+const RETRYABLE_ACP_CODES = new Set(["timeout", "child_exit", "transport"]);
+
+/**
+ * D-051 sweep: this used to fall back to
+ * `/timeout|temporar|transport|child exit|connection/i` over `error.message`.
+ * A provider's own refusal text reaches here verbatim — transport.ts wraps a
+ * peer RPC error as `AcpProtocolError(peerMessage, "rpc_error")` — so a
+ * permanent refusal worded with any of those keywords bought another model
+ * prompt, duplicating provider work and cost on something that can never
+ * succeed. The peer does not get a vote on our retry policy.
+ *
+ * Classification is now by type, or by a code we assigned ourselves. A message
+ * is for humans; it is never a branch.
+ */
 function defaultRetryablePromptError(error: unknown): boolean {
-  return error instanceof SenderProvenanceUnavailableError ||
-    error instanceof AcpTimeoutError ||
-    error instanceof AcpChildExitError ||
-    (error instanceof Error &&
-      /timeout|temporar|transport|child exit|connection/i.test(error.message));
+  if (error instanceof SenderProvenanceUnavailableError) return true;
+  if (error instanceof AcpHostError) return RETRYABLE_ACP_CODES.has(error.code);
+  return false;
 }
 
 class SenderProvenanceUnavailableError extends Error {

@@ -1557,8 +1557,10 @@ test("D-051: decay reaches the cap under sustained failure and clears when healt
   assert.equal(decayFollowAttempt(1), 0);
   assert.equal(decayFollowAttempt(0), 0);
 
-  // Drift is (2p - 1) per read. Walk the measured curve rather than asserting
-  // the arithmetic: at 71% failures the counter climbs, at 17% it stays at 0.
+  // Drift is (2p - 1) per read. NOTE: the 71%/17% dose-response curve these
+  // rates came from was retracted on 2026-08-05 (time confound; the real shape
+  // is closer to a flat ~50% per request). This asserts the decay MECHANISM at
+  // two rates, not a claim about production. At p near 0.5 it random-walks.
   const walk = (failureRate: number, reads: number): number => {
     let attempt = 0;
     for (let i = 0; i < reads; i += 1) {

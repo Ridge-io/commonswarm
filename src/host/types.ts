@@ -134,6 +134,19 @@ export class AcpChildExitError extends AcpHostError {
   }
 }
 
+/**
+ * A raw stream failure normalised at the transport boundary. Node surfaces
+ * these as bare Errors (EPIPE, ECONNRESET, a destroyed pipe), and without a
+ * code of our own the only thing left to classify on is their wording — which
+ * is how provider-supplied text ended up steering retry decisions.
+ */
+export class AcpTransportError extends AcpHostError {
+  constructor(readonly cause: Error) {
+    super("transport", `ACP transport failed: ${cause.message}`);
+    this.name = "AcpTransportError";
+  }
+}
+
 export class AcpVersionError extends AcpHostError {
   constructor(message: string) {
     super("version_refused", message);

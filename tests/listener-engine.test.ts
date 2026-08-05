@@ -8,7 +8,14 @@ import {
   CommandTransportError,
   type SignalRecord,
 } from "../src/cloud/command-client.js";
-import { AcpTimeoutError } from "../src/host/types.js";
+import {
+  AcpChildExitError,
+  AcpPermissionCanaryError,
+  AcpProtocolError,
+  AcpTimeoutError,
+  AcpTransportError,
+  AcpVersionError,
+} from "../src/host/types.js";
 import {
   RenewalReauthorisationRequired,
   RenewalRevoked,
@@ -1028,4 +1035,89 @@ test("ordinary noncredential message text cannot impersonate credential loss or 
       "cancelled",
     );
   }
+});
+
+// ---------------------------------------------------------------------------
+// D-051 sweep, third instance: defaultRetryablePromptError used to fall back to
+// a regex over error.message. transport.ts wraps a peer RPC error as
+// AcpProtocolError(peerMessage, "rpc_error"), so a provider's own permanent
+// refusal — phrased with any retry keyword — bought another model prompt,
+// duplicating provider work and cost on something that can never succeed.
+// The peer does not get a vote on our retry policy.
+// ---------------------------------------------------------------------------
+
+async function promptOutcome(id: string, error: Error): Promise<{
+  status: string;
+  modelCalls: number;
+}> {
+  const store = new MemoryStore();
+  let modelCalls = 0;
+  const engine = new ListenerEngine({
+    store,
+    now: () => Date.parse("2026-07-30T01:00:00.000Z"),
+    model: model(async () => {
+      modelCalls += 1;
+      throw error;
+    }),
+    poster: poster(async () => ({ signalId: REPLY_ID })),
+  });
+  const result = await engine.process(signal(id));
+  return { status: result.status, modelCalls };
+}
+
+test("D-051: a provider refusal worded like a retry does not buy another prompt", async () => {
+  // Exactly what a peer can put on the wire: our own AcpProtocolError carrying
+  // the provider's text verbatim, with a code WE assigned ("rpc_error").
+  const refusals = [
+    "model refused: connection to this model is not permitted for your plan",
+    "prompt rejected — temporarily is not the reason, this is permanent",
+    "unsupported transport for this account tier",
+    "quota exhausted after child exit accounting",
+  ];
+  for (const [index, text] of refusals.entries()) {
+    const outcome = await promptOutcome(
+      `aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaae0${index}`,
+      new AcpProtocolError(text, "rpc_error"),
+    );
+    assert.equal(outcome.status, "failed", `must not retry: ${text}`);
+    assert.equal(outcome.modelCalls, 1, "the model is prompted exactly once");
+  }
+});
+
+test("D-051: codes we assign at the ACP boundary still retry", async () => {
+  // Positive control on the same path — this is not passing because nothing
+  // retries any more.
+  const transient: Array<[string, Error]> = [
+    ["timeout", new AcpTimeoutError("ACP request timed out: session/prompt")],
+    ["child_exit", new AcpChildExitError(1, null)],
+    ["transport", new AcpTransportError(new Error("EPIPE"))],
+  ];
+  for (const [index, [code, error]] of transient.entries()) {
+    const outcome = await promptOutcome(
+      `aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaf0${index}`,
+      error,
+    );
+    assert.equal(outcome.status, "retry_pending", `${code} must retry`);
+  }
+
+  // And a code we assign that means permanent still does not.
+  for (const [index, error] of [
+    new AcpVersionError("ACP version refused"),
+    new AcpPermissionCanaryError("canary failed"),
+    new AcpProtocolError("bad frame", "protocol_error"),
+  ].entries()) {
+    const outcome = await promptOutcome(
+      `aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaab0${index}`,
+      error,
+    );
+    assert.equal(outcome.status, "failed", `${error.name} must not retry`);
+  }
+});
+
+test("D-051: a plain untyped error is not retryable however it is worded", async () => {
+  const outcome = await promptOutcome(
+    "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaac001",
+    new Error("transient connection timeout, temporarily unavailable"),
+  );
+  assert.equal(outcome.status, "failed");
 });

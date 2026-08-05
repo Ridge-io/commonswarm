@@ -19,6 +19,7 @@ import {
   AcpPromptsBlockedError,
   AcpTimeoutError,
   AcpTransport,
+  AcpTransportError,
   AcpVersionError,
   GROK_MEASURED_VERSION,
   assertGrokMeasuredVersion,
@@ -963,4 +964,49 @@ describe("Grok ACP host core (pure fake child)", () => {
       rmSync(cwd, { recursive: true, force: true });
     }
   });
+});
+
+test("D-051: raw stream failures leave the transport with a code we assigned", async () => {
+  const readable = new PassThrough();
+  const writable = new PassThrough();
+  const transport = new AcpTransport({ readable, writable, handlers: {} });
+  try {
+    const pending = transport.request("session/prompt", {}, 5_000);
+    // A bare Node stream error — the shape that used to escape untyped and
+    // leave downstream classifiers nothing but its wording to branch on.
+    const raw = new Error("read ECONNRESET");
+    (raw as Error & { code?: string }).code = "ECONNRESET";
+    readable.emit("error", raw);
+
+    await assert.rejects(pending, (error: unknown) => {
+      assert.ok(error instanceof AcpTransportError);
+      // The code is ours, not the peer's, and not read off the message.
+      assert.equal(error.code, "transport");
+      assert.equal(error.name, "AcpTransportError");
+      // The original is preserved for humans without becoming a branch.
+      assert.equal(error.cause.message, "read ECONNRESET");
+      return true;
+    });
+  } finally {
+    transport.close();
+  }
+});
+
+test("D-051: an already-typed ACP error is not re-wrapped at the boundary", async () => {
+  const readable = new PassThrough();
+  const writable = new PassThrough();
+  const transport = new AcpTransport({ readable, writable, handlers: {} });
+  try {
+    const pending = transport.request("session/prompt", {}, 5_000);
+    readable.emit("error", new AcpChildExitError(1, null));
+    await assert.rejects(pending, (error: unknown) => {
+      // Positive control that the boundary discriminates rather than
+      // blanket-wrapping: a code we already assigned survives intact.
+      assert.ok(error instanceof AcpChildExitError);
+      assert.equal((error as AcpChildExitError).code, "child_exit");
+      return true;
+    });
+  } finally {
+    transport.close();
+  }
 });

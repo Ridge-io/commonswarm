@@ -1444,11 +1444,21 @@ export function nextFollowBackoffMs(
  *
  * Decaying by one makes the steady state track the recent failure RATE rather
  * than the current streak: the counter drifts by (2p - 1) per read at failure
- * probability p. Against the measured curve that lands where we want it — at
- * 71% failures (concurrency 8) it climbs to the cap, at 17% (concurrency 2) it
- * stays pinned at 0 and a healthy receiver is never penalised. This holds
- * whatever the server says about `retryable`, so it protects the client even
- * on endpoints that never emit the field.
+ * probability p. A healthy receiver still returns to zero, one step per
+ * success, so health is never penalised for long. This holds whatever the
+ * server says about `retryable`, so it protects the client even on endpoints
+ * that never emit the field.
+ *
+ * ~~Superseded (2026-08-05, now dead): "Against the measured curve that lands
+ * where we want it — at 71% failures (concurrency 8) it climbs to the cap, at
+ * 17% (concurrency 2) it stays pinned at 0."~~ Wren retracted that
+ * dose-response curve the same day: interleaved measurement showed a roughly
+ * even per-request failure chance that load barely moves, and the ascending
+ * curve was a time confound. At p near 0.5 this counter random-walks rather
+ * than converging either way, so do not read the tuning as validated. What
+ * survives the retraction is the defect itself — a success wiping backoff the
+ * failures earned is wrong under ANY failure distribution — and that is the
+ * whole reason this function exists.
  */
 export function decayFollowAttempt(attempt: number): number {
   return attempt > 0 ? attempt - 1 : 0;
