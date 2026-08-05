@@ -2144,3 +2144,95 @@ narrative fitted after the fact, which is exactly the question put to the cross-
 The read-window duration that bounds how long a poisoned note keeps recurring. Whether the same
 conjunction can arise from a relation change other than revocation. Whether any listener outside this
 project is running v0.1.5.
+
+
+---
+
+## D-046 — root cause of the mismatch class: a mutable value is treated as immutable identity · RULING
+
+Two review arms were run on D-042: a Fable planning arm and a **cross-family Codex inversion arm**.
+They **disagreed on the fix**, and the disagreement was the point of running both.
+
+### What the Codex arm refuted, verified by the Lead
+
+My framing — *"a correct repair exists and is merely unreachable in the shipped mode"* — was the basis
+for the proposed fix: delete the durable pre-checks and let `engine.process` handle the mismatch, since
+it already produces a terminal, ACKable `signal_integrity_mismatch`. Fable's plan recommended exactly
+that.
+
+**It would not work, and the code says so plainly.** `engine.ts:342-348` writes
+`{ ...record, state: "failed", failureCode: "signal_integrity_mismatch" }` — it **spreads the old
+record**, preserving the stale `askBody`, `askUntil` and `senderOwnerRelation`. The durable runtime
+then rereads at `runtime.ts:1195-1197`, calls `sameEffectSignal` again, and throws *"terminal listener
+effect does not match the delivery"*, which becomes fatal at `:1212-1214`.
+
+**The proposed fix moves the fatal stop from `:1185` to `:1213`.** It does not remove it. Verified
+directly, not taken from the report.
+
+### The actual root cause, which is better than the framing it replaces
+
+`immutableSignalFingerprint` (`runtime.ts:405-419`) is named for immutability and carries the comment
+*"Bind recovered effects to the immutable fields from the authoritative lease."* Its inputs are
+`signalId`, `signalKind`, `body`, `until` — and **`senderOwnerRelation`**.
+
+`senderOwnerRelation` is **not immutable**. It is recomputed from current author, principal and
+membership rows on every fresh claim (`command/durable-delivery.ts:256-291`) and on every read
+(`read/index.ts:341-374`). Revoking an author drops the join and the relation falls to `unknown`.
+
+**We put a mutable, server-derived value inside something named and documented as immutable identity,
+and then compared against it to decide whether a stored record is still valid.** That is the defect.
+It is not four instances of one unreachable repair; it is one category error with several call sites.
+
+### The class framing, corrected
+
+- **D-040 and D-041b** genuinely do share the *"exit exists behind a condition the shipped mode makes
+  false"* shape.
+- **D-041a does not** — it was an I/O call outside its protecting `try`. Missing exception containment.
+- **D-042 and D-045 do not either** — they are the mutable-provenance category error above.
+
+~~"Three of four are the same defect."~~ ~~"Four of five share one shape."~~ **Both superseded.** The
+honest statement is that **parallel durable and cursor paths duplicated recovery semantics**, and the
+duplication is why one policy error surfaced at five call sites. That is a real architectural finding
+and a weaker claim than the one I made twice.
+
+### The fix this implies
+
+A single shared reconciliation primitive, called from both paths, distinguishing four cases:
+**immutable identity** (id, kind, body, until) · **mutable derived provenance**
+(`senderOwnerRelation`) · **unreadable storage** · **readable but mismatched storage**.
+
+Applied at **five** sites, not the three I named: `runtime.ts:454`, `:1095`, `:1113`, `:1127`, `:1197`.
+**The last two are how a three-line patch appears to work and still bricks a branch later.**
+
+Do **not** merge or redesign the two delivery loops in this release. This subsystem produced a new
+brick on each of its last two repair rounds, and a control-flow refactor enlarges the state space
+before any live-fire treatment arm has passed.
+
+### Two further corrections from the same arm
+
+**The brick is bounded, not infinite.** I described it as recurring every ~15 minutes forever. The
+server terminalizes a delivery after ten claims (`durable-delivery.ts:175-198`, causal test at
+`tests/p1-server/command.test.ts:6705-6760`). The real outcome is **bounded non-convergence plus
+eventual data loss** — the listener stops, the supervisor does not restart it
+(`supervisor.ts:270-312`), and the signal is eventually dropped as `delivery_attempts_exhausted`.
+Severe, and not what I said.
+
+**The enumeration counts fatal *assignments*, not fatal *causes*.** 27 operational
+`reason: "fatal"` constructions, 27 table rows — so no construction is missing. But one catch can
+represent several distinct failure states, and **an uncaught rejected `await` would contain no
+`reason: "fatal"` at all** — precisely the search-shape blind spot D-041a exposed. Two verdicts fail
+outright (`state-space-enumeration.md:103` and `:104`) and one is too broad (`:105`). The next
+inventory must enumerate every explicit throw, every awaited operation that can reject, and every
+returned fatal, then map each to its persisted phase.
+
+### A test that must be inverted
+
+`tests/listener-runtime.test.ts:1764-1822` currently **asserts the fatal outcome** — it locks in the
+defect. It has to be inverted as part of the fix, not deleted.
+
+### Method note
+
+The Fable arm and I are both Claude. It caught what I missed (D-045, the cursor-path exposure) but
+endorsed my fix framing. **Only the cross-family arm refuted the framing itself.** That is the
+argument for D-039's pairing rule, restated from the other direction: a same-family reviewer found the
+missing fact; a different-family reviewer found the wrong idea.
