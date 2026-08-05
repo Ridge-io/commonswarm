@@ -1124,11 +1124,10 @@ default is what makes a missed type safe rather than wrong.
 
 # Register — the directory read discards failure detail (pre-existing)
 
-**Form note.** This entry was rewritten after seven corrections to its previous
-narrative form. Each correction was the same failure — a consequence asserted
-across paths that had not been enumerated — so the shape was changed rather than
-patched again. Every line below carries its own scope; there are no quantifiers
-that were not enumerated.
+**Form note.** This entry was rewritten after its narrative form required
+repeated correction. Every line below carries its own scope, and no quantifier
+appears that was not enumerated. The correction history is kept as a record of
+what was claimed and refuted; it makes no claim about a common cause.
 
 ## What was measured
 
@@ -1140,24 +1139,25 @@ that were not enumerated.
 | 4 | `settleSignalAuthorLabels` converts a rejected directory read into a **fulfilled** promise carrying empty maps. | `signals.ts:1220-1227` | Read: `labels.catch(() => ({users: new Map(), agents: new Map()}))`. Plumb measured a 503 resolving to empty maps. |
 | 5 | All four `signalAuthorLabels` call sites are wrapped by it. | `cli.ts:2191`, `:2231`, `:2294`, `:2398` | Enumerated, all four. |
 | 6 | Empty maps are what `renderSignals` reads for author names. | `signals.ts:1341-1343` | Read. |
-| 6a | On a lookup miss `renderSignals` falls back to `${authorKind} ${signal.from}` — a truthful kind plus sender UUID. It does **not** assert absence and shows the user nothing false. | `signals.ts:1344-1345` | Read. Plumb found the earlier claim that it tells the user something untrue was false. |
+| 6a | On a lookup miss `renderSignals` emits `${authorKind} ${signal.from}` — the sender kind and id already present on the signal record. It emits no absence marker. | `signals.ts:1344-1345` | Read. |
 | 7 | The listener's provenance lookup discards the Error entirely in a bare `catch`. | `engine.ts:434` | Read; the `catch` carries a comment stating the design intent. |
 | 8 | For an **agent** sender, missing provenance throws a typed `SenderProvenanceUnavailableError`, which `defaultRetryablePromptError` classifies retryable. | `engine.ts:453`, `:246-247` | Read. Control: `tests/listener-engine.test.ts` "agent prompts retry without a model turn when operator provenance is unavailable". |
 | 9 | For a **human** sender, `operatorId` is set from `signal.from` regardless of the directory, so the guard at `:453` never fires and the prompt proceeds with null `senderName`/`operatorName`. | `engine.ts:92-99`, `:453` | Read. ClaudeCswarm verified independently on the gate tree. |
 | 10 | `cli.ts:2147` → `signalDirectory` (`:1973`) propagates the Error to the caller. | `cli.ts:2147` | Read; not wrapped. |
 | 11 | `readAgentSignalMembers` is `@deprecated` but exported, and propagates the Error unchanged. | `signals.ts:971-983` | Read. Its only in-repo caller is `tests/support/signal-fetch-deadline.test.ts:816`. Plumb found it. |
-| 12 | A tagged `retryable:false` 500 keeps its identity tag through the runtime to the supervisor predicate. | runtime path | Plumb's causal probe on `c0bd6f2`: `reason=fatal`, `requests=1`, `isRestartableListenerStop(exact stop)=true`. |
 
-**The finding, from facts 8 and 9:** on the agent path a failed directory read
-surfaces loudly and retries bounded; on the human path it surfaces nothing and
-the prompt proceeds with degraded labels. Only the second can run indefinitely
-without anyone noticing.
+**The difference between sender kinds, from facts 8 and 9, stated as internal
+outcomes only:** on the agent path the ask enters `retry_pending` with
+`failureCode = senderprovenanceunavailableerror`; on the human path the model
+prompt proceeds with null `senderName`/`operatorName`. Nothing here establishes
+what a user sees or how long either state persists — see "what is not
+established".
 
-**On facts 4, 6 and 6a together:** the indistinguishability is at the **label
-resolver**, not at the user. Nothing downstream of `settleSignalAuthorLabels`
-can tell "directory unreachable" from "this workspace has no members" — those
-are the same value — but the rendered output degrades to a sender UUID, which is
-truthful and merely less informative. The cost is a lost diagnostic, not a lie.
+**On facts 4, 6 and 6a together:** the two internal states are indistinguishable
+for label lookup — nothing downstream of `settleSignalAuthorLabels` can tell
+"directory unreachable" from "this workspace has no members", because both are
+an empty map — and names degrade to ids in the rendered line. That is what was
+measured. No claim is made here about what a user concludes from it.
 
 **On fact 2 and fact 3 together:** the status survives only inside a message
 string. That is the representation this repo forbids branching on — `.message`
@@ -1184,9 +1184,8 @@ own change with its own control.
 
 ## Correction history
 
-Kept because seven corrections to one paragraph is evidence about the form of
-that paragraph. Each claim below was made, then refuted; none was fabricated and
-each had a true observation underneath, stated at a scope that was wrong.
+Each claim below was made in an earlier version of this entry, then refuted.
+Kept so the record is readable without re-deriving it.
 
 | # | Claim | Why wrong | Found by |
 |---|---|---|---|
@@ -1200,7 +1199,3 @@ each had a true observation underneath, stated at a scope that was wrong.
 | 8 | "Exactly one consumer propagates." | The exported deprecated wrapper also propagates. The information had already been supplied and was dropped while compressing. | Plumb |
 | 9 | The label fallback "reports absence" and "tells the user something untrue". | `renderSignals:1344-1345` falls back to a truthful kind + sender UUID. Failure and no-name are indistinguishable to the **resolver**; the user sees an ID, not a false assertion. | Plumb |
 
-Eight of nine were found by a reader who did not write the text. The one Verity
-found came from applying a lesson Plumb had given minutes earlier. Two rules
-written during the sequence — "cite the control or mark unverified" and "name
-the layer and the caller" — were each defeated by the next correction.
