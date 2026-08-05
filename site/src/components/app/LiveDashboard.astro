@@ -1852,16 +1852,16 @@ import "../../styles/tokens.css";
       closeMentionPicker();
     };
 
-    /* The rail mirrors participants as presence/navigation only. A person owns the nested
-       agent rows below them; agents whose owner is outside the current member roster stay
-       visible in one trailing, honestly labelled fallback group. The scrolling list owns
-       participant-count growth, so the rail keeps the same height at every roster size. */
+    /* The rail mirrors participants as presence/navigation only. People and agents share
+       one aligned list; the agent row names its operator instead of asking indentation to
+       carry ownership. Agents whose owner is outside the current member roster stay visible
+       with an honest fallback label. The scrolling list owns participant-count growth. */
     const renderSidebarParticipants = (): void => {
       const participantList = one<HTMLUListElement>("[data-sidebar-participant-list]");
       if (!participantList) return;
       participantList.replaceChildren();
 
-      const buildAgentRow = (agent: Agent): HTMLLIElement => {
+      const buildAgentRow = (agent: Agent, ownerName: string): HTMLLIElement => {
         const row = document.createElement("li");
         row.className = "dashboard__sidebar-agent";
         const avatarWrap = document.createElement("span");
@@ -1879,25 +1879,18 @@ import "../../styles/tokens.css";
         copy.className = "dashboard__sidebar-participant-copy";
         const name = document.createElement("strong");
         name.textContent = agent.name;
+        name.title = agent.name;
         const meta = document.createElement("span");
-        const badge = document.createElement("span");
-        badge.className = "dashboard__sidebar-identity-badge";
-        badge.textContent = "AGENT";
-        meta.append(badge);
+        meta.textContent = `operated by ${ownerName}`;
         copy.append(name, meta);
         row.append(avatarWrap, copy);
         return row;
       };
 
       for (const group of groupParticipantsByOwner(members, agents)) {
-        const groupItem = document.createElement("li");
-        groupItem.className = "dashboard__sidebar-owner-group";
-        const personRow = document.createElement("div");
-        personRow.className = group.kind === "member"
-          ? "dashboard__sidebar-person"
-          : "dashboard__sidebar-person dashboard__sidebar-person--unresolved";
-
         if (group.kind === "member") {
+          const personRow = document.createElement("li");
+          personRow.className = "dashboard__sidebar-person";
           const avatar = document.createElement("span");
           avatar.className = "dashboard__sidebar-person-avatar";
           avatar.textContent = initials(group.member.name);
@@ -1906,29 +1899,17 @@ import "../../styles/tokens.css";
           copy.className = "dashboard__sidebar-participant-copy";
           const name = document.createElement("strong");
           name.textContent = group.member.name;
+          name.title = group.member.name;
           const meta = document.createElement("span");
-          const badge = document.createElement("span");
-          badge.className = "dashboard__sidebar-identity-badge";
-          badge.textContent = "PERSON";
-          const role = document.createElement("span");
-          role.textContent = group.member.role;
-          meta.append(badge, role);
+          meta.textContent = group.member.role;
           copy.append(name, meta);
           personRow.append(avatar, copy);
-        } else {
-          const marker = document.createElement("span");
-          marker.className = "dashboard__sidebar-unresolved-mark";
-          marker.textContent = "?";
-          marker.setAttribute("aria-hidden", "true");
-          const label = document.createElement("strong");
-          label.textContent = group.label;
-          personRow.append(marker, label);
+          participantList.append(personRow);
         }
-        const nestedAgents = document.createElement("ul");
-        nestedAgents.className = "dashboard__sidebar-owner-agents";
-        for (const agent of group.agents) nestedAgents.append(buildAgentRow(agent));
-        groupItem.append(personRow, nestedAgents);
-        participantList.append(groupItem);
+        const ownerName = group.kind === "member" ? group.member.name : group.label;
+        for (const agent of group.agents) {
+          participantList.append(buildAgentRow(agent, ownerName));
+        }
       }
     };
 
@@ -4685,24 +4666,6 @@ import "../../styles/tokens.css";
     scrollbar-gutter: stable;
   }
 
-  .dashboard__sidebar-owner-group,
-  .dashboard__sidebar-owner-agents {
-    min-inline-size: 0;
-    display: grid;
-    gap: 0;
-    padding: 0;
-    margin: 0;
-    list-style: none;
-  }
-
-  .dashboard__sidebar-owner-group + .dashboard__sidebar-owner-group {
-    margin-block-start: var(--s-1);
-  }
-
-  .dashboard__sidebar-owner-agents {
-    padding-inline-start: 1rem;
-  }
-
   .dashboard__sidebar-person,
   .dashboard__sidebar-agent {
     min-inline-size: 0;
@@ -4711,30 +4674,6 @@ import "../../styles/tokens.css";
     align-items: center;
     gap: var(--s-2);
     padding: var(--s-1) var(--s-2);
-  }
-
-  .dashboard__sidebar-person--unresolved {
-    grid-template-columns: auto minmax(0, 1fr);
-    color: var(--text-muted);
-  }
-
-  .dashboard__sidebar-unresolved-mark {
-    inline-size: 1.75rem;
-    block-size: 1.75rem;
-    display: grid;
-    place-items: center;
-    border: 1px dashed var(--border-strong);
-    border-radius: 50%;
-    font-family: var(--font-mono);
-    font-size: var(--t-xs);
-  }
-
-  .dashboard__sidebar-person--unresolved > strong {
-    overflow: hidden;
-    font-size: var(--t-xs);
-    font-weight: var(--weight-semibold);
-    text-overflow: ellipsis;
-    white-space: nowrap;
   }
 
   .dashboard__sidebar-person-avatar,
@@ -4752,6 +4691,11 @@ import "../../styles/tokens.css";
     font-weight: var(--weight-semibold);
   }
 
+  .dashboard__sidebar-agent-avatar {
+    inline-size: 1.5rem;
+    block-size: 1.5rem;
+  }
+
   .dashboard__sidebar-agent-avatar.dashboard__avatar--tinted {
     background: color-mix(in oklab, hsl(var(--avatar-hue) 58% 48%) 18%, var(--surface));
     border-color: color-mix(in oklab, hsl(var(--avatar-hue) 70% 42%) 50%, var(--border));
@@ -4759,7 +4703,10 @@ import "../../styles/tokens.css";
 
   .dashboard__sidebar-avatar-wrap {
     position: relative;
-    display: block;
+    inline-size: 1.75rem;
+    block-size: 1.75rem;
+    display: grid;
+    place-items: center;
   }
 
   .dashboard__presence-dot {
@@ -4782,10 +4729,15 @@ import "../../styles/tokens.css";
   .dashboard__sidebar-participant-copy > strong {
     overflow: hidden;
     color: var(--text);
+    font-family: var(--font-sans);
     font-size: var(--t-xs);
     font-weight: var(--weight-semibold);
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .dashboard__sidebar-agent .dashboard__sidebar-participant-copy > strong {
+    font-weight: var(--weight-medium);
   }
 
   .dashboard__sidebar-participant-copy > span {
@@ -4799,14 +4751,6 @@ import "../../styles/tokens.css";
     line-height: 1.3;
     text-overflow: ellipsis;
     white-space: nowrap;
-  }
-
-  .dashboard__sidebar-identity-badge {
-    flex: none;
-    color: var(--text-faint);
-    font-size: 0.5rem;
-    font-weight: var(--weight-semibold);
-    letter-spacing: 0.06em;
   }
 
   .dashboard__agent-ownership-note {

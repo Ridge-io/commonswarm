@@ -359,8 +359,13 @@ test("sidebar counts come from loaded signals and the shared field ships both sc
 });
 
 test("agent navigation keeps identity explicit and uses presence as a secondary cue", () => {
-  assert.match(dashboard, /className = "dashboard__sidebar-agent"/);
-  assert.match(dashboard, /className = "dashboard__presence-dot"/);
-  assert.match(dashboard, /badge\.textContent = "AGENT"/);
-  assert.match(dashboard, /operated by/);
+  const renderer = dashboard.slice(
+    dashboard.indexOf("const renderSidebarParticipants ="),
+    dashboard.indexOf("const workspaceMenuItems ="),
+  );
+  assert.match(renderer, /className = "dashboard__sidebar-agent"/);
+  assert.match(renderer, /className = "dashboard__presence-dot"/);
+  assert.match(renderer, /markAgentAvatar\(avatar, agent\.principalId\)/);
+  assert.match(renderer, /operated by/);
+  assert.doesNotMatch(renderer, /badge\.textContent = "AGENT"/);
 });
