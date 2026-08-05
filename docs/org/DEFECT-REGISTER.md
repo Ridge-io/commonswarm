@@ -2078,3 +2078,69 @@ Whether ACP's own permission-request path (`session/request_permission`) should 
 cross-owner turns. It is a *host*-mediated prompt to the operator rather than a capability we strip,
 so it may sit on the correct side of the line — but the ruling did not address it and it has not been
 decided. Do not remove it as part of implementing this without a separate decision.
+
+---
+
+## D-045 — the mismatch brick reaches the CURSOR path, so it is live in production today · SHIP-BLOCKER
+
+**Found 2026-08-04 by the Fable planning review; chain verified by the Lead. This corrects a claim I
+made repeatedly and acted on.**
+
+### The correction
+
+~~"Withholding the `read` function leaves every client in `cursor_fallback`, whose `engine.ts` path
+handles this defect class gracefully. All four bricks become unreachable with no code change."~~
+**Dead.** That is true for **asks**. It is **false for notes**.
+
+I checked that the durable path had a graceful counterpart and did not check whether notes had one at
+all. The hedge is real and still worth having — it does close D-040, D-041a, D-041b and D-042's
+durable sites — but it does **not** make the mismatch class unreachable, and I said that it did.
+
+### The chain, measured on `main` at `49acf89`
+
+1. `observeFallbackNote` (`runtime.ts:446`) throws when a stored effect is readable but does not match:
+   `!sameEffectSignal(existing, signal) || existing.state !== "observed"` → `throw new Error("stored
+   listener effect does not match the direct note")` (`:453-455`).
+2. It is called at **`:1231`**, inside `if (signal.kind === "note")`.
+3. **That call site is on the cursor path.** Brace-depth computed, not eyeballed: the
+   `if (deliveryMode === "durable_claim")` block opens at **957** and closes at **1221**. Line 1231 is
+   **outside** it and therefore runs in the mode production ships.
+4. The throw is caught at `:1243` and becomes `stop = { reason: "fatal" }` (`:1244`).
+5. **Notes have no graceful path in either mode.** `engine.ts` contains `integrityMatches` and
+   `signal_integrity_mismatch` for asks and **zero** occurrences of `"note"` — so the rescue that saves
+   an ask does not exist for a note.
+
+### The trigger, which is ordinary
+
+`sameEffectSignal` (`:394-403`) compares `senderOwnerRelation` along with id, kind, body and until. So
+a note a listener already observed becomes a mismatch **when the sender's owner relation changes** —
+for example when the author agent is revoked, which flips `cross_owner` to `unknown`.
+
+Fallback rescans from `after = null` each cycle, so the listener meets the same note again and dies
+again. This is not a one-shot.
+
+### Severity, stated honestly
+
+Reachable in production **today**, on v0.1.5, without enabling anything. It requires a listener that
+has already observed a note, a subsequent owner-relation change for that note's sender, and the note
+still inside the read window. That is a conjunction, not a certainty — but every element is ordinary
+operation, and revoking an agent is a routine administrative act.
+
+**Exposure is limited by fleet composition, not by design.** Whoever is running a v0.1.5 listener is
+exposed; today that is us.
+
+### What this says about the method
+
+The hedge was chosen because `cursor_fallback` is *"the mode production has used for its entire life"*
+and was assumed safe by longevity. **Longevity is not a proof.** The graceful ask handler was verified;
+the note path was never asked about. A fifth defect of the same family — an effect disagreement treated
+as an exception rather than as data — was sitting in the path chosen precisely to avoid that family.
+
+**This is the fifth. Four of five share one shape.** The class framing is now harder to dismiss as a
+narrative fitted after the fact, which is exactly the question put to the cross-family arm.
+
+### Not established
+
+The read-window duration that bounds how long a poisoned note keeps recurring. Whether the same
+conjunction can arise from a relation change other than revocation. Whether any listener outside this
+project is running v0.1.5.
