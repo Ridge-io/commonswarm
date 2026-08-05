@@ -2342,3 +2342,53 @@ That is the whole risk: the failure is guaranteed for that population and its *s
 **Fix direction, not yet decided:** detect the case before spawning and say so plainly, rather than
 letting the child fail. Do **not** widen the sanitizer to pass the key through — that would break the
 property the deny rule exists to protect.
+
+---
+
+## D-049 — ACP session mode is never set, so the permission canary rests on a default we do not control · SHIP-BLOCKER (shipped)
+
+Found 2026-08-05 by **Sable** while spiking `@agentclientprotocol/codex-acp`, and it applies to the
+**already-shipped** Claude provider in v0.1.6.
+
+### Sable's measurement, on codex-acp 1.1.9
+
+- `initialize` → `protocolVersion 1`; real `sanitizeChildEnv` 79 keys → 12, `HOME` survives; `session/new`
+  and a tool-free prompt both succeed. All good.
+- **`session/new` returns `currentModeId = "agent"`. In that mode a write canary emitted ZERO
+  `session/request_permission` calls and simply created the file.**
+- **Positive control on the same session:** `session/set_mode` → `read-only`, repeat the write → **1**
+  permission request, and `reject_once` left the file absent.
+
+So the host is capable of asking; the **default mode** decides whether it does. Sable stopped before
+implementing, which was correct.
+
+### It applies to the shipped Claude adapter
+
+`grep set_mode src/host/*.ts src/listener/*.ts` → **0**. The adapter shipped in v0.1.6 **never sets a
+mode**. It works today only because `claude-agent-acp` happens to default to
+`currentModeId: "default"` — *"Manual: standard behavior, prompts"*.
+
+**My spike saw a permission request because of that default, not because we asked for one.** I
+verified the mechanism and never asked what governed it.
+
+And `availableModes` includes **`auto` — "use a model classifier to approve/deny permission prompts"**.
+A user or future release defaulting to `auto` makes our deny canary vacuous, silently, with the suite
+green.
+
+### Why this matters beyond one adapter
+
+`enablePromptsAfterCanary` and the deny canary exist to prove **CommonSwarm controls tool
+permissions**. Resting that proof on an unasserted host default means the canary can pass while
+proving nothing — the same failure class as a repair that exists but is unreachable, which this
+release has now produced five times.
+
+### Fix
+
+**Set the mode explicitly after `session/new`, for every ACP provider, and fail closed if it cannot be
+set.** Do not rely on any host's default. Where a host exposes no mode API, that is a finding to
+record, not a reason to assume the default is safe.
+
+### Not established
+
+Whether grok and opencode expose modes and what they default to — only claude and codex were measured.
+Whether a user's Claude config can change the default mode without the adapter noticing.
