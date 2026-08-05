@@ -447,7 +447,7 @@ and also means a server-side misclassification propagates straight to us.
 **Implementation:** Verity, 2026-08-05, same branch. Found by Wren's parser
 flagging the line UNPARSED during the paired A/B.
 
-`inbox --follow` requires `--ndjson` (`cli.ts:2327`) and the connect prompt
+`inbox --follow` requires `--ndjson` (enforced by the `if (!args.has("ndjson")) throw` guard in `runSignalRead`; the bare line `cli.ts:2327` cited here previously now resolves to the `"json"` flag entry — see the correction history) and the connect prompt
 points non-Grok hosts at it, so the stream is machine-consumed by definition.
 The terminal condition was written as bare text:
 
@@ -766,7 +766,10 @@ Both points defeat the proposal independently.
   NDJSON stream — and any host following the connect prompt does. It does not
   serve the supervisor forms that read only an exit status: a shell `until`
   loop, a service unit, a host runner that respawns on nonzero exit. **Every
-  cswarm failure is `process.exitCode = 1`** (`cli.ts:3680,3715,3720,3724`), so
+  cswarm failure is `process.exitCode = 1`** (`cli.ts:3680,3715,3720,3724`
+  **as measured at 9df8905** — do not renumber these; the fourth site now calls
+  `exitCodeFor`, so refreshing them would turn a true statement about the past
+  into a false one about the present), so
   those cannot distinguish "refused, a later attempt may succeed" from
   "credential revoked, do not restart".
   A distinct exit code for the restartable case — reusing the exclusion list
@@ -1137,13 +1140,13 @@ what was claimed and refuted; it makes no claim about a common cause.
 | 2 | The same throw interpolates the HTTP status into the message string. | `signals.ts:946` | Read. Plumb confirmed a raw read carries HTTP 503. |
 | 3 | No identity tag is set on that Error, so its status is not available through the typed/identity channel. | `signals.ts:944-946` vs `:449` | Enumerated: `plainHttpStatus.set` occurs at exactly one site, `:449`, inside `throwSignalHttp`. This enumerates TAG SITES, not classifiers — see "what is not established". |
 | 4 | `settleSignalAuthorLabels` converts a rejected directory read into a **fulfilled** promise carrying empty maps. | `signals.ts:1220-1227` | Read: `labels.catch(() => ({users: new Map(), agents: new Map()}))`. Plumb measured a 503 resolving to empty maps. |
-| 5 | All four `signalAuthorLabels` call sites are wrapped by it. | `cli.ts:2191`, `:2231`, `:2294`, `:2398` | Enumerated, all four. |
+| 5 | All four `signalAuthorLabels` call sites are wrapped by it. | `cli.ts`, every `signalAuthorLabels(` call | Enumerated: 4 call sites, all 4 immediately inside `settleSignalAuthorLabels(`. |
 | 6 | Empty maps are what `renderSignals` reads for author names. | `signals.ts:1341-1343` | Read. |
 | 6a | On a lookup miss `renderSignals` emits `${authorKind} ${signal.from}` — the sender kind and id already present on the signal record. It emits no absence marker. | `signals.ts:1344-1345` | Read. |
 | 7 | The listener's provenance lookup discards the Error entirely in a bare `catch`. | `engine.ts:434` | Read; the `catch` carries a comment stating the design intent. |
 | 8 | For an **agent** sender, missing provenance throws a typed `SenderProvenanceUnavailableError`, which `defaultRetryablePromptError` classifies retryable. | `engine.ts:453`, `:246-247` | Read. Control: `tests/listener-engine.test.ts` "agent prompts retry without a model turn when operator provenance is unavailable". |
 | 9 | For a **human** sender, `operatorId` is set from `signal.from` regardless of the directory, so the guard at `:453` never fires and the prompt proceeds with null `senderName`/`operatorName`. | `engine.ts:92-99`, `:453` | Read. ClaudeCswarm verified independently on the gate tree. |
-| 10 | `cli.ts:2147` → `signalDirectory` (`:1973`) propagates the Error to the caller. | `cli.ts:2147` | Read; not wrapped. |
+| 10 | The `--to` recipient-resolution path calls `signalDirectory`, which propagates the Error to the caller. | `cli.ts` `signalDirectory()`, its call in `resolveSignalRecipient` | Read; not wrapped. |
 | 11 | `readAgentSignalMembers` is `@deprecated` but exported, and propagates the Error unchanged. | `signals.ts:971-983` | Read. Its only in-repo caller is `tests/support/signal-fetch-deadline.test.ts:816`. Plumb found it. |
 
 **The difference between sender kinds, from facts 8 and 9, stated as internal
@@ -1202,5 +1205,6 @@ Kept so the record is readable without re-deriving it.
 | 6 | `cli.ts:2025` surfaces the status. | All four of its call sites wrap it in `settleSignalAuthorLabels`. | Plumb |
 | 7 | `settleSignalAuthorLabels` "loses everything". | It converts a failure into a success carrying empty maps — indistinguishable from an empty workspace. | ClaudeCswarm |
 | 8 | "Exactly one consumer propagates." | The exported deprecated wrapper also propagates. The information had already been supplied and was dropped while compressing. | Plumb |
+| 10 | `cli.ts:2327` cited as the `--follow` requires `--ndjson` enforcement. | Correct at the SHA it was written on; after main's additions `:2327` is the `"json"` flag entry. It still RESOLVES, to the wrong thing — the kind a reader believes. Repointed to the guard by symbol. | Plumb (merge-only) |
 | 9 | The label fallback "reports absence" and "tells the user something untrue". | `renderSignals:1344-1345` emits `${authorKind} ${signal.from}` and no absence marker. The two internal states are indistinguishable for label lookup. No user-visible claim was measured. | Plumb |
 

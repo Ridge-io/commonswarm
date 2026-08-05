@@ -1347,6 +1347,13 @@ const RESTART_MATRIX: ReadonlyArray<[string, Error, boolean]> = [
     "child_exit_timeout",
     "ACP child did not exit after SIGTERM and SIGKILL",
   ), false],
+  // The missing-TYPE control Plumb specified: every other ACP row is a
+  // subclass, but production constructs the BASE class directly. Without a
+  // base-class row the table's claim was unsupported for that whole shape.
+  ["acp executable_missing (generic base)", new AcpHostError(
+    "executable_missing",
+    "the configured executable was not found",
+  ), false],
   ["acp spawn_failed", new AcpHostError("spawn_failed", "spawn failed"), false],
   ["acp busy", new AcpHostError("busy", "session busy"), false],
   ["acp closed", new AcpProtocolError("transport closed", "closed"), false],
