@@ -1132,9 +1132,35 @@ Errors — `member read could not reach the cloud service`, `member read failed
 there is treated as permanent**. It discards the server's failure detail exactly
 the way the signal read did before D-051.
 
-It reaches the engine through `resolveSenderProvenance`, where
-`defaultRetryablePromptError` — now type-and-code based after D-053 — correctly
-declines to retry a plain Error. So an ask **fails rather than retrying**.
+> ★ ~~**FALSE, written 2026-08-05 and corrected the same day. Kept, marked
+> dead:** "It reaches the engine through `resolveSenderProvenance`, where
+> `defaultRetryablePromptError` — now type-and-code based after D-053 —
+> correctly declines to retry a plain Error. So an ask **fails rather than
+> retrying**."~~
+>
+> Refuted by Plumb. The directory Error **never reaches**
+> `defaultRetryablePromptError`. `engine.ts:434` catches it with a bare `catch`
+> that deliberately swallows it, leaving the fallback provenance with
+> `operatorId === null`; `engine.ts:453` then throws a typed
+> `SenderProvenanceUnavailableError`, and `defaultRetryablePromptError:247`
+> returns **true** for that type. So the ask **retries** without a model turn,
+> bounded by `maxPromptAttempts` — the opposite of what I wrote. The existing
+> test `agent prompts retry without a model turn when operator provenance is
+> unavailable` is the control, and it asserts exactly this.
+>
+> I had read that test earlier the same day and noted that the plain Error is
+> converted to the typed one, then wrote the opposite into the artifact hours
+> later. The lesson is not "check the code" — I had checked it. It is that a
+> causal chain asserted from memory is an unverified claim no matter how
+> recently it was verified, and it went into an evidence file as fact.
+
+**What is actually true.** The detail loss is real: the directory read parses no
+envelope and sets no identity tag, so `request_id` and `retryable` are
+discarded. But the consequence is not a failed ask — it is a **blinded** one.
+The failure is discarded twice, once by not parsing the body and again by the
+bare `catch`, so a persistently failing directory read surfaces only as repeated
+`senderprovenanceunavailableerror` with **no server-side handle at all**. An
+operator debugging it has neither a `request_id` nor the status that caused it.
 
 D-058 changed nothing about it: the `member read` prefix never matched the
 `signal read` regex either. It is a fourth surface of the same shape as D-051,
