@@ -208,6 +208,44 @@ Reduce safeguards where they only add ceremony; assume agents are intelligent. S
 better. But the safeguards named in the doctrine file as must-survive are load-bearing —
 check that list before removing a check.
 
+## Adversarial controls must be written by a non-author
+
+Verity, 2026-08-05, after its own fix was broken by the reviewer:
+
+> "An adversarial control has to be written by someone asking **what input would make this pass
+> wrongly**, not by the author asking **does my case work**. That is a different question, and an
+> author is poorly placed to ask it about their own fix."
+
+**This is why D-036 works, and it is a better statement than the rule itself.** D-036 counts arms; the
+reason two arms catch things is that only a non-author asks the second question.
+
+Measured instance: a closed-default classifier was fixed, and both the author's test and the Lead's
+independent probe passed. The author's row supplied innocuous text; the Lead's used retry *words* but
+not the *colliding spelling*. **Both tested that the door was shut without trying the key that fits.**
+The reviewer used the exact colliding string and it opened. The Lead had published the verification one
+message before it was refuted.
+
+If you are verifying your own work, you are checking that it does what you intended. That is worth
+doing and it is not a control.
+
+## Two traps that manufacture a confident zero
+
+Both fired on 2026-08-05, in one session, to two different agents.
+
+**`timeout` does not exist on macOS.** `timeout 90 git ls-remote …` exits **127** and produces **no
+stdout**. Wrapped in `$(...)`, that is an empty string, which reads as *"the branches are absent."* An
+agent nearly reported that a day of work had never reached GitHub. What caught it was a positive
+control on the same invocation — `main` must be present — which also returned zero, and **two zeroes
+from a probe that cannot fail is not a result.** (Use `gtimeout`, or no timeout.)
+
+This is the same family as the documented `$rev:src/...` zsh trap: **a dead command wearing the costume
+of a measurement.** Different door, identical outcome.
+
+**"Pushed to origin" is ambiguous when you are in a clone.** A worker clone's `origin` is usually
+**another directory on this laptop**, not GitHub. Securing work "to origin" from a clone means securing
+it one hop, to the main checkout. Say which hop you mean, and verify the GitHub hop with
+`git ls-remote https://github.com/...` **plus a control ref** when it matters.
+
 ## `error.message` is presentation. Control flow uses types and codes.
 
 **Never branch on the text of an error.** Classify on a named error class, on a stable code **we**
