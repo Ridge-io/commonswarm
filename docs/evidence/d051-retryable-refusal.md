@@ -129,3 +129,169 @@ npm run check:tests -> clean
   and no `retryable`, so that path keeps status-only behaviour unchanged; its
   `message` field is not read into ours.
 - `npm run check:edge` was not run — no edge function was modified.
+
+---
+
+# D-051 companions — backoff decay, bounded restart, and the cancellation hole
+
+**Implementation:** Verity, 2026-08-05, same branch. Follows 84f0882, which both
+review arms passed while raising the same consequence: honouring the refusal
+correctly terminates a receiver, and nothing restarts one.
+
+## Companion 1 — the attempt counter decays instead of resetting
+
+`signals.ts` (`runInboxFollow`) and `runtime.ts` both set the retry attempt
+counter to 0 after every successful read. That is the amplifier's engine: an
+intermittently-failing receiver climbed, succeeded, reset, and climbed again,
+so it never reached the 30s cap. One receiver produced 370 frames in 28 min =
+**13.2/min**, where a receiver sitting at the cap produces ~2/min.
+
+`decayFollowAttempt` subtracts one instead. The counter then drifts by
+`(2p - 1)` per read at failure probability `p`, so the steady state tracks the
+recent failure *rate* rather than the current streak. Against Wren's measured
+curve: at 71% failures (concurrency 8) it climbs to the cap; at 17%
+(concurrency 2) it stays pinned at 0 and a healthy receiver is not penalised.
+
+This holds regardless of what the server says about `retryable`, so it also
+covers the endpoints that never emit the field.
+
+**Control** (`tests/support/agent-receive-cli.test.ts`): the arm sequence
+success, fail, fail, fail, **success**, fail. The lone success in the middle is
+the whole point.
+
+| | attempts | delays (ms) |
+|---|---|---|
+| decay (fixed) | 1, 2, 3, **3** | 250, 500, 1000, **1000** |
+| reset (main) | 1, 2, 3, **1** | 250, 500, 1000, **250** |
+
+Inversion: restoring `attempt = 0` fails the loop-level test while the
+arithmetic test stays green — it covers `decayFollowAttempt` directly, which
+the inversion does not touch.
+
+## Companion 2 — bounded outer restart
+
+`runListenerSupervisor` now retries `options.run` with full-jitter exponential
+backoff: 5 attempts, 1s initial, 60s cap. **Bounded is load-bearing** — an
+unbounded restart recreates the amplification D-051 removed, one process at a
+time instead of one request at a time.
+
+`isRestartableListenerStop` (runtime.ts) draws the line at "could the same read
+plausibly succeed later". Restart on 5xx, refusal, transport, timeout, dead
+model child. Never on: cancelled (the operator's decision), credential, 4xx,
+malformed. This matches Plumb's independently-derived exclusion list.
+
+The veto and the recovery operate at different layers and both survive: the
+client still does not immediately retry a refused read.
+
+### Two defects found while building it, both in this change's blast radius
+
+1. **`appendListenerEvent` has a strict field allowlist and throws on unknown
+   keys.** The new `restart_attempts` / `restartable` / `restarts_exhausted`
+   fields were rejected, so the `listener_failed` line — the one that records
+   *why* a listener is down — was silently dropped. Added to the allowlist.
+2. **A single rejected write poisoned the supervisor's whole write chain.**
+   `writes = writes.then(...)` means one rejection skips every *later* status
+   persist and event append: the status file freezes mid-lifecycle and the log
+   loses exactly the terminal lines that explain the failure. Each link now
+   catches its own failure. This was pre-existing; defect 1 exposed it.
+
+### What this does NOT fix, and it would have shipped broken
+
+**A listener model is single-use.** `runListenerRuntime` closes it in a
+`finally` on every exit, and all three adapters (`claude-model.ts:147`,
+`grok-model.ts:105`, `opencode-model.ts:131`) throw
+`"listener model is closed"` once closed — `closed` is never reset. `cli.ts`
+built one model and captured it in the `run` closure, so **every restart would
+have failed instantly**, burned all 5 attempts in seconds, and ended in
+`failed` anyway — while passing any test whose model double is reusable.
+
+`cli.ts` now calls a `newModel()` factory inside `run`, and the `run` option is
+documented as "called once per attempt, so it MUST construct its own
+per-attempt resources".
+
+The detached path is covered: `buildListenerChildArgs` spawns
+`__listen-supervisor`, which is the same `runListenerSupervisor`. That is the
+severity that matters — a detached listener exiting means an agent receives
+nothing until a human runs `listen start` again.
+
+## Companion 3 — cancellation cannot be forged by wording
+
+`signals.ts` `isAbortError` matched `/aborted/i` against `error.message`.
+Parsing failure bodies (84f0882) made that reachable from outside: `aborted` is
+slug-shaped, so it passes the contract-shape filter, and a server answering
+`{"error":"aborted"}` on a 500 would have produced
+
+```
+signal read failed (HTTP 500): aborted, request_id …
+```
+
+classified as a clean operator cancellation. **A receiver would have exited
+quietly reporting success, having read nothing** — worse than the retry storm,
+because it is silent.
+
+Now name-only, matching `runtime.ts:210`. The follow loop's catch also adopts
+runtime's documented precedence: our own abort state, then the credential
+predicate, then name-only `AbortError`.
+
+### The sweep, not just the instance
+
+Enumerated every `error.message` classifier in `src/` and assessed each for
+reachability by server-controlled text. Server text can only ever appear
+*after* the fixed prefix `signal read failed (HTTP NNN)`.
+
+| site | verdict |
+|---|---|
+| `signals.ts:457` status parse | safe — prefix-anchored |
+| `signals.ts:481` transport equality | safe — exact equality |
+| `signals.ts:488-491` malformed | safe — different prefix, exact equalities |
+| `signals.ts` `isFollowCredentialFailure` | **fixed** — see below |
+| `engine.ts:238` prompt retryability | not reachable today; see gap |
+| `delivery-journal.ts`, `storage.ts` | safe — local storage errors |
+| `command-client.ts:974`, `host/transport.ts:311` | display only, not classification |
+
+`isFollowCredentialFailure` tested `/secret is absent/i` unanchored over the
+whole message. It survived only because the shape filter rejects spaces — one
+layer of defence, and the same pattern as the `/aborted/i` hole. It now returns
+on status alone when the error came off the wire; the wording check is reached
+only by locally-thrown errors that never crossed the network.
+
+## Gates
+
+```
+npm test            -> tests 447, pass 447, fail 0   (84f0882: 436; main: 429)
+npm run test:p1-cli -> tests 149, pass 149, fail 0
+npm run build       -> clean
+npm run check:tests -> clean
+```
+
+All four inversions measured red, each failing a distinct subset:
+
+```
+restore `attempt = 0`                  -> 1 test  (loop-level only; arithmetic stays green)
+restore `/aborted/i`                   -> 2 tests
+restart classifier restarts everything -> 2 tests
+loosen the restart bound (+2)          -> 1 test
+```
+
+## Not established
+
+- **Still nothing measured against production.** Every control is a stub in a
+  pure test. Wren confirmed the binary installed on its laptop is released
+  0.1.5, which predates 84f0882 entirely, so no receiver anywhere has yet run
+  any of this.
+- **Receiver lifetime cannot be measured on Wren's host** — it reaps
+  long-running background processes (twice observed, ~28 min and ~2 min), so
+  lifetime there cannot distinguish a fatal refusal from the reaper. Requests
+  per failure event and final `lastErrorCode` remain safe to measure.
+- **`engine.ts:238` `defaultRetryablePromptError` still classifies by message
+  regex** (`/timeout|temporar|transport|child exit|connection/i`). It is not
+  reachable by server text today — prompt errors come from a local ACP child,
+  and the one wire error that can land in that catch
+  (`readAgentSignalDirectory` → `member read failed (HTTP n)`) carries no
+  envelope. It is the same pattern, though, and would become reachable the
+  moment anyone adds envelope text to the directory read path. Left alone
+  deliberately: changing prompt-error classification is outside this brief and
+  destabilises the listener's retry behaviour.
+- The restart policy's *defaults* (5 attempts, 1s, 60s) are unmeasured
+  judgment. Nothing establishes that 5 is the right bound under real
+  saturation.

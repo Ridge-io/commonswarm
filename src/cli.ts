@@ -2951,7 +2951,12 @@ async function runConfiguredListener(options: {
       ? { stateDirectory: options.stateDirectory }
       : {}),
   });
-  const model = options.provider === "opencode"
+  // A factory, not a value: the supervisor may run the listener more than once
+  // and a model is single-use (runListenerRuntime closes it on every exit, and
+  // every adapter throws "listener model is closed" once closed). Constructing
+  // one here and capturing it would make every restart fail instantly.
+  const newModel = () =>
+    options.provider === "opencode"
     ? new OpenCodeListenerModel({
       cwd: options.cwd,
       permissionMode: options.permissionMode,
@@ -3024,7 +3029,7 @@ async function runConfiguredListener(options: {
           principalId: options.principalId,
           credentialSession,
           store: effectStore,
-          model,
+          model: newModel(),
           signal,
           onEvent,
           listenerInstanceId,

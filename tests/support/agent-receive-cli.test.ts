@@ -25,6 +25,7 @@ import {
   askWaitJsonPayload,
   BoundedSignalIdSet,
   compareSignalCursor,
+  decayFollowAttempt,
   followHttpDetails,
   formatFollowFrame,
   isFatalFollowError,
@@ -1494,4 +1495,177 @@ test("D-051: a hostile error body cannot forge a credential failure", async () =
     isFollowCredentialFailure(new Error("the agent secret is absent")),
     true,
   );
+});
+
+// ---------------------------------------------------------------------------
+// D-051 companion 1: the backoff attempt counter decays on success instead of
+// resetting to zero. Zeroing was the amplifier's engine — an intermittently
+// failing receiver climbed, succeeded, reset, and climbed again, so it never
+// reached the 30s cap. 13.2 retry frames/min observed against ~2/min at cap.
+// ---------------------------------------------------------------------------
+
+test("D-051: an isolated success does not wipe the backoff the failures earned", async () => {
+  const frames: FollowFrame[] = [];
+  const controller = new AbortController();
+  let arms = 0;
+  // success, fail, fail, fail, success, fail — the lone success in the middle
+  // is the whole point: under the old reset it wiped three failures of backoff.
+  const outcomes = [true, false, false, false, true, false];
+  await runInboxFollow({
+    workspaceId: WORKSPACE,
+    now: () => 1_700_000_000_000,
+    random: () => 0,
+    pollMs: 0,
+    postEmitMs: 0,
+    sleep: async () => {
+      if (arms >= outcomes.length) controller.abort();
+    },
+    signal: controller.signal,
+    arm: async () => {
+      const ok = outcomes[arms] ?? false;
+      arms += 1;
+      if (!ok) throw new SignalHttpError(500);
+      return arms === 1 ? [row()] : [];
+    },
+    emit: (frame) => frames.push(frame),
+  });
+
+  const retries = frames.filter((frame) => frame.type === "retrying");
+  const attempts = retries.map((frame) =>
+    frame.type === "retrying" ? frame.attempt : -1
+  );
+  // Three failures climb 1,2,3. The success decays 3 -> 2. The next failure
+  // resumes at 3. Under a reset-to-zero it would restart at 1.
+  assert.deepEqual(attempts.slice(0, 4), [1, 2, 3, 3]);
+
+  // The delay is the thing that actually throttles, so assert it directly.
+  // random() === 0 makes the jittered delay exactly half the exponential.
+  const delays = retries.map((frame) =>
+    frame.type === "retrying" ? frame.delay_ms : -1
+  );
+  assert.deepEqual(delays.slice(0, 4), [250, 500, 1_000, 1_000]);
+  assert.notEqual(delays[3], delays[0]);
+});
+
+test("D-051: decay reaches the cap under sustained failure and clears when healthy", () => {
+  // Climb: every failure adds one attempt, and the delay saturates at the cap.
+  assert.equal(nextFollowBackoffMs(7, null, () => 1), 30_000);
+
+  // Decay is one step per success and floors at zero, so a receiver that
+  // recovers is not penalised forever.
+  assert.equal(decayFollowAttempt(3), 2);
+  assert.equal(decayFollowAttempt(1), 0);
+  assert.equal(decayFollowAttempt(0), 0);
+
+  // Drift is (2p - 1) per read. Walk the measured curve rather than asserting
+  // the arithmetic: at 71% failures the counter climbs, at 17% it stays at 0.
+  const walk = (failureRate: number, reads: number): number => {
+    let attempt = 0;
+    for (let i = 0; i < reads; i += 1) {
+      // Deterministic interleave standing in for the failure rate.
+      const failed = (i % 100) < Math.round(failureRate * 100);
+      attempt = failed ? attempt + 1 : decayFollowAttempt(attempt);
+    }
+    return attempt;
+  };
+  assert.ok(walk(0.71, 400) >= 7, "71% failures must reach the delay cap");
+  assert.equal(walk(0.17, 400), 0, "17% failures must not accumulate backoff");
+});
+
+// ---------------------------------------------------------------------------
+// D-051 companion 3: cancellation is a fact about our own AbortSignal, never
+// about wording. Parsing failure bodies made the old `/aborted/i` message
+// regex reachable from outside — a server answering {"error":"aborted"} would
+// have been read as a clean operator cancel, so a receiver would exit quietly
+// reporting success while having read nothing.
+// ---------------------------------------------------------------------------
+
+test("D-051: an error body saying 'aborted' cannot forge a cancellation", async () => {
+  // 'aborted' is slug-shaped, so the contract-shape filter passes it through
+  // to the message. Type, not text, is what must decide.
+  const inAnyField = [
+    { error: "aborted", request_id: "9d1f4b2c-0000-4000-8000-abcdefabcdef" },
+    { error: "internal_error", request_id: "aborted-9d1f4b2c" },
+    { error: "aborted", request_id: "aborted" },
+  ];
+  for (const envelope of inAnyField) {
+    const run = await d051FollowRun(
+      JSON.stringify({ ...envelope, retryable: false }),
+    );
+    assert.equal(
+      run.stop.reason,
+      "error",
+      `must not be cancelled: ${JSON.stringify(envelope)}`,
+    );
+    assert.notEqual(run.stop.reason, "cancelled");
+    // It is surfaced as a failure with the server's own words intact.
+    assert.match(String(run.stop.error?.message), /HTTP 500/);
+  }
+
+  // Positive control on the same harness: a real caller abort IS a
+  // cancellation, so this is not passing because nothing can cancel.
+  const cancelled = await d051FollowRun(d051Body(true));
+  assert.equal(cancelled.stop.reason, "cancelled");
+});
+
+test("D-051: only a typed AbortError cancels, and our own abort state outranks it", async () => {
+  const controller = new AbortController();
+  let arms = 0;
+  // A plain error whose text mentions aborting is NOT a cancellation.
+  const impostor = await runInboxFollow({
+    workspaceId: WORKSPACE,
+    now: () => 1_700_000_000_000,
+    random: () => 0,
+    pollMs: 0,
+    postEmitMs: 0,
+    sleep: async () => {},
+    signal: controller.signal,
+    arm: async () => {
+      arms += 1;
+      throw new Error("the request was aborted by the remote end");
+    },
+    emit: () => {},
+  });
+  assert.equal(impostor.reason, "error");
+  assert.equal(arms, 1);
+
+  // A typed AbortError is a cancellation.
+  const typed = new AbortController();
+  const abortError = new Error("stopped");
+  abortError.name = "AbortError";
+  const real = await runInboxFollow({
+    workspaceId: WORKSPACE,
+    now: () => 1_700_000_000_000,
+    random: () => 0,
+    pollMs: 0,
+    postEmitMs: 0,
+    sleep: async () => {},
+    signal: typed.signal,
+    arm: async () => {
+      throw abortError;
+    },
+    emit: () => {},
+  });
+  assert.equal(real.reason, "cancelled");
+});
+
+test("D-051: a credential verdict off the wire is decided by status, not wording", () => {
+  // Locally-thrown secret absence still classifies — the wording check is for
+  // errors that never crossed the network.
+  assert.equal(
+    isFollowCredentialFailure(new Error("the agent secret is absent")),
+    true,
+  );
+  assert.equal(isFollowCredentialFailure(new SignalHttpError(401)), true);
+  assert.equal(isFollowCredentialFailure(new SignalHttpError(403)), true);
+
+  // A wire error carrying the phrase must not be promoted to a credential
+  // stop by its text. Status is the only vote it gets.
+  const wire = new SignalHttpError(500, null, {
+    error: "secret_is_absent",
+    requestId: null,
+    retryable: false,
+  });
+  assert.equal(isFollowCredentialFailure(wire), false);
+  assert.match(wire.message, /secret_is_absent/);
 });

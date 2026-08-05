@@ -481,7 +481,8 @@ function isTransportFollowMessage(error: unknown): boolean {
       error.message === "signal read could not reach the cloud service");
 }
 
-function isMalformedFollowMessage(error: unknown): boolean {
+/** A malformed body/row: a protocol defect, so repeating the read cannot help. */
+export function isMalformedFollowMessage(error: unknown): boolean {
   if (error instanceof SignalMalformedError) return true;
   if (!(error instanceof Error)) return false;
   return error.message.startsWith("signal read returned a malformed") ||
@@ -1432,6 +1433,27 @@ export function nextFollowBackoffMs(
  * `retryable: true` does not promote a status we would otherwise refuse to
  * retry, so a server cannot talk this client into hammering a 401.
  */
+/**
+ * Decay the retry attempt counter after a success rather than zeroing it.
+ *
+ * D-051 companion: a single success used to reset the counter to 0, so an
+ * intermittently-failing receiver never reached the 30s backoff cap — it
+ * climbed, succeeded, reset, and climbed again. That is the amplifier's
+ * engine, and it is why one receiver produced 13.2 retry frames/min where a
+ * receiver sitting at the cap produces ~2.
+ *
+ * Decaying by one makes the steady state track the recent failure RATE rather
+ * than the current streak: the counter drifts by (2p - 1) per read at failure
+ * probability p. Against the measured curve that lands where we want it — at
+ * 71% failures (concurrency 8) it climbs to the cap, at 17% (concurrency 2) it
+ * stays pinned at 0 and a healthy receiver is never penalised. This holds
+ * whatever the server says about `retryable`, so it protects the client even
+ * on endpoints that never emit the field.
+ */
+export function decayFollowAttempt(attempt: number): number {
+  return attempt > 0 ? attempt - 1 : 0;
+}
+
 export function isRetryableFollowError(error: unknown): boolean {
   if (serverRefusedRetry(followErrorEnvelope(error))) return false;
   if (error instanceof SignalReadTimeoutError) return true;
@@ -1461,8 +1483,13 @@ export function isFatalFollowError(error: unknown): boolean {
 export function isFollowCredentialFailure(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
   const http = followHttpDetails(error);
-  if (http?.status === 401 || http?.status === 403) {
-    return true;
+  if (http !== null) {
+    // It came off the wire, so the status decides and nothing else does.
+    // Returning here keeps the wording check below out of reach of response
+    // text: since D-051 the message can carry server-supplied fields, and an
+    // unanchored phrase test over a message that contains external text is
+    // the same defect as the `/aborted/i` one this sweep removed.
+    return http.status === 401 || http.status === 403;
   }
   if (
     error.name === "RenewalReauthorisationRequired" ||
@@ -1470,6 +1497,7 @@ export function isFollowCredentialFailure(error: unknown): boolean {
   ) {
     return true;
   }
+  // Locally-thrown secret absence only; these errors never cross the network.
   return /secret is absent/i.test(error.message);
 }
 
@@ -1493,9 +1521,22 @@ export function formatFollowFrame(frame: FollowFrame): string {
   return JSON.stringify(frame);
 }
 
+/**
+ * Name-only cancellation recognition, matching runtime.ts `isAbort`.
+ *
+ * The message regex that used to sit here — `/aborted/i.test(error.message)` —
+ * let arbitrary error TEXT impersonate a caller cancellation. D-051 made that
+ * reachable from outside: failure bodies are now parsed, so a server answering
+ * `{"error":"aborted"}` would have produced the message "signal read failed
+ * (HTTP 500): aborted" and been classified as a clean cancel instead of an
+ * error. A receiver would exit quietly, reporting success, having read nothing.
+ *
+ * This is the same defect the A2 credential-escape work removed from the engine
+ * and runtime classifiers; signals.ts kept its copy. Cancellation is a fact
+ * about our own AbortSignal or a typed local abort, never about wording.
+ */
 function isAbortError(error: unknown): boolean {
-  return error instanceof Error &&
-    (error.name === "AbortError" || /aborted/i.test(error.message));
+  return error instanceof Error && error.name === "AbortError";
 }
 
 /** One page request from the follow loop to the caller's arm. */
@@ -1622,7 +1663,9 @@ export async function runInboxFollow(options: {
           })
         : armResult.nextCursor;
       const canPage = Array.isArray(armResult) ? true : armResult.canPage;
-      attempt = 0;
+      // Decay, never reset: an isolated success between failures must not wipe
+      // the backoff the failures earned. See decayFollowAttempt.
+      attempt = decayFollowAttempt(attempt);
 
       if (!ready) {
         options.emit({
@@ -1670,7 +1713,10 @@ export async function runInboxFollow(options: {
       const wait = await sleepInterruptible(waitMs);
       if (wait === "cancelled") return { reason: "cancelled" };
     } catch (error) {
-      if (cancelled() || isAbortError(error)) {
+      // Precedence mirrors runtime.ts: our own abort state is authoritative,
+      // then the credential predicate, then name-only AbortError. A caller
+      // that did not abort cannot be cancelled by what an error says.
+      if (cancelled()) {
         return { reason: "cancelled" };
       }
       if (isCredentialFailure(error)) {
@@ -1678,6 +1724,9 @@ export async function runInboxFollow(options: {
           reason: "credential",
           error: error instanceof Error ? error : new Error(String(error)),
         };
+      }
+      if (isAbortError(error)) {
+        return { reason: "cancelled" };
       }
       if (isRetryableFollowError(error)) {
         attempt += 1;

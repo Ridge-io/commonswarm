@@ -17,7 +17,10 @@ import {
   type DeliveryOutcome,
 } from "../cloud/delivery.js";
 import {
+  decayFollowAttempt,
+  isFatalFollowError,
   isFollowCredentialFailure,
+  isMalformedFollowMessage,
   isRetryableFollowError,
   nextFollowBackoffMs,
   readAgentSignalPage,
@@ -174,6 +177,29 @@ export type ListenerRuntimeStop =
   | { reason: "cancelled" }
   | { reason: "credential"; error: Error }
   | { reason: "fatal"; error: Error };
+
+/**
+ * Whether a stopped runtime is worth starting again (D-051 companion 2).
+ *
+ * Honouring `retryable: false` correctly turns a saturation failure into a
+ * terminated receiver, and nothing in this repo restarts one. But the server
+ * computes `retryable` from SQLSTATE, and a condition that clears on its own
+ * still arrives here as fatal — so a bounded restart is what keeps a receiver
+ * from being killed by a transient ceiling.
+ *
+ * The line is drawn at "could the same read plausibly succeed later":
+ * a cancelled run was the operator's decision, a credential failure and a 4xx
+ * refusal will refuse identically forever, and a malformed body is a protocol
+ * defect. Everything else — 5xx, transport, timeouts, a dead model child — is
+ * worth a bounded number of further attempts.
+ */
+export function isRestartableListenerStop(stop: ListenerRuntimeStop): boolean {
+  if (stop.reason !== "fatal") return false;
+  if (isFollowCredentialFailure(stop.error)) return false;
+  if (isFatalFollowError(stop.error)) return false;
+  if (isMalformedFollowMessage(stop.error)) return false;
+  return true;
+}
 
 /**
  * Name-only cancellation recognition, plus the explicit caller signal state
@@ -771,7 +797,10 @@ export async function runListenerRuntime(
             ts: eventTime(now),
           });
         }
-        readAttempt = 0;
+        // Decay, never reset — see decayFollowAttempt. Zeroing here let an
+        // intermittently-failing receiver climb, succeed, and climb again
+        // without ever reaching the backoff cap.
+        readAttempt = decayFollowAttempt(readAttempt);
       } catch (error) {
         // Exact caller abort state is authoritative, then the closed credential
         // predicate, then name-only AbortError. This preserves an explicit

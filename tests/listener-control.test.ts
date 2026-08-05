@@ -11,11 +11,14 @@ import { createConnection } from "node:net";
 import test from "node:test";
 import {
   ListenerAlreadyRunningError,
+  LISTENER_RESTART_MAX_MS,
   ackCommandId,
   appendListenerEvent,
   claimCommandId,
   effectiveListenerStatus,
+  isRestartableListenerStop,
   listenerPaths,
+  nextListenerRestartMs,
   openListenerDeliveryJournal,
   parseJournalRecord,
   queryListenerControl,
@@ -26,12 +29,19 @@ import {
   waitForListenerReady,
   writeListenerStatus,
   type ListenerPaths,
+  type ListenerRuntimeEvent,
+  type ListenerRuntimeStop,
   type ListenerStatus,
 } from "../src/listener/index.js";
 import {
   readSecureJsonFile,
   writeSecureJsonFile,
 } from "../src/cloud/storage.js";
+import {
+  SignalHttpError,
+  SignalMalformedError,
+  SignalTransportError,
+} from "../src/cloud/signals.js";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -972,4 +982,251 @@ test("the delivery journal module resolves from the listener index", () => {
   assert.equal(typeof parseJournalRecord, "function");
   assert.equal(typeof claimCommandId, "function");
   assert.equal(typeof ackCommandId, "function");
+});
+
+// ---------------------------------------------------------------------------
+// D-051 companion 2: bounded restart. Honouring retryable:false correctly
+// turns a saturation failure into a terminated receiver, and nothing in this
+// repo restarts one. Bounded is load-bearing — an unbounded restart would
+// recreate the amplification D-051 removed, one process at a time.
+// ---------------------------------------------------------------------------
+
+function saturationStop(): ListenerRuntimeStop {
+  // What a refused read now produces: a 500 the server told us not to retry.
+  return {
+    reason: "fatal",
+    error: new SignalHttpError(500, null, {
+      error: "internal_error",
+      requestId: "11111111-2222-4333-8444-555555555555",
+      retryable: false,
+    }),
+  };
+}
+
+async function readEvents(
+  target: ListenerPaths,
+): Promise<Array<Record<string, unknown>>> {
+  const log = await readFile(target.logPath, "utf8");
+  return log
+    .split("\n")
+    .filter((line) => line.trim().length > 0)
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+}
+
+test("D-051: a transient stop restarts a bounded number of times, then stays down and says why", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cswarm-restart-test-"));
+  const target = paths(root);
+  let runs = 0;
+  const delays: number[] = [];
+  const status = await runListenerSupervisor({
+    paths: target,
+    profileId: "profile-restart",
+    workspaceId: randomUUID(),
+    principalId: randomUUID(),
+    restart: {
+      maxAttempts: 3,
+      sleep: async (ms) => {
+        delays.push(ms);
+      },
+      random: () => 0,
+    },
+    run: async () => {
+      runs += 1;
+      return saturationStop();
+    },
+  });
+
+  // 1 initial attempt + 3 restarts, then it stops trying.
+  assert.equal(runs, 4);
+  assert.equal(status.state, "failed");
+  assert.equal(delays.length, 3);
+  // Full jitter with random() === 0 is exactly half the exponential.
+  assert.deepEqual(delays, [500, 1_000, 2_000]);
+
+  const events = await readEvents(target);
+  const restarting = events.filter((e) => e.event === "listener_restarting");
+  assert.equal(restarting.length, 3);
+  assert.deepEqual(restarting.map((e) => e.attempt), [1, 2, 3]);
+
+  const failed = events.find((e) => e.event === "listener_failed");
+  assert.ok(failed);
+  assert.equal(failed.restarts_exhausted, true);
+  assert.equal(failed.restart_attempts, 3);
+  assert.equal(failed.restartable, true);
+});
+
+test("D-051: a cause that cannot clear stops permanently and is never restarted", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cswarm-restart-test-"));
+
+  // A revoked credential must not loop: the supervisor must not retry it once.
+  const credentialTarget = paths(root);
+  let credentialRuns = 0;
+  const credentialStatus = await runListenerSupervisor({
+    paths: credentialTarget,
+    profileId: "profile-restart",
+    workspaceId: randomUUID(),
+    principalId: randomUUID(),
+    restart: { maxAttempts: 3, sleep: async () => {}, random: () => 0 },
+    run: async () => {
+      credentialRuns += 1;
+      return {
+        reason: "credential",
+        error: new Error("agent secret is absent"),
+      };
+    },
+  });
+  assert.equal(credentialRuns, 1);
+  assert.equal(credentialStatus.state, "failed");
+  assert.equal(credentialStatus.lastErrorCode, "credential_stopped");
+
+  // A 4xx refusal will refuse identically forever; restarting cannot help.
+  const fatalTarget = paths(root);
+  let fatalRuns = 0;
+  await runListenerSupervisor({
+    paths: fatalTarget,
+    profileId: "profile-restart",
+    workspaceId: randomUUID(),
+    principalId: randomUUID(),
+    restart: { maxAttempts: 3, sleep: async () => {}, random: () => 0 },
+    run: async () => {
+      fatalRuns += 1;
+      return { reason: "fatal", error: new SignalHttpError(403) };
+    },
+  });
+  assert.equal(fatalRuns, 1);
+
+  const events = await readEvents(fatalTarget);
+  assert.equal(events.some((e) => e.event === "listener_restarting"), false);
+  const failed = events.find((e) => e.event === "listener_failed");
+  assert.ok(failed);
+  // Down because it was never eligible, NOT because it ran out of attempts.
+  assert.equal(failed.restartable, false);
+  assert.equal(failed.restarts_exhausted, false);
+  assert.equal(failed.restart_attempts, 0);
+});
+
+test("D-051: a listener that recovers on a restart is not reported as failed", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cswarm-restart-test-"));
+  const target = paths(root);
+  let runs = 0;
+  const status = await runListenerSupervisor({
+    paths: target,
+    profileId: "profile-restart",
+    workspaceId: randomUUID(),
+    principalId: randomUUID(),
+    restart: { maxAttempts: 5, sleep: async () => {}, random: () => 0 },
+    run: async () => {
+      runs += 1;
+      if (runs <= 2) return saturationStop();
+      return { reason: "cancelled" };
+    },
+  });
+  assert.equal(runs, 3);
+  assert.equal(status.state, "stopped");
+  assert.equal(status.lastErrorCode, null);
+});
+
+test("D-051: the restart classifier separates what can clear from what cannot", () => {
+  // Transient: worth another bounded attempt.
+  assert.equal(
+    isRestartableListenerStop({ reason: "fatal", error: new SignalHttpError(500) }),
+    true,
+  );
+  assert.equal(isRestartableListenerStop(saturationStop()), true);
+  assert.equal(
+    isRestartableListenerStop({
+      reason: "fatal",
+      error: new SignalTransportError(),
+    }),
+    true,
+  );
+  // A dead model child is transient — the next attempt builds a fresh one.
+  assert.equal(
+    isRestartableListenerStop({
+      reason: "fatal",
+      error: new Error("listener model is closed"),
+    }),
+    true,
+  );
+
+  // Never: the operator's own stop, a credential that will refuse forever,
+  // a 4xx that will refuse identically, and a protocol defect.
+  assert.equal(isRestartableListenerStop({ reason: "cancelled" }), false);
+  assert.equal(
+    isRestartableListenerStop({
+      reason: "credential",
+      error: new Error("revoked"),
+    }),
+    false,
+  );
+  for (const status of [400, 401, 403, 404, 426]) {
+    assert.equal(
+      isRestartableListenerStop({
+        reason: "fatal",
+        error: new SignalHttpError(status),
+      }),
+      false,
+      `HTTP ${status} must not restart`,
+    );
+  }
+  assert.equal(
+    isRestartableListenerStop({
+      reason: "fatal",
+      error: new SignalMalformedError("signal read returned a malformed row"),
+    }),
+    false,
+  );
+});
+
+test("D-051: the restart delay is bounded by its own cap, not the read backoff cap", () => {
+  assert.equal(nextListenerRestartMs(1, {}, () => 0), 500);
+  assert.equal(nextListenerRestartMs(2, {}, () => 0), 1_000);
+  // Saturates at the restart ceiling and never exceeds it.
+  assert.equal(
+    nextListenerRestartMs(12, {}, () => 1),
+    LISTENER_RESTART_MAX_MS,
+  );
+  assert.ok(nextListenerRestartMs(12, {}, () => 0) <= LISTENER_RESTART_MAX_MS);
+});
+
+test("D-051: one rejected write does not poison the rest of the supervisor's writes", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cswarm-restart-test-"));
+  const target = paths(root);
+  const workspaceId = randomUUID();
+  const principalId = randomUUID();
+  const status = await runListenerSupervisor({
+    paths: target,
+    profileId: "profile-restart",
+    workspaceId,
+    principalId,
+    run: async (_signal, onEvent) => {
+      onEvent({
+        type: "ready",
+        workspaceId,
+        principalId,
+        ts: new Date().toISOString(),
+      });
+      // A malformed event is rejected by the append allowlist. It must cost
+      // only itself: the terminal lines after it still have to land, because
+      // they are the ones that say why the listener is down.
+      onEvent({ type: "unknown_event_kind" } as unknown as ListenerRuntimeEvent);
+      return { reason: "fatal", error: new SignalHttpError(403) };
+    },
+  });
+
+  assert.equal(status.state, "failed");
+  const events = await readEvents(target);
+  // The write after the rejected one survived.
+  assert.ok(
+    events.some((e) => e.event === "listener_failed"),
+    "the terminal listener_failed line must survive an earlier failed write",
+  );
+  // Positive control: the earlier lines are present too, so this is not a
+  // vacuous pass from an empty or unwritten log.
+  assert.ok(events.some((e) => e.event === "listener_ready"));
+  assert.ok(events.some((e) => e.event === "listener_starting"));
+
+  // And the status file itself kept being persisted through the failure.
+  const persisted = await readListenerStatus(target);
+  assert.equal(persisted?.state, "failed");
 });
