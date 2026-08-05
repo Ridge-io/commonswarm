@@ -2812,3 +2812,74 @@ the production 500s are unclassified rather than non-retryable. **Dashboard acce
 
 Whether the production failures actually lack a `code`. Whether adding the distinction changes the
 observed failure rate — **it would not**; it changes only what we tell clients about it.
+
+---
+
+## D-055 — `--ndjson` emits its fatal as bare text, breaking the contract the flag exists for · MAJOR
+
+Found by **Wren** during the paired A/B of `5886fa4`, because its parser flagged the line UNPARSED.
+
+In `--ndjson` mode the post-fix fatal is emitted as **plain text**, not a frame:
+
+```
+cswarm: signal read failed (HTTP 500): internal_error, request_id 5bdd7856-…
+```
+
+**The whole point of `--ndjson` is a machine-readable stream**, and the connect prompt directs
+non-Grok hosts to use it. A programmatic consumer breaks on that line instead of reading a terminal
+condition — so **the stream's last word is unparseable, and a wrapper cannot distinguish "died with a
+reason" from "emitted garbage."**
+
+Fix: emit a frame, e.g. `{"type":"error","reason":"server_refused","request_id":…}`. The information is
+already there; only the encoding is wrong.
+
+---
+
+## D-056 — a post-fix receiver dies at cold start 25% of the time · SHIP-BLOCKER for the D-051 deploy
+
+**8 independent cold starts, post-fix `5886fa4`: 6 reached ready, 2 died before ready — 25%.**
+
+Each death carried an error line naming the cause, so these are **genuine refusals**, not the host
+reaping processes. Wren reported this number while explicitly *refusing* to report lifetime, because
+that evidence is in-band and the other was not.
+
+### Why the bounded restart does not cover it
+
+D-052's companion 2 supervises **`listen start`** — `runListenerSupervisor`. This measurement is
+`cswarm inbox --follow`, the **CLI follow loop**, which has no supervisor. So the restart protection
+lands on the durable listener and **not** on the receiver the connect prompt tells most hosts to run.
+
+**That gap is the deploy decision.** At a ~50% per-request failure baseline, a receiver that exits on
+its first refused read has a coin-flip chance of never starting.
+
+### The A/B that produced it — Verity's prediction, confirmed
+
+Both arms launched in the same 75-second window, same credential, same workspace:
+
+| | requests per failure event |
+|---|---|
+| pre-fix `fb94d19` | 3,2,3,3,2,2,2,4,2,2,2 → **mean 2.45** |
+| post-fix `5886fa4` | **exactly 1** |
+
+Verity predicted 1. Measured 1. Its stated falsification condition — retry frames on a confirmed
+refusal with a confirmed-new binary — **did not occur**.
+
+**Binaries identified by sha256, not by name:** both report `cswarm 0.1.6`, so the version string is
+useless as identity. Wren re-verified the hashes **after transfer**, because a truncated copy would
+have been silent. Positive control reproduced: `serverRefusedRetry` pre=0 post=2,
+`decayFollowAttempt` pre=0 post=3.
+
+Per Verity's instruction, lifetime and failure-rate are **not** offered as evidence either way.
+
+### Disclosed deviation
+
+Wren copied only `dist` + `package.json` (the full trees are 47 MB of `node_modules` each and transfer
+kept timing out) and pointed **both** arms at the laptop's existing `@supabase/supabase-js 2.110.8`.
+Dependencies are therefore **held constant across arms**, preserving the client-behaviour comparison,
+but this is **not a byte-exact reproduction** of the build environment.
+
+### Not established
+
+Whether the 6 receivers that reached ready then died inside the 12-second window — Wren killed them at
+12 s and did not retain the frames, so it has cold-start death rate but **not post-ready survival**.
+Nothing about the server-side cause.
