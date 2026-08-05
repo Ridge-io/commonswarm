@@ -2669,9 +2669,21 @@ removed.
 Land `84f0882`, with **two companions in the same deploy**:
 
 1. **Fix the backoff reset.** Decay the attempt counter rather than zeroing it, or reset only after N
-   consecutive successes. This cuts amplification ~6× **without depending on the server's `retryable`
-   field at all**, and it keeps working on endpoints that never emit one. It is the most robust part of
-   the change and it was hiding inside the diagnosis.
+   consecutive successes.
+
+   ~~"This cuts amplification ~6× without depending on the server's `retryable` field at all… It is the
+   most robust part of the change."~~ **Dead — that was my line and it is wrong.** Found by Wren,
+   confirmed by Verity in the code: `attempt += 1` sits **inside** the `isRetryableFollowError` branch
+   (`signals.ts:1793`), so the D-051 veto makes the decay **unreachable for a refused failure**. The
+   veto fires, the read is fatal, and the counter is never touched.
+
+   **The two companions interact, and `84f0882` short-circuits the path `f439393` governs.** Wren
+   verified the premise rather than assuming it: 30 sequential reads gave 500×20, `retryable:false`×20,
+   `retryable:true`×0. **There is no retryable failure mode on that path today.**
+
+   So companion 1 is **insurance for a failure mode that is not occurring** — a 429, or a 5xx the
+   server classifies retryable. On current production behaviour it is the **least** active part of the
+   change, not the most robust. I was about to ship it described as the opposite.
 2. **Receiver supervision — restart with a cap.** Exponential, bounded, and it must stop and record why
    after N attempts, so transient saturation recovers while a revoked credential still terminates.
 
