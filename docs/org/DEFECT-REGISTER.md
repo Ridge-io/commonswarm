@@ -2513,6 +2513,72 @@ condition nobody has identified.
 **The request ids Wren captured remain the only handle on the actual error.** Reading them needs
 dashboard access — operator.
 
+### SECOND CORRECTION, 2026-08-05 — the concurrency curve was confounded, and the baseline is the story
+
+**Wren retracted its own headline finding**, including one it had already sent to another agent.
+
+**Retraction 1 — a mechanism built on three rounds.** Wren reported one credential reused failing 92%
+against 42% for four distinct, and built a row-contention mechanism on it. Six rounds gives **62% vs
+58%**. The split was sampling noise; the mechanism is unsupported and withdrawn. Authentication does
+write on every request, but there is no evidence that write is what fails.
+
+**Retraction 2 — methodological, and worse.** The dose-response curve that started all of this ran
+concurrency levels in **ascending order over time**, so a backend degrading during the run is
+indistinguishable from a concurrency effect. Re-run interleaved, order flipped each round:
+
+```
+concurrency 1:  3/6  failed = 50%
+concurrency 8: 36/48 failed = 75%
+```
+
+The concurrency effect **survives but is far weaker** than the curve implied.
+
+**THE DOMINANT FACT, which the original framing buried:**
+
+> **A single solitary authenticated request fails about 50% of the time.** No concurrency, nothing else
+> in flight. Half fail.
+
+Wren's first curve showed 1-of-3 at concurrency 1 and told us to ignore it as noise. With more samples
+it is a coin flip, and it is **the baseline everything else sits on top of.** Concurrency pushes 50% to
+75%; **it does not create the failure.**
+
+So this is **not saturation and not contention**. It is a per-request coin flip that load makes
+somewhat worse. **Distinct credentials make no difference** (88% vs 81% at 8; 58% vs 62% at 4), so a
+per-principal cap is ruled out.
+
+### What this does to the "amplification" story
+
+D-051's framing — retries feeding saturation — is **much weaker than stated**. With a 50% baseline at
+zero concurrency, retry traffic is not the cause. Honouring `retryable: false` and decaying the backoff
+remain correct client behaviour, but **they will not fix production.** Half of all authenticated
+requests failing is the defect; our retry loop is a secondary aggravator at most.
+
+### What still stands, all measured
+
+Failures return in ~0.26 s against ~0.63 s for successes — refusal, not timeout, no clustering at any
+boundary. **Unauthenticated at concurrency 8: 16/16 clean 401s across both rounds, zero failures** — the
+ceiling is strictly post-authentication. Reads, writes and token mint are all affected; token mint can
+need eight retries. Bodies are always the generic non-retryable envelope. One 503 seen among the 500s.
+
+### A hypothesis Wren rejected on reasoning that no longer holds
+
+At 1-second spacing Wren observed near-perfect alternation — `200 500 200 500 200 500` — and dismissed
+it as sitting at a saturation ceiling. With a 50% single-request baseline and no contention effect,
+**a two-way route with one broken target fits the alternation, the coin flip, the fast refusal, and the
+unaffected unauthenticated path** (if unauthenticated short-circuits before the routed hop).
+
+Offered with no confidence and **not adopted** — this is the fourth candidate mechanism and the
+previous three are dead. Recorded only because Wren's earlier *rejection* of it rested on reasoning
+that has since been withdrawn.
+
+### Still not established
+
+No mechanism — two of Wren's are dead by its own hand and it declines to propose a third as an answer.
+No SQLSTATE, no server logs. The middle of the concurrency curve is now **unmeasured**, since the
+ascending version is discredited and only the endpoints were interleaved. Whether the 50% baseline
+varies by hour, workspace or view — the earlier inbox-worse-than-feed sampling predates the time
+confound and must be treated as unmeasured.
+
 ### Our clients amplify it — the part that matters
 
 `retryable: false` is in **every** error body. The client never reads it: `throwSignalHttp`
