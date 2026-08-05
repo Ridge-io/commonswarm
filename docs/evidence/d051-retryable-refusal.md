@@ -1141,7 +1141,7 @@ status, which is wrong):
 | layer | lost | kept |
 |---|---|---|
 | 1. directory read (`signals.ts:946`) | `request_id`, `retryable` — the body is never parsed | **status, in the message text** |
-| 2a. author labels (`settleSignalAuthorLabels`, `signals.ts:1223`) | everything — `.catch()` returns empty maps | — |
+| 2a. author labels (`settleSignalAuthorLabels`, `signals.ts:1223`) | everything — and see below, it does not merely lose the error | — |
 | 2b. listener (`engine.ts:434`) | everything — the bare `catch` swallows the whole Error | — |
 
 **Three discards, not two** (Plumb's fifth correction; earlier versions of this
@@ -1154,10 +1154,22 @@ with `member read failed (HTTP 500)` in front of a person.
 
 Everything else is swallowed by design:
 
-- **`cli.ts:2025` `signalAuthorLabels` does NOT survive.** All four of its call
-  sites (`:2191`, `:2231`, `:2294`, `:2398`) wrap it in
-  `settleSignalAuthorLabels`, which catches and returns empty maps — display
-  labels are optional context, so degrading them silently is deliberate.
+- **`cli.ts:2025` `signalAuthorLabels` does NOT survive**, and "swallows" is
+  itself the wrong word for what happens. All four of its call sites (`:2191`,
+  `:2231`, `:2294`, `:2398`) wrap it in `settleSignalAuthorLabels`, whose
+  `.catch()` returns `{users: new Map(), agents: new Map()}`.
+
+  **It converts a failure into a success.** The caller receives a *fulfilled*
+  promise carrying empty maps, and `renderSignals` (`signals.ts:1343`) reads
+  those maps for author names. So nothing downstream can distinguish
+  **"the directory is unreachable"** from **"this workspace has no members"** —
+  they are the same value. A person sees unlabelled authors either way.
+
+  That makes this consumer categorically different from the listener rather
+  than a variation of it: **the listener swallows an error and then makes a
+  decision; the label path swallows an error and reports absence.** Only one of
+  them tells the user something untrue. It is not a bug — it is a deliberate
+  display fallback — but its cost had not been stated anywhere until now.
 - **The listener path** (`cli.ts:2951` → `resolveSenderProvenance`) loses it at
   `engine.ts:434`.
 
