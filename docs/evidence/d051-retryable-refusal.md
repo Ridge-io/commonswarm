@@ -520,7 +520,10 @@ the client-behaviour comparison stands either way.
 
 # D-056 — OPEN pre-deploy decision: does the follow loop need bounded recovery?
 
-**Status at time of writing (2026-08-05): UNDECIDED.** Recorded here because it
+**Status: RESOLVED 2026-08-05 — no bounded recovery. Verity withdrew its own
+argument; see "Why the argument for recovery fails" below.** The original
+UNDECIDED framing and both arguments are kept intact underneath, because the
+reasoning that defeated the proposal is more useful than the conclusion. Recorded here because it
 is a pre-deploy decision that currently exists only in swarm messages, and a
 decision that lives in chat never reaches whoever pulls this repo tomorrow.
 
@@ -708,3 +711,53 @@ What to read in the function log line for any of them:
   and names the ceiling directly.
 
 This is also the log line that settles D-056.
+
+## Why the argument for recovery fails — Verity, withdrawing it
+
+The proposal was "tolerate N refused reads (N=3) with backoff, then die". It
+was written believing refusals were a *subset* of failures. Wren then measured
+30 sequential authenticated reads: **`retryable:false` ×20, `retryable:true`
+×0**. Refusals are not a subset. They are all of them.
+
+Under that fact the proposal is not a safety margin, it is a revert:
+
+| | requests per failure event |
+|---|---:|
+| pre-fix (measured by Wren) | 2.45 |
+| post-fix (measured by Wren) | 1.00 |
+| proposed N=3 refusal tolerance | up to 4 |
+
+Pre-fix `attempt` peaked at exactly 3 because any success reset it. An N=3
+refusal tolerance would therefore reproduce — or exceed — the behaviour the fix
+removed, on 100% of current failures. It would undo the only improvement this
+whole change has actually measured, and it would do it by retrying through an
+explicit server instruction.
+
+The structural argument against was also right, and it is worth stating
+separately because it survives even if the failure mix changes: **the remedy
+for "the process exits and nothing restarts it" is supervision, not retry.**
+Retry is the remedy for "this request might succeed if repeated", which is
+precisely what the server is denying. Companion 2 is supervision and it exists;
+it is simply wired to `listen start` and not to the follow loop.
+
+Both points defeat the proposal independently.
+
+## What is NOT solved by deciding this
+
+- **25% of cold starts do not reach ready** on the unsupervised follow path,
+  and Wren's failure rate drifted 25 / 50 / 67% across one day, so the true
+  figure is regime-dependent and could be worse. Nothing client-side removes
+  this without disobeying the server. It is a server-side problem and it stays
+  open.
+- **Fail-fast is only a policy if something can act on it.** D-055 makes the
+  terminal condition parseable on stdout, which serves a host that consumes the
+  NDJSON stream — and any host following the connect prompt does. It does not
+  serve the supervisor forms that read only an exit status: a shell `until`
+  loop, a service unit, a host runner that respawns on nonzero exit. **Every
+  cswarm failure is `process.exitCode = 1`** (`cli.ts:3680,3715,3720,3724`), so
+  those cannot distinguish "refused, a later attempt may succeed" from
+  "credential revoked, do not restart".
+  A distinct exit code for the restartable case — reusing the exclusion list
+  already written and tested in `isRestartableListenerStop` — would close that
+  without costing a single request. Recorded as a proposal, not built, and not
+  part of this decision.
