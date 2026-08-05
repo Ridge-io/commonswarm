@@ -469,6 +469,8 @@ test("detached CLI completes durable claim reply ACK with one startup UUID and n
     const startArgs = [
       "listen",
       "start",
+      "--provider",
+      "grok",
       "--agent-token-stdin",
       ...common,
       "--cwd",
@@ -775,6 +777,8 @@ test("detached CLI cursor fallback still receives and replies", async () => {
     const started = await runCli([
       "listen",
       "start",
+      "--provider",
+      "grok",
       "--agent-token-stdin",
       ...common,
       "--cwd",
@@ -977,6 +981,8 @@ test("detached CLI reports missing Grok login without starting a model", async (
     const started = await runCli([
       "listen",
       "start",
+      "--provider",
+      "grok",
       "--agent-token-stdin",
       ...common,
       "--json",

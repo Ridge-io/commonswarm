@@ -58,7 +58,7 @@ test("every cswarm command in the prompt is self-contained with deployment flags
   };
   for (const command of [
     'cswarm working-on "what you are about to do" --agent-token-stdin',
-    'cswarm listen start --agent-token-stdin --cwd "$PWD" --permissions deny --json',
+    'cswarm listen start --agent-token-stdin --provider claude --cwd "$PWD" --permissions deny --json',
     "cswarm inbox --kind ask --follow --ndjson --agent-token-stdin",
     'cswarm reply <signal-id> "<answer>" --agent-token-stdin',
   ]) {
@@ -79,14 +79,17 @@ test("every cswarm command in the prompt is self-contained with deployment flags
   );
 });
 
-test("dashboard agent prompt teaches measured Grok wake and an honest host-neutral fallback", () => {
+test("dashboard agent prompt teaches measured Claude wake and a host-neutral fallback", () => {
   const prompt = dashboardAgentPrompt(INPUT);
 
   assert.match(
     prompt,
-    /Grok CLI exactly 0\.2\.117[\s\S]*cswarm listen start --agent-token-stdin/,
+    /Claude Code[\s\S]*npm install -g @agentclientprotocol\/claude-agent-acp@0\.64\.2[\s\S]*cswarm listen start --agent-token-stdin --provider claude/,
   );
-  assert.match(prompt, /local Grok worker/);
+  assert.match(prompt, /local Claude worker/);
+  assert.match(prompt, /post and read signals[\s\S]*do not need a\s+listener/);
+  assert.match(prompt, /listener adds detached live receipt/);
+  assert.match(prompt, /--provider grok or --provider opencode/);
   assert.match(prompt, /--permissions deny/);
   assert.match(prompt, /safe default denies\s+ACP tool requests/);
   assert.match(prompt, /Every sender reaches the worker in your project context/);
@@ -112,14 +115,14 @@ test("dashboard agent prompt teaches measured Grok wake and an honest host-neutr
   assert.equal(prompt.split(TOKEN).length - 1, 1, "receive guidance must not duplicate the credential");
 });
 
-test("dashboard agent prompt requires cswarm 0.1.4+ before receive commands", () => {
+test("dashboard agent prompt requires cswarm 0.1.6+ before receive commands", () => {
   const prompt = dashboardAgentPrompt(INPUT);
 
-  assert.match(prompt, /cswarm 0\.1\.4 or newer/i);
+  assert.match(prompt, /cswarm 0\.1\.6 or newer/i);
   assert.match(prompt, /cswarm --version/);
   assert.match(
     prompt,
-    /missing or older than 0\.1\.4[\s\S]*receive paths/i,
+    /missing or older than 0\.1\.6[\s\S]*receive paths/i,
   );
   assertLiveInstallCopy(prompt);
   // Same canonical installer for first install and for upgrade of a stale CLI.
@@ -131,10 +134,10 @@ test("dashboard agent prompt requires cswarm 0.1.4+ before receive commands", ()
   );
   assert.match(
     prompt,
-    /Only after cswarm[\s\S]*0\.1\.4 or newer is installed[\s\S]*cswarm inbox --kind ask --follow --ndjson/i,
+    /Only after cswarm[\s\S]*0\.1\.6 or newer is installed[\s\S]*cswarm inbox --kind ask --follow --ndjson/i,
   );
   assert.equal(prompt.split(TOKEN).length - 1, 1, "version guidance must not duplicate the credential");
-  assert.doesNotMatch(prompt, /swm_agt_[^"\s]+.*0\.1\.4/);
+  assert.doesNotMatch(prompt, /swm_agt_[^"\s]+.*0\.1\.6/);
 });
 
 test("dashboard agent prompt never promises unconditional renewal", () => {

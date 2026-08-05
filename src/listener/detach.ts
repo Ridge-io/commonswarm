@@ -3,6 +3,7 @@ import {
   type ChildProcess,
   type SpawnOptions,
 } from "node:child_process";
+import { posix, win32 } from "node:path";
 import { sanitizeChildEnv } from "../host/env.js";
 
 export interface ListenerChildSpec {
@@ -13,14 +14,16 @@ export interface ListenerChildSpec {
   principalId: string;
   cwd: string;
   permissionMode: "deny" | "allow";
-  provider?: "grok" | "opencode";
+  provider?: "grok" | "opencode" | "claude";
   stateDirectory?: string;
   /** Grok binary override (provider grok). */
   executable?: string;
   /** OpenCode binary override (provider opencode). */
   opencodeExecutable?: string;
+  /** Claude ACP bridge override (provider claude). */
+  claudeExecutable?: string;
   model?: string;
-  /** Grok-only; must not be set for opencode. */
+  /** Grok-only; must not be set for opencode or claude. */
   effort?: string;
   nodeExecArgv?: string[];
 }
@@ -30,6 +33,16 @@ export type ListenerSpawn = (
   args: readonly string[],
   options: SpawnOptions,
 ) => ChildProcess;
+
+/** Validate executable paths with the syntax of the platform that will spawn them. */
+export function isNativeAbsolutePath(
+  value: string,
+  platform: NodeJS.Platform = process.platform,
+): boolean {
+  return platform === "win32"
+    ? win32.isAbsolute(value)
+    : posix.isAbsolute(value);
+}
 
 /** Keep only the dev loader needed for a TypeScript source entrypoint. */
 export function listenerNodeExecArgv(values: readonly string[]): string[] {
@@ -53,18 +66,32 @@ export function listenerNodeExecArgv(values: readonly string[]): string[] {
 /** Public-only argv; the credential is intentionally not accepted here. */
 export function buildListenerChildArgs(spec: ListenerChildSpec): string[] {
   const provider = spec.provider ?? "grok";
-  if (provider === "opencode" && spec.effort) {
+  if (provider !== "grok" && spec.effort) {
     throw new Error(
-      "--effort is not supported for --provider opencode (no measured mapping)",
+      `--effort is not supported for --provider ${provider} (no measured mapping)`,
+    );
+  }
+  if (provider === "claude" && spec.model) {
+    throw new Error(
+      "--model is not supported for --provider claude (no measured bridge mapping)",
     );
   }
   const opencodeExe = spec.opencodeExecutable ??
     (provider === "opencode" ? spec.executable : undefined);
+  const claudeExe = spec.claudeExecutable ??
+    (provider === "claude" ? spec.executable : undefined);
   if (provider === "opencode") {
     // Detached supervisors must not resolve ambiguous bare "opencode" on PATH.
     if (!opencodeExe || !opencodeExe.startsWith("/")) {
       throw new Error(
         "detached --provider opencode requires an absolute --opencode-executable path",
+      );
+    }
+  }
+  if (provider === "claude") {
+    if (!claudeExe || !isNativeAbsolutePath(claudeExe)) {
+      throw new Error(
+        "detached --provider claude requires an absolute --claude-executable path",
       );
     }
   }
@@ -94,6 +121,9 @@ export function buildListenerChildArgs(spec: ListenerChildSpec): string[] {
       : []),
     ...(provider === "opencode" && opencodeExe
       ? ["--opencode-executable", opencodeExe]
+      : []),
+    ...(provider === "claude" && claudeExe
+      ? ["--claude-executable", claudeExe]
       : []),
     ...(spec.model ? ["--model", spec.model] : []),
     ...(provider === "grok" && spec.effort ? ["--effort", spec.effort] : []),
@@ -142,4 +172,3 @@ export async function spawnDetachedListener(options: {
   child.unref();
   return child;
 }
-

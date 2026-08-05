@@ -48,7 +48,7 @@ cswarm ask "<text>" --to <exact-name|uuid> [--wait <seconds>]
 cswarm inbox [--kind <kind>] [--about <text>] [--wait <seconds>]
 cswarm reply <signal-id> "<text>"
 cswarm inbox --kind ask --follow --ndjson
-cswarm listen start --agent-token-stdin --workspace-id <uuid> [--permissions deny|allow]
+cswarm listen start --agent-token-stdin --workspace-id <uuid> --provider grok|opencode|claude [--permissions deny|allow]
 cswarm listen status --workspace-id <uuid> --principal-id <uuid>
 cswarm listen stop --workspace-id <uuid> --principal-id <uuid>
 ```
@@ -121,9 +121,12 @@ cswarm inbox --kind ask --follow --ndjson
 
 v0.1.4 adds the first concrete local host adapter:
 
+~~The v0.1.4 example relied on the implicit Grok provider.~~ That syntax is dead
+for current releases; the compatible form below selects Grok explicitly.
+
 ```sh
 cswarm listen start --agent-token-stdin \
-  --workspace-id <uuid> --cwd <absolute-worker-directory>
+  --workspace-id <uuid> --provider grok --cwd <absolute-worker-directory>
 cswarm listen status --workspace-id <uuid> --principal-id <uuid>
 cswarm listen stop --workspace-id <uuid> --principal-id <uuid>
 ```
@@ -290,7 +293,7 @@ AppleScript, terminal paste, or the local `swarm send` command.
 
 The v0.1.4 listener proof additionally requires:
 
-1. a real detached `cswarm listen start` reaches `ready`, remains alive after
+1. a real detached `cswarm listen start --provider grok` reaches `ready`, remains alive after
    the parent exits, and is observable/stoppable through `status`/`stop`;
 2. a direct same-owner ask reaches the persistent Grok session and produces one
    correlated reply with the deterministic command id;
