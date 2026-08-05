@@ -1380,7 +1380,8 @@ test("D-051: readSignals carries the failure envelope off the wire", async () =>
     (error: unknown) => {
       assert.ok(error instanceof Error);
       // The pre-existing taxonomy is untouched: plain Error, status and
-      // Retry-After still readable through the prefix-anchored parse.
+      // Retry-After still readable — D-058: through the identity tag set at
+      // construction, not through a parse of the message.
       assert.equal(error.name, "Error");
       assert.equal(followHttpDetails(error)?.status, 500);
       assert.equal(followHttpDetails(error)?.retryAfterMs, 3_000);

@@ -249,13 +249,25 @@ reachability by server-controlled text. Server text can only ever appear
 
 | site | verdict |
 |---|---|
-| `signals.ts:457` status parse | safe — prefix-anchored |
-| `signals.ts:481` transport equality | safe — exact equality |
+| ~~`signals.ts:457` status parse~~ | ~~safe — prefix-anchored~~ **DEAD, see below** |
+| ~~`signals.ts:481` transport equality~~ | ~~safe — exact equality~~ **DEAD, see below** |
 | `signals.ts:488-491` malformed | safe — different prefix, exact equalities |
 | `signals.ts` `isFollowCredentialFailure` | **fixed** — see below |
 | `engine.ts:238` prompt retryability | not reachable today; see gap |
 | `delivery-journal.ts`, `storage.ts` | safe — local storage errors |
 | `command-client.ts:974`, `host/transport.ts:311` | display only, not classification |
+
+> ★ **Two rows of the table above are WRONG and are marked dead, 2026-08-05.**
+> The D-053 sweep judged the status parse and the transport equality *safe*
+> because it asked only one question: can server-controlled text reach them?
+> It could not — server text lands after our prefix, and the shape filter
+> rejects spaces. But that was the wrong question. **D-058 showed both were
+> reachable by any error type spelled the same way**, whatever its origin, and
+> the restart classifier turned that into a restart decision. Both sites are now
+> identity-tagged and neither reads a message. The reasoning error is worth more
+> than the correction: a sweep scoped to one threat model reports "safe" about a
+> site that is unsafe under another, and the word "safe" in that table carried
+> no scope.
 
 `isFollowCredentialFailure` tested `/secret is absent/i` unanchored over the
 whole message. It survived only because the shape filter rejects spaces — one
@@ -1050,3 +1062,81 @@ npm run check:tests -> clean
   wrapper that copies only the message — loses its tag and correctly gets no
   verdict. That is the safe direction, but it means classification depends on
   the original object surviving.
+
+---
+
+# D-058 follow-up — the two attack surfaces, closed by enumeration
+
+Both were named as unestablished when D-058 landed. Neither is now.
+
+## 1. Does any wrapper strip an identity tag before classification?
+
+**No.** Enumerated, and independently re-run by ClaudeCswarm:
+
+- `asError` (`runtime.ts:412`) is
+  `error instanceof Error ? error : new Error(String(error))` — a **pass-through
+  for Errors**. It is used **27 times** in `runtime.ts`, so it wraps every fatal
+  stop site.
+- Message-copying wrappers in `src/`: **5**, all in `cloud/auth.ts` wrapping
+  Supabase GoTrue errors, against a control of **477** `new Error(` sites — so
+  the search was real rather than a lucky zero.
+- No catch-and-rethrow in `runtime.ts`, `engine.ts` or `delivery.ts` converts a
+  tagged error into an untagged one.
+
+**This was a near-miss, and it is the finding.** Had `asError` reconstructed
+instead of passing through, D-058 would have silently destroyed restart
+classification for the entire listener **while every test stayed green** — the
+fix depended on that property and nobody had checked it. It surfaced only
+because a reviewer's assertion ("nothing wraps them today") and an author's
+unswept caveat ("I have not swept for wrap sites") contradicted each other, and
+the disagreement was treated as the work rather than as two people agreeing to
+move on.
+
+## 2. Is there an untagged-but-legitimate producer whose classification changed?
+
+**No, and the regex turns out to have had no legitimate effect at all.**
+
+```
+sites that SET the http tag                  -> 1   (signals.ts:449, in throwSignalHttp)
+sites constructing 'signal read failed (HTTP' -> 2   (signals.ts:144 SignalHttpError ctor,
+                                                      signals.ts:447 throwSignalHttp)
+```
+
+`followHttpDetails` handles `SignalHttpError` by `instanceof` **before** the tag
+lookup, and `throwSignalHttp` tags at 449. So the only strings the deleted regex
+could match came from errors already classified correctly by type or by tag.
+
+Every other `failed (HTTP n)` message in the codebase uses a different prefix —
+`member read`, `project read`, `workspace read`, `command`, `signal failed`,
+`login device registration`, `delivery command` — and the regex was `^`-anchored.
+`command-client.ts:962` is `signal failed (HTTP n)`, one word short of colliding.
+
+**Therefore deleting it was a zero-behaviour-change fix for real errors and a
+total fix for impostors.** Its entire live behaviour was the bypass.
+
+## 3. Remaining, stated not closed
+
+The 40-row table is a snapshot of the enumeration of `runtime.ts` fatal sites
+*today*, not a proof that no other type can reach a fatal stop. The closed
+default is what makes a missed type safe rather than wrong.
+
+---
+
+# Register — the directory read discards failure detail (pre-existing)
+
+**Not a defect introduced here, and deliberately not fixed in this branch.**
+
+`readAgentSignalDirectory` (`signals.ts:937/942/946`) throws untagged plain
+Errors — `member read could not reach the cloud service`, `member read failed
+(HTTP n)`. It has no envelope parsing and no identity tags, so **a transient 500
+there is treated as permanent**. It discards the server's failure detail exactly
+the way the signal read did before D-051.
+
+It reaches the engine through `resolveSenderProvenance`, where
+`defaultRetryablePromptError` — now type-and-code based after D-053 — correctly
+declines to retry a plain Error. So an ask **fails rather than retrying**.
+
+D-058 changed nothing about it: the `member read` prefix never matched the
+`signal read` regex either. It is a fourth surface of the same shape as D-051,
+it predates this workstream, and fixing it belongs in its own change with its
+own control.
