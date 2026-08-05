@@ -2312,3 +2312,33 @@ fatal assignment `:1240`, not `:1243`/`:1244`. The chain is otherwise as recorde
 
 Whether the deployed `command` v16 matches the repo. Why the `capability` function POSTs 404 while
 listed ACTIVE. The note read-window bound. None were checked.
+
+---
+
+## D-048 — an `ANTHROPIC_API_KEY` user gets an auth-less Claude child · OPEN
+
+Measured 2026-08-05 against the real exported `sanitizeChildEnv` (`src/host/env.ts:44`):
+
+```
+ANTHROPIC_API_KEY survives: false
+HOME survives:              true
+```
+
+`DENY_NAME_RE` (`:37-38`) matches `API_KEY`, so the key is stripped from every ACP child. That rule is
+correct — it is what stops credentials leaking into spawned hosts — and it has a side effect nobody
+priced.
+
+**Keychain/OAuth users are fine**: `HOME` survives and carries their credential, which is why the
+adapter spike passed. **A user authenticated by `ANTHROPIC_API_KEY` alone gets a child with no
+credential at all.**
+
+**Not established:** what that child actually does. It may fail at `initialize`, at `session/new`, or
+mid-prompt, and the message may be the bridge's rather than ours. Until measured, we do not know
+whether this presents as a legible "you are not signed in" or as an opaque crash several steps in.
+
+That is the whole risk: the failure is guaranteed for that population and its *shape* is unknown.
+`--provider claude` is now advertised in a shipped release, so this is reachable today.
+
+**Fix direction, not yet decided:** detect the case before spawning and say so plainly, rather than
+letting the child fail. Do **not** widen the sanitizer to pass the key through — that would break the
+property the deny rule exists to protect.
