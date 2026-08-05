@@ -67,7 +67,11 @@ same day.** That package exists but is the older home; the adapters now live und
 `@agentclientprotocol`, which is two major-ish generations ahead (0.64.2 vs 0.16.2). I named the stale
 one before checking whether a newer scope existed. **Use `@agentclientprotocol/claude-agent-acp`.**
 
-Adopting Codex costs almost nothing extra once Claude Code is done — same mechanism, one more package.
+~~Adopting Codex costs almost nothing extra once Claude Code is done — same mechanism, one more
+package.~~ **Superseded 2026-08-05:** the Codex spike found that an unchanged Claude adapter copy
+fails closed at the listener canary because `codex-acp` starts in `agent` mode. A `read-only` mode
+control did emit permission requests, so implementation cost remains unmeasured. See
+`docs/evidence/2026-08-05-codex-acp/bridge-spike.md`.
 
 ### Installing it during onboarding
 
