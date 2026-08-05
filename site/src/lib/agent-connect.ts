@@ -365,12 +365,15 @@ export async function createAgentIdentity(
   commandId: string,
   workspaceId: string,
   name: string,
-  model: string,
+  model?: string,
 ): Promise<AgentIdentity> {
+  const command = model === undefined
+    ? { kind: "create_agent_principal" as const, name }
+    : { kind: "create_agent_principal" as const, name, model };
   const outcome = await postCommand(
     session,
     commandId,
-    { kind: "create_agent_principal", name, model },
+    command,
     { workspace_id: workspaceId, stream: { kind: "workspace" } },
   );
   let body: Record<string, unknown>;
@@ -387,7 +390,7 @@ export async function createAgentIdentity(
       "The deployment accepted the agent identity without naming it, so this page cannot mint against it.",
     );
   }
-  return { principalId, name, model };
+  return { principalId, name, model: model ?? null };
 }
 
 /** A live credential. It is shown once, by definition, and is never persisted anywhere. */

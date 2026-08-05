@@ -58,6 +58,21 @@ test("every AgentConnect state exposes a correct h2 with no stale or skipped hea
   );
 });
 
+test("Add an agent asks only for a name and warns about the key when it exists", () => {
+  assert.match(connect, /Add the name collaborators will see in the feed\./);
+  assert.doesNotMatch(connect, /data-field(?:-wrap)?="model"|id="ac-models?"/);
+  assert.doesNotMatch(connect, /Add the model|Use the model name/);
+
+  const form = connect.slice(
+    connect.indexOf('<form class="ac__panel ac__form"'),
+    connect.indexOf('<div class="ac__panel" data-panel="working">'),
+  );
+  const result = connect.slice(connect.indexOf('<div class="ac__panel ac__result"'));
+  assert.doesNotMatch(form, /ac__warn/);
+  assert.match(result, /ac__warn[\s\S]*The key appears once, on this screen/);
+  assert.match(agentConnect, /model === undefined[\s\S]*create_agent_principal[\s\S]*model: model \?\? null/);
+});
+
 test("Done, Back, and first use converge on a channel return", () => {
   assert.match(connect, /commonswarm:agent-prompt-ready/);
   assert.doesNotMatch(connect, /commonswarm:agent-connected/);

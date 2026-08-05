@@ -24,7 +24,7 @@ test("participant groups retain empty people and collect unresolved agents", () 
   assert.equal(groups[2]?.agents[0]?.name, "orphan", "an unresolved owner must not hide its agent");
 });
 
-test("the dashboard nests each agent list under its owner row", () => {
+test("the dashboard flattens people and agents while naming each agent operator", () => {
   const start = dashboard.indexOf("const renderSidebarParticipants =");
   const end = dashboard.indexOf("const workspaceMenuItems =", start);
   assert.notEqual(start, -1);
@@ -32,9 +32,10 @@ test("the dashboard nests each agent list under its owner row", () => {
   const renderer = dashboard.slice(start, end);
 
   assert.match(renderer, /for \(const group of groupParticipantsByOwner\(members, agents\)\)/);
-  assert.match(renderer, /groupItem\.append\(personRow, nestedAgents\)/);
-  assert.match(renderer, /participantList\.append\(groupItem\)/);
-  assert.match(renderer, /badge\.textContent = "PERSON"/);
-  assert.match(renderer, /badge\.textContent = "AGENT"/);
-  assert.doesNotMatch(renderer, /operated by/, "nesting replaces repeated owner captions in the rail");
+  assert.match(renderer, /participantList\.append\(personRow\)/);
+  assert.match(renderer, /participantList\.append\(buildAgentRow\(agent, ownerName\)\)/);
+  assert.match(renderer, /meta\.textContent = `operated by \$\{ownerName\}`/);
+  assert.match(renderer, /name\.title = agent\.name/);
+  assert.doesNotMatch(renderer, /nestedAgents|sidebar-owner-(?:group|agents)/);
+  assert.doesNotMatch(renderer, /badge\.textContent = "(?:PERSON|AGENT)"/);
 });
