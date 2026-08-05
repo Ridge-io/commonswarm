@@ -1126,6 +1126,10 @@ default is what makes a missed type safe rather than wrong.
 
 **Not a defect introduced here, and deliberately not fixed in this branch.**
 
+**The finding, in one line:** the agent path fails loudly and bounded; the human
+path fails silently. Only the silent one can run for weeks without anyone
+knowing. Everything below is why.
+
 `readAgentSignalDirectory` (`signals.ts:937/942/946`) throws untagged plain
 Errors — `member read could not reach the cloud service`, `member read failed
 (HTTP n)`.
@@ -1144,11 +1148,17 @@ So a **direct CLI caller** (`cli.ts:1979`, `:2025`) does see
 (`cli.ts:2951` → `resolveSenderProvenance`) loses the status as well, and it
 loses it at the second layer rather than the first.
 
-One nuance the branch's own principle sharpens: the status survives as **prose
-for a human, not as data for a classifier**. There is no identity tag, so after
-D-058 nothing classifies on it — deliberately, because classifying on message
-text is the defect D-053 and D-058 removed. The status being readable and the
-status being usable are different properties, and only the first holds here.
+**Layer 1 preserves the status only in prose**, interpolated into a message
+string — which is exactly the representation this repo now forbids branching on:
+`error.message` is presentation, control flow uses types and codes. So the
+status survives in the one form no caller is permitted to use. That is why
+"preserves status" and "is undiagnosable" are both true at once, and it is the
+same defect shape as the branch itself, one layer up.
+
+Note the asymmetry this branch created: the signal read now **tags** status as
+identity (`plainHttpStatus`); the directory read does not. They no longer fail
+the same way, so any claim of parity between them is dead on arrival — an
+earlier draft of this entry asserted exactly that parity and was wrong.
 
 **The finding is diagnostic loss, scoped to the body fields at the directory
 layer and to everything at the listener layer.** It is not a claim about retry
@@ -1234,6 +1244,8 @@ entry: a failing directory read can silently downgrade prompt context with no
 signal to anyone.
 
 D-058 changed nothing about it: the `member read` prefix never matched the
-`signal read` regex either. It is a fourth surface of the same shape as D-051,
-it predates this workstream, and fixing it belongs in its own change with its
-own control.
+`signal read` regex either. It is a fourth surface of the same FAMILY as D-051 —
+server failure detail discarded before anyone can act on it — but not the same
+shape: D-051 was a client retrying through an instruction it never read, and
+this is a client that never captures the instruction at all. It predates this
+workstream, and fixing it belongs in its own change with its own control.
