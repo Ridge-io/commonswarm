@@ -1266,7 +1266,8 @@ test("D-051: one rejected write does not poison the rest of the supervisor's wri
 // restarts of work that cannot succeed. The set that failed open was exactly
 // the set the tests did not cover.
 //
-// This table drives EVERY error type the runtime can reach a fatal stop with.
+// This table drives every fatal error CLASS the runtime can reach a fatal stop
+// with, plus representative codes. It is NOT every code — see the test name.
 // It is also what stops the next error type silently acquiring a restart.
 // ---------------------------------------------------------------------------
 
@@ -1354,9 +1355,45 @@ const RESTART_MATRIX: ReadonlyArray<[string, Error, boolean]> = [
     "executable_missing",
     "the configured executable was not found",
   ), false],
-  ["acp spawn_failed", new AcpHostError("spawn_failed", "spawn failed"), false],
+  // false, and this does NOT assert permanence. One code covers two distinct
+  // causes and discards the OS error: a child spawn failure (claude.ts:327,
+  // inside child.once("error") — possibly EAGAIN/EMFILE and transient) and
+  // missing stdio after spawn (opencode.ts:798, grok.ts:180, claude.ts:353).
+  // The closed default is correct UNTIL the producers preserve or split the
+  // cause; the code is under-specified, not the verdict wrong.
+  ["acp spawn_failed (mixed causes)", new AcpHostError(
+    "spawn_failed",
+    "child missing stdio pipes",
+  ), false],
   ["acp busy", new AcpHostError("busy", "session busy"), false],
-  ["acp closed", new AcpProtocolError("transport closed", "closed"), false],
+  ["acp closed (AcpProtocolError)", new AcpProtocolError("transport closed", "closed"), false],
+  // busy is an AcpProtocolError, NOT a direct AcpHostError — verified at
+  // src/host/session.ts:451. An earlier row here used the wrong concrete type,
+  // certifying a verdict for a construction production never makes.
+  ["acp busy (AcpProtocolError)", new AcpProtocolError(
+    "prompt already in flight (sequential only)",
+    "busy",
+  ), false],
+  // Emitted only when promptInFlight is already true; the runtime is
+  // sequential, so reaching it is an invariant breach and an immediate retry
+  // has no coordination with the in-flight prompt.
+  ["acp pending_open_timeout", new AcpHostError(
+    "pending_open_timeout",
+    "opencode open did not settle",
+  ), false],
+  // The pending open may already have spawned a LIVE child and the home is
+  // retained, so restarting risks duplication rather than recovery.
+  ["acp cancelled_during_open", new AcpHostError(
+    "cancelled_during_open",
+    "listener model cancelled during open",
+  ), false],
+  // Caller/local lifecycle state, not a condition for retry: a later attempt
+  // would countermand a local cancellation and may open a replacement.
+  // NOT ESTABLISHED (Plumb ruled the retry verdict and declined the taxonomy):
+  // because this is an AcpHostError and not an AbortError, isAbort() is false,
+  // so the engine may record "failed" where "cancelled" or "received" would be
+  // right. This row asserts the RETRY verdict only. Its greenness is not a
+  // claim that the persistence taxonomy is correct.
 
   // --- unrecognised: must acquire NO decision ------------------------------
   ["plain TypeError", new TypeError("cannot read property of undefined"), false],

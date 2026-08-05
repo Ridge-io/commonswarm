@@ -1208,3 +1208,64 @@ Kept so the record is readable without re-deriving it.
 | 10 | `cli.ts:2327` cited as the `--follow` requires `--ndjson` enforcement. | Correct at the SHA it was written on; after main's additions `:2327` is the `"json"` flag entry. It still RESOLVES, to the wrong thing — the kind a reader believes. Repointed to the guard by symbol. | Plumb (merge-only) |
 | 9 | The label fallback "reports absence" and "tells the user something untrue". | `renderSignals:1344-1345` emits `${authorKind} ${signal.from}` and no absence marker. The two internal states are indistinguishable for label lookup. No user-visible claim was measured. | Plumb |
 
+
+---
+
+# Register — `spawn_failed` erases its cause (pre-existing, open)
+
+**Not fixed here.** Ruled by Plumb while adjudicating the recused codes; the
+verdict is not in dispute, the code's design is.
+
+## What was measured
+
+| # | Fact | Call site | How observed |
+|---|---|---|---|
+| 1 | `spawn_failed` is raised for an **OS child-spawn error**, inside a `child.once("error", …)` handler. | `src/host/claude.ts:327` (at 25dabb6) | Read. |
+| 2 | The same code is raised for **missing stdio after a successful spawn**. | `src/host/opencode.ts:798`, `grok.ts:180`, `claude.ts:353` (at 25dabb6) | Read. |
+| 3 | Neither producer preserves the underlying OS error. | same sites | Read: the constructor takes only a code and a literal message. |
+| 4 | `spawn_failed` is not in `TRANSIENT_ACP_CODES`, so it reaches "do not retry" through the closed default. | `src/host/types.ts` | Read. |
+
+## The finding
+
+**One code covers two causes with different transience and discards the
+evidence that would separate them.** An OS spawn failure can be `EAGAIN` or
+`EMFILE` — resource pressure that clears — while missing stdio after a
+successful spawn is a different condition entirely.
+
+The current verdict is **correct**: without the cause preserved, a caller cannot
+tell which it has, and the safe default is not to retry. **The code is
+under-specified, not the verdict wrong.**
+
+## What is not established
+
+- **Whether the OS-error arm is in practice transient.** No occurrence has been
+  observed; `EAGAIN`/`EMFILE` is the class of thing that reaches that handler,
+  not a measurement that it does.
+- **Whether splitting the code would change any real outcome.** That depends on
+  the first item.
+
+## Why it is not fixed here
+
+Fixing it means changing what the producers throw — a host-layer change with its
+own control, in a branch that is about the read path. The closed default keeps
+current behaviour safe until then.
+
+---
+
+# Not established — `cancelled_during_open` and the persistence taxonomy
+
+Plumb ruled the **retry verdict** for `cancelled_during_open` (false) and
+**explicitly declined** to establish whether the state the engine records is
+right. That declination is carried here rather than resolved, because it was
+not checked.
+
+`cancelled_during_open` is an `AcpHostError`, not an `AbortError`. `isAbort()`
+matches on `name === "AbortError"`, so a cancellation arriving as this code does
+not take the engine's cancellation branch and may be recorded as `failed`
+where `cancelled` or `received` would be right.
+
+**This is written as unestablished, not as a defect.** Reaching a verdict needs
+the reachability of that path during a real cancel to be traced, and that trace
+has not been done — not by Plumb, who declined it, and not here. The matrix row
+asserts the retry verdict only; its greenness is not a claim that the taxonomy
+is correct.
