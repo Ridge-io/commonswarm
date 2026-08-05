@@ -183,16 +183,22 @@ export type ListenerRuntimeStop =
  * Whether a stopped runtime is worth starting again (D-051 companion 2).
  *
  * Honouring `retryable: false` correctly turns a saturation failure into a
- * terminated receiver, and nothing in this repo restarts one. But the server
- * computes `retryable` from SQLSTATE, and a condition that clears on its own
- * still arrives here as fatal — so a bounded restart is what keeps a receiver
- * from being killed by a transient ceiling.
+ * terminated receiver. The server computes `retryable` from SQLSTATE, so a
+ * condition that clears on its own still arrives here as fatal — and a bounded
+ * restart is what keeps a receiver from being killed by a transient ceiling.
+ * The immediate veto and this outer recovery are different layers: the client
+ * still does not retry the refused read, and the supervisor may later start a
+ * fresh runtime.
  *
- * The line is drawn at "could the same read plausibly succeed later":
- * a cancelled run was the operator's decision, a credential failure and a 4xx
- * refusal will refuse identically forever, and a malformed body is a protocol
- * defect. Everything else — 5xx, transport, timeouts, a dead model child — is
- * worth a bounded number of further attempts.
+ * The line is drawn at "could the same read plausibly succeed later", and it is
+ * drawn by ENUMERATION, not by exclusion — see `isRestartableRuntimeError`.
+ *
+ * ~~Superseded (2026-08-05, dead), both written before D-057 closed the
+ * classification: "nothing in this repo restarts one" — false, this function is
+ * what restarts one, bounded, via `runListenerSupervisor`; and "Everything
+ * else — 5xx, transport, timeouts, a dead model child — is worth a bounded
+ * number of further attempts" — false, an unrecognised failure now returns
+ * false and acquires no decision.~~
  */
 export function isRestartableListenerStop(stop: ListenerRuntimeStop): boolean {
   if (stop.reason !== "fatal") return false;

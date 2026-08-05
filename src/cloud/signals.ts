@@ -505,14 +505,22 @@ function isTransportFollowMessage(error: unknown): boolean {
 /**
  * Whether a failed read could plausibly succeed on a later attempt.
  *
- * The single source for that judgement. `isRestartableListenerStop` (the
- * supervisor's bounded restart) and the follow CLI's exit status both call
- * this, so the two surfaces cannot drift into disagreeing about whether the
- * same failure is worth trying again.
+ * Scope: the READ path only. The follow CLI's exit status calls this directly;
+ * the supervisor's `isRestartableRuntimeError` delegates only its read-path
+ * portion here and decides delivery, command and ACP failures itself. Those two
+ * surfaces therefore agree about read failures by construction, which is the
+ * property worth having.
  *
- * A credential refusal and a 4xx will refuse identically forever, and a
- * malformed body is a protocol defect. Everything else — 5xx, a server
- * refusal, transport, timeouts — may clear on its own.
+ * ENUMERATED, not excluded (D-057): timeout, transport, and HTTP 429/5xx are
+ * restartable; everything else returns false and acquires no decision. A server
+ * refusal still restarts, because the `retryable: false` veto governs an
+ * IMMEDIATE retry of the same request, not whether a later run may work.
+ *
+ * ~~Superseded (2026-08-05, dead): "The single source for that judgement…so the
+ * two surfaces cannot drift" — false since D-057 gave the runtime its own closed
+ * classifier; and "Everything else — 5xx, a server refusal, transport,
+ * timeouts — may clear on its own", which states the rule by exclusion when it
+ * is now an enumeration.~~
  */
 export function isRestartableReadError(error: unknown): boolean {
   if (error instanceof SignalReadTimeoutError) return true;
