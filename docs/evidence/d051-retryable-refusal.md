@@ -447,7 +447,14 @@ and also means a server-side misclassification propagates straight to us.
 **Implementation:** Verity, 2026-08-05, same branch. Found by Wren's parser
 flagging the line UNPARSED during the paired A/B.
 
-`inbox --follow` requires `--ndjson` (enforced by the `if (!args.has("ndjson")) throw` guard in `runSignalRead`; the bare line `cli.ts:2327` cited here previously now resolves to the `"json"` flag entry — see the correction history) and the connect prompt
+`inbox --follow` requires `--ndjson` (enforced by the `if (!args.has("ndjson")) throw` guard in `runSignalRead`; the bare line `cli.ts:2327` cited here previously was correct **at 6d5a478**,
+where it is the outer `if (inbox && args.has("follow"))` guard with the ndjson
+enforcement at `:2328-2329` — verified at that SHA. After main's additions
+`:2327` resolves to the `"json"` flag entry instead. It still RESOLVES, to the
+wrong thing, which is the kind a reader believes; found by Plumb on the merge.
+The SHA was recovered with `git log -S 'cli.ts:2327'`, which finds the commit
+that introduced the citation and is therefore by construction the SHA at which
+it was true) and the connect prompt
 points non-Grok hosts at it, so the stream is machine-consumed by definition.
 The terminal condition was written as bare text:
 
@@ -1205,7 +1212,6 @@ Kept so the record is readable without re-deriving it.
 | 6 | `cli.ts:2025` surfaces the status. | All four of its call sites wrap it in `settleSignalAuthorLabels`. | Plumb |
 | 7 | `settleSignalAuthorLabels` "loses everything". | It converts a failure into a success carrying empty maps — indistinguishable from an empty workspace. | ClaudeCswarm |
 | 8 | "Exactly one consumer propagates." | The exported deprecated wrapper also propagates. The information had already been supplied and was dropped while compressing. | Plumb |
-| 10 | `cli.ts:2327` cited as the `--follow` requires `--ndjson` enforcement. | Correct at the SHA it was written on; after main's additions `:2327` is the `"json"` flag entry. It still RESOLVES, to the wrong thing — the kind a reader believes. Repointed to the guard by symbol. | Plumb (merge-only) |
 | 9 | The label fallback "reports absence" and "tells the user something untrue". | `renderSignals:1344-1345` emits `${authorKind} ${signal.from}` and no absence marker. The two internal states are indistinguishable for label lookup. No user-visible claim was measured. | Plumb |
 
 
@@ -1221,7 +1227,7 @@ verdict is not in dispute, the code's design is.
 | # | Fact | Call site | How observed |
 |---|---|---|---|
 | 1 | `spawn_failed` is raised for an **OS child-spawn error**, inside a `child.once("error", …)` handler. | `src/host/claude.ts:327` (at 25dabb6) | Read. |
-| 2 | The same code is raised for **missing stdio after a successful spawn**. | `src/host/opencode.ts:798`, `grok.ts:180`, `claude.ts:353` (at 25dabb6) | Read. |
+| 2 | The same code is raised for **missing stdio after `spawn()` returns** — which is not the same as a successful spawn. | `src/host/opencode.ts:798`, `grok.ts:180`, `claude.ts:353` (at 25dabb6) | Read. |
 | 3 | Neither producer preserves the underlying OS error. | same sites | Read: the constructor takes only a code and a literal message. |
 | 4 | `spawn_failed` is not in `TRANSIENT_ACP_CODES`, so it reaches "do not retry" through the closed default. | `src/host/types.ts` | Read. |
 
@@ -1229,8 +1235,8 @@ verdict is not in dispute, the code's design is.
 
 **One code covers two causes with different transience and discards the
 evidence that would separate them.** An OS spawn failure can be `EAGAIN` or
-`EMFILE` — resource pressure that clears — while missing stdio after a
-successful spawn is a different condition entirely.
+`EMFILE` — resource pressure that clears — while missing stdio after `spawn()`
+returns is a different condition entirely.
 
 The current verdict is **correct**: without the cause preserved, a caller cannot
 tell which it has, and the safe default is not to retry. **The code is
@@ -1254,10 +1260,10 @@ current behaviour safe until then.
 
 # Not established — `cancelled_during_open` and the persistence taxonomy
 
-Plumb ruled the **retry verdict** for `cancelled_during_open` (false) and
-**explicitly declined** to establish whether the state the engine records is
-right. That declination is carried here rather than resolved, because it was
-not checked.
+Plumb ruled the **retry verdict** for `cancelled_during_open` (false) and left
+the question of whether the state the engine records is right **unprobed** — it
+scoped its ruling rather than refusing the question. That scope is carried here
+rather than resolved, because nobody has checked it.
 
 `cancelled_during_open` is an `AcpHostError`, not an `AbortError`. `isAbort()`
 matches on `name === "AbortError"`, so a cancellation arriving as this code does
@@ -1266,6 +1272,6 @@ where `cancelled` or `received` would be right.
 
 **This is written as unestablished, not as a defect.** Reaching a verdict needs
 the reachability of that path during a real cancel to be traced, and that trace
-has not been done — not by Plumb, who declined it, and not here. The matrix row
+has not been done — not by Plumb, which scoped its ruling to retry, and not here. The matrix row
 asserts the retry verdict only; its greenness is not a claim that the taxonomy
 is correct.

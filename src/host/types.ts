@@ -102,8 +102,10 @@ export type HostSessionOptions = {
  * the ACP boundary, never one the peer supplied.
  *
  * Membership is opt-in and the default is "do not retry". An omitted code is
- * PERMANENT **or** UNSAFE TO REPEAT — Plumb's wording, and the disjunction is
- * the point: those are different reasons and collapsing them loses the second.
+ * PERMANENT, **or** UNSAFE TO REPEAT, **or** UNDER-SPECIFIED — three different
+ * reasons, and collapsing them loses whichever is not named. `spawn_failed` is
+ * the third: one code covers a possibly-transient OS spawn error and a missing
+ * stdio pipe, and discards the OS cause, so no caller can tell which it has.
  * `child_exit_timeout` is the clearest case of the second: the child may still
  * be ALIVE, so repeating the work is unsafe rather than merely futile, and it
  * has no rebuild path either.

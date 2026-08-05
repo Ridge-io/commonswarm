@@ -1358,14 +1358,14 @@ const RESTART_MATRIX: ReadonlyArray<[string, Error, boolean]> = [
   // false, and this does NOT assert permanence. One code covers two distinct
   // causes and discards the OS error: a child spawn failure (claude.ts:327,
   // inside child.once("error") — possibly EAGAIN/EMFILE and transient) and
-  // missing stdio after spawn (opencode.ts:798, grok.ts:180, claude.ts:353).
+  // missing stdio after spawn() RETURNS (opencode.ts:798, grok.ts:180,
+  // claude.ts:353) — which is not the same as a successful spawn.
   // The closed default is correct UNTIL the producers preserve or split the
   // cause; the code is under-specified, not the verdict wrong.
   ["acp spawn_failed (mixed causes)", new AcpHostError(
     "spawn_failed",
     "child missing stdio pipes",
   ), false],
-  ["acp busy", new AcpHostError("busy", "session busy"), false],
   ["acp closed (AcpProtocolError)", new AcpProtocolError("transport closed", "closed"), false],
   // busy is an AcpProtocolError, NOT a direct AcpHostError — verified at
   // src/host/session.ts:451. An earlier row here used the wrong concrete type,
@@ -1389,7 +1389,8 @@ const RESTART_MATRIX: ReadonlyArray<[string, Error, boolean]> = [
   ), false],
   // Caller/local lifecycle state, not a condition for retry: a later attempt
   // would countermand a local cancellation and may open a replacement.
-  // NOT ESTABLISHED (Plumb ruled the retry verdict and declined the taxonomy):
+  // NOT ESTABLISHED (Plumb ruled the retry verdict and left the taxonomy
+  // unprobed — it scoped its ruling, it did not refuse the question):
   // because this is an AcpHostError and not an AbortError, isAbort() is false,
   // so the engine may record "failed" where "cancelled" or "received" would be
   // right. This row asserts the RETRY verdict only. Its greenness is not a
