@@ -99,9 +99,16 @@ export type HostSessionOptions = {
 
 /**
  * Assigned codes whose failure may clear on a later attempt. Codes WE set at
- * the ACP boundary, never one the peer supplied. Every other code — a version
- * refusal, a failed permission canary, a protocol defect, blocked prompts —
- * will fail identically next time.
+ * the ACP boundary, never one the peer supplied.
+ *
+ * Membership is opt-in and the default is "do not retry". Omission does NOT
+ * assert that a code fails identically next time — codes are omitted for
+ * different reasons, and `child_exit_timeout` is the clearest: the child may
+ * still be ALIVE, so repeating the work is unsafe rather than merely futile.
+ * ~~Superseded (2026-08-05, dead): "Every other code — a version refusal, a
+ * failed permission canary, a protocol defect, blocked prompts — will fail
+ * identically next time."~~ That was false the moment a code was omitted for
+ * safety rather than futility.
  *
  * Shared by the engine's prompt-retry decision and the supervisor's restart
  * decision so the two cannot drift into disagreeing about the same failure.

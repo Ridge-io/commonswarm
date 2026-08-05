@@ -54,6 +54,7 @@ import {
 } from "../src/cloud/command-client.js";
 import {
   AcpChildExitError,
+  AcpHostError,
   AcpPermissionCanaryError,
   AcpPromptsBlockedError,
   AcpProtocolError,
@@ -1339,6 +1340,17 @@ const RESTART_MATRIX: ReadonlyArray<[string, Error, boolean]> = [
   ["renewal reauth", new RenewalReauthorisationRequired("horizon_reached", null, "sign in again"), false],
   ["renewal revoked", new RenewalRevoked("revoked", "the credential was revoked"), false],
 
+  // --- AcpHostError codes constructed directly, not via a subclass ---------
+  // child_exit_timeout is terminal for a distinct reason: the child may still
+  // be ALIVE, so repeating the work is unsafe rather than merely futile.
+  ["acp child_exit_timeout", new AcpHostError(
+    "child_exit_timeout",
+    "ACP child did not exit after SIGTERM and SIGKILL",
+  ), false],
+  ["acp spawn_failed", new AcpHostError("spawn_failed", "spawn failed"), false],
+  ["acp busy", new AcpHostError("busy", "session busy"), false],
+  ["acp closed", new AcpProtocolError("transport closed", "closed"), false],
+
   // --- unrecognised: must acquire NO decision ------------------------------
   ["plain TypeError", new TypeError("cannot read property of undefined"), false],
   ["plain Error", new Error("something nobody has classified"), false],
@@ -1369,7 +1381,13 @@ const RESTART_MATRIX: ReadonlyArray<[string, Error, boolean]> = [
   ), false],
 ];
 
-test("D-057: every fatal error type the runtime can emit has an explicit restart verdict", () => {
+// NOTE the scope in the name. This table enumerates the typed error CLASSES the
+// runtime can reach a fatal stop with, plus representative directly-constructed
+// AcpHostError codes. It is NOT every code: `new AcpHostError(<code>, …)` is
+// used with 30+ ad-hoc codes across src/host, and those reach `false` through
+// the closed default rather than through a row here. That is safe but it is not
+// enumeration, and an earlier version of this name claimed it was.
+test("D-057: every fatal error CLASS, and representative codes, has an explicit restart verdict", () => {
   const wrong: string[] = [];
   for (const [name, error, expected] of RESTART_MATRIX) {
     const actual = isRestartableListenerStop({ reason: "fatal", error });
