@@ -425,9 +425,16 @@ What this does and does not mean:
   a per-request coin flip independent of load, reducing client request volume
   does not reduce the proportion that fail. Anyone reading a post-deploy
   improvement as vindication of this change would be reading noise.
-- **The server-side cause remains unknown**, and Wren has explicitly declined
-  to offer a third mechanism after two died. The six `request_id`s plus
-  dashboard access are still the only route to the SQLSTATE.
+- ~~**Superseded 2026-08-05, dead:** "The server-side cause remains unknown, and
+  Wren has explicitly declined to offer a third mechanism after two died. The six
+  `request_id`s plus dashboard access are still the only route to the
+  SQLSTATE."~~ **The cause is now known.** The operator pulled the logs: the
+  500s are **pooler exhaustion (`EMAXCONNSESSION`)** — see
+  `docs/evidence/2026-08-05-production-500s-root-cause.md` (landed on
+  `lead/d054-production-logs` as 1802e65). Two consequences for this document:
+  the `request_id`s are no longer the only route, and — see below —
+  `retryable: false` names a **transient** condition, which refutes the premise
+  D-056 was resolved on.
 
 Also unresolved and worth an operator's attention: the server sends
 `retryable: false` on these. `read/diagnostics.ts` derives that from
@@ -539,6 +546,22 @@ the client-behaviour comparison stands either way.
 ---
 
 # D-056 — OPEN pre-deploy decision: does the follow loop need bounded recovery?
+
+> ★ **REOPENED 2026-08-05, later the same day, BY ITS OWN SETTLING CONDITION.**
+> This section wrote its own falsifier: *"if the operator pulls the `request_id`
+> logs and `retryable: false` turns out to be a real classification naming a
+> genuinely permanent ceiling, then dying immediately is correct and the
+> argument for recovery collapses."* **The operator pulled the logs and it
+> resolved the other way.** `retryable: false` names **pooler exhaustion**
+> (`EMAXCONNSESSION`), which is the definition of a transient condition — see
+> `docs/evidence/2026-08-05-production-500s-root-cause.md`. The premise the
+> withdrawal rested on is refuted, so the argument for bounded recovery is
+> un-withdrawn by evidence rather than by anyone re-arguing it.
+>
+> **Not reopened in this branch** — operator direction: it becomes its own lane
+> off `main` once this one lands. The resolution below is kept intact because
+> the reasoning that produced it is still the right reasoning against the facts
+> it had; what changed is the facts.
 
 **Status: RESOLVED 2026-08-05 — no bounded recovery. Verity withdrew its own
 argument; see "Why the argument for recovery fails" below.** The original
