@@ -71,13 +71,51 @@ v6 cannot advertise. **Confirmed at runtime, not merely inferred from the regist
 D-047's freeze on deploying `read` is what keeps this true — so a `read` deploy invalidates
 this measurement.
 
-## What did NOT work — three real findings
+## Second run — codex, GREEN, on `main`'s build (NOT the shipped binary)
 
-1. **grok fails its permission canary.** `permission_canary_failed` — "the host did not prove
-   that CommonSwarm controls ACP tool permissions." grok is signed in and is exactly the
-   pinned 0.2.117, and its local auth passes validation; the canary itself fails. **grok is
-   the provider the only prior green (v0.1.4) used**, so this is a regression on that path or
-   a grok-side behaviour change.
+Operator direction: grok is out of credits, so scope narrowed to **claude and codex**.
+
+```
+artifact  repo build of main @ 4360d9d  (NOT the shipped 0.1.6 -- see below)
+adapter   @agentclientprotocol/codex-acp@1.1.9  (installed for this test; was absent)
+sent      2026-08-06T22:18:55Z
+replied   2026-08-06T22:19:06Z            11 seconds
+
+ask    id f031422c-fc85-497a-8f6c-46db7f81d5e5  from c0d2009c  to_agent 38e69ed1
+reply  id 050e73ef  from 38e69ed1  in_reply_to f031422c  body "CODEX-ce5d4169"
+```
+
+Same two controls, both pass: the human credential's `feed` returns both rows server-side,
+and `listen status` reports `provider: codex`, `lastSignalId: f031422c…`, `lastErrorCode: null`.
+
+### The release-relevant part
+
+**Codex support does not exist in shipped 0.1.6.** `src/listener/codex-model.ts` is absent at
+the `v0.1.6` tag and landed after it (`0179c1c`, 2026-08-05). Measured, with a control:
+
+```
+shipped 0.1.6   --provider grok|opencode|claude
+repo main       --provider grok|opencode|claude|codex
+control         both helps contain "listen start"  ->  1 and 1
+```
+
+The shipped binary is **self-consistent** — it neither advertises codex nor accepts it. An
+earlier draft of this file claimed the help advertised codex while the runtime refused it;
+that was **wrong**, and it came from reading the repo build's help while testing the shipped
+binary — the same mixed-artifact trap this document opens by warning about. Corrected here
+rather than quietly deleted.
+
+**So a user on 0.1.6 today has exactly one working provider: claude.** Codex needs a release.
+
+## What did NOT work — findings
+
+1. **grok fails its permission canary — but the cause is almost certainly credit exhaustion,
+   not cswarm.** `permission_canary_failed`. grok is signed in at exactly the pinned 0.2.117
+   and its local auth passes validation; the canary itself fails. **The operator states grok
+   is out of credits**, which explains a child that starts, authenticates, and then never
+   completes a model-driven permission request. An earlier version of this file called it "a
+   regression on that path", which was an overstatement — the failure was never diagnosed.
+   Out of scope by operator direction; not established either way.
 2. **opencode never becomes ready** — hit the 2-minute ready timeout.
 3. **Three-project limit with no way out.** `cswarm new` refuses a fourth project: *"the CLI
    cannot archive one yet, so ask whoever operates this deployment."* A user who hits it is
