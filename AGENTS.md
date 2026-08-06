@@ -136,6 +136,48 @@ you which are debris and which are unique before anyone prunes.
 durable — that is what `docs/evidence/` is for. A completion claim whose evidence cannot
 be re-read later is not evidence.
 
+## Session continuity — read this before you start, write it before you stop
+
+**Where to pick up: the newest `docs/org/*-RESUME-HERE.md` on `main`.**
+
+```sh
+ls -1 docs/org/*RESUME-HERE.md | sort | tail -1     # the current one
+```
+
+Read it before re-deriving anything. It exists because sessions end abruptly — a context
+runs out, a laptop sleeps, an operator stops for the night — and **a handoff that lives in
+chat is a correction in a message**: it never reaches whoever opens the repo tomorrow.
+
+**It lives on `main`, and that is load-bearing.** The first one was written on a feature
+branch, where a fresh session starting from `main` would never have found it. Docs-only, so
+land it deliberately as an ungated docs commit rather than parking it on the branch it
+happens to describe.
+
+### What a resume file must contain
+
+Written for a successor who is reading the repo cold, not a continuation of your own
+context — the successor inherits your confusions along with your facts otherwise.
+
+1. **Refs by hash.** Branch names and version strings have both been wrong here. Say which
+   ref carries what, and mark anything RED as red with its cause.
+2. **What is LIVE** — deployed, landed, running in production — separated from what is
+   merely written. *Pushed ≠ landed ≠ applied.*
+3. **The next concrete action**, specific enough to start without a decision: a file, a
+   line, a command.
+4. **What is deliberately DEFERRED.** Without this the next session rebuilds what you
+   consciously chose to skip, or worse, treats the gap as an oversight and "fixes" it.
+5. **What was NOT established.** Carry the unestablished list forward; it is the part that
+   rots into false confidence fastest.
+6. **Corrections to claims you already published.** Commit messages cannot be edited and
+   reviewers quote them. If a claim in one is wrong, the resume file is where it gets
+   corrected — say so explicitly, keep the superseded wording, mark it dead.
+
+### While you work
+
+Anything an operator would need to act on goes in a durable artifact **as you learn it**,
+not in a summary at the end. `scratchpad/` is gitignored; `docs/evidence/` and `docs/org/`
+are not. A session that ends unexpectedly should still leave the repo honest.
+
 ## Verification
 
 The distilled operative rules. Full doctrine, with the incidents that produced it, is in

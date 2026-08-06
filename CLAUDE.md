@@ -5,6 +5,12 @@
 The instructions above are the whole brief — `AGENTS.md` is the canonical copy so that
 every agent CLI reads the same thing. Keep edits there, not here.
 
+- **Start by reading the newest `docs/org/*-RESUME-HERE.md` on `main`**
+  (`ls -1 docs/org/*RESUME-HERE.md | sort | tail -1`), and **write one before you stop.**
+  It is how a session survives running out of context or being ended mid-flight. AGENTS.md
+  §"Session continuity" says what it must contain — refs by hash, live vs merely written,
+  the next concrete action, what was deliberately deferred, what was not established, and
+  corrections to claims already published in commit messages.
 - Before committing, confirm which branch the working tree is on. This checkout is shared
   with other agents and is frequently not `main`.
 - Prefer `npm run test:p1-cli` for a fast, service-free signal while iterating. Run
