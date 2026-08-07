@@ -270,6 +270,31 @@ message before it was refuted.
 If you are verifying your own work, you are checking that it does what you intended. That is worth
 doing and it is not a control.
 
+## A control can discriminate and still pin the wrong claim
+
+Verity, 2026-08-07, after a copy control it had cleared turned out to be enforcing an
+overclaim:
+
+> "I checked that the control existed, that it was mutation-verified, and that it
+> discriminated. **I never asked what it pinned.** A test asserting the wrong string is green
+> and stays green, and mutation-testing proves it discriminates — it cannot tell you it is
+> discriminating *toward a false claim*."
+
+Measured instance: a CLI line said sign-out ended **every session for this identity**. The
+endpoint revokes refresh tokens and cannot revoke already-issued access JWTs, so the claim was
+false — and the test *required* the string `/every session/`, so the suite actively defended
+it. Two reviewers had cleared the control. It was a real test with a real mutation control,
+and it held a lie in place.
+
+**For any control over WORDS — copy, error text, docs assertions — "does it discriminate" and
+"does it pin the right claim" are independent questions, and only the second catches an
+overclaim.** Check the assertion against the *thing being described*, not against the
+implementation: an implementation and a test that agree with each other prove only that they
+agree. The reviewer who caught this read the assertion against the release note.
+
+This is the coverage-vs-code distinction one level in. `npm test` passing tells you a test ran;
+a green copy control tells you a string is stable. Neither tells you the string is true.
+
 ## Two traps that manufacture a confident zero
 
 Both fired on 2026-08-05, in one session, to two different agents.
