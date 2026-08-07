@@ -45,6 +45,7 @@ import {
   resolveSignalRecipient,
   followErrorEnvelope,
   DEFAULT_REFUSAL_TOLERANCE_MS,
+  MAX_REFUSAL_TOLERANCE_MS,
   resolveRefusalToleranceMs,
   runInboxFollow,
   SIGNAL_FOLLOW_PAGE_LIMIT,
@@ -1383,6 +1384,80 @@ test("D-051: retryable:false stops the read loop; the same 500 retries without i
   assert.notEqual(refused.retryFrames, permitted.retryFrames);
 });
 
+test("D-056 independent control (Plumb, adapted): recovered refusals do not spend a process-lifetime budget", async () => {
+  // NON-AUTHOR CONTROL. Written by Plumb against 31829df, where it was RED: it
+  // caught that `refusals` was a process-lifetime counter that never recovered
+  // after a success, so a healthy receiver meeting ISOLATED refusals died.
+  //
+  // ADAPTED, and the adaptation is disclosed because it could hide the defect:
+  // the option changed from a count (`refusalTolerance: 1`) to a time window
+  // (`refusalToleranceMs`), so the original cannot compile. Plumb's no-op
+  // `sleep` also means wall clock never advances, which would make ANY time
+  // budget inexhaustible -- so the clock here advances by exactly the delay the
+  // code asks for, which is what a real clock does. The contrast it tests --
+  // one continuous burst vs two recovered incidents -- is unchanged.
+  type Outcome = "ok" | "refused";
+  const run = async (outcomes: readonly Outcome[]) => {
+    const controller = new AbortController();
+    const frames: FollowFrame[] = [];
+    let reads = 0;
+    let clockMs = 1_700_000_000_000;
+    const stop = await runInboxFollow({
+      workspaceId: WORKSPACE,
+      refusalToleranceMs: 400,
+      now: () => clockMs,
+      random: () => 0,
+      pollMs: 0,
+      postEmitMs: 0,
+      sleep: async (ms: number) => {
+        clockMs += ms;
+      },
+      signal: controller.signal,
+      arm: async () => {
+        const outcome = outcomes[reads];
+        if (outcome === undefined) {
+          controller.abort();
+          return [];
+        }
+        reads += 1;
+        if (outcome === "refused") {
+          throw new SignalHttpError(500, null, {
+            error: "internal_error",
+            requestId: D051_REQUEST_ID,
+            retryable: false,
+          });
+        }
+        return [];
+      },
+      emit: (frame) => frames.push(frame),
+    });
+    return { frames, reads, stop };
+  };
+
+  // POSITIVE CONTROL: a continuous burst must still exhaust the budget. If
+  // recovery made the bound disappear, this would run to the outcome list's end
+  // and stop as "cancelled" instead -- i.e. the fielded unbounded loop, back on.
+  const burst = await run(["ok", "refused", "refused", "refused", "refused"]);
+  assert.equal(
+    burst.stop.reason,
+    "error",
+    "a continuous burst must still terminate on its own, not be cancelled by the harness",
+  );
+
+  // THE DEFECT ARM: refusals separated by SUCCESSES. Nothing here is a burst, so
+  // the budget must never exhaust and the receiver must still be alive when the
+  // outcomes run out.
+  const recovered = await run([
+    "ok", "refused", "ok", "refused", "ok", "refused", "ok", "refused", "ok",
+  ]);
+  assert.equal(
+    recovered.stop.reason,
+    "cancelled",
+    "a receiver that recovers between refusals must outlive a per-burst budget",
+  );
+  assert.equal(recovered.reads, 9, "every scripted outcome must be consumed");
+});
+
 test("D-056: the refusal budget env knob resolves safely", async () => {
   // A REAL product knob -- a supervised host sets 0 to restore the strict D-051
   // veto. It is also the seam that lets the e2e cases run without sleeping a
@@ -1403,6 +1478,18 @@ test("D-056: the refusal budget env knob resolves safely", async () => {
   // A negative clamps to the strict veto rather than reading as "infinite" --
   // the sign is far more likely a typo than an intent to remove the bound.
   assert.equal(resolveRefusalToleranceMs("-1"), 0);
+
+  // AND THE UPPER END, which is the sharper hazard (Verity): an extra zero would
+  // otherwise buy a ~7-day budget, i.e. the unbounded retry of 0.1.6 that this
+  // change exists to replace -- re-created silently through the knob added to
+  // prevent it.
+  assert.equal(resolveRefusalToleranceMs("600000000"), MAX_REFUSAL_TOLERANCE_MS);
+  assert.equal(resolveRefusalToleranceMs("Infinity"), DEFAULT_REFUSAL_TOLERANCE_MS);
+
+  // CONTROL for the clamp: a value UNDER the ceiling must pass through unchanged,
+  // or the assertion above would also pass if the function simply always clamped.
+  assert.equal(resolveRefusalToleranceMs("45000"), 45000);
+  assert.ok(MAX_REFUSAL_TOLERANCE_MS > DEFAULT_REFUSAL_TOLERANCE_MS);
 
   // CONTROL: the default must not itself be 0, or every assertion above passes
   // for the wrong reason.

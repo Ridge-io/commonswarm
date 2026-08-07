@@ -1609,7 +1609,11 @@ export function decayFollowAttempt(attempt: number): number {
  * is ~420s that is under 1%, so the receiver died anyway and the fix only
  * looked like one. The budget is therefore the WINDOW to survive, and the
  * existing 30s backoff cap bounds the request count that falls out of it:
- * roughly 6 attempts across 60s.
+ * at most 9 attempts across 60s (that is the worst case at random()=0; ~6 is
+ * typical mid-jitter). The 30s backoff cap is irrelevant at this budget — it
+ * saves ONE request, because the ladder only reaches 30s at attempt 7 and the
+ * window closes at 8-9. The cap only starts to matter if the budget is ever
+ * raised past ~120s, which is the trigger to revisit it.
  *
  * 60s DELIBERATELY DOES NOT COVER THE WHOLE OBSERVED FAULT. The measured upper
  * bound for a pooler burst is ~420s, and a budget that long means a receiver
@@ -1644,17 +1648,26 @@ export const DEFAULT_REFUSAL_TOLERANCE_MS = 60_000;
  *
  * Unset, empty, or unparseable falls back to the default rather than throwing —
  * a receiver must not fail to start because an env var has a typo, and the
- * default is the safe behaviour either way. Negative values clamp to 0 (strict
- * veto) rather than being treated as "infinite", since the sign is more likely a
- * mistake than an intent to disable the bound.
+ * default is the safe behaviour either way.
+ *
+ * CLAMPED AT BOTH ENDS, and the upper end is the one that matters (Verity).
+ * Negative clamps to 0 (strict veto): the sign is likelier a mistake than an
+ * intent to remove the bound. But an unbounded upper end is the sharper
+ * hazard — `600000000` is a ~7-day budget, which is functionally the unbounded
+ * retry of 0.1.6 that this change exists to REPLACE. An operator adding a zero
+ * by accident would silently re-create the fielded failure through the very
+ * knob added to prevent it, so the ceiling closes that.
  */
+export const MAX_REFUSAL_TOLERANCE_MS = 10 * 60_000;
+
 export function resolveRefusalToleranceMs(raw: string | undefined): number {
   if (raw === undefined || raw.trim() === "") {
     return DEFAULT_REFUSAL_TOLERANCE_MS;
   }
   const parsed = Number(raw);
   if (!Number.isFinite(parsed)) return DEFAULT_REFUSAL_TOLERANCE_MS;
-  return parsed < 0 ? 0 : parsed;
+  if (parsed < 0) return 0;
+  return Math.min(parsed, MAX_REFUSAL_TOLERANCE_MS);
 }
 
 export function isRetryableFollowError(error: unknown): boolean {
