@@ -322,6 +322,13 @@ later survivors. An author asking "is X right" hands the
 reviewer X as the unit; the sweep has to reset that or it cannot find a sibling claim inside the
 same sentence.
 
+**The weak one of these is claim-granularity, and it is worth knowing why** (Verity, whose rule
+it is). The trigger fires on something visible in a diff. Granularity fires on a *habit you
+cannot see* — the unit of review you already adopted, usually set by the question you were
+asked. A reviewer has to apply it to themselves mid-review, which is the hardest kind of rule to
+follow. If it turns out not to stop anyone, that is the reason, and it should be replaced rather
+than reworded.
+
 This is the coverage-vs-code distinction one level in. `npm test` passing tells you a test ran;
 a green copy control tells you a string is stable. Neither tells you the string is true.
 
