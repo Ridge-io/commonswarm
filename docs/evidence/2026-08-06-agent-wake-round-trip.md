@@ -107,6 +107,32 @@ rather than quietly deleted.
 
 **So a user on 0.1.6 today has exactly one working provider: claude.** Codex needs a release.
 
+## Third run — COLD recipient, GREEN. The stricter reading of "idle" also holds.
+
+The first two runs measured "idle" as *listener resident, model asleep*. The stricter reading —
+**the recipient is not running at all** — was flagged as unestablished, then tested:
+
+```
+01:35:16Z   ask sent while recipient is COLD (verified: no listener, no adapter process)
+01:35:36Z   ask --wait 20 TIMED OUT, reply: none          <- nobody home, as expected
+01:36:00Z   listener started
+            listen status  -> lastSignalId 281be62d-a7e5-4b35-8c7c-93aca1131756
+            reply d93d4c25, in_reply_to 281be62d, body "COLD-2b492e80"
+```
+
+**The message persisted in the cloud and woke the agent on startup.** The reply is bound to that
+specific ask by `in_reply_to` and carries the send-time nonce, so this is the cold ask being
+answered — not a fresh interaction that happened to follow.
+
+The intermediate timeout is itself a useful control: it proves nothing was listening when the
+ask was sent, so the later reply cannot be explained by a resident process.
+
+**So both readings of "idle" are satisfied**, and the earlier caveat in this file — that a
+recipient with no listener process "is not woken; the message waits in the inbox" — is
+**superseded**: it does wait, and starting the listener wakes the agent with it. What is *not*
+established is any push to a machine with nothing running; a process must start for the wake to
+land.
+
 ## What did NOT work — findings
 
 1. **grok fails its permission canary — but the cause is almost certainly credit exhaustion,

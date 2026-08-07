@@ -43,11 +43,19 @@ measurement.**
 codex does not exist in the shipped binary (`codex-model.ts` is absent at the `v0.1.6` tag;
 landed after, `0179c1c`). That materially raises the value of shipping 0.1.7.
 
-### Semantics the operator should confirm
+### Both readings of "idle" hold — including the cold one
 
-"Idle" that this system supports = **listener resident, model asleep**. A recipient with *no
-listener process* is **not** woken; the message waits in the inbox. Say this plainly in any
-copy rather than implying cold wake.
+- **Resident listener, model asleep** → woken, replies in 9-11s.
+- **Nothing running at all** → the ask times out with no reply (nobody home), the message
+  persists in the cloud, and **starting the listener wakes the agent with it**: measured
+  `lastSignalId` = the cold ask, reply bound by `in_reply_to` and carrying the nonce.
+
+The intermediate timeout is the control that makes the cold result meaningful — it proves
+nothing was listening when the ask was sent.
+
+~~Superseded: "a recipient with no listener process is not woken; the message waits in the
+inbox."~~ It waits AND wakes the agent on start. What is not established is any push to a
+machine with nothing running — a process must start for the wake to land.
 
 ---
 
