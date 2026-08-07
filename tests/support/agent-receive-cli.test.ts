@@ -44,6 +44,9 @@ import {
   readSignals,
   resolveSignalRecipient,
   followErrorEnvelope,
+  DEFAULT_REFUSAL_TOLERANCE_MS,
+  MAX_REFUSAL_TOLERANCE_MS,
+  resolveRefusalToleranceMs,
   runInboxFollow,
   SIGNAL_FOLLOW_PAGE_LIMIT,
   SIGNAL_FOLLOW_POLL_MS,
@@ -1273,7 +1276,24 @@ function d051Body(retryable: boolean | null): string {
  * stubbed 500 whose body differs ONLY in `retryable`. Counts requests, because
  * requests are the thing that fed the saturation.
  */
-async function d051FollowRun(errorBody: string): Promise<{
+async function d051FollowRun(
+  errorBody: string,
+  // D-056 added BOUNDED tolerance for server refusals, which changes how many
+  // times a refused loop fetches. These D-051 cases assert the VETO itself --
+  // that a refusal is not retried immediately and is distinguishable from a
+  // permitted retry -- so they pin tolerance to 0 and keep testing exactly what
+  // they were written to test. The tolerance has its own cases below.
+  refusalToleranceMs = 0,
+  // Default 4 preserves the bound the D-051 cases were written against; only the
+  // tolerance cases, which legitimately make more requests, raise it.
+  maxFetches = 4,
+  // Outcomes for reads AFTER the first (which always succeeds so the stream
+  // reaches ready). Default: refuse everything, the consecutive-burst shape.
+  // Verity's adversarial case needs the ISOLATED shape -- a success between every
+  // refusal -- which no existing case could express, and which is exactly where a
+  // lifetime budget and a per-burst budget diverge.
+  outcomes: readonly boolean[] | null = null,
+): Promise<{
   fetches: number;
   retryFrames: number;
   frames: FollowFrame[];
@@ -1285,10 +1305,11 @@ async function d051FollowRun(errorBody: string): Promise<{
   let fetches = 0;
   const fetcher = (async () => {
     fetches += 1;
-    if (fetches === 1) {
+    const scripted = outcomes === null ? false : (outcomes[fetches - 2] ?? false);
+    if (fetches === 1 || scripted) {
       return new Response(
         JSON.stringify({
-          signals: [row()],
+          signals: fetches === 1 ? [row()] : [],
           capabilities: { sender_owner_relation: 1, cursor_after: 1 },
         }),
         { status: 200, headers: { "content-type": "application/json" } },
@@ -1299,16 +1320,27 @@ async function d051FollowRun(errorBody: string): Promise<{
       headers: { "content-type": "application/json" },
     });
   }) as typeof fetch;
+  // The clock must ADVANCE. The refusal budget is a time window, so a frozen
+  // clock would make it inexhaustible and every tolerance case would measure the
+  // harness bound instead of the budget. Sleeping advances it by exactly the
+  // delay the code asked for, which is what a real clock would do.
+  let clockMs = 1_700_000_000_000;
   const stop = await runInboxFollow({
     workspaceId: WORKSPACE,
-    now: () => 1_700_000_000_000,
+    now: () => clockMs,
     random: () => 0,
     pollMs: 0,
     postEmitMs: 0,
-    // Bounds a retrying arm so the loop cannot spin forever. A refusing arm
-    // never reaches a retry sleep, so this hook cannot mask its behaviour.
-    sleep: async () => {
-      if (fetches >= 4) controller.abort();
+    refusalToleranceMs,
+    // Bounds a retrying arm so the loop cannot spin forever.
+    // ~~"A refusing arm never reaches a retry sleep, so this hook cannot mask
+    // its behaviour."~~ DEAD as of D-056: a TOLERATED refusal now does reach the
+    // sleep. Any case asserting that the CODE stopped must assert
+    // stop.reason === "error" -- "cancelled" means this harness stopped the loop,
+    // not the logic under test.
+    sleep: async (ms: number) => {
+      clockMs += ms;
+      if (fetches >= maxFetches) controller.abort();
     },
     signal: controller.signal,
     arm: async () =>
@@ -1350,6 +1382,197 @@ test("D-051: retryable:false stops the read loop; the same 500 retries without i
   // broken and the assertions above would prove nothing.
   assert.notEqual(refused.fetches, permitted.fetches);
   assert.notEqual(refused.retryFrames, permitted.retryFrames);
+});
+
+test("D-056 independent control (Plumb, adapted): recovered refusals do not spend a process-lifetime budget", async () => {
+  // NON-AUTHOR CONTROL. Written by Plumb against 31829df, where it was RED: it
+  // caught that `refusals` was a process-lifetime counter that never recovered
+  // after a success, so a healthy receiver meeting ISOLATED refusals died.
+  //
+  // ADAPTED, and the adaptation is disclosed because it could hide the defect:
+  // the option changed from a count (`refusalTolerance: 1`) to a time window
+  // (`refusalToleranceMs`), so the original cannot compile. Plumb's no-op
+  // `sleep` also means wall clock never advances, which would make ANY time
+  // budget inexhaustible -- so the clock here advances by exactly the delay the
+  // code asks for, which is what a real clock does. The contrast it tests --
+  // one continuous burst vs two recovered incidents -- is unchanged.
+  type Outcome = "ok" | "refused";
+  const run = async (outcomes: readonly Outcome[]) => {
+    const controller = new AbortController();
+    const frames: FollowFrame[] = [];
+    let reads = 0;
+    let clockMs = 1_700_000_000_000;
+    const stop = await runInboxFollow({
+      workspaceId: WORKSPACE,
+      refusalToleranceMs: 400,
+      now: () => clockMs,
+      random: () => 0,
+      pollMs: 0,
+      postEmitMs: 0,
+      sleep: async (ms: number) => {
+        clockMs += ms;
+      },
+      signal: controller.signal,
+      arm: async () => {
+        const outcome = outcomes[reads];
+        if (outcome === undefined) {
+          controller.abort();
+          return [];
+        }
+        reads += 1;
+        if (outcome === "refused") {
+          throw new SignalHttpError(500, null, {
+            error: "internal_error",
+            requestId: D051_REQUEST_ID,
+            retryable: false,
+          });
+        }
+        return [];
+      },
+      emit: (frame) => frames.push(frame),
+    });
+    return { frames, reads, stop };
+  };
+
+  // POSITIVE CONTROL: a continuous burst must still exhaust the budget. If
+  // recovery made the bound disappear, this would run to the outcome list's end
+  // and stop as "cancelled" instead -- i.e. the fielded unbounded loop, back on.
+  const burst = await run(["ok", "refused", "refused", "refused", "refused"]);
+  assert.equal(
+    burst.stop.reason,
+    "error",
+    "a continuous burst must still terminate on its own, not be cancelled by the harness",
+  );
+
+  // THE DEFECT ARM: refusals separated by SUCCESSES. Nothing here is a burst, so
+  // the budget must never exhaust and the receiver must still be alive when the
+  // outcomes run out.
+  const recovered = await run([
+    "ok", "refused", "ok", "refused", "ok", "refused", "ok", "refused", "ok",
+  ]);
+  assert.equal(
+    recovered.stop.reason,
+    "cancelled",
+    "a receiver that recovers between refusals must outlive a per-burst budget",
+  );
+  assert.equal(recovered.reads, 9, "every scripted outcome must be consumed");
+});
+
+test("D-056: the refusal budget env knob resolves safely", async () => {
+  // A REAL product knob -- a supervised host sets 0 to restore the strict D-051
+  // veto. It is also the seam that lets the e2e cases run without sleeping a
+  // production minute. Untested env parsing is how `--local` shipped unusable
+  // while every gate was green, so this covers the surface, not just the function.
+  assert.equal(resolveRefusalToleranceMs(undefined), DEFAULT_REFUSAL_TOLERANCE_MS);
+  assert.equal(resolveRefusalToleranceMs(""), DEFAULT_REFUSAL_TOLERANCE_MS);
+  assert.equal(resolveRefusalToleranceMs("   "), DEFAULT_REFUSAL_TOLERANCE_MS);
+
+  // A supervised host disabling tolerance.
+  assert.equal(resolveRefusalToleranceMs("0"), 0);
+  assert.equal(resolveRefusalToleranceMs("3000"), 3000);
+
+  // Garbage must not stop a receiver from starting; the default is safe either way.
+  assert.equal(resolveRefusalToleranceMs("banana"), DEFAULT_REFUSAL_TOLERANCE_MS);
+  assert.equal(resolveRefusalToleranceMs("NaN"), DEFAULT_REFUSAL_TOLERANCE_MS);
+
+  // PLUMB'S FAIL-OPEN CONTROL. "O" is the likeliest typo for an intended strict
+  // "0", and it lands on the default -- so a host asking for NO tolerance gets
+  // 60s of it. The value stays (malformed -> 0 would kill receivers of anyone
+  // who fat-fingered a LARGE value, which is the D-056 failure itself), but it
+  // must never be silent.
+  const typoWarnings: string[] = [];
+  assert.equal(
+    resolveRefusalToleranceMs("O", (m) => typoWarnings.push(m)),
+    DEFAULT_REFUSAL_TOLERANCE_MS,
+  );
+  assert.equal(typoWarnings.length, 1, "a malformed knob must announce itself");
+  assert.match(typoWarnings[0]!, /not a number/);
+
+  // ...and the clamp path, the second silent path (Verity).
+  const clampWarnings: string[] = [];
+  resolveRefusalToleranceMs("900000", (m) => clampWarnings.push(m));
+  assert.equal(clampWarnings.length, 1, "a clamped knob must announce itself");
+  assert.match(clampWarnings[0]!, /ceiling/);
+
+  // CONTROL: unset is NOT a mistake -- no intent was expressed -- so it must
+  // stay silent, or the warning becomes noise everyone learns to ignore.
+  const quiet: string[] = [];
+  resolveRefusalToleranceMs(undefined, (m) => quiet.push(m));
+  resolveRefusalToleranceMs("", (m) => quiet.push(m));
+  resolveRefusalToleranceMs("45000", (m) => quiet.push(m));
+  assert.deepEqual(quiet, [], "unset, empty, and valid values must not warn");
+
+  // A negative clamps to the strict veto rather than reading as "infinite" --
+  // the sign is far more likely a typo than an intent to remove the bound.
+  assert.equal(resolveRefusalToleranceMs("-1"), 0);
+
+  // AND THE UPPER END, which is the sharper hazard (Verity): an extra zero would
+  // otherwise buy a ~7-day budget, i.e. the unbounded retry of 0.1.6 that this
+  // change exists to replace -- re-created silently through the knob added to
+  // prevent it.
+  assert.equal(resolveRefusalToleranceMs("600000000"), MAX_REFUSAL_TOLERANCE_MS);
+  assert.equal(resolveRefusalToleranceMs("Infinity"), DEFAULT_REFUSAL_TOLERANCE_MS);
+
+  // CONTROL for the clamp: a value UNDER the ceiling must pass through unchanged,
+  // or the assertion above would also pass if the function simply always clamped.
+  assert.equal(resolveRefusalToleranceMs("45000"), 45000);
+  assert.ok(MAX_REFUSAL_TOLERANCE_MS > DEFAULT_REFUSAL_TOLERANCE_MS);
+
+  // CONTROL: the default must not itself be 0, or every assertion above passes
+  // for the wrong reason.
+  assert.ok(DEFAULT_REFUSAL_TOLERANCE_MS > 0);
+});
+
+test("D-056: refusals are tolerated for a bounded WINDOW, then the loop stops", async () => {
+  // The fault: pooler exhaustion reaches `read` as a generic XX000, which is not
+  // in that function's RETRYABLE_CODES, so a TRANSIENT busy spell is reported as
+  // permanent. Honouring it killed an unsupervised receiver on its first burst.
+  const strict = await d051FollowRun(d051Body(false), 0);
+  const tolerant = await d051FollowRun(d051Body(false), 60_000, 40);
+
+  // "error" and not "cancelled" proves the LOGIC ended the loop. The harness also
+  // aborts, so "it stopped" is otherwise ambiguous and this case would be measuring
+  // the harness rather than the budget.
+  assert.equal(tolerant.stop.reason, "error");
+  assert.equal(strict.stop.reason, "error");
+
+  // THE CONTROL. Equal counts would mean tolerance did nothing.
+  assert.notEqual(tolerant.fetches, strict.fetches);
+  assert.equal(strict.fetches, 2);
+
+  // Time-based, not count-based: the tolerated delays must actually cover the
+  // window. A fixed budget of 3 attempts bought 1.75s against a ~420s fault and
+  // only looked like a fix.
+  const tolerated = tolerant.frames.filter((f) => f.type === "retrying");
+  const covered = tolerated.reduce((sum, f) => sum + f.delay_ms, 0);
+  assert.ok(
+    covered >= 60_000,
+    `tolerated delays must span the budget, got ${covered}ms across ${tolerated.length}`,
+  );
+  for (const frame of tolerated) {
+    assert.equal(frame.reason, "server_refused_tolerated");
+    // Tolerance without delay would be the amplification the veto prevents.
+    assert.ok(frame.delay_ms > 0);
+  }
+});
+
+test("D-056: the budget is PER BURST -- isolated refusals never exhaust it", async () => {
+  // Verity's adversarial control, and it found a real defect: the counter was
+  // never reset, so the budget was per-LIFETIME. A healthy long-lived receiver
+  // meeting isolated refusals hours apart -- a success between every one -- died
+  // for no reason. Every other case uses consecutive refusals and cannot tell the
+  // two apart.
+  const isolated = await d051FollowRun(
+    d051Body(false),
+    60_000,
+    12,
+    [false, true, false, true, false, true, false, true, false, true],
+  );
+  assert.equal(
+    isolated.stop.reason,
+    "cancelled",
+    "a receiver that recovers between refusals must still be alive when the harness stops it",
+  );
 });
 
 test("D-051: the refusal is surfaced with the server's request_id", async () => {
