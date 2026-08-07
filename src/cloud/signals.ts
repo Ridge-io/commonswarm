@@ -1618,8 +1618,12 @@ export function decayFollowAttempt(attempt: number): number {
  * 60s DELIBERATELY DOES NOT COVER THE WHOLE OBSERVED FAULT. The measured upper
  * bound for a pooler burst is ~420s, and a budget that long means a receiver
  * sits silent for seven minutes, which is its own bad outcome. So this covers
- * SHORT spells in process and leaves longer ones to a restart -- which is what
- * exit 75 is for. Do not let a release note imply it survives the full window.
+ * SHORT spells in process. State the longer case as what is IMPLEMENTED rather
+ * than as what it enables (Plumb): a spell outlasting the window ends the
+ * session with the terminal frame and exit 75, and IT STAYS ENDED unless an
+ * external supervisor or a person restarts it. Nothing shipped consumes exit
+ * 75 today -- it marks the stop as restartable, it does not restart anything.
+ * Do not let a release note imply it survives the full window.
  *
  * That rate is the honest comparison, and it is against the FIELDED
  * alternative rather than against silence: 0.1.6 retries this same fault
