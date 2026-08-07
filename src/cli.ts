@@ -9,6 +9,7 @@ import type { Command } from "./protocol/index.js";
 import {
   login,
   logout,
+  logoutMessage,
   refreshedCredential,
   type RefreshedCredential,
 } from "./cloud/auth.js";
@@ -174,6 +175,7 @@ const BOOLEAN_FLAGS = new Set([
   "invitation-token-stdin",
   "json",
   "link-stdin",
+  "local",
   "ndjson",
   "no-browser",
 ]);
@@ -319,7 +321,7 @@ function usage(): string {
 
 Usage:
   cswarm login [--url <project-url> --anon-key <key>] [--no-browser]
-  cswarm logout [--url <project-url> --anon-key <key>] [--all-devices]
+  cswarm logout [--url <project-url> --anon-key <key>] [--all-devices] [--local]
   cswarm target [show] [--json]
   cswarm target set --url <project-url> --anon-key <key> [--json]
   cswarm target clear [--json]
@@ -3685,7 +3687,7 @@ async function main(): Promise<void> {
     return;
   }
   if (verb === "logout") {
-    args.assertShape([...TARGET_FLAGS, "device", "all-devices"], 1);
+    args.assertShape([...TARGET_FLAGS, "device", "all-devices", "local"], 1);
     if (args.optional("device") !== undefined) {
       throw new Error(
         "--device is deferred until the server-side device authority endpoint ships",
@@ -3694,18 +3696,19 @@ async function main(): Promise<void> {
     const cloud = await target(args);
     const credentials = await store(args, cloud);
     const allDevices = args.has("all-devices");
-    const removed = await logout(
+    const localOnly = args.has("local");
+    if (localOnly && allDevices) {
+      throw new Error(
+        "--local clears only this device and never contacts the server, so it cannot be combined with --all-devices",
+      );
+    }
+    const outcome = await logout(
       cloud,
       credentials,
       allDevices ? "global" : "local",
+      { localOnly },
     );
-    process.stdout.write(
-      removed
-        ? allDevices
-          ? "Logged out on all devices. Every refresh session for this identity was revoked for account-wide containment.\n"
-          : "Logged out on this device. Other machines stay signed in so collaborators are not disrupted.\n"
-        : "Already logged out.\n",
-    );
+    process.stdout.write(logoutMessage(outcome, allDevices));
     return;
   }
   if (verb === "invite") {
