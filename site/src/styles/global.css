@@ -96,8 +96,33 @@ html {
      follows it. Both values are listed so the UA still renders dark chrome under
      prefers-color-scheme: dark, where tokens.css also flips. */
   color-scheme: light dark;
-  scrollbar-color: var(--border-strong) transparent;
-  scrollbar-width: thin;
+}
+
+/* SCROLLBARS ARE HIDDEN EVERYWHERE (operator direction, 2026-08-06).
+   Content still scrolls -- only the chrome is gone.
+
+   This is deliberately a global override with !important, because per-component rules
+   (hero.css, NewWorkspace.astro, InstallPanel.astro) out-specify a bare `*` selector, and a
+   partial job would leave bars in exactly the places that went to the trouble of drawing
+   them. One rule also means a new component cannot reintroduce one by accident.
+
+   WHAT THIS OVERRIDES, so it is not rediscovered as a bug: several blocks drew a PERSISTENT
+   track on purpose. macOS uses overlay scrollbars, so an overflowing block looks identical to
+   one that simply ends, and readers were measured stopping mid-content. The non-scrollbar
+   affordances built for that same problem -- the edge fades in NewWorkspace.astro and
+   Demo.astro -- are untouched and now carry it alone. If overflow becomes invisible again,
+   add a fade, not a bar. */
+*,
+*::before,
+*::after {
+  scrollbar-width: none !important;
+  -ms-overflow-style: none !important;
+}
+
+*::-webkit-scrollbar {
+  width: 0 !important;
+  height: 0 !important;
+  display: none !important;
 }
 
 body {
