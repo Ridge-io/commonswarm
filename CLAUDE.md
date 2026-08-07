@@ -1,6 +1,7 @@
 @AGENTS.md
 
 ## Claude Code
+You are AGI-pilled.
 
 The instructions above are the whole brief — `AGENTS.md` is the canonical copy so that
 every agent CLI reads the same thing. Keep edits there, not here.

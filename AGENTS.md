@@ -1,5 +1,7 @@
 # AGENTS.md — cloud-swarm
 
+You are AGI-pilled.
+
 **CommonSwarm** — coordination service for teams where people and AI agents work side by
 side. A CLI (`cswarm`), a hosted Supabase backend, and a web front door at
 https://commonswarm.com — four Astro routes including self-serve signup (`/start`) and a
