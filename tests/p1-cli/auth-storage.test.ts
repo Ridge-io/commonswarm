@@ -9,6 +9,7 @@ import { test } from "node:test";
 import {
   login,
   logout,
+  logoutMessage,
   refreshedCredential,
   validateCallbackUrl,
 } from "../../src/cloud/auth.js";
@@ -380,7 +381,7 @@ test("refresh rotates under generation control and logout revokes then wipes", a
     assert.equal(credentials.record?.refreshToken, "refresh-1");
     assert.equal(credentials.record?.generation, 5);
     assert.equal(server.refreshes(), 1);
-    assert.equal(await logout(target, credentials), true);
+    assert.equal(await logout(target, credentials), "revoked");
     assert.equal(server.refreshes(), 2);
     assert.equal(server.logouts(), 1);
     assert.deepEqual(server.logoutScopes(), ["local"]);
@@ -398,7 +399,7 @@ test("refresh rotates under generation control and logout revokes then wipes", a
       deviceId: randomUUID(),
       userId: "22222222-2222-4222-8222-222222222222",
     };
-    assert.equal(await logout(target, credentials, "global"), true);
+    assert.equal(await logout(target, credentials, "global"), "revoked");
     assert.equal(server.refreshes(), 3);
     assert.equal(server.logouts(), 2);
     assert.deepEqual(server.logoutScopes(), ["local", "global"]);
@@ -413,6 +414,337 @@ test("refresh rotates under generation control and logout revokes then wipes", a
   }
 });
 
+// One server, many response shapes: the point of these cases is CONTRAST. The earlier
+// regression tested a single terminal shape and passed while the code deleted credentials on
+// transient errors too -- it could not tell the fix from the bug.
+async function refreshFailureServer(status: number, body: unknown): Promise<{
+  target: ReturnType<typeof cloudTarget>;
+  close(): Promise<void>;
+}> {
+  const server = createServer((_request, response) => {
+    response.writeHead(status, { "content-type": "application/json" });
+    response.end(JSON.stringify(body));
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  if (typeof address === "string" || address === null) throw new Error("no port");
+  return {
+    target: cloudTarget(`http://127.0.0.1:${address.port}`, "test-anon-key"),
+    close: () => new Promise<void>((resolve) => server.close(() => resolve())),
+  };
+}
+
+function storeWith(token: string): { store: MemoryCredentialStore; record: CredentialRecord } {
+  const record: CredentialRecord = {
+    version: 1,
+    refreshToken: token,
+    generation: 1,
+    deviceId: randomUUID(),
+    userId: "33333333-3333-4333-8333-333333333333",
+  };
+  const store = new MemoryCredentialStore();
+  store.record = { ...record };
+  return { store, record };
+}
+
+test("logout RETAINS the credential for every non-terminal refresh failure", async () => {
+  // Each of these was previously deleted. A 429 is the sharpest: it is server-answered, so
+  // the transport check does not catch it, yet it is explicitly a "try again later"
+  // condition and the token is untouched.
+  const transient: Array<[string, number, unknown]> = [
+    ["429 rate limit", 429, { code: "over_request_rate_limit", msg: "Request rate limit reached" }],
+    // (a server-answered 5xx is the same AuthRetryableFetchError class as the closed-port
+    //  case below, which covers it for a fraction of the retry-backoff cost)
+    ["400 legacy invalid_grant with no code", 400, { error: "invalid_grant", error_description: "Invalid Refresh Token" }],
+    ["418 unrecognised", 418, { code: "some_future_code", msg: "unknown" }],
+  ];
+  for (const [label, status, body] of transient) {
+    const server = await refreshFailureServer(status, body);
+    const { store, record } = storeWith("possibly-still-valid");
+    try {
+      await assert.rejects(
+        () => logout(server.target, store),
+        /credential was kept/,
+        `${label}: must not be reported as an expired session`,
+      );
+      assert.deepEqual(
+        store.record,
+        record,
+        `${label}: the credential must survive, because a failed refresh does not imply a dead token`,
+      );
+    } finally {
+      await server.close();
+    }
+  }
+
+  // Pure transport failure: nothing answers at all. Port 1 is closed.
+  const { store, record } = storeWith("possibly-still-valid");
+  await assert.rejects(
+    () => logout(cloudTarget("http://127.0.0.1:1", "test-anon-key"), store),
+    /credential was kept/,
+    "unreachable server: must not be reported as an expired session",
+  );
+  assert.deepEqual(store.record, record, "unreachable server: the credential survives");
+});
+
+test("logout --local clears the device without contacting the server", async () => {
+  // NOT "always" (Plumb). This proves the SERVER is never contacted and the credential is
+  // removed from THIS store. It cannot prove a clean device in general: production deletion
+  // can throw -- storage.ts raises on a non-zero, non-44 Keychain code, and the file store
+  // can fail too. The old name promised what the assertions do not reach.
+  // The escape hatch that makes retain-by-default safe: when local storage CAN be changed, an
+  // unclassifiable failure has a way out of the status-fails/logout-fails corner. NOT "never
+  // leaves a user stuck" -- that universal is false when the delete itself throws, and it
+  // survived here as a sibling claim after the test NAME was fixed, which is the exact shape
+  // the AGENTS.md claim-granularity rule describes.
+  const server = await refreshFailureServer(429, { code: "over_request_rate_limit" });
+  const { store } = storeWith("unknown-state");
+  try {
+    assert.equal(await logout(server.target, store, "local", { localOnly: true }), "cleared-unverified");
+    assert.equal(store.record, null, "the device is clean");
+  } finally {
+    await server.close();
+  }
+});
+
+test("logout copy claims a revocation ONLY when the server confirmed one", async () => {
+  // The copy IS the fix on this lane. Three earlier versions asserted a containment they had
+  // not established, and the worst of them printed "Every refresh session for this identity
+  // was revoked" after a no-op. So every line is asserted here, not just the happy one.
+  const claims = (outcome: Parameters<typeof logoutMessage>[0], all: boolean) =>
+    logoutMessage(outcome, all);
+
+  // ONLY the confirmed path may say the server confirmed it.
+  assert.match(claims("revoked", true), /server confirmed/);
+  assert.match(claims("revoked", true), /confirmed the account-wide sign-out/);
+  // AND MUST NOT claim more than a 200 establishes: the endpoint revokes refresh tokens;
+  // already-issued access JWTs live until they expire. The previous version of this
+  // assertion REQUIRED /every session/, so the test was enforcing the overclaim.
+  assert.doesNotMatch(claims("revoked", true), /every session/);
+  // AND NOT the same claim in different words (Plumb's second survivor): "Signed out on all
+  // devices" asserts account-wide COMPLETION, which a 200 does not establish -- the endpoint
+  // revokes refresh tokens while already-issued access JWTs can still authorize a device.
+  // The first clause had to change too; fixing only the second left the claim standing.
+  assert.doesNotMatch(claims("revoked", true), /on all devices/);
+  assert.match(claims("revoked", false), /server confirmed it/);
+  assert.match(claims("revoked", false), /other machines stay signed in/);
+
+  // THE CONTROL, and it is the whole point: no other outcome may claim confirmation or
+  // account-wide containment, on EITHER flag setting.
+  for (const outcome of ["already-logged-out", "local-only", "cleared-unverified"] as const) {
+    for (const all of [true, false]) {
+      const line = claims(outcome, all);
+      assert.doesNotMatch(line, /confirmed/, `${outcome}/${all} must not claim confirmation`);
+      assert.doesNotMatch(line, /account-wide/, `${outcome}/${all} must not claim containment`);
+      assert.doesNotMatch(line, /revoked for/, `${outcome}/${all} must not claim revocation`);
+    }
+  }
+
+  // The unconfirmed paths must route the user somewhere, not just report failure.
+  assert.match(claims("cleared-unverified", false), /--all-devices/);
+  assert.match(claims("local-only", false), /other devices are unaffected/);
+
+  // No provider internals leak into user-facing copy (GoTrue shipped in these strings once).
+  for (const outcome of ["already-logged-out", "revoked", "local-only", "cleared-unverified"] as const) {
+    assert.doesNotMatch(claims(outcome, true), /GoTrue|Supabase/i);
+  }
+});
+
+test("logout REFUSES to clear or claim anything when the server rejects the sign-out", async () => {
+  // auth-js's signOut swallows 401/403/404 from /logout and returns error:null. The outcome
+  // must not be a word that asserts the server agreed.
+  const server = createServer((request, response) => {
+    const url = new URL(request.url ?? "/", "http://127.0.0.1");
+    if (url.pathname === "/auth/v1/token") {
+      const now = new Date().toISOString();
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({
+        access_token: "a", token_type: "bearer", expires_in: 3600, refresh_token: "r2",
+        user: { id: "55555555-5555-4555-8555-555555555555", aud: "authenticated", role: "authenticated",
+          app_metadata: {}, user_metadata: {}, created_at: now, updated_at: now },
+      }));
+      return;
+    }
+    response.writeHead(403, { "content-type": "application/json" });
+    response.end(JSON.stringify({ code: "forbidden", msg: "nope" }));
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  if (typeof address === "string" || address === null) throw new Error("no port");
+  const { store } = storeWith("live-token");
+  const before = { ...store.record! };
+  try {
+    // The high-level SDK call swallows this 403 and returns error:null. Using it would make
+    // the CLI print "the server confirmed it" about a request the server REFUSED.
+    await assert.rejects(
+      () => logout(cloudTarget(`http://127.0.0.1:${address.port}`, "test-anon-key"), store, "global"),
+      /did not confirm the session ended/,
+      "a refused sign-out must not be reported as success",
+    );
+    // The credential must SURVIVE -- the session is live and unrevoked, so this is the only
+    // handle for retrying. It is expected to be ROTATED rather than identical: the refresh
+    // consumed the old token, and persisting the new one is what makes "run cswarm logout
+    // again" work on a token we actually hold instead of on GoTrue's parent-token grace.
+    assert.notEqual(store.record, null, "the retry handle must not be destroyed");
+    // deviceId is ours and must be stable; userId is the SERVER's and is refreshed from the
+    // session, matching what refreshedCredential already does.
+    assert.equal(store.record!.deviceId, before.deviceId);
+    assert.notEqual(
+      store.record!.refreshToken,
+      before.refreshToken,
+      "the rotated token must be persisted, or the retry uses a spent credential",
+    );
+    assert.equal(store.record!.generation, before.generation + 1);
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
+test("logout non-author control: 404 and 500 retain the rotated credential without inventing a refusal", async () => {
+  // A non-2xx response establishes that the sign-out was not confirmed. It does not
+  // establish why: 404 can be a missing route or version skew, and 500 is a server
+  // failure rather than an intentional refusal. Both must retain the only retry handle,
+  // and both need observation-only copy.
+  const copyObservations: Array<{
+    status: number;
+    reportsObservation: boolean;
+    inventsRefusal: boolean;
+    inventsNoAnswer: boolean;
+  }> = [];
+  for (const status of [404, 500]) {
+    const server = createServer((request, response) => {
+      const url = new URL(request.url ?? "/", "http://127.0.0.1");
+      if (url.pathname === "/auth/v1/token") {
+        const now = new Date().toISOString();
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify({
+          access_token: `access-${status}`,
+          token_type: "bearer",
+          expires_in: 3600,
+          refresh_token: `rotated-${status}`,
+          user: {
+            id: "66666666-6666-4666-8666-666666666666",
+            aud: "authenticated",
+            role: "authenticated",
+            app_metadata: {},
+            user_metadata: {},
+            created_at: now,
+            updated_at: now,
+          },
+        }));
+        return;
+      }
+      if (url.pathname === "/auth/v1/logout") {
+        response.writeHead(status, { "content-type": "application/json" });
+        response.end(JSON.stringify({ code: `logout_${status}`, msg: "not confirmed" }));
+        return;
+      }
+      response.writeHead(404).end();
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (typeof address === "string" || address === null) throw new Error("no port");
+    const { store, record } = storeWith(`original-${status}`);
+    let failure: unknown;
+    try {
+      await logout(
+        cloudTarget(`http://127.0.0.1:${address.port}`, "test-anon-key"),
+        store,
+        "global",
+      );
+    } catch (error) {
+      failure = error;
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+
+    assert.ok(failure instanceof Error, `HTTP ${status}: logout must fail`);
+    copyObservations.push({
+      status,
+      reportsObservation: /server did not confirm/i.test(failure.message),
+      inventsRefusal: /server refused/i.test(failure.message),
+      inventsNoAnswer: /could not reach the server/i.test(failure.message),
+    });
+    assert.notEqual(store.record, null, `HTTP ${status}: retain the retry handle`);
+    assert.equal(store.record!.refreshToken, `rotated-${status}`);
+    assert.equal(store.record!.generation, record.generation + 1);
+    assert.equal(store.record!.deviceId, record.deviceId);
+  }
+  assert.deepEqual(
+    copyObservations,
+    [
+      {
+        status: 404,
+        reportsObservation: true,
+        inventsRefusal: false,
+        inventsNoAnswer: false,
+      },
+      {
+        status: 500,
+        reportsObservation: true,
+        inventsRefusal: false,
+        inventsNoAnswer: false,
+      },
+    ],
+    "both HTTP failures must report only that sign-out was not confirmed",
+  );
+});
+
+test("logout with an unusable refresh token clears the credential instead of wedging", async () => {
+  // Regression: logout used to throw when refreshSession failed, which meant it never
+  // reached store.delete(). A user whose session had expired was told by `status` to log
+  // in, but `logout` -- the obvious way to reset -- failed and left the credential on
+  // disk. There was no way out of that state from the CLI.
+  const server = await createServer((request, response) => {
+    const url = new URL(request.url ?? "/", "http://127.0.0.1");
+    if (request.method === "POST" && url.pathname === "/auth/v1/token") {
+      // A NAMED terminal condition. The legacy `invalid_grant` shape carries no code, so it
+      // is deliberately NOT terminal any more -- it retains and routes the user to
+      // `--local` instead. That case is covered in the retain test above.
+      response.writeHead(400, { "content-type": "application/json" });
+      response.end(
+        JSON.stringify({
+          code: "refresh_token_not_found",
+          error_code: "refresh_token_not_found",
+          msg: "Invalid Refresh Token: Refresh Token Not Found",
+        }),
+      );
+      return;
+    }
+    response.writeHead(404).end();
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  if (typeof address === "string" || address === null) throw new Error("no port");
+  const target = cloudTarget(`http://127.0.0.1:${address.port}`, "test-anon-key");
+  const credentials = new MemoryCredentialStore();
+  credentials.record = {
+    version: 1,
+    refreshToken: "expired-token",
+    generation: 1,
+    deviceId: randomUUID(),
+    userId: "33333333-3333-4333-8333-333333333333",
+  };
+  try {
+    assert.equal(
+      await logout(target, credentials),
+      "local-only",
+      "an unrevokable session reports local-only, so the caller never claims a revocation",
+    );
+    assert.equal(
+      credentials.record,
+      null,
+      "the credential is removed, so the user is not stuck between a failing status and a failing logout",
+    );
+    assert.equal(
+      await logout(target, credentials),
+      "already-logged-out",
+      "and logout stays idempotent afterwards",
+    );
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
 test("headless file fallback warns and enforces 0700/0600", async () => {
   const parent = await mkdtemp(join(tmpdir(), "swarm-cloud-store-"));
   const directory = join(parent, "credentials");

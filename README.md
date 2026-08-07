@@ -265,10 +265,13 @@ unset SWARM_AGENT_TOKEN_INPUT
 the fresh response events in memory for display. Run `cswarm help`
 for its required flags.
 
-`logout` revokes only this machine's GoTrue session, then removes the local
-credential. Use `logout --all-devices` only when intentionally revoking every
-session for the identity. Remote device listing/renaming/revocation remains
-deferred.
+`logout` ends this machine's session and removes the local credential once the
+server confirms the sign-out; if the server does not confirm, the credential is
+kept and the command says so. `logout --local` clears this device without
+contacting the server. Use `logout --all-devices` only when intentionally
+requesting an account-wide sign-out: it revokes refresh sessions, while access tokens
+already issued stay valid until they expire. Remote device listing/renaming/revocation
+remains deferred.
 
 ### First-dogfood fixture bridge
 

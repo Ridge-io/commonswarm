@@ -3,6 +3,7 @@ import { createServer, type Server } from "node:http";
 import { spawn } from "node:child_process";
 import type { Readable, Writable } from "node:stream";
 import { createClient, type Session, type SupabaseClient } from "@supabase/supabase-js";
+import { isAuthRetryableFetchError } from "@supabase/auth-js";
 import {
   authStorageKey,
   CLIENT_PROTOCOL_VERSION,
@@ -544,7 +545,11 @@ export async function refreshedCredential(
       if (refreshed.error) {
         const afterFailure = await store.read();
         if (afterFailure && afterFailure.generation !== before.generation) continue;
-        throw new Error(`session refresh failed: ${refreshed.error.message}`);
+        // Expired, revoked, or rotated on another device all land here and all have the
+        // same remedy, so this deliberately does not classify — it tells the user what to
+        // do next instead of forwarding the provider's wording (§ error.message is
+        // presentation).
+        throw new Error("could not refresh your session; run cswarm login to sign in again");
       }
       const session = requireSession(refreshed.data.session);
       const current = await store.read();
@@ -565,27 +570,177 @@ export async function refreshedCredential(
   });
 }
 
+/** What logout actually achieved.
+ *
+ * ~~"`revoked` is deliberately NOT claimed for the account-wide case, because the library
+ * hides whether the server agreed."~~ DEAD, and it now says the OPPOSITE of the code: the
+ * high-level wrapper hides it, but `admin.signOut` does not, so `revoked` is claimed exactly
+ * when the server answered and accepted. What a 200 establishes is bounded, though -- the
+ * endpoint revokes refresh tokens and cannot revoke already-issued access JWTs before they
+ * expire, which is why the copy says "confirmed the sign-out" rather than "every session is
+ * ended". */
+export type LogoutOutcome =
+  | "already-logged-out"
+  /** The server ANSWERED and accepted the sign-out. The only outcome that may claim it. */
+  | "revoked"
+  | "local-only"
+  | "cleared-unverified";
+
+/**
+ * What to tell the user after `logout`, saying only what was observed.
+ *
+ * A pure function because the COPY is the fix here: three earlier versions of this command
+ * asserted a containment they had not established, and a string buried in a nested ternary
+ * inside main() is a string no test can reach. Every line below is covered.
+ */
+export function logoutMessage(
+  outcome: LogoutOutcome,
+  allDevices: boolean,
+): string {
+  switch (outcome) {
+    case "already-logged-out":
+      return "Already logged out.\n";
+    case "cleared-unverified":
+      return "Cleared this device. The server was not contacted, so any session it still " +
+        "holds is unchanged — sign in and run cswarm logout --all-devices if you need it revoked.\n";
+    case "local-only":
+      // States the OBSERVATION, not a cause. This fires for all four terminal codes, and
+      // only session_expired is expiry; after refresh_token_already_used a live session may
+      // exist elsewhere, so "nothing to revoke" is true of THIS handle and not the identity.
+      return "Signed out on this device. The server no longer accepts this credential, so " +
+        "there was nothing this device could revoke; other devices are unaffected.\n";
+    case "revoked":
+      return allDevices
+        // NOT "Signed out on all devices" (Plumb). That is the same account-wide completion
+        // claim in different words: the endpoint revokes refresh tokens, and already-issued
+        // access JWTs can still authorize a device until they expire. What is true is that
+        // THIS device is signed out and the account-wide request was accepted.
+        ? "Signed out on this device. The server confirmed the account-wide sign-out.\n"
+        : "Signed out on this device. The server confirmed it; other machines stay signed " +
+          "in so collaborators are not disrupted.\n";
+  }
+}
+
+/** Auth codes that mean this refresh token can never work again.
+ *
+ * CLOSED allowlist on purpose: anything not listed -- transient, rate-limited, or simply
+ * unrecognised -- RETAINS the credential. Deleting is irreversible, so the default has to be
+ * the reversible side. Measured shapes: a modern `400 refresh_token_not_found` carries
+ * `code`, while a legacy `400 invalid_grant` carries none, which is why the escape hatch
+ * below exists rather than a looser rule here. */
+const TERMINAL_REFRESH_CODES: ReadonlySet<string> = new Set([
+  "refresh_token_not_found",
+  "refresh_token_already_used",
+  "session_not_found",
+  "session_expired",
+]);
+
+/** True only when the server answered AND named a condition that can never recover. */
+function isTerminalRefreshFailure(error: unknown): boolean {
+  if (error === null || typeof error !== "object") return false;
+  const named = error as { name?: unknown; code?: unknown };
+  // A missing session is terminal by TYPE: there is nothing left to revoke.
+  if (named.name === "AuthSessionMissingError") return true;
+  return typeof named.code === "string" && TERMINAL_REFRESH_CODES.has(named.code);
+}
+
 export async function logout(
   target: CloudTarget,
   store: CredentialStore,
   scope: "local" | "global" = "local",
-): Promise<boolean> {
+  options: { localOnly?: boolean } = {},
+): Promise<LogoutOutcome> {
   return await store.withLock(async () => {
     const record = await store.read();
-    if (!record) return false;
+    if (!record) return "already-logged-out";
+    // The escape hatch. Asked for explicitly, so it needs no guess about the token's state:
+    // a user whose failure we cannot classify gets an explicit server-free deletion path.
+    // NOT "always has a way to a clean local state" -- the delete below can itself throw
+    // (storage.ts raises on a non-zero, non-44 Keychain code), so that holds only where
+    // local storage can be changed.
+    if (options.localOnly) {
+      await store.delete();
+      return "cleared-unverified";
+    }
     const memory = new MemoryStorage();
     const client = authClient(target, memory);
     const refreshed = await client.auth.refreshSession({
       refresh_token: record.refreshToken,
     });
     if (refreshed.error) {
-      throw new Error(`cannot revoke the GoTrue session: ${refreshed.error.message}`);
+      // RETAIN BY DEFAULT. Delete only for a positively recognised terminal condition.
+      // Everything else keeps the credential, because a failed refresh does NOT imply a
+      // dead token. Measured: a closed port yields AuthRetryableFetchError (status 0), and
+      // a 429 rate limit yields AuthApiError -- transient, server-answered, and previously
+      // deleted by this function. A rotated-but-lost response is also recoverable from the
+      // retained parent token, and deleting would destroy that handle.
+      if (!isTerminalRefreshFailure(refreshed.error)) {
+        throw new Error(
+          "could not confirm the session with the server, so your credential was kept; " +
+            "check your connection and run cswarm logout again, " +
+            "or run cswarm logout --local to clear this device without contacting the server",
+        );
+      }
+      await store.delete();
+      return "local-only";
     }
-    const signedOut = await client.auth.signOut({ scope });
+    // USE THE LOW-LEVEL CALL ON PURPOSE. The high-level `client.auth.signOut()` deliberately
+    // SWALLOWS 401/403/404 from /logout and returns error:null, so it can still clear local
+    // browser state -- measured: refresh 200 then logout 403 arrives here with no error at
+    // all. `admin.signOut` is the same request the wrapper makes, minus the swallowing, so
+    // this is using a lower layer of the SDK rather than reaching around it. Without this we
+    // cannot tell "the server revoked it" from "the server refused and we were not told",
+    // and the CLI would assert containment it never observed.
+    // PERSIST THE ROTATED TOKEN BEFORE ATTEMPTING THE REVOKE. The refresh above CONSUMED the
+    // stored token, so every failure path below tells the user to "run cswarm logout again"
+    // with a spent credential -- the retry would then depend on GoTrue's parent-token grace
+    // rather than on a token we hold.
+    //
+    // THE `generation` BUMP IS NOT BOOKKEEPING AND MUST NOT BE DROPPED (Verity).
+    // `generation` is a CONCURRENCY TOKEN: `refreshedCredential` above guards its retry loop
+    // on it (`current.generation !== before.generation` -> continue) and throws on a lost
+    // race. Writing the rotated refreshToken WITHOUT bumping it would let a concurrent
+    // refresher see an unchanged generation, conclude nothing had happened, and proceed
+    // against a token that had silently rotated underneath it -- a lost update, which is the
+    // exact class of defect this lane has produced three times. The bump is what makes this
+    // write participate in the protocol that already exists rather than race it.
+    const session = requireSession(refreshed.data.session);
+    await store.write({
+      ...record,
+      refreshToken: session.refresh_token,
+      generation: record.generation + 1,
+      userId: session.user.id,
+    });
+    const signedOut = await client.auth.admin.signOut(session.access_token, scope);
     if (signedOut.error) {
-      throw new Error(`GoTrue logout failed: ${signedOut.error.message}`);
+      // ONE MESSAGE FOR EVERY FAILURE, ON PURPOSE. The previous version split on
+      // isAuthApiError and named a cause -- "refused" vs "could not reach" -- and Plumb's
+      // non-author control showed that split is WRONG: a 500, where the server plainly
+      // ANSWERED, arrives as AuthRetryableFetchError and would have been reported as
+      // unreachable. That is this lane's own defect, committed inside the fix for it:
+      // asserting a cause the code did not establish. What we actually know is the same in
+      // every branch -- the sign-out was not confirmed -- so that is all this says.
+      //
+      // AND THE CREDENTIAL IS KEPT, whatever the reason. Retaining is the safe side: it
+      // preserves the retry handle, and a success or a later TERMINAL refresh resolves it
+      // automatically. NOT "self-clears" -- this suite itself proves that wrong, since a
+      // repeatable 429 or a code-less legacy invalid_grant is non-terminal and can recur
+      // indefinitely, so the refresh may never reach the local-only delete. `--local` is the
+      // explicit escape where storage can be changed. Classifying this response is the trap -- a 404 from /logout says
+      // nothing about the REFRESH token; it says this sign-out found no session to end, so
+      // deleting on it would infer one credential's state from a response about a different
+      // object.
+      throw new Error(
+        "signed in, but the server did not confirm the session ended; your credential was " +
+          "kept — run cswarm logout again, or run cswarm logout --local to clear this device " +
+          "without contacting the server",
+      );
     }
     await store.delete();
-    return true;
+    // Earned: admin.signOut bypasses the wrapper's 401/403/404 swallowing, so no error means
+    // the server answered and accepted. Note the SCOPE of what that establishes -- the
+    // endpoint revokes refresh tokens; already-issued access JWTs stay valid until they
+    // expire. The copy says "confirmed the sign-out", not "every session is ended".
+    return "revoked";
   });
 }

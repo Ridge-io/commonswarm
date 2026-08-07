@@ -270,6 +270,61 @@ message before it was refuted.
 If you are verifying your own work, you are checking that it does what you intended. That is worth
 doing and it is not a control.
 
+## A control can discriminate and still pin the wrong claim
+
+**TRIGGER: if a test asserts on a string a user will read, you are reviewing a CLAIM, not a
+behaviour.** Nothing else in this section fires until you notice that, which is the difference
+between a rule and a post-mortem — the reviewer who missed it did not fail to know this, they
+failed to realise it was the moment for it.
+
+**"Does it discriminate" and "does it pin the right claim" are independent questions, and only
+the second catches an overclaim.** Check the assertion against the **authority for the claim —
+what the system actually does** — not against another document of ours. *An implementation and
+a test that agree with each other prove only that they agree*, and so do two of our own
+artefacts.
+
+Measured instance, 2026-08-07: a CLI line said sign-out ended **every session for this
+identity**. The endpoint revokes refresh tokens and cannot revoke already-issued access JWTs,
+so the claim was false — and the test *required* the string `/every session/`, so the suite
+actively defended it. **Two reviewers had cleared that control**, and it was a real test with a
+real mutation control.
+
+Verity, whose control it was:
+
+> "I checked that the control existed, that it was mutation-verified, and that it
+> discriminated. **I never asked what it pinned.** A test asserting the wrong string is green
+> and stays green, and mutation-testing proves it discriminates — it cannot tell you it is
+> discriminating *toward a false claim*."
+
+The arm that caught it read the assertion against **what the API does**; the arm that missed it
+read the assertion against the implementation, which agreed with it. That is the technique, not
+just the warning.
+
+**And sweep over CLAIMS, not over lines, sentences, or whatever the question named.** One
+sentence can carry two claims, and the one that was already there does not announce itself — it
+is not in the diff, so it does not look like something under review. Measured, same day: a line
+read *"Signed out on all devices. The server confirmed the account-wide sign-out."* The second
+clause was corrected and the first was left asserting exactly what the correction removed. Two
+reviewers read the sentence as fixed, because the question had been about that sentence and the
+sweep inherited its granularity.
+
+**Two steps, and neither one is sufficient — recorded this way because claiming otherwise
+would preserve a refuted method.** Clause extraction — reading every string a function can emit
+one clause at a time rather than one line at a time — is what found the sibling clause. It did
+NOT find the rest: a lower occurrence in the same release note, an `always` in a test name, and
+a third repetition on a surface already edited that lane all survived it. Those came out only
+by **enumerating every surface in the claim family first, then reading each statement**. And
+"surface" means every place the claim is made, not only the ones a user reads: on this lane the
+same universal survived in SOURCE COMMENTS after every user-facing copy was clean, because the
+enumeration had been scoped to user-facing text. A comment asserting something false is a claim
+the next maintainer will act on. Do both, in that order, and expect the enumeration to be the one that finds the
+later survivors. An author asking "is X right" hands the
+reviewer X as the unit; the sweep has to reset that or it cannot find a sibling claim inside the
+same sentence.
+
+This is the coverage-vs-code distinction one level in. `npm test` passing tells you a test ran;
+a green copy control tells you a string is stable. Neither tells you the string is true.
+
 ## Two traps that manufacture a confident zero
 
 Both fired on 2026-08-05, in one session, to two different agents.
