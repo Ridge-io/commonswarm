@@ -611,7 +611,11 @@ export function logoutMessage(
         "there was nothing this device could revoke; other devices are unaffected.\n";
     case "revoked":
       return allDevices
-        ? "Signed out on all devices. The server confirmed the account-wide sign-out.\n"
+        // NOT "Signed out on all devices" (Plumb). That is the same account-wide completion
+        // claim in different words: the endpoint revokes refresh tokens, and already-issued
+        // access JWTs can still authorize a device until they expire. What is true is that
+        // THIS device is signed out and the account-wide request was accepted.
+        ? "Signed out on this device. The server confirmed the account-wide sign-out.\n"
         : "Signed out on this device. The server confirmed it; other machines stay signed " +
           "in so collaborators are not disrupted.\n";
   }

@@ -514,6 +514,11 @@ test("logout copy claims a revocation ONLY when the server confirmed one", async
   // already-issued access JWTs live until they expire. The previous version of this
   // assertion REQUIRED /every session/, so the test was enforcing the overclaim.
   assert.doesNotMatch(claims("revoked", true), /every session/);
+  // AND NOT the same claim in different words (Plumb's second survivor): "Signed out on all
+  // devices" asserts account-wide COMPLETION, which a 200 does not establish -- the endpoint
+  // revokes refresh tokens while already-issued access JWTs can still authorize a device.
+  // The first clause had to change too; fixing only the second left the claim standing.
+  assert.doesNotMatch(claims("revoked", true), /on all devices/);
   assert.match(claims("revoked", false), /server confirmed it/);
   assert.match(claims("revoked", false), /other machines stay signed in/);
 
