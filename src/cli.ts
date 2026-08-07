@@ -125,6 +125,7 @@ import {
   readSignals,
   renderSignalStatus,
   renderSignals,
+  resolveRefusalToleranceMs,
   resolveSignalRecipient,
   runInboxFollow,
   settleSignalAuthorLabels,
@@ -2455,10 +2456,17 @@ async function runInboxFollowCommand(args: Arguments): Promise<void> {
   const onAbortSignal = () => controller.abort();
   process.on("SIGINT", onAbortSignal);
   process.on("SIGTERM", onAbortSignal);
+  // Read ONCE, here, not per read: a value that can change mid-stream is a state
+  // surface nobody would test. A supervised host sets 0 to restore the strict
+  // D-051 veto, because the tolerance exists for the UNSUPERVISED path.
+  const refusalToleranceMs = resolveRefusalToleranceMs(
+    process.env.CSWARM_REFUSAL_TOLERANCE_MS,
+  );
   try {
     const stop = await runInboxFollow({
       workspaceId: selected.selectedWorkspace,
       signal: controller.signal,
+      refusalToleranceMs,
       ...(pageLimit === undefined ? {} : { pageLimit }),
       isCredentialFailure: (error) =>
         isFollowCredentialFailure(error) ||

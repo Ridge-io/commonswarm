@@ -1562,6 +1562,101 @@ export function decayFollowAttempt(attempt: number): number {
   return attempt > 0 ? attempt - 1 : 0;
 }
 
+/**
+ * How many server refusals a follow loop absorbs before it stops.
+ *
+ * D-056. The veto from D-051 is correct and stays: a refusal must block an
+ * IMMEDIATE retry, because retrying into pooler exhaustion amplifies the very
+ * condition that caused it. What the veto cannot see is that the server's
+ * `retryable:false` is sometimes WRONG. Measured: pooler exhaustion reaches
+ * `read` as a generic `XX000`, `XX000` is not in that function's
+ * `RETRYABLE_CODES`, so a transient busy spell is reported as permanent. The
+ * fault clears on its own within minutes.
+ *
+ * Honouring a false permanent refusal kills an unsupervised receiver on its
+ * first burst, silently, with nothing to restart it — `cswarm inbox --follow`
+ * has no supervisor. So the refusal is honoured as "do not retry NOW" rather
+ * than "never retry": each tolerated refusal waits the full jittered backoff
+ * before the next attempt.
+ *
+ * ~~"...which is the opposite of amplification."~~ DEAD (Plumb, 2026-08-05):
+ * that was false. It is bounded, rate-limited amplification — fewer requests
+ * than the fielded 0.1.6's unbounded retry, but more than zero, and they land
+ * on the saturated service. Say bounded, not absent.
+ *
+ * And this IS a bounded override of the veto, not merely a block on immediate
+ * retry. Ordinary retries were already delayed, so "it only blocks an IMMEDIATE
+ * retry" distinguishes nothing and overstates what is preserved: a
+ * `retryable:false` now buys the same delayed rearm that other retries get, via
+ * a second branch. The honest statement is that the refusal is overridden, on a
+ * bounded budget, because the server's verdict is measurably wrong for this
+ * fault.
+ *
+ * This is a WORKAROUND for a server-side misclassification, not a design
+ * choice. The correct fix classifies the pooler's exhaustion as retryable at
+ * source; that change is a `read` deploy and is gated separately. When it
+ * lands, this tolerance becomes redundant rather than wrong.
+ *
+ * Bounded, not unbounded: the fielded 0.1.6 retries forever, which is the
+ * other failure this replaces. Exhausting the budget still produces the
+ * terminal frame with `server_refused: true` and exit 75, so a supervisor that
+ * does exist keeps its restart signal.
+ *
+ * WHY TIME AND NOT A COUNT. A count cannot express the intent. Measured by
+ * Verity against the first version of this: a budget of 3 buys 1.75-3.5s,
+ * because the tolerated attempts share the backoff ladder and the first three
+ * rungs are 250/500/1000ms. Against a fault window whose measured upper bound
+ * is ~420s that is under 1%, so the receiver died anyway and the fix only
+ * looked like one. The budget is therefore the WINDOW to survive, and the
+ * existing 30s backoff cap bounds the request count that falls out of it:
+ * roughly 6 attempts across 60s.
+ *
+ * 60s DELIBERATELY DOES NOT COVER THE WHOLE OBSERVED FAULT. The measured upper
+ * bound for a pooler burst is ~420s, and a budget that long means a receiver
+ * sits silent for seven minutes, which is its own bad outcome. So this covers
+ * SHORT spells in process and leaves longer ones to a restart -- which is what
+ * exit 75 is for. Do not let a release note imply it survives the full window.
+ *
+ * That rate is the honest comparison, and it is against the FIELDED
+ * alternative rather than against silence: 0.1.6 retries this same fault
+ * unbounded, at a measured 13.2 frames/min. So this is roughly a quarter of
+ * the load already in production, not new load — while the thing it replaces
+ * is a receiver that dies and never comes back.
+ *
+ * PER BURST, NOT PER LIFETIME. The window resets on any successful read, for
+ * the same reason `attempt` decays there. A lifetime budget killed a healthy
+ * long-lived receiver that met a handful of ISOLATED refusals hours apart,
+ * with a success between each -- nothing about that is a burst. Every test
+ * used consecutive refusals, so nothing could tell the two apart.
+ *
+ * The 420s figure is an UPPER BOUND from one observation with load ceasing,
+ * not a validated value. 8 minutes is that bound plus margin; it is not tuned.
+ */
+export const DEFAULT_REFUSAL_TOLERANCE_MS = 60_000;
+
+/**
+ * Resolve the refusal budget from `CSWARM_REFUSAL_TOLERANCE_MS`.
+ *
+ * A REAL PRODUCT KNOB, not test scaffolding: a supervised host sets `0` to
+ * restore the strict D-051 veto, because tolerance exists for the unsupervised
+ * path. It also happens to make the value injectable, which is what lets a test
+ * exercise the budget without sleeping it.
+ *
+ * Unset, empty, or unparseable falls back to the default rather than throwing —
+ * a receiver must not fail to start because an env var has a typo, and the
+ * default is the safe behaviour either way. Negative values clamp to 0 (strict
+ * veto) rather than being treated as "infinite", since the sign is more likely a
+ * mistake than an intent to disable the bound.
+ */
+export function resolveRefusalToleranceMs(raw: string | undefined): number {
+  if (raw === undefined || raw.trim() === "") {
+    return DEFAULT_REFUSAL_TOLERANCE_MS;
+  }
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) return DEFAULT_REFUSAL_TOLERANCE_MS;
+  return parsed < 0 ? 0 : parsed;
+}
+
 export function isRetryableFollowError(error: unknown): boolean {
   if (serverRefusedRetry(followErrorEnvelope(error))) return false;
   if (error instanceof SignalReadTimeoutError) return true;
@@ -1697,6 +1792,13 @@ export async function runInboxFollow(options: {
   seen?: BoundedSignalIdSet;
   /** Optional classifier for credential refusal/horizon failures from arm(). */
   isCredentialFailure?: (error: unknown) => boolean;
+  /**
+   * How long to keep absorbing server refusals within one burst, in ms.
+   * Injectable so a test can pin it, and so a supervised host can set 0 to
+   * restore the strict veto — tolerance exists for the UNSUPERVISED path.
+   * See DEFAULT_REFUSAL_TOLERANCE_MS.
+   */
+  refusalToleranceMs?: number;
 }): Promise<FollowStop> {
   const now = options.now ?? Date.now;
   const sleepHook = options.sleep;
@@ -1711,6 +1813,9 @@ export async function runInboxFollow(options: {
 
   let ready = false;
   let attempt = 0;
+  let refusedSinceMs: number | null = null;
+  const refusalToleranceMs = options.refusalToleranceMs ??
+    DEFAULT_REFUSAL_TOLERANCE_MS;
   let after: SignalCursor | null = null;
 
   const cancelled = (): boolean => abort?.aborted === true;
@@ -1785,6 +1890,11 @@ export async function runInboxFollow(options: {
       // Decay, never reset: an isolated success between failures must not wipe
       // the backoff the failures earned. See decayFollowAttempt.
       attempt = decayFollowAttempt(attempt);
+      // The REFUSAL window, by contrast, does reset here: it bounds one burst,
+      // not the process lifetime. Without this a healthy receiver that met a few
+      // isolated refusals hours apart -- a success between every one -- would
+      // eventually exhaust the budget and die for no reason.
+      refusedSinceMs = null;
 
       if (!ready) {
         options.emit({
@@ -1875,6 +1985,40 @@ export async function runInboxFollow(options: {
           reason: "fatal_http",
           error: error instanceof Error ? error : new Error(String(error)),
         });
+      }
+      // BOUNDED REFUSAL TOLERANCE (D-056). Deliberately last: everything with a
+      // known cause -- cancellation, credential, malformed, fatal 4xx -- has already
+      // returned, so this only absorbs what would otherwise be a bare "error" stop.
+      // `isRetryableFollowError` is untouched above, so the refusal still blocks an
+      // immediate retry; this waits the full backoff first. See
+      // DEFAULT_REFUSAL_TOLERANCE for why a refusal is not taken as permanent.
+      if (serverRefusedRetry(followErrorEnvelope(error))) {
+        const nowMs = now();
+        if (refusedSinceMs === null) refusedSinceMs = nowMs;
+        const toleratedForMs = nowMs - refusedSinceMs;
+        if (toleratedForMs <= refusalToleranceMs && refusalToleranceMs > 0) {
+          attempt += 1;
+          const delayMs = nextFollowBackoffMs(
+            attempt,
+            followHttpDetails(error)?.retryAfterMs ?? null,
+            random,
+          );
+          if (ready) {
+            options.emit({
+              // A DISTINCT reason, so a wrapper can tell "the server refused and
+              // we are tolerating it" from an ordinary retry. Same frame type,
+              // because consumers already parse it.
+              type: "retrying",
+              reason: "server_refused_tolerated",
+              attempt,
+              delay_ms: delayMs,
+              ts: followTs(nowMs),
+            });
+          }
+          const wait = await sleepInterruptible(delayMs);
+          if (wait === "cancelled") return { reason: "cancelled" };
+          continue;
+        }
       }
       return stopWith({
         reason: "error",
