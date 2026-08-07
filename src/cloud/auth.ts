@@ -3,7 +3,7 @@ import { createServer, type Server } from "node:http";
 import { spawn } from "node:child_process";
 import type { Readable, Writable } from "node:stream";
 import { createClient, type Session, type SupabaseClient } from "@supabase/supabase-js";
-import { isAuthApiError, isAuthRetryableFetchError } from "@supabase/auth-js";
+import { isAuthRetryableFetchError } from "@supabase/auth-js";
 import {
   authStorageKey,
   CLIENT_PROTOCOL_VERSION,
@@ -570,8 +570,15 @@ export async function refreshedCredential(
   });
 }
 
-/** What logout actually achieved. `revoked` is deliberately NOT claimed for the
- * account-wide case (see `logout`), because the library hides whether the server agreed. */
+/** What logout actually achieved.
+ *
+ * ~~"`revoked` is deliberately NOT claimed for the account-wide case, because the library
+ * hides whether the server agreed."~~ DEAD, and it now says the OPPOSITE of the code: the
+ * high-level wrapper hides it, but `admin.signOut` does not, so `revoked` is claimed exactly
+ * when the server answered and accepted. What a 200 establishes is bounded, though -- the
+ * endpoint revokes refresh tokens and cannot revoke already-issued access JWTs before they
+ * expire, which is why the copy says "confirmed the sign-out" rather than "every session is
+ * ended". */
 export type LogoutOutcome =
   | "already-logged-out"
   /** The server ANSWERED and accepted the sign-out. The only outcome that may claim it. */
@@ -604,8 +611,7 @@ export function logoutMessage(
         "there was nothing this device could revoke; other devices are unaffected.\n";
     case "revoked":
       return allDevices
-        ? "Signed out on all devices. The server confirmed it, so every session for this " +
-          "identity is ended.\n"
+        ? "Signed out on all devices. The server confirmed the account-wide sign-out.\n"
         : "Signed out on this device. The server confirmed it; other machines stay signed " +
           "in so collaborators are not disrupted.\n";
   }
@@ -701,32 +707,31 @@ export async function logout(
     });
     const signedOut = await client.auth.admin.signOut(session.access_token, scope);
     if (signedOut.error) {
-      // The server ANSWERED and refused. The refresh SUCCEEDED, so a live session exists and
-      // we failed to end it -- keep the credential, which is the only handle for retrying.
-      // DELIBERATELY NOT CLASSIFIED BEYOND THIS. The tempting move is "404 means the session
-      // is already gone, so delete the credential" -- and it is wrong for a reason that is
-      // easy to miss (Verity): A 404 FROM /logout SAYS NOTHING ABOUT THE REFRESH TOKEN. It
-      // says this sign-out found no session to end. Deleting on it would infer the state of
-      // one credential from a response about a different object, which is the same shape as
-      // inferring "token dead" from "refresh failed" -- the bug already fixed once on this
-      // lane. Retaining is safe and self-clearing: the next run's refresh either works, or
-      // fails terminally and takes the local-only delete.
-      if (isAuthApiError(signedOut.error)) {
-        throw new Error(
-          "signed in, but the server refused to end the session; run cswarm logout again, " +
-            "or run cswarm logout --local to clear this device only",
-        );
-      }
-      // Not an API error, so the server never answered -- transport. Same remedy, different
-      // cause, and the message should not blame the server for a network we could not cross.
+      // ONE MESSAGE FOR EVERY FAILURE, ON PURPOSE. The previous version split on
+      // isAuthApiError and named a cause -- "refused" vs "could not reach" -- and Plumb's
+      // non-author control showed that split is WRONG: a 500, where the server plainly
+      // ANSWERED, arrives as AuthRetryableFetchError and would have been reported as
+      // unreachable. That is this lane's own defect, committed inside the fix for it:
+      // asserting a cause the code did not establish. What we actually know is the same in
+      // every branch -- the sign-out was not confirmed -- so that is all this says.
+      //
+      // AND THE CREDENTIAL IS KEPT, whatever the reason. Retaining is the safe side and it
+      // self-clears: the next run's refresh either works, or fails terminally and takes the
+      // local-only delete. Classifying this response is the trap -- a 404 from /logout says
+      // nothing about the REFRESH token; it says this sign-out found no session to end, so
+      // deleting on it would infer one credential's state from a response about a different
+      // object.
       throw new Error(
-        "signed in, but could not reach the server to end the session; check your connection " +
-          "and run cswarm logout again, or run cswarm logout --local to clear this device only",
+        "signed in, but the server did not confirm the session ended; your credential was " +
+          "kept — run cswarm logout again, or run cswarm logout --local to clear this device " +
+          "without contacting the server",
       );
     }
     await store.delete();
-    // NOW this is earned: admin.signOut returned no error, so the server answered and
-    // accepted. This is the only path that may claim a revocation.
+    // Earned: admin.signOut bypasses the wrapper's 401/403/404 swallowing, so no error means
+    // the server answered and accepted. Note the SCOPE of what that establishes -- the
+    // endpoint revokes refresh tokens; already-issued access JWTs stay valid until they
+    // expire. The copy says "confirmed the sign-out", not "every session is ended".
     return "revoked";
   });
 }

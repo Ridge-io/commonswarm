@@ -508,8 +508,12 @@ test("logout copy claims a revocation ONLY when the server confirmed one", async
     logoutMessage(outcome, all);
 
   // ONLY the confirmed path may say the server confirmed it.
-  assert.match(claims("revoked", true), /server confirmed it/);
-  assert.match(claims("revoked", true), /every session for this identity is ended/);
+  assert.match(claims("revoked", true), /server confirmed/);
+  assert.match(claims("revoked", true), /confirmed the account-wide sign-out/);
+  // AND MUST NOT claim more than a 200 establishes: the endpoint revokes refresh tokens;
+  // already-issued access JWTs live until they expire. The previous version of this
+  // assertion REQUIRED /every session/, so the test was enforcing the overclaim.
+  assert.doesNotMatch(claims("revoked", true), /every session/);
   assert.match(claims("revoked", false), /server confirmed it/);
   assert.match(claims("revoked", false), /other machines stay signed in/);
 
@@ -519,7 +523,7 @@ test("logout copy claims a revocation ONLY when the server confirmed one", async
     for (const all of [true, false]) {
       const line = claims(outcome, all);
       assert.doesNotMatch(line, /confirmed/, `${outcome}/${all} must not claim confirmation`);
-      assert.doesNotMatch(line, /every session/, `${outcome}/${all} must not claim containment`);
+      assert.doesNotMatch(line, /account-wide/, `${outcome}/${all} must not claim containment`);
       assert.doesNotMatch(line, /revoked for/, `${outcome}/${all} must not claim revocation`);
     }
   }
@@ -562,7 +566,7 @@ test("logout REFUSES to clear or claim anything when the server rejects the sign
     // the CLI print "the server confirmed it" about a request the server REFUSED.
     await assert.rejects(
       () => logout(cloudTarget(`http://127.0.0.1:${address.port}`, "test-anon-key"), store, "global"),
-      /refused to end the session/,
+      /did not confirm the session ended/,
       "a refused sign-out must not be reported as success",
     );
     // The credential must SURVIVE -- the session is live and unrevoked, so this is the only
@@ -582,6 +586,96 @@ test("logout REFUSES to clear or claim anything when the server rejects the sign
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
+});
+
+test("logout non-author control: 404 and 500 retain the rotated credential without inventing a refusal", async () => {
+  // A non-2xx response establishes that the sign-out was not confirmed. It does not
+  // establish why: 404 can be a missing route or version skew, and 500 is a server
+  // failure rather than an intentional refusal. Both must retain the only retry handle,
+  // and both need observation-only copy.
+  const copyObservations: Array<{
+    status: number;
+    reportsObservation: boolean;
+    inventsRefusal: boolean;
+    inventsNoAnswer: boolean;
+  }> = [];
+  for (const status of [404, 500]) {
+    const server = createServer((request, response) => {
+      const url = new URL(request.url ?? "/", "http://127.0.0.1");
+      if (url.pathname === "/auth/v1/token") {
+        const now = new Date().toISOString();
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify({
+          access_token: `access-${status}`,
+          token_type: "bearer",
+          expires_in: 3600,
+          refresh_token: `rotated-${status}`,
+          user: {
+            id: "66666666-6666-4666-8666-666666666666",
+            aud: "authenticated",
+            role: "authenticated",
+            app_metadata: {},
+            user_metadata: {},
+            created_at: now,
+            updated_at: now,
+          },
+        }));
+        return;
+      }
+      if (url.pathname === "/auth/v1/logout") {
+        response.writeHead(status, { "content-type": "application/json" });
+        response.end(JSON.stringify({ code: `logout_${status}`, msg: "not confirmed" }));
+        return;
+      }
+      response.writeHead(404).end();
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (typeof address === "string" || address === null) throw new Error("no port");
+    const { store, record } = storeWith(`original-${status}`);
+    let failure: unknown;
+    try {
+      await logout(
+        cloudTarget(`http://127.0.0.1:${address.port}`, "test-anon-key"),
+        store,
+        "global",
+      );
+    } catch (error) {
+      failure = error;
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+
+    assert.ok(failure instanceof Error, `HTTP ${status}: logout must fail`);
+    copyObservations.push({
+      status,
+      reportsObservation: /server did not confirm/i.test(failure.message),
+      inventsRefusal: /server refused/i.test(failure.message),
+      inventsNoAnswer: /could not reach the server/i.test(failure.message),
+    });
+    assert.notEqual(store.record, null, `HTTP ${status}: retain the retry handle`);
+    assert.equal(store.record!.refreshToken, `rotated-${status}`);
+    assert.equal(store.record!.generation, record.generation + 1);
+    assert.equal(store.record!.deviceId, record.deviceId);
+  }
+  assert.deepEqual(
+    copyObservations,
+    [
+      {
+        status: 404,
+        reportsObservation: true,
+        inventsRefusal: false,
+        inventsNoAnswer: false,
+      },
+      {
+        status: 500,
+        reportsObservation: true,
+        inventsRefusal: false,
+        inventsNoAnswer: false,
+      },
+    ],
+    "both HTTP failures must report only that sign-out was not confirmed",
+  );
 });
 
 test("logout with an unusable refresh token clears the credential instead of wedging", async () => {

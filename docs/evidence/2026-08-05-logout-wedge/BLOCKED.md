@@ -1,6 +1,8 @@
 # `lead/logout-wedge` was BLOCKED — RESOLVED 2026-08-07 on `lead/logout-honest`
 
-> **STATUS: both blockers are fixed and the fix shipped in v0.1.8.** The original branch was
+> **STATUS 2026-08-07: fix PREPARED and pending the D-036 gate. NOT landed, NOT released.**
+> Marking it shipped here would violate the repo's own *pushed ≠ landed ≠ applied* rule
+> (Plumb). This line gets updated to "shipped" only against the landed and released artifact. The original branch was
 > never merged; it also predated 0.1.7 and would have reverted that release's refusal-tolerance
 > work, so the logout material was rebuilt on a fresh branch off `main`. The record below is
 > kept intact because the *shape* of the failure is the useful part.
@@ -13,7 +15,9 @@
 > it discriminates. The CLI now says "the server confirmed it" only on the path where the
 > server actually answered and accepted.
 >
-> **BLOCKER 2 — legal-surface copy — corrected at all three sites.** `README`,
+> **BLOCKER 2 — legal-surface copy — corrected at all three sites, in two passes.** The first
+> pass fixed only the `--all-devices` claim and left ordinary `logout` asserting unconditional
+> local success, which is false on every retained path. Plumb caught the survivor. `README`,
 > `privacy.astro`, and `terms.astro` said sign-out "ends every session everywhere". They now
 > say it **asks the server to**, and privacy — the page where a user decides whether they are
 > protected — adds that the command reports whether the server confirmed it.
