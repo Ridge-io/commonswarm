@@ -1563,7 +1563,7 @@ export function decayFollowAttempt(attempt: number): number {
 }
 
 /**
- * How many server refusals a follow loop absorbs before it stops.
+ * How long a follow loop keeps absorbing server refusals within one burst.
  *
  * D-056. The veto from D-051 is correct and stays: a refusal must block an
  * IMMEDIATE retry, because retrying into pooler exhaustion amplifies the very
@@ -1623,9 +1623,18 @@ export function decayFollowAttempt(attempt: number): number {
  *
  * That rate is the honest comparison, and it is against the FIELDED
  * alternative rather than against silence: 0.1.6 retries this same fault
- * unbounded, at a measured 13.2 frames/min. So this is roughly a quarter of
- * the load already in production, not new load — while the thing it replaces
- * is a receiver that dies and never comes back.
+ * unbounded, at a measured 13.2 frames/min. Simulated against the real ladder
+ * (Plumb): this emits 7-9 retry frames before the window closes — roughly
+ * 53-68% of the fielded rate, not the "quarter" an earlier version of this
+ * comment claimed. Less load than what is in production today, and materially
+ * more than zero; the thing it replaces is a receiver that dies and never
+ * comes back.
+ *
+ * NOT A HARD 60s CEILING, and the wording matters (Plumb): the elapsed check
+ * runs BEFORE the sleep, so the loop stops at the first refusal observed AFTER
+ * the window closes. Simulated stop times are 60.7s / 68.6s / 61.5s across the
+ * jitter range, plus request latency. Read it as "keep retrying until a refusal
+ * lands past 60s", not "stop at exactly 60s".
  *
  * PER BURST, NOT PER LIFETIME. The window resets on any successful read, for
  * the same reason `attempt` decays there. A lifetime budget killed a healthy
@@ -1634,7 +1643,9 @@ export function decayFollowAttempt(attempt: number): number {
  * used consecutive refusals, so nothing could tell the two apart.
  *
  * The 420s figure is an UPPER BOUND from one observation with load ceasing,
- * not a validated value. 8 minutes is that bound plus margin; it is not tuned.
+ * not a validated value, and the 60s default deliberately does NOT cover it —
+ * see the split above. The 10-minute ceiling sits above the observed fault so
+ * an operator can choose to cover it, and below forever so a typo cannot.
  */
 export const DEFAULT_REFUSAL_TOLERANCE_MS = 60_000;
 
@@ -1646,28 +1657,61 @@ export const DEFAULT_REFUSAL_TOLERANCE_MS = 60_000;
  * path. It also happens to make the value injectable, which is what lets a test
  * exercise the budget without sleeping it.
  *
- * Unset, empty, or unparseable falls back to the default rather than throwing —
- * a receiver must not fail to start because an env var has a typo, and the
- * default is the safe behaviour either way.
+ * NEVER SILENT WHEN IT DISAGREES WITH YOU. Both review arms independently
+ * arrived at this, from opposite directions, and it is the part that matters:
  *
- * CLAMPED AT BOTH ENDS, and the upper end is the one that matters (Verity).
- * Negative clamps to 0 (strict veto): the sign is likelier a mistake than an
- * intent to remove the bound. But an unbounded upper end is the sharper
- * hazard — `600000000` is a ~7-day budget, which is functionally the unbounded
- * retry of 0.1.6 that this change exists to REPLACE. An operator adding a zero
- * by accident would silently re-create the fielded failure through the very
- * knob added to prevent it, so the ceiling closes that.
+ *   - Plumb: `CSWARM_REFUSAL_TOLERANCE_MS=O` (letter O, the likeliest typo for
+ *     an intended strict `0`) resolved to the DEFAULT, so a host asking for no
+ *     tolerance silently got 60s of it. Fail-open on the knob's own purpose.
+ *   - Verity: a value above the ceiling was clamped without a word, so the knob
+ *     quietly disagreed with the operator.
+ *
+ * They proposed opposite fallbacks for malformed input — 0 vs the default —
+ * and the tie breaks on which mistake is worse. Malformed -> 0 means someone
+ * fat-fingering a LARGE value gets the strict veto and their receivers die on
+ * the first refusal, which is precisely the D-056 failure this exists to
+ * prevent. Malformed -> default means someone fat-fingering `0` gets a little
+ * more retry load than they wanted. So the default stays, and the warning is
+ * what makes it honest: the operator is told, rather than the code guessing
+ * silently in either direction.
+ *
+ * Unset or empty is NOT a mistake — no intent was expressed — so it takes the
+ * default without comment. Negative clamps to 0: the sign is likelier a typo
+ * than an intent to remove the bound. The upper clamp exists because
+ * `600000000` would otherwise buy a ~7-day budget, i.e. the unbounded retry of
+ * 0.1.6 that this change exists to REPLACE, re-created by accident through the
+ * knob added to prevent it.
  */
 export const MAX_REFUSAL_TOLERANCE_MS = 10 * 60_000;
 
-export function resolveRefusalToleranceMs(raw: string | undefined): number {
+export function resolveRefusalToleranceMs(
+  raw: string | undefined,
+  warn: (message: string) => void = () => {},
+): number {
   if (raw === undefined || raw.trim() === "") {
     return DEFAULT_REFUSAL_TOLERANCE_MS;
   }
   const parsed = Number(raw);
-  if (!Number.isFinite(parsed)) return DEFAULT_REFUSAL_TOLERANCE_MS;
-  if (parsed < 0) return 0;
-  return Math.min(parsed, MAX_REFUSAL_TOLERANCE_MS);
+  if (!Number.isFinite(parsed)) {
+    warn(
+      `CSWARM_REFUSAL_TOLERANCE_MS is not a number (${JSON.stringify(raw)}); ` +
+        `using the default ${DEFAULT_REFUSAL_TOLERANCE_MS}ms. Set 0 to disable tolerance.`,
+    );
+    return DEFAULT_REFUSAL_TOLERANCE_MS;
+  }
+  if (parsed < 0) {
+    warn(
+      `CSWARM_REFUSAL_TOLERANCE_MS is negative (${parsed}); using 0, which disables tolerance.`,
+    );
+    return 0;
+  }
+  if (parsed > MAX_REFUSAL_TOLERANCE_MS) {
+    warn(
+      `CSWARM_REFUSAL_TOLERANCE_MS ${parsed}ms exceeds the ${MAX_REFUSAL_TOLERANCE_MS}ms ceiling; using the ceiling.`,
+    );
+    return MAX_REFUSAL_TOLERANCE_MS;
+  }
+  return parsed;
 }
 
 export function isRetryableFollowError(error: unknown): boolean {
@@ -2004,7 +2048,7 @@ export async function runInboxFollow(options: {
       // returned, so this only absorbs what would otherwise be a bare "error" stop.
       // `isRetryableFollowError` is untouched above, so the refusal still blocks an
       // immediate retry; this waits the full backoff first. See
-      // DEFAULT_REFUSAL_TOLERANCE for why a refusal is not taken as permanent.
+      // DEFAULT_REFUSAL_TOLERANCE_MS for why a refusal is not taken as permanent.
       if (serverRefusedRetry(followErrorEnvelope(error))) {
         const nowMs = now();
         if (refusedSinceMs === null) refusedSinceMs = nowMs;

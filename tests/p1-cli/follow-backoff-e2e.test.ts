@@ -254,9 +254,11 @@ test("D-051/D-055/D-056: a refused read is tolerated a bounded number of times, 
     // of D-056. This is the one case that measures the SHIPPED binary end to end,
     // so it is where the behaviour change has to be stated rather than inferred.
     //
-    // The veto itself is NOT relaxed: `isRetryableFollowError` still returns false
-    // for a refusal, so there is still no immediate retry. What changed is that a
-    // refusal is treated as "not now" rather than "never", because the server's
+    // The veto is OVERRIDDEN, on a bounded budget -- not merely deferred: `isRetryableFollowError` still returns false
+    // for a refusal, so there is no immediate retry, but ordinary retries were
+    // already delayed, so "it only blocks an immediate retry" would distinguish
+    // nothing. A refusal now buys the same delayed rearm other retries get,
+    // bounded by the window, because the server's
     // retryable:false is measurably WRONG for pooler exhaustion -- it arrives as a
     // generic XX000 that read's RETRYABLE_CODES does not list, and the fault clears
     // on its own in minutes. Obeying it killed an unsupervised receiver on its first

@@ -1475,6 +1475,33 @@ test("D-056: the refusal budget env knob resolves safely", async () => {
   assert.equal(resolveRefusalToleranceMs("banana"), DEFAULT_REFUSAL_TOLERANCE_MS);
   assert.equal(resolveRefusalToleranceMs("NaN"), DEFAULT_REFUSAL_TOLERANCE_MS);
 
+  // PLUMB'S FAIL-OPEN CONTROL. "O" is the likeliest typo for an intended strict
+  // "0", and it lands on the default -- so a host asking for NO tolerance gets
+  // 60s of it. The value stays (malformed -> 0 would kill receivers of anyone
+  // who fat-fingered a LARGE value, which is the D-056 failure itself), but it
+  // must never be silent.
+  const typoWarnings: string[] = [];
+  assert.equal(
+    resolveRefusalToleranceMs("O", (m) => typoWarnings.push(m)),
+    DEFAULT_REFUSAL_TOLERANCE_MS,
+  );
+  assert.equal(typoWarnings.length, 1, "a malformed knob must announce itself");
+  assert.match(typoWarnings[0]!, /not a number/);
+
+  // ...and the clamp path, the second silent path (Verity).
+  const clampWarnings: string[] = [];
+  resolveRefusalToleranceMs("900000", (m) => clampWarnings.push(m));
+  assert.equal(clampWarnings.length, 1, "a clamped knob must announce itself");
+  assert.match(clampWarnings[0]!, /ceiling/);
+
+  // CONTROL: unset is NOT a mistake -- no intent was expressed -- so it must
+  // stay silent, or the warning becomes noise everyone learns to ignore.
+  const quiet: string[] = [];
+  resolveRefusalToleranceMs(undefined, (m) => quiet.push(m));
+  resolveRefusalToleranceMs("", (m) => quiet.push(m));
+  resolveRefusalToleranceMs("45000", (m) => quiet.push(m));
+  assert.deepEqual(quiet, [], "unset, empty, and valid values must not warn");
+
   // A negative clamps to the strict veto rather than reading as "infinite" --
   // the sign is far more likely a typo than an intent to remove the bound.
   assert.equal(resolveRefusalToleranceMs("-1"), 0);

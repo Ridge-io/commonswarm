@@ -2461,6 +2461,9 @@ async function runInboxFollowCommand(args: Arguments): Promise<void> {
   // D-051 veto, because the tolerance exists for the UNSUPERVISED path.
   const refusalToleranceMs = resolveRefusalToleranceMs(
     process.env.CSWARM_REFUSAL_TOLERANCE_MS,
+    // Warn rather than guess silently. A knob that quietly disagrees with the
+    // operator is worse than one that argues back.
+    (message) => process.stderr.write(`cswarm: ${message}\n`),
   );
   try {
     const stop = await runInboxFollow({
