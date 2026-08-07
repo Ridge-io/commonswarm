@@ -6,14 +6,32 @@ never `"$R:src/..."`.
 ## Refs as they actually are
 
 ```
-main                     c829a33   v0.1.7 SHIPPED and verified on the public artifact
+main                     <see git>  v0.1.8 SHIPPED and verified on the public artifact
 lead/d056-bounded-recovery 72f5f70 MERGED into main, both D-036 arms cleared
-lead/logout-wedge        e16e1c8   BLOCKED -- open blockers, see below. NOT merged.
+lead/logout-honest       3e44367   MERGED. Shipped as v0.1.8.
+lead/logout-wedge        e16e1c8   SUPERSEDED -- predated 0.1.7, never merged. Do not use.
 lead/hide-scrollbars     d271109   LANDED TO PRODUCTION (site)
 lead/d059-pooler-raise   e67e73f   docs only, unreviewed
 ```
 
 ---
+
+## SHIPPED SINCE THIS DOC WAS WRITTEN
+
+**v0.1.7** — bounded refusal tolerance + codex provider + 13 correctness commits.
+**v0.1.8** — the logout lane: the CLI no longer strands a user with an expired session, no
+longer claims a sign-out the server refused, and a failed sign-out can now actually be retried
+(the attempt had been consuming the stored token without persisting the replacement).
+
+Both verified on the installed public artifact by sha256, and on the deployed pages with paired
+present/absent controls — not on the deploy log. See `docs/release/0.1.7.md`,
+`docs/release/0.1.8.md`, and `docs/evidence/2026-08-05-logout-wedge/BLOCKED.md`.
+
+**What the second lane cost, because it is the useful part:** Plumb held five times and every
+hold was correct. Three found claims that contradicted evidence already in this repo — a copy
+test that *required* an overclaimed string, a cause split I could not establish committed inside
+the fix for asserting causes I could not establish, and a "self-clears" justification whose
+counterexample was in the test file I had written. AGENTS.md gained three rules from it.
 
 ## THE HEADLINE: the wake round trip is GREEN, measured
 
