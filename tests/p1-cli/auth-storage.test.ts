@@ -487,7 +487,11 @@ test("logout RETAINS the credential for every non-terminal refresh failure", asy
   assert.deepEqual(store.record, record, "unreachable server: the credential survives");
 });
 
-test("logout --local always reaches a clean state without contacting the server", async () => {
+test("logout --local clears the device without contacting the server", async () => {
+  // NOT "always" (Plumb). This proves the SERVER is never contacted and the credential is
+  // removed from THIS store. It cannot prove a clean device in general: production deletion
+  // can throw -- storage.ts raises on a non-zero, non-44 Keychain code, and the file store
+  // can fail too. The old name promised what the assertions do not reach.
   // The escape hatch that makes retain-by-default safe: an unclassifiable failure must never
   // leave a user stuck between a failing status and a failing logout.
   const server = await refreshFailureServer(429, { code: "over_request_rate_limit" });

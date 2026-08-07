@@ -269,7 +269,8 @@ for its required flags.
 server confirms the sign-out; if the server does not confirm, the credential is
 kept and the command says so. `logout --local` clears this device without
 contacting the server. Use `logout --all-devices` only when intentionally
-revoking every session for the identity. Remote device listing/renaming/revocation
+requesting an account-wide sign-out: it revokes refresh sessions, while access tokens
+already issued stay valid until they expire. Remote device listing/renaming/revocation
 remains deferred.
 
 ### First-dogfood fixture bridge
