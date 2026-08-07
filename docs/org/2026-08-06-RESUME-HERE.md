@@ -1,3 +1,10 @@
+> # SUPERSEDED by `docs/org/2026-08-07-RESUME-HERE.md`
+>
+> **Do not act on the branch table below — every ref in it was deleted.** This file also calls
+> the pooler raise "docs only, unreviewed" (it is a live production config change), says
+> `lead/hide-scrollbars` is landed to production (it was deployed and never merged, and a later
+> deploy reverted it), and names a NEXT ACTION that shipped. Kept for history.
+
 # Resume here — CswarmLead, 2026-08-06
 
 **Verify every SHA by hash, not by branch name.** Braced revisions only: `"${R}:src/..."`,
