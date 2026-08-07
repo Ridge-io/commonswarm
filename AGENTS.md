@@ -603,8 +603,75 @@ git rev-parse "${r}:src/cli.ts"    # works                   <- the fix
 ```
 
 zsh parses `$r:s` as parameter `$r` with a **`:s` substitution modifier**. Any git revision
-written as `$var:path` where the path begins with `s` (`src/`, `site/`, `supabase/`) is
-mangled before git sees it. `tests/` and `docs/` are fine — it is specifically `s`.
+written as `$var:path` where the path begins with a **modifier letter** is mangled before git
+sees it.
+
+~~"`tests/` and `docs/` are fine — it is specifically `s`."~~ **Dead (2026-08-05): `tests/` is
+NOT fine, and "specifically `s`" was wrong.** The hazard is any path whose **first letter is a
+parameter-expansion modifier**.
+
+**The set was measured, not read off zsh's documentation** — every letter tested individually in
+the exact construct that bites, `"$R:Xzzz"` inside double quotes (Verity, 2026-08-05):
+
+```
+MANGLED:  a c e h l q r s t u   and   A P Q
+SAFE:     everything else
+```
+
+So `src/`, `site/`, `supabase/` and `tests/` all bite. `docs/` genuinely is safe — `d` is not a
+modifier — and that half-truth is why the original sentence survived unchallenged: **the example
+that would have refuted it is the one nobody happened to type.**
+
+~~An earlier version of this correction listed `p` and `x` as hazards and omitted uppercase.~~
+**Also dead, same day, and the cause matters more than the list:** measurement says `p` and `x` are
+**safe** here while `A`, `P`, `Q` **mangle**. **zsh's history-expansion modifiers and its
+parameter-expansion modifiers overlap but are not the same set.** The documented list people reach
+for is the history one; the construct that bites here is parameter expansion. A real list, applied
+one context wider than it holds.
+
+### Three faces, and only one is loud
+
+```
+$R:src/...    -> "bad substitution". The shell errors and ABORTS the script.
+$R:tests/...  -> the shell SILENTLY returns  <sha>ests/x.ts   — the `t` is eaten.
+                 Nothing failed in the shell. git rejected that particular value as
+                 ambiguous; a different consumer would have accepted it.
+$R:Azzz       -> the shell SILENTLY returns  /abs/path/to/cwd/<sha>zzz
+                 A plausible absolute path. No error, no warning.
+```
+
+~~"This instance failed loudly, so it is the less dangerous face."~~ **Dead.** Only `:s` is loud.
+`:t` and `:A` are silent *at the shell*, and whether you ever see an error depends entirely on
+whether the command you hand the result to happens to reject it. **Do not classify one of these by
+how it failed the one time you saw it.**
+
+### Worked example: the wrong object returned plausible numbers
+
+2026-08-05, during an inversion review of a merge SHA. The reviewer ran
+
+```sh
+git show "$M:src/listener/engine.ts"     # unbraced
+```
+
+`:s` mangled it and **git returned the merge COMMIT MESSAGE instead of the file.** The command
+succeeded. It printed text. The reviewer grepped that text for `AcpTimeoutError` and
+`AcpChildExitError` and got **2 and 2** — non-zero, plausible counts — and was one step from
+reporting a false blocker: that the merge had taken the wrong classifier and left dead imports.
+
+**The wrong object looked right because the commit message discussed exactly those symbols.** A
+merge commit explaining which error types the classifier keeps is, by construction, a document
+containing their names. The substitution could not have picked a more convincing decoy.
+
+What caught it was **incoherence between two results, not an error**: the function-body extraction
+came back *empty* while the symbol counts came back *non-zero*. A file cannot lack the function and
+contain its imports. Re-run braced, everything reversed.
+
+That is the lesson worth more than the letter list: this failure does not announce itself, and the
+value it returns can be more persuasive than the truth. **When a probe's results are mutually
+incompatible, suspect the instrument before you write up the finding.**
+
+**Brace every revision-with-path. Do not reason about which letters are safe** — this section has
+now been wrong about that twice.
 
 **The trigger is a literal `s` in the source text after the colon, not the expanded value:**
 
