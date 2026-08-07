@@ -300,6 +300,19 @@ The arm that caught it read the assertion against **what the API does**; the arm
 read the assertion against the implementation, which agreed with it. That is the technique, not
 just the warning.
 
+**And sweep over CLAIMS, not over lines, sentences, or whatever the question named.** One
+sentence can carry two claims, and the one that was already there does not announce itself — it
+is not in the diff, so it does not look like something under review. Measured, same day: a line
+read *"Signed out on all devices. The server confirmed the account-wide sign-out."* The second
+clause was corrected and the first was left asserting exactly what the correction removed. Two
+reviewers read the sentence as fixed, because the question had been about that sentence and the
+sweep inherited its granularity.
+
+The technique that then found nothing: extract every string the function can emit and read each
+**clause** independently, rather than each line. An author asking "is X right" hands the
+reviewer X as the unit; the sweep has to reset that or it cannot find a sibling claim inside the
+same sentence.
+
 This is the coverage-vs-code distinction one level in. `npm test` passing tells you a test ran;
 a green copy control tells you a string is stable. Neither tells you the string is true.
 
