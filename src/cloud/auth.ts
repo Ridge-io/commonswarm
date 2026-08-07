@@ -679,11 +679,19 @@ export async function logout(
     // this is using a lower layer of the SDK rather than reaching around it. Without this we
     // cannot tell "the server revoked it" from "the server refused and we were not told",
     // and the CLI would assert containment it never observed.
-    // PERSIST THE ROTATED TOKEN BEFORE ATTEMPTING THE REVOKE (Fable). The refresh above
-    // CONSUMED the stored token, so every failure path below tells the user to "run cswarm
-    // logout again" with a spent credential -- the retry would then depend on GoTrue's
-    // parent-token grace rather than on a token we hold. A write, not a delete: the
-    // reversible direction, inside the lock already held.
+    // PERSIST THE ROTATED TOKEN BEFORE ATTEMPTING THE REVOKE. The refresh above CONSUMED the
+    // stored token, so every failure path below tells the user to "run cswarm logout again"
+    // with a spent credential -- the retry would then depend on GoTrue's parent-token grace
+    // rather than on a token we hold.
+    //
+    // THE `generation` BUMP IS NOT BOOKKEEPING AND MUST NOT BE DROPPED (Verity).
+    // `generation` is a CONCURRENCY TOKEN: `refreshedCredential` above guards its retry loop
+    // on it (`current.generation !== before.generation` -> continue) and throws on a lost
+    // race. Writing the rotated refreshToken WITHOUT bumping it would let a concurrent
+    // refresher see an unchanged generation, conclude nothing had happened, and proceed
+    // against a token that had silently rotated underneath it -- a lost update, which is the
+    // exact class of defect this lane has produced three times. The bump is what makes this
+    // write participate in the protocol that already exists rather than race it.
     const session = requireSession(refreshed.data.session);
     await store.write({
       ...record,
@@ -695,6 +703,14 @@ export async function logout(
     if (signedOut.error) {
       // The server ANSWERED and refused. The refresh SUCCEEDED, so a live session exists and
       // we failed to end it -- keep the credential, which is the only handle for retrying.
+      // DELIBERATELY NOT CLASSIFIED BEYOND THIS. The tempting move is "404 means the session
+      // is already gone, so delete the credential" -- and it is wrong for a reason that is
+      // easy to miss (Verity): A 404 FROM /logout SAYS NOTHING ABOUT THE REFRESH TOKEN. It
+      // says this sign-out found no session to end. Deleting on it would infer the state of
+      // one credential from a response about a different object, which is the same shape as
+      // inferring "token dead" from "refresh failed" -- the bug already fixed once on this
+      // lane. Retaining is safe and self-clearing: the next run's refresh either works, or
+      // fails terminally and takes the local-only delete.
       if (isAuthApiError(signedOut.error)) {
         throw new Error(
           "signed in, but the server refused to end the session; run cswarm logout again, " +
