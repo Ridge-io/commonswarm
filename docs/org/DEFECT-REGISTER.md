@@ -1988,6 +1988,61 @@ parse a journal. The measured no-rollback constraint applies only between frozen
 
 ---
 
+## D-043 — an expired refresh token dead-ends every command with no remediation · FIXED in v0.1.8
+
+> **RESTORED 2026-08-07 after being destroyed by a branch prune.** This entry existed only on a
+> branch deleted during repo cleanup; main's register had a hole at D-043 between D-042 and
+> D-044, and the entry survived solely in an unreachable commit that the next `gc` would have
+> removed. Recovered from `59a8ab6`. The prune was audited at commit level and at content level
+> for `docs/` paths, and this still slipped: the branch's register file was a MODIFIED path, not
+> an added one, so a "files on the branch that main lacks" check could not see it. **A
+> content-level path check is not a content-level diff.**
+>
+> **FIXED in v0.1.8**, which is why the original heading below reads OPEN: `cswarm logout` now
+> clears a positively-recognised dead credential instead of throwing, `cswarm logout --local`
+> clears the device without contacting the server, and the CLI names the next step rather than
+> forwarding the provider's wording. See `docs/release/0.1.8.md` and
+> `docs/evidence/2026-08-05-logout-wedge/BLOCKED.md`.
+
+### Original entry, as filed 2026-08-04
+
+Found 2026-08-04 against **production v0.1.5**, on a machine whose saved session had expired.
+
+Every authenticated command returns:
+
+```
+cswarm: session refresh failed: Invalid Refresh Token: Refresh Token Not Found
+```
+
+and nothing else. It does not say the session expired in plain terms, does not name `cswarm login`,
+and offers no next step. Reproduced on `feed` and on `new`; it is the shared auth path, so it affects
+every authenticated command.
+
+**The state is recoverable** — `cswarm login` works and prints its authorize URL — so this is a
+signposting defect, not a lockout. But a user cannot be expected to infer the fix from *"Invalid
+Refresh Token: Refresh Token Not Found"*, which is the upstream Supabase string passed through
+verbatim.
+
+**This is the same family as QA-010**, the MAJOR fixed in this release: a dead session that the UI
+would not admit to. That fix taught the *web* client to say so. The CLI still passes the raw provider
+error through.
+
+Against `AGENTS.md` § *Writing for users* — *"CLI output tells the user what just happened, what is now
+true, and what happens next, so they never have to check whether it worked"* — this line satisfies
+none of the three.
+
+Suggested wording, not yet implemented:
+
+```
+cswarm: your session expired. Run `cswarm login` to sign in again.
+```
+
+**Not established:** whether the same passthrough occurs for other Supabase auth failures (revoked
+token, deleted user, rotated project keys), and whether the listener's long-running path surfaces it
+any better. Only the expired-refresh-token case was reproduced.
+
+---
+
 ## D-044 — cross-owner local sandboxing is retired; our lane is the CommonSwarm authority model · RULING
 
 **Operator ruling, 2026-08-04:**
