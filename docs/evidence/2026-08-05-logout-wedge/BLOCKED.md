@@ -1,8 +1,16 @@
 # `lead/logout-wedge` was BLOCKED — RESOLVED 2026-08-07 on `lead/logout-honest`
 
-> **STATUS 2026-08-07: fix PREPARED and pending the D-036 gate. NOT landed, NOT released.**
-> Marking it shipped here would violate the repo's own *pushed ≠ landed ≠ applied* rule
-> (Plumb). This line gets updated to "shipped" only against the landed and released artifact. The original branch was
+> **STATUS 2026-08-07: SHIPPED in v0.1.8, and this line is written against the released
+> artifact rather than the merge.** Measured: `curl -fsSL https://commonswarm.com/install.sh | sh`
+> yields `cswarm 0.1.8`, sha256 `101f2ec5…`, byte-identical to what was built here and to the
+> published asset. Live `/download` carries 0.1.8 with zero stale 0.1.7 strings; the corrected
+> privacy and terms copy is on the deployed pages, each checked with a paired present/absent
+> control on the same fetch. `--local` is reachable from the shipped bundle and its
+> mutual-exclusion guard fires.
+>
+> The previous line said "prepared and pending the gate" and was correct when written — Plumb
+> caught an earlier version of this file claiming v0.1.8 before it existed, which would have
+> violated *pushed ≠ landed ≠ applied*. The original branch was
 > never merged; it also predated 0.1.7 and would have reverted that release's refusal-tolerance
 > work, so the logout material was rebuilt on a fresh branch off `main`. The record below is
 > kept intact because the *shape* of the failure is the useful part.
