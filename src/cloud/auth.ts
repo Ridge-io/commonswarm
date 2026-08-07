@@ -653,9 +653,11 @@ export async function logout(
   return await store.withLock(async () => {
     const record = await store.read();
     if (!record) return "already-logged-out";
-    // The escape hatch. Asked for explicitly, so it needs no guess about the token's state,
-    // and it is what keeps the safe default above from wedging anyone: a user whose failure
-    // we cannot classify always has a way to a clean local state.
+    // The escape hatch. Asked for explicitly, so it needs no guess about the token's state:
+    // a user whose failure we cannot classify gets an explicit server-free deletion path.
+    // NOT "always has a way to a clean local state" -- the delete below can itself throw
+    // (storage.ts raises on a non-zero, non-44 Keychain code), so that holds only where
+    // local storage can be changed.
     if (options.localOnly) {
       await store.delete();
       return "cleared-unverified";
@@ -719,9 +721,12 @@ export async function logout(
       // asserting a cause the code did not establish. What we actually know is the same in
       // every branch -- the sign-out was not confirmed -- so that is all this says.
       //
-      // AND THE CREDENTIAL IS KEPT, whatever the reason. Retaining is the safe side and it
-      // self-clears: the next run's refresh either works, or fails terminally and takes the
-      // local-only delete. Classifying this response is the trap -- a 404 from /logout says
+      // AND THE CREDENTIAL IS KEPT, whatever the reason. Retaining is the safe side: it
+      // preserves the retry handle, and a success or a later TERMINAL refresh resolves it
+      // automatically. NOT "self-clears" -- this suite itself proves that wrong, since a
+      // repeatable 429 or a code-less legacy invalid_grant is non-terminal and can recur
+      // indefinitely, so the refresh may never reach the local-only delete. `--local` is the
+      // explicit escape where storage can be changed. Classifying this response is the trap -- a 404 from /logout says
       // nothing about the REFRESH token; it says this sign-out found no session to end, so
       // deleting on it would infer one credential's state from a response about a different
       // object.

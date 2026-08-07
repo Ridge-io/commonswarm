@@ -313,8 +313,11 @@ would preserve a refuted method.** Clause extraction — reading every string a 
 one clause at a time rather than one line at a time — is what found the sibling clause. It did
 NOT find the rest: a lower occurrence in the same release note, an `always` in a test name, and
 a third repetition on a surface already edited that lane all survived it. Those came out only
-by **enumerating every user-facing surface in the claim family first, then reading each
-statement**. Do both, in that order, and expect the enumeration to be the one that finds the
+by **enumerating every surface in the claim family first, then reading each statement**. And
+"surface" means every place the claim is made, not only the ones a user reads: on this lane the
+same universal survived in SOURCE COMMENTS after every user-facing copy was clean, because the
+enumeration had been scoped to user-facing text. A comment asserting something false is a claim
+the next maintainer will act on. Do both, in that order, and expect the enumeration to be the one that finds the
 later survivors. An author asking "is X right" hands the
 reviewer X as the unit; the sweep has to reset that or it cannot find a sibling claim inside the
 same sentence.
