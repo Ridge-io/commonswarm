@@ -308,8 +308,14 @@ clause was corrected and the first was left asserting exactly what the correctio
 reviewers read the sentence as fixed, because the question had been about that sentence and the
 sweep inherited its granularity.
 
-The technique that then found nothing: extract every string the function can emit and read each
-**clause** independently, rather than each line. An author asking "is X right" hands the
+**Two steps, and neither one is sufficient — recorded this way because claiming otherwise
+would preserve a refuted method.** Clause extraction — reading every string a function can emit
+one clause at a time rather than one line at a time — is what found the sibling clause. It did
+NOT find the rest: a lower occurrence in the same release note, an `always` in a test name, and
+a third repetition on a surface already edited that lane all survived it. Those came out only
+by **enumerating every user-facing surface in the claim family first, then reading each
+statement**. Do both, in that order, and expect the enumeration to be the one that finds the
+later survivors. An author asking "is X right" hands the
 reviewer X as the unit; the sweep has to reset that or it cannot find a sibling claim inside the
 same sentence.
 

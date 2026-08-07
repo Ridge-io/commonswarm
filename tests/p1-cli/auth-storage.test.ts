@@ -492,8 +492,11 @@ test("logout --local clears the device without contacting the server", async () 
   // removed from THIS store. It cannot prove a clean device in general: production deletion
   // can throw -- storage.ts raises on a non-zero, non-44 Keychain code, and the file store
   // can fail too. The old name promised what the assertions do not reach.
-  // The escape hatch that makes retain-by-default safe: an unclassifiable failure must never
-  // leave a user stuck between a failing status and a failing logout.
+  // The escape hatch that makes retain-by-default safe: when local storage CAN be changed, an
+  // unclassifiable failure has a way out of the status-fails/logout-fails corner. NOT "never
+  // leaves a user stuck" -- that universal is false when the delete itself throws, and it
+  // survived here as a sibling claim after the test NAME was fixed, which is the exact shape
+  // the AGENTS.md claim-granularity rule describes.
   const server = await refreshFailureServer(429, { code: "over_request_rate_limit" });
   const { store } = storeWith("unknown-state");
   try {
