@@ -2847,7 +2847,30 @@ already there; only the encoding is wrong.
 
 ---
 
-## D-056 — a post-fix receiver dies at cold start 25% of the time · SHIP-BLOCKER for the D-051 deploy
+## D-056 — a post-fix receiver dies at cold start 25% of the time · MITIGATED, shipped in v0.1.7
+
+> **STATUS 2026-08-07 — the ship-blocker is DISCHARGED, not the defect.** The heading below
+> read `SHIP-BLOCKER for the D-051 deploy` until this date; D-051 and its mitigation shipped
+> together in **v0.1.7** (`c829a33`), so that wording is **dead** and kept only for history.
+>
+> **What shipped:** bounded per-burst refusal tolerance in the follow loop (default 60s,
+> `CSWARM_REFUSAL_TOLERANCE_MS`, ceiling 10 min). A refusal is now absorbed for a window,
+> each attempt after full backoff, before the stream stops. The D-051 veto is not removed —
+> it is **overridden on a bounded budget**, because the server's `retryable:false` is
+> measurably wrong for pooler exhaustion (`XX000` is absent from `read`'s `RETRYABLE_CODES`).
+> Both D-036 arms cleared it; Plumb's non-author control is in the suite and was
+> mutation-verified to discriminate.
+>
+> **What is NOT fixed, and why this is MITIGATED rather than FIXED:** the 60s window does
+> **not** cover the ~420s observed pooler burst, and **nothing consumes exit 75**, so a
+> longer spell still ends the session and it stays ended until a person or a supervisor
+> restarts it. The underlying cause is a server-side misclassification that a `read` deploy
+> would fix at source; that deploy is frozen by D-047 and its vehicle is still unnamed.
+>
+> Evidence: `docs/release/0.1.7.md`, and the wake round trip measured on the shipped
+> artifact in `docs/evidence/2026-08-06-agent-wake-round-trip.md`.
+
+### Original entry, as filed
 
 **8 independent cold starts, post-fix `5886fa4`: 6 reached ready, 2 died before ready — 25%.**
 

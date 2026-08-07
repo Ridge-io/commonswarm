@@ -6,10 +6,11 @@ never `"$R:src/..."`.
 ## Refs as they actually are
 
 ```
-main                   2f554cb   evidence + continuity docs landed today
-lead/logout-wedge      e16e1c8   RED -- do not land (test:p1-cli 156/2, cause known)
-lead/hide-scrollbars   d271109   LANDED TO PRODUCTION (site)
-lead/d059-pooler-raise e67e73f   docs only, unreviewed
+main                     c829a33   v0.1.7 SHIPPED and verified on the public artifact
+lead/d056-bounded-recovery 72f5f70 MERGED into main, both D-036 arms cleared
+lead/logout-wedge        e16e1c8   BLOCKED -- open blockers, see below. NOT merged.
+lead/hide-scrollbars     d271109   LANDED TO PRODUCTION (site)
+lead/d059-pooler-raise   e67e73f   docs only, unreviewed
 ```
 
 ---
@@ -59,7 +60,20 @@ machine with nothing running — a process must start for the wake to land.
 
 ---
 
-## NEXT ACTION — unblock the red branch (~30 min)
+## ~~NEXT ACTION — unblock the red branch~~ DONE. v0.1.7 SHIPPED 2026-08-07.
+
+`curl -fsSL https://commonswarm.com/install.sh | sh` now yields **cswarm 0.1.7**, sha256
+`73ee5b11…`, matching the published asset byte-for-byte. Live `/download` carries 0.1.7 on
+every surface with zero stale 0.1.6 strings. The wake round trip was re-measured **on the
+downloaded binary** via **codex** — the provider that did not exist in 0.1.6.
+
+See `docs/release/0.1.7.md` for what shipped and its stated limits.
+
+### THE NEXT ACTION IS NOW THE LOGOUT LANE (see "Open" below)
+
+~~Superseded, kept for history:~~
+
+## ~~Unblock the red branch (~30 min)~~
 
 `lead/logout-wedge` is `test:p1-cli` **156/2**. Not a logic defect: both failures spawn the real
 CLI, which sleeps real backoff, so the 60s refusal budget exceeds their timeouts.
