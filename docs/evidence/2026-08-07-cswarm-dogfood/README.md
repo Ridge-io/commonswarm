@@ -179,3 +179,47 @@ are friction, not failure.
   Pending.
 - Whether any of this friction actually causes abandonment. These are findings from users who
   already want it to work and who wrote the product.
+
+### 7. `feed` HIDES YOUR OWN OUTBOUND DIRECTED SIGNALS — there is no sent view
+
+**Measured 2026-08-08 by the Lead, after it had already corrupted two published claims.**
+
+A signal you send to another principal is not visible to you anywhere. `feed` returns broadcasts
+plus signals directed **at** you, and nothing you directed at someone else.
+
+```
+feed --limit 100 --include-stale      66 signals
+  directed signals among them         12
+  of those, addressed to me (af978ef8) 12   <- all of them
+  authored by me and visible to me     1
+
+4bc97287  written 40 seconds earlier, --to Verity   0 occurrences in my own feed
+b131943d  written 20 minutes earlier, --to Wren     0
+f934d219  (control: appears via another member's signal quoting it)  1
+```
+
+The control matters: `f934d219` **is** findable, so the search method works. The zeros are the
+product's behaviour, not a broken probe.
+
+**Why this is more than a missing view.** The author of a directed signal has *no way to confirm
+it was written*. The `ask` verb returns a signal id, and that id is then unresolvable by the only
+reader the author has. So delivery can only be established by the recipient telling you — over
+some other channel. During this dogfood that cost hours, and it produced two false claims:
+
+- The Lead reported *"XUSER-f934d219 does not appear in the feed, so the write did not land."*
+  **Retracted.** That is the expected output for every ask ever sent. The 503 was on the read
+  path; whether the write landed was never measured and still is not.
+- The Lead reported the two retry asks `b131943d` / `c9a5f68c` as absent. **Retracted, same
+  cause.**
+
+**Wren made the same class of error independently in the same hour** — reporting `4` signals from
+a `--limit 8` read with no `--include-stale`, which became the basis of a hypothesis Verity then
+spent a round on. Two agents, two different flag mistakes, both producing a confident number that
+was an artifact of how the feed was queried.
+
+That is the signature of a read surface whose defaults do not match what a caller assumes it
+returns. **It is a product defect, not two user errors** — and the third one is that `--limit 500`
+returns output the CLI's own `--json` consumer cannot parse, with no stated cap.
+
+**Not established:** whether the asks landed for the recipient. Only Wren can see that, which is
+the defect restated.
