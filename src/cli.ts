@@ -1036,7 +1036,12 @@ async function runStatus(args: Arguments): Promise<void> {
 }
 
 async function runInvite(args: Arguments): Promise<void> {
-  args.assertShape([...TARGET_FLAGS, "workspace-id", "email"], 1);
+  /* `--json` is accepted and has no effect: this verb's receipt is already JSON on stdout,
+   * with narration on stderr. It is allowed because refusing it was a trap — `--json` works
+   * on status/feed/inbox/workspaces/listen-status, so a caller reasonably assumes it works
+   * here, and `mint --json > cred.json` left an EMPTY file (shell truncation, then a failed
+   * command writing nothing to stdout). See D-064. */
+  args.assertShape([...TARGET_FLAGS, "workspace-id", "email", "json"], 1);
   const cloud = await target(args);
   const human = await humanCredential(args, cloud);
   const workspace = await workspaceId(args, cloud, human);
@@ -1295,7 +1300,8 @@ async function runAccept(args: Arguments): Promise<void> {
 async function runPrincipal(args: Arguments): Promise<void> {
   const action = args.positionals[1];
   if (action === "create") {
-    args.assertShape([...TARGET_FLAGS, "workspace-id", "name"], 2);
+    /* `--json` accepted, no effect — see the note on `runInvite`. D-064. */
+    args.assertShape([...TARGET_FLAGS, "workspace-id", "name", "json"], 2);
     const cloud = await target(args);
     const human = await humanCredential(args, cloud);
     const workspace = await workspaceId(args, cloud, human);
@@ -1399,6 +1405,8 @@ async function runToken(args: Arguments): Promise<void> {
       "epoch",
       "ttl-ms",
       "renewal-horizon-days",
+      /* `--json` accepted, no effect — see the note on `runInvite`. D-064. */
+      "json",
     ],
     2,
   );

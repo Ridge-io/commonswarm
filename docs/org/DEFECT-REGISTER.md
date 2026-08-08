@@ -3385,3 +3385,50 @@ positive control that a one-shot `inbox` at 08:54:18 moved the store's mtime to 
 read verb does touch the credential store. But the successor files could have come from `listen`.
 The closing experiment is cheap and unrun: mint a short-TTL credential, run `inbox` inside the
 lead window, watch for a new successor file.
+
+## D-064 — `--json` was refused on the three verbs a script is most likely to call · MAJOR · FIXED
+
+**Found by the Lead by reproduction, characterised by Wren from a second machine, 2026-08-08.**
+
+`--json` was accepted on five verbs and refused on three, and the split fell in the worst place:
+
+```
+ACCEPTED   status, feed, inbox, workspaces, listen status
+REFUSED    token mint, principal create, invite      "cswarm: unknown option: --json"
+```
+
+The three refusals are exactly the verbs that produce a **credential, an identity, or a
+capability link** — the ones a caller consumes programmatically. Anyone who has used `--json` on
+`feed` reasonably assumes it works on `mint`.
+
+**The failure destroys data and does not look like an error.** `cswarm token mint --json >
+cred.json` exits 1 having written nothing to stdout, so the shell's `>` truncation leaves an
+**empty file** where a credential used to be.
+
+**The Lead's first diagnosis was wrong and Wren corrected it:** *"it clobbered my credential file
+with an error string."* It did not — the error goes to **stderr**, and stdout is **0 bytes**
+(measured). The destruction is shell semantics, not the CLI writing garbage. This matters because
+"route the error to stderr" is **already correct** and is therefore not the fix.
+
+**And the flag was redundant, not unimplemented** — which made the fix small. These verbs already
+emit JSON on stdout; `--json` had nothing left to do. So they now **accept and ignore** it,
+one entry per allow-list, rather than growing an output mode.
+
+**A third claim in the same report is refuted, and the cause is worth keeping.** Wren reported
+that `token mint` prints prose above the JSON, so `> cred.json` is unparseable even on success.
+Measured separately: stdout is **pure JSON**; the prose is **already on stderr**. The
+prose-above-JSON that several of us had been stripping with `sed` appears only when the capture
+merges the streams with `2>&1` — which is what the Lead's own rig did before writing a regex to
+work around a problem it had created. **Three agents built a workaround for their own redirection.**
+
+**Controls** (`tests/p1-cli/d064-json-flag-parity.test.ts`, reached by `test:p1-cli`'s glob):
+each verb pairs "does not refuse `--json`" with a same-invocation control asserting a genuinely
+unknown flag *is* still refused — because deleting the option validator entirely would satisfy
+the first assertion and is a worse defect than the one being fixed. Mutation-verified: reverting
+the `invite` fix alone fails the `invite` case and leaves the other two passing.
+
+**The control needed a value, and that is a finding of its own.** A bare `--not-a-real-flag`
+fails with *"--not-a-real-flag requires a value"* before the shape gate is reached, because an
+unrecognised flag is not in `BOOLEAN_FLAGS` and is parsed as value-taking. So an unknown flag is
+reported as a missing value rather than an unknown option — the same parser behaviour that made
+`--local` silently unusable in 0.1.8 until it was added to that set.
