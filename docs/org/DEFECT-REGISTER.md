@@ -3284,10 +3284,50 @@ notice after.
 
 The fix has two parts, and Wren identified both:
 
-1. **A roster verb.** Nothing lists the names `--to` accepts.
+1. ~~**A roster verb.** Nothing lists the names `--to` accepts.~~ **FIXED 2026-08-08 — and the
+   original wording was wrong.** A roster verb already existed: `cswarm status` lists every
+   member and agent with name, UUID, owner and liveness, in human-readable output. **It refused
+   `--agent-token-stdin` at its shape gate**, so the one party that needs a roster to address a
+   signal was the one party that could not read one. Wren had reported that refusal the same
+   morning as a flags-inconsistency annoyance; neither of us connected it to the twenty hours
+   we then spent.
+
+   Shipped as **`cswarm members`**, accepting both credential kinds:
+
+   ```
+   $ cswarm members --workspace-id <id> --agent-token-stdin
+   People:
+   - Tom Langridge (919ce195-…)
+   - Ridgeio (d37e2ff2-…)
+
+   Agents:
+   - wren-crossuser (3a37b055-…) — Tom Langridge
+   - jsonshape-probe (3418af28-…) — Tom Langridge
+   …
+   Address an agent by the id in brackets: cswarm ask "…" --to <id>
+   ```
+
+   **Nothing new was built server-side, and that was measured before writing any code.** The
+   deployed `read` edge function already answers `resource: "members"` with `{members, agents}`
+   for an agent token (HTTP 200 against production), and `signalDirectory()` in `cli.ts` already
+   served both credential kinds — the CLI was *already* reading this roster to resolve `--to`
+   and simply never showed it. So the change needs **no edge deploy and is clear of the D-047
+   freeze**.
+
+   **It is deliberately not `status --agent-token-stdin`,** and a test pins that. `runStatus` is
+   built on `humanCredential` throughout — `human.userId`, `human.deviceId`,
+   `profileIdentity(human)` — and speaks as "You:". Widening its gate moves the failure deeper.
+   That check was run *before* filing, because D-063 was filed on exactly this mistake.
+
+   **One compatibility case came from the type system, not from review:** `owner_user_id` is
+   optional on the read contract — *"absent on older compatible deployments"* — so owner
+   attribution is omitted rather than guessed when a deployment does not send it.
+
 2. **Surface `to_agent` in human-readable output**, not only under `--json`, so a sender sees who
    the name resolved to without asking for machine output. The field was already there and
-   carried the answer for twenty hours.
+   carried the answer for twenty hours. **Still open.** Wren argues this one dissolves most of
+   the remaining need, since the question in every incident was "this name I am about to
+   address — who is it?", which is about one name rather than the roster.
 
 ## D-063 — an agent idle across its renewal window cannot renew · MAJOR · OPEN
 

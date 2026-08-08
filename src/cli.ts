@@ -326,6 +326,7 @@ Usage:
   cswarm target set --url <project-url> --anon-key <key> [--json]
   cswarm target clear [--json]
   cswarm status [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--json]
+  cswarm members [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--agent-token-stdin] [--json]
   cswarm working-on "<what>" [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--about <ref>] [--until <dur>] [--json]
   cswarm note "<text>" [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--to <member|agent>] [--about <ref>] [--until <dur>] [--json]
   cswarm ask "<text>" [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--to <member|agent>] [--about <ref>] [--until <dur>] [--wait <seconds>] [--json]
@@ -2321,6 +2322,109 @@ async function runReply(args: Arguments): Promise<void> {
   );
 }
 
+/**
+ * The roster, for whoever is asking — including an agent. D-062.
+ *
+ * `status` already showed all of this, and refused `--agent-token-stdin` at its shape gate,
+ * so the party that needs a roster to address a signal was the one party that could not read
+ * one. That cost twenty hours: a principal named `Wren` existed, `--to Wren` resolved to it,
+ * and no supported command could show that it was not the Wren we meant.
+ *
+ * This is deliberately NOT `status --agent-token-stdin`. `runStatus` is built on
+ * `humanCredential` throughout — `human.userId`, `human.deviceId`, `profileIdentity(human)` —
+ * and speaks as "You:". Widening its gate would move the failure deeper, not fix it.
+ *
+ * Nothing new is fetched: `signalDirectory` already served both credential kinds, and the
+ * deployed `read` edge function already answers `resource: "members"` with `{members, agents}`
+ * for an agent token. This verb only shows what the CLI was already reading to resolve `--to`.
+ * So it needs no edge deploy, and stays clear of the D-047 freeze.
+ */
+async function runMembers(args: Arguments): Promise<void> {
+  args.assertShape([
+    ...TARGET_FLAGS,
+    "workspace-id",
+    ...CREDENTIAL_FLAGS,
+    "json",
+  ], 1);
+
+  const cloud = await target(args);
+  const selected = await commandWorkspaceAndCredential(args, cloud, {
+    validateHumanWorkspace: true,
+  });
+  const directory = await signalDirectory(
+    cloud,
+    selected.selectedWorkspace,
+    selected,
+  );
+
+  const memberNames = new Map(
+    directory.members.map((member) => [
+      member.user_id,
+      sanitizeDisplayLabel(member.display_name, "Unnamed member"),
+    ]),
+  );
+
+  if (args.has("json")) {
+    process.stdout.write(
+      `${
+        JSON.stringify(
+          {
+            workspace_id: selected.selectedWorkspace,
+            members: directory.members.map((member) => ({
+              user_id: member.user_id,
+              name: memberNames.get(member.user_id) ?? null,
+            })),
+            agents: directory.agents.map((agent) => ({
+              principal_id: agent.principal_id,
+              name: sanitizeDisplayLabel(agent.name, "Unnamed agent"),
+              /* `owner_user_id` is optional on the read contract — an older deployment omits
+               * it. Report null rather than inventing an owner. */
+              owner_user_id: agent.owner_user_id ?? null,
+              owner_name: agent.owner_user_id === undefined
+                ? null
+                : memberNames.get(agent.owner_user_id) ?? null,
+            })),
+          },
+          null,
+          2,
+        )
+      }\n`,
+    );
+    return;
+  }
+
+  const lines: string[] = [];
+  lines.push("People:");
+  if (directory.members.length === 0) {
+    lines.push("- nobody yet");
+  }
+  for (const member of directory.members) {
+    lines.push(`- ${memberNames.get(member.user_id)} (${member.user_id})`);
+  }
+  lines.push("");
+  lines.push("Agents:");
+  if (directory.agents.length === 0) {
+    lines.push("- none yet");
+  }
+  for (const agent of directory.agents) {
+    /* Owner attribution is omitted, not guessed, when the deployment does not send it. */
+    const owner = agent.owner_user_id === undefined
+      ? undefined
+      : memberNames.get(agent.owner_user_id);
+    lines.push(
+      `- ${sanitizeDisplayLabel(agent.name, "Unnamed agent")} (${agent.principal_id})${
+        owner === undefined ? "" : ` — ${owner}`
+      }`,
+    );
+  }
+  lines.push("");
+  /* The UUID is the addressable identity and the name is not: names are unique per workspace,
+   * but a name you did not create can belong to someone you did not mean. Saying so here is
+   * the cheap half of D-062. */
+  lines.push("Address an agent by the id in brackets: cswarm ask \"…\" --to <id>");
+  process.stdout.write(`${lines.join("\n")}\n`);
+}
+
 async function runSignalRead(
   args: Arguments,
   inbox: boolean,
@@ -3733,6 +3837,10 @@ async function main(): Promise<void> {
   }
   if (verb === "status") {
     await runStatus(args);
+    return;
+  }
+  if (verb === "members") {
+    await runMembers(args);
     return;
   }
   if (verb === "working-on" || verb === "note" || verb === "ask") {
