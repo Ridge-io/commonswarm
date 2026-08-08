@@ -3674,8 +3674,35 @@ D-062, where `to_agent` carried the answer under `--json` for twenty hours.
 first that was pinning it *deliberately*. The others were the `logout` overclaim, `every session`,
 `visible only to its recipient`, and `deployment operator who invited you`.
 
-**Flagged for a non-author read:** the Lead both made this change and rewrote the control that
-opposed it. That is exactly the arrangement AGENTS.md says does not count as a control.
+**Non-author read completed — Wren, 2026-08-08. Override upheld, with one correction to the
+justification and one improvement recorded.**
+
+**The stronger argument, which the Lead did not make.** `accept-link.ts:214`:
+
+```ts
+const workspaceName = sanitizeDisplayLabel(payload.workspace_name, "this swarm");
+```
+
+The **new** workspace name — already rendered prominently in quotes in this very sentence — comes
+from the **link payload**. It is attacker-controlled and merely sanitized. So the shipped message
+has always echoed an *untrusted* workspace identifier. If a policy existed against disclosing
+workspace identifiers here it would bite the untrusted one far harder than the trusted one, so no
+such policy exists. **The change adds local trusted data to a message that already renders remote
+untrusted data, and is therefore strictly safer than what shipped before it.** Verified
+independently by the Lead at the same line.
+
+**CORRECTION to this entry's own reasoning, and it is Wren's criticism.** The brief specifies
+`(was "<old>")` — quoted, in the same form as `"<new>"`, which the code renders as a **name**.
+What shipped is a bare uuid. **So the brief authorises the change and not the format, and citing
+"the brief specifies this line" as the justification quoted the source for the half that helped.**
+The honest statement is: *the brief's format is knowingly not met, because the previous
+workspace's name is unavailable without a fetch that does not exist at this point* — the same
+implementation-limitation reasoning, applied to the format as well as to the omission. Both halves
+or neither.
+
+**Recorded as an improvement rather than a deviation:** `switch back with cswarm use <id>` is
+**better than the brief**, which only wanted the user informed. Wren asked that this not be lumped
+in with the format deviation, and it should not be.
 
 ## Observation — `new` does not create a principal; `accept` does
 
