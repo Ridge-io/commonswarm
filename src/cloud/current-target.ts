@@ -228,7 +228,11 @@ function missingTargetError(mode: "human" | "agent"): Error {
     );
   }
   return new Error(
-    "no Cloud target is selected: start with cswarm accept --link-stdin because invite links carry the Cloud target and save its Supabase project base URL, or run cswarm target set --url https://<ref>.supabase.co --anon-key <key> using values from the deployment operator who invited you; scripts and CI may instead pass --url and --anon-key or set SWARM_CLOUD_URL and SWARM_CLOUD_ANON_KEY",
+    /* "who invited you" assumed an inviter. Self-serve signup is live, so a reader who created
+     * their own workspace has no such person and the sentence sends them to nobody. Same family
+     * as the 3-project cap telling the account holder to ask an operator who is themselves —
+     * instruction text written for a different reader than the one receiving it. See D-067. */
+    "no Cloud target is selected: start with cswarm accept --link-stdin because invite links carry the Cloud target and save its Supabase project base URL, or run cswarm target set --url https://<ref>.supabase.co --anon-key <key> using values from whoever runs this deployment, or from your own project's API settings if you created it; scripts and CI may instead pass --url and --anon-key or set SWARM_CLOUD_URL and SWARM_CLOUD_ANON_KEY",
   );
 }
 

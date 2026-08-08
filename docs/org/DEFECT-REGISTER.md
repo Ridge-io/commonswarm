@@ -3574,3 +3574,58 @@ sh -n install.sh            ->  parses clean
 **Nothing in a gate executes this text**, which is how the previous fiction in the same block
 (*"paste the link when prompted"*, against a `--link-stdin` that refuses a TTY) survived to
 production. Both were found by a second-machine dogfood and neither by a test.
+
+## D-067 — instruction text written for a different reader than the one receiving it · MAJOR · PARTLY FIXED
+
+**Wren's framing, adopted verbatim, and filed as ONE entry at its suggestion rather than three
+separate copy defects.** The unifying fault is not wording; it is that each message names a
+remedy the reader it reaches cannot perform.
+
+| instance | told the reader to | why that reader cannot |
+|---|---|---|
+| `install.sh`: *"paste the link when prompted"* | wait for a prompt | `accept --link-stdin` refuses a TTY; there is no prompt. **Fixed.** |
+| 3-project cap: *"ask whoever operates this deployment"* | ask the operator | on this deployment the account holder **is** the operator, and there is no CLI or web path. **Open — see finding 10.** |
+| no-target error: *"values from the deployment operator who invited you"* | ask their inviter | self-serve signup is **live**; a reader who created their own workspace has no inviter. **Fixed here.** |
+
+**Fixed in this entry:** both no-target messages (`src/cloud/current-target.ts:231`,
+`src/cloud/config.ts:14`) now read *"from whoever runs this deployment, or from your own
+project's API settings if you created it"* — naming a route for each reader and assuming
+neither.
+
+**A copy control was holding the defect in place.** `tests/p1-cli/cli-errors.test.ts` required
+the literal `/deployment operator who invited you/`, so the gate actively defended a sentence
+that sent self-serve users to nobody. Replaced with what the message must **do** — name both
+routes, assume neither — rather than the words it happened to use. **This is the fourth control
+in this repo found pinning a claim rather than a behaviour**, after the `logout` overclaim, the
+`every session` string, and `visible only to its recipient`.
+
+**Why this family keeps recurring, and it is not carelessness.** Every one of these sentences was
+written by someone who knew exactly who they were talking to, and was right at the time. What
+changed was the population: `--link-stdin` replaced a prompt, self-serve replaced invite-only,
+and the operator became the user. **Availability and audience are deployment state, and this repo
+already knows that copy asserting deployment state goes stale silently — that is D-023.** The
+new part is that it applies to *who the reader is*, not only to *what is available*.
+
+**Not established:** whether a self-serve user can obtain their URL and anon key from any product
+surface at all. The corrected text says "your own project's API settings", which is true of
+Supabase but was **not verified as reachable from anything CommonSwarm shows them**. If it is
+not, the sentence is honest and still a dead end, and the finding is larger than copy.
+
+## Agent-path statelessness — now gated
+
+Not a defect. An invariant nothing was protecting, recorded because the gate exists because of
+it: `tests/p1-cli/agent-path-stateless.test.ts` asserts an agent verb writes **zero files** into
+a pristine `HOME`, and that it fails at the network rather than at configuration.
+
+Found by Wren with a better instrument than the one it was asked for. Told to log out for a cold
+walk, it declined — its browser automation was down, so it could not establish which identity a
+re-login would take, and a wrong one would have destroyed the cross-user rig. It pointed `HOME`
+at an empty directory instead: repeatable, risk-free, and strictly more controlled.
+
+Wren named the exact regression: someone shortens the four-flag invocation by requiring a saved
+target, which breaks the only path that works from nothing — the property that makes the
+verbosity tolerable. Mutation-verified against precisely that change.
+
+**Measured refinement:** files are zero; **two empty directories** are created, identically for a
+full artifact, one without `expires_at`, and a bare token. Wren's claim was about files and is
+exact; "leaves nothing behind" would have been slightly overstated, so the gate asserts on files.

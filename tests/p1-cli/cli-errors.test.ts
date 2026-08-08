@@ -40,7 +40,20 @@ test("missing cloud URL names invite acceptance as the real front door", async (
   assert.equal(result.stdout, "");
   assert.match(result.stderr, /Supabase project base URL/);
   assert.match(result.stderr, /https:\/\/<ref>\.supabase\.co/);
-  assert.match(result.stderr, /deployment operator who invited you/);
+  /* D-067. This required the literal "deployment operator who invited you", so the gate was
+   * actively holding a sentence that assumed a person who may not exist: self-serve signup is
+   * live, and a reader who created their own workspace has no inviter. The message sent them
+   * to nobody, and the test made sure it kept doing so.
+   *
+   * Replaced with what the message must now DO rather than the words it used to use: name a
+   * route for both readers, and assume neither. */
+  assert.match(result.stderr, /whoever runs this deployment/);
+  assert.match(result.stderr, /if you created it/);
+  assert.doesNotMatch(
+    result.stderr,
+    /who invited you/,
+    "the no-target message assumes an inviter again; self-serve users have none",
+  );
   assert.match(result.stderr, /invite/);
   assert.match(result.stderr, /cswarm accept --link-stdin/);
   assert.match(result.stderr, /invite links carry the Cloud target/);

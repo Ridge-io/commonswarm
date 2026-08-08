@@ -11,7 +11,9 @@ export interface CloudTarget {
 export function cloudTarget(url: string, anonKey: string): CloudTarget {
   if (!url.trim()) {
     throw new Error(
-      "--url is required: use the Supabase project base URL (https://<ref>.supabase.co) from the deployment operator who invited you, or start with cswarm accept --link-stdin because invite links carry the Cloud target; if you already have a project, pass --url and --anon-key or set SWARM_CLOUD_URL and SWARM_CLOUD_ANON_KEY.",
+      /* Not "who invited you" — self-serve signup is live and that reader has no inviter.
+       * See D-067 and the matching wording in current-target.ts. */
+      "--url is required: use the Supabase project base URL (https://<ref>.supabase.co) from whoever runs this deployment, or from your own project's API settings if you created it, or start with cswarm accept --link-stdin because invite links carry the Cloud target; if you already have a project, pass --url and --anon-key or set SWARM_CLOUD_URL and SWARM_CLOUD_ANON_KEY.",
     );
   }
   const parsed = new URL(url);
