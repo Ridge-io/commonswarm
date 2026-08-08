@@ -163,10 +163,17 @@ esac
 # The stated REASON was always right and is kept; only the method was fiction. Piping is also
 # what README.md documents.
 printf '\nNext, if you have an invite link:\n\n'
-printf '  read -r LINK    # paste the link, then press Enter\n'
+# `-rs`, not `-r`: `-s` keeps the link off the screen and out of scrollback. Without it this
+# text was telling a stranger to echo a live capability to their terminal on the line directly
+# above the sentence explaining why we keep capabilities out of shell history -- the reason was
+# right and the method contradicted it. README.md uses `read -rs` for the agent-token path for
+# the same reason. The trailing `echo` restores the newline that `-s` swallows. Found by a
+# second-machine dogfood on the shipped installer; nothing here is executed by a gate.
+printf '  read -rs LINK; echo    # paste the link, then press Enter (stays hidden)\n'
 printf '  printf %%s "$LINK" | cswarm accept --link-stdin\n\n'
-printf 'The link is piped in rather than passed as an argument, because an argument would\n'
-printf 'leave a live capability in your shell history and in the process list.\n'
+printf 'The link is piped in rather than passed as an argument, and read hides it as you paste,\n'
+printf 'because either would leave a live capability on screen, in your shell history, or in\n'
+printf 'the process list.\n'
 printf '\nNo invite? Make your own workspace. It is free and takes no card:\n\n'
 printf '  https://commonswarm.com/app\n\n'
 # `<project name>`, not `<workspace name>`: that is the placeholder `cswarm --help` prints

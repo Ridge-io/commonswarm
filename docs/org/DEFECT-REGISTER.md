@@ -3472,3 +3472,77 @@ fails with *"--not-a-real-flag requires a value"* before the shape gate is reach
 unrecognised flag is not in `BOOLEAN_FLAGS` and is parsed as value-taking. So an unknown flag is
 reported as a missing value rather than an unknown option — the same parser behaviour that made
 `--local` silently unusable in 0.1.8 until it was added to that set.
+
+## D-065 — `invite` needs an email address the product never shows you · MAJOR · OPEN
+
+**Found by Wren, 2026-08-08, and only reachable from the invite-FROM direction** — which is why
+running the reverse round was worth it. Every earlier round had the Lead as inviter, and the Lead
+happens to know the invitee's address out of band.
+
+`cswarm invite` takes `--email`. **No surface in the product shows anyone else's email.** Both
+`status` and the new `members` verb render people as name plus user id:
+
+```
+- Tom Langridge (919ce195-…) — member — you
+- Ridgeio (d37e2ff2-…) — owner
+```
+
+So a collaborator who has worked in two shared workspaces for two days, can see the other party's
+user id, and can address their agents by UUID, **must leave the product and ask for an email
+address** to add them to a third. Wren demonstrated it live by being blocked mid-round.
+
+**Measured scope, before proposing a fix.** The protocol already models this:
+`src/protocol/workspace-commands.ts:34` declares `email: string | null`, and the reducer's
+`inviteeAlreadyMember(cmd.email)` takes a nullable. **The wire contract does not:**
+`supabase/functions/command/index.ts:92` types the request as
+`{ kind: "invite_member"; email: string; ttl_ms?: number }` — non-null and required.
+
+**So every candidate fix needs a `command` edge deploy**, and that is the finding's real cost:
+
+| candidate | needs |
+|---|---|
+| invite by user id, for someone already visible to you | `command` edge change + deploy |
+| link-only invite (`email: null`) | `command` edge change + deploy — **the reducer already supports it** |
+| show emails to co-members | a read-path change; `read` is under the D-047 freeze |
+
+The second is the smallest by code and the largest by consequence: an invite with no addressee is
+a bearer capability for the workspace, and §8 already treats invitations as a
+branded-phishing vector. The first leaks nothing new — it names only what the caller can already
+see — and is the one Wren recommends starting from.
+
+**Not established:** whether `command`'s deployed v16 would accept `email: null` today if the
+client sent it (the wire type is TypeScript, not necessarily a runtime check); whether
+`inviteeAlreadyMember(null)` returns false as the reducer's typing implies; and whether an
+invitation row with a null email breaks any later acceptance path. **None of these were probed** —
+`command` is the write path for everything, so a deploy is an operator decision and none of this
+was tested against production.
+
+## D-066 — the installer told a stranger to echo a live capability to their screen · MINOR · FIXED
+
+**Found by Wren on the shipped installer, 2026-08-08.** `install.sh` printed:
+
+```
+read -r LINK    # paste the link, then press Enter
+printf %s "$LINK" | cswarm accept --link-stdin
+```
+
+directly above the sentence *"The link is piped in rather than passed as an argument, because an
+argument would leave a live capability in your shell history and in the process list."*
+
+`read -r` echoes as you type, so the single-use invite link lands on screen and in scrollback.
+**The stated reason was correct and the method two lines above it did the thing the reason
+forbids.** `README.md:254` already uses `read -rs` for the agent-token path.
+
+Fixed to `read -rs LINK; echo` — the trailing `echo` restores the newline `-s` swallows.
+Verified in both shells a user is likely to paste into, with the old form as a control:
+
+```
+bash   read -rs LINK; echo  ->  cswarm://accept/TESTLINK
+zsh    read -rs LINK; echo  ->  cswarm://accept/TESTLINK
+zsh    read -r  LINK        ->  cswarm://accept/TESTLINK   (control: -rs is not silently broken)
+sh -n install.sh            ->  parses clean
+```
+
+**Nothing in a gate executes this text**, which is how the previous fiction in the same block
+(*"paste the link when prompted"*, against a `--link-stdin` that refuses a TTY) survived to
+production. Both were found by a second-machine dogfood and neither by a test.
