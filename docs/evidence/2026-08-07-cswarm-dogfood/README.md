@@ -87,13 +87,6 @@ day-to-day use of its own product is the *weaker* of the two paths.
 This is the gap that a bridge to Claude Code's own inbox socket would close. See
 `docs/org/2026-08-07-POSITIONING-CROSS-USER.md`.
 
-## What worked without comment
-
-Principal creation, token minting, `working-on`, `note --to`, `inbox`, `feed`, and the JSON
-contract on all of them. No `CSWARM BLOCKED` fallback was needed to get three agents onboarded and
-talking. **The product carried its own team's coordination on the first try** — the findings above
-are friction, not failure.
-
 ### 6. The Lead hand-wrote onboarding instead of using the product's connect artifact
 
 `site/src/components/connect/agent-prompt.ts` exists and describes itself as *"the one artifact a
@@ -109,6 +102,13 @@ Not a fallback failure. The defect worth chasing is why the maintainer reached f
 steps at the moment of onboarding — whether the artifact is not discoverable from where an
 operator stands, or does not cover the agent-to-agent case. **Unestablished; do not assume the
 first.**
+
+## What worked without comment
+
+Principal creation, token minting, `working-on`, `note --to`, `inbox`, `feed`, and the JSON
+contract on all of them. No `CSWARM BLOCKED` fallback was needed to get three agents onboarded and
+talking. **The product carried its own team's coordination on the first try** — the findings above
+are friction, not failure.
 
 ## Not established
 
