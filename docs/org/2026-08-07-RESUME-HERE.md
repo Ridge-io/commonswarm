@@ -43,7 +43,27 @@ unreachable in production — they need `durable_claim`, and deployed `read` v6 
 
 ---
 
+## STRATEGIC DECISION 2026-08-07 — read this before planning anything
+
+**CommonSwarm sits on cross-user and provider-agnostic.** Operator decision, after Anthropic
+shipped native inter-agent messaging in Claude Code v2.1.224.
+Full reasoning: `docs/org/2026-08-07-POSITIONING-CROSS-USER.md`.
+
+The short version: **run 1 of our wake evidence — claude↔claude, same user, same machine — is
+now a free Claude Code built-in.** Runs 2 and 3 (a codex recipient, and a COLD recipient whose
+ask persisted server-side) are things their design refuses, because their socket is scoped to one
+OS user and an offline session has nothing to queue to.
+
+**The obligation that creates is the top of the list below:** the cross-user round trip has never
+been measured. It is in our own evidence file's "Not established" list. Do not change public copy
+until it passes.
+
 ## NEXT ACTIONS, in order
+
+0. **MEASURE THE CROSS-USER, CROSS-MACHINE ROUND TRIP.** The whole positioning rests on it and it
+   is unmeasured. Rig exists: Wren is identity B on `toms-m1-max-mbp`. Doubles as the first real
+   exercise of the invite path — §6 item 3, the only OPEN launch-bar item.
+
 
 1. **The register is behind the work.** Several entries below have no number or no update.
    Highest value first: the **logout defect family fixed in 0.1.8 has no entry**; **D-058 is
