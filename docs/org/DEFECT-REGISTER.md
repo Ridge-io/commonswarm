@@ -3240,10 +3240,54 @@ a UUID obtained out of band, and nothing in the CLI or the connect artifact says
 agents debugged this for ~20 hours with the answer in every response object. Not a missing
 instrument — an unread field.
 
-**Not established:** whether `23733ab6` is a stale principal or a live agent that read the
-misdirected content (**nobody has looked**, and it decides hygiene vs disclosure); and whether
-resolution prefers creation order, which would mean any name can be shadowed by a later
-duplicate.
+### Both open questions are now closed — HYGIENE, not disclosure
+
+**Shadowing is impossible** (Wren, measured): principal names are **unique per workspace** and a
+duplicate is refused at creation.
+
+```
+create principal 'shadowprobe'        accepted  159d62cb
+create principal 'shadowprobe' again  REJECTED  "principal_name_taken"
+create principal <fresh unique name>  accepted  4f9283a8   <- control: create still works
+--to shadowprobe                      resolves to 159d62cb, the sole holder
+```
+
+So `23733ab6` was not shadowing anyone. It held the name `Wren` legitimately, by getting there
+first. Resolution order is moot.
+
+**And it was mine.** `/tmp/cswarm-dogfood/Wren.cred.json` and `Wren.out` on the mini record that
+**the Lead created principal `Wren` at 2026-08-07T22:12:50** as an onboarding placeholder, in
+anticipation of an agent that then created its own (`wren-crossuser`, `3a37b055`) on its own
+machine. The placeholder was never withdrawn and kept the name.
+
+**Nothing could have read the misdirected asks, and this is a mechanism rather than an absence
+argument.** The only credential ever minted for `23733ab6` was minted by the Lead and carried
+`expires_at: 2026-08-08T04:12:49.701Z`. The first misaddressed ask was sent at **13:16:45Z** —
+**over nine hours after that credential was already dead.** The content went to a mailbox for
+which no live key existed.
+
+**Residual risk, stated rather than dismissed:** the signals persist server-side, so a *newly*
+minted credential for `23733ab6` could still read them. Minting requires the workspace owner's
+credential. **The principal is therefore revoked** — see below — which is the action that closes
+it, not the reasoning above.
+
+**Still not established:** whether any token other than the Lead's was ever minted for
+`23733ab6`. Local artifacts cannot show that; only `swarm.agent_tokens` can, and the count was
+not run. The argument above rests on the owner-only minting constraint, not on a measured count.
+
+### What D-062 actually is
+
+Not missing validation — validation works. Not ambiguous resolution — duplicates are refused.
+**Name addressing is safe but undiscoverable.** A caller can be entirely correct, receive
+`accepted`, and be talking to someone else, with no supported way to check first and no prompt to
+notice after.
+
+The fix has two parts, and Wren identified both:
+
+1. **A roster verb.** Nothing lists the names `--to` accepts.
+2. **Surface `to_agent` in human-readable output**, not only under `--json`, so a sender sees who
+   the name resolved to without asking for machine output. The field was already there and
+   carried the answer for twenty hours.
 
 ## D-063 — an agent idle across its renewal window cannot renew · MAJOR · OPEN
 
