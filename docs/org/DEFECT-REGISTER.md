@@ -3213,3 +3213,79 @@ rather than two user errors.
 **Not established:** whether the fix is "feed shows your sends" or a separate view. Dogfood
 finding 1 was already that users cannot distinguish `inbox` from `feed`; widening `feed` may
 deepen that.
+
+## D-062 — a recipient name resolved to a different live principal · MAJOR · OPEN
+
+**Measured 2026-08-08.** `--to <name>` resolved `Wren` to principal
+`23733ab6-cb45-473c-8996-210930dffdf3`. The intended Wren is `wren-crossuser`, principal
+`3a37b055-035b-45d4-9597-7f189e397c44`. Signals were **delivered, correctly, to a different
+agent** — content intended for one principal was readable by another.
+
+```
+--to Zzqx<random>   REFUSED   "signal recipient is not a live member or agent of this project"
+--to Wren           accepted  to_agent = 23733ab6...   <- real, live, WRONG
+--to Verity         accepted  to_agent = 765542b1...   <- control
+--to 3a37b055...    accepted  to_agent = 3a37b055...   <- control
+```
+
+**Name validation works** — the refusal proves it. The defect is collision, not absence of
+checking, and the two demand opposite fixes.
+
+**There is no roster verb.** `cswarm --help` lists no `members`/`roster`/`agents`, and
+`cswarm members` returns *"unknown command"*. So a caller cannot enumerate the names `--to`
+accepts, and cannot discover that two principals answer to one name. The only safe addressing is
+a UUID obtained out of band, and nothing in the CLI or the connect artifact says so.
+
+**The receipt already carries the evidence.** `to_agent` echoed `23733ab6` on every send. Three
+agents debugged this for ~20 hours with the answer in every response object. Not a missing
+instrument — an unread field.
+
+**Not established:** whether `23733ab6` is a stale principal or a live agent that read the
+misdirected content (**nobody has looked**, and it decides hygiene vs disclosure); and whether
+resolution prefers creation order, which would mean any name can be shadowed by a later
+duplicate.
+
+## D-063 — token renewal is wired into `listen` and not into the commands agents actually run · MAJOR · OPEN
+
+**2026-08-08. This is dogfood findings 4 and 5 as one defect, and it corrects the fix direction
+both of them proposed.**
+
+Canonical spec §2.3 sets **default TTL ≤ 1h** as a hardened security boundary (Kimi #1/#2:
+narrowest binding, redaction, revoke-every-command). §796 names the designed mitigation:
+
+> *"agent tokens default to ≤1h TTL. The CLI **silently re-mints** worker tokens using the
+> member's refresh credential — zero operator interaction in steady state, and this is the
+> designed path, not an implementation accident."*
+
+**So "raise the default TTL" is not a fix — it is a spec violation.** The dogfood recorded
+`--ttl-ms 28800000` (8h) as "the fix was a flag already shipped"; that flag reaches the *hard
+max*, deliberately traded against the ≤1h default, and using it as the standard onboarding path
+converts a documented security boundary into a workaround. **Retracted as the recommendation.**
+
+The renewal machinery exists and is correct. It is simply not connected where it is needed:
+
+```
+src/cloud/renewal.ts        implemented   successor endpoint, due(), horizon
+src/listener/runtime.ts     WIRED         a listener renews
+src/cli.ts  token mint      WIRED
+src/cloud/signals.ts        NOT WIRED     inbox, feed, note, ask -- one comment, no call
+```
+
+An agent that runs `cswarm listen` renews. **An agent that polls with one-shot signal commands
+does not, and dies at 59 minutes.** That is exactly the population dogfood finding 5 identified
+as unable to be woken — so the same agents are denied both the wake path and the renewal path,
+and finding 4's "mint-to-use latency structurally exceeds TTL" is the observable consequence.
+
+**Three live copies of the default must move together if it ever moves** (Plumb, verified):
+`src/protocol/workspace-commands.ts:17` (used at `:662` root, `:950` successor),
+`src/cloud/renewal.ts:61` (`:680` reconstructs a missing `issuedAt` from it),
+`site/src/lib/agent-connect.ts:41` (passed by `AgentConnect.astro:537`). Plus:
+`_shared/protocol.js` is generated and follows protocol; the seed fixture hardcodes 1h; tests pin
+root and successor at 1h; `api.md`, `llms.txt` and §2.3 all state ≤1h.
+
+**Two constants are derived from the 1h cadence and must not be moved mechanically:**
+`RENEWAL_MAX_SUCCESSORS_DEFAULT = 800` is derived from a 1h/54m cadence over 30 days and would
+need rederiving; `RENEWAL_PENDING_RECOVERY_MS = 1h` is a separate ambiguous-outcome replay window
+that merely shares the number.
+
+**The fix is to wire renewal into the signal path**, not to move any of them.
