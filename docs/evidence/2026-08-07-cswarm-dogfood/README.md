@@ -1,0 +1,91 @@
+# Dogfood: running the fleet's own coordination through cswarm
+
+**2026-08-07, operator direction.** Move the working fleet off the internal `swarm` CLI and onto
+CommonSwarm. Fall back to `swarm` only when cswarm actually blocks, and **treat every fallback as
+a defect finding rather than a workaround.**
+
+Set up the way a user would: the **shipped 0.1.8 binary from the public installer**, not the repo
+build.
+
+```
+install   curl -fsSL https://commonswarm.com/install.sh | sh   ->  cswarm 0.1.8
+workspace Dogfood Workspace  3ab184b3-fbb4-5ee9-afad-3842a604439a
+agents    CswarmLead, Verity, Plumb, Wren (agent principals)
+```
+
+## Findings
+
+### 1. `inbox` is empty for a new member, and the onboarding tells them to look there
+
+**Found by Plumb, reported through cswarm.** The onboarding instruction said *"read your inbox and
+confirm you can see my working-on signal."* `working-on` is a **broadcast** — `to` and `to_agent`
+are null — so it lands in `feed`, never in `inbox`. A new member follows the instruction, sees
+nothing, and has no reason to think anything worked.
+
+Measured on Verity's principal at the same moment:
+
+```
+inbox:  1 signal    (only what was directed at them)
+feed:  20 signals   (the workspace's actual activity)
+```
+
+Plumb's words: *"inbox correctly returned empty; I had to know to run feed."* The command behaved
+correctly and the mental model did not. **A first-run user cannot distinguish "nothing has
+happened" from "you are looking at the wrong view."**
+
+This is the sharpest kind of onboarding defect: nothing errors, so there is nothing to search for.
+
+### 2. The onboarding path never surfaces the env vars that make it usable
+
+**Found by the Lead, while writing the onboarding.** Every command was handed out as:
+
+```
+cat <cred> | cswarm inbox --agent-token-stdin --url ... --anon-key ... --workspace-id ... --json
+```
+
+Four flags, every command, plus a credential pipe. `SWARM_CLOUD_URL`, `SWARM_CLOUD_ANON_KEY` and
+`SWARM_CLOUD_WORKSPACE_ID` remove all three flags and are documented in `--help` — buried in prose
+under other topics. **The ergonomics exist; the path a new user walks does not reach them.**
+
+Plumb independently reported the same friction and proposed the fix: *"a credential/target profile
+or wrapper emitted during onboarding would reduce copy risk."* That is the right shape — the
+moment a credential is minted is the moment to hand over a ready-to-use invocation.
+
+### 3. Agent credentials do not inherit the human's saved target
+
+`cswarm listen`/`ask` under an agent credential refuses the saved target with *"agent credentials
+never inherit a human's saved Cloud target; pass --url and --anon-key or set SWARM_CLOUD_URL and
+SWARM_CLOUD_ANON_KEY."* Deliberate and defensible — an agent should not silently inherit a human's
+tenancy — but combined with finding 2 it means the *first* thing a new agent does is fail.
+
+### 4. Agent credentials expire in ~8h with no renewal unless a listener runs
+
+Told to the team up front so an auth failure reads as expected rather than as a mystery. A
+polling agent — which is what an interactive session is — has no renewal path. Not a defect on its
+own; it is a consequence of renewal being tied to a running listener, and it makes the
+poll-based workflow a second-class citizen.
+
+### 5. Interactive sessions poll; they are not woken
+
+The wake path requires `cswarm listen`, which spawns a **new** provider process per delivery. An
+already-running interactive session cannot be woken — it has to poll `inbox`. So the fleet's
+day-to-day use of its own product is the *weaker* of the two paths.
+
+This is the gap that a bridge to Claude Code's own inbox socket would close. See
+`docs/org/2026-08-07-POSITIONING-CROSS-USER.md`.
+
+## What worked without comment
+
+Principal creation, token minting, `working-on`, `note --to`, `inbox`, `feed`, and the JSON
+contract on all of them. No `CSWARM BLOCKED` fallback was needed to get three agents onboarded and
+talking. **The product carried its own team's coordination on the first try** — the findings above
+are friction, not failure.
+
+## Not established
+
+- **Cross-user.** Verity and Plumb are principals under a single human identity on one machine.
+  That is same-user multi-agent, and it would look like a pass while proving nothing new. The real
+  test is Wren: identity B on a second machine, creating its own principal under its own identity.
+  Pending.
+- Whether any of this friction actually causes abandonment. These are findings from users who
+  already want it to work and who wrote the product.
