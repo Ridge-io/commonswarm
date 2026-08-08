@@ -3629,3 +3629,72 @@ verbosity tolerable. Mutation-verified against precisely that change.
 **Measured refinement:** files are zero; **two empty directories** are created, identically for a
 full artifact, one without `expires_at`, and a bare token. Wren's claim was about files and is
 exact; "leaves nothing behind" would have been slightly overstated, so the gate asserts on files.
+
+## D-068 — accepting an invite silently reselects your default workspace · MINOR · FIXED
+
+**Found by Wren, replicated independently by the Lead in the opposite direction.** Both machines,
+both invite directions, identical behaviour.
+
+`cswarm accept` always sets the default workspace to the one just joined, and narrated it as:
+
+```
+Your default workspace is now "…" (was another workspace).
+```
+
+Every later command without an explicit `--workspace-id` now targets somewhere new. The line
+tells the reader that happened and **withholds the one fact that lets them undo it**. Wren was
+moved off its own prod-dogfood workspace mid-round; the Lead was moved off `CommonSwarm Build`.
+
+Fixed to name it and the remedy:
+
+```
+Your default workspace is now "…" (was 4f63d2b0-…; switch back with cswarm use 4f63d2b0-…).
+```
+
+**A gate asserted the id was absent, and that was a deliberate pin — so it was checked before
+being changed rather than edited to make a diff pass.** `accept-link.test.ts` carried
+`assert.doesNotMatch(message, new RegExp(previous))`. What the check found:
+
+- `docs/design/P2-CONNECT-UX-BRIEF.md:141` specifies this exact line as
+  *"Your default workspace is now "\<new\>" (was "\<old\>")"* — **the brief wanted the previous
+  workspace identified.** The shipped text identifies nothing.
+- The likely cause is availability, not policy: `previousDefault` comes from the stored profile,
+  which holds an id and no name, and a bare uuid read badly as prose. **The assertion pinned an
+  implementation limitation.**
+- No security rationale exists. `previous` is the user's own prior default from their own local
+  profile — not the forged `hint`, which is a separate test — and a workspace id is not a
+  capability; it appears in every `--workspace-id` invocation.
+
+The id is shown rather than the name because resolving the name needs a network call, and
+`accept` should not make one to decorate a sentence. `previous_workspace_id` was **already in the
+event's `data` payload**, so the fact was present and hidden from the human — the same shape as
+D-062, where `to_agent` carried the answer under `--json` for twenty hours.
+
+**This is the fifth control in this repo found pinning wording rather than behaviour**, and the
+first that was pinning it *deliberately*. The others were the `logout` overclaim, `every session`,
+`visible only to its recipient`, and `deployment operator who invited you`.
+
+**Flagged for a non-author read:** the Lead both made this change and rewrote the control that
+opposed it. That is exactly the arrangement AGENTS.md says does not count as a control.
+
+## Observation — `new` does not create a principal; `accept` does
+
+**Measured 2026-08-08, not filed as a defect because the intent is unclear.** Wren created
+workspace `0d499d2d` with `cswarm new` and holds **no agent principal in it**. The Lead accepted
+an invitation to the same workspace and got one automatically: `yulanbot@mac.lan-986ece6e`.
+
+```
+People:  Tom Langridge (919ce195-…)      <- created the workspace, no agent
+         Ridgeio (d37e2ff2-…)
+Agents:  yulanbot@mac.lan-986ece6e (ea944bf0-…)   <- created by the accept
+```
+
+**Why it may matter.** The auto-created name is `<unix-user>@<hostname>-<device-prefix>` and is
+collision-resistant by construction — now confirmed on **two different hosts**, so the D-062
+result generalises rather than describing one machine. But a **self-serve user who creates their
+own workspace never goes through `accept`**, so they have no principal and must run
+`principal create --name` — which after D-062 is *the only remaining route to the name-collision
+class*. The solo path pushes users onto the one verb that can still produce the defect.
+
+**Not established:** whether `new` omitting a principal is deliberate, and whether the site's
+`/start` flow creates one where the CLI does not. Neither was probed.

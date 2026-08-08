@@ -482,8 +482,19 @@ export async function acceptInviteLink(
   ) {
     runtime.emit({
       step: "default",
+      /* Name what you were moved OFF, not just that you were moved. D-068.
+       *
+       * Accepting an invitation silently reselects the default workspace, so every later command
+       * without an explicit --workspace-id targets somewhere new. "(was another workspace)" told
+       * the reader that had happened and withheld the only fact that lets them undo it. Measured
+       * independently on two machines, in both directions of the invite.
+       *
+       * The id, not a name: `previousDefault` comes from the local profile, which stores only the
+       * id — and `accept` should not make a network call to decorate a sentence. `previous_workspace_id`
+       * was already in this event's `data`, so the fact was present and hidden from the human,
+       * which is the same shape as D-062. */
       message:
-        `Your default workspace is now "${workspaceName}" (was another workspace).`,
+        `Your default workspace is now "${workspaceName}" (was ${previousDefault}; switch back with cswarm use ${previousDefault}).`,
       data: { workspace_id: workspaceId, previous_workspace_id: previousDefault },
     });
   }

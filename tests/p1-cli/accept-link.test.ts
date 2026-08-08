@@ -356,11 +356,34 @@ test("fresh accept trusts the server workspace, switches default, and narrates i
   assert.equal(store.profile.principalId, result.principalId);
   const defaults = runtime.progress.filter((entry) => entry.step === "default");
   assert.equal(defaults.length, 1);
+  /* D-068. This asserted the message was exactly "(was another workspace)" AND that the previous
+   * workspace id was ABSENT. That second assertion was a deliberate pin, so it was checked
+   * before being changed rather than edited to make a diff pass.
+   *
+   * What the check found: `docs/design/P2-CONNECT-UX-BRIEF.md:141` specifies this line as
+   * `Your default workspace is now "<new>" (was "<old>")` — the brief wanted the previous
+   * workspace IDENTIFIED. The shipped text identifies nothing, almost certainly because only the
+   * id is available locally (`previousDefault` comes from the stored profile, which holds no
+   * name) and a raw uuid read badly as prose. So the assertion pinned an implementation
+   * limitation, not a policy.
+   *
+   * No security rationale exists for withholding it: `previous` here is the user's OWN prior
+   * default from their OWN local profile — not the forged `hint`, which is a different test — and
+   * a workspace id is not a capability; it appears in every --workspace-id invocation.
+   *
+   * Why it matters enough to change: accept silently reselects the default, so every later
+   * command without --workspace-id targets somewhere new. Measured independently on two machines
+   * in both directions of the invite. The old text told the reader that had happened and withheld
+   * the one fact that lets them undo it. */
   assert.equal(
     defaults[0]!.message,
-    'Your default workspace is now "Design swarm" (was another workspace).',
+    `Your default workspace is now "Design swarm" (was ${previous}; switch back with cswarm use ${previous}).`,
   );
-  assert.doesNotMatch(defaults[0]!.message, new RegExp(previous));
+  assert.match(defaults[0]!.message, new RegExp(previous));
+  // The remedy has to name a verb that exists and accepts a full id — `cswarm use
+  // <full-id|exact-name>`. A remedy naming a verb that cannot take this argument would be the
+  // D-067 family: an instruction the reader cannot perform.
+  assert.match(defaults[0]!.message, /cswarm use /);
 });
 
 test("403 plus membership uses non-claiming copy, including forged hints", async () => {
