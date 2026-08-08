@@ -64,6 +64,22 @@ Plumb independently reported the same friction and proposed the fix: *"a credent
 or wrapper emitted during onboarding would reduce copy risk."* That is the right shape — the
 moment a credential is minted is the moment to hand over a ready-to-use invocation.
 
+**CORRECTION, and it moves this finding from the Lead to the product.** I first recorded this as
+my own prose mistake, on the assumption that the shipped connect artifact did better. It does not.
+`site/src/components/connect/agent-prompt.ts` — *"the one artifact a person gives an AI agent"* —
+hands out the long form and never the short one. Measured, with a control:
+
+```
+SWARM_CLOUD_URL            0 occurrences
+SWARM_CLOUD_ANON_KEY       0
+SWARM_CLOUD_WORKSPACE_ID   0
+--anon-key                 4     <- control: the long form appears four times
+```
+
+So every user who follows the product's own onboarding gets the four-flag form repeated per
+command, and is never told the shorter one exists. **This is a product defect, and my hand-written
+version merely reproduced it.**
+
 ### 3. Agent credentials do not inherit the human's saved target
 
 `cswarm listen`/`ask` under an agent credential refuses the saved target with *"agent credentials
@@ -94,9 +110,12 @@ person gives an AI agent… containing everything needed to install, identify th
 the credential."* The Lead did not use it — instructions were written by hand into the bootstrap
 message.
 
-Both findings 1 and 2 are **downstream of that choice**: the wrong `inbox`/`feed` instruction and
-the four-flag incantation were hand-written mistakes the artifact would not have made. So the
-first two findings measure the Lead's prose, not the product.
+Finding 1 is **downstream of that choice** — the wrong `inbox`/`feed` instruction is a
+hand-written mistake, and whether the artifact would have avoided it is untested.
+
+Finding 2 is **not**, and I had it backwards: the artifact reproduces the four-flag form itself.
+I attributed a product defect to my own writing, which is the more comfortable of the two
+conclusions and the wrong one.
 
 Not a fallback failure. The defect worth chasing is why the maintainer reached for hand-written
 steps at the moment of onboarding — whether the artifact is not discoverable from where an
