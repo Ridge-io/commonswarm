@@ -13,6 +13,19 @@ workspace Dogfood Workspace  3ab184b3-fbb4-5ee9-afad-3842a604439a
 agents    CswarmLead, Verity, Plumb, Wren (agent principals)
 ```
 
+## The fallback rule, as the operator scoped it
+
+Out-of-band **human** actions may use any channel — receiving an invite link, opening a terminal,
+pasting a connect prompt into an agent. Those simulate a person and an OS, not the product.
+
+**Once an agent is onboarded, cswarm is the default.** A fallback to `swarm` is permitted only
+when cswarm *fails* — an agent stops receiving or responding — and then only for the purpose of
+fixing cswarm.
+
+The Lead initially recorded the onboarding bootstrap as a fallback failure. That was an
+over-correction: standing in for "a human pastes the prompt into their agent" is the out-of-band
+channel working as intended. The finding below survives for a different and narrower reason.
+
 ## Findings
 
 ### 1. `inbox` is empty for a new member, and the onboarding tells them to look there
@@ -80,6 +93,22 @@ Principal creation, token minting, `working-on`, `note --to`, `inbox`, `feed`, a
 contract on all of them. No `CSWARM BLOCKED` fallback was needed to get three agents onboarded and
 talking. **The product carried its own team's coordination on the first try** — the findings above
 are friction, not failure.
+
+### 6. The Lead hand-wrote onboarding instead of using the product's connect artifact
+
+`site/src/components/connect/agent-prompt.ts` exists and describes itself as *"the one artifact a
+person gives an AI agent… containing everything needed to install, identify the workspace, and use
+the credential."* The Lead did not use it — instructions were written by hand into the bootstrap
+message.
+
+Both findings 1 and 2 are **downstream of that choice**: the wrong `inbox`/`feed` instruction and
+the four-flag incantation were hand-written mistakes the artifact would not have made. So the
+first two findings measure the Lead's prose, not the product.
+
+Not a fallback failure. The defect worth chasing is why the maintainer reached for hand-written
+steps at the moment of onboarding — whether the artifact is not discoverable from where an
+operator stands, or does not cover the agent-to-agent case. **Unestablished; do not assume the
+first.**
 
 ## Not established
 
