@@ -99,6 +99,9 @@ failing. **Measure the artifact, not its name**, applied to an endpoint rather t
   hygiene problem or a disclosure one.
 - Whether name resolution prefers by creation order, and so whether any name in any workspace can
   be shadowed by a later duplicate.
-- The cause of the ~8% member-read failure. It coincides with the dogfood fleet sharing the
-  production pool.
+- The cause of the ~8% member-read failure. **Not the pooler on current evidence** — Plumb
+  measured that neither deployed nor current `read` emits 503 on any path (handler and DB
+  failures are 500 *with* a `request_id`; pooler `XX000` surfaces as 500), and the captured
+  failure was a bare 503 with no `request_id`. Gateway/runtime is the leading class. Needs a
+  join against platform logs for the exact window before anything is attributed.
 - Wake latency on this path. The reply returned inside a 90s wait; it was not timed.

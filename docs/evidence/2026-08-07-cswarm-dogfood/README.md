@@ -246,8 +246,17 @@ one, which is the weaker form this repo's doctrine exists to reject.
 So the honest statement is: **25 reads returned successfully, and the probe's ability to detect
 the failure it is looking for is unproven.** Not "the read path is healthy."
 
-Plausible and unverified: the 503 was load-correlated. It occurred while the dogfood fleet shared
-the production pool, which the resume file already lists as owed
-(*"the dogfood fleet shares the production pool — 8 seats against 38 connections"*). Chasing it
-further needs server-side data, and the `read` function is under the D-047 freeze with an unnamed
-deploy vehicle, so this is deliberately **not** pursued now.
+~~Plausible and unverified: the 503 was load-correlated with the dogfood fleet sharing the
+production pool.~~ **DEAD, refuted by Plumb 2026-08-08, and it was my speculation rather than a
+measurement.** Production `read` is v6; both the deployed-era source (`24ec0f9`) and current
+`read` catch handler and DB failures as **HTTP 500 with a `request_id`**. *Neither emits 503 on
+any path.* Pooler `XX000` surfaces as a 500. The captured failure was a **bare 503 with no
+`request_id`**, which is the signature of something that never reached the function.
+
+So the leading class is **gateway/runtime, not the function and not the pooler** — and my guess
+pointed at the one component the evidence rules out. Plumb's discriminating controls, on the same
+endpoint: valid token `200`, syntactically valid bogus token `401`, valid token with a bad body
+`400`. That is the control I failed to build twice.
+
+**Next discriminating check, not yet run:** platform/gateway and edge logs for
+`2026-08-08T13:16:45Z`–`13:17:02Z`. **Do not attribute this to the pooler without that join.**
