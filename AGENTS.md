@@ -352,6 +352,48 @@ of a measurement.** Different door, identical outcome.
 it one hop, to the main checkout. Say which hop you mean, and verify the GitHub hop with
 `git ls-remote https://github.com/...` **plus a control ref** when it matters.
 
+## A negative result is evidence only if the path it was meant to exercise was reached
+
+**Wren, 2026-08-08, after contaminating its own instrument three times in one session and
+reporting the contamination as a product defect each time.**
+
+> "A NEGATIVE RESULT IS ONLY EVIDENCE IF YOU CAN SHOW THE PATH IT WAS SUPPOSED TO EXERCISE WAS
+> ACTUALLY REACHED."
+
+This is the generalisation of the two confident-zero traps below, and it is stronger than either,
+because it catches the cases where **nothing failed at all**. Five instances, same day, across
+three agents:
+
+| what was measured | what was actually exercised |
+|---|---|
+| `feed --limit 8` with no `--include-stale` | a truncated window, reported as the whole feed |
+| `to_agent_principal_id` came back null | a field that **does not exist** in the response |
+| `token mint` "prints prose above the JSON" | a capture that merged the streams with `2>&1` |
+| "the read path is healthy", 25 clean reads | `feed`, while the failing endpoint was **member-read** |
+| "renewal is not wired into the signal path" | a leaf file, for a concern handled by its **caller** |
+| a control using a bare `--not-a-real-flag` | the **parser**, which rejects it before the validator |
+
+Every one produced a confident, plausible number. None of them reached the thing being asked
+about. Three were reported as product defects and one nearly shipped a second renewal path
+beside a working one.
+
+**The check is one question, asked before the result is written down: *what would this have
+returned if the feature were present and working?*** If the answer is "the same thing", the probe
+did not measure the feature. In particular:
+
+- **A zero from a read needs its flags justified.** Defaults truncate, filter, and scope.
+- **A missing field is not an absent value.** Print the key set before concluding a field is null.
+- **A merged stream is not the program's output.** `2>&1` makes narration look like data — and it
+  is how three agents came to propose moving output that was already correctly placed.
+- **A grep of one file cannot clear a concern its caller owns.** Find the layer, not the name.
+- **A control that dies early tests the early thing.** A control must be shown to reach the gate
+  it is controlling, or it is passing for the wrong reason.
+
+The last one is the sharpest, because it inverts the usual advice. **Mutation-testing a control
+proves it can fail. It does not prove it fails *for the reason claimed*** — a control rejected by
+the argument parser fails when the feature is broken *and* when it is fine, and looks correct in
+both cases.
+
 ## `error.message` is presentation. Control flow uses types and codes.
 
 **Never branch on the text of an error.** Classify on a named error class, on a stable code **we**
