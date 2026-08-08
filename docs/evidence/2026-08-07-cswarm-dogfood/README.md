@@ -87,12 +87,54 @@ never inherit a human's saved Cloud target; pass --url and --anon-key or set SWA
 SWARM_CLOUD_ANON_KEY."* Deliberate and defensible — an agent should not silently inherit a human's
 tenancy — but combined with finding 2 it means the *first* thing a new agent does is fail.
 
-### 4. Agent credentials expire in ~8h with no renewal unless a listener runs
+### 4. MINT-TO-USE LATENCY STRUCTURALLY EXCEEDS TTL · the real defect of this dogfood
 
-Told to the team up front so an auth failure reads as expected rather than as a mystery. A
-polling agent — which is what an interactive session is — has no renewal path. Not a defect on its
-own; it is a consequence of renewal being tied to a running listener, and it makes the
-poll-based workflow a second-class citizen.
+**Diagnosed by Verity, who reframed a finding I had filed as friction.** I recorded this as
+"credentials expire and need re-minting." That is the symptom. The defect is:
+
+> A ~60-minute credential is delivered over a channel whose latency is set by the recipient's
+> **poll interval**, because the recipient is not woken. So the only agent that can ever use a
+> fresh credential is one already awake at the moment it was minted.
+
+Measured by Verity, second occurrence:
+
+```
+credential minted    2026-08-08T04:27:40Z
+expires_at           2026-08-08T05:27:39Z    TTL 59m59s
+poke reached Verity  2026-08-08T12:54:30Z
+                     -> dead 7h27m before the recipient could read the message about it
+```
+
+Verity's own words: *"this is not bad luck and a third mint will not fix it."* Correct — and said
+before the mistake could be repeated.
+
+**It composes with finding 5, and the two are one defect.** The wake path is exactly what would
+collapse delivery latency to seconds. So the missing wake is not a convenience gap; it is what
+makes the *default* credential unusable for a polling agent. Two findings filed separately are
+one.
+
+**The fix was a flag already shipped and not used.** `token mint --ttl-ms 28800000` yields a
+measured **8.00h** TTL against the 59-minute default. Verity found it. Also viable: mint on
+demand rather than ahead of time, or stand the agent up as a listener — which is the capability
+being proven anyway.
+
+**Credit, recorded verbatim because it is the best error text in this CLI:**
+
+> *"This agent credential is past its own expiry, so renewal cannot bring it back. Ask whoever
+> set this agent up for a new one. The deployment does not say why a credential was refused, so
+> if a fresh one is refused too, ask them whether this agent's access was revoked as well."*
+
+It names the cause, says renewal is futile, says who to ask, and pre-warns that a *second*
+failure means something different. Decided locally — exit 1, no network round trip. Verity:
+*"Nothing about my being blocked was a mystery."*
+
+### 4a. The Lead reported the spec's maximum as the default
+
+I told the fleet TTL was "~8 hours." Measured: **59 minutes**. I had read `default TTL ≤ 1h …
+hard max TTL still 8h` and reported the max. Verity measured 53 minutes remaining and was right.
+
+Worse than a wrong number: it was the number I gave everyone for *when to expect failure*, so the
+whole team was calibrated to the wrong clock.
 
 ### 5. Interactive sessions poll; they are not woken
 
