@@ -342,6 +342,7 @@ Usage:
   cswarm workspaces [--url <url> --anon-key <key>] [--json]
   cswarm use <full-id|exact-name> [--url <url> --anon-key <key>] [--json]
   cswarm invite [--url <url> --anon-key <key>] [--workspace-id <uuid>] --email <email>
+  cswarm invite revoke [--url <url> --anon-key <key>] [--workspace-id <uuid>] --invitation-id <uuid> [--json]
   cswarm member remove <full-user-id|exact-name> --confirm <same-selector> [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--json]
   cswarm accept --link-stdin [--name <name>] [--no-browser] [--json]
   cswarm accept <https://...#invite=...|cswarm://accept/...> [--name <name>] [--no-browser] [--json]  # unsafe: shell history/process list
@@ -1042,6 +1043,57 @@ async function runInvite(args: Arguments): Promise<void> {
    * on status/feed/inbox/workspaces/listen-status, so a caller reasonably assumes it works
    * here, and `mint --json > cred.json` left an EMPTY file (shell truncation, then a failed
    * command writing nothing to stdout). See D-064. */
+  /* `cswarm invite revoke` — D-069.
+   *
+   * An invitation is a bearer capability with a TTL of up to seven days, and until now it was
+   * the ONLY capability in this product that could not be withdrawn: `principal revoke`,
+   * `token revoke` and `link revoke` all exist. The reducer and the command edge have supported
+   * `revoke_invitation` all along (9 references in the edge, 0 in this file) — nothing reached
+   * it. So a link that was forwarded, pasted into a chat, or read over a shoulder had no remedy
+   * at all.
+   *
+   * Client-only: no edge deploy, nothing near the D-047 freeze. */
+  if (args.positionals[1] === "revoke") {
+    args.assertShape(
+      [...TARGET_FLAGS, "workspace-id", "invitation-id", "json"],
+      2,
+    );
+    const cloud = await target(args);
+    const human = await humanCredential(args, cloud);
+    const workspace = await workspaceId(args, cloud, human);
+    const invitationId = args.required("invitation-id");
+    const revoked = (
+      await sendConnectWithPending(
+        new ThinCommandClient(cloud),
+        human,
+        workspace,
+        { kind: "revoke_invitation", invitation_id: invitationId },
+      )
+    ).response;
+    if (revoked.status !== "accepted") {
+      /* Report the refusal and DO NOT infer what it implies about the link. The obvious
+       * wording — "anyone holding the link can still use it" — is false for the commonest
+       * refusal: `invitation_not_live` means the invitation was already accepted or revoked, so
+       * the link is dead and the sentence would tell an operator to panic about a spent
+       * capability. Naming a consequence the refusal does not establish is exactly the
+       * cause-splitting that produced three defects on the logout path (D-060). */
+      throw new Error(
+        `The invitation was not revoked: ${
+          revoked.reason ?? "required condition not met"
+        }.`,
+      );
+    }
+    const output = {
+      message:
+        "Invitation revoked. The link no longer works, and anyone who already accepted it stays a member — remove them with cswarm member remove.",
+      status: revoked.status,
+      invitation_id: invitationId,
+      command_event_ids: revoked.event_ids,
+    };
+    if (args.has("json")) printJson(output);
+    else process.stdout.write(`${output.message}\n`);
+    return;
+  }
   args.assertShape([...TARGET_FLAGS, "workspace-id", "email", "json"], 1);
   const cloud = await target(args);
   const human = await humanCredential(args, cloud);

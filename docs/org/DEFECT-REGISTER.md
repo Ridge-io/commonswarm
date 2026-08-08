@@ -3698,3 +3698,54 @@ class*. The solo path pushes users onto the one verb that can still produce the 
 
 **Not established:** whether `new` omitting a principal is deliberate, and whether the site's
 `/start` flow creates one where the CLI does not. Neither was probed.
+
+## D-069 — an invitation could not be revoked · MAJOR · FIXED
+
+**Found 2026-08-08 while trying to honour a commitment**: Wren and the Lead had each agreed to
+revoke the other's invite link after the round. There was no way to do it.
+
+An invitation is a **bearer capability with a TTL of up to seven days**, and it was the only
+capability in the product that could not be withdrawn. `principal revoke`, `token revoke` and
+`link revoke` all existed. A link that was forwarded, pasted into a chat, or read over a shoulder
+had **no remedy at all**.
+
+**The server had supported it the whole time.** Measured with a control:
+
+```
+revoke_invitation in the reducer            3
+revoke_invitation in the command edge       9
+revoke_invitation in src/cli.ts             0
+invite_member    in src/cli.ts              1   <- control: the grep works
+```
+
+So this is a **client-only** fix — `cswarm invite revoke --invitation-id <uuid>`, no edge deploy,
+nothing near the D-047 freeze. Same shape as D-062, where the deployed `read` already answered
+`resource: "members"` and no verb called it. **Twice in one day, the server was ahead of the CLI
+and the gap read as a missing feature.**
+
+**Verified end to end on production, with the control that makes it evidence:**
+
+```
+invite  --email tom+cswarm-revoke-test@ridge.io   -> invitation 0e3b46fb-…
+invite revoke --invitation-id 0e3b46fb-…          -> "Invitation revoked. The link no longer works…"
+invite revoke --invitation-id 0e3b46fb-…  (again) -> refused: invitation_not_live
+```
+
+The replay is what proves the first call changed state rather than merely returning success. Two
+further live refusals confirmed the authority checks independently: `role_forbidden` when a
+*member* of someone else's workspace attempted it, and `invitation_not_live` for an invitation the
+invitee had already accepted.
+
+**A defect was introduced and caught inside the same change.** The first refusal message read
+*"The invitation was not revoked: … Anyone holding the link can still use it."* That second
+sentence is **false for the commonest refusal**: `invitation_not_live` means the invitation was
+already accepted or revoked, so the link is dead — and the message would send an operator to
+panic about a spent capability. Removed. **This is D-060's cause-splitting exactly**, reproduced
+by the same author who wrote up D-060, which is the argument for the non-author rule rather than
+against it. A test now asserts the refusal claims nothing about the link's usability.
+
+**Note for the invite path generally:** a same-user replay of an accepted link short-circuits to
+*"You're already a member"* **before the token is consumed**, so that outcome establishes
+idempotency for the accepting user and says **nothing** about whether the token is still live for
+a *different* identity. That was not tested — it needs a third identity — and it is the reason
+revocation matters rather than a substitute for it.
