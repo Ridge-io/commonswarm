@@ -3101,3 +3101,115 @@ unknown prompt/post errors terminal; unknown runtime events logged without ACK.
 `sender_owner_relation=unknown` is a **legitimate closed server enum**, not a defect. **One conditional
 kept:** the agent-scope denylist returns `false` for novel strings and is safe only because a novel
 scope grants nothing *today* — adding a command or scope without updating both gates would change that.
+
+---
+
+## D-058 — the closed classification was bypassable by wording · MAJOR · FIXED
+
+**Entered 2026-08-08, late.** This entry is written after the fact because the defect was found,
+fixed, and controlled entirely inside `docs/evidence/d051-retryable-refusal.md`, which **cites
+D-058 eight times against a number that had no entry here.** A register that a reader consults to
+find out whether a defect is real returned nothing for a defect that was real, fixed, and
+controlled. The evidence file is the authority for detail; this is the index it was missing.
+
+Found by **Plumb** on `2b5e905`. **This is D-053 surviving inside the D-057 fix** — the third
+regression of "never branch on `error.message`", inside the very change that closed the second.
+
+`followHttpDetails` fell back to matching `/^signal read failed \(HTTP (\d+)\)/` against the
+message, and `isTransportFollowMessage` matched exact transport prose. Because
+`isRestartableRuntimeError` delegates unrecognised errors to the read predicate, the closed
+default was reachable **around** — by spelling:
+
+```
+'some ordinary failure'                          -> false
+'timeout transport connection'                   -> false
+'signal read could not reach the cloud service'  -> TRUE    <- bypass
+'signal read failed (HTTP 500)'                  -> TRUE    <- bypass
+'signal read failed (HTTP 400)'                  -> false
+```
+
+**Fixed by identity, not prose:** the HTTP regex was deleted (every real HTTP failure has been
+tagged at construction by `plainHttpStatus` since before this workstream, so the regex was
+redundant for real errors and served *only* as the bypass), and transport errors got a
+`plainTransportErrors` WeakSet tagged at all three throw sites.
+
+**Why it is the canonical instance of the non-author rule.** The D-057 table's row supplied
+innocuous text; an independent probe used retry *words* but not the *colliding spelling*. Both
+tested that the door was shut without trying the key that fits. See AGENTS.md, "Adversarial
+controls must be written by a non-author" — that section was written from this defect.
+
+## D-059 — NUMBER NOT USED · tombstone
+
+`docs/org/2026-08-07-RESUME-HERE.md` records that D-059 "was allocated and never entered."
+**No content for it survives anywhere in the repo** — the only occurrence of the string is that
+claim about itself. So there is nothing to enter, and the allocation cannot be reconstructed.
+
+Reserved rather than reused: if the original allocation resurfaces it keeps this number, and new
+defects take fresh ones. A silently reused number is worse than a gap.
+
+## D-060 — `cswarm logout` claimed a sign-out the server had refused · MAJOR · FIXED in v0.1.8
+
+**Entered 2026-08-08, late.** D-043 covers the logout *wedge* and is filed. This is a **different
+defect fixed in the same release** and it had no entry — searched with a control:
+`"all devices"` 0, `"sign-out"` 0, `D-043` 2.
+
+`@supabase/auth-js` deliberately swallows 401/403/404 on sign-out so browser apps can still clear
+local state. The CLI inherited that silence and printed **"Signed out on all devices"** about
+requests the server had **refused**. For a user reaching for `--all-devices` as containment after
+a suspected compromise, that is the difference between believing the request went through and
+knowing it.
+
+Fixed by reading the server's actual answer via `admin.signOut(access_token, scope)`: confirmed
+sign-outs say so and only then; unconfirmed ones retain the credential — because it is the only
+handle left for retrying — and do not guess at the cause.
+
+**Three defects were found while fixing this one, each by a non-author, and they are the reason
+the final shape is conservative:**
+
+1. The first fix deleted the credential on *any* refresh failure — Verity blocked it: a transport
+   failure means the token may still be live.
+2. The second gated on `isAuthRetryableFetchError` — Plumb blocked it: a 429 arrives as
+   `AuthApiError`, so it still deleted a live credential. Fixed with a **closed allowlist** of
+   four terminal refresh codes.
+3. The failure message split causes it could not distinguish — Plumb's 404/500 control showed a
+   server that *answered* 500 was reported as "could not reach". Collapsed to one
+   observation-only message.
+
+**A copy control enforced an overclaim that two reviewers had cleared:** the test required
+`/every session/`, a phrase that was false, so the gate was holding the wrong claim in place.
+Access tokens already issued stay valid until expiry; only refresh tokens are revoked.
+
+## D-061 — a directed signal is invisible to its author · MAJOR · OPEN
+
+**Found 2026-08-08 by the Lead, after it had corrupted two of the Lead's own published claims.**
+
+`feed` returns broadcasts plus signals directed **at** you. It does not return signals you
+directed at someone else, and no other view does either. **There is no sent view.**
+
+```
+feed --limit 100 --include-stale       66 signals
+  directed among them                  12
+  addressed to me                      12   <- all of them
+4bc97287  written 40s earlier, --to Verity   0 occurrences in the author's own feed
+f934d219  control, quoted by another member  1   <- the search method resolves
+```
+
+`ask` returns a signal id that the author cannot then resolve. **Delivery is establishable only
+by the recipient telling you, over some other channel** — which during the 2026-08-07 dogfood
+meant the internal `swarm` CLI, i.e. the product could not confirm its own delivery without the
+tool it replaces.
+
+Two false claims came directly from this: "XUSER-f934d219 is absent from the feed, so the write
+did not land," and the same for two retry asks. Both retracted in
+`docs/evidence/2026-08-07-cswarm-dogfood/README.md` §7. Whether those asks landed is **still
+unmeasured**.
+
+**Related, same surface:** `--limit 500` returns output the CLI's own `--json` consumer cannot
+parse, with no documented cap; and a `--limit 8` read without `--include-stale` produced a
+confident wrong count for a second agent in the same hour. Two agents, two flag mistakes, one
+read surface whose defaults do not match what callers assume — filed as one product defect
+rather than two user errors.
+
+**Not established:** whether the fix is "feed shows your sends" or a separate view. Dogfood
+finding 1 was already that users cannot distinguish `inbox` from `feed`; widening `feed` may
+deepen that.
