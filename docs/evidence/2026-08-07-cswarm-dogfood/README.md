@@ -293,3 +293,33 @@ deliberately polled. **Under load, attention goes to the channel that interrupts
 That is a design finding and it outranks most of the friction above: for cswarm to be the
 default channel for agents, the arrival of a signal has to reach the agent without the agent
 choosing to look. Which is dogfood finding 5 — the wake path — arriving from a third direction.
+
+### 10. The free tier caps at 3 projects and the CLI cannot free a slot
+
+**2026-08-08, hit on the first command of the invite round.**
+
+```
+$ cswarm new "Invite Round 2026-08-08"
+cswarm: You have already created 3 projects, which is the limit for one account. Archiving a
+        project frees its slot; the CLI cannot archive one yet, so ask whoever operates this
+        deployment. Projects you were invited to do not count against the limit.
+```
+
+The message is well written by this repo's standards — it states the limit, names the remedy,
+says the remedy is unavailable here, and pre-empts the obvious follow-up question about invited
+projects. It is also **a dead end**: the account holder is told to ask the deployment operator,
+and on this deployment the account holder **is** the operator. There is no CLI path and no web
+path; freeing a slot requires touching the database.
+
+**Why this matters beyond one blocked command.** `SWARM_SELF_SERVE=1` is live and a stranger can
+create their own workspace at `/start`. The fourth workspace that stranger tries to create fails
+the same way, and the instruction they receive — ask the operator — has no address attached. On a
+self-serve tier, "ask whoever operates this deployment" is not a remedy.
+
+It also blocks the launch-bar item directly: **a cold invite test wants a workspace with no
+prior members**, and the cap means one cannot be made. The round proceeds against a leftover
+workspace instead, which costs the "workspace created in the same session as the invite" case.
+
+**Not established:** whether the cap is enforced server-side or is a client-side count; whether
+archiving exists as a command surface anywhere; and whether `/start` presents this any better
+than the CLI does. None of those were probed — the finding is the dead end, not its mechanism.
