@@ -65,10 +65,20 @@ until it passes.
    exercise of the invite path — §6 item 3, the only OPEN launch-bar item.
 
 
-1. **The register is behind the work.** Several entries below have no number or no update.
-   Highest value first: the **logout defect family fixed in 0.1.8 has no entry**; **D-058 is
-   cited eight times in `docs/evidence/d051-retryable-refusal.md` and does not exist**; D-059 was
-   allocated and never entered; D-050 was reproduced twice on 08-06 with no update; D-056 does
+1. ~~**The register is behind the work.**~~ **PARTLY DONE 2026-08-08 in `e21f5b4`**, and one
+   claim in the original wording was **wrong**:
+
+   - **D-058** — entered. Was cited eight times against a number with no entry.
+   - **D-060** — entered. New number.
+   - **D-061** — entered. New: a directed signal is invisible to its author.
+   - **D-059** — tombstoned, not entered. No content for it survives anywhere in the repo, so
+     the allocation cannot be reconstructed; reserved rather than silently reused.
+   - ~~"the logout defect family fixed in 0.1.8 has no entry"~~ — **DEAD, this was wrong.** The
+     family is **D-043**, filed and marked FIXED in v0.1.8. Measured with a control (`D-043` 2).
+     The genuine gap was narrower and elsewhere: the *overclaim* fixed in the same release — the
+     CLI reporting a sign-out the server had refused — had no entry, and is now **D-060**.
+
+   **Still open on this item:** D-050 was reproduced twice on 08-06 with no update; D-056 does
    not mention the pooler raise and its 25% cold-start figure was measured at `pool_size = 15`
    with no marker saying so.
 2. **The `read` deploy vehicle is still unnamed, and the drift has grown.** Main's
