@@ -3245,7 +3245,40 @@ misdirected content (**nobody has looked**, and it decides hygiene vs disclosure
 resolution prefers creation order, which would mean any name can be shadowed by a later
 duplicate.
 
-## D-063 — token renewal is wired into `listen` and not into the commands agents actually run · MAJOR · OPEN
+## D-063 — an agent idle across its renewal window cannot renew · MAJOR · OPEN
+
+> ### ⚠ THIS ENTRY WAS FILED WRONG. The original heading and mechanism are DEAD.
+>
+> ~~"token renewal is wired into `listen` and not into the commands agents actually run"~~ —
+> **refuted by Verity, 2026-08-08, hours after I filed it.** Renewal **is** wired into every
+> signal verb. I grepped `src/cloud/signals.ts`, found no renewal call, and concluded the path
+> was unwired. **Renewal lives one layer up**, at `src/cli.ts:1918` —
+> `bearer: await session.bearer()` inside `commandWorkspaceAndCredential` — and
+> `renewal.ts:784-785` shows `bearer()` consults `due()` and renews before returning.
+>
+> Verified independently rather than accepted, because Verity's own line numbers were off by
+> about five and I had already published one wrong version of this entry:
+>
+> ```
+> runPostSignal      2124  -> commandWorkspaceAndCredential 2144    (note, ask, working-on)
+> runReply           2255  ->                               2272
+> runSignalRead      2316  ->                               2354    (inbox, feed)
+> runInboxFollow     2429  ->                               2431
+> dispatched at 3731 / 3735 / 3739
+> ```
+>
+> `cli.ts:1911-1914` states it in a comment I never read: *"Renewal is resolved HERE, before the
+> first request rather than after a 401."*
+>
+> **I measured the wrong layer** — the same error as this session's `feed`-vs-`member-read`
+> mistake, one level in. Grepping a leaf file for a concern handled by its caller returns a
+> confident zero. Had this been implemented as filed it would have added a **second renewal path
+> beside a working one**, and that is hard to unpick later.
+>
+> The retraction of the *TTL* remedy below still stands and is unaffected: 8h is still the
+> documented hard max and still the wrong default.
+
+## What actually survives
 
 **2026-08-08. This is dogfood findings 4 and 5 as one defect, and it corrects the fix direction
 both of them proposed.**
@@ -3262,19 +3295,29 @@ narrowest binding, redaction, revoke-every-command). §796 names the designed mi
 max*, deliberately traded against the ≤1h default, and using it as the standard onboarding path
 converts a documented security boundary into a workaround. **Retracted as the recommendation.**
 
-The renewal machinery exists and is correct. It is simply not connected where it is needed:
+**Renewal is LAZY: it happens only while a command is running.** Measured in
+`renewalDueAt` (`renewal.ts:121-129`):
 
 ```
-src/cloud/renewal.ts        implemented   successor endpoint, due(), horizon
-src/listener/runtime.ts     WIRED         a listener renews
-src/cli.ts  token mint      WIRED
-src/cloud/signals.ts        NOT WIRED     inbox, feed, note, ask -- one comment, no call
+lead = min(RENEWAL_LEAD_CEILING_MS, max(RENEWAL_LEAD_FLOOR_MS, lifetime * 0.1))
+     = min(15m, max(5m, 6m)) = 6 MINUTES for a 1h credential
 ```
 
-An agent that runs `cswarm listen` renews. **An agent that polls with one-shot signal commands
-does not, and dies at 59 minutes.** That is exactly the population dogfood finding 5 identified
-as unable to be woken — so the same agents are denied both the wake path and the renewal path,
-and finding 4's "mint-to-use latency structurally exceeds TTL" is the observable consequence.
+So the population splits, and only one half has a defect:
+
+- An agent that **runs any command inside the last 6 minutes** of its credential renews. It is
+  fine today, and needs no change.
+- An agent **idle across that window cannot be saved by any wiring**, because nothing is
+  executing to notice. There is no timer, and a serverless backend has nothing to push to.
+
+That is the real shape of finding 4. Verity's own death is the data point:
+`due 04:06:46Z, expired 04:12:46Z, last command 03:20Z` — **idle through the window**, not
+missing wiring. Verity supplied the observation that seeded my wrong inference and corrected it
+itself.
+
+It composes with dogfood finding 5 exactly as filed there, but for a different reason than I
+gave: a polling agent whose poll interval exceeds the lead window is unrenewable, and the wake
+path would collapse the interval to seconds. **The fix is latency or lead time, not wiring.**
 
 **Three live copies of the default must move together if it ever moves** (Plumb, verified):
 `src/protocol/workspace-commands.ts:17` (used at `:662` root, `:950` successor),
@@ -3288,4 +3331,13 @@ root and successor at 1h; `api.md`, `llms.txt` and §2.3 all state ≤1h.
 need rederiving; `RENEWAL_PENDING_RECOVERY_MS = 1h` is a separate ambiguous-outcome replay window
 that merely shares the number.
 
-**The fix is to wire renewal into the signal path**, not to move any of them.
+**Neither the TTL constants nor the signal path should be touched.** The open question is
+whether the 6-minute lead is right for an agent whose natural cadence is longer, and that is a
+question about the *lead fraction and floor*, not about wiring.
+
+**Not established:** nobody has watched a renewal fire from a signal verb. Verity found
+`~/.cswarm/agent-credentials/` at 0700 with two `successor-*.json` records, and confirmed by
+positive control that a one-shot `inbox` at 08:54:18 moved the store's mtime to 08:54:18 — so a
+read verb does touch the credential store. But the successor files could have come from `listen`.
+The closing experiment is cheap and unrun: mint a short-TTL credential, run `inbox` inside the
+lead window, watch for a new successor file.
