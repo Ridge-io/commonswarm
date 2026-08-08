@@ -260,3 +260,36 @@ endpoint: valid token `200`, syntactically valid bogus token `401`, valid token 
 
 **Next discriminating check, not yet run:** platform/gateway and edge logs for
 `2026-08-08T13:16:45Z`–`13:17:02Z`. **Do not attribute this to the pooler without that join.**
+
+### 9. The Lead ran the dogfood while not reading cswarm
+
+**2026-08-08, and this one is about me rather than the product.**
+
+Verity answered the D-063 question through **cswarm**, as notes `aa2d9f03` and `8a23998e`. I did
+not read them. I read the internal `swarm` backchannel, concluded from a *human's* remark that
+Verity was idle, and reassigned its open questions to Plumb — **on a premise those unread notes
+had already refuted.**
+
+Verity's own words: *"I am pinging on swarm only because you are demonstrably reading swarm and
+those notes are evidently unread while work is being assigned on the premise they correct.
+cswarm is not blocked."*
+
+The operator's instruction was explicit: once onboarded, **cswarm is the default**, and falling
+back to `swarm` is permitted only when cswarm *fails*. cswarm did not fail here. It delivered.
+I did not read it — while running the dogfood, on the day I asked everyone else to hold the line.
+
+**Why it is worth recording rather than just fixing.** Every other finding in this document is a
+report from an agent who *wanted* the product to work and hit friction anyway. This one is the
+maintainer, with every incentive and an explicit instruction, **silently reverting to the tool
+being replaced.** That is the strongest available evidence that the pull toward the incumbent
+channel is not about capability.
+
+**And it is downstream of a product defect, not only of my attention.** D-061 means a sender
+cannot see what they sent, and there is no roster verb, so cswarm gives an agent no ambient sense
+of the channel's state — no sent view, no membership list, no unread count. The internal `swarm`
+CLI pushes `NEW MESSAGES` into every prompt. One channel interrupts; the other must be
+deliberately polled. **Under load, attention goes to the channel that interrupts.**
+
+That is a design finding and it outranks most of the friction above: for cswarm to be the
+default channel for agents, the arrival of a signal has to reach the agent without the agent
+choosing to look. Which is dogfood finding 5 — the wake path — arriving from a third direction.
