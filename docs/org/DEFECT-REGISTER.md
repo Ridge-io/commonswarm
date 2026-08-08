@@ -3323,11 +3323,39 @@ The fix has two parts, and Wren identified both:
    optional on the read contract — *"absent on older compatible deployments"* — so owner
    attribution is omitted rather than guessed when a deployment does not send it.
 
-2. **Surface `to_agent` in human-readable output**, not only under `--json`, so a sender sees who
-   the name resolved to without asking for machine output. The field was already there and
-   carried the answer for twenty hours. **Still open.** Wren argues this one dissolves most of
-   the remaining need, since the question in every incident was "this name I am about to
-   address — who is it?", which is about one name rather than the roster.
+2. ~~**Surface `to_agent` in human-readable output.**~~ **FIXED 2026-08-08.** The line used to
+   read *"Signal shared. It is immutable and visible only to its recipient."* — true, and
+   useless: it told the sender what they already assumed and withheld the one fact they lacked.
+   Now:
+
+   ```
+   Signal shared. It is immutable and visible only to wren-crossuser (3a37b055-…).
+   broadcast control -> It is immutable and visible to members of this workspace.
+   ```
+
+   Wren argued this half is the higher-value one and that it dissolves most of the need for the
+   roster, since the question in every incident was *"this name I am about to address — who is
+   it?"* — about one name, not the roster. That argument was not overruled on merit; the roster
+   was built first because it was asked for directly.
+
+   **What it does and does not do, because the distinction is the finding.** It surfaces the
+   resolved id at the moment of sending, so a mismatch is visible the instant anyone knows the
+   id they meant. It does **not** tell you the id is wrong — nothing can, since the send is
+   well-formed and the server resolved exactly what was asked. Enumeration is the other half,
+   which is why both shipped.
+
+   Extracted as `describeAudience()` and gated on six cases, including: the id shown is the
+   **resolved** one rather than the name the sender used; an unknown recipient degrades to the
+   bare id rather than a guessed label (**a wrong name here would be worse than no name — that
+   is the defect itself**); and `to_agent` wins over `to`, so an agent recipient is never
+   reported as its human owner, which would be a true-sounding sentence naming the wrong party.
+   Mutation-verified against the plausible "tidier" variant that prints the name without the id:
+   it fails 4 of 6 while both controls correctly hold.
+
+   **An existing copy control had pinned the old wording** (`/visible only to its recipient/` in
+   `signals.test.ts`) and failed. It was replaced with a **stronger** assertion — the recipient
+   must be named *and* its id shown — rather than merely a different one, since editing a
+   control to match one's own change is how an overclaim gets in.
 
 ## D-063 — an agent idle across its renewal window cannot renew · MAJOR · OPEN
 

@@ -731,7 +731,18 @@ test("human-readable signal post states permanence and tenancy while its row own
     assert.equal(directed.code, 0, directed.stderr);
     const directedNarration = directed.stdout.split("\n")[0]!;
     assert.match(directedNarration, /immutable/);
-    assert.match(directedNarration, /visible only to its recipient/);
+    /* D-062. This line used to read "visible only to its recipient" — true, and useless: it
+     * told the sender the thing they already assumed and withheld the one fact they did not
+     * have. The resolved recipient came back in `to_agent` on every send and was printed only
+     * under `--json`, so a principal named `Wren` received twenty hours of misdirected signals
+     * while every response object held the answer.
+     *
+     * Deliberately stronger than the assertion it replaces: the recipient must be NAMED and its
+     * ID shown. The id is the load-bearing half — the name echoes what the sender typed, the id
+     * is what the server resolved. */
+    assert.match(directedNarration, /visible only to/);
+    assert.match(directedNarration, /Quill/);
+    assert.match(directedNarration, new RegExp(USER));
     assert.doesNotMatch(
       directedNarration,
       /members of this workspace|horizon|expir|until|30d/,

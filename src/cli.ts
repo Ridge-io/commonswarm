@@ -2248,10 +2248,7 @@ async function runPostSignal(
       credential,
     ),
   );
-  const directed = signal.to !== null || signal.to_agent !== null;
-  const audience = directed
-    ? "visible only to its recipient"
-    : "visible to members of this workspace";
+  const audience = describeAudience(signal, authors);
   process.stdout.write(
     `Signal shared. It is immutable and ${audience}.\n${renderSignals([signal], {
       inbox: false,
@@ -2339,6 +2336,41 @@ async function runReply(args: Arguments): Promise<void> {
  * for an agent token. This verb only shows what the CLI was already reading to resolve `--to`.
  * So it needs no edge deploy, and stays clear of the D-047 freeze.
  */
+/**
+ * Say who a signal actually went to, by name AND id. D-062.
+ *
+ * `--to <name>` is resolved server-side and the resolved id came back in `to_agent` on every
+ * send — but only under `--json`, so nobody read it. A principal named `Wren` existed, was not
+ * the Wren anyone meant, and three agents spent about twenty hours on that with the answer
+ * sitting in every response object they had already received.
+ *
+ * Exported for the gate: this is a claim a user reads, so it is worth pinning as a pure value
+ * rather than only observing it against a live deployment.
+ *
+ * **What this does and does not do.** It surfaces the resolved id at the moment of sending, so a
+ * mismatch becomes visible the instant anyone knows the id they meant. It does NOT tell you the
+ * id is wrong — nothing here can, because the send is well-formed and the server resolved
+ * exactly what was asked. Enumerating (`cswarm members`) is the other half.
+ *
+ * The id is printed even when the name is known, because the id is the addressable identity:
+ * names are unique per workspace, but a name you did not create can belong to someone you did
+ * not mean. When the directory does not know the recipient the bare id is printed rather than a
+ * guessed label — a wrong name here would be worse than no name, which is the defect itself.
+ */
+export function describeAudience(
+  signal: { to: string | null; to_agent: string | null },
+  authors: SignalAuthorLabels,
+): string {
+  const recipientId = signal.to_agent ?? signal.to;
+  if (recipientId === null) return "visible to members of this workspace";
+  const name = signal.to_agent !== null
+    ? authors.agents.get(signal.to_agent)
+    : authors.users.get(recipientId);
+  return `visible only to ${
+    name === undefined ? recipientId : `${name} (${recipientId})`
+  }`;
+}
+
 async function runMembers(args: Arguments): Promise<void> {
   args.assertShape([
     ...TARGET_FLAGS,
