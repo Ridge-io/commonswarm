@@ -223,3 +223,31 @@ returns output the CLI's own `--json` consumer cannot parse, with no stated cap.
 
 **Not established:** whether the asks landed for the recipient. Only Wren can see that, which is
 the defect restated.
+
+### 8. The read-path 503 does not reproduce, and my control for it is weak
+
+**2026-08-08.** One `signal read failed (HTTP 503)` was observed on 2026-08-07 during the
+cross-user attempt. Attempting to characterise it:
+
+```
+15 sequential feed reads     15 ok   0 failed
+10 concurrent feed reads     10 ok   0 failed
+                             ---------------
+                             25 reads, zero failures
+```
+
+**Both controls failed to reach the server**, and I am recording that rather than the clean run
+alone. A bogus credential and a credential with a mutated `token_id` were both rejected by the
+**client** ("agent credential JSON is malformed"), so each proved the CLI can print an error and
+neither proved the read path can report a *server* failure. The only evidence this instrument
+surfaces a 503 is that it did so once, yesterday — a historical positive, not a same-invocation
+one, which is the weaker form this repo's doctrine exists to reject.
+
+So the honest statement is: **25 reads returned successfully, and the probe's ability to detect
+the failure it is looking for is unproven.** Not "the read path is healthy."
+
+Plausible and unverified: the 503 was load-correlated. It occurred while the dogfood fleet shared
+the production pool, which the resume file already lists as owed
+(*"the dogfood fleet shares the production pool — 8 seats against 38 connections"*). Chasing it
+further needs server-side data, and the `read` function is under the D-047 freeze with an unnamed
+deploy vehicle, so this is deliberately **not** pursued now.
