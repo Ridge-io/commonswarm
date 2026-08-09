@@ -4093,7 +4093,34 @@ means neither path has ever executed. Testing them needs a global `npm install -
 collaborator's machine — **an operator decision, not the Lead's**, and Wren correctly declined to
 do it unasked.
 
-## D-075 — workspace archiving is designed, honoured by the cap, and unreachable · MAJOR · OPEN
+## D-075 — workspace archiving is designed, honoured by the cap, and unreachable · MAJOR · MITIGATED, not fixed
+
+> ### CAP RAISED 3 -> 10, DEPLOYED 2026-08-09. Archiving is still unreachable.
+>
+> Operator decision: *"there's no UI mechanism for deleting a workspace, so either add one or more
+> simply increase the limit."* Raising it is the smaller change — it needs no new command kind, no
+> reducer case, and no answer to whether an archived workspace stays readable to its members.
+>
+> `command` **v16 -> v17**. `read` untouched at v6, so the D-047 freeze is intact.
+> `SELF_SERVE_CREATE_DAILY_LIMIT` raised 6 -> 20 in the same change, because at 6 it would have
+> become **smaller** than the live cap and silently inverted the invariant its own comment states.
+>
+> **Verified on the real user path**, not from the deploy log: a fourth workspace was created
+> (`cac2181e-…`) where the same command failed an hour earlier.
+>
+> **Three pre-deploy checks, because `command` is the write path for every verb:**
+> - the linked ref `ukezjcnxjvkpkeezxaew` matches the **live page's own meta tag**;
+> - the generated `_shared/protocol.js` regenerates to an **identical hash**, so it was not stale;
+> - `command/index.ts` was **unchanged since the commit v16 shipped from**, against a control
+>   showing `src/cli.ts` moved 615+/46− over the same range. So the deploy carried exactly this
+>   diff and nothing else.
+>
+> **This entry stays open in substance.** The cap is no longer a hard ceiling, but `archived_at`
+> still has zero writes, and a user who reaches 10 has the same problem one order of magnitude
+> later. The right fix is still a way to remove a project.
+>
+> **Not established:** that the limit is exactly 10. A fourth workspace proves it is no longer 3;
+> proving the boundary would mean creating ten workspaces on production, which is not worth it.
 
 **Measured 2026-08-09, after the 3-project cap blocked a release-verification test.**
 
