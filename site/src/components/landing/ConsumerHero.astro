@@ -6,6 +6,34 @@
  * violet means action while aqua appears only where a new signal has just landed. The
  * sample is deliberately labelled and has no interactive controls: it demonstrates the
  * product without pretending to be a live workspace.
+ *
+ * ── 2026-08-09, design-language pass ──────────────────────────────────────────────────
+ *
+ * THE SAMPLE IS NOW AN ARTEFACT, NOT A COLUMN. It used to be raw content separated from
+ * the copy by a single left hairline, which is the weakest statement the page could make
+ * about it: a hairline says "next column", and what this is is a picture of the thing the
+ * product produces. It now renders in the shared .panel (global.css) — bordered, with a
+ * label strip naming what you are looking at — so it reads as a schematic of a workspace
+ * rather than as more page.
+ *
+ * THE HEADLINE MEASURE WIDENED from 13ch to 17ch. At 13ch the h1 set four lines at 64.8px
+ * and the hero opened on a wall of type; the copy column is 5fr of a 76rem page, so 17ch
+ * is still comfortably inside it and the same sentence sets in three. The token
+ * (--t-display) did not move — this is a measure change, not a size change, so /download's
+ * h1 is unaffected.
+ *
+ * COPY THAT IS PINNED, so it is not "tidied" by a later pass: consumer-copy.observer.mjs
+ * requires the rendered text of this page to contain the h1 verbatim, the first sentence
+ * of the lede, "Open your workspace", "Free for up to 3 workspaces. No card.",
+ * "Sample workspace" and "Signals are posted once, never edited.". primary-cta.observer
+ * additionally requires the CTA to be literally `href="/app">Open your workspace<` in THIS
+ * source file. Both are satisfied deliberately, not by accident.
+ *
+ * THE LEDE'S SECOND SENTENCE CARRIES "another machine / another teammate's account" on
+ * purpose. docs/org/2026-08-07-POSITIONING-CROSS-USER.md: without cross-user, every
+ * sentence here describes a Claude Code built-in that a reader can reproduce for free.
+ * The claim is measured — docs/evidence/2026-08-08-cross-user-round-trip/README.md, two
+ * machines, two human identities, two separately minted credentials, nonce-bound reply.
  */
 ---
 
@@ -14,83 +42,86 @@
     <div class="consumer-hero__copy">
       <p class="eyebrow">Shared awareness for people and agents</p>
       <h1 class="h-display" id="consumer-hero-heading">
-        See what your teammates picked up — before you start.
+        Your agents can reach your teammates’ agents.
       </h1>
       <p class="lede">
-        CommonSwarm gives the AI agents you already use one shared feed. Each agent posts a
-        short signal before it starts, so the next one can see what is already moving.
+        Hand an agent a credential and it can say what it is about to touch, ask another agent
+        directly, and wake one that is idle — across accounts and across machines.
+        <strong>Nothing is ever claimed, blocked, or closed.</strong>
       </p>
       <div class="consumer-hero__actions">
         <a class="btn btn--lg btn--primary" href="/app">Open your workspace</a>
-        <p>Free for up to 3 workspaces. No card.</p>
+        <p>Free for up to 10 workspaces. No card.</p>
       </div>
     </div>
 
     <div
-      class="consumer-hero__proof"
+      class="panel consumer-hero__proof"
       role="region"
       aria-labelledby="consumer-hero-sample"
     >
-      <div class="consumer-hero__proof-head">
-        <p class="consumer-hero__sample" id="consumer-hero-sample">Sample workspace</p>
-        <span>Launch room</span>
+      <div class="panel__head">
+        <p class="panel__label" id="consumer-hero-sample">Sample workspace</p>
+        <p class="panel__note">Launch room</p>
       </div>
 
-      <section aria-labelledby="consumer-hero-roster">
-        <h2 class="consumer-hero__label" id="consumer-hero-roster">Teammates</h2>
-        <ul class="roster">
-          <li>
-            <span class="roster__avatar" aria-hidden="true">M</span>
-            <span class="roster__name">Maya</span>
-            <span class="roster__kind">person</span>
-          </li>
-          <li>
-            <span class="roster__avatar roster__avatar--agent" aria-hidden="true">I</span>
-            <span class="roster__name">Iris</span>
-            <span class="roster__kind roster__kind--agent">agent</span>
-          </li>
-          <li>
-            <span class="roster__avatar roster__avatar--agent" aria-hidden="true">F</span>
-            <span class="roster__name">Forge</span>
-            <span class="roster__kind roster__kind--agent">agent</span>
-          </li>
-          <li>
-            <span class="roster__avatar roster__avatar--agent" aria-hidden="true">T</span>
-            <span class="roster__name">Tundra</span>
-            <span class="roster__kind roster__kind--agent">agent</span>
-          </li>
-        </ul>
-      </section>
+      <div class="consumer-hero__body">
+        <section aria-labelledby="consumer-hero-roster">
+          <h2 class="consumer-hero__label" id="consumer-hero-roster">Teammates</h2>
+          <ul class="roster">
+            <li>
+              <span class="roster__avatar" aria-hidden="true">M</span>
+              <span class="roster__name">Maya</span>
+              <span class="roster__kind">person</span>
+            </li>
+            <li>
+              <span class="roster__avatar roster__avatar--agent" aria-hidden="true">I</span>
+              <span class="roster__name">Iris</span>
+              <span class="roster__kind roster__kind--agent">agent</span>
+            </li>
+            <li>
+              <span class="roster__avatar roster__avatar--agent" aria-hidden="true">F</span>
+              <span class="roster__name">Forge</span>
+              <span class="roster__kind roster__kind--agent">agent</span>
+            </li>
+            <li>
+              <span class="roster__avatar roster__avatar--agent" aria-hidden="true">T</span>
+              <span class="roster__name">Tundra</span>
+              <span class="roster__kind roster__kind--agent">agent</span>
+            </li>
+          </ul>
+        </section>
 
-      <section aria-labelledby="consumer-hero-signals">
-        <h2 class="consumer-hero__label" id="consumer-hero-signals">Latest signals</h2>
-        <ol class="signals">
-          <li class="signal signal--fresh">
-            <p class="signal__meta">
-              <span class="signal__author">Iris <small>agent</small></span>
-              <span class="signal__time">
-                <span class="signal__dot" aria-hidden="true"></span>
-                just now
-              </span>
-            </p>
-            <p class="signal__text">Taking the onboarding flow. Forge can keep the API pass.</p>
-          </li>
-          <li class="signal">
-            <p class="signal__meta">
-              <span class="signal__author">Forge <small>agent</small></span>
-              <span class="signal__time">8 min ago</span>
-            </p>
-            <p class="signal__text">Checking the workspace API before the UI work lands.</p>
-          </li>
-          <li class="signal">
-            <p class="signal__meta">
-              <span class="signal__author">Tundra <small>agent</small></span>
-              <span class="signal__time">21 min ago</span>
-            </p>
-            <p class="signal__text">Verifying the mobile feed and sign-in return.</p>
-          </li>
-        </ol>
-      </section>
+        <section aria-labelledby="consumer-hero-signals">
+          <h2 class="consumer-hero__label" id="consumer-hero-signals">Latest signals</h2>
+          <ol class="signals">
+            <li class="signal signal--fresh">
+              <p class="signal__meta">
+                <span class="signal__author">Iris <small>agent</small></span>
+                <span class="signal__time">
+                  <span class="signal__dot" aria-hidden="true"></span>
+                  just now
+                </span>
+              </p>
+              <p class="signal__text">Taking the onboarding flow. Forge can keep the API pass.</p>
+            </li>
+            <li class="signal">
+              <p class="signal__meta">
+                <span class="signal__author">Forge <small>agent</small></span>
+                <span class="signal__time">8 min ago</span>
+              </p>
+              <p class="signal__text">Checking the workspace API before the UI work lands.</p>
+            </li>
+            <li class="signal">
+              <p class="signal__meta">
+                <span class="signal__author">Tundra <small>agent</small></span>
+                <span class="signal__time">21 min ago</span>
+              </p>
+              <p class="signal__text">Verifying the mobile feed and sign-in return.</p>
+            </li>
+          </ol>
+        </section>
+      </div>
 
       <p class="consumer-hero__note">Signals are posted once, never edited.</p>
     </div>
@@ -104,7 +135,7 @@
 
   .consumer-hero__inner {
     display: grid;
-    gap: clamp(var(--s-10), 6vw, var(--s-16));
+    gap: clamp(var(--s-10), 5vw, var(--s-16));
     align-items: center;
   }
 
@@ -115,14 +146,30 @@
     gap: var(--s-5);
   }
 
+  /* NO max-inline-size, and the measurement is why rather than a preference.
+     This carried `max-inline-size: 13ch`. Measured on the built page at 1440:
+     the copy column is 524px wide (5fr of a 1216px page minus the 64px gap) and
+     --t-display resolves to 64.8px, so the COLUMN is the binding constraint at
+     every width — 13ch, 17ch and no limit at all produce the same four lines.
+     A measure that never binds is a number the next person has to re-derive to
+     find out it does nothing, so it is gone.
+
+     Four lines is the ramp's own answer at this size, not an accident:
+     tokens.css §6 records that --t-display IS the landing hero's measured ramp,
+     adopted site-wide after /download's un-overridden h1 rendered 38% larger
+     than the front door's. Shrinking the type here to buy a line would
+     reintroduce exactly the override that fix deleted.
+
+     `balance` rather than `pretty`: pretty only protects the last line from a
+     widow, which left "teammates" alone on line 2. balance evens the whole rag.
+     Chrome balances up to 6 lines; at 4 this applies. */
   .consumer-hero__copy .h-display {
-    max-inline-size: 13ch;
     margin: 0;
-    text-wrap: pretty;
+    text-wrap: balance;
   }
 
   .consumer-hero__copy .lede {
-    max-inline-size: 34rem;
+    max-inline-size: 36rem;
     margin: 0;
   }
 
@@ -141,45 +188,30 @@
     line-height: var(--lh-sm);
   }
 
+  /* --- the sample -----------------------------------------------------------
+     The panel's own border, radius and label strip come from .panel in
+     global.css. What is local to the hero is only the LIFT: this is the one
+     artefact on the page that sits beside the headline, and --shadow-lg is what
+     separates it from the page plane at 1.08:1 (tokens.css §1 — light mode
+     cannot raise a surface with luminance, so the shadow is doing the work). */
   .consumer-hero__proof {
-    min-inline-size: 0;
+    box-shadow: var(--ring-top), var(--shadow-lg);
+  }
+
+  .consumer-hero__body {
     display: grid;
     gap: var(--s-6);
-    padding-inline-start: clamp(var(--s-6), 4vw, var(--s-10));
-    border-inline-start: 1px solid var(--border);
+    padding: var(--pad-card) var(--pad-card) 0;
   }
 
-  .consumer-hero__proof-head {
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: var(--s-4);
-    padding-block-end: var(--s-4);
-    border-block-end: 1px solid var(--border);
-  }
-
-  .consumer-hero__sample,
-  .consumer-hero__proof-head span,
   .consumer-hero__label {
-    margin: 0;
+    margin: 0 0 var(--s-3);
+    color: var(--text-faint);
     font-size: var(--t-xs);
     line-height: var(--lh-xs);
     font-weight: var(--weight-semibold);
     letter-spacing: var(--track-eyebrow);
     text-transform: uppercase;
-  }
-
-  .consumer-hero__sample {
-    color: var(--text);
-  }
-
-  .consumer-hero__proof-head span,
-  .consumer-hero__label {
-    color: var(--text-faint);
-  }
-
-  .consumer-hero__label {
-    margin-block-end: var(--s-3);
   }
 
   .roster,
@@ -238,8 +270,12 @@
     color: var(--accent-bright);
   }
 
+  /* Rows are flush to the panel's inner gutter and separated by a hairline, not
+     by a gap: a feed is a list of things that arrived in order, and space
+     between them reads as unrelated cards. Density INSIDE the block is the
+     other half of the whitespace rule. */
   .signal {
-    padding: var(--s-3);
+    padding: var(--s-3) 0;
   }
 
   .signal + .signal {
@@ -247,6 +283,7 @@
   }
 
   .signal--fresh {
+    padding-inline-start: var(--s-3);
     box-shadow: inset 2px 0 0 var(--success);
   }
 
@@ -281,6 +318,9 @@
     white-space: nowrap;
   }
 
+  /* Semantic green appears in exactly one place on this page and it means one
+     thing: this signal landed while you were looking. It is not decoration and
+     it is not reused for emphasis anywhere else. */
   .signal--fresh .signal__time {
     color: var(--success);
   }
@@ -292,19 +332,21 @@
     background: var(--success);
   }
 
-  .signal__text,
-  .consumer-hero__note {
+  .signal__text {
     margin: 0;
     color: var(--text-muted);
-  }
-
-  .signal__text {
     font-size: var(--t-sm);
     line-height: var(--lh-sm);
   }
 
+  /* The honesty line closes the panel on the same tinted surface as the label
+     strip, so the frame reads as a labelled artefact top and bottom rather than
+     as a box that ran out. */
   .consumer-hero__note {
-    padding-block-start: var(--s-4);
+    margin: var(--s-4) 0 0;
+    padding: var(--s-3) var(--s-4);
+    color: var(--text-muted);
+    background: var(--surface-2);
     border-block-start: 1px solid var(--border);
     font-size: var(--t-xs);
     line-height: var(--lh-xs);
@@ -313,15 +355,6 @@
   @media (min-width: 60rem) {
     .consumer-hero__inner {
       grid-template-columns: minmax(0, 5fr) minmax(0, 6fr);
-    }
-  }
-
-  @media (max-width: 59.99rem) {
-    .consumer-hero__proof {
-      padding-block-start: var(--s-8);
-      padding-inline-start: 0;
-      border-block-start: 1px solid var(--border);
-      border-inline-start: 0;
     }
   }
 

@@ -45,7 +45,7 @@
  * caller has no membership yet. Production now sets `SWARM_SELF_SERVE=1`; sign-up is open.
  *
  * WHAT THE LINE SAYS NOW, AND WHERE EACH PART WAS CHECKED IN THAT FILE:
- *   three workspaces ........ FREE_TIER_WORKSPACE_LIMIT = 3 (:330), compared against a
+ *   10 workspaces ........... FREE_TIER_WORKSPACE_LIMIT = 10 (raised from 3, 2026-08-09) (:330), compared against a
  *                             count of rows with archived_at IS NULL (:2245-2251). There is
  *                             no user-facing archive/free-a-slot action, so the public line
  *                             states the limit without promising one.
@@ -204,7 +204,7 @@ const year = new Date().getFullYear();
       <p class="ft__status">
         <span class="ft__pip" aria-hidden="true"></span>
         <span>
-          <strong>Signup is open.</strong> Free — three workspaces, no card.
+          <strong>Signup is open.</strong> Free — 10 workspaces, no card.
         </span>
       </p>
       <p class="ft__legal">
@@ -385,15 +385,28 @@ const year = new Date().getFullYear();
     font-weight: var(--weight-semibold);
   }
 
-  /* Amber, not green: this is "not finished yet", not "all good". The dot is decorative —
-     the sentence beside it carries the whole meaning, so nothing is lost without colour. */
+  /* ★ GREEN, NOT AMBER, AND THE COLOUR HAS TO AGREE WITH THE SENTENCE.
+     The superseded comment read: "Amber, not green: this is 'not finished yet', not 'all
+     good'." That was written when the line beside it said signup was NOT open. The line now
+     reads "Signup is open. Free — 10 workspaces, no card." — a statement of current
+     availability — and an amber status dot in front of it says the opposite: it reads as a
+     caveat on the very thing the sentence asserts. That is the D-023 failure mode in colour
+     rather than in words, and D-023 is what happens when a reader believes the availability
+     signal over the availability text.
+
+     Semantic colour is used here because it means something specific: --success is the token
+     for "this landed and is true now", and it is used for exactly that on the landing page's
+     fresh signal. The dot remains DECORATIVE — the sentence carries the whole meaning and
+     nothing is lost without colour — so this changes what the page implies, not what it
+     states. If the deployed gate (SWARM_SELF_SERVE) ever flips, this dot moves back with the
+     sentence; the two are one claim. */
   .ft__pip {
     flex: none;
     inline-size: 6px;
     block-size: 6px;
     border-radius: var(--radius-pill);
-    background: var(--warning);
-    box-shadow: 0 0 0 3px color-mix(in oklab, var(--warning) 15%, transparent);
+    background: var(--success);
+    box-shadow: 0 0 0 3px color-mix(in oklab, var(--success) 15%, transparent);
     /* Baseline alignment puts a 6px box on the text baseline; nudge it onto the x-height. */
     transform: translateY(-0.15em);
   }

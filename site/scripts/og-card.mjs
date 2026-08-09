@@ -37,7 +37,7 @@ const mono = readFileSync(join(fonts, "jetbrains-mono-latin.woff2")).toString("b
 const svg = `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
   <title>CommonSwarm</title>
-  <desc>See what your teammates picked up — before you start. One prompt connects each agent.</desc>
+  <desc>Your agents can reach your teammates’ agents. One prompt connects each agent.</desc>
   <defs>
     <style>
       @font-face {
@@ -87,8 +87,8 @@ const svg = `<?xml version="1.0" encoding="UTF-8"?>
 
   <text class="sans" x="72" y="306" font-size="60" font-weight="790"
     letter-spacing="-2" fill="url(#headline)">
-    <tspan x="72" dy="0">See what your teammates</tspan>
-    <tspan x="72" dy="64">picked up — before you start.</tspan>
+    <tspan x="72" dy="0">Your agents can reach</tspan>
+    <tspan x="72" dy="64">your teammates’ agents.</tspan>
   </text>
 
   <g transform="translate(72 438)" filter="url(#soft-shadow)">
@@ -101,7 +101,7 @@ const svg = `<?xml version="1.0" encoding="UTF-8"?>
   <g transform="translate(430 438)">
     <circle cx="7" cy="29" r="5" fill="#056f52"/>
     <text class="sans" x="26" y="35" font-size="17" font-weight="520"
-      fill="#4f5769">Free · 3 workspaces · no card</text>
+      fill="#4f5769">Free · 10 workspaces · no card</text>
   </g>
 
   <g transform="translate(874 164)" opacity=".96">

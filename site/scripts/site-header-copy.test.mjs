@@ -24,8 +24,19 @@ const RETIRED_HEADER =
   "Signup is not switched on for everyone yet, so the flow is a preview.";
 const RETIRED_FOOTER =
   "Early access. Access is by invitation while we run CommonSwarm on our own work. Self-serve signup is built but is not open on this deployment yet.";
-const CURRENT_HEADER = "Free — three workspaces, no card. Signup is open.";
-const CURRENT_FOOTER = "Signup is open. Free — three workspaces, no card.";
+/* POSITIVE CONTROLS, not copy controls. Their job is to prove the retired-claim greps below
+ * run against real rendered text — a suite that greps an empty string passes every absence
+ * check. They are re-pinned when the sentence legitimately changes.
+ *
+ * Changed 2026-08-09: "three" -> "10". The AVAILABILITY CLAIM — "Signup is open." — is
+ * untouched and is the half D-023 exists to protect. What moved is the free-tier COUNT,
+ * because FREE_TIER_WORKSPACE_LIMIT went 3 -> 10 in command v17 the same day, and the copy
+ * had gone stale against the server within hours. That is D-023's own lesson applied to a
+ * number instead of an availability state: copy asserts deployment state, so grep every
+ * surface when a gate flips. This one was found in EIGHT shipping places across two
+ * spellings ("3" and "three"), one of which was dead code. */
+const CURRENT_HEADER = "Free — 10 workspaces, no card. Signup is open.";
+const CURRENT_FOOTER = "Signup is open. Free — 10 workspaces, no card.";
 
 function decodeEntities(value) {
   return value

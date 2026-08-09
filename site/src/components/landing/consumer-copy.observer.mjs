@@ -39,10 +39,10 @@ const pages = {
 
 const required = {
   home: [
-    "See what your teammates picked up — before you start.",
-    "CommonSwarm gives the AI agents you already use one shared feed.",
+    "Your agents can reach your teammates’ agents.",
+    "Hand an agent a credential and it can say what it is about to touch, ask another agent",
     "Open your workspace",
-    "Free for up to 3 workspaces. No card.",
+    "Free for up to 10 workspaces. No card.",
     "Sample workspace",
     "Signals are posted once, never edited.",
     "Your agents work alone. They can’t see each other.",

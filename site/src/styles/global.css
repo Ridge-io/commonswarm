@@ -416,6 +416,30 @@ kbd {
   color: var(--verified);
 }
 
+/* ★ THE DISPLAY HEADING IS SOLID INK. It used to be
+ *     background: linear-gradient(178deg, var(--text) 34%, var(--text-muted) 100%)
+ *   painted through `background-clip: text`, giving every h1 a top-to-bottom falloff.
+ *   That is removed, and three separate things go with it, which is the point:
+ *
+ *   1. THE FALLOFF FOUGHT THE VOICE. The largest type on the site is where a capability is
+ *      stated plainly; a heading that dissolves toward its own last line reads as an effect
+ *      applied to the sentence rather than as the sentence. Solid --text is what the rest of
+ *      the page already does.
+ *   2. IT CARRIED A LIVE CONTRAST FLOOR. The end stop was #b7bfd3 (1.84:1 on white) before it
+ *      was moved to --text-muted; --text-muted is AA, so nothing was broken at the point this
+ *      changed, but the bottom of every headline still rendered a full ink-step lighter than
+ *      the token the heading claims to use. There is now no gradient to keep in range.
+ *   3. IT NEEDED --descender-pad TO EXIST AT ALL. `background-clip: text` paints only inside
+ *      the padding box, and --lh-display makes the line box shorter than the font's own
+ *      ascent+descent, so g/y/p/j on the last line fell outside the box and simply were not
+ *      painted. The measurement that found it is kept because it is the useful part: at
+ *      64.8px with line-height 67.392px the font box is ascent 58 + descent 14 = 1.2em
+ *      against a 1.04em line box, leaving 3.79px of ink below the element. With solid
+ *      `color` there is no clip and no ink to lose, so the padding/negative-margin pair that
+ *      compensated for it is deleted rather than kept "just in case" — it was compensation
+ *      for a mechanism that is gone.
+ *
+ *   DO NOT REINTRODUCE background-clip HERE without re-deriving the descender pad. */
 .h-display {
   font-size: var(--t-display);
   /* At 320px a word like "irreversibility" is wider than the column at display size.
@@ -424,50 +448,23 @@ kbd {
   font-weight: var(--weight-display);
   line-height: var(--lh-display);
   letter-spacing: var(--track-display);
-  /* Very slight top-to-bottom falloff. The fallback colour is declared first, so a
-   * browser without background-clip:text still gets solid --text. */
   color: var(--text);
-  /* #b7bfd3 was a pale blue-grey picked to fade DOWNWARD against near-black. On white it
-     measures 1.84:1, so the bottom third of every display heading was nearly invisible.
-     --text-muted is the token that means "still readable, one step back", and it flips with
-     the palette. */
-  background: linear-gradient(178deg, var(--text) 34%, var(--text-muted) 100%);
-  -webkit-background-clip: text;
-  background-clip: text;
-  -webkit-text-fill-color: transparent;
-  /* ★ DESCENDERS. `background-clip: text` paints the gradient only where the element's
-     PADDING BOX is, and --lh-display makes the line box SHORTER than the font's own
-     ascent+descent — so the bottom of every g, y, p and j on the last line falls outside the
-     box and is simply not painted. It does not look like a bug in the CSS; it looks like the
-     typeface has clipped descenders, which is why it survived until someone looked closely at
-     a social card.
-     MEASURED on the live hero, not estimated: at 64.8px with line-height 67.392px, the font
-     box is ascent 58 + descent 14 = 1.2em against a 1.04em line box, leaving 3.79px of ink
-     below the element. 0.1em (6.5px there) covers it with room to spare.
-     The negative margin gives the space straight back, so adding this moves nothing on the
-     page. It is a custom property because two companion rules set `margin` as a SHORTHAND
-     and would otherwise silently reset the compensation while keeping the padding — which
-     would shift every display heading down by 6px instead of fixing anything. */
-  --descender-pad: 0.1em;
-  padding-bottom: var(--descender-pad);
-  margin-bottom: calc(-1 * var(--descender-pad));
 }
 
-/* Escape hatches: -webkit-text-fill-color inherits, so a highlighted word inside a
- * gradient heading has to opt back out explicitly. Both are provided. */
+/* Escape hatches for a highlighted word inside a heading. -webkit-text-fill-color is kept
+ * alongside `color` because it is what a stale cached stylesheet or a nested rule could still
+ * set to transparent; declaring both means the word is legible either way. */
 .h-display em,
 .h-display .accent,
 .h-section em,
 .h-section .accent {
   font-style: normal;
-  background: none;
   color: var(--accent-bright);
   -webkit-text-fill-color: var(--accent-bright);
 }
 
 .h-display .plain,
 .h-section .plain {
-  background: none;
   color: var(--text);
   -webkit-text-fill-color: var(--text);
 }
@@ -498,6 +495,127 @@ kbd {
 .prose {
   max-width: var(--measure);
   color: var(--text-muted);
+}
+
+/* --- section opening ------------------------------------------------------
+ * .section-head is the three-part opening every marketing section repeats:
+ * eyebrow, heading, lede. It exists because four components had each written
+ * their own version of it with four different gaps (--s-4, --s-5, --s-3 and a
+ * bare margin), so parallel sections opened on visibly different rhythms while
+ * every author believed they were matching the others.
+ *
+ * TWO GAPS, NOT ONE, and the difference is the whole idea. Inside the group the
+ * gap is tight (--stack-sm) because eyebrow/heading/lede are one thought.
+ * BELOW the group it is --stack-head, which is several times larger, because the
+ * artefact underneath is the next thought. Cluster within, breathe between.
+ *
+ * The lede is held to --measure-wide by .lede itself; the group is capped so a
+ * heading cannot run the full 76rem page width and stop being scannable. */
+.section-head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--stack-sm);
+  max-width: 46rem;
+  margin-bottom: var(--stack-head);
+}
+
+/* The lede wants a little more air under the heading than the eyebrow wants
+ * above it — the eyebrow is a label ON the heading, the lede is a sentence after
+ * it. One rule rather than asking each caller to remember. */
+.section-head > .lede {
+  margin-top: var(--s-2);
+}
+
+/* Centred variant, for the closing call to action only. Everything else on the
+ * page is left-aligned against the same optical edge; a centred section in the
+ * middle of a scroll reads as a different page. */
+.section-head--center {
+  align-items: center;
+  margin-inline: auto;
+  text-align: center;
+}
+
+.section-head--center > .lede {
+  margin-inline: auto;
+}
+
+/* --- artefact panel -------------------------------------------------------
+ * .panel is the bordered container the site shows a real artefact in: a
+ * schematic of the workspace, a terminal block, the generated agent prompt. It
+ * is one component because those three were three components, and a reader who
+ * has learned that "bordered box with a small uppercase label on top" means
+ * "this is a thing the product produces" should not have to relearn it per
+ * section.
+ *
+ * THE HEAD IS A LABEL STRIP, NOT A TITLE BAR. It carries what the artefact is on
+ * the left and one piece of context on the right, both at --t-xs uppercase, on
+ * the one tinted surface in the light ladder (--surface-2 / --elev-3). It is
+ * deliberately quiet: the artefact is the content, the strip only says what you
+ * are looking at.
+ *
+ * NOT a .card. .card is padded and is for prose; .panel is flush so a <pre> or a
+ * schematic can run edge to edge under its own strip. */
+.panel {
+  min-width: 0;
+  overflow: hidden;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--ring-top);
+}
+
+.panel__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s-4);
+  padding: var(--s-3) var(--s-4);
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+}
+
+/* Both labels are --t-xs rather than --t-2xs: they are uppercase and tracked,
+ * which costs legibility, and tokens.css §2 is explicit that --text-faint is
+ * text and has to clear AA at the size it is actually used. --text-muted here
+ * is 6.40:1 at worst (on --elev-3, which is exactly the surface this strip
+ * paints). */
+.panel__label,
+.panel__note {
+  font-size: var(--t-xs);
+  line-height: var(--lh-xs);
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--track-eyebrow);
+  text-transform: uppercase;
+  margin: 0;
+}
+
+.panel__label {
+  color: var(--text);
+}
+
+.panel__note {
+  color: var(--text-muted);
+  font-weight: var(--weight-medium);
+  text-align: right;
+}
+
+.panel__body {
+  padding: var(--pad-card);
+}
+
+/* A <pre> inside a panel is the terminal case: flush to the panel's own edges,
+ * mono, and its own scroll container so a long line scrolls the block rather
+ * than the page. */
+.panel > pre,
+.panel__body > pre {
+  margin: 0;
+  padding: clamp(var(--s-4), 3vw, var(--s-6));
+  overflow-x: auto;
+  background: none;
+  border: 0;
+  border-radius: 0;
+  font-size: var(--t-sm);
+  line-height: var(--lh-base);
 }
 
 .mono {

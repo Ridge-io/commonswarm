@@ -5,7 +5,12 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 const siteDir = join(dirname(fileURLToPath(import.meta.url)), "..");
 const distDir = join(siteDir, "dist");
-const currentOgHeadline = "See what your teammates picked up — before you start.";
+/* The consumer promise, changed deliberately on 2026-08-09 at the operator's direction.
+ * This constant is a SYNC BOUNDARY, not a copy control: its job is to keep the OG alt text
+ * and the social card describing whatever the homepage currently promises. Moving it when
+ * the promise moves is the gate working; moving it to make a diff pass would not be. The
+ * card image itself is regenerated from scripts/og-card.mjs, so all three stay in step. */
+const currentOgHeadline = "Your agents can reach your teammates’ agents.";
 const currentOgMechanism = "One prompt connects each agent";
 const retiredOgCommand = "cswarm accept --link-stdin";
 

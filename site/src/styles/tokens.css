@@ -325,9 +325,25 @@
   --s-32: 8rem;
 
   /* Derived rhythm. Components consume THESE, not raw steps, so that changing
-     the density of the product is one edit here instead of fifty in components. */
-  --pad-section: clamp(var(--s-16), 9vw, var(--s-32));
+     the density of the product is one edit here instead of fifty in components.
+
+     BREATHE BETWEEN IDEAS, CLUSTER WITHIN ONE. --pad-section is the gap between
+     two different arguments and it is deliberately large: at 1440 it resolves to
+     144px, so a section ends and the next one begins with a clear pause and no
+     rule drawn between them. That pause is what replaced the full-bleed hairlines
+     the landing sections used to carry — a hairline separates two things that are
+     already touching, and once there is enough space it is redundant chrome.
+     Density INSIDE a block is unchanged: --pad-card, --stack-* and --gap-* are
+     the tight end of the same scale and none of them moved. */
+  --pad-section: clamp(var(--s-16), 9vw, 9rem);
   --pad-section-tight: clamp(var(--s-12), 6vw, var(--s-24));
+
+  /* The gap between a section's heading group (eyebrow + heading + lede) and the
+     artefact it introduces — a card grid, a code block, a schematic panel. One
+     token because every marketing section repeats the same three-part opening,
+     and four components had each picked their own value for this. See
+     .section-head in global.css, which is the shared implementation. */
+  --stack-head: clamp(var(--s-8), 4vw, var(--s-12));
   --pad-card: var(--s-6);
   --pad-card-lg: var(--s-8);
   --pad-card-sm: var(--s-4);
