@@ -471,16 +471,30 @@ const selfServeEnabled = Deno.env.get("SWARM_SELF_SERVE") === "1";
  * §9 P5 caps free-tier workspaces per *verified* identity so one attacker
  * cannot mint tenants at zero marginal cost. Counts only live workspaces, so
  * archiving frees a slot.
+ *
+ * RAISED 3 -> 10 on 2026-08-09, operator decision. The cap was reached by two
+ * ordinary collaborators doing ordinary work, and because archiving is
+ * unreachable (D-075) there was no way back down: the escape hatch this comment
+ * names does not exist in any surface. A cap whose only remedy is unimplemented
+ * is a hard ceiling, and it blocked a release-verification test.
+ *
+ * 10 still bounds tenant minting, which is what §9 P5 asks for. The right fix
+ * remains archiving; this removes the ceiling until that exists.
  */
-const FREE_TIER_WORKSPACE_LIMIT = 3;
+const FREE_TIER_WORKSPACE_LIMIT = 10;
 
 /**
  * §9 P5 again: the same identity archiving and recreating in a loop would slip
  * the live cap above, so creations themselves are capped over a rolling day.
  * Deliberately larger than FREE_TIER_WORKSPACE_LIMIT — a user who archives a
  * mistake and starts over must not be locked out for a day.
+ *
+ * RAISED 6 -> 20 in the same change, to keep that relationship true. Left at 6
+ * it would have become SMALLER than the live cap, silently inverting the
+ * invariant this comment states and capping a legitimate user at 6 creations
+ * while telling them they may hold 10.
  */
-const SELF_SERVE_CREATE_DAILY_LIMIT = 6;
+const SELF_SERVE_CREATE_DAILY_LIMIT = 20;
 
 /**
  * §8: free self-serve plus transactional email is a branded-phishing vector,

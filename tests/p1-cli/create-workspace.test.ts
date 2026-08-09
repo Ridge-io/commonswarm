@@ -174,7 +174,18 @@ test("the workspace limit reads as a limit, not as a status code", async () => {
   assert.equal(error.status, 403);
   assert.equal(error.code, "workspace_limit_reached");
   assert.match(error.message, /already created 3 projects/);
-  assert.match(error.message, /Archiving a project frees its slot/);
+  /* D-075. This required the literal "Archiving a project frees its slot" — a remedy that does
+   * not exist in any surface. `swarm.workspaces.archived_at` has zero writes anywhere, so the
+   * gate was holding a sentence that sent every capped user to a dead end. The rest of it,
+   * "ask whoever operates this deployment", named a person who on a self-serve deployment IS
+   * the reader.
+   *
+   * Now pins what the message must DO: state the limit, offer no unimplemented remedy, and name
+   * the one route that works. */
+  assert.match(error.message, /cannot be removed yet/);
+  assert.match(error.message, /invited .* do not count/);
+  assert.doesNotMatch(error.message, /Archiving a project frees its slot/);
+  assert.doesNotMatch(error.message, /ask whoever operates/);
   assert.doesNotMatch(error.message, /403/);
   assert.doesNotMatch(error.message, /forbidden/i);
 });

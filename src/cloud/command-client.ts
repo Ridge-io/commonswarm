@@ -267,11 +267,19 @@ export function createWorkspaceError(
     return new CreateWorkspaceError(
       status,
       code,
+      /* D-067/D-075. This used to end "Archiving a project frees its slot; the CLI cannot archive
+       * one yet, so ask whoever operates this deployment." Both halves were dead ends. Archiving
+       * is unreachable from every surface — `archived_at` exists and nothing writes it — and on a
+       * self-serve deployment the reader IS the operator, so it named a person who does not exist
+       * to perform an action that does not exist.
+       *
+       * It now states the limit, does not offer a remedy that is unimplemented, and names the one
+       * route that does work: someone else's invitation, which is not capped. */
       `${
         limit === null
           ? "You have already created as many projects as this account allows."
           : `You have already created ${limit} projects, which is the limit for one account.`
-      } Archiving a project frees its slot; the CLI cannot archive one yet, so ask whoever operates this deployment. Projects you were invited to do not count against the limit.`,
+      } Projects cannot be removed yet, so this limit is a ceiling rather than a queue. Projects you were invited to do not count against it — a collaborator can still add you to theirs.`,
     );
   }
   if (status === 403) {
