@@ -4059,3 +4059,77 @@ never run here.** The version pin is enforced before anything spawns, which is c
 means neither path has ever executed. Testing them needs a global `npm install -g` on a
 collaborator's machine — **an operator decision, not the Lead's**, and Wren correctly declined to
 do it unasked.
+
+## D-075 — workspace archiving is designed, honoured by the cap, and unreachable · MAJOR · OPEN
+
+**Measured 2026-08-09, after the 3-project cap blocked a release-verification test.**
+
+`swarm.workspaces.archived_at` exists in the schema. The free-tier cap **reads it and honours
+it**, and the server says so in its own comment:
+
+```sql
+-- Counted inside the transaction and against created_by, so two concurrent
+-- requests cannot both read limit-1. Archived workspaces free their slot.
+SELECT count(*)::text AS live
+FROM swarm.workspaces
+WHERE created_by = ${auth.actor.user}::uuid
+  AND archived_at IS NULL
+```
+
+A second cap exists **because** archiving was expected to work: `SELF_SERVE_CREATE_DAILY_LIMIT = 6`
+is *"deliberately larger than `FREE_TIER_WORKSPACE_LIMIT` — a user who archives a mistake and
+starts over must not be locked out for a day."*
+
+**Nothing anywhere sets `archived_at`.** Measured with a control:
+
+```
+writes to archived_at   0
+writes to revoked_at    3     <- control: the search works
+archived_at in schema   2 tables
+```
+
+So the column exists, the cap query honours it, two separate limits are tuned around it, the
+`workspaces` JSON returns `archived: false` on every row — **and no command kind, no CLI verb, and
+no page can ever change it.** The feature is fully designed and half-built.
+
+**It is now blocking work, not just annoying.** Both the Lead and Wren hold three owned
+workspaces. Neither can create a fourth. The remaining release-verification test — `invite` →
+`accept` exercised on 0.1.9 rather than 0.1.8 — needs a fresh workspace and is therefore
+**unreachable by either party**. The cap is stopping a test of the release it shipped with.
+
+This is finding 10 sharpened from *"the CLI cannot archive one yet, so ask whoever operates this
+deployment"* to something more specific: **there is nobody to ask.** No operator surface exists
+either. The message names a remedy that does not exist anywhere in the product.
+
+**Fix needs a `command` edge change** — a new command kind that sets `archived_at`, plus a CLI
+verb. `command` is not under the D-047 freeze, but it is the write path for every verb, so
+deploying it is an operator decision. **Not attempted.**
+
+**Not established:** whether an archived workspace remains readable to its members (the `read`
+paths filter `archived_at IS NULL` in at least three places, so members may lose access rather
+than merely hiding it); and whether `repositories.archived_at`, the second column, behaves the
+same way. Neither was probed.
+
+## D-072 — CONFIRMED from the owner's side
+
+Wren, 2026-08-09, holding **owner** on `0d499d2d`:
+
+```
+$ cswarm member remove d37e2ff2-… --confirm d37e2ff2-… --workspace-id 0d499d2d-…
+exit 1, stdout empty
+cswarm: Sign in again with cswarm login, then repeat the member remove command.
+```
+
+**Authority was not in question and the fresh-auth gate fired anyway.** That is the mechanism this
+entry describes — `handleTransaction` step 7 runs before the reducer looks at role — measured from
+the side that has the role. The wording is the pre-fix text because Wren runs shipped 0.1.9 and
+`1fe88f8` is on `main` and unreleased; that is consistent, not a regression.
+
+**And the cost named in the original entry stopped being hypothetical.** It now blocks the last
+untested destructive path. Fresh sign-in needs an OAuth round trip; Wren's browser automation is
+down; and Wren will not re-authenticate while it cannot verify which GitHub identity the browser
+holds — it flipped between two identities twice in one day, and the wrong one destroys the
+cross-user rig. **Wren declined to gamble an identity to close a test, which is correct.**
+
+Unblock path, **operator's call**: `cswarm login --no-browser` prints the OAuth URL for a human to
+open by hand. Wren declined to hand the operator a login prompt unasked.
