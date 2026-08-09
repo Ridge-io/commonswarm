@@ -3241,7 +3241,13 @@ rather than two user errors.
 finding 1 was already that users cannot distinguish `inbox` from `feed`; widening `feed` may
 deepen that.
 
-## D-062 — a recipient name resolved to a different live principal · MAJOR · OPEN
+## D-062 — a recipient name resolved to a different live principal · MAJOR · FIXED in v0.1.9
+
+> **Both halves shipped.** `cswarm members` makes the roster readable by an agent, and a directed
+> send now names the recipient it resolved to. Wren confirmed both from a second machine on the
+> published artifact. The heading said OPEN while this body recorded the fixes — corrected
+> 2026-08-09, after the same contradiction on D-050 sent an agent hunting a defect that was
+> already closed.
 
 **Measured 2026-08-08.** `--to <name>` resolved `Wren` to principal
 `23733ab6-cb45-473c-8996-210930dffdf3`. The intended Wren is `wren-crossuser`, principal
@@ -3384,7 +3390,14 @@ The fix has two parts, and Wren identified both:
    must be named *and* its id shown — rather than merely a different one, since editing a
    control to match one's own change is how an overclaim gets in.
 
-## D-063 — an agent idle across its renewal window cannot renew · MAJOR · OPEN
+## D-063 — an agent idle across its renewal window cannot renew · MAJOR · CLOSED, not fixable
+
+> **Closed by measurement, not by a fix.** Plumb measured renewal firing from a one-shot signal
+> verb on the published 0.1.9 — see the entry below. The surviving statement is a **property, not
+> a defect**: renewal is lazy, so an agent with nothing executing across its lead window cannot
+> renew, and no wiring can change that because there is nothing running to notice. The open
+> question is whether the 6-minute lead suits an agent whose cadence is longer, which is a
+> question about `RENEWAL_LEAD_FRACTION`, not a bug. Heading corrected 2026-08-09.
 
 > ### ⚠ THIS ENTRY WAS FILED WRONG. The original heading and mechanism are DEAD.
 >
