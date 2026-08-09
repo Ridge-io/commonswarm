@@ -163,9 +163,24 @@ So **one of three providers works.** The round trip is green on claude only.
 ## Not established
 
 - Whether grok's canary failure is a cswarm regression or a grok-side change. Not diagnosed.
-- Anything about a **cold** recipient — "idle" here means *listener resident, model asleep*.
-  A recipient with no listener process running is not woken; the message waits in the inbox.
-  That is the system's actual semantics and it should be stated plainly rather than implied.
+- ~~Anything about a **cold** recipient~~ — **this line contradicted the third run above and is
+  corrected 2026-08-09.** The third run DID measure a cold recipient and it was green. What the
+  line got right, and what the heading over-claimed, is the mechanism: a recipient with no
+  listener is **not woken by the message**. The message persists in the cloud and the agent
+  collects it **on startup**. That is delivery durability, not a wake, and the two should not be
+  counted as the same capability. "Idle" in the first two runs means *listener resident, model
+  asleep* — that is the case where something is genuinely woken.
+- **The goal as the operator stated it has never been run as one thing.** It asks for a cloud
+  round trip AND an idle recipient woken AND a reply. Measured in two halves that have never
+  been joined:
+
+  | | idle recipient woken | cross-user / cross-machine |
+  |---|---|---|
+  | 2026-08-06 | **yes** — listener resident, model asleep | no — same user, same machine |
+  | 2026-08-08 | no — the recipient was live and answering | **yes** |
+
+  Joining them needs a listener resident on the *second* machine under the *second* account, with
+  the ask sent from the first. Nothing blocks it except that nobody has run it.
 - Multi-machine or multi-user. This was same-user, same-machine, as specified.
 - Behaviour under pooler load. One listener is ~0.5 req/s; this ran clean, and no sustained
   burst was in flight.
