@@ -4254,5 +4254,26 @@ because esbuild keeps them. `was another workspace` appeared in the released bin
 like unfixed copy; it was the fix's own comment — `was another workspace)" told`. The live
 template was there too. **Grep the interpolation, not the prose**, or read the surrounding bytes.
 
+**It fired again during the 0.1.10 verification, one hour after this note was written.** A
+must-be-absent control on `ask whoever operates this deployment` returned **1** where it required
+0. The hit was line 22162 of the bundle:
+
+```
+/* D-067/D-075. This used to end "Archiving a project frees its slot
+ * one yet, so ask whoever operates this deployment." Both halves were dead ends.
+```
+
+The comment explaining the fix contains the string the fix removed — **which is true of every
+well-documented copy change in this repo**, so this will keep happening. Writing the note did not
+prevent it; it made the diagnosis fast instead of alarming.
+
+**So a must-be-absent control on a bundle is only trustworthy paired with a must-be-present
+control on the live form.** Here: `Projects cannot be removed yet` present in the interpolated
+template settled it, and the raw absence count never could have.
+
+**Option not taken:** stripping comments from the release bundle would remove the hazard and
+shrink the artifact. Not done mid-release — it would change the bytes of a build already verified
+and published.
+
 Related: `AGENTS.md`, *"measure the artifact, not its name"*. This is that rule applied to a
 version string, which is the most convincing name an artifact has.
