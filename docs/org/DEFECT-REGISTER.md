@@ -3887,6 +3887,48 @@ defect being fixed.
 **Extracted as `renderRoster()`** so the claims are gated as pure values rather than observed
 against a live deployment.
 
+### CORRECTION — the first fix replaced a false claim with a different false claim
+
+**Found by Verity, 2026-08-09, hours after the wording shipped in v0.1.10.** The replacement said:
+
+> *"…so this command cannot tell you which."*
+
+**It can tell.** An empty roster means, with certainty, that the credential is **not scoped** to
+that project — because the first disjunct is unreachable. **A workspace can never have zero
+members, and the protocol enforces that as an INVARIANT rather than a rule.** Verified line by
+line rather than taken:
+
+```
+workspace-reducer.ts:125    WorkspaceCreated seeds owners_count: 1
+workspace-reducer.ts:60     actual < 1  ->  StreamIntegrityError    (a CORRUPT STREAM, not a refusal)
+workspace-commands.ts:547   last Owner cannot be removed
+workspace-commands.ts:583   last Owner cannot be demoted
+workspace-commands.ts       no leave / self-remove command exists   (0 hits; control remove_member = 3)
+read/index.ts:309-314       SELECT … FROM swarm_read.member_profiles WHERE workspace_id = …
+member_profiles             gated on is_member, then returns EVERY live membership
+```
+
+So a scoped reader always sees at least one owner. Both lists empty ⟹ not scoped.
+
+**And saying so leaks nothing — which is what the first attempt got backwards.** Verity's
+distinction, and it is the whole finding:
+
+| ambiguity | must it be hidden? |
+|---|---|
+| **existence** — does this project exist at all | **Yes.** Preserved: the sentence is *identical* whether the project is absent or present-without-you. |
+| **scope** — is this credential in it | **No.** It is the caller's own state, and the only actionable half. |
+
+**The first fix protected existence by also hiding scope. Scope never needed hiding.** Now:
+
+> *"This credential is not scoped to that project. That is all this command can tell you: the
+> answer is the same whether the project does not exist or exists without you. Asking about a
+> project must not reveal whether it is real, so the two are deliberately indistinguishable."*
+
+**This is the second false claim in the same three lines, both caught by the same non-author.**
+The first asserted emptiness; the second asserted an ambiguity that does not exist. Being cautious
+is not the same as being accurate — a hedge can be exactly as false as an overclaim, and it is
+harder to notice because it sounds humble.
+
 ## D-071 — the roster is unbounded and unpaginated · MINOR · OPEN
 
 **Found by Verity, same review.** The `members` read takes no `limit` and offers no pagination,

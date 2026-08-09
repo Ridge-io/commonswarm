@@ -38,19 +38,36 @@ test("FM-1: an entirely empty roster does NOT claim the project is empty", () =>
   // The two claims that were false. Either one asserts emptiness the command cannot establish.
   assert.doesNotMatch(out, /nobody yet/);
   assert.doesNotMatch(out, /none yet/);
-
-  // And it must say why it cannot tell, or the caution is just vagueness.
-  assert.match(out, /may not be\s+scoped to it/);
-  assert.match(out, /cannot tell you which/);
 });
 
-test("FM-1: the cautious wording does not leak whether the project exists", () => {
-  // The server's ambiguity is deliberate. Copy that resolved it — "no such project", "not
-  // authorised" — would reintroduce the oracle the server is avoiding, which would be a worse
-  // defect than the one being fixed.
+test("FM-1: it states the scope answer, because there is one", () => {
+  /* The first fix said "this command cannot tell you which" — true-sounding and false. A
+   * workspace can never have zero members: `WorkspaceCreated` seeds `owners_count: 1`, the
+   * reducer treats fewer than one live owner as a StreamIntegrityError rather than a refusal,
+   * the last owner can be neither removed nor demoted, and no leave command exists. So an empty
+   * roster means NOT SCOPED, with certainty. Found by Verity after it shipped in 0.1.10. */
+  const out = renderRoster(directory([], []), new Map());
+
+  assert.match(out, /not scoped to that project/);
+  assert.doesNotMatch(
+    out,
+    /cannot tell you which/,
+    "the message claims an ambiguity that the owner-count invariant rules out",
+  );
+  // It must not reintroduce the emptiness it cannot establish, in the other direction either.
+  assert.doesNotMatch(out, /may have no members/);
+});
+
+test("FM-1: stating scope does not leak whether the project exists", () => {
+  /* The two ambiguities are different and only one must be preserved. EXISTENCE stays hidden —
+   * this sentence is identical whether the project is absent or present-without-you. SCOPE is
+   * the caller's own state and was never the secret. Copy resolving existence — "no such
+   * project", "not authorised" — would reintroduce the oracle. */
   const out = renderRoster(directory([], []), new Map());
 
   assert.doesNotMatch(out, /not authoris|not authoriz|no such|does not exist|forbidden|denied/i);
+  // And it must say the indistinguishability is deliberate, or a reader treats it as vagueness.
+  assert.match(out, /same whether the project does\s+not exist or exists without you/);
 });
 
 test("FM-1: zero agents WITH visible people is genuinely empty, and still says so", () => {

@@ -2450,11 +2450,28 @@ export function renderRoster(
    * true there and is kept. */
   const lines: string[] = [];
   if (directory.members.length === 0 && directory.agents.length === 0) {
+    /* Say which. FM-1 first said "this command cannot tell you which" — TRUE-sounding and FALSE,
+     * caught by Verity within hours of it shipping in 0.1.10.
+     *
+     * A workspace can never have zero members, and the protocol enforces that as an INVARIANT
+     * rather than a rule: `WorkspaceCreated` seeds `owners_count: 1`; the reducer raises
+     * `StreamIntegrityError` — a corrupt stream, not a refused command — if the live owner count
+     * drops below one; the last owner can be neither removed nor demoted; and no leave or
+     * self-remove command exists at all. The read edge selects every live member of the
+     * workspace, gated on `is_member`. So an empty roster cannot mean "empty project". It means
+     * this credential is not scoped, with certainty.
+     *
+     * AND SAYING SO LEAKS NOTHING, which is the part the first attempt got backwards. There are
+     * two ambiguities and it conflated them:
+     *   EXISTENCE — must stay hidden. Preserved: this sentence is IDENTICAL whether the project
+     *               does not exist or exists without you.
+     *   SCOPE     — the caller's own state. Safe to state, and the only actionable half.
+     * The first fix protected existence by also hiding scope. Scope never needed hiding. */
     return (
-      "Nothing is visible here with this credential.\n\n"
-        + "This project may have no members and no agents yet, or this credential may not be\n"
-        + "scoped to it. The server answers both the same way — on purpose, so that asking about\n"
-        + "a project cannot reveal whether it exists — so this command cannot tell you which.\n"
+      "This credential is not scoped to that project.\n\n"
+        + "That is all this command can tell you: the answer is the same whether the project does\n"
+        + "not exist or exists without you. Asking about a project must not reveal whether it is\n"
+        + "real, so the two are deliberately indistinguishable.\n"
     );
   }
   lines.push("People:");
