@@ -4107,7 +4107,15 @@ main().catch((error) => {
           );
         }
       }
-      process.stderr.write(`${JSON.stringify(structured)}\n`);
+      /* D-073. This branch is the one a PERSON reads — the `--json` branch above already
+       * writes the machine form, to stdout. A trailing `JSON.stringify(structured)` here made
+       * every server-returned error appear twice: once as the sentence, then again wrapped in
+       * braces, with no `--json` requested. Client-side errors were unaffected, so the
+       * doubling followed the error CLASS rather than the verb, which is why it went unnoticed
+       * for so long — it never appeared in the failure modes anyone was testing.
+       *
+       * Removed rather than reformatted: nothing pinned it, the originating commit gives no
+       * rationale for it, and a caller wanting the object has `--json`. */
     }
     process.exitCode = 1;
     return;

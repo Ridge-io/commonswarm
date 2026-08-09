@@ -146,7 +146,15 @@ test("fresh-login removal keeps its command id for the post-login retry", async 
       workspaceId,
       command,
     ),
-    /Sign in again/,
+    /* D-072. This required the literal "Sign in again", which was the retired opening of a
+     * message that also promised repeating the command would then work — false for a non-owner,
+     * because the reducer's Owner/Admin check runs after the fresh-auth gate.
+     *
+     * This test is about the COMMAND ID surviving for the post-login retry; the message match is
+     * incidental to it. So it now pins the durable part of the claim — that the refusal names
+     * the login step — rather than the exact sentence, which is asserted in full by
+     * tests/p1-cli/d072-d073-error-copy.test.ts. */
+    /cswarm login/,
   );
   assert.equal(Object.keys(store.profile.pendingCommands).length, 1);
   await sendConnectWithPending(

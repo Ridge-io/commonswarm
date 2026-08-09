@@ -3923,3 +3923,76 @@ Two details worth keeping. `predecessor_pending_first_use` on the first call mea
 must be *used* once before a successor can be issued — so renewal needs two invocations, not one.
 And the post-revoke `403` is the positive control: without it, "no more successor files" would be
 indistinguishable from a dead probe.
+
+## D-072 — `member remove` promised that signing in again would let you retry · MAJOR · FIXED
+
+**Found by Wren, 2026-08-09, walking verb paths nobody had exercised on the shipped 0.1.9.**
+
+```
+$ cswarm member remove <owner-id> --confirm <owner-id> --workspace-id <ws>
+cswarm: Sign in again with cswarm login, then repeat the member remove command.
+        No membership change was recorded.
+```
+
+Wren was signed in — `cswarm workspaces` listed all six projects seconds later — and is only a
+**member** of that workspace, so it could never remove anyone there.
+
+**The diagnosis in the original report is wrong, and the difference decides the fix.** Wren read
+this as *"reports an authority failure as an authentication failure"*. It does not. Measured from
+the code rather than inferred: `ReauthenticationRequired` is thrown **only** on
+`401 && error === "fresh_auth_required"`, and the server's fresh-auth gate sits inside
+`handleTransaction` at step 7 — **before** the reducer evaluates authority. So the server
+genuinely returned an authentication refusal and had *not yet looked* at the caller's role.
+**Reporting `role_forbidden` here would have swapped one false cause for another.**
+
+The real defect is the **implied promise**. The reducer's next gate is *"removing members requires
+Owner/Admin"*, so for a non-owner the advice buys a browser OAuth round trip and a second wall
+with no new information.
+
+**And the cost is not hypothetical.** It was found on a machine whose browser automation was
+broken, where signing out can strand the seat entirely — **the message recommends the exact
+action its reader had refused to take the day before, for that reason.**
+
+Fixed by stating both gates:
+
+> *"Removing a member needs a recent sign-in. Run `cswarm login`, then repeat the command. No
+> membership change was recorded. This is a separate check from permission — removing a member
+> also requires Owner or Admin, and that is only checked once the sign-in is fresh."*
+
+Gated both ways: the message must name the Owner/Admin requirement, **and** must not assert
+`role_forbidden` or "you lack permission", which the server has not established. That second test
+exists because over-correcting is the same D-060 family — **the fourth instance this session.**
+
+**Wren's control is what made it a finding rather than a guess:** the same account, same
+workspace, same authority gap, through `invite revoke`, reports `role_forbidden` correctly. So
+the server distinguishes the two perfectly well and one verb's copy did not.
+
+## D-073 — server errors printed twice, rendered then raw · MINOR · FIXED
+
+**Found by Wren, same walk.**
+
+```
+$ cswarm use 00000000-0000-4000-8000-000000000000
+exit 1, stdout 0 bytes, stderr 255 bytes containing BOTH:
+  cswarm: That project is not available to this account. Run cswarm workspaces to see …
+  {"code":"project_not_available","message":"That project is not available to this account. …"}
+```
+
+No `--json` was requested. The `main().catch` handler's **human** branch ended with a trailing
+`process.stderr.write(JSON.stringify(structured))`, after the `--json` branch had already covered
+machine output.
+
+**Scope, which is the useful part:** it followed the **error class**, not the verb. Reproduced on
+`use`, `status` and `feed`; **client-side** errors printed once (`unknown option: --json`,
+`invitation_not_live`, `--confirm must exactly repeat the member selector`). That is why it
+survived — it never appeared in the failure modes anyone was testing.
+
+Removed rather than reformatted: nothing pinned it, the originating commit (`053e972`) gives no
+rationale, and a caller wanting the object has `--json`. The gate pairs "no dump on the human
+path" with a control asserting the machine form still exists — otherwise it would also pass on a
+handler that had stopped emitting JSON entirely.
+
+**Sixth control found pinning wording rather than behaviour** (`pending-command.test.ts` required
+the literal `Sign in again`). Its actual subject is command-id retention across the post-login
+retry; the message match was incidental, so it now pins `cswarm login` and the full sentence is
+asserted in one place.

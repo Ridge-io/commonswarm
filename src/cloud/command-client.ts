@@ -206,11 +206,30 @@ export class CommandHttpError extends Error {
   }
 }
 
+/**
+ * `401 fresh_auth_required` — the server wants a recent interactive sign-in before it will
+ * consider removing a member.
+ *
+ * D-072. The old wording was *"Sign in again with cswarm login, then repeat the member remove
+ * command"*, which promises the retry will work. It does not for a non-owner: the fresh-auth gate
+ * runs in `handleTransaction` at step 7, **before** the reducer evaluates authority, and the
+ * reducer then refuses with `role_forbidden` because "removing members requires Owner/Admin". So
+ * a member following this advice pays for a browser OAuth round trip and arrives at a second wall
+ * with no new information.
+ *
+ * That cost is not hypothetical. On a machine whose browser automation is broken — which is where
+ * this was found — signing out to sign back in can strand the seat entirely. **The message was
+ * recommending the exact action its reader had refused to take the day before, for that reason.**
+ *
+ * The fix is not to report `role_forbidden` here: the server genuinely returned an authentication
+ * refusal and has not evaluated authority yet, so claiming otherwise would be a different false
+ * cause. It is to stop implying that this step is the only one.
+ */
 export class ReauthenticationRequired extends CommandHttpError {
   constructor() {
     super(
       401,
-      "Sign in again with cswarm login, then repeat the member remove command. No membership change was recorded.",
+      "Removing a member needs a recent sign-in. Run cswarm login, then repeat the command. No membership change was recorded. This is a separate check from permission — removing a member also requires Owner or Admin, and that is only checked once the sign-in is fresh.",
     );
     this.name = "ReauthenticationRequired";
   }
