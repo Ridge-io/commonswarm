@@ -20,7 +20,7 @@ happened. **A resume file is a snapshot, and its Refs block is the part that rot
 
 | | |
 |---|---|
-| CLI | **v0.1.10** — `curl -fsSL https://commonswarm.com/install.sh \| sh`, sha256 `ee34b686…cc1c73` |
+| CLI | **v0.1.11** — `curl -fsSL https://commonswarm.com/install.sh \| sh`, sha256 `8480682a…396860` |
 | Verified by | the Lead, Wren (second machine), and Verity — three independent installs, same hash |
 | Supabase pooler | `pool_size = 38` on `ukezjcnxjvkpkeezxaew` |
 | Edge functions | `read` **v6**, `command` **v17** (2026-08-09), `capability` v2 |
@@ -104,6 +104,12 @@ check:tests   0 errors        test:p1-cli     188/188        site            146
   `read` edge change — **under the D-047 freeze**.
 - **D-061** a directed signal is still invisible to its author. `cswarm members` and the recipient
   echo reduce the pain; there is still no sent view.
+- **D-076** the intermittent read 503 is a **`postgres@3.4.9` null-socket crash** in the read
+  isolate, root-caused by Plumb via a `request_id` join: 8 crashes in a day, 8/8 joining a
+  `POST 503 /read`. Upstream PR #1168 is **open and unmerged**, so there is no version to upgrade
+  to. **Mitigated in 0.1.11** by a bounded one-shot read retry — the crash is transient because a
+  retry reaches a fresh isolate. The driver bug itself is untouched and needs `read`, which is
+  frozen.
 - **D-048** an `ANTHROPIC_API_KEY` user gets an auth-less Claude child. **Re-measured 2026-08-09
   and the mechanism still holds** — key stripped, `HOME` and `PATH` survive. Needs a design
   decision rather than a fix: `DENY_NAME_RE` is deliberate and stops credentials leaking into
