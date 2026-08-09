@@ -670,6 +670,65 @@ async function fetchSignalRead(
   }
 }
 
+/** Retries for a read whose isolate crashed. Two, so a failing service still fails promptly. */
+const READ_RETRY_ATTEMPTS = 2;
+
+/** First backoff. Doubled on the second attempt. Short, because the retry costs a round trip. */
+const READ_RETRY_BASE_MS = 250;
+
+/**
+ * A 5xx on a read is worth repeating once or twice, because the commonest one is not a refusal.
+ *
+ * D-076: `postgres@3.4.9` can crash the read isolate outside the handler's promise catch — a
+ * `nextWrite` firing after `closed()` has nulled the socket — and the platform then answers 503.
+ * Measured: 8 crashes in a day, 8/8 joining a `POST 503 /read`. Upstream PR #1168 fixes it and is
+ * still open, so there is no version to upgrade to. A retry reaches a FRESH ISOLATE, which is why
+ * it works here and would not for an ordinary server error.
+ *
+ * Scoped deliberately:
+ * - **Reads only.** Every caller of `fetchSignalRead` is a read, so repeating cannot duplicate a
+ *   signal. A write must never get this treatment without idempotency keys.
+ * - **5xx only.** A 4xx says the request is wrong; repeating it cannot help.
+ * - **The server's veto wins.** D-051: `retryable: false` governs exactly this — an immediate
+ *   retry of the same request — so it is honoured before the status.
+ * - **Timeouts propagate.** They are already bounded by the caller's deadline, and retrying one
+ *   would spend that deadline twice.
+ * - **A caller's abort wins.** Checked before sleeping, so cancellation stays prompt.
+ * - **One-shot reads only.** `agentSignalPage` is shared with `readAgentSignalPage`, which
+ *   the follow loop drives, and that loop ALREADY retries with earned backoff (D-051,
+ *   D-056). Wrapping it here put a second retry underneath a working one and silently
+ *   absorbed the failures the outer loop counts — two D-051 gates caught it. The same
+ *   mistake D-063 was filed for. So this applies to `humanSignals` and
+ *   `readAgentSignalDirectory`, which have no retry above them and are where the measured
+ *   member-read failure lives.
+ */
+async function fetchSignalReadRetrying(
+  fetcher: typeof fetch,
+  input: Parameters<typeof fetch>[0],
+  init: RequestInit,
+  timeoutMs: number = SIGNAL_READ_TIMEOUT_MS,
+  sleep: (ms: number) => Promise<void> = (ms) =>
+    new Promise((resolve) => setTimeout(resolve, ms)),
+): Promise<{ response: Response; body: unknown } | null> {
+  let result = await fetchSignalRead(fetcher, input, init, timeoutMs);
+  for (let attempt = 1; attempt <= READ_RETRY_ATTEMPTS; attempt += 1) {
+    if (result === null || result.response.ok) return result;
+    if (result.response.status < 500) return result;
+    const envelope = result.body;
+    if (
+      envelope !== null && typeof envelope === "object" &&
+      (envelope as Record<string, unknown>).retryable === false
+    ) {
+      return result;
+    }
+    if (init.signal?.aborted) return result;
+    await sleep(READ_RETRY_BASE_MS * attempt);
+    if (init.signal?.aborted) return result;
+    result = await fetchSignalRead(fetcher, input, init, timeoutMs);
+  }
+  return result;
+}
+
 function mapReadFailure(error: unknown, waitBound: boolean): never {
   if (error instanceof SignalReadTimeoutError) {
     if (waitBound) throw error;
@@ -718,7 +777,7 @@ async function humanSignals(
   url.searchParams.set("limit", String(query.limit));
   let result: { response: Response; body: unknown } | null;
   try {
-    result = await fetchSignalRead(options.fetcher, url, {
+    result = await fetchSignalReadRetrying(options.fetcher, url, {
       headers: {
         authorization: `Bearer ${credential.accessToken}`,
         apikey: target.anonKey,
@@ -927,7 +986,7 @@ export async function readAgentSignalDirectory(
   const options = normalizeReadOptions(fetcherOrOptions);
   let result: { response: Response; body: unknown } | null;
   try {
-    result = await fetchSignalRead(options.fetcher, readEndpoint(target), {
+    result = await fetchSignalReadRetrying(options.fetcher, readEndpoint(target), {
       method: "POST",
       headers: {
         authorization: `Bearer ${token}`,
