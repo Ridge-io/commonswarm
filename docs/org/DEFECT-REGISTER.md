@@ -1602,7 +1602,27 @@ moves"* — applies here with "deployment state" replaced by "supported host set
 Full measurement trail: `docs/evidence/2026-08-02-v015-execution/stage-q-authenticated-qa.md`,
 section QA-011.
 
-## D-038 — the product emits a link its own CLI cannot parse, and blames the payload · OPEN
+## D-038 — the product emits a link its own CLI cannot parse, and blames the payload · FIXED
+
+> ### ⚠ FIXED, AND THIS ENTRY CARRIED IT AS OPEN
+>
+> Measured 2026-08-09 against shipped `0.1.9`. The CLI now parses the **web** form the site
+> emits, identically to the `cswarm://` form:
+>
+> ```
+> https://commonswarm.com/invite#invite=<payload>   -> "You're accepting an invitation to …"
+> cswarm://accept/<payload>            (control)    -> identical output
+> https://commonswarm.com/invite#invite=NOTVALID    -> "invite link payload is not valid JSON"
+> ```
+>
+> The third line is the control: the parser still refuses a bad payload, so the first two are not
+> passing because parsing was abandoned. `cswarm --help` documents both forms.
+>
+> **The mismatch this entry describes no longer exists**, so the gap between "the link you were
+> sent" and "the command the README documents" is closed.
+>
+> **This is the fourth entry found stale in one day** — after D-050, D-062 and D-063. See the note
+> at the end of this file.
 
 **Found by:** Wren (laptop seat), 2026-08-03, during the invite burn test
 **Owner:** operator decision on severity · **Severity:** P1 first-run path for every new collaborator
@@ -4146,3 +4166,33 @@ cross-user rig. **Wren declined to gamble an identity to close a test, which is 
 
 Unblock path, **operator's call**: `cswarm login --no-browser` prints the OAuth URL for a human to
 open by hand. Wren declined to hand the operator a login prompt unasked.
+
+---
+
+## Register hygiene — four entries were stale on 2026-08-09, and one cost real work
+
+Checked every `OPEN` entry the Lead had not personally handled this session. **Four of them were
+already fixed:**
+
+| entry | state on paper | measured |
+|---|---|---|
+| D-050 | OPEN, and listed under "STILL OWED" in the resume file | fixed in `0179c1c`, gated, mutation-verified |
+| D-062 | `OPEN` heading over a body recording both fixes | fixed in v0.1.9 |
+| D-063 | `OPEN` heading over a body recording the correction | closed by measurement |
+| D-038 | OPEN | the CLI parses the web form; verified with a refusal control |
+
+**D-050's staleness was not free.** The Lead read the register *and* the resume file, believed
+both, and sent Wren to hunt a defect that had been fixed for days. Wren walked an `opencode`
+teardown — a different code path from the one the entry describes — and reported a
+non-reproduction against a claude-adapter defect. Two agents, one wasted round, because a heading
+disagreed with its own body.
+
+**The rule that follows, and it is cheap:**
+
+> **Check the heading against the body before acting on an entry, and re-measure before
+> dispatching anyone.** A register is consulted precisely when someone does not already know the
+> answer, so a stale entry is at its most dangerous exactly when it is used.
+
+The failure mode is specific: an entry gets a correction appended to its **body** — because that is
+where the reasoning goes — and the **heading** is left alone. Everything downstream reads the
+heading.
