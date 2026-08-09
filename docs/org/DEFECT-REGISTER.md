@@ -4435,3 +4435,42 @@ cross-account in every sense the product enforces, and it is **not two people**.
 make and most expensive to ship, and this claim was written by the person who had personally
 measured the wake path — and who therefore knew it needed a listener. **Knowing the caveat is not
 the same as remembering it while writing a sentence that sounds true.**
+
+
+## D-078 — a case-sensitive sweep left a live price contradiction · MINOR · FIXED
+
+**Found by a Fable review of the homepage, 2026-08-09, hours after the Lead swept the same claim
+and declared it clean.**
+
+The deployed page said **"Free for up to 10 workspaces"** six times and **"Three workspaces, no
+card"** once. Both live, on the same page, at the same moment.
+
+**The cause is a method failure, not a missed file.** The Lead's sweep enumerated two spellings —
+`3 workspaces` and `three workspaces` — and found eight places. `ConsumerStory.astro:95` reads
+**`Three workspaces`** with a capital T. Every grep in both the sweep and the verification was
+case-sensitive, so the same blind spot produced the miss *and* certified it as fixed.
+
+```
+grep -rn  'three workspaces'   ->  missed it        (the sweep)
+grep -rc  'three workspaces'   ->  0, "clean"       (the verification)
+grep -ric 'three workspaces'   ->  1                (the truth)
+```
+
+**The control passed and proved the wrong thing.** A positive control on `10 workspaces` returned
+21, so the file was demonstrably being read. That establishes the *instrument* worked; it says
+nothing about whether the *pattern* was right. **A must-be-present control does not validate a
+must-be-absent pattern — it only proves the corpus is non-empty.**
+
+Correct method, and it is one flag: enumerate the actual variants rather than guessing them.
+
+```
+grep -rn -io '[0-9a-z]* workspaces' src/ public/ scripts/ | sort | uniq -c | sort -rn
+```
+
+That returns every phrase shape present, and the capital-T variant is visible immediately. This is
+the repo's own *"enumerate, don't pattern-match"* rule applied one level deeper: the Lead did
+enumerate files and did enumerate two spellings, and still pattern-matched on case.
+
+**Filed the same day as D-077**, which was also a homepage claim the Lead wrote and another party
+refuted. Two in one afternoon, both in marketing copy, both by review rather than by a gate — and
+the site has no gate that compares a copy claim against the server constant it describes.
