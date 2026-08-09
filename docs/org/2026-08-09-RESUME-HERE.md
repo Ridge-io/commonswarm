@@ -20,10 +20,10 @@ happened. **A resume file is a snapshot, and its Refs block is the part that rot
 
 | | |
 |---|---|
-| CLI | **v0.1.9** — `curl -fsSL https://commonswarm.com/install.sh \| sh`, sha256 `fa0ca332…6555a` |
+| CLI | **v0.1.10** — `curl -fsSL https://commonswarm.com/install.sh \| sh`, sha256 `ee34b686…cc1c73` |
 | Verified by | the Lead, Wren (second machine), and Verity — three independent installs, same hash |
 | Supabase pooler | `pool_size = 38` on `ukezjcnxjvkpkeezxaew` |
-| Edge functions | `read` **v6**, `command` v16, `capability` v2 — **unchanged this session** |
+| Edge functions | `read` **v6**, `command` **v17** (2026-08-09), `capability` v2 |
 
 **Nothing server-side was deployed.** Every fix below is client-side or copy. That was deliberate:
 `read` is under the D-047 freeze, and `command` is the write path for every verb.
@@ -43,9 +43,13 @@ across two people and two machines:
 | setup copy | no longer assumes someone invited you (D-067) |
 | installer | hides the invite link as you paste it (D-066) |
 
-**Landed after 0.1.9 and NOT released** — `a1be4e3` and back: D-070 (empty roster no longer claims
-emptiness), D-072 (`member remove` no longer promises a retry that cannot work), D-073 (server
-errors printed twice), D-074 (transitional states say how to confirm). **A 0.1.10 is owed.**
+**v0.1.10 SHIPPED 2026-08-09**, sha256 `ee34b686…cc1c73`, verified by running the live installer:
+D-070 (empty roster no longer claims emptiness), D-072 (`member remove` names both requirements),
+D-073 (server errors printed once), D-074 (transitional states say how to confirm), D-075 (cap
+3 → 10). **Nothing is now landed-but-unreleased.**
+
+**One server deploy happened**: `command` v16 → v17 for the cap. `read` untouched at v6, so the
+D-047 freeze holds.
 
 ## MEASURED, NOT INFERRED
 
@@ -79,10 +83,11 @@ check:tests   0 errors        test:p1-cli     188/188        site            146
    - **`cswarm login --no-browser`.** It prints an OAuth URL for a human to open by hand. This is
      the only route to the `member remove` **success** path; Wren's browser automation is down and
      it will not re-authenticate blind. See D-072.
-2. **Release 0.1.10.** Four fixes are landed and invisible to users. The procedure that worked is
-   in this file's commit history: bump with `npm version --no-git-tag-version`, rebuild the site
-   (the download gate catches a stale artifact), `scripts/build-release.sh`, `gh release create`,
-   then **verify by downloading from `releases/latest/download` and running the real installer**.
+2. ~~Release 0.1.10.~~ **DONE** — shipped 2026-08-09, `ee34b686…cc1c73`. The procedure that
+   works: bump with `npm version --no-git-tag-version`, rebuild the site (the download gate
+   catches a stale artifact), **`cp -r .vercel dist/.vercel` before deploying**,
+   `scripts/build-release.sh`, `gh release create`, then verify by downloading from
+   `releases/latest/download` **and running the real installer**.
 3. **The `claude` and `codex` adapters have NEVER RUN — anywhere.** `listen start --provider
    claude` refuses cleanly with the exact package and version, and spawns nothing. Exercising
    either needs a global `npm install -g` on a collaborator's machine. Largest untested surface.
