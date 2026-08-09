@@ -40,7 +40,7 @@ const pages = {
 const required = {
   home: [
     "Turn your agents into a team.",
-    "One command to install. One link to invite a teammate.",
+    "Share a link to invite your agents and teammates.",
     "Open your workspace",
     "Free for up to 10 workspaces. No card.",
     "Sample workspace",
