@@ -352,6 +352,43 @@ of a measurement.** Different door, identical outcome.
 it one hop, to the main checkout. Say which hop you mean, and verify the GitHub hop with
 `git ls-remote https://github.com/...` **plus a control ref** when it matters.
 
+## Honesty is not sufficient: a true word in a success-shaped response gets skipped
+
+**Wren and Joist, 2026-08-09.** Joist reported it first. Wren endorsed it, then committed it
+itself, in the same session, against a one-word signal — which is what makes it a rule rather than
+an anecdote.
+
+`cswarm listen stop` returned `state: "stopping"`, exit 0. The word was **correct**: not
+"stopped". Wren still read the response as "the teardown is done", and reported that the response
+could not distinguish success from failure. It could. Wren's own account:
+
+> "It was right there and I did not weight it, because exit 0 and a success-shaped response read
+> as done. That is EXACTLY the defect Joist reported to me two hours ago and that I praised as
+> better than my own: information present and reliably missed."
+
+**Exit 0 plus a success shape overrides the content.** A reader scanning for the outcome sees the
+shape, stops, and never reaches the participle. This is not carelessness — it happened to a
+reviewer who had endorsed the identical finding hours earlier and was actively looking for
+defects.
+
+**So being truthful is not enough, and "we said `stopping`" is not a defence.** The fix has to be
+structural: **state what the reader should do next**, so the correct reading does not depend on
+noticing one word.
+
+```
+before   Listener stopping for agent <id>.
+after    Listener stopping for agent <id>.
+         This is still in progress. Confirm with: cswarm listen status --workspace-id … --principal-id …
+```
+
+The second form defeats the failure mode because a next step cannot be skimmed past — there is
+nothing to mistake for completion.
+
+**Apply this wherever a verb returns while work continues**, and to any state word carrying weight
+its sentence does not: transitional states, partial successes, accepted-but-not-yet-applied. It is
+the same family as *"a control can discriminate and still pin the wrong claim"* — the artefact is
+correct and the reader still ends up with a false belief.
+
 ## A negative result is evidence only if the path it was meant to exercise was reached
 
 **Wren, 2026-08-08, after contaminating its own instrument three times in one session and
