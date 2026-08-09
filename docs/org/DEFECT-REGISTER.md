@@ -4282,3 +4282,61 @@ and published.
 
 Related: `AGENTS.md`, *"measure the artifact, not its name"*. This is that rule applied to a
 version string, which is the most convincing name an artifact has.
+
+## D-076 — the intermittent read 503 is a postgres.js null-socket crash · MAJOR · OPEN, blocked
+
+**Root cause found by Plumb, 2026-08-09**, by joining the Supabase Management API logs on
+`request_id`. This closes the only measured production fault that had survived the dogfood.
+
+```
+13:17:01.831Z  Boot           read f4d3de40-…, deployment v6, execution 6a616526-…
+13:17:02.564Z  UncaughtException  TypeError: Cannot read properties of null (reading 'write')
+                                  at postgres/3.4.9/src/connection.js:255  nextWrite
+                                  then Deno timer/event-loop frames
+13:17:02.729Z  POST 503 /functions/v1/read   request_id 019fe185-…, 1222ms, x_served_by=base/server
+```
+
+**The crash is outside the handler's promise catch**, so the isolate dies and `base/server`
+emits a 503 165 ms later. That is why the response carries no `request_id` from the function and
+no error body of ours.
+
+**Scale, with controls.** Positive controls on the query envelope: `function_edge_logs` 79,
+`function_logs` 103, `supavisor_logs` 186. Over a full day: 25,580 function logs, **8 matching
+crashes across 8 request_ids, and 8/8 join to a `POST 503 /read` row.** Not a one-off.
+
+**Upstream is open, so upgrading does not fix it.** `postgres@3.4.9` is pinned in four places
+across the edge functions. PR [porsager/postgres#1168](https://github.com/porsager/postgres/pull/1168)
+describes this exact race — `nextWrite` scheduled via `setImmediate` firing after `closed()` has
+nulled the socket — and adds a null guard. **Verified independently 2026-08-09: the PR is OPEN,
+approved, unmerged, with multiple production reports.** There is no released version carrying it.
+
+### Two of the Lead's inferences are DEAD
+
+- ~~"A bare 503 with no `request_id` is the signature of something that never reached the
+  function."~~ **Wrong.** It reached the function and the function crashed; the edge-log row's
+  function/deployment/execution fields are **blank**, and filtering by function id therefore
+  *hid* the 503. The absence of our metadata was caused by the very failure being looked for.
+- ~~"Gateway/runtime is the leading class."~~ **Half right and misleading.** `base/server` did emit
+  the 503, but the cause is in the function's own database driver. Naming the layer that reported
+  the error pointed away from the layer that produced it.
+
+### What is still not established
+
+- **The pooler is not implicated and not exonerated.** Supavisor rows in the window are
+  informational only — a client `Terminate` at 13:17:02.112 and `Connection authenticated` at
+  13:17:02.474 — with **no** EMAXCONN, no max-client error, **and no request join key**. So the
+  earlier retraction stands: no pooler attribution without a join, and the join does not exist.
+- **Why the socket closed at all.** The null guard would stop the crash; it would not explain the
+  close.
+
+### Fix options, all blocked
+
+`read` is under the **D-047 freeze**, and `main`'s `read` is four commits past deployed v6, so
+any of these ships the durable-delivery work with it:
+
+1. Vendor the one-line null guard from PR #1168 until upstream merges.
+2. Wrap the driver call so the rejection reaches the handler's catch and returns our own error.
+3. Treat a tagged 503 as retryable at the client — the crash is transient by construction, and a
+   second attempt hits a fresh isolate.
+
+**No source, config, database or deploy change was made in this investigation.**
