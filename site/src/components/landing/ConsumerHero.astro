@@ -165,14 +165,18 @@
      `balance` rather than `pretty`: pretty only protects the last line from a
      widow, which left "teammates" alone on line 2. balance evens the whole rag.
      Chrome balances up to 6 lines; at 4 this applies. */
+  /* One step below --t-display (4.05rem cap = 64.8px at 1440), scoped to this hero: .h-display
+   * also sets /download's h1 and that page was not asked to change. */
   .consumer-hero__copy .h-display {
     margin: 0;
+    font-size: clamp(2.125rem, 3.4vw + 0.7rem, 3.25rem);
     text-wrap: balance;
   }
 
   .consumer-hero__copy .lede {
-    max-inline-size: 36rem;
+    max-inline-size: 34rem;
     margin: 0;
+    font-size: var(--t-lg);
   }
 
   /* The hyphen in "vibe-code" is a break opportunity, and the browser took it — the coinage
@@ -200,7 +204,12 @@
      artefact on the page that sits beside the headline, and --shadow-lg is what
      separates it from the page plane at 1.08:1 (tokens.css §1 — light mode
      cannot raise a surface with luminance, so the shadow is doing the work). */
+  /* Capped well inside the 76rem page. At full page width the sample workspace read as a wide,
+   * flat band; a narrower box is closer to square while staying rectangular. */
   .consumer-hero__proof {
+    max-inline-size: 52rem;
+    margin-inline: auto;
+    inline-size: 100%;
     box-shadow: var(--ring-top), var(--shadow-lg);
   }
 
