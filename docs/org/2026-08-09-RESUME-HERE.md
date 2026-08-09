@@ -8,9 +8,13 @@ work** — see "What I got wrong" below.
 ## Refs
 
 ```
-main    a1be4e3   (run `git rev-parse --short main`; this file is written at a point in time)
-GitHub  2540bae   — main is AHEAD by 6 commits. PUSH BEFORE ANYTHING ELSE.
+main    2d62161   — pushed. GitHub and local agree at this SHA.
 ```
+
+Run `git rev-parse --short main` and `git ls-remote https://github.com/Ridge-io/cloud-swarm
+refs/heads/main` before trusting either line. This block was already wrong once within an hour of
+being written — it said "AHEAD by 6 commits, PUSH BEFORE ANYTHING ELSE" after the push had
+happened. **A resume file is a snapshot, and its Refs block is the part that rots first.**
 
 ## LIVE IN PRODUCTION
 
@@ -67,7 +71,7 @@ check:tests   0 errors        test:p1-cli     188/188        site            146
 
 ## NEXT ACTIONS, in order
 
-0. **`git push origin main`.** Six commits are local-only, including the whole D-070…D-075 set.
+0. ~~`git push origin main`~~ — **done**, `2d62161`, verified against `git ls-remote`.
 1. **TWO OPERATOR DECISIONS BLOCK EVERYTHING ELSE.** The fleet is stood down because of them:
    - **Free a workspace slot, or authorise archiving (D-075).** The Lead and Wren each hold three
      owned workspaces. Neither can create a fourth. The remaining release-verification test —
