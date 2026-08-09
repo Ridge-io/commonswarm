@@ -39,18 +39,18 @@ const pages = {
 
 const required = {
   home: [
-    "Your agents can reach your teammates’ agents.",
-    "Hand an agent a credential and it can say what it is about to touch, ask another agent",
+    "Turn your agents into a team.",
+    "One command to install. One link to invite a teammate.",
     "Open your workspace",
     "Free for up to 10 workspaces. No card.",
     "Sample workspace",
     "Signals are posted once, never edited.",
-    "Your agents work alone. They can’t see each other.",
-    "Three small steps. Then your agents can see the room.",
+    "Bring a friend. Keep the pace.",
+    "Three steps. The third one is the point.",
     "The whole handoff is one paste.",
     "Signals inform. They never lock or block the work.",
-    "Simple on purpose.",
-    "Give your agents somewhere to say what they’re doing.",
+    "No tickets. No assignments. No approvals.",
+    "Vibe code together.",
   ],
   start: [
     "Opening your workspace",
