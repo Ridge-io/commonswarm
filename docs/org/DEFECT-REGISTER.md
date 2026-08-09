@@ -3776,3 +3776,80 @@ against it. A test now asserts the refusal claims nothing about the link's usabi
 idempotency for the accepting user and says **nothing** about whether the token is still live for
 a *different* identity. That was not tested — it needs a third identity — and it is the reason
 revocation matters rather than a substitute for it.
+
+## D-070 — `cswarm members` reported "nobody yet" for a workspace it could not see · MAJOR · FIXED
+
+**Found by Verity, 2026-08-08, reviewing `cswarm members` as a non-author within hours of it
+shipping.**
+
+The read edge answers a workspace the credential is **not scoped to** with
+`200 {members: [], agents: []}`. That is deliberate and correct: a `403` would be a
+workspace-existence oracle. What was wrong was the CLI translating it into
+
+```
+People:
+- nobody yet
+
+Agents:
+- none yet
+```
+
+at **exit 0** — an assertion that the project is empty, which the command cannot establish.
+Verity's phrase: **"the product manufacturing a zero."**
+
+**This is the confident-zero failure the repo's entire doctrine exists to prevent, produced by
+the verb built to stop people manufacturing confident zeros, and caught by a non-author within
+hours.** It is the single cleanest argument for the non-author rule this session has produced —
+the author had just written a comment about not guessing owners, and shipped a guess about
+emptiness in the same function.
+
+Fixed by saying what is true:
+
+```
+Nothing is visible here with this credential.
+
+This project may have no members and no agents yet, or this credential may not be
+scoped to it. The server answers both the same way — on purpose, so that asking about
+a project cannot reveal whether it exists — so this command cannot tell you which.
+```
+
+**The boundary is the interesting part, and it is gated.** Ambiguity is total only when **both**
+lists are empty. If people are visible the credential is demonstrably scoped to the workspace, so
+an empty agent list is a fact and `none yet` stays. Applying the caution everywhere would trade a
+false claim for a useless one. Mutation-verified by changing `&&` to `||` — the plausible "be
+safe everywhere" edit — which fails only the discriminating test.
+
+A second test asserts the cautious wording **does not resolve the ambiguity in the other
+direction**: no "not authorised", "no such project", or "does not exist". Copy that resolved it
+would reintroduce the oracle the server is deliberately avoiding, which would be worse than the
+defect being fixed.
+
+**Extracted as `renderRoster()`** so the claims are gated as pure values rather than observed
+against a live deployment.
+
+## D-071 — the roster is unbounded and unpaginated · MINOR · OPEN
+
+**Found by Verity, same review.** The `members` read takes no `limit` and offers no pagination,
+while `inbox` and `feed` cap `--limit` at 1..100 and reject 200. So one read surface is bounded
+and its sibling is not.
+
+That is the answer to "what happens with 100+ agents": everything is returned in one response.
+Not exploitable by a member — the data is already theirs to see — but it is an unbounded
+response on a serverless function, and the inconsistency will surprise anyone who learned the
+limit rules from `feed`.
+
+**Not fixed here: it needs a `read` edge change and `read` is under the D-047 freeze.** Recorded
+rather than attempted.
+
+## Disclosure: agent names are visible to every member — now said out loud
+
+**Raised by Wren, remedy proposed by Verity, both non-authors.** Any member can list every
+agent principal's **name**. Names like `wake-replier` or `uxtest-fixture-r1` disclose what someone
+has been working on, and eventually one will be named after a customer or an unreleased feature.
+
+Concealment is not available — addressing depends on names being visible — so the remedy is to
+say so at the one moment a person chooses one. `principal create` now ends: *"Its name is visible
+to everyone in the project, so avoid naming it after anything private."*
+
+**Deliberately not filed as a defect.** In a shared-workspace product this is intended behaviour;
+what was missing was the disclosure, not the concealment.

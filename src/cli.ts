@@ -1372,7 +1372,13 @@ async function runPrincipal(args: Arguments): Promise<void> {
     );
     printJson({
       message:
-        "Agent identity created. It makes this machine's agent auditable inside the shared workspace.",
+        /* The visibility sentence is Verity's, and it is the whole fix for the disclosure it
+         * found: every member can see every agent's NAME via `cswarm members`. Concealing them
+         * is not an option — addressing depends on them — so the remedy is saying so at the one
+         * moment a person chooses the name. Names like `wake-replier` or `uxtest-fixture-r1`
+         * disclose what someone has been working on, and eventually one will name a customer or
+         * an unreleased feature. */
+        "Agent identity created. It makes this machine's agent auditable inside the shared workspace. Its name is visible to everyone in the project, so avoid naming it after anything private.",
       status: response.status,
       principal_id: uuid(response.principal_id, "principal_id"),
     });
@@ -2423,6 +2429,65 @@ export function describeAudience(
   }`;
 }
 
+/**
+ * The roster as a user reads it. Pure, so the CLAIMS it makes can be gated. FM-1.
+ */
+export function renderRoster(
+  directory: SignalDirectory,
+  memberNames: ReadonlyMap<string, string>,
+): string {
+  /* FM-1, found by Verity: an EMPTY roster is ambiguous and must not be reported as emptiness.
+   *
+   * The read edge answers a workspace this credential is not scoped to with
+   * `200 {members: [], agents: []}` — deliberately, because a 403 would be a workspace-existence
+   * oracle. That is right on the server. What was wrong was this command translating it into
+   * "nobody yet", which asserts the workspace is empty and is exactly the confident zero this
+   * repo's doctrine exists to prevent. Caught in the verb built to stop people manufacturing
+   * zeros, by a non-author, which is the argument for non-author review in one line.
+   *
+   * The ambiguity is only total when BOTH lists are empty. If people are visible, an empty agent
+   * list is genuinely empty — you are demonstrably scoped to the workspace — so "none yet" stays
+   * true there and is kept. */
+  const lines: string[] = [];
+  if (directory.members.length === 0 && directory.agents.length === 0) {
+    return (
+      "Nothing is visible here with this credential.\n\n"
+        + "This project may have no members and no agents yet, or this credential may not be\n"
+        + "scoped to it. The server answers both the same way — on purpose, so that asking about\n"
+        + "a project cannot reveal whether it exists — so this command cannot tell you which.\n"
+    );
+  }
+  lines.push("People:");
+  if (directory.members.length === 0) {
+    lines.push("- nobody yet");
+  }
+  for (const member of directory.members) {
+    lines.push(`- ${memberNames.get(member.user_id)} (${member.user_id})`);
+  }
+  lines.push("");
+  lines.push("Agents:");
+  if (directory.agents.length === 0) {
+    lines.push("- none yet");
+  }
+  for (const agent of directory.agents) {
+    /* Owner attribution is omitted, not guessed, when the deployment does not send it. */
+    const owner = agent.owner_user_id === undefined
+      ? undefined
+      : memberNames.get(agent.owner_user_id);
+    lines.push(
+      `- ${sanitizeDisplayLabel(agent.name, "Unnamed agent")} (${agent.principal_id})${
+        owner === undefined ? "" : ` — ${owner}`
+      }`,
+    );
+  }
+  lines.push("");
+  /* The UUID is the addressable identity and the name is not: names are unique per workspace,
+   * but a name you did not create can belong to someone you did not mean. Saying so here is
+   * the cheap half of D-062. */
+  lines.push("Address an agent by the id in brackets: cswarm ask \"…\" --to <id>");
+  return `${lines.join("\n")}\n`;
+}
+
 async function runMembers(args: Arguments): Promise<void> {
   args.assertShape([
     ...TARGET_FLAGS,
@@ -2477,36 +2542,7 @@ async function runMembers(args: Arguments): Promise<void> {
     return;
   }
 
-  const lines: string[] = [];
-  lines.push("People:");
-  if (directory.members.length === 0) {
-    lines.push("- nobody yet");
-  }
-  for (const member of directory.members) {
-    lines.push(`- ${memberNames.get(member.user_id)} (${member.user_id})`);
-  }
-  lines.push("");
-  lines.push("Agents:");
-  if (directory.agents.length === 0) {
-    lines.push("- none yet");
-  }
-  for (const agent of directory.agents) {
-    /* Owner attribution is omitted, not guessed, when the deployment does not send it. */
-    const owner = agent.owner_user_id === undefined
-      ? undefined
-      : memberNames.get(agent.owner_user_id);
-    lines.push(
-      `- ${sanitizeDisplayLabel(agent.name, "Unnamed agent")} (${agent.principal_id})${
-        owner === undefined ? "" : ` — ${owner}`
-      }`,
-    );
-  }
-  lines.push("");
-  /* The UUID is the addressable identity and the name is not: names are unique per workspace,
-   * but a name you did not create can belong to someone you did not mean. Saying so here is
-   * the cheap half of D-062. */
-  lines.push("Address an agent by the id in brackets: cswarm ask \"…\" --to <id>");
-  process.stdout.write(`${lines.join("\n")}\n`);
+  process.stdout.write(renderRoster(directory, memberNames));
 }
 
 async function runSignalRead(
