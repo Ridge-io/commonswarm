@@ -3048,6 +3048,20 @@ function renderListenerStatus(status: ListenerStatus): string {
       `The last claim reported ${status.lastTerminalDeliveryFailureCount} terminal delivery failures; they remain recorded, and the listener will keep receiving.`,
     );
   }
+  /* D-074. `stopping` and `starting` are TRANSITIONAL: the verb returns before teardown or
+   * startup completes, so `listen stop` exits 0 while the child is still going away. The state
+   * word is honest — it says "stopping", not "stopped" — but a verb the user just invoked,
+   * exiting 0, reads as done, and nothing here said how to find out.
+   *
+   * Found by Wren, which read the return as unable to distinguish "stopping and will succeed"
+   * from "stopping and will fail". The response does carry the distinction; what it lacked was
+   * the next step. This repo's own standard is that output says what happened, what is now true,
+   * AND what happens next — the third part was missing exactly where it matters most. */
+  if (status.state === "stopping" || status.state === "starting") {
+    lines.push(
+      `This is still in progress. Confirm with: cswarm listen status --workspace-id ${status.workspaceId} --principal-id ${status.principalId}`,
+    );
+  }
   return lines.join("\n");
 }
 

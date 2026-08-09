@@ -2450,7 +2450,34 @@ Whether a user's Claude config can change the default mode without the adapter n
 
 ---
 
-## D-050 — the Claude adapter swallows a verified teardown failure and multiplies live bridge processes · MAJOR (shipped)
+## D-050 — the Claude adapter swallows a verified teardown failure and multiplies live bridge processes · MAJOR · **FIXED**
+
+> ### ⚠ FIXED IN `0179c1c`, AND THIS ENTRY CARRIED IT AS OPEN FOR DAYS
+>
+> Measured 2026-08-09. `src/listener/claude-model.ts` no longer discards the close error:
+> `await worker.close().catch(() => undefined)` is now
+> `try { await worker.close(); } finally { … }`, so `child_exit_timeout` escapes and no
+> replacement worker opens. The Claude analogue test the Fix section asks for **exists**, is
+> **named in `npm test`**, and passes:
+>
+> ```
+> ✔ D-050: Claude close timeout is runtime-fatal before replacement opens
+> ✔ D-050: Codex close timeout is runtime-fatal before replacement opens
+> ```
+>
+> **Mutation-verified against the original defect**: restoring the exact
+> `.catch(() => undefined)` swallow fails the Claude test and **only** that one — Codex keeps
+> passing, since it carries its own fix.
+>
+> **The register and the resume file were both stale on this**, and the cost was not zero: the
+> 2026-08-07 resume file lists D-050 under "STILL OWED", and on 2026-08-09 the Lead sent Wren to
+> hunt for it on a second machine. Wren walked an `opencode` teardown — **a different code path
+> from the one this entry describes** — found no orphan, and reported it as a third data point
+> against a defect that had already been fixed in the Claude adapter.
+>
+> **Nothing here was re-derived from the fix; it was measured from the code and the gate.** The
+> original entry is kept below unchanged, because its mechanism is the clearest description of
+> what was wrong.
 
 Found 2026-08-05 by **Plumb** (cross-family inversion arm) with a controlled reproduction. Every link
 verified by the Lead against `main`. **Live in v0.1.6.**
@@ -3996,3 +4023,39 @@ handler that had stopped emitting JSON entirely.
 the literal `Sign in again`). Its actual subject is command-id retention across the post-login
 retry; the message match was incidental, so it now pins `cswarm login` and the full sentence is
 asserted in one place.
+
+## D-074 — `listen stop` returns mid-teardown and offered no way to confirm · MINOR · FIXED
+
+**Found by Wren, 2026-08-09**, walking the listener surface nobody had touched.
+
+```
+stop  ->  state "stopping", stoppedAt null, pid 3587
+after ->  3587 gone, 3597 gone, 0 opencode acp, 0 supervisors
+```
+
+The teardown was clean. The point is the **response**: `listen stop` exits 0 while the child is
+still going away.
+
+**Wren's reading was that the response cannot distinguish "stopping and will succeed" from
+"stopping and will fail". Measured, it can** — the state word is `stopping`, not `stopped`, and
+`renderListenerStatus` prints `Listener stopping for agent …` verbatim. The response is honest.
+
+**What was missing is the third part of this repo's own standard for CLI output** — *what
+happened, what is now true, and what happens next.* A verb the user just invoked, exiting 0,
+reads as done; nothing told them how to find out. Transitional states now say so:
+
+> *"This is still in progress. Confirm with: `cswarm listen status --workspace-id … --principal-id …`"*
+
+Applied to `stopping` **and** `starting`, since `listen start` has the same shape.
+
+**Not a defect, and worth recording as such:** `listen start --provider claude` refuses with
+*"claude-agent-acp is not installed; run npm install -g @agentclientprotocol/claude-agent-acp@0.64.2,
+then retry"* and **spawns nothing** — supervisor count zero after, so there is no half-started
+state. Exact package, exact version, exact remedy, checked before anything starts. Wren asked for
+it to be recorded next to the messages it has complained about.
+
+**Still unexercised, and now the largest untested surface:** the **claude and codex adapters have
+never run here.** The version pin is enforced before anything spawns, which is correct and also
+means neither path has ever executed. Testing them needs a global `npm install -g` on a
+collaborator's machine — **an operator decision, not the Lead's**, and Wren correctly declined to
+do it unasked.
