@@ -95,6 +95,15 @@ check:tests   0 errors        test:p1-cli     188/188        site            146
   `read` edge change — **under the D-047 freeze**.
 - **D-061** a directed signal is still invisible to its author. `cswarm members` and the recipient
   echo reduce the pain; there is still no sent view.
+- **D-048** an `ANTHROPIC_API_KEY` user gets an auth-less Claude child. **Re-measured 2026-08-09
+  and the mechanism still holds** — key stripped, `HOME` and `PATH` survive. Needs a design
+  decision rather than a fix: `DENY_NAME_RE` is deliberate and stops credentials leaking into
+  spawned hosts. What the child actually *does* is still unmeasured and needs the adapter
+  installed, so it is blocked behind action 3.
+
+**Four entries were found stale on 2026-08-09** — D-050, D-062, D-063 and D-038 were all fixed
+while marked OPEN. See the hygiene note at the end of `DEFECT-REGISTER.md`. **Check an entry's
+heading against its body, and re-measure, before dispatching anyone against it.**
 
 ## WHAT I GOT WRONG, so it is not repeated
 
