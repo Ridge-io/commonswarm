@@ -3853,3 +3853,73 @@ to everyone in the project, so avoid naming it after anything private."*
 
 **Deliberately not filed as a defect.** In a shared-workspace product this is intended behaviour;
 what was missing was the disclosure, not the concealment.
+
+## CORRECTION to D-069 — the "live unrevoked link" exposure did not exist
+
+**Both parties asserted it. Neither measured it. It was false.**
+
+The Lead wrote: *"your link is currently UNREVOKED and live until its TTL."* Wren wrote: *"my
+invite link 4f8269b4 stays LIVE AND UNREVOKED until 0.1.9 ships."* On 0.1.9 Wren's first revoke
+attempt returned:
+
+```
+cswarm: The invitation was not revoked: invitation_not_live.
+```
+
+It had been consumed when the Lead **accepted** it, hours before either claim was written.
+
+**How each of us got there is the same mistake in opposite directions.** The Lead tried to revoke
+it and got `role_forbidden` — an authority refusal that fires *before* liveness is evaluated, so
+the attempt never reached the question. Wren had no verb at all. **Each inferred exposure from
+their own inability to act.**
+
+**And the Lead had already measured the answer.** Hours earlier, revoking the *symmetric*
+invitation — its own invite to Wren, likewise already accepted — returned `invitation_not_live`.
+The same code, on the same day, for the same reason. **The evidence for the general case was in
+hand and the opposite conclusion was published about its mirror image.**
+
+For roughly two hours this register carried a live-capability exposure that did not exist. The
+practical cost was nil. The reasoning cost is not: **had the exposure been real, the identical
+reasoning would have been just as confident**, and nothing in it depended on the answer.
+
+The verb itself is unaffected and works. Wren exercised **both** paths with controls, creating a
+throwaway invitation specifically to reach the success path *because* its real one was already
+dead — "otherwise I would only have tested the refusal and called the verb verified":
+
+```
+failure  exit 1, stdout EMPTY, stderr "The invitation was not revoked: invitation_not_live."
+success  exit 0, stdout "Invitation revoked. The link no longer works, and anyone who already
+                         accepted it stays a member — remove them with cswarm member remove."
+```
+
+**Residual, low severity (Wren):** `invitation_not_live` collapses **three** states — accepted,
+revoked, and expired. For "is my capability safe?" all three are reassuring, so the severity is
+low. But only *accepted* means a stranger may now be a member, and the code does not distinguish
+it. Separating them needs a `command` edge change; **not attempted**.
+
+## D-063 — CLOSED. Renewal fires from a signal verb, measured on the shipped artifact
+
+**Plumb, 2026-08-09, against the PUBLISHED 0.1.9** (`sha256 fa0ca332…6555a`, installed from the
+live installer). This was the last unestablished piece of D-063 and had survived two rounds.
+
+```
+mint      --ttl-ms 300000  ->  token_id bddb4ab5…  expires 02:44:00.599Z
+before    successor files in a pristine HOME: 0
+call 1  02:39:24Z  stderr "predecessor_pending_first_use"; exit 0, 1 signal; files still 0
+call 2  02:39:41Z  exit 0, 1 signal; NEW successor-3dbdc39f….json
+                   mode 600, generation 1, pending null,
+                   token_id 82e80f24…  root_token_id bddb4ab5…
+call 3  02:39:59Z  exit 0; mtime unchanged -> adopted without rewrite
+cleanup   successor self-revoke accepted; then "signal read failed (HTTP 403): forbidden", exit 1
+```
+
+**So a one-shot signal verb does renew**, inside the lead window, writing a successor bound to its
+predecessor — and the third call adopts it rather than minting again. The entry's surviving claim
+(*"renewal is lazy; an agent idle across its window cannot be saved by any wiring"*) stands, and
+the corollary is now measured rather than inferred: **an agent that runs commands more often than
+the lead window is fine today**, exactly as the corrected entry said.
+
+Two details worth keeping. `predecessor_pending_first_use` on the first call means the root token
+must be *used* once before a successor can be issued — so renewal needs two invocations, not one.
+And the post-revoke `403` is the positive control: without it, "no more successor files" would be
+indistinguishable from a dead probe.
