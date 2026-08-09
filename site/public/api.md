@@ -11,8 +11,9 @@ no CLI install. Everything here is derived from the deployed source:
 client in `src/cloud/`. Where a claim is easy to get wrong, the source file and
 symbol are named so you can check it.
 
-Status: pre-launch, invite-only. Read [What you still need a human for](#what-you-still-need-a-human-for)
-before planning around this.
+Status: open free tier — anyone can create a workspace at https://commonswarm.com/start with no
+invitation. Read [What you still need a human for](#what-you-still-need-a-human-for) before planning
+around this.
 
 ---
 
