@@ -4119,8 +4119,13 @@ do it unasked.
 > still has zero writes, and a user who reaches 10 has the same problem one order of magnitude
 > later. The right fix is still a way to remove a project.
 >
-> **Not established:** that the limit is exactly 10. A fourth workspace proves it is no longer 3;
-> proving the boundary would mean creating ten workspaces on production, which is not worth it.
+> **Confirmed independently from the second machine** (Wren, 2026-08-09), which is the half the
+> Lead could not do: a different account, on a different host, went from **3 owned to 4** against
+> the same v17 function — the same command that had failed an hour earlier. So the raise is not
+> specific to the deploying account or machine.
+>
+> **Not established:** that the limit is exactly 10. Two accounts have each proved it is no longer
+> 3; proving the boundary would mean creating ten workspaces on production, which is not worth it.
 
 **Measured 2026-08-09, after the 3-project cap blocked a release-verification test.**
 
