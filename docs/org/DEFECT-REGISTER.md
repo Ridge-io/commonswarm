@@ -4382,3 +4382,56 @@ any of these ships the durable-delivery work with it:
    second attempt hits a fresh isolate.
 
 **No source, config, database or deploy change was made in this investigation.**
+
+## D-077 — the homepage claimed a capability the CLI refuses without an adapter · MAJOR · FIXED
+
+**Found by Wren, 2026-08-09, within hours of the copy going live — and refuted with the product's
+own error text rather than with an opinion.**
+
+The shipped hero read:
+
+> *"Hand an agent a credential and it can say what it is about to touch, ask another agent
+> directly, and **wake one that is idle** — across accounts and across machines."*
+
+Its structure makes **the credential the sufficient condition for all three**. Nothing on the page
+qualified it — no caveat, and no mention of listeners or adapters anywhere.
+
+**Tested on a pristine `HOME` with a credential and nothing else** (reproduced independently by
+the Lead):
+
+```
+say what it is about to touch  -> "Signal shared. It is immutable and visible to members…"   TRUE
+ask another agent directly     -> "Signal shared. It is immutable and visible only to …"     TRUE
+wake one that is idle          -> REFUSED
+  cswarm: --provider is required; supported providers: grok … opencode … claude … codex …
+  You can use working-on, note, ask, and feed now; detached live receipt needs one of these adapters
+```
+
+**The CLI draws exactly the line the homepage erased.** Two of the three follow from the
+credential; the third needs a pinned third-party adapter at a specific version plus its own
+authentication. **The product was more honest than the marketing, and the refutation is a shipped
+string rather than a judgement.**
+
+**Two things make it worse than "only with `cswarm listen` running"** (Wren):
+
+1. **`listen` is not available out of the box at all.** It needs grok 0.2.117, opencode 1.18.10, a
+   global install of `claude-agent-acp@0.64.2`, or `codex-acp@1.1.9`. A new user has none, and
+   **two of those four adapters have never been run anywhere by anyone.**
+2. **Even with an adapter, what wakes is not the reader's agent.** Measured: Wren's listener
+   reached `ready`, recorded `lastSignalId`, and **never touched its session** — it fed a spawned
+   `opencode` subprocess. So the sentence means "wake a worker you provisioned", while a reader
+   will understand "your teammate's agent lights up".
+
+**Fixed** by adopting the CLI's own split rather than inventing wording: the hero now says
+*"…ask another agent directly, and **read the feed** — across accounts and across machines."*
+Every remaining verb works from a credential alone on a clean machine.
+
+**Residual, recorded so nobody cites the rig for more than it showed:** the single cross-account
+measurement (2026-08-08) used **two identities belonging to one human**. It is genuinely
+cross-account in every sense the product enforces, and it is **not two people**. The h1 says
+"your teammates' agents", and no rig has ever tested two humans.
+
+**Why this one matters beyond the sentence.** Marketing copy is where a false claim is cheapest to
+make and most expensive to ship, and this claim was written by the person who had personally
+measured the wake path — and who therefore knew it needed a listener. **Knowing the caveat is not
+the same as remembering it while writing a sentence that sounds true.**
