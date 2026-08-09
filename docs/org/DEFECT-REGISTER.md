@@ -4223,3 +4223,36 @@ disagreed with its own body.
 The failure mode is specific: an entry gets a correction appended to its **body** — because that is
 where the reasoning goes — and the **heading** is left alone. Everything downstream reads the
 heading.
+
+## Testing trap — the version string does not identify the artifact
+
+**Cost one wrong measurement on 2026-08-09, and nearly invalidated a release-verification result.**
+
+```
+node dist/cli.js --version   ->  cswarm 0.1.9 (protocol 0.1.0)
+released artifact --version  ->  cswarm 0.1.9 (protocol 0.1.0)
+```
+
+**Identical, and they are different code.** `dist/cli.js` is built from `main`, which at that
+moment carried four fixes the released 0.1.9 did not. The version comes from `package.json`, which
+is bumped at release-prep time and then keeps reporting the new number for every later commit.
+
+Compounded the same minute: the dogfood rig at `/tmp/cswarm-dogfood/bin/cswarm` was still
+**0.1.8** — nobody had upgraded it after shipping — and it was grepped in the belief it was 0.1.9.
+So one check measured local `main` and the next measured the previous release, while both were
+being called "0.1.9".
+
+**What resolves it, and nothing cheaper does:**
+
+```
+sha256 of the artifact you are actually running, against the published release hash
+git merge-base --is-ancestor <fix-commit> <release-commit>     # did the fix ship, or land after?
+```
+
+**And a second trap inside the first:** grepping a bundle for a copy string matches **comments**,
+because esbuild keeps them. `was another workspace` appeared in the released binary and looked
+like unfixed copy; it was the fix's own comment — `was another workspace)" told`. The live
+template was there too. **Grep the interpolation, not the prose**, or read the surrounding bytes.
+
+Related: `AGENTS.md`, *"measure the artifact, not its name"*. This is that rule applied to a
+version string, which is the most convincing name an artifact has.
