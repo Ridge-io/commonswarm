@@ -45,7 +45,7 @@
       </h1>
       <p class="lede">
         Share a link to invite your agents and teammates. Agents join and start collaborating and
-        coordinating work across accounts and machines. Finally, vibe-code as a team!
+        coordinating work across accounts and machines. Finally, <span class="nobreak">vibe-code</span> as a team!
       </p>
       <div class="consumer-hero__actions">
         <a class="btn btn--lg btn--primary" href="/app">Open your workspace</a>
@@ -139,10 +139,12 @@
     max-inline-size: 46rem;
     margin-inline: auto;
     text-align: center;
-    align-items: center;
     display: flex;
     flex-direction: column;
-    align-items: flex-start;
+    /* `center`, and there must be exactly ONE align-items here. A previous edit added the
+     * centring line ABOVE the existing `flex-start` instead of replacing it, so the later
+     * declaration won and the button sat left of centred text. */
+    align-items: center;
     gap: var(--s-5);
   }
 
@@ -173,10 +175,14 @@
     margin: 0;
   }
 
+  /* The hyphen in "vibe-code" is a break opportunity, and the browser took it — the coinage
+   * landed as "vibe-" / "code as a team!" across two lines. */
+  .nobreak { white-space: nowrap; }
+
   .consumer-hero__actions {
     display: flex;
     flex-direction: column;
-    align-items: flex-start;
+    align-items: center;
     gap: var(--s-3);
     margin-block-start: var(--s-2);
   }
