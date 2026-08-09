@@ -212,12 +212,38 @@ function targetFingerprint(target: CloudTarget): string {
   return createHash("sha256").update(target.anonKey).digest("hex").slice(0, 12);
 }
 
+/**
+ * The saved target. The anon key is returned ONLY under `--reveal-anon-key`. D-079.
+ *
+ * The key used to be fingerprinted here and nowhere else, which made this summary useless for
+ * the one job an agent needs it for. Agent credentials deliberately do not inherit a human's
+ * saved target, and the refusal says *"pass --url and --anon-key or set SWARM_CLOUD_URL and
+ * SWARM_CLOUD_ANON_KEY"* — so the CLI demanded a value **no command would return**. Wren, on a
+ * second machine, satisfied it by reading `~/.cswarm/credentials.d/current-target.json` directly,
+ * which is the outcome the fingerprint was presumably meant to prevent.
+ *
+ * There was never a secret to protect. AGENTS.md: *"The anon key is a public identifier protected
+ * by RLS, not a secret."* The product publishes this exact value in a `commonswarm:anon-key`
+ * meta tag on every page of commonswarm.com. Fingerprinting it treated a published identifier as
+ * a credential and pushed agents into the credential store to get it.
+ *
+ * The default stays fingerprinted, and that is deliberate rather than timid: a 208-character JWT
+ * printed by default lands in logs, screenshots and pasted issues, where the next reader may not
+ * check WHICH key it is. `supabase projects api-keys` prints the service-role key two rows below
+ * the anon key, so "cswarm prints keys" is a habit worth not forming.
+ *
+ * `--reveal-anon-key` makes it an explicit act. That closes the dead end without changing what a
+ * casual invocation emits, and the existing control asserting the default output omits the key
+ * stays true and unedited.
+ */
 export function currentTargetSummary(
   target: CloudTarget,
-): { url: string; anon_key_fingerprint: string } {
+  reveal = false,
+): { url: string; anon_key_fingerprint: string; anon_key?: string } {
   return {
     url: target.url,
     anon_key_fingerprint: targetFingerprint(target),
+    ...(reveal ? { anon_key: target.anonKey } : {}),
   };
 }
 

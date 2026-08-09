@@ -178,6 +178,7 @@ const BOOLEAN_FLAGS = new Set([
   "local",
   "ndjson",
   "no-browser",
+  "reveal-anon-key",
 ]);
 
 const UUID_RE =
@@ -322,7 +323,7 @@ function usage(): string {
 Usage:
   cswarm login [--url <project-url> --anon-key <key>] [--no-browser]
   cswarm logout [--url <project-url> --anon-key <key>] [--all-devices] [--local]
-  cswarm target [show] [--json]
+  cswarm target [show] [--json] [--reveal-anon-key]
   cswarm target set --url <project-url> --anon-key <key> [--json]
   cswarm target clear [--json]
   cswarm status [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--json]
@@ -846,11 +847,21 @@ async function runNew(args: Arguments): Promise<void> {
 async function runTarget(args: Arguments): Promise<void> {
   const action = args.positionals[1] ?? "show";
   if (action === "show") {
-    args.assertShape(["json"], args.positionals[1] === undefined ? 1 : 2);
+    /* D-079: `--reveal-anon-key` is opt-in. Agent credentials never inherit a human's saved
+     * target, and that refusal names --url/--anon-key — so without this flag the CLI demanded a
+     * value no command returned, and an agent on a second machine satisfied it by reading
+     * ~/.cswarm/credentials.d/ directly. The key is public (RLS-protected, and published in a
+     * meta tag on every page of commonswarm.com), so there is no secret to withhold; the default
+     * stays fingerprinted only so a 208-character JWT does not land in logs by accident. */
+    args.assertShape(
+      ["json", "reveal-anon-key"],
+      args.positionals[1] === undefined ? 1 : 2,
+    );
+    const reveal = args.has("reveal-anon-key");
     const saved = await readCurrentTarget();
     if (args.has("json")) {
       printJson({
-        current_target: saved === null ? null : currentTargetSummary(saved),
+        current_target: saved === null ? null : currentTargetSummary(saved, reveal),
       });
       return;
     }
@@ -860,9 +871,12 @@ async function runTarget(args: Arguments): Promise<void> {
       );
       return;
     }
-    const summary = currentTargetSummary(saved);
+    const summary = currentTargetSummary(saved, reveal);
     process.stdout.write(
-      `Current Cloud target: ${summary.url}\nAnon key fingerprint: ${summary.anon_key_fingerprint}\n`,
+      `Current Cloud target: ${summary.url}\nAnon key fingerprint: ${summary.anon_key_fingerprint}\n`
+          + (summary.anon_key === undefined
+            ? ""
+            : `Anon key: ${summary.anon_key}\n`),
     );
     return;
   }

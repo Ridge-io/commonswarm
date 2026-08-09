@@ -4474,3 +4474,42 @@ enumerate files and did enumerate two spellings, and still pattern-matched on ca
 **Filed the same day as D-077**, which was also a homepage claim the Lead wrote and another party
 refuted. Two in one afternoon, both in marketing copy, both by review rather than by a gate — and
 the site has no gate that compares a copy claim against the server constant it describes.
+
+## D-079 — the CLI demanded a value no command would return · MINOR · FIXED
+
+**Found by Wren, 2026-08-09, onboarding an agent on a second machine.**
+
+Agent credentials never inherit a human's saved target — deliberate, and the refusal says so:
+
+```
+cswarm: agent credentials never inherit a human's saved Cloud target; pass --url and
+        --anon-key or set SWARM_CLOUD_URL and SWARM_CLOUD_ANON_KEY
+```
+
+**No supported command returned the anon key.** `target show --json` gave
+`anon_key_fingerprint` and nothing else. To satisfy an error the CLI itself printed, Wren read
+`~/.cswarm/credentials.d/current-target.json` **directly** — reaching into the credential store,
+which is the outcome fingerprinting was presumably meant to prevent. The alternative is asking a
+human to paste a key, which is the habit the design exists to stop.
+
+**There was no secret to withhold.** AGENTS.md: *"The anon key is a public identifier protected by
+RLS, not a secret."* The product publishes this exact value in a `commonswarm:anon-key` meta tag
+on **every page of commonswarm.com**. The CLI was fingerprinting a value the website prints.
+
+**Fixed with `cswarm target show --reveal-anon-key`**, and the default is unchanged.
+
+**The design decision is the interesting part, and the first attempt was wrong.** Returning the
+key unconditionally failed `current-target.test.ts`, which asserts the default output omits it.
+That control is worth keeping even though the key is public: a 208-character JWT emitted by
+default lands in logs, screenshots and pasted issues, and `supabase projects api-keys` prints the
+**service-role** key two rows below the anon key. *"cswarm prints keys"* is a habit worth not
+forming. So revealing became an explicit act, the existing control stays true, **and it was not
+edited.**
+
+**`reveal-anon-key` had to be added to `BOOLEAN_FLAGS`** — without it the parser treats an
+unrecognised flag as value-taking, which is exactly what made `--local` unusable in 0.1.8 (D-064's
+control found the same shape). Checked before shipping rather than after.
+
+Gated on three cases including one the other two cannot catch: the fingerprint must not equal the
+key in either mode, since a fingerprint that returned the key verbatim would satisfy both the
+default-omits and reveal-returns tests.
