@@ -4817,3 +4817,62 @@ extraction bug surfaced the same way: a fixed two-token slice produced `members 
 - Whether the ARTIFACT form works everywhere. Only the bare form was swept, because that is where
   the disagreement was. If some subcommand rejects the artifact, nobody has looked.
 
+## D-083 — the bare credential form DELETED a successor stored by the artifact form · MAJOR · FIXED
+
+**Destructive, reachable today, and found inside a REFUTATION.** A verification agent was refuting
+a different claim about credential input paths; it reported that the claim "points at the one line
+that must not change while missing a real destructive defect three lines away." The defect was the
+three lines away.
+
+`AgentCredentialSession.open` compared the stored lineage's `rootTokenId` to the presented
+credential's `tokenId` by **strict equality**, and **deleted the record** on mismatch
+(`src/cloud/renewal.ts:711`). The bare credential form carries no token id — `tokenId: null` at
+`cli.ts:587`, against `cli.ts:644` for the artifact form. So:
+
+```
+agent runs `listen start` (REQUIRES the artifact form)  -> successor stored, rootTokenId set
+agent runs `members`      (accepts a BARE token)        -> presented.tokenId === null
+                                                        -> sameLineage false -> store.delete()
+```
+
+**The successor credential is destroyed.** This is not hypothetical: D-082 measured, that same
+day, that `listen start` requires the artifact form while `members` accepts a bare token. Merely
+alternating subcommands with the same secret is enough.
+
+**A null id cannot mean "someone else's lineage".** The store filename is
+`credentialLineageKey(agent.token)` — sha256 of the **presented secret** (`cli.ts:2023`,
+`agent-credential.ts:89-91`) — so finding the record at all already proves the caller holds the
+same root token. The id is corroboration, not identification.
+
+### The part worth more than the fix
+
+**The comment directly above the check records this exact bug happening once before** — a null read
+as "belongs to a different agent", the record deleted, an interrupted renewal made unreplayable —
+**and being fixed there, for `principalId` only.** The `principalId` clause is null-tolerant on
+both sides. The `rootTokenId` clause, one clause to its left, was not.
+
+**The fix was applied to the case that was found rather than to the class**, and the identical
+defect sat beside it, documented, for as long as the comment has existed. That is the failure mode
+this register exists to catch, committed by someone who had just written the explanation of it.
+
+**Gate:** `tests/p1-cli/d083-bare-form-deletes-successor.test.ts`, reached by the `test:p1-cli`
+glob. Mutation-tested in both directions, each verified to land by grep first:
+
+| mutation | result |
+|---|---|
+| revert to strict equality | fails the bare-form test only |
+| never delete (`if (false)`) | fails the foreign-lineage control only |
+
+The second control exists because "treat null as unknown" is easily mis-implemented as "never
+delete", which would leave a foreign record in place and defeat the check entirely. The third test
+pins that a matching lineage is still ADOPTED, so a change that deleted nothing and adopted
+nothing cannot pass all three.
+
+**`rootTokenId` appeared 0 times in `tests/` before this** — 12 times in `src/`. Nothing pinned it.
+
+**NOT established:** whether any credential was actually lost in the field. The path is reachable
+and the code is unambiguous, but no incident is attributed to it. Wren spent a day alternating
+bare and artifact forms across subcommands and did not report a lost successor — which does not
+clear it, because a deleted successor is silent: the root token still works and renewal simply
+starts over.
+

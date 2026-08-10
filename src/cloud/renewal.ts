@@ -708,7 +708,28 @@ export class AgentCredentialSession {
          * the very command id that makes an interrupted renewal replayable. The lineage
          * key in the filename is already derived from the presented credential; rootTokenId
          * is the second check, and the principal is a third only where it exists. */
-        const sameLineage = record.rootTokenId === options.presented.tokenId &&
+        /* rootTokenId is compared ON THE SAME TERMS as the principal below: only when BOTH
+         * sides name one. It was strict equality, and that DELETED A LIVE SUCCESSOR.
+         *
+         * The bare credential form carries no token id — `tokenId: null` at cli.ts:587, against
+         * cli.ts:644 for the artifact form. So an agent that renewed under the artifact form and
+         * then ran ANY command under the bare form of the SAME SECRET failed this check and had
+         * its stored successor deleted. That is reachable today and not hypothetical: `listen
+         * start` REQUIRES the artifact form while `members` accepts a bare token, so alternating
+         * subcommands is enough (D-082).
+         *
+         * A null id cannot mean "someone else's lineage". The store filename is
+         * `credentialLineageKey(agent.token)` = sha256 of the PRESENTED SECRET (cli.ts:2023,
+         * agent-credential.ts:89-91), so finding this record at all already proves the caller
+         * holds the same root token. The id is corroboration, not identification.
+         *
+         * The comment above records this exact bug happening once before, to the principal, and
+         * being fixed there. It was fixed for the case that was found rather than for the class,
+         * and the identical defect sat one clause to its left. */
+        const sameLineage =
+          (options.presented.tokenId === null ||
+            record.rootTokenId === null ||
+            record.rootTokenId === options.presented.tokenId) &&
           (options.presented.principalId === null ||
             record.principalId === null ||
             record.principalId === options.presented.principalId);
