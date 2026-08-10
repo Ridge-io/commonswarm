@@ -10,8 +10,12 @@ work** — see "What I got wrong" below.
 ```
 main    2d62161   — SUPERSEDED, see the two lines below. Kept so the rot is visible.
 main    2fc605f   — GitHub, measured by `git ls-remote` 2026-08-09 late.
-main    dd41de1   — LOCAL, two D-080 commits ahead of GitHub. Fast-forward verified
-                    (`git merge-base --is-ancestor 2fc605f HEAD`). Check whether it landed.
+main    dd41de1   — the second D-080 commit. Fast-forward verified against GitHub
+                    (`git merge-base --is-ancestor 2fc605f HEAD`).
+main    cf8fdd1   — LOCAL HEAD when this was written: dd41de1 plus this docs commit.
+                    THREE ahead of GitHub, not two — this line was wrong within one
+                    commit of being written, which is the rot this block is known for.
+                    Re-measure both ends; do not trust either number here.
 ```
 
 Run `git rev-parse --short main` and `git ls-remote https://github.com/Ridge-io/cloud-swarm
