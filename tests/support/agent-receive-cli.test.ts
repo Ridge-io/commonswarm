@@ -22,6 +22,7 @@ import {
   type ListenerStatus,
 } from "../../src/listener/index.js";
 import {
+  ASK_WAIT_TIMEOUT_MESSAGE,
   askWaitJsonPayload,
   BoundedSignalIdSet,
   compareSignalCursor,
@@ -351,8 +352,9 @@ test("ask wait JSON returns ask plus reply or explicit timed_out success", () =>
   });
   assert.deepEqual(askWaitJsonPayload(ask, null, true), {
     status: "accepted",
-    message:
-      "Ask shared. No reply arrived before the wait ended; the ask remains live.",
+    /* F-5: reads the shared constant rather than a copy of it. A literal here is a THIRD
+     * surface that can disagree with the two it is meant to pin. */
+    message: ASK_WAIT_TIMEOUT_MESSAGE,
     signal: ask,
     reply: null,
     timed_out: true,
