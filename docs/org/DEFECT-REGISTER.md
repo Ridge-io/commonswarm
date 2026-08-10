@@ -4513,3 +4513,73 @@ control found the same shape). Checked before shipping rather than after.
 Gated on three cases including one the other two cannot catch: the fingerprint must not equal the
 key in either mode, since a fingerprint that returned the key verbatim would satisfy both the
 default-omits and reveal-returns tests.
+
+## D-080 — `listen start` reports terminal failure for a listener that then serves · MAJOR · OPEN
+
+**Found by Wren, 2026-08-09, by filing a blocker on it and then discovering the listener was
+healthy.**
+
+```
+$ cswarm listen start … --provider opencode --permissions deny
+cswarm: the host did not prove that CommonSwarm controls ACP tool permissions;
+        no model prompt was delivered
+<returns>
+
++7s   the same pid logs listener_ready
+      and it served a cross-user wake round trip minutes later
+```
+
+**The command's failure message is not a reliable signal of the listener's fate.** Anyone
+following that output concludes it is broken, reports a blocker, and stops — which is exactly what
+happened, costing about an hour.
+
+**And the diagnostics are attached the wrong way round.** The attempt that genuinely failed said
+*"listener failed (stopped); no ready listener was left running"* — vague. The attempt that
+**succeeded** said *"the host did not prove that CommonSwarm controls ACP tool permissions; no
+model prompt was delivered"* — specific, actionable, and wrong about the outcome.
+
+**A second observer error compounds it, and is worth recording because it is a property of the
+product rather than of the observer.** Wren's confirming `listen status` also reported `failed`,
+because it polled at ~23:04:36 and `ready` did not land until 23:04:42. A six-second window in
+which the status command returns a transient as though it were an outcome.
+
+**Related and already fixed for `stop`:** D-074 added *"This is still in progress. Confirm with:
+cswarm listen status …"* to transitional states. That fix does not help here, because `start`
+exits with what reads as a terminal failure rather than a transitional state.
+
+**Fix direction, not attempted:** `listen start` should not return a terminal error while the
+supervisor it launched is still resolving. Either wait for `ready`/`failed`, or say plainly that
+the outcome is not yet known and name the command that will tell you.
+
+## D-081 — the opencode permission canary is intermittent · MAJOR · OPEN
+
+**Measured 2026-08-09**, and it settles an item that sat undiagnosed on two resume files as
+*"opencode never reaches ready."*
+
+```
+22:00:14   start -> listener_failed   permission_canary_failed   6.8s
+23:04:34   start -> listener_ready                               8.2s
+```
+
+**Byte-identical config** — same config-hash listener directory, same profile, workspace,
+principal, provider, permissions and cwd. Not a regression: `git diff v0.1.8..HEAD --
+src/listener/ src/host/` is **empty**, so the canary code is identical across every release
+between the runs. The CLI upgrade at 16:06Z was a timing coincidence, and the provider binary
+predates both runs.
+
+**Seven mechanisms were proposed for this failure family across one afternoon by five agents, and
+all seven were refuted** — machine-wide `pkill`, OOM kill, output/buffer cap, harness timeout,
+uniform timer, session-ownership teardown, and no-tool-reply. Wren's ledger, and its own
+assessment is the part worth keeping:
+
+> "None killed by argument — every one died to somebody going and looking, usually at their own
+> claim."
+
+**What the canary needs, from `src/host/session.ts`:** a probe prompt, the *model* attempting a
+tool call, the host rejecting it, and a correlated terminal tool status. It therefore depends on a
+**remote model responding**, which is why ruling the provider out by binary mtime was insufficient
+— mtime measures the artifact, not the service behind it. The provider was subsequently verified
+live (model answered in 7s and did attempt tool calls), which refuted the seventh mechanism too.
+
+**Not established:** the cause. Only that it is intermittent, not a regression, not a missing
+capability, and not a hang (6.8s against a 30s timeout).
