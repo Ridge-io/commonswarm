@@ -213,3 +213,77 @@ measurement so whoever decides has the numbers.
   nothing to the diagnosis.
 - **`member remove`'s success path.** Still blocked on a human at a keyboard for
   `cswarm login --no-browser`.
+
+---
+
+# Round 2 — after fixing F-1 and F-6
+
+Same method: live installer artefact for the shipped comparison, local `main` build for the fixed
+one, cold user via `HOME` override, isolation re-verified with a control before anything else.
+
+## F-1 · FIXED and verified cold
+
+```
+$ HOME=<cold> cswarm new "My Workspace"
+Using the CommonSwarm deployment at https://ukezjcnxjvkpkeezxaew.supabase.co,
+  discovered from https://commonswarm.com and saved. …
+cswarm: not logged in; run cswarm login
+```
+
+The dead end is gone: the second line is the **correct next error**, and the target is saved so
+discovery is a one-time step. `cswarm login` likewise now reaches the GitHub sign-in URL instead of
+refusing.
+
+## F-6 · FIXED, and the sweep is over surfaces rather than files
+
+`project` mentions in each read surface's output, on the fixed build:
+
+```
+status 0   workspaces 0   members 0   inbox 0   feed 4
+```
+
+**The four in `feed` are correct and must stay.** They are inside signal BODIES written by the
+agent Verity — user content. A product that rewrites what its users wrote would be a worse defect
+than the one being fixed. Checked individually rather than inferred from the count.
+
+The collision that opened this finding is gone:
+
+```
+$ cswarm use <id>   -> Selected workspace Dogfood Workspace (…)
+$ cswarm note "…"   -> …visible to members of this workspace.
+```
+
+## D-080 · holds under the real trigger, again
+
+R2/9 retried immediately after a failed start, with `failed` pid 8385 on disk — D-080's exact
+condition. It took **25s** and the resulting status carried pid **11642**. On 0.1.11 the same
+condition printed at **0s**. The stale status was not adopted.
+
+## D-081 · three consecutive failures, and a lead worth chasing
+
+| attempt | elapsed | code |
+|---|---|---|
+| R2/8 | 24s | `permission_canary_failed` |
+| R2/9 | 25s | `permission_canary_failed` |
+| R2/10 | 9s | `opencode_config_probe_failed` |
+
+**CORRECTION to this file's own round-1 claim.** Round 1 said *"a genuine D-081 canary failure
+takes ~7s."* That was **one sample**. Measured here: 24s, 25s, 9s. The timing discriminator
+against D-080 still holds — D-080 fails at **0s**, before anything can have happened — but the
+"~7s" figure is withdrawn. Use *"0s versus many seconds"*, not a number.
+
+**The lead: `uptime` reported load average 25.15 at the moment of these failures.** Round 1
+reached `ready` on 3 of 5 attempts earlier the same day; this round reached it 0 of 3, and the
+only variable I can name is machine load. Joist's recorded 30s canary constant is plausible to
+blow on a box at load 25 — this mini hosts about 22 agent seats.
+
+**This is a LEAD, not a cause, and the reason is that I have no load figures from round 1.**
+Nobody recorded load when D-081 fired before, so there is nothing to compare against. The cheap
+next step is to capture `uptime` and `sysctl -n kern.memorystatus_vm_pressure_level` alongside
+every listener start, and see whether failures cluster. That is a measurement anyone can run; it
+is not a diagnosis.
+
+## Left behind
+
+Nothing. Every process was enumerated by cwd rather than counted — five opencode processes remain
+on the box and none is mine.
