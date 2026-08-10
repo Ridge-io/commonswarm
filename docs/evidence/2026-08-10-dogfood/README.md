@@ -133,3 +133,83 @@ asserting the process's state, which the code does not check, rather than our ow
 **NOT established:** whether the `claude`, `codex` or `grok` providers behave the same. Only
 `opencode` 1.18.10 was exercised. The mechanism is provider-independent — it is in
 `waitForListenerReady`, above the adapter — but that is an argument, not a measurement.
+
+---
+
+## F-3 — "no ready listener was left running" was measured false · FIXED
+
+The generic fallback in `listenerFailureMessage`. Row 2 above printed it while the listener it
+had spawned was `starting` with no error recorded, and that listener reached `ready` 24s later.
+Nothing on that path stops the child and nothing re-checks it.
+
+Now: `listener failed (<code>); check cswarm listen status before starting another`.
+
+**Why the earlier sweep missed it.** `dd41de1` corrected the same defect in the `ready_timeout`
+string and swept the claim family. This line survived because it **names no error code** — it did
+not look like a member of the family being swept. Enumerating every string a function can RETURN,
+rather than every string matching the phrasing under review, is what found it.
+
+## F-4 — a reply was invisible as a reply · FIXED
+
+`cswarm reply` sets `in_reply_to`; the run read it back from the JSON surface carrying the exact
+ask id. The human line dropped it, so the reply arrived rendered `[note]`, indistinguishable from
+an unrelated one — in a product whose core loop is ask → reply.
+
+**Not a regression.** The same inbox held an **eleven-day-old** reply never shown as one. This has
+been true for every reply the product has carried.
+
+## F-5 — `ask --wait` timed out with no next step · FIXED
+
+*"Ask shared. No reply arrived before the wait ended; the ask remains live."* True, and it leaves
+the reader with nothing to do — the defect Wren and Joist recorded on `listen stop`, one verb
+away. `cswarm inbox` is verified, not guessed: this run posted an ask, replied, and read the reply
+from the asker's inbox.
+
+The sentence had **two** producers, human and JSON. It is now one shared constant, because
+`workspaces.ts` already records what editing both looks like when it goes wrong.
+
+**And fixing it broke a test I did not run before publishing.** `tests/support/agent-receive-cli.test.ts`
+pinned the old literal. `npm test` was **498/499** while I wrote a commit message claiming
+499/499 — I had read `test:p1-cli` green and reported the other number without looking. Corrected
+in `27a1f9c`. The file lives in `tests/support/`, which the `test:p1-cli` glob does not reach and
+`npm test` reaches only because it names the file literally: **both gates were needed to see it.**
+
+## F-6 — `project` and `workspace` are used interchangeably · NOT FIXED, needs a decision
+
+Measured in `src/cli.ts` prose, with flag and field names (`--workspace-id`, `SWARM_CLOUD_WORKSPACE_ID`)
+excluded because those are identifiers and must not change:
+
+```
+16 project     11 workspace
+ 2 projects     5 workspaces
+```
+
+Roughly even, inside one CLI. Two consecutive commands in this run:
+
+```
+$ cswarm use <id>
+Selected project Dogfood Workspace (3ab184b3-…).
+
+$ cswarm note "…"
+Signal shared. It is immutable and visible to members of this workspace.
+```
+
+`install.sh` names this drift and declines it: *"the site and the docs say 'workspace' throughout.
+That drift is real and is not this file's to settle."* README is also split (14 / 21).
+
+**Left unfixed deliberately.** Which noun wins is a product decision, not a defect fix, and a
+blanket rename touches help text, error messages, and the tests that pin them. Recorded with the
+measurement so whoever decides has the numbers.
+
+## What this run did NOT establish
+
+- **`cswarm login` first-time GitHub sign-in.** Still unverified, in every round. Needs a browser.
+- **The `/app` web signup path.** Only the terminal path was exercised for F-1.
+- **The `claude`, `codex`, `grok` providers.** Only `opencode` 1.18.10 ran. D-080's mechanism sits
+  in `waitForListenerReady`, above the adapter, so it should be provider-independent — that is an
+  argument, not a measurement.
+- **Whether D-081's canary intermittency has a cause.** One genuine failure was observed in this
+  run (row 3) and one clean start (row 1), which is consistent with the existing record and adds
+  nothing to the diagnosis.
+- **`member remove`'s success path.** Still blocked on a human at a keyboard for
+  `cswarm login --no-browser`.
