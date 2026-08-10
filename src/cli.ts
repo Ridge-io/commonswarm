@@ -400,10 +400,14 @@ Usage:
 
 Credential selection for command/dogfood:
   default                 refresh the human login from secure storage
-  --agent-token-stdin     read a mint/seed credential artifact (or legacy swm_agt_) from stdin.
-                          listen start is the exception: it needs the COMPLETE JSON artifact,
-                          including expires_at, because a bare token cannot identify durable
-                          state or rotate safely. Every other command accepts either form
+  --agent-token-stdin     read a mint/seed credential artifact, or a bare swm_agt_ token, from
+                          stdin. WHICH FORMS ARE ACCEPTED DEPENDS ON WHAT THE SUBCOMMAND DOES
+                          WITH THE CREDENTIAL. A subcommand that only reads takes either form.
+                          One that persists or references the credential needs the complete
+                          JSON artifact, because it needs a field a bare secret does not carry:
+                            members       reads only          -- either form
+                            listen start  persists durable state, rotates -- needs expires_at
+                            token revoke  names what it revokes           -- needs token_id
 
 Signals (intention sharing) accept the same credential selection. Agent mode
 never opens a browser or infers a human's saved workspace. Durations use a whole

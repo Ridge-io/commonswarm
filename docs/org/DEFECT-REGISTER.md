@@ -4764,7 +4764,56 @@ Mutation-tested, both verified to land: reporting every failure as unknown fails
 distinguishability control, and removing one documented flag from `KNOWN_FLAGS` fails the coverage
 gate.
 
-**NOT established:** whether any OTHER flag has a per-subcommand contract. Only
-`--agent-token-stdin` was examined, because that is the one that produced a disagreement. The
-general question — does any flag mean different things to different subcommands — is unmeasured.
+### The first fix was WRONG, and Wren refuted it within the hour
+
+**There are THREE contracts, not two.** Wren swept the flag across every subcommand whose usage
+line carries it, with one real token in one invocation set — so that `members` working is a
+positive control for the other two rather than a separate observation:
+
+```
+members       -> works
+listen start  -> "requires the complete JSON credential artifact, including expires_at"
+token revoke  -> "agent credential on stdin has no token_id; pipe the JSON artifact"
+```
+
+**The two refusals cite DIFFERENT missing fields.** They are two independent requirements that
+happen to be satisfied by the same artifact, not one strict mode with one reason.
+
+~~The first fix wrote *"listen start is the exception"* and **this file claimed the gate held
+three claims: the exception, the reason, and the general case.**~~ **Dead.** That shape only holds
+if there is one exception. The gate would have stayed green with `token revoke` undocumented — and
+the wording was worse than the silence it replaced, because it newly implied the difference had
+been enumerated. Wren:
+
+> "The original defect was documentation silent on a difference; the risk in the fix is
+> documentation that appears to have enumerated the difference and has not."
+
+**This is a control discriminating toward a false claim** — the AGENTS.md section on exactly that
+— written by me hours after quoting it in a commit message. Mutation-testing proved the gate could
+fail; it could not tell me it was failing toward the wrong assertion.
+
+**The fix is Wren's framing, as a PROPERTY rather than a list**, because a property survives the
+next subcommand and an enumeration does not: *which forms are accepted depends on what the
+subcommand does with the credential.* Read-only takes either; persisting or referencing it needs
+the field a bare secret does not carry. All three are named with their reasons.
+
+**Two gates now, and the second exists because the first cannot see a subcommand that does not
+exist yet.** It derives the takers from the usage text and requires each to appear in the flag's
+description, so adding the flag to a fourth subcommand fails a test instead of silently making the
+documentation incomplete again.
+
+**My own control had a hole, found by mutating it.** Its first version fell back to matching the
+subcommand's first word, so deleting `token revoke`'s entire line left it GREEN — "token" appears
+in the description's own prose (*"bare swm_agt_ token"*). **A control matching a word the
+surrounding sentence already contains cannot fail.** It now requires the full subcommand. A second
+extraction bug surfaced the same way: a fixed two-token slice produced `members [--url`, because
+`members` is one word and `token revoke` is two.
+
+**NOT established**, and Wren's scope note is explicit about the boundary:
+
+- Whether any OTHER flag has a per-subcommand contract. Wren swept ONE flag across its
+  subcommands; 36 subcommands share `--workspace-id`, `--json`, `--until`, `--about` and none has
+  been tested for divergence. The general question stands, narrowed by one flag.
+- Whether the ARTIFACT form works everywhere. Only the bare form was swept, because that is where
+  the disagreement was. If some subcommand rejects the artifact, nobody has looked.
 

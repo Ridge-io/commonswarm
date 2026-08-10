@@ -69,21 +69,78 @@ test("KNOWN_FLAGS covers every flag the usage text advertises", () => {
   assert.deepEqual(missing, [], `documented but not in KNOWN_FLAGS: ${missing.join(", ")}`);
 });
 
-test("--help states listen start's stricter credential contract", () => {
-  /* Wren, 2026-08-10, and the finding is sharper than the defect it started as. The flag NAME is
-   * shared and the CONTRACT is not: `members --agent-token-stdin` accepts a bare swm_agt_ token,
-   * `listen start --agent-token-stdin` refuses one. Both of us measured the flag and reached
-   * opposite conclusions, because we happened to pick different subcommands.
+test("--help states the credential contract as a PROPERTY, and names both strict cases", () => {
+  /* Wren swept the flag across every subcommand that takes it and refuted the first version of
+   * this fix. There are THREE contracts, not two, and the two refusals cite DIFFERENT missing
+   * fields — `listen start` needs expires_at, `token revoke` needs token_id. They are two
+   * independent requirements that happen to be satisfied by the same artifact, not one strict
+   * mode with one reason.
    *
-   * The refusal itself is CORRECT and stays — listen start keeps durable state and rotates, and
-   * neither is possible without expires_at. What was wrong is that --help documented the bare
-   * form as if it were universal, so the documentation was true for whichever subcommand the
-   * reader checked it against. */
+   * ~~The first fix said "listen start is the exception" and THIS TEST REQUIRED THAT STRING.~~
+   * Dead. That shape only holds if there is one exception, so the gate would have stayed green
+   * while `token revoke` remained undocumented — and worse, the wording newly implied the
+   * difference had been enumerated. Wren: "the original defect was documentation silent on a
+   * difference; the risk in the fix is documentation that appears to have enumerated the
+   * difference and has not."
+   *
+   * That is a control discriminating toward a false claim, which AGENTS.md documents and which I
+   * wrote hours after quoting it. The fix is to pin the PROPERTY — what the subcommand does with
+   * the credential — because that survives the next subcommand; an enumeration does not. */
   const help = run(["--help"]);
 
-  assert.match(help, /listen start is the exception/);
-  assert.match(help, /COMPLETE JSON artifact/);
-  /* CONTROL: the general case must still be documented. Deleting the bare form entirely would
-   * satisfy the assertions above while making the line wrong for every other subcommand. */
-  assert.match(help, /legacy swm_agt_/);
+  assert.match(help, /DEPENDS ON WHAT THE SUBCOMMAND DOES/);
+  assert.match(help, /listen start[^\n]*expires_at/, "listen start's requirement is unstated");
+  assert.match(help, /token revoke[^\n]*token_id/, "token revoke's requirement is unstated");
+  assert.doesNotMatch(
+    help,
+    /is the exception/,
+    "it claims a single exception again, which is the refuted shape",
+  );
+  /* CONTROL: the permissive general case must survive. Documenting only the strict subcommands
+   * would satisfy everything above while making the flag look unusable for `members`. */
+  assert.match(help, /bare swm_agt_ token/);
+});
+
+test("every subcommand taking --agent-token-stdin is accounted for in its description", () => {
+  /* The safety net for the enumeration above. Wren's scope note is explicit that its sweep covered
+   * the three subcommands documented TODAY; a fourth added later would inherit whichever contract
+   * its implementation happens to have, and the description would silently stop being complete.
+   *
+   * Derived from the usage text rather than a hand-written list, so this fails when someone adds
+   * the flag to a subcommand without saying which form it takes. */
+  const help = run(["--help"]);
+  const takers = [...new Set(
+    help.split("\n")
+      .filter((line) => /^\s{2}cswarm /.test(line) && line.includes("--agent-token-stdin"))
+      /* Words after `cswarm` up to the first option/placeholder. Taking a fixed two tokens
+       * yielded "members [--url", because `members` is a one-word subcommand and `token revoke`
+       * is two — the shape differs per line and a fixed slice cannot see that. */
+      .map((line) => {
+        const words = line.trim().split(/\s+/).slice(1);
+        const name: string[] = [];
+        for (const word of words) {
+          if (!/^[a-z][a-z-]*$/.test(word)) break;
+          name.push(word);
+        }
+        return name.join(" ");
+      })
+      .filter((name) => name.length > 0),
+  )];
+
+  assert.ok(takers.length >= 3, `usage parse looks wrong: found ${takers.length}`);
+
+  const description = help.slice(help.indexOf("--agent-token-stdin  "));
+  /* The FULL subcommand, never a fallback to its first word. A verb-level fallback was tried and
+   * measured useless: deleting `token revoke`'s whole line left this green, because "token"
+   * appears in the description's own prose ("bare swm_agt_ token"). A control matching a word
+   * that the surrounding sentence already contains cannot fail. */
+  const undocumented = takers.filter((sub) => !description.includes(sub));
+
+  assert.deepEqual(
+    undocumented,
+    [],
+    `these take --agent-token-stdin but the description does not say which form: ${
+      undocumented.join(", ")
+    }`,
+  );
 });
