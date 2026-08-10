@@ -663,7 +663,7 @@ neither of them was — which is the argument for §2, not against anyone.
 
 ---
 
-## D-019 — No test file in this repo is ever typechecked · OPEN
+## D-019 — No test file in this repo is ever typechecked · FIXED
 
 **Found:** 2026-07-29 by Cinder, while implementing D-011's round-three fix. It declined to
 count a `Record<RefusalCode, Cause>` exhaustiveness check as the mechanism, on the grounds that
@@ -710,6 +710,21 @@ is how a good change becomes a bad afternoon. It goes in once the review queue d
 7 fixed in the branches that own those files.
 
 ---
+
+**FIXED, and the heading was stale until 2026-08-10** — the fix landed as
+`npm run check:tests` (`tsc -p tsconfig.tests.json`) and nobody came back to the entry. Found
+while answering an operator question about launch readiness, which is a bad way to find it: the
+entry was being counted as an open defect in a list going to the operator.
+
+**Measured with a positive control on the same invocation**, because a green typecheck proves
+nothing on its own: a deliberate `const _typeProbe: number = "not a number"` appended to
+`tests/p1-cli/f6-workspace-vocabulary.test.ts` produced exactly **1** `error TS`, and removing it
+returned clean. Two different answers, so the instrument discriminates.
+
+This is the **fifth** entry found fixed-while-marked-OPEN. The hygiene note at the end of this
+file already warns to check a heading against its body before dispatching anyone; that was not
+enough, because a stale heading is invisible to anyone who does not happen to know the fix
+landed. **A count of open defects taken from headings is not a measurement.**
 
 ## D-020 — An unidentified intermittent failure in the suite every merge rests on · OPEN
 
@@ -854,7 +869,7 @@ minutes. Fix + markup-stripping observer + mutation at line 150.
 
 ---
 
-## D-023 — The home page tells every visitor signup is switched off. It is on. · OPEN
+## D-023 — The home page tells every visitor signup is switched off. It is on. · FIXED
 
 **Found:** 2026-07-29 by the codex consumer critique; verified against production by the advisor.
 
@@ -893,6 +908,19 @@ asserts the old state — site, CLI, installer, email templates, OG description 
 called done. That check has now been skipped twice.
 
 ---
+
+**FIXED, heading stale until 2026-08-10.** Measured against the DEPLOYED page, not the source,
+with both arms on the same invocation:
+
+```
+curl -s https://commonswarm.com | grep -icE 'invite-only|not open|waiting list|waitlist'   -> 0
+curl -s https://commonswarm.com | grep -icE 'start|sign up|create'                          -> 6
+curl -s -o /dev/null -w '%{http_code}' https://commonswarm.com/start                        -> 200
+```
+
+The must-be-absent grep returns 0 and the must-be-present control returns 6, so the zero is a
+result rather than a broken probe. Same discovery route as D-019 above — found while counting
+open defects for an operator question.
 
 ## D-024 — A test's name, its comment, and its assertion all contradicted each other · IN REVIEW
 
