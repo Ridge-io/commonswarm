@@ -507,8 +507,27 @@ export async function waitForListenerReady(
       ) {
         throw error;
       }
+      /* D-080: this fallback runs when the LIVE control query fails, which is the normal state
+       * for the first moments of a start — the socket is not up yet. It then reads the status
+       * FILE, and that file belongs to whatever ran in this directory last.
+       *
+       * The directory is keyed by config hash, so a retry after a failed start reads the
+       * PREVIOUS run's terminal status and reports it as its own. Measured: a start at 23:04:34
+       * printed the 22:00 attempt's `permission_canary_failed` and exited, while the listener it
+       * had just launched reached ready at 23:04:42 and then served a cross-user wake round trip
+       * for 3h35m. It also explains why the diagnostics read backwards — the specific message
+       * belonged to the earlier failure, not to the start that printed it.
+       *
+       * The live branch above already rejects a mismatched pid via ListenerAlreadyRunningError.
+       * This one did not check at all, so it is the only path by which a stale terminal status
+       * can end a healthy start. */
       const stored = await readListenerStatus(paths).catch(() => null);
-      if (stored?.state === "failed" || stored?.state === "stopped") {
+      const storedIsThisInstance = stored !== null &&
+        (options.expectedPid === undefined || stored.pid === options.expectedPid);
+      if (
+        storedIsThisInstance &&
+        (stored.state === "failed" || stored.state === "stopped")
+      ) {
         throw new ListenerStartupError(
           stored.lastErrorCode ?? stored.state,
         );

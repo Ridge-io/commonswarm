@@ -3178,7 +3178,15 @@ export function listenerFailureMessage(
     return "the detached listener process exited before it became ready; check the measured host version and login, then retry";
   }
   if (code === "ready_timeout") {
-    return "the listener did not become ready within two minutes; check network access and host login, then retry";
+    /* D-080. "then retry" described a state this path does not create: nothing kills the child
+     * on a ready timeout, so the listener is still running when this prints. Retrying spawns a
+     * second one or hits "already running". Every other code here follows a listener that
+     * reported `failed` and terminated, where "retry" is correct — this was the one that did not.
+     *
+     * Wren, who measured D-080, pointed at `listen stop` as the pattern already in the product:
+     * it says it is asynchronous, says it is incomplete, and names the command to confirm with.
+     * The timeout is a report that we stopped waiting, not that the listener stopped. */
+    return "the listener did not become ready within two minutes and was not stopped; confirm with cswarm listen status before starting another";
   }
   return `listener failed (${code}); no ready listener was left running`;
 }

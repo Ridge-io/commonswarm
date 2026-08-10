@@ -4514,7 +4514,7 @@ Gated on three cases including one the other two cannot catch: the fingerprint m
 key in either mode, since a fingerprint that returned the key verbatim would satisfy both the
 default-omits and reveal-returns tests.
 
-## D-080 — `listen start` reports terminal failure for a listener that then serves · MAJOR · OPEN
+## D-080 — `listen start` reports terminal failure for a listener that then serves · MAJOR · FIXED
 
 **Found by Wren, 2026-08-09, by filing a blocker on it and then discovering the listener was
 healthy.**
@@ -4547,9 +4547,45 @@ which the status command returns a transient as though it were an outcome.
 cswarm listen status …"* to transitional states. That fix does not help here, because `start`
 exits with what reads as a terminal failure rather than a transitional state.
 
-**Fix direction, not attempted:** `listen start` should not return a terminal error while the
-supervisor it launched is still resolving. Either wait for `ready`/`failed`, or say plainly that
-the outcome is not yet known and name the command that will tell you.
+**FIXED 2026-08-09** in `src/listener/supervisor.ts` and `src/cli.ts`. Two changes, because the
+defect had two halves and fixing only the first would have left the misleading text in place.
+
+**1. The mechanism — the stale-status fallback did not check the pid.** `waitForListenerReady`
+queries the live control socket, and falls back to reading the status FILE when that query fails.
+That failure is the NORMAL state for the first moments of a start: the socket is not up yet. The
+listener directory is keyed by CONFIG HASH, so an identical retry lands in the same directory and
+the fallback reads **the previous run's** terminal status. The live branch already rejected a
+mismatched pid (`ListenerAlreadyRunningError`); the fallback checked nothing. It now requires
+`stored.pid === options.expectedPid` before treating a stored `failed`/`stopped` as this start's
+outcome.
+
+This explains the backwards diagnostics recorded above without needing a second cause: the
+specific `permission_canary_failed` belonged to the earlier genuine failure, read out of its file
+by the run that then succeeded.
+
+**2. The message on the path that remains — `ready_timeout` told the user to retry.** Nothing
+kills the child on a timeout, so the listener is still running when that prints; retrying spawns a
+second or collides with the first. It now reads *"…and was not stopped; confirm with cswarm listen
+status before starting another"*. **Checked and deliberately unchanged:** every other code in
+`listenerFailureMessage` follows a listener that reported `failed` and terminated, where "then
+retry" is correct. `ready_timeout` was the only one asserting a state the code does not create.
+
+Credit to Wren for the second half: it noticed that `listen stop` already does this well — it says
+it is asynchronous, says it is incomplete, and names the command to confirm with — and that the
+good pattern was one subcommand away from the bad one.
+
+**Gate:** `tests/p1-cli/d080-stale-start-status.test.ts`, reached by the `test:p1-cli` glob (4
+tests, verified present in its output). Mutation-tested: reverting the pid guard fails the stale
+test while both over-fix controls still pass, so the control discriminates and is not merely
+green. The controls exist because "require a pid match" could equally have been implemented by
+ignoring the stored status altogether, which would silence real failures and be a worse defect
+than this one.
+
+**NOT established:** whether this was the only cause of the observed report. D-081 records that
+the opencode canary genuinely is intermittent, so a start CAN fail for real; this fix stops a
+previous failure being reported as the current one, and does not make the canary reliable. The
+six-second `listen status` window described above is untouched — a status poll can still return a
+transient as though it were an outcome.
 
 ## D-081 — the opencode permission canary is intermittent · MAJOR · OPEN
 
