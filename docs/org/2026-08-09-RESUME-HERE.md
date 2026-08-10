@@ -8,15 +8,14 @@ work** — see "What I got wrong" below.
 ## Refs
 
 ```
-main    2d62161   — SUPERSEDED, see the two lines below. Kept so the rot is visible.
-main    2fc605f   — GitHub, measured by `git ls-remote` 2026-08-09 late.
-main    dd41de1   — the second D-080 commit. Fast-forward verified against GitHub
-                    (`git merge-base --is-ancestor 2fc605f HEAD`).
-main    cf8fdd1   — LOCAL HEAD when this was written: dd41de1 plus this docs commit.
-                    THREE ahead of GitHub, not two — this line was wrong within one
-                    commit of being written, which is the rot this block is known for.
-                    Re-measure both ends; do not trust either number here.
+main    4f3dfd5   — LANDED. GitHub and local agree, verified by `git ls-remote` with
+                    both controls (an absent ref returns 0 rows, `main` returns 1).
+                    Everything below through the D-080 section is at or before this.
 ```
+
+The three lines this block held before are kept in git history rather than here; each was
+accurate when written and stale within the hour. Two of them were superseded by my own commits
+while I was writing the file.
 
 Run `git rev-parse --short main` and `git ls-remote https://github.com/Ridge-io/cloud-swarm
 refs/heads/main` before trusting either line. This block was already wrong once within an hour of
