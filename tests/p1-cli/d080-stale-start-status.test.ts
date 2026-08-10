@@ -256,3 +256,53 @@ test("D-080: a CONCURRENT instance's failure is not adopted either", async () =>
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("D-080: a BACKWARD CLOCK STEP degrades the error code, it does not swallow the failure", async () => {
+  /* Raised by the exact-review arm on the second round. The floor is the parent's `Date.now()`
+   * and `startedAt` is the child's, so a backward clock step between the two can put this
+   * instance's OWN status before its own floor and fail the match.
+   *
+   * The arm's premise was partly wrong — parent and child are one process tree on one machine, so
+   * there are not two clocks to disagree — but a single clock CAN step backward, so the case is
+   * real. What it claimed as the consequence is what this pins, and it is smaller: the specific
+   * code is replaced by `process_exit`, promptly, because the supervisor terminates after a failed
+   * start and isProcessAlive sees it. Worse diagnostics; not a swallowed failure and not a hang.
+   *
+   * Recorded as a bounded, measured limitation instead of being argued away. It is strictly better
+   * than the defect being fixed, which reported a specific code that was WRONG. */
+  const { dir, p } = paths();
+  try {
+    await writeListenerStatus(
+      p,
+      status({ pid: 2222, startedAt: new Date(FLOOR - 5_000).toISOString() }),
+    );
+
+    const alive = false; // the child wrote `failed` and exited, which is what it does
+    const started = Date.now();
+    await assert.rejects(
+      waitForListenerReady(p, {
+        expectedPid: 2222,
+        startedAtFloorMs: FLOOR,
+        timeoutMs: 5_000,
+        pollMs: 20,
+        isProcessAlive: () => alive,
+      }),
+      (error: unknown) => {
+        assert.ok(error instanceof ListenerStartupError);
+        assert.equal(
+          (error as ListenerStartupError).code,
+          "process_exit",
+          "the failure was swallowed rather than degraded",
+        );
+        // Promptly: the 500ms exit grace, nowhere near the 5s timeout.
+        assert.ok(
+          Date.now() - started < 3_000,
+          "it waited for the timeout instead of reporting the exit",
+        );
+        return true;
+      },
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

@@ -4613,6 +4613,24 @@ rejects. With that test added, all three mutations discriminate:
 | drop the timestamp floor | fails the pid-reuse test |
 | restore `"was not stopped"` | fails the claim test |
 
+**Second review round on the replacement SHA.** Gemini returned a reasoned PASS on all three
+questions put to it. Codex returned FAIL on three, and two of the three do not survive contact
+with the code:
+
+- *"Parent and child wall clocks can differ."* **Refuted.** They are one process tree on one
+  machine; there is one clock. The half that IS real is that a single clock can step backward.
+- *"`cswarm did not stop it` is not established — some path may have stopped the child."*
+  **Refuted by enumeration.** The only `child.kill()` in the start path is the
+  `child.pid === undefined` guard at `cli.ts:3601`, which throws before `waitForListenerReady` is
+  ever called, and the wait itself contains no kill, stop, signal, or abort. No path reaching
+  `ready_timeout` has stopped the child.
+- *"A backward step can swallow this instance's genuine failure."* **Real, and smaller than
+  claimed** — now pinned by a test rather than argued away. The supervisor terminates after a
+  failed start, so `isProcessAlive` observes the exit and the error is reported as `process_exit`
+  within the 500ms grace. The specific code degrades; the failure is not swallowed and there is no
+  hang. That is strictly better than the defect being fixed, which reported a specific code that
+  was **wrong**.
+
 Over-fix controls: this instance's own failure is still reported, and a caller supplying neither
 identifier gets `ready_timeout` rather than a stored code. They exist because "require a pid
 match" could equally have been implemented by ignoring the stored status altogether, which would
