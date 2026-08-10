@@ -247,6 +247,72 @@ export function currentTargetSummary(
   };
 }
 
+/** The deployment a cold install belongs to. Overridable so a private deployment can self-host. */
+export const DEFAULT_SITE_ORIGIN = "https://commonswarm.com";
+
+/** One meta tag's content, by name, from an HTML document. Our own markup, not the general case. */
+function metaContent(html: string, name: string): string | null {
+  /* Attribute order is fixed by our own templates (name then content) and both are
+   * double-quoted. Deliberately narrow: this parses ONE shape and returns null for anything
+   * else, rather than pretending to be an HTML parser. */
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const pattern = new RegExp(
+    `<meta\\s+name="${escaped}"\\s+content="([^"]*)"`,
+    "i",
+  );
+  const found = pattern.exec(html);
+  return found?.[1] ?? null;
+}
+
+/**
+ * The Cloud target of the deployment this CLI was installed from. Returns null on ANY failure.
+ *
+ * F-1 of the 2026-08-10 dogfood. `install.sh` closes by telling a stranger with no invite to run
+ * `cswarm login` and `cswarm new`, and both refused: no Cloud target is selected. The remedy text
+ * then offered three routes and none was open to that reader — they had no invite link, "whoever
+ * runs this deployment" was themselves, and they had not created a Supabase project. The
+ * installer's own comment at line 147 states the reason not to send someone to `login`, 35 lines
+ * above the line that does it.
+ *
+ * The values are not secret and are already published, by us, on the host the installer came
+ * from — AGENTS.md: "The anon key is a public identifier protected by RLS, not a secret." So this
+ * is the onboarding direction applied: detect rather than ask. Trusting HTTPS from this origin is
+ * the same trust already placed in it by `curl -fsSL … | sh`.
+ *
+ * Null on every failure so the CALLER can surface the original, more informative error. A
+ * discovery that reported its own network problem would replace a message about the user's
+ * situation with one about ours.
+ */
+export async function discoverCloudTarget(
+  options: { origin?: string; fetcher?: typeof fetch } = {},
+): Promise<CloudTarget | null> {
+  const origin = options.origin ?? process.env.CSWARM_SITE ?? DEFAULT_SITE_ORIGIN;
+  /* Refuse plaintext outright, BEFORE any request. A discovered target is written to the
+   * credential store, so an origin that can be tampered with in flight chooses where this CLI
+   * sends its traffic from then on. */
+  if (!origin.startsWith("https://")) return null;
+  const doFetch = options.fetcher ?? fetch;
+  try {
+    const response = await doFetch(`${origin}/start`, {
+      headers: { accept: "text/html" },
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!response.ok) return null;
+    const html = await response.text();
+    const url = metaContent(html, "commonswarm:url");
+    const anonKey = metaContent(html, "commonswarm:anon-key");
+    /* This guard is NOT independently gated by a test, and that is recorded rather than hidden:
+     * deleting it leaves every F-1 test green, because `cloudTarget(url, null)` currently throws
+     * a TypeError that the catch below turns into the same null. So the behaviour is right for
+     * the wrong reason. Keep it — the alternative is a code path whose correctness depends on a
+     * crash, and a future lenient `cloudTarget` would then save a target with no key. */
+    if (url === null || anonKey === null) return null;
+    return cloudTarget(url, anonKey);
+  } catch {
+    return null;
+  }
+}
+
 function missingTargetError(mode: "human" | "agent"): Error {
   if (mode === "agent") {
     return new Error(

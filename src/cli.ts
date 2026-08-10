@@ -37,6 +37,8 @@ import {
   type CloudTarget,
 } from "./cloud/config.js";
 import {
+  discoverCloudTarget,
+  DEFAULT_SITE_ORIGIN,
   clearCurrentTarget,
   currentTargetSummary,
   readCurrentTarget,
@@ -415,13 +417,47 @@ grants no new authority and is not a governed product workspace-creation path.`;
 }
 
 async function target(args: Arguments): Promise<CloudTarget> {
-  return await resolveCloudTarget({
-    explicitUrl: args.optional("url"),
-    explicitAnonKey: args.optional("anon-key"),
-    environmentalUrl: process.env.SWARM_CLOUD_URL,
-    environmentalAnonKey: process.env.SWARM_CLOUD_ANON_KEY,
-    mode: args.has("agent-token-stdin") ? "agent" : "human",
-  });
+  const mode = args.has("agent-token-stdin") ? "agent" : "human";
+  try {
+    return await resolveCloudTarget({
+      explicitUrl: args.optional("url"),
+      explicitAnonKey: args.optional("anon-key"),
+      environmentalUrl: process.env.SWARM_CLOUD_URL,
+      environmentalAnonKey: process.env.SWARM_CLOUD_ANON_KEY,
+      mode,
+    });
+  } catch (error) {
+    /* F-1. A cold self-serve user has no target and no way to get one: they hold no invite link,
+     * "whoever runs this deployment" is themselves, and they created no Supabase project. The
+     * deployment publishes its own target on the host they installed from, so ask it.
+     *
+     * Narrow on purpose. Only when NOTHING supplied a URL — an explicit flag, the environment, or
+     * a saved target — so this can never override a choice the user made, and never redirect a
+     * command that was merely missing its anon key. Agent mode is excluded because agent
+     * credentials deliberately do not inherit a human's target. */
+    if (
+      mode !== "human" ||
+      args.optional("url") !== undefined ||
+      process.env.SWARM_CLOUD_URL !== undefined ||
+      (await readCurrentTarget()) !== null
+    ) {
+      throw error;
+    }
+    const discovered = await discoverCloudTarget();
+    /* Rethrow the ORIGINAL error, which describes the user's situation, rather than one about
+     * our network. */
+    if (discovered === null) throw error;
+    await writeCurrentTarget(discovered);
+    /* stderr, so this never contaminates --json on stdout. Announced rather than silent: the CLI
+     * just chose where this machine sends its traffic, and the user is entitled to know which
+     * deployment and how to change it. */
+    process.stderr.write(
+      `Using the CommonSwarm deployment at ${discovered.url}, discovered from ${
+        process.env.CSWARM_SITE ?? DEFAULT_SITE_ORIGIN
+      } and saved. Change it with cswarm target set, or point CSWARM_SITE at your own deployment.\n`,
+    );
+    return discovered;
+  }
 }
 
 async function store(
