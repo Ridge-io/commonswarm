@@ -1347,7 +1347,7 @@ export function askWaitJsonPayload(
   return {
     status: "accepted",
     message: timedOut
-      ? "Ask shared. No reply arrived before the wait ended; the ask remains live."
+      ? ASK_WAIT_TIMEOUT_MESSAGE
       : "Ask shared and a correlated reply arrived.",
     signal: ask,
     reply,
@@ -1381,6 +1381,24 @@ export function postSignalTargets(
     in_reply_to: null,
   };
 }
+
+/**
+ * The ask-wait timeout line, in ONE place because it is emitted from TWO — the human path in
+ * `cli.ts` and the JSON payload below.
+ *
+ * F-5 of the 2026-08-10 dogfood. The sentence used to end at "the ask remains live", which is
+ * true and leaves the reader with nothing to do. That is the defect Wren and Joist recorded on
+ * `listen stop`: a state word carrying weight its sentence does not, in a success-shaped
+ * response. `listen stop` was fixed by naming the confirming command, and this is the same shape.
+ *
+ * `cswarm inbox` is the verified answer, not a guess: the dogfood posted an ask, replied to it,
+ * and read the reply back from the asker's inbox.
+ *
+ * Shared rather than duplicated for the reason `archiveKnownGaps` is shared — a copy in each
+ * surface is a copy that drifts, and a test naming one of them cannot see the other.
+ */
+export const ASK_WAIT_TIMEOUT_MESSAGE =
+  "Ask shared. No reply arrived before the wait ended; the ask remains live. Check for a reply with: cswarm inbox";
 
 export function renderSignals(
   signals: readonly SignalRecord[],

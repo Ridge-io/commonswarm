@@ -113,6 +113,7 @@ import {
   type WorkspaceWarning,
 } from "./cloud/workspaces.js";
 import {
+  ASK_WAIT_TIMEOUT_MESSAGE,
   askWaitJsonPayload,
   followStopFrame,
   formatFollowFrame,
@@ -2282,7 +2283,7 @@ async function runPostSignal(
     );
     if (waitResult.timedOut || reply === null) {
       process.stdout.write(
-        `Ask shared. No reply arrived before the wait ended; the ask remains live.\n${
+        `${ASK_WAIT_TIMEOUT_MESSAGE}\n${
           renderSignals([signal], {
             inbox: false,
             includeStale: true,
