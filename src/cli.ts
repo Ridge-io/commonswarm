@@ -167,6 +167,21 @@ import {
   type ListenerStatus,
 } from "./listener/index.js";
 
+/**
+ * Every flag this build accepts, for ERROR WORDING ONLY — never for acceptance. See the throw in
+ * the parser for why that distinction is load-bearing. Kept honest by a gate that reads the
+ * usage text and requires every flag printed there to appear here.
+ */
+const KNOWN_FLAGS = new Set([
+  "about", "agent-token-stdin", "all-devices", "anon-key", "branch", "capability-id",
+  "claude-executable", "codex-executable", "confirm", "cwd", "device-id", "effort", "email",
+  "epoch", "evidence", "follow", "force-file-store", "foreground", "grok-executable", "head-sha",
+  "help", "include-stale", "invitation-id", "invitation-token-stdin", "json", "kind", "limit",
+  "link-stdin", "local", "model", "name", "ndjson", "no-browser", "opencode-executable",
+  "permissions", "principal-id", "provider", "reveal-anon-key", "run-id", "since", "site", "slug",
+  "task-id", "to", "token-id", "ttl-ms", "uid", "until", "url", "version", "wait", "workspace-id",
+]);
+
 const BOOLEAN_FLAGS = new Set([
   "agent-token-stdin",
   "all-devices",
@@ -243,6 +258,26 @@ class Arguments {
       }
       const next = values[index + 1];
       if (next === undefined || next.startsWith("--")) {
+        /* Wren, 2026-08-10. Every unknown flag reported "--X requires a value", because anything
+         * outside BOOLEAN_FLAGS is assumed to take one. So a flag that DOES NOT EXIST was
+         * reported as a flag used wrongly, and the user was told to fix their invocation rather
+         * than that the thing they typed is not a flag.
+         *
+         * Found when someone on 0.1.11 tried `--reveal-anon-key`, a flag that only exists on a
+         * later build: they were told it "requires a value". Same family as D-080 — the error
+         * blames the reader for something that is not their doing. AGENTS.md already records the
+         * other cost of this: a control written with a bare `--not-a-real-flag` died in the
+         * parser and was passing for the wrong reason.
+         *
+         * MESSAGING ONLY. The accept path is untouched, so a value-taking flag missing from
+         * KNOWN_FLAGS still works exactly as before; the worst a stale list can do is word an
+         * error badly. Making the list authoritative for ACCEPTANCE would turn an omission into
+         * a broken command, which is a far worse failure than a clumsy sentence. */
+        if (!KNOWN_FLAGS.has(name)) {
+          throw new Error(
+            `unknown option --${name}; run cswarm --help to see the options this version accepts`,
+          );
+        }
         throw new Error(`--${name} requires a value`);
       }
       this.push(name, next);
@@ -365,7 +400,10 @@ Usage:
 
 Credential selection for command/dogfood:
   default                 refresh the human login from secure storage
-  --agent-token-stdin     read a mint/seed credential artifact (or legacy swm_agt_) from stdin
+  --agent-token-stdin     read a mint/seed credential artifact (or legacy swm_agt_) from stdin.
+                          listen start is the exception: it needs the COMPLETE JSON artifact,
+                          including expires_at, because a bare token cannot identify durable
+                          state or rotate safely. Every other command accepts either form
 
 Signals (intention sharing) accept the same credential selection. Agent mode
 never opens a browser or infers a human's saved workspace. Durations use a whole

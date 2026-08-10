@@ -4702,3 +4702,69 @@ live (model answered in 7s and did attempt tool calls), which refuted the sevent
 
 **Not established:** the cause. Only that it is intermittent, not a regression, not a missing
 capability, and not a hang (6.8s against a 30s timeout).
+
+## D-082 — one flag name, two contracts; and every unknown flag blamed the user · MINOR · FIXED
+
+**Found by Wren, 2026-08-10, out of a disagreement between two agents who were both right.**
+
+Wren reported that `--agent-token-stdin` rejects a bare agent token. I could not reproduce it and
+said so. Wren then found why, and the finding is better than either original claim:
+
+```
+cswarm members      --agent-token-stdin   <bare swm_agt_>  -> WORKS
+cswarm listen start --agent-token-stdin   <bare swm_agt_>  -> refused: "requires the complete
+    JSON credential artifact, including expires_at; a bare token cannot identify durable state
+    or rotate safely"
+```
+
+**The flag NAME is shared and the CONTRACT is not.** I had tested `members`; Wren had hit
+`listen start`. `--help` documented the bare form as if it were universal, so **the documentation
+was true for whichever subcommand the reader happened to check it against.**
+
+The refusal itself is correct and is unchanged: `listen start` keeps durable state and rotates,
+and neither is possible without `expires_at`. What was wrong was the documentation. `--help` now
+names the exception, and a gate holds all three claims — the exception, the reason, and the
+general case, the last so that deleting the bare form to satisfy the first two fails.
+
+**Wren also nearly filed an inconclusive result, and recorded why it was inconclusive.** Its first
+attempt used a FAKE `swm_agt_` string, which was rejected by *format validation* — "must be
+`swm_agt_` followed by 32 base64url-encoded random bytes" — before ever reaching the artifact
+check. That error looks like an answer and is not one. This is the AGENTS.md rule about a control
+that dies early, hit in the field: **only a real token exercises the path.**
+
+### The second half, which is broader than the report that produced it
+
+Wren observed that `--reveal-anon-key` on 0.1.11 fails with *"requires a value"* rather than
+*"unknown flag"*, and called it trivial. Measured, it is neither trivial nor specific to that
+flag: **every unknown flag reported "requires a value", on both builds**, because the parser
+assumes anything outside `BOOLEAN_FLAGS` takes one.
+
+```
+0.1.11  cswarm target show --not-a-real-flag  -> cswarm: --not-a-real-flag requires a value
+main    cswarm target show --not-a-real-flag  -> cswarm: --not-a-real-flag requires a value
+```
+
+So a flag that **does not exist** was reported as a flag **used wrongly**. Wren named the family
+exactly: it is D-080's shape — the error blames the reader for something that is not their doing,
+here for being on an older version. AGENTS.md already records the other cost, in the list of traps
+that manufacture a false negative: a control written with a bare `--not-a-real-flag` died in the
+parser before reaching the gate it was meant to exercise, and passed for the wrong reason.
+
+**FIXED, messaging only.** `KNOWN_FLAGS` is consulted **when building the error and never when
+accepting one**, so a value-taking flag missing from the list still works exactly as before; the
+worst a stale list can do is word an error badly. Making it authoritative for acceptance would
+turn an omission into a broken command — a far worse failure than a clumsy sentence.
+
+The list is kept honest by a gate that reads the **usage text** and requires every advertised flag
+to appear in it, so adding a documented flag without listing it fails a test rather than reaching
+a user as *"unknown option --your-new-flag"*.
+
+**Gate:** `tests/p1-cli/unknown-flag-message.test.ts`, reached by the `test:p1-cli` glob.
+Mutation-tested, both verified to land: reporting every failure as unknown fails the
+distinguishability control, and removing one documented flag from `KNOWN_FLAGS` fails the coverage
+gate.
+
+**NOT established:** whether any OTHER flag has a per-subcommand contract. Only
+`--agent-token-stdin` was examined, because that is the one that produced a disagreement. The
+general question — does any flag mean different things to different subcommands — is unmeasured.
+
