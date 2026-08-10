@@ -29,6 +29,8 @@ import {
  * It also explains the backwards diagnostics Wren noticed — the specific message belonged to the
  * earlier genuine failure, and the vague one to the start that actually failed. */
 
+const FLOOR = Date.parse("2026-08-09T23:04:34.000Z");
+
 const status = (over: Partial<ListenerStatus>): ListenerStatus => ({
   version: 1,
   logPath: "/tmp/d080-listener.log",
@@ -40,7 +42,7 @@ const status = (over: Partial<ListenerStatus>): ListenerStatus => ({
   principalId: "33333333-3333-4333-8333-333333333333",
   pid: 1111,
   state: "failed",
-  startedAt: new Date(0).toISOString(),
+  startedAt: new Date(FLOOR - 3_600_000).toISOString(), // a PREVIOUS run by default
   readyAt: null,
   stoppedAt: new Date(0).toISOString(),
   updatedAt: new Date(0).toISOString(),
@@ -79,6 +81,7 @@ test("D-080: a PREVIOUS run's failure does not end this start", async () => {
     await assert.rejects(
       waitForListenerReady(p, {
         expectedPid: 2222,
+        startedAtFloorMs: FLOOR,
         timeoutMs: 120,
         pollMs: 20,
         isProcessAlive: () => true,
@@ -105,11 +108,15 @@ test("D-080: THIS start's own failure is still reported — the fix does not swa
    * defect than the one being fixed. */
   const { dir, p } = paths();
   try {
-    await writeListenerStatus(p, status({ pid: 2222 }));
+    await writeListenerStatus(
+      p,
+      status({ pid: 2222, startedAt: new Date(FLOOR + 10).toISOString() }),
+    );
 
     await assert.rejects(
       waitForListenerReady(p, {
         expectedPid: 2222,
+        startedAtFloorMs: FLOOR,
         timeoutMs: 500,
         pollMs: 20,
         isProcessAlive: () => true,
@@ -128,15 +135,32 @@ test("D-080: THIS start's own failure is still reported — the fix does not swa
   }
 });
 
-test("D-080: with no expectedPid the old behaviour stands, so callers that cannot know are unaffected", async () => {
+test("D-080: PID REUSE — a matching pid is not enough, the status must also be new", async () => {
+  /* Raised independently by BOTH review arms. Pids are recycled, and this directory is keyed by
+   * config hash, so the one file a retry reads is the previous run's — whose pid can come round
+   * again. The floor is captured before the spawn, so an earlier run's status fails it whatever
+   * pid it carries. */
   const { dir, p } = paths();
   try {
-    await writeListenerStatus(p, status({ pid: 9999 }));
+    await writeListenerStatus(
+      p,
+      status({ pid: 2222, startedAt: new Date(FLOOR - 60_000).toISOString() }),
+    );
 
     await assert.rejects(
-      waitForListenerReady(p, { timeoutMs: 500, pollMs: 20 }),
+      waitForListenerReady(p, {
+        expectedPid: 2222, // the SAME pid — only the timestamp separates the runs
+        startedAtFloorMs: FLOOR,
+        timeoutMs: 120,
+        pollMs: 20,
+        isProcessAlive: () => true,
+      }),
       (error: unknown) => {
-        assert.ok(error instanceof ListenerStartupError);
+        assert.ok(
+          !(error instanceof ListenerStartupError) ||
+            (error as ListenerStartupError).code !== "permission_canary_failed",
+          "a recycled pid let a previous run's failure end this start",
+        );
         return true;
       },
     );
@@ -145,7 +169,31 @@ test("D-080: with no expectedPid the old behaviour stands, so callers that canno
   }
 });
 
-test("D-080: the ready timeout does not tell the user to retry, because nothing was stopped", async () => {
+test("D-080: a caller that supplies neither identifier never adopts a stored failure", async () => {
+  /* Both arms flagged the original `expectedPid === undefined ||` as a latent copy of the defect.
+   * A caller that cannot identify its own instance must not be handed one. */
+  const { dir, p } = paths();
+  try {
+    await writeListenerStatus(p, status({ pid: 9999 }));
+
+    await assert.rejects(
+      waitForListenerReady(p, { timeoutMs: 120, pollMs: 20 }),
+      (error: unknown) => {
+        assert.ok(error instanceof ListenerStartupError);
+        assert.equal(
+          (error as ListenerStartupError).code,
+          "ready_timeout",
+          "an unidentified caller adopted a stored terminal status",
+        );
+        return true;
+      },
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("D-080: the ready timeout does not advise a retry, because cswarm did not stop it", async () => {
   /* This pins a CLAIM, so it is checked against what the code does, not against another message.
    * The authority: `listen start`'s catch turns ListenerStartupError into this text and never
    * kills the child, so on a timeout the listener is still running. "then retry" asserted the
@@ -153,6 +201,12 @@ test("D-080: the ready timeout does not tell the user to retry, because nothing 
   const message = listenerFailureMessage("ready_timeout", "opencode");
 
   assert.doesNotMatch(message, /retry/, "the timeout still advises a retry");
+  assert.doesNotMatch(
+    message,
+    /was not stopped/,
+    "it asserts the listener's state, which the loop never re-checks before throwing",
+  );
+  assert.match(message, /cswarm did not stop it/, "it must scope the claim to our own action");
   assert.match(message, /cswarm listen status/, "it must name the confirming command");
 
   /* CONTROL. A genuine startup failure follows a runtime that terminated, so there "retry" is
@@ -162,4 +216,43 @@ test("D-080: the ready timeout does not tell the user to retry, because nothing 
     /retry/,
     "a terminal failure should still say retry",
   );
+});
+
+test("D-080: a CONCURRENT instance's failure is not adopted either", async () => {
+  /* This is what the pid check earns on its own, and it was missing: the mutation that deletes
+   * the pid match passed every other test here, because each of those is also caught by the
+   * timestamp floor. An ungated check is one a later reader will simplify away after running
+   * exactly that mutation and seeing nothing fail.
+   *
+   * The case is real. The directory is keyed by config hash, so two starts with identical config
+   * share it. The file fallback runs precisely when the socket is not answering — the window in
+   * which a racing instance's terminal status is on disk and new enough to clear the floor. */
+  const { dir, p } = paths();
+  try {
+    await writeListenerStatus(
+      p,
+      // NEWER than this start's floor, so the floor admits it. Different pid: not ours.
+      status({ pid: 4444, startedAt: new Date(FLOOR + 5).toISOString() }),
+    );
+
+    await assert.rejects(
+      waitForListenerReady(p, {
+        expectedPid: 2222,
+        startedAtFloorMs: FLOOR,
+        timeoutMs: 120,
+        pollMs: 20,
+        isProcessAlive: () => true,
+      }),
+      (error: unknown) => {
+        assert.ok(
+          !(error instanceof ListenerStartupError) ||
+            (error as ListenerStartupError).code !== "permission_canary_failed",
+          "a concurrent instance's failure ended this start",
+        );
+        return true;
+      },
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

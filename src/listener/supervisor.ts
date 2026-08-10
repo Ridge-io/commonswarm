@@ -477,6 +477,13 @@ export async function waitForListenerReady(
     sleep?: (ms: number) => Promise<void>;
     expectedPid?: number;
     isProcessAlive?: () => boolean;
+    /* Epoch ms captured BEFORE the child is spawned. A stored status older than this belongs to
+     * an earlier run, whatever pid it carries. D-080: the pid check alone is not sufficient,
+     * because pids are recycled and this directory is keyed by config hash, so the one file a
+     * retry reads is the one written by the run whose pid could come round again. The floor
+     * precedes the spawn, so this instance's own startedAt is always at or after it and its
+     * genuine failures are still reported. */
+    startedAtFloorMs?: number;
   } = {},
 ): Promise<ListenerStatus> {
   const timeoutMs = options.timeoutMs ?? 120_000;
@@ -522,8 +529,18 @@ export async function waitForListenerReady(
        * This one did not check at all, so it is the only path by which a stale terminal status
        * can end a healthy start. */
       const stored = await readListenerStatus(paths).catch(() => null);
+      /* Both identifiers must MATCH, never merely be absent. The first version read
+       * `expectedPid === undefined || …`, which kept the original unsafe behaviour for any caller
+       * that could not supply a pid — a latent copy of the defect, and both review arms flagged
+       * it. `listen start` is the only caller in src/ and it supplies both, so requiring them
+       * costs nothing here and cannot be reintroduced by a future caller that omits one.
+       *
+       * Failing this check only means the shortcut is not taken: the wait continues to ready, to
+       * process_exit, or to the timeout. It can delay a report; it cannot invent one. */
       const storedIsThisInstance = stored !== null &&
-        (options.expectedPid === undefined || stored.pid === options.expectedPid);
+        options.expectedPid !== undefined && stored.pid === options.expectedPid &&
+        options.startedAtFloorMs !== undefined &&
+        Date.parse(stored.startedAt) >= options.startedAtFloorMs;
       if (
         storedIsThisInstance &&
         (stored.state === "failed" || stored.state === "stopped")

@@ -3185,8 +3185,14 @@ export function listenerFailureMessage(
      *
      * Wren, who measured D-080, pointed at `listen stop` as the pattern already in the product:
      * it says it is asynchronous, says it is incomplete, and names the command to confirm with.
-     * The timeout is a report that we stopped waiting, not that the listener stopped. */
-    return "the listener did not become ready within two minutes and was not stopped; confirm with cswarm listen status before starting another";
+     * The timeout is a report that we stopped waiting, not that the listener stopped.
+     *
+     * The wording asserts OUR action, not the process's state, and that distinction is the whole
+     * point. A first version said "was not stopped", which reads as a claim about the listener —
+     * and both review arms refuted it: the loop does no final liveness check, so the child can
+     * exit between the last poll and this throw. What IS guaranteed is that cswarm did not stop
+     * it, because this path never kills the child. Say the thing that is true. */
+    return "the listener did not become ready within two minutes and cswarm did not stop it; check cswarm listen status before starting another";
   }
   return `listener failed (${code}); no ready listener was left running`;
 }
@@ -3558,6 +3564,10 @@ async function runListenStart(args: Arguments): Promise<void> {
         args.optional("codex-executable") ?? "codex-acp",
       );
     }
+    /* D-080. Captured BEFORE the spawn on purpose: any status file older than this belongs to
+     * an earlier run in this config-hash-keyed directory, whatever pid it carries. Taking it
+     * after the spawn would race the child's own first write and could discard a real failure. */
+    const startedAtFloorMs = Date.now();
     const child = await spawnDetachedListener({
       spec: {
         entrypoint,
@@ -3594,6 +3604,7 @@ async function runListenStart(args: Arguments): Promise<void> {
     try {
       status = await waitForListenerReady(paths, {
         expectedPid: child.pid,
+        startedAtFloorMs,
         isProcessAlive: () =>
           child.exitCode === null && child.signalCode === null,
       });

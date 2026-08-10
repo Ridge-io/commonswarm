@@ -4564,9 +4564,18 @@ specific `permission_canary_failed` belonged to the earlier genuine failure, rea
 by the run that then succeeded.
 
 **2. The message on the path that remains — `ready_timeout` told the user to retry.** Nothing
-kills the child on a timeout, so the listener is still running when that prints; retrying spawns a
-second or collides with the first. It now reads *"…and was not stopped; confirm with cswarm listen
-status before starting another"*. **Checked and deliberately unchanged:** every other code in
+kills the child on a timeout, so retrying spawns a second listener or collides with the first.
+
+~~The first correction read *"…and was not stopped; confirm with cswarm listen status"*.~~
+**Dead.** Both review arms refuted it, and Codex's form of the argument is the sharper one: the
+wait loop performs **no final liveness check**, so the child can exit between the last poll and
+the throw. *"Was not stopped"* is a claim about the listener's state that the code does not
+guarantee — and the test I had written **required that string**, so the suite would have defended
+it. Same shape as the `/every session/` incident in AGENTS.md, caught this time by a non-author.
+
+It now reads *"the listener did not become ready within two minutes and cswarm did not stop it;
+check cswarm listen status before starting another"*. The wording asserts **our action**, not the
+process's state. That we did not stop it is guaranteed — this path never kills the child. **Checked and deliberately unchanged:** every other code in
 `listenerFailureMessage` follows a listener that reported `failed` and terminated, where "then
 retry" is correct. `ready_timeout` was the only one asserting a state the code does not create.
 
@@ -4574,12 +4583,40 @@ Credit to Wren for the second half: it noticed that `listen stop` already does t
 it is asynchronous, says it is incomplete, and names the command to confirm with — and that the
 good pattern was one subcommand away from the bad one.
 
-**Gate:** `tests/p1-cli/d080-stale-start-status.test.ts`, reached by the `test:p1-cli` glob (4
-tests, verified present in its output). Mutation-tested: reverting the pid guard fails the stale
-test while both over-fix controls still pass, so the control discriminates and is not merely
-green. The controls exist because "require a pid match" could equally have been implemented by
-ignoring the stored status altogether, which would silence real failures and be a worse defect
-than this one.
+**3. A pid match alone was not enough, and the first version of this fix shipped in the commit
+below with two holes that BOTH review arms found independently** (Gemini as the inversion arm,
+Codex as the exact-review arm; Grok is credit-exhausted and Pi has no API key on this machine):
+
+- **PID REUSE.** Pids are recycled. This directory is keyed by config hash, so the one file a
+  retry reads is the previous run's — whose pid can come round again. Fixed by a `startedAtFloorMs`
+  captured **before** the spawn: a status older than the floor belongs to an earlier run whatever
+  pid it carries. The floor precedes the spawn, so this instance's own `startedAt` is always at or
+  after it and its genuine failures are still reported. `startedAt` is minted fresh per run at
+  `supervisor.ts:131` and never inherited, which is what makes it a sound discriminator.
+- **`expectedPid === undefined ||` kept the unsafe behaviour** for any caller that could not
+  supply a pid — a latent copy of the defect. Both identifiers are now required to MATCH rather
+  than merely be absent. `listen start` is the only caller in `src/` and supplies both.
+
+**Gate:** `tests/p1-cli/d080-stale-start-status.test.ts`, reached by the `test:p1-cli` glob (6
+tests, verified present in its output).
+
+**Mutation-tested, and the first round FAILED to justify one of the three mechanisms — recorded
+because the finding is the point.** Deleting the pid match left every test green: each case was
+also caught by the timestamp floor. An ungated check is one a later reader will simplify away
+after running exactly that mutation. The missing case was a **concurrent** second instance — a
+status written AFTER the floor under a different pid, which the floor admits and only the pid
+rejects. With that test added, all three mutations discriminate:
+
+| mutation | result |
+|---|---|
+| drop the pid match | fails the concurrent-instance test |
+| drop the timestamp floor | fails the pid-reuse test |
+| restore `"was not stopped"` | fails the claim test |
+
+Over-fix controls: this instance's own failure is still reported, and a caller supplying neither
+identifier gets `ready_timeout` rather than a stored code. They exist because "require a pid
+match" could equally have been implemented by ignoring the stored status altogether, which would
+silence real failures and be a worse defect than this one.
 
 **NOT established:** whether this was the only cause of the observed report. D-081 records that
 the opencode canary genuinely is intermittent, so a start CAN fail for real; this fix stops a
