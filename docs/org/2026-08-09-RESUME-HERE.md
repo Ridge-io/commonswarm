@@ -8,7 +8,10 @@ work** — see "What I got wrong" below.
 ## Refs
 
 ```
-main    2d62161   — pushed. GitHub and local agree at this SHA.
+main    2d62161   — SUPERSEDED, see the two lines below. Kept so the rot is visible.
+main    2fc605f   — GitHub, measured by `git ls-remote` 2026-08-09 late.
+main    dd41de1   — LOCAL, two D-080 commits ahead of GitHub. Fast-forward verified
+                    (`git merge-base --is-ancestor 2fc605f HEAD`). Check whether it landed.
 ```
 
 Run `git rev-parse --short main` and `git ls-remote https://github.com/Ridge-io/cloud-swarm
@@ -146,6 +149,46 @@ heading against its body, and re-measure, before dispatching anyone against it.*
   then Wren committing it against its own endorsement). `exit 0` plus a success shape overrides
   the content. The fix is structural — say what to do next.
 
+## D-080 FIXED — and the review round is the part worth reading
+
+`1ed9ca7` (mechanism) and `dd41de1` (the two holes both review arms found). Client-side only;
+nothing deployed. Gates: build, `check:tests`, `npm test` 499/499, `test:p1-cli` 203/203.
+
+**The mechanism.** `waitForListenerReady` falls back to the status FILE when the live control
+query fails — which is the NORMAL state in the first moments of a start, because the socket is not
+up yet. The listener directory is keyed by CONFIG HASH, so an identical retry reads **the previous
+run's** terminal status and reports it as its own. The live branch already rejected a mismatched
+pid; the fallback checked nothing. This also explains the backwards diagnostics Wren recorded,
+without needing a second cause.
+
+**The first fix was insufficient and I published it before review.** Two arms (Gemini inversion,
+Codex exact) independently found the same two holes: pids are recycled so a pid match alone is not
+identity, and `expectedPid === undefined ||` preserved the unsafe behaviour for any caller that
+could not supply one. Both closed in `dd41de1` — a `startedAtFloorMs` captured **before** the
+spawn, and both identifiers now required to MATCH rather than merely be absent.
+
+**A CLI string I wrote asserted something the code does not guarantee, and my own test defended
+it.** The timeout message said the listener *"was not stopped"*. The wait loop performs no final
+liveness check, so the child can exit between the last poll and the throw. I had written a control
+**requiring** that string. This is the `/every session/` shape from AGENTS.md, and it was caught by
+a non-author, not by me. Now: *"cswarm did not stop it"* — our action, which is guaranteed, rather
+than the process's state, which is not. **The test NAME carried the refuted claim too**; a sweep
+over the claim family rather than over the diff is what found it.
+
+**The first mutation round failed to justify one of three mechanisms, and that is a result, not a
+hiccup.** Deleting the pid match left every test green, because each case was also caught by the
+timestamp floor. An ungated check is one a later reader deletes after running exactly that
+mutation. The missing case was a CONCURRENT second instance — a status written after the floor
+under a different pid, which the floor admits and only the pid rejects. All three discriminate now.
+
+## A TRAP THAT FIRED AGAIN, on the documented remedy itself
+
+AGENTS.md says of macOS's missing `timeout`: *"(Use `gtimeout`, or no timeout.)"* **`gtimeout` is
+not installed on `yulanbots-mac-mini`.** `gtimeout 60 git ls-remote …` exits 127 with no stdout, so
+the `ls-remote` control returned **0 rows** and read as *"the branch is absent from GitHub"* — the
+branch was present. The remedy reproduced the trap it fixes. AGENTS.md is corrected. The control
+is what caught it, for the second time in this file.
+
 ## NOT ESTABLISHED
 
 - Whether an archived workspace stays readable to its members (`read` filters `archived_at IS
@@ -159,3 +202,13 @@ heading against its body, and re-measure, before dispatching anyone against it.*
   needs a log join for `2026-08-08T13:16:45Z`–`13:17:02Z`.
 - Whether any of this friction causes abandonment. Every finding here came from people who wrote
   the product and wanted it to work.
+- **Whether D-080 was the only cause of the report Wren filed.** D-081 records the opencode canary
+  as genuinely intermittent, so a start CAN fail for real. This fix stops a previous failure being
+  reported as the current one; it does not make the canary reliable, and the two must not be
+  conflated by anyone reading the fix as "listener start is fixed".
+- **The six-second `listen status` window is untouched.** A status poll can still return a
+  transient as though it were an outcome — the second observer error in D-080, and a property of
+  the product rather than of the observer.
+- **D-080's fix has never been exercised against a real start.** Every gate on it is a pure unit
+  test with a synthetic status file. The measured scenario needs two consecutive starts in one
+  config-hash directory where the first fails.

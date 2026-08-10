@@ -344,6 +344,14 @@ agent nearly reported that a day of work had never reached GitHub. What caught i
 control on the same invocation — `main` must be present — which also returned zero, and **two zeroes
 from a probe that cannot fail is not a result.** (Use `gtimeout`, or no timeout.)
 
+★ **And `gtimeout` is not installed everywhere either — measured absent on `yulanbots-mac-mini`,
+2026-08-09.** It ships with coreutils (`brew install coreutils`), which is not a given on a fresh
+machine. Writing `gtimeout 60 git ls-remote …` there exits **127** with no stdout, which is
+byte-for-byte the failure the remedy was supposed to prevent: a `git ls-remote` control returned
+**0 rows** and read as *"the branch is absent from GitHub"* when the branch was present. The
+remedy reproduced the trap. `command -v gtimeout` before relying on it, or use no timeout — and
+note that the control is what caught this, again.
+
 This is the same family as the documented `$rev:src/...` zsh trap: **a dead command wearing the costume
 of a measurement.** Different door, identical outcome.
 
