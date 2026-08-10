@@ -306,3 +306,24 @@ test("D-080: a BACKWARD CLOCK STEP degrades the error code, it does not swallow 
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("D-080/F-3: the generic listener failure does not claim nothing was left running", async () => {
+  /* MEASURED false on production, 2026-08-10: a start on 0.1.11 printed
+   * "listener failed (stopped); no ready listener was left running" at 0s, while the listener it
+   * had spawned was `starting` with no error recorded and reached ready 24s later.
+   *
+   * Nothing on this path stops the child and nothing re-checks it, so the string asserted a state
+   * the code never observed — the same defect as the ready_timeout wording, in the fallback that
+   * the sweep for that one did not reach because it names no error code. */
+  const message = listenerFailureMessage("some_unmapped_code");
+
+  assert.doesNotMatch(
+    message,
+    /no ready listener was left running/,
+    "it still asserts a process state the code never checks",
+  );
+  assert.match(message, /cswarm listen status/, "it must name the confirming command");
+  /* CONTROL: the code itself is ours to assert and must survive — a fix that dropped the whole
+   * sentence would pass the assertion above while losing the only diagnostic it carried. */
+  assert.match(message, /some_unmapped_code/, "the failure code was dropped");
+});

@@ -3194,7 +3194,15 @@ export function listenerFailureMessage(
      * it, because this path never kills the child. Say the thing that is true. */
     return "the listener did not become ready within two minutes and cswarm did not stop it; check cswarm listen status before starting another";
   }
-  return `listener failed (${code}); no ready listener was left running`;
+  /* D-080, F-3 of the 2026-08-10 dogfood. "no ready listener was left running" was MEASURED
+   * false on production: a start printed it while the listener it had just spawned was in state
+   * `starting` with no error recorded, and that listener reached ready 24 seconds later. Nothing
+   * on this path stops the child, and nothing re-checks it before this string is built.
+   *
+   * Same correction as `ready_timeout` above: drop the claim about the process's state, which we
+   * do not check, and give the reader the command that answers it. The code is still named,
+   * because that is the part that is ours to assert. */
+  return `listener failed (${code}); check cswarm listen status before starting another`;
 }
 
 /** Resolve the detached Claude bridge while preserving its install remedy. */
