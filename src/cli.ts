@@ -341,8 +341,8 @@ Usage:
   cswarm listen start --agent-token-stdin [--url <url> --anon-key <key>] --workspace-id <uuid> --provider grok|opencode|claude|codex [--cwd <absolute-path>] [--model <model>] [--effort <level>] [--permissions deny|allow] [--grok-executable <path>] [--opencode-executable <path>] [--claude-executable <path>] [--codex-executable <path>] [--foreground] [--json]
   cswarm listen status [--url <url> --anon-key <key>] --workspace-id <uuid> --principal-id <uuid> [--json]
   cswarm listen stop [--url <url> --anon-key <key>] --workspace-id <uuid> --principal-id <uuid> [--json]
-  cswarm new "<project name>" [--url <url> --anon-key <key>] [--json]
-  cswarm new --name "<project name>" [--url <url> --anon-key <key>] [--json]
+  cswarm new "<workspace name>" [--url <url> --anon-key <key>] [--json]
+  cswarm new --name "<workspace name>" [--url <url> --anon-key <key>] [--json]
   cswarm workspaces [--url <url> --anon-key <key>] [--json]
   cswarm use <full-id|exact-name> [--url <url> --anon-key <key>] [--json]
   cswarm invite [--url <url> --anon-key <key>] [--workspace-id <uuid>] --email <email>
@@ -368,7 +368,7 @@ Credential selection for command/dogfood:
   --agent-token-stdin     read a mint/seed credential artifact (or legacy swm_agt_) from stdin
 
 Signals (intention sharing) accept the same credential selection. Agent mode
-never opens a browser or infers a human's saved project. Durations use a whole
+never opens a browser or infers a human's saved workspace. Durations use a whole
 number plus m, h, or d (for example 90m, 24h, or 7d) and are capped at 30d.
 Place -- before signal text that itself begins with -- to stop option parsing.
 
@@ -379,7 +379,7 @@ appear only in fresh success responses.
 
 cswarm link new hands someone a browser link to ONE work item before they install
 anything. It shows that item's name and state, the repository it belongs to, who
-invited them, and how long the project has existed — and reaches nothing else, not
+invited them, and how long the workspace has existed — and reaches nothing else, not
 the member list, not the message feed, not another work item. The link is printed
 once and never again, because only its hash is stored; it lasts a day by default
 and at most 7 days, and cswarm link revoke --capability-id <uuid> withdraws it
@@ -398,12 +398,12 @@ Successful login and invite acceptance save the current Cloud target. Override i
 per command with --url/--anon-key or SWARM_CLOUD_URL/SWARM_CLOUD_ANON_KEY;
 flags take precedence over environment, which takes precedence over the saved target.
 Agent credentials never inherit a human's saved target. Workspace flags may also
-be set with SWARM_CLOUD_WORKSPACE_ID. cswarm new starts a project of your own
+be set with SWARM_CLOUD_WORKSPACE_ID. cswarm new starts a workspace of your own
 (a name of 1 to 80 characters) and selects it; whether a deployment accepts that
 is a setting on the deployment, and an invite link is the other way in.
-Normal project selection is:
+Normal workspace selection is:
 cswarm workspaces, then cswarm use <full-id|exact-name>. A sole accepted
-project is saved automatically; ambiguous names require the full id and CommonSwarm
+workspace is saved automatically; ambiguous names require the full id and CommonSwarm
 never guesses. The workspace-id environment variable is a power-user override,
 with --workspace-id taking precedence. An invite link supplies its whole target
 and cannot be combined with --url or --anon-key.
@@ -809,7 +809,7 @@ async function runUse(args: Arguments): Promise<void> {
     human.userId,
   );
   const message =
-    `Selected project ${selected.name} (${selected.workspace_id}). Later commands will use it unless --workspace-id or SWARM_CLOUD_WORKSPACE_ID overrides it.`;
+    `Selected workspace ${selected.name} (${selected.workspace_id}). Later commands will use it unless --workspace-id or SWARM_CLOUD_WORKSPACE_ID overrides it.`;
   if (args.has("json")) {
     printJson({
       code: "project_selected",
@@ -825,7 +825,7 @@ async function runNew(args: Arguments): Promise<void> {
   const named = args.has("name");
   if (named && args.positionals.length > 1) {
     throw new Error(
-      "give the project name once: as a positional or as --name, not both",
+      "give the workspace name once: as a positional or as --name, not both",
     );
   }
   args.assertShape([...TARGET_FLAGS, "name", "json"], named ? 1 : 2);
@@ -834,7 +834,7 @@ async function runNew(args: Arguments): Promise<void> {
   assertWorkspaceName(name);
   const cloud = await target(args);
   const human = await humanCredential(args, cloud);
-  // The id is ours: the project has no route to be addressed by until it exists,
+  // The id is ours: the workspace has no route to be addressed by until it exists,
   // so the server takes the one we propose rather than handing one back.
   const proposedId = randomUUID();
   let result: ConnectCommandResult;
@@ -846,21 +846,21 @@ async function runNew(args: Arguments): Promise<void> {
   } catch (error) {
     if (error instanceof CommandTransportError) {
       throw new CommandTransportError(
-        `${error.message}; run cswarm workspaces to see whether the project exists before creating it again`,
+        `${error.message}; run cswarm workspaces to see whether the workspace exists before creating it again`,
       );
     }
     throw error;
   }
-  const response = acceptedConnect("project creation", result);
+  const response = acceptedConnect("workspace creation", result);
   const created = uuid(response.workspace_id, "workspace_id");
   if (created !== proposedId) {
     throw new Error(
-      "the server confirmed a different project than this command created; run cswarm workspaces before doing anything else",
+      "the server confirmed a different workspace than this command created; run cswarm workspaces before doing anything else",
     );
   }
   await writeWorkspaceDefault(human.store, human.userId, created);
   const message =
-    `Created project ${name} (${created}). It is now your selected project, so later commands will use it unless --workspace-id or SWARM_CLOUD_WORKSPACE_ID overrides it.`;
+    `Created workspace ${name} (${created}). It is now your selected workspace, so later commands will use it unless --workspace-id or SWARM_CLOUD_WORKSPACE_ID overrides it.`;
   const next =
     `Next: cswarm invite --email <address> brings someone in, and cswarm working-on "<what>" tells them what you have started.`;
   if (args.has("json")) {
@@ -982,7 +982,7 @@ async function runStatus(args: Arguments): Promise<void> {
       if (!args.has("json")) writeWorkspaceWarning(warnings[0]!);
     }
     const message =
-      "You're not in any projects yet. Ask a colleague to send you an invitation link, then accept it with cswarm accept --link-stdin.";
+      "You're not in any workspaces yet. Ask a colleague to send you an invitation link, then accept it with cswarm accept --link-stdin.";
     if (args.has("json")) {
       printJson({
         identity: {
@@ -1001,7 +1001,7 @@ async function runStatus(args: Arguments): Promise<void> {
       return;
     }
     process.stdout.write(
-      `You: ${identityLabel} (${human.userId})\nYou're not in any projects yet.\nAsk a colleague to send you an invitation link, then accept it with cswarm accept --link-stdin.\n`,
+      `You: ${identityLabel} (${human.userId})\nYou're not in any workspaces yet.\nAsk a colleague to send you an invitation link, then accept it with cswarm accept --link-stdin.\n`,
     );
     return;
   }
@@ -1240,7 +1240,7 @@ async function runMember(args: Arguments): Promise<void> {
   }
   const output = {
     message:
-      `Removed ${selected.name} (${selected.user_id}) from this project. Their access to other projects was not changed.`,
+      `Removed ${selected.name} (${selected.user_id}) from this workspace. Their access to other workspaces was not changed.`,
     status: response.status,
     user_id: selected.user_id,
     command_event_ids: response.event_ids,
@@ -1429,7 +1429,7 @@ async function runPrincipal(args: Arguments): Promise<void> {
          * moment a person chooses the name. Names like `wake-replier` or `uxtest-fixture-r1`
          * disclose what someone has been working on, and eventually one will name a customer or
          * an unreleased feature. */
-        "Agent identity created. It makes this machine's agent auditable inside the shared workspace. Its name is visible to everyone in the project, so avoid naming it after anything private.",
+        "Agent identity created. It makes this machine's agent auditable inside the shared workspace. Its name is visible to everyone in the workspace, so avoid naming it after anything private.",
       status: response.status,
       principal_id: uuid(response.principal_id, "principal_id"),
     });
@@ -2027,7 +2027,7 @@ async function commandWorkspaceAndCredential(
   if (args.has("agent-token-stdin")) {
     if (override === null) {
       throw new Error(
-        "not logged in; agent credentials require --workspace-id or SWARM_CLOUD_WORKSPACE_ID because they never infer a human's project selection",
+        "not logged in; agent credentials require --workspace-id or SWARM_CLOUD_WORKSPACE_ID because they never infer a human's workspace selection",
       );
     }
     const agent = await stdinCredential();
@@ -2509,19 +2509,19 @@ export function renderRoster(
      * `StreamIntegrityError` — a corrupt stream, not a refused command — if the live owner count
      * drops below one; the last owner can be neither removed nor demoted; and no leave or
      * self-remove command exists at all. The read edge selects every live member of the
-     * workspace, gated on `is_member`. So an empty roster cannot mean "empty project". It means
+     * workspace, gated on `is_member`. So an empty roster cannot mean "empty workspace". It means
      * this credential is not scoped, with certainty.
      *
      * AND SAYING SO LEAKS NOTHING, which is the part the first attempt got backwards. There are
      * two ambiguities and it conflated them:
-     *   EXISTENCE — must stay hidden. Preserved: this sentence is IDENTICAL whether the project
+     *   EXISTENCE — must stay hidden. Preserved: this sentence is IDENTICAL whether the workspace
      *               does not exist or exists without you.
      *   SCOPE     — the caller's own state. Safe to state, and the only actionable half.
      * The first fix protected existence by also hiding scope. Scope never needed hiding. */
     return (
-      "This credential is not scoped to that project.\n\n"
-        + "That is all this command can tell you: the answer is the same whether the project does\n"
-        + "not exist or exists without you. Asking about a project must not reveal whether it is\n"
+      "This credential is not scoped to that workspace.\n\n"
+        + "That is all this command can tell you: the answer is the same whether the workspace does\n"
+        + "not exist or exists without you. Asking about a workspace must not reveal whether it is\n"
         + "real, so the two are deliberately indistinguishable.\n"
     );
   }
@@ -4021,8 +4021,8 @@ async function main(): Promise<void> {
     process.stdout.write(
       `Login complete for ${result.userId}. This device (${result.deviceId}) is registered so its agent credentials can be governed independently; refresh credential: ${result.storage}; ${
         result.workspaceId
-          ? `project ${result.workspaceId} is now selected`
-          : "no project is selected yet—run cswarm workspaces, then cswarm use <full-id|exact-name>"
+          ? `workspace ${result.workspaceId} is now selected`
+          : "no workspace is selected yet—run cswarm workspaces, then cswarm use <full-id|exact-name>"
       }.\n`,
     );
     return;
@@ -4207,7 +4207,7 @@ main().catch((error) => {
       process.stderr.write(`cswarm: ${error.message}\n`);
       const projects = structured.projects;
       if (Array.isArray(projects) && projects.length > 0) {
-        process.stderr.write("Available projects:\n");
+        process.stderr.write("Available workspaces:\n");
         for (const project of projects) {
           if (!project || typeof project !== "object") continue;
           const row = project as Record<string, unknown>;

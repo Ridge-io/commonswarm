@@ -1076,7 +1076,7 @@ export function resolveSignalRecipient(
       );
     }
     throw new Error(
-      "signal recipient is not a live member or agent of this project",
+      "signal recipient is not a live member or agent of this workspace",
     );
   }
 
@@ -1105,7 +1105,7 @@ export function resolveSignalRecipient(
     );
   }
   throw new Error(
-    "signal recipient is not a live member or agent of this project",
+    "signal recipient is not a live member or agent of this workspace",
   );
 }
 
@@ -1270,7 +1270,7 @@ export async function readSignals(
 }
 
 export const SIGNAL_STATUS_UNAVAILABLE_MESSAGE =
-  "Signal summary is temporarily unavailable; core project status is still shown.";
+  "Signal summary is temporarily unavailable; core workspace status is still shown.";
 
 export interface SignalStatusSupplement {
   recentSignals: SignalRecord[] | null;
@@ -1415,8 +1415,8 @@ export function renderSignals(
       options.inbox
         ? "Nothing is waiting for you."
         : options.includeStale
-        ? "No signals have been shared in this project yet."
-        : "No live signals in this project yet.",
+        ? "No signals have been shared in this workspace yet."
+        : "No live signals in this workspace yet.",
     ].join("\n");
   }
   const now = options.now ?? Date.now();

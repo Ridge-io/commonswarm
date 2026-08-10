@@ -333,7 +333,7 @@ test("supplementary signal failures degrade without hiding core status", async (
   );
   assert.equal(recentUnavailable.recentSignals, null);
   assert.equal(recentUnavailable.waitingAsks, 1);
-  assert.match(recentUnavailable.warning ?? "", /core project status is still shown/);
+  assert.match(recentUnavailable.warning ?? "", /core workspace status is still shown/);
 
   const inboxUnavailable = await settleSignalStatus(
     Promise.resolve([row]),
@@ -968,7 +968,7 @@ test("end-of-options allows signal bodies that begin with dashes", async () => {
   assert.doesNotMatch(result.stderr, /invalid option|requires a value/);
 });
 
-test("signal grammar rejects forged authors and agent reads/posts fail closed without a project", async () => {
+test("signal grammar rejects forged authors and agent reads/posts fail closed without a workspace", async () => {
   const base = [
     "--url",
     "http://127.0.0.1:9",

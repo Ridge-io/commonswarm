@@ -34,29 +34,29 @@ function workspace(
 
 /* ---------- when the notice appears ---------- */
 
-test("D-006: no archived project means no archive notice", () => {
+test("D-006: no archived workspace means no archive notice", () => {
   const rendered = renderWorkspaces(
     [workspace("Dogfood Workspace", false), workspace("Other", false)],
     null,
   );
-  assert.doesNotMatch(rendered, /Archiving a project/);
+  assert.doesNotMatch(rendered, /Archiving a workspace/);
   // The list itself must still be there — this is a notice change, not a list change.
   assert.match(rendered, /Dogfood Workspace/);
 });
 
-test("D-006: one archived project brings the notice back", () => {
+test("D-006: one archived workspace brings the notice back", () => {
   const rendered = renderWorkspaces(
     [workspace("Dogfood Workspace", true), workspace("Other", false)],
     null,
   );
-  assert.match(rendered, /Archiving a project/);
+  assert.match(rendered, /Archiving a workspace/);
   assert.match(rendered, /\(archived\)/);
 });
 
-test("D-006: an empty project list says nothing about archiving", () => {
+test("D-006: an empty workspace list says nothing about archiving", () => {
   const rendered = renderWorkspaces([], null);
-  assert.doesNotMatch(rendered, /Archiving a project/);
-  assert.match(rendered, /not in any projects yet/);
+  assert.doesNotMatch(rendered, /Archiving a workspace/);
+  assert.match(rendered, /not in any workspaces yet/);
 });
 
 /* ---------- what the notice is allowed to say ---------- */
@@ -68,7 +68,7 @@ test("D-006: an empty project list says nothing about archiving", () => {
  * this sentence, and each one would be false. They are separate assertions so a failure
  * names which false claim came back.
  */
-test("D-006: the notice does not say archived projects are restricted", () => {
+test("D-006: the notice does not say archived workspaces are restricted", () => {
   const text = ARCHIVE_NOT_ENFORCED_MESSAGE;
   // False: the command path never consults archived_at (D-016).
   assert.doesNotMatch(text, /cannot be selected|no longer accessible|is inaccessible/i);
@@ -92,9 +92,9 @@ test("D-006: the notice does not over-claim that archiving does nothing", () => 
 });
 
 test("D-006: the notice gives a direction rather than inventing a command", () => {
-  // Nothing in this CLI archives a project or ends a membership, so naming a flag would be
+  // Nothing in this CLI archives a workspace or ends a membership, so naming a flag would be
   // a lie that costs the reader a failed attempt to find it.
-  assert.match(ARCHIVE_NOT_ENFORCED_MESSAGE, /ask whoever runs the project/);
+  assert.match(ARCHIVE_NOT_ENFORCED_MESSAGE, /ask whoever runs the workspace/);
   assert.doesNotMatch(ARCHIVE_NOT_ENFORCED_MESSAGE, /cswarm \w+ --/);
 });
 
@@ -120,7 +120,7 @@ test("D-006: the known_gaps payload is exactly the approved code and message", (
   assert.deepEqual(archiveKnownGaps(), [{
     code: "workspace_archive_not_enforced",
     message:
-      "Archiving a project does not restrict what members or their agents can do in it: an archived project stays selectable, and commands against it still succeed while your membership is live. Removing a project from this list means ending your membership, which this CLI cannot do — ask whoever runs the project.",
+      "Archiving a workspace does not restrict what members or their agents can do in it: an archived workspace stays selectable, and commands against it still succeed while your membership is live. Removing a workspace from this list means ending your membership, which this CLI cannot do — ask whoever runs the workspace.",
   }]);
 });
 

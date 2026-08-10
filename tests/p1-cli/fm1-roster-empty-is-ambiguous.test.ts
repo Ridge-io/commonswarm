@@ -32,7 +32,7 @@ const AGENT = {
 };
 const names = new Map([[MEMBER.user_id, "Tom"]]);
 
-test("FM-1: an entirely empty roster does NOT claim the project is empty", () => {
+test("FM-1: an entirely empty roster does NOT claim the workspace is empty", () => {
   const out = renderRoster(directory([], []), new Map());
 
   // The two claims that were false. Either one asserts emptiness the command cannot establish.
@@ -48,7 +48,7 @@ test("FM-1: it states the scope answer, because there is one", () => {
    * roster means NOT SCOPED, with certainty. Found by Verity after it shipped in 0.1.10. */
   const out = renderRoster(directory([], []), new Map());
 
-  assert.match(out, /not scoped to that project/);
+  assert.match(out, /not scoped to that workspace/);
   assert.doesNotMatch(
     out,
     /cannot tell you which/,
@@ -58,16 +58,16 @@ test("FM-1: it states the scope answer, because there is one", () => {
   assert.doesNotMatch(out, /may have no members/);
 });
 
-test("FM-1: stating scope does not leak whether the project exists", () => {
+test("FM-1: stating scope does not leak whether the workspace exists", () => {
   /* The two ambiguities are different and only one must be preserved. EXISTENCE stays hidden —
-   * this sentence is identical whether the project is absent or present-without-you. SCOPE is
+   * this sentence is identical whether the workspace is absent or present-without-you. SCOPE is
    * the caller's own state and was never the secret. Copy resolving existence — "no such
-   * project", "not authorised" — would reintroduce the oracle. */
+   * workspace", "not authorised" — would reintroduce the oracle. */
   const out = renderRoster(directory([], []), new Map());
 
   assert.doesNotMatch(out, /not authoris|not authoriz|no such|does not exist|forbidden|denied/i);
   // And it must say the indistinguishability is deliberate, or a reader treats it as vagueness.
-  assert.match(out, /same whether the project does\s+not exist or exists without you/);
+  assert.match(out, /same whether the workspace does\s+not exist or exists without you/);
 });
 
 test("FM-1: zero agents WITH visible people is genuinely empty, and still says so", () => {

@@ -51,7 +51,7 @@ export function resolveWorkspaceMember(
     if (selected) return selected;
     throw new MemberSelectionError(
       "member_not_found",
-      "No current project member has that user id.",
+      "No current workspace member has that user id.",
     );
   }
   const safe = sanitizeDisplayLabel(selector, "");
@@ -66,7 +66,7 @@ export function resolveWorkspaceMember(
   }
   throw new MemberSelectionError(
     "member_not_found",
-    "No current project member has that exact name.",
+    "No current workspace member has that exact name.",
   );
 }
 
@@ -107,11 +107,11 @@ export interface WorkspaceWarning {
 export const DEFAULT_MEMBERSHIP_REVOKED: WorkspaceWarning = {
   code: "default_membership_revoked",
   message:
-    "Your previously selected project is no longer available to this account. CommonSwarm cleared that saved selection.",
+    "Your previously selected workspace is no longer available to this account. CommonSwarm cleared that saved selection.",
 };
 
 const PROJECT_NOT_AVAILABLE =
-  "That project is not available to this account. Run cswarm workspaces to see projects you can select.";
+  "That workspace is not available to this account. Run cswarm workspaces to see workspaces you can select.";
 
 function compareText(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
@@ -141,8 +141,8 @@ export class WorkspaceResolutionError extends WorkspaceCliError {
     const none = sorted.length === 0;
     super(
       none
-        ? "You're not in any projects yet. Ask a colleague to send you an invitation link, then accept it with cswarm accept --link-stdin."
-        : "More than one project is available and none is selected. Run cswarm workspaces, then cswarm use <full-id|exact-name>.",
+        ? "You're not in any workspaces yet. Ask a colleague to send you an invitation link, then accept it with cswarm accept --link-stdin."
+        : "More than one workspace is available and none is selected. Run cswarm workspaces, then cswarm use <full-id|exact-name>.",
     );
     this.name = "WorkspaceResolutionError";
     this.code = none
@@ -183,7 +183,7 @@ export class WorkspaceAmbiguousNameError extends WorkspaceCliError {
 
   constructor(workspaces: readonly WorkspaceSummary[]) {
     super(
-      "That project name matches more than one project. Choose one by full id with cswarm use <full-id>.",
+      "That workspace name matches more than one workspace. Choose one by full id with cswarm use <full-id>.",
     );
     this.name = "WorkspaceAmbiguousNameError";
     this.workspaces = sortWorkspaces(workspaces);
@@ -204,21 +204,21 @@ export class WorkspaceAmbiguousNameError extends WorkspaceCliError {
 
 function checkedUuid(value: unknown, field: string): string {
   if (typeof value !== "string" || !UUID_RE.test(value)) {
-    throw new Error(`project read returned a malformed ${field}`);
+    throw new Error(`workspace read returned a malformed ${field}`);
   }
   return value.toLowerCase();
 }
 
 function checkedRole(value: unknown): WorkspaceSummary["role"] {
   if (typeof value !== "string" || !ROLES.has(value)) {
-    throw new Error("project read returned a malformed role");
+    throw new Error("workspace read returned a malformed role");
   }
   return value as WorkspaceSummary["role"];
 }
 
 function checkedString(value: unknown, field: string): string {
   if (typeof value !== "string") {
-    throw new Error(`project read returned a malformed ${field}`);
+    throw new Error(`workspace read returned a malformed ${field}`);
   }
   return value;
 }
@@ -229,7 +229,7 @@ function checkedNullableTimestamp(value: unknown, field: string): string | null 
     typeof value !== "string" ||
     !Number.isFinite(Date.parse(value))
   ) {
-    throw new Error(`project read returned a malformed ${field}`);
+    throw new Error(`workspace read returned a malformed ${field}`);
   }
   return value;
 }
@@ -255,10 +255,10 @@ async function rows(
       },
     });
   } catch {
-    throw new Error("project read could not reach the cloud service");
+    throw new Error("workspace read could not reach the cloud service");
   }
   if (!response.ok) {
-    throw new Error(`project read failed (HTTP ${response.status})`);
+    throw new Error(`workspace read failed (HTTP ${response.status})`);
   }
   const body = await response.json().catch(() => null);
   if (
@@ -270,7 +270,7 @@ async function rows(
         Array.isArray(entry),
     )
   ) {
-    throw new Error("project read returned malformed JSON");
+    throw new Error("workspace read returned malformed JSON");
   }
   return body as Array<Record<string, unknown>>;
 }
@@ -322,8 +322,8 @@ export function cloudWorkspaceDirectory(
         );
         names.set(workspaceId, {
           name: sanitizeDisplayLabel(
-            checkedString(row.name, "project name"),
-            "Unnamed project",
+            checkedString(row.name, "workspace name"),
+            "Unnamed workspace",
           ),
           archived: archivedAt !== null,
         });
@@ -333,7 +333,7 @@ export function cloudWorkspaceDirectory(
         const project = names.get(workspaceId);
         if (!project) {
           throw new Error(
-            "project read omitted a project for a live membership",
+            "workspace read omitted a workspace for a live membership",
           );
         }
         return {
@@ -387,7 +387,7 @@ export function cloudWorkspaceDirectory(
       ]);
       const members = memberRows.map((row): WorkspaceMember => {
         if (checkedUuid(row.workspace_id, "workspace_id") !== selected) {
-          throw new Error("project read returned a cross-project member");
+          throw new Error("workspace read returned a cross-workspace member");
         }
         const userId = checkedUuid(row.user_id, "user_id");
         return {
@@ -405,7 +405,7 @@ export function cloudWorkspaceDirectory(
       );
       const principals = principalRows.map((row) => {
         if (checkedUuid(row.workspace_id, "workspace_id") !== selected) {
-          throw new Error("project read returned a cross-project agent");
+          throw new Error("workspace read returned a cross-workspace agent");
         }
         const revokedAt = checkedNullableTimestamp(
           row.revoked_at,
@@ -443,7 +443,7 @@ export function cloudWorkspaceDirectory(
       for (const row of runRows) {
         const principalId = checkedUuid(row.principal_id, "principal_id");
         if (!principalIds.has(principalId)) {
-          throw new Error("project read returned a cross-project agent run");
+          throw new Error("workspace read returned a cross-workspace agent run");
         }
         if (checkedUuid(row.device_id, "device_id") === session.deviceId) {
           machinePrincipals.add(principalId);
@@ -458,11 +458,11 @@ export function cloudWorkspaceDirectory(
       );
       const tasks = taskRows.map((row): WorkspaceTask => {
         if (checkedUuid(row.workspace_id, "workspace_id") !== selected) {
-          throw new Error("project read returned a cross-project task");
+          throw new Error("workspace read returned a cross-workspace task");
         }
         const owner = row.owner;
         if (owner !== null && typeof owner !== "string") {
-          throw new Error("project read returned a malformed task holder");
+          throw new Error("workspace read returned a malformed task holder");
         }
         const holderId = owner === null
           ? null
@@ -707,8 +707,8 @@ export function relativeExpiry(
 /**
  * ★ WHAT ARCHIVING DOES AND DOES NOT DO, SAID ONCE (D-006).
  *
- * The sentence this replaces — "Project archive enforcement is not available yet; archived
- * projects remain selectable while your membership is live" — was true and useless. It
+ * The sentence this replaces — "Workspace archive enforcement is not available yet; archived
+ * workspaces remain selectable while your membership is live" — was true and useless. It
  * described the SYSTEM'S state to someone asking about THEIR list, and left them with no
  * action, which is the D-004 failure in a different surface.
  *
@@ -723,12 +723,12 @@ export function relativeExpiry(
  * be an authorization boundary at all is an open product question (D-016), so the old
  * wording asserted the outcome of a decision nobody has made.
  *
- * The remedy names no command because there is none: nothing in this CLI archives a project
+ * The remedy names no command because there is none: nothing in this CLI archives a workspace
  * or ends a membership. It points at the person who can instead of inventing a flag.
  */
 export const ARCHIVE_NOT_ENFORCED_CODE = "workspace_archive_not_enforced";
 export const ARCHIVE_NOT_ENFORCED_MESSAGE =
-  "Archiving a project does not restrict what members or their agents can do in it: an archived project stays selectable, and commands against it still succeed while your membership is live. Removing a project from this list means ending your membership, which this CLI cannot do — ask whoever runs the project.";
+  "Archiving a workspace does not restrict what members or their agents can do in it: an archived workspace stays selectable, and commands against it still succeed while your membership is live. Removing a workspace from this list means ending your membership, which this CLI cannot do — ask whoever runs the workspace.";
 
 /**
  * The `known_gaps` payload, built in ONE place because it is emitted from two.
@@ -757,11 +757,11 @@ export function renderWorkspaces(
 ): string {
   if (workspaces.length === 0) {
     return [
-      "You're not in any projects yet.",
+      "You're not in any workspaces yet.",
       "Ask a colleague to send you an invitation link, then accept it with cswarm accept --link-stdin.",
     ].join("\n");
   }
-  const lines = ["Projects:"];
+  const lines = ["Workspaces:"];
   for (const workspace of sortWorkspaces(workspaces)) {
     const current = workspace.workspace_id === currentWorkspaceId
       ? " — selected"
@@ -775,10 +775,10 @@ export function renderWorkspaces(
     (workspace) => workspace.workspace_id === currentWorkspaceId,
   )) {
     lines.push(
-      "No project is selected. Run cswarm use <full-id|exact-name>.",
+      "No workspace is selected. Run cswarm use <full-id|exact-name>.",
     );
   }
-  /* Shown only when the list actually holds an archived project. The old line printed on
+  /* Shown only when the list actually holds an archived workspace. The old line printed on
    * every run, to everyone, about a state most readers had nothing in — and today nobody
    * can be in it, because no command sets archived_at; only tests do. The machine-readable
    * `known_gaps` entry is NOT made conditional, because a contract that appears and
@@ -802,16 +802,16 @@ export function renderStatus(options: RenderStatusOptions): string {
   const lines = [
     `You: ${options.identityLabel} (${options.userId})`,
     `You're in ${options.projectCount} ${
-      options.projectCount === 1 ? "project" : "projects"
+      options.projectCount === 1 ? "workspace" : "workspaces"
     } (selected: ${options.selected.name}).`,
-    `Project: ${options.selected.name} (${options.selected.workspace_id})${
+    `Workspace: ${options.selected.name} (${options.selected.workspace_id})${
       options.selected.archived ? " — archived" : ""
     }`,
     "",
     "Members:",
   ];
   if (options.status.members.length === 0) {
-    lines.push("No members are visible in this project.");
+    lines.push("No members are visible in this workspace.");
   } else {
     for (const member of options.status.members) {
       lines.push(

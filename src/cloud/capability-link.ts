@@ -36,7 +36,7 @@ const ISO_TIMESTAMP_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$/;
  * enforced by Postgres, and this only describes it.
  */
 export const CAPABILITY_DISCLOSURE =
-  "Anyone holding the link can read this one work item: its name and state, the repository it belongs to, who invited them, and how long the project has existed. It reaches nothing else — not the member list, not the message feed, not any other work item.";
+  "Anyone holding the link can read this one work item: its name and state, the repository it belongs to, who invited them, and how long the workspace has existed. It reaches nothing else — not the member list, not the message feed, not any other work item.";
 
 function loopbackOrigin(parsed: URL): boolean {
   return parsed.hostname === "127.0.0.1" || parsed.hostname === "localhost";

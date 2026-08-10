@@ -176,9 +176,15 @@ printf 'because either would leave a live capability on screen, in your shell hi
 printf 'the process list.\n'
 printf '\nNo invite? Make your own workspace. It is free and takes no card:\n\n'
 printf '  https://commonswarm.com/app\n\n'
-# `<project name>`, not `<workspace name>`: that is the placeholder `cswarm --help` prints
-# for this command, and a line shown to someone who has not run --help yet must match what
-# they will read when they do. (The two nouns disagree across the product -- the site and
-# the docs say "workspace" throughout. That drift is real and is not this file's to settle.)
-printf 'Or stay in the terminal:\n\n  cswarm login\n  cswarm new "<project name>"\n\n'
+# `<workspace name>`: this must match the placeholder `cswarm --help` prints for this
+# command, because a line shown to someone who has not run --help yet must match what they
+# will read when they do. The two move together or not at all.
+#
+# It said `<project name>` until 2026-08-10. The drift this comment described -- the CLI
+# saying "project" while the site and docs said "workspace" -- was MEASURED at 16 project to
+# 11 workspace in cli.ts prose, and settled in favour of "workspace": that is what the schema
+# (swarm.workspaces), the flag (--workspace-id) and the design doc already say. Someone else's
+# "project" is left alone: Supabase's project base URL and OpenCode's project cwd are their
+# nouns, not ours.
+printf 'Or stay in the terminal:\n\n  cswarm login\n  cswarm new "<workspace name>"\n\n'
 printf 'And this works right now, with no account and no network:\n\n  cswarm --help\n\n'

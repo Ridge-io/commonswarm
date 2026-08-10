@@ -236,7 +236,7 @@ export class ReauthenticationRequired extends CommandHttpError {
 }
 
 /**
- * Creating a project is the one refusal a stranger meets before they have any
+ * Creating a workspace is the one refusal a stranger meets before they have any
  * context, so it carries a sentence instead of a status code.
  */
 export class CreateWorkspaceError extends Error {
@@ -267,7 +267,7 @@ export function createWorkspaceError(
     return new CreateWorkspaceError(
       status,
       code,
-      /* D-067/D-075. This used to end "Archiving a project frees its slot; the CLI cannot archive
+      /* D-067/D-075. This used to end "Archiving a workspace frees its slot; the CLI cannot archive
        * one yet, so ask whoever operates this deployment." Both halves were dead ends. Archiving
        * is unreachable from every surface — `archived_at` exists and nothing writes it — and on a
        * self-serve deployment the reader IS the operator, so it named a person who does not exist
@@ -277,16 +277,16 @@ export function createWorkspaceError(
        * route that does work: someone else's invitation, which is not capped. */
       `${
         limit === null
-          ? "You have already created as many projects as this account allows."
-          : `You have already created ${limit} projects, which is the limit for one account.`
-      } Projects cannot be removed yet, so this limit is a ceiling rather than a queue. Projects you were invited to do not count against it — a collaborator can still add you to theirs.`,
+          ? "You have already created as many workspaces as this account allows."
+          : `You have already created ${limit} workspaces, which is the limit for one account.`
+      } Workspaces cannot be removed yet, so this limit is a ceiling rather than a queue. Workspaces you were invited to do not count against it — a collaborator can still add you to theirs.`,
     );
   }
   if (status === 403) {
     return new CreateWorkspaceError(
       status,
       "forbidden",
-      "CommonSwarm did not create the project. Creating your own project is not open on this deployment yet, and it also needs a confirmed email address on your account. If someone has already invited you, cswarm accept --link-stdin joins their project.",
+      "CommonSwarm did not create the workspace. Creating your own workspace is not open on this deployment yet, and it also needs a confirmed email address on your account. If someone has already invited you, cswarm accept --link-stdin joins their workspace.",
     );
   }
   if (status === 426) {
@@ -318,7 +318,7 @@ export function createWorkspaceError(
   return new CreateWorkspaceError(
     status,
     code,
-    `CommonSwarm could not tell whether the project was created (HTTP ${status}). Run cswarm workspaces to see whether it exists before trying again.`,
+    `CommonSwarm could not tell whether the workspace was created (HTTP ${status}). Run cswarm workspaces to see whether it exists before trying again.`,
   );
 }
 
@@ -357,7 +357,7 @@ export function capabilityCommandError(
     return new CapabilityCommandError(
       status,
       code,
-      `This project already has ${
+      `This workspace already has ${
         limit === null ? "as many live links as it allows" : `${limit} live links`
       }. Revoke one you no longer need with cswarm link revoke --capability-id <uuid>, or wait for some to expire.`,
     );
@@ -367,8 +367,8 @@ export function capabilityCommandError(
       status,
       "forbidden",
       verb === "mint"
-        ? "CommonSwarm did not create the link. Links are minted by a project owner or admin signed in with a confirmed email, for a work item that exists in this project — and never by an agent credential. Nothing was created."
-        : "CommonSwarm did not revoke that link. Either it is not a live link in this project, or your account may not revoke links here — and an agent credential may never revoke one. Nothing changed.",
+        ? "CommonSwarm did not create the link. Links are minted by a workspace owner or admin signed in with a confirmed email, for a work item that exists in this workspace — and never by an agent credential. Nothing was created."
+        : "CommonSwarm did not revoke that link. Either it is not a live link in this workspace, or your account may not revoke links here — and an agent credential may never revoke one. Nothing changed.",
     );
   }
   if (status === 429) {
@@ -422,15 +422,15 @@ export function capabilityCommandError(
 /** Bounds the name here so a typo is answered locally, in the same words the server uses. */
 export function assertWorkspaceName(value: string): void {
   if (value.length === 0) {
-    throw new Error("a project name is required");
+    throw new Error("a workspace name is required");
   }
   if (value.length > WORKSPACE_NAME_MAX_LENGTH) {
     throw new Error(
-      `a project name may be at most ${WORKSPACE_NAME_MAX_LENGTH} characters; this one is ${value.length}`,
+      `a workspace name may be at most ${WORKSPACE_NAME_MAX_LENGTH} characters; this one is ${value.length}`,
     );
   }
   if (CONTROL_RE.test(value)) {
-    throw new Error("a project name may not contain control characters");
+    throw new Error("a workspace name may not contain control characters");
   }
 }
 
@@ -487,7 +487,7 @@ export function assertHumanCapabilityCredential(
   throw new Error(
     `only a signed-in person can ${verb} a capability link, and this command was given ${
       agent ? "an agent credential" : "a credential that is not a human login"
-    }. The link is minted by a project owner or admin whose email is confirmed; an agent credential can never mint or revoke one, so a compromised worker cannot hand out board state. Run cswarm login as that person, or ask an owner or admin to run this command.`,
+    }. The link is minted by a workspace owner or admin whose email is confirmed; an agent credential can never mint or revoke one, so a compromised worker cannot hand out board state. Run cswarm login as that person, or ask an owner or admin to run this command.`,
   );
 }
 

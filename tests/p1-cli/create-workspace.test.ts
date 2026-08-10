@@ -56,11 +56,11 @@ function accepted(workspaceId: string): Response {
   );
 }
 
-test("project names are bounded before the round trip", () => {
+test("workspace names are bounded before the round trip", () => {
   assert.equal(WORKSPACE_NAME_MAX_LENGTH, 80);
   assert.doesNotThrow(() => assertWorkspaceName("a"));
   assert.doesNotThrow(() => assertWorkspaceName("x".repeat(80)));
-  assert.throws(() => assertWorkspaceName(""), /project name is required/);
+  assert.throws(() => assertWorkspaceName(""), /workspace name is required/);
   assert.throws(
     () => assertWorkspaceName("x".repeat(81)),
     /at most 80 characters; this one is 81/,
@@ -108,7 +108,7 @@ test("create_workspace sends a client id and pins no route", async () => {
   assert.equal(typeof body.client_version, "string");
 });
 
-test("create_workspace refuses to be routed to an existing project", async () => {
+test("create_workspace refuses to be routed to an existing workspace", async () => {
   const target = cloudTarget("http://127.0.0.1:54321", "anon-key");
   let called = false;
   const fetcher = (async () => {
@@ -173,8 +173,8 @@ test("the workspace limit reads as a limit, not as a status code", async () => {
   assert.ok(error instanceof CreateWorkspaceError);
   assert.equal(error.status, 403);
   assert.equal(error.code, "workspace_limit_reached");
-  assert.match(error.message, /already created 3 projects/);
-  /* D-075. This required the literal "Archiving a project frees its slot" — a remedy that does
+  assert.match(error.message, /already created 3 workspaces/);
+  /* D-075. This required the literal "Archiving a workspace frees its slot" — a remedy that does
    * not exist in any surface. `swarm.workspaces.archived_at` has zero writes anywhere, so the
    * gate was holding a sentence that sent every capped user to a dead end. The rest of it,
    * "ask whoever operates this deployment", named a person who on a self-serve deployment IS
@@ -184,7 +184,7 @@ test("the workspace limit reads as a limit, not as a status code", async () => {
    * the one route that works. */
   assert.match(error.message, /cannot be removed yet/);
   assert.match(error.message, /invited .* do not count/);
-  assert.doesNotMatch(error.message, /Archiving a project frees its slot/);
+  assert.doesNotMatch(error.message, /Archiving a workspace frees its slot/);
   assert.doesNotMatch(error.message, /ask whoever operates/);
   assert.doesNotMatch(error.message, /403/);
   assert.doesNotMatch(error.message, /forbidden/i);
@@ -223,9 +223,9 @@ test("the remaining refusals each say what to do next", () => {
   assert.equal(signedOut.code, "unauthenticated");
   assert.match(signedOut.message, /cswarm login/);
 
-  // An unknown outcome must not be reported as a refusal: the project may exist.
+  // An unknown outcome must not be reported as a refusal: the workspace may exist.
   const unknown = createWorkspaceError(502, null);
-  assert.match(unknown.message, /could not tell whether the project was created/);
+  assert.match(unknown.message, /could not tell whether the workspace was created/);
   assert.match(unknown.message, /cswarm workspaces/);
 });
 
@@ -239,7 +239,7 @@ test("new validates its arguments before asking for a credential", async () => {
 
   const blank = await cli(["new", "   "]);
   assert.equal(blank.code, 1);
-  assert.match(blank.stderr, /project name is required/);
+  assert.match(blank.stderr, /workspace name is required/);
 
   const long = await cli(["new", "x".repeat(81)]);
   assert.equal(long.code, 1);
@@ -263,7 +263,7 @@ test("new validates its arguments before asking for a credential", async () => {
 test("new is discoverable in the usage block", async () => {
   const help = await cli(["help"]);
   assert.equal(help.code, 0);
-  assert.match(help.stdout, /cswarm new "<project name>"/);
-  assert.match(help.stdout, /cswarm new --name "<project name>"/);
-  assert.match(help.stdout, /cswarm new starts a project of your own/);
+  assert.match(help.stdout, /cswarm new "<workspace name>"/);
+  assert.match(help.stdout, /cswarm new --name "<workspace name>"/);
+  assert.match(help.stdout, /cswarm new starts a workspace of your own/);
 });
