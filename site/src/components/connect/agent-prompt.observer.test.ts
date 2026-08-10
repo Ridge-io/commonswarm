@@ -45,7 +45,30 @@ test("dashboard agent prompt is one complete, secret-safe handoff", () => {
   assert.doesNotMatch(prompt, /<the anon key above>/);
   assert.match(prompt, /DO NOT ECHO THIS CREDENTIAL BACK/);
   assert.match(prompt, /separate stdin channel/);
-  assert.match(prompt, /Do not use\s+echo, printf, or a heredoc/);
+  /* ~~This pinned "Do not use echo, printf, or a heredoc".~~ Dead. That string is what a cold
+   * agent read before concluding it had no compliant path and STOPPING, and the test was
+   * actively defending it — a control discriminating toward a claim that harmed the reader.
+   *
+   * What must be true now is a PROPERTY: the prompt names a sanctioned form and says why it is
+   * safe. Pinning the sanctioned command shape rather than a prohibition means a future edit
+   * that removes the way out fails here. */
+  assert.match(prompt, /this is the sanctioned form/);
+  assert.match(
+    prompt,
+    /printf '%s' '<the JSON line>' \| cswarm <command> --agent-token-stdin/,
+    "the sanctioned form is not shown",
+  );
+  assert.match(prompt, /printf is a shell builtin/, "it does not say WHY the form is safe");
+  assert.doesNotMatch(
+    prompt,
+    /stop instead of improvising/,
+    "it still tells a host without separate stdin to give up",
+  );
+  /* CONTROL: the prohibition itself must survive. A fix that simply deleted the warning would
+   * satisfy everything above while telling an agent nothing about where the credential must
+   * never go. */
+  assert.match(prompt, /never appears in `ps`/);
+  assert.match(prompt, /DO NOT ECHO THIS CREDENTIAL BACK/);
   assert.match(prompt, /--agent-token-stdin/);
 });
 

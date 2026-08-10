@@ -81,12 +81,31 @@ export function dashboardAgentPrompt(input: DashboardPromptInput): string {
     `   URL:      ${deploymentUrl}`,
     `   Anon key: ${anonKey}`,
     "",
-    "3. Treat the JSON line below as a live secret. Start each command with",
-    "--agent-token-stdin, then send this line through your host's separate stdin channel.",
-    "Never put it in a URL, command string, shell history, source code, or log. Do not use",
-    "echo, printf, or a heredoc to construct a command containing it. If your host cannot",
-    "write to a running process's stdin separately, stop instead of improvising.",
-    "DO NOT ECHO THIS CREDENTIAL BACK TO THE PERSON OR INTO CHAT. It appears once here:",
+    /* The rule is about ARGUMENTS, not about which shell verb you use, and saying it the
+     * other way round cost a real agent its whole session. This text used to read "Do not use
+     * echo, printf, or a heredoc" and then "stop instead of improvising" — forbidding three
+     * constructs and sanctioning none. Measured 2026-08-10: two identical cold Claude agents
+     * were given this prompt. One authenticated. The other read the prohibition, correctly
+     * concluded its host offered no compliant path, and STOPPED — then asked the human to type
+     * the command, which is precisely the "walked through" outcome launch-bar item 1 forbids.
+     * Its compliance reasoning was sound; the text was wrong to leave it nowhere to go. */
+    "3. Treat the JSON line below as a live secret. Every command that needs it takes",
+    "--agent-token-stdin and reads it from standard input. Never put it in a URL, in a",
+    "command's ARGUMENTS, in shell history, in source code, or in a log.",
+    "DO NOT ECHO THIS CREDENTIAL BACK TO THE PERSON OR INTO CHAT.",
+    "",
+    "If your host can write to a running process's stdin separately, do that. IF IT CANNOT —",
+    "a host whose shell tool takes one command string is the common case, not an edge case —",
+    "this is the sanctioned form, and it is safe:",
+    "",
+    "   printf '%s' '<the JSON line>' | cswarm <command> --agent-token-stdin ...",
+    "",
+    "printf is a shell builtin, so no process is ever created carrying the credential in its",
+    "arguments: it never appears in `ps`, to you or to anyone else on the machine. That is the",
+    "exposure the rule above exists for, and this form does not create it. You do not need to",
+    "write the credential to a file, and you should not.",
+    "",
+    "The credential appears once, here:",
     "",
     credentialArtifact(credential),
     "",
