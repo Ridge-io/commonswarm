@@ -1420,10 +1420,21 @@ export function renderSignals(
     const about = signal.about === null
       ? ""
       : ` about ${JSON.stringify(signal.about)}`;
+    /* F-4 of the 2026-08-10 dogfood. `reply` sets in_reply_to and the field survives all the way
+     * into the JSON surface, where it was MEASURED carrying the exact ask id. The human line
+     * dropped it, so a reply arrives in the inbox rendered `[note]`, indistinguishable from an
+     * unrelated one — in a product whose core loop is ask -> reply, the reply was invisible AS a
+     * reply. Same family as D-062: the data was there and the reader could not see it.
+     *
+     * The kind stays `note` because that is what the protocol stores; only the reference was
+     * missing. `?? null` because an older edge response normalises the absent field to null. */
+    const replyTo = (signal.in_reply_to ?? null) === null
+      ? ""
+      : ` — in reply to ${signal.in_reply_to}`;
     lines.push(
       `- [${signal.kind}] ${author} — ${
         relativeAge(signal.created_at, now)
-      } — ${relativeExpiry(signal.until, now)}${expired}${about}: ${
+      } — ${relativeExpiry(signal.until, now)}${expired}${about}${replyTo}: ${
         JSON.stringify(signal.body)
       }`,
     );
