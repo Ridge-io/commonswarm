@@ -159,11 +159,31 @@ test("dashboard agent prompt teaches measured Claude wake and a host-neutral fal
 test("dashboard agent prompt requires cswarm 0.1.6+ before receive commands", () => {
   const prompt = dashboardAgentPrompt(INPUT);
 
-  assert.match(prompt, /cswarm 0\.1\.6 or newer/i);
+  /* ~~This pinned "cswarm 0.1.6 or newer" and "missing or older than 0.1.6 … receive paths".~~
+   * Dead 2026-08-11. That wording told an agent to install only if it was BELOW the floor, and
+   * 0.1.6 is a compatibility floor rather than the current release — so two cold agents each
+   * reported "cswarm 0.1.11 ✓ (≥ 0.1.6, no install needed)", skipped the install, and never
+   * received 0.1.13 and its reply-loop fix. The test was defending the sentence that caused it.
+   *
+   * Pins the PROPERTY now: the floor is still stated, the installer is unconditional, and the
+   * version check happens AFTER rather than as a gate before it. */
+  /* Scoped to STEP 1. A bare /0\.1\.6/ over the whole prompt passes on a different sentence
+   * further down ("Only after cswarm 0.1.6 or newer is installed"), so deleting the floor from
+   * the step that states it left the test green — measured by mutation, not assumed. A control
+   * that matches text elsewhere in the same document cannot see the thing it names. */
+  const stepOne = prompt.slice(prompt.indexOf("1. Make sure"), prompt.indexOf("2. Connect"));
+  assert.ok(stepOne.length > 80, "step 1 could not be isolated");
+  assert.match(stepOne, /0\.1\.6/, "the compatibility floor is no longer stated in step 1");
   assert.match(prompt, /cswarm --version/);
   assert.match(
     prompt,
-    /missing or older than 0\.1\.6[\s\S]*receive paths/i,
+    /safe to re-run[\s\S]*even if cswarm is\s*already present/i,
+    "the installer is no longer unconditional, so an agent can skip it and stay pinned",
+  );
+  assert.doesNotMatch(
+    prompt,
+    /if cswarm is missing or older than/i,
+    "the conditional-install wording is back",
   );
   assertLiveInstallCopy(prompt);
   // Same canonical installer for first install and for upgrade of a stale CLI.

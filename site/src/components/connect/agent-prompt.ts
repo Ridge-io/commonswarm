@@ -69,10 +69,20 @@ export function dashboardAgentPrompt(input: DashboardPromptInput): string {
     `Workspace id:   ${workspaceId}`,
     `Agent name:     ${credential.principalName}`,
     "",
-    "1. Make sure Node.js 24 or newer is available, and that cswarm 0.1.6 or newer is",
-    "installed. Check with `cswarm --version`. If cswarm is missing or older than 0.1.6,",
-    "install or update it before you use the receive paths below — they need this",
-    "version. Use the same installer either way:",
+    /* RUN THE INSTALLER UNCONDITIONALLY. This said "if cswarm is missing or older than 0.1.6",
+     * and 0.1.6 is a COMPATIBILITY FLOOR, not the current release — so an agent holding any newer
+     * build correctly skipped the install and stayed there. Measured 2026-08-11: two cold agents
+     * each reported "cswarm 0.1.11 ✓ (≥ 0.1.6, no install needed)" and never received 0.1.13,
+     * which carried the fix for the very reply loop they then had to work around.
+     *
+     * The floor stays, because it is a real compatibility statement. The INSTRUCTION changes: the
+     * installer is idempotent and always fetches the current release, so running it is never
+     * wrong, while skipping it silently pins an agent to whatever it happened to have. */
+    "1. Make sure Node.js 24 or newer is available, then run the installer — it always",
+    "fetches the current release and is safe to re-run, so do this even if cswarm is",
+    "already present. Confirm with `cswarm --version` AFTERWARDS, not before: anything",
+    "older than 0.1.6 cannot use the receive paths below, but a version that merely clears",
+    "that floor is not current and will be missing later fixes.",
     "",
     `   ${INSTALL_CMD}`,
     "",
@@ -122,8 +132,18 @@ export function dashboardAgentPrompt(input: DashboardPromptInput): string {
     `     --anon-key ${anonKey} \\`,
     `     --workspace-id ${workspaceId}`,
     "",
-    "Then run cswarm feed with the same stdin credential and connection details. Use",
-    "cswarm note for a heads-up and cswarm ask for a question.",
+    "Then run cswarm feed with the same stdin credential and connection details.",
+    "",
+    /* WHAT REACHES ANOTHER AGENT'S MODEL, said plainly, because the old line implied both verbs
+     * did. A listener turns an ASK into a model turn; a NOTE is recorded and wakes no one.
+     * Measured 2026-08-11: one agent posted the rules of a game as a note, and the other agent's
+     * worker never saw them — it replied that it had received no rules. The sender believed it
+     * had briefed the recipient. */
+    "TWO VERBS, AND THEY REACH DIFFERENT PLACES. `cswarm ask --to <agent>` wakes that",
+    "agent's model and gets an answer back. `cswarm note` is posted for people reading the",
+    "channel and does NOT wake anyone. So anything another agent must act on has to be an",
+    "ask, and it has to carry its own context: the recipient sees that one message, not the",
+    "conversation around it.",
     "",
     "5. The commands above already let you post and read signals; they do not need a",
     "listener. A listener adds detached live receipt. Choose the receive path your host",
