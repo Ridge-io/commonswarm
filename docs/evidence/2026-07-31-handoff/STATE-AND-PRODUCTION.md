@@ -32,8 +32,8 @@ There are two independent clones of the same remote:
 
 | Clone | Branch/head | Relation to `origin/main` | Dirty state | Deployment inputs |
 |---|---|---|---|---|
-| `/Users/yulanbot/Developer/Ridge.io/cloud-swarm` | `main` at `af87f8a` | behind 8, ahead 0 | `.gitignore` adds `.gstack/` | `site/.env`, Vercel project link, and Supabase project link are present |
-| `/Users/yulanbot/Developer/Ridge.io/cloud-swarm-source` | `main` at `a21db3f` | exact | `.gitignore` adds `.gstack/` | all three are absent |
+| `/Users/yulanbot/Developer/Ridge.io/cloud-swarm` | `main` at `b443b74` | behind 8, ahead 0 | `.gitignore` adds `.gstack/` | `site/.env`, Vercel project link, and Supabase project link are present |
+| `/Users/yulanbot/Developer/Ridge.io/cloud-swarm-source` | `main` at `17ce88b` | exact | `.gitignore` adds `.gstack/` | all three are absent |
 
 The first clone is the current interactive workspace and the only immediately deploy-capable
 clone, but it does not contain the v0.1.4 listener source. The second is the exact source tree
@@ -49,7 +49,7 @@ The paragraph above is correct but abstract, and an abstract warning is one a fu
 talk itself past. The measured specifics:
 
 ```
-$ git diff --stat af87f8a a21db3f -- site/
+$ git diff --stat b443b74 17ce88b -- site/
  site/src/components/connect/agent-prompt.observer.test.ts | 32 ++++++++-------
  site/src/components/connect/agent-prompt.ts               | 33 ++++++++++++-----
  site/src/components/download/AfterInstall.astro           |  2 +-
@@ -157,7 +157,7 @@ way to add an agent. The product ruling in
 5. show the first signal in the same feed when the agent connects.
 
 The first exact production deployment exposed a real selector bug: the outer dashboard panel
-switcher hid the `AgentConnect` component's internal ready state. Commit `21c3328` narrowed the
+switcher hid the `AgentConnect` component's internal ready state. Commit `acc174e` narrowed the
 selector and added a regression observer. A disposable production identity then completed the
 full sign-in → workspace → agent prompt → first signal journey. Evidence:
 `docs/evidence/2026-07-30-workspace-first-production-e2e.md`.
@@ -178,7 +178,7 @@ prompt auto-completes on first use and offers **Done**.
 Agent records now carry a human-readable model label and owner relationship. Feed/roster rows
 show model and owner so otherwise-similar agents do not blend together.
 
-Primary implementation anchor: `02929c9` (`feat: add teammate agent invite flow`) plus the
+Primary implementation anchor: `84b7aa0` (`feat: add teammate agent invite flow`) plus the
 later access/revocation integration on main. Product spec:
 `docs/design/2026-07-30-REMOTE-TEAMMATE-AGENT-INVITE.md`.
 
@@ -197,7 +197,7 @@ could hide agent management entirely. The redesign:
 - refreshes the roster once when a new principal first appears in the live feed without
   creating a polling storm for revoked historical principals.
 
-Relevant main commits: `3d3c438`, `f943e16`, `65271ed`, `4ac26f1`. Visual and test evidence
+Relevant main commits: `e27b699`, `7207e61`, `f9d4faa`, `c06ad2d`. Visual and test evidence
 is under `docs/evidence/2026-07-30-header-agent-roster/`. That evidence document still calls
 the change a candidate; the commits are now on main and production, so its status header is
 stale even though its measured implementation details remain useful.
@@ -220,7 +220,7 @@ clear; it should not silently merge independent events.
 
 ### 4.5 Agent receive: v0.1.2
 
-Tag `v0.1.2` (`b2326b5`) added direct agent-addressed ask/note signals, correlated replies,
+Tag `v0.1.2` (`a223b57`) added direct agent-addressed ask/note signals, correlated replies,
 and CLI inbox/reply surfaces. It established that agents could poll or block for messages, but
 an idle host still had to run the command or be externally resumed.
 
@@ -228,7 +228,7 @@ Evidence: `docs/evidence/2026-07-30-agent-receive-v0.1.2-production.md`.
 
 ### 4.6 Host-neutral resilient stream: v0.1.3
 
-Tag `v0.1.3` (`c0f3391`) added:
+Tag `v0.1.3` (`cd06d76`) added:
 
 ```sh
 cswarm inbox --kind ask --follow --ndjson
@@ -246,7 +246,7 @@ Evidence: `docs/evidence/2026-07-30-v0.1.3-release.md`.
 
 ### 4.7 Detached Grok listener: v0.1.4
 
-Tag `v0.1.4` (`4cc29e6`) is the first release that receives a direct ask after the setup turn
+Tag `v0.1.4` (`5c5ca86`) is the first release that receives a direct ask after the setup turn
 and delivers it to a model without cmux or terminal keystroke injection:
 
 ```sh
@@ -294,20 +294,20 @@ Newest first:
 
 | Commit | Meaning |
 |---|---|
-| `a21db3f` | committed v0.1.4 release/production evidence; current remote main |
-| `4cc29e6` | v0.1.4 tag; classify read revocation as credential stop |
-| `5dc9745` | durable Grok receiver |
-| `f253fc4` | persisted idempotent ask replies |
-| `a6a3cb1` | measured Grok ACP host subprocess core |
-| `55f445e` | follow cursor wire and sender-relation parsing alignment |
-| `7c0f7c5` | lossless cursor, tolerant parse, honest renewal copy |
-| `24ec0f9` | server-proven sender relation and ascending cursor |
-| `af87f8a` | v0.1.3 production receive evidence; stale clone head |
-| `c0f3391` | v0.1.3 tag review fixes |
-| `1ea5a62` | v0.1.3 release version |
-| `2a70d52` | resilient follow/NDJSON receive stream |
-| `d85ce99` | v0.1.2 production evidence |
-| `b2326b5` | v0.1.2 tag, direct receive/reply |
+| `17ce88b` | committed v0.1.4 release/production evidence; current remote main |
+| `5c5ca86` | v0.1.4 tag; classify read revocation as credential stop |
+| `0d33bb4` | durable Grok receiver |
+| `d2f5caa` | persisted idempotent ask replies |
+| `329f608` | measured Grok ACP host subprocess core |
+| `c171dfb` | follow cursor wire and sender-relation parsing alignment |
+| `ed8ebbd` | lossless cursor, tolerant parse, honest renewal copy |
+| `4da9170` | server-proven sender relation and ascending cursor |
+| `b443b74` | v0.1.3 production receive evidence; stale clone head |
+| `cd06d76` | v0.1.3 tag review fixes |
+| `e8a5a77` | v0.1.3 release version |
+| `a66ec98` | resilient follow/NDJSON receive stream |
+| `88e883d` | v0.1.2 production evidence |
+| `a223b57` | v0.1.2 tag, direct receive/reply |
 
 ### GitHub release
 

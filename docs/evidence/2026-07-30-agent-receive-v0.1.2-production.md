@@ -27,15 +27,15 @@ process exits.
 
 The implementation was integrated at `394524f`. GitHub correctly refused that
 commit on `main` because its history contained merge commits. The release was
-linearized as the single commit `b2326b5` directly on deployed `main`
-`02929c9`.
+linearized as the single commit `a223b57` directly on deployed `main`
+`84b7aa0`.
 
 Object-level controls:
 
 - `394524f^{tree}` = `0d627c3ea0764ba474c5bb04b963bd0426f80535`
-- `b2326b5^{tree}` = `0d627c3ea0764ba474c5bb04b963bd0426f80535`
-- `git diff-tree 394524f b2326b5` was empty
-- `git rev-list --merges 02929c9..b2326b5` returned zero commits
+- `a223b57^{tree}` = `0d627c3ea0764ba474c5bb04b963bd0426f80535`
+- `git diff-tree 394524f a223b57` was empty
+- `git rev-list --merges 84b7aa0..a223b57` returned zero commits
 
 Grok and AGY/Gemini each approved both the implementation commit and the exact
 linear release commit. Neither review found a blocker or high-severity issue.
@@ -65,7 +65,7 @@ terminal paste, or local `swarm send` for the CommonSwarm message path.
 
 Rollout order was:
 
-1. fast-forward `main` to `b2326b5`;
+1. fast-forward `main` to `a223b57`;
 2. apply only `20260730000002_agent_signal_receive.sql`;
 3. deploy `read`;
 4. deploy `command`;

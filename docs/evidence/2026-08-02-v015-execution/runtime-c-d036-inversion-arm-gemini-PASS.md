@@ -21,7 +21,7 @@
   Any newly prepared ACK during a live run has a different `commandId`, preventing false-positive clearing of stale 403 errors on active leases.
 
 ### 3. FROZEN FILES & RUNTIME A2 INVARIANTS
-* **Frozen Files Check:** `git diff b7a0866..f30974a --stat -- src/listener/engine.ts src/cloud/command-client.ts src/cloud/delivery.ts src/listener/delivery-journal.ts` is **completely empty**.
+* **Frozen Files Check:** `git diff f694421..12f865b --stat -- src/listener/engine.ts src/cloud/command-client.ts src/cloud/delivery.ts src/listener/delivery-journal.ts` is **completely empty**.
 * **A2 Invariants:**
   - *Typed-HTTP precedence:* Enforced in [`runtime.ts:185`](file:///Users/yulanbot/Developer/Ridge.io/cloud-swarm/src/listener/runtime.ts#L185) via `isCredentialLoss` which checks HTTP status 401/403 before string error inspection.
   - *Classifier-throw restoration:* Injected via `isCredentialFailure: isCredentialLoss` at [`runtime.ts:517`](file:///Users/yulanbot/Developer/Ridge.io/cloud-swarm/src/listener/runtime.ts#L517).

@@ -48,9 +48,9 @@ ordinary site-gate output.
 ## RED then GREEN discrimination
 
 For the RED arm, both accepted fix files were temporarily restored to their exact
-pre-`f713d47` blobs:
+pre-`b993437` blobs:
 
-| Pre-fix file | Working blob | `f713d47^` blob |
+| Pre-fix file | Working blob | `b993437^` blob |
 |---|---|---|
 | `site/src/lib/commonswarm.ts` | `4531f5e6c90b7c4e020ade61201288344e46ddbd` | `4531f5e6c90b7c4e020ade61201288344e46ddbd` |
 | `site/src/components/app/LiveDashboard.astro` | `07f896a5ea998ddc243843e0a7f40df752503cf8` | `07f896a5ea998ddc243843e0a7f40df752503cf8` |

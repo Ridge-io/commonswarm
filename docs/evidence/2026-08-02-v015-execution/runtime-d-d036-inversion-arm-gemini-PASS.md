@@ -1,6 +1,6 @@
 # Independent Cross-Family Review: Runtime D (SHA `0f5bbcff03e3839340c1fa99dbd979fe62380bb3`)
 
-**Target Diff:** `git diff b7cdb5b..0f5bbcf` (5 files)  
+**Target Diff:** `git diff 5f1179c..84fec4e` (5 files)  
 **Specification:** [`RUNTIME-D-GOAL.md`](file:///Users/yulanbot/Developer/Ridge.io/cloud-swarm/docs/design/contracts/RUNTIME-D-GOAL.md) & [`RUNTIME-C-D-PREFLIGHT-CORRECTIONS.md`](file:///Users/yulanbot/Developer/Ridge.io/cloud-swarm/docs/design/contracts/RUNTIME-C-D-PREFLIGHT-CORRECTIONS.md)  
 **Methodology:** Pure static analysis, schema inspection, call-tree tracing, and diff verification.
 
@@ -37,7 +37,7 @@
 ### 3. Frozen Files & Scope Boundary Verification
 * **Frozen Files Check:**
   ```bash
-  git diff b7cdb5b..0f5bbcf --stat -- src/listener/engine.ts src/listener/runtime.ts src/cloud/command-client.ts src/listener/delivery-journal.ts
+  git diff 5f1179c..84fec4e --stat -- src/listener/engine.ts src/listener/runtime.ts src/cloud/command-client.ts src/listener/delivery-journal.ts
   ```
   **Result:** `0 files changed` (100% clean, empty diff).
 * **Non-functional Comment-Only Check for `src/cloud/delivery.ts`:**

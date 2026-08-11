@@ -10,8 +10,8 @@ The candidate is blocked because required control 2 does not discriminate the pr
 - `origin/cobalt/durable-delivery-server`: `d972c3f8181c8da927edd8cf9818044261d9b08b`
 - branch: `cobalt/durable-delivery-server`
 - initial `git status --porcelain=v1`: empty
-- `git diff --stat f9689d5..d972c3f`: exactly `tests/p1-server/command.test.ts | 436 +++++++++++++++++++++++++++++++---------` (`341 insertions(+), 95 deletions(-)`)
-- `git diff --name-only f9689d5..d972c3f`: exactly `tests/p1-server/command.test.ts`
+- `git diff --stat e2fe5e3..ea3c91f`: exactly `tests/p1-server/command.test.ts | 436 +++++++++++++++++++++++++++++++---------` (`341 insertions(+), 95 deletions(-)`)
+- `git diff --name-only e2fe5e3..ea3c91f`: exactly `tests/p1-server/command.test.ts`
 
 ## Source inspection of the four invariants
 
@@ -129,7 +129,7 @@ Static gates, all green:
 - `npm run check:edge`: exit 0 across command/read/capability; real 0.31 s
 - `npm run build`: exit 0; real 3.78 s
 - `npm test`: 196/196 passed, 0 failed; duration 4662.429208 ms; real 4.88 s
-- `git diff --check f9689d5..d972c3f`: exit 0; real 0.03 s
+- `git diff --check e2fe5e3..ea3c91f`: exit 0; real 0.03 s
 
 DB-slot gates before the stop:
 

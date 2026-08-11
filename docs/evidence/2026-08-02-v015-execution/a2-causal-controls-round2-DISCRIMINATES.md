@@ -157,7 +157,7 @@ Ran exactly `git checkout -- src/listener/runtime.ts`. Then:
 
 ## Verdict
 
-Yes. At frozen SHA `ab1b240`, A2's focused engine/runtime suite discriminates all three
+Yes. At frozen SHA `d8707eb`, A2's focused engine/runtime suite discriminates all three
 requested invariants:
 
 1. Removing the engine credential classifier produces three completed engine failures and

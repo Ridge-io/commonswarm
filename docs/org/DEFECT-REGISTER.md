@@ -29,7 +29,7 @@ All the renewal work was on `main`, correct, tested, and unreachable by anyone w
 **Evidence:** grep of the shipped binary for five renewal symbols returned 0 for all five;
 the same probe against a fresh build returned 2/1/2/4/1.
 
-**Closed by:** `v0.1.0`, commit `43db30e`. Verified by installing from the live site and
+**Closed by:** `v0.1.0`, commit `6aec33d`. Verified by installing from the live site and
 re-running the same probe.
 
 **Class:** *pushed ≠ landed ≠ applied.* The register exists partly because of this one.
@@ -51,7 +51,7 @@ the grant atomically inside the mint transaction.
 **Evidence:** production mint printed the warning; the next agent call renewed successfully
 against a grant the server had already created.
 
-**Closed by:** `v0.1.1`, commit `8c5dc23`. Message now keys off the stated expiry alone.
+**Closed by:** `v0.1.1`, commit `4f3bd5b`. Message now keys off the stated expiry alone.
 
 **Class:** wrong advice is worse than no advice — the remedy it recommended was hand-rotation.
 
@@ -159,7 +159,7 @@ accumulates things they cannot get rid of.
 **RULED 2026-07-29, and the entry's original premise was wrong.** It conflated two unrelated
 defects:
 
-- **The archive notice is wording** — split out, ruled, and **MERGED to `main` at `8da566f`**
+- **The archive notice is wording** — split out, ruled, and **MERGED to `main` at `08a177e`**
   after a REQUEST CHANGES round (the drift test observed the renderer, never either JSON
   payload — D-018 instance 4). Advisor-verified: drifting the builder's message turns exactly
   the two payload observers red, 11 → 9/11, restored 11/11. Patch-id `848c177d…` identical
@@ -343,7 +343,7 @@ than quietly tolerating the family.
 thing — the deployment refused and will not say why. Say that. Name neither cause. The remedy
 is identical either way, so honesty costs nothing.
 
-**Closed by `7f34523`, merged to `main` 2026-07-29**, after three review rounds — each of
+**Closed by `eae6acb`, merged to `main` 2026-07-29**, after three review rounds — each of
 which found a real hole (see D-017, D-018). Advisor-verified at the merged SHA against the
 acceptance criterion: add a production reason, touch no test file → 14/15 with the class test
 naming the unclassified code; restored 15/15.
@@ -374,7 +374,7 @@ branch that only runs when something has gone wrong.
 different statements, and the advisor conflated them. `tests/p1-cli/renewal-refusal-cause.test.ts`
 is the file's first client-side test.
 
-**Closed by D-004's merge (`ebedf99`) alone.** The citation previously read "by D-004/D-011",
+**Closed by D-004's merge (`f547909`) alone.** The citation previously read "by D-004/D-011",
 which credited an unmerged branch — the same error as D-017's premature FIXED, one entry apart.
 D-011 deepens this coverage; it did not close it.
 
@@ -514,14 +514,14 @@ no regex over English decides the question.
 weakest joint twice and still shipped them as the load-bearing check; flagging a risk is not
 the same as not taking it."*
 
-**Closed by `7f34523`, merged to `main` 2026-07-29.** Verified after the merge:
+**Closed by `eae6acb`, merged to `main` 2026-07-29.** Verified after the merge:
 `grep -c assertedCauses` on main → **0**; `grep -c CAUSE_BY_CODE` → **4**. The regex classifier
 is gone from the shipped tree, not merely from a branch.
 
 The paragraph below is kept, marked dead, because it was true for several hours and the entry
 that recorded it was itself the register's live untruth.
 
-★ **(WAS TRUE UNTIL `7f34523`) THE DEFECT WAS ON `main`.** Measured 2026-07-29 after this entry was first
+★ **(WAS TRUE UNTIL `eae6acb`) THE DEFECT WAS ON `main`.** Measured 2026-07-29 after this entry was first
 written as FIXED — which it was not:
 
 ```
@@ -535,7 +535,7 @@ claim, in the entry whose whole subject is unmeasured claims — caught by Cinde
 register, not by me.
 
 **Status: FIXED.** It became FIXED when D-011 merged, as this line required, and not before.
-Final SHA `7f34523` after two further review rounds — Mica broke the hand-kept mirror by adding
+Final SHA `eae6acb` after two further review rounds — Mica broke the hand-kept mirror by adding
 a sixth production reason (15/15 green, nothing presented it), and then required a doc-only
 amend because `src/` still claimed compile-time enforcement that D-019 proved inert.
 
@@ -784,8 +784,8 @@ register trustworthy.
 
 **Raised:** 2026-07-29 by Cinder, against its own interest, at the last merge of the day.
 
-Mica approved D-011 with a stated precondition: *"origin/main has advanced from `d190f1e` to
-`34d47e3` in DEFECT-REGISTER docs only; a byte-identical base move preserves verdict."*
+Mica approved D-011 with a stated precondition: *"origin/main has advanced from `2444435` to
+`08e26c4` in DEFECT-REGISTER docs only; a byte-identical base move preserves verdict."*
 
 By the time the merge came round, **that precondition was false** — D-006(b) had landed,
 advancing `main` with code (`src/cli.ts`, `src/cloud/workspaces.ts`, and a test file). Cinder
@@ -798,7 +798,7 @@ interested party."*
 ```
 literal precondition   docs-only advance?      FALSE — three code files moved
 the property it stood for:
-  git diff d190f1e e66be08   vs   git diff f6a87e1 7f34523   ->  byte-identical
+  git diff 2444435 e66be08   vs   git diff c7a9a81 eae6acb   ->  byte-identical
   patch-id both sides                                        ->  e979b4ed…
   files touched by D-006(b) ∩ files touched by D-011         ->  empty
 ```
@@ -967,7 +967,7 @@ response. Plus an observer proving 403-then-401 rejects after one call.
 
 ## D-025 — the p1-server harness converts "the runtime never came up" into a random assertion failure
 
-**Found by:** Cinder (codex) · **Verified by:** Lead6, source read at `b0e5af1` · **Severity:** P2
+**Found by:** Cinder (codex) · **Verified by:** Lead6, source read at `ace6da5` · **Severity:** P2
 **Site:** `tests/p1-server/command.test.ts:825`, the local `postCommand` helper.
 
 ```ts
@@ -1060,7 +1060,7 @@ document that exists to be relied on.
 
 **Ruling (applied):** delete the claim, do not build the feature to save the sentence. Archiving
 semantics stay deferred behind D-016's operator ruling; the archiving copy is gone from all
-three documents (merged `d0fb1ce`) and from DonePanel (Juniper's L2). Member-removal copy is in
+three documents (merged `d18df4b`) and from DonePanel (Juniper's L2). Member-removal copy is in
 Kestrel's follow-up. **Hosted `remove_member` exposure is chartered separately as real
 functionality** (Cinder, after D-025) — the Slack-channel model needs it, but it lands as code
 with its own observer, not as a paragraph.
@@ -1418,7 +1418,7 @@ and non-claims are recorded in `docs/evidence/2026-07-29-d034-signal-fetch-deadl
 6 already carried application deadlines and 8 did not. D-034 changes only the three signal
 read sites.
 
-**Superseded integration-history statement — DEAD after browser lane `e7537289`:**
+**Superseded integration-history statement — DEAD after browser lane `c1f3e36b`:**
 ~~Browser create-workspace, CLI login, accept-link, and workspace-list reads remain separate
 defects and are not fixed or claimed here.~~
 
@@ -1430,7 +1430,7 @@ CLI login, accept-link, and workspace-list reads remain open and outside the sig
 **D-034 content reconciliation (measured 2026-07-30, Onyx hosted-remove-member-final):** orphan
 browser candidate `4be37fc` and primary-clone `main` carry byte-identical
 `site/src/lib/commonswarm.ts` and `tests/p1-cli/browser-fetch-deadline.test.ts` relative to the
-landed browser runtime path; the browser lane landed via `e753728` with later evidence
+landed browser runtime path; the browser lane landed via `c1f3e36` with later evidence
 corrections on main. This is a content-identity note for remove_member documentation hygiene,
 not a claim that D-034 is closed or that hosted remove_member is deployed.
 
@@ -1789,7 +1789,7 @@ one, which is a reasonable trade only while the two-arm rule stands.
 ## D-040 — a stop during processing permanently bricks the listener after the lease expires · SHIP-BLOCKER
 
 **Found 2026-08-03 by the independent Claude Opus 5 inversion arm mandated by D-039, on the frozen
-release SHA `175f894`, during Stage 7b. Severity CRITICAL. v0.1.5 must not ship with this.**
+release SHA `6b9117b`, during Stage 7b. Severity CRITICAL. v0.1.5 must not ship with this.**
 
 Gemini, the arm D-036 named, reviewed the same delta at the same scope and **did not find it**. D-039
 was ruled hours earlier for unrelated reasons; it paid for itself immediately.
@@ -1843,7 +1843,7 @@ reader.** Twenty-two causal controls and five green gates did not see it; one ar
 
 Small in code: make the existing repair block reachable from `durable_claim`. **Not** small in
 process — it changes the release SHA, so per D-036/D-039 the full Stage 7 gate and **both** review
-arms rerun on the replacement SHA. There is no version of this that ships `175f894`.
+arms rerun on the replacement SHA. There is no version of this that ships `6b9117b`.
 
 ### An unplanned control that worked
 
@@ -1902,7 +1902,7 @@ real cross-owner hole the day such a feature ships.
 
 ## D-041 — the D-040 fix introduces a new brick and leaves D-040's shape in a sibling state · SHIP-BLOCKER
 
-**Found 2026-08-04 by a fresh Claude Opus 5 arm on `de848ee`, verified by the Lead. The candidate must
+**Found 2026-08-04 by a fresh Claude Opus 5 arm on `9591466`, verified by the Lead. The candidate must
 not merge.** This is the **third** consecutive round in which the durable-delivery runtime hid a
 permanent-brick defect from a fully green gate (390/390 here).
 
@@ -1964,8 +1964,8 @@ happened to name.
 
 ## D-042 — a mismatched effect bricks the listener; fourth consecutive round, identical shape · SHIP-BLOCKER
 
-**Found 2026-08-04 by a fresh Claude Opus 5 inversion arm on `a7c2544`, verified by the Lead.
-`a7c2544` must not merge.** Gate at that SHA: **395/395**, p1-cli 143/143, p1-local 4/4, p1-server
+**Found 2026-08-04 by a fresh Claude Opus 5 inversion arm on `810a005`, verified by the Lead.
+`810a005` must not merge.** Gate at that SHA: **395/395**, p1-cli 143/143, p1-local 4/4, p1-server
 69/69, site 113/113, build/check:tests/check:edge all 0, bundle undirtied. **All green, and it bricks.**
 
 ### The defect
@@ -2199,7 +2199,7 @@ I checked that the durable path had a graceful counterpart and did not check whe
 all. The hedge is real and still worth having — it does close D-040, D-041a, D-041b and D-042's
 durable sites — but it does **not** make the mismatch class unreachable, and I said that it did.
 
-### The chain, measured on `main` at `49acf89`
+### The chain, measured on `main` at `891c158`
 
 1. `observeFallbackNote` (`runtime.ts:446`) throws when a stored effect is readable but does not match:
    `!sameEffectSignal(existing, signal) || existing.state !== "observed"` → `throw new Error("stored
@@ -2352,7 +2352,7 @@ not the repo.
 
 `read` **v6 is deployed and serving**, from 2026-07-31. What I withheld was the *newer* build. The
 distinction matters because the safety property does not come from absence — it comes from **version
-skew**. v6 predates `ecb219c`, the commit that added `delivery_claim`/`delivery_ack`, so it advertises
+skew**. v6 predates `06b7c1a`, the commit that added `delivery_claim`/`delivery_ack`, so it advertises
 neither and every client selects `cursor_fallback`.
 
 `cursor_fallback` holds because an **old version is running**, not because nothing is.
@@ -2500,7 +2500,7 @@ Whether a user's Claude config can change the default mode without the adapter n
 
 ## D-050 — the Claude adapter swallows a verified teardown failure and multiplies live bridge processes · MAJOR · **FIXED**
 
-> ### ⚠ FIXED IN `0179c1c`, AND THIS ENTRY CARRIED IT AS OPEN FOR DAYS
+> ### ⚠ FIXED IN `9ba92e2`, AND THIS ENTRY CARRIED IT AS OPEN FOR DAYS
 >
 > Measured 2026-08-09. `src/listener/claude-model.ts` no longer discards the close error:
 > `await worker.close().catch(() => undefined)` is now
@@ -2765,7 +2765,7 @@ the Lead.
 
 ### What the naive fix does
 
-I specified *"do not retry, surface the error instead."* Traced end to end on `84f0882`:
+I specified *"do not retry, surface the error instead."* Traced end to end on `9c12461`:
 
 ```
 refused 500 -> isRetryableFollowError false -> runtime.ts:806 stop={reason:"fatal"}
@@ -2796,7 +2796,7 @@ removed.
 
 ### Ruling
 
-Land `84f0882`, with **two companions in the same deploy**:
+Land `9c12461`, with **two companions in the same deploy**:
 
 1. **Fix the backoff reset.** Decay the attempt counter rather than zeroing it, or reset only after N
    consecutive successes.
@@ -2807,7 +2807,7 @@ Land `84f0882`, with **two companions in the same deploy**:
    (`signals.ts:1793`), so the D-051 veto makes the decay **unreachable for a refused failure**. The
    veto fires, the read is fatal, and the counter is never touched.
 
-   **The two companions interact, and `84f0882` short-circuits the path `f439393` governs.** Wren
+   **The two companions interact, and `9c12461` short-circuits the path `37582dc` governs.** Wren
    verified the premise rather than assuming it: 30 sequential reads gave 500×20, `retryable:false`×20,
    `retryable:true`×0. **There is no retryable failure mode on that path today.**
 
@@ -2959,7 +2959,7 @@ observed failure rate — **it would not**; it changes only what we tell clients
 
 ## D-055 — `--ndjson` emits its fatal as bare text, breaking the contract the flag exists for · MAJOR
 
-Found by **Wren** during the paired A/B of `5886fa4`, because its parser flagged the line UNPARSED.
+Found by **Wren** during the paired A/B of `59ff363`, because its parser flagged the line UNPARSED.
 
 In `--ndjson` mode the post-fix fatal is emitted as **plain text**, not a frame:
 
@@ -2981,7 +2981,7 @@ already there; only the encoding is wrong.
 
 > **STATUS 2026-08-07 — the ship-blocker is DISCHARGED, not the defect.** The heading below
 > read `SHIP-BLOCKER for the D-051 deploy` until this date; D-051 and its mitigation shipped
-> together in **v0.1.7** (`c829a33`), so that wording is **dead** and kept only for history.
+> together in **v0.1.7** (`41c69e1`), so that wording is **dead** and kept only for history.
 >
 > **What shipped:** bounded per-burst refusal tolerance in the follow loop (default 60s,
 > `CSWARM_REFUSAL_TOLERANCE_MS`, ceiling 10 min). A refusal is now absorbed for a window,
@@ -3002,7 +3002,7 @@ already there; only the encoding is wrong.
 
 ### Original entry, as filed
 
-**8 independent cold starts, post-fix `5886fa4`: 6 reached ready, 2 died before ready — 25%.**
+**8 independent cold starts, post-fix `59ff363`: 6 reached ready, 2 died before ready — 25%.**
 
 Each death carried an error line naming the cause, so these are **genuine refusals**, not the host
 reaping processes. Wren reported this number while explicitly *refusing* to report lifetime, because
@@ -3023,8 +3023,8 @@ Both arms launched in the same 75-second window, same credential, same workspace
 
 | | requests per failure event |
 |---|---|
-| pre-fix `fb94d19` | 3,2,3,3,2,2,2,4,2,2,2 → **mean 2.45** |
-| post-fix `5886fa4` | **exactly 1** |
+| pre-fix `0ad5871` | 3,2,3,3,2,2,2,4,2,2,2 → **mean 2.45** |
+| post-fix `59ff363` | **exactly 1** |
 
 Verity predicted 1. Measured 1. Its stated falsification condition — retry frames on a confirmed
 refusal with a confirmed-new binary — **did not occur**.
@@ -3053,11 +3053,11 @@ Nothing about the server-side cause.
 
 ## D-057 — the restart classifier is default-true, so unrecognised failures restart five times · MAJOR
 
-Found by **Plumb** on exact `e126e00`; verified by the Lead **by execution**, not by reading.
+Found by **Plumb** on exact `b9480da`; verified by the Lead **by execution**, not by reading.
 
 ### The question asked, and the better answer returned
 
-I asked whether `e126e00`'s shared predicate changed semantics versus the inline logic it replaced.
+I asked whether `b9480da`'s shared predicate changed semantics versus the inline logic it replaced.
 **It did not — Plumb confirmed they are semantically identical.** But it found that *both* are
 **domain-incomplete**, which is the more useful finding: the refactor did not introduce the defect, it
 propagated an existing one to a second caller.
@@ -3118,13 +3118,13 @@ five restarts on a persistent 4xx has caused observable harm in production, as o
 latent path.
 
 
-### D-057 REOPENED on `2b5e905` — the closed default has a prose door in front of it
+### D-057 REOPENED on `71bafb0` — the closed default has a prose door in front of it
 
 The fix enumerated a restartable set and returned `false` otherwise. **It is bypassed by wording.**
 
 `followHttpDetails` matches any `Error` whose **message** is `/^signal read failed \(HTTP (\d+)\)/`,
 and `isTransportFollowMessage` matches exact transport prose. `runtime.ts` delegates unknown fatal
-errors to the read predicate. Executed on `2b5e905` with an unrecognised `FutureRuntimeError`:
+errors to the read predicate. Executed on `71bafb0` with an unrecognised `FutureRuntimeError`:
 
 ```
 "some ordinary failure"                          -> false
@@ -3161,7 +3161,7 @@ real read path proving the tagged route still works once the regex is gone.
 ### Artifact correction owed
 
 The D-056 evidence states `isRestartableReadError` is the single predicate used by both callers and
-that `runtime.ts` imports no underlying classifiers. **`2b5e905` makes both false.** To be marked
+that `runtime.ts` imports no underlying classifiers. **`71bafb0` makes both false.** To be marked
 superseded in-artifact, not silently edited.
 
 ### Plumb's default sweep — negative result, recorded
@@ -3187,7 +3187,7 @@ D-058 eight times against a number that had no entry here.** A register that a r
 find out whether a defect is real returned nothing for a defect that was real, fixed, and
 controlled. The evidence file is the authority for detail; this is the index it was missing.
 
-Found by **Plumb** on `2b5e905`. **This is D-053 surviving inside the D-057 fix** — the third
+Found by **Plumb** on `71bafb0`. **This is D-053 surviving inside the D-057 fix** — the third
 regression of "never branch on `error.message`", inside the very change that closed the second.
 
 `followHttpDetails` fell back to matching `/^signal read failed \(HTTP (\d+)\)/` against the
@@ -4117,7 +4117,7 @@ machine output.
 `invitation_not_live`, `--confirm must exactly repeat the member selector`). That is why it
 survived — it never appeared in the failure modes anyone was testing.
 
-Removed rather than reformatted: nothing pinned it, the originating commit (`053e972`) gives no
+Removed rather than reformatted: nothing pinned it, the originating commit (`6f023a7`) gives no
 rationale, and a caller wanting the object has `--json`. The gate pairs "no dump on the human
 path" with a control asserting the machine form still exists — otherwise it would also pass on a
 handler that had stopped emitting JSON entirely.
@@ -4258,7 +4258,7 @@ cswarm: Sign in again with cswarm login, then repeat the member remove command.
 **Authority was not in question and the fresh-auth gate fired anyway.** That is the mechanism this
 entry describes — `handleTransaction` step 7 runs before the reducer looks at role — measured from
 the side that has the role. The wording is the pre-fix text because Wren runs shipped 0.1.9 and
-`1fe88f8` is on `main` and unreleased; that is consistent, not a regression.
+`d83ba3e` is on `main` and unreleased; that is consistent, not a regression.
 
 **And the cost named in the original entry stopped being hypothetical.** It now blocks the last
 untested destructive path. Fresh sign-in needs an OAuth round trip; Wren's browser automation is
@@ -4278,7 +4278,7 @@ already fixed:**
 
 | entry | state on paper | measured |
 |---|---|---|
-| D-050 | OPEN, and listed under "STILL OWED" in the resume file | fixed in `0179c1c`, gated, mutation-verified |
+| D-050 | OPEN, and listed under "STILL OWED" in the resume file | fixed in `9ba92e2`, gated, mutation-verified |
 | D-062 | `OPEN` heading over a body recording both fixes | fixed in v0.1.9 |
 | D-063 | `OPEN` heading over a body recording the correction | closed by measurement |
 | D-038 | OPEN | the CLI parses the web form; verified with a refusal control |

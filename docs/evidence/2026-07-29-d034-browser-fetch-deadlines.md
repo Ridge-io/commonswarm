@@ -162,7 +162,7 @@ exit 0
 
 ### First rebase integration
 
-The candidate was then rebased onto exact parent `75e032d`. That base expanded the standard
+The candidate was then rebased onto exact parent `b5d9d84`. That base expanded the standard
 site test command with dashboard/connect observers. The resolved package script preserves
 every base glob, appends the D-034 browser observer, and retains the dedicated
 `test:browser-deadline` command.
@@ -234,7 +234,7 @@ IDENTICAL tests/p1-cli/browser-fetch-deadline.test.ts
   blob 3e0e3889fc307a230b5cc355a8fb6decee868a84
 IDENTICAL site/package-lock.json
   blob 807e29a185508a03bb0afeb082afd002b77c149f
-IDENTICAL root package.json against 2c3d986
+IDENTICAL root package.json against 600b6da
 SUPERPOSITION site/package.json:
   every base script preserved, including test:onramp
   every base test glob preserved

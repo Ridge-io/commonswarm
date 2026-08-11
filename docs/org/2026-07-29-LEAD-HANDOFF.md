@@ -5,7 +5,7 @@ the claude-family Lead cannot continue. The mission does not stop for a billing 
 
 Read this file, then `docs/org/DEFECT-REGISTER.md` from **D-018 onward** (today's entries), then
 `docs/design/2026-07-29-WORKSPACE-FIRST-DASHBOARD.md` (the operator's own binding ruling). That is
-the whole context. `AGENTS.md` is the standing brief and is current as of `abf3de7`.
+the whole context. `AGENTS.md` is the standing brief and is current as of `e77620d`.
 
 ---
 
@@ -45,7 +45,7 @@ All verified against the deployed site with paired positive/absence greps, not a
 | `commonswarm.com` | live, Cloudflare DNS, apex+www 200, cert to 26 Oct 2026 |
 | Self-serve signup | **OPEN** — `SWARM_SELF_SERVE=1` since 2026-07-28, free, 3 workspaces, no card |
 | Installer | `curl -fsSL https://commonswarm.com/install.sh \| sh` → cswarm 0.1.1, public repo |
-| `/start` | pure two-step on-ramp (merged `0ed02a9`) — no stepper, no dead ends |
+| `/start` | pure two-step on-ramp (merged `c1214d3`) — no stepper, no dead ends |
 | `/download` | real command, correct version, prerequisites before paste |
 | Legal pages | Terms/Privacy/AUP — false archiving + member-removal remedies deleted |
 | Email | **all 13 Supabase templates branded in production; custom SMTP active at 30/hour** from `CommonSwarm <hello@commonswarm.com>` |
@@ -64,7 +64,7 @@ record. Inbox-visible receipt and the cold-browser magic-link return leg remain 
 ## 3. Two branches are frozen and should merge FIRST
 
 Both are complete, green, grok-approved, and were held only because their authors could not obtain
-a claude verdict. ~~**I ruled that unnecessary in D-032 (`abf3de7`): a grok verdict alone satisfies
+a claude verdict. ~~**I ruled that unnecessary in D-032 (`e77620d`): a grok verdict alone satisfies
 inversion for codex-authored work**, because the principle is *different family*, not *those two
 families*. Conditions: the DONE says grok-alone and why; everything else unchanged; retroactive
 claude read when capacity returns.~~ **Dead before either branch merged. Operator ruling D-033

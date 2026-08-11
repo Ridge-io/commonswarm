@@ -2,7 +2,7 @@
 
 - **Target SHA**: `e3dc295321abcbeac28b6418b396e85d69b99f6f` on branch `cobalt/durable-delivery-server`
 - **Worktree**: `/Users/yulanbot/Developer/Ridge.io/swarm-worktrees/cobalt-durable-delivery`
-- **Reviewed Delta**: `5f5018a..e3dc295` (`tests/p1-server/command.test.ts`, +845 lines)
+- **Reviewed Delta**: `078aec9..a84fc2d` (`tests/p1-server/command.test.ts`, +845 lines)
 - **Binding Specification**: `SERVER-PHASE-C-PREFLIGHT-CORRECTIONS.md`
 - **Execution Constraints**: Static code analysis only. No database or test commands executed.
 
@@ -65,7 +65,7 @@ None.
 - Denied `resets_at` is strictly asserted against `windowStart + 60s`.
 
 #### 5. Production Contamination & Scope Creep
-- Delta `5f5018a..e3dc295` modifies only `tests/p1-server/command.test.ts`. `supabase/` is completely untouched.
+- Delta `078aec9..a84fc2d` modifies only `tests/p1-server/command.test.ts`. `supabase/` is completely untouched.
 - No modifications were made to pre-existing Phase-B helpers or earlier test cases.
 
 #### 6. Leaks and Hangs

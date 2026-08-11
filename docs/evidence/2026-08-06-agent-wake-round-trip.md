@@ -76,7 +76,7 @@ this measurement.
 Operator direction: grok is out of credits, so scope narrowed to **claude and codex**.
 
 ```
-artifact  repo build of main @ 4360d9d  (NOT the shipped 0.1.6 -- see below)
+artifact  repo build of main @ 8952e83  (NOT the shipped 0.1.6 -- see below)
 adapter   @agentclientprotocol/codex-acp@1.1.9  (installed for this test; was absent)
 sent      2026-08-06T22:18:55Z
 replied   2026-08-06T22:19:06Z            11 seconds
@@ -91,7 +91,7 @@ and `listen status` reports `provider: codex`, `lastSignalId: f031422c…`, `las
 ### The release-relevant part
 
 **Codex support does not exist in shipped 0.1.6.** `src/listener/codex-model.ts` is absent at
-the `v0.1.6` tag and landed after it (`0179c1c`, 2026-08-05). Measured, with a control:
+the `v0.1.6` tag and landed after it (`9ba92e2`, 2026-08-05). Measured, with a control:
 
 ```
 shipped 0.1.6   --provider grok|opencode|claude

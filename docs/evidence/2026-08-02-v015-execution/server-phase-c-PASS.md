@@ -135,7 +135,7 @@ failure. Both failures were the expected missing-recharge outcomes printed in th
   `b84f0304b1e81158195fd51c3a59e770b5170066b88d094c697418e009e486f0` (exact pre-mutant match).
 - Working-tree blob: `64d2912dbdd652f810d5295f1019c6b5e96f9685`.
 - Accepted Phase-B blob: `64d2912dbdd652f810d5295f1019c6b5e96f9685`.
-- `git diff --exit-code 5f5018a... -- supabase/functions/command/index.ts` returned 0.
+- `git diff --exit-code 078aec9... -- supabase/functions/command/index.ts` returned 0.
 - Final committed diff contains no production path.
 
 ## Gates and elapsed time
@@ -174,7 +174,7 @@ pre-restart static sequence also passed (check:tests 1.78 s, check:edge 0.23 s, 
 
 - Commit: `e3dc295321abcbeac28b6418b396e85d69b99f6f`.
 - Commit stat: exactly one test file, +845 lines.
-- Push advanced remote branch `5f5018a..e3dc295`.
+- Push advanced remote branch `078aec9..a84fc2d`.
 - Clean `HEAD`, local tracking ref, and live remote ref all equal
   `e3dc295321abcbeac28b6418b396e85d69b99f6f`.
 - Final matching process count: `0`.

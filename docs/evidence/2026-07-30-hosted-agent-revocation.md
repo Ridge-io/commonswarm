@@ -8,7 +8,7 @@
 | Pre-rebase `command/index.ts` sha256 | `42f441dd97fee25c703d9a84538f7046f74f5c4c2c7b9f399ca2f48ecf690291` |
 | Original implementation base | `492b6d150223adab66d47f1185fabbb227ca630b` |
 | **Product/test tree tip (gates below)** | **`0c4aed938605884ae86c7e45aa7d288d1f21d31c`** — composite successor assert + whitespace follow-up |
-| Product/test-tree parent | `04eb407` (rebase / observer-order commit; `0c4aed9` is the composite + whitespace follow-up); base `fb1dfdfd2f2f9d7c70820e76a23523d893cd68a3` (origin/main) |
+| Product/test-tree parent | `1997a42` (rebase / observer-order commit; `6593a6d` is the composite + whitespace follow-up); base `fb1dfdfd2f2f9d7c70820e76a23523d893cd68a3` (origin/main) |
 | Product/test-tree `command/index.ts` sha256 | `42f441dd97fee25c703d9a84538f7046f74f5c4c2c7b9f399ca2f48ecf690291` (byte-identical to pre-rebase edge source) |
 | Branch | `swarm/Forge/hosted-agent-revocation` |
 | Worktree | `~/.swarm/wt/cloud-swarm-source/Forge--hosted-agent-revocation` |
@@ -16,7 +16,7 @@
 
 **Documentation-only successors** of this file (commits that touch only
 `docs/evidence/**`) preserve the product and test tree measured below. Gates,
-hashes, and causal claims refer to exact `0c4aed9` unless a later product/test
+hashes, and causal claims refer to exact `6593a6d` unless a later product/test
 commit is explicitly named. A docs-only SHA is **not** a re-gated product tip.
 
 ## Implementation
@@ -25,7 +25,7 @@ Edge wire/prepare/projection for `revoke_agent_principal` / `revoke_agent_token`
 principal/token revoke + agent stdin surrender, browser `/app` Remove (role-aware).
 No migration.
 
-Rebased onto `fb1dfdf` (workspace entry redesign). **LiveDashboard conflicts: none**
+Rebased onto `efeaeb3` (workspace entry redesign). **LiveDashboard conflicts: none**
 (auto-merge). Manually verified both:
 
 - upstream workspace-entry redesign (create-workspace / zero-workspace create panel)
@@ -67,7 +67,7 @@ Site mutation (cheap, pre-rebase): `docs/evidence/2026-07-30-agent-revocation-si
 copy of swarm run-003. It is **tracked in this branch** (force-added under
 `docs/evidence/`) so it is not silently lost across rebase.
 
-## Measured gates on product/test tree exact `0c4aed9` (source sha256 `42f441dd…`)
+## Measured gates on product/test tree exact `6593a6d` (source sha256 `42f441dd…`)
 
 Edge source remained byte-identical across inverse restores:
 `sha256(supabase/functions/command/index.ts) = 42f441dd97fee25c703d9a84538f7046f74f5c4c2c7b9f399ca2f48ecf690291`
@@ -77,7 +77,7 @@ before mutation, after arm2 restore, and after recovery runs.
 |-----|------|-----|----------------------|
 | run-010 | 0 | 38/38 | Final-SHA full `test:p1-server` baseline GREEN; hosted revocation PASS |
 | run-011 (arm2 mut: disable only AgentTokenRevoked distinct lineage INSERT) | 1 | 37/38 | **Causal arm2 RED with revised observer.** Composite assertion ran after **both** already-issued successor **post** and **renew**. Failure text: `post HTTP 200` body `status=accepted` (signal accepted — post **live** under mutation) **and** `renew HTTP 200` body `status=rejected` `reason=renewal_lineage_revoked` (domain rejection of renew). **Causal ceiling:** post remains live when lineage tombstone is absent; renew is **independently** domain-rejected — do **not** claim renew was live (not 200/200 live). |
-| run-012 (restored inverse, no checkout) | 1 | 37/38 | Hosted revocation **PASS**; sole fail: pre-principal async log-observer `2 !== 5` (unrelated fixed-delay audit-count flake). Edge hash restored `42f441dd…`; tracked clean on `0c4aed9` |
+| run-012 (restored inverse, no checkout) | 1 | 37/38 | Hosted revocation **PASS**; sole fail: pre-principal async log-observer `2 !== 5` (unrelated fixed-delay audit-count flake). Edge hash restored `42f441dd…`; tracked clean on `6593a6d` |
 | run-013 (recovery, no-edit) | 1 | 37/38 | Hosted revocation **PASS**; sole fail: pre-principal async log-observer `4 !== 5` (same flake class). Not a product/reg regression of revocation |
 | run-014 | 0 | 135/135 | Full `test:p1-cli` GREEN. agent-revocation-cli: help principal+token paths; principal revoke human-only calm; token revoke human id + agent stdin self-surrender; `ConnectCommand` both revoke kinds — all PASS |
 | run-015 | 0 | — | `npm run build` (tsc) GREEN |
@@ -106,7 +106,7 @@ So arm2 proves the composite path executes both calls and that **post containmen
 
 Established by the combination of:
 
-1. Exact product/test-tree run-010 full `test:p1-server` **38/38** GREEN on `0c4aed9`
+1. Exact product/test-tree run-010 full `test:p1-server` **38/38** GREEN on `6593a6d`
 2. Inverse-restored edge `command/index.ts` sha256 `42f441dd…` (byte-identical to pre-mutation) and tracked-clean HEAD on that tip
 3. Hosted revocation **PASS** in post-restore runs 012 and 013
 
@@ -122,7 +122,7 @@ The shipping-only items that remained when this evidence was written were comple
 - production `command` version 13 was deployed and downloaded bytes matched the landed
   source
 - the site was deployed, live-browser tested, repaired for one causal Add-agent panel
-  defect, and redeployed from product SHA `21c3328`
+  defect, and redeployed from product SHA `acc174e`
 - the disposable live onboarding, agent signal, removal backend, and complete privileged
   cleanup were exercised
 

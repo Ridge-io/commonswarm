@@ -1,7 +1,7 @@
 # D-051 evidence — the read client honours `retryable: false`
 
 **Defect:** production saturation, amplified by our own client.
-**Implementation:** Verity, 2026-08-05, branch `d051-honour-retryable` off `main` (root `fb94d19`).
+**Implementation:** Verity, 2026-08-05, branch `d051-honour-retryable` off `main` (root `0ad5871`).
 **Measured by:** Wren (dose-response curve), recorded in D-051.
 
 ## What the server was already saying
@@ -134,7 +134,7 @@ npm run check:tests -> clean
 
 # D-051 companions — backoff decay, bounded restart, and the cancellation hole
 
-**Implementation:** Verity, 2026-08-05, same branch. Follows 84f0882, which both
+**Implementation:** Verity, 2026-08-05, same branch. Follows 9c12461, which both
 review arms passed while raising the same consequence: honouring the refusal
 correctly terminates a receiver, and nothing restarts one.
 
@@ -225,7 +225,7 @@ nothing until a human runs `listen start` again.
 ## Companion 3 — cancellation cannot be forged by wording
 
 `signals.ts` `isAbortError` matched `/aborted/i` against `error.message`.
-Parsing failure bodies (84f0882) made that reachable from outside: `aborted` is
+Parsing failure bodies (9c12461) made that reachable from outside: `aborted` is
 slug-shaped, so it passes the contract-shape filter, and a server answering
 `{"error":"aborted"}` on a 500 would have produced
 
@@ -278,7 +278,7 @@ only by locally-thrown errors that never crossed the network.
 ## Gates
 
 ```
-npm test            -> tests 447, pass 447, fail 0   (84f0882: 436; main: 429)
+npm test            -> tests 447, pass 447, fail 0   (9c12461: 436; main: 429)
 npm run test:p1-cli -> tests 149, pass 149, fail 0
 npm run build       -> clean
 npm run check:tests -> clean
@@ -297,7 +297,7 @@ loosen the restart bound (+2)          -> 1 test
 
 - **Still nothing measured against production.** Every control is a stub in a
   pure test. Wren confirmed the binary installed on its laptop is released
-  0.1.5, which predates 84f0882 entirely, so no receiver anywhere has yet run
+  0.1.5, which predates 9c12461 entirely, so no receiver anywhere has yet run
   any of this.
 - **Receiver lifetime cannot be measured on Wren's host** — it reaps
   long-running background processes (twice observed, ~28 min and ~2 min), so
@@ -461,13 +461,13 @@ and also means a server-side misclassification propagates straight to us.
 **Implementation:** Verity, 2026-08-05, same branch. Found by Wren's parser
 flagging the line UNPARSED during the paired A/B.
 
-`inbox --follow` requires `--ndjson` (enforced by the `if (!args.has("ndjson")) throw` guard in `runSignalRead`; the bare line `cli.ts:2327` cited here previously was correct **at 6d5a478**,
+`inbox --follow` requires `--ndjson` (enforced by the `if (!args.has("ndjson")) throw` guard in `runSignalRead`; the bare line `cli.ts:2327` cited here previously was correct **at c84fc89**,
 where it is the outer `if (inbox && args.has("follow"))` guard with the ndjson
 enforcement at `:2328-2329` — verified at that SHA. After main's additions
 `:2327` resolves to the `"json"` flag entry instead. It still RESOLVES, to the
 wrong thing, which is the kind a reader believes; found by Plumb on the merge.
 The SHA was LOCATED with `git log -S 'cli.ts:2327'` and then INDEPENDENTLY
-VERIFIED by `git show 6d5a478:src/cli.ts`. Those are two steps and the second is
+VERIFIED by `git show c84fc89:src/cli.ts`. Those are two steps and the second is
 not optional: `-S` finds where the string was introduced **including if it
 arrived wrong**, so it yields a candidate, not a proof) and the connect prompt
 points non-Grok hosts at it, so the stream is machine-consumed by definition.
@@ -594,7 +594,7 @@ run.
 1. **The framing "should we add recovery to a fail-fast tool" is backwards.**
    The follow loop already had *unbounded* recovery — `isRetryableFollowError`
    plus backoff retried 5xx forever, which is what produced the 370 frames.
-   84f0882 carved refusals *out* of an existing recovery loop. "Keep its
+   9c12461 carved refusals *out* of an existing recovery loop. "Keep its
    current fail-fast behaviour" is therefore not the status quo; it is a
    behaviour introduced four commits ago and now measured at 25% never-start.
 2. **The justification for the carve-out is the thing Wren retracted.** The
@@ -687,9 +687,9 @@ Consequences, stated plainly:
 The **diagnosis**, not the remedy. Paired window, same credential, 112s:
 
 ```
-PRE-FIX  fb94d19: 28 retrying frames over 14 failure events
+PRE-FIX  0ad5871: 28 retrying frames over 14 failure events
                   attempt histogram {1: 14, 2: 9, 3: 5}, MAX 3
-POST-FIX 5886fa4: zero retrying frames, immediate exit
+POST-FIX 59ff363: zero retrying frames, immediate exit
 ```
 
 A pre-fix ceiling of exactly 3 is what the reset defect predicts: any success
@@ -805,7 +805,7 @@ Both points defeat the proposal independently.
   serve the supervisor forms that read only an exit status: a shell `until`
   loop, a service unit, a host runner that respawns on nonzero exit. **Every
   cswarm failure is `process.exitCode = 1`** (`cli.ts:3680,3715,3720,3724`
-  **as measured at 9df8905** — do not renumber these; the fourth site now calls
+  **as measured at 851fce6** — do not renumber these; the fourth site now calls
   `exitCodeFor`, so refreshing them would turn a true statement about the past
   into a false one about the present), so
   those cannot distinguish "refused, a later attempt may succeed" from
@@ -841,7 +841,7 @@ requests.
 > `runtime.ts` no longer imports the three underlying classifiers separately,
 > which is what would have let the two lists drift apart."~~
 >
-> Both claims became FALSE at 2b5e905 and are kept here rather than edited away.
+> Both claims became FALSE at 71bafb0 and are kept here rather than edited away.
 > The unification was correct as far as it went — Plumb confirmed no regression
 > from it — but the thing it unified was already broken: the predicate was
 > default-true over a domain that does not include delivery or ACP failures. See
@@ -1016,7 +1016,7 @@ npm run check:tests -> clean
 
 # D-058 — the closed classification was bypassable by wording
 
-**Found by Plumb on 2b5e905. This is D-053 surviving inside the D-057 fix.**
+**Found by Plumb on 71bafb0. This is D-053 surviving inside the D-057 fix.**
 
 ## The bypass
 
@@ -1025,7 +1025,7 @@ against the message, and `isTransportFollowMessage` matched exact transport
 prose. `isRestartableRuntimeError` delegates unrecognised errors to the read
 predicate — so the closed default was reachable around, by spelling.
 
-Executed on 2b5e905 with an unrecognised `FutureRuntimeError`:
+Executed on 71bafb0 with an unrecognised `FutureRuntimeError`:
 
 ```
 'some ordinary failure'                          -> false

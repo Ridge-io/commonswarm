@@ -15,7 +15,7 @@
 
 ## RED / GREEN
 
-**RED (origin/main `f62bb3a`):** catch logs only
+**RED (origin/main `aefd23d`):** catch logs only
 `"read function failure"` + `error.name` and returns
 `{ "error": "internal_error" }` with no request_id, retryable, code,
 severity, routine, constraint, or phase.

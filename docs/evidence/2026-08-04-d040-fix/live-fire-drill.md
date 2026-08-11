@@ -327,8 +327,8 @@ The branch worktree was clean before this evidence file was created.
 
 ## What this did not establish
 
-- It did not prove that `de848ee` recovers, ACKs, replies, or continues receiving after this crash.
-- It did not prove that `de848ee` fails those properties; the only candidate restart was blocked by
+- It did not prove that `9591466` recovers, ACKs, replies, or continues receiving after this crash.
+- It did not prove that `9591466` fails those properties; the only candidate restart was blocked by
   a harness-created leftover lock and is not a product verdict.
 - It did not measure the frozen parser's response to `signalFingerprint`; the copied state also
   carried the leftover lock.

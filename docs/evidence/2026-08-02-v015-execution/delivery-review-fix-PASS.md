@@ -8,7 +8,7 @@ New pushed SHA: `df2f4c9c4119b560ac2b7749b733dd6148212cf2`
 
 The starting SHA differed from the frozen reviewed base by one documentation-only commit.
 The five reviewed blobs (`durable-delivery.ts`, command `index.ts`, read `index.ts`,
-`command.test.ts`, and the delivery migration) were byte-identical between `8852ce8` and
+`command.test.ts`, and the delivery migration) were byte-identical between `0421a9f` and
 the starting SHA before work began.
 
 ## Exact corrections
@@ -82,7 +82,7 @@ No residual matching process remained.
 ## Migration identity
 
 `supabase/migrations/20260731000001_signal_deliveries.sql` remained blob
-`d569747fe9ef93186c7422f7082fcf37fec116f2`, identical to `8852ce8`. Its working-tree SHA-256
+`d569747fe9ef93186c7422f7082fcf37fec116f2`, identical to `0421a9f`. Its working-tree SHA-256
 was `58d9409065e150870dba91e6b82eff9d519063c0c25cd55ef88f141695f69d44`.
 
 ## Not established

@@ -32,14 +32,14 @@ history, but their Goal-C/D path ownership and several runtime details are super
 2. Runtime B must receive exact acceptance after its Windows live-listener ordering repair. Its
    accepted API—not any earlier candidate—is authoritative for prepare, UUID, status, and journal
    export.
-3. Server Phases B and C must pass exact review and be integrated. Phase A `3039cce` established
+3. Server Phases B and C must pass exact review and be integrated. Phase A `488bf37` established
    intended source shape but not the required database behavior.
 4. Server integration must preserve the current 26-file literal root-test union and append
    `tests/claim-ledger-parse.test.ts` exactly once. Expected post-server root union: **27 unique
    files**. Never accept the server branch's older `package.json` wholesale.
 
 No C candidate may freeze or be called complete until one Lead-supplied exact base contains
-accepted A/A2, B, journal `d4148b4`, transport `1465e5c`, effect store `bb0f8145`, the final server,
+accepted A/A2, B, journal `7ca2e50`, transport `240e6f9`, effect store `c21a9478`, the final server,
 and the reconciled 27-file test union.
 
 ## Corrected Goal C ownership and sequence

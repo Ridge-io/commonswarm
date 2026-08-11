@@ -1,7 +1,7 @@
 ### Independent Inversion Review (Ruling D-036)
 
 **Target SHA:** `ab1b240334efc62b50027512f64692e15d0e0752`  
-**Delta:** `cc18bf3..ab1b240`  
+**Delta:** `aa8ac4f..d8707eb`  
 **Touched Files:** [`src/listener/engine.ts`](file:///Users/yulanbot/Developer/Ridge.io/swarm-worktrees/deepseek-runtime-reply-pi/src/listener/engine.ts), [`src/listener/runtime.ts`](file:///Users/yulanbot/Developer/Ridge.io/swarm-worktrees/deepseek-runtime-reply-pi/src/listener/runtime.ts), [`tests/listener-engine.test.ts`](file:///Users/yulanbot/Developer/Ridge.io/swarm-worktrees/deepseek-runtime-reply-pi/tests/listener-engine.test.ts), [`tests/listener-runtime.test.ts`](file:///Users/yulanbot/Developer/Ridge.io/swarm-worktrees/deepseek-runtime-reply-pi/tests/listener-runtime.test.ts)
 
 ---
