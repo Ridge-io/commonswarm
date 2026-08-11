@@ -47,6 +47,45 @@ must land only after criterion 4 is green.
 
 `install.sh` currently reads `Ridge-io/cloud-swarm`, deliberately.
 
+## STATUS: criteria 1–4 GREEN. Only criterion 5 (deletion) remains, and it is NOT authorised.
+
+```
+commonswarm  PUBLIC, main 4931e0a, 891 commits, 14 releases      <- the live home
+cloud-swarm  PUBLIC, untouched, still serving, forks 0           <- frozen, awaiting the call
+```
+
+| # | criterion | result |
+|---|---|---|
+| 1 | metadata | **0**, control 912 email-bearing commits |
+| 2 | commit messages | **0**, control 912 subjects |
+| 3 | file content, ALL history | **0**, control 6 files carry the REDACTED marker |
+| 4 | real install from the new URL | **0.1.12**, sha256 `224e40bd…455bb5`, no override |
+| 5 | old repo deleted | **NOT DONE — operator's call** |
+
+Criteria 1–3 measured on a **fresh clone from GitHub**, not on my working copy. That mattered:
+my own checkout read **44** after the cut-over, because `git fetch` does not force-update existing
+tags — every `v0.*` tag and the advisor branch still pointed at pre-rewrite commits. Deleting and
+re-fetching them brought it to 0 against a control of 912. **A working checkout that still
+reaches the old objects is a live hazard**: one careless `push --all` republishes them.
+
+### Order that was followed, and why
+
+The repoint landed **after** the new repo was proven to serve, not before — verified first with
+`CSWARM_REPO=Ridge-io/commonswarm` as an override, then again with **no override** against the
+deployed installer. `sync:installer` copies repo-root `install.sh` into `site/public/` on every
+build, so that line ships on the next site deploy regardless of what the deploy was for.
+
+All 14 releases were mirrored and checked **per release** for both `cswarm` and `cswarm.sha256` —
+not in aggregate — because a release missing its checksum is refused by the installer, and that
+exact failure happened earlier the same day behind a green deploy log.
+
+### Still to do, in order
+
+1. Remap the SHA citations (172 of 220 are remappable; the other 48 point at commits that were
+   never on origin, so they were already unresolvable to anyone cloning from GitHub).
+2. The CI identity guard.
+3. **Criterion 5.** Re-check `forks=0` immediately before, then delete. Irreversible.
+
 ## PLAN
 
 ### Phase 1 — prepare (no operator decision, nothing irreversible)
