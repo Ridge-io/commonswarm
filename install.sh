@@ -1,7 +1,7 @@
 #!/bin/sh
 # CommonSwarm installer.  Usage:
 #
-#   curl -fsSL https://<host>/install.sh | sh
+#   curl -fsSL https://commonswarm.com/install.sh | sh
 #
 # Installs a single file to ~/.local/bin/cswarm (no sudo, no node_modules).
 # Override with CSWARM_INSTALL_DIR=/usr/local/bin, or CSWARM_VERSION=x.y.z.
@@ -26,6 +26,10 @@ set -eu
 # install from it was verified with CSWARM_REPO= as an override.
 REPO="${CSWARM_REPO:-Ridge-io/commonswarm}"
 VERSION="${CSWARM_VERSION:-latest}"
+# Accept both `0.1.12` and `v0.1.12`. The URL below adds its own `v`, so a value copied from the
+# releases page — where all 14 tags are displayed WITH the v — built `.../download/vv0.1.12` and
+# 404'd. The failure names the version, so it reads as "that release does not exist".
+VERSION="${VERSION#v}"
 INSTALL_DIR="${CSWARM_INSTALL_DIR:-$HOME/.local/bin}"
 
 die() { printf '\nCommonSwarm install failed: %s\n\n' "$1" >&2; exit 1; }
@@ -47,7 +51,7 @@ If you use a version manager (nvm, fnm, asdf), node is set up by your shell's st
 files and is not visible to a non-interactive shell. That is the most likely cause here.
 Open a normal terminal and run this installer again, or run it through a login shell:
 
-  zsh -lic 'curl -fsSL <url>/install.sh | sh'
+  zsh -lic 'curl -fsSL https://commonswarm.com/install.sh | sh'
 
 If you genuinely do not have Node yet:
 
@@ -116,13 +120,13 @@ while [ "$_d" != "/" ] && [ -n "$_d" ]; do
 Node would load cswarm as an ES module and it would fail with a confusing error.
 
 Install somewhere outside that tree, e.g.:
-  CSWARM_INSTALL_DIR=\$HOME/.local/bin curl -fsSL <url>/install.sh | sh"
+  curl -fsSL https://commonswarm.com/install.sh | CSWARM_INSTALL_DIR=\$HOME/bin sh"
   fi
   _d="$(dirname "$_d")"
 done
 chmod +x "$TMP/cswarm"
 mv "$TMP/cswarm" "$INSTALL_DIR/cswarm" || die "could not write to $INSTALL_DIR
-Try:  CSWARM_INSTALL_DIR=/usr/local/bin curl -fsSL <url>/install.sh | sudo sh"
+Try:  curl -fsSL https://commonswarm.com/install.sh | sudo env CSWARM_INSTALL_DIR=/usr/local/bin sh"
 
 # Read the version back OUT OF THE INSTALLED FILE rather than echoing what we meant to
 # install. `--version` already prints "cswarm X.Y.Z (protocol A.B.C)", so print that line

@@ -1449,12 +1449,21 @@ export function renderSignals(
     const replyTo = (signal.in_reply_to ?? null) === null
       ? ""
       : ` — in reply to ${signal.in_reply_to}`;
+    /* The signal's OWN id, because `cswarm reply <signal-id>` requires it and no human-readable
+     * surface printed it — not feed, not inbox, not status, not the confirmation after a post.
+     * The core loop was unusable from the CLI: you could read an ask and had no way to answer it.
+     *
+     * Worse than absent. The line already carries a uuid — the AUTHOR's — so a reader following
+     * the obvious cue pastes the wrong one and gets a refusal that looks like their mistake.
+     * Shown only for kinds that can BE replied to, so every other row stays quiet. */
+    const replyable = signal.kind === "ask";
+    const idHint = replyable ? ` — reply with: cswarm reply ${signal.id}` : "";
     lines.push(
       `- [${signal.kind}] ${author} — ${
         relativeAge(signal.created_at, now)
       } — ${relativeExpiry(signal.until, now)}${expired}${about}${replyTo}: ${
         JSON.stringify(signal.body)
-      }`,
+      }${idHint}`,
     );
   }
   return lines.join("\n");
