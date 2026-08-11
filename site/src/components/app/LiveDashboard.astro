@@ -518,7 +518,10 @@ import "../../styles/tokens.css";
                   <button type="button" data-feed-filter="direct-to-you" aria-pressed="false">Direct to you</button>
                 </div>
               </div>
-              <ol class="dashboard__feed" data-feed-list></ol>
+              <!-- ABOVE the list, not below it. Older messages now render at the TOP, so a
+                   control that loads them belongs where they will appear. Below the list it also
+                   made clicking appear to do nothing: renderFeed saw the reader at the bottom,
+                   pinned them to the newest row, and the loaded rows landed off-screen above. -->
               <div class="dashboard__feed-more" data-feed-more hidden>
                 <button
                   class="dashboard__button dashboard__button--secondary"
@@ -529,6 +532,7 @@ import "../../styles/tokens.css";
                 </button>
                 <p class="dashboard__feed-more-error" data-load-older-error role="alert" hidden></p>
               </div>
+              <ol class="dashboard__feed" data-feed-list></ol>
             </section>
 
             <form class="dashboard__composer" data-composer hidden>
@@ -2287,16 +2291,6 @@ import "../../styles/tokens.css";
       if (el) el.scrollTop = el.scrollHeight;
     };
 
-    /* Run a render that may PREPEND rows, keeping the reader's position fixed. */
-    const preservingScrollAnchor = (render: () => void): void => {
-      const el = feedScroller();
-      if (!el) { render(); return; }
-      const before = el.scrollHeight;
-      const top = el.scrollTop;
-      render();
-      el.scrollTop = top + (el.scrollHeight - before);
-    };
-
     const renderFeed = (): void => {
       window.clearTimeout(signalExpiryTimer);
       signalExpiryTimer = undefined;
@@ -2318,8 +2312,11 @@ import "../../styles/tokens.css";
         );
       }
       /* Captured BEFORE the list is rebuilt: once replaceChildren has run, the old scroll
-       * geometry is gone and "were they at the bottom" can no longer be answered. */
+       * geometry is gone and neither question can be answered. */
       const wasAtBottom = atBottom();
+      const scrollerBefore = feedScroller();
+      const heightBefore = scrollerBefore?.scrollHeight ?? 0;
+      const topBefore = scrollerBefore?.scrollTop ?? 0;
       const list = one<HTMLOListElement>("[data-feed-list]");
       const count = one<HTMLElement>("[data-update-count]");
       const more = one<HTMLElement>("[data-feed-more]");
@@ -2490,11 +2487,24 @@ import "../../styles/tokens.css";
       previousSignalIds = new Set(signals.map((signal) => signal.id));
       feedWasEmpty = false;
       showChannelView("feed");
-      /* Pin to the newest message only if the reader was ALREADY at the bottom. Scrolling them
-       * down unconditionally would yank the page out from under anyone reading history — the
-       * defect every chat client has shipped at least once. showChannelView must run first: the
-       * view is `hidden` until then and a hidden element has no scroll geometry to set. */
-      if (wasAtBottom) scrollToNewest();
+      /* Two cases, and the anchoring MUST live here rather than around the load-older click.
+       * The click handler is `async` and returns at its first `await`, so measuring around
+       * `button.click()` reads the height before a single row has been added — the anchor was a
+       * no-op and the viewport jumped anyway. This is the point at which the DOM has actually
+       * changed, so it is the only place the measurement means anything.
+       *
+       * AT THE BOTTOM: pin to newest. Anywhere else: the reader is in history, so hold their
+       * position by the exact height that was prepended above them. Scrolling them down
+       * unconditionally is the defect every chat client ships at least once.
+       *
+       * showChannelView must run first: the view is `hidden` until then, and a hidden element
+       * has no scroll geometry to read or set. */
+      if (wasAtBottom) {
+        scrollToNewest();
+      } else {
+        const el = feedScroller();
+        if (el && heightBefore > 0) el.scrollTop = topBefore + (el.scrollHeight - heightBefore);
+      }
     };
 
     const syncConnectWorkspace = (workspace: Workspace): void => {
@@ -3975,8 +3985,10 @@ import "../../styles/tokens.css";
      * request-version guard and the "still here" recovery message. A second loading route would
      * be a second place for those to drift, and the two could fire concurrently.
      *
-     * `preservingScrollAnchor` is what stops the viewport jumping when the older page prepends —
-     * without it, reaching the top and being thrown back down is worse than no lazy-loading. */
+     * The anchoring that stops the viewport jumping lives in `renderFeed`, NOT here. Wrapping
+     * this click was the first attempt and it was a no-op: the handler is `async` and returns at
+     * its first `await`, so the measurement ran before a single row had been added. Reaching the
+     * top and being thrown back down is worse than no lazy-loading at all. */
     const wireFeedAutoLoad = (): void => {
       const scroller = feedScroller();
       const button = one<HTMLButtonElement>("[data-load-older]");
@@ -3988,7 +4000,8 @@ import "../../styles/tokens.css";
          * usually already there by the time they would have noticed the end. */
         if (scroller.scrollTop > scroller.clientHeight) return;
         pending = true;
-        preservingScrollAnchor(() => button.click());
+        /* Plain click. The anchoring happens in renderFeed, where the rows actually arrive. */
+        button.click();
         window.setTimeout(() => { pending = false; }, 400);
       }, { passive: true });
     };
@@ -4519,6 +4532,11 @@ import "../../styles/tokens.css";
   }
 
   .dashboard__sample-notice:not([hidden]) + .dashboard__frame {
+    /* BOTH axes of the constraint, or this rule stops working. It set only min-block-size, which
+     * was enough while the frame had no block-size — the frame grew to content and the minimum
+     * was the only thing holding it up. Now that the frame is pinned to 100svh, a minimum alone
+     * cannot SHRINK it, so the sample notice would push the frame's last 3.5rem below the fold. */
+    block-size: calc(100svh - 3.5rem);
     min-block-size: calc(100svh - 3.5rem);
   }
 
