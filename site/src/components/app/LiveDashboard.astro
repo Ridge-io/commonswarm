@@ -854,7 +854,9 @@ import "../../styles/tokens.css";
     let composerIntent: { commandId: string; body: string; audienceKey: string } | null = null;
     const visualMentions = new Map<string, EntityRef[]>();
 
-    const SIGNAL_PAGE_SIZE = 50;
+    /* 25, not 50. The operator asked for 20-30 on first paint with older pages fetched on
+     * scroll-up. The FETCH size stays one larger so `hasMore` is known without a second query. */
+    const SIGNAL_PAGE_SIZE = 25;
     const SIGNAL_FETCH_SIZE = SIGNAL_PAGE_SIZE + 1;
 
     /* The first presentation of EACH independently gated surface takes no scripted
@@ -2255,6 +2257,46 @@ import "../../styles/tokens.css";
       if (directTarget) directTarget.textContent = String(directCount);
     };
 
+    /* ── transcript scroll behaviour ─────────────────────────────────────────────────────────
+     * Three things a chat transcript must do, none of which it did:
+     *   1. open at the NEWEST message, not the top of history;
+     *   2. stay pinned to the bottom while you are already at the bottom, and NOT yank you down
+     *      when you have scrolled up to read;
+     *   3. load older messages as you approach the top, WITHOUT the viewport jumping.
+     *
+     * (3) is the one that is easy to get wrong and horrible when wrong: prepending rows above the
+     * viewport moves everything down by their height. The fix is to measure scrollHeight before
+     * the insert and add the difference back to scrollTop after it, so the row you were reading
+     * stays under your eye. */
+    const feedScroller = (): HTMLElement | null =>
+      one<HTMLElement>(".dashboard__feed-view");
+
+    /* Within this many px of the bottom counts as "at the bottom". Not zero: sub-pixel layout and
+     * a mid-scroll render both leave a small remainder, and demanding exact equality means the
+     * pin silently stops working. */
+    const NEAR_BOTTOM_PX = 64;
+
+    const atBottom = (): boolean => {
+      const el = feedScroller();
+      if (!el) return true;
+      return el.scrollHeight - el.scrollTop - el.clientHeight <= NEAR_BOTTOM_PX;
+    };
+
+    const scrollToNewest = (): void => {
+      const el = feedScroller();
+      if (el) el.scrollTop = el.scrollHeight;
+    };
+
+    /* Run a render that may PREPEND rows, keeping the reader's position fixed. */
+    const preservingScrollAnchor = (render: () => void): void => {
+      const el = feedScroller();
+      if (!el) { render(); return; }
+      const before = el.scrollHeight;
+      const top = el.scrollTop;
+      render();
+      el.scrollTop = top + (el.scrollHeight - before);
+    };
+
     const renderFeed = (): void => {
       window.clearTimeout(signalExpiryTimer);
       signalExpiryTimer = undefined;
@@ -2275,6 +2317,9 @@ import "../../styles/tokens.css";
           Math.min(Math.max(nextExpiry - now + 25, 25), 2_147_483_647),
         );
       }
+      /* Captured BEFORE the list is rebuilt: once replaceChildren has run, the old scroll
+       * geometry is gone and "were they at the bottom" can no longer be answered. */
+      const wasAtBottom = atBottom();
       const list = one<HTMLOListElement>("[data-feed-list]");
       const count = one<HTMLElement>("[data-update-count]");
       const more = one<HTMLElement>("[data-feed-more]");
@@ -2315,7 +2360,15 @@ import "../../styles/tokens.css";
           : "No loaded signals are directed to you.";
         list.append(empty);
       }
-      for (const signal of visibleSignals) {
+      /* OLDEST FIRST ON SCREEN, newest at the bottom — the shape of every chat client, and what
+       * the transcript did NOT do: rows appeared newest-first.
+       *
+       * The reversal belongs HERE and not in the query. The fetch is deliberately
+       * `.order(created_at, desc)` because the cursor pages BACKWARDS through history with
+       * `created_at.lt`; flipping the query to ascending would fetch the OLDEST 25 on first paint
+       * and break every "load older" page after it. So the array stays newest-first for
+       * pagination and is reversed once, for display. */
+      for (const signal of [...visibleSignals].reverse()) {
         const row = document.createElement("li");
         row.className = "dashboard__message";
         if ((feedWasEmpty || previousSignalIds.size > 0) && !previousSignalIds.has(signal.id)) {
@@ -2437,6 +2490,11 @@ import "../../styles/tokens.css";
       previousSignalIds = new Set(signals.map((signal) => signal.id));
       feedWasEmpty = false;
       showChannelView("feed");
+      /* Pin to the newest message only if the reader was ALREADY at the bottom. Scrolling them
+       * down unconditionally would yank the page out from under anyone reading history — the
+       * defect every chat client has shipped at least once. showChannelView must run first: the
+       * view is `hidden` until then and a hidden element has no scroll geometry to set. */
+      if (wasAtBottom) scrollToNewest();
     };
 
     const syncConnectWorkspace = (workspace: Workspace): void => {
@@ -3912,6 +3970,30 @@ import "../../styles/tokens.css";
     one<HTMLButtonElement>("[data-refresh]")?.addEventListener("click", () => {
       if (activeWorkspaceId) void openWorkspace(activeWorkspaceId);
     });
+    /* AUTO-LOAD OLDER ON SCROLL-UP. Deliberately drives the SAME button rather than calling
+     * loadSignals directly: the button already owns the disabled state, the inline error, the
+     * request-version guard and the "still here" recovery message. A second loading route would
+     * be a second place for those to drift, and the two could fire concurrently.
+     *
+     * `preservingScrollAnchor` is what stops the viewport jumping when the older page prepends —
+     * without it, reaching the top and being thrown back down is worse than no lazy-loading. */
+    const wireFeedAutoLoad = (): void => {
+      const scroller = feedScroller();
+      const button = one<HTMLButtonElement>("[data-load-older]");
+      if (!scroller || !button) return;
+      let pending = false;
+      scroller.addEventListener("scroll", () => {
+        if (pending || button.disabled || !signalHasMore) return;
+        /* One viewport of headroom: fire before the reader hits the very top, so the page is
+         * usually already there by the time they would have noticed the end. */
+        if (scroller.scrollTop > scroller.clientHeight) return;
+        pending = true;
+        preservingScrollAnchor(() => button.click());
+        window.setTimeout(() => { pending = false; }, 400);
+      }, { passive: true });
+    };
+    wireFeedAutoLoad();
+
     one<HTMLButtonElement>("[data-load-older]")?.addEventListener("click", async (event) => {
       if (!activeWorkspaceId || !signalHasMore) return;
       const workspaceId = activeWorkspaceId;
@@ -4416,6 +4498,12 @@ import "../../styles/tokens.css";
   }
 
   .dashboard__frame {
+    /* BLOCK-SIZE, not only min-block-size. With a minimum alone the grid row sizes to CONTENT, so
+     * the whole app grew to the height of the transcript — measured 14,907px against an 846px
+     * viewport — and the PAGE scrolled instead of the transcript. `overflow: hidden` below was
+     * already here and was doing nothing, because nothing ever exceeded a bound that did not
+     * exist. Measured in the browser before and after. */
+    block-size: 100svh;
     min-block-size: 100svh;
     display: grid;
     grid-template-columns: var(--dashboard-rail) minmax(0, 1fr);
@@ -5028,6 +5116,10 @@ import "../../styles/tokens.css";
 
   .dashboard__channel {
     min-inline-size: 0;
+    /* The BLOCK axis needs it too. A grid item defaults to min-height:auto and refuses to shrink
+     * below its content, which keeps the column taller than its track no matter what the frame
+     * does. */
+    min-block-size: 0;
     display: grid;
     grid-template-rows: auto minmax(0, 1fr);
     background: var(--surface);
@@ -5861,8 +5953,17 @@ import "../../styles/tokens.css";
   }
 
   .dashboard__feed-view {
-    align-self: start;
+    /* ~~align-self: start~~ — dead 2026-08-11, and it was the actual blocker. A grid item aligned
+     * to `start` is sized to its CONTENT rather than stretched to its track, so this section was
+     * 14,680px tall inside a 619px row and its own `overflow-y: auto` never engaged. `stretch`
+     * makes it fill the track, which is what turns it into the scroller.
+     *
+     * Found by measuring computed heights up the ancestor chain in the browser, not by reading:
+     * every candidate above this (frame bound, min-block-size on the column) was necessary and
+     * none of them was sufficient. */
+    align-self: stretch;
     min-inline-size: 0;
+    min-block-size: 0;
   }
 
   .dashboard__feed-toolbar {
