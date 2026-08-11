@@ -13,7 +13,18 @@ set -eu
 # Ridge-io/coswarm-dist — a repo that CARRIED THE RETIRED PRODUCT NAME AND NEVER EXISTED, so
 # this installer 404'd for every stranger who ran it. The separate -dist repo was specified
 # back when source was going to stay private; source is public now, so the reason is gone.
-REPO="${CSWARM_REPO:-Ridge-io/cloud-swarm}"
+#
+# Repointed from Ridge-io/cloud-swarm to Ridge-io/commonswarm on 2026-08-10. That was NOT a
+# rename: cloud-swarm's history carried two operator work addresses in commit metadata, and a
+# force-push cannot purge them because GitHub keeps unreachable objects fetchable by SHA. A new
+# repo never receives them.
+#
+# ORDERING, because it is not obvious and it 404s every install if you get it wrong: site's
+# `sync:installer` copies THIS FILE into site/public/ on EVERY build, so changing the line below
+# ships on the next site deploy whether or not that deploy was about the installer. It was
+# changed only after commonswarm was public and serving all 14 releases, and after a real
+# install from it was verified with CSWARM_REPO= as an override.
+REPO="${CSWARM_REPO:-Ridge-io/commonswarm}"
 VERSION="${CSWARM_VERSION:-latest}"
 INSTALL_DIR="${CSWARM_INSTALL_DIR:-$HOME/.local/bin}"
 

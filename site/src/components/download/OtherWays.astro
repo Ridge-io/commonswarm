@@ -68,7 +68,7 @@ const { cmd } = Astro.props;
 const readCmd = cmd.replace(/\|\s*sh$/, "| less");
 const pinCmd = INSTALL_CMD_PINNED;
 const dirCmd = INSTALL_CMD_DIR;
-const sourceCmd = `git clone https://github.com/Ridge-io/cloud-swarm.git
+const sourceCmd = `git clone https://github.com/Ridge-io/commonswarm.git
 cd cloud-swarm
 npm install
 npm run build
