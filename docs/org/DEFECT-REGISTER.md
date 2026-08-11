@@ -4670,7 +4670,7 @@ previous failure being reported as the current one, and does not make the canary
 six-second `listen status` window described above is untouched — a status poll can still return a
 transient as though it were an outcome.
 
-## D-081 — the opencode permission canary is intermittent · MAJOR · OPEN
+## D-081 — the opencode permission canary is intermittent · MAJOR · OPEN, MITIGATED
 
 **Measured 2026-08-09**, and it settles an item that sat undiagnosed on two resume files as
 *"opencode never reaches ready."*
@@ -4702,6 +4702,48 @@ live (model answered in 7s and did attempt tool calls), which refuted the sevent
 
 **Not established:** the cause. Only that it is intermittent, not a regression, not a missing
 capability, and not a hang (6.8s against a 30s timeout).
+
+### MITIGATED 2026-08-10 — one bounded retry. The cause is still NOT established.
+
+`enablePromptsAfterCanary` (`src/host/session.ts`) now makes **two** canary attempts instead of
+one. Ships in the next release; the entry stays OPEN because nothing here diagnoses anything.
+
+**Why a retry is justified when a diagnosis is not.** The pass condition depends on a **remote
+model choosing to attempt a tool call**, and `runPermissionBoundaryCanary` resets its own
+observation state and sends a fresh prompt — so a second call is a genuine second sample, not a
+re-read of the first verdict. That was checked before the retry was written; a retry that could
+only re-fail would double the cost of a dead host for nothing.
+
+Precedent: **D-076**, shipped in 0.1.11 as a bounded one-shot retry with its root cause open and
+documented. Seven mechanisms for D-081 were proposed and refuted in a single afternoon, and the
+model-sampling dependency may stay nondeterministic however long anyone stares at it.
+
+**The cost, recorded rather than hidden.** A genuinely dead host now takes up to two canary
+timeouts before failing. Measured first-attempt failures on this machine were **24s, 25s and 9s**
+against a 30s timeout, so the doubled worst case is a minute-scale wait. That is the price of not
+reporting a healthy listener as failed.
+
+**It cannot hide a deterministic failure.** Every attempt is reported through `onAttempt`, and the
+thrown error names the count — *"(failed 2 attempts)"* — so **"flaky, retried, ready" and "failed
+twice" stay distinguishable in the log** instead of collapsing into one line. Those are different
+defects with different owners.
+
+**Gate:** `tests/p1-cli/d081-canary-retry.test.ts`, reached by the `test:p1-cli` glob. Four tests,
+three of them controls. Mutation-tested, each verified to land:
+
+| mutation | result |
+|---|---|
+| `total = 1` (no retry) | fails the recovery test and both bound tests |
+| don't return on pass (always run every attempt) | fails the happy-path control |
+
+**The happy-path control is the one worth keeping.** A retry implemented as "always run twice"
+would satisfy the recovery test while **doubling the startup cost of every healthy listener** —
+worse than the defect for the majority of runs.
+
+**NOT established, and unchanged by this:** the cause; whether a stranger's machine sees the same
+rate (the 3-consecutive-failure observation was at machine load 25.15 on a box hosting two agent
+fleets); and whether the retry actually raises the ready-rate in the field. That last one is a
+measurement nobody has taken and this entry does not claim it.
 
 ## D-082 — one flag name, two contracts; and every unknown flag blamed the user · MINOR · FIXED
 

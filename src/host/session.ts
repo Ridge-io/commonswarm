@@ -211,19 +211,56 @@ export class AcpHostSession {
    * Steady-state `--permissions allow` is not proven by a deny-only canary;
    * allow_once is only selected after this gate, by the listener model.
    */
+  /**
+   * D-081. ONE BOUNDED RETRY, because the canary's pass condition depends on a REMOTE MODEL
+   * CHOOSING to attempt a tool call, and re-prompting re-samples that choice.
+   *
+   * `runPermissionBoundaryCanary` resets its own observation state and sends a fresh prompt, so a
+   * second call is a genuine second sample rather than a re-read of the first verdict — that is
+   * what makes a retry meaningful here and it was checked before this was written.
+   *
+   * MITIGATION, NOT A DIAGNOSIS, and deliberately so: seven mechanisms for D-081 were proposed
+   * and refuted in a single afternoon, and the cause is still not established. The precedent is
+   * D-076, shipped in 0.1.11 as a bounded one-shot retry with its root cause open and documented.
+   *
+   * The cost is real and is recorded rather than hidden: a genuinely dead host now takes up to
+   * two canary timeouts before failing. Measured first-attempt failures on this machine were 24s,
+   * 25s and 9s against a 30s timeout, so a doubled worst case is a minute-scale wait. That is the
+   * price of not reporting a healthy listener as failed, which is the defect being mitigated.
+   *
+   * It must NOT be able to hide a deterministic failure: every attempt is reported through
+   * `onAttempt`, and the thrown error names how many were made and why the last one failed, so
+   * "flaky, retried, ready" and "failed twice" are distinguishable in the log rather than
+   * collapsing into one line.
+   */
   async enablePromptsAfterCanary(options?: {
     probeText?: string;
     timeoutMs?: number;
+    /** Total canary attempts, not retries. Default 2. Values below 1 are treated as 1. */
+    attempts?: number;
+    onAttempt?: (
+      attempt: number,
+      total: number,
+      result: { passed: boolean; reason?: string },
+    ) => void;
   }): Promise<void> {
     if (this.promptsEnabled) return;
-    const result = await this.runPermissionBoundaryCanary(options);
-    if (!result.passed) {
-      throw new AcpPermissionCanaryError(
-        result.reason ??
-          "permission-boundary canary failed: need host reject + correlated terminal tool status",
-      );
+    const total = Math.max(1, options?.attempts ?? 2);
+    let last: { passed: boolean; reason?: string } | null = null;
+    for (let attempt = 1; attempt <= total; attempt += 1) {
+      const result = await this.runPermissionBoundaryCanary(options);
+      last = result;
+      options?.onAttempt?.(attempt, total, result);
+      if (result.passed) {
+        this.promptsEnabled = true;
+        return;
+      }
     }
-    this.promptsEnabled = true;
+    const detail = last?.reason ??
+      "permission-boundary canary failed: need host reject + correlated terminal tool status";
+    throw new AcpPermissionCanaryError(
+      total === 1 ? detail : `${detail} (failed ${total} attempts)`,
+    );
   }
 
   /** Test/helper: force-enable prompts without canary (never used by production open path). */
