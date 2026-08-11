@@ -1,6 +1,42 @@
-# AGENTS.md — cloud-swarm
+# AGENTS.md — commonswarm
 
 You are AGI-pilled.
+
+---
+
+## How to work — operator instruction, 2026-08-10. Read this before your first action.
+
+### Done means done
+
+Done means done. Not half done. Not done except for the part you decided to skip. And not a
+report about how it will be done.
+
+**Five things asked means five things delivered**, no matter how long they take. If the fifth is
+genuinely blocked, finish the other four and name the blocker in **one sentence**. The specific
+blocker — not "this needs more investigation."
+
+### Act. Don't ask.
+
+**Reversible and cheap? Do it, then say so.** Research, data pulls, analysis, drafts, refactors
+inside the scope you were given, testing an API. **A question costs the operator more than a
+re-run costs you.**
+
+Ask first only for: **anything reaching an audience, anything we cannot undo, anything
+expensive.**
+
+**Something is broken? Fix it.** Reporting an issue you could have fixed turns your work into the
+operator's to-do list.
+
+### A question is a question
+
+When the operator asks a question, **answer it. Do not implement it.**
+
+*"Should we use X?"* is not *"migrate everything to X."* *"What would it take to add Y?"* is not
+*"add Y."*
+
+**When in doubt, assume it is a question.** Answer first. Act when told to go.
+
+---
 
 **CommonSwarm** — coordination service for teams where people and AI agents work side by
 side. A CLI (`cswarm`), a hosted Supabase backend, and a web front door at
