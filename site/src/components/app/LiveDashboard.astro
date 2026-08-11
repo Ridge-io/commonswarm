@@ -5974,72 +5974,6 @@ import "../../styles/tokens.css";
     list-style: none;
   }
 
-  /* ── SOFTENING (operator, 2026-08-11: "soften the aesthetic slightly, don't use as many
-   * borders") ───────────────────────────────────────────────────────────────────────────────
-   *
-   * Enumerated rather than sampled: every element inside .dashboard__frame painting a visible
-   * edge was listed from the rendered page, which is how the two avatar rings NOT in the obvious
-   * places (sidebar-person, entity) were found.
-   *
-   * Three rules, in order of how much they were doing:
-   *   1. Avatar rings carried NO information. Each avatar already has its own fill; the ring
-   *      restated a boundary the fill was making, on every avatar on screen.
-   *   2. Dividers keep their job and lose their weight. Separation still reads at ~38% because
-   *      the surfaces either side differ; the line was doing the work twice.
-   *   3. Inputs used --border-interactive at REST. That token is the focus colour — spending it
-   *      on the resting state leaves nothing louder for focus to say.
-   *
-   * Deliberately NOT softened: .dashboard__presence-dot, whose ring is the background colour
-   * punching the dot out of the avatar beneath it, and .dashboard__rail-add, whose dashed edge
-   * is the affordance rather than decoration. Both would lose meaning, not weight. */
-  .dashboard__message-avatar,
-  .dashboard__sidebar-agent-avatar,
-  .dashboard__sidebar-person-avatar,
-  .dashboard__entity-avatar {
-    border-color: transparent;
-  }
-
-  /* The TINTED rings are a different case and nearly got removed by mistake. Their colour is
-   * hashed from the identity, and the rule's own comment says "the hue still distinguishes agents
-   * in the fill AND the ring" — so the ring carries information, not decoration. It is also the
-   * redundant half of that pair: the fill carries the same hue.
-   *
-   * So: softened, not removed. 52% -> 20% keeps the identity readable at a whisper instead of an
-   * outline. Two classes, matching the specificity of the rules above — a single-class override
-   * loses to `.dashboard__message-avatar.dashboard__avatar--tinted` no matter where it sits, which
-   * is why the first attempt at this appeared to do nothing on the deployed page. */
-  .dashboard__agent-avatar.dashboard__avatar--tinted,
-  .dashboard__message-avatar.dashboard__avatar--tinted,
-  .dashboard__sidebar-agent-avatar.dashboard__avatar--tinted,
-  .dashboard__entity-avatar.dashboard__avatar--tinted {
-    border-color: color-mix(in oklab, hsl(var(--avatar-hue) 70% 58%) 20%, transparent);
-  }
-
-  .dashboard__rail,
-  .dashboard__rail-section,
-  .dashboard__rail-details,
-  .dashboard__rail-foot,
-  .dashboard__channel-head,
-  .dashboard__workspace-context,
-  .dashboard__workspace-menu-create {
-    border-color: color-mix(in oklab, var(--border) 38%, transparent);
-  }
-
-  .dashboard__workspace-trigger,
-  .dashboard__workspace-menu,
-  .dashboard__workspace-id,
-  .dashboard__icon-button,
-  .dashboard__roster-button {
-    border-color: color-mix(in oklab, var(--border) 42%, transparent);
-  }
-
-  .dashboard__composer-input,
-  .dashboard__invite-form input,
-  .dashboard__create-form input,
-  .dashboard__roster-dialog-search {
-    border-color: color-mix(in oklab, var(--border) 50%, transparent);
-  }
-
   .dashboard__feed-view {
     /* ~~align-self: start~~ — dead 2026-08-11, and it was the actual blocker. A grid item aligned
      * to `start` is sized to its CONTENT rather than stretched to its track, so this section was
@@ -6759,4 +6693,95 @@ import "../../styles/tokens.css";
       animation: none;
     }
   }
+  /* ── EDGES (operator, 2026-08-11: "scale it back further, we don't need most of these
+   * dividers and borders") ─────────────────────────────────────────────────────────────────
+   *
+   * Method was subtractive, which is the only honest way to answer "which of these are needed":
+   * every edge inside the frame was set transparent, the result was looked at, and the ones that
+   * were MISSED were restored. Nothing here is a guess about what looks better.
+   *
+   * TWO survive, and only two:
+   *   .dashboard__composer-input — a text field has to look like a text field. It is the one
+   *     place a user is expected to click INTO rather than ON, and nothing else marks it.
+   *   .dashboard__presence-dot — its "border" is the background colour punching the dot out of
+   *     the avatar underneath. That is a mask, not a line; removing it merges two shapes.
+   *
+   * WHY THE REST WERE REDUNDANT, measured rather than asserted:
+   *   - The rail/channel divider: the surfaces differ already, rgb(13,15,20) against
+   *     rgb(18,21,28). The line was restating a boundary the fill was already making.
+   *   - The rail's internal dividers: the section headings (STREAMS, PEOPLE & AGENTS) and the
+   *     spacing separate those groups. Two devices for one job.
+   *   - Avatar rings: the fill carries the identity hue, so the ring was the redundant half of a
+   *     pair — see the tinted rules above, whose own comment says the hue reads "in the fill AND
+   *     the ring".
+   *   - Buttons and the workspace trigger: they have their own backgrounds and hover states.
+   *
+   * NOT written as `.dashboard__frame * { border-color: transparent }`. That was the probe, and
+   * it is the wrong thing to ship: it would silently swallow the edge of anything added later,
+   * including one that needed it, and the next person would have no way to see why their border
+   * did not appear. Listing them means a new component starts with its own edges and someone
+   * decides deliberately. */
+  .dashboard__rail,
+  .dashboard__rail-section,
+  .dashboard__rail-details,
+  .dashboard__rail-foot,
+  .dashboard__rail-add,
+  .dashboard__channel-head,
+  .dashboard__workspace-context,
+  .dashboard__workspace-trigger,
+  .dashboard__workspace-menu,
+  .dashboard__workspace-menu-create,
+  .dashboard__workspace-id,
+  .dashboard__icon-button,
+  .dashboard__roster-button,
+  .dashboard__roster-dialog,
+  .dashboard__message-avatar,
+  .dashboard__sidebar-agent-avatar,
+  .dashboard__sidebar-person-avatar,
+  .dashboard__entity-avatar,
+  .dashboard__agent-avatar.dashboard__avatar--tinted,
+  .dashboard__message-avatar.dashboard__avatar--tinted,
+  .dashboard__sidebar-agent-avatar.dashboard__avatar--tinted,
+  .dashboard__entity-avatar.dashboard__avatar--tinted,
+  .dashboard__invite-form input,
+  .dashboard__create-form input,
+  .dashboard__roster-dialog-search {
+    border-color: transparent;
+  }
+
+  /* Three that the single-class list above could not reach, and the reason is worth keeping:
+   * `.dashboard__rail-section + .dashboard__rail-section` and `.dashboard__message + .dashboard__message`
+   * are SIBLING selectors — specificity
+   * (0,2,0) — so a one-class override loses to it wherever it sits in the file. The toolbar and
+   * composer edges were simply missed on the first pass; they were found by re-enumerating the
+   * painted edges on the DEPLOYED page rather than by re-reading the source. */
+  .dashboard__rail-section + .dashboard__rail-section,
+  .dashboard__message + .dashboard__message,
+  .dashboard__feed-toolbar,
+  .dashboard__composer,
+  .dashboard__composer select,
+  .dashboard__composer-recipient {
+    border-color: transparent;
+  }
+
+  /* THE RAIL IS SEPARATED BY SURFACE, NOT BY A LINE — and this is the one place removing an edge
+   * genuinely lost something, caught by checking BOTH themes rather than the one on screen.
+   *
+   * In dark the rail already sat on rgb(13,15,20) against the channel's rgb(18,21,28), so the
+   * divider was restating what the fill said. In LIGHT both were #fff, identical, and that border
+   * was the ONLY thing separating the sidebar from the transcript. Dropping it flattened the two
+   * columns into one white field.
+   *
+   * So the separation moves to the fill in both themes, which is the same answer the rest of this
+   * block gives: a tint, not a rule. --bg is the page colour behind the frame, so the rail reads
+   * as the surface the content sits ON rather than as a boxed-off panel. */
+  .dashboard__rail {
+    background: var(--bg);
+  }
+
+  /* The one edge a user needs: this is the field they click INTO. */
+  .dashboard__composer-input {
+    border-color: color-mix(in oklab, var(--border) 40%, transparent);
+  }
+
 </style>
