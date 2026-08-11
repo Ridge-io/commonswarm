@@ -68,6 +68,24 @@ test("dashboard agent prompt is one complete, secret-safe handoff", () => {
    * satisfy everything above while telling an agent nothing about where the credential must
    * never go. */
   assert.match(prompt, /never appears in `ps`/);
+  /* The sanctioned form must not CONTRADICT the prohibition it appears under. Both cold agents
+   * that connected on 2026-08-10 raised this unprompted: the first version banned putting the
+   * credential "in shell history" and then sanctioned a form that puts it there, rebutting only
+   * the `ps` exposure. They proceeded; an agent that stopped reading at the prohibition would
+   * have had no way through — which is the same coin-flip mechanism the fix was for.
+   *
+   * So: shell history is NOT in the prohibition list, and the form's limits are stated. */
+  const prohibition = prompt.slice(
+    prompt.indexOf("Never put it in a URL"),
+    prompt.indexOf("If your host can write"),
+  );
+  assert.doesNotMatch(
+    prohibition,
+    /shell history/,
+    "the prohibition still bans what the sanctioned form does",
+  );
+  assert.match(prompt, /What it does NOT do/, "the form's limits are not stated");
+  assert.match(prompt, /already there, because that is where you/, "it hides the transcript exposure");
   assert.match(prompt, /DO NOT ECHO THIS CREDENTIAL BACK/);
   assert.match(prompt, /--agent-token-stdin/);
 });

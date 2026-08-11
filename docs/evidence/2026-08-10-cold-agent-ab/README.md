@@ -44,6 +44,65 @@ the same as the original agent's:
 against the CURRENT binary. That rules out the alternative explanation that 0.1.11 or the host was
 at fault: same host, same binary, same credential shape, only the sentence differs.
 
+## A and B — BOTH CONNECTED
+
+```
+A  OUTCOME: CONNECTED   working-on -> feed -> npm i -g claude-agent-acp -> listen start -> state: ready
+B  OUTCOME: CONNECTED   same sequence, same outcome
+```
+
+Both used the sanctioned form verbatim and unprompted:
+
+```
+printf '%s' '<REDACTED>' | cswarm working-on "..." --agent-token-stdin --url ... --workspace-id ...
+```
+
+**Result: 2/2 with the fix, 0/1 without it.** Verified independently of the agents' own reports —
+`listen status` read back `provider claude | state ready` for both principals, and `members`
+showed all three agents in the roster.
+
+## ★ THE CLAUDE ADAPTER RAN, FOR THE FIRST TIME ANYWHERE
+
+Both resume files and the register say *"the `claude` and `codex` adapters have NEVER RUN —
+anywhere"*, listed as the largest untested surface. **Two cold agents took `--provider claude` to
+`state: ready` unaided**, installing `claude-agent-acp@0.64.2` themselves from the prompt's own
+instruction. Measured after the fact by an independent `listen status`, not taken from their
+reports:
+
+```
+A: provider claude | state ready | pid 86743 | readyAt 2026-08-11T00:23:33.365Z
+B: provider claude | state ready | pid 87276
+```
+
+That claim is now dead for `claude`. It stands for `codex`.
+
+## ★ BOTH SUCCEEDING AGENTS FOUND A REAL DEFECT IN THE FIX
+
+Independently, in almost the same words. A:
+
+> "Step 3 forbids putting the credential 'in a command's ARGUMENTS, in shell history', then
+> sanctions `printf '%s' '<JSON>' | cswarm …`. That form does keep it out of `ps`, but it does put
+> it in shell history — the sanctioned form contradicts two of the four prohibitions it appears
+> under, and it only rebuts the `ps` one."
+
+B:
+
+> "Those read as contradictory for about a paragraph… **An agent that stopped reading at the
+> prohibition would have had no way to proceed on a single-command-string host.**"
+
+**B names the mechanism exactly, and it is the same coin-flip the fix was for.** My wording banned
+something the sanctioned form does, so a careful reader could still stop — I had reduced the
+failure rate without removing the cause.
+
+Fixed: `shell history` is out of the prohibition list, and the form's limits are now stated
+outright — it does not keep the line out of the agent's own transcript (*"it is already there,
+because that is where you received it"*) nor out of a shell history file. Gated by a test that
+slices the prohibition text and asserts `shell history` is absent from it; mutation-verified by
+putting it back, which fails.
+
+**This is the value of running the test rather than reasoning about the fix.** Two agents that
+SUCCEEDED reported the flaw that would have made a third fail.
+
 ## A defect in MY instrument, found by the control agent
 
 It reported that `Agent name:` rendered the literal string `undefined`. That is **my harness, not
