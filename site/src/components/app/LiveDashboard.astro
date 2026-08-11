@@ -4638,7 +4638,10 @@ import "../../styles/tokens.css";
   .dashboard__workspace-context {
     display: grid;
     gap: var(--s-1);
-    padding: var(--s-3) var(--s-2) var(--s-4);
+    /* --s-1 inline, not --s-2. Measured: the rail had FOUR text insets — labels and item rows at
+     * 20px, this counts line at 24, the ownership note at 28 — so text began somewhere different
+     * in every block. One inset gives the eye a single left edge to follow down the rail. */
+    padding: var(--s-3) var(--s-1) var(--s-4);
     border-block-end: 1px solid var(--border);
   }
 
@@ -4873,7 +4876,8 @@ import "../../styles/tokens.css";
   }
 
   .dashboard__agent-ownership-note {
-    margin: var(--s-1) var(--s-2) 0;
+    /* Inline margin dropped to meet the rail's single text inset — it sat 8px further in. */
+    margin: var(--s-1) 0 0;
     color: var(--text-faint);
     font-size: 0.62rem;
     line-height: 1.45;
@@ -5968,6 +5972,72 @@ import "../../styles/tokens.css";
     padding: 0 0 var(--s-10);
     margin: 0;
     list-style: none;
+  }
+
+  /* ── SOFTENING (operator, 2026-08-11: "soften the aesthetic slightly, don't use as many
+   * borders") ───────────────────────────────────────────────────────────────────────────────
+   *
+   * Enumerated rather than sampled: every element inside .dashboard__frame painting a visible
+   * edge was listed from the rendered page, which is how the two avatar rings NOT in the obvious
+   * places (sidebar-person, entity) were found.
+   *
+   * Three rules, in order of how much they were doing:
+   *   1. Avatar rings carried NO information. Each avatar already has its own fill; the ring
+   *      restated a boundary the fill was making, on every avatar on screen.
+   *   2. Dividers keep their job and lose their weight. Separation still reads at ~38% because
+   *      the surfaces either side differ; the line was doing the work twice.
+   *   3. Inputs used --border-interactive at REST. That token is the focus colour — spending it
+   *      on the resting state leaves nothing louder for focus to say.
+   *
+   * Deliberately NOT softened: .dashboard__presence-dot, whose ring is the background colour
+   * punching the dot out of the avatar beneath it, and .dashboard__rail-add, whose dashed edge
+   * is the affordance rather than decoration. Both would lose meaning, not weight. */
+  .dashboard__message-avatar,
+  .dashboard__sidebar-agent-avatar,
+  .dashboard__sidebar-person-avatar,
+  .dashboard__entity-avatar {
+    border-color: transparent;
+  }
+
+  /* The TINTED rings are a different case and nearly got removed by mistake. Their colour is
+   * hashed from the identity, and the rule's own comment says "the hue still distinguishes agents
+   * in the fill AND the ring" — so the ring carries information, not decoration. It is also the
+   * redundant half of that pair: the fill carries the same hue.
+   *
+   * So: softened, not removed. 52% -> 20% keeps the identity readable at a whisper instead of an
+   * outline. Two classes, matching the specificity of the rules above — a single-class override
+   * loses to `.dashboard__message-avatar.dashboard__avatar--tinted` no matter where it sits, which
+   * is why the first attempt at this appeared to do nothing on the deployed page. */
+  .dashboard__agent-avatar.dashboard__avatar--tinted,
+  .dashboard__message-avatar.dashboard__avatar--tinted,
+  .dashboard__sidebar-agent-avatar.dashboard__avatar--tinted,
+  .dashboard__entity-avatar.dashboard__avatar--tinted {
+    border-color: color-mix(in oklab, hsl(var(--avatar-hue) 70% 58%) 20%, transparent);
+  }
+
+  .dashboard__rail,
+  .dashboard__rail-section,
+  .dashboard__rail-details,
+  .dashboard__rail-foot,
+  .dashboard__channel-head,
+  .dashboard__workspace-context,
+  .dashboard__workspace-menu-create {
+    border-color: color-mix(in oklab, var(--border) 38%, transparent);
+  }
+
+  .dashboard__workspace-trigger,
+  .dashboard__workspace-menu,
+  .dashboard__workspace-id,
+  .dashboard__icon-button,
+  .dashboard__roster-button {
+    border-color: color-mix(in oklab, var(--border) 42%, transparent);
+  }
+
+  .dashboard__composer-input,
+  .dashboard__invite-form input,
+  .dashboard__create-form input,
+  .dashboard__roster-dialog-search {
+    border-color: color-mix(in oklab, var(--border) 50%, transparent);
   }
 
   .dashboard__feed-view {
