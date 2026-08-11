@@ -653,8 +653,8 @@ unmeasured + GUI-gated). Accept line must be `cswarm accept --link-stdin`.
 #   git log --format='%an <%ae>' origin/main | sort | uniq -c | sort -rn
 #   sum of parts must equal: git rev-list --count origin/main
 Cooper Yulan <yulanbot@gmail.com>    256   <- machine default, most seats
-Cooper Yulan <<employer-a-address REDACTED 2026-08-10>>    14   <- a seat that set its own email
-Cooper Yulan <<employer-b-address REDACTED 2026-08-10>>   5   <- another
+Cooper Yulan <employer-a-address REDACTED 2026-08-10>    14   <- a seat that set its own email
+Cooper Yulan <employer-b-address REDACTED 2026-08-10>   5   <- another
 Ridgeio      <tom@ridge.io>            1
 Ferry        <ferry@cloud-swarm.local> 1   <- a seat that set its own NAME
 # sum 277 = rev-list --count at e54746b
