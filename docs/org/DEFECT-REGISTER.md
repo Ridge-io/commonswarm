@@ -4918,3 +4918,36 @@ bare and artifact forms across subcommands and did not report a lost successor �
 clear it, because a deleted successor is silent: the root token still works and renewal simply
 starts over.
 
+## Doctrine — A PROCESS MEASUREMENT WITHOUT A HOST IS NOT A RESULT
+
+**2026-08-10. Two agents measured the same question, with correct instruments and correct
+controls, got 1 and 0, and BOTH WERE RIGHT.**
+
+Wren reported a live listener — pid 71854, principal `d8a20644`, workspace `7c28b611`, resident
+5h53m and still polling production. I measured, found **zero** `__listen-supervisor` processes
+against a positive control of 52 node processes, and told Wren its report was *"correct in
+principle and stale in fact."*
+
+**My correction was the error.** The listener was on the OPERATOR'S LAPTOP. My zero was correct
+for the mini. Wren's one was correct for the laptop. Neither instrument was faulty and neither
+control was missing — **the missing term was the host**, and neither of us had stated it.
+
+```
+tom's laptop   pid 71854 UP 5h53m     control: 88 node processes
+the mini       __listen-supervisor 0  control: 35 node processes
+```
+
+**A positive control proves the instrument works. It says nothing about WHERE it was pointed.**
+That is the same shape as the two other errors of the same day — reading a transitional state as
+an outcome, and matching a process by pattern and assuming ownership. In all three the
+measurement was sound and the SCOPE was assumed.
+
+**The rule: state the host in the result, not just the number.** Wren's own framing, and it is
+better than "enumerate rather than count" for this class, because enumeration on the wrong machine
+is still enumeration.
+
+This matters beyond tidiness on a fleet: a claim like *"the fleet is quiet"* or *"nothing else is
+consuming signals"* is a claim about every host, and it cannot be established from one. The
+isolation that DID hold here held for a stated reason — the cold-agent A/B ran in workspace
+`c2ea0541`, and `7c28b611` is a different workspace — not because the machine was quiet.
+
