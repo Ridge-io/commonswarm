@@ -25,14 +25,27 @@ when the deployment moves — grep every surface when a gate flips.**
 the old name collided with a competitor. Prose says CommonSwarm; anything a user types says
 `cswarm`. Four things still legitimately read `coswarm` and must not be "fixed":
 
-- ~~the release repo default `Ridge-io/coswarm-dist` in `install.sh`~~ — **dead**
-  (2026-07-29): the decision landed; `install.sh:16` now defaults to `Ridge-io/cloud-swarm`
-  (public), and the published installer at commonswarm.com/install.sh installs cswarm 0.1.4;
+- ~~the release repo default `Ridge-io/coswarm-dist` in `install.sh`~~ — **dead** (2026-07-29).
+  ~~"`install.sh:16` now defaults to `Ridge-io/cloud-swarm` (public), and the published installer
+  installs cswarm 0.1.4"~~ — **also dead (2026-08-10)**: the line is now `install.sh:27` and
+  defaults to **`Ridge-io/commonswarm`**, and the published installer installs **0.1.12**.
+  `Ridge-io/cloud-swarm` is no longer the release home — see the repo-migration note below;
 - the Vercel project and live URL `coswarm-site` / `coswarm-site.vercel.app` — still the
   deployed site, see the deploy section below;
 - the esbuild define `__COSWARM_VERSION__` — a build-time identifier shared between
   `scripts/build-release.sh` and `src/cli.ts`; both sides must change together;
-- the git repo `cloud-swarm` and the GitHub org `Ridge-io` — operator actions.
+- ~~the git repo `cloud-swarm`~~ — **dead (2026-08-10)**: the repo is now
+  **`Ridge-io/commonswarm`**. The GitHub org `Ridge-io` is unchanged and remains an operator
+  action.
+
+★ **THE REPO MOVED ON 2026-08-10 AND IT WAS NOT A RENAME.** `Ridge-io/cloud-swarm`'s history
+carried two operator work addresses in commit metadata, commit messages **and file blobs** — 199
+of its last 200 commits had them in the tree. A force-push cannot purge that: GitHub keeps
+unreachable objects fetchable by SHA. **A new repo never receives them**, which is the only clean
+purge available. `Ridge-io/commonswarm` is that repo: history rewritten, all 14 releases mirrored
+with both assets, installer repointed, verified by a real install. **Every SHA changed**, so any
+citation older than the migration that still resolves is a coincidence — 149 were remapped.
+`Ridge-io/cloud-swarm` still exists and is frozen; deleting it is an operator action.
 
 Also unaffected, and different things entirely: the PostgreSQL schema `swarm.`, every
 `SWARM_*` env var, and the separate local `swarm` CLI the agent fleet runs.

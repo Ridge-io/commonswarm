@@ -68,8 +68,16 @@ const { cmd } = Astro.props;
 const readCmd = cmd.replace(/\|\s*sh$/, "| less");
 const pinCmd = INSTALL_CMD_PINNED;
 const dirCmd = INSTALL_CMD_DIR;
-const sourceCmd = `git clone https://github.com/Ridge-io/commonswarm.git
-cd cloud-swarm
+/* The directory is DERIVED from the clone URL rather than written twice. It was written twice,
+ * and on 2026-08-10 the URL was repointed to commonswarm while the `cd` was left saying
+ * cloud-swarm — so the live page told a stranger to clone one directory and enter another, in
+ * both the visible lines and the Copy payload. The comment directly above says derivation exists
+ * so "a change at the top of the page cannot leave this variant behind"; this was the one variant
+ * that opted out, and it is the one that drifted. Nothing in site/scripts/ gates this string. */
+const SOURCE_REPO = "https://github.com/Ridge-io/commonswarm.git";
+const sourceDir = SOURCE_REPO.replace(/^.*\//, "").replace(/\.git$/, "");
+const sourceCmd = `git clone ${SOURCE_REPO}
+cd ${sourceDir}
 npm install
 npm run build
 node dist/cli.js --version`;

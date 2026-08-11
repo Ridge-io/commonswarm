@@ -268,8 +268,11 @@ Not "the tests pass." A stranger, on their own machine, can:
 
 1. **◐ UNBLOCKED; cold-stranger outcome not measured — install `cswarm` and authenticate
    without being walked through it.** The public installer at
-   `https://commonswarm.com/install.sh` installs the checksummed `v0.1.4` release from
-   public `Ridge-io/cloud-swarm`. The first two-machine dogfood run installed from that URL
+     `https://commonswarm.com/install.sh` installs the checksummed `latest` release
+     (**v0.1.12**, measured 2026-08-10) from public **`Ridge-io/commonswarm`**.
+     ~~"installs the checksummed `v0.1.4` release from public `Ridge-io/cloud-swarm`"~~ —
+     **dead (2026-08-10)**: the installer defaults to `latest`, not a pin, and the release
+     home moved. **Re-score this item against `Ridge-io/commonswarm`.** The first two-machine dogfood run installed from that URL
    and completed GitHub OAuth; see `docs/evidence/2026-07-29-first-real-dogfood.md`. Both
    participants were operators, so that run did not establish “without being walked
    through it” for a cold stranger.

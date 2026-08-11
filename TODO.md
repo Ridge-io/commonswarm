@@ -91,14 +91,14 @@ action.
 
 ## 2. Release repository and installer — **RESOLVED 2026-07-29**
 
-Published releases live on the public `Ridge-io/cloud-swarm` repository. Release `v0.1.1`
+Published releases live on the public `Ridge-io/commonswarm` repository (14 mirrored, latest v0.1.12, each carrying `cswarm` and `cswarm.sha256`). Release `v0.1.1`
 carries both `cswarm` and `cswarm.sha256`, and the installer published at
 `https://commonswarm.com/install.sh` defaults to that repository. A fresh install reports
 `cswarm 0.1.1`.
 
 Measured again 2026-07-29: the repository is `PUBLIC`; the release has both assets;
 `/install.sh` returns 200 while `/nope.sh` returns 404; and the served script sets
-`REPO="${CSWARM_REPO:-Ridge-io/cloud-swarm}"`.
+`REPO="${CSWARM_REPO:-Ridge-io/commonswarm}"`.
 
 <details>
 <summary>★ SUPERSEDED release-decision snapshot — DEAD as current instruction</summary>
