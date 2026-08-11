@@ -1,0 +1,74 @@
+# Fails a push or PR whose commits carry an author/committer address that is not on the measured
+# allowlist in scripts/check-commit-identity.sh.
+#
+# ACCIDENT SCOPE, and saying so is what makes it not a lie. GitHub runs the workflow that ships
+# WITH the ref under test, so a workflow in the repo cannot police identity against a deliberate
+# change — anything it reads is supplied by the thing it checks. Do NOT try to fix that by
+# extracting a "trusted" copy from the base ref: that was built, bought nothing, and introduced a
+# script-injection hole on the way.
+#
+# It is a CI job and not a hook because every offending push in the incident used --no-verify
+# under a standing ruling permitting it. A guard people are allowed to skip is not a guard.
+#
+# GitHub's own committer_email_pattern ruleset would be the non-bypassable answer. It REQUIRES
+# ENTERPRISE; this org is on Team. Probed, not recalled. Do not spend an afternoon on it.
+name: commit identity
+
+on:
+  push:
+  pull_request:
+
+# Never cancel a run in progress: a cancelled identity check reads as "not failed" in the checks
+# UI, which is the wrong default for a guard.
+concurrency:
+  group: commit-identity-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    # Ordered fallback to the self-hosted fleet, so deleting one repo variable reverts a tier at a
+    # time and deleting all three returns to GitHub-hosted. This repo has no runners registered
+    # yet, so today it lands on ubuntu-latest for a job that takes about a minute.
+    runs-on: ${{ vars.CI_RUNS_ON_LIGHT || vars.CI_RUNS_ON_NODE || vars.CI_RUNS_ON || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The check needs history, not just the tip.
+          fetch-depth: 0
+
+      - name: Resolve the range to check
+        id: range
+        # NOTHING from the github context is interpolated into a run: block. Values arrive through
+        # env, where the shell cannot execute them. That is the rule Spark's rounds 1 and 2 broke.
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            range="$BASE_SHA..HEAD"
+          elif [ -n "${BEFORE:-}" ] && [ "$BEFORE" != "0000000000000000000000000000000000000000" ] \
+               && git cat-file -e "${BEFORE}^{commit}" 2>/dev/null; then
+            range="$BEFORE..HEAD"
+          else
+            # A new branch, a force-push, or a first push: `before` is absent or unreachable, so
+            # fall back to the commits this ref adds beyond the default branch. Checking ALL of
+            # history here would fail forever on any historical identity.
+            git fetch --no-tags origin "+refs/heads/main:refs/remotes/origin/main" 2>/dev/null || true
+            if git rev-parse --verify -q origin/main >/dev/null; then
+              range="origin/main..HEAD"
+            else
+              range="HEAD~1..HEAD"
+            fi
+          fi
+          echo "value=$range" >> "$GITHUB_OUTPUT"
+          echo "checking range: $range"
+
+      - name: Check commit identity
+        env:
+          RANGE: ${{ steps.range.outputs.value }}
+        run: ./scripts/check-commit-identity.sh "$RANGE"
