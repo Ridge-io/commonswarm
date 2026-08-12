@@ -6,13 +6,13 @@ Supersedes `docs/org/2026-08-07-RESUME-HERE.md`. Written for someone reading the
 
 The operator asked one question — *"why would the agent be on permissions deny? we want low
 friction here by default"* — and it turned into a permission-default change plus nine D-036 review
-rounds that found real defects in every single round, several of them inside my own corrections.
+rounds — twelve by the end — that found real defects in every single round, several of them inside
+my own corrections, and one of which broke the repo (D-089).
 
 ## Refs, by hash
 
 | ref | what it carries | state |
 |---|---|---|
-| `e82e906` | duplicate optionIds, bare JSON-RPC frames (see below) | landed |
 | `4844b4e` | the permission default flip (deny → allow), D-084 | landed |
 | `de6ecee` | eleven strings the flip falsified | landed |
 | `87fe7ed` | round-2 corrections: a false competitive claim, the canonical spec | landed |
@@ -43,7 +43,7 @@ true; the two about the reply-text path are false. See D-086 "round 3".
 
 ## What is LIVE vs merely written
 
-- **LIVE:** `main` at `e82e906` on GitHub. Nothing else.
+- **LIVE:** `main` at `b69af69` on GitHub (this file). Nothing else.
 - **NOT released:** v0.1.16 is built (`dist-release/cswarm`, 0.1.16, sha256
   `de62758…` at the time of writing — rebuild before publishing) but **no GitHub release exists**.
   The latest published release is still **v0.1.15**.
@@ -55,8 +55,9 @@ true; the two about the reply-text path are false. See D-086 "round 3".
 
 ## The next concrete action
 
-1. Read the round-9 arm outputs if they are still in
-   `/private/tmp/claude-501/.../scratchpad/arm9-*.txt`; if not, rerun both arms on `e82e906`.
+1. Confirm both D-036 arms are clean on the current HEAD. Twelve rounds have run; every one found
+   something real, so do not assume the next is a formality. **Tell each arm not to touch this
+   repo's config** — that instruction is what stopped D-089 recurring.
 2. If nothing blocks: `bash scripts/build-release.sh`, then `gh release create v0.1.16` with **both**
    `dist-release/cswarm` AND `dist-release/cswarm.sha256` — v0.1.12 shipped without the sha256 and
    the installer refused every install.
