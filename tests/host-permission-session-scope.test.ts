@@ -552,9 +552,20 @@ for (const [label, result] of [
  *   2. `canaryRejectKey(sessionId, toolCallId)`, which encodes the session INTO the key — so a
  *      foreign deny looks up a key that was never inserted.
  *
- * Measured: deleting (1) alone → 32/32 green. Making (2) ignore the session → 32/32 green. Doing
- * BOTH → these four tests fail. A redundant pair means no single mutation can be discriminated, and
- * a test that claimed to witness one of them would be lying about which.
+ * ~~"Measured: deleting (1) alone → 32/32 green … no single mutation can be discriminated."~~
+ * **FALSE WHEN WRITTEN, and refuted by the exact-review arm.** The claim was true only for the
+ * inputs I had chosen. The delimiter key `${sessionId}` + NUL + `${toolCallId}` was NOT injective,
+ * so ("ours", "left"+NUL+"right") collided with ("ours"+NUL+"left", "right") — and against THAT
+ * input, deleting (1) alone does fail. The key was the weaker half, not an equal one.
+ *
+ * The key is now `JSON.stringify([sessionId, toolCallId])`, and the corrected measurement is:
+ *
+ *   delimiter key + guard deleted   → the collision test FAILS   (the guard was load-bearing)
+ *   injective key + guard deleted   → 33/33 green                (the key alone now suffices)
+ *
+ * So the redundancy is real NOW and was not real THEN — my fix made my own claim true after the
+ * fact, which is not the same as it having been true. Recorded this way because "I checked and
+ * nothing failed" is exactly how the original error was produced.
  *
  * So these tests pin the SECURITY PROPERTY — a terminal deny from a session we are not driving
  * never satisfies the boundary proof — and they deliberately do not attribute it to a mechanism.
@@ -669,4 +680,107 @@ test("D-086 canary CONTROL: our own session's terminal deny still proves the bou
   assert.equal(outcome.sawPermissionRequest, true, "the host stopped seeing its own permission request");
   assert.equal(outcome.sawDeniedToolResult, true, "the host stopped correlating its own deny");
   assert.equal(outcome.passed, true, "the canary no longer passes on a correct boundary proof");
+});
+
+/* The delimiter collision, and why it refuted my own claim.
+ *
+ * The reject key used to be `${sessionId}` + NUL + `${toolCallId}`, which is NOT injective:
+ * ("ours", "left" + NUL + "right") and ("ours" + NUL + "left", "right") produce the SAME key. ACP
+ * types both identifiers as plain strings and excludes nothing, and the CHILD chooses both — so a
+ * provider could make a FOREIGN session's terminal deny correlate with our recorded reject and
+ * satisfy the permission-boundary canary.
+ *
+ * This input is what refuted the "redundant pair" claim recorded above. Under the delimiter key,
+ * deleting the explicit session match alone left the other four canary tests green and breaks THIS
+ * one — so a single mutation IS discriminable, and my claim held only for the inputs I had chosen.
+ * The key is now JSON.stringify of the tuple, which escapes the separator inside each element.
+ *
+ * NUL is written as an escape here and never as a literal byte: a literal control character in a
+ * source file is invisible in review, which is the same class of problem as the bug it tests. */
+const NUL = "\u0000";
+
+function collisionChild() {
+  const toAgent = new PassThrough();
+  const toHost = new PassThrough();
+  let buf = "";
+  const send = (msg: unknown) => toHost.write(`${JSON.stringify(msg)}\n`);
+
+  toAgent.on("data", (chunk: Buffer | string) => {
+    buf += typeof chunk === "string" ? chunk : chunk.toString("utf8");
+    let nl: number;
+    while ((nl = buf.indexOf("\n")) !== -1) {
+      const line = buf.slice(0, nl);
+      buf = buf.slice(nl + 1);
+      if (!line.trim()) continue;
+      const msg = JSON.parse(line) as Record<string, unknown>;
+      if (msg.method === "initialize") {
+        send({ jsonrpc: "2.0", id: msg.id, result: { protocolVersion: ACP_PROTOCOL_VERSION } });
+      } else if (msg.method === "session/new") {
+        send({ jsonrpc: "2.0", id: msg.id, result: { sessionId: "ours" } });
+      } else if (msg.method === "session/prompt") {
+        // Reject recorded under ("ours", "left" + NUL + "right").
+        send({
+          jsonrpc: "2.0",
+          id: 9200,
+          method: "session/request_permission",
+          params: {
+            sessionId: "ours",
+            toolCall: { toolCallId: `left${NUL}right`, title: "x", kind: "execute" },
+            options: [
+              { optionId: "a", name: "Allow", kind: "allow_once" },
+              { optionId: "r", name: "Reject", kind: "reject_once" },
+            ],
+          },
+        });
+        setTimeout(() => {
+          // Terminal deny from a DIFFERENT session that collides under a delimiter key.
+          send({
+            jsonrpc: "2.0",
+            method: "session/update",
+            params: {
+              sessionId: `ours${NUL}left`,
+              update: {
+                sessionUpdate: "tool_call_update",
+                toolCallId: "right",
+                status: "rejected",
+                title: "x",
+              },
+            },
+          });
+          setTimeout(
+            () => send({ jsonrpc: "2.0", id: msg.id, result: { stopReason: "end_turn" } }),
+            20,
+          );
+        }, 20);
+      }
+    }
+  });
+
+  return { readable: toHost, writable: toAgent };
+}
+
+test("D-086 canary: a colliding (session, toolCall) pair does not satisfy the boundary proof", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "d086-collide-"));
+  const fake = collisionChild();
+  try {
+    const { session } = await openAcpSessionOverStdio({
+      cwd,
+      readable: fake.readable,
+      writable: fake.writable,
+      promptsEnabled: true,
+      requestTimeoutMs: 5_000,
+      permissionCallback: defaultPermissionCallback,
+    });
+    const outcome = await session.runPermissionBoundaryCanary();
+    await session.close();
+
+    assert.equal(
+      outcome.sawDeniedToolResult,
+      false,
+      "a foreign session's deny correlated with ours through a key collision",
+    );
+    assert.equal(outcome.passed, false, "the canary passed on a forged correlation");
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
 });

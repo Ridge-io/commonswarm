@@ -278,8 +278,20 @@ export class AcpHostSession {
     };
   }
 
+  /** Injective (sessionId, toolCallId) key — a delimiter alone is not, and NUL is not special. */
   private canaryRejectKey(sessionId: string, toolCallId: string): string {
-    return `${sessionId}\0${toolCallId}`;
+    /* ~~`${sessionId}\0${toolCallId}`~~ NOT INJECTIVE. ACP types both identifiers as plain strings
+     * and excludes nothing, so ("ours", "left\0right") and ("ours\0left", "right") produced the
+     * SAME key — a provider choosing its own ids could make a foreign session's terminal deny
+     * correlate with our recorded reject and satisfy the permission-boundary canary.
+     *
+     * Reaching for a rarer delimiter is the same bug with a longer straw. JSON.stringify of the
+     * tuple is injective because it escapes the separator inside each element.
+     *
+     * Found by the exact-review arm on e487971, which used the collision to REFUTE my claim that
+     * the session match and this key were redundant. They were not: the key was the weaker half,
+     * and my "no single mutation discriminates" held only for the inputs I happened to choose. */
+    return JSON.stringify([sessionId, toolCallId]);
   }
 
   async runPermissionBoundaryCanary(options?: {

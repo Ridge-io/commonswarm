@@ -5250,9 +5250,32 @@ was worth more than the control would have been. The property is enforced **twic
 2. `canaryRejectKey(sessionId, toolCallId)`, which encodes the session **into the key**, so a
    foreign deny looks up a key that was never inserted.
 
-Measured: deleting (1) alone → 32/32 green. Making (2) ignore the session → 32/32 green. **Both →
-the four tests fail.** No single mutation is discriminable, and a test claiming to witness one of
-them would be misattributing the property.
+~~"Measured: deleting (1) alone → 32/32 green … No single mutation is discriminable."~~ **FALSE,
+refuted by the exact-review arm on `e487971`, and the refutation is better than the claim.**
+
+`canaryRejectKey` was `${sessionId}` + NUL + `${toolCallId}`, which is **not injective**: ACP types
+both identifiers as plain strings and excludes nothing, so `("ours", "left"+NUL+"right")` and
+`("ours"+NUL+"left", "right")` produce the same key. **The child chooses both identifiers**, so a
+provider could forge a correlation between a foreign session's terminal deny and our recorded
+reject, and satisfy the permission-boundary canary. Against that input, deleting the explicit guard
+alone *does* fail — the key was the weaker half, not an equal one.
+
+**How I got it wrong:** I ran two mutations against the four inputs I had already written and
+generalised "no single mutation discriminates" from them. The claim was about all inputs; the
+evidence was about four. Reaching for a rarer delimiter would have been the same bug with a longer
+straw; the key is now `JSON.stringify([sessionId, toolCallId])`, which escapes the separator inside
+each element.
+
+Corrected measurement, with the collision control added:
+
+| mutation | result |
+|---|---|
+| delimiter key, explicit guard deleted | collision control **fails** — the guard was load-bearing |
+| injective key, explicit guard deleted | 33/33 green — the key alone now suffices |
+
+**The redundancy is real now and was not real then.** My fix made my own claim true after the fact,
+which is not the same as it having been true, and the distinction is the whole point of keeping the
+superseded wording.
 
 The tests therefore pin the **security property** — a terminal deny from a session we are not
 driving never satisfies the boundary proof — and deliberately do not attribute it to a mechanism.
