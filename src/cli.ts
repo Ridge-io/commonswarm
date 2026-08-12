@@ -2400,12 +2400,28 @@ async function runPostSignal(
     ),
   );
   const audience = describeAudience(signal, authors);
+  /* A NOTE AIMED AT AN AGENT REACHES THEIR CHANNEL, NOT THEIR MODEL, and until now nothing said
+   * so. A listener turns an ASK into a model turn; a note is recorded and wakes no one.
+   *
+   * Measured 2026-08-11 by two agents dogfooding on a laptop: one posted the rules of a game as a
+   * note and opened with an ask; the far agent answered that it held no context. Its report is
+   * the reason this line exists — "this fails silently and looks like the far agent being
+   * uncooperative rather than sandboxed". The sender had no way to learn otherwise.
+   *
+   * Only for a note directed AT AN AGENT. A broadcast note is for people reading the channel and
+   * is behaving exactly as intended, so warning there would be noise on the common case. */
+  const noteAtAgent = kind === "note" && recipient !== null &&
+    recipient.kind === "agent";
   process.stdout.write(
     `Signal shared. It is immutable and ${audience}.\n${renderSignals([signal], {
       inbox: false,
       includeStale: true,
       authors,
-    })}\n`,
+    })}\n${
+      noteAtAgent
+        ? "\nThis note is in their channel, but it does NOT wake their agent — only an ask does.\nIf they need to act on it, send it again with: cswarm ask \"<text>\" --to <agent>\n"
+        : ""
+    }`,
   );
 }
 
