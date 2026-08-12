@@ -385,7 +385,24 @@ export class AcpHostSession {
        *
        * Measured by the exact-review arm on 65527457: eight malformed shapes all produced
        * `loaded: true` with no fallback. The distinction is presence, not type. */
+      /* THREE outcomes, not two. The previous version collapsed every non-record into "absent",
+       * so an array, a bare string, a number, a boolean, or a missing `result` all reported a
+       * SUCCESSFUL load of the requested session. ACP v1's success shape for session/load is null
+       * or a response object; nothing else is a response we understand.
+       *
+       * Measured by the exact-review arm on d20f81e: 5 of 5 malformed top-level shapes returned
+       * loaded: true. **And the test I had written as a CONTROL required `"not-a-record"` to
+       * resume** — the fourth control in this lane pinned to a false claim, and the only one I
+       * wrote while deliberately protecting legitimate behaviour. Being permissive is not the same
+       * as being compatible. */
+      const resultIsEmptySuccess = result === null || result === undefined;
       const resultRecord = isRecord(result) ? result : null;
+      if (!resultIsEmptySuccess && resultRecord === null) {
+        throw new AcpProtocolError(
+          "session/load returned an unrecognised result shape",
+          "session_load_malformed",
+        );
+      }
       const sessionIdAbsent = resultRecord === null ||
         !("sessionId" in resultRecord) || resultRecord.sessionId === undefined;
       if (sessionIdAbsent) {

@@ -5227,6 +5227,40 @@ conclusion either way.
 tree, and pair it with a control that must be present. A working tree is a claim about the future;
 only the commit is the artefact.
 
+### Round 4: absent, malformed, and unrecognised are THREE answers
+
+`session/load` collapsed every non-record result into "absent", so an array, a bare string, a
+number, a boolean, or a missing `result` all reported a **successful load of the requested session**.
+ACP v1's success shape is `null` or a response object. Measured on `d20f81e`: 5 of 5 malformed
+top-level shapes returned `loaded: true`.
+
+**And the test I had written as a CONTROL required `"not-a-record"` to resume.** It was the fourth
+control in this lane pinned to a false claim, and the only one written while deliberately protecting
+legitimate behaviour — which is what made it hard to see. **Permissive is not the same as
+compatible.** Guarding a real provider behaviour (the empty-result resume) does not license
+accepting every shape that is not that behaviour.
+
+### The canary guard that cannot be witnessed, and why that is the answer
+
+The arm also asked for a control discriminating the canary's session-correlation guard, after
+finding its deletion left all 526 tests green. **That control cannot exist**, and establishing why
+was worth more than the control would have been. The property is enforced **twice, independently**:
+
+1. the explicit `claimedSessionId === this.sessionId` guard, and
+2. `canaryRejectKey(sessionId, toolCallId)`, which encodes the session **into the key**, so a
+   foreign deny looks up a key that was never inserted.
+
+Measured: deleting (1) alone → 32/32 green. Making (2) ignore the session → 32/32 green. **Both →
+the four tests fail.** No single mutation is discriminable, and a test claiming to witness one of
+them would be misattributing the property.
+
+The tests therefore pin the **security property** — a terminal deny from a session we are not
+driving never satisfies the boundary proof — and deliberately do not attribute it to a mechanism.
+"Safe but unwitnessed" was half right: it is *unwitnessable alone*, and it is not the only thing
+holding the property up. **A redundant pair looks exactly like dead code under single-mutation
+testing**, which is the trap worth remembering — the next reader will run that mutation, see
+nothing fail, and delete one half.
+
 ### Also fixed in the same pass, all from the same arm
 
 - The OpenCode start note said tool requests are "allowed one at a time by default", unqualified,

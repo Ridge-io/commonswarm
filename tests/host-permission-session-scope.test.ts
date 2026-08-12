@@ -28,6 +28,7 @@ import { test } from "node:test";
 import {
   ACP_PROTOCOL_VERSION,
   allowOnceOrDeny,
+  defaultPermissionCallback,
   openAcpSessionOverStdio,
 } from "../src/host/index.js";
 
@@ -502,7 +503,11 @@ for (const [label, result] of [
 for (const [label, result] of [
   ["an empty object", {}],
   ["an explicitly undefined field", { sessionId: undefined }],
-  ["a non-record", "not-a-record"],
+  /* ~~["a non-record", "not-a-record"]~~ MOVED to the malformed list below. I wrote it here as a
+   * control protecting legitimate behaviour, and it was requiring a garbage response to be
+   * reported as a successful load. ACP v1's empty success is `null`, not an arbitrary JSON value.
+   * Permissive is not the same as compatible. */
+  ["an explicit null result", null],
 ] as const) {
   test(`D-086 load CONTROL: an ABSENT session id (${label}) still resumes`, async () => {
     /* The distinction this whole change rests on. Rejecting these too would "secure" the product by
@@ -513,3 +518,155 @@ for (const [label, result] of [
     assert.equal(out.freshSessionsAfterLoad, 0, `${label} forced a needless fresh session`);
   });
 }
+
+for (const [label, result] of [
+  ["a bare string", "not-a-record"],
+  ["an array", ["ours"]],
+  ["a number", 7],
+  ["a boolean", true],
+] as const) {
+  test(`D-086 load: an unrecognised top-level result (${label}) is not a successful load`, async () => {
+    /* ACP v1's success shape is null or a response object. Everything else is a response we do not
+     * understand, and reporting it as a successful load of the requested session was the last
+     * surviving blocker on d20f81e — 5 of 5 shapes returned loaded: true. */
+    const out = await loadRaw(result);
+    assert.equal(out.loaded, false, `${label} was reported as a successful load`);
+    assert.equal(out.freshSessionsAfterLoad, 1, `${label} did not fall back to a fresh session`);
+  });
+}
+
+/* The canary's session correlation.
+ *
+ * The boundary canary passes only when the host denied a permission request AND saw a correlated
+ * terminal deny for that toolCallId. If a terminal update naming ANOTHER session could satisfy the
+ * second half, a provider could unlock real prompts without ever honouring our deny — the canary is
+ * the proof that CommonSwarm controls ACP permissions, so a bypass here devalues every start.
+ *
+ * WHAT THESE TESTS ESTABLISH, AND WHAT THEY DO NOT — measured, because the obvious claim is wrong.
+ *
+ * The exact-review arm asked for "a control that discriminates that guard" after finding its
+ * deletion left all 526 tests green. **That control cannot exist, and the reason is the useful
+ * result:** the property is enforced TWICE, independently.
+ *
+ *   1. the explicit `claimedSessionId === this.sessionId` guard, and
+ *   2. `canaryRejectKey(sessionId, toolCallId)`, which encodes the session INTO the key — so a
+ *      foreign deny looks up a key that was never inserted.
+ *
+ * Measured: deleting (1) alone → 32/32 green. Making (2) ignore the session → 32/32 green. Doing
+ * BOTH → these four tests fail. A redundant pair means no single mutation can be discriminated, and
+ * a test that claimed to witness one of them would be lying about which.
+ *
+ * So these tests pin the SECURITY PROPERTY — a terminal deny from a session we are not driving
+ * never satisfies the boundary proof — and they deliberately do not attribute it to a mechanism.
+ * The earlier note that this guard was "safe and unwitnessed" was half right: it is unwitnessable
+ * on its own, and it is not the only thing holding the property up. */
+function canaryChild(updateSessionId: unknown, omit = false) {
+  const toAgent = new PassThrough();
+  const toHost = new PassThrough();
+  let buf = "";
+  const send = (msg: unknown) => toHost.write(`${JSON.stringify(msg)}\n`);
+
+  toAgent.on("data", (chunk: Buffer | string) => {
+    buf += typeof chunk === "string" ? chunk : chunk.toString("utf8");
+    let nl: number;
+    while ((nl = buf.indexOf("\n")) !== -1) {
+      const line = buf.slice(0, nl);
+      buf = buf.slice(nl + 1);
+      if (!line.trim()) continue;
+      const msg = JSON.parse(line) as Record<string, unknown>;
+      if (msg.method === "initialize") {
+        send({ jsonrpc: "2.0", id: msg.id, result: { protocolVersion: ACP_PROTOCOL_VERSION } });
+      } else if (msg.method === "session/new") {
+        send({ jsonrpc: "2.0", id: msg.id, result: { sessionId: "ours" } });
+      } else if (msg.method === "session/prompt") {
+        // Ask on OUR session so the host denies it and records the reject key.
+        send({
+          jsonrpc: "2.0",
+          id: 9100,
+          method: "session/request_permission",
+          params: {
+            sessionId: "ours",
+            toolCall: { toolCallId: "canary-tc", title: "run_terminal_command", kind: "execute" },
+            options: [
+              { optionId: "a", name: "Allow", kind: "allow_once" },
+              { optionId: "r", name: "Reject", kind: "reject_once" },
+            ],
+          },
+        });
+        // Then report the terminal deny under whichever session this case exercises.
+        setTimeout(() => {
+          send({
+            jsonrpc: "2.0",
+            method: "session/update",
+            params: {
+              ...(omit ? {} : { sessionId: updateSessionId }),
+              update: {
+                sessionUpdate: "tool_call_update",
+                toolCallId: "canary-tc",
+                status: "rejected",
+                title: "run_terminal_command",
+              },
+            },
+          });
+          setTimeout(
+            () => send({ jsonrpc: "2.0", id: msg.id, result: { stopReason: "end_turn" } }),
+            20,
+          );
+        }, 20);
+      }
+    }
+  });
+
+  return { readable: toHost, writable: toAgent };
+}
+
+async function canaryWith(updateSessionId: unknown, omit = false) {
+  const cwd = mkdtempSync(join(tmpdir(), "d086-canary-"));
+  const fake = canaryChild(updateSessionId, omit);
+  try {
+    const { session } = await openAcpSessionOverStdio({
+      cwd,
+      readable: fake.readable,
+      writable: fake.writable,
+      promptsEnabled: true,
+      requestTimeoutMs: 5_000,
+      /* DENY, because that is what production does during the canary: every model adapter forces
+       * defaultPermissionCallback while `workerCanary` is set, regardless of --permissions. An
+       * approving callback records no reject key, so nothing can correlate and the canary fails for
+       * every input — which is exactly how the first version of these tests passed vacuously. The
+       * control caught it. Again. */
+      permissionCallback: defaultPermissionCallback,
+    });
+    const outcome = await session.runPermissionBoundaryCanary();
+    await session.close();
+    return outcome;
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+}
+
+for (const [label, id, omit] of [
+  ["a foreign session", "other", false],
+  ["an omitted session", undefined, true],
+  ["a null session", null, false],
+  ["a numeric session", 7, false],
+] as const) {
+  test(`D-086 canary: a terminal deny from ${label} does not satisfy the boundary proof`, async () => {
+    const outcome = await canaryWith(id, omit);
+    assert.equal(
+      outcome.sawDeniedToolResult,
+      false,
+      `a terminal deny from ${label} was accepted as our correlated deny`,
+    );
+    assert.equal(outcome.passed, false, `the canary passed on a deny from ${label}`);
+  });
+}
+
+test("D-086 canary CONTROL: our own session's terminal deny still proves the boundary", async () => {
+  /* Requiring the match is satisfiable by never correlating anything, which fails every canary and
+   * bricks `listen start` for all four providers. */
+  const outcome = await canaryWith("ours");
+  assert.equal(outcome.sawPermissionRequest, true, "the host stopped seeing its own permission request");
+  assert.equal(outcome.sawDeniedToolResult, true, "the host stopped correlating its own deny");
+  assert.equal(outcome.passed, true, "the canary no longer passes on a correct boundary proof");
+});
