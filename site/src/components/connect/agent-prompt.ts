@@ -110,9 +110,23 @@ export function dashboardAgentPrompt(input: DashboardPromptInput): string {
     "",
     "   printf '%s' '<the JSON line>' | cswarm <command> --agent-token-stdin ...",
     "",
-    "printf is a shell builtin, so no process is ever created carrying the credential in its",
-    "arguments: it never appears in `ps`, to you or to anyone else on the machine. That is the",
-    "exposure worth preventing, and this form prevents it. What it does NOT do is keep the line",
+    /* ~~"it never appears in `ps`, to you or to anyone else on the machine. That is the exposure
+     * worth preventing, and this form prevents it."~~ **FALSE, and measured false 2026-08-12.**
+     *
+     * printf being a builtin is true and is not the whole story. A host whose shell tool takes one
+     * command string runs `zsh -c "printf … | cswarm …"`, and THAT process carries the entire
+     * command line — credential included — in its own argv. Probed: the secret appeared in `ps` on
+     * two processes.
+     *
+     * The prompt named that host shape as "the common case, not an edge case" in the sentence
+     * before, and then told the agent it was safe. A false claim about where a credential is
+     * visible is the worst kind to make confidently. Caught by the D-036 exact-review arm. */
+    "printf is a shell builtin, so printf itself never becomes a process carrying the credential.",
+    "But if your host runs your command as one string, that wrapper process — `zsh -c \"…\"` or",
+    "similar — does carry the whole command line, credential included, where anyone else on the",
+    "machine can read it with `ps` for as long as the command runs. It is brief and it is real.",
+    "Prefer the separate-stdin path above whenever your host has one. What this form also does NOT",
+    "do is keep the line",
     "out of your own session transcript — it is already there, because that is where you",
     "received it — or out of a shell history file if your host keeps one; clear that entry if",
     "yours does. Do not write the credential to a file.",
@@ -139,8 +153,15 @@ export function dashboardAgentPrompt(input: DashboardPromptInput): string {
      * Measured 2026-08-11: one agent posted the rules of a game as a note, and the other agent's
      * worker never saw them — it replied that it had received no rules. The sender believed it
      * had briefed the recipient. */
-    "TWO VERBS, AND THEY REACH DIFFERENT PLACES. `cswarm ask --to <agent>` wakes that",
-    "agent's model and gets an answer back. `cswarm note` is posted for people reading the",
+    /* ~~"`cswarm ask --to <agent>` wakes that agent's model and gets an answer back."~~ Dead
+     * 2026-08-12. Two overstatements in one clause: the wake needs a listener already running on
+     * the RECIPIENT, and the answer comes back to the sender only with --wait. This sentence was
+     * itself written to fix the note-vs-ask confusion, and it overshot in the other direction —
+     * a correction that promises more than the thing it corrected. */
+    "TWO VERBS, AND THEY REACH DIFFERENT PLACES. `cswarm ask --to <agent>` is addressed to that",
+    "agent and wakes its model if that agent has a listener running; add `--wait <seconds>` to",
+    "block until the reply arrives, or read it later from your inbox. `cswarm note` is posted",
+    "for people reading the",
     "channel and does NOT wake anyone. So anything another agent must act on has to be an",
     "ask, and it has to carry its own context: the recipient sees that one message, not the",
     "conversation around it.",
@@ -204,9 +225,13 @@ export function dashboardAgentPrompt(input: DashboardPromptInput): string {
     "can rotate only while this listener remains",
     "alive and secure local state is available.",
     "",
-    "Grok CLI 0.2.117 and OpenCode 1.18.10 also have detached adapters. Use the same",
-    "command with --provider grok or --provider opencode after installing and signing in",
-    "to that pinned host.",
+    /* Codex was MISSING from this list while `cswarm listen start` accepts it (src/cli.ts:376,
+     * src/listener/codex-model.ts). A Codex user reading this prompt was sent to the foreground
+     * fallback, which does not wake a model — losing the whole feature for one of four supported
+     * providers. Caught by the D-036 exact-review arm. */
+    "Codex, Grok CLI 0.2.117 and OpenCode 1.18.10 also have detached adapters. Use the same",
+    "command with --provider codex, --provider grok or --provider opencode after installing and",
+    "signing in to that pinned host.",
     "",
     "For every other host, use the host-neutral foreground stream instead. Only after cswarm",
     "0.1.6 or newer is installed, start this command and send the same credential through its",

@@ -80,3 +80,37 @@ test("the deny escape hatch is documented where an operator will meet it", () =>
     "the prompt names deny without saying when an operator should reach for it",
   );
 });
+
+test("every provider the CLI accepts is offered a detached adapter in the onboarding prompt", () => {
+  /* Codex was missing from the prompt's adapter list while `cswarm listen start` accepted it, so a
+   * Codex user was routed to the foreground fallback — which does not wake a model. One of four
+   * supported providers silently lost the feature, and the site suite stayed green because nothing
+   * compared the two lists.
+   *
+   * Read the CLI usage line as the AUTHORITY for what is supported, and the prompt source for what
+   * is offered. Comparing the prompt against another copy of the prompt would only prove our own
+   * files agree — which is exactly how this survived. */
+  const cliUsage = readFileSync(
+    new URL("../../src/cli.ts", import.meta.url),
+    "utf8",
+  );
+  const usageLine = cliUsage
+    .split("\n")
+    .find((line) => line.includes("cswarm listen start") && line.includes("--provider"));
+  assert.ok(usageLine, "the listen start usage line moved; this control cannot find the authority");
+
+  const supported = (/--provider ([a-z|]+)/.exec(usageLine!)?.[1] ?? "").split("|").filter(Boolean);
+  assert.ok(supported.length >= 4, `expected 4+ providers in the usage line, saw ${supported.join(",")}`);
+
+  const prompt = readFileSync(
+    new URL("../../site/src/components/connect/agent-prompt.ts", import.meta.url),
+    "utf8",
+  ).replace(/\/\*[\s\S]*?\*\//g, "");
+
+  for (const provider of supported) {
+    assert.ok(
+      prompt.includes(`--provider ${provider}`),
+      `the CLI supports --provider ${provider} but the onboarding prompt never offers it`,
+    );
+  }
+});

@@ -67,7 +67,32 @@ test("dashboard agent prompt is one complete, secret-safe handoff", () => {
   /* CONTROL: the prohibition itself must survive. A fix that simply deleted the warning would
    * satisfy everything above while telling an agent nothing about where the credential must
    * never go. */
-  assert.match(prompt, /never appears in `ps`/);
+  /* ~~`assert.match(prompt, /never appears in `ps`/)`~~ Dead 2026-08-12, and this is the FIFTH
+   * control in this lane found pinned to a false claim — the worst of them, because it defended a
+   * security claim about a CREDENTIAL.
+   *
+   * Measured: a host whose shell tool takes one command string runs `zsh -c "printf … | cswarm …"`,
+   * and that wrapper carries the credential in its own argv. The secret appeared in `ps` on two
+   * processes. The prompt named that host shape as "the common case" one sentence earlier.
+   *
+   * The replacement pins the honest version: printf itself creates no process, the wrapper does,
+   * and the separate-stdin path is preferred. The negative below is what stops the old claim
+   * returning. */
+  assert.match(
+    prompt,
+    /printf itself never becomes a process carrying the credential/,
+    "the prompt no longer explains why printf is used at all",
+  );
+  assert.match(
+    prompt,
+    /does carry the whole command line, credential included/,
+    "the prompt hides that a one-command-string host exposes the credential in ps",
+  );
+  assert.doesNotMatch(
+    prompt,
+    /never appears in `ps`/,
+    "the false ps-safety claim is back",
+  );
   /* The sanctioned form must not CONTRADICT the prohibition it appears under. Both cold agents
    * that connected on 2026-08-10 raised this unprompted: the first version banned putting the
    * credential "in shell history" and then sanctioned a form that puts it there, rebutting only
@@ -84,7 +109,7 @@ test("dashboard agent prompt is one complete, secret-safe handoff", () => {
     /shell history/,
     "the prohibition still bans what the sanctioned form does",
   );
-  assert.match(prompt, /What it does NOT do/, "the form's limits are not stated");
+  assert.match(prompt, /What this form also does NOT\s+do/, "the form's limits are not stated");
   assert.match(prompt, /already there, because that is where you/, "it hides the transcript exposure");
   assert.match(prompt, /DO NOT ECHO THIS CREDENTIAL BACK/);
   assert.match(prompt, /--agent-token-stdin/);
