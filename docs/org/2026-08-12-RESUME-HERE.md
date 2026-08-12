@@ -43,15 +43,19 @@ true; the two about the reply-text path are false. See D-086 "round 3".
 
 ## What is LIVE vs merely written
 
-- **LIVE:** `main` at `b69af69` on GitHub (this file). Nothing else.
-- **NOT released:** v0.1.16 is built (`dist-release/cswarm`, 0.1.16, sha256
-  `de62758…` at the time of writing — rebuild before publishing) but **no GitHub release exists**.
-  The latest published release is still **v0.1.15**.
-- **NOT deployed:** the site has NOT been redeployed. `site/src/components/connect/agent-prompt.ts`
-  changed substantially (it now recommends `--permissions allow`), so **commonswarm.com/app is
-  serving the old onboarding prompt**.
-- **NOT run:** the two-agent dogfood against 0.1.16. That was the operator's standing ask and it is
-  the next concrete action.
+- **LIVE — `main`** on GitHub, through the docs commits above.
+- **LIVE — v0.1.16 is RELEASED.** `gh release` on `Ridge-io/commonswarm` with **both** `cswarm` and
+  `cswarm.sha256`. Verified by a real cold install through the published installer
+  (`curl -fsSL https://commonswarm.com/install.sh | CSWARM_INSTALL_DIR=… sh`), which reported
+  `cswarm 0.1.16 (protocol 0.1.0)`. The installed binary was probed directly: the three retired
+  strings absent, the new ones present, with a positive control on the same invocation.
+- **LIVE — the site is DEPLOYED.** `commonswarm.com` 200, `/install.sh` 200 against a `/nope.sh` 404
+  control, `/download` carries 0.1.16 and no 0.1.15, `/start` backend meta non-empty with zero
+  service-role JWTs. The onboarding prompt is client-generated, so it was verified in the **deployed
+  bundle** (`/_astro/AgentConnect…js`): `--permissions allow` and the codex bridge present, the false
+  `ps` claim and "It is brief and it is real" absent, control present.
+- **NOT run:** the two-agent dogfood against 0.1.16. Standing operator ask, and the first measurement
+  of steady-state `allow`.
 
 ## The next concrete action
 
