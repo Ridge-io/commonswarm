@@ -12,7 +12,7 @@ rounds that found real defects in every single round, several of them inside my 
 
 | ref | what it carries | state |
 |---|---|---|
-| `e82e906` | HEAD of `main`, pushed to `Ridge-io/commonswarm` | **LIVE on GitHub, NOT released** |
+| `e82e906` | duplicate optionIds, bare JSON-RPC frames (see below) | landed |
 | `4844b4e` | the permission default flip (deny → allow), D-084 | landed |
 | `de6ecee` | eleven strings the flip falsified | landed |
 | `87fe7ed` | round-2 corrections: a false competitive claim, the canonical spec | landed |
@@ -23,6 +23,20 @@ rounds that found real defects in every single round, several of them inside my 
 | `e487971` | three-way load outcomes; a FALSE redundancy claim, corrected by `da8d045` | landed |
 | `da8d045` | injective canary key (the NUL collision) | landed |
 | `e82e906` | duplicate optionIds, bare JSON-RPC frames | landed |
+| `eed7701` | three false onboarding claims (ps/wake/codex) | landed |
+| `6b56497` | the credential rule contradicted its own sanctioned form | landed |
+| `0d743ba` | **JUNK — message `c0`, author `T`.** Built from a review arm's temp tree and pushed; it REVERTED `6b56497`. See D-089 | landed, superseded by `cfb9ca0` |
+| `cfb9ca0` | provider bridges, D-088 sequencing, and D-089 itself | landed |
+| `3309e19` | HEAD of `main`: "brief" was false for the fallback receiver | **LIVE on GitHub, NOT released** |
+
+**RED, and read this before trusting any git output in this checkout:** a D-036 review arm set
+`core.worktree` in this repo's local config while verifying "from a separate checkout". Every git
+command then operated on its `/tmp` tree while `npm test`, `grep` and the editor read the real one —
+`git status` reported clean over six modified files, `git add -f` did nothing, and a commit built
+from that tree (`0d743ba`, message `c0`, author `T`) was pushed and **reverted a landed fix**.
+Fixed and recorded as **D-089**. The one-command check is `git rev-parse --show-toplevel`; run it
+before trusting a clean `git status` here. Review arms are now told explicitly not to touch this
+repo's config, and the last two rounds left it clean.
 
 **RED:** `65527457`'s commit message is wrong and cannot be edited. Three of its five claims are
 true; the two about the reply-text path are false. See D-086 "round 3".
