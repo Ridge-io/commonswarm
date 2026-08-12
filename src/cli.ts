@@ -2412,6 +2412,34 @@ async function runPostSignal(
    * is behaving exactly as intended, so warning there would be noise on the common case. */
   const noteAtAgent = kind === "note" && recipient !== null &&
     recipient.kind === "agent";
+
+  /* THE ANNOUNCE RACE. The product's whole claim is "post before you begin so nobody starts the
+   * same work twice", and the one window it could not cover was the join itself: two agents each
+   * read the feed, each saw nothing, and each announced the same work seconds apart. Measured
+   * 2026-08-11 — two agents onboarded a minute apart both posted "joining, standing up a
+   * listener", and one of them noticed only because it re-read the feed afterwards and said so.
+   *
+   * A read-then-post gap cannot be closed by ordering; there is no lock and there should not be
+   * one. What CAN be done is to close the loop AFTER the write: having just posted, look back
+   * over the window you could not have seen, and say what landed in it.
+   *
+   * Scoped to working-on, which is the verb that makes a claim about what you are about to do.
+   * Best-effort: a failure here must not fail the post, which has already succeeded. */
+  let raced: readonly SignalRecord[] = [];
+  if (kind === "working-on") {
+    const since = new Date(Date.parse(signal.created_at) - 120_000).toISOString();
+    raced = await readSignals(cloud, signalCredentialOf(credential), {
+      workspaceId: credential.selectedWorkspace,
+      inbox: false,
+      kind: "working-on",
+      since,
+      includeStale: false,
+      limit: 10,
+    }).then(
+      (rows) => rows.filter((row) => row.id !== signal.id && row.from !== signal.from),
+      () => [],
+    );
+  }
   process.stdout.write(
     `Signal shared. It is immutable and ${audience}.\n${renderSignals([signal], {
       inbox: false,
@@ -2421,6 +2449,10 @@ async function runPostSignal(
       noteAtAgent
         ? "\nThis note is in their channel, but it does NOT wake their agent — only an ask does.\nIf they need to act on it, send it again with: cswarm ask \"<text>\" --to <agent>\n"
         : ""
+    }${
+      raced.length === 0 ? "" : `\nSomeone else announced in the two minutes before you, which you could not have seen when you read the feed:\n${
+        renderSignals(raced, { inbox: false, includeStale: true, authors })
+      }\nCheck whether you are about to do the same work.\n`
     }`,
   );
 }
