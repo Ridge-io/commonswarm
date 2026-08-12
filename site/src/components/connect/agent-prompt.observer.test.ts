@@ -201,6 +201,20 @@ test("dashboard agent prompt teaches measured Claude wake and a host-neutral fal
       /Tool\s+requests\s+are\s+approved\s+one\s+at\s+a\s+time\s+when\s+the\s+worker\s+asks\s+and\s+the\s+host\s+offers\s+a\s+one-time\s+approval/,
       "the prompt states allow as unconditional; it is conditional on the host offering allow_once",
     );
+    /* "Brief" was false for the fallback receiver, which this same prompt tells you to keep
+     * running: an agent whose host takes one command string cannot use the fallback's
+     * separate-stdin channel, so the wrapper holds the credential in argv for the receiver's whole
+     * lifetime. Another local person can read it the entire time. */
+    assert.doesNotMatch(
+      prompt,
+      /It\s+is\s+brief\s+and\s+it\s+is\s+real/,
+      "the prompt calls the ps exposure brief, which is false for the long-running fallback",
+    );
+    assert.match(
+      prompt,
+      /WHOLE\s+TIME\s+the\s+receiver\s+runs/,
+      "the prompt no longer says how long the credential is readable in the long-running case",
+    );
     /* Wrapping-tolerant, because the prompt is a hand-wrapped string array: `/safe default denies/`
      * missed `safe default\ndenies` and would have passed on the very sentence it forbids. Caught
      * by the exact-review arm. */

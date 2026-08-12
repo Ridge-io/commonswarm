@@ -125,9 +125,21 @@ export function dashboardAgentPrompt(input: DashboardPromptInput): string {
     "printf is a shell builtin, so printf itself never becomes a process carrying the credential.",
     "But if your host runs your command as one string, that wrapper process — `zsh -c \"…\"` or",
     "similar — does carry the whole command line, credential included, where anyone else on the",
-    "machine can read it with `ps` for as long as the command runs. It is brief and it is real,",
-    "and it is the one exception to the rule above: prefer the separate-stdin path whenever your",
-    "host has one, and use this form only when it does not.",
+    /* ~~"It is brief and it is real"~~ Dead 2026-08-12. "Brief" is true for a one-shot post and
+     * for `listen start`, which detaches and returns — and FALSE for the fallback receiver below,
+     * which the same prompt tells you to keep running. An agent whose host takes one command string
+     * cannot use that fallback's separate-stdin channel, so it runs this very form and the wrapper
+     * holds the credential in its argv for the receiver's whole lifetime. Another local person can
+     * read it the entire time, with no buggy or hostile provider involved.
+     *
+     * I wrote "brief" thinking of one-shot commands, in a paragraph that exists precisely because
+     * some hosts cannot do anything else. Caught by the D-036 exact-review arm. */
+    "machine can read it with `ps` for exactly as long as that command runs. For a one-shot post,",
+    "or for `listen start` which detaches and returns, that is moments. For the fallback receiver",
+    "below it is the WHOLE TIME the receiver runs, which is the entire session — if that is your",
+    "only option, prefer the detached listener over the fallback, and tell the person it is",
+    "readable locally so it is their decision. This is the one exception to the rule above: prefer",
+    "the separate-stdin path whenever your host has one, and use this form only when it does not.",
     "",
     "This form also does not keep the line out of your own session transcript — it is already",
     "there, because that is where you received it — or out of a shell history file if your host",
