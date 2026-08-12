@@ -12,9 +12,13 @@
  *
  * A private HOME alone does **not** defeat project-level OpenCode config;
  * OpenCode 1.18.10 still merges project permissions unless
- * `OPENCODE_DISABLE_PROJECT_CONFIG` is set and verified. Steady-state
- * `--permissions allow` is a separate local opt-in after the deny canary —
- * the canary does not prove allow_once behaviour.
+ * `OPENCODE_DISABLE_PROJECT_CONFIG` is set and verified.
+ *
+ * ~~"Steady-state `--permissions allow` is a separate local opt-in after the
+ * deny canary"~~ Dead 2026-08-11: allow is the DEFAULT, selected by omitting
+ * the flag. The rest of that sentence stands and is why it matters — **the
+ * canary does not prove allow_once behaviour**, so the mode now reached by
+ * default is the one the canary does not cover.
  */
 
 import type {

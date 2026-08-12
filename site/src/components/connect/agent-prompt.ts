@@ -180,8 +180,13 @@ export function dashboardAgentPrompt(input: DashboardPromptInput): string {
     "act, and nothing on screen tells you that is why it seems unhelpful.",
     "",
     'Wait for JSON with state "ready". The adapter keeps a local Claude worker',
-    "receiving after this setup turn ends and replies to direct asks. The safe default denies",
-    "ACP tool requests. Every sender reaches the worker in your project context; each prompt",
+    /* ~~"The safe default denies ACP tool requests."~~ Dead 2026-08-11, caught by BOTH review
+     * arms on 4844b4e7. The flip made it false twice over: the command above passes
+     * --permissions allow, and omitting the flag now resolves to allow too. It sat two lines
+     * below the flag I changed and was not in the diff. */
+    "receiving after this setup turn ends and replies to direct asks. Tool requests are",
+    "allowed one at a time when the worker asks.",
+    "Every sender reaches the worker in your project context; each prompt",
     "states who sent it, their operator, and the owner relation. Cross-owner prompts steer the",
     "agent to seek your confirmation before destructive or irreversible action. The short credential",
     "can rotate only while this listener remains",

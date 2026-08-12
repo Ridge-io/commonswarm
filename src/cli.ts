@@ -3180,11 +3180,14 @@ export function listenerStatusJson(
     ...(mode
       ? {
         permission_mode: mode,
+        /* "allowed once" alone overstates it: allowOnceOrDeny selects allow_once only when the
+         * host OFFERS that option, and denies otherwise. Both review arms flagged the
+         * unqualified form on 4844b4e7. */
         same_owner_delivery: mode === "allow"
-          ? "worker session; tool requests allowed once"
+          ? "worker session; tool requests allowed once each when the host offers allow_once, otherwise denied"
           : "worker session; tool requests denied",
         cross_owner_delivery: mode === "allow"
-          ? "same worker session with sender provenance; tool requests allowed once"
+          ? "same worker session with sender provenance; tool requests allowed once each when the host offers allow_once, otherwise denied"
           : "same worker session with sender provenance; tool requests denied",
       }
       : {}),
@@ -3779,7 +3782,7 @@ async function runListenStart(args: Arguments): Promise<void> {
     return;
   }
   const hostNote = provider === "opencode"
-    ? "The OpenCode worker uses one private auth/config home and your selected project cwd. Every sender reaches that worker with sender and operator provenance in the prompt. Steady-state --permissions allow is a separate local opt-in after the deny canary.\n"
+    ? "The OpenCode worker uses one private auth/config home and your selected project cwd. Every sender reaches that worker with sender and operator provenance in the prompt. Tool requests are allowed one at a time by default; --permissions deny refuses them. The deny canary does not cover steady-state allow.\n"
     : provider === "claude"
     ? "The Claude worker uses your selected cwd and normal Claude Code keychain/OAuth state through claude-agent-acp 0.64.2. Every sender reaches that worker with sender and operator provenance in the prompt.\n"
     : provider === "codex"
@@ -3803,10 +3806,10 @@ async function runListenStart(args: Arguments): Promise<void> {
        * denied" is true and gets skimmed past; naming what the worker cannot do does not. */
       `Same-owner tool requests are ${
         permissionMode === "allow"
-          ? "allowed once each, one request at a time"
-          : "denied. This worker can reply to messages but cannot run commands, read or " +
-            "write files, or act on anything it is asked to do; restart with " +
-            "--permissions allow if that is not what you want"
+          ? "allowed once each, one request at a time when the worker asks"
+          : "denied. This worker can reply to messages but cannot do anything it must ask " +
+            "permission for — running commands and writing files were both refused in " +
+            "testing; restart with --permissions allow if that is not what you want"
       }. The same permission mode applies to every sender relation.\n` +
       "The short credential rotates while this process remains alive and secure local state is available; a person reauthorises after the 30-day horizon.\n" +
       hostNote +

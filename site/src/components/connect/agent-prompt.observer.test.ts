@@ -145,7 +145,24 @@ test("dashboard agent prompt teaches measured Claude wake and a host-neutral fal
     /Swap it for `--permissions deny`/,
     "the way to harden a cross-owner listener is no longer documented",
   );
-  assert.match(prompt, /safe default denies\s+ACP tool requests/);
+    /* ~~`assert.match(prompt, /safe default denies\s+ACP tool requests/)`~~ Dead 2026-08-11.
+     *
+     * This is the repo's own "a control can discriminate and still pin the wrong claim", caught by
+     * BOTH review arms on 4844b4e7. The assertion was real and discriminating — and the moment the
+     * default flipped to allow it was **requiring a false sentence**, so the suite would have
+     * rejected the correction and defended the falsehood. Green throughout.
+     *
+     * It survived my own sweep because I swept the lines I had CHANGED. This one sat two lines
+     * below the flag and was not in the diff. */
+    /* Whitespace-tolerant at every gap: the prompt is a hand-wrapped string array, so where a
+     * line breaks is cosmetic and a rebalance must not turn this control red for a reason that
+     * is not about the claim. */
+    assert.match(prompt, /Tool\s+requests\s+are\s+allowed\s+one\s+at\s+a\s+time\s+when\s+the\s+worker\s+asks/);
+    assert.doesNotMatch(
+      prompt,
+      /safe default denies/,
+      "the prompt still tells a new operator that the default denies tool requests",
+    );
   assert.match(prompt, /Every sender reaches the worker in your project context/);
   assert.match(prompt, /who sent it, their operator, and the owner relation/);
   assert.match(prompt, /seek your confirmation before destructive or irreversible action/);

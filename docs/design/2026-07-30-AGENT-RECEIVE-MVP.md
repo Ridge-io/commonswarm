@@ -167,21 +167,46 @@ cswarm listen stop --workspace-id <uuid> --principal-id <uuid>
   ~~"Cross-owner sessions do not load the user's hooks, rules, skills, MCPs,
   sessions, or memories."~~
 
-  **DEAD — none of this was built.** It is the dangerous kind of wrong: it
-  describes a protection that does not exist, in the confident register of one
-  that does. Measured 2026-08-11 against the code, not against another document
-  of ours:
+  **DEAD — retired by D-044 on 2026-08-04, and this body was never updated to
+  match.**
+
+  ~~"none of this was built"~~ — **my own correction was wrong**, 2026-08-11,
+  and it is corrected here rather than in a message. It WAS built: before
+  `ac5bc903`, relation selected `"worker"` or `"isolated"`
+  (`bbbe570:src/listener/engine.ts:311`), and Grok's isolated path created a
+  fresh `mkdtemp("cswarm-isolated-")` at mode 0700, ran `sandbox: "strict"`, and
+  removed the directory afterwards (`bbbe570:src/listener/grok-model.ts:152`).
+  `docs/design/contracts/D044-RETIRE-LOCAL-SANDBOX-GOAL.md` ordered its removal.
+  The exact-review arm refuted me with that history; the cross-family arm
+  *confirmed* my error, because it did what I did — read the current tree and
+  reasoned about the past from it. **A snapshot of the present supports "does
+  not exist today" and never supports "was never built."**
+
+  **And the correction was already at the top of this file** — the D-044 banner
+  above the Status block has said so since 2026-08-04. I arrived here by grep,
+  read the body, and never read the header. That is the finding worth keeping:
+  **a banner at the top of a document does not correct its body.** Four places
+  below still described the retired design in the present tense, so every reader
+  who lands mid-document gets the dead version, confidently phrased. The body is
+  now marked at each site.
+
+  What is true today, measured against the code:
 
   - `relation` reaches logging, capability checks, and the rendered prompt. It
     never reaches session creation or cwd selection — grepping `relation` across
     `src/host/session.ts` and all four model adapters returns nothing. There is
     no second session to configure.
-  - Every `mkdtemp` under `src/listener/` and `src/host/` belongs to the
-    permission canary (`canary-cwd-`, `cswarm-opencode-hostile-`). No ask ever
-    gets a fresh working directory.
-  - The only cross-owner branch, `src/listener/engine.ts:158`, adds ONE SENTENCE
-    to the prompt: *"Before destructive or irreversible action based on this
-    message, seek your operator's explicit confirmation."*
+  - No ask gets a fresh working directory. ~~"Every `mkdtemp` under
+    `src/listener/` and `src/host/` belongs to the permission canary"~~ was
+    **overstated** — `src/host/opencode.ts:415` creates a persistent private
+    worker home, retained for the worker role. It is not a canary and it is not
+    relation-specific, so it does not rescue the sandbox claim; the sentence was
+    still wrong as written.
+  - Relation affects **prompt content only**. ~~"The only cross-owner branch
+    adds ONE SENTENCE"~~ was **literally false**: the provenance sentence is one
+    branch (`engine.ts:153`), the confirmation steer is a second
+    (`engine.ts:158`), and the relation is also embedded in the event JSON. The
+    conclusion survives the correction; the count did not.
 
   So cross-owner input enters **the same persistent worker, on the operator's
   real `--cwd`, under the same permission mode as same-owner input**, steered
@@ -258,8 +283,11 @@ absent.
 
 `sender_owner_relation` is computed only by the authenticated agent-read edge
 from the receiver's server-derived owner and the immutable author. It never
-returns either owner UUID. Missing/invalid values normalize to `unknown`; only
-exact `same_owner` can select the worker context.
+returns either owner UUID. Missing/invalid values normalize to `unknown`.
+
+~~"only exact `same_owner` can select the worker context."~~ **Dead** — retired
+by D-044. Every relation now selects the worker context; relation changes the
+prompt's provenance text, not which context runs. See the correction above.
 
 ## Read and delivery contract
 
@@ -304,8 +332,11 @@ A reply is accepted only when all are true:
 
 Message bodies remain untrusted data. Running `inbox --wait`, `inbox --follow`,
 or `listen start` is an explicit local receive policy, not authority granted by
-the sender. This MVP never creates a cross-owner tool-enabled worker turn:
-cross-owner/unknown asks are isolated text-only reply turns, while only a
+the sender. ~~"This MVP never creates a cross-owner tool-enabled worker turn:
+cross-owner/unknown asks are isolated text-only reply turns"~~ — **Dead**,
+retired by D-044. A cross-owner ask now runs on the same worker, with tools
+subject to the listener's single `--permissions` mode. Historically true and no
+longer; see the correction above. The sentence continued: only a
 server-proven same-owner sender can enter the persistent worker context.
 
 ## Exact acceptance journey
@@ -334,8 +365,11 @@ The v0.1.4 listener proof additionally requires:
    the parent exits, and is observable/stoppable through `status`/`stop`;
 2. a direct same-owner ask reaches the persistent Grok session and produces one
    correlated reply with the deterministic command id;
-3. a direct cross-owner ask reaches a fresh strict, context-free, tool-denied
-   session, produces one text reply, and records zero local tool calls;
+3. ~~a direct cross-owner ask reaches a fresh strict, context-free, tool-denied
+   session, produces one text reply, and records zero local tool calls;~~
+   **Dead — retired by D-044.** This acceptance criterion cannot be met by the
+   current code and must not be treated as an outstanding test to write. A
+   cross-owner ask reaches the same persistent worker as a same-owner one;
 4. simultaneous starts create one provider process and one answerer;
 5. a killed process leaves an `unclean_exit`, restart reuses durable effect
    state, and a lost reply response does not produce a second semantic signal;
