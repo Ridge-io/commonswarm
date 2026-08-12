@@ -5296,3 +5296,32 @@ nothing fail, and delete one half.
   explicit confirmation". The prompt is addressed to the agent, so the shorter form asked it for its
   own approval. **A test required the false wording** — the third control in this lane found pinned to
   a false claim, none of them caught by a gate.
+
+## D-087 — a permission request outside a prompt turn is answered normally · MINOR · OPEN
+
+Reported by the D-036 exact-review arm on `da8d045`, reproduced by it: with an open session and no
+prompt in flight, a child permission request received `{"outcome":{"outcome":"selected","optionId":"allow"}}`
+under the now-default allow mode.
+
+**Not fixed, deliberately, and the reasoning is recorded so nobody re-derives it.** The ACP child is
+software the operator installed and runs as themselves — `claude-agent-acp`, `codex-acp`, Grok,
+OpenCode. It already has their shell and their filesystem. A provider that wants to run a command
+does not need to route it through our permission callback, out of turn or otherwise. So the
+threat this would close is not "the provider does something unauthorised"; it is narrower.
+
+**What it would actually buy:** an approval the operator never contextually authorised, since no
+message was being processed. That is worth closing eventually.
+
+**Why not now:** refusing out-of-turn requests is a behaviour change to the handshake with four
+providers, and nothing establishes that they only ask during a prompt. Denying wrongly would break a
+working listener, and this lane has already shown how easy it is to "secure" the product by breaking
+it — see the `session/load` control in D-086 that required a garbage response to resume.
+
+**The fix, when someone takes it:** gate approval on a prompt being in flight, with a measured check
+against all four adapters first — specifically whether any of them requests permission during
+`initialize`, `session/new`, or `session/set_mode`. That measurement is the work; the code is one
+condition.
+
+Related, from the same report and same reasoning: `openWorkCwd` can leave an exported session
+prompt-capable after required-mode selection fails. The current CLI closes that failed session, and
+OpenCode has no required mode, so no shipped path reaches it.

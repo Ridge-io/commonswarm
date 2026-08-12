@@ -265,8 +265,28 @@ export class AcpTransport extends EventEmitter {
       return;
     }
 
-    // Response (has id, result or error, no method)
+    /* Response (has id, EXACTLY ONE of result/error, no method).
+     *
+     * D-086 round 6. The "result or error" in the old comment was never enforced: a bare `{id}`
+     * frame was accepted and resolved `undefined`, which `session/load` read as a successful load
+     * and — worse — which `session/set_mode` read as proof the provider had APPLIED the required
+     * mode. Codex is put into read-only that way before its canary, so a provider answering `{id}`
+     * would be treated as read-only while being nothing of the kind.
+     *
+     * JSON-RPC 2.0 §5 requires exactly one of result/error. A frame with neither, or with both, is
+     * malformed and is now reported rather than silently resolved. */
     if ("id" in rec && rec.id !== null && rec.id !== undefined && !("method" in rec)) {
+      const hasResult = "result" in rec;
+      const hasError = "error" in rec;
+      if (hasResult === hasError) {
+        const err = new AcpProtocolError(
+          "response must carry exactly one of result or error",
+          "malformed_frame",
+        );
+        this.handlers.onProtocolError?.(err);
+        this.emit("protocolError", err);
+        return;
+      }
       this.handleResponse(rec);
       return;
     }

@@ -30,6 +30,7 @@ import {
   allowOnceOrDeny,
   defaultPermissionCallback,
   openAcpSessionOverStdio,
+  parsePermissionOptions,
 } from "../src/host/index.js";
 
 const ALLOW_AND_REJECT = [
@@ -780,6 +781,137 @@ test("D-086 canary: a colliding (session, toolCall) pair does not satisfy the bo
       "a foreign session's deny correlated with ours through a key collision",
     );
     assert.equal(outcome.passed, false, "the canary passed on a forged correlation");
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+/* D-086 round 6: two more places the child's own framing was taken at face value.
+ *
+ * Neither is about a malicious provider. The ACP child runs as the operator and needs no permission
+ * from us to act on their machine. Both matter because a BUGGY provider could pass a canary that
+ * proves nothing — and we would then report `ready` while unable to restrain the worker that
+ * untrusted cross-owner prompts are steering. */
+
+test("D-086: a duplicate optionId is dropped, because it cannot identify our answer", () => {
+  /* A child can attach the same id to reject_once and allow_always. We select "reject", the wire
+   * carries only the shared id, and the child is free to read it as the approval — which also makes
+   * the deny canary vacuous, since its whole job is to prove our refusal was understood. */
+  const options = parsePermissionOptions([
+    { optionId: "same", name: "Reject", kind: "reject_once" },
+    { optionId: "same", name: "Always allow", kind: "allow_always" },
+    { optionId: "unique-reject", name: "Reject", kind: "reject_once" },
+  ]);
+
+  assert.equal(
+    options.filter((o) => o.optionId === "same").length,
+    0,
+    "an ambiguous optionId survived into the options we choose from",
+  );
+  assert.deepEqual(
+    options.map((o) => o.optionId),
+    ["unique-reject"],
+    "the unambiguous option was lost with the ambiguous ones",
+  );
+});
+
+test("D-086 CONTROL: distinct optionIds are all kept", () => {
+  /* Dropping duplicates is satisfiable by dropping everything, which would leave the default
+   * callback with nothing to select and cancel every request — deny mode would still look safe and
+   * allow mode would stop working entirely. */
+  const options = parsePermissionOptions([
+    { optionId: "a", name: "Allow", kind: "allow_once" },
+    { optionId: "r", name: "Reject", kind: "reject_once" },
+  ]);
+
+  assert.deepEqual(options.map((o) => o.optionId), ["a", "r"]);
+  assert.deepEqual(
+    defaultPermissionCallback({ sessionId: "s", options, summary: "x" }),
+    { outcome: "selected", optionId: "r" },
+    "deny can no longer find a reject option",
+  );
+});
+
+test("D-086: an ambiguous option set still denies rather than failing open", () => {
+  /* The end-to-end property. With every id ambiguous, nothing survives parsing, and the deny-safe
+   * default must cancel rather than select something it cannot name. */
+  const options = parsePermissionOptions([
+    { optionId: "same", name: "Reject", kind: "reject_once" },
+    { optionId: "same", name: "Always allow", kind: "allow_always" },
+  ]);
+
+  assert.deepEqual(options, []);
+  assert.deepEqual(
+    allowOnceOrDeny({ sessionId: "s", options, summary: "x" }),
+    { outcome: "cancelled" },
+    "an ambiguous option set produced a selection instead of a refusal",
+  );
+});
+
+/* A bare `{id}` frame is not a response.
+ *
+ * JSON-RPC 2.0 §5 requires exactly one of result/error. The transport's own comment said "result or
+ * error" and never checked, so `{"jsonrpc":"2.0","id":N}` resolved `undefined` — which `session/load`
+ * read as a successful load, and which `session/set_mode` read as proof the provider had APPLIED the
+ * required mode. Codex is put into read-only that way BEFORE its canary, so a provider answering
+ * `{id}` would be treated as read-only while being nothing of the kind.
+ *
+ * Exercised through `load()`, because that is a caller whose success/failure is observable: a frame
+ * that is not a response must not resolve the request, so the call falls back to a fresh session. */
+function bareResponseChild() {
+  const toAgent = new PassThrough();
+  const toHost = new PassThrough();
+  let buf = "";
+  let newSessions = 0;
+  const send = (msg: unknown) => toHost.write(`${JSON.stringify(msg)}\n`);
+
+  toAgent.on("data", (chunk: Buffer | string) => {
+    buf += typeof chunk === "string" ? chunk : chunk.toString("utf8");
+    let nl: number;
+    while ((nl = buf.indexOf("\n")) !== -1) {
+      const line = buf.slice(0, nl);
+      buf = buf.slice(nl + 1);
+      if (!line.trim()) continue;
+      const msg = JSON.parse(line) as Record<string, unknown>;
+      if (msg.method === "initialize") {
+        send({ jsonrpc: "2.0", id: msg.id, result: { protocolVersion: ACP_PROTOCOL_VERSION } });
+      } else if (msg.method === "session/new") {
+        newSessions += 1;
+        send({ jsonrpc: "2.0", id: msg.id, result: { sessionId: `fresh-${newSessions}` } });
+      } else if (msg.method === "session/load") {
+        // Neither result nor error. Previously resolved undefined and read as success.
+        send({ jsonrpc: "2.0", id: msg.id });
+      } else if (msg.method === "session/set_mode") {
+        send({ jsonrpc: "2.0", id: msg.id, result: {} });
+      }
+    }
+  });
+
+  return { readable: toHost, writable: toAgent, newSessionCount: () => newSessions };
+}
+
+test("D-086: a JSON-RPC frame with neither result nor error is not a success", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "d086-bare-"));
+  const fake = bareResponseChild();
+  try {
+    const { session } = await openAcpSessionOverStdio({
+      cwd,
+      readable: fake.readable,
+      writable: fake.writable,
+      promptsEnabled: true,
+      requestTimeoutMs: 1_500,
+      permissionCallback: defaultPermissionCallback,
+    });
+    const before = fake.newSessionCount();
+    const out = await session.load("requested");
+    await session.close();
+
+    assert.equal(out.loaded, false, "a bare {id} frame was accepted as a successful load");
+    assert.equal(
+      fake.newSessionCount() - before,
+      1,
+      "no fallback session was opened, so the bare frame resolved the request",
+    );
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }

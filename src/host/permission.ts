@@ -68,8 +68,30 @@ export function resolvePermissionCallback(
   return callback ?? defaultPermissionCallback;
 }
 
+/**
+ * Parse the child's permission options, dropping any whose optionId is not uniquely ours to name.
+ *
+ * D-086 round 6. A duplicate optionId makes our answer AMBIGUOUS ON THE WIRE: a child can attach
+ * the same id to `reject_once` and `allow_always`, we select "reject", and the response carries only
+ * the shared id — which the child is free to read as the approval. That also makes the deny canary
+ * vacuous for such input, because the canary's whole job is to prove our refusal was understood.
+ *
+ * Dropping duplicates rather than rejecting the whole request keeps a well-formed subset usable: if
+ * what remains contains a reject, deny still works normally; if nothing remains, the default
+ * callback cancels. Fail-closed either way.
+ *
+ * Found by the exact-review arm on da8d045. The point is not that the child might lie — it runs as
+ * the operator and needs no permission from us to act. It is that a BUGGY provider can pass a canary
+ * that proves nothing, and we would report `ready` while unable to restrain it.
+ */
 export function parsePermissionOptions(raw: unknown): PermissionOption[] {
   if (!Array.isArray(raw)) return [];
+  const seen = new Map<string, number>();
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const id = (item as Record<string, unknown>).optionId;
+    if (typeof id === "string" && id) seen.set(id, (seen.get(id) ?? 0) + 1);
+  }
   const options: PermissionOption[] = [];
   for (const item of raw) {
     if (!item || typeof item !== "object") continue;
@@ -78,6 +100,8 @@ export function parsePermissionOptions(raw: unknown): PermissionOption[] {
     const name = rec.name;
     const kind = rec.kind;
     if (typeof optionId !== "string" || !optionId) continue;
+    // An id that appears twice cannot identify our answer; see the note above.
+    if ((seen.get(optionId) ?? 0) > 1) continue;
     if (typeof name !== "string") continue;
     if (
       kind !== "allow_once" &&
