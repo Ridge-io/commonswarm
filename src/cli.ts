@@ -2951,9 +2951,27 @@ function listenerUuid(value: string | undefined, flag: string): string {
   return value.toLowerCase();
 }
 
-function listenerPermissionMode(value: string | undefined): ListenerPermissionMode {
-  if (value === undefined || value === "deny") return "deny";
-  if (value === "allow") return "allow";
+/** Omitting --permissions means ALLOW. Operator direction 2026-08-11: low friction by default. */
+export function listenerPermissionMode(value: string | undefined): ListenerPermissionMode {
+  /* ~~`if (value === undefined || value === "deny") return "deny";`~~ Dead 2026-08-11. The omitted
+   * flag used to mean deny, which made the safe-looking default the one that quietly breaks the
+   * product: a worker under deny ANSWERS and cannot ACT — Bash and Write refused, so it cannot
+   * hash, persist or initiate — while `listen status` reports it healthy. Measured on the
+   * two-agent dogfood: the agent on the other end read it as uncooperative and nothing on any
+   * surface said why.
+   *
+   * `allow` is not a blanket grant. It selects allow-once PER REQUEST (allowOnceOrDeny) and falls
+   * back to deny when the host offers no such option, so it is the decision a human makes clicking
+   * through, one tool call at a time. The permission-boundary canary is UNAFFECTED: it forces deny
+   * regardless of this mode, so the proof that CommonSwarm controls ACP permissions still runs.
+   *
+   * NOT ESTABLISHED, and it is the reason this was deny: steady-state `allow` is unmeasured — see
+   * the canary limit strings below, which still say so and are still true. The enforced boundary
+   * against a CROSS-OWNER sender steering the worker is what this trades away; what remains is
+   * sender provenance in the prompt plus the model's judgement. `--permissions deny` is unchanged
+   * and is the answer for a listener taking work from outside your account. */
+  if (value === undefined || value === "allow") return "allow";
+  if (value === "deny") return "deny";
   throw new Error("--permissions must be deny or allow");
 }
 
@@ -3773,10 +3791,22 @@ async function runListenStart(args: Arguments): Promise<void> {
         ? "Listener stopped."
         : "Listener is ready and will keep receiving after this command exits."
     }\n${renderListenerStatus(status)}\n` +
+      /* ~~"allowed once because you explicitly selected --permissions allow" / "denied by
+       * default"~~ Dead 2026-08-11. Flipping the default inverted BOTH clauses at once: allow is
+       * no longer explicitly selected and deny is no longer the default. Neither string appeared
+       * in the diff that changed the default, which is why the sweep has to be over claims rather
+       * than over changed lines.
+       *
+       * The deny branch also now states the COST. Measured the same day: a worker under deny had
+       * Bash and Write refused, so it could answer and could not act, and every status surface
+       * called it healthy — the operator had nothing to read that explained it. "Tool requests are
+       * denied" is true and gets skimmed past; naming what the worker cannot do does not. */
       `Same-owner tool requests are ${
         permissionMode === "allow"
-          ? "allowed once because you explicitly selected --permissions allow"
-          : "denied by default"
+          ? "allowed once each, one request at a time"
+          : "denied. This worker can reply to messages but cannot run commands, read or " +
+            "write files, or act on anything it is asked to do; restart with " +
+            "--permissions allow if that is not what you want"
       }. The same permission mode applies to every sender relation.\n` +
       "The short credential rotates while this process remains alive and secure local state is available; a person reauthorises after the 30-day horizon.\n" +
       hostNote +

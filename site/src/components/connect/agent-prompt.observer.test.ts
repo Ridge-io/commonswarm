@@ -99,7 +99,7 @@ test("every cswarm command in the prompt is self-contained with deployment flags
   };
   for (const command of [
     'cswarm working-on "what you are about to do" --agent-token-stdin',
-    'cswarm listen start --agent-token-stdin --provider claude --cwd "$PWD" --permissions deny --json',
+    'cswarm listen start --agent-token-stdin --provider claude --cwd "$PWD" --permissions allow --json',
     "cswarm inbox --kind ask --follow --ndjson --agent-token-stdin",
     'cswarm reply <signal-id> "<answer>" --agent-token-stdin',
   ]) {
@@ -131,7 +131,20 @@ test("dashboard agent prompt teaches measured Claude wake and a host-neutral fal
   assert.match(prompt, /post and read signals[\s\S]*do not need a\s+listener/);
   assert.match(prompt, /listener adds detached live receipt/);
   assert.match(prompt, /--provider grok or --provider opencode/);
-  assert.match(prompt, /--permissions deny/);
+  /* ~~This pinned `--permissions deny`.~~ Dead 2026-08-11. Deny left the worker able to ANSWER
+   * and unable to ACT — no Bash, no Write, so it could not hash, persist or initiate — while
+   * presenting as healthy, and the agent on the other end read it as uncooperative. Operator
+   * direction: low friction by default.
+   *
+   * `allow` is not a blanket grant: it selects allow-once PER REQUEST and falls back to deny when
+   * the host offers no such option. Pins the default AND that the harder mode is still offered,
+   * so nobody silently drops the escape hatch. */
+  assert.match(prompt, /--permissions allow/);
+  assert.match(
+    prompt,
+    /Swap it for `--permissions deny`/,
+    "the way to harden a cross-owner listener is no longer documented",
+  );
   assert.match(prompt, /safe default denies\s+ACP tool requests/);
   assert.match(prompt, /Every sender reaches the worker in your project context/);
   assert.match(prompt, /who sent it, their operator, and the owner relation/);

@@ -156,10 +156,28 @@ export function dashboardAgentPrompt(input: DashboardPromptInput): string {
     "Then start CommonSwarm's detached Claude adapter from the project directory. Start",
     "this command, then send the same credential through its separate stdin channel:",
     "",
-    '   cswarm listen start --agent-token-stdin --provider claude --cwd "$PWD" --permissions deny --json \\',
+    /* --permissions ALLOW, not deny. Operator direction 2026-08-11: "we want low friction here by
+     * default." Measured the same day: a worker under `deny` had Bash and Write refused, so it
+     * could not hash, persist, or initiate — it answered questions and could do nothing else, and
+     * PRESENTED AS HEALTHY THE WHOLE TIME. The agent on the other end read it as uncooperative.
+     *
+     * `allow` is not a blanket grant. It selects allow-once PER REQUEST and falls back to deny
+     * when the host offers no such option — the same decision a human makes clicking through, one
+     * tool call at a time.
+     *
+     * What this genuinely trades: the deny boundary was the only ENFORCED protection against a
+     * cross-owner sender steering the worker. What remains is provenance in the prompt plus the
+     * model's own judgement, which is a softer guarantee. Same-owner is the common case and the
+     * one this default serves; the lines after the command tell an operator how to harden it. */
+    '   cswarm listen start --agent-token-stdin --provider claude --cwd "$PWD" --permissions allow --json \\',
     `     --url ${deploymentUrl} \\`,
     `     --anon-key ${anonKey} \\`,
     `     --workspace-id ${workspaceId}`,
+    "",
+    "`--permissions allow` lets the worker use its tools one request at a time, which is what",
+    "makes it useful rather than only talkative. Swap it for `--permissions deny` if this agent",
+    "will take work from people outside your account: under deny the worker can answer but not",
+    "act, and nothing on screen tells you that is why it seems unhelpful.",
     "",
     'Wait for JSON with state "ready". The adapter keeps a local Claude worker',
     "receiving after this setup turn ends and replies to direct asks. The safe default denies",
