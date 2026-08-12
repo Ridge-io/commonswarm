@@ -5168,6 +5168,40 @@ state. That is a different search, over different files, and it has to be asked 
   against itself. Extracted to `src/host/permission.ts` and exported. Verified identical across all
   four before the move.
 
+### Round 2 of the same defect: the first fix compared a SUBSTITUTED value
+
+Both arms reran and **both blocked again**, on two further paths.
+
+**The malformed-id bypass (exact-review arm).** `handlePermissionRequest` read the id as
+`typeof rec.sessionId === "string" ? rec.sessionId : this.sessionId ?? ""` — when the child omitted
+the field or sent a non-string, **the host filled in its own id and then compared it to itself.** The
+first fix rejected an explicit foreign id and waved the absent one straight through. Measured on
+`8e666ab4`: omitted, `null`, and numeric ids all reached the callback as `"ours"` and returned
+`allow_once`. An empty string denied, which is exactly why a casual probe looks clean.
+
+**My test could not have found it.** The helper's parameter was typed `string`, so it was
+structurally incapable of expressing the input that shipped. **A test helper's parameter types decide
+which defects it can describe** — that one had quietly excluded the entire malformed-input class, and
+no amount of mutation testing inside it would have helped.
+
+**And my first mutation of the fix was itself wrong.** I reverted the comparison but not the
+substitution, so the "reverted" code still denied and the mutation passed — I nearly recorded a
+non-discriminating control as verified. Restoring *both* lines fails all four cases. A mutation that
+does not reach the defect tests the same nothing as a probe that does not.
+
+**The reply-text path (both arms, independently).** `promptInternal` accumulated every
+`agent_message_chunk` into `message` regardless of session, and `message` becomes the reply body
+posted as a signal — so text from a session we never opened would be published under our agent's
+name. I found this by acting on the blocker's own question ("is there any other path where the
+sessionId is trusted") rather than re-reading the fix; the inversion arm found it independently and
+proposed byte-identical code.
+
+**`session/load` let the child pick (exact-review arm).** We ask to load id X, the child returns Y,
+and Y was adopted as the active session — **defeating every later check at the source rather than at
+each use.** The arm loaded `"requested"`, received `"other"`, then had a permission request for
+`"other"` approved. A mismatch is now treated as a failed load and takes the existing fallback, which
+re-canaries before any real prompt. Deleting the guard had left the entire grok suite green.
+
 ### Also fixed in the same pass, all from the same arm
 
 - The OpenCode start note said tool requests are "allowed one at a time by default", unqualified,

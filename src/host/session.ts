@@ -380,6 +380,21 @@ export class AcpHostSession {
         await this.applyRequiredMode();
         return { sessionId, loaded: true };
       }
+      /* D-086 round 2. The child returning a DIFFERENT id than the one we asked to load was
+       * accepted as the new active session, so it could choose the session every later check is
+       * made against — defeating those checks at the source rather than at each use. The
+       * exact-review arm loaded "requested", received "other", and then had a permission request
+       * for "other" approved.
+       *
+       * ACP has no aliasing that we rely on, so a mismatch is treated as a failed load and takes
+       * the existing fallback: reset the prompt gate and open a fresh session, which re-runs the
+       * canary before any real prompt. Fail-closed, and it reuses a path that is already tested. */
+      if (result.sessionId !== sessionId) {
+        throw new AcpProtocolError(
+          "session/load returned a different session id",
+          "session_id_mismatch",
+        );
+      }
       this.sessionId = result.sessionId;
       await this.applyRequiredMode();
       return { sessionId: result.sessionId, loaded: true };
@@ -571,7 +586,13 @@ export class AcpHostSession {
 
   private handleSessionUpdate(params: unknown): void {
     if (!isRecord(params)) return;
-    const sessionId = typeof params.sessionId === "string" ? params.sessionId : this.sessionId ?? "";
+    /* D-086 round 2, same substitution as the permission path: an absent or non-string id was read
+     * as ours, which let an unattributed update satisfy the canary correlation below and be
+     * accumulated into the active prompt's reply. Kept as an explicit null so both uses can tell
+     * "the child said it is ours" from "the child said nothing". */
+    const claimedSessionId =
+      typeof params.sessionId === "string" ? params.sessionId : null;
+    const sessionId = claimedSessionId ?? "";
     const update = params.update;
     if (!isRecord(update)) return;
     const kind = updateKind(update.sessionUpdate);
@@ -602,7 +623,8 @@ export class AcpHostSession {
       toolCallId &&
       status &&
       this.sessionId !== null &&
-      sessionId === this.sessionId &&
+      claimedSessionId !== null &&
+      claimedSessionId === this.sessionId &&
       this.canaryState.rejectedToolKeys.has(
         this.canaryRejectKey(sessionId, toolCallId),
       ) &&
@@ -632,8 +654,18 @@ export class AcpHostSession {
 
   private async handlePermissionRequest(id: JsonRpcId, params: unknown): Promise<void> {
     const rec = isRecord(params) ? params : {};
-    const sessionId =
-      typeof rec.sessionId === "string" ? rec.sessionId : this.sessionId ?? "";
+    /* D-086 round 2. `?? this.sessionId` DEFEATED the session check by substituting our own id for a
+     * missing or non-string one — so a child that simply OMITS sessionId was treated as us and
+     * approved. The first fix rejected an explicit foreign id and this walked around it. Measured by
+     * the exact-review arm: omitted, null, and numeric ids all reached the callback as "ours" and
+     * returned allow_once; only an empty string denied.
+     *
+     * `sessionId` is non-optional in src/host/types.ts, so requiring it enforces our declared
+     * contract rather than inventing a stricter one. Absent means unattributed, and unattributed
+     * means denied. */
+    const claimedSessionId =
+      typeof rec.sessionId === "string" ? rec.sessionId : null;
+    const sessionId = claimedSessionId ?? "";
     const options = parsePermissionOptions(rec.options);
     const toolCall = isRecord(rec.toolCall) ? rec.toolCall : {};
     const toolCallId =
@@ -653,7 +685,8 @@ export class AcpHostSession {
      * approving allow_once for sessionId "other". A flip that is safe in isolation can arm a defect
      * that was previously unreachable — the change and the defect were in different files. */
     const sessionMatches =
-      this.sessionId !== null && sessionId === this.sessionId;
+      this.sessionId !== null && claimedSessionId !== null &&
+      claimedSessionId === this.sessionId;
     if (sessionMatches) {
       this.canaryState.sawPermissionRequest = true;
     }
