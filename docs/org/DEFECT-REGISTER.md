@@ -5202,6 +5202,31 @@ each use.** The arm loaded `"requested"`, received `"other"`, then had a permiss
 `"other"` approved. A mismatch is now treated as a failed load and takes the existing fallback, which
 re-canaries before any real prompt. Deleting the guard had left the entire grok suite green.
 
+### Round 3: a commit message claimed a fix the commit did not contain
+
+**CORRECTION to `65527457`'s commit message, which cannot be edited.** It stated that the reply-text
+path had been fixed and tested. **It had not.** The fix was written, tested green, mutation-tested —
+and then lost from the working tree before the commit, together with its two tests. Three of that
+commit's five claims were true; the two about the reply-text path were false.
+
+**How the inversion arm caught it, and why I did not.** The arm read the working tree. I "verified"
+by remembering that I had applied the edit and that its tests had passed. Both were true and both
+were about a state that no longer existed. When an arm contradicts a claim about *what is in the
+code*, the tree is the authority and my memory of editing it is not evidence.
+
+**And my first check of the arm's claim manufactured its own zero.** I ran
+`git show $sha:src/host/session.ts` and `git show $sha:tests/...` unbraced. zsh's `:s` killed the
+first with "bad substitution" and its `:t` silently turned the second into `8e666abests/...`, which
+git rejected. Both produced empty output, both read as "absent" — the documented trap, on the exact
+day, fired while investigating whether something was absent. **The re-run added a positive control
+(`claimedSessionId`, which must be non-zero on the later commit and zero on the earlier), and only
+then were the zeros trustworthy.** Without it I would have had two indistinguishable zeros and a
+conclusion either way.
+
+**What this changes about verifying a fix landed:** grep the **committed object**, not the working
+tree, and pair it with a control that must be present. A working tree is a claim about the future;
+only the commit is the artefact.
+
 ### Also fixed in the same pass, all from the same arm
 
 - The OpenCode start note said tool requests are "allowed one at a time by default", unqualified,

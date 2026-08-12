@@ -553,7 +553,22 @@ export class AcpHostSession {
     const prev = this.events.update;
     this.events.update = (u) => {
       updates.push(u);
-      if (u.kind === "agent_message_chunk" && u.text) {
+      /* D-086, the reply-text path. Text is accumulated only from the session we are driving.
+       *
+       * `handlePermissionRequest` trusting the child's sessionId was the release blocker; this is
+       * the same trust one layer over. An `agent_message_chunk` naming a session we never opened
+       * would otherwise be concatenated into `message`, and `message` becomes the reply body posted
+       * as a signal — so text from a foreign session gets published under our agent's name.
+       *
+       * Well-behaved providers are unaffected. `sessionId` is non-optional in src/host/types.ts, so
+       * an update that omits it is unattributed, and unattributed text does not become our reply.
+       *
+       * ★ THIS FIX WAS WRITTEN ONCE AND LOST before it reached a commit, while 65527457's message
+       * claimed it had landed. Both arms had reported the path; the inversion arm caught the
+       * discrepancy on the next round by reading the tree instead of the message. Verified present
+       * this time by grepping the COMMITTED object, not the working tree. */
+      const fromOurSession = this.sessionId === null || u.sessionId === this.sessionId;
+      if (u.kind === "agent_message_chunk" && u.text && fromOurSession) {
         if (message.length + u.text.length > ACP_MAX_ACCUMULATED_TEXT_CHARS) {
           throw new AcpProtocolError(
             "accumulated agent message exceeds bound",

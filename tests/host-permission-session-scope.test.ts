@@ -250,7 +250,12 @@ function loadChild(returnedSessionId: string) {
         newSessions += 1;
         send({ jsonrpc: "2.0", id: msg.id, result: { sessionId: `fresh-${newSessions}` } });
       } else if (msg.method === "session/load") {
-        send({ jsonrpc: "2.0", id: msg.id, result: { sessionId: returnedSessionId } });
+        send({
+          jsonrpc: "2.0",
+          id: msg.id,
+          // "" models the documented agents that return an EMPTY result on load success.
+          result: returnedSessionId === "" ? {} : { sessionId: returnedSessionId },
+        });
       } else if (msg.method === "session/set_mode") {
         send({ jsonrpc: "2.0", id: msg.id, result: {} });
       }
@@ -301,4 +306,118 @@ test("D-086 CONTROL: session/load returning the SAME id still loads", async () =
   assert.equal(result.sessionId, "requested", "a correct load stopped being adopted");
   assert.equal(result.loaded, true, "a correct load was reported as failed");
   assert.equal(freshSessionsAfterLoad, 0, "a correct load opened a needless fresh session");
+});
+
+test("D-086 REGRESSION GUARD: an agent returning an EMPTY load result still resumes", async () => {
+  /* The riskiest thing about the mismatch guard is breaking a provider that was working. The
+   * existing comment in session.ts records that "some agents return empty result on load success",
+   * and that path must survive: an empty result keeps the REQUESTED id and is a successful load.
+   *
+   * This is the question that outranks the hardening — a fix that secures the product by breaking
+   * it for real providers is not a fix. Nothing covered this branch before.
+   *
+   * WHAT WAS ESTABLISHED, stated exactly: forcing the guard to reject every load leaves this test
+   * GREEN, because an empty result returns at the earlier `typeof result.sessionId !== "string"`
+   * branch and never reaches the guard. So this is a regression PIN, not a mutation-discriminating
+   * control — and the structural separation it demonstrates is the stronger result: the guard
+   * cannot break the empty-result provider, whatever it is changed to. The mutation that does turn
+   * this red is one that removes the early branch. */
+  const { result, freshSessionsAfterLoad } = await loadInto("");
+
+  assert.equal(result.sessionId, "requested", "an empty load result stopped keeping the requested id");
+  assert.equal(result.loaded, true, "an empty load result was treated as a failed load");
+  assert.equal(freshSessionsAfterLoad, 0, "an empty load result forced a needless fresh session");
+});
+
+/* The reply-text path. `message` becomes the reply body posted as a signal, so text from a session
+ * we never opened would be published under our agent's name — the same trust as the permission
+ * blocker, one layer over.
+ *
+ * ★ These tests and their fix were written once and LOST before reaching a commit, while
+ * 65527457's message claimed both had landed. The inversion arm caught it by reading the tree
+ * instead of the commit message. Re-added and verified against the COMMITTED object. */
+function chunkChild(chunkSessionId: unknown, omit = false) {
+  const toAgent = new PassThrough();
+  const toHost = new PassThrough();
+  let buf = "";
+  const send = (msg: unknown) => toHost.write(`${JSON.stringify(msg)}\n`);
+
+  toAgent.on("data", (chunk: Buffer | string) => {
+    buf += typeof chunk === "string" ? chunk : chunk.toString("utf8");
+    let nl: number;
+    while ((nl = buf.indexOf("\n")) !== -1) {
+      const line = buf.slice(0, nl);
+      buf = buf.slice(nl + 1);
+      if (!line.trim()) continue;
+      const msg = JSON.parse(line) as Record<string, unknown>;
+      if (msg.method === "initialize") {
+        send({ jsonrpc: "2.0", id: msg.id, result: { protocolVersion: ACP_PROTOCOL_VERSION } });
+      } else if (msg.method === "session/new") {
+        send({ jsonrpc: "2.0", id: msg.id, result: { sessionId: "ours" } });
+      } else if (msg.method === "session/prompt") {
+        send({
+          jsonrpc: "2.0",
+          method: "session/update",
+          params: {
+            ...(omit ? {} : { sessionId: chunkSessionId }),
+            update: {
+              sessionUpdate: "agent_message_chunk",
+              content: { type: "text", text: "SMUGGLED" },
+            },
+          },
+        });
+        setTimeout(
+          () => send({ jsonrpc: "2.0", id: msg.id, result: { stopReason: "end_turn" } }),
+          40,
+        );
+      }
+    }
+  });
+
+  return { readable: toHost, writable: toAgent };
+}
+
+async function messageFrom(chunkSessionId: unknown, omit = false): Promise<string> {
+  const cwd = mkdtempSync(join(tmpdir(), "d086-chunk-"));
+  const fake = chunkChild(chunkSessionId, omit);
+  try {
+    const { session } = await openAcpSessionOverStdio({
+      cwd,
+      readable: fake.readable,
+      writable: fake.writable,
+      promptsEnabled: true,
+      requestTimeoutMs: 5_000,
+      permissionCallback: (request) => allowOnceOrDeny(request),
+    });
+    const result = await session.prompt("do a thing");
+    await session.close();
+    return result.message ?? "";
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+}
+
+for (const [label, id, omit] of [
+  ["an explicit foreign id", "other", false],
+  ["an omitted id", undefined, true],
+  ["a null id", null, false],
+  ["a numeric id", 7, false],
+] as const) {
+  test(`D-086 reply text: a chunk with ${label} does not enter the reply`, async () => {
+    assert.equal(
+      await messageFrom(id, omit),
+      "",
+      `text from a chunk with ${label} reached the reply body`,
+    );
+  });
+}
+
+test("D-086 reply text CONTROL: our own session's chunk still becomes the reply", async () => {
+  /* Dropping every chunk satisfies all four assertions above and produces a listener that answers
+   * every ask with an empty string — a worse defect than the one being fixed. */
+  assert.equal(
+    await messageFrom("ours"),
+    "SMUGGLED",
+    "the real session's text no longer reaches the reply",
+  );
 });
