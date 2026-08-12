@@ -1947,7 +1947,7 @@ header**.
 - `~/.config/uxtest/round.env` — `UXTEST_HUMAN1_UID`, `UXTEST_HUMAN2_EMAIL`, `UXTEST_OAUTH_CONSENT`.
 - Identity **A** (mini, owner): `d37e2ff2-2efb-4bdc-b8fb-176ce4bfccbc` / `tom@ridge.io`.
   Identity **B** (laptop, member): `919ce195-4e19-4c89-852b-8f09a4b556d9` /
-  `tom.langridge@mediafire.com`. Distinct verified emails — field lesson #5.
+  `<identity-B-email REDACTED — operator address at another employer>`. Distinct verified emails — field lesson #5.
 
 ### Fleet
 - **Quill [codex]** — implementation worker, fresh (replaced Mason at 14 compactions / ~24h; see
