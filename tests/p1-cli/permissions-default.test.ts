@@ -11,10 +11,15 @@ import { listenerPermissionMode } from "../../src/cli.js";
  * fixture fields being handed IN, not the resolver's answer. A default that can be inverted
  * silently is not a default anyone is holding.
  *
- * WHAT WAS MEASURED, 2026-08-11: on the two-agent dogfood a worker started under `deny` had Bash
- * and Write refused. It could answer questions and could not hash, persist, or initiate anything —
- * and `cswarm listen status` reported it healthy throughout. The agent on the other end read it as
- * uncooperative. Operator direction the same day: "we want low friction here by default."
+ * WHAT WAS MEASURED, 2026-08-11: on the two-agent dogfood (OpenCode; the other three providers
+ * were not exercised) a worker started under `deny` had Bash and Write refused, so it could not
+ * hash, persist, or initiate — and `cswarm listen status` reported it healthy throughout. The
+ * agent on the other end read it as uncooperative. Operator direction the same day: "we want low
+ * friction here by default."
+ *
+ * SCOPE OF `deny`, since the first version of this comment overstated it: deny governs only the
+ * operations the PROVIDER raises a permission request for. Which those are is the provider's
+ * choice, not ours.
  *
  * WHAT `allow` IS: allow-once PER REQUEST, falling back to deny when the host offers no such
  * option. Not a blanket grant. The permission-boundary canary forces deny regardless of the mode,

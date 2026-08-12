@@ -174,10 +174,14 @@ export function dashboardAgentPrompt(input: DashboardPromptInput): string {
     `     --anon-key ${anonKey} \\`,
     `     --workspace-id ${workspaceId}`,
     "",
-    "`--permissions allow` lets the worker use its tools one request at a time, which is what",
-    "makes it useful rather than only talkative. Swap it for `--permissions deny` if this agent",
-    "will take work from people outside your account: under deny the worker can answer but not",
-    "act, and nothing on screen tells you that is why it seems unhelpful.",
+    /* Every clause here is scoped to what we actually control. We answer the provider's
+     * permission requests; we do not decide which operations produce one. So "cannot act" is
+     * wrong and "cannot do what it must ask about" is right. Both round-2 arms caught the
+     * stronger form. */
+    "`--permissions allow` approves the worker's tool requests one at a time, when it asks and",
+    "when the host offers a one-time approval. Swap it for `--permissions deny` if this agent",
+    "will take work from people outside your account: under deny anything the worker must ask",
+    "permission for is refused, and nothing on screen tells you that is why it seems unhelpful.",
     "",
     'Wait for JSON with state "ready". The adapter keeps a local Claude worker',
     /* ~~"The safe default denies ACP tool requests."~~ Dead 2026-08-11, caught by BOTH review
@@ -185,7 +189,7 @@ export function dashboardAgentPrompt(input: DashboardPromptInput): string {
      * --permissions allow, and omitting the flag now resolves to allow too. It sat two lines
      * below the flag I changed and was not in the diff. */
     "receiving after this setup turn ends and replies to direct asks. Tool requests are",
-    "allowed one at a time when the worker asks.",
+    "approved one at a time when the worker asks and the host offers a one-time approval.",
     "Every sender reaches the worker in your project context; each prompt",
     "states who sent it, their operator, and the owner relation. Cross-owner prompts steer the",
     "agent to seek your confirmation before destructive or irreversible action. The short credential",

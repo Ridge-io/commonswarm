@@ -157,11 +157,34 @@ test("dashboard agent prompt teaches measured Claude wake and a host-neutral fal
     /* Whitespace-tolerant at every gap: the prompt is a hand-wrapped string array, so where a
      * line breaks is cosmetic and a rebalance must not turn this control red for a reason that
      * is not about the claim. */
-    assert.match(prompt, /Tool\s+requests\s+are\s+allowed\s+one\s+at\s+a\s+time\s+when\s+the\s+worker\s+asks/);
+    /* ~~`/Tool\s+requests\s+are\s+allowed\s+one\s+at\s+a\s+time\s+when\s+the\s+worker\s+asks/`~~
+     * Dead within one commit of being written, and both round-2 arms caught it independently.
+     *
+     * It discriminated — it failed when "allowed" became "denied" — and it required the
+     * UNQUALIFIED sentence. `allowOnceOrDeny` selects allow_once only when the host OFFERS that
+     * option and denies otherwise, and the same commit stated exactly that in the JSON status
+     * output. So this control would have REJECTED the truthful replacement. I wrote a
+     * discriminating control pointed at a false claim in the very commit whose message explains
+     * that failure mode. It is easier to do than the rule makes it sound. */
+    assert.match(
+      prompt,
+      /Tool\s+requests\s+are\s+approved\s+one\s+at\s+a\s+time\s+when\s+the\s+worker\s+asks\s+and\s+the\s+host\s+offers\s+a\s+one-time\s+approval/,
+      "the prompt states allow as unconditional; it is conditional on the host offering allow_once",
+    );
+    /* Wrapping-tolerant, because the prompt is a hand-wrapped string array: `/safe default denies/`
+     * missed `safe default\ndenies` and would have passed on the very sentence it forbids. Caught
+     * by the exact-review arm. */
     assert.doesNotMatch(
       prompt,
-      /safe default denies/,
+      /safe\s+default\s+denies/,
       "the prompt still tells a new operator that the default denies tool requests",
+    );
+    /* The deny copy must not promise more than the boundary delivers either: we answer the
+     * provider's permission requests and do not decide which operations produce one. */
+    assert.doesNotMatch(
+      prompt,
+      /can\s+answer\s+but\s+not\s+act/,
+      "deny is described as blocking all action, but it blocks only what the provider asks about",
     );
   assert.match(prompt, /Every sender reaches the worker in your project context/);
   assert.match(prompt, /who sent it, their operator, and the owner relation/);

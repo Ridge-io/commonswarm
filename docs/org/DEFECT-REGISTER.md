@@ -4952,7 +4952,7 @@ isolation that DID hold here held for a stated reason — the cold-agent A/B ran
 `c2ea0541`, and `7c28b611` is a different workspace — not because the machine was quiet.
 
 
-## D-084 — the deny default made the worker silently useless; and a doc's top-line correction never reached its body · MAJOR · FIXED (default), OPEN (isolation)
+## D-084 — the deny default made the worker silently useless; and a doc's top-line correction never reached its body · MAJOR · FIXED (default), WONTFIX-PENDING-OPERATOR (isolation)
 
 **Two findings from one question**, plus a third that came out of getting the second one wrong.
 The operator asked, 2026-08-11: *"why would the agent be on permissions deny? again we want low
@@ -4961,9 +4961,14 @@ friction here by default."*
 ### Finding 1 — the default (FIXED)
 
 A listener started without `--permissions` ran in `deny`. Measured on the two-agent dogfood the
-same day: the worker had Bash and Write refused, so it could **answer questions and do nothing
-else**. Every status surface called it healthy, and the agent on the other end read it as
-uncooperative. Nothing anywhere said why.
+same day (OpenCode; the other three providers were not exercised): the worker had Bash and Write
+refused, so it could not hash, persist, or initiate. Every status surface called it healthy, and
+the agent on the other end read it as uncooperative. Nothing anywhere said why.
+
+~~"answer questions and do nothing else"~~ overstates it, and the same overstatement reached the
+CLI copy, the onboarding prompt, and this entry before being caught. **Deny governs only the
+operations the PROVIDER raises a permission request for** — which those are is the provider's
+choice, not ours, and project-level config can bypass the request entirely.
 
 This is the *"a true word in a success-shaped response gets skipped"* family, one worse: there was
 no word at all. `listen start` said "Same-owner tool requests are denied by default" — true, reads
@@ -5012,9 +5017,19 @@ surfaced the divergence.
 
 Bearing on Finding 1, stated rather than buried: had the sandbox been live, the `allow` default
 would be bounded. It is not. The flip still went in — the operator asked for it, the friction is
-measured, and D-044 retired the protection deliberately a week earlier. The surviving bound is
-workspace membership: a cross-owner sender is someone you invited. That is real and it is not
-sandboxing.
+measured, and D-044 retired the protection deliberately a week earlier.
+
+The surviving bound is workspace membership. ~~"a cross-owner sender is someone you invited"~~ is
+**too strong** and is corrected here: the read edge proves only that the author is a live member of
+the workspace owned by someone else (`supabase/functions/read/index.ts:350`). Any owner or admin
+may have invited them, not necessarily you. The bound is *"a member of a workspace you are in"*,
+which is real, weaker than it first reads, and is not sandboxing.
+
+**Status wording.** The isolation half is marked WONTFIX-PENDING-OPERATOR rather than OPEN. Calling
+it OPEN while the conclusion says restoring it would reverse a deliberate operator ruling is an
+internally inconsistent status that invites someone to "fix" it as cleanup — flagged by the
+exact-review arm on de6ecee2. Nothing here is owed by an engineer; it is owed by whoever wants the
+boundary back.
 
 ### Finding 3 — I got Finding 2 wrong first, and the two arms disagreed about it
 
@@ -5059,3 +5074,48 @@ remain true. The next dogfood round runs under `allow` and is the first measurem
 that `prompt()` takes a rendered string, so the permission callback cannot see the relation; it
 needs threading through the four model adapters, and the worker is sequential, so a per-turn field
 is sound. Note this would partly reverse D-044 and is an operator decision, not a cleanup.
+
+## D-085 — a retired feature is still described as live in ~25 documents · MINOR · OPEN (enumerated, deliberately not swept)
+
+D-044 retired the cross-owner local sandbox on 2026-08-04. The code was removed cleanly. **The
+prose was not**, and the scale only became visible on 2026-08-11 when the D-036 arms enumerated it
+while reviewing an unrelated change.
+
+**Why this is its own entry and not a task inside D-084:** the correction pattern used so far —
+a banner at the top of each affected file — was applied, and it did not work. Ten files carry a
+D-044 banner and still describe the sandbox in the present tense further down. A reader arriving by
+grep, which is how anyone arrives at a 400-line design doc, never sees the banner. That is the
+finding; the individual lines are its symptom.
+
+**Fixed on 2026-08-11** (the ones a reader acts on):
+
+- `docs/design/2026-08-03-MERCURY-AGENT-COMPARATIVE-ANALYSIS.md:224,255` — the worst of them, and
+  it had **no banner at all**. A competitive table asserted our boundary was "built and enforced …
+  fresh auth-only home, empty cwd" against a rival's "does not exist", citing
+  `src/listener/grok-model.ts:183` — a line D-044 deleted. Claiming a security property against a
+  competitor after removing it is the worst place for this error.
+- `docs/design/SWARM-CLOUD.md:293,425` and `docs/design/SWARM-CLOUD-V1.md:263,394` — the canonical
+  spec, which wins on conflict, so a stale body here outranks correct code in any dispute.
+- `docs/design/2026-07-31-DURABLE-SIGNAL-DELIVERY.md:347,467` — including an **acceptance criterion**
+  ("hostile cross-owner claim reaches a fresh zero-tool host session") that current code cannot
+  satisfy. Left alone it reads as outstanding work rather than retired design.
+
+**Enumerated, NOT fixed** — recorded so the next person inherits the list rather than the search.
+Both arms produced it independently; this is the union:
+
+`docs/design/2026-08-02-V015-MASTER-PLAN.md:292` ·
+`docs/design/2026-08-03-STAGE7-CAUSAL-CONTROL-REGISTER.md:103,130` ·
+`docs/design/2026-08-04-LISTENER-PROVIDER-GAP.md:115` ·
+`docs/design/contracts/D040-LISTENER-BRICK-FIX-GOAL.md:103` ·
+`docs/org/DEFECT-REGISTER.md:1887` (the D-044 correction does not appear until line 2094)
+
+**Deliberately NOT touched: `docs/evidence/**`.** Roughly a dozen files there describe the sandbox
+as live, and they are correct — an evidence file is a dated record of what was measured on the day,
+and rewriting one destroys the thing it exists to be. They are listed in the arms' transcripts under
+`docs/evidence/2026-08-05-d051/` siblings if anyone needs the full set. **Do not "fix" them.** If
+evidence needs a pointer, add a dated line at the top saying what later changed; never edit the
+finding.
+
+**The rule this produces, which is the part worth keeping:** when a feature is deleted, the sweep
+for its prose is part of the deletion, not follow-up work. D-044's contract listed the code to
+remove and no documents. Every one of these lines has been wrong for a week.

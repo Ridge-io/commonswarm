@@ -110,6 +110,13 @@ export class OpenCodeListenerModel implements ListenerModel {
       await chmod(cwd, 0o700);
       return cwd;
     });
+    /* DELIBERATELY deny, and deliberately NOT the CLI default. `cswarm listen start` resolves an
+     * omitted --permissions to "allow" (D-084, operator direction: low friction by default) and
+     * always passes an explicit mode, so this fallback is only reached by a programmatic caller
+     * that never stated one. A library caller who did not choose gets the conservative mode; a
+     * product user who did not choose gets the one the operator asked for. The divergence was
+     * flagged by the cross-family inversion arm on de6ecee2 as a possible oversight — it is
+     * recorded here as intent so the next reader does not "align" them. */
     this.permissionMode = options.permissionMode ?? "deny";
     this.pendingOpenWaitMs = options.pendingOpenWaitMs ?? DEFAULT_PENDING_OPEN_WAIT_MS;
   }

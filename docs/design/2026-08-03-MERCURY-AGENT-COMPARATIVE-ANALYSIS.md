@@ -221,7 +221,7 @@ CommonSwarm solves *"my colleague's agent is about to touch the file mine is in.
 | Unit of value | A conversation with *your* agent | An immutable signal of intent | Different |
 | Multi-person | **None shipped.** Announced as "circles" `[C]` | Core: workspaces, members, invites | **We ship what they announced** |
 | Identity model | Single local user; no principals | Agents are **principals owned by a human**; owner relation carried in `sender_owner_relation` | **Ours is a real model; theirs is absent** |
-| Cross-owner boundary | Does not exist | Enforced. `src/listener/file-store.ts:31` `RELATIONS = {same_owner, cross_owner, unknown}`; cross-owner turns get "a fresh auth-only home and empty cwd" (`src/cli.ts:2578`) and "discover no user/project hooks, rules, skills, MCPs, sessions, or memories" (`src/listener/grok-model.ts:183`) | **Ours only** |
+| Cross-owner boundary | Does not exist | **RETIRED 2026-08-04 (D-044).** ~~"Enforced… a fresh auth-only home and empty cwd… discover no user/project hooks, rules, skills, MCPs, sessions, or memories"~~ — that sandbox was built, then deliberately removed; the cited `grok-model.ts:183` no longer exists. Today the relation is *derived server-side* and appears as provenance in the prompt, plus an advisory steer; cross-owner input reaches the same worker and cwd as same-owner input. | Server-side relation: ours only. Local isolation: **neither** |
 | Directed-message privacy | `[N]` | Enforced server-side: `read/index.ts:376-383` filters `(to IS NULL AND to_agent IS NULL) OR to_agent = <principal>` | **Ours only, and verified** |
 | Durability | Local SQLite + JSON; cloud durability `[N]` | Postgres; `FOR UPDATE OF d SKIP LOCKED` (`command/durable-delivery.ts:235`), lease id/expiry, persist-before-ACK | **Ours specified and measured** |
 | Mutability | Memory is mutable, consolidating, conflict-resolved | Signals **immutable**, TTL-expiring | Opposite by design |
@@ -252,9 +252,18 @@ But there is one difference from QM worth naming. QM's collaboration model was "
 scoped memory." Mercury's announced model — *"decide which agents can connect, what knowledge
 they can access, and how they collaborate"* — is **conceptually closer to us**: it is about
 governing what one person's agent may learn from another person's agent. That is the same
-territory as our cross-owner boundary. The difference is that ours is **built and enforced**
-(fresh auth-only home, empty cwd, no inherited hooks/rules/skills/MCPs/memories; server-side
-directed-read filtering) and theirs is a waitlist headline with no published design.
+territory as our cross-owner boundary.
+
+~~"The difference is that ours is **built and enforced** (fresh auth-only home, empty cwd, no
+inherited hooks/rules/skills/MCPs/memories…)"~~ — **DEAD, 2026-08-04 (D-044).** The local sandbox
+half of that sentence was retired. Claiming it against a competitor after removing it is the worst
+place for this class of error, and this file carried no correction banner, so nothing flagged it:
+found 2026-08-11 by the D-036 arms while reviewing an unrelated change.
+
+What survives, and is still a real difference: **server-side** sender-relation derivation and
+directed-read filtering, which the client cannot forge. What does not: any local isolation of a
+cross-owner turn. Ours and theirs are both "no local sandbox"; ours additionally tells the worker
+who is asking, with authority the sender cannot spoof.
 
 ### Where Mercury does something we do worse, or not at all
 

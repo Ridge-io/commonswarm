@@ -344,7 +344,7 @@ Claim returns the same closed enum as the v0.1.4 read edge:
 - missing, revoked, malformed, or internally inconsistent author: `unknown`.
 
 The receiver owner comes from the authenticated agent database join. It never comes from the
-credential artifact or request body. `unknown` takes the cross-owner isolated/tool-denied path.
+credential artifact or request body. ~~`unknown` takes the cross-owner isolated/tool-denied path.~~ **[DEAD — D-044, 2026-08-04: no local sandbox; cross-owner reaches the same worker and cwd.]**
 Server tests must exercise the read and claim matrices side by side so drift is visible.
 
 ## Listener integration
@@ -464,7 +464,7 @@ Client/runtime:
 - `retry_pending` stays within lease bound and never acks early;
 - note is observed/acked with zero model prompts;
 - two listeners prompt at most one model while one lease is live;
-- hostile cross-owner claim reaches a fresh zero-tool host session;
+- ~~hostile cross-owner claim reaches a fresh zero-tool host session;~~ **[DEAD — D-044, 2026-08-04: no local sandbox; cross-owner reaches the same worker and cwd.]** This acceptance criterion is unmeetable by current code and is not outstanding work.
 - credential absent from argv, env, status, logs, and raw host frames;
 - pending count changes only with live unacked rows;
 - rollback with a held lease keeps ack live, drains it, resets the cursor, and rescans without a

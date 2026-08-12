@@ -2955,10 +2955,14 @@ function listenerUuid(value: string | undefined, flag: string): string {
 export function listenerPermissionMode(value: string | undefined): ListenerPermissionMode {
   /* ~~`if (value === undefined || value === "deny") return "deny";`~~ Dead 2026-08-11. The omitted
    * flag used to mean deny, which made the safe-looking default the one that quietly breaks the
-   * product: a worker under deny ANSWERS and cannot ACT — Bash and Write refused, so it cannot
-   * hash, persist or initiate — while `listen status` reports it healthy. Measured on the
-   * two-agent dogfood: the agent on the other end read it as uncooperative and nothing on any
-   * surface said why.
+   * product: under deny a worker cannot do anything it must ask permission for, while
+   * `listen status` reports it healthy. Measured on the two-agent dogfood (OpenCode): Bash and
+   * Write were refused, so it could not hash, persist or initiate; the agent on the other end
+   * read it as uncooperative and nothing on any surface said why.
+   *
+   * ~~"ANSWERS and cannot ACT"~~ is too strong and is corrected here: deny governs only the
+   * operations the PROVIDER raises a permission request for. Which those are is the provider's
+   * choice, not ours.
    *
    * `allow` is not a blanket grant. It selects allow-once PER REQUEST (allowOnceOrDeny) and falls
    * back to deny when the host offers no such option, so it is the decision a human makes clicking
@@ -3806,10 +3810,13 @@ async function runListenStart(args: Arguments): Promise<void> {
        * denied" is true and gets skimmed past; naming what the worker cannot do does not. */
       `Same-owner tool requests are ${
         permissionMode === "allow"
-          ? "allowed once each, one request at a time when the worker asks"
+          ? "approved one at a time, when the worker asks and the host offers a one-time approval"
+          /* ~~"running commands and writing files were both refused in testing"~~ Dead: this line
+           * is emitted for EVERY provider, and the durable record
+           * (docs/evidence/2026-08-10-dogfood/README.md) exercised only OpenCode. A measurement
+           * from one provider was being asserted for four. Caught by the exact-review arm. */
           : "denied. This worker can reply to messages but cannot do anything it must ask " +
-            "permission for — running commands and writing files were both refused in " +
-            "testing; restart with --permissions allow if that is not what you want"
+            "permission for; restart with --permissions allow if that is not what you want"
       }. The same permission mode applies to every sender relation.\n` +
       "The short credential rotates while this process remains alive and secure local state is available; a person reauthorises after the 30-day horizon.\n" +
       hostNote +
