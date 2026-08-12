@@ -114,3 +114,37 @@ test("every provider the CLI accepts is offered a detached adapter in the onboar
     );
   }
 });
+
+test("D-088: the CLI accepts both credential-message spellings, so the site can change one later", () => {
+  /* The artifact `message` is validated byte-for-byte, which makes it a PROTOCOL CONSTANT, not copy.
+   * Measured against the shipped v0.1.15 binary: the current spelling passes the message check and
+   * fails later on token format; the honest replacement is rejected as "agent credential JSON is
+   * malformed". So changing the site's string alone would break every installed cswarm.
+   *
+   * The first version of that probe returned "malformed" for BOTH arms — the fixture had the wrong
+   * key set — and identical output from both arms is a broken instrument, not a result. It only
+   * became evidence once the two arms produced DIFFERENT errors.
+   *
+   * This accepts the new spelling ahead of the site emitting it. The order is the whole point: the
+   * CLI has to read both before the site may write either. */
+  const cli = readFileSync(new URL("../../src/cli.ts", import.meta.url), "utf8");
+  const accepted = cli.slice(
+    cli.indexOf("ACCEPTED_AGENT_CREDENTIAL_MESSAGES: readonly string[]"),
+  ).slice(0, 400);
+
+  assert.match(accepted, /AGENT_CREDENTIAL_MESSAGE,/, "the current spelling was dropped");
+  assert.match(accepted, /AGENT_CREDENTIAL_MESSAGE_D088/, "the honest spelling is not accepted yet");
+
+  /* CONTROL, and the one that matters: the SITE must still emit the current spelling. Changing it
+   * before this build is widely installed is the hard break this whole arrangement exists to
+   * prevent — and a test that only checked the CLI would let exactly that through. */
+  const siteSource = readFileSync(
+    new URL("../../site/src/lib/agent-connect.ts", import.meta.url),
+    "utf8",
+  ).replace(/\/\*[\s\S]*?\*\//g, "");
+  assert.match(
+    siteSource,
+    /bound to this task and run so the agent's work stays scoped and attributable/,
+    "the site changed the credential message before the CLI change had shipped",
+  );
+});

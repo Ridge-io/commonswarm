@@ -69,6 +69,22 @@ export const WEB_DEVICE_LABEL = "cswarm-web";
  * durable command ids instead of ephemeral ones. If the CLI's constant ever changes, this one
  * has to change with it — there is no shared module between site/ and src/.
  */
+/* The wording here is a PROTOCOL CONSTANT, not copy. `src/cli.ts` validates it byte-for-byte
+ * (`artifact.message !== AGENT_CREDENTIAL_MESSAGE`), so changing this string makes every credential
+ * this site mints unreadable by every cswarm already installed.
+ *
+ * Measured 2026-08-12 against the SHIPPED v0.1.15 binary: the current wording passes the message
+ * check and fails later on token format; the proposed replacement is rejected as "agent credential
+ * JSON is malformed". Two different errors, so the probe discriminates — the first attempt returned
+ * "malformed" for BOTH arms because the fixture had the wrong key set, and identical output from
+ * both arms is a broken instrument, not a result.
+ *
+ * The claim it makes is still wrong and is tracked as D-088: the run binding and attribution are
+ * real, the TASK SCOPE IS NOT — `task_id` is generated here (see below) because a person connecting
+ * an agent has not picked a work item, nothing restricts the agent to it, and
+ * `supabase/functions/_shared/agent-auth.ts` never reads it. Fixing it needs the CLI to accept both
+ * spellings first, ship, and only then change this string. Doing it in one step trades a soft false
+ * claim for a hard break. */
 const AGENT_CREDENTIAL_MESSAGE =
   "Agent credential minted. It is bound to this task and run so the agent's work stays scoped and attributable.";
 

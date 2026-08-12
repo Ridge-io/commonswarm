@@ -109,8 +109,8 @@ test("dashboard agent prompt is one complete, secret-safe handoff", () => {
     /shell history/,
     "the prohibition still bans what the sanctioned form does",
   );
-  assert.match(prompt, /What this form also does NOT\s+do/, "the form's limits are not stated");
-  assert.match(prompt, /already there, because that is where you/, "it hides the transcript exposure");
+  assert.match(prompt, /This\s+form\s+also\s+does\s+not\s+keep\s+the\s+line\s+out\s+of\s+your\s+own\s+session\s+transcript/, "the form's limits are not stated");
+  assert.match(prompt, /already\s+there,\s+because\s+that\s+is\s+where\s+you/, "it hides the transcript exposure");
   assert.match(prompt, /DO NOT ECHO THIS CREDENTIAL BACK/);
   assert.match(prompt, /--agent-token-stdin/);
 });
@@ -155,7 +155,12 @@ test("dashboard agent prompt teaches measured Claude wake and a host-neutral fal
   assert.match(prompt, /local Claude worker/);
   assert.match(prompt, /post and read signals[\s\S]*do not need a\s+listener/);
   assert.match(prompt, /listener adds detached live receipt/);
-  assert.match(prompt, /--provider grok or --provider opencode/);
+  /* ~~`/--provider grok or --provider opencode/`~~ Dead 2026-08-12. The adapter list now names all
+   * three non-Claude providers WITH the bridge each one needs, because listing codex without its
+   * bridge sent a signed-in Codex user straight to `executable_missing`. */
+  assert.match(prompt, /--provider\s+codex\s+npm install -g @agentclientprotocol\/codex-acp@1\.1\.9/);
+  assert.match(prompt, /--provider\s+grok\s+install Grok CLI 0\.2\.117/);
+  assert.match(prompt, /--provider\s+opencode\s+install OpenCode 1\.18\.10/);
   /* ~~This pinned `--permissions deny`.~~ Dead 2026-08-11. Deny left the worker able to ANSWER
    * and unable to ACT — no Bash, no Write, so it could not hash, persist or initiate — while
    * presenting as healthy, and the agent on the other end read it as uncooperative. Operator

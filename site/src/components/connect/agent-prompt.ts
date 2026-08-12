@@ -100,8 +100,9 @@ export function dashboardAgentPrompt(input: DashboardPromptInput): string {
      * the command, which is precisely the "walked through" outcome launch-bar item 1 forbids.
      * Its compliance reasoning was sound; the text was wrong to leave it nowhere to go. */
     "3. Treat the JSON line below as a live secret. Every command that needs it takes",
-    "--agent-token-stdin and reads it from standard input. Never put it in a URL, in a",
-    "command's ARGUMENTS, in source code, or in a log.",
+    "--agent-token-stdin and reads it from standard input. Never put it in a URL, in source",
+    "code, or in a log, and keep it out of command ARGUMENTS wherever your host lets you —",
+    "see the one exception below, which is named because it is unavoidable on some hosts.",
     "DO NOT ECHO THIS CREDENTIAL BACK TO THE PERSON OR INTO CHAT.",
     "",
     "If your host can write to a running process's stdin separately, do that. IF IT CANNOT —",
@@ -124,12 +125,13 @@ export function dashboardAgentPrompt(input: DashboardPromptInput): string {
     "printf is a shell builtin, so printf itself never becomes a process carrying the credential.",
     "But if your host runs your command as one string, that wrapper process — `zsh -c \"…\"` or",
     "similar — does carry the whole command line, credential included, where anyone else on the",
-    "machine can read it with `ps` for as long as the command runs. It is brief and it is real.",
-    "Prefer the separate-stdin path above whenever your host has one. What this form also does NOT",
-    "do is keep the line",
-    "out of your own session transcript — it is already there, because that is where you",
-    "received it — or out of a shell history file if your host keeps one; clear that entry if",
-    "yours does. Do not write the credential to a file.",
+    "machine can read it with `ps` for as long as the command runs. It is brief and it is real,",
+    "and it is the one exception to the rule above: prefer the separate-stdin path whenever your",
+    "host has one, and use this form only when it does not.",
+    "",
+    "This form also does not keep the line out of your own session transcript — it is already",
+    "there, because that is where you received it — or out of a shell history file if your host",
+    "keeps one; clear that entry if yours does. Do not write the credential to a file.",
     "",
     "The credential appears once, here:",
     "",
@@ -229,9 +231,17 @@ export function dashboardAgentPrompt(input: DashboardPromptInput): string {
      * src/listener/codex-model.ts). A Codex user reading this prompt was sent to the foreground
      * fallback, which does not wake a model — losing the whole feature for one of four supported
      * providers. Caught by the D-036 exact-review arm. */
-    "Codex, Grok CLI 0.2.117 and OpenCode 1.18.10 also have detached adapters. Use the same",
-    "command with --provider codex, --provider grok or --provider opencode after installing and",
-    "signing in to that pinned host.",
+    /* Each provider's REQUIREMENT, not just its name. Adding codex to the list without its bridge
+     * sent a signed-in Codex user straight to `executable_missing` — an option is only an
+     * improvement if its instructions work. The strings match `src/cli.ts`'s own provider hints,
+     * which is the authority; a control asserts every accepted provider appears here WITH its
+     * requirement. */
+    "Three other hosts have detached adapters. Same command, different --provider, and each",
+    "needs its own pinned bridge or host installed first:",
+    "",
+    "   --provider codex     npm install -g @agentclientprotocol/codex-acp@1.1.9",
+    "   --provider grok      install Grok CLI 0.2.117, then run grok login",
+    "   --provider opencode  install OpenCode 1.18.10 and authenticate it",
     "",
     "For every other host, use the host-neutral foreground stream instead. Only after cswarm",
     "0.1.6 or newer is installed, start this command and send the same credential through its",

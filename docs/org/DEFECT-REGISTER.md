@@ -5325,3 +5325,100 @@ condition.
 Related, from the same report and same reasoning: `openWorkCwd` can leave an exported session
 prompt-capable after required-mode selection fails. The current CLI closes that failed session, and
 OpenCode has no required mode, so no shipped path reaches it.
+
+## D-088 — the credential artifact's `message` is a protocol constant, and it makes a false claim · MINOR · HALF-FIXED (CLI accepts both; site unchanged on purpose)
+
+The credential artifact the site mints carries:
+
+> Agent credential minted. It is bound to this task and run so the agent's work stays scoped and
+> attributable.
+
+**The run binding and attribution are real. The task scope is not.** `task_id` is *generated* by the
+site at mint time — the code's own comment says so, because "a person connecting their agent for the
+first time has not picked a work item" — nothing restricts the agent to it, and
+`supabase/functions/_shared/agent-auth.ts` never reads it. "Stays scoped" tells the reader a boundary
+exists.
+
+### Why it is not simply fixed, which is the part worth keeping
+
+**That string is validated byte-for-byte** by `src/cli.ts` (`artifact.message !== …`). It is a
+protocol constant wearing the costume of copy. Changing the site's spelling makes every credential
+the site mints unreadable by **every cswarm already installed**.
+
+Measured against the **shipped v0.1.15 binary**, downloaded from the release:
+
+| artifact | result |
+|---|---|
+| current spelling | passes the message check, fails later on token format |
+| proposed spelling | `agent credential JSON is malformed` |
+
+**The first version of that probe returned "malformed" for BOTH arms** — the fixture had the wrong
+key set, so neither reached the message check. Identical output from both arms is a broken
+instrument, not a result; it only became evidence once the two arms produced *different* errors. I
+was one step from concluding "changing it breaks users" on a probe that rejected everything, which
+happens to be the right conclusion reached by a method that could not have established it.
+
+### What was done
+
+- `src/cli.ts` now accepts **both** spellings. The CLI must be able to READ the honest string before
+  the site may WRITE it.
+- The site still emits the current spelling, deliberately.
+- A control in `tests/p1-cli/permissions-default.test.ts` asserts both halves — including that the
+  **site has not changed** — because a test checking only the CLI would let exactly the hard break
+  through. That control caught an incomplete revert of my own within a minute of being written.
+
+### What is left
+
+Change the site's string one release after this build is widely installed, then drop
+`AGENT_CREDENTIAL_MESSAGE` and the compatibility list. Not before.
+
+**The general rule:** a string that some other program compares byte-for-byte is not copy, whatever
+it reads like. Before "fixing" prose, grep for an equality test on it.
+
+## D-089 — a review arm's temporary checkout redirected every git command in this repo · MAJOR · FIXED
+
+**`core.worktree = /private/tmp/commonswarm-eed7701-VCpWYQ` was written into this repo's LOCAL git
+config** by a D-036 exact-review arm that verified `eed7701` "from a separate checkout". From that
+moment every git command run here operated on **that temporary tree**, while every other tool —
+`npm test`, `grep`, the editor — kept reading the real one.
+
+### What it did, in order
+
+1. `git status` reported the tmp tree: **clean**, while six real files were modified.
+2. `git add -A` staged nothing of mine, and `git add -f <paths>` silently did nothing either.
+3. A commit was created anyway, from the tmp tree's state, with the message `c0` and author `T` —
+   neither of which came from me.
+4. **It reverted a landed fix.** The tmp tree was pinned to `eed7701`, one commit behind, so the
+   commit undid `6b56497`'s correction of the credential-rule contradiction.
+5. **It was pushed to `origin/main`.**
+
+### The tell, and why the earlier signals were not enough
+
+The visible symptom was a contradiction no explanation fits: `git status` clean, `git diff` empty,
+`git hash-object <file>` ≠ the index blob, and `git add -f` refusing to change anything. **Three
+readings that cannot all be true of one repository** — which is the same shape as the earlier
+`git show $rev:file` incident: *when a probe's results are mutually incompatible, suspect the
+instrument before you write up the finding.*
+
+I chased three wrong hypotheses first — `assume-unchanged` bits, a `.gitattributes` clean filter,
+leaked `GIT_DIR`/`GIT_WORK_TREE` — and each was cheap to falsify. What settled it was asking git
+*where it thought it was*: `git rev-parse --show-toplevel`, which answered with a path in `/tmp`.
+
+**That question belongs at the START of that list, not the end.** "Which artifact is this command
+operating on" is the repo's own first rule, and I applied it to files, refs and URLs all session
+while never once asking it of git itself.
+
+### Fixed
+
+`git config --local --unset core.worktree`; toplevel verified back to the real path; the work
+recommitted from the real tree, superseding the junk commit's content.
+
+### What to do about it
+
+- **Before trusting a `git status` in a shared checkout, run `git rev-parse --show-toplevel`.**
+  It costs nothing and it is the only cheap check that catches this class.
+- A review arm that makes a separate checkout **must not touch the source repo's config**. Prefer
+  `git worktree add` (which records itself in `git worktree list`, where this was invisible) or a
+  clone to a fresh path.
+- `scripts/branch-audit.sh` and any future janitor should flag a `core.worktree` pointing outside
+  the repo — it is never right for this checkout.

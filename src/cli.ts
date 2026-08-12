@@ -201,8 +201,23 @@ const BOOLEAN_FLAGS = new Set([
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+/* The credential artifact's `message` is validated byte-for-byte below, which makes it a PROTOCOL
+ * CONSTANT rather than copy: a site minting a different spelling is unreadable by every cswarm
+ * already installed. Measured against the shipped v0.1.15 binary, 2026-08-12.
+ *
+ * D-088. The current wording claims the credential is "bound to this task … so the agent's work
+ * stays scoped". The run binding and attribution are real; the task scope is not. So the honest
+ * spelling is ACCEPTED HERE FIRST, in this release, and the site keeps emitting the current one
+ * until enough installs carry this build. Reversing that order trades a soft false claim for a hard
+ * break. */
 const AGENT_CREDENTIAL_MESSAGE =
   "Agent credential minted. It is bound to this task and run so the agent's work stays scoped and attributable.";
+const AGENT_CREDENTIAL_MESSAGE_D088 =
+  "Agent credential minted. It is bound to this run, so the agent's work is attributable to it.";
+const ACCEPTED_AGENT_CREDENTIAL_MESSAGES: readonly string[] = [
+  AGENT_CREDENTIAL_MESSAGE,
+  AGENT_CREDENTIAL_MESSAGE_D088,
+];
 
 // Injected by scripts/build-release.sh via esbuild --define. Absent in dev/test builds,
 // where the package.json read below is correct. A bundled release has no package.json
@@ -614,7 +629,7 @@ function parsedAgentCredential(value: string): AgentCredentialInput {
   if (
     actualKeys.length !== shape.length ||
     !actualKeys.every((key, index) => key === shape[index]) ||
-    artifact.message !== AGENT_CREDENTIAL_MESSAGE ||
+    !ACCEPTED_AGENT_CREDENTIAL_MESSAGES.includes(artifact.message as string) ||
     artifact.status !== "accepted" ||
     typeof artifact.principal_id !== "string" ||
     !UUID_RE.test(artifact.principal_id) ||
