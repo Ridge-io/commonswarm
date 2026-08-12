@@ -3786,7 +3786,7 @@ async function runListenStart(args: Arguments): Promise<void> {
     return;
   }
   const hostNote = provider === "opencode"
-    ? "The OpenCode worker uses one private auth/config home and your selected project cwd. Every sender reaches that worker with sender and operator provenance in the prompt. Tool requests are allowed one at a time by default; --permissions deny refuses them. The deny canary does not cover steady-state allow.\n"
+    ? "The OpenCode worker uses one private auth/config home and your selected project cwd. Every sender reaches that worker with sender and operator provenance in the prompt. Tool requests are approved one at a time by default, when the worker asks and the host offers a one-time approval; --permissions deny refuses them. The deny canary does not cover steady-state allow.\n"
     : provider === "claude"
     ? "The Claude worker uses your selected cwd and normal Claude Code keychain/OAuth state through claude-agent-acp 0.64.2. Every sender reaches that worker with sender and operator provenance in the prompt.\n"
     : provider === "codex"

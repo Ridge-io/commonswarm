@@ -6,7 +6,7 @@ import {
   type GrokAcpHandle,
   type GrokAcpOpenOptions,
 } from "../host/grok.js";
-import { defaultPermissionCallback } from "../host/permission.js";
+import { allowOnceOrDeny, defaultPermissionCallback } from "../host/permission.js";
 import {
   AcpChildExitError,
   AcpHostError,
@@ -39,12 +39,6 @@ export interface GrokListenerModelOptions {
 
 const MAX_GROK_AUTH_BYTES = 256 * 1024;
 
-function allowOnceOrDeny(request: PermissionRequest): PermissionDecision {
-  const allowOnce = request.options.find((option) => option.kind === "allow_once");
-  return allowOnce
-    ? { outcome: "selected", optionId: allowOnce.optionId }
-    : defaultPermissionCallback(request);
-}
 
 /**
  * Grok-backed listener model.

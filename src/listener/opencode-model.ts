@@ -9,7 +9,7 @@ import {
   type OpenCodeAcpHandle,
   type OpenCodeAcpOpenOptions,
 } from "../host/opencode.js";
-import { defaultPermissionCallback } from "../host/permission.js";
+import { allowOnceOrDeny, defaultPermissionCallback } from "../host/permission.js";
 import {
   AcpChildExitError,
   AcpHostError,
@@ -49,12 +49,6 @@ export interface OpenCodeListenerModelOptions {
   pendingOpenWaitMs?: number;
 }
 
-function allowOnceOrDeny(request: PermissionRequest): PermissionDecision {
-  const allowOnce = request.options.find((option) => option.kind === "allow_once");
-  return allowOnce
-    ? { outcome: "selected", optionId: allowOnce.optionId }
-    : defaultPermissionCallback(request);
-}
 
 function asError(error: unknown): Error {
   return error instanceof Error ? error : new Error(String(error));

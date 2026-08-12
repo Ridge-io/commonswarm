@@ -5119,3 +5119,64 @@ finding.
 **The rule this produces, which is the part worth keeping:** when a feature is deleted, the sweep
 for its prose is part of the deletion, not follow-up work. D-044's contract listed the code to
 remove and no documents. Every one of these lines has been wrong for a week.
+
+## D-086 — a permission request for another session was approved, and only the new allow default made it reachable · MAJOR · FIXED
+
+**`src/host/session.ts` computed whether an incoming `session/request_permission` belonged to the
+session we are driving, used that answer only to set a canary flag, and then ran the permission
+callback regardless.**
+
+While `deny` was the default this was inert: the callback refused everything, so a mismatched
+session got the same refusal as a matching one and nothing could observe the difference. **D-084 made
+`allow` the default and armed it.** `allowOnceOrDeny` returns an `allow_once` approval — and it
+would return one for a sessionId that is not ours.
+
+The sessionId arrives over JSON-RPC from the provider child. It is **that process's assertion**, not
+a fact we established. Trusting it is a fail-open, not a nuisance.
+
+**Found by the D-036 exact-review arm on `87fe7edc`, which reproduced it** — an active session
+`"active"` approving `allow_once` for `sessionId: "other"` — rather than reasoning about it. Three
+review rounds had already run on this lane and two earlier rounds missed it, because both were
+reading the strings the change touched.
+
+### The lesson, which is bigger than the bug
+
+**The change and the defect were in different files.** Nothing in the D-084 diff was wrong. The flip
+was correct in isolation, correctly tested, and correctly reviewed twice. It armed a latent defect
+one layer down that no test *of the flip* could reach.
+
+So: **when a default moves from the closed position to the open one, the review question is not "is
+the new default right" but "what was this default suppressing?"** A permissive default does not
+introduce its own bugs; it exposes everything downstream that was only ever exercised in the closed
+state. That is a different search, over different files, and it has to be asked deliberately.
+
+### Fixed
+
+- `src/host/session.ts` refuses a mismatched session with `defaultPermissionCallback` **before** the
+  approving callback is invoked.
+- `tests/host-permission-session-scope.test.ts`, named in the `test` script, mutation-verified
+  against three defects: reverting the fix, escalating to `allow_always`, and an over-broad fix that
+  denies everything. The last is the one that matters — "reject mismatched sessions" is satisfiable
+  by rejecting all of them, which passes the security test while destroying the feature D-084 exists
+  to deliver.
+- **The control caught the test passing vacuously.** The first version raised the permission request
+  immediately after `session/new`, before the host had recorded its session id, so `sessionMatches`
+  was false in *both* arms and the mismatch case passed without exercising a mismatch. A control that
+  dies early tests the early thing. It now asks during a prompt.
+- `allowOnceOrDeny` lived as **four byte-identical private copies** in the model adapters, so its
+  fallback branch could not be tested against shipping code — only re-implemented and asserted
+  against itself. Extracted to `src/host/permission.ts` and exported. Verified identical across all
+  four before the move.
+
+### Also fixed in the same pass, all from the same arm
+
+- The OpenCode start note said tool requests are "allowed one at a time by default", unqualified,
+  **contradicting the qualified sentence a few lines below it in the same response.**
+- The onboarding prompt said nothing on screen tells you why a denied worker seems unhelpful.
+  **I falsified that by fixing what it described** — the same lane made `listen start` state the cost
+  of deny in both human and `--json` output, and the recommended command passes `--json`. The
+  complaint outlived the defect it complained about.
+- The prompt told the agent to seek "your confirmation"; the runtime steer says "your **operator's**
+  explicit confirmation". The prompt is addressed to the agent, so the shorter form asked it for its
+  own approval. **A test required the false wording** — the third control in this lane found pinned to
+  a false claim, none of them caught by a gate.

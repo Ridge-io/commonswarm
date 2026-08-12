@@ -180,8 +180,12 @@ export function dashboardAgentPrompt(input: DashboardPromptInput): string {
      * stronger form. */
     "`--permissions allow` approves the worker's tool requests one at a time, when it asks and",
     "when the host offers a one-time approval. Swap it for `--permissions deny` if this agent",
+    /* ~~"nothing on screen tells you that is why it seems unhelpful"~~ Dead within hours of being
+     * written: I FALSIFIED IT BY FIXING WHAT IT DESCRIBED. The same lane made `listen start` state
+     * the cost of deny in both human and --json output, and the command above passes --json. The
+     * complaint outlived the defect it was complaining about. */
     "will take work from people outside your account: under deny anything the worker must ask",
-    "permission for is refused, and nothing on screen tells you that is why it seems unhelpful.",
+    "permission for is refused, which listen start reports as permission_mode deny.",
     "",
     'Wait for JSON with state "ready". The adapter keeps a local Claude worker',
     /* ~~"The safe default denies ACP tool requests."~~ Dead 2026-08-11, caught by BOTH review
@@ -192,7 +196,11 @@ export function dashboardAgentPrompt(input: DashboardPromptInput): string {
     "approved one at a time when the worker asks and the host offers a one-time approval.",
     "Every sender reaches the worker in your project context; each prompt",
     "states who sent it, their operator, and the owner relation. Cross-owner prompts steer the",
-    "agent to seek your confirmation before destructive or irreversible action. The short credential",
+    /* "your operator's confirmation", not "your confirmation". This prompt is addressed to THE
+     * AGENT, so "your" would name the agent itself — it would be seeking its own approval. The
+     * runtime steer at src/listener/engine.ts:158 says "your operator's explicit confirmation";
+     * this is the authority, and the prompt now matches it. Caught by the exact-review arm. */
+    "agent to seek your operator's confirmation before destructive or irreversible action. The short credential",
     "can rotate only while this listener remains",
     "alive and secure local state is available.",
     "",

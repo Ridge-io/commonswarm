@@ -29,6 +29,25 @@ import type {
 } from "./types.js";
 
 /** Default callback: reject_once if available, else cancel. Never allow. */
+/**
+ * Steady-state `--permissions allow`: take a ONE-TIME approval when the host offers one, and defer
+ * to the deny-safe default otherwise.
+ *
+ * It never selects `allow_always` or `allow_session`. "Allow" means one tool call, decided again
+ * next time — the same thing a person does clicking through a prompt.
+ *
+ * Lived as four byte-identical private copies in the model adapters until 2026-08-11, which meant
+ * the fallback branch could not be tested against the real code: a test could only re-implement it
+ * and assert its own copy. Extracted so tests/host-permission-session-scope.test.ts exercises what
+ * ships. Verified identical across all four before the move.
+ */
+export function allowOnceOrDeny(request: PermissionRequest): PermissionDecision {
+  const allowOnce = request.options.find((option) => option.kind === "allow_once");
+  return allowOnce
+    ? { outcome: "selected", optionId: allowOnce.optionId }
+    : defaultPermissionCallback(request);
+}
+
 export function defaultPermissionCallback(
   request: PermissionRequest,
 ): PermissionDecision {

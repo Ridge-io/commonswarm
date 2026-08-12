@@ -8,7 +8,7 @@ import {
   type ClaudeAcpOpenOptions,
 } from "../host/claude.js";
 import { ACP_CANARY_TIMEOUT_MS } from "../host/bounds.js";
-import { defaultPermissionCallback } from "../host/permission.js";
+import { allowOnceOrDeny, defaultPermissionCallback } from "../host/permission.js";
 import {
   AcpChildExitError,
   AcpPermissionCanaryError,
@@ -43,12 +43,6 @@ class ClaudeListenerClosedDuringOpen extends Error {
   }
 }
 
-function allowOnceOrDeny(request: PermissionRequest): PermissionDecision {
-  const allowOnce = request.options.find((option) => option.kind === "allow_once");
-  return allowOnce
-    ? { outcome: "selected", optionId: allowOnce.optionId }
-    : defaultPermissionCallback(request);
-}
 
 /** Claude-backed listener model using one operator-home worker session. */
 export class ClaudeListenerModel implements ListenerModel {

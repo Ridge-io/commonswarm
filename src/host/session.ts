@@ -640,11 +640,38 @@ export class AcpHostSession {
       typeof toolCall.toolCallId === "string" ? toolCall.toolCallId : undefined;
     const title = typeof toolCall.title === "string" ? toolCall.title : undefined;
     const kind = typeof toolCall.kind === "string" ? toolCall.kind : undefined;
-    // Only the active session counts for the canary permission arm.
+    /* Only the active session counts for the canary permission arm — AND for approval at all.
+     *
+     * D-086. This match was computed and then used only for canary bookkeeping; the callback below
+     * ran unconditionally. While deny was the default the bug was inert, because the callback
+     * refused everything either way. Making allow the default (D-084) turned a latent fail-open
+     * into a live one: an `allow_once` approval could be returned for a session that is not the one
+     * we are driving. The request arrives over JSON-RPC from the provider child, so the sessionId
+     * is ITS assertion, not ours.
+     *
+     * Found by the exact-review arm on 87fe7edc, which reproduced it: an active session "active"
+     * approving allow_once for sessionId "other". A flip that is safe in isolation can arm a defect
+     * that was previously unreachable — the change and the defect were in different files. */
     const sessionMatches =
       this.sessionId !== null && sessionId === this.sessionId;
     if (sessionMatches) {
       this.canaryState.sawPermissionRequest = true;
+    }
+    if (!sessionMatches) {
+      this.transport.respond(
+        id,
+        permissionDecisionToResult(defaultPermissionCallback({
+          sessionId,
+          toolCallId,
+          title,
+          kind,
+          options,
+          summary: sanitizeText(
+            [kind, title, toolCallId].filter(Boolean).join(" ") || "permission request",
+          ),
+        })),
+      );
+      return;
     }
     // Never pass rawInput through — summary only.
     const summary = sanitizeText(

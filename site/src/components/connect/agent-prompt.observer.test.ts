@@ -188,7 +188,21 @@ test("dashboard agent prompt teaches measured Claude wake and a host-neutral fal
     );
   assert.match(prompt, /Every sender reaches the worker in your project context/);
   assert.match(prompt, /who sent it, their operator, and the owner relation/);
-  assert.match(prompt, /seek your confirmation before destructive or irreversible action/);
+  /* ~~`/seek your confirmation before destructive or irreversible action/`~~ Dead 2026-08-11.
+   *
+   * A discriminating control pinned to the WRONG RECIPIENT. The prompt is addressed to the agent,
+   * so "your confirmation" names the agent — it would be seeking its own approval. The runtime
+   * steer says "your operator's explicit confirmation" (src/listener/engine.ts:158), and the
+   * runtime is the authority for what the agent is actually told.
+   *
+   * Third control in this lane found pointing at a false claim, all three caught by review arms and
+   * none by a gate. Checking against the CODE rather than against the prompt is the technique;
+   * comparing the prompt to a test of the prompt only proves our own files agree. */
+  assert.match(
+    prompt,
+    /seek your operator's confirmation before destructive or irreversible action/,
+    "the prompt asks the agent for its own confirmation, not its operator's",
+  );
   assert.doesNotMatch(prompt, /fresh strict|context-free|tool-denied session/);
   assert.match(prompt, /short credential\s+can rotate only while this listener remains\s+alive/);
   assert.match(prompt, /cswarm inbox --kind ask --follow --ndjson --agent-token-stdin/);
