@@ -374,11 +374,31 @@ export class AcpHostSession {
         },
         this.requestTimeoutMs,
       );
-      if (!isRecord(result) || typeof result.sessionId !== "string") {
+      /* ABSENT and MALFORMED are different answers and were treated the same.
+       *
+       * Some agents return an empty result on load success, so an absent sessionId legitimately
+       * means "the one you asked for" — that path is load-bearing and must not change. But
+       * `typeof result.sessionId !== "string"` also swallowed a sessionId that was PRESENT and
+       * wrong: `null`, a number, an array. Those are not a silent success, they are a provider
+       * telling us something we do not understand about which session we are on, and we were
+       * recording `loaded: true` for the requested id anyway.
+       *
+       * Measured by the exact-review arm on 65527457: eight malformed shapes all produced
+       * `loaded: true` with no fallback. The distinction is presence, not type. */
+      const resultRecord = isRecord(result) ? result : null;
+      const sessionIdAbsent = resultRecord === null ||
+        !("sessionId" in resultRecord) || resultRecord.sessionId === undefined;
+      if (sessionIdAbsent) {
         // Some agents return empty result on load success — keep requested id.
         this.sessionId = sessionId;
         await this.applyRequiredMode();
         return { sessionId, loaded: true };
+      }
+      if (typeof resultRecord.sessionId !== "string") {
+        throw new AcpProtocolError(
+          "session/load returned a non-string session id",
+          "session_id_malformed",
+        );
       }
       /* D-086 round 2. The child returning a DIFFERENT id than the one we asked to load was
        * accepted as the new active session, so it could choose the session every later check is
@@ -387,17 +407,21 @@ export class AcpHostSession {
        * for "other" approved.
        *
        * ACP has no aliasing that we rely on, so a mismatch is treated as a failed load and takes
-       * the existing fallback: reset the prompt gate and open a fresh session, which re-runs the
-       * canary before any real prompt. Fail-closed, and it reuses a path that is already tested. */
-      if (result.sessionId !== sessionId) {
+       * the existing fallback: reset the prompt gate and open a fresh session.
+       *
+       * ~~"which re-runs the canary before any real prompt"~~ — precise correction from the
+       * exact-review arm: the fallback does NOT run a canary. It leaves `promptsEnabled: false`, so
+       * real prompts are BLOCKED until the caller runs one. Fail-closed either way, and the
+       * difference matters to anyone reasoning about what happens next. */
+      if (resultRecord.sessionId !== sessionId) {
         throw new AcpProtocolError(
           "session/load returned a different session id",
           "session_id_mismatch",
         );
       }
-      this.sessionId = result.sessionId;
+      this.sessionId = resultRecord.sessionId;
       await this.applyRequiredMode();
-      return { sessionId: result.sessionId, loaded: true };
+      return { sessionId: resultRecord.sessionId, loaded: true };
     } catch {
       // Fallback session/new is a new agent context: re-canary before real prompts.
       this.resetPromptGate();

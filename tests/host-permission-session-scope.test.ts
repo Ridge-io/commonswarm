@@ -36,11 +36,15 @@ const ALLOW_AND_REJECT = [
   { optionId: "r", name: "Reject", kind: "reject_once" as const },
 ];
 
-/* The helper takes `unknown`, not `string`, ON PURPOSE. The first version typed it `string`, so it
+/* The helper's session-id parameter is a WIDE UNION, not `string`. The first version typed it
  * was structurally incapable of expressing the bypass that actually shipped — a child that OMITS
  * sessionId or sends a non-string. A test helper's parameter types decide which defects it can even
  * describe, and this one had quietly excluded the whole malformed-input class. Caught by the
- * exact-review arm, which probed it directly rather than through the helper. */
+ * exact-review arm, which probed it directly rather than through the helper.
+ *
+ * ~~"takes `unknown`"~~ — corrected: it is `ClaimedSessionId | typeof OMITTED`, and the object case
+ * still needs a cast. Same arm, same round. A union that happens to cover today's cases is not the
+ * same claim as `unknown`, and writing the stronger word describes a helper I did not build. */
 type ClaimedSessionId = string | number | null | undefined;
 const OMITTED = Symbol("omitted");
 
@@ -421,3 +425,91 @@ test("D-086 reply text CONTROL: our own session's chunk still becomes the reply"
     "the real session's text no longer reaches the reply",
   );
 });
+
+/* session/load: ABSENT and MALFORMED are different answers.
+ *
+ * An absent sessionId legitimately means "the one you asked for" — documented provider behaviour
+ * and load-bearing. A sessionId that is PRESENT and not a string is a provider saying something we
+ * do not understand about which session we are on, and it was being recorded as a successful load
+ * of the requested id. Eight malformed shapes reproduced that on 65527457. */
+function loadChildRaw(result: unknown) {
+  const toAgent = new PassThrough();
+  const toHost = new PassThrough();
+  let buf = "";
+  let newSessions = 0;
+  const send = (msg: unknown) => toHost.write(`${JSON.stringify(msg)}\n`);
+
+  toAgent.on("data", (chunk: Buffer | string) => {
+    buf += typeof chunk === "string" ? chunk : chunk.toString("utf8");
+    let nl: number;
+    while ((nl = buf.indexOf("\n")) !== -1) {
+      const line = buf.slice(0, nl);
+      buf = buf.slice(nl + 1);
+      if (!line.trim()) continue;
+      const msg = JSON.parse(line) as Record<string, unknown>;
+      if (msg.method === "initialize") {
+        send({ jsonrpc: "2.0", id: msg.id, result: { protocolVersion: ACP_PROTOCOL_VERSION } });
+      } else if (msg.method === "session/new") {
+        newSessions += 1;
+        send({ jsonrpc: "2.0", id: msg.id, result: { sessionId: `fresh-${newSessions}` } });
+      } else if (msg.method === "session/load") {
+        send({ jsonrpc: "2.0", id: msg.id, result });
+      } else if (msg.method === "session/set_mode") {
+        send({ jsonrpc: "2.0", id: msg.id, result: {} });
+      }
+    }
+  });
+
+  return { readable: toHost, writable: toAgent, newSessionCount: () => newSessions };
+}
+
+async function loadRaw(result: unknown) {
+  const cwd = mkdtempSync(join(tmpdir(), "d086-loadraw-"));
+  const fake = loadChildRaw(result);
+  try {
+    const { session } = await openAcpSessionOverStdio({
+      cwd,
+      readable: fake.readable,
+      writable: fake.writable,
+      promptsEnabled: true,
+      requestTimeoutMs: 5_000,
+      permissionCallback: (request) => allowOnceOrDeny(request),
+    });
+    const before = fake.newSessionCount();
+    const out = await session.load("requested");
+    await session.close();
+    return { ...out, freshSessionsAfterLoad: fake.newSessionCount() - before };
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+}
+
+for (const [label, result] of [
+  ["null", { sessionId: null }],
+  ["a number", { sessionId: 7 }],
+  ["an array", { sessionId: ["ours"] }],
+  ["an object", { sessionId: { id: "ours" } }],
+  ["a boolean", { sessionId: true }],
+] as const) {
+  test(`D-086 load: a PRESENT ${label} session id is not a successful load`, async () => {
+    const out = await loadRaw(result);
+    assert.equal(out.loaded, false, `a ${label} session id was reported as a successful load`);
+    assert.notEqual(out.sessionId, "requested", `a ${label} session id kept the requested id`);
+    assert.equal(out.freshSessionsAfterLoad, 1, "no fallback session was opened");
+  });
+}
+
+for (const [label, result] of [
+  ["an empty object", {}],
+  ["an explicitly undefined field", { sessionId: undefined }],
+  ["a non-record", "not-a-record"],
+] as const) {
+  test(`D-086 load CONTROL: an ABSENT session id (${label}) still resumes`, async () => {
+    /* The distinction this whole change rests on. Rejecting these too would "secure" the product by
+     * breaking session resumption for the providers the comment in session.ts was written for. */
+    const out = await loadRaw(result);
+    assert.equal(out.loaded, true, `${label} stopped being treated as a successful load`);
+    assert.equal(out.sessionId, "requested", `${label} stopped keeping the requested id`);
+    assert.equal(out.freshSessionsAfterLoad, 0, `${label} forced a needless fresh session`);
+  });
+}
