@@ -7,7 +7,39 @@ Supersedes `docs/org/2026-08-07-RESUME-HERE.md`. Written for someone reading the
 Work is parked deliberately, to be picked up in a day or two. **Nothing is mid-flight and nothing is
 blocked.** v0.1.16 is shipped, verified live, and the tree is clean.
 
-**Pick up here:** run the two-agent dogfood against 0.1.16. It is the only open item on this lane and
+### ⚠️ ONE OPERATOR DECISION IS WAITING — it is the only thing blocked on a human
+
+**Retire `Ridge-io/cloud-swarm`.** The migration is COMPLETE and measured (2026-08-13): the published
+installer defaults to `Ridge-io/commonswarm`, all 14 old releases are mirrored (18 there now), the
+live site has **zero** references to the old repo on `/`, `/download`, `/start` or `/app`, and a real
+cold install was verified the same day. Nothing depends on the old repo. The "delete last, not
+first" sequencing rule is therefore satisfied.
+
+**What is still true, and is the reason this matters:** the old repo is still PUBLIC and still serves
+the operator's employer address in `SUCCESSION-PLAN.md` — verified by anonymous fetch, HTTP 200,
+against a control that also returned 200. That address is the whole reason the migration happened.
+
+**Making it private is BLOCKED and will stay blocked** until someone acts: GitHub returns
+`422 Visibility can't be private. Please add seats for collaborators` because the repo has five
+collaborators — `calvintychan` (admin), `danlangridge` (admin), `Ridgeio` (admin), `tlangridge`
+(write), `cooperyulan` (read). Do not retry the flag expecting a different answer; either pay for
+seats or remove collaborators first.
+
+| option | effect | reversible |
+|---|---|---|
+| **delete** (recommended) | The only clean purge. `forks=0`, so deletion genuinely removes the data — the condition the doctrine names, still true on 2026-08-13 | **NO** |
+| remove collaborators, then private | Unblocks the private flag with no seats. Hides it, keeps the data | yes |
+| redact at HEAD | Same fix applied to `commonswarm` at `4bb6158`. Stops it being SERVED, does not purge history | yes |
+
+**Why delete is recommended:** it is the only option that removes the contaminated history rather
+than hiding it, which was the entire point of migrating. **The window closes if anyone forks it** —
+a fork gets promoted to root on deletion and the data survives. `forks=0` today.
+
+None of the three was taken. The operator was asked and ran out of time.
+
+---
+
+**Pick up here (engineering):** run the two-agent dogfood against 0.1.16. It is the only open item on this lane and
 it is the first measurement of steady-state `--permissions allow`, which twelve review rounds could
 not establish — the permission-boundary canary forces deny regardless of mode, so it proves the deny
 path only.
