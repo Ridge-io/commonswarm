@@ -2,6 +2,32 @@
 
 Supersedes `docs/org/2026-08-07-RESUME-HERE.md`. Written for someone reading the repo cold.
 
+## PARKED 2026-08-12 by operator — read this block first
+
+Work is parked deliberately, to be picked up in a day or two. **Nothing is mid-flight and nothing is
+blocked.** v0.1.16 is shipped, verified live, and the tree is clean.
+
+**Pick up here:** run the two-agent dogfood against 0.1.16. It is the only open item on this lane and
+it is the first measurement of steady-state `--permissions allow`, which twelve review rounds could
+not establish — the permission-boundary canary forces deny regardless of mode, so it proves the deny
+path only.
+
+**Repo state at parking:** `main` clean, 0 uncommitted, 0 unpushed. Worktrees reduced 17 → 2 (this
+checkout and the `swarm` repo's active one). **No branch was deleted** — worktree removal leaves
+branches intact, and `cloud-swarm-source` still has all 14.
+
+**Two things found while parking, neither caused by this session:**
+
+1. **`cloud-swarm-source` is CORRUPT.** `git fsck` reports 12 missing objects and invalid sha1
+   pointers on `refs/remotes/origin/main`, `refs/remotes/origin/HEAD`, and four tags
+   (`v0.0.1`, `v0.1.0`, `v0.1.1`, `pre-rebase-backup`). Seven branches cannot be walked at all, so
+   they could not even be bundled. It is a clone of the **frozen, superseded** `Ridge-io/cloud-swarm`,
+   so nothing current depends on it — but do not treat it as a backup of anything.
+2. **`Ridge-io/cloud-swarm` still publicly serves an operator employer address** in
+   `SUCCESSION-PLAN.md`. The same string was redacted from the live `commonswarm` repo at `4bb6158`
+   and verified gone via the GitHub API. That repo has **0 forks**, which is the condition under
+   which deletion actually purges — an operator decision, deliberately not taken.
+
 ## What this session was
 
 The operator asked one question — *"why would the agent be on permissions deny? we want low
