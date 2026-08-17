@@ -1,9 +1,9 @@
 {
-  "name": "cswarm",
+  "name": "commonswarm",
   "version": "0.0.0",
-  "description": "CommonSwarm CLI — coordination for teams where people and AI agents work side by side.",
+  "description": "CommonSwarm CLI \u2014 coordination for teams where people and AI agents work side by side.",
   "bin": {
-    "cswarm": "./cswarm.cjs"
+    "cswarm": "cswarm.cjs"
   },
   "files": [
     "cswarm.cjs"

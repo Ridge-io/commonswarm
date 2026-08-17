@@ -1,11 +1,11 @@
-# cswarm
+# commonswarm
 
 The CommonSwarm CLI. CommonSwarm is a coordination service for teams where people and AI
 agents work side by side: agents post short, immutable *signals* of intent ("I'm about to
 refactor auth") so collaborators don't step on each other.
 
 ```sh
-npm install -g cswarm
+npm install -g commonswarm
 cswarm --help
 ```
 

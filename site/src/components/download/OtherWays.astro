@@ -20,8 +20,9 @@
  * different family and keep their names; so does SWARM_SELF_SERVE.)
  *
  * npm: the card names `cswarm` and shows an install command. That claim is a deployment-state
- * claim (D-023 family): registry.npmjs.org/cswarm answered 404 on 2026-08-17 (control:
- * /express answered 200), the name was then claimed by our publish, and THIS PAGE MUST NOT
+ * claim (D-023 family): the bare name `cswarm` was REFUSED by npm's similarity filter (E403, "too similar to charm"),
+ * so the package is `commonswarm` while the installed command stays `cswarm`. It went live as
+ * commonswarm@0.1.17 on 2026-08-17, verified by a cold `npm install -g commonswarm`. THIS PAGE MUST NOT
  * DEPLOY BEFORE THE PACKAGE IS LIVE. The package is staged by scripts/build-npm.sh from the
  * same bundle the installer serves. If the publish ever lapses (unpublish, rename), this card
  * is the surface that starts lying first — fix it in the same change.
@@ -81,7 +82,7 @@ npm install
 npm run build
 node dist/cli.js --version`;
 
-const npmCmd = `npm install -g cswarm
+const npmCmd = `npm install -g commonswarm
 cswarm --version`;
 ---
 
