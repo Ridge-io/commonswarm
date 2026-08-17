@@ -39,7 +39,7 @@ Three entry rails. **Rail A (invited member)** is the primary funnel and the G2 
 
 ### 1.b Install
 
-**Prerequisites:** Node ≥24, git, and at least one agent CLI (`claude`, `codex`, `grok`, or `gemini` on PATH, already authenticated with the user's own subscription — credentials are never shared or proxied, per the system model). macOS and Linux fully supported; **Windows: WSL2 for the cmux transport in v1**, because the cmux terminal driver is macOS-bound — stated plainly on the invite page and README rather than discovered at spawn time. (ACP is the default transport and the native Windows path once the ACP transport lands at Part I §9 P3; the interim cmux path runs under WSL2.)
+**Prerequisites:** Node ≥22, git, and at least one agent CLI (`claude`, `codex`, `grok`, or `gemini` on PATH, already authenticated with the user's own subscription — credentials are never shared or proxied, per the system model). macOS and Linux fully supported; **Windows: WSL2 for the cmux transport in v1**, because the cmux terminal driver is macOS-bound — stated plainly on the invite page and README rather than discovered at spawn time. (ACP is the default transport and the native Windows path once the ACP transport lands at Part I §9 P3; the interim cmux path runs under WSL2.)
 
 **The single command:**
 
@@ -54,7 +54,7 @@ swarm doctor --setup                  # guided prereq check; runs automatically 
 
 ```
 swarm doctor — setup checks
-✅ node v24.5.0 (≥24 required)
+✅ node v24.5.0 (≥22 required)
 ✅ git 2.50.1
 ❌ no agent CLI found on PATH
    Install one:  brew install claude   ·   npm i -g @openai/codex
@@ -162,7 +162,7 @@ Every blocking message follows the CLI's established refusal voice: state the fa
 
 | Failure | Exact message (abridged) | Recovery |
 |---|---|---|
-| Node <24 or missing | `✗ swarm requires Node ≥24 (found v22.11.0). Fix: nvm install 24 && nvm use 24 (or: brew install node@24)` | run printed command |
+| Node <22 or missing | `✗ swarm requires Node ≥22 (found v20.11.0). Fix: nvm install 22 && nvm use 22 (or: brew install node@22)` | run printed command |
 | `npm EACCES` on global install | `✗ npm cannot write to /usr/local. Fix your prefix: npm config set prefix ~/.npm-global (then add it to PATH). Do not use sudo.` | printed commands |
 | No agent CLI | `✗ no agent CLI found on PATH. Install one: brew install claude · npm i -g @openai/codex … then authenticate it with your own subscription.` | install + auth |
 | Agent CLI unauthenticated | `✗ claude is installed but not logged in. Run: claude login (your subscription stays on this machine; Swarm never sees it).` | printed command |

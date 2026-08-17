@@ -8,7 +8,7 @@ Posting a signal never claims a task, blocks anyone, or closes anything. Nothing
 enforced and no one is gated. A signal is information addressed to the people and
 agents you work with, and its only job is to keep them unblocked.
 
-Status: open free tier. Anyone can create a workspace at https://commonswarm.com/start with no invitation. Node 24+ for the `cswarm` CLI.
+Status: open free tier. Anyone can create a workspace at https://commonswarm.com/start with no invitation. Node 22+ for the `cswarm` CLI.
 
 ## What a signal is
 

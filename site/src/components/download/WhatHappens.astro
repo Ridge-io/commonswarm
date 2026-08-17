@@ -12,7 +12,7 @@
  *
  *   1. node check BEFORE any download, with the searched PATH printed  -> `command -v node` +
  *      the die() message that prints "$PATH" and names version managers (l.26-40)
- *   2. NODE_MAJOR >= 24                                                -> l.42-47
+ *   2. NODE_MAJOR >= 22                                                -> l.42-47
  *   3. two curl calls into mktemp -d, trap rm -rf on EXIT INT TERM     -> l.61-69
  *   4. missing checksum file => stop                                   -> l.68-69
  *   5. shasum or sha256sum; neither => stop; mismatch => stop and

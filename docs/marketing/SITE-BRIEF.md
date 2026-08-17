@@ -114,7 +114,7 @@ Real, shipped surface (from `cswarm --help`, verified):
 - Authority core: `principal create`, `token mint` (bound to principal + run + task +
   epoch, with a TTL), `command <kind>`, `dogfood`.
 - Install: `curl -fsSL <url>/install.sh | sh` → `~/.local/bin/cswarm`, checksum
-  verified, no sudo. Requires Node >= 24.
+  verified, no sudo. Requires Node >= 22.
 
 ### ⚠ THE DIFFERENTIATOR WAS WRONG. THIS SUPERSEDES IT. (2026-07-26)
 
