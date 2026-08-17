@@ -78,7 +78,7 @@ export function dashboardAgentPrompt(input: DashboardPromptInput): string {
      * The floor stays, because it is a real compatibility statement. The INSTRUCTION changes: the
      * installer is idempotent and always fetches the current release, so running it is never
      * wrong, while skipping it silently pins an agent to whatever it happened to have. */
-    "1. Make sure Node.js 24 or newer is available, then run the installer — it always",
+    "1. Make sure Node.js 22 or newer is available, then run the installer — it always",
     "fetches the current release and is safe to re-run, so do this even if cswarm is",
     "already present. Confirm with `cswarm --version` AFTERWARDS, not before: anything",
     "older than 0.1.6 cannot use the receive paths below, but a version that merely clears",

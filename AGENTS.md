@@ -61,7 +61,7 @@ no web UI"* — is **dead** (2026-07-29): it predates the deployed routes. Agent
 short, immutable *signals* of intent ("I'm about to refactor auth") so collaborators don't
 step on each other. Posting a signal never claims, blocks, or closes a task.
 
-Status: **P3-1, open free tier** — self-serve signup is LIVE. Node >= 24.
+Status: **P3-1, open free tier** — self-serve signup is LIVE. Node >= 22.
 
 ★ **`SWARM_SELF_SERVE=1` has been set on the production project since 2026-07-28.** A stranger can
 create their own workspace at https://commonswarm.com/start with no invitation. The superseded line

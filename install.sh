@@ -40,10 +40,10 @@ die() { printf '\nCommonSwarm install failed: %s\n\n' "$1" >&2; exit 1; }
 # A bare `command -v node` is correct but its ADVICE is wrong for a large share of users.
 # Version managers (nvm, fnm, asdf) put node on PATH from a shell init file, so node is
 # invisible to any non-login, non-interactive shell -- ssh, CI, docker exec, a GUI-spawned
-# process. Telling someone who already runs v24 under nvm to "brew install node" is a false
+# process. Telling someone who already runs v22 under nvm to "brew install node" is a false
 # statement on the very first thing they see. So we say WHERE we looked, and name the case.
 command -v node >/dev/null 2>&1 || die \
-"CommonSwarm needs Node.js 24 or newer, and node was not found on this PATH:
+"CommonSwarm needs Node.js 22 or newer, and node was not found on this PATH:
 
   $PATH
 
@@ -59,8 +59,8 @@ If you genuinely do not have Node yet:
   other:  https://nodejs.org/en/download"
 
 NODE_MAJOR="$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)"
-[ "$NODE_MAJOR" -ge 24 ] 2>/dev/null || die \
-"CommonSwarm needs Node.js 24 or newer. You have $(node -v 2>/dev/null || echo 'an unknown version').
+[ "$NODE_MAJOR" -ge 22 ] 2>/dev/null || die \
+"CommonSwarm needs Node.js 22 or newer. You have $(node -v 2>/dev/null || echo 'an unknown version').
 
   macOS:  brew upgrade node
   other:  https://nodejs.org/en/download"

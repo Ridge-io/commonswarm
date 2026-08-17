@@ -14,7 +14,7 @@
 # and no dependency resolution on the user's machine, which is the whole point of a
 # `curl | sh` installer.
 #
-# NODE IS STILL REQUIRED (>=24, see package.json engines). This ships JavaScript, not a
+# NODE IS STILL REQUIRED (>=22, see package.json engines). This ships JavaScript, not a
 # native executable. The installer checks for it and says so; that is deliberate — a
 # fake "self-contained binary" that dies on `node: command not found` is worse UX than
 # an installer that names the requirement up front.
@@ -31,7 +31,7 @@ rm -rf "$OUT"; mkdir -p "$OUT"
 # identifier that src/cli.ts declares, so the two names must change together or the
 # injection silently stops happening. Nobody types it, so the rename can wait.
 npx esbuild src/cli.ts \
-  --bundle --platform=node --target=node24 --format=cjs \
+  --bundle --platform=node --target=node22 --format=cjs \
   --define:__COSWARM_VERSION__="\"$VERSION\"" \
   --outfile="$OUT/cswarm"
 

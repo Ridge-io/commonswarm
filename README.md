@@ -21,8 +21,8 @@ needs no configuration, because an invite link carries its own target.
 
 > **Status: P3-1, open free tier.** Install with
 > `curl -fsSL https://commonswarm.com/install.sh | sh` (installs `cswarm`,
-> currently 0.1.4, Node >= 24 required). The rest of this README assumes you
-> have it.
+> Node >= 22 required), or `npm install -g cswarm` where only package
+> registries are reachable. The rest of this README assumes you have it.
 
 CommonSwarm is the cloud evolution of [`swarm`](https://github.com/Ridgeio/swarm),
 the local single-machine CLI. It lives in its own repo so that cloud work can

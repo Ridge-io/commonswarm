@@ -19,12 +19,12 @@
  * would never learn the flag did nothing. (SWARM_CLOUD_URL and SWARM_CLOUD_ANON_KEY are a
  * different family and keep their names; so does SWARM_SELF_SERVE.)
  *
- * npm: there is NO published package. registry.npmjs.org/coswarm and /cloud-swarm were both
- * checked and both answer 404 — but that was the OLD name. `cswarm` has NOT been checked
- * against the registry by this pass, so the card no longer names which strings 404; it says
- * only that no package is published, which is a fact about our own release process rather
- * than about a namespace nobody measured. Do not put a name back into that copy without
- * curling the registry for it first — the whole risk is that someone else already holds it.
+ * npm: the card names `cswarm` and shows an install command. That claim is a deployment-state
+ * claim (D-023 family): registry.npmjs.org/cswarm answered 404 on 2026-08-17 (control:
+ * /express answered 200), the name was then claimed by our publish, and THIS PAGE MUST NOT
+ * DEPLOY BEFORE THE PACKAGE IS LIVE. The package is staged by scripts/build-npm.sh from the
+ * same bundle the installer serves. If the publish ever lapses (unpublish, rename), this card
+ * is the surface that starts lying first — fix it in the same change.
  *
  * From source: verified by doing it. `npm run build` is `tsc` (package.json) and the bin entry
  * is dist/cli.js — package.json now declares bin as {"cswarm": "dist/cli.js"}, so the command
@@ -49,7 +49,6 @@
 
 import Card from "../ui/Card.astro";
 import CodeBlock from "../ui/CodeBlock.astro";
-import Badge from "../ui/Badge.astro";
 import { INSTALL_CMD_DIR } from "../../lib/install.ts";
 import { INSTALL_CMD_PINNED } from "../../lib/release.ts";
 
@@ -81,6 +80,9 @@ cd ${sourceDir}
 npm install
 npm run build
 node dist/cli.js --version`;
+
+const npmCmd = `npm install -g cswarm
+cswarm --version`;
 ---
 
 <section class="ow section--tight" id="other-ways" aria-labelledby="ow-title">
@@ -100,15 +102,15 @@ node dist/cli.js --version`;
       </Card>
 
       <Card as="article" title="npm" headingLevel={3} class="ow__card">
-        <div class="ow__status">
-          <Badge variant="neutral" size="sm">Not published</Badge>
-        </div>
-        <p class="ow__p ow__p--last">
-          There is no npm package yet, so there is no command to give you here. Publishing one
-          is a decision that hasn’t been made. Until it is, the installer and the source tree
-          are the two real paths, and this card would rather say so than print an
-          <span class="mono">npm i -g</span> line that installs nothing.
+        <p class="ow__p">
+          The same single-file CLI, through the registry. This is the door for sandboxed
+          agent environments (Claude Cowork and similar) whose egress allowlists permit
+          package registries but block this site — <span class="mono">curl | sh</span> can
+          never arrive there. To actually connect, the sandbox must also reach
+          <span class="mono">commonswarm.com</span> and the deployment’s API host; installing
+          is the half npm solves.
         </p>
+        <CodeBlock code={npmCmd} label="install from npm" prompt="$" wrap />
       </Card>
 
       <Card as="article" title="Pin a version, or pick the directory" headingLevel={3} class="ow__card">
@@ -125,7 +127,7 @@ node dist/cli.js --version`;
 
       <Card as="article" title="From source" headingLevel={3} class="ow__card">
         <p class="ow__p">
-          Needs Node 24+ and a clone of the repository. The build is plain
+          Needs Node 22+ and a clone of the repository. The build is plain
           <span class="mono">tsc</span>; the result is the same single file the installer
           would have fetched.
         </p>
