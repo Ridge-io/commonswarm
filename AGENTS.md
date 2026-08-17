@@ -615,9 +615,9 @@ Measured 2026-08-04, end to end:
 ```
 supabase projects list        -> ukezjcnxjvkpkeezxaew  "cloud-swarm-dev"   (● linked)
 supabase/.temp/project-ref    -> ukezjcnxjvkpkeezxaew
-site/.env PUBLIC_SUPABASE_URL -> https://ukezjc….supabase.co
+site/.env PUBLIC_SUPABASE_URL -> https://api.commonswarm.com     (since 2026-08-17)
 curl https://commonswarm.com/start | grep 'commonswarm:url'
-                              -> https://ukezjc….supabase.co     (positive control: 1 match)
+                              -> https://api.commonswarm.com     (positive control: 1 match)
 ```
 
 **The live site's own deployed meta tag names it.** There is no separate production project. The
@@ -629,6 +629,13 @@ This is the repo's own *"measure the artifact, not its name"* rule with an unusu
 here the name actively asserts the opposite of the truth. Resolve the ref and check it against the
 live page before any `supabase db push`, `functions deploy`, or anything destructive. Renaming the
 project is an operator action and would be worth doing.
+
+★ **`api.commonswarm.com` is the project's ACTIVE custom domain (2026-08-17).** It CNAMEs to
+`ukezjcnxjvkpkeezxaew.supabase.co` (Cloudflare, DNS-only) and both hosts serve the same project —
+the supabase.co URL keeps working, so CLI targets saved before the move are fine. The live site's
+meta tag and cold-CLI discovery now hand out `api.commonswarm.com`; the GitHub OAuth app
+(`cloud-swarm-dev`, Ov23liqq…) carries BOTH callback URLs. The add-on bills $10/month. This exists
+so sandboxed agent environments need exactly one egress allowlist entry: `commonswarm.com`.
 
 Local development uses `npm run db:start` (Docker, `127.0.0.1:54321`) and never touches this project.
 

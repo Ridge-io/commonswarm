@@ -2,7 +2,31 @@
 
 Supersedes `docs/org/2026-08-12-RESUME-HERE.md`. Written for someone reading the repo cold.
 
-## What happened today
+## SECOND SESSION, same day — the sandbox-distribution lane (read this block first)
+
+Everything below it still stands; this block is newer. Full record:
+`docs/evidence/2026-08-17-sandbox-distribution/README.md`.
+
+- **v0.1.17 is RELEASED and LIVE**: Node floor is 22 (measured), GitHub release has both assets,
+  the live installer serves it, and `npm install -g commonswarm` is a second, verified door
+  (package `commonswarm`; npm refused `cswarm` as too similar to `charm`; the command is still
+  `cswarm`).
+- **`api.commonswarm.com` is the ACTIVE API host** ($10/mo Supabase add-on). The site meta and
+  cold CLI discovery now hand it out; the supabase.co URL still serves, and the GitHub OAuth app
+  carries both callbacks. A sandboxed agent now needs one allowlist entry: `commonswarm.com`.
+- **`Ridge-io/cloud-swarm` is DELETED** (forks were 0 — the clean purge happened).
+- **The old-repo decision and the deletion blocker in the earlier block below are RESOLVED** —
+  read them as history.
+- D-036 ran with codex (exact) + grok (inversion) **at operator direction — Grok is a usable arm
+  again by operator ruling this session**; findings all fixed pre-release.
+- Ops loose ends for the operator: npm credentials file on the Desktop → move to 1Password and
+  delete; npm publish token `~/.config/cswarm-npm-token.txt` expires 2026-08-24 — mint a fresh
+  one (npmjs.com → Access Tokens → granular, bypass-2FA) for the next release, or enroll a
+  security key.
+- **Next release procedure gains one step**: after `gh release create`, run
+  `bash scripts/build-npm.sh && cd dist-npm && npm publish` with a valid token.
+
+## What happened today (first session)
 
 1. **The two-agent dogfood against shipped 0.1.16 RAN.** It was the only open engineering item.
    Evidence: `docs/evidence/2026-08-17-two-agent-dogfood/README.md`. Headline results:
