@@ -51,6 +51,7 @@ import {
   type FileCommand,
   type FileStorage,
 } from "./file-artifacts.ts";
+import { drainFilePurgeQueue } from "./file-artifacts.ts";
 // Supabase's edge graph cannot resolve the NodeNext `.js` specifiers in the
 // frozen TypeScript core. This checked-in bundle is regenerated directly from
 // src/protocol/index.ts by build:command-core; it is not a second implementation.
@@ -852,6 +853,20 @@ function fileStorage(): FileStorage {
       const length = response.headers.get("content-length");
       const size = length === null ? Number.NaN : Number(length);
       return Number.isFinite(size) ? size : null;
+    },
+    async removeObjects(paths) {
+      // DELETE /object/{bucket} with prefixes removes what exists and reports
+      // the rest in the body; only a transport/authorization failure is an
+      // error. The drain treats "object absent" as already-deleted (see the
+      // FileStorage contract) because pending-GC queues never-uploaded paths.
+      const response = await fetch(`${base}/object/${FILE_BUCKET}`, {
+        method: "DELETE",
+        headers,
+        body: JSON.stringify({ prefixes: paths }),
+      });
+      if (!response.ok && response.status !== 404) {
+        throw new Error(`storage object delete failed: ${response.status}`);
+      }
     },
     async signDownload(path, filename, expiresInSeconds) {
       const response = await fetch(
@@ -6913,6 +6928,23 @@ async function handlePostRequest(request: Request): Promise<Response> {
       verifiedHuman,
       agentTokenHash,
     );
+    /* S4: opportunistic purge-queue drain, AFTER the command's transaction and
+     * in its own — a storage outage must never fail the command that happened
+     * to trigger the drain. The queue is durable, so a swallowed failure only
+     * defers work to the next file command. Bounded to keep latency flat. */
+    if ((FILE_COMMAND_KINDS as readonly string[]).includes(kind)) {
+      try {
+        await db.begin(async (drainTx) => {
+          await drainTx.unsafe("SET LOCAL ROLE swarm_command");
+          await drainTx.unsafe(
+            "SET LOCAL search_path = swarm, pg_catalog",
+          );
+          await drainFilePurgeQueue(drainTx, fileStorage(), 10);
+        });
+      } catch (error) {
+        console.error("file purge queue drain failed", safeError(error));
+      }
+    }
     return json(result.status, result.body, result.headers);
   } catch (error) {
     if (error instanceof LedgerRace) {

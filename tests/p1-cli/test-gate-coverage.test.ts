@@ -10,9 +10,16 @@ interface PackageJson {
 
 const repoRoot = process.cwd();
 const pureCliCommand = "node --import tsx --test tests/p1-cli/**/*.test.ts";
+/* S4 added a second stack-touching file; --test-concurrency=1 because each
+ * p1-local file spawns the one local functions runtime (same reason p1-server
+ * carries the flag). The pin moves WITH the claim it guards: both files stay
+ * reachable only through test:p1-local, never through a pure gate. */
 const localStackCommand =
-  "node --import tsx --test tests/p1-local/local-integration.test.ts";
-const localStackTest = "tests/p1-local/local-integration.test.ts";
+  "node --import tsx --test --test-concurrency=1 tests/p1-local/local-integration.test.ts tests/p1-local/file-artifacts-e2e.test.ts";
+const localStackTests = [
+  "tests/p1-local/file-artifacts-e2e.test.ts",
+  "tests/p1-local/local-integration.test.ts",
+];
 
 function repoRelative(path: string): string {
   return relative(repoRoot, path).split(sep).join("/");
@@ -70,7 +77,9 @@ test("D-030: every test file is reached by an npm execution script", async () =>
   const unreachable = files.filter((file) => matchingScripts(file, scripts).length === 0);
 
   assert.ok(files.length > 0);
-  assert.ok(files.includes(localStackTest));
+  for (const stackTest of localStackTests) {
+    assert.ok(files.includes(stackTest));
+  }
   assert.deepEqual(unreachable, []);
 });
 
@@ -103,8 +112,10 @@ test("D-030: the pure CLI gate cannot reach the stack-touching suite", async () 
   assert.equal(packageJson.scripts?.["test:p1-cli"], pureCliCommand);
   assert.equal(packageJson.scripts?.["test:p1-local"], localStackCommand);
   assert.deepEqual(
-    files.filter((file) => file.endsWith("/local-integration.test.ts")),
-    [localStackTest],
+    files.filter((file) => file.startsWith("tests/p1-local/")),
+    localStackTests,
   );
-  assert.deepEqual(matchingScripts(localStackTest, scripts), ["test:p1-local"]);
+  for (const stackTest of localStackTests) {
+    assert.deepEqual(matchingScripts(stackTest, scripts), ["test:p1-local"]);
+  }
 });

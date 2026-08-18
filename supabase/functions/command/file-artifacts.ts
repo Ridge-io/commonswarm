@@ -312,6 +312,12 @@ export interface FileStorage {
     filename: string,
     expiresInSeconds: number,
   ): Promise<string>;
+  /**
+   * Batch object deletion for the purge-queue drain (S4). Must SUCCEED for
+   * paths that hold no object — a pending row GC'd before its PUT queues a
+   * path that was never written, and the drain still has to retire it.
+   */
+  removeObjects(paths: readonly string[]): Promise<void>;
 }
 
 export async function fileVersionCreate(
@@ -950,4 +956,37 @@ export async function fileRestore(
     ok: true,
     body: { file_id: cmd.file_id, name: file.name, restored: true },
   };
+}
+
+/**
+ * S4: the purge-queue consumer. swarm.purge_file_artifacts() (pg_cron) claims
+ * rows and queues their storage paths — SQL cannot delete storage objects (the
+ * storage schema trigger refuses; measured, see the migration comment) — and
+ * THIS drains the queue through the Storage API. It runs best-effort after any
+ * file command, in its own transaction: at-least-once with a durable queue, so
+ * a failed drain simply leaves rows for the next one. removeObjects tolerates
+ * paths that never had an object (a pending row GC'd before its PUT).
+ */
+export async function drainFilePurgeQueue(
+  tx: Sql,
+  storage: FileStorage,
+  limit: number,
+): Promise<number> {
+  const rows = await tx<{ storage_path: string }[]>`
+    SELECT storage_path
+    FROM swarm.file_purge_queue
+    WHERE deleted_at IS NULL
+    ORDER BY claimed_at
+    LIMIT ${limit}
+    FOR UPDATE SKIP LOCKED
+  `;
+  if (rows.length === 0) return 0;
+  const paths = rows.map((row) => row.storage_path);
+  await storage.removeObjects(paths);
+  await tx`
+    UPDATE swarm.file_purge_queue
+    SET deleted_at = statement_timestamp()
+    WHERE storage_path = ANY(${paths})
+  `;
+  return paths.length;
 }
