@@ -2021,10 +2021,10 @@ function accepted(label: string, result: CommandResult): void {
  *
  * The lineage key is derived from the credential the caller presented, so the successor
  * this run obtains is found again by the next run — which is the whole point: a one-shot
- * CLI that forgot its successor would be back to an eight-hour wall. When the store cannot
+ * CLI that forgot its successor would be back at the bootstrap-expiry wall. When the store cannot
  * be opened (a read-only home directory, a hostile umask) renewal still happens, it just
- * does not outlive the process, and the caller is told so rather than left to find out in
- * eight hours.
+ * does not outlive the process, and the caller is told so rather than left to find out at
+ * expiry.
  */
 async function agentSession(
   cloud: CloudTarget,

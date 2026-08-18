@@ -109,7 +109,7 @@ commands require that.
 
 **Agent token.** An opaque string matching `^swm_agt_[A-Za-z0-9_-]{43}$`. It is
 hashed at rest, returned exactly once at mint time, and non-refreshing. Default TTL
-one hour, hard maximum eight hours (`AGENT_TOKEN_DEFAULT_TTL_MS`,
+one hour, hard maximum 24 hours (`AGENT_TOKEN_DEFAULT_TTL_MS`,
 `AGENT_TOKEN_MAX_TTL_MS`). It is bound to one workspace: a command naming any other
 workspace fails route resolution and returns `403`, and a read for another workspace
 returns an empty result rather than an error.
@@ -436,7 +436,7 @@ workspace.
 }
 ```
 
-`ttl_ms` is optional: default 1 hour, maximum 8 hours. `scopes` is optional and
+`ttl_ms` is optional: default 1 hour, maximum 24 hours. `scopes` is optional and
 defaults to `["create","acquire","renew","handoff","takeover","submit","close","reopen","post_signal"]`.
 You may narrow it — `["post_signal"]` is enough for a signalling agent, and narrower is
 better. You cannot widen it: any scope outside that list is rejected, which is what
@@ -448,7 +448,7 @@ only time the token string exists. Capture it from the fresh response.
 **4. Use it.** The token replaces the human bearer on `/functions/v1/command` and is
 the only credential `/functions/v1/read` accepts.
 
-The root token expires after an hour by default (eight hours maximum). Credentials
+The root token expires after an hour by default (24 hours maximum; the web connect flow mints at the maximum). Credentials
 minted by the current connect flow also carry a bounded renewal grant. `cswarm`
 can rotate them into short successors while secure local state is available and a
 CLI process is still making calls, up to the human-authorized horizon. A stopped

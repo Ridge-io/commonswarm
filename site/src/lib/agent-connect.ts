@@ -308,7 +308,7 @@ export interface AgentIdentity {
 
 /**
  * The agent identities this person already owns here, so a second credential does not need a
- * second identity. It matters because an agent token lives at most 8 hours: re-minting is the
+ * second identity. It matters because an agent token is short-lived: re-minting is the
  * normal case, not the exception, and inventing "claude-2", "claude-3" is what happens without
  * this list. Reads through swarm_read.agent_principals, which applies the membership gate in
  * the database (supabase/migrations/20260723000001_p1_schema.sql:662).

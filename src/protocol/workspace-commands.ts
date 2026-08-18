@@ -666,7 +666,7 @@ export function decideWorkspace(
       }
       const ttl = cmd.ttl_ms ?? AGENT_TOKEN_DEFAULT_TTL_MS;
       if (!Number.isFinite(ttl) || ttl <= 0 || ttl > AGENT_TOKEN_MAX_TTL_MS) {
-        return domain(ctx, cmd.kind, 'token_ttl_invalid', 'token TTL must be positive and at most 8 hours');
+        return domain(ctx, cmd.kind, 'token_ttl_invalid', 'token TTL must be positive and at most 24 hours');
       }
       if (state.tokens[cmd.token_id]) {
         return domain(ctx, cmd.kind, 'bad_state', 'token id already exists');

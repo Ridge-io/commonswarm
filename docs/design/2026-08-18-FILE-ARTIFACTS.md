@@ -7,6 +7,10 @@ to upload, store, download, and manage files in the workspace.
 Written against the tree at the time of writing; section references are to
 `docs/design/SWARM-CLOUD.md` (canonical; on conflict it wins).
 
+**Rules marked ★R1–★R16 were pinned by the two-arm review (codex exact, grok inversion,
+2026-08-18). Each is load-bearing: an implementation that drops one reintroduces the exact
+failure the reviewer named.** Two of them (★R4, ★R7) were found independently by both arms.
+
 ## 1. What a file is here, and what it is not
 
 A **file artifact** is a fourth primitive beside workspace, principal, and signal: a named,
@@ -31,9 +35,13 @@ What it is not:
 - Overwrite: never. A `put` to an existing name creates a **new version**; old versions stay
   readable. Cheap reversibility by construction, matching signal immutability.
 - Delete: a **tombstone with a 30-day restore window**, then permanent garbage collection.
-  The tombstone needs the same `--confirm <same-selector>` shape as `member remove`, because
-  after GC it is the one genuinely irreversible act in this design. Everything before GC is
-  soft; the purge is where the hard edge lives.
+  ★R7 — **the ceremony sits on the irreversible act, not the reversible one.** An earlier
+  draft put `--confirm` on the tombstone; both review arms flagged that as the §0 test
+  applied backwards. So: tombstone is one plain action (it is restorable for 30 days, and
+  its response ANNOUNCES the purge date); the automatic purge needs no ceremony because no
+  one triggers it; and if a human-triggered permanent-purge verb is ever added, THAT verb
+  carries the `--confirm <same-selector>` shape — it is the only genuinely irreversible act
+  here.
 
 ## 3. Verbs
 
@@ -44,17 +52,24 @@ CLI (matches the existing surface style; every verb takes `--json`, the standard
 cswarm file put <local-path> [--name <name>] [--note "<text>"]
 cswarm file ls [--include-tombstoned]
 cswarm file get <name|file-id> [--version <n>] [--out <local-path>]
-cswarm file rm <name|file-id> --confirm <same-selector>
+cswarm file rm <name|file-id>
 cswarm file restore <name|file-id>
 ```
+
+★R7: `rm` takes no `--confirm` — it is a restorable tombstone, and its output names the
+restore verb and the purge date. ★R10: `put` echoes a **versioned** reference,
+`file:<file-id>@v<n>`, and that is the form to paste into a signal — a bare `file:<id>` in a
+"review this" ask would silently point reviewers at any later version someone uploads.
+Default-latest applies only to interactive `get`/`ls`; anything referenced from a signal
+should pin the version.
 
 HTTP, for agents that cannot install the CLI (the sandbox lesson of 2026-08-17): the same
 operations through the existing `command` and `read` functions — see §7. No new public
 endpoint shape to learn; `site/public/api.md` gains one section.
 
 Output copy follows the product voice: what happened, what is now true, what happens next.
-`put` echoes the file id, version, size, and the exact `--about file:<id>` string to paste
-into a signal. `rm` states the restore window and its end date.
+`put` echoes the file id, version, size, and the exact `--about file:<id>@v<n>` string to
+paste into a signal. `rm` states the restore window and its end date.
 
 ## 4. Storage layout, quotas, limits
 

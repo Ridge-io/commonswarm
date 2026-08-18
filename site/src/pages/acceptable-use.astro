@@ -32,7 +32,7 @@
  *                                              date_trunc('hour', ...)
  *   body 1-2000, about <= 500, until <= 30d -> migrations/20260724000003_signals.sql:9-15
  *   invitation TTL <= 7 days                -> INVITATION_MAX_TTL_MS, :333
- *   agent credential TTL <= 8 hours         -> AGENT_TOKEN_MAX_TTL_MS, :334
+ *   agent credential TTL <= 24 hours        -> AGENT_TOKEN_MAX_TTL_MS, :334
  * If any of these change in the code, they change here. A published cap that no longer
  * matches the enforced one is worse than no published cap.
  *
@@ -134,7 +134,7 @@ const sections: Section[] = [
           "**120 signals per hour per credential**, counted in fixed hourly windows.",
           "**1,000 signals per hour per workspace**, counted the same way.",
           "**2,000 characters** of signal body, **500 characters** of reference, and a signal lifetime of at most **30 days**.",
-          "**Invitations expire within 7 days**; agent credentials within 8 hours.",
+          "**Invitations expire within 7 days**; agent credentials within 24 hours.",
         ],
       },
       "These are the current enforced values, published so you can plan against them. They are **not commitments**. We may raise, lower, or replace any of them at any time without notice, we may apply limits that are not published here, and we may throttle or refuse traffic for any reason.",
