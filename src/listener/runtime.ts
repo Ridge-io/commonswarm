@@ -913,29 +913,35 @@ export async function runListenerRuntime(
           principalId: options.principalId,
           ts: eventTime(now),
         });
-        // Self-description, once per listener start, best-effort: a failed
-        // declaration is an event line, never a listener failure — identity
-        // metadata must not take down receipt. Runs after ready so the
-        // canary's outcome is settled first.
+        // Self-description, once per listener start, best-effort and
+        // FIRE-AND-FORGET: a failed declaration is an event line, never a
+        // listener failure, and the declaration must never delay first-page
+        // receipt or shutdown — the awaited version could hold both for the
+        // full request timeout and ignored cancellation (landing-round
+        // finding 3). The fetch is tied to the listener's own stop signal.
         if (options.declareModel !== undefined) {
-          let declared = false;
-          try {
-            const credential = await options.credentialSession.bearer();
-            const outcome = await declareAgentModel(options.target, {
-              workspaceId: options.workspaceId,
-              model: options.declareModel,
-              credential,
-            }, options.fetcher);
-            declared = outcome.httpStatus === 200;
-          } catch {
-            declared = false;
-          }
-          options.onEvent?.({
-            type: "model_declared",
-            ok: declared,
-            model: options.declareModel,
-            ts: eventTime(now),
-          });
+          const declaredLabel = options.declareModel;
+          void (async () => {
+            let declared = false;
+            try {
+              const credential = await options.credentialSession.bearer();
+              const outcome = await declareAgentModel(options.target, {
+                workspaceId: options.workspaceId,
+                model: declaredLabel,
+                credential,
+                ...(abort ? { signal: abort } : {}),
+              }, options.fetcher);
+              declared = outcome.httpStatus === 200;
+            } catch {
+              declared = false;
+            }
+            options.onEvent?.({
+              type: "model_declared",
+              ok: declared,
+              model: declaredLabel,
+              ts: eventTime(now),
+            });
+          })();
         }
       }
 

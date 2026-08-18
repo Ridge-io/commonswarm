@@ -1133,7 +1133,7 @@ function decideWorkspace(state, cmd, ctx) {
         if (trimmed.length > 120) {
           return domain2(ctx, cmd.kind, "model_invalid", "model must be at most 120 characters");
         }
-        if (/[\u0000-\u001f\u007f]/.test(trimmed)) {
+        if (/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/.test(trimmed)) {
           return domain2(ctx, cmd.kind, "model_invalid", "model must not contain control characters");
         }
         model = trimmed.length === 0 ? null : trimmed;

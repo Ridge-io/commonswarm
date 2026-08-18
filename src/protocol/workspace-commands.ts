@@ -740,7 +740,12 @@ export function decideWorkspace(
         if (trimmed.length > 120) {
           return domain(ctx, cmd.kind, 'model_invalid', 'model must be at most 120 characters');
         }
-        if (/[\u0000-\u001f\u007f]/.test(trimmed)) {
+        /* The class is invite-link.ts's CONTROL_GLOBAL_RE: C0 + DEL + C1 +
+         * bidi controls. At least C0/DEL/C1 is what the DB's [[:cntrl:]]
+         * refuses under the UTF-8 locales in use; the bidi additions make the
+         * reducer deliberately STRICTER than the constraint, which is the safe
+         * direction — accepted-by-reducer must never fail projection. */
+        if (/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/.test(trimmed)) {
           return domain(ctx, cmd.kind, 'model_invalid', 'model must not contain control characters');
         }
         model = trimmed.length === 0 ? null : trimmed;

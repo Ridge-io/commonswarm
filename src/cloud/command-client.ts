@@ -601,11 +601,16 @@ export async function declareAgentModel(
     model: string | null;
     credential: string;
     commandId?: string;
+    /** Caller cancellation (the listener's stop signal); aborts the fetch. */
+    signal?: AbortSignal;
   },
   fetcher: typeof fetch = fetch,
 ): Promise<{ httpStatus: number }> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 30_000);
+  const onCallerAbort = () => controller.abort();
+  request.signal?.addEventListener("abort", onCallerAbort, { once: true });
+  if (request.signal?.aborted) controller.abort();
   let response: Response;
   try {
     response = await fetcher(commandEndpoint(target), {
@@ -631,6 +636,7 @@ export async function declareAgentModel(
     throw new CommandTransportError("model declaration failed before a response");
   } finally {
     clearTimeout(timer);
+    request.signal?.removeEventListener("abort", onCallerAbort);
   }
   return { httpStatus: response.status };
 }

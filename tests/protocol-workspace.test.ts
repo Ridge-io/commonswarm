@@ -1149,12 +1149,20 @@ describe('declare_agent_model', () => {
     assert.equal(long.ok, false);
     if (!long.ok) assert.equal(long.reason, 'model_invalid');
     const control = world.apply(
-      { kind: 'declare_agent_model', model: 'claudebell' },
+      { kind: 'declare_agent_model', model: 'claude' + String.fromCharCode(7) + 'bell' },
       asAgent,
     );
     assert.equal(control.ok, false);
     if (!control.ok) assert.equal(control.reason, 'model_invalid');
-    // Both refused without touching state.
+    // C1 range too: the DB's [[:cntrl:]] refuses U+0085, so the reducer must
+    // (landing-round finding 2 — the first regex stopped at DEL).
+    const c1 = world.apply(
+      { kind: 'declare_agent_model', model: 'a' + String.fromCharCode(0x85) + 'b' },
+      asAgent,
+    );
+    assert.equal(c1.ok, false);
+    if (!c1.ok) assert.equal(c1.reason, 'model_invalid');
+    // All refused without touching state.
     assert.equal(world.state()?.principals['principal-bob']?.model, null);
   });
 

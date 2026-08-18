@@ -431,6 +431,8 @@ const INVITATION_MAX_TTL_MS = 7 * 24 * 60 * 60 * 1000;
  * protocol moved to 24h (operator ruling 2026-08-18) while this line still said 8h, so the
  * server refused mints the reducer would have accepted. */
 const AGENT_TOKEN_MAX_TTL_MS = 24 * 60 * 60 * 1000;
+/* Changed-value declarations only; unchanged redeclares are free no-ops. */
+const MODEL_DECLARE_RATE_LIMIT_PER_HOUR = 10;
 const SIGNAL_MAX_UNTIL_MS = 30 * 24 * 60 * 60 * 1000;
 const SIGNAL_DEFAULT_UNTIL_MS: Record<SignalKind, number> = {
   "working-on": 24 * 60 * 60 * 1000,
@@ -1524,17 +1526,34 @@ function validateCommand(
   // 20260730000001_workspace_access_lifecycle.sql — a hand-written duplicate
   // here has drifted before (the 8h→24h TTL constant above).
   if (cmd.kind === "declare_agent_model") {
-    return exactKeys(cmd, ["kind", "model"]) &&
-        (cmd.model === null || boundedText(cmd.model, 120))
-      ? {
-        ok: true,
-        command: { kind: "declare_agent_model", model: cmd.model },
-      }
-      : {
+    if (
+      !exactKeys(cmd, ["kind", "model"]) ||
+      (cmd.model !== null && typeof cmd.model !== "string")
+    ) {
+      return {
         ok: false,
         status: 400,
         reason: "declare_agent_model takes model (text or null) and nothing else",
       };
+    }
+    /* Normalize EXACTLY as the reducer will (trim, empty -> null) BEFORE
+     * validating, so the wire and the reducer agree on every input: a raw ""
+     * is a clear, not a refusal, and a padded value is measured trimmed —
+     * validating the raw value rejected what the reducer would accept and
+     * vice versa (landing-round finding 1). */
+    const declaredModel = cmd.model === null ? null : cmd.model.trim();
+    const normalized = declaredModel === "" ? null : declaredModel;
+    if (normalized !== null && !boundedText(normalized, 120)) {
+      return {
+        ok: false,
+        status: 400,
+        reason: "declare_agent_model takes model (text or null) and nothing else",
+      };
+    }
+    return {
+      ok: true,
+      command: { kind: "declare_agent_model", model: normalized },
+    };
   }
 
   // Token revoke is workspace-routed and may be presented by an agent for
@@ -6467,6 +6486,72 @@ async function handleTransaction(
 
     await beforeStep(10);
     let outcome: FreshOutcome;
+    if (prepared !== null && prepared.command.kind === "declare_agent_model") {
+      /* Two abuse guards (landing-round finding 4), both BEFORE the reducer:
+       *
+       * Unchanged declarations are accepted no-ops with NO event, audit,
+       * ledger, or charge — every listener redeclares at every start, and the
+       * steady state is "same label again". Compared against the TABLE the
+       * projection targets, not folded stream state: out-of-band backfills
+       * exist, and suppressing against a stream value the table does not hold
+       * would strand the table. Changed values ride the file lane's
+       * per-principal hourly bucket, keyed by PRINCIPAL because token ids
+       * rotate (★R9.6's lesson). */
+      const declaringPrincipal = auth.agent?.principal_id ?? null;
+      if (declaringPrincipal !== null) {
+        const currentRows = await tx<{ model: string | null }[]>`
+          SELECT model FROM swarm.agent_principals
+          WHERE principal_id = ${declaringPrincipal}::uuid
+            AND workspace_id = ${route.workspaceId}::uuid
+            AND revoked_at IS NULL
+        `;
+        const currentRow = currentRows[0];
+        if (
+          currentRow !== undefined &&
+          (currentRow.model ?? null) === prepared.command.model
+        ) {
+          return {
+            status: 200,
+            body: {
+              status: "accepted",
+              ok: true,
+              event_ids: [],
+              events: [],
+              unchanged: true,
+              workspace_id: route.workspaceId,
+              min_client_version: minClientVersion,
+            },
+          };
+        }
+        const declareBucket = await incrementRateBucket(
+          tx,
+          `model:declare:agent:${declaringPrincipal}`,
+          MODEL_DECLARE_RATE_LIMIT_PER_HOUR,
+        );
+        if (declareBucket.count > MODEL_DECLARE_RATE_LIMIT_PER_HOUR) {
+          const detail =
+            `model declaration limit ${MODEL_DECLARE_RATE_LIMIT_PER_HOUR} changes/hour; resets at ${declareBucket.resetsAt}`;
+          await insertAudit(tx, {
+            auth,
+            commandKind: kind,
+            workspaceId: route.workspaceId,
+            streamId: route.streamId,
+            outcome: "rate_limit",
+            reason: "rate_limited",
+            detail,
+          });
+          return {
+            status: 429,
+            body: {
+              error: "rate_limited",
+              message: `Declaration refused: ${detail}.`,
+              limit: MODEL_DECLARE_RATE_LIMIT_PER_HOUR,
+              resets_at: declareBucket.resetsAt,
+            },
+          };
+        }
+      }
+    }
     if (prepared !== null) {
       let decision = decideWorkspace(
         prepared.state,

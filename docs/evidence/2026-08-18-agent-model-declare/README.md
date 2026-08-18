@@ -64,3 +64,30 @@ and best-effort pins live in `tests/listener-cli-process.test.ts` (same list);
   does, the label could carry it; not probed here.
 - CLI mint path still lacks a `--model` flag for `principal create` (out of scope; the web
   create already accepts model).
+
+## Landing round (two-arm findings), all five fixed
+
+1. **Wire-vs-reducer normalization** — the wire now trims and empty→nulls BEFORE validating,
+   exactly as the reducer does; raw `""` is a clear (and, when already clear, an unchanged
+   no-op), a padded value is measured trimmed. Pinned by M6/M7 on the HTTP path.
+2. **C1 control range** — the reducer's class is now invite-link's (C0 + DEL + C1 + bidi),
+   deliberately stricter than the DB's `[[:cntrl:]]`, which is the safe direction. Pinned by
+   the U+0085 reducer case. (The wire's `boundedText` already covered C1.) A raw \x07 byte
+   that an earlier edit left in the TEST SOURCE was replaced with `String.fromCharCode`.
+3. **Fire-and-forget declaration** — the runtime no longer awaits the declare after ready:
+   it is a detached best-effort task tied to the listener's stop signal, so a hanging
+   request can neither delay first-page receipt nor block shutdown. Pinned by the
+   cursor-fallback process test, whose fake server now NEVER ANSWERS the declaration while
+   the listener must still receive, reply, and stop.
+4. **Abuse guards** — an unchanged redeclaration (compared against the TABLE the projection
+   targets, not folded stream state, because out-of-band backfills exist) is an accepted
+   no-op with `unchanged: true` and NO event/audit/ledger/charge; changed values ride a
+   per-principal 10/hour bucket on the file lane's pattern (keyed by principal — token ids
+   rotate). Pinned by M8 (no-op), M9 (429 at the bound, no-ops still free while limited).
+5. **No-target fence pinned** — M10 sends a raw request with an extra `principal_id` key:
+   400 at the wire, both principals' rows byte-identical before and after.
+
+Gates re-run after the fixes (fresh `supabase db reset`): build + bundle + check:edge
+clean · `npm test` 543/543 · p1-cli 255/255 · check:tests clean · p1-server 87 tests,
+85 pass (all 10 M-tests green; the 2 failures remain the pre-existing self-serve pair) ·
+p1-local 4/4.

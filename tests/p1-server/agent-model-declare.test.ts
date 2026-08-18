@@ -282,3 +282,74 @@ test("M5 null clears the declaration", async () => {
   assert.equal(byId[f.principalA], null);
   assert.equal(byId[f.principalB], "codex (codex-acp 1.1.9)");
 });
+
+test("M6 wire normalizes like the reducer: raw empty string is a clear, and here a no-op", async () => {
+  // A's model is null after M5, so ""(-> null) must be an accepted UNCHANGED
+  // no-op: no events, flagged unchanged (landing-round findings 1 + 4).
+  const result = await declare(f.tokenA, "");
+  assert.equal(result.status, 200, JSON.stringify(result.body));
+  assert.equal(result.body.unchanged, true);
+  assert.deepEqual(result.body.event_ids, []);
+  const byId = await models();
+  assert.equal(byId[f.principalA], null);
+});
+
+test("M7 wire measures the TRIMMED value: a padded 120-char model is accepted and stored trimmed", async () => {
+  const core = "y".repeat(120);
+  const result = await declare(f.tokenA, `  ${core}  `);
+  assert.equal(result.status, 200, JSON.stringify(result.body));
+  const byId = await models();
+  assert.equal(byId[f.principalA], core);
+});
+
+test("M8 an unchanged redeclaration is an accepted no-op without an event", async () => {
+  const core = "y".repeat(120);
+  const result = await declare(f.tokenA, core);
+  assert.equal(result.status, 200, JSON.stringify(result.body));
+  assert.equal(result.body.unchanged, true);
+  assert.deepEqual(result.body.event_ids, []);
+});
+
+test("M9 changed declarations are bounded per principal per hour", async () => {
+  // Charges so far for A: M1, M5, M7 = 3 of the 10/hour bound. Seven more
+  // unique values reach the bound; the next changed value must be refused.
+  for (let index = 1; index <= 7; index += 1) {
+    const result = await declare(f.tokenA, `v${index}`);
+    assert.equal(result.status, 200, JSON.stringify(result.body));
+  }
+  const refused = await declare(f.tokenA, "v8");
+  assert.equal(refused.status, 429, JSON.stringify(refused.body));
+  assert.equal(refused.body.error, "rate_limited");
+  const byId = await models();
+  assert.equal(byId[f.principalA], "v7");
+  // An unchanged redeclaration is still free while rate-limited for changes.
+  const noop = await declare(f.tokenA, "v7");
+  assert.equal(noop.status, 200, JSON.stringify(noop.body));
+  assert.equal(noop.body.unchanged, true);
+});
+
+test("M10 the no-target fence: an extra principal_id key is refused at the wire, rows untouched", async () => {
+  const before = await models();
+  const response = await fetch(`${local.API_URL}/functions/v1/command`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${f.tokenA}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      command_id: randomUUID(),
+      client_version: "0.1.0",
+      workspace_id: f.workspace,
+      stream: { kind: "workspace" },
+      command: {
+        kind: "declare_agent_model",
+        model: "attacker",
+        principal_id: f.principalB,
+      },
+    }),
+  });
+  assert.equal(response.status, 400);
+  await response.json();
+  const after = await models();
+  assert.deepEqual(after, before);
+});
