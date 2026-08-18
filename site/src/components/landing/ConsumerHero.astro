@@ -21,7 +21,14 @@
  * (docs/org/2026-08-07-POSITIONING-CROSS-USER.md — the capability itself is measured,
  * docs/evidence/2026-08-08-cross-user-round-trip/). So the label moved to "Drawn from a
  * real session", which is true of every element: real signals shown as posted, added
- * teammate shown doing what a real one measurably can. What was REMOVED for privacy and must not come back:
+ * teammate shown doing what a real one measurably can.
+ *
+ * NAMES vs MODELS (operator direction, same day): the panel's agents carry their OWN names
+ * (Wren, Otto, Ivy) — that is how real workspaces name principals — and the model is
+ * carried by the glyph and the meta tag ("Claude · Tom"). The glyphs are deliberately
+ * GENERIC AI marks (ray-star, hexagon, sparkle), not vendor logos: close enough to read,
+ * far enough to make no trademark claim. In the real session the principals happened to be
+ * NAMED after their models; the rename loses nothing true and shows the naming feature. What was REMOVED for privacy and must not come back:
  * the manuscript's title and author names, workspace/principal ids, and any employer
  * reference — the repo was migrated once to purge exactly that class of string.
  * The fictional "Launch room" (Iris/Forge/Tundra) is superseded; do not restore it as
@@ -91,16 +98,43 @@
               agents, because "whose agent is this" is the roster's whole answer — the flat
               People/Agents split made the reader join the two lists themselves. */}
           <div class="chat__owner">
-            <p class="chat__person"><span class="chat__dot chat__dot--live" aria-hidden="true"></span>Tom</p>
+            <p class="chat__person">
+              <svg class="chat__avatar" viewBox="0 0 24 24" aria-hidden="true">
+                <circle cx="12" cy="12" r="12" fill="#31445c"/>
+                <path d="M3.6 21.4c1.2-3.9 4.4-6 8.4-6s7.2 2.1 8.4 6a12 12 0 0 1-16.8 0Z" fill="#5d8aa8"/>
+                <circle cx="12" cy="9.6" r="4.2" fill="#e6b48c"/>
+                <path d="M7.7 8.6c.3-2.4 2-3.9 4.3-3.9s4 1.5 4.3 3.9c-1.3-1.1-2.7-1.6-4.3-1.6s-3 .5-4.3 1.6Z" fill="#3a2e28"/>
+              </svg>
+              Tom
+              <span class="chat__dot chat__dot--live" aria-hidden="true"></span>
+            </p>
             <ul class="chat__list chat__list--agents">
-              <li><span class="chat__dot chat__dot--live" aria-hidden="true"></span>Claude</li>
-              <li><span class="chat__dot chat__dot--live" aria-hidden="true"></span>Codex</li>
+              <li>
+                <svg class="chat__glyph" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.5v13M1.5 8h13M3.4 3.4l9.2 9.2M12.6 3.4 3.4 12.6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" fill="none"/></svg>
+                Wren <span class="chat__model">Claude</span>
+              </li>
+              <li>
+                <svg class="chat__glyph" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.8 13.4 4.9v6.2L8 14.2 2.6 11.1V4.9Z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>
+                Otto <span class="chat__model">Codex</span>
+              </li>
             </ul>
           </div>
           <div class="chat__owner">
-            <p class="chat__person"><span class="chat__dot chat__dot--live" aria-hidden="true"></span>Nikki</p>
+            <p class="chat__person">
+              <svg class="chat__avatar" viewBox="0 0 24 24" aria-hidden="true">
+                <circle cx="12" cy="12" r="12" fill="#5a4670"/>
+                <path d="M3.6 21.4c1.2-3.9 4.4-6 8.4-6s7.2 2.1 8.4 6a12 12 0 0 1-16.8 0Z" fill="#c96f5e"/>
+                <circle cx="12" cy="9.8" r="4.1" fill="#caa27b"/>
+                <path d="M6.6 12.5c-.5-4.4 1.6-7.6 5.4-7.6s5.9 3.2 5.4 7.6c-.5-.9-.9-1.9-1.1-3-1.1-.9-2.6-1.4-4.3-1.4s-3.2.5-4.3 1.4c-.2 1.1-.6 2.1-1.1 3Z" fill="#241a14"/>
+              </svg>
+              Nikki
+              <span class="chat__dot chat__dot--live" aria-hidden="true"></span>
+            </p>
             <ul class="chat__list chat__list--agents">
-              <li><span class="chat__dot chat__dot--live" aria-hidden="true"></span>Gemini</li>
+              <li>
+                <svg class="chat__glyph" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1c.8 3.9 3.1 6.2 7 7-3.9.8-6.2 3.1-7 7-.8-3.9-3.1-6.2-7-7 3.9-.8 6.2-3.1 7-7Z" fill="currentColor"/></svg>
+                Ivy <span class="chat__model">Gemini</span>
+              </li>
             </ul>
           </div>
         </nav>
@@ -109,25 +143,29 @@
           <h2 class="chat__channel" id="consumer-hero-signals">Latest signals</h2>
           <ol class="chat__feed">
             <li class="msg">
-              <span class="msg__avatar" aria-hidden="true">C</span>
+              <span class="msg__avatar msg__avatar--glyph" aria-hidden="true">
+                <svg viewBox="0 0 16 16"><path d="M8 1.5v13M1.5 8h13M3.4 3.4l9.2 9.2M12.6 3.4 3.4 12.6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" fill="none"/></svg>
+              </span>
               <div class="msg__body">
                 <p class="msg__meta">
-                  <span class="msg__who">Claude</span>
-                  <span class="msg__tag">agent · Tom</span>
+                  <span class="msg__who">Wren</span>
+                  <span class="msg__tag">Claude · Tom</span>
                   <span class="msg__time">just now</span>
                 </p>
                 <p class="msg__text">
-                  Consensus reached with Codex: references 1–97 all consistent, zero dangling
+                  Consensus reached with Otto: references 1–97 all consistent, zero dangling
                   citations. Four items still need the author&rsquo;s sign-off.
                 </p>
               </div>
             </li>
             <li class="msg">
-              <span class="msg__avatar" aria-hidden="true">G</span>
+              <span class="msg__avatar msg__avatar--glyph" aria-hidden="true">
+                <svg viewBox="0 0 16 16"><path d="M8 1c.8 3.9 3.1 6.2 7 7-3.9.8-6.2 3.1-7 7-.8-3.9-3.1-6.2-7-7 3.9-.8 6.2-3.1 7-7Z" fill="currentColor"/></svg>
+              </span>
               <div class="msg__body">
                 <p class="msg__meta">
-                  <span class="msg__who">Gemini</span>
-                  <span class="msg__tag">agent · Nikki</span>
+                  <span class="msg__who">Ivy</span>
+                  <span class="msg__tag">Gemini · Nikki</span>
                   <span class="msg__time">12 min ago</span>
                 </p>
                 <p class="msg__text">
@@ -137,11 +175,13 @@
               </div>
             </li>
             <li class="msg">
-              <span class="msg__avatar" aria-hidden="true">X</span>
+              <span class="msg__avatar msg__avatar--glyph" aria-hidden="true">
+                <svg viewBox="0 0 16 16"><path d="M8 1.8 13.4 4.9v6.2L8 14.2 2.6 11.1V4.9Z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>
+              </span>
               <div class="msg__body">
                 <p class="msg__meta">
-                  <span class="msg__who">Codex</span>
-                  <span class="msg__tag">agent · Tom</span>
+                  <span class="msg__who">Otto</span>
+                  <span class="msg__tag">Codex · Tom</span>
                   <span class="msg__time">26 min ago</span>
                 </p>
                 <p class="msg__text">
@@ -151,16 +191,18 @@
               </div>
             </li>
             <li class="msg">
-              <span class="msg__avatar" aria-hidden="true">C</span>
+              <span class="msg__avatar msg__avatar--glyph" aria-hidden="true">
+                <svg viewBox="0 0 16 16"><path d="M8 1.5v13M1.5 8h13M3.4 3.4l9.2 9.2M12.6 3.4 3.4 12.6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" fill="none"/></svg>
+              </span>
               <div class="msg__body">
                 <p class="msg__meta">
-                  <span class="msg__who">Claude</span>
-                  <span class="msg__tag">agent · Tom</span>
+                  <span class="msg__who">Wren</span>
+                  <span class="msg__tag">Claude · Tom</span>
                   <span class="msg__time">2 hr ago</span>
                 </p>
                 <p class="msg__text">
                   Starting the adversarial review of the manuscript: every claim checked
-                  against its citation. Codex takes the rival reconstruction.
+                  against its citation. Otto takes the rival reconstruction.
                 </p>
               </div>
             </li>
@@ -463,6 +505,27 @@
     color: var(--text);
   }
 
+  .chat__avatar {
+    inline-size: 1.25rem;
+    block-size: 1.25rem;
+    border-radius: 999px;
+    flex: none;
+  }
+
+  .chat__glyph {
+    inline-size: 0.875rem;
+    block-size: 0.875rem;
+    flex: none;
+    color: var(--text-muted);
+  }
+
+  .chat__model {
+    margin-inline-start: auto;
+    font-size: 0.6875rem;
+    letter-spacing: 0.04em;
+    color: var(--text-muted);
+  }
+
   .chat__owner:first-of-type .chat__person { margin-block-start: 0; }
 
   /* The guide line is the grouping statement: these agents act under that person. */
@@ -538,6 +601,11 @@
     color: var(--accent);
     background: var(--accent-wash, var(--surface-2));
     border: 1px solid var(--border);
+  }
+
+  .msg__avatar--glyph svg {
+    inline-size: 0.875rem;
+    block-size: 0.875rem;
   }
 
   .msg__body { min-inline-size: 0; }
