@@ -304,6 +304,26 @@ interface StoredResponse {
   detail?: string;
   class?: "authz" | "domain";
   event_ids: string[];
+  /* File-artifact replay fields (★R16): a lost create response must replay the
+   * SAME pending slot and upload capability, so the allowlist carries them. */
+  file_id?: string;
+  version_id?: string;
+  version_n?: number;
+  name?: string;
+  upload_path?: string;
+  upload_token?: string;
+  upload_expires_in_seconds?: number;
+  commit_deadline_note?: string;
+  size_bytes?: number;
+  sha256?: string | null;
+  sha256_note?: string;
+  reference?: string;
+  content_type?: string;
+  download_path?: string;
+  download_url_expires_in_seconds?: number;
+  restorable_until?: string;
+  note?: string;
+  restored?: boolean;
   invitation_id?: string;
   principal_id?: string;
   token_id?: string;
@@ -1824,6 +1844,34 @@ function storedResponse(value: unknown): StoredResponse {
     ...(record(response.signal) === null
       ? {}
       : { signal: response.signal as unknown as SignalRecord }),
+    ...(typeof response.file_id === "string" ? { file_id: response.file_id } : {}),
+    ...(typeof response.version_id === "string" ? { version_id: response.version_id } : {}),
+    ...(typeof response.version_n === "number" ? { version_n: response.version_n } : {}),
+    ...(typeof response.name === "string" ? { name: response.name } : {}),
+    ...(typeof response.upload_path === "string" ? { upload_path: response.upload_path } : {}),
+    ...(typeof response.upload_token === "string" ? { upload_token: response.upload_token } : {}),
+    ...(typeof response.upload_expires_in_seconds === "number"
+      ? { upload_expires_in_seconds: response.upload_expires_in_seconds }
+      : {}),
+    ...(typeof response.commit_deadline_note === "string"
+      ? { commit_deadline_note: response.commit_deadline_note }
+      : {}),
+    ...(typeof response.size_bytes === "number" ? { size_bytes: response.size_bytes } : {}),
+    ...(typeof response.sha256 === "string" || response.sha256 === null
+      ? { sha256: response.sha256 as string | null }
+      : {}),
+    ...(typeof response.sha256_note === "string" ? { sha256_note: response.sha256_note } : {}),
+    ...(typeof response.reference === "string" ? { reference: response.reference } : {}),
+    ...(typeof response.content_type === "string" ? { content_type: response.content_type } : {}),
+    ...(typeof response.download_path === "string" ? { download_path: response.download_path } : {}),
+    ...(typeof response.download_url_expires_in_seconds === "number"
+      ? { download_url_expires_in_seconds: response.download_url_expires_in_seconds }
+      : {}),
+    ...(typeof response.restorable_until === "string"
+      ? { restorable_until: response.restorable_until }
+      : {}),
+    ...(typeof response.note === "string" ? { note: response.note } : {}),
+    ...(typeof response.restored === "boolean" ? { restored: response.restored } : {}),
   };
 }
 

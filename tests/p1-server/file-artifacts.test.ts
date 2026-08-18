@@ -520,12 +520,15 @@ test("F4 purge claims once and restore refuses a claimed file (★R6)", async ()
     WHERE version_id = ${versionId}::uuid
   `;
   assert.equal(state[0]?.state, "purged", "purge claimed the version row");
-  const object = await sql<{ count: string }[]>`
-    SELECT count(*)::text AS count FROM storage.objects
-    WHERE bucket_id = 'swarm-files'
-      AND name = ${`${f.workspaceA}/${fileId}/1`}
+  // Bytes are deleted by the S4 queue drain through the Storage API — SQL-side
+  // deletion is refused by storage's own trigger. The claim must have QUEUED
+  // the path durably.
+  const queued = await sql<{ count: string }[]>`
+    SELECT count(*)::text AS count FROM swarm.file_purge_queue
+    WHERE storage_path = ${`${f.workspaceA}/${fileId}/1`}
+      AND deleted_at IS NULL
   `;
-  assert.equal(object[0]?.count, "0", "purge deleted the object row");
+  assert.equal(queued[0]?.count, "1", "purge queued the object path");
 
   const restore = await postCommand(f.uaJwt, {
     kind: "file_restore",

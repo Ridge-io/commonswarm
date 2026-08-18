@@ -116,23 +116,36 @@ INSERT INTO storage.buckets (id, name, public)
 VALUES ('swarm-files', 'swarm-files', false)
 ON CONFLICT (id) DO NOTHING;
 
+-- Object deletion CANNOT happen here: storage protects its tables with a
+-- trigger ("Direct deletion from storage tables is not allowed. Use the
+-- Storage API instead." — measured on the local stack, 2026-08-18). So the
+-- claim writes the object paths into a durable queue, and S4 drains the queue
+-- through the Storage API with the service key. Restore semantics do not wait
+-- for the bytes: a claimed row is 'purged' the moment the claim commits.
+CREATE TABLE swarm.file_purge_queue (
+  storage_path text PRIMARY KEY,
+  claimed_at   timestamptz NOT NULL DEFAULT statement_timestamp(),
+  deleted_at   timestamptz
+);
+ALTER TABLE swarm.file_purge_queue OWNER TO swarm_admin;
+ALTER TABLE swarm.file_purge_queue ENABLE ROW LEVEL SECURITY;
+CREATE POLICY swarm_command_all ON swarm.file_purge_queue
+  AS PERMISSIVE FOR ALL TO swarm_command
+  USING (true) WITH CHECK (true);
+REVOKE ALL ON TABLE swarm.file_purge_queue FROM PUBLIC, anon, authenticated;
+GRANT SELECT, INSERT, UPDATE ON TABLE swarm.file_purge_queue TO swarm_command;
+
 -- ★R6: purge claims in ONE transaction so restore can never race it; the
 -- function body is a single statement set inside the cron transaction.
 -- ★R15: pending rows live 2 hours (the pinned storage-js upload URL is valid
 -- for two), then are claimed the same way; their objects — uploaded or not —
--- are swept with the tombstone purge.
--- Object deletion: rows in storage.objects are removed here, which is what the
--- local stack honors end to end. Whether hosted storage garbage-collects the
--- backing blob on a direct row delete is NOT established here — S6 must verify
--- it against production before this job runs there.
+-- join the same queue.
 CREATE OR REPLACE FUNCTION swarm.purge_file_artifacts()
 RETURNS void
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = swarm, storage, pg_catalog
 AS $$
-DECLARE
-  claimed_paths text[];
 BEGIN
   WITH tombstone_claim AS (
     UPDATE swarm.file_versions AS v
@@ -151,30 +164,33 @@ BEGIN
     WHERE v.state = 'pending'
       AND v.created_at < statement_timestamp() - interval '2 hours'
     RETURNING v.storage_path
-  )
-  SELECT coalesce(array_agg(storage_path), '{}')
-  INTO claimed_paths
-  FROM (
-    SELECT storage_path FROM tombstone_claim
-    UNION ALL
-    SELECT storage_path FROM pending_claim
-  ) AS claims;
-
-  DELETE FROM storage.objects
-  WHERE bucket_id = 'swarm-files'
-    AND name = ANY (claimed_paths);
-
+  ),
   -- Orphan objects: paths in the bucket with no version row at all (a PUT that
-  -- outlived a lost create response, or debris). Swept on the same schedule.
-  DELETE FROM storage.objects AS o
-  WHERE o.bucket_id = 'swarm-files'
-    AND NOT EXISTS (
-      SELECT 1 FROM swarm.file_versions AS v WHERE v.storage_path = o.name
-    );
+  -- outlived a lost create response, or debris). Queued on the same schedule.
+  orphans AS (
+    SELECT o.name AS storage_path
+    FROM storage.objects AS o
+    WHERE o.bucket_id = 'swarm-files'
+      AND o.created_at < statement_timestamp() - interval '2 hours'
+      AND NOT EXISTS (
+        SELECT 1 FROM swarm.file_versions AS v WHERE v.storage_path = o.name
+      )
+  )
+  INSERT INTO swarm.file_purge_queue (storage_path)
+  SELECT storage_path FROM tombstone_claim
+  UNION
+  SELECT storage_path FROM pending_claim
+  UNION
+  SELECT storage_path FROM orphans
+  ON CONFLICT (storage_path) DO NOTHING;
 END;
 $$;
 
 ALTER FUNCTION swarm.purge_file_artifacts() OWNER TO swarm_admin;
+-- The definer runs as swarm_admin, which enumerates (never deletes) objects
+-- for the orphan sweep.
+GRANT USAGE ON SCHEMA storage TO swarm_admin;
+GRANT SELECT ON TABLE storage.objects TO swarm_admin;
 REVOKE ALL ON FUNCTION swarm.purge_file_artifacts() FROM PUBLIC;
 
 SELECT cron.schedule(
