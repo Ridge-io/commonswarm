@@ -65,15 +65,17 @@ const renderRailGeometry = async (): Promise<RailGeometry> => {
   const fixture = join(directory, "index.html");
   const agents = (count: number): string => Array.from({ length: count }, (_, index) => `
     <li class="dashboard__sidebar-agent">
-      <span class="dashboard__sidebar-avatar-wrap"><span class="dashboard__sidebar-agent-avatar">A${index + 1}</span></span>
-      <span class="dashboard__sidebar-participant-copy"><strong>Agent ${index + 1}</strong><span>operated by Dana Rivera</span></span>
+      <span class="dashboard__sidebar-model-mark"><svg class="dashboard__sidebar-model-glyph" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3" fill="currentColor"/></svg></span>
+      <span class="dashboard__sidebar-participant-copy"><strong>Agent ${index + 1}</strong><span>Model ${index + 1}</span></span>
     </li>`).join("");
   const rows = (count: number): string => `
-    <li class="dashboard__sidebar-person">
-      <span class="dashboard__sidebar-person-avatar">DR</span>
-      <span class="dashboard__sidebar-participant-copy"><strong>Dana Rivera</strong><span>owner</span></span>
-    </li>
-    ${agents(count)}`;
+    <li class="dashboard__sidebar-owner-group">
+      <div class="dashboard__sidebar-person">
+        <span class="dashboard__sidebar-avatar-wrap"><span class="dashboard__sidebar-person-avatar">DR</span><span class="dashboard__presence-dot"></span></span>
+        <span class="dashboard__sidebar-participant-copy"><strong>Dana Rivera</strong><span>owner</span></span>
+      </div>
+      <ul class="dashboard__sidebar-owner-agents">${agents(count)}</ul>
+    </li>`;
   const rail = (name: string, count: number): string => `
     <aside class="dashboard__rail" data-rail="${name}">
       <div class="dashboard__workspace-control">
@@ -161,7 +163,7 @@ const renderRailGeometry = async (): Promise<RailGeometry> => {
   }
 };
 
-test("the workspace shell groups people with their agents in one bounded list", () => {
+test("the workspace shell groups people with their nested agents in one bounded list", () => {
   for (const token of [
     "STREAMS",
     "PEOPLE &amp; AGENTS",
@@ -187,6 +189,8 @@ test("the workspace shell groups people with their agents in one bounded list", 
   );
   assert.match(dashboard, /const renderSidebarParticipants =/);
   assert.match(dashboard, /renderSidebarParticipants\(\);/);
+  assert.match(dashboard, /className = "dashboard__sidebar-owner-group"/);
+  assert.match(dashboard, /className = "dashboard__sidebar-owner-agents"/);
   assert.equal(
     [...dashboard.matchAll(/<button\b[^>]*data-workspace-menu-trigger[^>]*>/g)].length,
     1,
@@ -363,14 +367,19 @@ test("sidebar counts come from loaded signals and the shared field ships both sc
   );
 });
 
-test("agent navigation keeps identity explicit and uses presence as a secondary cue", () => {
+test("participant navigation uses human presence and agent model identity", () => {
   const renderer = dashboard.slice(
     dashboard.indexOf("const renderSidebarParticipants ="),
     dashboard.indexOf("const workspaceMenuItems ="),
   );
   assert.match(renderer, /className = "dashboard__sidebar-agent"/);
   assert.match(renderer, /className = "dashboard__presence-dot"/);
-  assert.match(renderer, /markAgentAvatar\(avatar, agent\.principalId\)/);
-  assert.match(renderer, /operated by/);
+  assert.match(renderer, /modelMark\.innerHTML = modelGlyphSvg\(/);
+  assert.match(renderer, /modelFamily\(agent\.model\)/);
+  assert.match(renderer, /"dashboard__sidebar-model-glyph"/);
+  assert.match(renderer, /model\.textContent = agent\.model/);
+  assert.match(renderer, /owner\.textContent = `operated by \$\{ownerName\}`/);
+  assert.match(renderer, /group\.kind === "unresolved" \? group\.label : undefined/);
+  assert.doesNotMatch(renderer, /markAgentAvatar\(/);
   assert.doesNotMatch(renderer, /badge\.textContent = "AGENT"/);
 });
