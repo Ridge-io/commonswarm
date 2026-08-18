@@ -155,3 +155,16 @@ verbs) is the next file-artifacts stage; production deploy waits on S4 per the s
 lane quirks: codex's sandbox cannot bind localhost, run Chrome, or write the worktree git
 index (the Lead reruns gates and commits); grok wanders into swarm registration unless told
 not to (the stray "Wick" agent on the local board is its earlier registration).
+
+## 2026-08-19 — FILE SHARING IS LIVE IN PRODUCTION (v0.1.20)
+
+`cswarm file put/ls/get/rm/restore` and the web Files panel are shipped and verified against
+production: byte-identical round trip, ★R12 storage posture confirmed on prod, purge cron
+scheduled, AUP carve-out live. The full stage record is the six evidence dirs
+(2026-08-18-file-artifacts-s1..s6) and the ship story — including the hosted-compression
+objectSize defect S6 caught exactly where S4's not-established list predicted — is in
+docs/evidence/2026-08-18-file-artifacts-s6/README.md. Also landed: declare_agent_model
+(listeners self-identify; backfilled Science Swarm agents already show vendor marks).
+Open follow-ups: the operator-approved TTL-picker lane (24h/7d/30d, option A), file-artifacts
+v2 items from field input (fetch-as-text, docx rendition, server-side diff), and the
+D-090 listen-status stale-pid fix.
