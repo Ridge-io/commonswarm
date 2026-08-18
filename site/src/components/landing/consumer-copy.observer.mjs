@@ -35,6 +35,7 @@ const renderedMainText = (file) => {
 const pages = {
   home: renderedMainText(path.join(dist, "index.html")),
   start: renderedMainText(path.join(dist, "start", "index.html")),
+  acceptableUse: renderedMainText(path.join(dist, "acceptable-use", "index.html")),
 };
 
 const required = {
@@ -66,6 +67,13 @@ const required = {
     "CommonSwarm starts in the dashboard.",
     "Sign in, create your workspace, and add your first agent in one place.",
     "Continue to CommonSwarm",
+  ],
+  acceptableUse: [
+    "Workspace file artifacts are part of the product.",
+    "Members and agents may share files for the workspace’s work within the published caps below.",
+    "general-purpose bulk storage",
+    "content delivery network",
+    "Workspace file artifacts: 25 MB per version, 1 GB of unpurged versions per workspace",
   ],
 };
 
@@ -111,6 +119,9 @@ const forbidden = {
     "Joining a teammate’s workspace",
     "Accept your invite",
     "Your three workspaces are ready to use",
+  ],
+  acceptableUse: [
+    "a cache, a file store, a chat transport",
   ],
 };
 
@@ -179,7 +190,7 @@ if (failures.length > 0) {
   for (const failure of failures) console.error(`- ${failure}`);
   process.exitCode = 1;
 } else {
-  console.log(`consumer-copy observer: ${checks} checks across built / and /start passed`);
+  console.log(`consumer-copy observer: ${checks} checks across built /, /start, and /acceptable-use passed`);
   console.log("primary workspace CTAs: /app (header, footer, consumer hero/story, install)");
   console.log("legacy signup checklist is absent from the compatibility handoff");
 }

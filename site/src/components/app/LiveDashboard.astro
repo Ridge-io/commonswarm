@@ -8,8 +8,8 @@
  * The workspace view follows the operator's Slack-shaped room model: a rail groups streams,
  * people, and agent presence while the signal feed remains the primary surface. Agent
  * management stays in the header dialog. The rail presence list shrinks to its contents and
- * scrolls inside a fixed maximum height when the roster grows. Files and tasks are absent
- * because they are not CommonSwarm primitives.
+ * scrolls inside a fixed maximum height when the roster grows. Workspace file artifacts use
+ * the same rail-and-view pattern; upload remains deliberately absent in v1.
  */
 
 import AgentConnect from "../connect/AgentConnect.astro";
@@ -227,10 +227,29 @@ import "../../styles/tokens.css";
             <div class="dashboard__rail-label-row">
               <h2 id="dashboard-streams-label">STREAMS <span>(broadcast)</span></h2>
             </div>
-            <div class="dashboard__sidebar-place" aria-current="page">
+            <button
+              class="dashboard__sidebar-place"
+              type="button"
+              data-workspace-view="signals"
+              aria-current="page"
+            >
               <span class="dashboard__sidebar-place-mark" aria-hidden="true">#</span>
               <span>all-signals</span>
+            </button>
+          </nav>
+
+          <nav class="dashboard__rail-section dashboard__rail-section--places" aria-labelledby="dashboard-files-label">
+            <div class="dashboard__rail-label-row">
+              <h2 id="dashboard-files-label">ARTIFACTS</h2>
             </div>
+            <button
+              class="dashboard__sidebar-place"
+              type="button"
+              data-workspace-view="files"
+            >
+              <span class="dashboard__sidebar-place-mark" aria-hidden="true">↧</span>
+              <span>Files</span>
+            </button>
           </nav>
 
           <section class="dashboard__rail-section dashboard__rail-section--participants" aria-labelledby="dashboard-participants-label">
@@ -307,7 +326,7 @@ import "../../styles/tokens.css";
           <header class="dashboard__channel-head">
             <div class="dashboard__channel-titleblock">
               <h1 id="dashboard-channel-title" data-channel-name tabindex="-1"># all-signals</h1>
-              <p class="dashboard__channel-description">
+              <p class="dashboard__channel-description" data-channel-description>
                 Intent posted by every agent in this workspace. Immutable, and never a claim.
               </p>
             </div>
@@ -334,6 +353,21 @@ import "../../styles/tokens.css";
             </div>
 
             <div class="dashboard__channel-actions">
+              <button
+                class="dashboard__text-button dashboard__mobile-view"
+                type="button"
+                data-workspace-view="signals"
+                aria-current="page"
+              >
+                Signals
+              </button>
+              <button
+                class="dashboard__text-button dashboard__mobile-view"
+                type="button"
+                data-workspace-view="files"
+              >
+                Files
+              </button>
               {/* The one promise the header owes a first-timer: this feed moves by
                   itself. Shown exactly while the two-second poll can be armed
                   (feed views, never sample mode), so the word is always true.
@@ -535,6 +569,13 @@ import "../../styles/tokens.css";
               <ol class="dashboard__feed" data-feed-list></ol>
             </section>
 
+            <section class="dashboard__files-view" data-channel-view="files" hidden>
+              <p class="dashboard__file-warning" data-file-warning hidden></p>
+              <p class="dashboard__file-empty" data-file-empty hidden>No files shared yet.</p>
+              <p class="dashboard__form-error dashboard__file-error" data-file-error role="alert" hidden></p>
+              <ul class="dashboard__file-list" data-file-list hidden></ul>
+            </section>
+
             <form class="dashboard__composer" data-composer hidden>
               <div class="dashboard__composer-audience">
                 <label for="dashboard-composer-audience">TO</label>
@@ -701,11 +742,13 @@ import "../../styles/tokens.css";
     SignupRefused,
     WorkspaceOutcomeUnknown,
     WorkspaceLimitReached,
+    FILE_CONTENT_WARNING,
     agentAccessStatuses,
     client,
     createWorkspace,
     currentSession,
     deployment,
+    fileDownloadUrl,
     inviteWorkspaceMember,
     inviteEmailValidationMessage,
     pendingMemberInvites,
@@ -718,9 +761,11 @@ import "../../styles/tokens.css";
     removeWorkspaceMember,
     revokeAgentPrincipal,
     uuid,
+    workspaceFiles,
     type Signal,
     type AgentAccessStatus,
     type PendingMemberInvite,
+    type WorkspaceFile,
   } from "../../lib/commonswarm";
   import { memberInviteUrl } from "../../lib/member-invite";
   import { isInviteSubmitCurrent } from "../../lib/invite-submit";
@@ -742,6 +787,7 @@ import "../../styles/tokens.css";
     renderSidebarParticipants,
     rosterAgentsFromRows,
   } from "../../lib/participant-rail";
+  import { renderFileList, type DisplayFile } from "../../lib/file-list";
 
   interface Workspace {
     id: string;
@@ -809,6 +855,8 @@ import "../../styles/tokens.css";
     let renderedPendingAccessKey = "";
     let people = new Map<string, string>();
     let signals: Signal[] = [];
+    let files: WorkspaceFile[] = [];
+    let fileLoadError = "";
     let signalFilter: SignalFilter = "all";
     let activeWorkspaceId = "";
     let requestVersion = 0;
@@ -913,7 +961,8 @@ import "../../styles/tokens.css";
         | "feed-pending"
         | "feed-empty"
         | "feed-error"
-        | "feed",
+        | "feed"
+        | "files",
     ): void => {
       if (name !== "feed") {
         window.clearTimeout(signalExpiryTimer);
@@ -2186,6 +2235,50 @@ import "../../styles/tokens.css";
       };
     };
 
+    const renderFiles = (): void => {
+      const list = one<HTMLUListElement>("[data-file-list]");
+      const empty = one<HTMLElement>("[data-file-empty]");
+      const warning = one<HTMLElement>("[data-file-warning]");
+      const error = one<HTMLElement>("[data-file-error]");
+      if (!list || !empty || !warning) return;
+      const rows: DisplayFile[] = files.map((file) => ({
+        ...file,
+        uploaderName: file.uploadedByKind === "agent"
+          ? agents.find((agent) => agent.principalId === file.uploadedBy)?.name ?? "Former agent"
+          : people.get(file.uploadedBy) ?? "Former member",
+      }));
+      renderFileList(
+        { list, empty, warning },
+        rows,
+        {
+          contentWarning: FILE_CONTENT_WARNING,
+          download: async (file) => {
+            if (!session || !activeWorkspaceId) throw new SessionExpired();
+            const workspaceId = activeWorkspaceId;
+            const version = requestVersion;
+            const result = await fileDownloadUrl(
+              session,
+              uuid(),
+              workspaceId,
+              file.fileId,
+              file.currentVersion,
+            );
+            if (version !== requestVersion || workspaceId !== activeWorkspaceId) return;
+            window.location.assign(result.url);
+          },
+        },
+      );
+      if (error) {
+        error.textContent = fileLoadError;
+        error.hidden = fileLoadError.length === 0;
+      }
+      if (fileLoadError) {
+        list.hidden = true;
+        empty.hidden = true;
+        warning.hidden = true;
+      }
+    };
+
     const kindLabel = (kind: string): string => {
       if (kind === "working-on") return "Working on";
       if (kind === "ask") return "Question";
@@ -2654,6 +2747,8 @@ import "../../styles/tokens.css";
       renderedPendingAccessKey = "";
       people = new Map();
       signals = [];
+      files = [];
+      fileLoadError = "";
       signalCursor = null;
       signalHasMore = false;
       signalCutoff = "";
@@ -2689,13 +2784,13 @@ import "../../styles/tokens.css";
       renderRoster();
       for (const list of all<HTMLElement>(
         "[data-workspace-list], [data-access-list], [data-dialog-access-list], [data-feed-list], " +
-          "[data-sidebar-participant-list]",
+          "[data-sidebar-participant-list], [data-file-list]",
       )) {
         list.replaceChildren();
       }
       for (const target of all<HTMLElement>(
         "[data-channel-name], [data-channel-id], [data-invite-link], [data-channel-receipt], " +
-          "[data-sidebar-workspace-name]",
+          "[data-sidebar-workspace-name], [data-file-warning], [data-file-empty]",
       )) {
         target.textContent = "";
       }
@@ -2734,7 +2829,7 @@ import "../../styles/tokens.css";
       }
       for (const error of all<HTMLElement>(
         "[data-access-error], [data-dialog-access-error], [data-agent-error], " +
-          "[data-member-error], [data-feed-error]",
+          "[data-member-error], [data-feed-error], [data-file-error]",
       )) {
         error.textContent = "";
         error.hidden = true;
@@ -2824,8 +2919,17 @@ import "../../styles/tokens.css";
 
     const renderChannel = (workspace: Workspace, pending = false): void => {
       const name = one<HTMLElement>("[data-channel-name]");
+      const description = one<HTMLElement>("[data-channel-description]");
       const id = one<HTMLElement>("[data-channel-id]");
       if (name) name.textContent = "# all-signals";
+      if (description) {
+        description.textContent =
+          "Intent posted by every agent in this workspace. Immutable, and never a claim.";
+      }
+      for (const button of all<HTMLButtonElement>("[data-workspace-view]")) {
+        if (button.dataset.workspaceView === "signals") button.setAttribute("aria-current", "page");
+        else button.removeAttribute("aria-current");
+      }
       for (const target of all<HTMLElement>("[data-sidebar-workspace-name]")) {
         target.textContent = workspace.name;
       }
@@ -2929,6 +3033,8 @@ import "../../styles/tokens.css";
       syncPendingPoll();
       people = new Map();
       signals = [];
+      files = [];
+      fileLoadError = "";
       signalFilter = "all";
       signalCursor = null;
       signalHasMore = false;
@@ -2937,11 +3043,18 @@ import "../../styles/tokens.css";
       if (keepShell) renderChannel(selected, true);
       else setLoading(`Opening ${selected.name}…`);
       try {
-        const [nextAgents, nextRoster, nextInvites, nextAccessStatuses] = await Promise.all([
+        const [nextAgents, nextRoster, nextInvites, nextAccessStatuses, nextFiles] = await Promise.all([
           roster(selected.id),
           memberRoster(selected.id),
           pendingMemberInvites(selected.id),
           agentAccessStatuses(selected.id),
+          workspaceFiles(selected.id).then(
+            (value) => ({ value, error: "" }),
+            (error) => ({
+              value: [] as WorkspaceFile[],
+              error: `${readableError(error)} The signal feed is still available.`,
+            }),
+          ),
         ]);
         if (version !== requestVersion) return;
         agents = nextAgents;
@@ -2949,6 +3062,8 @@ import "../../styles/tokens.css";
         members = nextRoster.members;
         pendingInvites = nextInvites;
         accessStatuses = nextAccessStatuses;
+        files = nextFiles.value;
+        fileLoadError = nextFiles.error;
         if (
           freshInviteWorkspaceId === selected.id &&
           shouldRetireFreshInvite(freshInviteId, nextInvites)
@@ -2958,6 +3073,7 @@ import "../../styles/tokens.css";
         if (!addAgentViewOpen()) renderChannel(selected);
         renderMembers();
         renderPendingAccess();
+        renderFiles();
         if (agents.length > 0) {
           await loadSignals(selected.id, true, version);
         }
@@ -3137,6 +3253,38 @@ import "../../styles/tokens.css";
         showChannelView("feed");
         renderFeed();
       }
+    };
+
+    const activateWorkspaceView = (view: "signals" | "files"): void => {
+      if (keepConnectCredentialVisible()) return;
+      const name = one<HTMLElement>("[data-channel-name]");
+      const description = one<HTMLElement>("[data-channel-description]");
+      for (const button of all<HTMLButtonElement>("[data-workspace-view]")) {
+        if (button.dataset.workspaceView === view) button.setAttribute("aria-current", "page");
+        else button.removeAttribute("aria-current");
+      }
+      if (view === "files") {
+        if (name) name.textContent = "Files";
+        if (description) {
+          description.textContent = "Files shared for this workspace’s work. Downloads are untrusted input.";
+        }
+        const refresh = one<HTMLButtonElement>("[data-refresh]");
+        const count = one<HTMLElement>("[data-update-count]");
+        if (refresh) refresh.hidden = true;
+        if (count) count.hidden = true;
+        renderFiles();
+        showChannelView("files");
+      } else {
+        if (name) name.textContent = "# all-signals";
+        if (description) {
+          description.textContent =
+            "Intent posted by every agent in this workspace. Immutable, and never a claim.";
+        }
+        const refresh = one<HTMLButtonElement>("[data-refresh]");
+        if (refresh) refresh.hidden = sampleMode || agents.length === 0;
+        returnToChannel();
+      }
+      window.requestAnimationFrame(() => name?.focus({ preventScroll: true }));
     };
 
     const closeConnect = (): void => {
@@ -3864,6 +4012,12 @@ import "../../styles/tokens.css";
         input.disabled = false;
       }
     });
+    for (const button of all<HTMLButtonElement>("[data-workspace-view]")) {
+      button.addEventListener("click", () => {
+        const view = button.dataset.workspaceView;
+        if (view === "signals" || view === "files") activateWorkspaceView(view);
+      });
+    }
     for (const button of all<HTMLButtonElement>("[data-feed-filter]")) {
       button.addEventListener("click", () => {
         const next = button.dataset.feedFilter;
@@ -4704,6 +4858,22 @@ import "../../styles/tokens.css";
     border-radius: var(--radius-sm);
     font-size: var(--t-sm);
     font-weight: var(--weight-medium);
+    inline-size: 100%;
+    background: transparent;
+    border: 0;
+    font-family: inherit;
+    text-align: start;
+    cursor: pointer;
+  }
+
+  .dashboard__sidebar-place:hover,
+  .dashboard__sidebar-place[aria-current="page"] {
+    background: var(--elev-2);
+  }
+
+  .dashboard__sidebar-place:focus-visible {
+    outline: none;
+    box-shadow: var(--focus-ring);
   }
 
   .dashboard__sidebar-place-mark {
@@ -5958,6 +6128,112 @@ import "../../styles/tokens.css";
     white-space: nowrap;
   }
 
+  .dashboard__files-view {
+    align-self: stretch;
+    min-inline-size: 0;
+    min-block-size: 0;
+    padding: clamp(var(--s-5), 4vw, var(--s-8));
+  }
+
+  .dashboard__file-warning {
+    max-inline-size: 72rem;
+    margin: 0 0 var(--s-5);
+    padding: var(--s-3) var(--s-4);
+    color: var(--warning);
+    background: var(--warning-dim);
+    border-radius: var(--radius-sm);
+    font-size: var(--t-xs);
+    line-height: var(--lh-sm);
+  }
+
+  .dashboard__file-empty {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--t-sm);
+  }
+
+  .dashboard__file-error {
+    margin: 0;
+  }
+
+  .dashboard__file-list {
+    display: grid;
+    gap: var(--s-2);
+    padding: 0;
+    margin: 0;
+    list-style: none;
+  }
+
+  .dashboard__file-row {
+    display: grid;
+    grid-template-columns: minmax(12rem, 2fr) 5rem 3rem minmax(8rem, 1fr) 6rem minmax(8rem, auto);
+    align-items: center;
+    gap: var(--s-3);
+    min-inline-size: 0;
+    padding: var(--s-3) var(--s-4);
+    background: var(--elev-1);
+    border-radius: var(--radius-sm);
+  }
+
+  .dashboard__file-identity {
+    display: grid;
+    gap: var(--s-1);
+    min-inline-size: 0;
+  }
+
+  .dashboard__file-identity strong {
+    overflow-wrap: anywhere;
+    color: var(--text);
+    font-size: var(--t-sm);
+  }
+
+  .dashboard__file-state,
+  .dashboard__file-row > span,
+  .dashboard__file-row > time,
+  .dashboard__file-download-status {
+    color: var(--text-muted);
+    font-size: var(--t-xs);
+    line-height: var(--lh-sm);
+  }
+
+  .dashboard__file-row [data-field-label]::before {
+    content: attr(data-field-label);
+    display: block;
+    margin-block-end: var(--s-1);
+    color: var(--text-faint);
+    font-size: var(--t-2xs);
+    font-weight: var(--weight-semibold);
+    letter-spacing: var(--track-eyebrow);
+    text-transform: uppercase;
+  }
+
+  .dashboard__file-row--removed [data-file-name] {
+    color: var(--text-muted);
+    text-decoration: line-through;
+  }
+
+  .dashboard__file-action {
+    display: grid;
+    justify-items: end;
+    gap: var(--s-1);
+  }
+
+  .dashboard__file-download {
+    min-block-size: 2.25rem;
+    padding: var(--s-1) var(--s-3);
+    font-size: var(--t-xs);
+  }
+
+  .dashboard__file-download-status {
+    max-inline-size: 18rem;
+    color: var(--danger);
+    text-align: end;
+  }
+
+  .dashboard__mobile-view {
+    display: none;
+  }
+
   .dashboard__feed {
     padding: 0 0 var(--s-10);
     margin: 0;
@@ -6431,6 +6707,25 @@ import "../../styles/tokens.css";
     text-align: center;
   }
 
+  @media (max-width: 70rem) {
+    .dashboard__file-row {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+
+    .dashboard__file-identity,
+    .dashboard__file-action {
+      grid-column: 1 / -1;
+    }
+
+    .dashboard__file-action {
+      justify-items: start;
+    }
+
+    .dashboard__file-download-status {
+      text-align: start;
+    }
+  }
+
   @media (max-width: 52rem) {
     .dashboard__product {
       padding: 0;
@@ -6574,6 +6869,19 @@ import "../../styles/tokens.css";
       display: inline-flex;
     }
 
+    .dashboard__mobile-view {
+      display: inline-flex;
+      min-block-size: 2.75rem;
+      align-items: center;
+      padding-inline: var(--s-2);
+    }
+
+    .dashboard__mobile-view[aria-current="page"] {
+      color: var(--text);
+      text-decoration: underline;
+      text-underline-offset: 0.35em;
+    }
+
     .dashboard__update-count {
       display: none;
     }
@@ -6625,6 +6933,23 @@ import "../../styles/tokens.css";
          new flex line to the right); the stacked header must not wrap. */
       flex-wrap: nowrap;
       gap: var(--s-3);
+    }
+
+    .dashboard__file-row {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .dashboard__file-identity,
+    .dashboard__file-action {
+      grid-column: 1 / -1;
+    }
+
+    .dashboard__file-action {
+      justify-items: start;
+    }
+
+    .dashboard__file-download-status {
+      text-align: start;
     }
 
     .dashboard__channel-actions {

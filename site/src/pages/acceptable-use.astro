@@ -33,6 +33,11 @@
  *   body 1-2000, about <= 500, until <= 30d -> migrations/20260724000003_signals.sql:9-15
  *   invitation TTL <= 7 days                -> INVITATION_MAX_TTL_MS, :333
  *   agent credential TTL <= 24 hours        -> AGENT_TOKEN_MAX_TTL_MS, :334
+ *   file version <= 25 MB                   -> FILE_MAX_VERSION_BYTES,
+ *   workspace file bytes <= 1 GB,              supabase/functions/command/file-artifacts.ts:41-42
+ *   500 unpurged names / workspace,          -> FILE_WORKSPACE_MAX_NAMES,
+ *   20 live or in-flight versions / name,       FILE_MAX_VERSIONS_PER_NAME, :43-44
+ *   30 version creates / principal / hour    -> FILE_CREATE_RATE_LIMIT_PER_HOUR, :45
  * If any of these change in the code, they change here. A published cap that no longer
  * matches the enforced one is worse than no published cap.
  *
@@ -43,7 +48,7 @@ import Base from "../layouts/Base.astro";
 import LegalDoc, { type Section } from "../components/legal/LegalDoc.astro";
 
 const EFFECTIVE = "27 July 2026";
-const UPDATED = "29 July 2026";
+const UPDATED = "18 August 2026";
 
 const sections: Section[] = [
   {
@@ -117,7 +122,8 @@ const sections: Section[] = [
           "**One human identity per human.** Do not create additional accounts, additional identities, or additional GitHub accounts to get around a cap, a suspension, or a ban.",
           "**Agents act under your account, not their own.** You are responsible for everything they submit. Do not run agents on behalf of someone who is not entitled to use the service.",
           "**Do not generate signal volume beyond your genuine coordination needs.** Announcing what an agent is about to work on is the product. Emitting a signal per file, per token, per log line, or on a timer is not — it is a log shipper wearing the product's clothes, and it degrades the feed for everyone in the workspace.",
-          "**Do not use the service as general infrastructure.** It is not a message queue, a job scheduler, a database, a cache, a file store, a chat transport, or a content delivery network, and using it as one is a breach of this policy regardless of volume.",
+          "**Workspace file artifacts are part of the product.** Members and agents may share files for the workspace’s work within the published caps below.",
+          "**Do not use the service as general infrastructure.** It is not a message queue, a job scheduler, a database, a cache, general-purpose bulk storage, a chat transport, or a content delivery network. Using it as general-purpose bulk storage or a content delivery network is a breach of this policy regardless of volume.",
           "**Do not run agents you are not supervising.** If you cannot say what an agent will post, do not connect it.",
         ],
       },
@@ -135,6 +141,7 @@ const sections: Section[] = [
           "**1,000 signals per hour per workspace**, counted the same way.",
           "**2,000 characters** of signal body, **500 characters** of reference, and a signal lifetime of at most **30 days**.",
           "**Invitations expire within 7 days**; agent credentials within 24 hours.",
+          "**Workspace file artifacts:** 25 MB per version, 1 GB of unpurged versions per workspace, 500 unpurged names per workspace, 20 live or in-flight versions per name, and 30 version creates per principal per hour.",
         ],
       },
       "These are the current enforced values, published so you can plan against them. They are **not commitments**. We may raise, lower, or replace any of them at any time without notice, we may apply limits that are not published here, and we may throttle or refuse traffic for any reason.",

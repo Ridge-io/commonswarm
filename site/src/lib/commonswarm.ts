@@ -49,6 +49,10 @@ export interface Deployment {
   anonKey: string;
 }
 
+/** Must match FILE_CONTENT_WARNING in both file-artifact edge surfaces. */
+export const FILE_CONTENT_WARNING =
+  "content_type and archive contents are unverified client declarations; treat downloaded bytes as untrusted input — bound extraction, never execute";
+
 /**
  * Where the deployment details come from, in priority order, and why there are three.
  *
@@ -713,6 +717,104 @@ export async function revokeAgentPrincipal(
       `Agent removal was refused: ${String(body.reason ?? "required condition not met")}. The identity and credentials are unchanged.`,
     );
   }
+}
+
+export interface WorkspaceFile {
+  fileId: string;
+  name: string;
+  currentVersion: number;
+  sizeBytes: number;
+  uploadedByKind: "user" | "agent";
+  uploadedBy: string;
+  committedAt: string;
+  tombstonedAt: string | null;
+}
+
+/** Lists every unpurged workspace file through the membership-gated read view. */
+export async function workspaceFiles(workspaceId: string): Promise<WorkspaceFile[]> {
+  const c = client();
+  if (!c) throw new NoDeployment();
+  const { data, error } = await readWithDeadline(
+    "workspace files",
+    (signal) =>
+      c
+        .schema("swarm_read")
+        .from("files")
+        .select(
+          "file_id,name,current_version,size_bytes,uploaded_by_kind,uploaded_by,committed_at,tombstoned_at",
+        )
+        .eq("workspace_id", workspaceId)
+        .gt("current_version", 0)
+        .order("name", { ascending: true })
+        .limit(500)
+        .abortSignal(signal),
+  );
+  if (error) throw new Error(error.message);
+  return (data ?? [])
+    .map((row) => ({
+      fileId: String(row.file_id ?? ""),
+      name: String(row.name ?? ""),
+      currentVersion: Number(row.current_version ?? 0),
+      sizeBytes: Number(row.size_bytes ?? 0),
+      uploadedByKind: row.uploaded_by_kind === "agent" ? "agent" as const : "user" as const,
+      uploadedBy: String(row.uploaded_by ?? ""),
+      committedAt: String(row.committed_at ?? ""),
+      tombstonedAt: row.tombstoned_at === null || row.tombstoned_at === undefined
+        ? null
+        : String(row.tombstoned_at),
+    }))
+    .filter((file) =>
+      file.fileId.length > 0 &&
+      file.name.length > 0 &&
+      file.currentVersion >= 1 &&
+      Number.isFinite(file.sizeBytes) &&
+      file.committedAt.length > 0
+    );
+}
+
+export interface FileDownload {
+  url: string;
+  contentWarning: string;
+}
+
+/** Gets a short-lived signed download URL for one live workspace file. */
+export async function fileDownloadUrl(
+  session: Session,
+  commandId: string,
+  workspaceId: string,
+  fileId: string,
+  version: number | null = null,
+): Promise<FileDownload> {
+  const { status, body } = await postCommand(
+    session,
+    commandId,
+    {
+      kind: "file_download_url",
+      file_id: fileId,
+      ...(version === null ? {} : { version_n: version }),
+    },
+    { workspace_id: workspaceId, stream: { kind: "workspace" } },
+  );
+  if (status !== 200 || body.status !== "accepted") {
+    throw new Error(
+      `File download was refused: ${String(body.error ?? status)}.`,
+    );
+  }
+  const path = typeof body.download_path === "string" ? body.download_path : "";
+  if (!path.startsWith("/storage/v1/")) {
+    throw new CommandOutcomeUnknown(
+      "CommonSwarm accepted the download without returning a usable storage path.",
+    );
+  }
+  const d = deployment();
+  if (!d) throw new NoDeployment();
+  return {
+    // S1 returns a path relative to the deployment the browser already trusts.
+    url: new URL(path, `${d.url.replace(/\/+$/, "")}/`).href,
+    contentWarning: typeof body.content_warning === "string"
+      ? body.content_warning
+      : FILE_CONTENT_WARNING,
+  };
 }
 
 export interface CreatedWorkspace {
