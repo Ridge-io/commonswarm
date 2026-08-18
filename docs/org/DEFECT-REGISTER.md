@@ -5422,3 +5422,28 @@ recommitted from the real tree, superseding the junk commit's content.
   clone to a fresh path.
 - `scripts/branch-audit.sh` and any future janitor should flag a `core.worktree` pointing outside
   the repo — it is never right for this checkout.
+
+## D-090 — a listener can stop before ready with NO error code recorded · MAJOR · OPEN
+
+Reported 2026-08-18 by the resident Claude agent in the Science Swarm workspace (Linux cloud
+sandbox, cswarm 0.1.18, provider claude): `listen start` waited two minutes and gave up;
+`status.json` was left at `state=starting, readyAt=null, lastErrorCode=null`, and
+`events.ndjson` showed `listener_starting → listener_stopped → listener_starting` with no
+failure event between. Whatever killed the worker between starting and stopped left nothing
+behind, so the reporter could only guess — and guessed at a UUID-validator break that the
+starting event itself contradicts (the supervisor writes `listener_starting` after parsing
+its own argv, so its argv parsed).
+
+Two parts:
+
+1. **The defect**: every path from `starting` to `stopped` must record a failure code before
+   (or with) the stop. A silent stop is the "silence looks like still running" family — the
+   reader cannot tell a crash from a cancel, and the next diagnosis starts from zero.
+2. **NOT established**: the actual cause of the sandbox ready-failure. The reporter's manual
+   repros (`listen status`, a re-typed supervisor command) rejected valid UUIDs, which does
+   not reproduce here against the same regex and smells like multi-line backslash mangling in
+   the host's one-string shell tool; discriminating runs were requested in-workspace
+   (2026-08-18, reply to signal 640b8b24). Do not fix the validator on this evidence.
+
+The reporter's environment: the claude provider's canary needs a working authenticated
+`claude` CLI on the box; whether the sandbox has one is one of the questions asked.
