@@ -808,9 +808,12 @@ function fileStorage(): FileStorage {
       if (typeof data.url !== "string") {
         throw new Error("storage upload sign returned no url");
       }
-      const url = `${base}${data.url}`;
-      const token = new URL(url).searchParams.get("token") ?? "";
-      return { url, token };
+      const relative = `/storage/v1${data.url}`;
+      const token =
+        new URL(relative, "http://relative.invalid").searchParams.get(
+          "token",
+        ) ?? "";
+      return { path: relative, token };
     },
     async objectSize(path) {
       const response = await fetch(
@@ -839,7 +842,7 @@ function fileStorage(): FileStorage {
         throw new Error("storage download sign returned no url");
       }
       // §5: always an attachment, never inline from our domain.
-      return `${base}${data.signedURL}&download=${
+      return `/storage/v1${data.signedURL}&download=${
         encodeURIComponent(filename)
       }`;
     },

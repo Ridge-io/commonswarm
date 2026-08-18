@@ -1,0 +1,8 @@
+★R12 storage policy enumeration — local stack after 20260818000001, 2026-08-18
+
+storage-schema policies (must be EMPTY for client roles — service-role bypasses RLS):
+  (none)
+buckets: [{"id":"swarm-files","public":false}]
+swarm.files / file_versions policies: [{"schemaname":"swarm","tablename":"file_versions","policyname":"swarm_command_all","roles":"{swarm_command}"},{"schemaname":"swarm","tablename":"files","policyname":"swarm_command_all","roles":"{swarm_command}"}]
+cron jobs: [{"jobname":"swarm_purge_file_artifacts","schedule":"17 * * * *"},{"jobname":"swarm-purge-idempotency-keys","schedule":"17 3 * * *"},{"jobname":"swarm-purge-rate-buckets","schedule":"42 * * * *"},{"jobname":"swarm-purge-terminal-signal-deliveries","schedule":"23 4 * * *"}]
+swarm_read.files view present: 1

@@ -270,13 +270,20 @@ function refuse(
   return { ok: false, refusal: { status, error, message, reason } };
 }
 
-/** Storage operations the handlers need; index.ts binds them to the REST API. */
+/**
+ * Storage operations the handlers need; index.ts binds them to the REST API.
+ * Signed URLs are returned as RELATIVE paths (under /storage/v1) and clients
+ * prepend their own deployment URL: the runtime's SUPABASE_URL is an internal
+ * hostname under `supabase functions serve`, and in production the client may
+ * be talking through the custom domain — the server does not know which host
+ * the caller can reach, and must not guess.
+ */
 export interface FileStorage {
-  /** Signed upload URL bound to exactly one path, upsert OFF (★R1, ★R3). */
-  signUpload(path: string): Promise<{ url: string; token: string }>;
+  /** Signed upload path bound to exactly one object, upsert OFF (★R1, ★R3). */
+  signUpload(path: string): Promise<{ path: string; token: string }>;
   /** Measured object size, or null when the object does not exist (★R4). */
   objectSize(path: string): Promise<number | null>;
-  /** Signed, expiring download URL served as an attachment (§5). */
+  /** Signed, expiring download path served as an attachment (§5). */
   signDownload(
     path: string,
     filename: string,
@@ -450,11 +457,12 @@ export async function fileVersionCreate(
       version_id: cmd.version_id,
       version_n: versionN,
       name: cmd.name,
-      upload_url: upload.url,
+      // Relative to the deployment URL the caller already talks to.
+      upload_path: upload.path,
       upload_token: upload.token,
       upload_expires_in_seconds: 7200,
       commit_deadline_note:
-        "PUT the bytes to upload_url, then send file_version_commit. The pending slot expires two hours from now.",
+        "PUT the bytes to <your deployment URL> + upload_path, then send file_version_commit. The pending slot expires two hours from now.",
     },
   };
 }
@@ -607,7 +615,7 @@ export async function fileDownloadUrl(
       "tombstoned",
     );
   }
-  const url = await storage.signDownload(
+  const path = await storage.signDownload(
     version.storage_path,
     version.name,
     FILE_DOWNLOAD_URL_TTL_SECONDS,
@@ -620,7 +628,8 @@ export async function fileDownloadUrl(
       name: version.name,
       size_bytes: Number(version.size_bytes),
       content_type: version.content_type,
-      download_url: url,
+      // Relative to the deployment URL the caller already talks to.
+      download_path: path,
       download_url_expires_in_seconds: FILE_DOWNLOAD_URL_TTL_SECONDS,
     },
   };

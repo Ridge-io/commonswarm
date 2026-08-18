@@ -2,7 +2,7 @@
   "name": "cloud-swarm",
   "version": "0.1.19",
   "private": true,
-  "description": "SWARM-CLOUD — multi-human, multi-agent coordination cloud service (authority core). Forked from swarm (local CLI) to keep the in-use local tool stable.",
+  "description": "SWARM-CLOUD \u2014 multi-human, multi-agent coordination cloud service (authority core). Forked from swarm (local CLI) to keep the in-use local tool stable.",
   "type": "module",
   "bin": {
     "cswarm": "dist/cli.js"
@@ -23,7 +23,7 @@
     "test:p1-local": "node --import tsx --test tests/p1-local/local-integration.test.ts",
     "test:uxtest": "node --import tsx --test tests/uxtest-harness.test.ts",
     "pretest:p1-server": "npm run build:command-core",
-    "test:p1-server": "node --import tsx --test tests/p1-server/**/*.test.ts",
+    "test:p1-server": "node --import tsx --test --test-concurrency=1 tests/p1-server/**/*.test.ts",
     "prebuild": "rm -rf dist",
     "postbuild": "chmod 755 dist/cli.js",
     "db:start": "supabase start",
