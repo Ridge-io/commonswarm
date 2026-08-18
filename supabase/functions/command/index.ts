@@ -5936,47 +5936,6 @@ async function handleTransaction(
       const fileActor = auth.credentialKind === "agent"
         ? { kind: "agent" as const, id: auth.agent!.principal_id }
         : { kind: "user" as const, id: auth.actor.user! };
-      // §4 rate limit, charged only for the verb that consumes quota (★R9.6).
-      if (fileCommand.kind === FILE_VERSION_CREATE_KIND) {
-        // Humans key by user id — credentialId is null for every human, which
-        // was one shared global bucket; agents key by PRINCIPAL, because a
-        // token id rotates and each rotation would reset the meter.
-        const rateIdentity = auth.credentialKind === "agent"
-          ? auth.agent!.principal_id
-          : auth.actor.user;
-        if (rateIdentity === null) {
-          throw new Error("file rate limit has no stable identity");
-        }
-        const bucket = await incrementRateBucket(
-          tx,
-          `file:create:${auth.credentialKind}:${rateIdentity}`,
-          FILE_CREATE_RATE_LIMIT_PER_HOUR,
-        );
-        if (bucket.count > FILE_CREATE_RATE_LIMIT_PER_HOUR) {
-          const detail =
-            `file limit ${FILE_CREATE_RATE_LIMIT_PER_HOUR} uploads/hour; resets at ${bucket.resetsAt}`;
-          await insertAudit(tx, {
-            auth,
-            commandKind: kind,
-            workspaceId: route.workspaceId,
-            streamId: route.streamId,
-            outcome: "rate_limit",
-            reason: "rate_limited",
-            detail,
-            hash,
-          });
-          return {
-            status: 429,
-            body: {
-              error: "rate_limited",
-              message: `Upload refused: ${detail}.`,
-              limit: FILE_CREATE_RATE_LIMIT_PER_HOUR,
-              resets_at: bucket.resetsAt,
-            },
-          };
-        }
-      }
-      const storage = fileStorage();
       /* Called by handlers AFTER their row locks: a same-command-id request
        * that lost the lock race finds the winner's ledgered response here
        * instead of re-executing against changed state. The stored row must
@@ -6021,6 +5980,49 @@ async function handleTransaction(
       if (preDispatch !== null) {
         return { status: 200, body: preDispatch.stored };
       }
+      // §4 rate limit, charged only for the verb that consumes quota (★R9.6) —
+      // and only AFTER the pre-charge recheck above, so replaying a settled
+      // command id never burns budget or returns 429 (round-3 finding).
+      if (fileCommand.kind === FILE_VERSION_CREATE_KIND) {
+        // Humans key by user id — credentialId is null for every human, which
+        // was one shared global bucket; agents key by PRINCIPAL, because a
+        // token id rotates and each rotation would reset the meter.
+        const rateIdentity = auth.credentialKind === "agent"
+          ? auth.agent!.principal_id
+          : auth.actor.user;
+        if (rateIdentity === null) {
+          throw new Error("file rate limit has no stable identity");
+        }
+        const bucket = await incrementRateBucket(
+          tx,
+          `file:create:${auth.credentialKind}:${rateIdentity}`,
+          FILE_CREATE_RATE_LIMIT_PER_HOUR,
+        );
+        if (bucket.count > FILE_CREATE_RATE_LIMIT_PER_HOUR) {
+          const detail =
+            `file limit ${FILE_CREATE_RATE_LIMIT_PER_HOUR} uploads/hour; resets at ${bucket.resetsAt}`;
+          await insertAudit(tx, {
+            auth,
+            commandKind: kind,
+            workspaceId: route.workspaceId,
+            streamId: route.streamId,
+            outcome: "rate_limit",
+            reason: "rate_limited",
+            detail,
+            hash,
+          });
+          return {
+            status: 429,
+            body: {
+              error: "rate_limited",
+              message: `Upload refused: ${detail}.`,
+              limit: FILE_CREATE_RATE_LIMIT_PER_HOUR,
+              resets_at: bucket.resetsAt,
+            },
+          };
+        }
+      }
+      const storage = fileStorage();
       const outcome = fileCommand.kind === FILE_VERSION_CREATE_KIND
         ? await fileVersionCreate(
           tx,
