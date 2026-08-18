@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import {
   CommandHttpError,
   CommandTransportError,
+  declareAgentModel,
   SIGNAL_REQUEST_TIMEOUT_MS,
   ThinCommandClient,
   type SignalRecord,
@@ -107,6 +108,7 @@ export interface ListenerRuntimeModel extends ListenerModel {
 
 export type ListenerRuntimeEvent =
   | { type: "ready"; workspaceId: string; principalId: string; ts: string }
+  | { type: "model_declared"; ok: boolean; model: string; ts: string }
   | {
     type: "effect";
     signalId: string;
@@ -165,6 +167,12 @@ export interface ListenerRuntimeOptions {
     onMalformedRow: (index: number) => void;
   }) => Promise<AgentSignalPage>;
   poster?: ListenerReplyPoster;
+  /**
+   * Provider-derived model label declared once after ready
+   * (docs/design/2026-08-03-AGENT-SELF-IDENTIFY.md). Absent = declare nothing:
+   * detection returns a value or it returns nothing, never a guess.
+   */
+  declareModel?: string;
   listenerInstanceId?: string;
   deliveryJournal?: ListenerDeliveryJournalClient;
   deliveryClient?: ListenerDeliveryClient;
@@ -905,6 +913,36 @@ export async function runListenerRuntime(
           principalId: options.principalId,
           ts: eventTime(now),
         });
+        // Self-description, once per listener start, best-effort and
+        // FIRE-AND-FORGET: a failed declaration is an event line, never a
+        // listener failure, and the declaration must never delay first-page
+        // receipt or shutdown — the awaited version could hold both for the
+        // full request timeout and ignored cancellation (landing-round
+        // finding 3). The fetch is tied to the listener's own stop signal.
+        if (options.declareModel !== undefined) {
+          const declaredLabel = options.declareModel;
+          void (async () => {
+            let declared = false;
+            try {
+              const credential = await options.credentialSession.bearer();
+              const outcome = await declareAgentModel(options.target, {
+                workspaceId: options.workspaceId,
+                model: declaredLabel,
+                credential,
+                ...(abort ? { signal: abort } : {}),
+              }, options.fetcher);
+              declared = outcome.httpStatus === 200;
+            } catch {
+              declared = false;
+            }
+            options.onEvent?.({
+              type: "model_declared",
+              ok: declared,
+              model: declaredLabel,
+              ts: eventTime(now),
+            });
+          })();
+        }
       }
 
       let currentJournalRecord: ListenerDeliveryJournalRecord | null = null;

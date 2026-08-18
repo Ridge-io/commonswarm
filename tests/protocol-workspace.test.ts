@@ -1088,3 +1088,124 @@ describe('agent token revocation', () => {
     );
   });
 });
+
+describe('declare_agent_model', () => {
+  function seeded() {
+    const world = makeWorld();
+    world.create();
+    world.join('bob');
+    world.createPrincipal('bob');
+    return world;
+  }
+  const asAgent = {
+    actor: agent('bob', 'principal-bob'),
+    credential_kind: 'agent' as const,
+    presenting_token_id: 'token-bob',
+  };
+
+  it('an agent describes ITSELF: model lands on the presenting principal', () => {
+    const world = seeded();
+    const decision = world.apply(
+      { kind: 'declare_agent_model', model: 'claude (claude-agent-acp 0.64.2)' },
+      asAgent,
+    );
+    assert.equal(decision.ok, true);
+    assert.equal(
+      world.state()?.principals['principal-bob']?.model,
+      'claude (claude-agent-acp 0.64.2)',
+    );
+  });
+
+  it('trims, and a whitespace-only declaration clears to null', () => {
+    const world = seeded();
+    assert.equal(
+      world.apply({ kind: 'declare_agent_model', model: '  opencode  ' }, asAgent).ok,
+      true,
+    );
+    assert.equal(world.state()?.principals['principal-bob']?.model, 'opencode');
+    assert.equal(
+      world.apply({ kind: 'declare_agent_model', model: '   ' }, asAgent).ok,
+      true,
+    );
+    assert.equal(world.state()?.principals['principal-bob']?.model, null);
+  });
+
+  it('null clears an earlier declaration', () => {
+    const world = seeded();
+    world.apply({ kind: 'declare_agent_model', model: 'grok' }, asAgent);
+    assert.equal(
+      world.apply({ kind: 'declare_agent_model', model: null }, asAgent).ok,
+      true,
+    );
+    assert.equal(world.state()?.principals['principal-bob']?.model, null);
+  });
+
+  it('bounds mirror agent_principals_model_bounded: >120 and control chars refuse', () => {
+    const world = seeded();
+    const long = world.apply(
+      { kind: 'declare_agent_model', model: 'x'.repeat(121) },
+      asAgent,
+    );
+    assert.equal(long.ok, false);
+    if (!long.ok) assert.equal(long.reason, 'model_invalid');
+    const control = world.apply(
+      { kind: 'declare_agent_model', model: 'claude' + String.fromCharCode(7) + 'bell' },
+      asAgent,
+    );
+    assert.equal(control.ok, false);
+    if (!control.ok) assert.equal(control.reason, 'model_invalid');
+    // C1 range too: the DB's [[:cntrl:]] refuses U+0085, so the reducer must
+    // (landing-round finding 2 — the first regex stopped at DEL).
+    const c1 = world.apply(
+      { kind: 'declare_agent_model', model: 'a' + String.fromCharCode(0x85) + 'b' },
+      asAgent,
+    );
+    assert.equal(c1.ok, false);
+    if (!c1.ok) assert.equal(c1.reason, 'model_invalid');
+    // All refused without touching state.
+    assert.equal(world.state()?.principals['principal-bob']?.model, null);
+  });
+
+  it('a HUMAN credential is refused: model is set at create, not declared by proxy', () => {
+    const world = seeded();
+    const decision = world.apply(
+      { kind: 'declare_agent_model', model: 'claude' },
+      { actor: human('bob') },
+    );
+    assert.equal(decision.ok, false);
+    if (!decision.ok) {
+      assert.equal(decision.class, 'authz');
+      assert.equal(decision.reason, 'credential_kind_forbidden');
+    }
+  });
+
+  it('an agent credential with no resolved principal is refused', () => {
+    const world = seeded();
+    const decision = world.apply(
+      { kind: 'declare_agent_model', model: 'claude' },
+      {
+        actor: { user: 'bob', agent_principal: null, run: null },
+        credential_kind: 'agent',
+      },
+    );
+    assert.equal(decision.ok, false);
+    if (!decision.ok) assert.equal(decision.reason, 'principal_not_presented');
+  });
+
+  it('a revoked presenting principal is refused', () => {
+    const world = seeded();
+    assert.equal(
+      world.apply(
+        { kind: 'revoke_agent_principal', principal_id: 'principal-bob' },
+        { actor: human('bob') },
+      ).ok,
+      true,
+    );
+    const decision = world.apply(
+      { kind: 'declare_agent_model', model: 'claude' },
+      asAgent,
+    );
+    assert.equal(decision.ok, false);
+    if (!decision.ok) assert.equal(decision.reason, 'principal_revoked');
+  });
+});

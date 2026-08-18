@@ -258,6 +258,17 @@ export async function runListenerSupervisor(
       });
       return;
     }
+    if (event.type === "model_declared") {
+      // Outcome recorded either way: a silent best-effort failure is the
+      // D-090 family — information the next diagnosis needs, absent.
+      log({
+        ts: event.ts,
+        event: "listener_model_declared",
+        ok: event.ok,
+        model: event.model,
+      });
+      return;
+    }
     if (event.type === "delivery_mode") {
       status = {
         ...status,

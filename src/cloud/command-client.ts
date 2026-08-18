@@ -587,6 +587,60 @@ async function raceSignalDeadline<T>(
   return await Promise.race(arms);
 }
 
+/**
+ * Agent self-description (docs/design/2026-08-03-AGENT-SELF-IDENTIFY.md): the
+ * listener reports what it factually is — the provider its operator chose —
+ * over its own credential. Self-only by construction: the command carries no
+ * target field, so the server can only ever describe the presenting principal.
+ * Best-effort at the call site; this function just reports the outcome.
+ */
+export async function declareAgentModel(
+  target: CloudTarget,
+  request: {
+    workspaceId: string;
+    model: string | null;
+    credential: string;
+    commandId?: string;
+    /** Caller cancellation (the listener's stop signal); aborts the fetch. */
+    signal?: AbortSignal;
+  },
+  fetcher: typeof fetch = fetch,
+): Promise<{ httpStatus: number }> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 30_000);
+  const onCallerAbort = () => controller.abort();
+  request.signal?.addEventListener("abort", onCallerAbort, { once: true });
+  if (request.signal?.aborted) controller.abort();
+  let response: Response;
+  try {
+    response = await fetcher(commandEndpoint(target), {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${request.credential}`,
+        apikey: target.anonKey,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        command_id: request.commandId ?? newCommandId(),
+        client_version: CLIENT_PROTOCOL_VERSION,
+        workspace_id: request.workspaceId,
+        stream: { kind: "workspace" },
+        command: { kind: "declare_agent_model", model: request.model },
+      }),
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if ((error as Error).name === "AbortError") {
+      throw new CommandTransportError("model declaration timed out");
+    }
+    throw new CommandTransportError("model declaration failed before a response");
+  } finally {
+    clearTimeout(timer);
+    request.signal?.removeEventListener("abort", onCallerAbort);
+  }
+  return { httpStatus: response.status };
+}
+
 export class ThinCommandClient {
   private readonly projections = new Map<string, TaskState>();
 

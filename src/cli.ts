@@ -3033,6 +3033,25 @@ function listenerStateDirectory(args: Arguments): string | undefined {
   return value;
 }
 
+/**
+ * Provider-derived self-description (docs/design/2026-08-03-AGENT-SELF-IDENTIFY.md):
+ * the label states what the operator factually chose — the provider and its
+ * pinned bridge — never a guessed underlying model. The bridge versions are the
+ * pinned ones this file already instructs installing; keep them in step.
+ */
+function listenerModelLabel(provider: ListenerProviderId): string {
+  switch (provider) {
+    case "claude":
+      return "claude (claude-agent-acp 0.64.2)";
+    case "codex":
+      return "codex (codex-acp 1.1.9)";
+    case "opencode":
+      return "opencode";
+    case "grok":
+      return "grok";
+  }
+}
+
 function listenerProvider(args: Arguments): ListenerProviderId {
   const provider = args.optional("provider");
   const hints =
@@ -3647,6 +3666,7 @@ async function runConfiguredListener(options: {
           model: newModel(),
           signal,
           onEvent,
+          declareModel: listenerModelLabel(options.provider),
           listenerInstanceId,
           deliveryJournal: selectedJournal,
           resolveSenderProvenance,

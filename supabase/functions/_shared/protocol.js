@@ -355,6 +355,7 @@ var WORKSPACE_EVENT_TYPES = [
   "MemberRoleChanged",
   "AgentPrincipalCreated",
   "AgentPrincipalRevoked",
+  "AgentModelDeclared",
   "AgentTokenMinted",
   "AgentTokenRevoked",
   "CommandRejected"
@@ -611,6 +612,26 @@ function reduceWorkspace(prev, env3) {
             model: p.model ?? null,
             revoked_at: null
           }
+        }
+      };
+      break;
+    }
+    case "AgentModelDeclared": {
+      const p = req2(
+        env3.payload,
+        ["principal_id", "declared_at"],
+        env3.type,
+        env3.seq
+      );
+      const declaredFor = s.principals[p.principal_id];
+      if (!declaredFor) {
+        throw new StreamIntegrityError(`unknown principal "${p.principal_id}" at seq ${env3.seq}`);
+      }
+      next = {
+        ...s,
+        principals: {
+          ...s.principals,
+          [p.principal_id]: { ...declaredFor, model: p.model ?? null }
         }
       };
       break;
@@ -1083,6 +1104,45 @@ function decideWorkspace(state, cmd, ctx) {
           scopes: [...cmd.scopes],
           issued_at: ctx.now,
           expires_at: ctx.now + ttl
+        })
+      ]);
+    }
+    case "declare_agent_model": {
+      if (ctx.credential_kind !== "agent") {
+        return authz2(
+          "credential_kind_forbidden",
+          "model declaration is presented by the agent describing itself; a human sets model at principal creation"
+        );
+      }
+      if (ctx.actor.agent_principal === null) {
+        return authz2(
+          "principal_not_presented",
+          "model declaration requires the presenting agent principal to be resolved"
+        );
+      }
+      const declaring = state.principals[ctx.actor.agent_principal];
+      if (!declaring || declaring.revoked_at !== null) {
+        return domain2(ctx, cmd.kind, "principal_revoked", "the presenting principal is missing or revoked");
+      }
+      let model = null;
+      if (cmd.model !== null) {
+        if (typeof cmd.model !== "string") {
+          return domain2(ctx, cmd.kind, "model_invalid", "model must be a string or null");
+        }
+        const trimmed = cmd.model.trim();
+        if (trimmed.length > 120) {
+          return domain2(ctx, cmd.kind, "model_invalid", "model must be at most 120 characters");
+        }
+        if (/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/.test(trimmed)) {
+          return domain2(ctx, cmd.kind, "model_invalid", "model must not contain control characters");
+        }
+        model = trimmed.length === 0 ? null : trimmed;
+      }
+      return accept2([
+        env2(ctx, "AgentModelDeclared", {
+          principal_id: declaring.principal_id,
+          model,
+          declared_at: ctx.now
         })
       ]);
     }

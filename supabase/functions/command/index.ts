@@ -124,6 +124,9 @@ type ConnectCommand =
     scopes?: string[];
   }
   | { kind: "revoke_agent_token"; token_id: string }
+  // Self-description: no target field on purpose — the presenting agent
+  // credential IS the subject, the same fence shape as renew_agent_token.
+  | { kind: "declare_agent_model"; model: string | null }
   // §2.3 successor endpoint. It has no fields on purpose: the presented
   // predecessor credential IS the request, and accepting any target field here
   // is exactly the escalation the fence exists to stop.
@@ -247,6 +250,7 @@ type WorkspaceCommand =
     ttl_ms?: number;
   }
   | { kind: "revoke_agent_token"; token_id: string }
+  | { kind: "declare_agent_model"; model: string | null }
   | {
     kind: "renew_agent_token";
     successor_token_id: string;
@@ -427,6 +431,8 @@ const INVITATION_MAX_TTL_MS = 7 * 24 * 60 * 60 * 1000;
  * protocol moved to 24h (operator ruling 2026-08-18) while this line still said 8h, so the
  * server refused mints the reducer would have accepted. */
 const AGENT_TOKEN_MAX_TTL_MS = 24 * 60 * 60 * 1000;
+/* Changed-value declarations only; unchanged redeclares are free no-ops. */
+const MODEL_DECLARE_RATE_LIMIT_PER_HOUR = 10;
 const SIGNAL_MAX_UNTIL_MS = 30 * 24 * 60 * 60 * 1000;
 const SIGNAL_DEFAULT_UNTIL_MS: Record<SignalKind, number> = {
   "working-on": 24 * 60 * 60 * 1000,
@@ -709,6 +715,7 @@ const COMMAND_KINDS = [
   "revoke_agent_principal",
   "revoke_agent_token",
   "renew_agent_token",
+  "declare_agent_model",
   "post_signal",
   CLAIM_AGENT_INBOX_KIND,
   ACK_AGENT_DELIVERY_KIND,
@@ -749,6 +756,7 @@ const CONNECT_COMMAND_KINDS = [
 const WORKSPACE_COMMAND_KINDS = [
   ...CONNECT_COMMAND_KINDS,
   "revoke_agent_token",
+  "declare_agent_model",
   RENEW_AGENT_TOKEN_KIND,
   CLAIM_AGENT_INBOX_KIND,
   ACK_AGENT_DELIVERY_KIND,
@@ -1508,6 +1516,44 @@ function validateCommand(
         status: 400,
         reason: "renew_agent_token accepts no caller-selected fields",
       };
+  }
+
+  // Self-description accepts exactly one caller field: the model text. The
+  // subject is always the presenting agent principal — a body naming a
+  // principal is a request to describe someone else and is refused at the
+  // wire, the same fence shape as renewal above. Bounds MUST match the
+  // reducer's model_invalid rule and agent_principals_model_bounded in
+  // 20260730000001_workspace_access_lifecycle.sql — a hand-written duplicate
+  // here has drifted before (the 8h→24h TTL constant above).
+  if (cmd.kind === "declare_agent_model") {
+    if (
+      !exactKeys(cmd, ["kind", "model"]) ||
+      (cmd.model !== null && typeof cmd.model !== "string")
+    ) {
+      return {
+        ok: false,
+        status: 400,
+        reason: "declare_agent_model takes model (text or null) and nothing else",
+      };
+    }
+    /* Normalize EXACTLY as the reducer will (trim, empty -> null) BEFORE
+     * validating, so the wire and the reducer agree on every input: a raw ""
+     * is a clear, not a refusal, and a padded value is measured trimmed —
+     * validating the raw value rejected what the reducer would accept and
+     * vice versa (landing-round finding 1). */
+    const declaredModel = cmd.model === null ? null : cmd.model.trim();
+    const normalized = declaredModel === "" ? null : declaredModel;
+    if (normalized !== null && !boundedText(normalized, 120)) {
+      return {
+        ok: false,
+        status: 400,
+        reason: "declare_agent_model takes model (text or null) and nothing else",
+      };
+    }
+    return {
+      ok: true,
+      command: { kind: "declare_agent_model", model: normalized },
+    };
   }
 
   // Token revoke is workspace-routed and may be presented by an agent for
@@ -2466,6 +2512,8 @@ async function prepareWorkspaceCommand(
     };
   } else if (wire.kind === "revoke_agent_token") {
     command = { kind: "revoke_agent_token", token_id: wire.token_id };
+  } else if (wire.kind === "declare_agent_model") {
+    command = { kind: "declare_agent_model", model: wire.model };
   } else if (wire.kind === RENEW_AGENT_TOKEN_KIND) {
     // Every field below is read from the authenticated predecessor row or from
     // the server. `wire` contributes nothing but its kind.
@@ -3297,6 +3345,29 @@ async function updateWorkspaceProjection(
           NULL
         )
       `;
+    } else if (event.type === "AgentModelDeclared") {
+      // Bounds were enforced by the reducer, mirroring
+      // agent_principals_model_bounded — a violation here means the mirror
+      // drifted, and the constraint failing the transaction is the alarm.
+      if (typeof payload.principal_id !== "string") {
+        throw new Error("AgentModelDeclared payload is malformed");
+      }
+      const declaredModel = payload.model === null || payload.model === undefined
+        ? null
+        : String(payload.model);
+      const declaredRows = await tx<{ principal_id: string }[]>`
+        UPDATE swarm.agent_principals
+        SET model = ${declaredModel}
+        WHERE principal_id = ${String(payload.principal_id)}::uuid
+          AND workspace_id = ${route.workspaceId}::uuid
+          AND revoked_at IS NULL
+        RETURNING principal_id
+      `;
+      if (declaredRows.length !== 1) {
+        throw new Error(
+          "AgentModelDeclared projection did not update exactly one principal",
+        );
+      }
     } else if (event.type === "AgentPrincipalRevoked") {
       // One canonical event, one atomic projection: principal stamp + principal
       // tombstone + every live token + distinct lineage tombstones + grant
@@ -5566,6 +5637,25 @@ async function handleTransaction(
     // refuses sibling/principal targets; this only opens the door to the check.
     const isAgentTokenRevoke =
       validation.command.kind === "revoke_agent_token";
+    // Self-description needs no scope for the same reason self-surrender does:
+    // a "declare model" scope would be pure ceremony — the reducer already
+    // confines the command to the presenting principal (it has no target
+    // field), and existing minted tokens could never carry a new scope. This
+    // only opens the door to the reducer's own agent-only check.
+    const isModelDeclare =
+      validation.command.kind === "declare_agent_model";
+    if (isModelDeclare && auth.agent === null) {
+      await insertAudit(tx, {
+        auth,
+        commandKind: kind,
+        workspaceId: route.workspaceId,
+        streamId: route.streamId,
+        outcome: "authz",
+        reason: "declare_requires_agent_credential",
+        detail: ignoredIdentity,
+      });
+      return { status: 403, body: { error: "forbidden" } };
+    }
     if (isRenewal && auth.agent === null) {
       await insertAudit(tx, {
         auth,
@@ -5603,6 +5693,7 @@ async function handleTransaction(
       auth.agent !== null &&
       !isRenewal &&
       !isAgentTokenRevoke &&
+      !isModelDeclare &&
       !isDeliveryCommand &&
       !isFileCommand &&
       (
@@ -6395,6 +6486,72 @@ async function handleTransaction(
 
     await beforeStep(10);
     let outcome: FreshOutcome;
+    if (prepared !== null && prepared.command.kind === "declare_agent_model") {
+      /* Two abuse guards (landing-round finding 4), both BEFORE the reducer:
+       *
+       * Unchanged declarations are accepted no-ops with NO event, audit,
+       * ledger, or charge — every listener redeclares at every start, and the
+       * steady state is "same label again". Compared against the TABLE the
+       * projection targets, not folded stream state: out-of-band backfills
+       * exist, and suppressing against a stream value the table does not hold
+       * would strand the table. Changed values ride the file lane's
+       * per-principal hourly bucket, keyed by PRINCIPAL because token ids
+       * rotate (★R9.6's lesson). */
+      const declaringPrincipal = auth.agent?.principal_id ?? null;
+      if (declaringPrincipal !== null) {
+        const currentRows = await tx<{ model: string | null }[]>`
+          SELECT model FROM swarm.agent_principals
+          WHERE principal_id = ${declaringPrincipal}::uuid
+            AND workspace_id = ${route.workspaceId}::uuid
+            AND revoked_at IS NULL
+        `;
+        const currentRow = currentRows[0];
+        if (
+          currentRow !== undefined &&
+          (currentRow.model ?? null) === prepared.command.model
+        ) {
+          return {
+            status: 200,
+            body: {
+              status: "accepted",
+              ok: true,
+              event_ids: [],
+              events: [],
+              unchanged: true,
+              workspace_id: route.workspaceId,
+              min_client_version: minClientVersion,
+            },
+          };
+        }
+        const declareBucket = await incrementRateBucket(
+          tx,
+          `model:declare:agent:${declaringPrincipal}`,
+          MODEL_DECLARE_RATE_LIMIT_PER_HOUR,
+        );
+        if (declareBucket.count > MODEL_DECLARE_RATE_LIMIT_PER_HOUR) {
+          const detail =
+            `model declaration limit ${MODEL_DECLARE_RATE_LIMIT_PER_HOUR} changes/hour; resets at ${declareBucket.resetsAt}`;
+          await insertAudit(tx, {
+            auth,
+            commandKind: kind,
+            workspaceId: route.workspaceId,
+            streamId: route.streamId,
+            outcome: "rate_limit",
+            reason: "rate_limited",
+            detail,
+          });
+          return {
+            status: 429,
+            body: {
+              error: "rate_limited",
+              message: `Declaration refused: ${detail}.`,
+              limit: MODEL_DECLARE_RATE_LIMIT_PER_HOUR,
+              resets_at: declareBucket.resetsAt,
+            },
+          };
+        }
+      }
+    }
     if (prepared !== null) {
       let decision = decideWorkspace(
         prepared.state,

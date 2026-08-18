@@ -3,6 +3,7 @@
 import { SCHEMA_VERSION } from './events.js';
 import { StreamIntegrityError, UnknownEventTypeError } from './reducer.js';
 import {
+  AgentModelDeclared,
   AgentPrincipalCreated,
   AgentPrincipalRevoked,
   AgentTokenMinted,
@@ -287,6 +288,29 @@ export function reduceWorkspace(
             model: p.model ?? null,
             revoked_at: null,
           },
+        },
+      };
+      break;
+    }
+    case 'AgentModelDeclared': {
+      // `model` is deliberately absent from the required-key list: null is a
+      // legal value (a clear), and req() treats undefined as missing — the
+      // same convention AgentPrincipalCreated uses for its optional model.
+      const p = req<AgentModelDeclared>(
+        env.payload,
+        ['principal_id', 'declared_at'],
+        env.type,
+        env.seq,
+      );
+      const declaredFor = s.principals[p.principal_id];
+      if (!declaredFor) {
+        throw new StreamIntegrityError(`unknown principal "${p.principal_id}" at seq ${env.seq}`);
+      }
+      next = {
+        ...s,
+        principals: {
+          ...s.principals,
+          [p.principal_id]: { ...declaredFor, model: p.model ?? null },
         },
       };
       break;

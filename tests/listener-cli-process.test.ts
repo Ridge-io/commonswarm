@@ -327,6 +327,7 @@ test("detached CLI completes durable claim reply ACK with one startup UUID and n
     },
   ];
   const posts: Array<Record<string, unknown>> = [];
+  const declares: Array<Record<string, unknown>> = [];
   const claims: Array<Record<string, unknown>> = [];
   const acknowledgements: Array<Record<string, unknown>> = [];
   const acknowledgedSignalIds = new Set<string>();
@@ -406,6 +407,17 @@ test("detached CLI completes durable claim reply ACK with one startup UUID and n
           event_ids: [],
           events: [],
           min_client_version: "0.1.0",
+        }));
+        return;
+      }
+      if (command.kind === "declare_agent_model") {
+        declares.push(parsed);
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify({
+          status: "accepted",
+          ok: true,
+          event_ids: [],
+          events: [],
         }));
         return;
       }
@@ -506,6 +518,12 @@ test("detached CLI completes durable claim reply ACK with one startup UUID and n
 
     await waitFor(() => acknowledgements.length === 2);
     assert.equal(posts.length, 2);
+    // Self-description: once per listener start, the provider-derived label.
+    assert.equal(declares.length, 1);
+    assert.equal(
+      (declares[0]!.command as Record<string, unknown>).model,
+      "grok",
+    );
     assert.equal(
       posts.every((post) =>
         typeof post.command_id === "string" &&
@@ -703,6 +721,7 @@ test("detached CLI cursor fallback still receives and replies", async () => {
     sender_owner_relation: "same_owner",
   };
   const posts: Array<Record<string, unknown>> = [];
+  const declares: Array<Record<string, unknown>> = [];
   const server = createServer(async (request, response) => {
     let body = "";
     for await (const chunk of request) body += chunk.toString();
@@ -729,8 +748,16 @@ test("detached CLI cursor fallback still receives and replies", async () => {
     }
     if (request.url === "/functions/v1/command") {
       const parsed = JSON.parse(body) as Record<string, unknown>;
-      posts.push(parsed);
       const command = parsed.command as Record<string, unknown>;
+      if (command.kind === "declare_agent_model") {
+        // Deliberately refused: this test doubles as the best-effort proof.
+        // A failed self-description must not cost receipt or reply below.
+        declares.push(parsed);
+        response.writeHead(400, { "content-type": "application/json" });
+        response.end(JSON.stringify({ error: "invalid_request" }));
+        return;
+      }
+      posts.push(parsed);
       response.writeHead(200, { "content-type": "application/json" });
       response.end(JSON.stringify({
         status: "accepted",

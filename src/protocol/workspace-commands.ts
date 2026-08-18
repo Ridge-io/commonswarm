@@ -64,6 +64,18 @@ export type WorkspaceCommand =
     }
   | { kind: 'revoke_agent_principal'; principal_id: string }
   | {
+      /**
+       * Agent self-description (docs/design/2026-08-03-AGENT-SELF-IDENTIFY.md):
+       * the target principal is ALWAYS the presenting token's own — there is no
+       * target field, the same shape as renew_agent_token, so a worker can
+       * describe itself and nothing else. Model is descriptive identity, never
+       * an authorization input. Humans are refused: they already set model at
+       * create_agent_principal, and self-description by proxy is a guess.
+       */
+      kind: 'declare_agent_model';
+      model: string | null;
+    }
+  | {
       kind: 'mint_agent_token';
       token_id: string;
       principal_id: string;
@@ -694,6 +706,55 @@ export function decideWorkspace(
           scopes: [...cmd.scopes],
           issued_at: ctx.now,
           expires_at: ctx.now + ttl,
+        }),
+      ]);
+    }
+
+    case 'declare_agent_model': {
+      if (ctx.credential_kind !== 'agent') {
+        return authz(
+          'credential_kind_forbidden',
+          'model declaration is presented by the agent describing itself; a human sets model at principal creation',
+        );
+      }
+      if (ctx.actor.agent_principal === null) {
+        return authz(
+          'principal_not_presented',
+          'model declaration requires the presenting agent principal to be resolved',
+        );
+      }
+      const declaring = state.principals[ctx.actor.agent_principal];
+      if (!declaring || declaring.revoked_at !== null) {
+        return domain(ctx, cmd.kind, 'principal_revoked', 'the presenting principal is missing or revoked');
+      }
+      /* Mirrors agent_principals_model_bounded in
+       * 20260730000001_workspace_access_lifecycle.sql: btrim'd, 1..120 chars,
+       * no [[:cntrl:]] (C0 + DEL). The reducer and the database must agree, or
+       * an accepted event fails projection — the constraint is the source. */
+      let model: string | null = null;
+      if (cmd.model !== null) {
+        if (typeof cmd.model !== 'string') {
+          return domain(ctx, cmd.kind, 'model_invalid', 'model must be a string or null');
+        }
+        const trimmed = cmd.model.trim();
+        if (trimmed.length > 120) {
+          return domain(ctx, cmd.kind, 'model_invalid', 'model must be at most 120 characters');
+        }
+        /* The class is invite-link.ts's CONTROL_GLOBAL_RE: C0 + DEL + C1 +
+         * bidi controls. At least C0/DEL/C1 is what the DB's [[:cntrl:]]
+         * refuses under the UTF-8 locales in use; the bidi additions make the
+         * reducer deliberately STRICTER than the constraint, which is the safe
+         * direction — accepted-by-reducer must never fail projection. */
+        if (/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/.test(trimmed)) {
+          return domain(ctx, cmd.kind, 'model_invalid', 'model must not contain control characters');
+        }
+        model = trimmed.length === 0 ? null : trimmed;
+      }
+      return accept([
+        env(ctx, 'AgentModelDeclared', {
+          principal_id: declaring.principal_id,
+          model,
+          declared_at: ctx.now,
         }),
       ]);
     }
