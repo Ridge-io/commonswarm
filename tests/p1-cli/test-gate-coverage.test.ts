@@ -116,6 +116,14 @@ test("D-030: the pure CLI gate cannot reach the stack-touching suite", async () 
     localStackTests,
   );
   for (const stackTest of localStackTests) {
+    /* Review item 3: the basename filter is the copied-file control — a stack
+     * suite duplicated into a pure-gate directory matches here and breaks the
+     * exact-path expectation. The startsWith inventory above cannot see that. */
+    const basename = stackTest.slice(stackTest.lastIndexOf("/"));
+    assert.deepEqual(
+      files.filter((file) => file.endsWith(basename)),
+      [stackTest],
+    );
     assert.deepEqual(matchingScripts(stackTest, scripts), ["test:p1-local"]);
   }
 });

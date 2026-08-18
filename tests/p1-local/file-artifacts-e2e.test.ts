@@ -273,6 +273,32 @@ test("S4-3 purge pipeline end to end: cron claim queues, the drain deletes the R
   });
   assert.equal(commit.status, 200, JSON.stringify(commit.body));
 
+  // The object exists in REAL storage after commit. Checked HERE because no
+  // purge-queue row for this path can exist yet, so no drain can race the
+  // check. Storage answers 5xx briefly after a container restart (S4-6 in a
+  // prior run), so poll to a definitive answer.
+  const committedPath = await sql<{ storage_path: string }[]>`
+    SELECT storage_path FROM swarm.file_versions
+    WHERE file_id = ${fileId}::uuid
+  `;
+  {
+    const deadline = Date.now() + 8_000;
+    let ok = false;
+    let lastError = "";
+    while (Date.now() < deadline) {
+      const check = await admin.storage.from("swarm-files").download(
+        committedPath[0]!.storage_path,
+      );
+      if (!check.error) {
+        ok = true;
+        break;
+      }
+      lastError = String(check.error);
+      await delay(250);
+    }
+    assert.ok(ok, `object must exist after commit: ${lastError}`);
+  }
+
   // Tombstone it, then age the tombstone past the 30-day window in SQL —
   // the only clock the window reads (review round 2: database time).
   const rm = await postCommand({ kind: "file_tombstone", file_id: fileId });
@@ -299,9 +325,12 @@ test("S4-3 purge pipeline end to end: cron claim queues, the drain deletes the R
   assert.equal(queued.length, 1, "the claim queued the object path");
   assert.equal(queued[0]!.deleted_at, null, "not yet drained");
 
-  // The object still exists in REAL storage until the drain runs.
-  const preDrain = await admin.storage.from("swarm-files").download(storagePath);
-  assert.ifError(preDrain.error);
+  // No pre-drain existence assertion HERE, deliberately: every file command
+  // dispatches a detached drain, and the tombstone's drain can execute after
+  // the SQL purge above queued this path — deleting the object before this
+  // line runs. That is the drain WORKING; racing it is not the claim. The
+  // object's existence was asserted post-commit, where no queue row for this
+  // path can exist yet, and the end state below is the pipeline proof.
 
   // Any file command triggers the S4 drain. Restore is convenient: it must
   // ALSO refuse now (410 — the purge claimed the contents), which pins the
@@ -390,4 +419,151 @@ test("S4-4 pending GC: a never-uploaded slot is claimed at 3h and its queue row 
     await delay(100);
   }
   assert.ok(drained, "a never-uploaded path drains without error");
+});
+
+test("S4-5 batch boundary: one drain retires exactly its bounded batch, the next takes the rest", async () => {
+  // Synthetic queue rows under a test prefix — no objects behind them, which
+  // the drain tolerates by contract. 12 rows against the batch bound of 10.
+  const nudge = () =>
+    postCommand({ kind: "file_download_url", file_id: randomUUID() });
+  // Quiesce: drains detach via waitUntil, so one dispatched by an EARLIER
+  // test can land mid-count here. Drain the leftovers, then hold until the
+  // queue stays empty so no straggler can touch this test's rows.
+  {
+    const deadline = Date.now() + 8_000;
+    while (Date.now() < deadline) {
+      const pending = await sql<{ n: string }[]>`
+        SELECT count(*)::text AS n FROM swarm.file_purge_queue
+        WHERE deleted_at IS NULL
+      `;
+      if (Number(pending[0]!.n) === 0) break;
+      await nudge();
+      await delay(300);
+    }
+    await delay(500);
+  }
+  const prefix = `s4-batch-${randomUUID()}`;
+  const paths = Array.from({ length: 12 }, (_, i) => `${prefix}/row-${i}.bin`);
+  for (const path of paths) {
+    await sql`
+      INSERT INTO swarm.file_purge_queue (storage_path)
+      VALUES (${path})
+    `;
+  }
+
+  await nudge();
+  let firstBatch = 0;
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    const rows = await sql<{ n: string }[]>`
+      SELECT count(*)::text AS n FROM swarm.file_purge_queue
+      WHERE storage_path LIKE ${prefix + "/%"} AND deleted_at IS NOT NULL
+    `;
+    firstBatch = Number(rows[0]!.n);
+    if (firstBatch >= 10) break;
+    await delay(100);
+  }
+  assert.equal(firstBatch, 10, "the first drain retires exactly the batch bound");
+  // Boundary stability: hold briefly and confirm no straggler exceeds the
+  // bound — exactly 10, not "at least 10 on the way to 12".
+  await delay(800);
+  const held = await sql<{ n: string }[]>`
+    SELECT count(*)::text AS n FROM swarm.file_purge_queue
+    WHERE storage_path LIKE ${prefix + "/%"} AND deleted_at IS NOT NULL
+  `;
+  assert.equal(Number(held[0]!.n), 10, "one command drains one bounded batch");
+
+  // Review item 2's success-path half: every drained row records its attempt.
+  const stamped = await sql<{ n: string }[]>`
+    SELECT count(*)::text AS n FROM swarm.file_purge_queue
+    WHERE storage_path LIKE ${prefix + "/%"}
+      AND deleted_at IS NOT NULL
+      AND attempt_count = 1
+      AND last_attempt_at IS NOT NULL
+  `;
+  assert.equal(Number(stamped[0]!.n), 10, "attempts are stamped on success too");
+
+  await nudge();
+  const restDeadline = Date.now() + 5_000;
+  let drained = 0;
+  while (Date.now() < restDeadline) {
+    const rows = await sql<{ n: string }[]>`
+      SELECT count(*)::text AS n FROM swarm.file_purge_queue
+      WHERE storage_path LIKE ${prefix + "/%"} AND deleted_at IS NOT NULL
+    `;
+    drained = Number(rows[0]!.n);
+    if (drained === 12) break;
+    await delay(100);
+  }
+  assert.equal(drained, 12, "the second drain takes the remaining rows");
+});
+
+test("S4-6 storage outage: a failed drain stamps its attempt durably and the row stays eligible", async () => {
+  // The only DRIVABLE storage failure: every malformed prefix probed against
+  // the local storage API answers 200 (newline, empty string, 3000 chars —
+  // measured before writing this test), so the failure branch is driven the
+  // honest way — by taking storage DOWN. Last test in the file on purpose:
+  // it stops and restarts the storage container.
+  const path = `s4-outage-${randomUUID()}/victim.bin`;
+  await sql`
+    INSERT INTO swarm.file_purge_queue (storage_path) VALUES (${path})
+  `;
+  execFileSync("docker", ["stop", "supabase_storage_cloud-swarm"], {
+    stdio: "ignore",
+  });
+  try {
+    await postCommand({ kind: "file_download_url", file_id: randomUUID() });
+    const deadline = Date.now() + 8_000;
+    let failed:
+      | { attempt_count: number; last_error: string | null }
+      | null = null;
+    while (Date.now() < deadline) {
+      const rows = await sql<
+        {
+          attempt_count: number;
+          last_error: string | null;
+          deleted_at: string | null;
+        }[]
+      >`
+        SELECT attempt_count, last_error, deleted_at
+        FROM swarm.file_purge_queue
+        WHERE storage_path = ${path}
+      `;
+      if (rows[0] && rows[0].attempt_count > 0 && rows[0].deleted_at === null) {
+        failed = rows[0];
+        break;
+      }
+      await delay(150);
+    }
+    assert.ok(failed, "the failed attempt is stamped while the row stays pending");
+    assert.ok(failed!.attempt_count >= 1);
+    assert.ok(
+      typeof failed!.last_error === "string" && failed!.last_error.length > 0,
+      "the failure text is recorded durably",
+    );
+  } finally {
+    execFileSync("docker", ["start", "supabase_storage_cloud-swarm"], {
+      stdio: "ignore",
+    });
+  }
+  // Storage is back: the same row must be claimable again and drain clean.
+  await delay(1_500);
+  await postCommand({ kind: "file_download_url", file_id: randomUUID() });
+  const deadline = Date.now() + 8_000;
+  let recovered = false;
+  while (Date.now() < deadline) {
+    const rows = await sql<
+      { deleted_at: string | null; last_error: string | null }[]
+    >`
+      SELECT deleted_at, last_error FROM swarm.file_purge_queue
+      WHERE storage_path = ${path}
+    `;
+    if (rows[0]?.deleted_at) {
+      assert.equal(rows[0].last_error, null, "success clears the failure text");
+      recovered = true;
+      break;
+    }
+    await delay(150);
+  }
+  assert.ok(recovered, "a previously failed row drains on the next pass");
 });

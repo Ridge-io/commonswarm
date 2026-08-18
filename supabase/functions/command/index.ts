@@ -863,6 +863,10 @@ function fileStorage(): FileStorage {
         method: "DELETE",
         headers,
         body: JSON.stringify({ prefixes: paths }),
+        // S4 review item 1: a hung storage call must not hold the drain (and,
+        // without waitUntil, the response) hostage. 3s is generous for a
+        // same-network batch delete; a timeout is a recorded failed attempt.
+        signal: AbortSignal.timeout(3_000),
       });
       if (!response.ok && response.status !== 404) {
         throw new Error(`storage object delete failed: ${response.status}`);
@@ -6933,16 +6937,30 @@ async function handlePostRequest(request: Request): Promise<Response> {
      * to trigger the drain. The queue is durable, so a swallowed failure only
      * defers work to the next file command. Bounded to keep latency flat. */
     if ((FILE_COMMAND_KINDS as readonly string[]).includes(kind)) {
-      try {
-        await db.begin(async (drainTx) => {
-          await drainTx.unsafe("SET LOCAL ROLE swarm_command");
-          await drainTx.unsafe(
-            "SET LOCAL search_path = swarm, pg_catalog",
-          );
-          await drainFilePurgeQueue(drainTx, fileStorage(), 10);
-        });
-      } catch (error) {
-        console.error("file purge queue drain failed", safeError(error));
+      const drain = (async () => {
+        try {
+          await db.begin(async (drainTx) => {
+            await drainTx.unsafe("SET LOCAL ROLE swarm_command");
+            await drainTx.unsafe(
+              "SET LOCAL search_path = swarm, pg_catalog",
+            );
+            await drainFilePurgeQueue(drainTx, fileStorage(), 10);
+          });
+        } catch (error) {
+          console.error("file purge queue drain failed", safeError(error));
+        }
+      })();
+      /* S4 review item 1: the drain must not delay an already-committed
+       * command's response. waitUntil detaches it where the runtime offers
+       * that; the fallback await is bounded by the storage fetch's 3s abort,
+       * so even a runtime without waitUntil caps the added latency. */
+      const runtime = (globalThis as {
+        EdgeRuntime?: { waitUntil?: (p: Promise<unknown>) => void };
+      }).EdgeRuntime;
+      if (typeof runtime?.waitUntil === "function") {
+        runtime.waitUntil(drain);
+      } else {
+        await drain;
       }
     }
     return json(result.status, result.body, result.headers);

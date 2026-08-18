@@ -48,12 +48,40 @@ drain assertions; restored, both pass. The instrument discriminates.
 - `test:p1-server` **75/77** — the 2 failures are the pre-existing self-serve cap pair,
   proven pre-existing in the S1 evidence
 
+## Review round (two-arm) — four items, all closed
+
+1. **Drain isolation**: the storage DELETE now carries `AbortSignal.timeout(3s)`, and the
+   drain detaches behind `EdgeRuntime.waitUntil` where the runtime offers it (feature-
+   detected; the fallback await is bounded by the 3s abort). A hung storage call can no
+   longer delay an already-committed command's response.
+2. **Durable attempt accounting** (the D-090 family): `file_purge_queue` gained
+   `attempt_count`, `last_attempt_at`, `last_error` — amended IN PLACE in the S1 migration,
+   which has never been applied to production. The stamp rides the claim UPDATE so a failed
+   try cannot roll back its own record; the failure branch writes bounded `last_error` and
+   returns instead of throwing across the transaction.
+3. **The copied-file control** is back in the D-030 gate: a stack-touching file duplicated
+   into a pure-gate directory is caught by the per-basename exact-path check again.
+4. **Coverage**: S4-5 pins the 10-row batch boundary (12 rows → exactly 10, held stable,
+   then the rest) and success-path attempt stamping; S4-6 drives the REAL failure branch —
+   the only drivable storage failure. Measured first: every malformed prefix (newline,
+   empty string, 3000 chars) answers 200 from local storage, so S4-6 stops the storage
+   container, asserts the failed attempt stamps durably with the row still eligible,
+   restarts it, and asserts the same row drains clean with `last_error` cleared.
+
+Two flakes found and fixed while stabilizing, both lessons worth keeping:
+- A DETACHED drain from an earlier test can land mid-count (S4-5 now quiesces the queue
+  first and holds the boundary assertion through a straggler window).
+- S4-3's "object exists pre-drain" assertion raced a legitimately-dispatched drain — the
+  drain working is not a test failure. The existence assertion moved to post-commit, where
+  no queue row for the path can exist yet. Racing your own feature is not a claim.
+
 ## NOT established
 
 - Hosted-storage behavior: signed-URL single-use semantics, `x-upsert` honor, HEAD
   content-length, and the DELETE endpoint's response shape were all measured against the
   LOCAL storage container only. S6 re-verifies every one against production before the
   feature is called live.
-- Drain under storage outage: the swallow path is code-read, not fault-injected.
+- Concurrent drains against one queue (SKIP LOCKED disjointness is SQL-read, not raced by
+  two live runtimes) and a true storage-5xx (non-outage) response body.
 - pg_cron actually firing on a schedule (the function body is driven directly here; the
   cron registration itself is applied but its firing is production-observable only).

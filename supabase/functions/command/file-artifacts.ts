@@ -972,20 +972,43 @@ export async function drainFilePurgeQueue(
   storage: FileStorage,
   limit: number,
 ): Promise<number> {
+  /* The attempt stamp rides the CLAIM update, before the storage call: a row
+   * must record that it was tried even when the try fails, and a throw across
+   * the transaction would roll the stamp back — so the failure branch writes
+   * last_error and RETURNS instead of throwing (S4 review item 2; the D-090
+   * family — a pending row must distinguish never-tried from failing). */
   const rows = await tx<{ storage_path: string }[]>`
-    SELECT storage_path
-    FROM swarm.file_purge_queue
-    WHERE deleted_at IS NULL
-    ORDER BY claimed_at
-    LIMIT ${limit}
-    FOR UPDATE SKIP LOCKED
+    UPDATE swarm.file_purge_queue
+    SET attempt_count = attempt_count + 1,
+        last_attempt_at = statement_timestamp()
+    WHERE storage_path IN (
+      SELECT storage_path
+      FROM swarm.file_purge_queue
+      WHERE deleted_at IS NULL
+      ORDER BY claimed_at
+      LIMIT ${limit}
+      FOR UPDATE SKIP LOCKED
+    )
+    RETURNING storage_path
   `;
   if (rows.length === 0) return 0;
   const paths = rows.map((row) => row.storage_path);
-  await storage.removeObjects(paths);
+  try {
+    await storage.removeObjects(paths);
+  } catch (error) {
+    const detail = String(
+      error instanceof Error ? error.message : error,
+    ).slice(0, 500);
+    await tx`
+      UPDATE swarm.file_purge_queue
+      SET last_error = ${detail}
+      WHERE storage_path = ANY(${paths})
+    `;
+    return 0;
+  }
   await tx`
     UPDATE swarm.file_purge_queue
-    SET deleted_at = statement_timestamp()
+    SET deleted_at = statement_timestamp(), last_error = NULL
     WHERE storage_path = ANY(${paths})
   `;
   return paths.length;
