@@ -702,7 +702,7 @@ function reduceWorkspaceStream(events) {
 // src/protocol/workspace-commands.ts
 var INVITATION_MAX_TTL_MS = 7 * 24 * 60 * 60 * 1e3;
 var AGENT_TOKEN_DEFAULT_TTL_MS = 60 * 60 * 1e3;
-var AGENT_TOKEN_MAX_TTL_MS = 8 * 60 * 60 * 1e3;
+var AGENT_TOKEN_MAX_TTL_MS = 24 * 60 * 60 * 1e3;
 var RENEWAL_HORIZON_DEFAULT_MS = 30 * 24 * 60 * 60 * 1e3;
 var RENEWAL_HORIZON_MAX_MS = 90 * 24 * 60 * 60 * 1e3;
 var RENEWAL_MAX_SUCCESSORS_DEFAULT = 800;

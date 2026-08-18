@@ -383,7 +383,11 @@ const MAX_EVENT_PAYLOAD_BYTES = 64 * 1024;
 const MAX_TTL_MS = 4 * 60 * 60 * 1000;
 const INVITATION_TTL_MS = 24 * 60 * 60 * 1000;
 const INVITATION_MAX_TTL_MS = 7 * 24 * 60 * 60 * 1000;
-const AGENT_TOKEN_MAX_TTL_MS = 8 * 60 * 60 * 1000;
+/* MUST match AGENT_TOKEN_MAX_TTL_MS in src/protocol/workspace-commands.ts — this request-shape
+ * bound is hand-written, NOT generated into _shared/protocol.js, and it drifted once: the
+ * protocol moved to 24h (operator ruling 2026-08-18) while this line still said 8h, so the
+ * server refused mints the reducer would have accepted. */
+const AGENT_TOKEN_MAX_TTL_MS = 24 * 60 * 60 * 1000;
 const SIGNAL_MAX_UNTIL_MS = 30 * 24 * 60 * 60 * 1000;
 const SIGNAL_DEFAULT_UNTIL_MS: Record<SignalKind, number> = {
   "working-on": 24 * 60 * 60 * 1000,

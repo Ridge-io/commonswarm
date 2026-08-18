@@ -35,11 +35,17 @@ import { CLIENT_PROTOCOL_VERSION, NoDeployment, client, deployment, uuid } from 
 
 /**
  * Mirrors AGENT_TOKEN_DEFAULT_TTL_MS / AGENT_TOKEN_MAX_TTL_MS in
- * src/protocol/workspace-commands.ts:17-18. The reducer refuses anything above the maximum,
- * so a lifetime picker that offers more than 8 hours is offering a refusal.
+ * src/protocol/workspace-commands.ts. The reducer refuses anything above the maximum,
+ * so a lifetime picker that offers more than it is offering a refusal.
+ *
+ * The DEFAULT here is deliberately the max, not the protocol's 1h (operator ruling,
+ * 2026-08-18): the connect-page credential crosses a human — pasted into another
+ * machine's chat, often after environment fixes on that side — and the measured cost of
+ * a short bootstrap was a sandboxed agent watching its window close while its listener
+ * was stuck in "starting" and could not rotate. Rotation successors stay short.
  */
-export const AGENT_TOKEN_DEFAULT_TTL_MS = 60 * 60 * 1_000;
-export const AGENT_TOKEN_MAX_TTL_MS = 8 * 60 * 60 * 1_000;
+export const AGENT_TOKEN_DEFAULT_TTL_MS = 24 * 60 * 60 * 1_000;
+export const AGENT_TOKEN_MAX_TTL_MS = 24 * 60 * 60 * 1_000;
 
 /**
  * The renewal window (SWARM-CLOUD.md §2.3). This mirrors src/cloud/renewal.ts — there is no
@@ -47,7 +53,7 @@ export const AGENT_TOKEN_MAX_TTL_MS = 8 * 60 * 60 * 1_000;
  * with, so if one side moves the other has to move with it.
  *
  * WHY A WINDOW AND NOT A LONGER TOKEN. An agent work session now runs for days or weeks and
- * an agent token lives at most eight hours. The obvious fix — issue a token that lasts a
+ * an agent token lives at most a day. The obvious fix — issue a token that lasts a
  * month — puts a month-long bearer secret on a developer's machine, which is the trade §2.3
  * exists to refuse. So the token stays short and renews itself silently, and instead of
  * asking a person every hour, CommonSwarm asks them once a month. That is the checkpoint:

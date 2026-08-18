@@ -15,7 +15,12 @@ import {
 
 export const INVITATION_MAX_TTL_MS = 7 * 24 * 60 * 60 * 1_000;
 export const AGENT_TOKEN_DEFAULT_TTL_MS = 60 * 60 * 1_000;
-export const AGENT_TOKEN_MAX_TTL_MS = 8 * 60 * 60 * 1_000;
+/* 24h, raised from 8h by operator ruling 2026-08-18. The measured failure: a sandboxed
+ * agent's bootstrap window closed while a human debugged its environment — setup with a
+ * human in the loop can take longer than 8h across time zones, and rotation cannot start
+ * until a listener is READY, which is exactly the part that was stuck. Rotation SUCCESSORS
+ * stay short (renewal.ts keeps its own 8h successor cap); this bounds only the bootstrap. */
+export const AGENT_TOKEN_MAX_TTL_MS = 24 * 60 * 60 * 1_000;
 
 // §2.3 continuous-renewal horizon. A worksession that runs for weeks must not
 // be paid for by lengthening the bearer token: the TTL constants above stay
