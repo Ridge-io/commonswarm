@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { readFileSync } from "node:fs";
-import { access, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -13,6 +13,10 @@ import {
   signalCounts,
   signalIsDirectToViewer,
 } from "../../lib/signal-feed";
+import {
+  findChrome,
+  renderParticipantRailFixture,
+} from "./participant-rail.fixture.js";
 
 /*
  * Observer for the Slack-shaped workspace shell. The site gate reaches this file through
@@ -34,27 +38,6 @@ const builtAssets = assetPaths
   .join("\n");
 
 const run = promisify(execFile);
-const chromeCandidates = [
-  process.env.CHROME_BIN,
-  "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-  "/Applications/Chromium.app/Contents/MacOS/Chromium",
-  "/usr/bin/google-chrome",
-  "/usr/bin/chromium",
-  "/usr/bin/chromium-browser",
-].filter((candidate): candidate is string => Boolean(candidate));
-
-const findChrome = async (): Promise<string> => {
-  for (const candidate of chromeCandidates) {
-    try {
-      await access(candidate);
-      return candidate;
-    } catch {
-      // The resolved contract requires rendered geometry, so keep looking for a layout engine.
-    }
-  }
-  throw new Error("Chrome or Chromium is required for rendered AGENTS rail geometry tests");
-};
-
 type RailGeometry = {
   three: { clientHeight: number; scrollHeight: number; railHeight: number; overflowY: string };
   fifty: { clientHeight: number; scrollHeight: number; railHeight: number; overflowY: string };
@@ -63,27 +46,25 @@ type RailGeometry = {
 const renderRailGeometry = async (): Promise<RailGeometry> => {
   const directory = await mkdtemp(join(tmpdir(), "commonswarm-slack-rail-"));
   const fixture = join(directory, "index.html");
-  const agents = (count: number): string => Array.from({ length: count }, (_, index) => `
-    <li class="dashboard__sidebar-agent">
-      <span class="dashboard__sidebar-model-mark"><svg class="dashboard__sidebar-model-glyph" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3" fill="currentColor"/></svg></span>
-      <span class="dashboard__sidebar-participant-copy"><strong>Agent ${index + 1}</strong><span>Model ${index + 1}</span></span>
-    </li>`).join("");
-  const rows = (count: number): string => `
-    <li class="dashboard__sidebar-owner-group">
-      <div class="dashboard__sidebar-person">
-        <span class="dashboard__sidebar-avatar-wrap"><span class="dashboard__sidebar-person-avatar">DR</span><span class="dashboard__presence-dot"></span></span>
-        <span class="dashboard__sidebar-participant-copy"><strong>Dana Rivera</strong><span>owner</span></span>
-      </div>
-      <ul class="dashboard__sidebar-owner-agents">${agents(count)}</ul>
-    </li>`;
-  const rail = (name: string, count: number): string => `
+  const member = [{ userId: "dana", name: "Dana Rivera", role: "owner" as const }];
+  const rows = (count: number) => Array.from({ length: count }, (_, index) => ({
+    principal_id: `agent-${index + 1}`,
+    name: `Agent ${String(index + 1).padStart(2, "0")}`,
+    model: `Model ${index + 1}`,
+    owner_user_id: "dana",
+  }));
+  const [threeRows, fiftyRows] = await Promise.all([
+    renderParticipantRailFixture(member, rows(3)),
+    renderParticipantRailFixture(member, rows(50)),
+  ]);
+  const rail = (name: string, participantRows: string): string => `
     <aside class="dashboard__rail" data-rail="${name}">
       <div class="dashboard__workspace-control">
         <button class="dashboard__workspace-trigger">CommonSwarm Build</button>
       </div>
       <section class="dashboard__rail-section dashboard__rail-section--participants">
         <div class="dashboard__rail-label-row"><h2>PEOPLE &amp; AGENTS</h2></div>
-        <ul class="dashboard__sidebar-agent-list" data-list="${name}">${rows(count)}</ul>
+        <ul class="dashboard__sidebar-agent-list" data-list="${name}">${participantRows}</ul>
       </section>
     </aside>`;
   const html = `<!doctype html>
@@ -117,8 +98,8 @@ const renderRailGeometry = async (): Promise<RailGeometry> => {
   </head>
   <body>
     <div class="dashboard fixture">
-      ${rail("three", 3)}
-      ${rail("fifty", 50)}
+      ${rail("three", threeRows.innerHtml)}
+      ${rail("fifty", fiftyRows.innerHtml)}
     </div>
     <script>
       const measure = (name) => {
@@ -146,6 +127,8 @@ const renderRailGeometry = async (): Promise<RailGeometry> => {
       "--headless=new",
       "--disable-gpu",
       "--no-sandbox",
+      "--single-process",
+      "--no-zygote",
       "--window-size=1440,1000",
       "--allow-file-access-from-files",
       "--dump-dom",
@@ -187,10 +170,10 @@ test("the workspace shell groups people with their nested agents in one bounded 
     /(?:^|\n)\s*block-size:\s*14rem;/,
     "a short participant list must shrink to its content",
   );
-  assert.match(dashboard, /const renderSidebarParticipants =/);
-  assert.match(dashboard, /renderSidebarParticipants\(\);/);
-  assert.match(dashboard, /className = "dashboard__sidebar-owner-group"/);
-  assert.match(dashboard, /className = "dashboard__sidebar-owner-agents"/);
+  assert.match(
+    dashboard,
+    /renderSidebarParticipants\(participantList, members, agents, initials\)/,
+  );
   assert.equal(
     [...dashboard.matchAll(/<button\b[^>]*data-workspace-menu-trigger[^>]*>/g)].length,
     1,
@@ -367,19 +350,19 @@ test("sidebar counts come from loaded signals and the shared field ships both sc
   );
 });
 
-test("participant navigation uses human presence and agent model identity", () => {
-  const renderer = dashboard.slice(
-    dashboard.indexOf("const renderSidebarParticipants ="),
-    dashboard.indexOf("const workspaceMenuItems ="),
+test("participant navigation uses human presence and agent model identity", async () => {
+  const rail = await renderParticipantRailFixture(
+    [{ userId: "dana", name: "Dana Rivera", role: "owner" }],
+    [
+      { principal_id: "atlas", name: "Atlas", model: "Claude Opus", owner_user_id: "dana" },
+      { principal_id: "orphan", name: "Orphan", model: "GPT-5", owner_user_id: "former" },
+    ],
   );
-  assert.match(renderer, /className = "dashboard__sidebar-agent"/);
-  assert.match(renderer, /className = "dashboard__presence-dot"/);
-  assert.match(renderer, /modelMark\.innerHTML = modelGlyphSvg\(/);
-  assert.match(renderer, /modelFamily\(agent\.model\)/);
-  assert.match(renderer, /"dashboard__sidebar-model-glyph"/);
-  assert.match(renderer, /model\.textContent = agent\.model/);
-  assert.match(renderer, /owner\.textContent = `operated by \$\{ownerName\}`/);
-  assert.match(renderer, /group\.kind === "unresolved" \? group\.label : undefined/);
-  assert.doesNotMatch(renderer, /markAgentAvatar\(/);
-  assert.doesNotMatch(renderer, /badge\.textContent = "AGENT"/);
+
+  assert.match(rail.innerHtml, /dashboard__presence-dot/);
+  assert.match(rail.innerHtml, /dashboard__sidebar-model-glyph/);
+  assert.match(rail.innerHtml, />Claude Opus</);
+  assert.match(rail.innerHtml, />operated by Owner unavailable</);
+  assert.doesNotMatch(rail.innerHtml, /dashboard__sidebar-agent-avatar/);
+  assert.doesNotMatch(rail.innerHtml, />AGENT</);
 });

@@ -738,8 +738,10 @@ import "../../styles/tokens.css";
     shouldPollPendingAccess,
     shouldRetireFreshInvite,
   } from "../../lib/pending-access";
-  import { groupParticipantsByOwner } from "../../lib/participant-rail";
-  import { modelFamily, modelGlyphSvg } from "../../lib/model-glyph";
+  import {
+    renderSidebarParticipants,
+    rosterAgentsFromRows,
+  } from "../../lib/participant-rail";
 
   interface Workspace {
     id: string;
@@ -1146,14 +1148,7 @@ import "../../styles/tokens.css";
           .range(offset, offset + pageSize - 1);
         if (error) throw new Error(error.message);
         const page = data ?? [];
-        result.push(...page.map((row) => ({
-          principalId: String(row.principal_id ?? ""),
-          name: String(row.name ?? "Unnamed agent"),
-          model: row.model === null ? null : String(row.model),
-          ownerUserId: String(row.owner_user_id ?? ""),
-        })).filter((agent) =>
-          agent.principalId.length > 0 && agent.ownerUserId.length > 0
-        ));
+        result.push(...rosterAgentsFromRows(page));
         if (page.length < pageSize) return result;
       }
     };
@@ -1854,95 +1849,8 @@ import "../../styles/tokens.css";
       closeMentionPicker();
     };
 
-    /* The rail mirrors participants as presence/navigation only. Ownership is structural
-       because repeating an owner on every agent makes the relationship harder to scan. The
-       fallback still names missing ownership because indentation cannot identify a person
-       who is no longer in the member roster. */
-    const renderSidebarParticipants = (): void => {
-      const participantList = one<HTMLUListElement>("[data-sidebar-participant-list]");
-      if (!participantList) return;
-      participantList.replaceChildren();
-
-      const buildAgentRow = (agent: Agent, ownerName?: string): HTMLLIElement => {
-        const row = document.createElement("li");
-        row.className = "dashboard__sidebar-agent";
-        const modelMark = document.createElement("span");
-        modelMark.className = "dashboard__sidebar-model-mark";
-        modelMark.innerHTML = modelGlyphSvg(
-          modelFamily(agent.model),
-          "dashboard__sidebar-model-glyph",
-        );
-        const copy = document.createElement("span");
-        copy.className = "dashboard__sidebar-participant-copy";
-        const name = document.createElement("strong");
-        name.textContent = agent.name;
-        name.title = agent.name;
-        copy.append(name);
-        if (agent.model) {
-          const model = document.createElement("span");
-          model.textContent = agent.model;
-          copy.append(model);
-        }
-        if (ownerName) {
-          const owner = document.createElement("span");
-          owner.className = "dashboard__sidebar-orphan-owner";
-          owner.textContent = `operated by ${ownerName}`;
-          copy.append(owner);
-        }
-        row.append(modelMark, copy);
-        return row;
-      };
-
-      for (const group of groupParticipantsByOwner(members, agents)) {
-        const groupItem = document.createElement("li");
-        groupItem.className = "dashboard__sidebar-owner-group";
-        const personRow = document.createElement("div");
-        personRow.className = group.kind === "member"
-          ? "dashboard__sidebar-person"
-          : "dashboard__sidebar-person dashboard__sidebar-person--unresolved";
-
-        if (group.kind === "member") {
-          const avatarWrap = document.createElement("span");
-          avatarWrap.className = "dashboard__sidebar-avatar-wrap";
-          const avatar = document.createElement("span");
-          avatar.className = "dashboard__sidebar-person-avatar";
-          avatar.textContent = initials(group.member.name);
-          avatar.setAttribute("aria-hidden", "true");
-          const presence = document.createElement("span");
-          presence.className = "dashboard__presence-dot";
-          presence.setAttribute("aria-hidden", "true");
-          avatarWrap.append(avatar, presence);
-          const copy = document.createElement("span");
-          copy.className = "dashboard__sidebar-participant-copy";
-          const name = document.createElement("strong");
-          name.textContent = group.member.name;
-          name.title = group.member.name;
-          const meta = document.createElement("span");
-          meta.textContent = group.member.role;
-          copy.append(name, meta);
-          personRow.append(avatarWrap, copy);
-        } else {
-          const marker = document.createElement("span");
-          marker.className = "dashboard__sidebar-unresolved-mark";
-          marker.textContent = "?";
-          marker.setAttribute("aria-hidden", "true");
-          const label = document.createElement("strong");
-          label.textContent = group.label;
-          personRow.append(marker, label);
-        }
-        const nestedAgents = document.createElement("ul");
-        nestedAgents.className = "dashboard__sidebar-owner-agents";
-        for (const agent of group.agents) {
-          nestedAgents.append(buildAgentRow(
-            agent,
-            group.kind === "unresolved" ? group.label : undefined,
-          ));
-        }
-        groupItem.append(personRow, nestedAgents);
-        participantList.append(groupItem);
-      }
-    };
-
+    /* The rail mirrors participants as presence/navigation only. Its shared renderer keeps
+       ownership structural and names unresolved owners instead of hiding their agents. */
     const workspaceMenuItems = (): HTMLButtonElement[] =>
       all<HTMLButtonElement>("[data-workspace-menu] [role='menuitemradio'], [data-workspace-menu] [role='menuitem']")
         .filter((item) => !item.hidden);
@@ -2038,7 +1946,10 @@ import "../../styles/tokens.css";
      * management dialog. All render here from `agents`, so the surfaces cannot disagree.
      */
     const renderRoster = (): void => {
-      renderSidebarParticipants();
+      const participantList = one<HTMLUListElement>("[data-sidebar-participant-list]");
+      if (participantList) {
+        renderSidebarParticipants(participantList, members, agents, initials);
+      }
       renderHeaderRoster();
       renderDialogRoster();
       renderComposerAudience();
