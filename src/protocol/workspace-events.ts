@@ -20,6 +20,7 @@ export type WorkspaceEventType =
   | 'MemberRoleChanged'
   | 'AgentPrincipalCreated'
   | 'AgentPrincipalRevoked'
+  | 'AgentModelDeclared'
   | 'AgentTokenMinted'
   | 'AgentTokenRevoked'
   | 'CommandRejected';
@@ -34,6 +35,7 @@ export const WORKSPACE_EVENT_TYPES: readonly WorkspaceEventType[] = [
   'MemberRoleChanged',
   'AgentPrincipalCreated',
   'AgentPrincipalRevoked',
+  'AgentModelDeclared',
   'AgentTokenMinted',
   'AgentTokenRevoked',
   'CommandRejected',
@@ -165,6 +167,18 @@ export interface AgentPrincipalRevoked {
   revoked_at: number;
 }
 
+/**
+ * §2.12-adjacent self-description: the principal is always the PRESENTING
+ * credential's own — the command carries no target field, so this event can
+ * only ever describe its author. Model is descriptive identity, never an
+ * authorization input (same rule as AgentPrincipalCreated.model).
+ */
+export interface AgentModelDeclared {
+  principal_id: string;
+  model: string | null;
+  declared_at: number;
+}
+
 export interface AgentTokenMinted {
   token_id: string;
   principal_id: string;
@@ -206,6 +220,8 @@ export type WorkspaceRejectionReason =
   | 'scope_denylisted'
   | 'binding_required'
   | 'token_ttl_invalid'
+  | 'model_invalid'
+  | 'principal_not_presented'
   | 'bad_state';
 
 export interface WorkspaceCommandRejected {
