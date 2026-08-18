@@ -53,3 +53,10 @@ test("modelGlyphSvg: each family has its distinguishing attribute", () => {
   assert.doesNotMatch(unknown, /evenodd/);
   assert.doesNotMatch(unknown, /#3186FF/);
 });
+
+test("modelGlyphSvg: class names cannot break out of the class attribute", () => {
+  const glyph = modelGlyphSvg(null, 'glyph" onload="alert(1)');
+
+  assert.match(glyph, /class="glyph&quot; onload=&quot;alert\(1\)"/);
+  assert.doesNotMatch(glyph, /class="glyph" onload=/);
+});

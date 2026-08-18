@@ -18,7 +18,7 @@ export function modelFamily(model: string | null | undefined): ModelFamily | nul
 
 /** Self-contained mark so a roster can name the model without shared SVG defs. */
 export function modelGlyphSvg(family: ModelFamily | null, className?: string): string {
-  const classAttr = className ? ` class="${className}"` : "";
+  const classAttr = className ? ` class="${className.replaceAll('"', '&quot;')}"` : "";
   const open = `<svg viewBox="0 0 24 24" aria-hidden="true"${classAttr}>`;
   if (family === "claude") {
     return `${open}<path d="${CLAUDE_D}" fill="#D97757"/></svg>`;
