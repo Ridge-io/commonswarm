@@ -853,14 +853,22 @@ function fileStorage(): FileStorage {
       return { path: relative, token };
     },
     async objectSize(path) {
+      /* NOT a HEAD reading content-length. Measured on hosted storage 2026-08-18: Deno's
+       * fetch always negotiates compression, hosted answers compressible objects with
+       * content-encoding (br) and NO content-length, and the runtime strips the header
+       * after transparent decompression — so every markdown over the CDN's compression
+       * threshold read as "no object uploaded" while a 12-byte file passed. The local
+       * container never compresses, which is why S4's e2e could not catch it (its
+       * evidence named hosted HEAD semantics as not established; this is that gap).
+       * The info endpoint's JSON `size` comes from object metadata, not transport. */
       const response = await fetch(
-        `${base}/object/authenticated/${FILE_BUCKET}/${path}`,
-        { method: "HEAD", headers },
+        `${base}/object/info/authenticated/${FILE_BUCKET}/${path}`,
+        { headers },
       );
       if (!response.ok) return null;
-      const length = response.headers.get("content-length");
-      const size = length === null ? Number.NaN : Number(length);
-      return Number.isFinite(size) ? size : null;
+      const info = await response.json().catch(() => null);
+      const size = info && typeof info.size === "number" ? info.size : Number.NaN;
+      return Number.isFinite(size) && size >= 0 ? size : null;
     },
     async removeObjects(paths) {
       // DELETE /object/{bucket} with prefixes removes what exists and reports
