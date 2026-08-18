@@ -90,6 +90,20 @@ Proposed caps, all enforced server-side at version-create time:
 Exceeding a cap is a refusal with the number in it ("this file is 31 MB; the per-file limit
 is 25 MB"), not a bare status.
 
+★R5 — **what counts toward the 20-version cap: only `live` versions.** `pending` rows
+expire (§7) and never count — otherwise 20 failed uploads brick a name; `purged` rows do
+not count — otherwise a tombstone-and-purge loop still exhausts the cap. The quota SUM for
+the 1 GB cap likewise counts `live` bytes plus not-yet-expired `pending` declared bytes
+(pending must count there, or concurrent pendings overshoot the workspace cap at commit).
+
+★R16 — **caps need a concurrency rule or they are advisory.** All three checks run inside
+the version-create transaction while holding a row lock (`SELECT … FOR UPDATE`) on the
+`swarm.files` row for version/name checks and on the workspace row for the byte sum — two
+concurrent creates under READ COMMITTED otherwise both pass a cap they jointly exceed. And
+version-create is **idempotent by command id**, reusing the command function's existing
+command-id replay pattern: a client that lost the response and retries gets the SAME
+pending row back, not a second one.
+
 ## 5. Content types
 
 Allowlist, checked against the declared content type and the filename extension together:
@@ -103,9 +117,14 @@ Two supporting rules:
 - Signed download URLs always serve `Content-Disposition: attachment` with the content type
   recorded at commit. Nothing is ever served inline from our domain, which is what makes
   `.svg` (scriptable) acceptable on the list.
-- v1 does **no content sniffing**: the declared type is recorded, not verified. A mislabeled
-  file downloads as its bytes. This is stated in the spec rather than silently true; §10
-  defers verification.
+- ★R8 — v1 does **no content sniffing**, and the honesty has to reach the right audience:
+  `attachment` disposition protects a BROWSER, and the primary consumers here are AGENTS
+  reading bytes, whom it protects not at all. So the spec states plainly: the recorded type
+  is an unverified client declaration, archive contents are unverified (a `.zip` can be an
+  unpack bomb), and any agent adapter that automatically downloads or unpacks workspace
+  files must treat them as untrusted input — size-bound extraction, no execution, no
+  path-traversal-tolerant unpackers. This warning belongs in the adapter implementer docs,
+  not only here. §10 defers verification; it does not defer saying so.
 
 ## 6. Authorization
 
@@ -133,20 +152,56 @@ and audit plumbing that a new function would re-implement.
 Upload is **two-phase, direct to storage**, because file bytes must not stream through the
 command function (request size limits, memory, and double-handling):
 
-1. `file_version_create` (command): validates name, type, declared size against caps;
-   inserts a `pending` version row; asks Storage for a **short-lived signed upload URL**
-   scoped to exactly that object path; returns url + file/version ids. Audited like every
-   command.
+1. `file_version_create` (command): validates name, type, declared size against caps
+   (under the ★R16 locks); inserts a `pending` version row; asks Storage for a signed
+   upload URL **bound to exactly one object path with upsert disabled** (★R1: a
+   prefix-scoped or upsert-capable URL is a write capability wider than the row it was
+   issued for); returns url + file/version ids. Audited like every command.
 2. Client PUTs the bytes to the signed URL (CLI does this inside `file put`; an HTTP-only
    agent does the same two calls).
 3. `file_version_commit` (command): server reads the object's metadata from Storage,
-   verifies existence and size ≤ declared, records the client-supplied sha256, flips the row
-   to `live`, and bumps the file's current version. A `pending` row older than 1 hour is
-   GC-eligible; an uncommitted upload never becomes visible.
+   verifies existence, and ★R4 **records the ACTUAL size from storage metadata**, refusing
+   if it exceeds the declared size — the declared number gated the quota, the real number
+   is what the row must state. The client-supplied sha256 is recorded as an **unverified
+   client attestation**, labeled exactly that in the schema and in CLI output. Chosen over
+   server-side hashing because hashing 25 MB inside an edge invocation buys integrity
+   theater at real memory/time cost: the attestation serves client-side narration
+   ("did my bytes arrive?"), while the AUTHORITY facts are path binding, upsert-off, and
+   measured size. Revisit alongside §10's content verification.
+   ★R2 — commit is a **one-time `pending`→`live` transition, callable only by the
+   principal that created the pending row**: the UPDATE carries
+   `WHERE state = 'pending' AND created_by = <caller>`; a second commit — or any commit
+   against a `live` row — is refused, so a replay can never rewrite the sha256 or content
+   type of a committed version.
+   ★R3 — the upload capability must not outlive the commit: the object path is
+   per-version, the URL is upsert-off, and storage therefore refuses a second PUT to the
+   same path. A version whose bytes could change after commit would carry a hash that no
+   longer describes them.
+   ★R15 — **the pending-row lifetime must be ≥ the upload URL lifetime.** The pinned
+   @supabase/storage-js issues signed upload URLs valid for TWO hours
+   (StorageFileApi.ts:345), so a 1-hour pending GC would delete the row while the URL
+   still works, leaving an orphan object with no durable record. Pending rows therefore
+   live 2 hours; the purge job also sweeps **orphan objects** — storage paths with no row,
+   or whose row expired un-committed — on the same schedule.
 
 Download mirrors it in one step: `file_download_url` (command) verifies membership and
 liveness, then returns a signed URL good for 5 minutes. Issuing a download URL is a command,
 not a read, because it grants a capability and belongs in the audit trail with an actor.
+
+★R1 — **every file command resolves its target by the compound key
+`(workspace_id, file_id)`, never by `file_id` alone.** The classic miss is
+lookup-by-id-then-check-the-caller's-membership-in-the-ROUTED-workspace: the caller is a
+member of workspace A, routes workspace A, and names a file_id from workspace B — every
+check passes and the download URL crosses the tenant boundary. The compound key kills the
+whole class. It applies to `file_download_url`, `file_version_commit`, `file_tombstone`,
+and `file_restore` alike, and ★R14 backs it at the schema layer.
+
+★R6 — **purge and restore race, so purge claims in one transaction**:
+`UPDATE … SET state='purged' WHERE tombstoned_at < now() - interval '30 days' AND state !=
+'purged' RETURNING …`, then deletes the claimed objects; `file_restore` refuses any row the
+purge already claimed. Outstanding signed download URLs: a tombstone does NOT revoke them —
+they expire naturally within 5 minutes, which the tombstone response says; at purge the
+object itself is gone, so any straggler URL dies with it.
 
 List is a read: `read` gains `resource: "files"` returning name, id, current version, size,
 content type, uploader, created/tombstoned timestamps. Same shape rules as the existing
@@ -157,6 +212,24 @@ The reducer governs the signal/authority core; files are an I/O-bound side surfa
 their own tables, like durable deliveries already are (`durable-delivery.ts` is the
 precedent — direct handlers beside the reducer in the same function). This keeps
 `build:command-core` untouched.
+
+★R9 — **bypassing the reducer means the handlers re-implement its protections, so here is
+the exact list S2 must carry, enumerated so none can be forgotten:**
+
+1. revocation check on EVERY command (token, principal, run, device, membership,
+   tombstone ledger — the same set `agent_delivery_read_context` consults);
+2. the agent-scope rule: nothing in the file surface joins `HUMAN_ONLY_COMMANDS`
+   implicitly — each new kind is classified, in writing, as agent-allowed or human-only
+   (v1: all five are agent-allowed except nothing; tombstone/restore carry the §6 actor
+   rule instead);
+3. an audit row per command, accepted or refused, with human + principal + run
+   attribution (G3);
+4. command-id idempotency (★R16);
+5. workspace tenancy via the ★R1 compound key;
+6. rate limits from §4, enforced in the same place the signal limits are.
+
+A green S2 that lacks any line of this list is the reducer-bypass failure the review
+predicted, found before it was written.
 
 ## 8. Schema sketch
 
@@ -171,24 +244,34 @@ CREATE TABLE swarm.files (
   tombstoned_at  timestamptz,
   tombstoned_by  uuid,
   created_at     timestamptz NOT NULL DEFAULT now(),
-  UNIQUE (workspace_id, lower(name))
+  -- ★R14: the composite target for file_versions' composite FK.
+  UNIQUE (file_id, workspace_id)
 );
+
+-- ★R13: expression uniqueness needs an index, not a table constraint —
+-- UNIQUE (workspace_id, lower(name)) inside CREATE TABLE does not apply in PostgreSQL.
+CREATE UNIQUE INDEX files_workspace_name_ci
+  ON swarm.files (workspace_id, lower(name));
 
 CREATE TABLE swarm.file_versions (
   version_id     uuid PRIMARY KEY,
-  file_id        uuid NOT NULL REFERENCES swarm.files,
+  file_id        uuid NOT NULL,
   workspace_id   uuid NOT NULL,            -- denormalized for RLS and quota sums
   version_n      integer NOT NULL,
   state          text NOT NULL,            -- 'pending' | 'live' | 'purged'
-  size_bytes     bigint NOT NULL,
-  sha256         text,
-  content_type   text NOT NULL,
+  size_bytes     bigint NOT NULL,          -- ★R4: measured at commit from storage metadata
+  sha256         text,                     -- ★R4: UNVERIFIED client attestation, not authority
+  content_type   text NOT NULL,            -- ★R8: unverified client declaration
   storage_path   text NOT NULL,
   uploaded_by_kind text NOT NULL,
   uploaded_by    uuid NOT NULL,
   created_at     timestamptz NOT NULL DEFAULT now(),
   committed_at   timestamptz,
-  UNIQUE (file_id, version_n)
+  UNIQUE (file_id, version_n),
+  -- ★R14: a version can never disagree with its file about the tenant. A plain FK on
+  -- file_id alone lets a hand-written workspace_id diverge, and the denormalized column
+  -- is what RLS and the quota SUM read — divergence there IS the tenant-isolation bug.
+  FOREIGN KEY (file_id, workspace_id) REFERENCES swarm.files (file_id, workspace_id)
 );
 ```
 
@@ -226,11 +309,12 @@ no script reaches is silently not run (AGENTS.md trap; the D-025 scar).
 
 | stage | contents | gate |
 |---|---|---|
-| S1 | migration (tables + RLS + pg_cron purge), applied locally only | `npm run test:p1-local` (announced DB slot) |
+| S1 | migration (tables + RLS + pg_cron purge), applied locally only. ★R12: also VERIFY that no leftover storage configuration or policy grants client access — `supabase/config.toml` carries unused storage config today, and the bucket must go live service-role-only | `npm run test:p1-local` (announced DB slot) + an enumerated policy listing in the stage's evidence |
 | S2 | command kinds `file_version_create/commit`, `file_download_url`, `file_tombstone/restore`; read `resource: "files"`; caps + rate limits; audit rows | `npm run test:p1-server` (Docker + slot) — new test files under `tests/p1-server/` are reached by that glob; plus `npm run check:edge` |
 | S3 | CLI verbs (`file put/ls/get/rm/restore`), copy, `--json` shapes | new files under `tests/p1-cli/` (glob-reached) + any pure helpers named in the `test` script's literal list — say in the change which script picks each file up |
 | S4 | storage integration end-to-end against local Supabase: signed upload, commit verification, pending-GC | `test:p1-local` |
 | S5 | web read-only list | `npm --prefix site test` |
+| S5b | ★R11: amend the LIVE `/acceptable-use` page BEFORE the feature ships — its current text names "a file store" as a breach of policy, which would make this feature a policy violation on its own site. The amendment scopes it: workspace file artifacts are a product feature; the "general infrastructure" prohibition stays for non-artifact bulk storage | site deploy + a grep of the DEPLOYED page for both the new carve-out and the retained prohibition |
 | S6 | migration applied to production, functions deployed, CLI released (both assets + npm), site deployed, `api.md` section added | the deploy checklist in AGENTS.md, verified against the DEPLOYED surfaces |
 
 S1+S2 land together (a migration nothing reads is inert but a command without its tables is
@@ -243,6 +327,7 @@ stage.
    current unless `--version`; reviewers may prefer explicit-always.)
 2. Is 30 days the right restore window, or should it match the signal `--until` cap (30d)
    by rule rather than coincidence?
-3. Does the two-phase upload need an explicit abort verb, or is 1-hour pending-GC enough?
+3. Does the two-phase upload need an explicit abort verb, or is the 2-hour pending expiry
+   (★R15) enough?
 4. Case-insensitive name uniqueness: right call, or does it fight agents that generate
    `Plan.md` and `plan.md` as distinct artifacts?
