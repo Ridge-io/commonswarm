@@ -2,6 +2,22 @@
 
 Supersedes `docs/org/2026-08-12-RESUME-HERE.md`. Written for someone reading the repo cold.
 
+## 2026-08-18 — v0.1.18 shipped from the fan-out sweep (newest; read first)
+
+An operator-directed fan-out (codex arm: repo; grok arm: site) swept for surfaces still
+asserting the pre-0.1.17 state and found ~30, including **one real bug**: the invite-link
+origin pin only recognized the supabase.co host, so links minted under `api.commonswarm.com`
+were refused in agent mode. Fixed, reviewed two-arm (grok's inversion refuted the first
+version of the fix's copy — the hosted reader had a URL but no key source — and that is also
+fixed), released as **v0.1.18**: GitHub release with both assets, `commonswarm@0.1.18` on
+npm, site deployed showing 0.1.18, both cold install doors verified. The onboarding prompt
+now names the npm fallback for sandboxed hosts, and the no-target errors name discovery and
+the anon key's public source. Commits `e298b25` (code+sweep) and this one.
+
+Still open from the Cowork dogfood: the agent's 403 was a principal/workspace mismatch —
+the fix is minting principal AND token against the same workspace id; not a product defect
+on current evidence.
+
 ## SECOND SESSION, same day — the sandbox-distribution lane (read this block first)
 
 Everything below it still stands; this block is newer. Full record:
