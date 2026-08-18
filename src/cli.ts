@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 
 import { randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { open, unlink } from "node:fs/promises";
-import { isAbsolute } from "node:path";
+import { basename, isAbsolute } from "node:path";
 import { createInterface } from "node:readline/promises";
 import type { Command } from "./protocol/index.js";
 import {
@@ -36,6 +36,25 @@ import {
   cloudTarget,
   type CloudTarget,
 } from "./cloud/config.js";
+import {
+  allowedExtensionList,
+  assertWritableDestination,
+  contentTypeForName,
+  FILE_CONTENT_WARNING,
+  FILE_MAX_VERSION_BYTES,
+  FileCommandRefused,
+  fileDownloadUrl,
+  fileRestore,
+  fileTombstone,
+  fileVersionCommit,
+  fileVersionCreate,
+  getObject,
+  listFilesAsAgent,
+  listFilesAsHuman,
+  putObject,
+  sha256Hex,
+  type FileListRow,
+} from "./cloud/files.js";
 import {
   discoverCloudTarget,
   DEFAULT_SITE_ORIGIN,
@@ -175,9 +194,9 @@ import {
 const KNOWN_FLAGS = new Set([
   "about", "agent-token-stdin", "all-devices", "anon-key", "branch", "capability-id",
   "claude-executable", "codex-executable", "confirm", "cwd", "device-id", "effort", "email",
-  "epoch", "evidence", "follow", "force-file-store", "foreground", "grok-executable", "head-sha",
-  "help", "include-stale", "invitation-id", "invitation-token-stdin", "json", "kind", "limit",
-  "link-stdin", "local", "model", "name", "ndjson", "no-browser", "opencode-executable",
+  "epoch", "evidence", "follow", "force", "force-file-store", "foreground", "grok-executable", "head-sha",
+  "help", "include-stale", "include-tombstoned", "invitation-id", "invitation-token-stdin", "json", "kind", "limit",
+  "link-stdin", "local", "model", "name", "ndjson", "no-browser", "opencode-executable", "out",
   "permissions", "principal-id", "provider", "reveal-anon-key", "run-id", "since", "site", "slug",
   "task-id", "to", "token-id", "ttl-ms", "uid", "until", "url", "version", "wait", "workspace-id",
 ]);
@@ -187,9 +206,11 @@ const BOOLEAN_FLAGS = new Set([
   "all-devices",
   "force-file-store",
   "follow",
+  "force",
   "foreground",
   "help",
   "include-stale",
+  "include-tombstoned",
   "invitation-token-stdin",
   "json",
   "link-stdin",
@@ -388,6 +409,11 @@ Usage:
   cswarm feed [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--about <ref>] [--kind <kind>] [--since <timestamp>] [--limit <n>] [--include-stale] [--json]
   cswarm inbox [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--kind <kind>] [--about <ref>] [--since <timestamp>] [--limit <n>] [--include-stale] [--wait <seconds>] [--json]
   cswarm inbox --follow --ndjson [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--kind <kind>] [--about <ref>] [--since <timestamp>] [--limit <n>] [--include-stale]
+  cswarm file put <local-path> [--name <name>] [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--agent-token-stdin] [--json]
+  cswarm file ls [--include-tombstoned] [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--agent-token-stdin] [--json]
+  cswarm file get <name|file-id> [--version <n>] [--out <local-path>] [--force] [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--agent-token-stdin] [--json]
+  cswarm file rm <name|file-id> [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--agent-token-stdin] [--json]
+  cswarm file restore <name|file-id> [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--agent-token-stdin] [--json]
   cswarm listen start --agent-token-stdin [--url <url> --anon-key <key>] --workspace-id <uuid> --provider grok|opencode|claude|codex [--cwd <absolute-path>] [--model <model>] [--effort <level>] [--permissions deny|allow] [--grok-executable <path>] [--opencode-executable <path>] [--claude-executable <path>] [--codex-executable <path>] [--foreground] [--json]
   cswarm listen status [--url <url> --anon-key <key>] --workspace-id <uuid> --principal-id <uuid> [--json]
   cswarm listen stop [--url <url> --anon-key <key>] --workspace-id <uuid> --principal-id <uuid> [--json]
@@ -421,6 +447,8 @@ Credential selection for command/dogfood:
                           One that persists or references the credential needs the complete
                           JSON artifact, because it needs a field a bare secret does not carry:
                             members       reads only          -- either form
+                            file put, file ls, file get, file rm, file restore
+                                          read and command, nothing persisted -- either form
                             listen start  persists durable state, rotates -- needs expires_at
                             token revoke  names what it revokes           -- needs token_id
 
@@ -3949,6 +3977,280 @@ async function runListen(args: Arguments): Promise<void> {
   throw new UsageError("listen requires start, status, or stop");
 }
 
+/*
+ * cswarm file — the S3 verb surface over the file-artifacts server commands
+ * (FILE-ARTIFACTS.md §3). Copy rule: every success says what happened, what is
+ * now true, and what happens next; every refusal arrives with the server's own
+ * message, which carries the numbers (§4).
+ */
+
+function formatFileSize(value: number | string | null): string {
+  const bytes = Number(value ?? 0);
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+type FileCliContext = {
+  cloud: CloudTarget;
+  selected: Awaited<ReturnType<typeof commandWorkspaceAndCredential>>;
+};
+
+async function fileContext(
+  args: Arguments,
+  extraFlags: readonly string[],
+  positionalCount: number,
+): Promise<FileCliContext> {
+  args.assertShape(
+    [...TARGET_FLAGS, "workspace-id", ...CREDENTIAL_FLAGS, "json", ...extraFlags],
+    positionalCount,
+  );
+  const cloud = await target(args);
+  const selected = await commandWorkspaceAndCredential(args, cloud, {
+    validateHumanWorkspace: true,
+  });
+  return { cloud, selected };
+}
+
+async function fileRows(context: FileCliContext): Promise<FileListRow[]> {
+  const { cloud, selected } = context;
+  if (selected.kind === "agent") {
+    return await listFilesAsAgent(
+      cloud,
+      selected.bearer,
+      selected.selectedWorkspace,
+    );
+  }
+  /* The read edge function accepts agent credentials only; humans read the
+   * membership-gated swarm_read view over REST, the same split members uses. */
+  return await listFilesAsHuman(
+    cloud,
+    selected.human!.accessToken,
+    selected.selectedWorkspace,
+  );
+}
+
+/** A selector is a file id when it parses as one; anything else is a name. */
+async function resolveFileSelector(
+  context: FileCliContext,
+  selector: string,
+): Promise<string> {
+  if (UUID_RE.test(selector)) return selector.toLowerCase();
+  const rows = await fileRows(context);
+  const match = rows.find(
+    (row) => row.name.toLowerCase() === selector.toLowerCase(),
+  );
+  if (match === undefined) {
+    throw new Error(
+      `no file named "${
+        sanitizeDisplayLabel(selector, "that name")
+      }" exists in this workspace; run cswarm file ls to see what does, or pass a file id`,
+    );
+  }
+  return match.file_id;
+}
+
+async function runFilePut(args: Arguments): Promise<void> {
+  const localPath = args.positionals[2];
+  if (!localPath) throw new UsageError("cswarm file put needs a local path");
+  const context = await fileContext(args, ["name"], 3);
+  let bytes: Uint8Array;
+  try {
+    bytes = readFileSync(localPath);
+  } catch {
+    throw new Error(`could not read ${localPath}; check the path and permissions`);
+  }
+  const name = args.optional("name") ?? basename(localPath);
+  if (bytes.byteLength > FILE_MAX_VERSION_BYTES) {
+    // Preflight so a refusal costs zero upload bytes; the server enforces the
+    // same cap authoritatively at create.
+    throw new Error(
+      `this file is ${formatFileSize(bytes.byteLength)}; the per-file limit is ${
+        formatFileSize(FILE_MAX_VERSION_BYTES)
+      }, so the upload was not started`,
+    );
+  }
+  const contentType = contentTypeForName(name);
+  if (contentType === null) {
+    throw new Error(
+      `"${
+        sanitizeDisplayLabel(name, "that name")
+      }" has no allowed file extension; the workspace accepts ${allowedExtensionList()}`,
+    );
+  }
+  const send = {
+    target: context.cloud,
+    workspaceId: context.selected.selectedWorkspace,
+    credential: context.selected.bearer,
+  };
+  const created = await fileVersionCreate(send, {
+    fileId: randomUUID(),
+    versionId: randomUUID(),
+    name,
+    declaredSizeBytes: bytes.byteLength,
+    contentType,
+  });
+  await putObject(context.cloud, created.upload_path, bytes, contentType);
+  const committed = await fileVersionCommit(send, {
+    fileId: created.file_id,
+    versionId: created.version_id,
+    sha256: sha256Hex(bytes),
+  });
+  if (args.has("json")) {
+    process.stdout.write(`${JSON.stringify(committed, null, 2)}\n`);
+    return;
+  }
+  process.stdout.write(
+    `Uploaded ${committed.name} — version ${committed.version_n}, ${
+      formatFileSize(committed.size_bytes)
+    }, visible to everyone in this workspace.\n` +
+      `Reference for signals, pinned to this version: --about ${committed.reference}\n` +
+      `The recorded sha256 is an unverified client attestation.\n`,
+  );
+}
+
+async function runFileLs(args: Arguments): Promise<void> {
+  const context = await fileContext(args, ["include-tombstoned"], 2);
+  const rows = await fileRows(context);
+  const visible = args.has("include-tombstoned")
+    ? rows
+    : rows.filter((row) => row.tombstoned_at === null);
+  if (args.has("json")) {
+    process.stdout.write(
+      `${
+        JSON.stringify(
+          {
+            workspace_id: context.selected.selectedWorkspace,
+            files: visible,
+            sha256_note: "unverified client attestation",
+            content_warning: FILE_CONTENT_WARNING,
+          },
+          null,
+          2,
+        )
+      }\n`,
+    );
+    return;
+  }
+  if (visible.length === 0) {
+    process.stdout.write(
+      rows.length === 0
+        ? "No files in this workspace yet. Upload one with cswarm file put <path>.\n"
+        : "No live files; tombstoned ones exist. See them with cswarm file ls --include-tombstoned.\n",
+    );
+    return;
+  }
+  process.stdout.write(`Files in this workspace (${visible.length}):\n`);
+  for (const row of visible) {
+    const marker = row.tombstoned_at === null
+      ? ""
+      : "  [tombstoned; restorable with cswarm file restore]";
+    process.stdout.write(
+      `- ${sanitizeDisplayLabel(row.name, "unnamed file")}  v${row.current_version} · ${
+        formatFileSize(row.size_bytes)
+      } · ${
+        sanitizeDisplayLabel(row.content_type ?? "unknown type", "unknown type")
+      } · by ${row.uploaded_by_kind ?? row.created_by_kind}${marker}\n`,
+    );
+  }
+  process.stdout.write(`${FILE_CONTENT_WARNING}\n`);
+}
+
+async function runFileGet(args: Arguments): Promise<void> {
+  const selector = args.positionals[2];
+  if (!selector) throw new UsageError("cswarm file get needs a file name or id");
+  const context = await fileContext(args, ["version", "out", "force"], 3);
+  const versionN = args.has("version")
+    ? integer(args, "version", { minimum: 1 })
+    : null;
+  const fileId = await resolveFileSelector(context, selector);
+  const send = {
+    target: context.cloud,
+    workspaceId: context.selected.selectedWorkspace,
+    credential: context.selected.bearer,
+  };
+  const grant = await fileDownloadUrl(send, { fileId, versionN });
+  const destination = args.optional("out") ?? basename(grant.name);
+  assertWritableDestination(destination, args.has("force"), existsSync);
+  const bytes = await getObject(context.cloud, grant.download_path);
+  writeFileSync(destination, bytes);
+  if (args.has("json")) {
+    process.stdout.write(
+      `${
+        JSON.stringify(
+          { ...grant, written_to: destination, written_bytes: bytes.byteLength },
+          null,
+          2,
+        )
+      }\n`,
+    );
+    return;
+  }
+  process.stdout.write(
+    `Downloaded ${grant.name} version ${grant.version_n} (${
+      formatFileSize(bytes.byteLength)
+    }, ${grant.content_type}) to ${destination}.\n${grant.content_warning}\n`,
+  );
+}
+
+async function runFileRm(args: Arguments): Promise<void> {
+  const selector = args.positionals[2];
+  if (!selector) throw new UsageError("cswarm file rm needs a file name or id");
+  /* ★R7: no --confirm here on purpose — the tombstone is reversible for 30
+   * days and says so; the ceremony belongs to the irreversible purge, which
+   * nobody invokes by hand. */
+  const context = await fileContext(args, [], 3);
+  const fileId = await resolveFileSelector(context, selector);
+  const result = await fileTombstone({
+    target: context.cloud,
+    workspaceId: context.selected.selectedWorkspace,
+    credential: context.selected.bearer,
+  }, { fileId });
+  if (args.has("json")) {
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    return;
+  }
+  process.stdout.write(
+    `Tombstoned ${result.name}. It is hidden from listings and downloads now, and stays restorable with cswarm file restore until ${
+      result.restorable_until ?? "the 30-day window ends"
+    }.\nAfter that the purge permanently deletes the bytes; existing download URLs expire on their own 5-minute clock.\n`,
+  );
+}
+
+async function runFileRestore(args: Arguments): Promise<void> {
+  const selector = args.positionals[2];
+  if (!selector) {
+    throw new UsageError("cswarm file restore needs a file name or id");
+  }
+  const context = await fileContext(args, [], 3);
+  const fileId = await resolveFileSelector(context, selector);
+  const result = await fileRestore({
+    target: context.cloud,
+    workspaceId: context.selected.selectedWorkspace,
+    credential: context.selected.bearer,
+  }, { fileId });
+  if (args.has("json")) {
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    return;
+  }
+  process.stdout.write(
+    `Restored ${result.name}. It is listed and downloadable again; nothing else changed.\n`,
+  );
+}
+
+async function runFile(args: Arguments): Promise<void> {
+  const action = args.positionals[1];
+  if (action === "put") return await runFilePut(args);
+  if (action === "ls") return await runFileLs(args);
+  if (action === "get") return await runFileGet(args);
+  if (action === "rm") return await runFileRm(args);
+  if (action === "restore") return await runFileRestore(args);
+  throw new UsageError(
+    "cswarm file takes put, ls, get, rm, or restore",
+  );
+}
+
 async function runTaskCommand(args: Arguments): Promise<void> {
   args.assertShape(
     [...TARGET_FLAGS, ...ROUTE_FLAGS, ...CREDENTIAL_FLAGS, ...TASK_FLAGS],
@@ -4211,6 +4513,10 @@ async function main(): Promise<void> {
   }
   if (verb === "status") {
     await runStatus(args);
+    return;
+  }
+  if (verb === "file") {
+    await runFile(args);
     return;
   }
   if (verb === "members") {
