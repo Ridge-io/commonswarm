@@ -34,7 +34,7 @@
  *   invitation TTL <= 7 days                -> INVITATION_MAX_TTL_MS, :333
  *   agent credential TTL <= 24 hours        -> AGENT_TOKEN_MAX_TTL_MS, :334
  *   file version <= 25 MB                   -> FILE_MAX_VERSION_BYTES,
- *   workspace file bytes <= 1 GB,              supabase/functions/command/file-artifacts.ts:41-42
+ *   workspace file bytes <= 1 GB,              supabase/functions/command/file-artifacts.ts:43-47
  *   500 unpurged names / workspace,          -> FILE_WORKSPACE_MAX_NAMES,
  *   20 live or in-flight versions / name,       FILE_MAX_VERSIONS_PER_NAME, :43-44
  *   30 version creates / principal / hour    -> FILE_CREATE_RATE_LIMIT_PER_HOUR, :45
