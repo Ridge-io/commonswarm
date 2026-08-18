@@ -312,6 +312,12 @@ export interface FileStorage {
     filename: string,
     expiresInSeconds: number,
   ): Promise<string>;
+  /**
+   * Batch object deletion for the purge-queue drain (S4). Must SUCCEED for
+   * paths that hold no object — a pending row GC'd before its PUT queues a
+   * path that was never written, and the drain still has to retire it.
+   */
+  removeObjects(paths: readonly string[]): Promise<void>;
 }
 
 export async function fileVersionCreate(
@@ -950,4 +956,60 @@ export async function fileRestore(
     ok: true,
     body: { file_id: cmd.file_id, name: file.name, restored: true },
   };
+}
+
+/**
+ * S4: the purge-queue consumer. swarm.purge_file_artifacts() (pg_cron) claims
+ * rows and queues their storage paths — SQL cannot delete storage objects (the
+ * storage schema trigger refuses; measured, see the migration comment) — and
+ * THIS drains the queue through the Storage API. It runs best-effort after any
+ * file command, in its own transaction: at-least-once with a durable queue, so
+ * a failed drain simply leaves rows for the next one. removeObjects tolerates
+ * paths that never had an object (a pending row GC'd before its PUT).
+ */
+export async function drainFilePurgeQueue(
+  tx: Sql,
+  storage: FileStorage,
+  limit: number,
+): Promise<number> {
+  /* The attempt stamp rides the CLAIM update, before the storage call: a row
+   * must record that it was tried even when the try fails, and a throw across
+   * the transaction would roll the stamp back — so the failure branch writes
+   * last_error and RETURNS instead of throwing (S4 review item 2; the D-090
+   * family — a pending row must distinguish never-tried from failing). */
+  const rows = await tx<{ storage_path: string }[]>`
+    UPDATE swarm.file_purge_queue
+    SET attempt_count = attempt_count + 1,
+        last_attempt_at = statement_timestamp()
+    WHERE storage_path IN (
+      SELECT storage_path
+      FROM swarm.file_purge_queue
+      WHERE deleted_at IS NULL
+      ORDER BY claimed_at
+      LIMIT ${limit}
+      FOR UPDATE SKIP LOCKED
+    )
+    RETURNING storage_path
+  `;
+  if (rows.length === 0) return 0;
+  const paths = rows.map((row) => row.storage_path);
+  try {
+    await storage.removeObjects(paths);
+  } catch (error) {
+    const detail = String(
+      error instanceof Error ? error.message : error,
+    ).slice(0, 500);
+    await tx`
+      UPDATE swarm.file_purge_queue
+      SET last_error = ${detail}
+      WHERE storage_path = ANY(${paths})
+    `;
+    return 0;
+  }
+  await tx`
+    UPDATE swarm.file_purge_queue
+    SET deleted_at = statement_timestamp(), last_error = NULL
+    WHERE storage_path = ANY(${paths})
+  `;
+  return paths.length;
 }

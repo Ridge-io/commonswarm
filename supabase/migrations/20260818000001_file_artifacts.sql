@@ -131,9 +131,15 @@ ON CONFLICT (id) DO UPDATE SET public = false;
 -- through the Storage API with the service key. Restore semantics do not wait
 -- for the bytes: a claimed row is 'purged' the moment the claim commits.
 CREATE TABLE swarm.file_purge_queue (
-  storage_path text PRIMARY KEY,
-  claimed_at   timestamptz NOT NULL DEFAULT statement_timestamp(),
-  deleted_at   timestamptz
+  storage_path  text PRIMARY KEY,
+  claimed_at    timestamptz NOT NULL DEFAULT statement_timestamp(),
+  deleted_at    timestamptz,
+  -- S4 review: a pending row must distinguish never-tried from failed-repeatedly
+  -- (the D-090 family — silence looks like still-waiting). The drain stamps every
+  -- attempt durably; last_error is bounded by the drain, not by a constraint.
+  attempt_count int NOT NULL DEFAULT 0,
+  last_attempt_at timestamptz,
+  last_error    text
 );
 ALTER TABLE swarm.file_purge_queue OWNER TO swarm_admin;
 ALTER TABLE swarm.file_purge_queue ENABLE ROW LEVEL SECURITY;
