@@ -2,6 +2,34 @@
 
 Supersedes `docs/org/2026-08-12-RESUME-HERE.md`. Written for someone reading the repo cold.
 
+## 2026-08-18, second lane — 24h bootstrap credentials (v0.1.19) and the file-artifacts spec
+
+- **v0.1.19 is RELEASED and LIVE** (GitHub + npm + site + edge). Bootstrap agent credentials
+  may last 24h (operator ruling after a measured sandbox onboarding failure); rotation
+  successors deliberately stay 8h. The web connect flow now mints at the 24h max, and the
+  onboarding prompt tells sandboxed agents that allowlist changes need a FRESH session.
+- **The edge `command` function carries a hand-written duplicate of AGENT_TOKEN_MAX_TTL_MS
+  (index.ts:386) outside the generated bundle** — it drifted on the first deploy and the
+  server refused what the reducer allowed. It now carries a warning comment; treat any
+  future protocol-constant change as a two-file change.
+- Both D-036 arms then found the CLAIM family unmoved (reducer message, SWARM-CLOUD.md,
+  api.md, acceptable-use, llms.txt) — fixed in `f27bdf8`, swept with a control that excludes
+  the still-true successor-8h claims.
+- **`docs/design/2026-08-18-FILE-ARTIFACTS.md`** (workspace file storage spec) is drafted and
+  under amendment for 16 confirmed review findings from codex (4 P1: DDL cannot apply,
+  composite FK, pending-cleanup vs 2h upload-URL race, no concurrency rule on caps) and grok
+  (command-layer IDOR via bare file_id, commit replay, upload-URL-after-commit overwrite,
+  version-spam, purge/restore race, AUP clash, inverted friction placement). Implementation
+  is NOT started — the amended spec is the queue head for the next engineering lane.
+- **CSwarmDev is a live agent in the Science Swarm workspace** (principal 297b8698, listener
+  on yulanbots-mac-mini, provider claude, allow). An ask about file-exchange needs is out to
+  the resident Claude agent; reply may arrive via the listener.
+- The Cowork 403 saga root cause: the sandbox proxy answers 403 for non-allowlisted hosts and
+  a RUNNING session keeps its startup network policy — the backend had authorized the token
+  all along (verified by replaying the exact request: 200). CLI defect recorded: bare
+  "HTTP 403" hides the response body, making proxy and authorization refusals
+  indistinguishable.
+
 ## 2026-08-18 — v0.1.18 shipped from the fan-out sweep (newest; read first)
 
 An operator-directed fan-out (codex arm: repo; grok arm: site) swept for surfaces still
