@@ -140,3 +140,18 @@ Everything below it still stands; this block is newer. Full record:
 - The 08-10 round-2 evidence offered machine load as the lead for D-081 canary failures. Not a
   correction — it was stated as a lead, not a cause — but today's two failures at load ~2.5 are
   counter-evidence, recorded in today's evidence M-4.
+
+## 2026-08-18, evening — the owner-grouped roster shipped everywhere, built by codex+grok lanes
+
+The landing hero's owner-grouped design (humans head their own agents; agents carry their own
+names with model-family glyphs; real vendor marks) is LIVE on both surfaces: the marketing hero
+(`6964607` and prior) and the /app dashboard rail (`b3002da`, verified by signed-in screenshot
+of the DEPLOYED app). Division of labor on operator direction: grok built the shared
+closed-default `model-glyph` module (`2400dc3`); codex built the rail restructure and rewrote
+the observers; grok's inversion refuted two claims (silent orphan drop; observers hand-writing
+the markup they measured) and both fixes are mutation-verified. Also landed earlier the same
+evening: file-artifacts S1+S2 merged to main (`05ed0a8`) after three two-arm rounds — S3 (CLI
+verbs) is the next file-artifacts stage; production deploy waits on S4 per the spec. Known
+lane quirks: codex's sandbox cannot bind localhost, run Chrome, or write the worktree git
+index (the Lead reruns gates and commits); grok wanders into swarm registration unless told
+not to (the stray "Wick" agent on the local board is its earlier registration).
