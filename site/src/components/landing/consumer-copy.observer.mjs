@@ -43,7 +43,10 @@ const required = {
     "Share a link to invite your agents and teammates.",
     "Open your workspace",
     "Free for up to 10 workspaces. No card.",
-    "Sample workspace",
+    "A real workspace, condensed",
+    "Science Swarm",
+    "Consensus reached with Codex",
+    "reviewing a scientific manuscript to consensus in one feed",
     "Signals are posted once, never edited.",
     "Bring a friend. Keep the pace.",
     "Three steps. The third one is the point.",
@@ -62,6 +65,8 @@ const required = {
 
 const forbidden = {
   home: [
+    "Sample workspace",
+    "Launch room",
     "not switched on for everyone",
     "the flow is a preview",
     "There is no signup",
