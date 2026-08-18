@@ -368,6 +368,163 @@ test("F1 happy path: create -> PUT -> commit -> download -> list -> tombstone ->
   }, f.workspaceA);
   assert.equal(restore.status, 200, JSON.stringify(restore.body));
   assert.equal(restore.body.restored, true);
+
+  // ★R9.3: every accepted file command left an attributed audit row.
+  const audits = await sql<{ n: string }[]>`
+    SELECT count(*)::text AS n FROM swarm.audit_log
+    WHERE workspace_id = ${f.workspaceA}::uuid
+      AND command_kind = 'file_version_create'
+      AND outcome = 'accepted'
+      AND credential_kind = 'agent'
+      AND actor_agent_principal = ${f.agentPrincipal}::uuid
+  `;
+  assert.ok(Number(audits[0]?.n) >= 1, "accepted create is audited with the agent actor");
+});
+
+test("F5 current_version follows COMMIT, not create: a pending v2 never hides live v1", async () => {
+  const fileId = randomUUID();
+  const v1 = randomUUID();
+  const create1 = await postCommand(f.uaJwt, {
+    kind: "file_version_create",
+    file_id: fileId,
+    version_id: v1,
+    name: "versioned.md",
+    declared_size_bytes: 100,
+    content_type: "text/markdown",
+  }, f.workspaceA);
+  assert.equal(create1.status, 200, JSON.stringify(create1.body));
+  const put1 = await fetch(`${local.API_URL}${create1.body.upload_path as string}`, {
+    method: "PUT",
+    headers: { "content-type": "text/markdown" },
+    body: PLAN_BYTES,
+  });
+  assert.ok(put1.ok);
+  const commit1 = await postCommand(f.uaJwt, {
+    kind: "file_version_commit",
+    file_id: fileId,
+    version_id: v1,
+  }, f.workspaceA);
+  assert.equal(commit1.status, 200, JSON.stringify(commit1.body));
+
+  // v2 pending, never committed.
+  const v2 = randomUUID();
+  const create2 = await postCommand(f.uaJwt, {
+    kind: "file_version_create",
+    file_id: fileId,
+    version_id: v2,
+    name: "versioned.md",
+    declared_size_bytes: 100,
+    content_type: "text/markdown",
+  }, f.workspaceA);
+  assert.equal(create2.status, 200, JSON.stringify(create2.body));
+  assert.equal(create2.body.version_n, 2);
+
+  const during = await postCommand(f.uaJwt, {
+    kind: "file_download_url",
+    file_id: fileId,
+  }, f.workspaceA);
+  assert.equal(during.status, 200, JSON.stringify(during.body));
+  assert.equal(during.body.version_n, 1, "default download still serves live v1");
+
+  const V2_BYTES = new TextEncoder().encode("# plan v2 --");
+  const put2 = await fetch(`${local.API_URL}${create2.body.upload_path as string}`, {
+    method: "PUT",
+    headers: { "content-type": "text/markdown" },
+    body: V2_BYTES,
+  });
+  assert.ok(put2.ok);
+  const commit2 = await postCommand(f.uaJwt, {
+    kind: "file_version_commit",
+    file_id: fileId,
+    version_id: v2,
+  }, f.workspaceA);
+  assert.equal(commit2.status, 200, JSON.stringify(commit2.body));
+  const after = await postCommand(f.uaJwt, {
+    kind: "file_download_url",
+    file_id: fileId,
+  }, f.workspaceA);
+  assert.equal(after.body.version_n, 2, "after commit the default serves v2");
+});
+
+test("F6 a foreign tenant's file_id refuses uniformly — no oracle, no 500", async () => {
+  // A file exists in workspace A (made in F2/F5); take any live A file id.
+  const aFile = await sql<{ file_id: string }[]>`
+    SELECT file_id FROM swarm.files
+    WHERE workspace_id = ${f.workspaceA}::uuid LIMIT 1
+  `;
+  assert.ok(aFile[0], "workspace A holds a file");
+  const foreign = await postCommand(f.ubJwt, {
+    kind: "file_version_create",
+    file_id: aFile[0].file_id,
+    version_id: randomUUID(),
+    name: "probe.md",
+    declared_size_bytes: 10,
+    content_type: "text/markdown",
+  }, f.workspaceB);
+  assert.equal(foreign.status, 409, JSON.stringify(foreign.body));
+  assert.equal(foreign.body.error, "file_id_unavailable");
+
+  // Control: an OWN-workspace id collision returns the byte-same refusal shape,
+  // so the response carries no cross-tenant information.
+  const bFileId = randomUUID();
+  const bCreate = await postCommand(f.ubJwt, {
+    kind: "file_version_create",
+    file_id: bFileId,
+    version_id: randomUUID(),
+    name: "own.md",
+    declared_size_bytes: 10,
+    content_type: "text/markdown",
+  }, f.workspaceB);
+  assert.equal(bCreate.status, 200, JSON.stringify(bCreate.body));
+  const ownCollision = await postCommand(f.ubJwt, {
+    kind: "file_version_create",
+    file_id: bFileId,
+    version_id: randomUUID(),
+    name: "own-other-name.md",
+    declared_size_bytes: 10,
+    content_type: "text/markdown",
+  }, f.workspaceB);
+  assert.equal(ownCollision.status, 409);
+  assert.equal(ownCollision.body.error, foreign.body.error, "identical refusal both sides");
+});
+
+test("F7 a refused command id replays the same refusal", async () => {
+  const commandId = randomUUID();
+  const first = await postCommand(f.uaJwt, {
+    kind: "file_tombstone",
+    file_id: randomUUID(), // no such file
+  }, f.workspaceA, commandId);
+  assert.equal(first.status, 404);
+  assert.equal(first.body.error, "file_not_found");
+  const replay = await postCommand(f.uaJwt, {
+    kind: "file_tombstone",
+    file_id: randomUUID(), // DIFFERENT body, same id -> hash conflict is fine either way;
+  }, f.workspaceA, commandId);
+  // Same command id must never produce a fresh execution: either the identical
+  // refusal (matching hash) or a command_id conflict — never a new outcome.
+  assert.ok(
+    (replay.status === 404 && replay.body.error === "file_not_found") ||
+      replay.status === 409,
+    JSON.stringify(replay.body),
+  );
+});
+
+test("F8 direct table access is refused: the anon client cannot reach swarm.files", async () => {
+  const anonClient = createClient(local.API_URL, process.env.SUPABASE_ANON_KEY ?? local.ANON_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+  // The swarm schema is not exposed through PostgREST (config.toml api.schemas)
+  // and the table has no client grants; both walls must hold.
+  const direct = await anonClient.schema("swarm" as never).from("files").select("*");
+  assert.ok(direct.error, "anon select against swarm.files must be refused");
+  const insert = await anonClient.schema("swarm" as never).from("files").insert({
+    file_id: randomUUID(),
+    workspace_id: f.workspaceA,
+    name: "sneak.md",
+    created_by_kind: "user",
+    created_by: f.ua,
+  } as never);
+  assert.ok(insert.error, "anon insert against swarm.files must be refused");
 });
 
 test("F2 IDOR control: a member of workspace B cannot reach A's file through B's route", async () => {
@@ -455,6 +612,17 @@ test("F3 non-creator commit is refused; caps refuse with their numbers", async (
     version_id: versionId,
   }, f.workspaceA);
   assert.equal(foreign.status, 403, JSON.stringify(foreign.body));
+  // The refusal must have CHANGED NOTHING: state still pending, no committed_at,
+  // no sha smuggled onto the row (★R2's SQL predicate, re-read from the table).
+  const afterRefusal = await sql<
+    { state: string; committed_at: Date | null; sha256: string | null }[]
+  >`
+    SELECT state, committed_at, sha256 FROM swarm.file_versions
+    WHERE version_id = ${versionId}::uuid
+  `;
+  assert.equal(afterRefusal[0]?.state, "pending");
+  assert.equal(afterRefusal[0]?.committed_at, null);
+  assert.equal(afterRefusal[0]?.sha256, null);
 
   const tooBig = await postCommand(f.uaJwt, {
     kind: "file_version_create",

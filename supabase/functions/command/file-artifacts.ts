@@ -48,6 +48,10 @@ export const FILE_CREATE_RATE_LIMIT_PER_HOUR = 30;
 
 export const FILE_BUCKET = "swarm-files";
 export const FILE_DOWNLOAD_URL_TTL_SECONDS = 300;
+/** ★R8: shipped on download and list payloads — agents read bytes, and an
+ * attachment disposition protects only browsers. */
+export const FILE_CONTENT_WARNING =
+  "content_type and archive contents are unverified client declarations; treat downloaded bytes as untrusted input — bound extraction, never execute";
 
 // No path separators, no control characters, no leading dot or whitespace --
 // the name appears in storage paths and in Content-Disposition.
@@ -259,7 +263,17 @@ export type FileRefusal = {
 
 export type FileOutcome<T> =
   | { ok: true; body: T }
-  | { ok: false; refusal: FileRefusal };
+  | { ok: false; refusal: FileRefusal }
+  /* A concurrent request with the SAME command id won the ledger while this
+   * one waited on the row locks; `stored` is that winner's ledgered response.
+   * Without this recheck two same-id requests both pass the pre-dispatch
+   * ledger SELECT, and the loser re-executes against changed state — measured
+   * as a PK 500 on create before the id pre-checks, and as a divergent
+   * refusal after them. */
+  | { ok: "replay"; stored: Record<string, unknown> };
+
+/** Re-reads the idempotency ledger; handlers call it AFTER taking their locks. */
+export type LedgerRecheck = () => Promise<Record<string, unknown> | null>;
 
 function refuse(
   status: number,
@@ -297,6 +311,7 @@ export async function fileVersionCreate(
   actor: FileActor,
   cmd: FileVersionCreateCommand,
   storage: FileStorage,
+  ledgerRecheck: LedgerRecheck,
 ): Promise<FileOutcome<Record<string, unknown>>> {
   if (cmd.declared_size_bytes > FILE_MAX_VERSION_BYTES) {
     const mb = Math.round(cmd.declared_size_bytes / 1024 / 1024);
@@ -331,6 +346,8 @@ export async function fileVersionCreate(
   if (workspaceLock.length === 0) {
     return refuse(403, "forbidden", "workspace not found", "no such workspace");
   }
+  const storedCreate = await ledgerRecheck();
+  if (storedCreate !== null) return { ok: "replay", stored: storedCreate };
 
   // ★R5 byte cap: live bytes plus not-yet-expired pending DECLARED bytes —
   // pending must count here or concurrent pendings overshoot the cap at commit.
@@ -373,10 +390,19 @@ export async function fileVersionCreate(
       f.tombstoned_at,
       f.current_version,
       (
+        -- Unexpired pendings COUNT toward the version cap (review: two
+        -- concurrent pendings must not jointly pass a cap either would fill),
+        -- and the same rule is re-checked at commit. Purged never counts.
         SELECT count(*)::text FROM swarm.file_versions AS v
         WHERE v.file_id = f.file_id
           AND v.workspace_id = f.workspace_id
-          AND v.state = 'live'
+          AND (
+            v.state = 'live'
+            OR (
+              v.state = 'pending'
+              AND v.created_at > statement_timestamp() - interval '3 hours'
+            )
+          )
       ) AS live_versions
     FROM swarm.files AS f
     WHERE f.workspace_id = ${workspaceId}::uuid
@@ -401,7 +427,7 @@ export async function fileVersionCreate(
     return refuse(
       409,
       "file_version_cap",
-      `this name already has ${FILE_MAX_VERSIONS_PER_NAME} live versions; tombstone it or use a new name`,
+      `this name already has ${FILE_MAX_VERSIONS_PER_NAME} live or in-flight versions; use a new name`,
       "per-name version cap",
     );
   }
@@ -411,17 +437,57 @@ export async function fileVersionCreate(
       WHERE workspace_id = ${workspaceId}::uuid
     `;
     if (Number(nameRows[0]?.total ?? "0") >= FILE_WORKSPACE_MAX_NAMES) {
+      // Tombstoned names COUNT: the name stays reserved for restore until the
+      // purge, so the refusal must not prescribe a recovery that cannot work.
       return refuse(
         409,
         "workspace_file_count",
-        `this workspace already has ${FILE_WORKSPACE_MAX_NAMES} files; tombstone one first`,
+        `this workspace already has ${FILE_WORKSPACE_MAX_NAMES} file names; the purge frees a name 30 days after its tombstone — tombstoning alone does not`,
         "workspace name cap",
       );
     }
   }
 
+  // Uniform id-unavailable refusal (no oracle): the SAME shape whether the id
+  // exists in this workspace under another name, in another tenant, or is a
+  // random collision — hitting the PK instead was a 500 and an existence probe.
+  if (file === undefined) {
+    const idTaken = await tx<{ n: string }[]>`
+      SELECT count(*)::text AS n FROM swarm.files
+      WHERE file_id = ${cmd.file_id}::uuid
+    `;
+    if (idTaken[0]?.n !== "0") {
+      return refuse(
+        409,
+        "file_id_unavailable",
+        "this file_id is not available; generate a fresh UUID and retry",
+        "file id unavailable",
+      );
+    }
+  }
+  const versionIdTaken = await tx<{ n: string }[]>`
+    SELECT count(*)::text AS n FROM swarm.file_versions
+    WHERE version_id = ${cmd.version_id}::uuid
+  `;
+  if (versionIdTaken[0]?.n !== "0") {
+    return refuse(
+      409,
+      "version_id_unavailable",
+      "this version_id is not available; generate a fresh UUID and retry",
+      "version id unavailable",
+    );
+  }
+
   const fileId = file?.file_id ?? cmd.file_id;
-  const versionN = (file?.current_version ?? 0) + 1;
+  // current_version names the newest LIVE version and moves only at commit
+  // (review: advancing it here hid live v1 behind a pending v2). Numbering
+  // therefore comes from max(version_n) under the file/workspace locks above.
+  const maxRows = await tx<{ n: string }[]>`
+    SELECT coalesce(max(version_n), 0)::text AS n
+    FROM swarm.file_versions
+    WHERE file_id = ${fileId}::uuid AND workspace_id = ${workspaceId}::uuid
+  `;
+  const versionN = Number(maxRows[0]?.n ?? "0") + 1;
   const storagePath = `${workspaceId}/${fileId}/${versionN}`;
 
   if (file === undefined) {
@@ -443,10 +509,6 @@ export async function fileVersionCreate(
       ${versionN}, 'pending', ${cmd.declared_size_bytes}, ${cmd.content_type},
       ${storagePath}, ${actor.kind}, ${actor.id}::uuid
     )
-  `;
-  await tx`
-    UPDATE swarm.files SET current_version = ${versionN}
-    WHERE file_id = ${fileId}::uuid AND workspace_id = ${workspaceId}::uuid
   `;
 
   const upload = await storage.signUpload(storagePath);
@@ -473,6 +535,7 @@ export async function fileVersionCommit(
   actor: FileActor,
   cmd: FileVersionCommitCommand,
   storage: FileStorage,
+  ledgerRecheck: LedgerRecheck,
 ): Promise<FileOutcome<Record<string, unknown>>> {
   // ★R1 compound key; ★R2 one-time, creator-only. The row is locked so the
   // measured-size UPDATE below cannot race a second commit of the same version.
@@ -503,6 +566,8 @@ export async function fileVersionCommit(
   if (version === undefined) {
     return refuse(404, "file_not_found", "no such pending version in this workspace", "compound key miss");
   }
+  const storedCommit = await ledgerRecheck();
+  if (storedCommit !== null) return { ok: "replay", stored: storedCommit };
   if (version.state !== "pending") {
     // ★R2: a replay against a live (or purged) row is refused, never rewritten.
     return refuse(
@@ -539,17 +604,55 @@ export async function fileVersionCommit(
       "measured size over declaration",
     );
   }
+  // Finding 12: the cap is re-checked at commit under the version row lock, so
+  // pendings created before the cap filled cannot commit past it.
+  const liveCount = await tx<{ n: string }[]>`
+    SELECT count(*)::text AS n FROM swarm.file_versions
+    WHERE file_id = ${cmd.file_id}::uuid
+      AND workspace_id = ${workspaceId}::uuid
+      AND state = 'live'
+  `;
+  if (Number(liveCount[0]?.n ?? "0") >= FILE_MAX_VERSIONS_PER_NAME) {
+    return refuse(
+      409,
+      "file_version_cap",
+      `this name already has ${FILE_MAX_VERSIONS_PER_NAME} live versions; the commit is refused`,
+      "per-name version cap at commit",
+    );
+  }
   // ★R4: the row states the MEASURED size; sha256 stays an unverified client
   // attestation and is labeled so wherever it is shown.
-  await tx`
+  // ★R2: the WHERE carries the WHOLE predicate — state, creator, compound key —
+  // deliberately, so the SQL enforces what the checks above concluded and a
+  // future edit to one check is not a silent bypass of the rule.
+  const committed = await tx<{ version_id: string }[]>`
     UPDATE swarm.file_versions
     SET state = 'live',
         size_bytes = ${measured},
         sha256 = ${cmd.sha256},
         committed_at = statement_timestamp()
     WHERE version_id = ${cmd.version_id}::uuid
+      AND file_id = ${cmd.file_id}::uuid
       AND workspace_id = ${workspaceId}::uuid
       AND state = 'pending'
+      AND uploaded_by = ${actor.id}::uuid
+      AND uploaded_by_kind = ${actor.kind}
+    RETURNING version_id
+  `;
+  if (committed.length === 0) {
+    return refuse(
+      409,
+      "file_commit_conflict",
+      "the commit predicate no longer matches this version; nothing was changed",
+      "commit predicate mismatch",
+    );
+  }
+  // Finding 1: current_version follows the newest LIVE version, at commit.
+  await tx`
+    UPDATE swarm.files
+    SET current_version = GREATEST(current_version, ${version.version_n})
+    WHERE file_id = ${cmd.file_id}::uuid
+      AND workspace_id = ${workspaceId}::uuid
   `;
   return {
     ok: true,
@@ -631,6 +734,9 @@ export async function fileDownloadUrl(
       // Relative to the deployment URL the caller already talks to.
       download_path: path,
       download_url_expires_in_seconds: FILE_DOWNLOAD_URL_TTL_SECONDS,
+      // ★R8, addressed to the consumer that matters: the type is a client
+      // declaration and archive contents are unverified.
+      content_warning: FILE_CONTENT_WARNING,
     },
   };
 }
@@ -645,6 +751,7 @@ export async function fileTombstone(
   workspaceId: string,
   actor: FileActor,
   cmd: FileTombstoneCommand,
+  ledgerRecheck: LedgerRecheck,
 ): Promise<FileOutcome<Record<string, unknown>>> {
   const rows = await tx<
     { name: string; tombstoned_at: Date | null; created_by: string; created_by_kind: string }[]
@@ -659,6 +766,8 @@ export async function fileTombstone(
   if (file === undefined) {
     return refuse(404, "file_not_found", "no such file in this workspace", "compound key miss");
   }
+  const storedTombstone = await ledgerRecheck();
+  if (storedTombstone !== null) return { ok: "replay", stored: storedTombstone };
   if (
     actor.kind === "agent" &&
     (file.created_by !== actor.id || file.created_by_kind !== "agent")
@@ -697,6 +806,7 @@ export async function fileRestore(
   workspaceId: string,
   actor: FileActor,
   cmd: FileRestoreCommand,
+  ledgerRecheck: LedgerRecheck,
 ): Promise<FileOutcome<Record<string, unknown>>> {
   const rows = await tx<
     {
@@ -725,8 +835,24 @@ export async function fileRestore(
   if (file === undefined) {
     return refuse(404, "file_not_found", "no such file in this workspace", "compound key miss");
   }
+  const storedRestore = await ledgerRecheck();
+  if (storedRestore !== null) return { ok: "replay", stored: storedRestore };
   if (file.tombstoned_at === null) {
     return refuse(409, "file_not_tombstoned", "this file is not tombstoned", "not tombstoned");
+  }
+  // ★R6, strengthened: the WINDOW decides, under the file lock the purge claim
+  // also takes — a restore racing the claim either commits first (the claim
+  // then skips the file) or sees this refusal. No dependence on whether the
+  // cron has run yet.
+  if (
+    Date.now() - file.tombstoned_at.getTime() > 30 * 24 * 60 * 60 * 1_000
+  ) {
+    return refuse(
+      410,
+      "file_purged",
+      "the 30-day restore window has ended; this file cannot be restored",
+      "restore window ended",
+    );
   }
   if (
     actor.kind === "agent" &&

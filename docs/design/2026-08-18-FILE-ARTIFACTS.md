@@ -90,9 +90,11 @@ Proposed caps, all enforced server-side at version-create time:
 Exceeding a cap is a refusal with the number in it ("this file is 31 MB; the per-file limit
 is 25 MB"), not a bare status.
 
-★R5 — **what counts toward the 20-version cap: only `live` versions.** `pending` rows
-expire (§7) and never count — otherwise 20 failed uploads brick a name; `purged` rows do
-not count — otherwise a tombstone-and-purge loop still exhausts the cap. The quota SUM for
+★R5, amended at S2 review — **what counts toward the 20-version cap: `live` versions
+plus UNEXPIRED `pending` rows, and the cap is re-checked at commit.** Counting only live
+let concurrent pendings jointly pass a cap either would fill (grok). Expired pendings and
+`purged` rows never count — otherwise failed uploads or a tombstone-and-purge loop still
+exhaust the cap. The quota SUM for
 the 1 GB cap likewise counts `live` bytes plus not-yet-expired `pending` declared bytes
 (pending must count there, or concurrent pendings overshoot the workspace cap at commit).
 
@@ -135,6 +137,10 @@ Two supporting rules:
   member.** An agent may clean up its own artifacts; it may not delete a colleague's. Humans
   hold janitorial authority, consistent with human-only credential operations in §2.
 - **Restore: same set as tombstone.**
+- **The 500-name cap counts tombstoned names** (decided at S2 review): the name stays
+  reserved for restore until the purge, so releasing it early would let a new file take a
+  name a restore then collides with. The refusal says what actually frees a name — the
+  purge, 30 days after tombstone — never "tombstone one first".
 - **GC/purge: nobody calls it.** A scheduled job (pg_cron) purges storage objects for
   tombstones older than 30 days and marks the version rows `purged`. Rows are never deleted —
   the name, hash, sizes, and audit trail outlive the bytes.

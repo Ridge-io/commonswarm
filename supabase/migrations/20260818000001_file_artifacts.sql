@@ -112,9 +112,11 @@ REVOKE ALL ON swarm_read.files FROM anon;
 -- The private bucket. ★R12: service-role-only — no storage policies are created
 -- here, and S1's evidence enumerates that none exist elsewhere. Every object
 -- access goes through server-issued signed URLs.
+-- DO UPDATE, not DO NOTHING: a pre-existing bucket of this name must be forced
+-- private, or a misconfigured public bucket would survive the migration.
 INSERT INTO storage.buckets (id, name, public)
 VALUES ('swarm-files', 'swarm-files', false)
-ON CONFLICT (id) DO NOTHING;
+ON CONFLICT (id) DO UPDATE SET public = false;
 
 -- Object deletion CANNOT happen here: storage protects its tables with a
 -- trigger ("Direct deletion from storage tables is not allowed. Use the
@@ -147,22 +149,34 @@ SECURITY DEFINER
 SET search_path = swarm, storage, pg_catalog
 AS $$
 BEGIN
-  WITH tombstone_claim AS (
+  -- Lock order: FILE rows first, the same rows file_restore locks FOR UPDATE,
+  -- so a concurrent restore either commits before this claim sees the file or
+  -- blocks until the claim commits — never interleaves. (Review finding: the
+  -- claim used to lock only version rows while restore locked the file row.)
+  WITH expired_files AS (
+    SELECT f.file_id, f.workspace_id
+    FROM swarm.files AS f
+    WHERE f.tombstoned_at IS NOT NULL
+      AND f.tombstoned_at < statement_timestamp() - interval '30 days'
+    FOR UPDATE
+  ),
+  tombstone_claim AS (
     UPDATE swarm.file_versions AS v
     SET state = 'purged'
-    FROM swarm.files AS f
+    FROM expired_files AS f
     WHERE f.file_id = v.file_id
       AND f.workspace_id = v.workspace_id
-      AND f.tombstoned_at IS NOT NULL
-      AND f.tombstoned_at < statement_timestamp() - interval '30 days'
       AND v.state != 'purged'
     RETURNING v.storage_path
   ),
+  -- ★R15 with the signing-delay margin: the row's clock starts before the
+  -- upload URL is signed, so a 2h claim could kill a row whose 2h URL still
+  -- works. Claim only after 3h: URL validity plus an hour of margin.
   pending_claim AS (
     UPDATE swarm.file_versions AS v
     SET state = 'purged'
     WHERE v.state = 'pending'
-      AND v.created_at < statement_timestamp() - interval '2 hours'
+      AND v.created_at < statement_timestamp() - interval '3 hours'
     RETURNING v.storage_path
   ),
   -- Orphan objects: paths in the bucket with no version row at all (a PUT that
@@ -171,7 +185,7 @@ BEGIN
     SELECT o.name AS storage_path
     FROM storage.objects AS o
     WHERE o.bucket_id = 'swarm-files'
-      AND o.created_at < statement_timestamp() - interval '2 hours'
+      AND o.created_at < statement_timestamp() - interval '3 hours'
       AND NOT EXISTS (
         SELECT 1 FROM swarm.file_versions AS v WHERE v.storage_path = o.name
       )

@@ -12,7 +12,7 @@ Applied to the LOCAL stack only; production was not touched.
 | `npm test` | 536/536 |
 | `npm run test:p1-cli` | 255/255 |
 | `npm run check:tests` | clean |
-| `npm run test:p1-server` | **71/73** — the 4 new file tests pass; the 2 failures are pre-existing (below) |
+| `npm run test:p1-server` | **75/77** — the 8 file tests pass (F1–F8); the 2 failures are pre-existing (below) |
 | `npm run test:p1-local` | 4/4 |
 
 **The two `test:p1-server` failures are NOT this lane's.** `self-serve is capped per
@@ -66,11 +66,38 @@ delivery commands are), because existing minted tokens cannot carry new scopes a
 are workspace-visible like signals. Recorded in `file-artifacts.ts`'s header and at the
 gate in `index.ts`. Tombstone/restore enforce the §6 own-uploads rule for agents in SQL.
 
+## Two-arm review round (2026-08-18) — all 13 findings fixed
+
+Codex P1s: current_version now moves only at COMMIT (F5 pins it); same-command-id
+concurrency resolved by a post-lock ledger recheck in every mutating handler, and
+REFUSALS are ledgered with their original status so a replayed id reproduces the refusal
+(F7 pins it); purge claims FILE rows first — the same lock restore takes — and restore
+refuses once the 30-day window has passed regardless of whether the cron ran; the pending
+GC claims at 3h (2h URL validity + signing-delay margin); the rate limit keys humans by
+user id and agents by principal id.
+
+Codex P2s: a foreign-workspace files read returns `{files: []}`; the ★R8 warning ships on
+download and list payloads; the bucket INSERT forces `public = false` on conflict; the
+500-name cap counts tombstoned names and the refusal names the purge as the recovery —
+recorded in the spec §4/§6 with why.
+
+Grok: the commit UPDATE carries the full ★R2 predicate (state + creator + compound key)
+and F3 re-reads the row after a refused commit; a foreign tenant's file_id refuses
+uniformly as `file_id_unavailable` — byte-same for an own-workspace collision — instead
+of a PK 500 oracle (F6 pins both sides); unexpired pendings count toward the version cap
+and the cap re-checks at commit (spec ★R5 amended); the sign request sends `x-upsert:
+false` explicitly.
+
+F8 pins direct-access denial: the anon client's select AND insert against `swarm.files`
+are both refused (the swarm schema is not in PostgREST's exposed list and the table has
+no client grants — two walls, one probe each).
+
 ## Not established
 
-- **Hosted storage behavior**: signed-upload upsert-off refusal, HEAD content-length, and
+- **Hosted storage behavior**: signed-upload upsert-off refusal (BOTH the explicit
+  `x-upsert: false` header and the token's signature binding), HEAD content-length, and
   the sign endpoints were exercised against the LOCAL storage container only. S6 must
-  re-verify against production storage before deploy.
+  re-verify each against production storage before deploy.
 - The 30/hour create rate limit is wired through `incrementRateBucket` but not exercised by
   a test (30 uploads is slow); the bucket key is `file:create:<kind>:<id>`.
 - Per-name 20-version and 500-name caps: enforced in SQL under row locks, not exercised by

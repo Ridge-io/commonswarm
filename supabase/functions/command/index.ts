@@ -305,7 +305,11 @@ interface StoredResponse {
   class?: "authz" | "domain";
   event_ids: string[];
   /* File-artifact replay fields (★R16): a lost create response must replay the
-   * SAME pending slot and upload capability, so the allowlist carries them. */
+   * SAME pending slot and upload capability, so the allowlist carries them.
+   * http_status/error/message let a ledgered refusal replay verbatim. */
+  http_status?: number;
+  error?: string;
+  message?: string;
   file_id?: string;
   version_id?: string;
   version_n?: number;
@@ -819,7 +823,15 @@ function fileStorage(): FileStorage {
       // (★R3) — a second PUT to a committed version's path must be refused.
       const response = await fetch(
         `${base}/object/upload/sign/${FILE_BUCKET}/${path}`,
-        { method: "POST", headers, body: "{}" },
+        {
+          method: "POST",
+          // x-upsert explicitly false (★R3): the default is upsert-off, and
+          // this pins it against a storage default ever moving. Whether hosted
+          // storage honors both the header and the signature binding is S6's
+          // to re-verify.
+          headers: { ...headers, "x-upsert": "false" },
+          body: "{}",
+        },
       );
       if (!response.ok) {
         throw new Error(`storage upload sign failed: ${response.status}`);
@@ -1872,6 +1884,11 @@ function storedResponse(value: unknown): StoredResponse {
       : {}),
     ...(typeof response.note === "string" ? { note: response.note } : {}),
     ...(typeof response.restored === "boolean" ? { restored: response.restored } : {}),
+    ...(typeof response.http_status === "number"
+      ? { http_status: response.http_status }
+      : {}),
+    ...(typeof response.error === "string" ? { error: response.error } : {}),
+    ...(typeof response.message === "string" ? { message: response.message } : {}),
   };
 }
 
@@ -1881,6 +1898,18 @@ function replayResult(
 ): HttpResult {
   if (commandKind === "accept_invitation" && !response.ok) {
     return { status: 403, body: { error: "forbidden" } };
+  }
+  /* File refusals carry their original HTTP status so a replayed command id
+   * returns the SAME refusal a caller saw the first time (review finding).
+   * Additive: rows without http_status keep the historical 200/rejected shape. */
+  if (!response.ok && typeof response.http_status === "number") {
+    return {
+      status: response.http_status,
+      body: {
+        error: response.error ?? "forbidden",
+        ...(response.message === undefined ? {} : { message: response.message }),
+      },
+    };
   }
   return {
     status: 200,
@@ -5930,9 +5959,18 @@ async function handleTransaction(
         : { kind: "user" as const, id: auth.actor.user! };
       // §4 rate limit, charged only for the verb that consumes quota (★R9.6).
       if (fileCommand.kind === FILE_VERSION_CREATE_KIND) {
+        // Humans key by user id — credentialId is null for every human, which
+        // was one shared global bucket; agents key by PRINCIPAL, because a
+        // token id rotates and each rotation would reset the meter.
+        const rateIdentity = auth.credentialKind === "agent"
+          ? auth.agent!.principal_id
+          : auth.actor.user;
+        if (rateIdentity === null) {
+          throw new Error("file rate limit has no stable identity");
+        }
         const bucket = await incrementRateBucket(
           tx,
-          `file:create:${auth.credentialKind}:${auth.credentialId}`,
+          `file:create:${auth.credentialKind}:${rateIdentity}`,
           FILE_CREATE_RATE_LIMIT_PER_HOUR,
         );
         if (bucket.count > FILE_CREATE_RATE_LIMIT_PER_HOUR) {
@@ -5960,6 +5998,20 @@ async function handleTransaction(
         }
       }
       const storage = fileStorage();
+      /* Called by handlers AFTER their row locks: a same-command-id request
+       * that lost the lock race finds the winner's ledgered response here
+       * instead of re-executing against changed state. */
+      const ledgerRecheck = async () => {
+        const rows = await tx<{ response: unknown }[]>`
+          SELECT response FROM swarm.idempotency_keys
+          WHERE principal_kind = ${auth.credentialKind}
+            AND principal_id = ${canonicalPrincipal(auth.actor)}
+            AND command_id = ${commandId}
+          LIMIT 1
+        `;
+        const stored = record(rows[0]?.response);
+        return stored;
+      };
       const outcome = fileCommand.kind === FILE_VERSION_CREATE_KIND
         ? await fileVersionCreate(
           tx,
@@ -5967,6 +6019,7 @@ async function handleTransaction(
           fileActor,
           fileCommand,
           storage,
+          ledgerRecheck,
         )
         : fileCommand.kind === FILE_VERSION_COMMIT_KIND
         ? await fileVersionCommit(
@@ -5975,12 +6028,41 @@ async function handleTransaction(
           fileActor,
           fileCommand,
           storage,
+          ledgerRecheck,
         )
         : fileCommand.kind === FILE_DOWNLOAD_URL_KIND
         ? await fileDownloadUrl(tx, route.workspaceId, fileCommand, storage)
         : fileCommand.kind === FILE_TOMBSTONE_KIND
-        ? await fileTombstone(tx, route.workspaceId, fileActor, fileCommand)
-        : await fileRestore(tx, route.workspaceId, fileActor, fileCommand);
+        ? await fileTombstone(
+          tx,
+          route.workspaceId,
+          fileActor,
+          fileCommand,
+          ledgerRecheck,
+        )
+        : await fileRestore(
+          tx,
+          route.workspaceId,
+          fileActor,
+          fileCommand,
+          ledgerRecheck,
+        );
+      if (outcome.ok === "replay") {
+        const stored = outcome.stored;
+        if (
+          stored !== null && stored.ok === false &&
+          typeof stored.http_status === "number"
+        ) {
+          return {
+            status: stored.http_status,
+            body: {
+              error: String(stored.error ?? "forbidden"),
+              message: String(stored.message ?? ""),
+            },
+          };
+        }
+        return { status: 200, body: stored ?? {} };
+      }
       if (!outcome.ok) {
         await insertAudit(tx, {
           auth,
@@ -5992,6 +6074,35 @@ async function handleTransaction(
           detail: ignoredIdentity,
           hash,
         });
+        /* Refusals are ledgered too (review finding): without this, the same
+         * command id refused now could be re-executed later against changed
+         * state and return a DIFFERENT result — replay must reproduce the
+         * refusal. Rate limits (429) stay unledgered above: transient by
+         * design. ON CONFLICT DO NOTHING: losing a ledger race on a refusal
+         * needs no recharge — both writers hold the same refusal. */
+        await tx`
+          INSERT INTO swarm.idempotency_keys (
+            principal_kind, principal_id, command_id,
+            workspace_id, stream_id, request_hash, response
+          ) VALUES (
+            ${auth.credentialKind},
+            ${canonicalPrincipal(auth.actor)},
+            ${commandId},
+            ${route.workspaceId}::uuid,
+            ${route.streamId}::uuid,
+            ${hash},
+            ${tx.json({
+              ok: false,
+              class: outcome.refusal.status === 403 ? "authz" : "domain",
+              reason: outcome.refusal.reason,
+              http_status: outcome.refusal.status,
+              error: outcome.refusal.error,
+              message: outcome.refusal.message,
+              event_ids: [],
+            } as unknown as postgres.JSONValue)}::jsonb
+          )
+          ON CONFLICT (principal_kind, principal_id, command_id) DO NOTHING
+        `;
         return {
           status: outcome.refusal.status,
           body: {
