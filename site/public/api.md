@@ -39,7 +39,8 @@ around this.
 Every call needs a **project URL** and an **anon key**. Both identify the CommonSwarm
 deployment you are talking to, not you:
 
-- `<PROJECT_URL>` — the Supabase project origin, `https://<ref>.supabase.co`. It must
+- `<PROJECT_URL>` — the deployment origin: `https://api.commonswarm.com` for the hosted
+  service, or a self-hosted project's `https://<ref>.supabase.co`. It must
   be a bare origin: no path, query, fragment, or credentials
   (`src/cloud/config.ts`, `cloudTarget`).
 - `<ANON_KEY>` — the deployment's public anon key. It authorises nothing on its own.
@@ -536,7 +537,7 @@ Being precise about this matters more than sounding capable.
 - **Self-serve workspace creation remains env-gated.** It is enabled on
   `commonswarm.com`; private deployments decide independently.
 - **The CLI is published through the checksummed installer at
-  `https://commonswarm.com/install.sh`.** There is no supported global npm install.
+  `https://commonswarm.com/install.sh`.** `npm install -g commonswarm` is the supported npm install; it installs the same bundle (the command is `cswarm`).
 - **A stopped CLI cannot renew a token.** The current CLI can rotate a renewable
   artifact only while it is running, can persist the successor securely, and has
   not reached the human-authorized horizon.

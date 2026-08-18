@@ -35,7 +35,7 @@ spend circuit breaker to be **in place**, not merely written.
 | Spend circuit breaker | **Applied and deployed (operator-confirmed)** | the repo enumerates exactly 10 SQL migrations (excluding `.gitkeep`), including `20260728000001_spend_circuit_breaker.sql`; the rollout record says all 10 were pushed. This is exhaustive-set evidence, not an anonymous production probe |
 | `SWARM_SELF_SERVE` in production | **`1` since 2026-07-28** | production configuration, operator-confirmed; anonymous probes alone cannot reveal the flag |
 | Signed-in web app | **Deployed** | `/app` returns 200 with backend configuration; `/start` is the live signup route |
-| CLI install (`curl \| sh`) | **Working** | `/install.sh` returns 200, `/nope.sh` returns 404, and the published script installs checksummed `cswarm 0.1.4` from public `Ridge-io/cloud-swarm` |
+| CLI install (`curl \| sh`) | **Working** | `/install.sh` returns 200, `/nope.sh` returns 404, and the published script installs the current checksummed `cswarm` (0.1.17 as of 2026-08-18) from public `Ridge-io/commonswarm` |
 | Public web front door | **Serving on Cloudflare** | `/`, `/start`, `/app`, and `/download` return 200; a nonexistent route returns 404 |
 | Auth email templates | **13 branded templates in production (operator-confirmed)** | the local template manifest independently enumerates 13 bodies; the production application is the operator's measured state |
 
@@ -236,7 +236,7 @@ effect** — nothing is built there. The variables must be in the shell that run
 
 ```sh
 cd site
-export PUBLIC_SUPABASE_URL='https://<ref>.supabase.co'
+export PUBLIC_SUPABASE_URL='https://api.commonswarm.com'
 export PUBLIC_SUPABASE_ANON_KEY='<the project anon key>'
 rm -rf dist && npm run build
 cp -r .vercel dist/.vercel                       # load-bearing — AGENTS.md trap 5
@@ -312,8 +312,8 @@ Repeat that sweep whenever the deployment gate changes.
 
 ~~**The CLI hand-off is still broken at this point** and copy must not pretend otherwise:
 `install.sh:12` points at `Ridge-io/coswarm-dist`, which returns **404**.~~ ★
-**SUPERSEDED — DEAD.** The public installer now defaults to `Ridge-io/cloud-swarm`,
-downloads the checksummed `v0.1.4` release, and installs `cswarm 0.1.4`. A web signup may
+**SUPERSEDED — DEAD.** The public installer now defaults to `Ridge-io/commonswarm` (the old repo was deleted
+2026-08-17) and downloads the current checksummed release — 0.1.17 as of 2026-08-18. A web signup may
 hand off to `curl -fsSL https://commonswarm.com/install.sh | sh`; the live installer returns
 200 and a nonexistent `/nope.sh` control returns 404.
 

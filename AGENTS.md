@@ -78,7 +78,7 @@ the old name collided with a competitor. Prose says CommonSwarm; anything a user
 - ~~the release repo default `Ridge-io/coswarm-dist` in `install.sh`~~ — **dead** (2026-07-29).
   ~~"`install.sh:16` now defaults to `Ridge-io/cloud-swarm` (public), and the published installer
   installs cswarm 0.1.4"~~ — **also dead (2026-08-10)**: the line is now `install.sh:27` and
-  defaults to **`Ridge-io/commonswarm`**, and the published installer installs **0.1.12**.
+  defaults to **`Ridge-io/commonswarm`**, and the published installer installed **0.1.12** at that check (**0.1.17** as of 2026-08-18).
   `Ridge-io/cloud-swarm` is no longer the release home — see the repo-migration note below;
 - the Vercel project and live URL `coswarm-site` / `coswarm-site.vercel.app` — still the
   deployed site, see the deploy section below;
@@ -95,7 +95,7 @@ unreachable objects fetchable by SHA. **A new repo never receives them**, which 
 purge available. `Ridge-io/commonswarm` is that repo: history rewritten, all 14 releases mirrored
 with both assets, installer repointed, verified by a real install. **Every SHA changed**, so any
 citation older than the migration that still resolves is a coincidence — 149 were remapped.
-`Ridge-io/cloud-swarm` still exists and is frozen; deleting it is an operator action.
+`Ridge-io/cloud-swarm` was **DELETED on 2026-08-17** with `forks=0`, so the purge is complete.
 
 Also unaffected, and different things entirely: the PostgreSQL schema `swarm.`, every
 `SWARM_*` env var, and the separate local `swarm` CLI the agent fleet runs.
@@ -667,7 +667,7 @@ project and gets rotated by hand. Without it the build SUCCEEDS and silently pro
 whose `/start` and `/app` have no backend and whose GitHub sign-in does nothing. That shipped.
 
 ```
-PUBLIC_SUPABASE_URL=https://<ref>.supabase.co
+PUBLIC_SUPABASE_URL=https://api.commonswarm.com   # the active custom domain; a <ref>.supabase.co URL also still works
 PUBLIC_SUPABASE_ANON_KEY=<the anon key, from `supabase projects api-keys`>
 ```
 
@@ -734,8 +734,8 @@ There is no CI. Deploys are manual and are the Lead's call; nothing deploys on p
 `version` is the sole shipping source for the pinned install command
 (`site/src/lib/release.ts` → `INSTALL_CMD_PINNED`), the AfterInstall `cswarm --version`
 example, and the footer version line — all built through `site/src/lib/release.ts`, with
-the protocol number imported from its one source (`src/cloud/config.ts`). To bump (e.g.
-the upcoming v0.1.5): **no site string is edited**, but a real npm release syncs the root
+the protocol number imported from its one source (`src/cloud/config.ts`). To bump to
+the next release: **no site string is edited**, but a real npm release syncs the root
 manifest AND its lockfile — normal release work updates both `package.json` and
 `package-lock.json` (prefer `npm version --no-git-tag-version <version>` or the repo's
 final release procedure), and a pure gate

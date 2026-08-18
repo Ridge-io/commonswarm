@@ -7,7 +7,7 @@
 #
 # WHY THIS EXISTS: sandboxed agent environments (Claude Cowork and similar) allow egress
 # to package registries but block arbitrary hosts, so `curl | sh` from commonswarm.com
-# never arrives. `npm install -g cswarm` is the same artifact through a door those
+# never arrives. `npm install -g commonswarm` is the same artifact through a door those
 # environments leave open. The npm package ships the IDENTICAL bundle build-release.sh
 # produced — one file, no dependencies — so the two install paths cannot drift.
 #

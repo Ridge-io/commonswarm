@@ -274,7 +274,7 @@ Success body:
 ```json
 {
   "work_item": { "slug": "add-capability-urls", "lifecycle": "active" },
-  "repo":      { "full_name": "Ridge-io/cloud-swarm" },
+  "repo":      { "full_name": "Ridge-io/commonswarm" },
   "inviter":   { "display_name": "Tom" },
   "workspace": { "age_days": 41 },
   "expires_at": "2026-08-03T09:14:00.000Z"
@@ -314,7 +314,7 @@ Not by policy, by construction. None of these is reachable from a capability lin
   its repo, and the inviter's identity. Line 314 allows an *invite* token to reveal the
   workspace name, but that is a different credential and a different page. Excluded here.
   Consequence: the page can say "Tom invited you to `add-capability-urls` in
-  `Ridge-io/cloud-swarm`" but cannot name the project. Adding it is a one-word allowlist
+  `Ridge-io/commonswarm`" but cannot name the project. Adding it is a one-word allowlist
   amendment plus a migration to the projection signature — **not** something an
   implementer may add unilaterally.
 - **Anything, on any failure.** Invalid, malformed, expired, revoked, never-existed,

@@ -13,7 +13,7 @@ export function cloudTarget(url: string, anonKey: string): CloudTarget {
     throw new Error(
       /* Not "who invited you" — self-serve signup is live and that reader has no inviter.
        * See D-067 and the matching wording in current-target.ts. */
-      "--url is required: use the Supabase project base URL (https://<ref>.supabase.co) from whoever runs this deployment, or from your own project's API settings if you created it, or start with cswarm accept --link-stdin because invite links carry the Cloud target; if you already have a project, pass --url and --anon-key or set SWARM_CLOUD_URL and SWARM_CLOUD_ANON_KEY.",
+      "--url is required: the hosted CommonSwarm service is https://api.commonswarm.com; a self-hosted deployment uses its Supabase project base URL (https://<ref>.supabase.co) from whoever runs it, or from your own project's API settings if you created it. Or start with cswarm accept --link-stdin because invite links carry the Cloud target; scripts and CI may pass --url and --anon-key or set SWARM_CLOUD_URL and SWARM_CLOUD_ANON_KEY.",
     );
   }
   const parsed = new URL(url);

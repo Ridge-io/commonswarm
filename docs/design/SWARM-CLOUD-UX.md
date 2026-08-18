@@ -44,7 +44,7 @@ Three entry rails. **Rail A (invited member)** is the primary funnel and the G2 
 **The single command:**
 
 ```bash
-npm install -g @swarmcli/swarm        # package name TBD per Part I §7; scoped, checksum-pinned
+npm install -g commonswarm            # published 2026-08-17; installs the `cswarm` command
 swarm doctor --setup                  # guided prereq check; runs automatically on first `swarm` invocation
 ```
 
@@ -171,7 +171,7 @@ Every blocking message follows the CLI's established refusal voice: state the fa
 | Repo access not provisioned | `⏳ You joined "prompteden" but don't have GitHub access to prompteden/app yet. We nudged the owner 2m ago. Run swarm doctor --watch to continue automatically when it lands.` | wait with `--watch`; not an error |
 | Wrong directory for `cloud init` | `✗ not a git clone of a workspace repo. swarm cloud init runs inside a clone of a mapped repo (expected remote: github.com/prompteden/app). Clone it, or run swarm cloud repos to list mappings.` | cd / clone |
 | Keychain unavailable (headless Linux) | `⚠ no OS keychain found. Storing credential in ~/.swarm/credentials (0600, dir 0700). This is less protected than a keychain — see docs/security. Refusing outright would leave you no path; set SWARM_ALLOW_INSECURE_STORE=0 to hard-refuse instead.` | proceed warned or refuse (Part I §2.3) |
-| Firewall/proxy blocks stream | `⚠ live stream unreachable (proxy?). Falling back to 20s polling — the board stays correct, just slower. Allowlist: wss://swarm.<domain>, https://*.supabase.co` | poll fallback (App. A); allowlist |
+| Firewall/proxy blocks stream | `⚠ live stream unreachable (proxy?). Falling back to 20s polling — the board stays correct, just slower. Allowlist: https://api.commonswarm.com (hosted, wss included), or the deployment's https://*.supabase.co` | poll fallback (App. A); allowlist |
 | Agent joined, token mint failed | `✗ Wren is on the roster but its capability token wasn't minted (transient failure or membership change mid-join). Recovery is cause-specific (Part I §2.3): membership intact → swarm login, then re-mint a fresh worker; membership/principal revoked → the server tombstone stands and --force cannot mint one.` | cause-specific command |
 | Spawn outside cmux | `Failed to spawn claude session. Run from a cmux workspace or use --new-workspace <name> to create a named program context.` (existing string, kept) | printed alternatives |
 | Windows native | `✗ the cmux terminal driver is macOS/Linux. On Windows, run swarm inside WSL2 — full guide: docs/windows. (ACP is the default transport and the native Windows path once it ships at P3.)` | WSL2 |

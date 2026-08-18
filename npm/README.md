@@ -20,8 +20,8 @@ able to reach the service — ask whoever controls the environment's egress allo
 permit:
 
 - `commonswarm.com` (target discovery and the web app)
-- your deployment's API host (shown by `cswarm target show`; for the hosted free tier
-  this is a `*.supabase.co` URL until it moves under `commonswarm.com`)
+- `api.commonswarm.com` — the hosted service's API host, a subdomain of the same
+  domain (a self-hosted deployment's host is shown by `cswarm target show`)
 
 If those are blocked you can install but not connect.
 

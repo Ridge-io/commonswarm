@@ -86,6 +86,21 @@ export function dashboardAgentPrompt(input: DashboardPromptInput): string {
     "",
     `   ${INSTALL_CMD}`,
     "",
+    /* Sandboxed hosts get a second door, not a dead end. Measured 2026-08-17: a Claude Cowork
+     * agent ran this prompt in a sandbox whose egress allowlist permitted package registries
+     * and nothing else — the installer host and the deployment URL both reset at the proxy. It
+     * had nowhere to go and stopped. Same lesson as the stdin rule below: an instruction that
+     * forbids or breaks every available path must name a sanctioned one. */
+    "If the installer host is unreachable — sandboxed environments often allow package",
+    "registries while blocking other egress — install the same release from npm instead:",
+    "",
+    "   npm install -g commonswarm",
+    "",
+    "(The package is named commonswarm; the command it installs is still cswarm.) To",
+    "connect, the network must also reach the deployment URL in step 2. If it cannot, stop",
+    "and ask the person to allowlist commonswarm.com in the environment's egress settings;",
+    "do not try to work around the proxy.",
+    "",
     "2. Connect to the workspace with these public deployment details:",
     "",
     `   URL:      ${deploymentUrl}`,

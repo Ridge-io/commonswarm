@@ -274,6 +274,42 @@ test("invite link grammar rejects bad versions, padding, oversize, and malformed
   );
 });
 
+test("origin pin accepts both production origins; equivalents normalize; lookalikes refuse", async () => {
+  // api.commonswarm.com is the active custom domain (2026-08-17); the supabase.co host still
+  // serves the same project. A link carrying either must pass with no confirmation prompt.
+  // cloudTarget() collapses spelling variants to URL.origin BEFORE the gate compares, so
+  // equivalent spellings pass as the same origin — that is normalization working, not a
+  // widened allowlist. Non-equivalent origins (scheme change, lookalike suffix) refuse.
+  for (const url of [
+    "https://api.commonswarm.com",
+    "https://ukezjcnxjvkpkeezxaew.supabase.co",
+    "https://api.commonswarm.com/",
+    "https://API.commonswarm.com",
+    "https://api.commonswarm.com:443",
+  ]) {
+    let output = "";
+    await requirePinnedOrigin(cloudTarget(url, "anon"), {
+      interactive: false,
+      output: { write: (value) => output += value },
+    });
+    assert.equal(output, "", `${url} must pass silently`);
+  }
+  for (const url of [
+    "http://api.commonswarm.com",
+    "https://api.commonswarm.com.attacker.example",
+    "https://api-commonswarm.com",
+  ]) {
+    await assert.rejects(
+      requirePinnedOrigin(cloudTarget(url, "anon"), {
+        interactive: false,
+        output: { write: () => undefined },
+      }),
+      /refuses before login/,
+      `${url} must refuse`,
+    );
+  }
+});
+
 test("origin pin refuses non-interactive before login and exact confirmation is required", async () => {
   const unknown = cloudTarget("https://cloud.attacker.example", "anon");
   let output = "";

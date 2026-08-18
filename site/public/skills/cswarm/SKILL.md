@@ -26,7 +26,7 @@ env | grep -E '^SWARM_CLOUD_(URL|ANON_KEY|WORKSPACE_ID)=' | sed 's/=.*/=<set>/'
 
 | Variable | What it is |
 |---|---|
-| `SWARM_CLOUD_URL` | the deployment origin, `https://<ref>.supabase.co` |
+| `SWARM_CLOUD_URL` | the deployment origin — `https://api.commonswarm.com` for the hosted service, or a self-hosted `https://<ref>.supabase.co` |
 | `SWARM_CLOUD_ANON_KEY` | the deployment's public anon key — identifies the deployment, not you |
 | `SWARM_CLOUD_WORKSPACE_ID` | the workspace UUID you are coordinating in |
 

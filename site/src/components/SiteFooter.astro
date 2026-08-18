@@ -5,7 +5,7 @@
  * newsletter and there are no accounts.
  *
  * EVERY CLAIM AND EVERY LINK WAS CHECKED, logged out, on the day this was written:
- *   github.com/Ridge-io/cloud-swarm            HTTP 200   (public)
+ *   github.com/Ridge-io/commonswarm            HTTP 200   (public)
  *   .../cloud-swarm/blob/main/LICENSE          HTTP 200   (MIT, © 2026 Yulan Ventures, LLC)
  *   github.com/Ridge-io/coswarm-dist           HTTP 404   -> deliberately NOT linked
  *   controls: a made-up repo and a made-up blob path both returned 404, so the 200s above
@@ -19,7 +19,7 @@
  * this one, landing/SiteFoot.astro and download/PageFoot.astro, plus the older
  * components/Footer.astro. They disagreed on layout, on link set, and — worse — on fact:
  * two of them stated in rendered markup that the repository is "private during dogfood".
- * Re-checked live on the day of integration: github.com/Ridge-io/cloud-swarm answers 200
+ * Re-checked live on the day of integration: github.com/Ridge-io/commonswarm answers 200
  * logged out and .../blob/main/LICENSE answers 200, with a made-up repo path returning 404
  * as the control, so the 200s are real and the "private" claim was false on two pages. The
  * other three footers are deleted; every page now falls through to Base.astro's default slot.

@@ -961,7 +961,7 @@ async function runTarget(args: Arguments): Promise<void> {
     }
     if (saved === null) {
       process.stdout.write(
-        "No current Cloud target is saved. Start with cswarm accept --link-stdin, or run cswarm target set --url <project-url> --anon-key <key>.\n",
+        "No current Cloud target is saved. Start with cswarm accept --link-stdin, or run cswarm target set --url https://api.commonswarm.com --anon-key <key> for the hosted service (the anon key is public, in the meta tags at https://commonswarm.com/start); a self-hosted deployment uses its own URL and key.\n",
       );
       return;
     }

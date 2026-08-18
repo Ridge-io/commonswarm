@@ -31,9 +31,11 @@ argument against it was about macOS Gatekeeper mechanics, which is a packaging q
 reason to make a human hunt for a terminal command.
 
 **What the panel got right and still stands:** npm ahead of `curl | sh`; no signed `.pkg` yet;
-reuse the existing GitHub OAuth + PKCE rather than inventing auth; and the finding that the
+reuse the existing GitHub OAuth + PKCE rather than inventing auth; ~~and the finding that the
 real wall today is that `resolveCloudTarget` has **no compiled-in default**, so a perfect
-install still dead-ends on a Supabase error.
+install still dead-ends on a Supabase error~~ — **dead (2026-08-18)**: a cold install
+discovers the target from commonswarm.com, and the hosted API is api.commonswarm.com.
+The npm-ahead-of-curl point also landed: `npm install -g commonswarm` is live.
 
 ## ⚠ PRODUCT DIRECTION (operator, 2026-07-26)
 
@@ -217,7 +219,7 @@ The honest third line exists and is simply longer. Use this form on the site:
 
 ```
 cswarm working-on "wiring the payments webhook" \
-  --url https://<ref>.supabase.co --anon-key <key>
+  --url https://api.commonswarm.com --anon-key <key>
 ```
 
 or export `SWARM_CLOUD_URL` and `SWARM_CLOUD_ANON_KEY` once. Both are copy-pasteable and

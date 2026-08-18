@@ -324,7 +324,12 @@ function missingTargetError(mode: "human" | "agent"): Error {
      * their own workspace has no such person and the sentence sends them to nobody. Same family
      * as the 3-project cap telling the account holder to ask an operator who is themselves —
      * instruction text written for a different reader than the one receiving it. See D-067. */
-    "no Cloud target is selected: start with cswarm accept --link-stdin because invite links carry the Cloud target and save its Supabase project base URL, or run cswarm target set --url https://<ref>.supabase.co --anon-key <key> using values from whoever runs this deployment, or from your own project's API settings if you created it; scripts and CI may instead pass --url and --anon-key or set SWARM_CLOUD_URL and SWARM_CLOUD_ANON_KEY",
+    /* The hosted reader must be able to FINISH the target-set command, not just start it: the
+     * inversion arm on this change showed every listed route was closed for the self-serve
+     * hosted reader because <key> named no source. The anon key is public (RLS-protected) and
+     * published in the meta tags of https://commonswarm.com/start — say so. Same F-1/D-067
+     * family: a route you cannot complete is not a route. */
+    "no Cloud target is selected: most commands discover the hosted target from https://commonswarm.com automatically, so seeing this usually means that fetch failed — check network or your egress allowlist. Otherwise start with cswarm accept --link-stdin because invite links carry the Cloud target and save its Supabase project base URL, or run cswarm target set --url https://api.commonswarm.com --anon-key <key> for the hosted service — the anon key is public, in the meta tags at https://commonswarm.com/start (a self-hosted deployment uses its https://<ref>.supabase.co URL from whoever runs it, or from your own project's API settings if you created it); scripts and CI may instead pass --url and --anon-key or set SWARM_CLOUD_URL and SWARM_CLOUD_ANON_KEY",
   );
 }
 

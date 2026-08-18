@@ -21,8 +21,14 @@ const INVITE_WRAPPER_ERROR =
 const ACCEPT_INPUT_ERROR =
   "accept input was not recognized; use an https://...#invite=<payload> link, cswarm://accept/<payload>, or a swm_inv_ invitation capability";
 
-export const PRODUCTION_CLOUD_ORIGIN =
-  "https://ukezjcnxjvkpkeezxaew.supabase.co";
+/* Both origins serve the SAME production project: api.commonswarm.com is the active custom
+ * domain (2026-08-17) and the supabase.co host keeps working underneath it. Links minted by
+ * clients discovered under either URL must accept without the unknown-origin friction —
+ * before this set existed, a link carrying api.commonswarm.com was REFUSED in agent mode. */
+export const PRODUCTION_CLOUD_ORIGINS: ReadonlySet<string> = new Set([
+  "https://api.commonswarm.com",
+  "https://ukezjcnxjvkpkeezxaew.supabase.co",
+]);
 
 export interface InviteLinkPayload {
   v: 1;
@@ -276,7 +282,7 @@ export async function requirePinnedOrigin(
   target: CloudTarget,
   options: OriginPinOptions,
 ): Promise<void> {
-  if (target.url === PRODUCTION_CLOUD_ORIGIN || loopback(target)) return;
+  if (PRODUCTION_CLOUD_ORIGINS.has(target.url) || loopback(target)) return;
   if (
     options.interactive &&
     devOrigins(options.devAllowedOrigins).has(target.url)

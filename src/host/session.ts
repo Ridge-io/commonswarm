@@ -512,7 +512,10 @@ export class AcpHostSession {
         },
         clientInfo: {
           name: clientName ?? "cswarm-host",
-          version: clientVersion ?? "0.1.4",
+          /* "0.0.0" and not a real release number: this fallback only fires when a caller
+           * passes no version, and a hardcoded one here silently rots (it read "0.1.4"
+           * thirteen releases later). Callers that know the build version pass it. */
+          version: clientVersion ?? "0.0.0",
         },
       },
       this.requestTimeoutMs,
