@@ -33,6 +33,24 @@ import {
   type ClaimAgentInboxCommand,
   type DeliveryAckOutcome,
 } from "./durable-delivery.ts";
+import {
+  FILE_BUCKET,
+  FILE_COMMAND_KINDS,
+  FILE_CREATE_RATE_LIMIT_PER_HOUR,
+  FILE_DOWNLOAD_URL_KIND,
+  FILE_RESTORE_KIND,
+  FILE_TOMBSTONE_KIND,
+  FILE_VERSION_COMMIT_KIND,
+  FILE_VERSION_CREATE_KIND,
+  fileDownloadUrl,
+  fileRestore,
+  fileTombstone,
+  fileVersionCommit,
+  fileVersionCreate,
+  validateFileCommand,
+  type FileCommand,
+  type FileStorage,
+} from "./file-artifacts.ts";
 // Supabase's edge graph cannot resolve the NodeNext `.js` specifiers in the
 // frozen TypeScript core. This checked-in bundle is regenerated directly from
 // src/protocol/index.ts by build:command-core; it is not a second implementation.
@@ -145,7 +163,8 @@ type ValidatedCommand =
   | Command
   | ConnectCommand
   | SignalCommand
-  | DeliveryCommand;
+  | DeliveryCommand
+  | FileCommand;
 
 type WorkspaceRole = "owner" | "admin" | "member";
 
@@ -673,6 +692,7 @@ const COMMAND_KINDS = [
   "post_signal",
   CLAIM_AGENT_INBOX_KIND,
   ACK_AGENT_DELIVERY_KIND,
+  ...FILE_COMMAND_KINDS,
 ] as const;
 const TASK_COMMAND_KINDS = [
   "create",
@@ -712,6 +732,7 @@ const WORKSPACE_COMMAND_KINDS = [
   RENEW_AGENT_TOKEN_KIND,
   CLAIM_AGENT_INBOX_KIND,
   ACK_AGENT_DELIVERY_KIND,
+  ...FILE_COMMAND_KINDS,
 ] as const;
 const P0_AGENT_SCOPES = [
   "create",
@@ -756,6 +777,75 @@ const db = postgres(databaseUrl, {
   idle_timeout: 20,
   connect_timeout: 10,
 });
+/**
+ * Storage adapter for file artifacts (§7). Raw REST with the service role key:
+ * the bucket is service-role-only (★R12), so every signed URL is minted here
+ * and nowhere else. The runtime injects SUPABASE_SERVICE_ROLE_KEY.
+ */
+function fileStorage(): FileStorage {
+  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  if (!serviceKey) {
+    throw new Error("file artifacts require SUPABASE_SERVICE_ROLE_KEY");
+  }
+  const headers = {
+    authorization: `Bearer ${serviceKey}`,
+    apikey: serviceKey,
+    "content-type": "application/json",
+  };
+  const base = `${supabaseUrl}/storage/v1`;
+  return {
+    async signUpload(path) {
+      // No upsert field: storage defaults to upsert OFF, which is load-bearing
+      // (★R3) — a second PUT to a committed version's path must be refused.
+      const response = await fetch(
+        `${base}/object/upload/sign/${FILE_BUCKET}/${path}`,
+        { method: "POST", headers, body: "{}" },
+      );
+      if (!response.ok) {
+        throw new Error(`storage upload sign failed: ${response.status}`);
+      }
+      const data = await response.json() as { url?: string };
+      if (typeof data.url !== "string") {
+        throw new Error("storage upload sign returned no url");
+      }
+      const url = `${base}${data.url}`;
+      const token = new URL(url).searchParams.get("token") ?? "";
+      return { url, token };
+    },
+    async objectSize(path) {
+      const response = await fetch(
+        `${base}/object/authenticated/${FILE_BUCKET}/${path}`,
+        { method: "HEAD", headers },
+      );
+      if (!response.ok) return null;
+      const length = response.headers.get("content-length");
+      const size = length === null ? Number.NaN : Number(length);
+      return Number.isFinite(size) ? size : null;
+    },
+    async signDownload(path, filename, expiresInSeconds) {
+      const response = await fetch(
+        `${base}/object/sign/${FILE_BUCKET}/${path}`,
+        {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ expiresIn: expiresInSeconds }),
+        },
+      );
+      if (!response.ok) {
+        throw new Error(`storage download sign failed: ${response.status}`);
+      }
+      const data = await response.json() as { signedURL?: string };
+      if (typeof data.signedURL !== "string") {
+        throw new Error("storage download sign returned no url");
+      }
+      // §5: always an attachment, never inline from our domain.
+      return `${base}${data.signedURL}&download=${
+        encodeURIComponent(filename)
+      }`;
+    },
+  };
+}
+
 const authClient = createClient(supabaseUrl, supabaseAnonKey, {
   auth: { persistSession: false, autoRefreshToken: false },
 });
@@ -1181,6 +1271,10 @@ function validateCommand(
   }
   if (!(COMMAND_KINDS as readonly string[]).includes(cmd.kind)) {
     return { ok: false, status: 400, reason: "unknown command kind" };
+  }
+
+  if ((FILE_COMMAND_KINDS as readonly string[]).includes(cmd.kind)) {
+    return validateFileCommand(cmd);
   }
 
   if (cmd.kind === CLAIM_AGENT_INBOX_KIND) {
@@ -5437,11 +5531,21 @@ async function handleTransaction(
       });
       return { status: 403, body: { error: "delivery_unavailable" } };
     }
+    /* ★R9.2 (file artifacts): every FILE_COMMAND_KINDS kind is agent-allowed by
+     * class, exempted from the per-scope gate the way delivery commands are —
+     * existing minted tokens cannot carry new scopes, and files are
+     * workspace-visible like signals. Tombstone/restore enforce the §6 actor
+     * rule (own uploads only for agents) inside their handlers. */
+    const isFileCommand =
+      (FILE_COMMAND_KINDS as readonly string[]).includes(
+        validation.command.kind,
+      );
     if (
       auth.agent !== null &&
       !isRenewal &&
       !isAgentTokenRevoke &&
       !isDeliveryCommand &&
+      !isFileCommand &&
       (
         (CONNECT_COMMAND_KINDS as readonly string[]).includes(
           validation.command.kind,
@@ -5766,6 +5870,131 @@ async function handleTransaction(
           min_client_version: minClientVersion,
         },
       };
+    }
+
+    if ((FILE_COMMAND_KINDS as readonly string[]).includes(command.kind)) {
+      const fileCommand = command as FileCommand;
+      const fileActor = auth.credentialKind === "agent"
+        ? { kind: "agent" as const, id: auth.agent!.principal_id }
+        : { kind: "user" as const, id: auth.actor.user! };
+      // §4 rate limit, charged only for the verb that consumes quota (★R9.6).
+      if (fileCommand.kind === FILE_VERSION_CREATE_KIND) {
+        const bucket = await incrementRateBucket(
+          tx,
+          `file:create:${auth.credentialKind}:${auth.credentialId}`,
+          FILE_CREATE_RATE_LIMIT_PER_HOUR,
+        );
+        if (bucket.count > FILE_CREATE_RATE_LIMIT_PER_HOUR) {
+          const detail =
+            `file limit ${FILE_CREATE_RATE_LIMIT_PER_HOUR} uploads/hour; resets at ${bucket.resetsAt}`;
+          await insertAudit(tx, {
+            auth,
+            commandKind: kind,
+            workspaceId: route.workspaceId,
+            streamId: route.streamId,
+            outcome: "rate_limit",
+            reason: "rate_limited",
+            detail,
+            hash,
+          });
+          return {
+            status: 429,
+            body: {
+              error: "rate_limited",
+              message: `Upload refused: ${detail}.`,
+              limit: FILE_CREATE_RATE_LIMIT_PER_HOUR,
+              resets_at: bucket.resetsAt,
+            },
+          };
+        }
+      }
+      const storage = fileStorage();
+      const outcome = fileCommand.kind === FILE_VERSION_CREATE_KIND
+        ? await fileVersionCreate(
+          tx,
+          route.workspaceId,
+          fileActor,
+          fileCommand,
+          storage,
+        )
+        : fileCommand.kind === FILE_VERSION_COMMIT_KIND
+        ? await fileVersionCommit(
+          tx,
+          route.workspaceId,
+          fileActor,
+          fileCommand,
+          storage,
+        )
+        : fileCommand.kind === FILE_DOWNLOAD_URL_KIND
+        ? await fileDownloadUrl(tx, route.workspaceId, fileCommand, storage)
+        : fileCommand.kind === FILE_TOMBSTONE_KIND
+        ? await fileTombstone(tx, route.workspaceId, fileActor, fileCommand)
+        : await fileRestore(tx, route.workspaceId, fileActor, fileCommand);
+      if (!outcome.ok) {
+        await insertAudit(tx, {
+          auth,
+          commandKind: kind,
+          workspaceId: route.workspaceId,
+          streamId: route.streamId,
+          outcome: outcome.refusal.status === 403 ? "authz" : "domain",
+          reason: outcome.refusal.reason,
+          detail: ignoredIdentity,
+          hash,
+        });
+        return {
+          status: outcome.refusal.status,
+          body: {
+            error: outcome.refusal.error,
+            message: outcome.refusal.message,
+          },
+        };
+      }
+      const fileResponse = {
+        ok: true,
+        status: "accepted",
+        ...outcome.body,
+        event_ids: [],
+        events: [],
+        min_client_version: minClientVersion,
+      };
+      // ★R16: the stored response makes create idempotent — a retry with the
+      // same command id replays the SAME pending slot and upload URL.
+      const inserted = await tx<{ command_id: string }[]>`
+        INSERT INTO swarm.idempotency_keys (
+          principal_kind, principal_id, command_id,
+          workspace_id, stream_id, request_hash, response
+        ) VALUES (
+          ${auth.credentialKind},
+          ${canonicalPrincipal(auth.actor)},
+          ${commandId},
+          ${route.workspaceId}::uuid,
+          ${route.streamId}::uuid,
+          ${hash},
+          ${tx.json(fileResponse as unknown as postgres.JSONValue)}::jsonb
+        )
+        ON CONFLICT (principal_kind, principal_id, command_id) DO NOTHING
+        RETURNING command_id
+      `;
+      if (inserted.length === 0) {
+        throw new LedgerRace(
+          auth,
+          commandId,
+          kind,
+          route.workspaceId,
+          route.streamId,
+          hash,
+        );
+      }
+      await insertAudit(tx, {
+        auth,
+        commandKind: kind,
+        workspaceId: route.workspaceId,
+        streamId: route.streamId,
+        outcome: "accepted",
+        detail: ignoredIdentity,
+        hash,
+      });
+      return { status: 200, body: fileResponse };
     }
 
     if (command.kind === CLAIM_AGENT_INBOX_KIND) {

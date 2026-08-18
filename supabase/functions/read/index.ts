@@ -49,6 +49,11 @@ interface MemberReadRequest {
   workspace_id: string;
 }
 
+interface FileReadRequest {
+  resource: "files";
+  workspace_id: string;
+}
+
 /**
  * Explicit read-contract capability markers for agent-authenticated signals.
  * delivery_claim/ack advertise that the command edge supports the durable path;
@@ -121,7 +126,7 @@ function exactKeys(
 
 function parseBody(
   value: unknown,
-): SignalReadRequest | MemberReadRequest | null {
+): SignalReadRequest | MemberReadRequest | FileReadRequest | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const body = value as Record<string, unknown>;
   if (
@@ -132,6 +137,17 @@ function parseBody(
   ) {
     return {
       resource: "members",
+      workspace_id: body.workspace_id.toLowerCase(),
+    };
+  }
+  if (
+    body.resource === "files" &&
+    exactKeys(body, ["resource", "workspace_id"]) &&
+    typeof body.workspace_id === "string" &&
+    UUID_RE.test(body.workspace_id)
+  ) {
+    return {
+      resource: "files",
       workspace_id: body.workspace_id.toLowerCase(),
     };
   }
@@ -326,6 +342,24 @@ async function handle(
         ORDER BY p.principal_id ASC
       `;
       return json(200, { members, agents });
+    }
+    if (body.resource === "files") {
+      // File artifacts list (FILE-ARTIFACTS.md §7): the membership-gated view
+      // carries one row per file with its current LIVE version's facts. sha256
+      // is an unverified client attestation (★R4) and the shape says so.
+      const files = await tx<Record<string, unknown>[]>`
+        SELECT
+          file_id, name, current_version, size_bytes, content_type,
+          sha256, created_by_kind, created_by, uploaded_by_kind, uploaded_by,
+          created_at, committed_at, tombstoned_at
+        FROM swarm_read.files
+        WHERE workspace_id = ${body.workspace_id}::uuid
+        ORDER BY lower(name) ASC
+      `;
+      return json(200, {
+        files,
+        sha256_note: "unverified client attestation",
+      });
     }
     const inReplyTo = body.in_reply_to ?? null;
     // Cursor mode always pages oldest-first. Legacy requests keep the
