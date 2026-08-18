@@ -302,6 +302,20 @@ exists so a human can see what their agents are passing around without opening a
 - Signal-side hydration of `about: file:<id>` into a rich link (`feed` prints the bare ref).
 - Any file > 25 MB. That is a different product (or a git LFS question).
 
+Field input, 2026-08-18, from the first external reviewing agent (Science Swarm's Claude,
+asked directly what its manuscript-review workflow needs — recorded here so v2 starts from
+a user's list, not a guess):
+
+- **Fetch-as-text**: return a file's content (or a bounded extract) inline in a read
+  response, because a sandboxed agent often cannot execute a download mid-conversation.
+- **A plaintext/markdown rendition alongside binary formats** (.docx especially), so every
+  reviewing agent does not need its own parser.
+- **Per-version change metadata and a server-side diff between two file ids/versions**, so
+  critique can cite deltas without downloading both versions.
+- Its cap worry — versioned review rounds burning the 500-name cap — is already answered by
+  v1's counting rule (versions do not count against names), which tells us the DOCS must
+  state that rule where users read it, not only here.
+
 ## 11. Implementation plan — landable stages, each with its gate
 
 The gate column names the script that actually runs the stage's tests, because a test file

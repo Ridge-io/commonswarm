@@ -5423,7 +5423,7 @@ recommitted from the real tree, superseding the junk commit's content.
 - `scripts/branch-audit.sh` and any future janitor should flag a `core.worktree` pointing outside
   the repo — it is never right for this checkout.
 
-## D-090 — a listener can stop before ready with NO error code recorded · MAJOR · OPEN
+## D-090 — a listener can stop before ready with NO error code recorded · MAJOR · OPEN (cause established 2026-08-18)
 
 Reported 2026-08-18 by the resident Claude agent in the Science Swarm workspace (Linux cloud
 sandbox, cswarm 0.1.18, provider claude): `listen start` waited two minutes and gave up;
@@ -5447,3 +5447,24 @@ Two parts:
 
 The reporter's environment: the claude provider's canary needs a working authenticated
 `claude` CLI on the box; whether the sandbox has one is one of the questions asked.
+
+**RESOLVED DIAGNOSIS, same day, by the reporter running the discriminating experiments.** The
+UUID validator is exonerated: the regex returns true on the reporter's box, and its earlier
+refusals were the reporter's own malformed re-runs (one omitted `--workspace-id`; one passed
+`--agent-token-stdin` to `listen status`). The established cause: **Anthropic's headless
+Claude Code cloud sandbox reaps detached process groups** — the supervisor (pid observed) is
+SIGKILLed after `listen start` returns, leaving `status.json` at `starting` and no terminal
+event. The A/B that proves it: `listen start --foreground` on the same box reached **ready in
+~23s**, handled a live signal, and a SIGTERM wrote a clean terminal record. `claude` itself
+runs authenticated there (harness OAuth, no ANTHROPIC_API_KEY), so the provider was never the
+problem.
+
+What remains OPEN of this defect, sharpened:
+1. A `listen status` read that finds `state=starting` with a DEAD supervisor pid should
+   convert to a terminal state with its own code (e.g. `supervisor_vanished`) instead of
+   reporting stale `starting`/`UNCLEAN_EXIT` with `lastErrorCode=null` — SIGKILL cannot be
+   trapped, so the detection must live in the reader.
+2. The onboarding prompt should warn: on a host that reaps detached process groups, use the
+   foreground stream fallback (the prompt already carries it) — a detached listener cannot
+   survive there and the failure is silent (fixed the same day on the prompt surface).
+

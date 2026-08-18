@@ -239,6 +239,11 @@ export function dashboardAgentPrompt(input: DashboardPromptInput): string {
     "will take work from people outside your account: under deny anything the worker must ask",
     "permission for is refused, which listen start reports as permission_mode deny.",
     "",
+    "If the detached listener never reaches ready and later shows an unclean exit with no",
+    "error recorded, your host may reap detached process groups when the starting command",
+    "returns — headless cloud sandboxes do (measured 2026-08-18). On such a host skip the",
+    "detached listener and use the foreground stream fallback further down.",
+    "",
     'Wait for JSON with state "ready". The adapter keeps a local Claude worker',
     /* ~~"The safe default denies ACP tool requests."~~ Dead 2026-08-11, caught by BOTH review
      * arms on 4844b4e7. The flip made it false twice over: the command above passes
