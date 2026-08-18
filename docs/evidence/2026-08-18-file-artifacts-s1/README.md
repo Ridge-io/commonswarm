@@ -92,6 +92,37 @@ F8 pins direct-access denial: the anon client's select AND insert against `swarm
 are both refused (the swarm schema is not in PostgREST's exposed list and the table has
 no client grants — two walls, one probe each).
 
+## Verify round 2 (2026-08-18) — seven items, all addressed
+
+1. Commit serializes per FILE (the same `FOR UPDATE` create takes) before the
+   version-count check, so two commits of different pendings cannot jointly pass the cap.
+2. The recheck compares request hash + workspace + stream — same-id-different-content is
+   `command_id_conflict`, never a borrowed replay (F7 pins it); and a pre-charge dispatch
+   recheck replays settled ids BEFORE rate limiting or any pre-lock 404 can diverge.
+3. **Design change, and the rule to keep:** the ledger stores ACCEPTED results only.
+   Ledgering refusals froze the honest idempotent retry (PUT the bytes, retry the same id)
+   on a stale `file_bytes_missing` forever. State-dependent refusals re-evaluate on retry;
+   the post-lock recheck is what prevents double-execution. The comment at the (removed)
+   insert site carries both findings so neither gets re-fixed the wrong way. F7 now pins:
+   same id retried after the cause is fixed SUCCEEDS, accepted ids replay, and a different
+   body on the same id conflicts.
+4. All window math moved into SQL (`statement_timestamp()`); no `Date.now()` remains in
+   the module.
+5. `content_warning` ships on all three response shapes from ONE constant per function —
+   mirrored (not imported) into read/index.ts: a cross-function import of
+   file-artifacts.ts boots the read worker into `InvalidWorkerCreation` because read's
+   runtime has no import map for the bare "postgres" type specifier (measured; the
+   must-match comment records it).
+6. **Mechanism fixed via `files.purged_at`, deliberately NOT row deletion:** the unique
+   name index is partial (`WHERE purged_at IS NULL`), the purge stamps `purged_at` under
+   the same file-row locks once the window ended and every version is purged, and create
+   ignores purged files for both the name and the 500-name cap. The refusal copy is now
+   mechanically true, while spec §6's "rows are never deleted" (audit outlives the bytes)
+   is preserved — deleting `swarm.files` rows would also violate the composite FK from
+   surviving version rows. F4 pins the released name being reused.
+7. The ★R15 comments and the deadline note now all say 3 hours for the sweep and 2 for
+   the URL.
+
 ## Not established
 
 - **Hosted storage behavior**: signed-upload upsert-off refusal (BOTH the explicit

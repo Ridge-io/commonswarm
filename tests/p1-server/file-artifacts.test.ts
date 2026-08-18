@@ -488,25 +488,58 @@ test("F6 a foreign tenant's file_id refuses uniformly — no oracle, no 500", as
   assert.equal(ownCollision.body.error, foreign.body.error, "identical refusal both sides");
 });
 
-test("F7 a refused command id replays the same refusal", async () => {
-  const commandId = randomUUID();
-  const first = await postCommand(f.uaJwt, {
-    kind: "file_tombstone",
-    file_id: randomUUID(), // no such file
-  }, f.workspaceA, commandId);
-  assert.equal(first.status, 404);
-  assert.equal(first.body.error, "file_not_found");
+test("F7 refusals re-evaluate: the same command id retried after the cause is fixed SUCCEEDS", async () => {
+  // The ledger stores ACCEPTED results only. A state-dependent refusal
+  // (bytes missing) must NOT freeze the id: the honest idempotent retry is
+  // PUT-the-bytes-then-retry-the-SAME-id, and it must succeed.
+  const fileId = randomUUID();
+  const versionId = randomUUID();
+  const create = await postCommand(f.uaJwt, {
+    kind: "file_version_create",
+    file_id: fileId,
+    version_id: versionId,
+    name: "retry-me.md",
+    declared_size_bytes: 100,
+    content_type: "text/markdown",
+  }, f.workspaceA);
+  assert.equal(create.status, 200, JSON.stringify(create.body));
+
+  const commitId = randomUUID();
+  const early = await postCommand(f.uaJwt, {
+    kind: "file_version_commit",
+    file_id: fileId,
+    version_id: versionId,
+  }, f.workspaceA, commitId);
+  assert.equal(early.status, 409);
+  assert.equal(early.body.error, "file_bytes_missing");
+
+  const put = await fetch(`${local.API_URL}${create.body.upload_path as string}`, {
+    method: "PUT",
+    headers: { "content-type": "text/markdown" },
+    body: PLAN_BYTES,
+  });
+  assert.ok(put.ok);
+  const retry = await postCommand(f.uaJwt, {
+    kind: "file_version_commit",
+    file_id: fileId,
+    version_id: versionId,
+  }, f.workspaceA, commitId);
+  assert.equal(retry.status, 200, JSON.stringify(retry.body));
+
+  // An ACCEPTED id replays, and the SAME id with DIFFERENT content conflicts.
   const replay = await postCommand(f.uaJwt, {
+    kind: "file_version_commit",
+    file_id: fileId,
+    version_id: versionId,
+  }, f.workspaceA, commitId);
+  assert.equal(replay.status, 200, "accepted result replays");
+  assert.equal(replay.body.version_n, retry.body.version_n);
+  const conflict = await postCommand(f.uaJwt, {
     kind: "file_tombstone",
-    file_id: randomUUID(), // DIFFERENT body, same id -> hash conflict is fine either way;
-  }, f.workspaceA, commandId);
-  // Same command id must never produce a fresh execution: either the identical
-  // refusal (matching hash) or a command_id conflict — never a new outcome.
-  assert.ok(
-    (replay.status === 404 && replay.body.error === "file_not_found") ||
-      replay.status === 409,
-    JSON.stringify(replay.body),
-  );
+    file_id: fileId,
+  }, f.workspaceA, commitId);
+  assert.equal(conflict.status, 409, JSON.stringify(conflict.body));
+  assert.equal(conflict.body.error, "command_id_conflict");
 });
 
 test("F8 direct table access is refused: the anon client cannot reach swarm.files", async () => {
@@ -704,4 +737,21 @@ test("F4 purge claims once and restore refuses a claimed file (★R6)", async ()
   }, f.workspaceA);
   assert.equal(restore.status, 410, JSON.stringify(restore.body));
   assert.equal(restore.body.error, "file_purged");
+
+  // Item 6: the fully purged file released its NAME — the refusal copy
+  // ("the purge frees a name") is now mechanically true.
+  const released = await sql<{ purged_at: Date | null }[]>`
+    SELECT purged_at FROM swarm.files
+    WHERE file_id = ${fileId}::uuid AND workspace_id = ${f.workspaceA}::uuid
+  `;
+  assert.ok(released[0]?.purged_at, "purge stamped the file row");
+  const reuse = await postCommand(f.uaJwt, {
+    kind: "file_version_create",
+    file_id: randomUUID(),
+    version_id: randomUUID(),
+    name: "expired.md",
+    declared_size_bytes: 100,
+    content_type: "text/markdown",
+  }, f.workspaceA);
+  assert.equal(reuse.status, 200, JSON.stringify(reuse.body));
 });

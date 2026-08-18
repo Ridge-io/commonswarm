@@ -305,11 +305,7 @@ interface StoredResponse {
   class?: "authz" | "domain";
   event_ids: string[];
   /* File-artifact replay fields (★R16): a lost create response must replay the
-   * SAME pending slot and upload capability, so the allowlist carries them.
-   * http_status/error/message let a ledgered refusal replay verbatim. */
-  http_status?: number;
-  error?: string;
-  message?: string;
+   * SAME pending slot and upload capability, so the allowlist carries them. */
   file_id?: string;
   version_id?: string;
   version_n?: number;
@@ -1884,11 +1880,6 @@ function storedResponse(value: unknown): StoredResponse {
       : {}),
     ...(typeof response.note === "string" ? { note: response.note } : {}),
     ...(typeof response.restored === "boolean" ? { restored: response.restored } : {}),
-    ...(typeof response.http_status === "number"
-      ? { http_status: response.http_status }
-      : {}),
-    ...(typeof response.error === "string" ? { error: response.error } : {}),
-    ...(typeof response.message === "string" ? { message: response.message } : {}),
   };
 }
 
@@ -1898,18 +1889,6 @@ function replayResult(
 ): HttpResult {
   if (commandKind === "accept_invitation" && !response.ok) {
     return { status: 403, body: { error: "forbidden" } };
-  }
-  /* File refusals carry their original HTTP status so a replayed command id
-   * returns the SAME refusal a caller saw the first time (review finding).
-   * Additive: rows without http_status keep the historical 200/rejected shape. */
-  if (!response.ok && typeof response.http_status === "number") {
-    return {
-      status: response.http_status,
-      body: {
-        error: response.error ?? "forbidden",
-        ...(response.message === undefined ? {} : { message: response.message }),
-      },
-    };
   }
   return {
     status: 200,
@@ -6000,18 +5979,48 @@ async function handleTransaction(
       const storage = fileStorage();
       /* Called by handlers AFTER their row locks: a same-command-id request
        * that lost the lock race finds the winner's ledgered response here
-       * instead of re-executing against changed state. */
-      const ledgerRecheck = async () => {
-        const rows = await tx<{ response: unknown }[]>`
-          SELECT response FROM swarm.idempotency_keys
+       * instead of re-executing against changed state. The stored row must
+       * match THIS request's hash and route — a same-id request with different
+       * content must conflict, never wear the winner's response. */
+      const ledgerRecheck = async (): Promise<
+        | { hit: "stored"; stored: Record<string, unknown> }
+        | { hit: "conflict" }
+        | null
+      > => {
+        const rows = await tx<
+          {
+            response: unknown;
+            request_hash: string;
+            workspace_id: string;
+            stream_id: string;
+          }[]
+        >`
+          SELECT response, request_hash, workspace_id, stream_id
+          FROM swarm.idempotency_keys
           WHERE principal_kind = ${auth.credentialKind}
             AND principal_id = ${canonicalPrincipal(auth.actor)}
             AND command_id = ${commandId}
           LIMIT 1
         `;
-        const stored = record(rows[0]?.response);
-        return stored;
+        const row = rows[0];
+        if (row === undefined) return null;
+        const stored = record(row.response);
+        if (stored === null) return { hit: "conflict" };
+        const matches = row.request_hash === hash &&
+          row.workspace_id === route.workspaceId &&
+          row.stream_id === route.streamId;
+        return matches ? { hit: "stored", stored } : { hit: "conflict" };
       };
+      /* Pre-charge recheck: a retry of a settled command id must replay before
+       * it can be rate-limited (429-then-200 divergence) or refused by a
+       * pre-lock 404. Concurrency is still the post-lock recheck's job. */
+      const preDispatch = await ledgerRecheck();
+      if (preDispatch?.hit === "conflict") {
+        return { status: 409, body: { error: "command_id_conflict" } };
+      }
+      if (preDispatch !== null) {
+        return { status: 200, body: preDispatch.stored };
+      }
       const outcome = fileCommand.kind === FILE_VERSION_CREATE_KIND
         ? await fileVersionCreate(
           tx,
@@ -6048,20 +6057,9 @@ async function handleTransaction(
           ledgerRecheck,
         );
       if (outcome.ok === "replay") {
-        const stored = outcome.stored;
-        if (
-          stored !== null && stored.ok === false &&
-          typeof stored.http_status === "number"
-        ) {
-          return {
-            status: stored.http_status,
-            body: {
-              error: String(stored.error ?? "forbidden"),
-              message: String(stored.message ?? ""),
-            },
-          };
-        }
-        return { status: 200, body: stored ?? {} };
+        // The ledger holds accepted results only (see the refusal comment
+        // below), so a recheck hit is always the winner's 200.
+        return { status: 200, body: outcome.stored };
       }
       if (!outcome.ok) {
         await insertAudit(tx, {
@@ -6074,35 +6072,18 @@ async function handleTransaction(
           detail: ignoredIdentity,
           hash,
         });
-        /* Refusals are ledgered too (review finding): without this, the same
-         * command id refused now could be re-executed later against changed
-         * state and return a DIFFERENT result — replay must reproduce the
-         * refusal. Rate limits (429) stay unledgered above: transient by
-         * design. ON CONFLICT DO NOTHING: losing a ledger race on a refusal
-         * needs no recharge — both writers hold the same refusal. */
-        await tx`
-          INSERT INTO swarm.idempotency_keys (
-            principal_kind, principal_id, command_id,
-            workspace_id, stream_id, request_hash, response
-          ) VALUES (
-            ${auth.credentialKind},
-            ${canonicalPrincipal(auth.actor)},
-            ${commandId},
-            ${route.workspaceId}::uuid,
-            ${route.streamId}::uuid,
-            ${hash},
-            ${tx.json({
-              ok: false,
-              class: outcome.refusal.status === 403 ? "authz" : "domain",
-              reason: outcome.refusal.reason,
-              http_status: outcome.refusal.status,
-              error: outcome.refusal.error,
-              message: outcome.refusal.message,
-              event_ids: [],
-            } as unknown as postgres.JSONValue)}::jsonb
-          )
-          ON CONFLICT (principal_kind, principal_id, command_id) DO NOTHING
-        `;
+        /* FILE REFUSALS ARE DELIBERATELY NOT LEDGERED — do not "fix" this by
+         * ledgering them again. An earlier round did, to stop a replayed id
+         * returning a different result; the inversion arm then found the trap
+         * that kills that rule: a ledgered 409 file_bytes_missing FREEZES the
+         * honest idempotent retry — PUT the bytes, retry the SAME command id —
+         * on a stale refusal forever (same for file_not_tombstoned after a
+         * tombstone). State-dependent refusals are honest reports about NOW
+         * and must re-evaluate on retry; re-running them has no side effect,
+         * because the ledger only ever stores ACCEPTED results (effects) and
+         * the post-lock recheck above prevents double-execution of those.
+         * Same-id-different-content is command_id_conflict via the hash
+         * comparison, never a replay. */
         return {
           status: outcome.refusal.status,
           body: {

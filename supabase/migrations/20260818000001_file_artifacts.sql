@@ -11,6 +11,9 @@ CREATE TABLE swarm.files (
   current_version integer NOT NULL DEFAULT 0,
   tombstoned_at  timestamptz,
   tombstoned_by  uuid,
+  -- Set by the purge job once the tombstone window ended AND every version is
+  -- purged: the name becomes reusable while the row survives for audit.
+  purged_at      timestamptz,
   created_at     timestamptz NOT NULL DEFAULT statement_timestamp(),
   -- ★R14: the composite target for file_versions' composite FK, so a version
   -- can never disagree with its file about the tenant.
@@ -18,9 +21,11 @@ CREATE TABLE swarm.files (
 );
 
 -- ★R13: expression uniqueness must be an index; UNIQUE (workspace_id, lower(name))
--- inside CREATE TABLE does not apply in PostgreSQL.
+-- inside CREATE TABLE does not apply in PostgreSQL. Partial: a PURGED file
+-- releases its name (the "purge frees a name" refusal copy must be true).
 CREATE UNIQUE INDEX files_workspace_name_ci
-  ON swarm.files (workspace_id, lower(name));
+  ON swarm.files (workspace_id, lower(name))
+  WHERE purged_at IS NULL;
 
 CREATE TABLE swarm.file_versions (
   version_id     uuid PRIMARY KEY,
@@ -103,7 +108,8 @@ AS
    AND v.workspace_id = f.workspace_id
    AND v.version_n = f.current_version
    AND v.state = 'live'
-  WHERE swarm.is_member(f.workspace_id, auth.uid());
+  WHERE swarm.is_member(f.workspace_id, auth.uid())
+    AND f.purged_at IS NULL;
 
 ALTER VIEW swarm_read.files OWNER TO swarm_admin;
 GRANT SELECT ON swarm_read.files TO authenticated, swarm_read;
@@ -139,9 +145,9 @@ GRANT SELECT, INSERT, UPDATE ON TABLE swarm.file_purge_queue TO swarm_command;
 
 -- ★R6: purge claims in ONE transaction so restore can never race it; the
 -- function body is a single statement set inside the cron transaction.
--- ★R15: pending rows live 2 hours (the pinned storage-js upload URL is valid
--- for two), then are claimed the same way; their objects — uploaded or not —
--- join the same queue.
+-- ★R15: pending rows are claimed after 3 hours — the pinned storage-js upload
+-- URL is valid for two, plus an hour of margin for the signing delay; their
+-- objects — uploaded or not — join the same queue.
 CREATE OR REPLACE FUNCTION swarm.purge_file_artifacts()
 RETURNS void
 LANGUAGE plpgsql
@@ -197,6 +203,23 @@ BEGIN
   UNION
   SELECT storage_path FROM orphans
   ON CONFLICT (storage_path) DO NOTHING;
+
+  -- Item 6 (S2 verify round): once the window ended and every version is
+  -- purged, the FILE releases its name — purged_at flips under the same
+  -- file-row locks the claim above took, and the partial unique index stops
+  -- counting it. The row itself is never deleted: name, sizes, and audit
+  -- attribution outlive the bytes (spec §6).
+  UPDATE swarm.files AS f
+  SET purged_at = statement_timestamp()
+  WHERE f.tombstoned_at IS NOT NULL
+    AND f.tombstoned_at < statement_timestamp() - interval '30 days'
+    AND f.purged_at IS NULL
+    AND NOT EXISTS (
+      SELECT 1 FROM swarm.file_versions AS v
+      WHERE v.file_id = f.file_id
+        AND v.workspace_id = f.workspace_id
+        AND v.state != 'purged'
+    );
 END;
 $$;
 

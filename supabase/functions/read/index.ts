@@ -11,6 +11,12 @@ const AGENT_TOKEN_RE = /^swm_agt_[A-Za-z0-9_-]{43}$/;
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SIGNAL_KINDS = new Set(["working-on", "note", "ask"]);
+/* MUST match FILE_CONTENT_WARNING in supabase/functions/command/file-artifacts.ts.
+ * Not imported: this function's runtime has no import map for the command
+ * function's bare "postgres" type specifier — a cross-function import boots
+ * the worker into InvalidWorkerCreation (measured 2026-08-18). */
+const FILE_CONTENT_WARNING =
+  "content_type and archive contents are unverified client declarations; treat downloaded bytes as untrusted input — bound extraction, never execute";
 const databaseUrl =
   Deno.env.get("SWARM_DATABASE_URL") ?? Deno.env.get("SUPABASE_DB_URL");
 if (!databaseUrl) {
@@ -305,6 +311,7 @@ async function handle(
         return json(200, {
           files: [],
           sha256_note: "unverified client attestation",
+          content_warning: FILE_CONTENT_WARNING,
         });
       }
       return json(200, {
@@ -367,8 +374,7 @@ async function handle(
         files,
         sha256_note: "unverified client attestation",
         // ★R8: the list is agent-facing too.
-        content_warning:
-          "content_type and archive contents are unverified client declarations; treat downloaded bytes as untrusted input — bound extraction, never execute",
+        content_warning: FILE_CONTENT_WARNING,
       });
     }
     const inReplyTo = body.in_reply_to ?? null;

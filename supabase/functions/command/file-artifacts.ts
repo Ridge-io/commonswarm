@@ -272,8 +272,17 @@ export type FileOutcome<T> =
    * refusal after them. */
   | { ok: "replay"; stored: Record<string, unknown> };
 
-/** Re-reads the idempotency ledger; handlers call it AFTER taking their locks. */
-export type LedgerRecheck = () => Promise<Record<string, unknown> | null>;
+/**
+ * Re-reads the idempotency ledger; handlers call it AFTER taking their locks.
+ * "conflict" = a row exists for this command id with a DIFFERENT request hash
+ * or route — replaying the winner's response as if it answered THIS request
+ * would hand the caller someone else's result.
+ */
+export type LedgerRecheckResult =
+  | { hit: "stored"; stored: Record<string, unknown> }
+  | { hit: "conflict" }
+  | null;
+export type LedgerRecheck = () => Promise<LedgerRecheckResult>;
 
 function refuse(
   status: number,
@@ -347,7 +356,15 @@ export async function fileVersionCreate(
     return refuse(403, "forbidden", "workspace not found", "no such workspace");
   }
   const storedCreate = await ledgerRecheck();
-  if (storedCreate !== null) return { ok: "replay", stored: storedCreate };
+  if (storedCreate?.hit === "conflict") {
+    return refuse(
+      409,
+      "command_id_conflict",
+      "this command id was already used with a different request",
+      "command id conflict",
+    );
+  }
+  if (storedCreate !== null) return { ok: "replay", stored: storedCreate.stored };
 
   // ★R5 byte cap: live bytes plus not-yet-expired pending DECLARED bytes —
   // pending must count here or concurrent pendings overshoot the cap at commit.
@@ -358,8 +375,9 @@ export async function fileVersionCreate(
       AND (
         state = 'live'
         OR (
+          -- Same 3h window the GC claims on: URL validity plus margin.
           state = 'pending'
-          AND created_at > statement_timestamp() - interval '2 hours'
+          AND created_at > statement_timestamp() - interval '3 hours'
         )
       )
   `;
@@ -407,6 +425,9 @@ export async function fileVersionCreate(
     FROM swarm.files AS f
     WHERE f.workspace_id = ${workspaceId}::uuid
       AND lower(f.name) = lower(${cmd.name})
+      -- A purged file (tombstone window ended, bytes claimed) releases its
+      -- name; the row itself stays for audit. Item 6 of the S2 verify round.
+      AND f.purged_at IS NULL
     FOR UPDATE OF f
   `;
   const file = existing[0];
@@ -435,6 +456,7 @@ export async function fileVersionCreate(
     const nameRows = await tx<{ total: string }[]>`
       SELECT count(*)::text AS total FROM swarm.files
       WHERE workspace_id = ${workspaceId}::uuid
+        AND purged_at IS NULL
     `;
     if (Number(nameRows[0]?.total ?? "0") >= FILE_WORKSPACE_MAX_NAMES) {
       // Tombstoned names COUNT: the name stays reserved for restore until the
@@ -524,7 +546,7 @@ export async function fileVersionCreate(
       upload_token: upload.token,
       upload_expires_in_seconds: 7200,
       commit_deadline_note:
-        "PUT the bytes to <your deployment URL> + upload_path, then send file_version_commit. The pending slot expires two hours from now.",
+        "PUT the bytes to <your deployment URL> + upload_path, then send file_version_commit. The upload URL lasts two hours; the pending slot is swept three hours from now.",
     },
   };
 }
@@ -537,6 +559,30 @@ export async function fileVersionCommit(
   storage: FileStorage,
   ledgerRecheck: LedgerRecheck,
 ): Promise<FileOutcome<Record<string, unknown>>> {
+  // Concurrent commits of two DIFFERENT pending versions lock different
+  // version rows and would each pass the live-version count (review P1), so
+  // commit serializes per FILE first — the same lock create takes.
+  const fileLock = await tx<{ file_id: string }[]>`
+    SELECT file_id FROM swarm.files
+    WHERE file_id = ${cmd.file_id}::uuid
+      AND workspace_id = ${workspaceId}::uuid
+    FOR UPDATE
+  `;
+  if (fileLock.length === 0) {
+    return refuse(404, "file_not_found", "no such file in this workspace", "compound key miss");
+  }
+  const storedCommitEarly = await ledgerRecheck();
+  if (storedCommitEarly?.hit === "conflict") {
+    return refuse(
+      409,
+      "command_id_conflict",
+      "this command id was already used with a different request",
+      "command id conflict",
+    );
+  }
+  if (storedCommitEarly !== null) {
+    return { ok: "replay", stored: storedCommitEarly.stored };
+  }
   // ★R1 compound key; ★R2 one-time, creator-only. The row is locked so the
   // measured-size UPDATE below cannot race a second commit of the same version.
   const rows = await tx<
@@ -566,8 +612,6 @@ export async function fileVersionCommit(
   if (version === undefined) {
     return refuse(404, "file_not_found", "no such pending version in this workspace", "compound key miss");
   }
-  const storedCommit = await ledgerRecheck();
-  if (storedCommit !== null) return { ok: "replay", stored: storedCommit };
   if (version.state !== "pending") {
     // ★R2: a replay against a live (or purged) row is refused, never rewritten.
     return refuse(
@@ -767,7 +811,15 @@ export async function fileTombstone(
     return refuse(404, "file_not_found", "no such file in this workspace", "compound key miss");
   }
   const storedTombstone = await ledgerRecheck();
-  if (storedTombstone !== null) return { ok: "replay", stored: storedTombstone };
+  if (storedTombstone?.hit === "conflict") {
+    return refuse(
+      409,
+      "command_id_conflict",
+      "this command id was already used with a different request",
+      "command id conflict",
+    );
+  }
+  if (storedTombstone !== null) return { ok: "replay", stored: storedTombstone.stored };
   if (
     actor.kind === "agent" &&
     (file.created_by !== actor.id || file.created_by_kind !== "agent")
@@ -814,11 +866,18 @@ export async function fileRestore(
       tombstoned_at: Date | null;
       created_by: string;
       created_by_kind: string;
+      window_ended: boolean;
       purged: string;
     }[]
   >`
     SELECT
       f.name, f.tombstoned_at, f.created_by, f.created_by_kind,
+      -- The DATABASE clock decides the window (review: Date.now() skew could
+      -- refuse inside the announced window or allow a late restore).
+      (
+        f.tombstoned_at IS NOT NULL AND
+        f.tombstoned_at < statement_timestamp() - interval '30 days'
+      ) AS window_ended,
       (
         SELECT count(*)::text FROM swarm.file_versions AS v
         WHERE v.file_id = f.file_id
@@ -836,7 +895,15 @@ export async function fileRestore(
     return refuse(404, "file_not_found", "no such file in this workspace", "compound key miss");
   }
   const storedRestore = await ledgerRecheck();
-  if (storedRestore !== null) return { ok: "replay", stored: storedRestore };
+  if (storedRestore?.hit === "conflict") {
+    return refuse(
+      409,
+      "command_id_conflict",
+      "this command id was already used with a different request",
+      "command id conflict",
+    );
+  }
+  if (storedRestore !== null) return { ok: "replay", stored: storedRestore.stored };
   if (file.tombstoned_at === null) {
     return refuse(409, "file_not_tombstoned", "this file is not tombstoned", "not tombstoned");
   }
@@ -844,9 +911,7 @@ export async function fileRestore(
   // also takes — a restore racing the claim either commits first (the claim
   // then skips the file) or sees this refusal. No dependence on whether the
   // cron has run yet.
-  if (
-    Date.now() - file.tombstoned_at.getTime() > 30 * 24 * 60 * 60 * 1_000
-  ) {
+  if (file.window_ended) {
     return refuse(
       410,
       "file_purged",
