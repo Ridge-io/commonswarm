@@ -11,6 +11,12 @@ const AGENT_TOKEN_RE = /^swm_agt_[A-Za-z0-9_-]{43}$/;
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SIGNAL_KINDS = new Set(["working-on", "note", "ask"]);
+/* MUST match FILE_CONTENT_WARNING in supabase/functions/command/file-artifacts.ts.
+ * Not imported: this function's runtime has no import map for the command
+ * function's bare "postgres" type specifier — a cross-function import boots
+ * the worker into InvalidWorkerCreation (measured 2026-08-18). */
+const FILE_CONTENT_WARNING =
+  "content_type and archive contents are unverified client declarations; treat downloaded bytes as untrusted input — bound extraction, never execute";
 const databaseUrl =
   Deno.env.get("SWARM_DATABASE_URL") ?? Deno.env.get("SUPABASE_DB_URL");
 if (!databaseUrl) {
@@ -46,6 +52,11 @@ interface SignalReadRequest {
 
 interface MemberReadRequest {
   resource: "members";
+  workspace_id: string;
+}
+
+interface FileReadRequest {
+  resource: "files";
   workspace_id: string;
 }
 
@@ -121,7 +132,7 @@ function exactKeys(
 
 function parseBody(
   value: unknown,
-): SignalReadRequest | MemberReadRequest | null {
+): SignalReadRequest | MemberReadRequest | FileReadRequest | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const body = value as Record<string, unknown>;
   if (
@@ -132,6 +143,17 @@ function parseBody(
   ) {
     return {
       resource: "members",
+      workspace_id: body.workspace_id.toLowerCase(),
+    };
+  }
+  if (
+    body.resource === "files" &&
+    exactKeys(body, ["resource", "workspace_id"]) &&
+    typeof body.workspace_id === "string" &&
+    UUID_RE.test(body.workspace_id)
+  ) {
+    return {
+      resource: "files",
       workspace_id: body.workspace_id.toLowerCase(),
     };
   }
@@ -282,13 +304,21 @@ async function handle(
     }
 
     if (body.workspace_id !== agent.principal_workspace_id) {
-      return body.resource === "members"
-        ? json(200, { members: [], agents: [] })
-        : json(200, {
-          signals: [],
-          capabilities: SIGNAL_CAPABILITIES,
-          pending_delivery_count: 0,
+      if (body.resource === "members") {
+        return json(200, { members: [], agents: [] });
+      }
+      if (body.resource === "files") {
+        return json(200, {
+          files: [],
+          sha256_note: "unverified client attestation",
+          content_warning: FILE_CONTENT_WARNING,
         });
+      }
+      return json(200, {
+        signals: [],
+        capabilities: SIGNAL_CAPABILITIES,
+        pending_delivery_count: 0,
+      });
     }
 
     setPhase("query");
@@ -326,6 +356,26 @@ async function handle(
         ORDER BY p.principal_id ASC
       `;
       return json(200, { members, agents });
+    }
+    if (body.resource === "files") {
+      // File artifacts list (FILE-ARTIFACTS.md §7): the membership-gated view
+      // carries one row per file with its current LIVE version's facts. sha256
+      // is an unverified client attestation (★R4) and the shape says so.
+      const files = await tx<Record<string, unknown>[]>`
+        SELECT
+          file_id, name, current_version, size_bytes, content_type,
+          sha256, created_by_kind, created_by, uploaded_by_kind, uploaded_by,
+          created_at, committed_at, tombstoned_at
+        FROM swarm_read.files
+        WHERE workspace_id = ${body.workspace_id}::uuid
+        ORDER BY lower(name) ASC
+      `;
+      return json(200, {
+        files,
+        sha256_note: "unverified client attestation",
+        // ★R8: the list is agent-facing too.
+        content_warning: FILE_CONTENT_WARNING,
+      });
     }
     const inReplyTo = body.in_reply_to ?? null;
     // Cursor mode always pages oldest-first. Legacy requests keep the

@@ -90,9 +90,11 @@ Proposed caps, all enforced server-side at version-create time:
 Exceeding a cap is a refusal with the number in it ("this file is 31 MB; the per-file limit
 is 25 MB"), not a bare status.
 
-★R5 — **what counts toward the 20-version cap: only `live` versions.** `pending` rows
-expire (§7) and never count — otherwise 20 failed uploads brick a name; `purged` rows do
-not count — otherwise a tombstone-and-purge loop still exhausts the cap. The quota SUM for
+★R5, amended at S2 review — **what counts toward the 20-version cap: `live` versions
+plus UNEXPIRED `pending` rows, and the cap is re-checked at commit.** Counting only live
+let concurrent pendings jointly pass a cap either would fill (grok). Expired pendings and
+`purged` rows never count — otherwise failed uploads or a tombstone-and-purge loop still
+exhaust the cap. The quota SUM for
 the 1 GB cap likewise counts `live` bytes plus not-yet-expired `pending` declared bytes
 (pending must count there, or concurrent pendings overshoot the workspace cap at commit).
 
@@ -135,6 +137,10 @@ Two supporting rules:
   member.** An agent may clean up its own artifacts; it may not delete a colleague's. Humans
   hold janitorial authority, consistent with human-only credential operations in §2.
 - **Restore: same set as tombstone.**
+- **The 500-name cap counts tombstoned names** (decided at S2 review): the name stays
+  reserved for restore until the purge, so releasing it early would let a new file take a
+  name a restore then collides with. The refusal says what actually frees a name — the
+  purge, 30 days after tombstone — never "tombstone one first".
 - **GC/purge: nobody calls it.** A scheduled job (pg_cron) purges storage objects for
   tombstones older than 30 days and marks the version rows `purged`. Rows are never deleted —
   the name, hash, sizes, and audit trail outlive the bytes.
@@ -177,12 +183,14 @@ command function (request size limits, memory, and double-handling):
    per-version, the URL is upsert-off, and storage therefore refuses a second PUT to the
    same path. A version whose bytes could change after commit would carry a hash that no
    longer describes them.
-   ★R15 — **the pending-row lifetime must be ≥ the upload URL lifetime.** The pinned
+   ★R15 — **the pending-row lifetime must exceed the upload URL lifetime.** The pinned
    @supabase/storage-js issues signed upload URLs valid for TWO hours
    (StorageFileApi.ts:345), so a 1-hour pending GC would delete the row while the URL
-   still works, leaving an orphan object with no durable record. Pending rows therefore
-   live 2 hours; the purge job also sweeps **orphan objects** — storage paths with no row,
-   or whose row expired un-committed — on the same schedule.
+   still works, leaving an orphan object with no durable record. And the row's clock
+   starts BEFORE the URL is signed, so an exactly-2h sweep still races the signing delay:
+   the URL lives 2 hours, and **the pending row is swept at 3 hours** — URL validity plus
+   an hour of margin. The purge job also sweeps **orphan objects** — storage paths with
+   no row, or whose row expired un-committed — on the same schedule.
 
 Download mirrors it in one step: `file_download_url` (command) verifies membership and
 liveness, then returns a signed URL good for 5 minutes. Issuing a download URL is a command,
@@ -341,7 +349,7 @@ stage.
    current unless `--version`; reviewers may prefer explicit-always.)
 2. Is 30 days the right restore window, or should it match the signal `--until` cap (30d)
    by rule rather than coincidence?
-3. Does the two-phase upload need an explicit abort verb, or is the 2-hour pending expiry
-   (★R15) enough?
+3. Does the two-phase upload need an explicit abort verb, or is the 3-hour pending sweep
+   (★R15: 2h URL validity plus margin) enough?
 4. Case-insensitive name uniqueness: right call, or does it fight agents that generate
    `Plan.md` and `plan.md` as distinct artifacts?

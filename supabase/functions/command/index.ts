@@ -33,6 +33,24 @@ import {
   type ClaimAgentInboxCommand,
   type DeliveryAckOutcome,
 } from "./durable-delivery.ts";
+import {
+  FILE_BUCKET,
+  FILE_COMMAND_KINDS,
+  FILE_CREATE_RATE_LIMIT_PER_HOUR,
+  FILE_DOWNLOAD_URL_KIND,
+  FILE_RESTORE_KIND,
+  FILE_TOMBSTONE_KIND,
+  FILE_VERSION_COMMIT_KIND,
+  FILE_VERSION_CREATE_KIND,
+  fileDownloadUrl,
+  fileRestore,
+  fileTombstone,
+  fileVersionCommit,
+  fileVersionCreate,
+  validateFileCommand,
+  type FileCommand,
+  type FileStorage,
+} from "./file-artifacts.ts";
 // Supabase's edge graph cannot resolve the NodeNext `.js` specifiers in the
 // frozen TypeScript core. This checked-in bundle is regenerated directly from
 // src/protocol/index.ts by build:command-core; it is not a second implementation.
@@ -145,7 +163,8 @@ type ValidatedCommand =
   | Command
   | ConnectCommand
   | SignalCommand
-  | DeliveryCommand;
+  | DeliveryCommand
+  | FileCommand;
 
 type WorkspaceRole = "owner" | "admin" | "member";
 
@@ -285,6 +304,26 @@ interface StoredResponse {
   detail?: string;
   class?: "authz" | "domain";
   event_ids: string[];
+  /* File-artifact replay fields (★R16): a lost create response must replay the
+   * SAME pending slot and upload capability, so the allowlist carries them. */
+  file_id?: string;
+  version_id?: string;
+  version_n?: number;
+  name?: string;
+  upload_path?: string;
+  upload_token?: string;
+  upload_expires_in_seconds?: number;
+  commit_deadline_note?: string;
+  size_bytes?: number;
+  sha256?: string | null;
+  sha256_note?: string;
+  reference?: string;
+  content_type?: string;
+  download_path?: string;
+  download_url_expires_in_seconds?: number;
+  restorable_until?: string;
+  note?: string;
+  restored?: boolean;
   invitation_id?: string;
   principal_id?: string;
   token_id?: string;
@@ -673,6 +712,7 @@ const COMMAND_KINDS = [
   "post_signal",
   CLAIM_AGENT_INBOX_KIND,
   ACK_AGENT_DELIVERY_KIND,
+  ...FILE_COMMAND_KINDS,
 ] as const;
 const TASK_COMMAND_KINDS = [
   "create",
@@ -712,6 +752,7 @@ const WORKSPACE_COMMAND_KINDS = [
   RENEW_AGENT_TOKEN_KIND,
   CLAIM_AGENT_INBOX_KIND,
   ACK_AGENT_DELIVERY_KIND,
+  ...FILE_COMMAND_KINDS,
 ] as const;
 const P0_AGENT_SCOPES = [
   "create",
@@ -756,6 +797,86 @@ const db = postgres(databaseUrl, {
   idle_timeout: 20,
   connect_timeout: 10,
 });
+/**
+ * Storage adapter for file artifacts (§7). Raw REST with the service role key:
+ * the bucket is service-role-only (★R12), so every signed URL is minted here
+ * and nowhere else. The runtime injects SUPABASE_SERVICE_ROLE_KEY.
+ */
+function fileStorage(): FileStorage {
+  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  if (!serviceKey) {
+    throw new Error("file artifacts require SUPABASE_SERVICE_ROLE_KEY");
+  }
+  const headers = {
+    authorization: `Bearer ${serviceKey}`,
+    apikey: serviceKey,
+    "content-type": "application/json",
+  };
+  const base = `${supabaseUrl}/storage/v1`;
+  return {
+    async signUpload(path) {
+      // No upsert field: storage defaults to upsert OFF, which is load-bearing
+      // (★R3) — a second PUT to a committed version's path must be refused.
+      const response = await fetch(
+        `${base}/object/upload/sign/${FILE_BUCKET}/${path}`,
+        {
+          method: "POST",
+          // x-upsert explicitly false (★R3): the default is upsert-off, and
+          // this pins it against a storage default ever moving. Whether hosted
+          // storage honors both the header and the signature binding is S6's
+          // to re-verify.
+          headers: { ...headers, "x-upsert": "false" },
+          body: "{}",
+        },
+      );
+      if (!response.ok) {
+        throw new Error(`storage upload sign failed: ${response.status}`);
+      }
+      const data = await response.json() as { url?: string };
+      if (typeof data.url !== "string") {
+        throw new Error("storage upload sign returned no url");
+      }
+      const relative = `/storage/v1${data.url}`;
+      const token =
+        new URL(relative, "http://relative.invalid").searchParams.get(
+          "token",
+        ) ?? "";
+      return { path: relative, token };
+    },
+    async objectSize(path) {
+      const response = await fetch(
+        `${base}/object/authenticated/${FILE_BUCKET}/${path}`,
+        { method: "HEAD", headers },
+      );
+      if (!response.ok) return null;
+      const length = response.headers.get("content-length");
+      const size = length === null ? Number.NaN : Number(length);
+      return Number.isFinite(size) ? size : null;
+    },
+    async signDownload(path, filename, expiresInSeconds) {
+      const response = await fetch(
+        `${base}/object/sign/${FILE_BUCKET}/${path}`,
+        {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ expiresIn: expiresInSeconds }),
+        },
+      );
+      if (!response.ok) {
+        throw new Error(`storage download sign failed: ${response.status}`);
+      }
+      const data = await response.json() as { signedURL?: string };
+      if (typeof data.signedURL !== "string") {
+        throw new Error("storage download sign returned no url");
+      }
+      // §5: always an attachment, never inline from our domain.
+      return `/storage/v1${data.signedURL}&download=${
+        encodeURIComponent(filename)
+      }`;
+    },
+  };
+}
+
 const authClient = createClient(supabaseUrl, supabaseAnonKey, {
   auth: { persistSession: false, autoRefreshToken: false },
 });
@@ -1181,6 +1302,10 @@ function validateCommand(
   }
   if (!(COMMAND_KINDS as readonly string[]).includes(cmd.kind)) {
     return { ok: false, status: 400, reason: "unknown command kind" };
+  }
+
+  if ((FILE_COMMAND_KINDS as readonly string[]).includes(cmd.kind)) {
+    return validateFileCommand(cmd);
   }
 
   if (cmd.kind === CLAIM_AGENT_INBOX_KIND) {
@@ -1727,6 +1852,34 @@ function storedResponse(value: unknown): StoredResponse {
     ...(record(response.signal) === null
       ? {}
       : { signal: response.signal as unknown as SignalRecord }),
+    ...(typeof response.file_id === "string" ? { file_id: response.file_id } : {}),
+    ...(typeof response.version_id === "string" ? { version_id: response.version_id } : {}),
+    ...(typeof response.version_n === "number" ? { version_n: response.version_n } : {}),
+    ...(typeof response.name === "string" ? { name: response.name } : {}),
+    ...(typeof response.upload_path === "string" ? { upload_path: response.upload_path } : {}),
+    ...(typeof response.upload_token === "string" ? { upload_token: response.upload_token } : {}),
+    ...(typeof response.upload_expires_in_seconds === "number"
+      ? { upload_expires_in_seconds: response.upload_expires_in_seconds }
+      : {}),
+    ...(typeof response.commit_deadline_note === "string"
+      ? { commit_deadline_note: response.commit_deadline_note }
+      : {}),
+    ...(typeof response.size_bytes === "number" ? { size_bytes: response.size_bytes } : {}),
+    ...(typeof response.sha256 === "string" || response.sha256 === null
+      ? { sha256: response.sha256 as string | null }
+      : {}),
+    ...(typeof response.sha256_note === "string" ? { sha256_note: response.sha256_note } : {}),
+    ...(typeof response.reference === "string" ? { reference: response.reference } : {}),
+    ...(typeof response.content_type === "string" ? { content_type: response.content_type } : {}),
+    ...(typeof response.download_path === "string" ? { download_path: response.download_path } : {}),
+    ...(typeof response.download_url_expires_in_seconds === "number"
+      ? { download_url_expires_in_seconds: response.download_url_expires_in_seconds }
+      : {}),
+    ...(typeof response.restorable_until === "string"
+      ? { restorable_until: response.restorable_until }
+      : {}),
+    ...(typeof response.note === "string" ? { note: response.note } : {}),
+    ...(typeof response.restored === "boolean" ? { restored: response.restored } : {}),
   };
 }
 
@@ -5437,11 +5590,21 @@ async function handleTransaction(
       });
       return { status: 403, body: { error: "delivery_unavailable" } };
     }
+    /* ★R9.2 (file artifacts): every FILE_COMMAND_KINDS kind is agent-allowed by
+     * class, exempted from the per-scope gate the way delivery commands are —
+     * existing minted tokens cannot carry new scopes, and files are
+     * workspace-visible like signals. Tombstone/restore enforce the §6 actor
+     * rule (own uploads only for agents) inside their handlers. */
+    const isFileCommand =
+      (FILE_COMMAND_KINDS as readonly string[]).includes(
+        validation.command.kind,
+      );
     if (
       auth.agent !== null &&
       !isRenewal &&
       !isAgentTokenRevoke &&
       !isDeliveryCommand &&
+      !isFileCommand &&
       (
         (CONNECT_COMMAND_KINDS as readonly string[]).includes(
           validation.command.kind,
@@ -5766,6 +5929,217 @@ async function handleTransaction(
           min_client_version: minClientVersion,
         },
       };
+    }
+
+    if ((FILE_COMMAND_KINDS as readonly string[]).includes(command.kind)) {
+      const fileCommand = command as FileCommand;
+      const fileActor = auth.credentialKind === "agent"
+        ? { kind: "agent" as const, id: auth.agent!.principal_id }
+        : { kind: "user" as const, id: auth.actor.user! };
+      /* Called by handlers AFTER their row locks: a same-command-id request
+       * that lost the lock race finds the winner's ledgered response here
+       * instead of re-executing against changed state. The stored row must
+       * match THIS request's hash and route — a same-id request with different
+       * content must conflict, never wear the winner's response. */
+      const ledgerRecheck = async (): Promise<
+        | { hit: "stored"; stored: Record<string, unknown> }
+        | { hit: "conflict" }
+        | null
+      > => {
+        const rows = await tx<
+          {
+            response: unknown;
+            request_hash: string;
+            workspace_id: string;
+            stream_id: string;
+          }[]
+        >`
+          SELECT response, request_hash, workspace_id, stream_id
+          FROM swarm.idempotency_keys
+          WHERE principal_kind = ${auth.credentialKind}
+            AND principal_id = ${canonicalPrincipal(auth.actor)}
+            AND command_id = ${commandId}
+          LIMIT 1
+        `;
+        const row = rows[0];
+        if (row === undefined) return null;
+        const stored = record(row.response);
+        if (stored === null) return { hit: "conflict" };
+        const matches = row.request_hash === hash &&
+          row.workspace_id === route.workspaceId &&
+          row.stream_id === route.streamId;
+        return matches ? { hit: "stored", stored } : { hit: "conflict" };
+      };
+      /* Pre-charge recheck: a retry of a settled command id must replay before
+       * it can be rate-limited (429-then-200 divergence) or refused by a
+       * pre-lock 404. Concurrency is still the post-lock recheck's job. */
+      const preDispatch = await ledgerRecheck();
+      if (preDispatch?.hit === "conflict") {
+        return { status: 409, body: { error: "command_id_conflict" } };
+      }
+      if (preDispatch !== null) {
+        return { status: 200, body: preDispatch.stored };
+      }
+      // §4 rate limit, charged only for the verb that consumes quota (★R9.6) —
+      // and only AFTER the pre-charge recheck above, so replaying a settled
+      // command id never burns budget or returns 429 (round-3 finding).
+      if (fileCommand.kind === FILE_VERSION_CREATE_KIND) {
+        // Humans key by user id — credentialId is null for every human, which
+        // was one shared global bucket; agents key by PRINCIPAL, because a
+        // token id rotates and each rotation would reset the meter.
+        const rateIdentity = auth.credentialKind === "agent"
+          ? auth.agent!.principal_id
+          : auth.actor.user;
+        if (rateIdentity === null) {
+          throw new Error("file rate limit has no stable identity");
+        }
+        const bucket = await incrementRateBucket(
+          tx,
+          `file:create:${auth.credentialKind}:${rateIdentity}`,
+          FILE_CREATE_RATE_LIMIT_PER_HOUR,
+        );
+        if (bucket.count > FILE_CREATE_RATE_LIMIT_PER_HOUR) {
+          const detail =
+            `file limit ${FILE_CREATE_RATE_LIMIT_PER_HOUR} uploads/hour; resets at ${bucket.resetsAt}`;
+          await insertAudit(tx, {
+            auth,
+            commandKind: kind,
+            workspaceId: route.workspaceId,
+            streamId: route.streamId,
+            outcome: "rate_limit",
+            reason: "rate_limited",
+            detail,
+            hash,
+          });
+          return {
+            status: 429,
+            body: {
+              error: "rate_limited",
+              message: `Upload refused: ${detail}.`,
+              limit: FILE_CREATE_RATE_LIMIT_PER_HOUR,
+              resets_at: bucket.resetsAt,
+            },
+          };
+        }
+      }
+      const storage = fileStorage();
+      const outcome = fileCommand.kind === FILE_VERSION_CREATE_KIND
+        ? await fileVersionCreate(
+          tx,
+          route.workspaceId,
+          fileActor,
+          fileCommand,
+          storage,
+          ledgerRecheck,
+        )
+        : fileCommand.kind === FILE_VERSION_COMMIT_KIND
+        ? await fileVersionCommit(
+          tx,
+          route.workspaceId,
+          fileActor,
+          fileCommand,
+          storage,
+          ledgerRecheck,
+        )
+        : fileCommand.kind === FILE_DOWNLOAD_URL_KIND
+        ? await fileDownloadUrl(tx, route.workspaceId, fileCommand, storage)
+        : fileCommand.kind === FILE_TOMBSTONE_KIND
+        ? await fileTombstone(
+          tx,
+          route.workspaceId,
+          fileActor,
+          fileCommand,
+          ledgerRecheck,
+        )
+        : await fileRestore(
+          tx,
+          route.workspaceId,
+          fileActor,
+          fileCommand,
+          ledgerRecheck,
+        );
+      if (outcome.ok === "replay") {
+        // The ledger holds accepted results only (see the refusal comment
+        // below), so a recheck hit is always the winner's 200.
+        return { status: 200, body: outcome.stored };
+      }
+      if (!outcome.ok) {
+        await insertAudit(tx, {
+          auth,
+          commandKind: kind,
+          workspaceId: route.workspaceId,
+          streamId: route.streamId,
+          outcome: outcome.refusal.status === 403 ? "authz" : "domain",
+          reason: outcome.refusal.reason,
+          detail: ignoredIdentity,
+          hash,
+        });
+        /* FILE REFUSALS ARE DELIBERATELY NOT LEDGERED — do not "fix" this by
+         * ledgering them again. An earlier round did, to stop a replayed id
+         * returning a different result; the inversion arm then found the trap
+         * that kills that rule: a ledgered 409 file_bytes_missing FREEZES the
+         * honest idempotent retry — PUT the bytes, retry the SAME command id —
+         * on a stale refusal forever (same for file_not_tombstoned after a
+         * tombstone). State-dependent refusals are honest reports about NOW
+         * and must re-evaluate on retry; re-running them has no side effect,
+         * because the ledger only ever stores ACCEPTED results (effects) and
+         * the post-lock recheck above prevents double-execution of those.
+         * Same-id-different-content is command_id_conflict via the hash
+         * comparison, never a replay. */
+        return {
+          status: outcome.refusal.status,
+          body: {
+            error: outcome.refusal.error,
+            message: outcome.refusal.message,
+          },
+        };
+      }
+      const fileResponse = {
+        ok: true,
+        status: "accepted",
+        ...outcome.body,
+        event_ids: [],
+        events: [],
+        min_client_version: minClientVersion,
+      };
+      // ★R16: the stored response makes create idempotent — a retry with the
+      // same command id replays the SAME pending slot and upload URL.
+      const inserted = await tx<{ command_id: string }[]>`
+        INSERT INTO swarm.idempotency_keys (
+          principal_kind, principal_id, command_id,
+          workspace_id, stream_id, request_hash, response
+        ) VALUES (
+          ${auth.credentialKind},
+          ${canonicalPrincipal(auth.actor)},
+          ${commandId},
+          ${route.workspaceId}::uuid,
+          ${route.streamId}::uuid,
+          ${hash},
+          ${tx.json(fileResponse as unknown as postgres.JSONValue)}::jsonb
+        )
+        ON CONFLICT (principal_kind, principal_id, command_id) DO NOTHING
+        RETURNING command_id
+      `;
+      if (inserted.length === 0) {
+        throw new LedgerRace(
+          auth,
+          commandId,
+          kind,
+          route.workspaceId,
+          route.streamId,
+          hash,
+        );
+      }
+      await insertAudit(tx, {
+        auth,
+        commandKind: kind,
+        workspaceId: route.workspaceId,
+        streamId: route.streamId,
+        outcome: "accepted",
+        detail: ignoredIdentity,
+        hash,
+      });
+      return { status: 200, body: fileResponse };
     }
 
     if (command.kind === CLAIM_AGENT_INBOX_KIND) {
