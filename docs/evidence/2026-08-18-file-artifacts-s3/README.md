@@ -51,14 +51,39 @@ deploy; e2e against a real stack is S4's.
   spec keeps separate. Deferred to a spec decision.
 - `file get` writes whole-buffer, not streamed — bounded by the 25 MB cap, so simplicity won.
 
+## Review round (landing), three findings fixed
+
+1. **P1, atomic guard**: check-then-write raced — a file created between `existsSync` and
+   `writeFileSync` was truncated without `--force`. Now the write ITSELF is the guard:
+   `writeDestination` opens with the `wx` flag when force is absent and maps `EEXIST` to the
+   refusal; force uses a plain write. Mutation measured: plain-write mutation fails BOTH the
+   flag-pin unit test and the e2e get test (15/2), restore 17/0.
+2. **P2, retry safety in `put`**: all ids (command, file, version) are minted once per
+   invocation and reused by a single internal retry that fires ONLY for the unknown-outcome
+   class (no HTTP response arrived); the server's command-id replay then resolves the retry.
+   A received refusal is never retried. The false "retry the same put" advice string now says
+   the true thing: nothing went live, the pending slot self-expires, check `file ls`, and a
+   re-run is a NEW attempt. Mutation measured: minting a fresh command id per attempt fails
+   the same-ids retry test (16/1), restore 17/0.
+3. **P2, verbs under test, not helpers**: a fake cloud (real HTTP server, command replay
+   semantics included) now drives every verb through the spawned CLI end to end — put's
+   create→PUT→commit order and request shapes, sha/measured-size fields, the ★R10 echo, ★R7
+   copy with the purge date, get's atomic refusal ON DISK (original bytes intact) and --force
+   path, name-vs-id selector resolution (id needs zero reads), --json shapes for put/get,
+   download version_n shape, and ls's single warning line. 17 tests in the same glob-reached
+   file.
+
+`--json` stays a passthrough with the why in place: the server is the trusted party and agent
+consumers read unknown-field-tolerant JSON; an allowlist would only hide fields a newer server
+added deliberately.
+
 ## NOT established
 
 - End-to-end behavior against a real stack (upload PUT, signed URL composition against
   api.commonswarm.com, download bytes) — S4's stage, deliberately not run here; another
   agent may hold the machine's exclusive DB slot.
-- The CLI-side guard WIRING is not mutation-covered: the mutation check exercises the pure
-  guard function; deleting the call site in `cli.ts` would not fail a test. Recorded rather
-  than papered over — an S4 e2e get-twice test would close it.
+- ~~The CLI-side guard WIRING is not mutation-covered~~ — closed by the landing round: the
+  e2e get test exercises the real path and the wx mutation fails it on disk.
 - Human-path list against a real PostgREST (`swarm_read.files` over REST) — same S4 gap.
 - p1-server / p1-local were not run in this lane (slot discipline); nothing here changes
   server code.

@@ -86,6 +86,14 @@ export class FileCommandRefused extends Error {
 
 export class FileTransportError extends Error {
   override name = "FileTransportError";
+  /**
+   * True when no HTTP response arrived (connection failure, timeout), so the
+   * outcome is UNKNOWN and one same-id retry is safe under the server's
+   * command-id replay. A received refusal is a known outcome: never retried.
+   */
+  constructor(message: string, readonly noResponse: boolean = false) {
+    super(message);
+  }
 }
 
 export interface FileVersionCreateResult {
@@ -187,9 +195,9 @@ async function sendFileCommand<T>(
     });
   } catch (error) {
     if ((error as Error).name === "AbortError") {
-      throw new FileTransportError("file command timed out");
+      throw new FileTransportError("file command timed out", true);
     }
-    throw new FileTransportError("file command failed before a response");
+    throw new FileTransportError("file command failed before a response", true);
   } finally {
     clearTimeout(timer);
   }
@@ -306,12 +314,30 @@ export async function putObject(
       body: bytes as Uint8Array<ArrayBuffer>,
     });
   } catch {
-    throw new FileTransportError("the upload PUT failed before a response");
+    throw new FileTransportError("the upload PUT failed before a response", true);
   }
   if (!response.ok) {
     throw new FileTransportError(
-      `the upload PUT was refused (HTTP ${response.status}); the pending slot is unchanged — retry the same put, or wait for the three-hour sweep`,
+      `the upload PUT was refused (HTTP ${response.status}). Nothing went live, and this attempt's pending slot expires on its own within three hours. Check cswarm file ls, then re-run cswarm file put — a re-run is a new upload attempt with fresh ids`,
     );
+  }
+}
+
+/**
+ * One same-id retry for steps whose outcome is UNKNOWN (no response arrived).
+ * Safe only because the caller reuses the SAME command/file/version ids on the
+ * second attempt, and the server's command-id replay returns the first
+ * attempt's result if it actually landed (review finding 2a). A received
+ * refusal is a known outcome and is never retried here.
+ */
+export async function onceRetried<T>(step: () => Promise<T>): Promise<T> {
+  try {
+    return await step();
+  } catch (error) {
+    if (error instanceof FileTransportError && error.noResponse) {
+      return await step();
+    }
+    throw error;
   }
 }
 
@@ -334,20 +360,37 @@ export async function getObject(
   return new Uint8Array(await response.arrayBuffer());
 }
 
-/** Refusing before bytes move: the guard is pure so the CLI and tests share it. */
 export class LocalFileExists extends Error {
   override name = "LocalFileExists";
 }
 
-export function assertWritableDestination(
+type DestinationWriter = (
+  path: string,
+  bytes: Uint8Array,
+  options: { flag: string },
+) => void;
+
+/**
+ * The refusal is ATOMIC: without --force the write itself uses the `wx` flag,
+ * so a file created between any earlier check and this write is refused by the
+ * filesystem rather than truncated (review finding 1 — check-then-write raced).
+ * The writer is injected so tests can pin the flag and the EEXIST mapping.
+ */
+export function writeDestination(
   destination: string,
+  bytes: Uint8Array,
   force: boolean,
-  exists: (path: string) => boolean,
+  writer: DestinationWriter,
 ): void {
-  if (exists(destination) && !force) {
-    throw new LocalFileExists(
-      `${destination} already exists locally; nothing was downloaded. Pass --force to overwrite it, or --out <path> to write elsewhere`,
-    );
+  try {
+    writer(destination, bytes, { flag: force ? "w" : "wx" });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+      throw new LocalFileExists(
+        `${destination} already exists locally; nothing was written. Pass --force to overwrite it, or --out <path> to write elsewhere`,
+      );
+    }
+    throw error;
   }
 }
 

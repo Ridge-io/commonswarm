@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { randomUUID } from "node:crypto";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { open, unlink } from "node:fs/promises";
 import { basename, isAbsolute } from "node:path";
 import { createInterface } from "node:readline/promises";
@@ -22,6 +22,7 @@ import {
   CAPABILITY_MAX_TTL_MS,
   CAPABILITY_MIN_TTL_MS,
   CommandTransportError,
+  newCommandId,
   ThinCommandClient,
   type CommandResult,
   type ConnectCommandResult,
@@ -38,7 +39,6 @@ import {
 } from "./cloud/config.js";
 import {
   allowedExtensionList,
-  assertWritableDestination,
   contentTypeForName,
   FILE_CONTENT_WARNING,
   FILE_MAX_VERSION_BYTES,
@@ -51,8 +51,10 @@ import {
   getObject,
   listFilesAsAgent,
   listFilesAsHuman,
+  onceRetried,
   putObject,
   sha256Hex,
+  writeDestination,
   type FileListRow,
 } from "./cloud/files.js";
 import {
@@ -4084,20 +4086,37 @@ async function runFilePut(args: Arguments): Promise<void> {
     workspaceId: context.selected.selectedWorkspace,
     credential: context.selected.bearer,
   };
-  const created = await fileVersionCreate(send, {
-    fileId: randomUUID(),
-    versionId: randomUUID(),
-    name,
-    declaredSizeBytes: bytes.byteLength,
-    contentType,
-  });
-  await putObject(context.cloud, created.upload_path, bytes, contentType);
-  const committed = await fileVersionCommit(send, {
-    fileId: created.file_id,
-    versionId: created.version_id,
-    sha256: sha256Hex(bytes),
-  });
+  /* Every id is minted ONCE per invocation and reused on the internal retry a
+   * no-response failure gets, so the server's command-id replay resolves an
+   * unknown outcome instead of a second attempt minting a second version
+   * (review finding 2a). A re-RUN of `file put` is a new operation on purpose. */
+  const fileId = randomUUID();
+  const versionId = randomUUID();
+  const createCommandId = newCommandId();
+  const commitCommandId = newCommandId();
+  const created = await onceRetried(() =>
+    fileVersionCreate({ ...send, commandId: createCommandId }, {
+      fileId,
+      versionId,
+      name,
+      declaredSizeBytes: bytes.byteLength,
+      contentType,
+    })
+  );
+  await onceRetried(() =>
+    putObject(context.cloud, created.upload_path, bytes, contentType)
+  );
+  const committed = await onceRetried(() =>
+    fileVersionCommit({ ...send, commandId: commitCommandId }, {
+      fileId: created.file_id,
+      versionId: created.version_id,
+      sha256: sha256Hex(bytes),
+    })
+  );
   if (args.has("json")) {
+    /* Passthrough, no field allowlist: the server is the trusted party here,
+     * and agent consumers read JSON unknown-field-tolerantly — filtering would
+     * only hide fields a newer server added on purpose. */
     process.stdout.write(`${JSON.stringify(committed, null, 2)}\n`);
     return;
   }
@@ -4172,9 +4191,10 @@ async function runFileGet(args: Arguments): Promise<void> {
   };
   const grant = await fileDownloadUrl(send, { fileId, versionN });
   const destination = args.optional("out") ?? basename(grant.name);
-  assertWritableDestination(destination, args.has("force"), existsSync);
   const bytes = await getObject(context.cloud, grant.download_path);
-  writeFileSync(destination, bytes);
+  // Atomic: `wx` under the hood, so a file created since any earlier look is
+  // refused by the filesystem, never truncated (review finding 1).
+  writeDestination(destination, bytes, args.has("force"), writeFileSync);
   if (args.has("json")) {
     process.stdout.write(
       `${
