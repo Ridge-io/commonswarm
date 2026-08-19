@@ -3144,8 +3144,13 @@ test("self-serve is capped per identity and closed to agent credentials", async 
     const user = await createUser("self-serve-capped");
     registerHuman(f, user);
 
-    // Three succeed; the cap is a property of the identity, not the request.
-    for (let i = 0; i < 3; i += 1) {
+    // These mirror the edge constants FREE_TIER_WORKSPACE_LIMIT (10) and
+    // SELF_SERVE_CREATE_DAILY_LIMIT (20) in supabase/functions/command/index.ts.
+    // They are hardcoded on both sides (Deno edge vs Node test — no shared module,
+    // same gap as the agent-token TTL constant), so raising a limit means editing
+    // BOTH. They drifted once: the cap went 3->10 and these tests stayed at 3.
+    // The live cap succeeds up to the limit; the create-rate cap is exercised below.
+    for (let i = 0; i < 10; i += 1) {
       const ok = await createWorkspace(user.jwt, randomUUID(), `ws-${i}`);
       assert.equal(ok.status, 200, `workspace ${i} should be allowed`);
     }
@@ -3153,7 +3158,7 @@ test("self-serve is capped per identity and closed to agent credentials", async 
     assert.equal(capped.status, 403);
     assert.deepEqual(capped.body, {
       error: "workspace_limit_reached",
-      limit: 3,
+      limit: 10,
     });
 
     // Archiving frees a slot, so the cap counts live tenants, not lifetime ones.
@@ -3249,43 +3254,39 @@ test("self-serve refuses throwaway domains and caps creations per rolling day", 
     assert.equal(allowed.status, 200);
 
     // The live cap counts tenants that exist; archiving frees a slot, so the
-    // creation cap is what bounds an archive-and-recreate loop.
+    // creation cap is what bounds an archive-and-recreate loop. The daily
+    // creation cap is SELF_SERVE_CREATE_DAILY_LIMIT (20); we archive after each
+    // round so the live cap (10) is never the binding constraint — the loop
+    // reaches 20 creates and the 21st is refused as a rate limit, not a cap.
     const churner = await createUser("self-serve-churn");
     registerHuman(f, churner);
-    for (let i = 0; i < 3; i += 1) {
-      const made = await createWorkspace(churner.jwt, randomUUID(), `churn-${i}`);
-      assert.equal(made.status, 200, `first-round workspace ${i}`);
+    for (let round = 0; round < 2; round += 1) {
+      for (let i = 0; i < 10; i += 1) {
+        const made = await createWorkspace(
+          churner.jwt,
+          randomUUID(),
+          `churn-${round}-${i}`,
+        );
+        assert.equal(made.status, 200, `round ${round} workspace ${i}`);
+      }
+      await sql`
+        UPDATE swarm.workspaces
+        SET archived_at = statement_timestamp()
+        WHERE created_by = ${churner.id}::uuid
+      `;
     }
-    await sql`
-      UPDATE swarm.workspaces
-      SET archived_at = statement_timestamp()
-      WHERE created_by = ${churner.id}::uuid
-    `;
-    for (let i = 3; i < 6; i += 1) {
-      const made = await createWorkspace(churner.jwt, randomUUID(), `churn-${i}`);
-      assert.equal(
-        made.status,
-        200,
-        `archiving frees the live slot for workspace ${i}`,
-      );
-    }
-    await sql`
-      UPDATE swarm.workspaces
-      SET archived_at = statement_timestamp()
-      WHERE created_by = ${churner.id}::uuid
-    `;
-    const churned = await createWorkspace(churner.jwt, randomUUID(), "churn-6");
+    const churned = await createWorkspace(churner.jwt, randomUUID(), "churn-21");
     assert.equal(churned.status, 429);
     assert.equal(churned.body.error, "rate_limited");
-    assert.equal(churned.body.limit, 6);
-    assert.match(String(churned.body.message), /6 workspaces\/day/);
+    assert.equal(churned.body.limit, 20);
+    assert.match(String(churned.body.message), /20 workspaces\/day/);
     assert.ok(Number.isFinite(Date.parse(String(churned.body.resets_at))));
     const [churnCount] = await sql<{ count: string }[]>`
       SELECT count(*)::text AS count
       FROM swarm.workspaces
       WHERE created_by = ${churner.id}::uuid
     `;
-    assert.equal(churnCount?.count, "6", "the refused creation wrote no tenant");
+    assert.equal(churnCount?.count, "20", "the refused creation wrote no tenant");
     const churnAudit = await sql<{ outcome: string; reason: string | null }[]>`
       SELECT outcome, reason
       FROM swarm.audit_log
