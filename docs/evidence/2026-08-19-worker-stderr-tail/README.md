@@ -85,11 +85,11 @@ governs every ACP request including worker prompt turns.
 
 All on this branch's tree, macOS, Node 24:
 
-| gate | result |
+| gate | result (after the review round below) |
 |---|---|
 | `npm run build` | clean |
-| `npm test` | 562 pass, 0 fail (was 548 before this lane) |
-| `npm run test:p1-cli` | 273 pass, 0 fail (was 272) |
+| `npm test` | 568 pass, 0 fail (was 548 before this lane; 562 at the first commit) |
+| `npm run test:p1-cli` | 274 pass, 0 fail (was 272; 273 at the first commit) |
 | `npm run check:tests` | clean |
 
 New tests and where they run:
@@ -117,6 +117,72 @@ New tests and where they run:
 Mutation check (required by the lane): removing the ring cap and the
 TAIL_MAX_CHARS slice made `tests/host-stderr-tail.test.ts` fail **2 of 5**
 tests; restored, 5 of 5 pass. The bound assertions discriminate.
+
+## Two-arm review round (same day)
+
+The review of the first commit confirmed non-server-payload, once-only firing,
+D-053 compliance, and the 128-cap exemption, and returned five findings. All
+five are fixed in the follow-up commit.
+
+1. **Tail delivery raced supervisor consumption** (P1, both arms). The tail
+   published on child `close`, but the failure it explains derives from
+   `exit` and could reach the supervisor first — recording no tail, or
+   attaching one worker's tail to the next worker's failure. Fixed at both
+   ends: hosts now publish on `exit` (latched once, `close` as fallback),
+   registered BEFORE the transport's exit handler so the tail is in its
+   consumer's hands before `AcpChildExitError` exists; and the CLI holder is
+   a generation-guarded per-attempt sink — creating an attempt's sink clears
+   the slot and expires older sinks, so a superseded worker's late publish is
+   ignored. The cost, stated in the host comment: stderr bytes not yet
+   delivered at exit are dropped. Control added: both attempts fail, only the
+   first wrote stderr → the terminal failure carries NO tail. Mutation
+   (terminal writer falls back to the previous status tail): 1 test fails.
+2. **The byte fit ignored JSON escaping** (P1). 2000 raw backslashes fit a
+   2000-byte budget and serialize to 4002 bytes — over the 4096 line cap,
+   whose throw the write chain swallows: the scar, reintroduced by the fit
+   itself. The fit now shrinks against the SERIALIZED form
+   (`JSON.stringify`, budget 3000 bytes) while keeping the 2048-char
+   validator bound. Tests: all-backslash and all-quote 2000-char tails both
+   land a `listener_failed` line under 4096 bytes with a non-empty tail.
+   Mutation (serialized bound lifted): 1 test fails.
+3. **Credential fragments could survive the ring's left edge** (P1). Byte
+   eviction can bisect a token, leaving a suffix the prefix-matching redactor
+   cannot recognize; separators inside a token defeated the old
+   charset-bounded match. Fixed: after any eviction the ring drops the
+   truncated first line (through the first newline, else the first
+   whitespace, else everything); CR and zero-width characters joined the
+   control strip; the redactor is greedy to the next whitespace; sanitize
+   order confirmed and documented as strip-THEN-redact, with the redactor
+   ahead of the final char slice so the slice can only cut into the redaction
+   marker. Tests: bisected token (multi-byte geometry so the char slice
+   cannot mask the path — the first ASCII version of this test never reached
+   eviction and passed under mutation), embedded CR, ZWSP, ANSI-laced token,
+   and a `.`/`+` charset run — none survive. Mutations: boundary drop
+   disabled → 1 fail; redactor narrowed to the old charset → 1 fail.
+4. **The turn budget could outlive credential rotation** (P1, design).
+   Renewal runs only in `bearer()`, which nothing calls during a prompt; the
+   old 120s always fit inside the ≥5m rotation lead, a 10m–60m budget does
+   not — a long turn would end as `predecessor_expired_local`, stopping the
+   listener as credential loss because of a timeout setting. Fixed with a
+   per-turn resolver: each turn calls `bearer()` FIRST (renews when due),
+   then clamps its timeout via `clampTurnBudgetToCredential` to the live
+   credential's remaining lifetime minus a 60s margin, floored at 1s so the
+   failure mode stays the recoverable timeout class. **The invariant: a
+   worker turn never starts with a budget the live credential cannot
+   outlast — each turn renews first, then clamps to remaining lifetime minus
+   60s.** The 60m cap stays, with the guarantee stated in the usage text:
+   right after a rotation the full budget is available up to the token TTL
+   minus 60s (≈59m on the default 1h TTL); a turn landing just before a
+   rotation can be clamped to the ~5m renewal lead, and a timeout there is
+   redelivered onto the fresh credential. Tests: the clamp function is pinned
+   (untouched / clamped / floored / null-expiry cases, plus the
+   never-crosses-expiry property), and the model test pins that a resolver is
+   awaited once per turn, never cached. Known imprecision: `turn_budget_ms`
+   on a timeout event records the CONFIGURED budget; a clamped-short turn's
+   event does not show the clamped value.
+5. **`__listen-supervisor` validated `--turn-budget` after reading the
+   credential** (P2). The parse now runs right after provider validation,
+   before the credential is read — matching the public path.
 
 ## Not established
 

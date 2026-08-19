@@ -56,23 +56,95 @@ test("sanitizer output is bounded at 2048 characters and keeps the end", () => {
   assert.doesNotMatch(clean, /HEAD-/);
 });
 
-test("a real child that writes stderr and dies delivers one sanitized tail on close", async () => {
-  // The exact wiring every host uses in place of the old drain: ring on
-  // stderr, callback once on "close" (stderr fully flushed by then).
+test("a real child that writes stderr and dies delivers one sanitized tail, exactly once across exit and close", async () => {
+  /* The exact wiring every host uses in place of the old drain: ring on
+   * stderr, one latched callback registered on BOTH "exit" (so the tail is
+   * available synchronously with the event the failure derives from) and
+   * "close" (fallback). The child sleeps briefly after writing so the pipe
+   * data reaches the parent before exit — the mechanism under test is the
+   * latch and sanitize, not the kernel's delivery order. */
   const child = spawn(process.execPath, [
     "-e",
-    'process.stderr.write("\\u001b[31mfatal:\\u001b[0m provider crashed\\n"); process.exit(7);',
+    'process.stderr.write("\\u001b[31mfatal:\\u001b[0m provider crashed\\n");' +
+      "setTimeout(() => process.exit(7), 50);",
   ], { stdio: ["ignore", "ignore", "pipe"] });
   const tails: string[] = [];
   const ring = attachStderrTailRing(child.stderr!);
-  child.once("close", () => tails.push(ring.read()));
+  let delivered = false;
+  const publishTail = () => {
+    if (delivered) return;
+    delivered = true;
+    tails.push(ring.read());
+  };
+  child.once("exit", publishTail);
+  child.once("close", publishTail);
   const code = await new Promise<number | null>((resolve) => {
     child.on("close", (exitCode) => resolve(exitCode));
   });
-  // Let the once-handler above run regardless of registration order.
+  // Both events have fired by "close"; give the latch handlers a turn.
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(code, 7);
   assert.equal(tails.length, 1, "the tail must be delivered exactly once");
   assert.match(tails[0]!, /fatal: provider crashed/);
   assert.doesNotMatch(tails[0]!, /\u001b/);
 });
+
+test("a credential bisected by ring eviction does not survive as an unrecognizable suffix", () => {
+  /* The eviction cut can land mid-token, leaving a suffix that no longer
+   * matches the swm_ prefix. The ring must therefore never keep a truncated
+   * first line: it drops to the next newline boundary after any eviction. */
+  const stream = new PassThrough();
+  const ring = attachStderrTailRing(stream);
+  const token = `swm_agt_${"S".repeat(40)}`; // 48 chars, then a newline
+  /* Sized so the 4096-byte eviction cut lands INSIDE the token payload: the
+   * bytes after the token must total between 4048 and 4094, putting the cut
+   * 1..47 bytes into the 49-byte token line. Anything before the token is
+   * evicted whole and only widens the margin. */
+  /* Multi-byte payload, deliberately: 4096 BYTES of ASCII decode to 4096
+   * CHARS, and the sanitizer's final 2048-char slice would remove the front
+   * suffix anyway, masking the boundary drop under test. Three-byte CJK gives
+   * ~1400 chars for the same bytes, so the bisected suffix survives the char
+   * slice and only the line-boundary drop can remove it. */
+  let after = "";
+  // 31-byte lines land the total in (4048, 4094) after the 12-byte last line.
+  while (Buffer.byteLength(after, "utf8") < 4_050) {
+    after += `${"\u6c49".repeat(10)}\n`;
+  }
+  after += "last-line-ok";
+  const afterBytes = Buffer.byteLength(after, "utf8");
+  assert.ok(afterBytes > 4_047 && afterBytes < 4_095, `bad geometry: ${afterBytes}`);
+  stream.write(`filler-head\n${token}\n${after}`);
+  const tail = ring.read();
+  // Positive control that eviction actually ran: the head is gone.
+  assert.doesNotMatch(tail, /filler-head/, "no eviction happened; the test reached nothing");
+  assert.doesNotMatch(tail, /swm_/i);
+  assert.doesNotMatch(tail, /SSSS/, "a bisected token suffix survived eviction");
+  assert.match(tail, /last-line-ok/, "content after the boundary must survive");
+});
+
+test("separators inside a token do not defeat the redactor", () => {
+  const cases: Array<[string, string]> = [
+    ["embedded CR", "auth swm_agt_AB\rCDEF failed\n"],
+    ["zero-width space", "auth swm_\u200bagt_ZWTOKEN failed\n"],
+    ["ANSI lacing", "auth swm_\u001b[31magt_ANSITOKEN\u001b[0m failed\n"],
+    ["unusual charset run", "auth swm_agt_abc.def+ghi failed\n"],
+  ];
+  for (const [label, raw] of cases) {
+    const clean = sanitizeStderrTail(raw);
+    assert.doesNotMatch(clean, /swm_/i, `${label}: prefix survived`);
+    /* "def+ghi" (not "abc.def+ghi"): a redactor bounded by the token charset
+     * eats "swm_agt_abc" and leaves ".def+ghi" — a check for the full payload
+     * misses that surviving remainder. */
+    for (const fragment of ["CDEF", "ZWTOKEN", "ANSITOKEN", "def+ghi"]) {
+      if (raw.replace(/[\r\u200b]|\u001b\[[0-9;]*m/g, "").includes(fragment)) {
+        assert.equal(
+          clean.includes(fragment),
+          false,
+          `${label}: token payload "${fragment}" survived`,
+        );
+      }
+    }
+    assert.match(clean, /auth .*failed/, `${label}: surrounding text lost`);
+  }
+});
+

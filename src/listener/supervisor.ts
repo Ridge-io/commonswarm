@@ -134,19 +134,39 @@ function safeErrorCode(error: Error): string {
 }
 
 /**
- * events.ndjson lines are capped at 4096 bytes (appendListenerEvent), so keep
- * the END of the tail — the last lines of a crash log are the part that names
- * the cause — with headroom for the event's other fields.
+ * events.ndjson lines are capped at 4096 bytes (appendListenerEvent), and the
+ * validator also caps the tail at 2048 characters. Both bounds are enforced
+ * against the SERIALIZED form: JSON escaping doubles backslashes and quotes
+ * and can sextuple control remnants (\uXXXX), so a raw-byte budget can pass
+ * here and still push the line over the cap — where the throw is swallowed by
+ * the write chain and the one failure line the tail exists to enrich is
+ * silently dropped. Keep the END of the tail: the last lines of a crash log
+ * are the part that names the cause. 3000 bytes serialized leaves the event's
+ * other fields ample headroom under 4096.
  */
+const TAIL_SERIALIZED_BUDGET_BYTES = 3_000;
+
 function fitWorkerStderrTailForLog(tail: string): string {
-  const bytes = Buffer.from(tail, "utf8");
-  if (bytes.length <= 2_000) return tail.trim();
-  // Decoding from mid-sequence yields at most one leading replacement char.
-  return bytes
-    .subarray(bytes.length - 2_000)
-    .toString("utf8")
-    .replace(/^\ufffd/, "")
-    .trim();
+  let fitted = tail.trim();
+  for (;;) {
+    if (fitted.length === 0) return fitted;
+    const serializedBytes = Buffer.byteLength(JSON.stringify(fitted), "utf8");
+    if (
+      fitted.length <= 2_048 &&
+      serializedBytes <= TAIL_SERIALIZED_BUDGET_BYTES
+    ) {
+      return fitted;
+    }
+    // Drop from the front. A char serializes to at least 1 byte, so this
+    // always makes progress; /6 undershoots on heavily escaped input and the
+    // loop re-measures rather than over-cutting.
+    const dropChars = Math.max(
+      fitted.length - 2_048,
+      Math.ceil((serializedBytes - TAIL_SERIALIZED_BUDGET_BYTES) / 6),
+      1,
+    );
+    fitted = fitted.slice(dropChars);
+  }
 }
 
 /** Lifetime control socket + durable metadata around one listener runtime. */

@@ -436,3 +436,26 @@ test("promptTimeoutMs overrides the prompt-turn budget and onWorkerStderrTail th
   await adapter.close();
 });
 
+test("a promptTimeoutMs resolver is awaited at each turn start", async () => {
+  /* The listener passes a resolver, not a number: it renews the credential
+   * when due and clamps to what it can still cover, so the value can differ
+   * per turn. The model must call it per prompt, never cache it. */
+  const cwd = await mkdtemp(join(tmpdir(), "cswarm-claude-worker-"));
+  const records: Record[] = [];
+  const budgets = [120_000, 45_000];
+  let calls = 0;
+  const adapter = new ClaudeListenerModel({
+    cwd,
+    permissionMode: "allow",
+    promptTimeoutMs: async () => budgets[calls++]!,
+    open: fakeOpen(records),
+  });
+  await adapter.start();
+  await adapter.prompt(SIGNAL, "worker", "one");
+  assert.equal(records[0]?.promptTimeoutMs, 120_000);
+  await adapter.prompt(SIGNAL, "worker", "two");
+  assert.equal(records[0]?.promptTimeoutMs, 45_000);
+  assert.equal(calls, 2, "the resolver must run once per turn");
+  await adapter.close();
+});
+

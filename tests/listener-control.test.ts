@@ -1771,9 +1771,92 @@ test("an oversized tail is fitted from the front so the event line stays under i
   assert.ok(tail, "fitted tail missing from status");
   assert.ok(tail.endsWith("-TAIL"), "the END of the tail must survive fitting");
   assert.doesNotMatch(tail, /HEAD-/);
-  assert.ok(Buffer.byteLength(tail, "utf8") <= 2_000);
+  assert.ok(tail.length <= 2_048);
   // And the events.ndjson write actually landed (it would throw over the cap,
   // and the swallowed throw would silently drop this exact line — the scar).
   assert.match(await readFile(target.logPath, "utf8"), /listener_failed/);
+});
+
+test("a tail that expands under JSON escaping is fitted by SERIALIZED size, and the failure line survives", async () => {
+  /* A raw-byte budget passes 2000 backslashes, but each serializes to two
+   * bytes — the line blows the 4096 cap, appendListenerEvent throws, the
+   * write chain swallows it, and the failure line is silently dropped: the
+   * supervisor.ts scar, reintroduced by the fit itself. */
+  for (const [label, raw] of [
+    ["backslashes", "\\".repeat(2_000)],
+    ["quotes", '"'.repeat(2_000)],
+  ] as const) {
+    const root = await mkdtemp(join(tmpdir(), "cswarm-control-test-"));
+    const target = paths(root);
+    const final = await runListenerSupervisor({
+      paths: target,
+      profileId: "profile-tail-escape",
+      workspaceId: randomUUID(),
+      principalId: randomUUID(),
+      restart: { maxAttempts: 0 },
+      takeWorkerStderrTail: () => raw,
+      run: async () => ({
+        reason: "fatal",
+        error: new AcpChildExitError(1, null),
+      }),
+    });
+    assert.equal(final.state, "failed", label);
+    const lines = (await readFile(target.logPath, "utf8"))
+      .split("\n")
+      .filter(Boolean);
+    const failedLine = lines.find((line) => line.includes("listener_failed"));
+    assert.ok(failedLine, `${label}: the failure line was dropped`);
+    assert.ok(
+      Buffer.byteLength(`${failedLine}\n`, "utf8") <= 4_096,
+      `${label}: serialized line exceeds the cap`,
+    );
+    const failed = JSON.parse(failedLine) as { worker_stderr_tail?: string };
+    assert.ok(
+      (failed.worker_stderr_tail ?? "").length > 0,
+      `${label}: the tail itself was lost in fitting`,
+    );
+  }
+});
+
+test("a second worker's failure never inherits the first worker's tail", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cswarm-control-test-"));
+  const target = paths(root);
+  let tailSlot: string | null = "worker-one: died with this stderr";
+  const final = await runListenerSupervisor({
+    paths: target,
+    profileId: "profile-tail-inherit",
+    workspaceId: randomUUID(),
+    principalId: randomUUID(),
+    restart: { maxAttempts: 1, initialMs: 1, maxMs: 2 },
+    takeWorkerStderrTail: () => {
+      const tail = tailSlot;
+      tailSlot = null;
+      return tail;
+    },
+    // Both attempts fail; only the FIRST worker wrote stderr.
+    run: async () => ({
+      reason: "fatal",
+      error: new AcpChildExitError(1, null),
+    }),
+  });
+  assert.equal(final.state, "failed");
+  // CONTROL: the terminal failure belongs to worker two, which wrote nothing.
+  assert.equal(final.lastWorkerStderrTail, null);
+  const events = (await readFile(target.logPath, "utf8"))
+    .split("\n")
+    .filter(Boolean)
+    .map((line) =>
+      JSON.parse(line) as { event: string; worker_stderr_tail?: string }
+    );
+  const restarting = events.find((event) => event.event === "listener_restarting");
+  assert.ok(restarting, "listener_restarting line missing");
+  assert.equal(restarting.worker_stderr_tail, "worker-one: died with this stderr");
+  const failed = events.find((event) => event.event === "listener_failed");
+  assert.ok(failed, "listener_failed line missing");
+  assert.equal(
+    "worker_stderr_tail" in failed,
+    false,
+    "worker two's failure inherited worker one's tail",
+  );
 });
 

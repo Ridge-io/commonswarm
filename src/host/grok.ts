@@ -234,8 +234,22 @@ export async function openGrokAcpSession(
   const stderrTail = attachStderrTailRing(child.stderr);
   if (options.onStderrTail) {
     const deliverTail = options.onStderrTail;
-    // "close" (not "exit"): stderr is fully flushed by then. Exactly once.
-    child.once("close", () => deliverTail(stderrTail.read()));
+    /* Published on "exit", latched once, with "close" as a fallback. "exit" is
+     * the same event AcpChildExitError is derived from (the transport's exit
+     * handler below registers AFTER this one), so the tail is in its consumer's
+     * hands before the failure it explains can reach the supervisor — a
+     * "close"-only publish raced that read and could attach one worker's tail
+     * to the next worker's failure. The cost: stderr bytes not yet delivered
+     * at exit are dropped, acceptable for a tail whose job is the lines
+     * already written. */
+    let tailDelivered = false;
+    const publishTail = () => {
+      if (tailDelivered) return;
+      tailDelivered = true;
+      deliverTail(stderrTail.read());
+    };
+    child.once("exit", publishTail);
+    child.once("close", publishTail);
   }
 
   let sessionRef: AcpHostSession | null = null;

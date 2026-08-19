@@ -65,7 +65,11 @@ export interface ListenerEffectStore {
  * measured dying at exactly +120s twice (retry_pending, acptimeouterror)
  * before succeeding on promptAttempts 3. Raising only the prompt budget is
  * safe because the durable claim/ack layer already redelivers the signal if
- * the worker dies mid-turn — the timeout is not the only safety net.
+ * the worker dies mid-turn — the timeout is not the only safety net — AND
+ * because each turn is clamped to the live credential's remaining lifetime
+ * (clampTurnBudgetToCredential in cli.ts): renewal runs only between turns,
+ * so an unclamped long turn could outlive its credential and stop the
+ * listener as credential loss.
  * Override per-listener with `cswarm listen start --turn-budget`.
  */
 export const LISTENER_PROMPT_TIMEOUT_MS = 600_000;

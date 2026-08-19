@@ -48,8 +48,12 @@ export interface OpenCodeListenerModelOptions {
   prepareWorkerCwd?: (home: string) => Promise<string>;
   /** Test-only bound for waiting on in-progress opens during close (ms). */
   pendingOpenWaitMs?: number;
-  /** Per-prompt-turn budget in ms (default LISTENER_PROMPT_TIMEOUT_MS). */
-  promptTimeoutMs?: number;
+  /**
+   * Per-prompt-turn budget in ms, or a resolver called at each turn start
+   * (default LISTENER_PROMPT_TIMEOUT_MS). The listener passes a resolver that
+   * renews the credential when due and clamps to what it can still cover.
+   */
+  promptTimeoutMs?: number | (() => Promise<number>);
   /** Receives the worker's bounded stderr tail on child exit (local log only). */
   onWorkerStderrTail?: (tail: string) => void;
 }
@@ -136,10 +140,10 @@ export class OpenCodeListenerModel implements ListenerModel {
   ): Promise<ListenerPromptResult> {
     if (this.closed) throw new Error("listener model is closed");
     const worker = await this.ensureWorker();
+    const budget = this.options.promptTimeoutMs ?? LISTENER_PROMPT_TIMEOUT_MS;
+    const timeoutMs = typeof budget === "number" ? budget : await budget();
     try {
-      return await worker.session.prompt(prompt, {
-        timeoutMs: this.options.promptTimeoutMs ?? LISTENER_PROMPT_TIMEOUT_MS,
-      });
+      return await worker.session.prompt(prompt, { timeoutMs });
     } catch (error) {
       if (error instanceof AcpChildExitError) {
         const home = this.workerHome;

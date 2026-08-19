@@ -9,9 +9,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import {
+  clampTurnBudgetToCredential,
   listenerFailureMessage,
   resolveDetachedClaudeExecutable,
   resolveDetachedCodexExecutable,
+  TURN_BUDGET_CREDENTIAL_MARGIN_MS,
 } from "../../src/cli.js";
 
 function runCli(args: string[]) {
@@ -210,5 +212,35 @@ test("--turn-budget rejects out-of-bounds and malformed durations before any cre
   const valid = runCli([...base, "--turn-budget", "5m"]);
   assert.equal(valid.status, 1);
   assert.doesNotMatch(valid.stderr, /--turn-budget/);
+});
+
+test("a worker turn budget is clamped to the live credential's remaining lifetime", () => {
+  const now = 1_000_000_000_000;
+  const budget = 600_000; // the 10m default
+  // Plenty of credential left: the budget is untouched.
+  assert.equal(
+    clampTurnBudgetToCredential(budget, now + 3_600_000, now),
+    budget,
+  );
+  // The credential expires before the budget would end: clamp to remaining
+  // life minus the margin, so the turn ends while renewal can still run.
+  assert.equal(
+    clampTurnBudgetToCredential(budget, now + 300_000, now),
+    300_000 - TURN_BUDGET_CREDENTIAL_MARGIN_MS,
+  );
+  // The invariant itself: the clamped budget plus the margin never crosses expiry.
+  for (const remaining of [90_000, 300_000, 599_000, 601_000, 3_600_000]) {
+    const clamped = clampTurnBudgetToCredential(budget, now + remaining, now);
+    assert.ok(
+      clamped + TURN_BUDGET_CREDENTIAL_MARGIN_MS <= remaining || clamped === 1_000,
+      `budget ${clamped} outlives a credential with ${remaining}ms left`,
+    );
+  }
+  // Nearly-dead or dead credential: floor at 1s — the turn fails as the
+  // recoverable timeout class instead of running past expiry.
+  assert.equal(clampTurnBudgetToCredential(budget, now + 10_000, now), 1_000);
+  assert.equal(clampTurnBudgetToCredential(budget, now - 1, now), 1_000);
+  // No known expiry: nothing to clamp against (such a credential never renews either).
+  assert.equal(clampTurnBudgetToCredential(budget, null, now), budget);
 });
 
