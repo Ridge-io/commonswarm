@@ -3551,9 +3551,15 @@ async function updateWorkspaceProjection(
       ) {
         throw new Error("FeedbackSubmitted payload is malformed");
       }
+      // Pass the object through tx.json, the file's jsonb convention (see the
+      // event-payload insert in appendEvents). Hand-rolling JSON.stringify here
+      // double-encodes: the client JSON-encodes a bound parameter bound for a
+      // ::jsonb cast, so a pre-stringified value lands as a jsonb STRING scalar
+      // and `context->>'key'` reads nothing. null stays a SQL NULL, not a jsonb
+      // null — the read path and the human-reporter test both expect SQL NULL.
       const feedbackContext = payload.context === null || payload.context === undefined
         ? null
-        : JSON.stringify(payload.context);
+        : (payload.context as postgres.JSONValue);
       await tx`
         INSERT INTO swarm.feedback (
           feedback_id, workspace_id, reporter_kind, reporter_id,
@@ -3565,7 +3571,7 @@ async function updateWorkspaceProjection(
           ${String(payload.reporter_id)}::uuid,
           ${String(payload.category)},
           ${String(payload.body)},
-          ${feedbackContext}::jsonb,
+          ${feedbackContext === null ? null : tx.json(feedbackContext)}::jsonb,
           ${new Date(Number(payload.submitted_at))}
         )
       `;
