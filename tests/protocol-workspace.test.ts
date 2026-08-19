@@ -1210,6 +1210,98 @@ describe('declare_agent_model', () => {
   });
 });
 
+describe('submit_feedback', () => {
+  function seeded() {
+    const world = makeWorld();
+    world.create();
+    world.join('bob');
+    world.createPrincipal('bob');
+    return world;
+  }
+  const asAgent = {
+    actor: agent('bob', 'principal-bob'),
+    credential_kind: 'agent' as const,
+    presenting_token_id: 'token-bob',
+  };
+  const feedback = (over: Record<string, unknown> = {}) => ({
+    kind: 'submit_feedback' as const,
+    feedback_id: '4f000000-0000-4000-8000-000000000001',
+    category: 'bug' as const,
+    body: 'the error said X but the cause was Y',
+    context: null,
+    ...over,
+  });
+
+  it('an AGENT submits: attribution is the presenting principal, state unchanged', () => {
+    const world = seeded();
+    const before = world.state();
+    const decision = world.apply(feedback(), asAgent);
+    assert.equal(decision.ok, true);
+    if (!decision.ok) return;
+    const event = decision.events[0];
+    assert.equal(event.type, 'FeedbackSubmitted');
+    const payload = event.payload as Record<string, unknown>;
+    assert.equal(payload.reporter_kind, 'agent');
+    assert.equal(payload.reporter_id, 'principal-bob');
+    // Fold is a deliberate no-change: the durable record is the event + table.
+    assert.deepEqual(world.state(), before);
+  });
+
+  it('a HUMAN member submits: attribution is the user', () => {
+    const world = seeded();
+    const decision = world.apply(feedback({ category: 'idea' }), {
+      actor: agent('bob', null as unknown as string),
+      credential_kind: 'human' as const,
+      presenting_token_id: null,
+    });
+    assert.equal(decision.ok, true);
+    if (!decision.ok) return;
+    const payload = decision.events[0].payload as Record<string, unknown>;
+    assert.equal(payload.reporter_kind, 'user');
+    assert.equal(payload.reporter_id, 'bob');
+  });
+
+  it('a non-member human is refused', () => {
+    const world = seeded();
+    rejected(
+      world.apply(feedback(), {
+        actor: agent('mallory', null as unknown as string),
+        credential_kind: 'human' as const,
+        presenting_token_id: null,
+      }),
+      'bad_state',
+      'authz',
+    );
+  });
+
+  it('bounds: bad category, empty body, oversize body, hidden controls, bad context', () => {
+    const world = seeded();
+    rejected(world.apply(feedback({ category: 'praise' as never }), asAgent), 'feedback_invalid');
+    rejected(world.apply(feedback({ body: '   ' }), asAgent), 'feedback_invalid');
+    rejected(world.apply(feedback({ body: 'x'.repeat(4001) }), asAgent), 'feedback_invalid');
+    rejected(
+      world.apply(feedback({ body: 'a\u0007b' }), asAgent),
+      'feedback_invalid',
+    );
+    // Newlines and tabs are prose, not control abuse.
+    assert.equal(
+      world.apply(
+        feedback({ feedback_id: '4f000000-0000-4000-8000-000000000002', body: 'line one\nline two\tend' }),
+        asAgent,
+      ).ok,
+      true,
+    );
+    rejected(
+      world.apply(feedback({ context: { nested: { no: 'objects' } } as never }), asAgent),
+      'feedback_invalid',
+    );
+    rejected(
+      world.apply(feedback({ context: { k: 'v'.repeat(513) } as never }), asAgent),
+      'feedback_invalid',
+    );
+  });
+});
+
 describe('set_agent_model', () => {
   /* The human mirror of declare: the gate is revoke_agent_principal's
    * (owner/admin any principal, member only their own), and the bounds are the

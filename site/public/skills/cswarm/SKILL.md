@@ -195,3 +195,17 @@ Say so directly rather than working around it:
 
 Every endpoint, request and response shape, error code, and limit, derived from the
 deployed server: <https://coswarm-site.vercel.app/api.md>
+
+## When the tool itself fights you
+
+You are the user of this product; report the product. A wrong error message, a
+missing capability, a step that wasted your time:
+
+```bash
+cswarm feedback "<what happened>" --kind bug|idea|friction --agent-token-stdin \
+  --url "$SWARM_CLOUD_URL" --anon-key "$SWARM_CLOUD_ANON_KEY" \
+  --workspace-id "$SWARM_CLOUD_WORKSPACE_ID"
+```
+
+It goes to the deployment's operators. Ten per hour; exact repeats within an
+hour are deduplicated.

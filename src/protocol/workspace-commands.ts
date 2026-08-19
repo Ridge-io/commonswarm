@@ -93,6 +93,23 @@ export type WorkspaceCommand =
       model: string | null;
     }
   | {
+      /**
+       * Product feedback from the people AND the agents using the deployment —
+       * the operator's ruling (2026-08-19) is that agents are the real users
+       * and their bug reports and feature requests are collected first-class.
+       * Accepted from BOTH credential kinds; attribution comes from the
+       * presenting credential only (no caller-supplied reporter fields), and
+       * the payload is inert product data: it grants nothing, targets nothing,
+       * and is never an authorization input.
+       */
+      kind: 'submit_feedback';
+      feedback_id: string;
+      category: 'bug' | 'idea' | 'friction';
+      body: string;
+      /** Flat client-declared context (cswarm version, host, surface). */
+      context: Record<string, string> | null;
+    }
+  | {
       kind: 'mint_agent_token';
       token_id: string;
       principal_id: string;
@@ -438,6 +455,62 @@ function normalizedModel(
   return { ok: true, model: trimmed.length === 0 ? null : trimmed };
 }
 
+export const FEEDBACK_CATEGORIES = ['bug', 'idea', 'friction'] as const;
+export const FEEDBACK_BODY_MAX = 4_000;
+export const FEEDBACK_CONTEXT_MAX_BYTES = 2_048;
+
+/**
+ * One normalization for feedback bodies, mirrored by feedback_body_bounded in
+ * the swarm.feedback migration: trimmed, 1..4000 chars, and unlike model
+ * strings the body may carry newlines and tabs (it is prose); every other
+ * control character (C0, DEL, C1, bidi) is refused. Stricter here than the DB
+ * constraint in the same direction as normalizedModel — accepted-by-reducer
+ * must never fail projection.
+ */
+export function normalizedFeedbackBody(
+  value: unknown,
+): { ok: true; body: string } | { ok: false; message: string } {
+  if (typeof value !== 'string') {
+    return { ok: false, message: 'feedback body must be a string' };
+  }
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    return { ok: false, message: 'feedback body must not be empty' };
+  }
+  if (trimmed.length > FEEDBACK_BODY_MAX) {
+    return { ok: false, message: `feedback body must be at most ${FEEDBACK_BODY_MAX} characters` };
+  }
+  if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/.test(trimmed)) {
+    return { ok: false, message: 'feedback body must not contain control characters (newlines and tabs are fine)' };
+  }
+  return { ok: true, body: trimmed };
+}
+
+/** Flat string map, bounded serialized — context is descriptive, never large. */
+export function normalizedFeedbackContext(
+  value: unknown,
+): { ok: true; context: Record<string, string> | null } | { ok: false; message: string } {
+  if (value === null || value === undefined) return { ok: true, context: null };
+  if (typeof value !== 'object' || Array.isArray(value)) {
+    return { ok: false, message: 'feedback context must be a flat object of strings' };
+  }
+  const entries = Object.entries(value as Record<string, unknown>);
+  for (const [key, entry] of entries) {
+    if (typeof entry !== 'string' || key.length === 0 || key.length > 64 || entry.length > 512) {
+      return { ok: false, message: 'feedback context must be a flat object of bounded strings' };
+    }
+    if (/[\u0000-\u001f\u007f-\u009f]/.test(key + entry)) {
+      return { ok: false, message: 'feedback context must not contain control characters' };
+    }
+  }
+  if (entries.length === 0) return { ok: true, context: null };
+  const serialized = JSON.stringify(Object.fromEntries(entries));
+  if (serialized.length > FEEDBACK_CONTEXT_MAX_BYTES) {
+    return { ok: false, message: `feedback context must serialize to at most ${FEEDBACK_CONTEXT_MAX_BYTES} bytes` };
+  }
+  return { ok: true, context: Object.fromEntries(entries) as Record<string, string> };
+}
+
 function ownerOrAdmin(role: WorkspaceRole | null): boolean {
   return role === 'owner' || role === 'admin';
 }
@@ -696,6 +769,57 @@ export function decideWorkspace(
         env(ctx, 'AgentPrincipalRevoked', {
           principal_id: cmd.principal_id,
           revoked_at: ctx.now,
+        }),
+      ]);
+    }
+
+    case 'submit_feedback': {
+      /* Both credential kinds are welcome — feedback is the one command where
+       * the AGENT is the primary author by design (operator ruling 2026-08-19:
+       * agents are the real users). Attribution comes from the presenting
+       * credential alone; the command carries no reporter fields to lie in. */
+      /* feedback_id's UUID shape is a wire concern, enforced at the edge like
+       * every other client-generated id in this file — the reducer validates
+       * semantics only, matching its siblings. */
+      if (!FEEDBACK_CATEGORIES.includes(cmd.category)) {
+        return domain(ctx, cmd.kind, 'feedback_invalid', 'category must be bug, idea, or friction');
+      }
+      const body = normalizedFeedbackBody(cmd.body);
+      if (!body.ok) {
+        return domain(ctx, cmd.kind, 'feedback_invalid', body.message);
+      }
+      const context = normalizedFeedbackContext(cmd.context);
+      if (!context.ok) {
+        return domain(ctx, cmd.kind, 'feedback_invalid', context.message);
+      }
+      let reporter_kind: 'user' | 'agent';
+      let reporter_id: string;
+      if (ctx.credential_kind === 'agent') {
+        if (ctx.actor.agent_principal === null) {
+          return authz('principal_not_presented', 'agent feedback requires the presenting principal to be resolved');
+        }
+        const reporting = state.principals[ctx.actor.agent_principal];
+        if (!reporting || reporting.revoked_at !== null) {
+          return domain(ctx, cmd.kind, 'principal_revoked', 'the presenting principal is missing or revoked');
+        }
+        reporter_kind = 'agent';
+        reporter_id = reporting.principal_id;
+      } else {
+        if (ctx.role(user_id) === null) {
+          return authz('bad_state', 'caller is not a current workspace member');
+        }
+        reporter_kind = 'user';
+        reporter_id = user_id;
+      }
+      return accept([
+        env(ctx, 'FeedbackSubmitted', {
+          feedback_id: cmd.feedback_id,
+          category: cmd.category,
+          body: body.body,
+          context: context.context,
+          reporter_kind,
+          reporter_id,
+          submitted_at: ctx.now,
         }),
       ]);
     }

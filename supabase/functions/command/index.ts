@@ -128,6 +128,13 @@ type ConnectCommand =
   // Self-description: no target field on purpose — the presenting agent
   // credential IS the subject, the same fence shape as renew_agent_token.
   | { kind: "declare_agent_model"; model: string | null }
+  | {
+    kind: "submit_feedback";
+    feedback_id: string;
+    category: "bug" | "idea" | "friction";
+    body: string;
+    context: Record<string, string> | null;
+  }
   // Human relabeling: the mirror of declare, gated like revoke_agent_principal.
   | { kind: "set_agent_model"; principal_id: string; model: string | null }
   // §2.3 successor endpoint. It has no fields on purpose: the presented
@@ -254,6 +261,13 @@ type WorkspaceCommand =
   }
   | { kind: "revoke_agent_token"; token_id: string }
   | { kind: "declare_agent_model"; model: string | null }
+  | {
+    kind: "submit_feedback";
+    feedback_id: string;
+    category: "bug" | "idea" | "friction";
+    body: string;
+    context: Record<string, string> | null;
+  }
   | { kind: "set_agent_model"; principal_id: string; model: string | null }
   | {
     kind: "renew_agent_token";
@@ -437,6 +451,7 @@ const INVITATION_MAX_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const AGENT_TOKEN_MAX_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 /* Changed-value declarations only; unchanged redeclares are free no-ops. */
 const MODEL_DECLARE_RATE_LIMIT_PER_HOUR = 10;
+const FEEDBACK_RATE_LIMIT_PER_HOUR = 10;
 const SIGNAL_MAX_UNTIL_MS = 30 * 24 * 60 * 60 * 1000;
 const SIGNAL_DEFAULT_UNTIL_MS: Record<SignalKind, number> = {
   "working-on": 24 * 60 * 60 * 1000,
@@ -721,6 +736,7 @@ const COMMAND_KINDS = [
   "revoke_agent_token",
   "renew_agent_token",
   "declare_agent_model",
+  "submit_feedback",
   "post_signal",
   CLAIM_AGENT_INBOX_KIND,
   ACK_AGENT_DELIVERY_KIND,
@@ -763,6 +779,7 @@ const WORKSPACE_COMMAND_KINDS = [
   ...CONNECT_COMMAND_KINDS,
   "revoke_agent_token",
   "declare_agent_model",
+  "submit_feedback",
   RENEW_AGENT_TOKEN_KIND,
   CLAIM_AGENT_INBOX_KIND,
   ACK_AGENT_DELIVERY_KIND,
@@ -1585,6 +1602,76 @@ function validateCommand(
     return {
       ok: true,
       command: { kind: "declare_agent_model", model: normalized },
+    };
+  }
+
+  // Feedback from either credential kind. Normalize-before-validate (the
+  // set_agent_model landing-round lesson): the body is trimmed first so the
+  // wire and the reducer agree on every input. Bounds MUST match
+  // normalizedFeedbackBody / normalizedFeedbackContext in
+  // src/protocol/workspace-commands.ts — hand-written duplicates here have
+  // drifted before (the 8h→24h TTL constant).
+  if (cmd.kind === "submit_feedback") {
+    const keysOk = exactKeys(cmd, ["kind", "feedback_id", "category", "body"]) ||
+      exactKeys(cmd, ["kind", "feedback_id", "category", "body", "context"]);
+    if (
+      !keysOk ||
+      typeof cmd.feedback_id !== "string" ||
+      !UUID_RE.test(cmd.feedback_id) ||
+      (cmd.category !== "bug" && cmd.category !== "idea" && cmd.category !== "friction") ||
+      typeof cmd.body !== "string"
+    ) {
+      return {
+        ok: false,
+        status: 400,
+        reason:
+          "submit_feedback takes feedback_id, category (bug|idea|friction), body, and optional context",
+      };
+    }
+    const trimmedBody = cmd.body.trim();
+    if (
+      trimmedBody.length === 0 ||
+      trimmedBody.length > 4000 ||
+      /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/.test(trimmedBody)
+    ) {
+      return {
+        ok: false,
+        status: 400,
+        reason:
+          "feedback body must be 1..4000 characters; newlines and tabs are fine, other control characters are not",
+      };
+    }
+    let context: Record<string, string> | null = null;
+    if ("context" in cmd && cmd.context !== null && cmd.context !== undefined) {
+      if (typeof cmd.context !== "object" || Array.isArray(cmd.context)) {
+        return { ok: false, status: 400, reason: "feedback context must be a flat object of strings" };
+      }
+      const entries = Object.entries(cmd.context as Record<string, unknown>);
+      for (const [key, entry] of entries) {
+        if (
+          typeof entry !== "string" || key.length === 0 || key.length > 64 ||
+          entry.length > 512 || /[\u0000-\u001f\u007f-\u009f]/.test(key + entry)
+        ) {
+          return { ok: false, status: 400, reason: "feedback context must be a flat object of bounded strings" };
+        }
+      }
+      if (entries.length > 0) {
+        const flat = Object.fromEntries(entries) as Record<string, string>;
+        if (JSON.stringify(flat).length > 2048) {
+          return { ok: false, status: 400, reason: "feedback context must serialize to at most 2048 bytes" };
+        }
+        context = flat;
+      }
+    }
+    return {
+      ok: true,
+      command: {
+        kind: "submit_feedback",
+        feedback_id: cmd.feedback_id.toLowerCase(),
+        category: cmd.category,
+        body: trimmedBody,
+        context,
+      },
     };
   }
 
@@ -2583,6 +2670,14 @@ async function prepareWorkspaceCommand(
     command = { kind: "revoke_agent_token", token_id: wire.token_id };
   } else if (wire.kind === "declare_agent_model") {
     command = { kind: "declare_agent_model", model: wire.model };
+  } else if (wire.kind === "submit_feedback") {
+    command = {
+      kind: "submit_feedback",
+      feedback_id: wire.feedback_id,
+      category: wire.category,
+      body: wire.body,
+      context: wire.context,
+    };
   } else if (wire.kind === "set_agent_model") {
     command = {
       kind: "set_agent_model",
@@ -3443,6 +3538,37 @@ async function updateWorkspaceProjection(
           "AgentModelDeclared projection did not update exactly one principal",
         );
       }
+    } else if (event.type === "FeedbackSubmitted") {
+      // Bounds were enforced by the reducer, mirroring feedback_body_bounded —
+      // a violation here means the mirror drifted, and the constraint failing
+      // the transaction is the alarm (the AgentModelDeclared convention).
+      if (
+        typeof payload.feedback_id !== "string" ||
+        typeof payload.category !== "string" ||
+        typeof payload.body !== "string" ||
+        typeof payload.reporter_kind !== "string" ||
+        typeof payload.reporter_id !== "string"
+      ) {
+        throw new Error("FeedbackSubmitted payload is malformed");
+      }
+      const feedbackContext = payload.context === null || payload.context === undefined
+        ? null
+        : JSON.stringify(payload.context);
+      await tx`
+        INSERT INTO swarm.feedback (
+          feedback_id, workspace_id, reporter_kind, reporter_id,
+          category, body, context, created_at
+        ) VALUES (
+          ${String(payload.feedback_id)}::uuid,
+          ${route.workspaceId}::uuid,
+          ${String(payload.reporter_kind)},
+          ${String(payload.reporter_id)}::uuid,
+          ${String(payload.category)},
+          ${String(payload.body)},
+          ${feedbackContext}::jsonb,
+          ${new Date(Number(payload.submitted_at))}
+        )
+      `;
     } else if (event.type === "AgentPrincipalRevoked") {
       // One canonical event, one atomic projection: principal stamp + principal
       // tombstone + every live token + distinct lineage tombstones + grant
@@ -5719,6 +5845,13 @@ async function handleTransaction(
     // only opens the door to the reducer's own agent-only check.
     const isModelDeclare =
       validation.command.kind === "declare_agent_model";
+    // Feedback needs no scope for the same reason self-description does: a
+    // "submit feedback" scope would be pure ceremony — the payload is inert
+    // product data (it grants nothing and targets nothing), attribution is
+    // server-derived, and existing minted tokens could never carry a new
+    // scope. The reducer still requires a live membership or principal.
+    const isFeedback =
+      validation.command.kind === "submit_feedback";
     if (isModelDeclare && auth.agent === null) {
       await insertAudit(tx, {
         auth,
@@ -5769,6 +5902,7 @@ async function handleTransaction(
       !isRenewal &&
       !isAgentTokenRevoke &&
       !isModelDeclare &&
+      !isFeedback &&
       !isDeliveryCommand &&
       !isFileCommand &&
       (
@@ -6636,6 +6770,77 @@ async function handleTransaction(
             resets_at: setBucket.resetsAt,
           },
         };
+      }
+    }
+    if (prepared !== null && prepared.command.kind === "submit_feedback") {
+      /* Two guards BEFORE the reducer, the declare/set pattern:
+       *
+       * An EXACT duplicate body from the same reporter within the hour is an
+       * accepted no-op — retry storms (a client re-running a script, a stuck
+       * loop) would otherwise fill the table with identical rows. Feedback
+       * that legitimately repeats across hours or with different wording is
+       * NOT suppressed; repetition is itself signal. Compared against the
+       * projection-target table, not folded stream state (the backfill
+       * lesson). Changed submissions ride the shared hourly bucket, keyed by
+       * principal for agents (token ids rotate) and user id for humans. */
+      const reporterKey = auth.agent !== null
+        ? `agent:${auth.agent.principal_id}`
+        : `user:${auth.actor.user}`;
+      const reporterUuid = auth.agent !== null
+        ? auth.agent.principal_id
+        : auth.actor.user;
+      if (reporterUuid !== null) {
+        const duplicateRows = await tx<{ feedback_id: string }[]>`
+          SELECT feedback_id FROM swarm.feedback
+          WHERE workspace_id = ${route.workspaceId}::uuid
+            AND reporter_id = ${reporterUuid}::uuid
+            AND body = ${prepared.command.body}
+            AND created_at > statement_timestamp() - interval '1 hour'
+          LIMIT 1
+        `;
+        if (duplicateRows.length > 0) {
+          return {
+            status: 200,
+            body: {
+              status: "accepted",
+              ok: true,
+              event_ids: [],
+              events: [],
+              duplicate: true,
+              message:
+                "This feedback matches one you sent within the hour, so it was not recorded twice. It is already with the operators of this deployment.",
+              workspace_id: route.workspaceId,
+              min_client_version: minClientVersion,
+            },
+          };
+        }
+        const feedbackBucket = await incrementRateBucket(
+          tx,
+          `feedback:${reporterKey}`,
+          FEEDBACK_RATE_LIMIT_PER_HOUR,
+        );
+        if (feedbackBucket.count > FEEDBACK_RATE_LIMIT_PER_HOUR) {
+          const detail =
+            `feedback limit ${FEEDBACK_RATE_LIMIT_PER_HOUR}/hour; resets at ${feedbackBucket.resetsAt}`;
+          await insertAudit(tx, {
+            auth,
+            commandKind: kind,
+            workspaceId: route.workspaceId,
+            streamId: route.streamId,
+            outcome: "rate_limit",
+            reason: "rate_limited",
+            detail,
+          });
+          return {
+            status: 429,
+            body: {
+              error: "rate_limited",
+              message: `Feedback refused: ${detail}.`,
+              limit: FEEDBACK_RATE_LIMIT_PER_HOUR,
+              resets_at: feedbackBucket.resetsAt,
+            },
+          };
+        }
       }
     }
     if (prepared !== null && prepared.command.kind === "declare_agent_model") {

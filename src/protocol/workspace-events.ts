@@ -21,6 +21,7 @@ export type WorkspaceEventType =
   | 'AgentPrincipalCreated'
   | 'AgentPrincipalRevoked'
   | 'AgentModelDeclared'
+  | 'FeedbackSubmitted'
   | 'AgentTokenMinted'
   | 'AgentTokenRevoked'
   | 'CommandRejected';
@@ -36,6 +37,7 @@ export const WORKSPACE_EVENT_TYPES: readonly WorkspaceEventType[] = [
   'AgentPrincipalCreated',
   'AgentPrincipalRevoked',
   'AgentModelDeclared',
+  'FeedbackSubmitted',
   'AgentTokenMinted',
   'AgentTokenRevoked',
   'CommandRejected',
@@ -182,6 +184,22 @@ export interface AgentModelDeclared {
   declared_at: number;
 }
 
+/**
+ * Product feedback from a member or an agent — inert data about the product,
+ * never workspace authority. reporter_kind/reporter_id are server-derived from
+ * the presenting credential (submit_feedback carries no reporter fields), so
+ * the row cannot claim to be from anyone but its author.
+ */
+export interface FeedbackSubmitted {
+  feedback_id: string;
+  category: 'bug' | 'idea' | 'friction';
+  body: string;
+  context: Record<string, string> | null;
+  reporter_kind: 'user' | 'agent';
+  reporter_id: string;
+  submitted_at: number;
+}
+
 export interface AgentTokenMinted {
   token_id: string;
   principal_id: string;
@@ -224,6 +242,7 @@ export type WorkspaceRejectionReason =
   | 'binding_required'
   | 'token_ttl_invalid'
   | 'model_invalid'
+  | 'feedback_invalid'
   | 'principal_not_presented'
   | 'bad_state';
 

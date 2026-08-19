@@ -4,6 +4,7 @@ import { SCHEMA_VERSION } from './events.js';
 import { StreamIntegrityError, UnknownEventTypeError } from './reducer.js';
 import {
   AgentModelDeclared,
+  FeedbackSubmitted,
   AgentPrincipalCreated,
   AgentPrincipalRevoked,
   AgentTokenMinted,
@@ -290,6 +291,20 @@ export function reduceWorkspace(
           },
         },
       };
+      break;
+    }
+    case 'FeedbackSubmitted': {
+      // Feedback is durable in the stream and projected to swarm.feedback; it
+      // folds to NO state change because nothing downstream decides on it —
+      // the event's presence in the immutable log IS the record. Keys are
+      // still verified so a malformed envelope halts like any other.
+      req<FeedbackSubmitted>(
+        env.payload,
+        ['feedback_id', 'category', 'body', 'reporter_kind', 'reporter_id', 'submitted_at'],
+        env.type,
+        env.seq,
+      );
+      next = s;
       break;
     }
     case 'AgentModelDeclared': {
