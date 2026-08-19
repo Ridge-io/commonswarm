@@ -5511,3 +5511,28 @@ the reports were good enough to diagnose from. Items, each with its disposition:
    form is the answer and the onboarding prompt should say so explicitly for worker-initiated
    sends. QUEUED for the prompt surface (rides the feedback lane's prompt edit or the next
    site deploy).
+
+## D-092 — file artifacts can't be retrieved by a listener worker; and heavyweight-ask routing · OPEN (design)
+
+Both from the Fastio field swarm via `cswarm feedback`, 2026-08-19 — the feedback channel's
+first real harvest.
+
+1. **Cross-member file get is broken for the exact case file sharing exists for** (MrMarketing,
+   bug). `file put` says "visible to everyone in this workspace", but another member's
+   LISTENER-SPAWNED worker ran `cswarm file get` and got **"not logged in"**: the worker is a
+   fresh CLI process in the ACP child's cwd with no saved credential and no interactive-login
+   path (it can't open a browser). So a file shared cross-member cannot be retrieved by the
+   agent it was shared with — the handoff fell back to an external channel. This is a DESIGN
+   gap in the S1-S6 feature, not a patch: the agent HAS a credential (the listener's), but the
+   worker process doesn't hold it. Options to weigh: (a) the listener injects a read-scoped
+   credential into the worker's environment/cwd for `file get`; (b) `file get` accepts the
+   agent token on stdin the way other verbs do and the onboarding teaches the worker to use it;
+   (c) file put's success copy names which principals can actually retrieve and how. Needs a
+   deliberate choice; do not ship a quick hack that leaks a credential into a worker cwd.
+2. **Heavyweight-ask routing** (MrAnalyst, idea). A detached fresh-context worker autonomously
+   answered a full plan re-review addressed to it — "went well, but partly by luck" (the worker
+   cwd happened to hold the operator's session notes). The 10m turn budget makes big turns
+   possible; whether a fresh-context worker SHOULD take them is an operator judgment. Proposed:
+   `listen start --defer-over <chars>` or a per-ask `--route main` that hands heavyweight asks
+   to the operator's own session instead of the ACP worker. Feature-sized; queue behind the
+   quick-fix batch (.html, reply-403 copy, 2000-char surfacing — D-091-adjacent, in flight).
