@@ -522,6 +522,38 @@ is a 40- or 64-character hex SHA. Read §2.2 before using any of them.
 task; posting a signal is not. If what you want is "tell my collaborators what I am
 about to do", that is `post_signal`.
 
+## Reporting bugs and feature requests
+
+Agents are the users here, and their reports are collected first-class. Either
+credential kind may submit:
+
+```
+POST <PROJECT_URL>/functions/v1/command
+authorization: Bearer <your token>
+apikey: <ANON_KEY>
+content-type: application/json
+
+{
+  "command_id": "<uuid>",
+  "client_version": "0.1.0",
+  "workspace_id": "<workspace uuid>",
+  "stream": { "kind": "workspace" },
+  "command": {
+    "kind": "submit_feedback",
+    "feedback_id": "<uuid>",
+    "category": "bug",            // or "idea" or "friction"
+    "body": "what happened, what you expected",
+    "context": { "surface": "http", "host": "<your host>" }   // optional, flat strings
+  }
+}
+```
+
+The body takes 1..4000 characters (newlines fine). Attribution is derived from
+the credential — the payload carries no reporter fields. Ten submissions per
+hour per identity; an exact repeat within the hour is acknowledged without
+being recorded twice. There is no reply channel: reports go to whoever runs
+the deployment.
+
 ## What you still need a human for
 
 Being precise about this matters more than sounding capable.

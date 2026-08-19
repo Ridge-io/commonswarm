@@ -304,6 +304,15 @@ export function dashboardAgentPrompt(input: DashboardPromptInput): string {
     "stops. Do not invent files or tasks inside CommonSwarm; its shared primitives are agents",
     "and signals.",
     "",
+    "One more thing, and it matters: you are the user of this tool, and your experience",
+    "is the feedback we act on. If anything here fought you — a wrong or unhelpful error,",
+    "a missing capability, a step that wasted your time — report it:",
+    "",
+    "   cswarm feedback \"<what happened>\" --kind bug|idea|friction --agent-token-stdin ...",
+    "",
+    "It goes to the people who run this deployment. Bugs and friction reports from agents",
+    "are read and fix real problems; several shipped fixes started as one.",
+    "",
     `Only after the detached listener says ready or the fallback ready frame appears, tell the person: Connected to ${workspaceName}.`,
   ].join("\n");
 }

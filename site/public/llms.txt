@@ -57,6 +57,14 @@ after one hour by default (30 days maximum; the web connect page offers 24 hours
 Treat the token as a secret. Read it from the environment; never put it in a prompt,
 a transcript, a tool argument, or a URL.
 
+## Feedback from agents
+
+Agents are the primary users and their feedback is collected first-class:
+`cswarm feedback "<text>" --kind bug|idea|friction` (or the `submit_feedback`
+command over HTTP) files a bug, idea, or friction report with the deployment's
+operators. Rate-limited to 10/hour per identity; exact repeats within an hour
+are deduplicated.
+
 ## Site
 
 - [Home](https://coswarm-site.vercel.app/)

@@ -356,6 +356,7 @@ var WORKSPACE_EVENT_TYPES = [
   "AgentPrincipalCreated",
   "AgentPrincipalRevoked",
   "AgentModelDeclared",
+  "FeedbackSubmitted",
   "AgentTokenMinted",
   "AgentTokenRevoked",
   "CommandRejected"
@@ -616,6 +617,16 @@ function reduceWorkspace(prev, env3) {
       };
       break;
     }
+    case "FeedbackSubmitted": {
+      req2(
+        env3.payload,
+        ["feedback_id", "category", "body", "reporter_kind", "reporter_id", "submitted_at"],
+        env3.type,
+        env3.seq
+      );
+      next = s;
+      break;
+    }
     case "AgentModelDeclared": {
       const p = req2(
         env3.payload,
@@ -861,6 +872,46 @@ function normalizedModel(value) {
   }
   return { ok: true, model: trimmed.length === 0 ? null : trimmed };
 }
+var FEEDBACK_CATEGORIES = ["bug", "idea", "friction"];
+var FEEDBACK_BODY_MAX = 4e3;
+var FEEDBACK_CONTEXT_MAX_BYTES = 2048;
+function normalizedFeedbackBody(value) {
+  if (typeof value !== "string") {
+    return { ok: false, message: "feedback body must be a string" };
+  }
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    return { ok: false, message: "feedback body must not be empty" };
+  }
+  if (trimmed.length > FEEDBACK_BODY_MAX) {
+    return { ok: false, message: `feedback body must be at most ${FEEDBACK_BODY_MAX} characters` };
+  }
+  if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/.test(trimmed)) {
+    return { ok: false, message: "feedback body must not contain control characters (newlines and tabs are fine)" };
+  }
+  return { ok: true, body: trimmed };
+}
+function normalizedFeedbackContext(value) {
+  if (value === null || value === void 0) return { ok: true, context: null };
+  if (typeof value !== "object" || Array.isArray(value)) {
+    return { ok: false, message: "feedback context must be a flat object of strings" };
+  }
+  const entries = Object.entries(value);
+  for (const [key2, entry] of entries) {
+    if (typeof entry !== "string" || key2.length === 0 || key2.length > 64 || entry.length > 512) {
+      return { ok: false, message: "feedback context must be a flat object of bounded strings" };
+    }
+    if (/[\u0000-\u001f\u007f-\u009f]/.test(key2 + entry)) {
+      return { ok: false, message: "feedback context must not contain control characters" };
+    }
+  }
+  if (entries.length === 0) return { ok: true, context: null };
+  const serialized = JSON.stringify(Object.fromEntries(entries));
+  if (new TextEncoder().encode(serialized).length > FEEDBACK_CONTEXT_MAX_BYTES) {
+    return { ok: false, message: `feedback context must serialize to at most ${FEEDBACK_CONTEXT_MAX_BYTES} bytes` };
+  }
+  return { ok: true, context: Object.fromEntries(entries) };
+}
 function ownerOrAdmin(role) {
   return role === "owner" || role === "admin";
 }
@@ -1075,6 +1126,49 @@ function decideWorkspace(state, cmd, ctx) {
         env2(ctx, "AgentPrincipalRevoked", {
           principal_id: cmd.principal_id,
           revoked_at: ctx.now
+        })
+      ]);
+    }
+    case "submit_feedback": {
+      if (!FEEDBACK_CATEGORIES.includes(cmd.category)) {
+        return domain2(ctx, cmd.kind, "feedback_invalid", "category must be bug, idea, or friction");
+      }
+      const body = normalizedFeedbackBody(cmd.body);
+      if (!body.ok) {
+        return domain2(ctx, cmd.kind, "feedback_invalid", body.message);
+      }
+      const context = normalizedFeedbackContext(cmd.context);
+      if (!context.ok) {
+        return domain2(ctx, cmd.kind, "feedback_invalid", context.message);
+      }
+      let reporter_kind;
+      let reporter_id;
+      if (ctx.credential_kind === "agent") {
+        if (ctx.actor.agent_principal === null) {
+          return authz2("principal_not_presented", "agent feedback requires the presenting principal to be resolved");
+        }
+        const reporting = state.principals[ctx.actor.agent_principal];
+        if (!reporting || reporting.revoked_at !== null) {
+          return domain2(ctx, cmd.kind, "principal_revoked", "the presenting principal is missing or revoked");
+        }
+        reporter_kind = "agent";
+        reporter_id = reporting.principal_id;
+      } else {
+        if (ctx.role(user_id) === null) {
+          return authz2("bad_state", "caller is not a current workspace member");
+        }
+        reporter_kind = "user";
+        reporter_id = user_id;
+      }
+      return accept2([
+        env2(ctx, "FeedbackSubmitted", {
+          feedback_id: cmd.feedback_id,
+          category: cmd.category,
+          body: body.body,
+          context: context.context,
+          reporter_kind,
+          reporter_id,
+          submitted_at: ctx.now
         })
       ]);
     }
@@ -1387,6 +1481,9 @@ export {
   AGENT_TOKEN_MAX_TTL_MS,
   DISPOSITIONS,
   EVENT_TYPES,
+  FEEDBACK_BODY_MAX,
+  FEEDBACK_CATEGORIES,
+  FEEDBACK_CONTEXT_MAX_BYTES,
   INVITATION_MAX_TTL_MS,
   RENEWAL_HORIZON_DEFAULT_MS,
   RENEWAL_HORIZON_MAX_MS,
@@ -1405,6 +1502,8 @@ export {
   idemKey,
   isAgentScopeDenylisted,
   leaseLive,
+  normalizedFeedbackBody,
+  normalizedFeedbackContext,
   reduceStream,
   reduceTask,
   reduceWorkspace,

@@ -57,6 +57,7 @@ import {
   writeDestination,
   type FileListRow,
 } from "./cloud/files.js";
+import { FeedbackRefusedError, submitFeedback } from "./cloud/feedback.js";
 import {
   discoverCloudTarget,
   DEFAULT_SITE_ORIGIN,
@@ -418,6 +419,7 @@ Usage:
   cswarm file get <name|file-id> [--version <n>] [--out <local-path>] [--force] [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--agent-token-stdin] [--json]
   cswarm file rm <name|file-id> [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--agent-token-stdin] [--json]
   cswarm file restore <name|file-id> [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--agent-token-stdin] [--json]
+  cswarm feedback "<text>" --kind bug|idea|friction [--about <ref>] [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--agent-token-stdin] [--json]
   cswarm listen start --agent-token-stdin [--url <url> --anon-key <key>] --workspace-id <uuid> --provider grok|opencode|claude|codex [--cwd <absolute-path>] [--model <model>] [--effort <level>] [--permissions deny|allow] [--grok-executable <path>] [--opencode-executable <path>] [--claude-executable <path>] [--codex-executable <path>] [--turn-budget <duration>] [--foreground] [--json]
   cswarm listen status [--url <url> --anon-key <key>] --workspace-id <uuid> --principal-id <uuid> [--json]
   cswarm listen stop [--url <url> --anon-key <key>] --workspace-id <uuid> --principal-id <uuid> [--json]
@@ -453,8 +455,12 @@ Credential selection for command/dogfood:
                             members       reads only          -- either form
                             file put, file ls, file get, file rm, file restore
                                           read and command, nothing persisted -- either form
+                            feedback      command only, nothing persisted     -- either form
                             listen start  persists durable state, rotates -- needs expires_at
                             token revoke  names what it revokes           -- needs token_id
+
+Found a bug or missing feature in cswarm itself? cswarm feedback sends it to the
+deployment's operators — agents are encouraged to report friction they hit.
 
 Signals (intention sharing) accept the same credential selection. Agent mode
 never opens a browser or infers a human's saved workspace. Durations use a whole
@@ -4467,6 +4473,50 @@ async function runFileRestore(args: Arguments): Promise<void> {
   );
 }
 
+async function runFeedback(args: Arguments): Promise<void> {
+  const body = args.positionals[1];
+  if (!body) {
+    throw new UsageError(
+      'cswarm feedback needs the feedback text: cswarm feedback "<text>" --kind bug|idea|friction',
+    );
+  }
+  const kind = args.required("kind");
+  if (kind !== "bug" && kind !== "idea" && kind !== "friction") {
+    throw new UsageError("--kind must be bug, idea, or friction");
+  }
+  const about = args.optional("about");
+  const context = await fileContext(args, ["kind", "about"], 2);
+  /* Context is descriptive only: the CLI version and platform help the
+   * operator reproduce, and nothing here reads env vars or paths. */
+  const submitted = await submitFeedback({
+    target: context.cloud,
+    workspaceId: context.selected.selectedWorkspace,
+    credential: context.selected.bearer,
+  }, {
+    category: kind,
+    body,
+    context: {
+      surface: "cli",
+      cswarm_version: CLI_BUILD_VERSION,
+      platform: process.platform,
+      ...(about ? { about } : {}),
+    },
+  });
+  if (args.has("json")) {
+    process.stdout.write(`${JSON.stringify(submitted, null, 2)}\n`);
+    return;
+  }
+  if (submitted.duplicate === true) {
+    process.stdout.write(
+      "This matches feedback you sent within the hour, so it was not recorded twice. It is already with the operators of this deployment.\n",
+    );
+    return;
+  }
+  process.stdout.write(
+    "Feedback recorded for the operators of this deployment. It is stored durably with your workspace and identity attached, and it is read when they review feedback - there is no reply channel, so nothing further will happen in this session.\n",
+  );
+}
+
 async function runFile(args: Arguments): Promise<void> {
   const action = args.positionals[1];
   if (action === "put") return await runFilePut(args);
@@ -4741,6 +4791,10 @@ async function main(): Promise<void> {
   }
   if (verb === "status") {
     await runStatus(args);
+    return;
+  }
+  if (verb === "feedback") {
+    await runFeedback(args);
     return;
   }
   if (verb === "file") {
