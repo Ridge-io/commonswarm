@@ -1,9 +1,9 @@
 /**
- * declare_agent_model against the served command function and real Postgres.
- *
- * The self-only property is structural — the command has no target field — so
- * the control here is behavioural: two principals declare, and each write
- * lands on the declarer's own row while the sibling's row is untouched.
+ * set_agent_model against the served command function and real Postgres —
+ * the HUMAN mirror of agent-model-declare.test.ts. The gate under test is
+ * revoke_agent_principal's convention: owner/admin relabel any principal in
+ * the workspace, a plain member only their own; agents are refused on this
+ * kind outright (they have declare_agent_model for themselves).
  *
  * Reached by `npm run test:p1-server` (globs tests/p1-server/**; serial via
  * --test-concurrency=1 because each file owns the one local runtime).
@@ -47,16 +47,21 @@ function localEnvironment(): LocalEnvironment {
   return parsed as LocalEnvironment;
 }
 
-interface DeclareFixture {
+interface SetFixture {
   workspace: string;
+  ownerId: string;
   ownerJwt: string;
-  principalA: string;
-  principalB: string;
-  tokenA: string;
-  tokenB: string;
+  memberId: string;
+  memberJwt: string;
+  /** Owned by the plain member. */
+  principalMember: string;
+  /** Owned by the workspace owner. */
+  principalOwner: string;
+  /** A live token for principalMember, for the agent-refusal control. */
+  agentToken: string;
 }
 
-let f: DeclareFixture;
+let f: SetFixture;
 
 async function createUser(
   label: string,
@@ -79,30 +84,34 @@ async function createUser(
   return { id: created.data.user.id, jwt: signedIn.data.session.access_token };
 }
 
-async function declareFixture(): Promise<DeclareFixture> {
-  const owner = await createUser("declare-owner");
+async function setFixture(): Promise<SetFixture> {
+  const owner = await createUser("set-owner");
+  const member = await createUser("set-member");
   const workspace = randomUUID();
   const device = randomUUID();
-  const principalA = randomUUID();
-  const principalB = randomUUID();
-  const tokenA = `swm_agt_${randomBytes(32).toString("base64url")}`;
-  const tokenB = `swm_agt_${randomBytes(32).toString("base64url")}`;
+  const principalMember = randomUUID();
+  const principalOwner = randomUUID();
+  const agentToken = `swm_agt_${randomBytes(32).toString("base64url")}`;
   await sql.begin(async (tx) => {
     await tx`
       INSERT INTO swarm.users (user_id, display_name)
-      VALUES (${owner.id}::uuid, 'DeclareOwner')
+      VALUES
+        (${owner.id}::uuid, 'SetOwner'),
+        (${member.id}::uuid, 'SetMember')
     `;
     await tx`
       INSERT INTO swarm.devices (device_id, user_id, label)
-      VALUES (${device}::uuid, ${owner.id}::uuid, 'declare-tests')
+      VALUES (${device}::uuid, ${member.id}::uuid, 'set-tests')
     `;
     await tx`
       INSERT INTO swarm.workspaces (workspace_id, name, created_by)
-      VALUES (${workspace}::uuid, 'DeclareWS', ${owner.id}::uuid)
+      VALUES (${workspace}::uuid, 'SetWS', ${owner.id}::uuid)
     `;
     await tx`
       INSERT INTO swarm.memberships (workspace_id, user_id, role)
-      VALUES (${workspace}::uuid, ${owner.id}::uuid, 'owner')
+      VALUES
+        (${workspace}::uuid, ${owner.id}::uuid, 'owner'),
+        (${workspace}::uuid, ${member.id}::uuid, 'member')
     `;
     await tx`
       INSERT INTO swarm.streams (stream_id, workspace_id, kind)
@@ -112,38 +121,35 @@ async function declareFixture(): Promise<DeclareFixture> {
       INSERT INTO swarm.agent_principals (
         principal_id, workspace_id, owner_user_id, name
       ) VALUES
-        (${principalA}::uuid, ${workspace}::uuid, ${owner.id}::uuid, 'declare-a'),
-        (${principalB}::uuid, ${workspace}::uuid, ${owner.id}::uuid, 'declare-b')
+        (${principalMember}::uuid, ${workspace}::uuid, ${member.id}::uuid, 'set-member-agent'),
+        (${principalOwner}::uuid, ${workspace}::uuid, ${owner.id}::uuid, 'set-owner-agent')
     `;
-    for (const [principal, token] of [
-      [principalA, tokenA] as const,
-      [principalB, tokenB] as const,
-    ]) {
-      const run = randomUUID();
-      await tx`
-        INSERT INTO swarm.agent_runs (run_id, principal_id, device_id)
-        VALUES (${run}::uuid, ${principal}::uuid, ${device}::uuid)
-      `;
-      await tx`
-        INSERT INTO swarm.agent_tokens (
-          token_id, principal_id, run_id, scopes, token_hash,
-          expires_at, lineage_id
-        ) VALUES (
-          ${randomUUID()}::uuid, ${principal}::uuid, ${run}::uuid,
-          ${tx.json(["post_signal"])}::jsonb,
-          ${createHash("sha256").update(token).digest()},
-          statement_timestamp() + interval '1 hour', ${randomUUID()}::uuid
-        )
-      `;
-    }
+    const run = randomUUID();
+    await tx`
+      INSERT INTO swarm.agent_runs (run_id, principal_id, device_id)
+      VALUES (${run}::uuid, ${principalMember}::uuid, ${device}::uuid)
+    `;
+    await tx`
+      INSERT INTO swarm.agent_tokens (
+        token_id, principal_id, run_id, scopes, token_hash,
+        expires_at, lineage_id
+      ) VALUES (
+        ${randomUUID()}::uuid, ${principalMember}::uuid, ${run}::uuid,
+        ${tx.json(["post_signal"])}::jsonb,
+        ${createHash("sha256").update(agentToken).digest()},
+        statement_timestamp() + interval '1 hour', ${randomUUID()}::uuid
+      )
+    `;
   });
   return {
     workspace,
+    ownerId: owner.id,
     ownerJwt: owner.jwt,
-    principalA,
-    principalB,
-    tokenA,
-    tokenB,
+    memberId: member.id,
+    memberJwt: member.jwt,
+    principalMember,
+    principalOwner,
+    agentToken,
   };
 }
 
@@ -153,7 +159,7 @@ before(async () => {
   admin = createClient(local.API_URL, local.SERVICE_ROLE_KEY, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
-  envDir = mkdtempSync(join(tmpdir(), "cswarm-declare-env-"));
+  envDir = mkdtempSync(join(tmpdir(), "cswarm-set-model-env-"));
   const envFile = join(envDir, "test.env");
   writeFileSync(envFile, "SWARM_ENV=test\n");
   functionProcess = spawn(
@@ -194,7 +200,7 @@ before(async () => {
     now: () => Date.now(),
     diagnostics: () => `command function logs:\n${functionLogs.slice(-4000)}`,
   });
-  f = await declareFixture();
+  f = await setFixture();
 });
 
 after(async () => {
@@ -215,14 +221,15 @@ after(async () => {
   if (envDir) rmSync(envDir, { recursive: true, force: true });
 });
 
-async function declare(
-  token: string,
+async function setModel(
+  jwt: string,
+  principalId: string,
   model: string | null,
 ): Promise<{ status: number; body: Record<string, unknown> }> {
   const response = await fetch(`${local.API_URL}/functions/v1/command`, {
     method: "POST",
     headers: {
-      authorization: `Bearer ${token}`,
+      authorization: `Bearer ${jwt}`,
       "content-type": "application/json",
     },
     body: JSON.stringify({
@@ -230,7 +237,7 @@ async function declare(
       client_version: "0.1.0",
       workspace_id: f.workspace,
       stream: { kind: "workspace" },
-      command: { kind: "declare_agent_model", model },
+      command: { kind: "set_agent_model", principal_id: principalId, model },
     }),
   });
   const body = await response.json() as Record<string, unknown>;
@@ -246,110 +253,61 @@ async function models(): Promise<Record<string, string | null>> {
   return Object.fromEntries(rows.map((row) => [row.principal_id, row.model]));
 }
 
-test("M1 an agent's declaration lands on its OWN row and only there", async () => {
-  const result = await declare(f.tokenA, "claude (claude-agent-acp 0.64.2)");
+test("S1 the workspace owner relabels a MEMBER-owned agent; the audit names the human", async () => {
+  const result = await setModel(f.ownerJwt, f.principalMember, "gpt-5");
   assert.equal(result.status, 200, JSON.stringify(result.body));
   const byId = await models();
-  assert.equal(byId[f.principalA], "claude (claude-agent-acp 0.64.2)");
-  // The sibling is the control: same workspace, untouched.
-  assert.equal(byId[f.principalB], null);
+  assert.equal(byId[f.principalMember], "gpt-5");
+  assert.equal(byId[f.principalOwner], null);
+  // Attribution: the accepted audit row carries the HUMAN and no principal —
+  // a human set must be distinguishable from an agent self-declaration.
+  const audit = await sql<
+    { actor_user: string | null; actor_agent_principal: string | null }[]
+  >`
+    SELECT actor_user, actor_agent_principal
+    FROM swarm.audit_log
+    WHERE workspace_id = ${f.workspace}::uuid
+      AND command_kind = 'set_agent_model'
+      AND outcome = 'accepted'
+    ORDER BY occurred_at DESC
+    LIMIT 1
+  `;
+  assert.equal(audit[0]?.actor_user, f.ownerId);
+  assert.equal(audit[0]?.actor_agent_principal, null);
 });
 
-test("M2 the second principal's declaration cannot reach the first's row", async () => {
-  const result = await declare(f.tokenB, "codex (codex-acp 1.1.9)");
-  assert.equal(result.status, 200, JSON.stringify(result.body));
+test("S2 a plain member cannot relabel someone ELSE'S agent, but can their own", async () => {
+  const refused = await setModel(f.memberJwt, f.principalOwner, "gemini");
+  assert.equal(refused.status, 200, JSON.stringify(refused.body));
+  assert.equal(refused.body.status, "rejected");
+  assert.equal(refused.body.reason, "principal_not_owned");
+  const allowed = await setModel(f.memberJwt, f.principalMember, "claude");
+  assert.equal(allowed.status, 200, JSON.stringify(allowed.body));
+  assert.equal(allowed.body.status, "accepted");
   const byId = await models();
-  assert.equal(byId[f.principalA], "claude (claude-agent-acp 0.64.2)");
-  assert.equal(byId[f.principalB], "codex (codex-acp 1.1.9)");
+  assert.equal(byId[f.principalOwner], null);
+  assert.equal(byId[f.principalMember], "claude");
 });
 
-test("M3 a human credential is refused before the reducer", async () => {
+test("S2b the UNCHANGED-value probe is refused for someone else's agent (both arms' finding)", async () => {
+  // The fast-path used to answer `accepted` before the ownership gate, so a plain
+  // member could confirm another member's agent existed and probe its current model
+  // by submitting the value it already had. The fast path now requires the caller
+  // to pass the reducer's exact gate; an unauthorized unchanged submit falls through
+  // to the reducer and gets its refusal, indistinguishable from a changed one.
+  const current = (await models())[f.principalOwner];
+  const refused = await setModel(f.memberJwt, f.principalOwner, current);
+  assert.equal(refused.status, 200);
+  assert.equal(refused.body.status, "rejected");
+  assert.equal(refused.body.reason, "principal_not_owned");
+  assert.notEqual(refused.body.unchanged, true, "must not leak the unchanged fast-path shape");
+});
+
+test("S3 an agent token is refused on this kind", async () => {
   const response = await fetch(`${local.API_URL}/functions/v1/command`, {
     method: "POST",
     headers: {
-      authorization: `Bearer ${f.ownerJwt}`,
-      "content-type": "application/json",
-    },
-    body: JSON.stringify({
-      command_id: randomUUID(),
-      client_version: "0.1.0",
-      workspace_id: f.workspace,
-      stream: { kind: "workspace" },
-      command: { kind: "declare_agent_model", model: "claude" },
-    }),
-  });
-  assert.equal(response.status, 403);
-  await response.json();
-  const byId = await models();
-  assert.equal(byId[f.principalA], "claude (claude-agent-acp 0.64.2)");
-});
-
-test("M4 the wire refuses an over-bound model before authorization", async () => {
-  const result = await declare(f.tokenA, "x".repeat(121));
-  assert.equal(result.status, 400, JSON.stringify(result.body));
-  const byId = await models();
-  assert.equal(byId[f.principalA], "claude (claude-agent-acp 0.64.2)");
-});
-
-test("M5 null clears the declaration", async () => {
-  const result = await declare(f.tokenA, null);
-  assert.equal(result.status, 200, JSON.stringify(result.body));
-  const byId = await models();
-  assert.equal(byId[f.principalA], null);
-  assert.equal(byId[f.principalB], "codex (codex-acp 1.1.9)");
-});
-
-test("M6 wire normalizes like the reducer: raw empty string is a clear, and here a no-op", async () => {
-  // A's model is null after M5, so ""(-> null) must be an accepted UNCHANGED
-  // no-op: no events, flagged unchanged (landing-round findings 1 + 4).
-  const result = await declare(f.tokenA, "");
-  assert.equal(result.status, 200, JSON.stringify(result.body));
-  assert.equal(result.body.unchanged, true);
-  assert.deepEqual(result.body.event_ids, []);
-  const byId = await models();
-  assert.equal(byId[f.principalA], null);
-});
-
-test("M7 wire measures the TRIMMED value: a padded 120-char model is accepted and stored trimmed", async () => {
-  const core = "y".repeat(120);
-  const result = await declare(f.tokenA, `  ${core}  `);
-  assert.equal(result.status, 200, JSON.stringify(result.body));
-  const byId = await models();
-  assert.equal(byId[f.principalA], core);
-});
-
-test("M8 an unchanged redeclaration is an accepted no-op without an event", async () => {
-  const core = "y".repeat(120);
-  const result = await declare(f.tokenA, core);
-  assert.equal(result.status, 200, JSON.stringify(result.body));
-  assert.equal(result.body.unchanged, true);
-  assert.deepEqual(result.body.event_ids, []);
-});
-
-test("M9 changed declarations are bounded per principal per hour", async () => {
-  // Charges so far for A: M1, M5, M7 = 3 of the 10/hour bound. Seven more
-  // unique values reach the bound; the next changed value must be refused.
-  for (let index = 1; index <= 7; index += 1) {
-    const result = await declare(f.tokenA, `v${index}`);
-    assert.equal(result.status, 200, JSON.stringify(result.body));
-  }
-  const refused = await declare(f.tokenA, "v8");
-  assert.equal(refused.status, 429, JSON.stringify(refused.body));
-  assert.equal(refused.body.error, "rate_limited");
-  const byId = await models();
-  assert.equal(byId[f.principalA], "v7");
-  // An unchanged redeclaration is still free while rate-limited for changes.
-  const noop = await declare(f.tokenA, "v7");
-  assert.equal(noop.status, 200, JSON.stringify(noop.body));
-  assert.equal(noop.body.unchanged, true);
-});
-
-test("M10 the no-target fence: an extra principal_id key is refused at the wire, rows untouched", async () => {
-  const before = await models();
-  const response = await fetch(`${local.API_URL}/functions/v1/command`, {
-    method: "POST",
-    headers: {
-      authorization: `Bearer ${f.tokenA}`,
+      authorization: `Bearer ${f.agentToken}`,
       "content-type": "application/json",
     },
     body: JSON.stringify({
@@ -358,14 +316,39 @@ test("M10 the no-target fence: an extra principal_id key is refused at the wire,
       workspace_id: f.workspace,
       stream: { kind: "workspace" },
       command: {
-        kind: "declare_agent_model",
-        model: "attacker",
-        principal_id: f.principalB,
+        kind: "set_agent_model",
+        principal_id: f.principalMember,
+        model: "self-promotion",
       },
     }),
   });
-  assert.equal(response.status, 400);
+  assert.equal(response.status, 403);
   await response.json();
-  const after = await models();
-  assert.deepEqual(after, before);
+  const byId = await models();
+  assert.equal(byId[f.principalMember], "claude");
+});
+
+test("S4 an unchanged set is an accepted no-op appending nothing", async () => {
+  const eventsBefore = await sql<{ n: string }[]>`
+    SELECT count(*)::text AS n FROM swarm.events
+    WHERE workspace_id = ${f.workspace}::uuid
+  `;
+  const result = await setModel(f.ownerJwt, f.principalMember, "claude");
+  assert.equal(result.status, 200, JSON.stringify(result.body));
+  assert.equal(result.body.unchanged, true);
+  assert.deepEqual(result.body.event_ids, []);
+  const eventsAfter = await sql<{ n: string }[]>`
+    SELECT count(*)::text AS n FROM swarm.events
+    WHERE workspace_id = ${f.workspace}::uuid
+  `;
+  assert.equal(eventsBefore[0]?.n, eventsAfter[0]?.n);
+});
+
+test("S5 empty clears, and the wire refuses an over-bound value", async () => {
+  const cleared = await setModel(f.ownerJwt, f.principalMember, "");
+  assert.equal(cleared.status, 200, JSON.stringify(cleared.body));
+  const byId = await models();
+  assert.equal(byId[f.principalMember], null);
+  const over = await setModel(f.ownerJwt, f.principalMember, "x".repeat(121));
+  assert.equal(over.status, 400, JSON.stringify(over.body));
 });

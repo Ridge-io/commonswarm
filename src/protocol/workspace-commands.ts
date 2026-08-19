@@ -80,6 +80,19 @@ export type WorkspaceCommand =
       model: string | null;
     }
   | {
+      /**
+       * Human-set agent model — the mirror of declare_agent_model. An agent may
+       * only describe itself; a person may relabel agents in their workspace
+       * under the same gate as revoke_agent_principal (owner/admin, or the
+       * member who owns the principal). Model stays descriptive identity,
+       * never an authorization input; the event envelope's actor_user carries
+       * WHO set it, distinguishing a human set from a self-declaration.
+       */
+      kind: 'set_agent_model';
+      principal_id: string;
+      model: string | null;
+    }
+  | {
       kind: 'mint_agent_token';
       token_id: string;
       principal_id: string;
@@ -275,6 +288,7 @@ const HUMAN_ONLY_COMMANDS = new Set<WorkspaceCommand['kind']>([
   'change_role',
   'create_agent_principal',
   'revoke_agent_principal',
+  'set_agent_model',
   'mint_agent_token',
 ]);
 
@@ -397,6 +411,31 @@ function liveMember(state: WorkspaceState, user_id: string) {
 
 function callerUser(ctx: DecideWorkspaceCtx): string | null {
   return ctx.actor.user;
+}
+
+/**
+ * One normalization for BOTH model-writing commands (declare_agent_model,
+ * set_agent_model), so the agent path and the human path can never drift.
+ * Mirrors agent_principals_model_bounded in
+ * 20260730000001_workspace_access_lifecycle.sql: btrim'd, 1..120 chars, no
+ * [[:cntrl:]] (C0 + DEL); the class here adds C1 + bidi controls, deliberately
+ * STRICTER than the constraint — accepted-by-reducer must never fail projection.
+ */
+function normalizedModel(
+  value: unknown,
+): { ok: true; model: string | null } | { ok: false; message: string } {
+  if (value === null) return { ok: true, model: null };
+  if (typeof value !== 'string') {
+    return { ok: false, message: 'model must be a string or null' };
+  }
+  const trimmed = value.trim();
+  if (trimmed.length > 120) {
+    return { ok: false, message: 'model must be at most 120 characters' };
+  }
+  if (/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/.test(trimmed)) {
+    return { ok: false, message: 'model must not contain control characters' };
+  }
+  return { ok: true, model: trimmed.length === 0 ? null : trimmed };
 }
 
 function ownerOrAdmin(role: WorkspaceRole | null): boolean {
@@ -731,33 +770,41 @@ export function decideWorkspace(
       if (!declaring || declaring.revoked_at !== null) {
         return domain(ctx, cmd.kind, 'principal_revoked', 'the presenting principal is missing or revoked');
       }
-      /* Mirrors agent_principals_model_bounded in
-       * 20260730000001_workspace_access_lifecycle.sql: btrim'd, 1..120 chars,
-       * no [[:cntrl:]] (C0 + DEL). The reducer and the database must agree, or
-       * an accepted event fails projection — the constraint is the source. */
-      let model: string | null = null;
-      if (cmd.model !== null) {
-        if (typeof cmd.model !== 'string') {
-          return domain(ctx, cmd.kind, 'model_invalid', 'model must be a string or null');
-        }
-        const trimmed = cmd.model.trim();
-        if (trimmed.length > 120) {
-          return domain(ctx, cmd.kind, 'model_invalid', 'model must be at most 120 characters');
-        }
-        /* The class is invite-link.ts's CONTROL_GLOBAL_RE: C0 + DEL + C1 +
-         * bidi controls. At least C0/DEL/C1 is what the DB's [[:cntrl:]]
-         * refuses under the UTF-8 locales in use; the bidi additions make the
-         * reducer deliberately STRICTER than the constraint, which is the safe
-         * direction — accepted-by-reducer must never fail projection. */
-        if (/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/.test(trimmed)) {
-          return domain(ctx, cmd.kind, 'model_invalid', 'model must not contain control characters');
-        }
-        model = trimmed.length === 0 ? null : trimmed;
+      const normalized = normalizedModel(cmd.model);
+      if (!normalized.ok) {
+        return domain(ctx, cmd.kind, 'model_invalid', normalized.message);
       }
       return accept([
         env(ctx, 'AgentModelDeclared', {
           principal_id: declaring.principal_id,
-          model,
+          model: normalized.model,
+          declared_at: ctx.now,
+        }),
+      ]);
+    }
+
+    case 'set_agent_model': {
+      /* Same gate as revoke_agent_principal: owner/admin roles manage any
+       * agent in the workspace; a plain member manages only their own. The
+       * HUMAN_ONLY set already refused agent credentials before this case. */
+      const principal = state.principals[cmd.principal_id];
+      if (!principal) {
+        return domain(ctx, cmd.kind, 'principal_not_found', 'agent principal does not exist');
+      }
+      if (principal.revoked_at !== null) {
+        return domain(ctx, cmd.kind, 'principal_revoked', 'agent principal is revoked');
+      }
+      if (!ownerOrAdmin(actorRole) && principal.owner_user_id !== user_id) {
+        return domain(ctx, cmd.kind, 'principal_not_owned', "Member may set only their own principal's model");
+      }
+      const normalized = normalizedModel(cmd.model);
+      if (!normalized.ok) {
+        return domain(ctx, cmd.kind, 'model_invalid', normalized.message);
+      }
+      return accept([
+        env(ctx, 'AgentModelDeclared', {
+          principal_id: principal.principal_id,
+          model: normalized.model,
           declared_at: ctx.now,
         }),
       ]);
