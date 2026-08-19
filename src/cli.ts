@@ -181,6 +181,7 @@ import {
   spawnDetachedListener,
   stopListener,
   waitForListenerReady,
+  LISTENER_PROMPT_TIMEOUT_MS,
   type ListenerPermissionMode,
   type ListenerProviderId,
   type ListenerDeliveryJournal,
@@ -200,7 +201,7 @@ const KNOWN_FLAGS = new Set([
   "help", "include-stale", "include-tombstoned", "invitation-id", "invitation-token-stdin", "json", "kind", "limit",
   "link-stdin", "local", "model", "name", "ndjson", "no-browser", "opencode-executable", "out",
   "permissions", "principal-id", "provider", "reveal-anon-key", "run-id", "since", "site", "slug",
-  "task-id", "to", "token-id", "ttl-ms", "uid", "until", "url", "version", "wait", "workspace-id",
+  "task-id", "to", "token-id", "ttl-ms", "turn-budget", "uid", "until", "url", "version", "wait", "workspace-id",
 ]);
 
 const BOOLEAN_FLAGS = new Set([
@@ -416,7 +417,7 @@ Usage:
   cswarm file get <name|file-id> [--version <n>] [--out <local-path>] [--force] [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--agent-token-stdin] [--json]
   cswarm file rm <name|file-id> [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--agent-token-stdin] [--json]
   cswarm file restore <name|file-id> [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--agent-token-stdin] [--json]
-  cswarm listen start --agent-token-stdin [--url <url> --anon-key <key>] --workspace-id <uuid> --provider grok|opencode|claude|codex [--cwd <absolute-path>] [--model <model>] [--effort <level>] [--permissions deny|allow] [--grok-executable <path>] [--opencode-executable <path>] [--claude-executable <path>] [--codex-executable <path>] [--foreground] [--json]
+  cswarm listen start --agent-token-stdin [--url <url> --anon-key <key>] --workspace-id <uuid> --provider grok|opencode|claude|codex [--cwd <absolute-path>] [--model <model>] [--effort <level>] [--permissions deny|allow] [--grok-executable <path>] [--opencode-executable <path>] [--claude-executable <path>] [--codex-executable <path>] [--turn-budget <duration>] [--foreground] [--json]
   cswarm listen status [--url <url> --anon-key <key>] --workspace-id <uuid> --principal-id <uuid> [--json]
   cswarm listen stop [--url <url> --anon-key <key>] --workspace-id <uuid> --principal-id <uuid> [--json]
   cswarm new "<workspace name>" [--url <url> --anon-key <key>] [--json]
@@ -458,6 +459,11 @@ Signals (intention sharing) accept the same credential selection. Agent mode
 never opens a browser or infers a human's saved workspace. Durations use a whole
 number plus m, h, or d (for example 90m, 24h, or 7d) and are capped at 30d.
 Place -- before signal text that itself begins with -- to stop option parsing.
+
+listen start --turn-budget bounds ONE worker prompt turn (default 10m): how long
+the worker may think and use tools on a single message before the turn times out
+and durable delivery retries it. A whole number plus s, m, or h (for example
+90s, 5m, 1h), at least 30s and at most 60m.
 
 Invite, legacy token accept, principal create/revoke, human token mint/revoke, link, and new require a
 stored human login. Agent self-surrender of a token uses --agent-token-stdin and never takes the secret on argv. Invite-link accept signs in when needed, then accepts and
@@ -2168,6 +2174,29 @@ function signalDuration(value: string | undefined): number | undefined {
   return milliseconds;
 }
 
+/**
+ * One worker prompt turn's budget. Default is LISTENER_PROMPT_TIMEOUT_MS; the
+ * floor keeps a typo from making every turn time out instantly, and the cap
+ * keeps a wedged worker from holding a claimed signal for hours.
+ */
+function listenerTurnBudgetMs(value: string | undefined): number {
+  if (value === undefined) return LISTENER_PROMPT_TIMEOUT_MS;
+  const match = /^([1-9]\d*)(s|m|h)$/.exec(value);
+  if (!match) {
+    throw new Error("--turn-budget must be a duration such as 90s, 5m, or 1h");
+  }
+  const unit = match[2] === "s" ? 1_000 : match[2] === "m" ? 60_000 : 3_600_000;
+  const milliseconds = Number(match[1]) * unit;
+  if (
+    !Number.isSafeInteger(milliseconds) ||
+    milliseconds < 30_000 ||
+    milliseconds > 3_600_000
+  ) {
+    throw new Error("--turn-budget must be between 30s and 60m");
+  }
+  return milliseconds;
+}
+
 function signalText(value: string, label: "body" | "about"): string {
   const maximum = label === "body" ? 2000 : 500;
   if (value.length < (label === "body" ? 1 : 0) || value.length > maximum) {
@@ -3275,6 +3304,17 @@ function renderListenerStatus(status: ListenerStatus): string {
       ? `Last status code: ${status.lastErrorCode}.`
       : "No listener error is recorded.",
   ];
+  if (status.lastWorkerStderrTail) {
+    // Local diagnosis for the D-090 family: the failing box's own log is the
+    // only place the cause exists, so surface the end of it here.
+    const tailLines = status.lastWorkerStderrTail
+      .split("\n")
+      .filter((line) => line.trim().length > 0);
+    lines.push("Worker stderr (local log only):");
+    for (const line of tailLines.slice(-3)) {
+      lines.push(`  ${line}`);
+    }
+  }
   if (status.deliveryMode === "durable_claim") {
     lines.push("Delivery mode: durable claim and acknowledgement.");
   } else if (status.deliveryMode === "cursor_fallback") {
@@ -3525,6 +3565,7 @@ async function runConfiguredListener(options: {
   claudeExecutable?: string;
   codexExecutable?: string;
   stateDirectory?: string;
+  turnBudgetMs?: number;
 }): Promise<ListenerStatus> {
   if (options.provider === "opencode" && options.effort) {
     throw new Error(
@@ -3575,6 +3616,16 @@ async function runConfiguredListener(options: {
       ? { stateDirectory: options.stateDirectory }
       : {}),
   });
+  const turnBudgetMs = options.turnBudgetMs ?? LISTENER_PROMPT_TIMEOUT_MS;
+  // The newest dead worker's stderr tail. Read-and-cleared by the supervisor,
+  // which writes it only to the operator's own 0600 log and status file; it
+  // never rides an error object or a server payload (D-090 family).
+  let lastWorkerStderrTail: string | null = null;
+  const onWorkerStderrTail = (tail: string) => {
+    // An empty tail still clears the slot: a previous worker's stderr must
+    // not masquerade as this exit's.
+    lastWorkerStderrTail = tail.length > 0 ? tail : null;
+  };
   // A factory, not a value: the supervisor may run the listener more than once
   // and a model is single-use (runListenerRuntime closes it on every exit, and
   // every adapter throws "listener model is closed" once closed). Constructing
@@ -3584,6 +3635,8 @@ async function runConfiguredListener(options: {
     ? new OpenCodeListenerModel({
       cwd: options.cwd,
       permissionMode: options.permissionMode,
+      promptTimeoutMs: turnBudgetMs,
+      onWorkerStderrTail,
       ...(options.model ? { model: options.model } : {}),
       ...(options.opencodeExecutable
         ? { executable: options.opencodeExecutable }
@@ -3595,6 +3648,8 @@ async function runConfiguredListener(options: {
     ? new ClaudeListenerModel({
       cwd: options.cwd,
       permissionMode: options.permissionMode,
+      promptTimeoutMs: turnBudgetMs,
+      onWorkerStderrTail,
       ...(options.claudeExecutable
         ? { executable: options.claudeExecutable }
         : options.executable
@@ -3605,6 +3660,8 @@ async function runConfiguredListener(options: {
     ? new CodexListenerModel({
       cwd: options.cwd,
       permissionMode: options.permissionMode,
+      promptTimeoutMs: turnBudgetMs,
+      onWorkerStderrTail,
       ...(options.codexExecutable
         ? { executable: options.codexExecutable }
         : options.executable
@@ -3614,6 +3671,8 @@ async function runConfiguredListener(options: {
     : new GrokListenerModel({
       cwd: options.cwd,
       permissionMode: options.permissionMode,
+      promptTimeoutMs: turnBudgetMs,
+      onWorkerStderrTail,
       ...(options.model ? { model: options.model } : {}),
       ...(options.effort ? { effort: options.effort } : {}),
       ...(options.executable ? { executable: options.executable } : {}),
@@ -3633,6 +3692,12 @@ async function runConfiguredListener(options: {
       principalId: options.principalId,
       provider: options.provider,
       permissionMode: options.permissionMode,
+      turnBudgetMs,
+      takeWorkerStderrTail: () => {
+        const tail = lastWorkerStderrTail;
+        lastWorkerStderrTail = null;
+        return tail;
+      },
       prepare: async (proposedInstanceId) => {
         const selected = await openListenerDeliveryJournal({
           profileId: options.cloud.profileId,
@@ -3694,6 +3759,7 @@ async function runListenStart(args: Arguments): Promise<void> {
     "claude-executable",
     "codex-executable",
     "state-dir",
+    "turn-budget",
     "foreground",
     "json",
   ], 2);
@@ -3704,6 +3770,10 @@ async function runListenStart(args: Arguments): Promise<void> {
   }
   const provider = listenerProvider(args);
   validateListenerProviderFlags(args, provider);
+  // Validated before the target and credential work so a bad duration fails
+  // fast; the detached path forwards the validated string for the supervisor
+  // to re-parse.
+  const turnBudgetMs = listenerTurnBudgetMs(args.optional("turn-budget"));
   const cloud = await target(args);
   const workspaceId = listenerUuid(
     args.optional("workspace-id") ?? process.env.SWARM_CLOUD_WORKSPACE_ID,
@@ -3744,6 +3814,7 @@ async function runListenStart(args: Arguments): Promise<void> {
       cwd,
       permissionMode,
       provider,
+      turnBudgetMs,
       ...(args.optional("model") ? { model: args.required("model") } : {}),
       ...(args.optional("effort") ? { effort: args.required("effort") } : {}),
       ...(args.optional("grok-executable")
@@ -3807,6 +3878,9 @@ async function runListenStart(args: Arguments): Promise<void> {
         ...(stateDirectory ? { stateDirectory } : {}),
         ...(args.optional("model") ? { model: args.required("model") } : {}),
         ...(args.optional("effort") ? { effort: args.required("effort") } : {}),
+        ...(args.optional("turn-budget")
+          ? { turnBudget: args.required("turn-budget") }
+          : {}),
         ...(args.optional("grok-executable")
           ? { executable: args.required("grok-executable") }
           : {}),
@@ -3904,6 +3978,7 @@ async function runListenSupervisor(args: Arguments): Promise<void> {
     "claude-executable",
     "codex-executable",
     "state-dir",
+    "turn-budget",
   ], 1);
   const provider = listenerProvider(args);
   validateListenerProviderFlags(args, provider);
@@ -3922,6 +3997,7 @@ async function runListenSupervisor(args: Arguments): Promise<void> {
     cwd,
     permissionMode: listenerPermissionMode(args.optional("permissions")),
     provider,
+    turnBudgetMs: listenerTurnBudgetMs(args.optional("turn-budget")),
     ...(args.optional("model") ? { model: args.required("model") } : {}),
     ...(args.optional("effort") ? { effort: args.required("effort") } : {}),
     ...(args.optional("grok-executable")

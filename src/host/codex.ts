@@ -6,6 +6,7 @@
  * operator's normal HOME for ChatGPT/Codex file-backed auth state.
  */
 
+import { attachStderrTailRing } from "./stderr-tail.js";
 import {
   execFile,
   spawn,
@@ -56,6 +57,11 @@ export type CodexAcpOpenOptions = {
   clientVersion?: string;
   /** When true, prompts are enabled without canary (tests only). */
   promptsEnabled?: boolean;
+  /**
+   * Bounded, sanitized stderr tail, delivered once when the child exits — for
+   * the operator's LOCAL listener log only; never attach it to an error.
+   */
+  onStderrTail?: (tail: string) => void;
 };
 
 export type CodexAcpHandle = {
@@ -357,9 +363,12 @@ export async function openCodexAcpSession(
     await terminateCodexChild(child);
     throw new AcpHostError("spawn_failed", "child missing stdio pipes");
   }
-  // Provider stderr may contain prompt text or local paths. Drain, never log.
-  child.stderr.on("data", () => undefined);
-  child.stderr.resume();
+  const stderrTail = attachStderrTailRing(child.stderr);
+  if (options.onStderrTail) {
+    const deliverTail = options.onStderrTail;
+    // "close" (not "exit"): stderr is fully flushed by then. Exactly once.
+    child.once("close", () => deliverTail(stderrTail.read()));
+  }
 
   let sessionRef: AcpHostSession | null = null;
   const transport = createBoundTransport({

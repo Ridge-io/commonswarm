@@ -178,3 +178,37 @@ test("hidden supervisor rejects another provider's executable before credentials
   assert.match(result.stderr, /--grok-executable requires --provider grok/);
   assert.doesNotMatch(result.stderr, /credential|workspace-id must be a UUID/i);
 });
+
+test("--turn-budget rejects out-of-bounds and malformed durations before any credential work", () => {
+  const base = [
+    "listen",
+    "start",
+    "--agent-token-stdin",
+    "--provider",
+    "grok",
+    "--url",
+    "https://unreachable.example.test",
+    "--anon-key",
+    "anon",
+    "--workspace-id",
+    "11111111-1111-4111-8111-111111111111",
+  ];
+  const tooShort = runCli([...base, "--turn-budget", "5s"]);
+  assert.equal(tooShort.status, 1);
+  assert.match(tooShort.stderr, /--turn-budget must be between 30s and 60m/);
+
+  const tooLong = runCli([...base, "--turn-budget", "2h"]);
+  assert.equal(tooLong.status, 1);
+  assert.match(tooLong.stderr, /--turn-budget must be between 30s and 60m/);
+
+  const malformed = runCli([...base, "--turn-budget", "90x"]);
+  assert.equal(malformed.status, 1);
+  assert.match(malformed.stderr, /--turn-budget must be a duration such as 90s, 5m, or 1h/);
+
+  // CONTROL: a valid duration must get PAST the budget gate — this invocation
+  // still fails (no piped credential), but for a different reason.
+  const valid = runCli([...base, "--turn-budget", "5m"]);
+  assert.equal(valid.status, 1);
+  assert.doesNotMatch(valid.stderr, /--turn-budget/);
+});
+

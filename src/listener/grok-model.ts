@@ -14,6 +14,7 @@ import {
   type PermissionDecision,
   type PermissionRequest,
 } from "../host/types.js";
+import { LISTENER_PROMPT_TIMEOUT_MS } from "./types.js";
 import type {
   ListenerModel,
   ListenerPermissionMode,
@@ -35,6 +36,10 @@ export interface GrokListenerModelOptions {
   permissionMode?: ListenerPermissionMode;
   env?: NodeJS.ProcessEnv;
   open?: OpenGrokSession;
+  /** Per-prompt-turn budget in ms (default LISTENER_PROMPT_TIMEOUT_MS). */
+  promptTimeoutMs?: number;
+  /** Receives the worker's bounded stderr tail on child exit (local log only). */
+  onWorkerStderrTail?: (tail: string) => void;
 }
 
 const MAX_GROK_AUTH_BYTES = 256 * 1024;
@@ -79,7 +84,9 @@ export class GrokListenerModel implements ListenerModel {
     if (this.closed) throw new Error("listener model is closed");
     const worker = await this.ensureWorker();
     try {
-      return await worker.session.prompt(prompt);
+      return await worker.session.prompt(prompt, {
+        timeoutMs: this.options.promptTimeoutMs ?? LISTENER_PROMPT_TIMEOUT_MS,
+      });
     } catch (error) {
       if (error instanceof AcpChildExitError) {
         try {
@@ -120,6 +127,9 @@ export class GrokListenerModel implements ListenerModel {
       ...(this.options.model ? { model: this.options.model } : {}),
       ...(this.options.effort ? { effort: this.options.effort } : {}),
       ...(this.options.env ? { env: this.options.env } : {}),
+    ...(this.options.onWorkerStderrTail
+      ? { onStderrTail: this.options.onWorkerStderrTail }
+      : {}),
       clientName: "cswarm-listener",
     });
     try {

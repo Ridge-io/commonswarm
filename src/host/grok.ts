@@ -19,6 +19,7 @@ import {
   GROK_MEASURED_VERSION,
 } from "./bounds.js";
 import { sanitizeChildEnv } from "./env.js";
+import { attachStderrTailRing } from "./stderr-tail.js";
 import { AcpHostSession, createBoundTransport } from "./session.js";
 import { AcpTransport } from "./transport.js";
 import {
@@ -45,6 +46,12 @@ export type GrokAcpOpenOptions = {
   clientVersion?: string;
   /** When true, prompts are enabled without canary (tests only). */
   promptsEnabled?: boolean;
+
+  /**
+   * Bounded, sanitized stderr tail, delivered once when the child exits — for
+   * the operator's LOCAL listener log only; never attach it to an error.
+   */
+  onStderrTail?: (tail: string) => void;
 };
 
 export type GrokAcpHandle = {
@@ -224,10 +231,12 @@ export async function openGrokAcpSession(
     child.kill("SIGKILL");
     throw new AcpHostError("spawn_failed", "child missing stdio pipes");
   }
-  // Provider stderr is deliberately not logged: it may contain prompt text or
-  // local paths. Drain it so a noisy child cannot deadlock on a full pipe.
-  child.stderr.on("data", () => undefined);
-  child.stderr.resume();
+  const stderrTail = attachStderrTailRing(child.stderr);
+  if (options.onStderrTail) {
+    const deliverTail = options.onStderrTail;
+    // "close" (not "exit"): stderr is fully flushed by then. Exactly once.
+    child.once("close", () => deliverTail(stderrTail.read()));
+  }
 
   let sessionRef: AcpHostSession | null = null;
   const transport = createBoundTransport({

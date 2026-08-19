@@ -14,6 +14,7 @@ import {
   type ChildProcessWithoutNullStreams,
 } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { attachStderrTailRing } from "./stderr-tail.js";
 import {
   accessSync,
   constants as fsConstants,
@@ -76,6 +77,11 @@ export type OpenCodeAcpOpenOptions = {
   clientVersion?: string;
   /** When true, prompts are enabled without canary (tests only). */
   promptsEnabled?: boolean;
+  /**
+   * Bounded, sanitized stderr tail, delivered once when the child exits — for
+   * the operator's LOCAL listener log only; never attach it to an error.
+   */
+  onStderrTail?: (tail: string) => void;
   /**
    * Private absolute home already prepared with auth + safe config.
    * When omitted, open builds a temporary auth-only home and removes it on close.
@@ -797,9 +803,12 @@ export async function openOpenCodeAcpSession(
       await disposeHome();
       throw new AcpHostError("spawn_failed", "child missing stdio pipes");
     }
-    // Provider stderr may contain prompt text — drain, never log.
-    child.stderr.on("data", () => undefined);
-    child.stderr.resume();
+    const stderrTail = attachStderrTailRing(child.stderr);
+    if (options.onStderrTail) {
+      const deliverTail = options.onStderrTail;
+      // "close" (not "exit"): stderr is fully flushed by then. Exactly once.
+      child.once("close", () => deliverTail(stderrTail.read()));
+    }
 
     let sessionRef: AcpHostSession | null = null;
     const transport = createBoundTransport({

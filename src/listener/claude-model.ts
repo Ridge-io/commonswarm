@@ -17,6 +17,7 @@ import {
   type PermissionRequest,
 } from "../host/types.js";
 import type { SignalRecord } from "../cloud/command-client.js";
+import { LISTENER_PROMPT_TIMEOUT_MS } from "./types.js";
 import type {
   ListenerModel,
   ListenerPermissionMode,
@@ -34,6 +35,10 @@ export interface ClaudeListenerModelOptions {
   permissionMode?: ListenerPermissionMode;
   env?: NodeJS.ProcessEnv;
   open?: OpenClaudeSession;
+  /** Per-prompt-turn budget in ms (default LISTENER_PROMPT_TIMEOUT_MS). */
+  promptTimeoutMs?: number;
+  /** Receives the worker's bounded stderr tail on child exit (local log only). */
+  onWorkerStderrTail?: (tail: string) => void;
 }
 
 class ClaudeListenerClosedDuringOpen extends Error {
@@ -81,7 +86,9 @@ export class ClaudeListenerModel implements ListenerModel {
     if (this.closed) throw new Error("listener model is closed");
     const worker = await this.ensureWorker();
     try {
-      return await worker.session.prompt(prompt);
+      return await worker.session.prompt(prompt, {
+        timeoutMs: this.options.promptTimeoutMs ?? LISTENER_PROMPT_TIMEOUT_MS,
+      });
     } catch (error) {
       if (error instanceof AcpChildExitError) {
         try {
@@ -175,6 +182,9 @@ export class ClaudeListenerModel implements ListenerModel {
         ...(this.options.executable ? { executable: this.options.executable } : {}),
         ...(this.options.env ? { env: this.options.env } : {}),
         signal: controller.signal,
+      ...(this.options.onWorkerStderrTail
+        ? { onStderrTail: this.options.onWorkerStderrTail }
+        : {}),
         clientName: "cswarm-listener",
       });
       this.openingHandle = handle;

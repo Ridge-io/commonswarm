@@ -17,6 +17,7 @@ import {
   type PermissionDecision,
   type PermissionRequest,
 } from "../host/types.js";
+import { LISTENER_PROMPT_TIMEOUT_MS } from "./types.js";
 import type {
   ListenerModel,
   ListenerPermissionMode,
@@ -47,6 +48,10 @@ export interface OpenCodeListenerModelOptions {
   prepareWorkerCwd?: (home: string) => Promise<string>;
   /** Test-only bound for waiting on in-progress opens during close (ms). */
   pendingOpenWaitMs?: number;
+  /** Per-prompt-turn budget in ms (default LISTENER_PROMPT_TIMEOUT_MS). */
+  promptTimeoutMs?: number;
+  /** Receives the worker's bounded stderr tail on child exit (local log only). */
+  onWorkerStderrTail?: (tail: string) => void;
 }
 
 
@@ -132,7 +137,9 @@ export class OpenCodeListenerModel implements ListenerModel {
     if (this.closed) throw new Error("listener model is closed");
     const worker = await this.ensureWorker();
     try {
-      return await worker.session.prompt(prompt);
+      return await worker.session.prompt(prompt, {
+        timeoutMs: this.options.promptTimeoutMs ?? LISTENER_PROMPT_TIMEOUT_MS,
+      });
     } catch (error) {
       if (error instanceof AcpChildExitError) {
         const home = this.workerHome;
@@ -465,6 +472,9 @@ export class OpenCodeListenerModel implements ListenerModel {
         ...(this.options.allowMissingAuth === true
           ? { allowMissingAuth: true }
           : {}),
+      ...(this.options.onWorkerStderrTail
+        ? { onStderrTail: this.options.onWorkerStderrTail }
+        : {}),
         clientName: "cswarm-listener",
       });
       pending.phase = "opening";

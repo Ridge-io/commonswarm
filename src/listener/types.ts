@@ -54,6 +54,22 @@ export interface ListenerEffectStore {
   write(record: ListenerEffectRecord): Promise<void>;
 }
 
+/**
+ * Default budget for one listener worker PROMPT turn (10 minutes).
+ *
+ * The transport default (ACP_DEFAULT_REQUEST_TIMEOUT_MS, 120s) protects the
+ * handshake path: initialize, session/new, and the permission canary must
+ * answer quickly, and a tight bound turns a wedged child into a fast,
+ * restartable failure. A prompt turn is different — a worker legitimately
+ * thinks, runs tools, and edits files for minutes, and a heavyweight ask was
+ * measured dying at exactly +120s twice (retry_pending, acptimeouterror)
+ * before succeeding on promptAttempts 3. Raising only the prompt budget is
+ * safe because the durable claim/ack layer already redelivers the signal if
+ * the worker dies mid-turn — the timeout is not the only safety net.
+ * Override per-listener with `cswarm listen start --turn-budget`.
+ */
+export const LISTENER_PROMPT_TIMEOUT_MS = 600_000;
+
 export type ListenerPermissionMode = "deny" | "allow";
 
 export type ListenerPromptMode = "worker";

@@ -58,6 +58,7 @@ type Record = {
   canaryOptions?: { probeText?: string; timeoutMs?: number };
   canaryDecision?: PermissionDecision;
   promptDecision?: PermissionDecision;
+  promptTimeoutMs?: number;
   closed: boolean;
   cancelled: boolean;
 };
@@ -74,7 +75,8 @@ function fakeOpen(records: Record[]): OpenClaudeSession {
         record.canaryOptions = canaryOptions;
         record.canaryDecision = await options.permissionCallback?.(REQUEST);
       },
-      async prompt(text: string) {
+      async prompt(text: string, promptOptions?: { timeoutMs?: number }) {
+        record.promptTimeoutMs = promptOptions?.timeoutMs;
         record.promptDecision = await options.permissionCallback?.(REQUEST);
         return {
           message: `reply:${text}`,
@@ -390,3 +392,47 @@ test("D-050: Claude close timeout is runtime-fatal before replacement opens", as
   assert.equal((await engine.process(ask)).status, "failed");
   assert.equal(opens, 1);
 });
+
+test("worker prompt turns get the 10-minute default budget; the handshake keeps the tight transport default", async () => {
+  /* The 120s transport default protects initialize/session-new/canary; a real
+   * prompt turn legitimately runs for minutes (measured: a heavyweight ask
+   * died at exactly +120s twice before succeeding on durable retry). The
+   * model must therefore pass a per-call budget on the PROMPT only. */
+  const cwd = await mkdtemp(join(tmpdir(), "cswarm-claude-worker-"));
+  const records: Record[] = [];
+  const adapter = new ClaudeListenerModel({
+    cwd,
+    permissionMode: "allow",
+    open: fakeOpen(records),
+  });
+  await adapter.start();
+  await adapter.prompt(SIGNAL, "worker", "work");
+  assert.equal(records[0]?.promptTimeoutMs, 600_000);
+  // The open options must NOT widen the transport-wide request timeout —
+  // that would slow every wedged-handshake failure, not just prompts.
+  assert.equal(records[0]?.options.requestTimeoutMs, undefined);
+  await adapter.close();
+});
+
+test("promptTimeoutMs overrides the prompt-turn budget and onWorkerStderrTail threads into the host open", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "cswarm-claude-worker-"));
+  const records: Record[] = [];
+  const tails: string[] = [];
+  const adapter = new ClaudeListenerModel({
+    cwd,
+    permissionMode: "allow",
+    promptTimeoutMs: 45_000,
+    onWorkerStderrTail: (tail) => tails.push(tail),
+    open: fakeOpen(records),
+  });
+  await adapter.start();
+  await adapter.prompt(SIGNAL, "worker", "work");
+  assert.equal(records[0]?.promptTimeoutMs, 45_000);
+  const onStderrTail = (records[0]?.options as { onStderrTail?: (tail: string) => void })
+    .onStderrTail;
+  assert.equal(typeof onStderrTail, "function");
+  onStderrTail!("boom");
+  assert.deepEqual(tails, ["boom"]);
+  await adapter.close();
+});
+
