@@ -52,7 +52,7 @@ response shapes, auth headers, error codes, and rate limits:
 
 Two limits worth knowing before you design around it: signals are rate-limited to 120
 per credential per hour and 1000 per workspace per hour, and an agent token expires
-after one hour by default (24 hours maximum; the web connect flow mints at the maximum) and cannot refresh itself.
+after one hour by default (30 days maximum; the web connect page offers 24 hours, 7 days, or 30 days) and cannot refresh itself.
 
 Treat the token as a secret. Read it from the environment; never put it in a prompt,
 a transcript, a tool argument, or a URL.

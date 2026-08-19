@@ -15,12 +15,16 @@ import {
 
 export const INVITATION_MAX_TTL_MS = 7 * 24 * 60 * 60 * 1_000;
 export const AGENT_TOKEN_DEFAULT_TTL_MS = 60 * 60 * 1_000;
-/* 24h, raised from 8h by operator ruling 2026-08-18. The measured failure: a sandboxed
- * agent's bootstrap window closed while a human debugged its environment — setup with a
- * human in the loop can take longer than 8h across time zones, and rotation cannot start
- * until a listener is READY, which is exactly the part that was stuck. Rotation SUCCESSORS
- * stay short (renewal.ts keeps its own 8h successor cap); this bounds only the bootstrap. */
-export const AGENT_TOKEN_MAX_TTL_MS = 24 * 60 * 60 * 1_000;
+/* 30 DAYS, raised 8h→24h→30d by operator rulings 2026-08-18/19. The bootstrap credential
+ * crosses a human (pasted into another machine's chat, often after environment repair on
+ * that side), and rotation cannot start until a listener is READY — the step most likely to
+ * be broken. 30d is the ceiling BY CONSTRUCTION: it equals RENEWAL_HORIZON_DEFAULT_MS, the
+ * once-a-month human reauthorisation checkpoint, so no bearer credential of any kind can
+ * outlive a month without a person touching it. "Never expire" was considered and refused —
+ * a pasted prompt is a standing transcript, and a non-expiring secret in one is a backdoor.
+ * The web connect flow DEFAULTS to 24h and offers 7d/30d; rotation SUCCESSORS stay short
+ * (renewal.ts keeps its own 8h successor cap); this bounds only the bootstrap. */
+export const AGENT_TOKEN_MAX_TTL_MS = 30 * 24 * 60 * 60 * 1_000;
 
 // §2.3 continuous-renewal horizon. A worksession that runs for weeks must not
 // be paid for by lengthening the bearer token: the TTL constants above stay
@@ -678,7 +682,7 @@ export function decideWorkspace(
       }
       const ttl = cmd.ttl_ms ?? AGENT_TOKEN_DEFAULT_TTL_MS;
       if (!Number.isFinite(ttl) || ttl <= 0 || ttl > AGENT_TOKEN_MAX_TTL_MS) {
-        return domain(ctx, cmd.kind, 'token_ttl_invalid', 'token TTL must be positive and at most 24 hours');
+        return domain(ctx, cmd.kind, 'token_ttl_invalid', 'token TTL must be positive and at most 30 days');
       }
       if (state.tokens[cmd.token_id]) {
         return domain(ctx, cmd.kind, 'bad_state', 'token id already exists');

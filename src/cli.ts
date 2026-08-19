@@ -1647,7 +1647,7 @@ async function runToken(args: Arguments): Promise<void> {
           : {
             ttl_ms: integer(args, "ttl-ms", {
               minimum: 1,
-              maximum: 86_400_000,
+              maximum: 2_592_000_000,
             }),
           }),
       },

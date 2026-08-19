@@ -723,7 +723,7 @@ function reduceWorkspaceStream(events) {
 // src/protocol/workspace-commands.ts
 var INVITATION_MAX_TTL_MS = 7 * 24 * 60 * 60 * 1e3;
 var AGENT_TOKEN_DEFAULT_TTL_MS = 60 * 60 * 1e3;
-var AGENT_TOKEN_MAX_TTL_MS = 24 * 60 * 60 * 1e3;
+var AGENT_TOKEN_MAX_TTL_MS = 30 * 24 * 60 * 60 * 1e3;
 var RENEWAL_HORIZON_DEFAULT_MS = 30 * 24 * 60 * 60 * 1e3;
 var RENEWAL_HORIZON_MAX_MS = 90 * 24 * 60 * 60 * 1e3;
 var RENEWAL_MAX_SUCCESSORS_DEFAULT = 800;
@@ -1079,7 +1079,7 @@ function decideWorkspace(state, cmd, ctx) {
       }
       const ttl = cmd.ttl_ms ?? AGENT_TOKEN_DEFAULT_TTL_MS;
       if (!Number.isFinite(ttl) || ttl <= 0 || ttl > AGENT_TOKEN_MAX_TTL_MS) {
-        return domain2(ctx, cmd.kind, "token_ttl_invalid", "token TTL must be positive and at most 24 hours");
+        return domain2(ctx, cmd.kind, "token_ttl_invalid", "token TTL must be positive and at most 30 days");
       }
       if (state.tokens[cmd.token_id]) {
         return domain2(ctx, cmd.kind, "bad_state", "token id already exists");

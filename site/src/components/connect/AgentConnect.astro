@@ -99,6 +99,24 @@ const {
       </p>
     </div>
 
+    <div class="ac__field" data-field-wrap="ttl">
+      <label class="ac__label" for="ac-ttl">Key lifetime</label>
+      {/* Three values, not a free field (operator direction 2026-08-19, API-key mental
+          model). "Never" is deliberately absent: the 30-day renewal horizon is the
+          ceiling on any bearer credential, and a pasted prompt is a standing transcript —
+          a non-expiring secret in one is a backdoor. 30d IS the horizon, so it is the
+          honest "as long as possible". */}
+      <select class="ac__control" id="ac-ttl" data-field="ttl">
+        <option value="86400000" selected>24 hours</option>
+        <option value="604800000">7 days</option>
+        <option value="2592000000">30 days</option>
+      </select>
+      <p class="ac__hint">
+        How long the pasted key works before the agent must be running to renew it.
+        Shorter is safer; pick longer if setup on the other machine may take a while.
+      </p>
+    </div>
+
     <p class="ac__form-error" data-slot="form-error" role="alert" hidden></p>
 
     <button class="ac__btn ac__btn--primary" type="submit" data-action="mint">
@@ -173,6 +191,7 @@ const {
 <script>
   import {
     AGENT_TOKEN_DEFAULT_TTL_MS,
+    AGENT_TOKEN_MAX_TTL_MS,
     AgentConnectRefused,
     AgentNameTaken,
     ClientTooOld,
@@ -528,13 +547,21 @@ const {
         }
 
         this.#step("mint-credential", "doing");
+        const ttlField = this.querySelector('[data-field="ttl"]');
+        const chosenTtl = ttlField instanceof HTMLSelectElement
+          ? Number(ttlField.value)
+          : Number.NaN;
         const credential = await mintAgentCredential(
           session,
           mintCommandId,
           this.#workspaceId,
           identity,
           deviceId,
-          AGENT_TOKEN_DEFAULT_TTL_MS,
+          /* A tampered or missing option falls back to the safe default, never
+             to a wider lifetime. */
+          Number.isFinite(chosenTtl) && chosenTtl > 0 && chosenTtl <= AGENT_TOKEN_MAX_TTL_MS
+            ? chosenTtl
+            : AGENT_TOKEN_DEFAULT_TTL_MS,
         );
         this.#step("mint-credential", "done");
 

@@ -38,14 +38,16 @@ import { CLIENT_PROTOCOL_VERSION, NoDeployment, client, deployment, uuid } from 
  * src/protocol/workspace-commands.ts. The reducer refuses anything above the maximum,
  * so a lifetime picker that offers more than it is offering a refusal.
  *
- * The DEFAULT here is deliberately the max, not the protocol's 1h (operator ruling,
- * 2026-08-18): the connect-page credential crosses a human — pasted into another
+ * The DEFAULT stays 24h while the protocol max is 30d (operator ruling 2026-08-19: an
+ * API-key-style lifetime picker — 24h / 7d / 30d; "never" refused because the 30-day
+ * renewal horizon is the deliberate ceiling on any bearer credential). Context from
+ * 2026-08-18: the connect-page credential crosses a human — pasted into another
  * machine's chat, often after environment fixes on that side — and the measured cost of
  * a short bootstrap was a sandboxed agent watching its window close while its listener
  * was stuck in "starting" and could not rotate. Rotation successors stay short.
  */
 export const AGENT_TOKEN_DEFAULT_TTL_MS = 24 * 60 * 60 * 1_000;
-export const AGENT_TOKEN_MAX_TTL_MS = 24 * 60 * 60 * 1_000;
+export const AGENT_TOKEN_MAX_TTL_MS = 30 * 24 * 60 * 60 * 1_000;
 
 /**
  * The renewal window (SWARM-CLOUD.md §2.3). This mirrors src/cloud/renewal.ts — there is no
@@ -460,7 +462,7 @@ export async function mintAgentCredential(
 ): Promise<AgentCredential> {
   if (!Number.isFinite(ttlMs) || ttlMs <= 0 || ttlMs > AGENT_TOKEN_MAX_TTL_MS) {
     throw new Error(
-      `A credential may last at most ${AGENT_TOKEN_MAX_TTL_MS / 3_600_000} hours.`,
+      `A credential may last at most ${AGENT_TOKEN_MAX_TTL_MS / 86_400_000} days.`,
     );
   }
   const runId = uuid();
