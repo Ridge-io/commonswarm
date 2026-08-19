@@ -6569,15 +6569,33 @@ async function handleTransaction(
        * these guards only stop append/charge churn. Compound-keyed read, the
        * ★R1 shape: the row must belong to the routed workspace. */
       const targetPrincipal = prepared.command.principal_id;
-      const currentRows = await tx<{ model: string | null }[]>`
-        SELECT model FROM swarm.agent_principals
-        WHERE principal_id = ${targetPrincipal}::uuid
-          AND workspace_id = ${route.workspaceId}::uuid
-          AND revoked_at IS NULL
+      /* Both review arms, same finding: this fast path used to return before the
+       * reducer's ownership gate, so an unchanged-value submit ACCEPTED for a
+       * principal the caller may not manage — an authorization probe. The fast
+       * path now fires only when the caller would pass the reducer's exact gate
+       * (owner/admin any; member self-only); anything else falls through and the
+       * reducer refuses in its own words, so the refusal shape cannot desync. */
+      const currentRows = await tx<
+        { model: string | null; owner_user_id: string; caller_role: string | null }[]
+      >`
+        SELECT p.model, p.owner_user_id, m.role AS caller_role
+        FROM swarm.agent_principals AS p
+        LEFT JOIN swarm.memberships AS m
+          ON m.workspace_id = p.workspace_id
+         AND m.user_id = ${route.userId}::uuid
+         AND m.revoked_at IS NULL
+        WHERE p.principal_id = ${targetPrincipal}::uuid
+          AND p.workspace_id = ${route.workspaceId}::uuid
+          AND p.revoked_at IS NULL
       `;
       const currentRow = currentRows[0];
+      const callerMayManage = currentRow !== undefined && (
+        currentRow.caller_role === "owner" ||
+        currentRow.caller_role === "admin" ||
+        currentRow.owner_user_id === route.userId
+      );
       if (
-        currentRow !== undefined &&
+        callerMayManage &&
         (currentRow.model ?? null) === prepared.command.model
       ) {
         return {

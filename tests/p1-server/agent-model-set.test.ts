@@ -273,6 +273,20 @@ test("S2 a plain member cannot relabel someone ELSE'S agent, but can their own",
   assert.equal(byId[f.principalMember], "claude");
 });
 
+test("S2b the UNCHANGED-value probe is refused for someone else's agent (both arms' finding)", async () => {
+  // The fast-path used to answer `accepted` before the ownership gate, so a plain
+  // member could confirm another member's agent existed and probe its current model
+  // by submitting the value it already had. The fast path now requires the caller
+  // to pass the reducer's exact gate; an unauthorized unchanged submit falls through
+  // to the reducer and gets its refusal, indistinguishable from a changed one.
+  const current = (await models())[f.principalOwner];
+  const refused = await setModel(f.memberJwt, f.principalOwner, current);
+  assert.equal(refused.status, 200);
+  assert.equal(refused.body.status, "rejected");
+  assert.equal(refused.body.reason, "principal_not_owned");
+  assert.notEqual(refused.body.unchanged, true, "must not leak the unchanged fast-path shape");
+});
+
 test("S3 an agent token is refused on this kind", async () => {
   const response = await fetch(`${local.API_URL}/functions/v1/command`, {
     method: "POST",
