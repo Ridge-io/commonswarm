@@ -6576,23 +6576,22 @@ async function handleTransaction(
        * (owner/admin any; member self-only); anything else falls through and the
        * reducer refuses in its own words, so the refusal shape cannot desync. */
       const currentRows = await tx<
-        { model: string | null; owner_user_id: string; caller_role: string | null }[]
+        { model: string | null; owner_user_id: string }[]
       >`
-        SELECT p.model, p.owner_user_id, m.role AS caller_role
-        FROM swarm.agent_principals AS p
-        LEFT JOIN swarm.memberships AS m
-          ON m.workspace_id = p.workspace_id
-         AND m.user_id = ${route.userId}::uuid
-         AND m.revoked_at IS NULL
-        WHERE p.principal_id = ${targetPrincipal}::uuid
-          AND p.workspace_id = ${route.workspaceId}::uuid
-          AND p.revoked_at IS NULL
+        SELECT model, owner_user_id FROM swarm.agent_principals
+        WHERE principal_id = ${targetPrincipal}::uuid
+          AND workspace_id = ${route.workspaceId}::uuid
+          AND revoked_at IS NULL
       `;
       const currentRow = currentRows[0];
-      const callerMayManage = currentRow !== undefined && (
-        currentRow.caller_role === "owner" ||
-        currentRow.caller_role === "admin" ||
-        currentRow.owner_user_id === route.userId
+      /* The caller's role and identity are already resolved in scope: the route
+       * carries the live membership role, and the auth actor carries the human
+       * user id (HUMAN_ONLY refused agent credentials before this point). */
+      const callerUserId = auth.actor.user;
+      const callerMayManage = currentRow !== undefined && callerUserId !== null && (
+        route.membershipRole === "owner" ||
+        route.membershipRole === "admin" ||
+        currentRow.owner_user_id === callerUserId
       );
       if (
         callerMayManage &&
