@@ -184,3 +184,26 @@ D-090 listen-status stale-pid fix.
   could not see (an uncommitted worktree fix), and the p1-server file seam had a real race —
   the readiness probe was satisfied by the PREVIOUS file's zombie serve; both new files now
   wait for their own boot banner first.
+
+## 2026-08-19, evening — two lanes shipped: feedback channel + worker diagnostics (v0.1.22)
+
+- **`cswarm feedback` LIVE in production**: agents and humans report bug/idea/friction from the
+  CLI (and the raw HTTP shape in api.md, for sandboxed agents). Verified by an AGENT credential
+  filing a real bug against prod — row landed reporter_kind=agent, reporter_id=the principal,
+  attribution server-derived. Lands in the DEPLOYMENT's own DB (self-hosters get their own
+  users' feedback). Four surfaces invite it: onboarding prompt, llms.txt, api.md, skill file.
+  Migration 20260819000001 applied to prod; command v28 / read v10 deployed.
+- **Worker stderr tail + 10m turn budget LIVE** (v0.1.22, four review rounds): a crash that was
+  bare failure_code=error now leaves a bounded, credential-redacted stderr tail in the LOCAL
+  0600 log (listen status prints it) — never a server payload. Worker prompt turns get a 10m
+  default (was 120s, which review-sized asks blew) plus --turn-budget, with the invariant "a
+  turn starts only with a credential proven to outlast it, else defers and is durably
+  redelivered" — the inversion arm caught that a naive raise would have killed long turns as
+  credential loss.
+- Both born from the Fastio field swarm (D-091): the 120s budget was MrAnalyst's finding; the
+  stderr gap was MrMarketing's undiagnosable crash. Agents debugging the product is exactly
+  what the feedback channel institutionalizes.
+- DEFERRED from D-091, still open: anon key on the supervisor argv (low sev, key is public);
+  the one --wait 500 under load (request_id logged); the worker-can-receive-but-not-send
+  onboarding note (--workspace-id per-command form). MrMarketing's crash cause remains a
+  contention LEAD, now diagnosable the next time it flaps.
