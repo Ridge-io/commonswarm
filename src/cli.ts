@@ -182,6 +182,7 @@ import {
   stopListener,
   waitForListenerReady,
   LISTENER_PROMPT_TIMEOUT_MS,
+  ListenerRenewalUnavailableError,
   type ListenerPermissionMode,
   type ListenerProviderId,
   type ListenerDeliveryJournal,
@@ -2228,6 +2229,42 @@ export function clampTurnBudgetToCredential(
   return Math.max(1_000, Math.min(budgetMs, horizonMs));
 }
 
+/**
+ * Decide one worker turn's budget, or refuse to start it.
+ *
+ * ★ Invariant: a turn starts ONLY with a credential proven to outlast it. Two
+ * conditions defer the turn instead of attempting it — renewal FAILED at turn
+ * start (`renewalFailed`), or the live credential's remaining lifetime is
+ * already inside the rotation margin. Both throw
+ * ListenerRenewalUnavailableError, a recoverable class the durable claim/ack
+ * layer redelivers once rotation recovers. The 1s floor in
+ * clampTurnBudgetToCredential is therefore reachable ONLY for a LIVE credential
+ * whose remaining life is just over the margin (rotation-due-soon) — never for
+ * a failed rotation or a credential already inside the margin, because those
+ * throw before the clamp runs.
+ */
+export function resolveTurnBudgetOrDefer(
+  configuredBudgetMs: number,
+  credentialExpiresAt: number | null,
+  nowMs: number,
+  renewalFailed: boolean,
+): number {
+  if (renewalFailed) {
+    throw new ListenerRenewalUnavailableError(
+      "the worker credential could not be renewed before this turn; deferring the ask for durable redelivery",
+    );
+  }
+  if (
+    credentialExpiresAt !== null &&
+    credentialExpiresAt - nowMs <= TURN_BUDGET_CREDENTIAL_MARGIN_MS
+  ) {
+    throw new ListenerRenewalUnavailableError(
+      "the live worker credential is inside its rotation margin and was not renewed; deferring the ask for durable redelivery",
+    );
+  }
+  return clampTurnBudgetToCredential(configuredBudgetMs, credentialExpiresAt, nowMs);
+}
+
 function signalText(value: string, label: "body" | "about"): string {
   const maximum = label === "body" ? 2000 : 500;
   if (value.length < (label === "body" ? 1 : 0) || value.length > maximum) {
@@ -3648,23 +3685,34 @@ async function runConfiguredListener(options: {
       : {}),
   });
   const turnBudgetMs = options.turnBudgetMs ?? LISTENER_PROMPT_TIMEOUT_MS;
-  /* Each turn renews FIRST (bearer() rotates when due), then clamps to what
-   * the live credential can still cover — see clampTurnBudgetToCredential for
-   * the invariant. A clamped-short turn that times out is redelivered by the
-   * durable claim/ack layer, and the retry starts on the freshly rotated
-   * credential with the full budget. */
+  // The budget actually applied to the most recent turn, so a timeout event can
+  // report the bound that was hit rather than the configured cap (a reader who
+  // sees 600000 when the turn was clamped to 5m has a wrong bound).
+  let lastAppliedTurnBudgetMs: number | null = null;
+  /* Each turn renews FIRST (bearer() rotates when due), then either clamps to
+   * what the live credential can still cover or DEFERS when no budget can be
+   * proven to outlast the turn — see resolveTurnBudgetOrDefer for the
+   * invariant. A deferral throws a recoverable error before any worker prompt;
+   * a clamped-short turn that times out is redelivered by the durable claim/ack
+   * layer, and the retry starts on the freshly rotated credential. */
   const resolveTurnBudgetMs = async (): Promise<number> => {
+    let renewalFailed = false;
     try {
       await credentialSession.bearer();
     } catch {
-      // Credential failures are surfaced and classified by the next read or
-      // post; the clamp below still bounds the turn to the credential in hand.
+      // A rotation-endpoint failure must NOT let the turn start on the old
+      // (possibly expired) credential; resolveTurnBudgetOrDefer throws so the
+      // ask is deferred and durably redelivered when rotation recovers.
+      renewalFailed = true;
     }
-    return clampTurnBudgetToCredential(
+    const applied = resolveTurnBudgetOrDefer(
       turnBudgetMs,
       credentialSession.expiry,
       Date.now(),
+      renewalFailed,
     );
+    lastAppliedTurnBudgetMs = applied;
+    return applied;
   };
   // The newest dead worker's stderr tail. Read-and-cleared by the supervisor,
   // which writes it only to the operator's own 0600 log and status file; it
@@ -3751,7 +3799,9 @@ async function runConfiguredListener(options: {
       principalId: options.principalId,
       provider: options.provider,
       permissionMode: options.permissionMode,
-      turnBudgetMs,
+      // The bound a timeout event reports: the last turn's clamped budget when
+      // one has run, else the configured cap.
+      getTurnBudgetMs: () => lastAppliedTurnBudgetMs ?? turnBudgetMs,
       takeWorkerStderrTail: () => {
         const tail = lastWorkerStderrTail;
         lastWorkerStderrTail = null;

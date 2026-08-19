@@ -74,6 +74,27 @@ export interface ListenerEffectStore {
  */
 export const LISTENER_PROMPT_TIMEOUT_MS = 600_000;
 
+/**
+ * A worker turn was deferred, not attempted: the live credential could not be
+ * renewed, or its remaining lifetime is already inside the rotation margin, so
+ * no budget could be proven to outlast the turn.
+ *
+ * ★ The invariant this enforces: a turn starts ONLY with a credential proven to
+ * outlast it. Renewal runs between turns (in bearer()), never during a prompt,
+ * so a turn begun on a nearly-dead credential would end in credential loss —
+ * exactly what the raised prompt budget must not cause. Deferring is RECOVERABLE:
+ * the durable claim/ack layer redelivers the ask, and the retry begins after
+ * rotation has recovered. The name is the failure code the event carries
+ * (engine failureCode()); it must stay a recoverable code, never acptimeouterror
+ * and never a doomed 1s turn.
+ */
+export class ListenerRenewalUnavailableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "renewal_unavailable";
+  }
+}
+
 export type ListenerPermissionMode = "deny" | "allow";
 
 export type ListenerPromptMode = "worker";

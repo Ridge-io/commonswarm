@@ -13,8 +13,10 @@ import {
   listenerFailureMessage,
   resolveDetachedClaudeExecutable,
   resolveDetachedCodexExecutable,
+  resolveTurnBudgetOrDefer,
   TURN_BUDGET_CREDENTIAL_MARGIN_MS,
 } from "../../src/cli.js";
+import { ListenerRenewalUnavailableError } from "../../src/listener/index.js";
 
 function runCli(args: string[]) {
   return spawnSync(
@@ -242,5 +244,51 @@ test("a worker turn budget is clamped to the live credential's remaining lifetim
   assert.equal(clampTurnBudgetToCredential(budget, now - 1, now), 1_000);
   // No known expiry: nothing to clamp against (such a credential never renews either).
   assert.equal(clampTurnBudgetToCredential(budget, null, now), budget);
+});
+
+test("resolveTurnBudgetOrDefer enforces the invariant: a turn starts only with a credential proven to outlast it", () => {
+  const now = 1_000_000_000_000;
+  const budget = 600_000; // the 10m default
+
+  // Happy path: plenty of credential left, renewal fine -> full clamped budget.
+  assert.equal(resolveTurnBudgetOrDefer(budget, now + 3_600_000, now, false), budget);
+
+  // Renewal FAILED at turn start -> defer, never a doomed turn on the old cred.
+  assert.throws(
+    () => resolveTurnBudgetOrDefer(budget, now + 3_600_000, now, true),
+    (error) => error instanceof ListenerRenewalUnavailableError,
+    "a failed renewal must defer even when the credential looks live",
+  );
+
+  // Credential already INSIDE the margin (<= margin remaining) -> defer.
+  for (const remaining of [0, 1, 30_000, TURN_BUDGET_CREDENTIAL_MARGIN_MS]) {
+    assert.throws(
+      () => resolveTurnBudgetOrDefer(budget, now + remaining, now, false),
+      (error) => error instanceof ListenerRenewalUnavailableError,
+      `remaining ${remaining} is inside the margin and must defer`,
+    );
+  }
+  // A dead (past-expiry) credential defers too — it never reaches the 1s floor.
+  assert.throws(
+    () => resolveTurnBudgetOrDefer(budget, now - 1, now, false),
+    (error) => error instanceof ListenerRenewalUnavailableError,
+  );
+
+  // Just OUTSIDE the margin -> a live credential, turn allowed, clamped short.
+  const justOutside = TURN_BUDGET_CREDENTIAL_MARGIN_MS + 5_000; // 65s remaining
+  const applied = resolveTurnBudgetOrDefer(budget, now + justOutside, now, false);
+  assert.ok(applied >= 1_000, "a live credential yields a runnable budget");
+  assert.ok(
+    applied + TURN_BUDGET_CREDENTIAL_MARGIN_MS <= justOutside || applied === 1_000,
+    "the applied budget still cannot outlast the credential",
+  );
+
+  // The 1s floor is reachable ONLY for a live credential just over the margin
+  // (rotation-due-soon), never a dead one.
+  const nearFloor = TURN_BUDGET_CREDENTIAL_MARGIN_MS + 500; // 60.5s remaining
+  assert.equal(resolveTurnBudgetOrDefer(budget, now + nearFloor, now, false), 1_000);
+
+  // Unknown expiry (out of scope: such a credential never renews) -> no defer.
+  assert.equal(resolveTurnBudgetOrDefer(budget, null, now, false), budget);
 });
 

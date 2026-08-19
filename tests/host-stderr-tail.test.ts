@@ -123,26 +123,29 @@ test("a credential bisected by ring eviction does not survive as an unrecognizab
 });
 
 test("separators inside a token do not defeat the redactor", () => {
-  const cases: Array<[string, string]> = [
-    ["embedded CR", "auth swm_agt_AB\rCDEF failed\n"],
-    ["zero-width space", "auth swm_\u200bagt_ZWTOKEN failed\n"],
-    ["ANSI lacing", "auth swm_\u001b[31magt_ANSITOKEN\u001b[0m failed\n"],
-    ["unusual charset run", "auth swm_agt_abc.def+ghi failed\n"],
+  /* Each case laces a credential with a separator the shared class must treat
+   * as invisible-within-a-token: the strip deletes it so the token reassembles
+   * and the redactor eats the whole thing. Every listed fragment must vanish;
+   * the surrounding "auth ... failed" must survive. */
+  const cases: Array<[string, string, string[]]> = [
+    ["embedded CR", "auth swm_agt_AB\rCDEF failed\n", ["CDEF"]],
+    ["zero-width space", "auth swm_\u200bagt_ZWTOKEN failed\n", ["ZWTOKEN"]],
+    ["ANSI lacing", "auth swm_\u001b[31magt_ANSITOKEN\u001b[0m failed\n", ["ANSITOKEN"]],
+    ["unusual charset run", "auth swm_agt_abc.def+ghi failed\n", ["def+ghi"]],
+    ["NBSP U+00A0", "auth swm_agt_NBA\u00a0NBB failed\n", ["NBA", "NBB"]],
+    ["en-quad U+2000", "auth swm_agt_ENA\u2000ENB failed\n", ["ENA", "ENB"]],
+    ["line separator U+2028", "auth swm_agt_LSA\u2028LSB failed\n", ["LSA", "LSB"]],
+    ["narrow NBSP U+202F", "auth swm_agt_NNA\u202fNNB failed\n", ["NNA", "NNB"]],
   ];
-  for (const [label, raw] of cases) {
+  for (const [label, raw, fragments] of cases) {
     const clean = sanitizeStderrTail(raw);
     assert.doesNotMatch(clean, /swm_/i, `${label}: prefix survived`);
-    /* "def+ghi" (not "abc.def+ghi"): a redactor bounded by the token charset
-     * eats "swm_agt_abc" and leaves ".def+ghi" — a check for the full payload
-     * misses that surviving remainder. */
-    for (const fragment of ["CDEF", "ZWTOKEN", "ANSITOKEN", "def+ghi"]) {
-      if (raw.replace(/[\r\u200b]|\u001b\[[0-9;]*m/g, "").includes(fragment)) {
-        assert.equal(
-          clean.includes(fragment),
-          false,
-          `${label}: token payload "${fragment}" survived`,
-        );
-      }
+    for (const fragment of fragments) {
+      assert.equal(
+        clean.includes(fragment),
+        false,
+        `${label}: token payload "${fragment}" survived`,
+      );
     }
     assert.match(clean, /auth .*failed/, `${label}: surrounding text lost`);
   }

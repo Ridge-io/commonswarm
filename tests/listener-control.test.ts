@@ -1668,7 +1668,10 @@ test("a restart carries the dead worker's tail; reaching ready clears it; a heal
     workspaceId,
     principalId,
     restart: { maxAttempts: 2, initialMs: 1, maxMs: 2 },
-    turnBudgetMs: 600_000,
+    // The CLAMPED budget actually in force for the last turn (5m), which is
+    // deliberately NOT the 10m configured default — the event must carry this,
+    // not the cap.
+    getTurnBudgetMs: () => 300_000,
     takeWorkerStderrTail: () => {
       const tail = tailSlot;
       tailSlot = null;
@@ -1738,7 +1741,8 @@ test("a restart carries the dead worker's tail; reaching ready clears it; a heal
     // The budget rides only the timeout class.
     const timeoutEffect = events.find((event) => event.failure_code === "acptimeouterror");
     assert.ok(timeoutEffect, "timeout effect line missing");
-    assert.equal(timeoutEffect.turn_budget_ms, 600_000);
+    // The clamped budget in force, not the configured cap.
+    assert.equal(timeoutEffect.turn_budget_ms, 300_000);
     const otherEffect = events.find((event) => event.failure_code === "error");
     assert.ok(otherEffect, "non-timeout effect line missing");
     assert.equal("turn_budget_ms" in otherEffect, false);

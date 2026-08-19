@@ -108,8 +108,13 @@ export interface ListenerSupervisorOptions {
    * "error" was undiagnosable from the failing box's own log).
    */
   takeWorkerStderrTail?: () => string | null;
-  /** Per-prompt-turn budget in ms, recorded on timeout-class effect events. */
-  turnBudgetMs?: number;
+  /**
+   * The turn budget in ms to record on a timeout-class effect event. Returns
+   * the budget ACTUALLY applied to the last turn (clamped to the credential's
+   * lifetime), so the reader sees the bound that was hit rather than the
+   * configured cap. Returns null when no turn has run yet.
+   */
+  getTurnBudgetMs?: () => number | null;
 }
 
 export class ListenerStartupError extends Error {
@@ -299,11 +304,15 @@ export async function runListenerSupervisor(
         status: event.status,
         failure_code: event.failureCode,
         // Code comparison, not message matching (D-053). The budget rides
-        // only the timeout class so a reader can see what bound was hit.
-        ...(event.failureCode === "acptimeouterror" &&
-            options.turnBudgetMs !== undefined
-          ? { turn_budget_ms: options.turnBudgetMs }
-          : {}),
+        // only the timeout class so a reader can see what bound was hit — and
+        // it is the CLAMPED budget actually in force, not the configured cap.
+        ...((): Record<string, number> => {
+          if (event.failureCode !== "acptimeouterror") return {};
+          const budget = options.getTurnBudgetMs?.();
+          return typeof budget === "number" && budget > 0
+            ? { turn_budget_ms: budget }
+            : {};
+        })(),
       });
       return;
     }

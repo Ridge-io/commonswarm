@@ -85,11 +85,11 @@ governs every ACP request including worker prompt turns.
 
 All on this branch's tree, macOS, Node 24:
 
-| gate | result (after the review round below) |
+| gate | result (after both review rounds below) |
 |---|---|
 | `npm run build` | clean |
-| `npm test` | 568 pass, 0 fail (was 548 before this lane; 562 at the first commit) |
-| `npm run test:p1-cli` | 274 pass, 0 fail (was 272; 273 at the first commit) |
+| `npm test` | 571 pass, 0 fail (548 before this lane; 562 / 568 at the two prior commits) |
+| `npm run test:p1-cli` | 275 pass, 0 fail (272 before; 273 / 274 at the two prior commits) |
 | `npm run check:tests` | clean |
 
 New tests and where they run:
@@ -183,6 +183,58 @@ five are fixed in the follow-up commit.
 5. **`__listen-supervisor` validated `--turn-budget` after reading the
    credential** (P2). The parse now runs right after provider validation,
    before the credential is read — matching the public path.
+
+## Verification round 2 (same day) — two remaining holes closed
+
+The second review verified items 1, 2, 5 FIXED and confirmed the redactor and clamp work
+on the happy path, but found two holes. Both are fixed.
+
+1. **The invariant was still false on a rotation-endpoint failure** (P1, both arms).
+   `resolveTurnBudgetMs` caught a `bearer()` throw and started the turn on the old
+   (possibly expired) credential; the 1s floor could itself outlive a dead credential. So a
+   rotation failure at turn start still burned the ask as doomed 1s timeouts and then
+   credential loss. Fixed: a new exported pure decision `resolveTurnBudgetOrDefer(budget,
+   expiry, now, renewalFailed)` **throws `ListenerRenewalUnavailableError`** — a recoverable
+   class whose `.name` is the event code `renewal_unavailable` — when renewal failed OR the
+   live credential's remaining lifetime is already `<=` the 60s margin. The engine
+   classifies that error as retry_pending (not acptimeouterror, not terminal), so the
+   durable claim/ack layer redelivers the ask when rotation recovers. The four models now
+   resolve the budget BEFORE `ensureWorker`, so a deferral never attempts a worker prompt.
+   The 1s floor is now reachable ONLY for a LIVE credential just over the margin
+   (rotation-due-soon), never a failed rotation or an inside-margin credential, because
+   those throw before the clamp runs.
+   **Corrected invariant, as documented in `resolveTurnBudgetOrDefer` and the error class:**
+   *a turn starts ONLY with a credential proven to outlast it; if none can be obtained the
+   turn is deferred (recoverably redelivered), never attempted on a dead one.*
+   Tests: engine — a resolver throw → retry_pending, code `renewal_unavailable`, ask
+   returns to `received`, no worker prompt; model — a throwing resolver propagates and the
+   fake session's prompt runs 0 times; pure — `resolveTurnBudgetOrDefer` defers on
+   renewalFailed, on `<=`-margin, and on a past-expiry credential, allows and clamps a
+   just-outside-margin credential, and reaches the 1s floor only for a live near-margin
+   credential. Mutations: resolver never defers → pure test fails; deferral error made
+   non-retryable → engine test fails; model runs the prompt despite a defer → model test
+   fails.
+   The 60m cap is unchanged; the invariant is enforced per-turn by the clamp/defer, so a
+   long budget can never outlive its credential regardless of the cap.
+
+2. **Redactor residual leak + turn_budget imprecision** (P1, both arms).
+   The eviction drop used `/\s/` while the redactor terminated on `\S`; JS `\s` omits the
+   zero-width joiners and the two classes could disagree, and NBSP / U+2000–200A / U+2028 /
+   U+202F were neither stripped nor treated as boundaries, so a token straddling one leaked
+   a suffix. Fixed by a single shared source `EXOTIC_SEPARATORS` feeding all three regexes:
+   the strip now DELETES every exotic separator (so a laced token reassembles before
+   redaction), and the eviction boundary and the redactor terminator both use the same
+   `SEPARATOR_CLASS_SOURCE`. Every regex is built via `new RegExp` from `\uXXXX` source
+   strings — no raw control byte sits in a literal (the ANSI literal, which had held a raw
+   ESC, was converted too). Tests add NBSP, U+2000, U+2028, and U+202F fixtures inside a
+   token, each asserting both payload halves vanish; the eviction positive control (CJK
+   geometry proving eviction fired) remains. Mutation: strip stops deleting exotics → the
+   NBSP/token test fails.
+   On the recorded imprecision: **`turn_budget_ms` now records the CLAMPED budget actually
+   in force**, not the configured cap — chosen because the reader needs the bound that was
+   hit (600000 when the real budget was 5m is a wrong bound). The supervisor reads it
+   through a `getTurnBudgetMs()` getter the CLI backs with the last-applied clamped value.
+   The control test pins that a clamped 300000 (not the 600000 default) reaches the event.
 
 ## Not established
 

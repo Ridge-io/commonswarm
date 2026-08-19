@@ -139,9 +139,13 @@ export class OpenCodeListenerModel implements ListenerModel {
     prompt: string,
   ): Promise<ListenerPromptResult> {
     if (this.closed) throw new Error("listener model is closed");
-    const worker = await this.ensureWorker();
+    // Resolve the turn budget BEFORE touching the worker: the resolver may
+    // renew the credential and, if it cannot prove a budget that outlasts the
+    // turn, throw ListenerRenewalUnavailableError to defer. No worker prompt
+    // must be attempted on a deferral.
     const budget = this.options.promptTimeoutMs ?? LISTENER_PROMPT_TIMEOUT_MS;
     const timeoutMs = typeof budget === "number" ? budget : await budget();
+    const worker = await this.ensureWorker();
     try {
       return await worker.session.prompt(prompt, { timeoutMs });
     } catch (error) {

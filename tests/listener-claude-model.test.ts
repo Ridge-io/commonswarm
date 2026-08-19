@@ -21,6 +21,7 @@ import {
 import {
   ClaudeListenerModel,
   ListenerEngine,
+  ListenerRenewalUnavailableError,
   type OpenClaudeSession,
 } from "../src/listener/index.js";
 import type {
@@ -59,13 +60,14 @@ type Record = {
   canaryDecision?: PermissionDecision;
   promptDecision?: PermissionDecision;
   promptTimeoutMs?: number;
+  promptCalls: number;
   closed: boolean;
   cancelled: boolean;
 };
 
 function fakeOpen(records: Record[]): OpenClaudeSession {
   return async (options) => {
-    const record: Record = { options, closed: false, cancelled: false };
+    const record: Record = { options, promptCalls: 0, closed: false, cancelled: false };
     records.push(record);
     const session = {
       async enablePromptsAfterCanary(canaryOptions?: {
@@ -76,6 +78,7 @@ function fakeOpen(records: Record[]): OpenClaudeSession {
         record.canaryDecision = await options.permissionCallback?.(REQUEST);
       },
       async prompt(text: string, promptOptions?: { timeoutMs?: number }) {
+        record.promptCalls += 1;
         record.promptTimeoutMs = promptOptions?.timeoutMs;
         record.promptDecision = await options.permissionCallback?.(REQUEST);
         return {
@@ -456,6 +459,30 @@ test("a promptTimeoutMs resolver is awaited at each turn start", async () => {
   await adapter.prompt(SIGNAL, "worker", "two");
   assert.equal(records[0]?.promptTimeoutMs, 45_000);
   assert.equal(calls, 2, "the resolver must run once per turn");
+  await adapter.close();
+});
+
+test("a resolver that defers (throws) is not caught by the model and never reaches the worker prompt", async () => {
+  /* Item 4: the budget is resolved BEFORE the worker is prompted. If the
+   * resolver throws ListenerRenewalUnavailableError (credential cannot outlast
+   * the turn), the model must let it propagate — no session.prompt, so the
+   * engine defers the ask instead of burning a doomed turn. */
+  const cwd = await mkdtemp(join(tmpdir(), "cswarm-claude-worker-"));
+  const records: Record[] = [];
+  const adapter = new ClaudeListenerModel({
+    cwd,
+    permissionMode: "allow",
+    promptTimeoutMs: async () => {
+      throw new ListenerRenewalUnavailableError("deferring: credential inside margin");
+    },
+    open: fakeOpen(records),
+  });
+  await adapter.start();
+  await assert.rejects(
+    adapter.prompt(SIGNAL, "worker", "work"),
+    (error) => error instanceof ListenerRenewalUnavailableError,
+  );
+  assert.equal(records[0]?.promptCalls, 0, "the worker prompt must not run on a deferral");
   await adapter.close();
 });
 
