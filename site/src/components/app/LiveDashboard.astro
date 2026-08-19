@@ -192,6 +192,24 @@ import "../../styles/tokens.css";
                 <path d="m4 6 4 4 4-4"></path>
               </svg>
             </button>
+            {/* Workspace details moved off the rail into this gear popover next to the
+                name (operator direction 2026-08-19). Same data-hooks (data-channel-id,
+                data-copy-workspace-id) so the copy wiring resolves unchanged. */}
+            <button
+              class="dashboard__gear-button"
+              type="button"
+              data-workspace-details-trigger
+              aria-haspopup="dialog"
+              aria-expanded="false"
+              aria-controls="dashboard-workspace-details"
+              aria-label="Workspace details"
+              title="Workspace details"
+            >
+              <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+                <circle cx="12" cy="12" r="3"></circle>
+                <path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M16.9 16.9l2.1 2.1M19.1 4.9l-2.1 2.1M7.1 16.9l-2.1 2.1"></path>
+              </svg>
+            </button>
             <div
               class="dashboard__workspace-menu"
               id="dashboard-workspace-menu"
@@ -212,6 +230,21 @@ import "../../styles/tokens.css";
                   <span>New workspace</span>
                 </button>
               </div>
+            </div>
+            <div
+              class="dashboard__popover dashboard__workspace-details-popover"
+              id="dashboard-workspace-details"
+              data-workspace-details-popover
+              role="dialog"
+              aria-label="Workspace details"
+              hidden
+            >
+              <p class="dashboard__popover-label">Workspace ID</p>
+              <code class="dashboard__workspace-id" data-channel-id></code>
+              <button class="dashboard__text-button" type="button" data-copy-workspace-id>
+                Copy workspace ID
+              </button>
+              <span class="dashboard__copy-status" role="status" aria-live="polite" data-workspace-id-status></span>
             </div>
           </div>
 
@@ -262,62 +295,50 @@ import "../../styles/tokens.css";
             </p>
           </section>
 
-          <details class="dashboard__rail-details" data-member-details hidden>
-            <summary>Manage people</summary>
-            <div class="dashboard__rail-details-body">
-              <ul class="dashboard__agent-list" data-member-list></ul>
-              <p class="dashboard__form-error" data-member-error role="alert" hidden></p>
-              <div data-member-reauth hidden>
-                <button class="dashboard__rail-add" type="button" data-member-reauth-github>
-                  Sign in again with GitHub
-                </button>
-                <button class="dashboard__rail-add" type="button" data-member-reauth-email>
-                  Email a fresh sign-in link
-                </button>
-              </div>
-            </div>
-          </details>
-
-          <details class="dashboard__rail-details" data-access-details hidden>
-            <summary>
-              <span>Pending access</span>
-              <span data-access-count>0</span>
-            </summary>
-            <div class="dashboard__rail-details-body">
-              <ul class="dashboard__agent-list" data-access-list></ul>
-              <p class="dashboard__form-error" data-access-error role="alert" hidden></p>
-            </div>
-          </details>
-
-          <details class="dashboard__rail-details" data-workspace-details>
-            <summary>Workspace details</summary>
-            <div class="dashboard__rail-details-body">
-              <code class="dashboard__workspace-id" data-channel-id></code>
-              <button class="dashboard__text-button" type="button" data-copy-workspace-id>
-                Copy workspace ID
-              </button>
-              <span class="dashboard__copy-status" role="status" aria-live="polite" data-workspace-id-status></span>
-            </div>
-          </details>
-
-          <div class="dashboard__rail-foot">
-            <a class="dashboard__wordmark" href="/" aria-label="CommonSwarm home">CommonSwarm</a>
+          {/* Manage people, Pending access, and Workspace details left the rail
+              (operator direction 2026-08-19): member management folded into the
+              header People & agents dialog, pending access already mirrored there,
+              workspace details into the gear popover above. The rail bottom is now
+              just the user-menu button. */}
+          <div class="dashboard__rail-foot" data-user-menu-root>
             <button
-              class="dashboard__theme-toggle"
+              class="dashboard__user-trigger"
               type="button"
-              data-theme-toggle
-              aria-label="Theme: System. Activate for light theme"
-              title="Theme: System"
+              data-user-menu-trigger
+              aria-haspopup="menu"
+              aria-expanded="false"
+              aria-controls="dashboard-user-menu"
+              aria-label="Account menu"
             >
-              <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
-                <circle cx="12" cy="12" r="8.5"></circle>
-                <path d="M12 3.5a8.5 8.5 0 0 1 0 17Z"></path>
+              <span class="dashboard__user-trigger-name" data-rail-account>Your account</span>
+              <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+                <path d="m4 6 4 4 4-4"></path>
               </svg>
-              <span data-theme-toggle-label>System</span>
             </button>
-            <div class="dashboard__rail-account">
-              <span data-rail-account>Your account</span>
-              <button class="dashboard__text-button" type="button" data-signout>Sign out</button>
+            <div
+              class="dashboard__popover dashboard__user-menu"
+              id="dashboard-user-menu"
+              data-user-menu
+              role="menu"
+              aria-label="Account"
+              hidden
+            >
+              <button
+                class="dashboard__theme-toggle"
+                type="button"
+                role="menuitem"
+                data-theme-toggle
+                aria-label="Theme: System. Activate for light theme"
+                title="Theme: System"
+              >
+                <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+                  <circle cx="12" cy="12" r="8.5"></circle>
+                  <path d="M12 3.5a8.5 8.5 0 0 1 0 17Z"></path>
+                </svg>
+                <span data-theme-toggle-label>System</span>
+              </button>
+              <button class="dashboard__text-button dashboard__user-menu-item" type="button" role="menuitem" data-signout>Sign out</button>
+              <a class="dashboard__wordmark dashboard__user-menu-brand" href="/" aria-label="CommonSwarm home">CommonSwarm</a>
             </div>
           </div>
         </aside>
@@ -658,7 +679,7 @@ import "../../styles/tokens.css";
   >
     <div class="dashboard__roster-dialog-head">
       <h2 id="dashboard-roster-title">
-        Agents
+        People &amp; agents
         <span class="dashboard__roster-dialog-count" data-agent-count>0</span>
       </h2>
       <button
@@ -698,6 +719,24 @@ import "../../styles/tokens.css";
         data-dialog-agent-list
       ></ul>
       <p class="dashboard__form-error" data-agent-error role="alert" hidden></p>
+
+      {/* Manage people (human members) moved here from the rail (operator direction
+          2026-08-19). Same data-hooks — data-member-details gates visibility to
+          owner/admin exactly as before (renderMembers sets .hidden; the harmless
+          .open no-op on a non-details element is intentional). */}
+      <section class="dashboard__roster-dialog-members" data-member-details hidden aria-labelledby="dashboard-roster-members-title">
+        <h3 class="dashboard__roster-dialog-pending-title" id="dashboard-roster-members-title">People</h3>
+        <ul class="dashboard__agent-list" data-member-list></ul>
+        <p class="dashboard__form-error" data-member-error role="alert" hidden></p>
+        <div data-member-reauth hidden>
+          <button class="dashboard__rail-add" type="button" data-member-reauth-github>
+            Sign in again with GitHub
+          </button>
+          <button class="dashboard__rail-add" type="button" data-member-reauth-email>
+            Email a fresh sign-in link
+          </button>
+        </div>
+      </section>
 
       {/* Pending access lives here only where the rail's own details are hidden:
           at ≤52rem this dialog is the ONLY reachable pending surface, so the
@@ -3918,6 +3957,51 @@ import "../../styles/tokens.css";
       if (!root || root.contains(event.target as Node)) return;
       closeWorkspaceMenu();
     });
+
+    /* Two popovers rehomed from the rail (operator direction 2026-08-19): the
+       workspace-details gear and the account menu. Same show/hide + aria-expanded +
+       Escape + outside-click contract as the workspace switcher, kept as isolated
+       handlers so they never disturb the switcher's roving-focus logic. */
+    const wirePopover = (triggerSel: string, popoverSel: string): void => {
+      const trigger = one<HTMLButtonElement>(triggerSel);
+      const popover = one<HTMLElement>(popoverSel);
+      if (!trigger || !popover) return;
+      const set = (open: boolean): void => {
+        popover.hidden = !open;
+        trigger.setAttribute("aria-expanded", open ? "true" : "false");
+      };
+      const close = (restoreFocus = false): void => {
+        if (popover.hidden) return;
+        set(false);
+        if (restoreFocus) trigger.focus({ preventScroll: true });
+      };
+      trigger.addEventListener("click", () => {
+        const willOpen = popover.hidden;
+        set(willOpen);
+        if (willOpen) {
+          const first = popover.querySelector<HTMLElement>("button, a, [tabindex]");
+          window.requestAnimationFrame(() => first?.focus({ preventScroll: true }));
+        } else {
+          trigger.focus({ preventScroll: true });
+        }
+      });
+      document.addEventListener("keydown", (event) => {
+        if (event.key !== "Escape" || popover.hidden) return;
+        event.preventDefault();
+        close(true);
+      });
+      const dismiss = (event: Event): void => {
+        if (popover.hidden) return;
+        const target = event.target as Node;
+        if (trigger.contains(target) || popover.contains(target)) return;
+        close();
+      };
+      document.addEventListener("pointerdown", dismiss);
+      document.addEventListener("focusin", dismiss);
+    };
+    wirePopover("[data-workspace-details-trigger]", "[data-workspace-details-popover]");
+    wirePopover("[data-user-menu-trigger]", "[data-user-menu]");
+
     one<HTMLButtonElement>("[data-new-workspace]")?.addEventListener(
       "click",
       openNewWorkspace,
@@ -4733,10 +4817,13 @@ import "../../styles/tokens.css";
     position: relative;
     z-index: 4;
     min-inline-size: 0;
+    display: flex;
+    align-items: stretch;
+    gap: var(--s-2);
   }
 
   .dashboard__workspace-trigger {
-    inline-size: 100%;
+    flex: 1 1 auto;
     min-inline-size: 0;
     min-block-size: 3rem;
     display: grid;
@@ -4801,6 +4888,137 @@ import "../../styles/tokens.css";
     border: 1px solid var(--border-strong);
     border-radius: var(--radius);
     box-shadow: 0 1rem 2.5rem color-mix(in oklab, var(--text) 14%, transparent);
+  }
+
+  /* Gear button beside the workspace name — opens the workspace-details popover. */
+  .dashboard__gear-button {
+    flex: none;
+    display: grid;
+    place-items: center;
+    inline-size: 3rem;
+    min-block-size: 3rem;
+    color: var(--text-muted);
+    background: color-mix(in oklab, var(--surface) 72%, transparent);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
+    cursor: pointer;
+    transition:
+      background var(--dur-2) var(--ease-standard),
+      color var(--dur-2) var(--ease-standard),
+      border-color var(--dur-2) var(--ease-standard);
+  }
+
+  .dashboard__gear-button:hover,
+  .dashboard__gear-button[aria-expanded="true"] {
+    color: var(--text);
+    background: var(--surface);
+    border-color: color-mix(in oklab, var(--accent) 45%, var(--border));
+  }
+
+  .dashboard__gear-button:focus-visible {
+    outline: none;
+    box-shadow: var(--focus-ring);
+  }
+
+  .dashboard__gear-button svg {
+    fill: none;
+    stroke: currentColor;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    stroke-width: 1.6;
+  }
+
+  /* Shared popover surface for the gear (workspace details) and the account menu.
+     Same visual language as the workspace switcher's menu. */
+  .dashboard__popover {
+    position: absolute;
+    z-index: 6;
+    min-inline-size: 15rem;
+    display: grid;
+    gap: var(--s-2);
+    padding: var(--s-3);
+    background: var(--surface-3);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
+    box-shadow: 0 1rem 2.5rem color-mix(in oklab, var(--text) 14%, transparent);
+  }
+
+  .dashboard__workspace-details-popover {
+    inset-block-start: calc(100% + var(--s-2));
+    inset-inline-end: 0;
+  }
+
+  .dashboard__popover-label {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--t-2xs);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
+  /* Account button + menu at the rail foot. */
+  .dashboard__user-trigger {
+    inline-size: 100%;
+    min-inline-size: 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--s-2);
+    padding: var(--s-2) var(--s-3);
+    color: var(--text-muted);
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: var(--radius);
+    cursor: pointer;
+    text-align: start;
+    transition:
+      background var(--dur-2) var(--ease-standard),
+      border-color var(--dur-2) var(--ease-standard);
+  }
+
+  .dashboard__user-trigger:hover,
+  .dashboard__user-trigger[aria-expanded="true"] {
+    background: color-mix(in oklab, var(--surface) 72%, transparent);
+    border-color: var(--border);
+  }
+
+  .dashboard__user-trigger:focus-visible {
+    outline: none;
+    box-shadow: var(--focus-ring);
+  }
+
+  .dashboard__user-trigger-name {
+    min-inline-size: 0;
+    overflow: hidden;
+    font-size: var(--t-xs);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .dashboard__user-trigger svg {
+    flex: none;
+    fill: none;
+    stroke: currentColor;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    stroke-width: 1.6;
+  }
+
+  .dashboard__user-menu {
+    inset-block-end: calc(100% + var(--s-2));
+    inset-inline: 0;
+  }
+
+  .dashboard__user-menu-item,
+  .dashboard__user-menu-brand {
+    justify-self: start;
+  }
+
+  .dashboard__user-menu-brand {
+    margin-block-start: var(--s-1);
+    padding-block-start: var(--s-2);
+    border-block-start: 1px solid var(--border);
+    inline-size: 100%;
   }
 
   .dashboard__workspace-context {
@@ -5325,6 +5543,7 @@ import "../../styles/tokens.css";
   }
 
   .dashboard__rail-foot {
+    position: relative;
     display: grid;
     gap: var(--s-3);
     /* No margin-block-start:auto here on purpose. The owner-grouped roster is back in the
@@ -6880,24 +7099,24 @@ import "../../styles/tokens.css";
       display: none;
     }
 
+    /* The rail-foot is the account menu now (operator direction 2026-08-19). At mobile
+       it sits in the top-bar's second column so the account control — and the home link,
+       theme toggle, and sign-out inside its menu — stay reachable. It keeps its own box
+       (not display:contents) so the popover anchors to it. */
     .dashboard__rail-foot {
-      display: contents;
-    }
-
-    .dashboard__rail-account {
-      display: none;
-    }
-
-    .dashboard__theme-toggle {
-      grid-column: 2;
-      grid-row: 2;
-      justify-self: end;
-    }
-
-    .dashboard__rail-foot > .dashboard__wordmark {
       grid-column: 2;
       grid-row: 1;
       justify-self: end;
+      padding: 0;
+      border: 0;
+    }
+
+    .dashboard__user-trigger {
+      inline-size: auto;
+    }
+
+    .dashboard__user-menu {
+      inset-inline: auto 0;
     }
 
     .dashboard__workspace-context,
