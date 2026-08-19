@@ -48,6 +48,7 @@ const status = (over: Partial<ListenerStatus>): ListenerStatus => ({
   updatedAt: new Date(0).toISOString(),
   lastSignalId: null,
   lastErrorCode: "permission_canary_failed",
+  lastWorkerStderrTail: null,
   /* All six delivery keys are required by writeListenerStatus, even when null. */
   deliveryMode: "cursor_fallback",
   pendingDeliveryCount: null,

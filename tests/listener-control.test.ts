@@ -97,6 +97,7 @@ function statusFor(paths: ListenerPaths, state: ListenerStatus["state"]): Listen
     stoppedAt: state === "stopped" || state === "failed" ? ts : null,
     lastSignalId: null,
     lastErrorCode: null,
+    lastWorkerStderrTail: null,
     deliveryMode: null,
     pendingDeliveryCount: null,
     lastTerminalDeliveryFailureCount: null,
@@ -806,6 +807,7 @@ test("old status without delivery fields reads as six nulls and is never rewritt
     stoppedAt: null,
     lastSignalId: null,
     lastErrorCode: null,
+    lastWorkerStderrTail: null,
     logPath: target.logPath,
   };
   await writeSecureJsonFile(target.statusPath, JSON.stringify(oldStatus));
@@ -1517,3 +1519,348 @@ test("D-057: a non-restartable delivery failure is not restarted by the supervis
   assert.equal(failed?.restartable, false);
   assert.equal(failed?.restart_attempts, 0);
 });
+
+/* D-090 family: a crash-looping worker whose every failure event read a bare
+ * "error" was undiagnosable from the failing box's own log, because all four
+ * hosts drained stderr. The tail is LOCAL-ONLY — these tests pin the two
+ * schema gates and the supervisor's consumption of it. */
+
+test("appendListenerEvent: worker_stderr_tail is exempt from the 128-char cap but keeps its own bound and the secret scan", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cswarm-control-test-"));
+  const target = paths(root);
+  const ts = "2026-08-19T00:00:00.000Z";
+  const longTail = "x".repeat(300);
+  await appendListenerEvent(target, {
+    ts,
+    event: "listener_failed",
+    failure_code: "error",
+    worker_stderr_tail: longTail,
+  });
+  const log = await readFile(target.logPath, "utf8");
+  assert.match(log, /worker_stderr_tail/);
+  // CONTROL: the same 300 characters in any OTHER string field must still be
+  // rejected — the exemption is for the tail alone, not a general loosening.
+  await assert.rejects(
+    appendListenerEvent(target, { ts, event: "listener_failed", failure_code: longTail }),
+    /unsafe text/,
+  );
+  await assert.rejects(
+    appendListenerEvent(target, {
+      ts,
+      event: "listener_failed",
+      worker_stderr_tail: "y".repeat(2_049),
+    }),
+    /stderr tail is not allowed/,
+  );
+  await assert.rejects(
+    appendListenerEvent(target, {
+      ts,
+      event: "listener_failed",
+      worker_stderr_tail: "",
+    }),
+    /stderr tail is not allowed/,
+  );
+  // The secret scan still applies to the tail itself.
+  await assert.rejects(
+    appendListenerEvent(target, {
+      ts,
+      event: "listener_failed",
+      worker_stderr_tail: "leaked swm_agt_abc123",
+    }),
+    /unsafe text/,
+  );
+});
+
+test("appendListenerEvent: turn_budget_ms must be a positive safe integer", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cswarm-control-test-"));
+  const target = paths(root);
+  const ts = "2026-08-19T00:00:00.000Z";
+  await appendListenerEvent(target, {
+    ts,
+    event: "listener_effect",
+    failure_code: "acptimeouterror",
+    turn_budget_ms: 600_000,
+  });
+  assert.match(await readFile(target.logPath, "utf8"), /"turn_budget_ms":600000/);
+  for (const bad of [0, -5, 1.5, "600000", null] as const) {
+    await assert.rejects(
+      appendListenerEvent(target, { ts, event: "listener_effect", turn_budget_ms: bad }),
+      /turn budget is not allowed/,
+    );
+  }
+});
+
+test("status lastWorkerStderrTail: round-trips, absent key normalizes to null, secrets are rejected", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cswarm-control-test-"));
+  const target = paths(root);
+  const base = statusFor(target, "failed");
+  await writeListenerStatus(target, {
+    ...base,
+    lastWorkerStderrTail: "boom: provider crashed\nsecond line",
+  });
+  assert.equal(
+    (await readListenerStatus(target))?.lastWorkerStderrTail,
+    "boom: provider crashed\nsecond line",
+  );
+  // An old status file without the key reads back as null, without a rewrite.
+  const raw = JSON.parse(
+    await readFile(target.statusPath, "utf8"),
+  ) as { lastWorkerStderrTail?: unknown };
+  delete raw.lastWorkerStderrTail;
+  await writeSecureJsonFile(target.statusPath, JSON.stringify(raw));
+  assert.equal((await readListenerStatus(target))?.lastWorkerStderrTail, null);
+  // A credential-shaped tail is rejected by name, never displayed.
+  raw.lastWorkerStderrTail = "token swm_agt_abc";
+  await writeSecureJsonFile(target.statusPath, JSON.stringify(raw));
+  await assert.rejects(readListenerStatus(target), /malformed/);
+});
+
+test("a failing worker's stderr tail reaches the terminal failure event and status", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cswarm-control-test-"));
+  const target = paths(root);
+  const workspaceId = randomUUID();
+  const principalId = randomUUID();
+  let tailSlot: string | null = "fatal: provider crashed\nlast line names the cause";
+  const final = await runListenerSupervisor({
+    paths: target,
+    profileId: "profile-tail",
+    workspaceId,
+    principalId,
+    restart: { maxAttempts: 0 },
+    takeWorkerStderrTail: () => {
+      const tail = tailSlot;
+      tailSlot = null;
+      return tail;
+    },
+    run: async () => ({
+      reason: "fatal",
+      error: new AcpChildExitError(1, null),
+    }),
+  });
+  assert.equal(final.state, "failed");
+  assert.equal(
+    final.lastWorkerStderrTail,
+    "fatal: provider crashed\nlast line names the cause",
+  );
+  const log = await readFile(target.logPath, "utf8");
+  const failed = log
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as { event: string; worker_stderr_tail?: string })
+    .find((event) => event.event === "listener_failed");
+  assert.ok(failed, "listener_failed line missing");
+  assert.equal(
+    failed.worker_stderr_tail,
+    "fatal: provider crashed\nlast line names the cause",
+  );
+});
+
+test("a restart carries the dead worker's tail; reaching ready clears it; a healthy stop writes NO tail field", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cswarm-control-test-"));
+  const target = paths(root);
+  const workspaceId = randomUUID();
+  const principalId = randomUUID();
+  let attempts = 0;
+  let tailSlot: string | null = "restart-me: first worker died";
+  const run = runListenerSupervisor({
+    paths: target,
+    profileId: "profile-tail-restart",
+    workspaceId,
+    principalId,
+    restart: { maxAttempts: 2, initialMs: 1, maxMs: 2 },
+    // The CLAMPED budget actually in force for the last turn (5m), which is
+    // deliberately NOT the 10m configured default — the event must carry this,
+    // not the cap.
+    getTurnBudgetMs: () => 300_000,
+    takeWorkerStderrTail: () => {
+      const tail = tailSlot;
+      tailSlot = null;
+      return tail;
+    },
+    run: async (signal, onEvent) => {
+      attempts += 1;
+      if (attempts === 1) {
+        return { reason: "fatal", error: new AcpChildExitError(1, null) };
+      }
+      onEvent({
+        type: "ready",
+        workspaceId,
+        principalId,
+        ts: new Date().toISOString(),
+      });
+      onEvent({
+        type: "effect",
+        signalId: randomUUID(),
+        status: "retry_pending",
+        failureCode: "acptimeouterror",
+        ts: new Date().toISOString(),
+      });
+      onEvent({
+        type: "effect",
+        signalId: randomUUID(),
+        status: "failed",
+        failureCode: "error",
+        ts: new Date().toISOString(),
+      });
+      await new Promise<void>((resolve) => {
+        if (signal.aborted) resolve();
+        else signal.addEventListener("abort", () => resolve(), { once: true });
+      });
+      return { reason: "cancelled" };
+    },
+  });
+  void run.catch(() => undefined);
+  try {
+    const ready = await waitForListenerReady(target, { timeoutMs: 5_000, pollMs: 10 });
+    assert.equal(ready.state, "ready");
+    // Reaching ready cleared the tail from status.
+    assert.equal(ready.lastWorkerStderrTail, null);
+    await stopListener(target);
+    const final = await run;
+    assert.equal(final.state, "stopped");
+    // A healthy stop must not resurrect a tail.
+    assert.equal(final.lastWorkerStderrTail, null);
+    const events = (await readFile(target.logPath, "utf8"))
+      .split("\n")
+      .filter(Boolean)
+      .map((line) =>
+        JSON.parse(line) as {
+          event: string;
+          failure_code?: string;
+          worker_stderr_tail?: string;
+          turn_budget_ms?: number;
+        }
+      );
+    const restarting = events.find((event) => event.event === "listener_restarting");
+    assert.ok(restarting, "listener_restarting line missing");
+    assert.equal(restarting.worker_stderr_tail, "restart-me: first worker died");
+    const stopped = events.find((event) => event.event === "listener_stopped");
+    assert.ok(stopped, "listener_stopped line missing");
+    // CONTROL: the field is absent on a healthy stop, not null or empty.
+    assert.equal("worker_stderr_tail" in stopped, false);
+    // The budget rides only the timeout class.
+    const timeoutEffect = events.find((event) => event.failure_code === "acptimeouterror");
+    assert.ok(timeoutEffect, "timeout effect line missing");
+    // The clamped budget in force, not the configured cap.
+    assert.equal(timeoutEffect.turn_budget_ms, 300_000);
+    const otherEffect = events.find((event) => event.failure_code === "error");
+    assert.ok(otherEffect, "non-timeout effect line missing");
+    assert.equal("turn_budget_ms" in otherEffect, false);
+  } finally {
+    await stopListener(target).catch(() => undefined);
+    await run.catch(() => undefined);
+  }
+});
+
+test("an oversized tail is fitted from the front so the event line stays under its byte cap", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cswarm-control-test-"));
+  const target = paths(root);
+  const workspaceId = randomUUID();
+  const principalId = randomUUID();
+  const hugeTail = `HEAD-${"z".repeat(2_040)}-TAIL`;
+  const final = await runListenerSupervisor({
+    paths: target,
+    profileId: "profile-tail-fit",
+    workspaceId,
+    principalId,
+    restart: { maxAttempts: 0 },
+    takeWorkerStderrTail: () => hugeTail,
+    run: async () => ({
+      reason: "fatal",
+      error: new AcpChildExitError(1, null),
+    }),
+  });
+  assert.equal(final.state, "failed");
+  const tail = final.lastWorkerStderrTail;
+  assert.ok(tail, "fitted tail missing from status");
+  assert.ok(tail.endsWith("-TAIL"), "the END of the tail must survive fitting");
+  assert.doesNotMatch(tail, /HEAD-/);
+  assert.ok(tail.length <= 2_048);
+  // And the events.ndjson write actually landed (it would throw over the cap,
+  // and the swallowed throw would silently drop this exact line — the scar).
+  assert.match(await readFile(target.logPath, "utf8"), /listener_failed/);
+});
+
+test("a tail that expands under JSON escaping is fitted by SERIALIZED size, and the failure line survives", async () => {
+  /* A raw-byte budget passes 2000 backslashes, but each serializes to two
+   * bytes — the line blows the 4096 cap, appendListenerEvent throws, the
+   * write chain swallows it, and the failure line is silently dropped: the
+   * supervisor.ts scar, reintroduced by the fit itself. */
+  for (const [label, raw] of [
+    ["backslashes", "\\".repeat(2_000)],
+    ["quotes", '"'.repeat(2_000)],
+  ] as const) {
+    const root = await mkdtemp(join(tmpdir(), "cswarm-control-test-"));
+    const target = paths(root);
+    const final = await runListenerSupervisor({
+      paths: target,
+      profileId: "profile-tail-escape",
+      workspaceId: randomUUID(),
+      principalId: randomUUID(),
+      restart: { maxAttempts: 0 },
+      takeWorkerStderrTail: () => raw,
+      run: async () => ({
+        reason: "fatal",
+        error: new AcpChildExitError(1, null),
+      }),
+    });
+    assert.equal(final.state, "failed", label);
+    const lines = (await readFile(target.logPath, "utf8"))
+      .split("\n")
+      .filter(Boolean);
+    const failedLine = lines.find((line) => line.includes("listener_failed"));
+    assert.ok(failedLine, `${label}: the failure line was dropped`);
+    assert.ok(
+      Buffer.byteLength(`${failedLine}\n`, "utf8") <= 4_096,
+      `${label}: serialized line exceeds the cap`,
+    );
+    const failed = JSON.parse(failedLine) as { worker_stderr_tail?: string };
+    assert.ok(
+      (failed.worker_stderr_tail ?? "").length > 0,
+      `${label}: the tail itself was lost in fitting`,
+    );
+  }
+});
+
+test("a second worker's failure never inherits the first worker's tail", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cswarm-control-test-"));
+  const target = paths(root);
+  let tailSlot: string | null = "worker-one: died with this stderr";
+  const final = await runListenerSupervisor({
+    paths: target,
+    profileId: "profile-tail-inherit",
+    workspaceId: randomUUID(),
+    principalId: randomUUID(),
+    restart: { maxAttempts: 1, initialMs: 1, maxMs: 2 },
+    takeWorkerStderrTail: () => {
+      const tail = tailSlot;
+      tailSlot = null;
+      return tail;
+    },
+    // Both attempts fail; only the FIRST worker wrote stderr.
+    run: async () => ({
+      reason: "fatal",
+      error: new AcpChildExitError(1, null),
+    }),
+  });
+  assert.equal(final.state, "failed");
+  // CONTROL: the terminal failure belongs to worker two, which wrote nothing.
+  assert.equal(final.lastWorkerStderrTail, null);
+  const events = (await readFile(target.logPath, "utf8"))
+    .split("\n")
+    .filter(Boolean)
+    .map((line) =>
+      JSON.parse(line) as { event: string; worker_stderr_tail?: string }
+    );
+  const restarting = events.find((event) => event.event === "listener_restarting");
+  assert.ok(restarting, "listener_restarting line missing");
+  assert.equal(restarting.worker_stderr_tail, "worker-one: died with this stderr");
+  const failed = events.find((event) => event.event === "listener_failed");
+  assert.ok(failed, "listener_failed line missing");
+  assert.equal(
+    "worker_stderr_tail" in failed,
+    false,
+    "worker two's failure inherited worker one's tail",
+  );
+});
+

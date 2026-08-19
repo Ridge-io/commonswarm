@@ -5468,3 +5468,46 @@ What remains OPEN of this defect, sharpened:
    foreground stream fallback (the prompt already carries it) — a detached listener cannot
    survive there and the failure is silent (fixed the same day on the prompt surface).
 
+
+## D-091 — field findings from the first external multi-agent swarm (Fastio), 2026-08-19 · TRIAGED
+
+Three Claude Code agents on the operator's own Macs, coordinating real work. Two structured
+debug reports (MrMarketing, MrAnalyst) — the debugging themselves was done BY the agents, and
+the reports were good enough to diagnose from. Items, each with its disposition:
+
+1. **Claude worker crash loop, box-specific** — MrMarketing's listener: ready → dead ~35s,
+   ×5 restarts, exhausted; bare `failure_code:"error"`, no stderr (the hosts drain it for
+   privacy). MrAnalyst's listener on a sibling machine: 30+ min healthy, four signals handled.
+   The mini could not reproduce (3 min stable, same version/mode). UNDIAGNOSABLE until the
+   failing box can speak: the stderr-tail lane (local-log-only bounded capture) is the fix
+   vehicle; a foreground stderr capture was requested from the failing box meanwhile.
+   **Follow-up, same day: recovery CONFIRMED and a contention LEAD recorded.** The restarted
+   listener reported 6 pending at ready, claimed the oldest 0.95s later, drained the whole
+   backlog in order, and ran clean (7+ signals, three full worker turns, zero restarts) —
+   the durable ledger did exactly what it promises. The crash did NOT reproduce; the one
+   named environmental difference: instance 1's entire crash window coincided with heavy
+   concurrent Claude Code work in the SAME project on the same box, and the claude bridge
+   shares the interactive session's Claude home and keychain/OAuth. That is a LEAD, not a
+   cause (the opencode/load lesson: nobody measured contention at the time, so nothing can
+   be compared). The stderr tail converts any future flap into a diagnosis; the reporter has
+   the foreground capture staged.
+2. **Server-side delivery verified INNOCENT** — the "missed" ask was created 43s AFTER the
+   listener exhausted (delivery row enqueued same-instant by trigger, zero lag, never leased
+   because nothing was alive to lease it; it remains queued and will deliver on next ready).
+   The reporter's "~15:58" was a relative-age estimate; the ledger says 16:01:32. Estimates
+   are not timestamps.
+3. **ACP worker turn budget is a hard ~120s** — heavyweight asks blow it deterministically
+   (two acptimeouterror retries at exactly +120s, success on attempt 3). Fix in flight on the
+   stderr-tail lane: 10-minute default for worker PROMPT turns only + `--turn-budget` flag.
+4. **Anon key rides the supervisor's argv** (ps-visible for the process lifetime). The key is
+   public by design (RLS; printed in site meta), so severity LOW, but needless: pass via env
+   or stdin. QUEUED.
+5. **`ask --wait` read path returned one HTTP 500 under load** — request_id
+   d5f35b23-d7f8-4eeb-b09b-595254a1a8e6 at 2026-08-19T16:36:42Z; immediate resend succeeded;
+   receiver saw the ask twice (at-least-once, as documented). Log lookup QUEUED (CLI lacks a
+   logs subcommand; dashboard).
+6. **A worker that RECEIVES fine may be unable to SEND** — no workspace selected in its CLI
+   state; it correctly refused to guess among 12. The stateless `--workspace-id` per-command
+   form is the answer and the onboarding prompt should say so explicitly for worker-initiated
+   sends. QUEUED for the prompt surface (rides the feedback lane's prompt edit or the next
+   site deploy).
