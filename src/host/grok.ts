@@ -19,6 +19,7 @@ import {
   GROK_MEASURED_VERSION,
 } from "./bounds.js";
 import { sanitizeChildEnv } from "./env.js";
+import { attachStderrTailRing } from "./stderr-tail.js";
 import { AcpHostSession, createBoundTransport } from "./session.js";
 import { AcpTransport } from "./transport.js";
 import {
@@ -45,6 +46,12 @@ export type GrokAcpOpenOptions = {
   clientVersion?: string;
   /** When true, prompts are enabled without canary (tests only). */
   promptsEnabled?: boolean;
+
+  /**
+   * Bounded, sanitized stderr tail, delivered once when the child exits — for
+   * the operator's LOCAL listener log only; never attach it to an error.
+   */
+  onStderrTail?: (tail: string) => void;
 };
 
 export type GrokAcpHandle = {
@@ -224,10 +231,26 @@ export async function openGrokAcpSession(
     child.kill("SIGKILL");
     throw new AcpHostError("spawn_failed", "child missing stdio pipes");
   }
-  // Provider stderr is deliberately not logged: it may contain prompt text or
-  // local paths. Drain it so a noisy child cannot deadlock on a full pipe.
-  child.stderr.on("data", () => undefined);
-  child.stderr.resume();
+  const stderrTail = attachStderrTailRing(child.stderr);
+  if (options.onStderrTail) {
+    const deliverTail = options.onStderrTail;
+    /* Published on "exit", latched once, with "close" as a fallback. "exit" is
+     * the same event AcpChildExitError is derived from (the transport's exit
+     * handler below registers AFTER this one), so the tail is in its consumer's
+     * hands before the failure it explains can reach the supervisor — a
+     * "close"-only publish raced that read and could attach one worker's tail
+     * to the next worker's failure. The cost: stderr bytes not yet delivered
+     * at exit are dropped, acceptable for a tail whose job is the lines
+     * already written. */
+    let tailDelivered = false;
+    const publishTail = () => {
+      if (tailDelivered) return;
+      tailDelivered = true;
+      deliverTail(stderrTail.read());
+    };
+    child.once("exit", publishTail);
+    child.once("close", publishTail);
+  }
 
   let sessionRef: AcpHostSession | null = null;
   const transport = createBoundTransport({

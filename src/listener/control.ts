@@ -52,6 +52,13 @@ export interface ListenerStatus {
   stoppedAt: string | null;
   lastSignalId: string | null;
   lastErrorCode: string | null;
+  /**
+   * Final lines of the last failed worker's stderr, sanitized and bounded by
+   * the supervisor. LOCAL diagnosis only (D-090 family) — this file is the
+   * operator's own 0600 state; the tail never reaches a server payload.
+   * Old status files omit the key; readListenerStatus normalizes it to null.
+   */
+  lastWorkerStderrTail: string | null;
   // Metadata-only delivery fields (§13). Required nullable fields for every
   // in-memory producer; readListenerStatus normalizes old version-1 disk JSON
   // that omits them to null without rewriting bytes, and writeListenerStatus
@@ -127,6 +134,7 @@ const STATUS_ALLOWED_KEYS = new Set([
   "stoppedAt",
   "lastSignalId",
   "lastErrorCode",
+  "lastWorkerStderrTail",
   "logPath",
   "deliveryMode",
   "pendingDeliveryCount",
@@ -221,6 +229,12 @@ function parseStatus(raw: string): ListenerStatus {
     !(row.lastErrorCode === null ||
       (typeof row.lastErrorCode === "string" &&
         /^[a-z0-9_-]{1,96}$/.test(row.lastErrorCode))) ||
+    !(row.lastWorkerStderrTail === undefined ||
+      row.lastWorkerStderrTail === null ||
+      (typeof row.lastWorkerStderrTail === "string" &&
+        row.lastWorkerStderrTail.length > 0 &&
+        row.lastWorkerStderrTail.length <= 2_048 &&
+        !/swm_(?:agt|inv|cap)_/i.test(row.lastWorkerStderrTail))) ||
     typeof row.logPath !== "string" ||
     !isAbsolute(row.logPath) ||
     !(row.deliveryMode === undefined ||
@@ -252,6 +266,7 @@ function parseStatus(raw: string): ListenerStatus {
       (row.lastTerminalDeliveryFailureAt ?? null) as string | null,
     lastClaimAt: (row.lastClaimAt ?? null) as string | null,
     lastAckAt: (row.lastAckAt ?? null) as string | null,
+    lastWorkerStderrTail: (row.lastWorkerStderrTail ?? null) as string | null,
   };
 }
 
@@ -302,6 +317,11 @@ export async function appendListenerEvent(
     "restart_attempts",
     "restartable",
     "restarts_exhausted",
+    // D-090 family: the last lines of a dead worker's stderr, sanitized and
+    // bounded by the supervisor, and the prompt-turn budget behind a timeout.
+    // Local log only — this file never feeds a server payload.
+    "worker_stderr_tail",
+    "turn_budget_ms",
   ]);
   const deliveryModes = new Set(["durable_claim", "cursor_fallback"]);
   const deliveryOutcomes = new Set([
@@ -339,8 +359,24 @@ export async function appendListenerEvent(
       throw new Error("listener event outcome is not allowed");
     }
     if (
+      key === "worker_stderr_tail" &&
+      !(typeof value === "string" && value.length > 0 && value.length <= 2_048)
+    ) {
+      throw new Error("listener event stderr tail is not allowed");
+    }
+    if (
+      key === "turn_budget_ms" &&
+      !(typeof value === "number" && Number.isSafeInteger(value) && value > 0)
+    ) {
+      throw new Error("listener event turn budget is not allowed");
+    }
+    if (
       typeof value === "string" &&
-      (value.length > 128 || /swm_(?:agt|inv|cap)_/i.test(value))
+      // worker_stderr_tail is deliberately exempt from the generic 128-char
+      // cap (its own bound is 2048, above); the secret scan still applies to
+      // every string, the tail included.
+      ((key !== "worker_stderr_tail" && value.length > 128) ||
+        /swm_(?:agt|inv|cap)_/i.test(value))
     ) {
       throw new Error("listener event contains unsafe text");
     }

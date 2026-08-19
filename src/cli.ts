@@ -181,6 +181,8 @@ import {
   spawnDetachedListener,
   stopListener,
   waitForListenerReady,
+  LISTENER_PROMPT_TIMEOUT_MS,
+  ListenerRenewalUnavailableError,
   type ListenerPermissionMode,
   type ListenerProviderId,
   type ListenerDeliveryJournal,
@@ -200,7 +202,7 @@ const KNOWN_FLAGS = new Set([
   "help", "include-stale", "include-tombstoned", "invitation-id", "invitation-token-stdin", "json", "kind", "limit",
   "link-stdin", "local", "model", "name", "ndjson", "no-browser", "opencode-executable", "out",
   "permissions", "principal-id", "provider", "reveal-anon-key", "run-id", "since", "site", "slug",
-  "task-id", "to", "token-id", "ttl-ms", "uid", "until", "url", "version", "wait", "workspace-id",
+  "task-id", "to", "token-id", "ttl-ms", "turn-budget", "uid", "until", "url", "version", "wait", "workspace-id",
 ]);
 
 const BOOLEAN_FLAGS = new Set([
@@ -416,7 +418,7 @@ Usage:
   cswarm file get <name|file-id> [--version <n>] [--out <local-path>] [--force] [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--agent-token-stdin] [--json]
   cswarm file rm <name|file-id> [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--agent-token-stdin] [--json]
   cswarm file restore <name|file-id> [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--agent-token-stdin] [--json]
-  cswarm listen start --agent-token-stdin [--url <url> --anon-key <key>] --workspace-id <uuid> --provider grok|opencode|claude|codex [--cwd <absolute-path>] [--model <model>] [--effort <level>] [--permissions deny|allow] [--grok-executable <path>] [--opencode-executable <path>] [--claude-executable <path>] [--codex-executable <path>] [--foreground] [--json]
+  cswarm listen start --agent-token-stdin [--url <url> --anon-key <key>] --workspace-id <uuid> --provider grok|opencode|claude|codex [--cwd <absolute-path>] [--model <model>] [--effort <level>] [--permissions deny|allow] [--grok-executable <path>] [--opencode-executable <path>] [--claude-executable <path>] [--codex-executable <path>] [--turn-budget <duration>] [--foreground] [--json]
   cswarm listen status [--url <url> --anon-key <key>] --workspace-id <uuid> --principal-id <uuid> [--json]
   cswarm listen stop [--url <url> --anon-key <key>] --workspace-id <uuid> --principal-id <uuid> [--json]
   cswarm new "<workspace name>" [--url <url> --anon-key <key>] [--json]
@@ -458,6 +460,17 @@ Signals (intention sharing) accept the same credential selection. Agent mode
 never opens a browser or infers a human's saved workspace. Durations use a whole
 number plus m, h, or d (for example 90m, 24h, or 7d) and are capped at 30d.
 Place -- before signal text that itself begins with -- to stop option parsing.
+
+listen start --turn-budget bounds ONE worker prompt turn (default 10m): how long
+the worker may think and use tools on a single message before the turn times out
+and durable delivery retries it. A whole number plus s, m, or h (for example
+90s, 5m, 1h), at least 30s and at most 60m. Each turn is additionally clamped
+to the live credential's remaining lifetime minus 60s, after renewing it when
+due — a turn never outlives its credential. Right after a rotation the full
+budget is available up to the token TTL minus 60s (about 59m on the default 1h
+TTL); a turn that lands just before a rotation can be clamped to the ~5m
+renewal lead, and if it times out there, durable delivery retries it on the
+fresh credential.
 
 Invite, legacy token accept, principal create/revoke, human token mint/revoke, link, and new require a
 stored human login. Agent self-surrender of a token uses --agent-token-stdin and never takes the secret on argv. Invite-link accept signs in when needed, then accepts and
@@ -2168,6 +2181,90 @@ function signalDuration(value: string | undefined): number | undefined {
   return milliseconds;
 }
 
+/**
+ * One worker prompt turn's budget. Default is LISTENER_PROMPT_TIMEOUT_MS; the
+ * floor keeps a typo from making every turn time out instantly, and the cap
+ * keeps a wedged worker from holding a claimed signal for hours.
+ */
+function listenerTurnBudgetMs(value: string | undefined): number {
+  if (value === undefined) return LISTENER_PROMPT_TIMEOUT_MS;
+  const match = /^([1-9]\d*)(s|m|h)$/.exec(value);
+  if (!match) {
+    throw new Error("--turn-budget must be a duration such as 90s, 5m, or 1h");
+  }
+  const unit = match[2] === "s" ? 1_000 : match[2] === "m" ? 60_000 : 3_600_000;
+  const milliseconds = Number(match[1]) * unit;
+  if (
+    !Number.isSafeInteger(milliseconds) ||
+    milliseconds < 30_000 ||
+    milliseconds > 3_600_000
+  ) {
+    throw new Error("--turn-budget must be between 30s and 60m");
+  }
+  return milliseconds;
+}
+
+/** Post-turn work (the ack, the reply post, the renewal request itself) must fit between turn end and credential expiry. */
+export const TURN_BUDGET_CREDENTIAL_MARGIN_MS = 60_000;
+
+/**
+ * Bound one worker turn to the live credential's remaining lifetime.
+ *
+ * ★ Invariant: a worker turn never starts with a budget the live credential
+ * cannot outlast. Renewal runs in bearer(), which nothing calls during a
+ * prompt, so an unclamped turn longer than the credential's remaining life
+ * ends with the listener stopped as credential loss
+ * (predecessor_expired_local) because of a timeout setting. The floor keeps
+ * the clamp recoverable rather than protective-in-name-only: a turn bounded
+ * at 1s fails as the timeout class and is durably redelivered, where
+ * outliving the credential stops the listener.
+ */
+export function clampTurnBudgetToCredential(
+  budgetMs: number,
+  credentialExpiresAt: number | null,
+  nowMs: number,
+): number {
+  if (credentialExpiresAt === null) return budgetMs;
+  const horizonMs = credentialExpiresAt - nowMs - TURN_BUDGET_CREDENTIAL_MARGIN_MS;
+  return Math.max(1_000, Math.min(budgetMs, horizonMs));
+}
+
+/**
+ * Decide one worker turn's budget, or refuse to start it.
+ *
+ * ★ Invariant: a turn starts ONLY with a credential proven to outlast it. Two
+ * conditions defer the turn instead of attempting it — renewal FAILED at turn
+ * start (`renewalFailed`), or the live credential's remaining lifetime is
+ * already inside the rotation margin. Both throw
+ * ListenerRenewalUnavailableError, a recoverable class the durable claim/ack
+ * layer redelivers once rotation recovers. The 1s floor in
+ * clampTurnBudgetToCredential is therefore reachable ONLY for a LIVE credential
+ * whose remaining life is just over the margin (rotation-due-soon) — never for
+ * a failed rotation or a credential already inside the margin, because those
+ * throw before the clamp runs.
+ */
+export function resolveTurnBudgetOrDefer(
+  configuredBudgetMs: number,
+  credentialExpiresAt: number | null,
+  nowMs: number,
+  renewalFailed: boolean,
+): number {
+  if (renewalFailed) {
+    throw new ListenerRenewalUnavailableError(
+      "the worker credential could not be renewed before this turn; deferring the ask for durable redelivery",
+    );
+  }
+  if (
+    credentialExpiresAt !== null &&
+    credentialExpiresAt - nowMs <= TURN_BUDGET_CREDENTIAL_MARGIN_MS
+  ) {
+    throw new ListenerRenewalUnavailableError(
+      "the live worker credential is inside its rotation margin and was not renewed; deferring the ask for durable redelivery",
+    );
+  }
+  return clampTurnBudgetToCredential(configuredBudgetMs, credentialExpiresAt, nowMs);
+}
+
 function signalText(value: string, label: "body" | "about"): string {
   const maximum = label === "body" ? 2000 : 500;
   if (value.length < (label === "body" ? 1 : 0) || value.length > maximum) {
@@ -3275,6 +3372,17 @@ function renderListenerStatus(status: ListenerStatus): string {
       ? `Last status code: ${status.lastErrorCode}.`
       : "No listener error is recorded.",
   ];
+  if (status.lastWorkerStderrTail) {
+    // Local diagnosis for the D-090 family: the failing box's own log is the
+    // only place the cause exists, so surface the end of it here.
+    const tailLines = status.lastWorkerStderrTail
+      .split("\n")
+      .filter((line) => line.trim().length > 0);
+    lines.push("Worker stderr (local log only):");
+    for (const line of tailLines.slice(-3)) {
+      lines.push(`  ${line}`);
+    }
+  }
   if (status.deliveryMode === "durable_claim") {
     lines.push("Delivery mode: durable claim and acknowledgement.");
   } else if (status.deliveryMode === "cursor_fallback") {
@@ -3525,6 +3633,7 @@ async function runConfiguredListener(options: {
   claudeExecutable?: string;
   codexExecutable?: string;
   stateDirectory?: string;
+  turnBudgetMs?: number;
 }): Promise<ListenerStatus> {
   if (options.provider === "opencode" && options.effort) {
     throw new Error(
@@ -3575,6 +3684,55 @@ async function runConfiguredListener(options: {
       ? { stateDirectory: options.stateDirectory }
       : {}),
   });
+  const turnBudgetMs = options.turnBudgetMs ?? LISTENER_PROMPT_TIMEOUT_MS;
+  // The budget actually applied to the most recent turn, so a timeout event can
+  // report the bound that was hit rather than the configured cap (a reader who
+  // sees 600000 when the turn was clamped to 5m has a wrong bound).
+  let lastAppliedTurnBudgetMs: number | null = null;
+  /* Each turn renews FIRST (bearer() rotates when due), then either clamps to
+   * what the live credential can still cover or DEFERS when no budget can be
+   * proven to outlast the turn — see resolveTurnBudgetOrDefer for the
+   * invariant. A deferral throws a recoverable error before any worker prompt;
+   * a clamped-short turn that times out is redelivered by the durable claim/ack
+   * layer, and the retry starts on the freshly rotated credential. */
+  const resolveTurnBudgetMs = async (): Promise<number> => {
+    let renewalFailed = false;
+    try {
+      await credentialSession.bearer();
+    } catch {
+      // A rotation-endpoint failure must NOT let the turn start on the old
+      // (possibly expired) credential; resolveTurnBudgetOrDefer throws so the
+      // ask is deferred and durably redelivered when rotation recovers.
+      renewalFailed = true;
+    }
+    const applied = resolveTurnBudgetOrDefer(
+      turnBudgetMs,
+      credentialSession.expiry,
+      Date.now(),
+      renewalFailed,
+    );
+    lastAppliedTurnBudgetMs = applied;
+    return applied;
+  };
+  // The newest dead worker's stderr tail. Read-and-cleared by the supervisor,
+  // which writes it only to the operator's own 0600 log and status file; it
+  // never rides an error object or a server payload (D-090 family).
+  let lastWorkerStderrTail: string | null = null;
+  let workerStderrGeneration = 0;
+  /* One sink per model (= per supervisor attempt). Creating a sink clears the
+   * slot and expires every older sink, so a superseded worker whose exit
+   * publishes late can never label its stderr as the current attempt's — the
+   * second worker must not inherit or be overwritten by the first's tail. */
+  const newWorkerStderrTailSink = () => {
+    const generation = ++workerStderrGeneration;
+    lastWorkerStderrTail = null;
+    return (tail: string) => {
+      if (generation !== workerStderrGeneration) return;
+      // An empty tail still clears the slot: a previous worker's stderr must
+      // not masquerade as this exit's.
+      lastWorkerStderrTail = tail.length > 0 ? tail : null;
+    };
+  };
   // A factory, not a value: the supervisor may run the listener more than once
   // and a model is single-use (runListenerRuntime closes it on every exit, and
   // every adapter throws "listener model is closed" once closed). Constructing
@@ -3584,6 +3742,8 @@ async function runConfiguredListener(options: {
     ? new OpenCodeListenerModel({
       cwd: options.cwd,
       permissionMode: options.permissionMode,
+      promptTimeoutMs: resolveTurnBudgetMs,
+      onWorkerStderrTail: newWorkerStderrTailSink(),
       ...(options.model ? { model: options.model } : {}),
       ...(options.opencodeExecutable
         ? { executable: options.opencodeExecutable }
@@ -3595,6 +3755,8 @@ async function runConfiguredListener(options: {
     ? new ClaudeListenerModel({
       cwd: options.cwd,
       permissionMode: options.permissionMode,
+      promptTimeoutMs: resolveTurnBudgetMs,
+      onWorkerStderrTail: newWorkerStderrTailSink(),
       ...(options.claudeExecutable
         ? { executable: options.claudeExecutable }
         : options.executable
@@ -3605,6 +3767,8 @@ async function runConfiguredListener(options: {
     ? new CodexListenerModel({
       cwd: options.cwd,
       permissionMode: options.permissionMode,
+      promptTimeoutMs: resolveTurnBudgetMs,
+      onWorkerStderrTail: newWorkerStderrTailSink(),
       ...(options.codexExecutable
         ? { executable: options.codexExecutable }
         : options.executable
@@ -3614,6 +3778,8 @@ async function runConfiguredListener(options: {
     : new GrokListenerModel({
       cwd: options.cwd,
       permissionMode: options.permissionMode,
+      promptTimeoutMs: resolveTurnBudgetMs,
+      onWorkerStderrTail: newWorkerStderrTailSink(),
       ...(options.model ? { model: options.model } : {}),
       ...(options.effort ? { effort: options.effort } : {}),
       ...(options.executable ? { executable: options.executable } : {}),
@@ -3633,6 +3799,14 @@ async function runConfiguredListener(options: {
       principalId: options.principalId,
       provider: options.provider,
       permissionMode: options.permissionMode,
+      // The bound a timeout event reports: the last turn's clamped budget when
+      // one has run, else the configured cap.
+      getTurnBudgetMs: () => lastAppliedTurnBudgetMs ?? turnBudgetMs,
+      takeWorkerStderrTail: () => {
+        const tail = lastWorkerStderrTail;
+        lastWorkerStderrTail = null;
+        return tail;
+      },
       prepare: async (proposedInstanceId) => {
         const selected = await openListenerDeliveryJournal({
           profileId: options.cloud.profileId,
@@ -3694,6 +3868,7 @@ async function runListenStart(args: Arguments): Promise<void> {
     "claude-executable",
     "codex-executable",
     "state-dir",
+    "turn-budget",
     "foreground",
     "json",
   ], 2);
@@ -3704,6 +3879,10 @@ async function runListenStart(args: Arguments): Promise<void> {
   }
   const provider = listenerProvider(args);
   validateListenerProviderFlags(args, provider);
+  // Validated before the target and credential work so a bad duration fails
+  // fast; the detached path forwards the validated string for the supervisor
+  // to re-parse.
+  const turnBudgetMs = listenerTurnBudgetMs(args.optional("turn-budget"));
   const cloud = await target(args);
   const workspaceId = listenerUuid(
     args.optional("workspace-id") ?? process.env.SWARM_CLOUD_WORKSPACE_ID,
@@ -3744,6 +3923,7 @@ async function runListenStart(args: Arguments): Promise<void> {
       cwd,
       permissionMode,
       provider,
+      turnBudgetMs,
       ...(args.optional("model") ? { model: args.required("model") } : {}),
       ...(args.optional("effort") ? { effort: args.required("effort") } : {}),
       ...(args.optional("grok-executable")
@@ -3807,6 +3987,9 @@ async function runListenStart(args: Arguments): Promise<void> {
         ...(stateDirectory ? { stateDirectory } : {}),
         ...(args.optional("model") ? { model: args.required("model") } : {}),
         ...(args.optional("effort") ? { effort: args.required("effort") } : {}),
+        ...(args.optional("turn-budget")
+          ? { turnBudget: args.required("turn-budget") }
+          : {}),
         ...(args.optional("grok-executable")
           ? { executable: args.required("grok-executable") }
           : {}),
@@ -3904,9 +4087,13 @@ async function runListenSupervisor(args: Arguments): Promise<void> {
     "claude-executable",
     "codex-executable",
     "state-dir",
+    "turn-budget",
   ], 1);
   const provider = listenerProvider(args);
   validateListenerProviderFlags(args, provider);
+  // Validated before the credential is read, like the public listen start
+  // path: a bad duration must fail fast, not after secrets moved.
+  const turnBudgetMs = listenerTurnBudgetMs(args.optional("turn-budget"));
   const cloud = await target(args);
   const workspaceId = listenerUuid(args.optional("workspace-id"), "workspace-id");
   const principalId = listenerUuid(args.optional("principal-id"), "principal-id");
@@ -3922,6 +4109,7 @@ async function runListenSupervisor(args: Arguments): Promise<void> {
     cwd,
     permissionMode: listenerPermissionMode(args.optional("permissions")),
     provider,
+    turnBudgetMs,
     ...(args.optional("model") ? { model: args.required("model") } : {}),
     ...(args.optional("effort") ? { effort: args.required("effort") } : {}),
     ...(args.optional("grok-executable")

@@ -54,6 +54,73 @@ export interface ListenerEffectStore {
   write(record: ListenerEffectRecord): Promise<void>;
 }
 
+/**
+ * Default budget for one listener worker PROMPT turn (10 minutes).
+ *
+ * The transport default (ACP_DEFAULT_REQUEST_TIMEOUT_MS, 120s) protects the
+ * handshake path: initialize, session/new, and the permission canary must
+ * answer quickly, and a tight bound turns a wedged child into a fast,
+ * restartable failure. A prompt turn is different — a worker legitimately
+ * thinks, runs tools, and edits files for minutes, and a heavyweight ask was
+ * measured dying at exactly +120s twice (retry_pending, acptimeouterror)
+ * before succeeding on promptAttempts 3. Raising only the prompt budget is
+ * safe because the durable claim/ack layer already redelivers the signal if
+ * the worker dies mid-turn — the timeout is not the only safety net — AND
+ * because each turn is clamped to the live credential's remaining lifetime
+ * (clampTurnBudgetToCredential in cli.ts): renewal runs only between turns,
+ * so an unclamped long turn could outlive its credential and stop the
+ * listener as credential loss.
+ * Override per-listener with `cswarm listen start --turn-budget`.
+ */
+export const LISTENER_PROMPT_TIMEOUT_MS = 600_000;
+
+/**
+ * A worker turn was deferred, not attempted: the live credential could not be
+ * renewed, or its remaining lifetime is already inside the rotation margin, so
+ * no budget could be proven to outlast the turn.
+ *
+ * ★ The invariant this enforces: a turn starts ONLY with a credential proven to
+ * outlast it. Renewal runs between turns (in bearer()), never during a prompt,
+ * so a turn begun on a nearly-dead credential would end in credential loss —
+ * exactly what the raised prompt budget must not cause.
+ *
+ * Deferral is recoverable across TRANSIENT renewal failures: the durable
+ * claim/ack layer redelivers the ask, and the retry begins after rotation has
+ * recovered. It is NOT retried forever — after bounded prompt attempts exhaust
+ * (LISTENER_MAX_PROMPT_ATTEMPTS in engine.ts) a truly-unrenewable ask goes
+ * TERMINAL (failed + acked), which is correct: an ask that can never obtain a
+ * live credential must stop, not loop. The terminal record carries this code —
+ * the honest `renewal_unavailable`, recorded via engine failureCode() from
+ * `.name` — never acptimeouterror and never a doomed 1s turn.
+ */
+export class ListenerRenewalUnavailableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "renewal_unavailable";
+  }
+}
+
+/**
+ * The SINGLE gate every worker turn passes: resolve-or-defer the budget for the
+ * credential live RIGHT NOW, then prompt.
+ *
+ * Kept as one function every model calls so no start-a-turn path can prompt
+ * without first resolving/deferring. Its callers run it AFTER ensureWorker (the
+ * respawn), so the budget reflects the credential at the moment the turn
+ * actually starts — a slow respawn after a worker death cannot leave a stale
+ * budget that outlives a now-dead credential. A deferral (the resolver throwing
+ * ListenerRenewalUnavailableError) throws HERE, before session.prompt, so no
+ * turn begins on a credential that cannot outlast it.
+ */
+export async function resolveBudgetAndPrompt<T>(
+  session: { prompt(text: string, options: { timeoutMs: number }): Promise<T> },
+  prompt: string,
+  budget: number | (() => Promise<number>),
+): Promise<T> {
+  const timeoutMs = typeof budget === "number" ? budget : await budget();
+  return await session.prompt(prompt, { timeoutMs });
+}
+
 export type ListenerPermissionMode = "deny" | "allow";
 
 export type ListenerPromptMode = "worker";

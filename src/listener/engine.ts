@@ -12,6 +12,7 @@ import {
   AcpHostError,
   TRANSIENT_ACP_CODES,
 } from "../host/types.js";
+import { ListenerRenewalUnavailableError } from "./types.js";
 import type {
   ListenerEffectRecord,
   ListenerEffectStore,
@@ -245,6 +246,10 @@ function abortError(): Error {
  */
 function defaultRetryablePromptError(error: unknown): boolean {
   if (error instanceof SenderProvenanceUnavailableError) return true;
+  // A deferred turn (credential could not be renewed before it) is recoverable:
+  // the ask must survive for durable redelivery once rotation recovers, never
+  // burn its attempts as a failure.
+  if (error instanceof ListenerRenewalUnavailableError) return true;
   if (error instanceof AcpHostError) return TRANSIENT_ACP_CODES.has(error.code);
   return false;
 }

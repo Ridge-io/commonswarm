@@ -21,6 +21,7 @@ import {
 import {
   ClaudeListenerModel,
   ListenerEngine,
+  ListenerRenewalUnavailableError,
   type OpenClaudeSession,
 } from "../src/listener/index.js";
 import type {
@@ -58,13 +59,15 @@ type Record = {
   canaryOptions?: { probeText?: string; timeoutMs?: number };
   canaryDecision?: PermissionDecision;
   promptDecision?: PermissionDecision;
+  promptTimeoutMs?: number;
+  promptCalls: number;
   closed: boolean;
   cancelled: boolean;
 };
 
 function fakeOpen(records: Record[]): OpenClaudeSession {
   return async (options) => {
-    const record: Record = { options, closed: false, cancelled: false };
+    const record: Record = { options, promptCalls: 0, closed: false, cancelled: false };
     records.push(record);
     const session = {
       async enablePromptsAfterCanary(canaryOptions?: {
@@ -74,7 +77,9 @@ function fakeOpen(records: Record[]): OpenClaudeSession {
         record.canaryOptions = canaryOptions;
         record.canaryDecision = await options.permissionCallback?.(REQUEST);
       },
-      async prompt(text: string) {
+      async prompt(text: string, promptOptions?: { timeoutMs?: number }) {
+        record.promptCalls += 1;
+        record.promptTimeoutMs = promptOptions?.timeoutMs;
         record.promptDecision = await options.permissionCallback?.(REQUEST);
         return {
           message: `reply:${text}`,
@@ -390,3 +395,171 @@ test("D-050: Claude close timeout is runtime-fatal before replacement opens", as
   assert.equal((await engine.process(ask)).status, "failed");
   assert.equal(opens, 1);
 });
+
+test("worker prompt turns get the 10-minute default budget; the handshake keeps the tight transport default", async () => {
+  /* The 120s transport default protects initialize/session-new/canary; a real
+   * prompt turn legitimately runs for minutes (measured: a heavyweight ask
+   * died at exactly +120s twice before succeeding on durable retry). The
+   * model must therefore pass a per-call budget on the PROMPT only. */
+  const cwd = await mkdtemp(join(tmpdir(), "cswarm-claude-worker-"));
+  const records: Record[] = [];
+  const adapter = new ClaudeListenerModel({
+    cwd,
+    permissionMode: "allow",
+    open: fakeOpen(records),
+  });
+  await adapter.start();
+  await adapter.prompt(SIGNAL, "worker", "work");
+  assert.equal(records[0]?.promptTimeoutMs, 600_000);
+  // The open options must NOT widen the transport-wide request timeout —
+  // that would slow every wedged-handshake failure, not just prompts.
+  assert.equal(records[0]?.options.requestTimeoutMs, undefined);
+  await adapter.close();
+});
+
+test("promptTimeoutMs overrides the prompt-turn budget and onWorkerStderrTail threads into the host open", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "cswarm-claude-worker-"));
+  const records: Record[] = [];
+  const tails: string[] = [];
+  const adapter = new ClaudeListenerModel({
+    cwd,
+    permissionMode: "allow",
+    promptTimeoutMs: 45_000,
+    onWorkerStderrTail: (tail) => tails.push(tail),
+    open: fakeOpen(records),
+  });
+  await adapter.start();
+  await adapter.prompt(SIGNAL, "worker", "work");
+  assert.equal(records[0]?.promptTimeoutMs, 45_000);
+  const onStderrTail = (records[0]?.options as { onStderrTail?: (tail: string) => void })
+    .onStderrTail;
+  assert.equal(typeof onStderrTail, "function");
+  onStderrTail!("boom");
+  assert.deepEqual(tails, ["boom"]);
+  await adapter.close();
+});
+
+test("a promptTimeoutMs resolver is awaited at each turn start", async () => {
+  /* The listener passes a resolver, not a number: it renews the credential
+   * when due and clamps to what it can still cover, so the value can differ
+   * per turn. The model must call it per prompt, never cache it. */
+  const cwd = await mkdtemp(join(tmpdir(), "cswarm-claude-worker-"));
+  const records: Record[] = [];
+  const budgets = [120_000, 45_000];
+  let calls = 0;
+  const adapter = new ClaudeListenerModel({
+    cwd,
+    permissionMode: "allow",
+    promptTimeoutMs: async () => budgets[calls++]!,
+    open: fakeOpen(records),
+  });
+  await adapter.start();
+  await adapter.prompt(SIGNAL, "worker", "one");
+  assert.equal(records[0]?.promptTimeoutMs, 120_000);
+  await adapter.prompt(SIGNAL, "worker", "two");
+  assert.equal(records[0]?.promptTimeoutMs, 45_000);
+  assert.equal(calls, 2, "the resolver must run once per turn");
+  await adapter.close();
+});
+
+test("a resolver that defers (throws) is not caught by the model and never reaches the worker prompt", async () => {
+  /* Item 4: the budget is resolved BEFORE the worker is prompted. If the
+   * resolver throws ListenerRenewalUnavailableError (credential cannot outlast
+   * the turn), the model must let it propagate — no session.prompt, so the
+   * engine defers the ask instead of burning a doomed turn. */
+  const cwd = await mkdtemp(join(tmpdir(), "cswarm-claude-worker-"));
+  const records: Record[] = [];
+  const adapter = new ClaudeListenerModel({
+    cwd,
+    permissionMode: "allow",
+    promptTimeoutMs: async () => {
+      throw new ListenerRenewalUnavailableError("deferring: credential inside margin");
+    },
+    open: fakeOpen(records),
+  });
+  await adapter.start();
+  await assert.rejects(
+    adapter.prompt(SIGNAL, "worker", "work"),
+    (error) => error instanceof ListenerRenewalUnavailableError,
+  );
+  assert.equal(records[0]?.promptCalls, 0, "the worker prompt must not run on a deferral");
+  await adapter.close();
+});
+
+test("a worker death + slow respawn with an expired credential defers, never prompting on the dead credential", async () => {
+  /* Item 1 (final round): the budget gate must run AFTER the respawn, not
+   * before it. Turn 1's worker dies mid-prompt (AcpChildExitError), so turn 2
+   * respawns. The respawn is SLOW — it advances the clock past the credential's
+   * expiry — so a gate that resolved BEFORE the respawn would prompt turn 2 on
+   * a now-dead credential. With the gate after ensureWorker, turn 2 defers. */
+  const cwd = await mkdtemp(join(tmpdir(), "cswarm-claude-worker-"));
+  let now = 0;
+  const expiry = 1_000;
+  const marginAnalog = 60; // defer once within this of expiry
+  let opens = 0;
+  const promptCallsPerWorker: number[] = [];
+  const openSession: OpenClaudeSession = async (options) => {
+    opens += 1;
+    const workerIndex = opens;
+    // The respawn (2nd open) is slow: it advances the clock past expiry.
+    if (opens >= 2) now = expiry + 1;
+    promptCallsPerWorker[workerIndex - 1] = 0;
+    const session = {
+      async enablePromptsAfterCanary() {
+        await options.permissionCallback?.(REQUEST);
+      },
+      async prompt(text: string) {
+        promptCallsPerWorker[workerIndex - 1] += 1;
+        if (workerIndex === 1) {
+          // Worker 1 dies mid-turn; the model nulls it, forcing a respawn.
+          throw new AcpChildExitError(1, null);
+        }
+        return { message: `reply:${text}`, stopReason: "end_turn" as const, updates: [] };
+      },
+      cancel() {},
+    };
+    return {
+      session,
+      child: {},
+      executable: "/opt/claude-agent-acp",
+      args: [],
+      env: {},
+      async close() {},
+    } as unknown as import("../src/host/claude.js").ClaudeAcpHandle;
+  };
+  const promptTimeoutMs = async () => {
+    // The same shape as the real resolver: defer when the credential is inside
+    // its rotation margin / expired at the moment the turn actually starts.
+    if (now >= expiry - marginAnalog) {
+      throw new ListenerRenewalUnavailableError("credential inside margin / expired at turn start");
+    }
+    return 30_000;
+  };
+  const adapter = new ClaudeListenerModel({
+    cwd,
+    permissionMode: "allow",
+    promptTimeoutMs,
+    open: openSession,
+  });
+
+  // Turn 1: worker opens (now=0), gate resolves a live budget, prompt dies.
+  await assert.rejects(
+    adapter.prompt(SIGNAL, "worker", "one"),
+    (error) => error instanceof AcpChildExitError,
+  );
+  assert.equal(promptCallsPerWorker[0], 1, "worker 1 was prompted, then died");
+
+  // Turn 2: ensureWorker respawns worker 2, which advances the clock past
+  // expiry; ONLY THEN does the gate resolve -> it must defer, not prompt.
+  await assert.rejects(
+    adapter.prompt(SIGNAL, "worker", "two"),
+    (error) => error instanceof ListenerRenewalUnavailableError,
+  );
+  assert.equal(
+    promptCallsPerWorker[1],
+    0,
+    "worker 2 must NOT be prompted on the now-dead credential",
+  );
+  await adapter.close();
+});
+

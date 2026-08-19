@@ -17,6 +17,10 @@ import {
   type PermissionDecision,
   type PermissionRequest,
 } from "../host/types.js";
+import {
+  LISTENER_PROMPT_TIMEOUT_MS,
+  resolveBudgetAndPrompt,
+} from "./types.js";
 import type {
   ListenerModel,
   ListenerPermissionMode,
@@ -47,6 +51,14 @@ export interface OpenCodeListenerModelOptions {
   prepareWorkerCwd?: (home: string) => Promise<string>;
   /** Test-only bound for waiting on in-progress opens during close (ms). */
   pendingOpenWaitMs?: number;
+  /**
+   * Per-prompt-turn budget in ms, or a resolver called at each turn start
+   * (default LISTENER_PROMPT_TIMEOUT_MS). The listener passes a resolver that
+   * renews the credential when due and clamps to what it can still cover.
+   */
+  promptTimeoutMs?: number | (() => Promise<number>);
+  /** Receives the worker's bounded stderr tail on child exit (local log only). */
+  onWorkerStderrTail?: (tail: string) => void;
 }
 
 
@@ -130,9 +142,15 @@ export class OpenCodeListenerModel implements ListenerModel {
     prompt: string,
   ): Promise<ListenerPromptResult> {
     if (this.closed) throw new Error("listener model is closed");
+    // Respawn a dead worker FIRST; the budget gate runs AFTER, inside
+    // resolveBudgetAndPrompt, so it resolves-or-defers against the credential
+    // live at turn start rather than before a slow respawn. A deferral throws
+    // before session.prompt, so no turn begins on a credential that cannot
+    // outlast it.
     const worker = await this.ensureWorker();
+    const budget = this.options.promptTimeoutMs ?? LISTENER_PROMPT_TIMEOUT_MS;
     try {
-      return await worker.session.prompt(prompt);
+      return await resolveBudgetAndPrompt(worker.session, prompt, budget);
     } catch (error) {
       if (error instanceof AcpChildExitError) {
         const home = this.workerHome;
@@ -465,6 +483,9 @@ export class OpenCodeListenerModel implements ListenerModel {
         ...(this.options.allowMissingAuth === true
           ? { allowMissingAuth: true }
           : {}),
+      ...(this.options.onWorkerStderrTail
+        ? { onStderrTail: this.options.onWorkerStderrTail }
+        : {}),
         clientName: "cswarm-listener",
       });
       pending.phase = "opening";

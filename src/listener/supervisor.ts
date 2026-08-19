@@ -100,6 +100,21 @@ export interface ListenerSupervisorOptions {
   ) => Promise<ListenerRuntimeStop>;
   /** Bounded restart for possibly-transient stops. Default: the constants above. */
   restart?: ListenerRestartPolicy;
+  /**
+   * Read-and-clear accessor for the newest worker stderr tail. The supervisor
+   * is its only consumer and writes it only to the operator's own 0600 log
+   * and status file — never to a server payload or an error object (D-090
+   * family: a crash-looping worker whose every failure event read a bare
+   * "error" was undiagnosable from the failing box's own log).
+   */
+  takeWorkerStderrTail?: () => string | null;
+  /**
+   * The turn budget in ms to record on a timeout-class effect event. Returns
+   * the budget ACTUALLY applied to the last turn (clamped to the credential's
+   * lifetime), so the reader sees the bound that was hit rather than the
+   * configured cap. Returns null when no turn has run yet.
+   */
+  getTurnBudgetMs?: () => number | null;
 }
 
 export class ListenerStartupError extends Error {
@@ -121,6 +136,42 @@ function safeErrorCode(error: Error): string {
   }
   const name = error.name.toLowerCase().replace(/[^a-z0-9_-]+/g, "_");
   return name.slice(0, 96) || "listener_error";
+}
+
+/**
+ * events.ndjson lines are capped at 4096 bytes (appendListenerEvent), and the
+ * validator also caps the tail at 2048 characters. Both bounds are enforced
+ * against the SERIALIZED form: JSON escaping doubles backslashes and quotes
+ * and can sextuple control remnants (\uXXXX), so a raw-byte budget can pass
+ * here and still push the line over the cap — where the throw is swallowed by
+ * the write chain and the one failure line the tail exists to enrich is
+ * silently dropped. Keep the END of the tail: the last lines of a crash log
+ * are the part that names the cause. 3000 bytes serialized leaves the event's
+ * other fields ample headroom under 4096.
+ */
+const TAIL_SERIALIZED_BUDGET_BYTES = 3_000;
+
+function fitWorkerStderrTailForLog(tail: string): string {
+  let fitted = tail.trim();
+  for (;;) {
+    if (fitted.length === 0) return fitted;
+    const serializedBytes = Buffer.byteLength(JSON.stringify(fitted), "utf8");
+    if (
+      fitted.length <= 2_048 &&
+      serializedBytes <= TAIL_SERIALIZED_BUDGET_BYTES
+    ) {
+      return fitted;
+    }
+    // Drop from the front. A char serializes to at least 1 byte, so this
+    // always makes progress; /6 undershoots on heavily escaped input and the
+    // loop re-measures rather than over-cutting.
+    const dropChars = Math.max(
+      fitted.length - 2_048,
+      Math.ceil((serializedBytes - TAIL_SERIALIZED_BUDGET_BYTES) / 6),
+      1,
+    );
+    fitted = fitted.slice(dropChars);
+  }
 }
 
 /** Lifetime control socket + durable metadata around one listener runtime. */
@@ -147,6 +198,7 @@ export async function runListenerSupervisor(
     stoppedAt: null,
     lastSignalId: null,
     lastErrorCode: null,
+    lastWorkerStderrTail: null,
     deliveryMode: null,
     pendingDeliveryCount: null,
     lastTerminalDeliveryFailureCount: null,
@@ -218,9 +270,22 @@ export async function runListenerSupervisor(
     pid: process.pid,
   });
 
+  const takeWorkerStderrTail = options.takeWorkerStderrTail;
+  const takeTail = (): string | null => {
+    if (!takeWorkerStderrTail) return null;
+    const tail = takeWorkerStderrTail();
+    if (typeof tail !== "string") return null;
+    const fitted = fitWorkerStderrTailForLog(tail);
+    return fitted.length > 0 ? fitted : null;
+  };
+
   const onEvent = (event: ListenerRuntimeEvent) => {
     if (event.type === "ready") {
-      transition("ready", { readyAt: event.ts, lastErrorCode: null });
+      transition("ready", {
+        readyAt: event.ts,
+        lastErrorCode: null,
+        lastWorkerStderrTail: null,
+      });
       log({ ts: event.ts, event: "listener_ready" });
       return;
     }
@@ -238,6 +303,16 @@ export async function runListenerSupervisor(
         signal_id: event.signalId,
         status: event.status,
         failure_code: event.failureCode,
+        // Code comparison, not message matching (D-053). The budget rides
+        // only the timeout class so a reader can see what bound was hit — and
+        // it is the CLAMPED budget actually in force, not the configured cap.
+        ...((): Record<string, number> => {
+          if (event.failureCode !== "acptimeouterror") return {};
+          const budget = options.getTurnBudgetMs?.();
+          return typeof budget === "number" && budget > 0
+            ? { turn_budget_ms: budget }
+            : {};
+        })(),
       });
       return;
     }
@@ -378,14 +453,22 @@ export async function runListenerSupervisor(
       restarts += 1;
       const delayMs = nextListenerRestartMs(restarts, policy, restartRandom);
       const restartCode = safeErrorCode(stop.error);
+      const restartStderrTail = takeTail();
       log({
         ts: iso(now),
         event: "listener_restarting",
         attempt: restarts,
         delay_ms: delayMs,
         failure_code: restartCode,
+        ...(restartStderrTail !== null
+          ? { worker_stderr_tail: restartStderrTail }
+          : {}),
       });
-      transition("starting", { readyAt: null, lastErrorCode: restartCode });
+      transition("starting", {
+        readyAt: null,
+        lastErrorCode: restartCode,
+        lastWorkerStderrTail: restartStderrTail,
+      });
       await restartSleep(delayMs, controller.signal);
       if (controller.signal.aborted) {
         stop = { reason: "cancelled" };
@@ -398,15 +481,18 @@ export async function runListenerSupervisor(
       transition("stopped", {
         stoppedAt,
         lastErrorCode: null,
+        lastWorkerStderrTail: null,
       });
       log({ ts: stoppedAt, event: "listener_stopped" });
     } else {
       const code = stop.reason === "credential"
         ? "credential_stopped"
         : safeErrorCode(stop.error);
+      const failedStderrTail = takeTail();
       transition("failed", {
         stoppedAt,
         lastErrorCode: code,
+        lastWorkerStderrTail: failedStderrTail,
       });
       // Record why it is down and why it stopped trying — a listener left down
       // after exhausting restarts must be distinguishable from one that was
@@ -418,6 +504,9 @@ export async function runListenerSupervisor(
         restart_attempts: restarts,
         restartable: eligible,
         restarts_exhausted: exhausted,
+        ...(failedStderrTail !== null
+          ? { worker_stderr_tail: failedStderrTail }
+          : {}),
       });
     }
   } catch (error) {
@@ -425,11 +514,19 @@ export async function runListenerSupervisor(
     const code = safeErrorCode(
       error instanceof Error ? error : new Error(String(error)),
     );
-    transition("failed", { stoppedAt, lastErrorCode: code });
+    const failedStderrTail = takeTail();
+    transition("failed", {
+      stoppedAt,
+      lastErrorCode: code,
+      lastWorkerStderrTail: failedStderrTail,
+    });
     log({
       ts: stoppedAt,
       event: "listener_failed",
       failure_code: code,
+      ...(failedStderrTail !== null
+        ? { worker_stderr_tail: failedStderrTail }
+        : {}),
     });
   } finally {
     await writes.catch(() => undefined);
