@@ -1299,6 +1299,13 @@ describe('submit_feedback', () => {
       world.apply(feedback({ context: { k: 'v'.repeat(513) } as never }), asAgent),
       'feedback_invalid',
     );
+    // The context bound is BYTES not characters: a CJK context under the
+    // 2048-char count but over 2048 UTF-8 bytes must be refused (both review
+    // arms). 700 chars x 3 bytes = 2100 bytes, comfortably over.
+    rejected(
+      world.apply(feedback({ context: { k: '一'.repeat(700) } as never }), asAgent),
+      'feedback_invalid',
+    );
   });
 });
 

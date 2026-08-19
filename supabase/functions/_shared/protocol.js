@@ -907,7 +907,7 @@ function normalizedFeedbackContext(value) {
   }
   if (entries.length === 0) return { ok: true, context: null };
   const serialized = JSON.stringify(Object.fromEntries(entries));
-  if (serialized.length > FEEDBACK_CONTEXT_MAX_BYTES) {
+  if (new TextEncoder().encode(serialized).length > FEEDBACK_CONTEXT_MAX_BYTES) {
     return { ok: false, message: `feedback context must serialize to at most ${FEEDBACK_CONTEXT_MAX_BYTES} bytes` };
   }
   return { ok: true, context: Object.fromEntries(entries) };

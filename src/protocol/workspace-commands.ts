@@ -505,7 +505,9 @@ export function normalizedFeedbackContext(
   }
   if (entries.length === 0) return { ok: true, context: null };
   const serialized = JSON.stringify(Object.fromEntries(entries));
-  if (serialized.length > FEEDBACK_CONTEXT_MAX_BYTES) {
+  // BYTES, not characters: the field is named _MAX_BYTES and this bounds what lands
+  // in jsonb. length alone let a 1446-char CJK context store 4643 bytes (both arms).
+  if (new TextEncoder().encode(serialized).length > FEEDBACK_CONTEXT_MAX_BYTES) {
     return { ok: false, message: `feedback context must serialize to at most ${FEEDBACK_CONTEXT_MAX_BYTES} bytes` };
   }
   return { ok: true, context: Object.fromEntries(entries) as Record<string, string> };

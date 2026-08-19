@@ -1657,7 +1657,7 @@ function validateCommand(
       }
       if (entries.length > 0) {
         const flat = Object.fromEntries(entries) as Record<string, string>;
-        if (JSON.stringify(flat).length > 2048) {
+        if (new TextEncoder().encode(JSON.stringify(flat)).length > 2048) {
           return { ok: false, status: 400, reason: "feedback context must serialize to at most 2048 bytes" };
         }
         context = flat;
