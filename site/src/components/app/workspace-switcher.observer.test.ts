@@ -131,12 +131,17 @@ test("the emitted browser assets carry the workspace menu behavior and presentat
 });
 
 test("the home link remains reachable beside the switcher at responsive widths", () => {
-  assert.match(dashboard, /<div class="dashboard__rail-foot">[\s\S]*?href="\/"/);
+  // The rail-foot is the account menu now (operator direction 2026-08-19): the
+  // CommonSwarm home link lives inside it, alongside the theme toggle and sign-out.
+  assert.match(
+    dashboard,
+    /data-user-menu-root[\s\S]*?data-user-menu[\s\S]*?class="dashboard__wordmark dashboard__user-menu-brand" href="\/"/,
+  );
+  // At mobile the foot is placed in the top-bar's second column (its own box, not
+  // display:contents) so the account menu — and the home link within — stays reachable.
   const responsive = between(dashboard, "@media (max-width: 52rem)", "@media (max-width: 34rem)");
-  assert.match(responsive, /\.dashboard__rail-foot\s*\{\s*display: contents;/);
-  assert.match(responsive, /\.dashboard__rail-account\s*\{\s*display: none;/);
   assert.match(
     responsive,
-    /\.dashboard__rail-foot > \.dashboard__wordmark\s*\{[\s\S]*?grid-column: 2;[\s\S]*?grid-row: 1;/,
+    /\.dashboard__rail-foot\s*\{[\s\S]*?grid-column: 2;[\s\S]*?grid-row: 1;/,
   );
 });

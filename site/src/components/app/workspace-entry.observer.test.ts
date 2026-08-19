@@ -68,7 +68,11 @@ test("the live dashboard offers peer agent and collaborator paths from an empty 
   assert.doesNotMatch(dashboard, /data-create-eyebrow/);
   assert.doesNotMatch(dashboard, /<label for="dashboard-workspace-name">/);
   assert.match(dashboard, /id="dashboard-workspace-name"[\s\S]*?aria-label="Workspace name"/);
-  assert.match(dashboard, /<summary>Manage people<\/summary>/);
+  // Manage people moved off the rail into the header "People & agents" dialog
+  // (operator direction 2026-08-19): the member-management surface now lives as a
+  // section inside that dialog, not a rail <details>.
+  assert.match(dashboard, /id="dashboard-roster-title">\s*People &amp; agents/);
+  assert.match(dashboard, /class="dashboard__roster-dialog-members" data-member-details/);
   assert.doesNotMatch(dashboard, /data-member-count/);
   assert.match(dashboard, /Choose who joins first\./);
   assert.match(dashboard, /data-add-agent/);
