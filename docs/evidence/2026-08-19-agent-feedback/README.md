@@ -43,23 +43,36 @@ feature requests.
 | `tests/p1-cli/feedback-verb.test.ts` (7 tests) | `npm run test:p1-cli` (glob) |
 | `tests/p1-server/agent-feedback.test.ts` (6 tests) | `npm run test:p1-server` (glob) |
 
-## Gate results (this worktree, this tree)
+## Gate results (after merging main @478c703 into this branch)
+
+Main's stderr/turn-budget merge touched `src/cli.ts` (listen region) — one
+usage-line conflict, resolved keeping BOTH main's `--turn-budget` on the
+`listen start` line and this lane's `feedback` usage line.
 
 | gate | result |
 |---|---|
-| `npm test` | 552 pass, 0 fail |
-| `npm run test:p1-cli` (after `npm run build`) | 279 pass, 0 fail |
+| `npm test` | 578 pass, 0 fail |
+| `npm run test:p1-cli` (after `npm run build`) | 282 pass, 0 fail |
 | `npm run check:tests` | clean |
 | `npm run check:edge` | clean (3 entrypoints) |
 | `npm run db:reset` | applied all migrations incl. `20260819000001` |
-| `npm run test:p1-server` (fresh reset) | see below |
+| `npm run test:p1-server` (fresh reset) | 97 pass, 2 fail — the 2 are the documented pre-existing self-serve-cap failures (`200 !== 429`), NOT this lane; all 6 feedback tests pass |
 | `cd site && npm run build` | 8 pages built |
 | `npm --prefix site test` | 167 pass, 0 fail (agent-prompt copy pins did not fire) |
 
-p1-server result: RECORDED IN THE COMMIT MESSAGE of this lane's final commit —
-the run finished after this file was first written. The new file's 6 tests
-must all pass; the only tolerated failures are the 2 known pre-existing
-self-serve-cap failures.
+(pre-merge counts were 552 / 279; the rise is tests main brought in.)
+
+### A real bug the p1-server row assertion caught
+
+First p1-server run after the merge failed on the agent-submit row: the
+stored `context` jsonb was a double-encoded STRING scalar, not an object.
+Cause: the projection hand-rolled `JSON.stringify(payload.context)` then cast
+`::jsonb`, but the edge's postgres client JSON-encodes a bound parameter that
+feeds a `::jsonb` cast — so the pre-stringified value was encoded twice.
+`context->>'key'` would have read nothing for the operator. Fixed by passing
+the object through `tx.json` (the file's jsonb convention, as in
+`appendEvents`); verified `jsonb_typeof(context) = 'object'` directly in the
+DB. Second run green.
 
 ## Not established
 
