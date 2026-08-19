@@ -5081,6 +5081,11 @@ import "../../styles/tokens.css";
 
   .dashboard__rail-section--participants .dashboard__sidebar-agent-list {
     min-block-size: 0;
+    /* Override the base 14rem cap: in the sidebar the roster is the 1fr row of a
+       flex:1 section, so it should take ALL the rail's leftover height and scroll
+       within that — not clip at ~5 rows with dead space beneath. The 14rem cap is
+       for the header-dialog copy of this list, which is not inside a growing rail. */
+    max-block-size: none;
     overflow-y: auto;
     align-content: start;
   }

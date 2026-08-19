@@ -208,12 +208,19 @@ test("the workspace shell groups people with their nested agents in one bounded 
   assert.match(privacyReset, /renderRoster\(\);/);
 });
 
-test("the participant list shrinks when short and scrolls at its cap", async () => {
+test("the participant list shrinks when short and fills+scrolls the rail when long", async () => {
   const geometry = await renderRailGeometry();
 
-  assert.ok(geometry.three.clientHeight < 224, JSON.stringify(geometry));
+  // Short roster: the list shrinks to its content, no scroll.
   assert.equal(geometry.three.scrollHeight, geometry.three.clientHeight, JSON.stringify(geometry));
-  assert.equal(geometry.fifty.clientHeight, 224, JSON.stringify(geometry));
+  // Long roster: the list FILLS the rail's available height (well past the retired 14rem/224px
+  // cap — operator direction 2026-08-19) and scrolls its overflow within that. The header-dialog
+  // copy of this list keeps the 14rem cap; only the growing sidebar list is uncapped.
+  assert.ok(geometry.fifty.clientHeight > 224, JSON.stringify(geometry));
+  assert.ok(
+    geometry.fifty.clientHeight <= geometry.fifty.railHeight,
+    "the list must not exceed the rail it lives in: " + JSON.stringify(geometry),
+  );
   assert.ok(geometry.fifty.scrollHeight > geometry.fifty.clientHeight, JSON.stringify(geometry));
   assert.equal(geometry.three.overflowY, "auto", JSON.stringify(geometry));
   assert.equal(geometry.fifty.overflowY, "auto", JSON.stringify(geometry));
