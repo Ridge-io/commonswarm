@@ -170,6 +170,22 @@ before(async () => {
   };
   functionProcess.stdout?.on("data", capture);
   functionProcess.stderr?.on("data", capture);
+  /* The HTTP probe below cannot tell OUR serve from the previous test file's
+   * still-answering zombie: at the file seam the old instance satisfies the
+   * probe, kong swaps runtimes mid-suite, and every request 502s ("An invalid
+   * response was received from the upstream server") — measured on the
+   * declare→set adjacency, where this file's own log never got past "Setting
+   * up Edge Functions runtime...". Our stdout is unambiguously ours, so wait
+   * for OUR boot banner first; only then is the HTTP probe meaningful. */
+  {
+    const bootDeadline = Date.now() + 60_000;
+    while (!functionLogs.includes("Serving functions on")) {
+      if (Date.now() > bootDeadline) {
+        throw new Error(`functions serve never booted:\n${functionLogs.slice(-3000)}`);
+      }
+      await delay(250);
+    }
+  }
   await awaitFunctionRunning({
     url: `${local.API_URL}/functions/v1/command`,
     fetcher: fetch,
