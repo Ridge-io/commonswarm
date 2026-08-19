@@ -5481,6 +5481,16 @@ the reports were good enough to diagnose from. Items, each with its disposition:
    The mini could not reproduce (3 min stable, same version/mode). UNDIAGNOSABLE until the
    failing box can speak: the stderr-tail lane (local-log-only bounded capture) is the fix
    vehicle; a foreground stderr capture was requested from the failing box meanwhile.
+   **Follow-up, same day: recovery CONFIRMED and a contention LEAD recorded.** The restarted
+   listener reported 6 pending at ready, claimed the oldest 0.95s later, drained the whole
+   backlog in order, and ran clean (7+ signals, three full worker turns, zero restarts) —
+   the durable ledger did exactly what it promises. The crash did NOT reproduce; the one
+   named environmental difference: instance 1's entire crash window coincided with heavy
+   concurrent Claude Code work in the SAME project on the same box, and the claude bridge
+   shares the interactive session's Claude home and keychain/OAuth. That is a LEAD, not a
+   cause (the opencode/load lesson: nobody measured contention at the time, so nothing can
+   be compared). The stderr tail converts any future flap into a diagnosis; the reporter has
+   the foreground capture staged.
 2. **Server-side delivery verified INNOCENT** — the "missed" ask was created 43s AFTER the
    listener exhausted (delivery row enqueued same-instant by trigger, zero lag, never leased
    because nothing was alive to lease it; it remains queued and will deliver on next ready).
