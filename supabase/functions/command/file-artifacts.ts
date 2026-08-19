@@ -61,7 +61,7 @@ const FILE_NAME_RE = /^(?![.\s])[^/\\\u0000-\u001f]{1,255}$/;
 const ALLOWED_CONTENT_TYPE_RE =
   /^(text\/[a-z0-9.+-]+|application\/(pdf|json|x-yaml|yaml|zip|gzip|x-gzip|vnd\.openxmlformats-officedocument\.(wordprocessingml\.document|spreadsheetml\.sheet|presentationml\.presentation))|image\/(png|jpeg|gif|webp|svg\+xml))$/;
 const ALLOWED_EXTENSION_RE =
-  /\.(md|txt|csv|json|yaml|yml|pdf|docx|xlsx|pptx|png|jpg|jpeg|gif|webp|svg|zip|tar\.gz)$/i;
+  /\.(md|txt|csv|html?|json|yaml|yml|pdf|docx|xlsx|pptx|png|jpg|jpeg|gif|webp|svg|zip|tar\.gz)$/i;
 
 export interface FileVersionCreateCommand {
   kind: typeof FILE_VERSION_CREATE_KIND;

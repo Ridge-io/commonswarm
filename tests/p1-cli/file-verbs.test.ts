@@ -41,7 +41,11 @@ test("content types map the §5 allowlist and refuse everything else", () => {
     contentTypeForName("report.docx"),
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   );
+  // .html/.htm are allowed (Fastio feedback): served as attachment, never inline.
+  assert.equal(contentTypeForName("index.html"), "text/html");
+  assert.equal(contentTypeForName("page.HTM"), "text/html");
   // Closed default: an unknown extension returns null rather than a guess.
+  // A control that .exe stays refused proves the map did not go permissive.
   assert.equal(contentTypeForName("tool.exe"), null);
   assert.equal(contentTypeForName("no-extension"), null);
   assert.equal(contentTypeForName(""), null);

@@ -109,7 +109,7 @@ pending row back, not a second one.
 ## 5. Content types
 
 Allowlist, checked against the declared content type and the filename extension together:
-text (`text/*`, `.md`, `.txt`, `.csv`, `.json`, `.yaml`), documents (`.pdf`, `.docx`,
+text (`text/*`, `.md`, `.txt`, `.csv`, `.html`, `.htm`, `.json`, `.yaml`), documents (`.pdf`, `.docx`,
 `.xlsx`, `.pptx`), images (`.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.svg`), archives
 (`.zip`, `.tar.gz`). Everything else — executables, scripts, dylibs, unknown binaries — is
 refused with the list.
@@ -118,7 +118,7 @@ Two supporting rules:
 
 - Signed download URLs always serve `Content-Disposition: attachment` with the content type
   recorded at commit. Nothing is ever served inline from our domain, which is what makes
-  `.svg` (scriptable) acceptable on the list.
+  `.svg` (scriptable) and `.html` acceptable on the list — never rendered, only downloaded.
 - ★R8 — v1 does **no content sniffing**, and the honesty has to reach the right audience:
   `attachment` disposition protects a BROWSER, and the primary consumers here are AGENTS
   reading bytes, whom it protects not at all. So the spec states plainly: the recorded type

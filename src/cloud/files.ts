@@ -37,6 +37,12 @@ const CONTENT_TYPES: ReadonlyMap<string, string> = new Map([
   [".md", "text/markdown"],
   [".txt", "text/plain"],
   [".csv", "text/csv"],
+  // .html/.htm: a web/marketing team's deliverables (Fastio feedback 2026-08-19). Every
+  // download is served Content-Disposition: attachment (§5), never rendered inline, so HTML
+  // is no more dangerous than the .svg already permitted — the spec treats all downloads as
+  // untrusted attachments the consumer must not execute.
+  [".html", "text/html"],
+  [".htm", "text/html"],
   [".json", "application/json"],
   [".yaml", "application/yaml"],
   [".yml", "application/yaml"],

@@ -381,6 +381,32 @@ test("F1 happy path: create -> PUT -> commit -> download -> list -> tombstone ->
   assert.ok(Number(audits[0]?.n) >= 1, "accepted create is audited with the agent actor");
 });
 
+test("F9 .html is accepted (Fastio feedback); a genuinely-unsafe extension is still refused", async () => {
+  // A web/marketing team's deliverables are HTML. Downloads are served
+  // Content-Disposition: attachment, so .html is no worse than the .svg already allowed.
+  const html = await postCommand(f.agentToken, {
+    kind: "file_version_create",
+    file_id: randomUUID(),
+    version_id: randomUUID(),
+    name: "index.html",
+    declared_size_bytes: 500,
+    content_type: "text/html",
+  }, f.workspaceA);
+  assert.equal(html.status, 200, JSON.stringify(html.body));
+
+  // Control: the allowlist did not go permissive - an executable is still refused,
+  // so F9 proves the gate accepts .html, not that it accepts everything.
+  const exe = await postCommand(f.agentToken, {
+    kind: "file_version_create",
+    file_id: randomUUID(),
+    version_id: randomUUID(),
+    name: "tool.exe",
+    declared_size_bytes: 500,
+    content_type: "application/x-msdownload",
+  }, f.workspaceA);
+  assert.notEqual(exe.status, 200, "an .exe must not be accepted");
+});
+
 test("F5 current_version follows COMMIT, not create: a pending v2 never hides live v1", async () => {
   const fileId = randomUUID();
   const v1 = randomUUID();
