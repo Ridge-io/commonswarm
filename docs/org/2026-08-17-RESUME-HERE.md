@@ -168,3 +168,19 @@ docs/evidence/2026-08-18-file-artifacts-s6/README.md. Also landed: declare_agent
 Open follow-ups: the operator-approved TTL-picker lane (24h/7d/30d, option A), file-artifacts
 v2 items from field input (fetch-as-text, docx rendition, server-side diff), and the
 D-090 listen-status stale-pid fix.
+
+## 2026-08-19, second lane — expiration picker and the model-identity loop, all live
+
+- **Key-lifetime picker LIVE** (v0.1.21): 24h default / 7d / 30d on the connect page; cap 30d
+  at all four sites (= the renewal horizon; "never" refused and the why is at the constant);
+  verified on prod both directions.
+- **Model identity closed-loop LIVE**: listeners self-declare on ready (proven on prod —
+  a fresh 0.1.21 listener set `claude (claude-agent-acp 0.64.2)` with zero human input), and
+  humans edit any manageable agent's model in the header dialog (set_agent_model,
+  revoke-convention gate; the arms' one convergent finding — the unchanged-value fast path
+  answering before the ownership gate — fixed and pinned by S2b). Verified by a live
+  click-through: edit → save → the rail label updated without reload.
+- Two instrument notes worth keeping: check:edge blocked a broken merge the pure suites
+  could not see (an uncommitted worktree fix), and the p1-server file seam had a real race —
+  the readiness probe was satisfied by the PREVIOUS file's zombie serve; both new files now
+  wait for their own boot banner first.
