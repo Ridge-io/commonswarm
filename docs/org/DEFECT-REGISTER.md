@@ -5529,6 +5529,17 @@ first real harvest.
    agent token on stdin the way other verbs do and the onboarding teaches the worker to use it;
    (c) file put's success copy names which principals can actually retrieve and how. Needs a
    deliberate choice; do not ship a quick hack that leaks a credential into a worker cwd.
+
+   **CORRECTED 2026-08-19: the capability is NOT broken — this is an ergonomics/onboarding gap.**
+   Measured: MrCswarmLead (a DIFFERENT member than the uploader) retrieved the 47.8 KB plan file
+   cross-member with `cswarm file get --agent-token-stdin` and its own agent credential — success.
+   claude-gabe's "not logged in" was its WORKER running BARE `cswarm file get`, which looks for a
+   saved human login the worker doesn't have. The credential form works today; the worker just
+   wasn't told to use it. So D-092 narrows: the onboarding prompt's receive section should teach
+   the worker that file get/put take `--agent-token-stdin` with the same credential the listener
+   uses (the download half of the handoff), and ideally the listener makes the credential
+   available to the worker so it is automatic. The earlier framing ("cross-member delivery is a
+   design gap in the feature") was wrong — do not chase a phantom broken capability.
 2. **Heavyweight-ask routing** (MrAnalyst, idea). A detached fresh-context worker autonomously
    answered a full plan re-review addressed to it — "went well, but partly by luck" (the worker
    cwd happened to hold the operator's session notes). The 10m turn budget makes big turns
