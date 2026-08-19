@@ -4850,6 +4850,23 @@ import "../../styles/tokens.css";
     border-block-start: 1px solid color-mix(in oklab, var(--border) 72%, transparent);
   }
 
+  /* The roster fills the rail's leftover height instead of sitting content-tall
+     with dead space beneath it: the participants section grows, its list takes
+     the slack and scrolls when the roster is long, and the ownership note stays
+     pinned at the bottom. min-block-size:0 lets the inner list actually scroll
+     inside a flex/grid parent rather than overflow the rail. */
+  .dashboard__rail-section--participants {
+    flex: 1 1 auto;
+    min-block-size: 0;
+    grid-template-rows: auto 1fr auto;
+  }
+
+  .dashboard__rail-section--participants .dashboard__sidebar-agent-list {
+    min-block-size: 0;
+    overflow-y: auto;
+    align-content: start;
+  }
+
   .dashboard__rail-details-body {
     display: grid;
     gap: var(--s-3);
@@ -5310,9 +5327,10 @@ import "../../styles/tokens.css";
   .dashboard__rail-foot {
     display: grid;
     gap: var(--s-3);
-    /* The agents section used to flex:1 the footer to the bottom; with the roster moved
-       to the header dialog, the footer's own margin does the pinning now. */
-    margin-block-start: auto;
+    /* No margin-block-start:auto here on purpose. The owner-grouped roster is back in the
+       sidebar (dashboard__rail-section--participants, flex:1), and that section growing is
+       what pushes the footer down — an auto margin would win over its flex-grow and eat the
+       slack, leaving the roster content-tall with dead space beneath it. */
     padding: var(--s-3) var(--s-2) 0;
     border-block-start: 1px solid var(--border);
     color: var(--text-muted);
