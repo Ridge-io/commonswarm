@@ -151,3 +151,28 @@ test("separators inside a token do not defeat the redactor", () => {
   }
 });
 
+test("a single unterminated line too long for the ring is dropped WHOLE, not truncated-and-kept", () => {
+  /* STRUCTURAL (final round): when eviction cuts a line and there is no newline
+   * in the retained region, the entire partial line is dropped. This closes
+   * every straddle-at-the-cut leak regardless of which separator sits at the
+   * byte boundary — no partial line survives to be redacted. */
+  const stream = new PassThrough();
+  const ring = attachStderrTailRing(stream);
+  const token = `swm_agt_${"Q".repeat(40)}`;
+  // One line, no newline anywhere, longer than the 4096-byte ring: the cut
+  // lands with no newline boundary, so the whole partial line is dropped.
+  stream.write(`${"X".repeat(6_000)}${token}${"Y".repeat(200)}`);
+  const tail = ring.read();
+  assert.equal(tail, "", "a bisected unterminated line must be dropped entirely");
+
+  // Positive control: the SAME token in a line UNDER the ring cap (no eviction)
+  // is kept, with the token redacted — proving the emptiness above is caused by
+  // eviction, not by a rule that always empties single lines.
+  const small = new PassThrough();
+  const smallRing = attachStderrTailRing(small);
+  small.write(`prefix ${token} suffix`);
+  const kept = smallRing.read();
+  assert.match(kept, /prefix .*suffix/, "an un-evicted line must be kept");
+  assert.doesNotMatch(kept, /swm_/i, "the token in a kept line is still redacted");
+});
+

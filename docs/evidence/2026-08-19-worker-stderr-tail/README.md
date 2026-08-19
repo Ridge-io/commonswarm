@@ -85,11 +85,11 @@ governs every ACP request including worker prompt turns.
 
 All on this branch's tree, macOS, Node 24:
 
-| gate | result (after both review rounds below) |
+| gate | result (after all three review rounds below) |
 |---|---|
 | `npm run build` | clean |
-| `npm test` | 571 pass, 0 fail (548 before this lane; 562 / 568 at the two prior commits) |
-| `npm run test:p1-cli` | 275 pass, 0 fail (272 before; 273 / 274 at the two prior commits) |
+| `npm test` | 574 pass, 0 fail (548 before this lane; 562 / 568 / 571 at the three prior commits) |
+| `npm run test:p1-cli` | 275 pass, 0 fail (272 before; 273 / 274 / 275 at the prior commits) |
 | `npm run check:tests` | clean |
 
 New tests and where they run:
@@ -235,6 +235,54 @@ on the happy path, but found two holes. Both are fixed.
    hit (600000 when the real budget was 5m is a wrong bound). The supervisor reads it
    through a `getTurnBudgetMs()` getter the CLI backs with the last-applied clamped value.
    The control test pins that a clamped 300000 (not the 600000 default) reaches the event.
+
+## Verification round 3 (same day) — final round, three changes
+
+The third review closed the resolver path and confirmed the redactor/clamp on the happy path,
+and named three remaining items. All three are fixed; the lane lands after this.
+
+1. **The second dead-credential path: slow worker respawn** (P1, both arms). The budget
+   resolve/defer guarded the resolver call site, but each model resolved the budget BEFORE
+   `ensureWorker`. A worker death forces a respawn on the next turn, and a slow respawn could
+   elapse past the credential's expiry between the resolve and the prompt — so the turn ran on
+   a now-dead credential with a stale budget. Fixed structurally: a single shared gate
+   `resolveBudgetAndPrompt(session, prompt, budget)` (in `src/listener/types.ts`) resolves-or-
+   defers then prompts, and all four models now call it AFTER `ensureWorker`. So every path
+   that starts a worker turn resolves-or-defers against the credential live at turn start, and
+   a deferral throws before `session.prompt`. Factoring it into one function means a fifth
+   model cannot diverge. Test (claude model): worker 1 dies mid-prompt; the turn-2 respawn
+   advances a fake clock past expiry; the gate then defers (`renewal_unavailable`) and worker 2
+   is never prompted. Mutation: revert one model to resolve-before-`ensureWorker` → that test
+   fails (worker 2 is prompted on the dead credential).
+
+2. **Structural redactor fix — stop growing the class** (P1, both arms). The leak family is
+   "a token straddles the 4096-byte eviction cut and the separator at the cut is not in our
+   class." Killed structurally: on eviction with no newline in the retained region, the ENTIRE
+   partial line is dropped — a line too long to fit the ring without a newline is dropped
+   whole, never truncated-and-kept. No partial line survives to be redacted, so the posture no
+   longer depends on which separator sits at the boundary (U+200E/200F or any future one). The
+   greedy in-line redactor is kept for complete lines; the now-unused `SEPARATOR_RE` was
+   removed. The residual is documented honestly in the helper comment: this is a bounded LOCAL
+   0600 diagnostic log; redaction is defense-in-depth; a credential fragment separated by
+   whitespace from other text WITHIN a surviving complete line is redacted per token by the
+   greedy match, and the structural whole-line drop covers the eviction boundary — the class
+   plus the line-drop is the complete posture, and no more code points are added. Test: a
+   single unterminated line longer than the ring, containing a token, drops to empty, with a
+   positive control (the same token under the ring cap is kept and redacted) proving the
+   emptiness is caused by eviction. Mutation: keep the partial suffix instead of dropping →
+   that test fails.
+
+3. **Corrected the "never terminal" overclaim** (documentation; behavior was already correct).
+   The prior comment implied deferral is retried forever. It is not: deferral is recoverable
+   across TRANSIENT renewal failures (durable redelivery), but after bounded prompt attempts
+   exhaust (`LISTENER_MAX_PROMPT_ATTEMPTS`) a truly-unrenewable ask goes terminal (failed +
+   acked) — correct, an ask that can never obtain a live credential must stop, not loop. The
+   comment on `ListenerRenewalUnavailableError` now says exactly that. Confirmed the terminal
+   record carries the honest code: `failureCode()` derives it from the error's `.name`
+   (`renewal_unavailable`), never `acptimeouterror`. Test (engine): a persistently-unrenewable
+   ask returns retry_pending first (recoverable), then, after bounded retries, terminal
+   `failed` with `failureCode: "renewal_unavailable"` (asserted not-equal to acptimeouterror),
+   and the persisted record matches.
 
 ## Not established
 

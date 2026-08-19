@@ -486,3 +486,80 @@ test("a resolver that defers (throws) is not caught by the model and never reach
   await adapter.close();
 });
 
+test("a worker death + slow respawn with an expired credential defers, never prompting on the dead credential", async () => {
+  /* Item 1 (final round): the budget gate must run AFTER the respawn, not
+   * before it. Turn 1's worker dies mid-prompt (AcpChildExitError), so turn 2
+   * respawns. The respawn is SLOW — it advances the clock past the credential's
+   * expiry — so a gate that resolved BEFORE the respawn would prompt turn 2 on
+   * a now-dead credential. With the gate after ensureWorker, turn 2 defers. */
+  const cwd = await mkdtemp(join(tmpdir(), "cswarm-claude-worker-"));
+  let now = 0;
+  const expiry = 1_000;
+  const marginAnalog = 60; // defer once within this of expiry
+  let opens = 0;
+  const promptCallsPerWorker: number[] = [];
+  const openSession: OpenClaudeSession = async (options) => {
+    opens += 1;
+    const workerIndex = opens;
+    // The respawn (2nd open) is slow: it advances the clock past expiry.
+    if (opens >= 2) now = expiry + 1;
+    promptCallsPerWorker[workerIndex - 1] = 0;
+    const session = {
+      async enablePromptsAfterCanary() {
+        await options.permissionCallback?.(REQUEST);
+      },
+      async prompt(text: string) {
+        promptCallsPerWorker[workerIndex - 1] += 1;
+        if (workerIndex === 1) {
+          // Worker 1 dies mid-turn; the model nulls it, forcing a respawn.
+          throw new AcpChildExitError(1, null);
+        }
+        return { message: `reply:${text}`, stopReason: "end_turn" as const, updates: [] };
+      },
+      cancel() {},
+    };
+    return {
+      session,
+      child: {},
+      executable: "/opt/claude-agent-acp",
+      args: [],
+      env: {},
+      async close() {},
+    } as unknown as import("../src/host/claude.js").ClaudeAcpHandle;
+  };
+  const promptTimeoutMs = async () => {
+    // The same shape as the real resolver: defer when the credential is inside
+    // its rotation margin / expired at the moment the turn actually starts.
+    if (now >= expiry - marginAnalog) {
+      throw new ListenerRenewalUnavailableError("credential inside margin / expired at turn start");
+    }
+    return 30_000;
+  };
+  const adapter = new ClaudeListenerModel({
+    cwd,
+    permissionMode: "allow",
+    promptTimeoutMs,
+    open: openSession,
+  });
+
+  // Turn 1: worker opens (now=0), gate resolves a live budget, prompt dies.
+  await assert.rejects(
+    adapter.prompt(SIGNAL, "worker", "one"),
+    (error) => error instanceof AcpChildExitError,
+  );
+  assert.equal(promptCallsPerWorker[0], 1, "worker 1 was prompted, then died");
+
+  // Turn 2: ensureWorker respawns worker 2, which advances the clock past
+  // expiry; ONLY THEN does the gate resolve -> it must defer, not prompt.
+  await assert.rejects(
+    adapter.prompt(SIGNAL, "worker", "two"),
+    (error) => error instanceof ListenerRenewalUnavailableError,
+  );
+  assert.equal(
+    promptCallsPerWorker[1],
+    0,
+    "worker 2 must NOT be prompted on the now-dead credential",
+  );
+  await adapter.close();
+});
+

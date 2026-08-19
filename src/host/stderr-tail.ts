@@ -44,15 +44,25 @@ const CONTROL_AND_SEPARATOR_STRIP_RE = new RegExp(
  * appendListenerEvent throws on these prefixes, and the supervisor's write
  * chain swallows that throw — so an unredacted token would silently drop the
  * one failure line the tail exists to enrich (the supervisor.ts write-chain
- * scar). The terminator is the SHARED separator class (not the token's own
+ * scar). The terminator is the shared separator class (not the token's own
  * charset), so an unexpected character inside a leaked secret cannot split it
- * into a redacted head and a surviving tail. */
+ * into a redacted head and a surviving tail.
+ *
+ * POSTURE (bounded, and deliberately not grown further): this is a LOCAL 0600
+ * diagnostic log, and redaction is defense-in-depth, not the containment
+ * boundary. Two mechanisms cover the two places a secret can appear, and
+ * together they are the whole posture — do not keep adding code points:
+ *   1. WITHIN a surviving complete line, a credential fragment separated by
+ *      whitespace from other text is redacted per token by this greedy match;
+ *      the strip first deletes exotic separators so a laced token reassembles.
+ *   2. AT the eviction boundary, the structural whole-line drop in read()
+ *      removes any bisected partial line before redaction ever runs, so no
+ *      straddle-at-the-cut fragment reaches this regex regardless of the
+ *      separator at the byte boundary. */
 const CREDENTIAL_PREFIX_RE = new RegExp(
   `swm_(?:agt|inv|cap)_[^${SEPARATOR_CLASS_SOURCE}]*`,
   "gi",
 );
-/* The same shared class, non-global, for the eviction-boundary search below. */
-const SEPARATOR_RE = new RegExp(`[${SEPARATOR_CLASS_SOURCE}]`);
 
 export interface StderrTailRing {
   /** Sanitized tail (last TAIL_MAX_CHARS chars) of what the child wrote. */
@@ -111,19 +121,17 @@ export function attachStderrTailRing(stderr: Readable): StderrTailRing {
     read(): string {
       let text = Buffer.concat(chunks).toString("utf8");
       if (evicted) {
-        /* The byte eviction above can bisect a line — and with it a leaked
-         * credential, leaving a suffix the redactor's prefix match cannot
-         * recognize. So a truncated first line is never kept: drop through
-         * the first newline, or the first whitespace when the retained bytes
-         * are a single line, or everything when there is no boundary at all.
-         * A partial first line is noise; a partial secret is a leak. */
+        /* STRUCTURAL: the byte eviction can bisect the first retained line —
+         * and with it a leaked credential — mid-token, leaving a suffix the
+         * redactor's prefix match cannot recognize. A partial first line is
+         * NEVER kept: drop through the first newline; if the whole retained
+         * region is one unterminated line, drop it ENTIRELY. This closes every
+         * straddle-at-the-cut case regardless of which separator sits at the
+         * byte boundary — no partial line survives to be redacted — so the
+         * posture does not depend on enumerating separators. A partial first
+         * line is noise; a partial secret is a leak. */
         const newline = text.indexOf("\n");
-        if (newline !== -1) {
-          text = text.slice(newline + 1);
-        } else {
-          const boundary = text.search(SEPARATOR_RE);
-          text = boundary === -1 ? "" : text.slice(boundary + 1);
-        }
+        text = newline === -1 ? "" : text.slice(newline + 1);
       }
       return sanitizeStderrTail(text);
     },

@@ -1158,3 +1158,46 @@ test("a deferred turn (credential unrenewable) is retry_pending with the renewal
   assert.equal(modelCalls, 1, "the resolver ran; a real worker prompt did not follow");
 });
 
+test("a persistently-unrenewable ask defers across transient failures, then goes terminal after bounded retries with the honest code", async () => {
+  /* Item 3 (final round): deferral is recoverable across TRANSIENT renewal
+   * failures, but not forever. After bounded prompt attempts exhaust, a
+   * truly-unrenewable ask goes terminal (failed + acked) — correct, an ask
+   * that can never get a live credential must stop, not loop. The terminal
+   * record must carry the HONEST code (renewal_unavailable), never
+   * acptimeouterror or a lie. */
+  const store = new MemoryStore();
+  const engine = new ListenerEngine({
+    store,
+    now: () => Date.parse("2026-07-30T01:00:00.000Z"),
+    maxPromptAttempts: 2,
+    model: model(async () => {
+      throw new ListenerRenewalUnavailableError("credential cannot be renewed");
+    }),
+    poster: poster(async () => ({ signalId: REPLY_ID })),
+  });
+  const ask = signal("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaad002");
+
+  // Early deliveries defer (recoverable): the ask survives for redelivery.
+  const first = await engine.process(ask);
+  assert.equal(first.status, "retry_pending");
+  assert.equal(
+    first.status === "retry_pending" && first.record.failureCode,
+    "renewal_unavailable",
+  );
+
+  // Bounded retries exhaust -> terminal failed, with the honest code.
+  const second = await engine.process(ask);
+  assert.equal(second.status, "failed");
+  assert.equal(
+    second.status === "failed" && second.record.failureCode,
+    "renewal_unavailable",
+  );
+  assert.notEqual(
+    second.status === "failed" && second.record.failureCode,
+    "acptimeouterror",
+  );
+  const persisted = await store.read(ask.id);
+  assert.equal(persisted?.state, "failed");
+  assert.equal(persisted?.failureCode, "renewal_unavailable");
+});
+

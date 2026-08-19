@@ -14,7 +14,10 @@ import {
   type PermissionDecision,
   type PermissionRequest,
 } from "../host/types.js";
-import { LISTENER_PROMPT_TIMEOUT_MS } from "./types.js";
+import {
+  LISTENER_PROMPT_TIMEOUT_MS,
+  resolveBudgetAndPrompt,
+} from "./types.js";
 import type {
   ListenerModel,
   ListenerPermissionMode,
@@ -86,15 +89,15 @@ export class GrokListenerModel implements ListenerModel {
     prompt: string,
   ): Promise<ListenerPromptResult> {
     if (this.closed) throw new Error("listener model is closed");
-    // Resolve the turn budget BEFORE touching the worker: the resolver may
-    // renew the credential and, if it cannot prove a budget that outlasts the
-    // turn, throw ListenerRenewalUnavailableError to defer. No worker prompt
-    // must be attempted on a deferral.
-    const budget = this.options.promptTimeoutMs ?? LISTENER_PROMPT_TIMEOUT_MS;
-    const timeoutMs = typeof budget === "number" ? budget : await budget();
+    // Respawn a dead worker FIRST; the budget gate runs AFTER, inside
+    // resolveBudgetAndPrompt, so it resolves-or-defers against the credential
+    // live at turn start rather than before a slow respawn. A deferral throws
+    // before session.prompt, so no turn begins on a credential that cannot
+    // outlast it.
     const worker = await this.ensureWorker();
+    const budget = this.options.promptTimeoutMs ?? LISTENER_PROMPT_TIMEOUT_MS;
     try {
-      return await worker.session.prompt(prompt, { timeoutMs });
+      return await resolveBudgetAndPrompt(worker.session, prompt, budget);
     } catch (error) {
       if (error instanceof AcpChildExitError) {
         try {
