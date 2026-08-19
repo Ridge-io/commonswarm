@@ -1166,7 +1166,7 @@ describe('declare_agent_model', () => {
     assert.equal(world.state()?.principals['principal-bob']?.model, null);
   });
 
-  it('a HUMAN credential is refused: model is set at create, not declared by proxy', () => {
+  it('a HUMAN credential is refused here: humans use set_agent_model instead', () => {
     const world = seeded();
     const decision = world.apply(
       { kind: 'declare_agent_model', model: 'claude' },
@@ -1207,5 +1207,113 @@ describe('declare_agent_model', () => {
     );
     assert.equal(decision.ok, false);
     if (!decision.ok) assert.equal(decision.reason, 'principal_revoked');
+  });
+});
+
+describe('set_agent_model', () => {
+  /* The human mirror of declare: the gate is revoke_agent_principal's
+   * (owner/admin any principal, member only their own), and the bounds are the
+   * SAME normalizedModel helper — one over-bound case proves the sharing. */
+  function seeded() {
+    const world = makeWorld();
+    world.create();               // alice owns ws-1
+    world.join('bob');            // plain member
+    world.join('carol');          // plain member
+    world.createPrincipal('bob'); // principal-bob owned by bob
+    return world;
+  }
+
+  it('the workspace owner relabels another member\'s agent, attributed to the human', () => {
+    const world = seeded();
+    const decision = world.apply(
+      { kind: 'set_agent_model', principal_id: 'principal-bob', model: '  gpt-5  ' },
+      { actor: human('alice') },
+    );
+    assert.equal(decision.ok, true);
+    assert.equal(world.state()?.principals['principal-bob']?.model, 'gpt-5');
+    if (decision.ok) {
+      const envs = decision.events;
+      assert.equal(envs[0]?.type, 'AgentModelDeclared');
+      // Attribution: a human set carries the user and NO agent principal.
+      assert.equal(envs[0]?.actor_user, 'alice');
+      assert.equal(envs[0]?.actor_agent_principal, null);
+    }
+  });
+
+  it('a member relabels their OWN agent; another plain member is refused', () => {
+    const world = seeded();
+    assert.equal(
+      world.apply(
+        { kind: 'set_agent_model', principal_id: 'principal-bob', model: 'claude' },
+        { actor: human('bob') },
+      ).ok,
+      true,
+    );
+    const decision = world.apply(
+      { kind: 'set_agent_model', principal_id: 'principal-bob', model: 'gemini' },
+      { actor: human('carol') },
+    );
+    assert.equal(decision.ok, false);
+    if (!decision.ok) assert.equal(decision.reason, 'principal_not_owned');
+    assert.equal(world.state()?.principals['principal-bob']?.model, 'claude');
+  });
+
+  it('an AGENT credential is refused: an agent may only describe itself', () => {
+    const world = seeded();
+    const decision = world.apply(
+      { kind: 'set_agent_model', principal_id: 'principal-bob', model: 'claude' },
+      {
+        actor: agent('bob', 'principal-bob'),
+        credential_kind: 'agent',
+        presenting_token_id: 'token-bob',
+      },
+    );
+    assert.equal(decision.ok, false);
+    if (!decision.ok) {
+      assert.equal(decision.class, 'authz');
+      assert.equal(decision.reason, 'credential_kind_forbidden');
+    }
+  });
+
+  it('bounds are the shared helper: over-bound and revoked-target refused, empty clears', () => {
+    const world = seeded();
+    assert.equal(
+      world.apply(
+        { kind: 'set_agent_model', principal_id: 'principal-bob', model: 'x'.repeat(121) },
+        { actor: human('alice') },
+      ).ok,
+      false,
+    );
+    assert.equal(
+      world.apply(
+        { kind: 'set_agent_model', principal_id: 'principal-bob', model: '   ' },
+        { actor: human('alice') },
+      ).ok,
+      true,
+    );
+    assert.equal(world.state()?.principals['principal-bob']?.model, null);
+    assert.equal(
+      world.apply(
+        { kind: 'revoke_agent_principal', principal_id: 'principal-bob' },
+        { actor: human('bob') },
+      ).ok,
+      true,
+    );
+    const afterRevoke = world.apply(
+      { kind: 'set_agent_model', principal_id: 'principal-bob', model: 'claude' },
+      { actor: human('alice') },
+    );
+    assert.equal(afterRevoke.ok, false);
+    if (!afterRevoke.ok) assert.equal(afterRevoke.reason, 'principal_revoked');
+  });
+
+  it('a missing principal is refused', () => {
+    const world = seeded();
+    const decision = world.apply(
+      { kind: 'set_agent_model', principal_id: 'principal-ghost', model: 'claude' },
+      { actor: human('alice') },
+    );
+    assert.equal(decision.ok, false);
+    if (!decision.ok) assert.equal(decision.reason, 'principal_not_found');
   });
 });

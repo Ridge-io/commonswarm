@@ -736,6 +736,7 @@ var HUMAN_ONLY_COMMANDS = /* @__PURE__ */ new Set([
   "change_role",
   "create_agent_principal",
   "revoke_agent_principal",
+  "set_agent_model",
   "mint_agent_token"
 ]);
 function isAgentScopeDenylisted(scope) {
@@ -845,6 +846,20 @@ function liveMember(state, user_id) {
 }
 function callerUser(ctx) {
   return ctx.actor.user;
+}
+function normalizedModel(value) {
+  if (value === null) return { ok: true, model: null };
+  if (typeof value !== "string") {
+    return { ok: false, message: "model must be a string or null" };
+  }
+  const trimmed = value.trim();
+  if (trimmed.length > 120) {
+    return { ok: false, message: "model must be at most 120 characters" };
+  }
+  if (/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/.test(trimmed)) {
+    return { ok: false, message: "model must not contain control characters" };
+  }
+  return { ok: true, model: trimmed.length === 0 ? null : trimmed };
 }
 function ownerOrAdmin(role) {
   return role === "owner" || role === "admin";
@@ -1124,24 +1139,37 @@ function decideWorkspace(state, cmd, ctx) {
       if (!declaring || declaring.revoked_at !== null) {
         return domain2(ctx, cmd.kind, "principal_revoked", "the presenting principal is missing or revoked");
       }
-      let model = null;
-      if (cmd.model !== null) {
-        if (typeof cmd.model !== "string") {
-          return domain2(ctx, cmd.kind, "model_invalid", "model must be a string or null");
-        }
-        const trimmed = cmd.model.trim();
-        if (trimmed.length > 120) {
-          return domain2(ctx, cmd.kind, "model_invalid", "model must be at most 120 characters");
-        }
-        if (/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/.test(trimmed)) {
-          return domain2(ctx, cmd.kind, "model_invalid", "model must not contain control characters");
-        }
-        model = trimmed.length === 0 ? null : trimmed;
+      const normalized = normalizedModel(cmd.model);
+      if (!normalized.ok) {
+        return domain2(ctx, cmd.kind, "model_invalid", normalized.message);
       }
       return accept2([
         env2(ctx, "AgentModelDeclared", {
           principal_id: declaring.principal_id,
-          model,
+          model: normalized.model,
+          declared_at: ctx.now
+        })
+      ]);
+    }
+    case "set_agent_model": {
+      const principal = state.principals[cmd.principal_id];
+      if (!principal) {
+        return domain2(ctx, cmd.kind, "principal_not_found", "agent principal does not exist");
+      }
+      if (principal.revoked_at !== null) {
+        return domain2(ctx, cmd.kind, "principal_revoked", "agent principal is revoked");
+      }
+      if (!ownerOrAdmin(actorRole) && principal.owner_user_id !== user_id) {
+        return domain2(ctx, cmd.kind, "principal_not_owned", "Member may set only their own principal's model");
+      }
+      const normalized = normalizedModel(cmd.model);
+      if (!normalized.ok) {
+        return domain2(ctx, cmd.kind, "model_invalid", normalized.message);
+      }
+      return accept2([
+        env2(ctx, "AgentModelDeclared", {
+          principal_id: principal.principal_id,
+          model: normalized.model,
           declared_at: ctx.now
         })
       ]);

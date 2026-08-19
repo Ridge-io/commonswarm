@@ -168,10 +168,13 @@ export interface AgentPrincipalRevoked {
 }
 
 /**
- * §2.12-adjacent self-description: the principal is always the PRESENTING
- * credential's own — the command carries no target field, so this event can
- * only ever describe its author. Model is descriptive identity, never an
- * authorization input (same rule as AgentPrincipalCreated.model).
+ * §2.12-adjacent model identity, written by two commands: declare_agent_model
+ * (agent self-description — no target field, the presenting principal is the
+ * subject) and set_agent_model (human relabeling under the agent-management
+ * gate). The envelope's actor_user / actor_agent_principal say WHICH: a
+ * self-declaration carries the agent principal, a human set carries the user
+ * and a null principal. Model is descriptive identity, never an authorization
+ * input (same rule as AgentPrincipalCreated.model).
  */
 export interface AgentModelDeclared {
   principal_id: string;

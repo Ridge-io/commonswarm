@@ -719,6 +719,47 @@ export async function revokeAgentPrincipal(
   }
 }
 
+/**
+ * Human relabeling of an agent's model identity (the mirror of the agent's own
+ * declare_agent_model). Empty or whitespace clears — the server normalizes to
+ * null and the rail shows the neutral glyph. Same gate as removal: owner/admin
+ * any agent, member their own.
+ */
+export async function setAgentModel(
+  session: Session,
+  commandId: string,
+  workspaceId: string,
+  principalId: string,
+  model: string | null,
+): Promise<void> {
+  const { status, body } = await postCommand(
+    session,
+    commandId,
+    { kind: "set_agent_model", principal_id: principalId, model },
+    { workspace_id: workspaceId, stream: { kind: "workspace" } },
+  );
+  if (status === 403) {
+    throw new Error(
+      "Your current project role cannot change this agent's model. CommonSwarm did not change anything.",
+    );
+  }
+  if (status === 429) {
+    throw new Error(
+      "Model changes are limited to a few per hour. Nothing was changed; try again later.",
+    );
+  }
+  if (status !== 200) {
+    throw new Error(
+      `Model change failed (HTTP ${status}). CommonSwarm did not confirm a change.`,
+    );
+  }
+  if (body.status !== "accepted") {
+    throw new Error(
+      `Model change was refused: ${String(body.reason ?? "required condition not met")}. The agent is unchanged.`,
+    );
+  }
+}
+
 export interface WorkspaceFile {
   fileId: string;
   name: string;

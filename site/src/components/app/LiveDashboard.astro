@@ -760,6 +760,7 @@ import "../../styles/tokens.css";
     signOut,
     removeWorkspaceMember,
     revokeAgentPrincipal,
+    setAgentModel,
     uuid,
     workspaceFiles,
     type Signal,
@@ -787,6 +788,7 @@ import "../../styles/tokens.css";
     renderSidebarParticipants,
     rosterAgentsFromRows,
   } from "../../lib/participant-rail";
+  import { buildAgentModelEditor } from "../../lib/agent-model-editor";
   import { renderFileList, type DisplayFile } from "../../lib/file-list";
 
   interface Workspace {
@@ -2108,6 +2110,59 @@ import "../../styles/tokens.css";
           }`;
         copy.append(name, state);
         row.append(avatar, copy);
+        /* Model is editable under the SAME gate as removal (owner/admin any
+           agent, member their own) — the human mirror of the agent's own
+           declare. The value is free text and lands in the DOM only as
+           textContent; the closed-default glyph mapper owns display. */
+        const mayEditModel = Boolean(
+          me &&
+          (
+            me.role === "owner" ||
+            me.role === "admin" ||
+            agent.ownerUserId === me.userId
+          ),
+        );
+        if (mayEditModel && !sampleMode) {
+          const editButton = document.createElement("button");
+          editButton.type = "button";
+          editButton.className = "dashboard__text-button";
+          editButton.textContent = "Edit model";
+          editButton.dataset.editModel = agent.principalId;
+          editButton.addEventListener("click", () => {
+            if (row.querySelector("[data-model-editor]")) return;
+            const editor = buildAgentModelEditor(document, {
+              agentName: agent.name,
+              currentModel: agent.model,
+              onCancel: () => editor.remove(),
+              onSave: async (model) => {
+                if (!session || !activeWorkspaceId) return;
+                try {
+                  await setAgentModel(
+                    session,
+                    uuid(),
+                    activeWorkspaceId,
+                    agent.principalId,
+                    model,
+                  );
+                  /* Same refresh path removal uses: re-open the workspace so
+                     the rail glyph, the dialog line, and local state all
+                     re-read the one authority instead of a hand-patched copy. */
+                  await openWorkspace(activeWorkspaceId);
+                } catch (error) {
+                  const errorTarget = one<HTMLElement>("[data-agent-error]");
+                  if (errorTarget) {
+                    errorTarget.textContent = readableError(error);
+                    errorTarget.hidden = false;
+                  }
+                }
+              },
+            });
+            editor.dataset.modelEditor = agent.principalId;
+            row.append(editor);
+            editor.querySelector("input")?.focus({ preventScroll: true });
+          });
+          row.append(editButton);
+        }
         // Owner/admin any principal; member only own. Clear on the connect
         // prompt only hides the secret — it never revokes.
         const mayRemove = Boolean(
@@ -4391,6 +4446,25 @@ import "../../styles/tokens.css";
   .dashboard__roster-button,
   .dashboard__text-button {
     font: inherit;
+  }
+
+  .dashboard__model-editor {
+    inline-size: 100%;
+    display: flex;
+    align-items: center;
+    gap: var(--s-2);
+    margin-block-start: var(--s-2);
+  }
+
+  .dashboard__model-editor input {
+    flex: 1;
+    min-inline-size: 0;
+    padding: var(--s-1) var(--s-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm, 6px);
+    background: var(--surface-2);
+    color: var(--text);
+    font-size: var(--t-xs);
   }
 
   .dashboard__button {

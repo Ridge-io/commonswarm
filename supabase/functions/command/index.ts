@@ -128,6 +128,8 @@ type ConnectCommand =
   // Self-description: no target field on purpose — the presenting agent
   // credential IS the subject, the same fence shape as renew_agent_token.
   | { kind: "declare_agent_model"; model: string | null }
+  // Human relabeling: the mirror of declare, gated like revoke_agent_principal.
+  | { kind: "set_agent_model"; principal_id: string; model: string | null }
   // §2.3 successor endpoint. It has no fields on purpose: the presented
   // predecessor credential IS the request, and accepting any target field here
   // is exactly the escalation the fence exists to stop.
@@ -252,6 +254,7 @@ type WorkspaceCommand =
   }
   | { kind: "revoke_agent_token"; token_id: string }
   | { kind: "declare_agent_model"; model: string | null }
+  | { kind: "set_agent_model"; principal_id: string; model: string | null }
   | {
     kind: "renew_agent_token";
     successor_token_id: string;
@@ -714,6 +717,7 @@ const COMMAND_KINDS = [
   "create_agent_principal",
   "mint_agent_token",
   "revoke_agent_principal",
+  "set_agent_model",
   "revoke_agent_token",
   "renew_agent_token",
   "declare_agent_model",
@@ -745,6 +749,7 @@ const CONNECT_COMMAND_KINDS = [
   "create_agent_principal",
   "mint_agent_token",
   "revoke_agent_principal",
+  "set_agent_model",
 ] as const;
 /**
  * Everything that travels the workspace-stream path. `renew_agent_token` routes
@@ -1580,6 +1585,43 @@ function validateCommand(
     return {
       ok: true,
       command: { kind: "declare_agent_model", model: normalized },
+    };
+  }
+
+  // Human relabeling: exactly a principal target and the model text. Same
+  // normalize-before-validate order as declare (its landing-round finding 1),
+  // and the SAME bounds — the reducer's shared normalizedModel is the source.
+  if (cmd.kind === "set_agent_model") {
+    if (
+      !exactKeys(cmd, ["kind", "principal_id", "model"]) ||
+      typeof cmd.principal_id !== "string" ||
+      !UUID_RE.test(cmd.principal_id) ||
+      (cmd.model !== null && typeof cmd.model !== "string")
+    ) {
+      return {
+        ok: false,
+        status: 400,
+        reason:
+          "set_agent_model takes principal_id and model (text or null) and nothing else",
+      };
+    }
+    const setModel = cmd.model === null ? null : cmd.model.trim();
+    const normalizedSet = setModel === "" ? null : setModel;
+    if (normalizedSet !== null && !boundedText(normalizedSet, 120)) {
+      return {
+        ok: false,
+        status: 400,
+        reason:
+          "set_agent_model takes principal_id and model (text or null) and nothing else",
+      };
+    }
+    return {
+      ok: true,
+      command: {
+        kind: "set_agent_model",
+        principal_id: cmd.principal_id.toLowerCase(),
+        model: normalizedSet,
+      },
     };
   }
 
@@ -2541,6 +2583,12 @@ async function prepareWorkspaceCommand(
     command = { kind: "revoke_agent_token", token_id: wire.token_id };
   } else if (wire.kind === "declare_agent_model") {
     command = { kind: "declare_agent_model", model: wire.model };
+  } else if (wire.kind === "set_agent_model") {
+    command = {
+      kind: "set_agent_model",
+      principal_id: wire.principal_id,
+      model: wire.model,
+    };
   } else if (wire.kind === RENEW_AGENT_TOKEN_KIND) {
     // Every field below is read from the authenticated predecessor row or from
     // the server. `wire` contributes nothing but its kind.
@@ -6513,6 +6561,66 @@ async function handleTransaction(
 
     await beforeStep(10);
     let outcome: FreshOutcome;
+    if (prepared !== null && prepared.command.kind === "set_agent_model") {
+      /* The human mirror of declare's two guards below: unchanged sets are
+       * accepted no-ops (no event/audit/ledger/charge), and changed values
+       * ride the same hourly bucket — keyed by the HUMAN user id, since that
+       * is the acting identity here. The reducer still owns authorization;
+       * these guards only stop append/charge churn. Compound-keyed read, the
+       * ★R1 shape: the row must belong to the routed workspace. */
+      const targetPrincipal = prepared.command.principal_id;
+      const currentRows = await tx<{ model: string | null }[]>`
+        SELECT model FROM swarm.agent_principals
+        WHERE principal_id = ${targetPrincipal}::uuid
+          AND workspace_id = ${route.workspaceId}::uuid
+          AND revoked_at IS NULL
+      `;
+      const currentRow = currentRows[0];
+      if (
+        currentRow !== undefined &&
+        (currentRow.model ?? null) === prepared.command.model
+      ) {
+        return {
+          status: 200,
+          body: {
+            status: "accepted",
+            ok: true,
+            event_ids: [],
+            events: [],
+            unchanged: true,
+            workspace_id: route.workspaceId,
+            min_client_version: minClientVersion,
+          },
+        };
+      }
+      const setBucket = await incrementRateBucket(
+        tx,
+        `model:set:user:${auth.actor.user}`,
+        MODEL_DECLARE_RATE_LIMIT_PER_HOUR,
+      );
+      if (setBucket.count > MODEL_DECLARE_RATE_LIMIT_PER_HOUR) {
+        const detail =
+          `model set limit ${MODEL_DECLARE_RATE_LIMIT_PER_HOUR} changes/hour; resets at ${setBucket.resetsAt}`;
+        await insertAudit(tx, {
+          auth,
+          commandKind: kind,
+          workspaceId: route.workspaceId,
+          streamId: route.streamId,
+          outcome: "rate_limit",
+          reason: "rate_limited",
+          detail,
+        });
+        return {
+          status: 429,
+          body: {
+            error: "rate_limited",
+            message: `Model change refused: ${detail}.`,
+            limit: MODEL_DECLARE_RATE_LIMIT_PER_HOUR,
+            resets_at: setBucket.resetsAt,
+          },
+        };
+      }
+    }
     if (prepared !== null && prepared.command.kind === "declare_agent_model") {
       /* Two abuse guards (landing-round finding 4), both BEFORE the reducer:
        *
