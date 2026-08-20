@@ -16,6 +16,13 @@ test("a 403 on reply yields an actionable hint naming the reply-to-someone-else 
   assert.match(String(hint), /addressed to you/);
   assert.match(String(hint), /your own ask/);
   assert.match(String(hint), /cswarm ask --to|cswarm note/);
+  /* The hint must NOT diagnose: the same 403 carries revoked/expired credentials and
+   * non-membership (inversion arm, 2026-08-19). It names the likely cause AND the
+   * authorization alternatives, so a reader whose real problem is a dead credential is
+   * not sent chasing the wrong fix. */
+  assert.match(String(hint), /revoked|expired/);
+  assert.match(String(hint), /member of this workspace/);
+  assert.match(String(hint), /most common cause/);
 });
 
 test("non-403 errors pass through untouched (no false hint)", () => {

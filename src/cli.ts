@@ -2627,12 +2627,19 @@ async function runPostSignal(
  * Added for the Fastio feedback 2026-08-19: the bare "HTTP 403 forbidden" gave no next step.
  */
 export function replyRefusalHint(error: unknown): string | null {
-  if (error instanceof CommandHttpError && error.status === 403) {
-    return "reply was refused: you can only reply to a signal that was addressed to you. " +
-      "You cannot reply to your own ask — reply to the other party's signal, or reach " +
-      "someone directly with cswarm ask --to <agent>, or post a channel-visible cswarm note.";
-  }
-  return null;
+  if (!(error instanceof CommandHttpError) || error.status !== 403) return null;
+  /* A 403 on this path is NOT always "you are not the addressee": the same status carries
+   * revoked credentials, non-membership, and other authorization refusals (the inversion arm
+   * on the Fastio fix round found the hint firing on all of them, which is misleading advice
+   * — the D-053 family one level up: right status, wrong CAUSE). So the hint is phrased as a
+   * possibility with the other causes named, never as a diagnosis. If the server ever
+   * distinguishes this refusal with its own code, branch on that code instead and drop the
+   * hedging — the hedge exists only because the status is ambiguous today. */
+  return "reply was refused (403). The most common cause is that the signal was not addressed " +
+    "to you — you cannot reply to your own ask; reply to the other party's signal, reach " +
+    "someone directly with cswarm ask --to <agent>, or post a channel-visible cswarm note. " +
+    "If you did receive that signal, the refusal is an authorization one instead: the " +
+    "credential may be revoked or expired, or it may not be a member of this workspace.";
 }
 
 async function runReply(args: Arguments): Promise<void> {
