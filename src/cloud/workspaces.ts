@@ -313,34 +313,31 @@ export function cloudWorkspaceDirectory(
           fetcher,
         ),
       ]);
-      const names = new Map<string, { name: string; archived: boolean }>();
-      for (const row of workspaceRows) {
+      const roles = new Map<string, WorkspaceSummary["role"]>();
+      for (const row of membershipRows) {
         const workspaceId = checkedUuid(row.workspace_id, "workspace_id");
+        roles.set(workspaceId, checkedRole(row.role));
+      }
+      const result = workspaceRows.map((row): WorkspaceSummary => {
+        const workspaceId = checkedUuid(row.workspace_id, "workspace_id");
+        const role = roles.get(workspaceId);
+        if (!role) {
+          throw new Error(
+            "workspace read omitted the current user's live membership",
+          );
+        }
         const archivedAt = checkedNullableTimestamp(
           row.archived_at,
           "archived_at",
         );
-        names.set(workspaceId, {
+        return {
+          workspace_id: workspaceId,
           name: sanitizeDisplayLabel(
             checkedString(row.name, "workspace name"),
             "Unnamed workspace",
           ),
+          role,
           archived: archivedAt !== null,
-        });
-      }
-      const result = membershipRows.map((row): WorkspaceSummary => {
-        const workspaceId = checkedUuid(row.workspace_id, "workspace_id");
-        const project = names.get(workspaceId);
-        if (!project) {
-          throw new Error(
-            "workspace read omitted a workspace for a live membership",
-          );
-        }
-        return {
-          workspace_id: workspaceId,
-          name: project.name,
-          role: checkedRole(row.role),
-          archived: project.archived,
         };
       });
       return sortWorkspaces(result);

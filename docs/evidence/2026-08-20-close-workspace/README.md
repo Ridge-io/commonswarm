@@ -8,7 +8,10 @@
 - It emits `WorkspaceArchived` with the server decision timestamp.
 - It sets only `swarm.workspaces.archived_at` to that event timestamp.
 - It writes the normal accepted or refused command audit row.
-- The existing read and route filters then hide the workspace from everyone.
+- ~~The existing read and route filters then hide the workspace from everyone.~~
+  **DEAD:** the route filter existed, but the applied `swarm_read.workspaces`
+  view still returned archived rows. Migration
+  `20260820000001_hide_archived_workspaces.sql` adds the missing view filter.
 - Because the free-tier count includes only rows with `archived_at IS NULL`, closing frees one live-workspace slot.
 
 ## What it does not do
@@ -21,6 +24,33 @@
 
 The reducer refuses a second archive as `workspace_already_archived`. In normal HTTP use, the archived workspace fails route resolution first and returns the same unavailable response as any workspace the caller cannot address.
 
+## 2026-08-20 fix round
+
+Root cause: `20260724000002_status_workspaces.sql` gated the workspace view by
+membership only. It selected `archived_at` but did not filter it, so PostgREST
+still listed closed workspaces.
+
+The new migration replaces `swarm_read.workspaces` with the same membership
+gate plus `w.archived_at IS NULL`. It keeps `archived_at` in the projection for
+released CLI and web clients that still select and null-filter that column.
+
+Consumers checked:
+
+- `src/cloud/workspaces.ts`: the `cswarm workspaces`, `use`, and status
+  selection path now lets the filtered workspace view drive the join. An
+  archived membership left in `swarm_read.memberships` is ignored instead of
+  causing a malformed-read error.
+- `site/src/lib/commonswarm.ts` and
+  `site/src/components/app/LiveDashboard.astro`: both already add
+  `archived_at IS NULL`; the view filter makes that redundant but does not
+  change the result.
+- `supabase/functions/command/index.ts`: route resolution already rejects
+  archived workspaces. Support restore reads and updates the durable
+  `swarm.workspaces` row directly; no restore path uses the filtered view.
+- The free-tier live count reads `swarm.workspaces` directly and keeps its own
+  `archived_at IS NULL` predicate. The view migration does not affect or
+  double-apply that count.
+
 ## Reached coverage
 
 - `tests/protocol-workspace.test.ts` — reached by `npm test`.
@@ -29,6 +59,23 @@ The reducer refuses a second archive as `workspace_already_archived`. In normal 
 - `site/src/components/app/workspace-settings.observer.test.ts` and `site/src/components/app/workspace-entry.observer.test.ts` — reached by `cd site && npm test` through the recursive component observer glob.
 
 ## Verification in this worktree
+
+Fix-round results:
+
+- Focused `tests/p1-cli/workspaces.test.ts`: 13 passed, 0 failed.
+- `npm test`: 557 passed, 26 failed; all 26 are the existing local-socket
+  `EPERM` sandbox failures.
+- `npm run test:p1-cli`: 252 passed, 26 failed; the same existing local-socket
+  `EPERM` group failed.
+- `npm run check:tests`: passed with 0 diagnostics.
+- `npm run check:edge`: all 3 named edge entrypoints passed.
+- `cd site && npm run build`: passed; 8 static pages built.
+- `cd site && npm test`: 164 passed, 5 failed; 4 are the existing local-socket
+  `EPERM` failures and 1 is the existing headless Chrome `SIGABRT` failure.
+- `npm run test:p1-server`: not run by instruction; the Lead owns the database
+  slot and will verify the migration-backed PostgREST assertion.
+
+Original lane results:
 
 - `npm run build:command-core` — passed; regenerated `supabase/functions/_shared/protocol.js`.
 - `npm run build` — passed.

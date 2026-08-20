@@ -437,7 +437,7 @@ test("TTY-marked multi-project resolution fails before a prompt can block", asyn
   }
 });
 
-test("cloud directory uses swarm_read and sanitizes attacker-controlled labels", async () => {
+test("cloud directory uses live swarm_read workspaces and sanitizes attacker-controlled labels", async () => {
   const memberId = USER_ID;
   const principalId = "33333333-3333-4333-8333-333333333333";
   const taskId = "44444444-4444-4444-8444-444444444444";
@@ -454,11 +454,20 @@ test("cloud directory uses swarm_read and sanitizes attacker-controlled labels",
     assert.equal(headers.get("apikey"), "anon-test-key");
     assert.equal(headers.get("accept-profile"), "swarm_read");
     const bodies: Record<string, unknown[]> = {
-      memberships: [{
-        workspace_id: WORKSPACE_A,
-        user_id: USER_ID,
-        role: "owner",
-      }],
+      memberships: [
+        {
+          workspace_id: WORKSPACE_A,
+          user_id: USER_ID,
+          role: "owner",
+        },
+        {
+          // Archived memberships remain in swarm_read.memberships. The filtered
+          // workspaces view must drive the CLI list, so this row is omitted.
+          workspace_id: WORKSPACE_B,
+          user_id: USER_ID,
+          role: "owner",
+        },
+      ],
       workspaces: [{
         workspace_id: WORKSPACE_A,
         name: "\u001b[31mLaunch\u001b[0m\u202e",
@@ -500,6 +509,8 @@ test("cloud directory uses swarm_read and sanitizes attacker-controlled labels",
     fetcher,
   );
   const projects = await cloud.list(session);
+  assert.equal(projects.length, 1);
+  assert.equal(projects[0]?.workspace_id, WORKSPACE_A);
   assert.equal(projects[0]?.name, "Launch");
   const status = await cloud.status(session, WORKSPACE_A);
   assert.equal(status.members[0]?.name, "Quill");
