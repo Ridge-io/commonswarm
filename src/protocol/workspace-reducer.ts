@@ -19,6 +19,7 @@ import {
   WORKSPACE_ROLES,
   WorkspaceCommandRejected,
   WorkspaceCreated,
+  WorkspaceArchived,
   WorkspaceEventEnvelope,
   WorkspaceRole,
   WorkspaceState,
@@ -135,6 +136,17 @@ export function reduceWorkspace(
   let next: WorkspaceState;
 
   switch (env.type) {
+    case 'WorkspaceArchived': {
+      const p = req<WorkspaceArchived>(env.payload, ['archived_at'], env.type, env.seq);
+      if (s.workspace.archived_at !== null) {
+        throw new StreamIntegrityError(`workspace archived twice at seq ${env.seq}`);
+      }
+      next = {
+        ...s,
+        workspace: { ...s.workspace, archived_at: p.archived_at },
+      };
+      break;
+    }
     case 'MemberInvited': {
       const p = req<MemberInvited>(
         env.payload,

@@ -112,6 +112,7 @@ type ConnectCommand =
   | { kind: "revoke_invitation"; invitation_id: string }
   | { kind: "accept_invitation"; token: string }
   | { kind: "remove_member"; user_id: string }
+  | { kind: "archive_workspace" }
   | { kind: "create_agent_principal"; name: string; model?: string }
   | { kind: "revoke_agent_principal"; principal_id: string }
   | {
@@ -231,6 +232,7 @@ interface WorkspaceState {
 }
 
 type WorkspaceCommand =
+  | { kind: "archive_workspace" }
   | {
     kind: "invite_member";
     invitation_id: string;
@@ -729,6 +731,7 @@ const COMMAND_KINDS = [
   "revoke_invitation",
   "accept_invitation",
   "remove_member",
+  "archive_workspace",
   "create_agent_principal",
   "mint_agent_token",
   "revoke_agent_principal",
@@ -762,6 +765,7 @@ const CONNECT_COMMAND_KINDS = [
   "revoke_invitation",
   "accept_invitation",
   "remove_member",
+  "archive_workspace",
   "create_agent_principal",
   "mint_agent_token",
   "revoke_agent_principal",
@@ -1732,6 +1736,15 @@ function validateCommand(
   }
 
   if ((CONNECT_COMMAND_KINDS as readonly string[]).includes(cmd.kind)) {
+    if (cmd.kind === "archive_workspace") {
+      return exactKeys(cmd, ["kind"])
+        ? { ok: true, command: { kind: "archive_workspace" } }
+        : {
+          ok: false,
+          status: 400,
+          reason: "archive_workspace fields are malformed",
+        };
+    }
     if (cmd.kind === "remove_member") {
       return exactKeys(cmd, ["kind", "user_id"]) &&
           typeof cmd.user_id === "string" &&
@@ -2188,10 +2201,13 @@ async function resolveRoute(
   const memberships = await tx<
     { role: Role; revoked_at: Date | null }[]
   >`
-    SELECT role, revoked_at
-    FROM swarm.memberships
-    WHERE workspace_id = ${workspaceId}::uuid
-      AND user_id = ${auth.actor.user}::uuid
+    SELECT m.role, m.revoked_at
+    FROM swarm.memberships AS m
+    JOIN swarm.workspaces AS w
+      ON w.workspace_id = m.workspace_id
+     AND w.archived_at IS NULL
+    WHERE m.workspace_id = ${workspaceId}::uuid
+      AND m.user_id = ${auth.actor.user}::uuid
     LIMIT 1
   `;
   const membership = memberships[0];
@@ -2661,6 +2677,8 @@ async function prepareWorkspaceCommand(
     };
   } else if (wire.kind === "remove_member") {
     command = { kind: "remove_member", user_id: wire.user_id };
+  } else if (wire.kind === "archive_workspace") {
+    command = { kind: "archive_workspace" };
   } else if (wire.kind === "revoke_agent_principal") {
     command = {
       kind: "revoke_agent_principal",
@@ -3420,7 +3438,21 @@ async function updateWorkspaceProjection(
     const payload = record(event.payload);
     if (!payload || event.type === "CommandRejected") continue;
 
-    if (event.type === "MemberInvited") {
+    if (event.type === "WorkspaceArchived") {
+      if (typeof payload.archived_at !== "number") {
+        throw new Error("WorkspaceArchived payload is malformed");
+      }
+      const archived = await tx<{ workspace_id: string }[]>`
+        UPDATE swarm.workspaces
+        SET archived_at = ${new Date(payload.archived_at)}
+        WHERE workspace_id = ${route.workspaceId}::uuid
+          AND archived_at IS NULL
+        RETURNING workspace_id
+      `;
+      if (archived.length !== 1) {
+        throw new Error("WorkspaceArchived projection did not archive exactly one workspace");
+      }
+    } else if (event.type === "MemberInvited") {
       const invitation = projection.invitations[String(payload.invitation_id)];
       if (!invitation) throw new Error("folded invitation projection missing");
       await tx`

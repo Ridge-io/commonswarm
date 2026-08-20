@@ -347,6 +347,7 @@ registerUpcaster("TaskCreated", 0, (p) => ({ task_id: p.id, slug: p.name }));
 var WORKSPACE_ROLES = ["owner", "admin", "member"];
 var WORKSPACE_EVENT_TYPES = [
   "WorkspaceCreated",
+  "WorkspaceArchived",
   "MemberInvited",
   "InvitationRevoked",
   "InvitationAccepted",
@@ -456,6 +457,17 @@ function reduceWorkspace(prev, env3) {
   const s = prev;
   let next;
   switch (env3.type) {
+    case "WorkspaceArchived": {
+      const p = req2(env3.payload, ["archived_at"], env3.type, env3.seq);
+      if (s.workspace.archived_at !== null) {
+        throw new StreamIntegrityError(`workspace archived twice at seq ${env3.seq}`);
+      }
+      next = {
+        ...s,
+        workspace: { ...s.workspace, archived_at: p.archived_at }
+      };
+      break;
+    }
     case "MemberInvited": {
       const p = req2(
         env3.payload,
@@ -740,6 +752,7 @@ var RENEWAL_HORIZON_MAX_MS = 90 * 24 * 60 * 60 * 1e3;
 var RENEWAL_MAX_SUCCESSORS_DEFAULT = 800;
 var HUMAN_ONLY_COMMANDS = /* @__PURE__ */ new Set([
   "create_workspace",
+  "archive_workspace",
   "invite_member",
   "revoke_invitation",
   "accept_invitation",
@@ -984,6 +997,27 @@ function decideWorkspace(state, cmd, ctx) {
     return authz2("bad_state", "caller is not a current workspace member");
   }
   switch (cmd.kind) {
+    case "archive_workspace": {
+      if (actorRole !== "owner") {
+        return domain2(
+          ctx,
+          cmd.kind,
+          "not_workspace_owner",
+          "closing a workspace requires the Owner role"
+        );
+      }
+      if (state.workspace.archived_at !== null) {
+        return domain2(
+          ctx,
+          cmd.kind,
+          "workspace_already_archived",
+          "workspace is already closed"
+        );
+      }
+      return accept2([
+        env2(ctx, "WorkspaceArchived", { archived_at: ctx.now })
+      ]);
+    }
     case "invite_member": {
       if (!ownerOrAdmin(actorRole)) {
         return domain2(ctx, cmd.kind, "role_forbidden", "inviting members requires Owner/Admin");

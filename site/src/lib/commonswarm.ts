@@ -686,6 +686,35 @@ export async function removeWorkspaceMember(
   }
 }
 
+/** Closes a workspace through the human session; the server keeps it restorable. */
+export async function archiveWorkspace(
+  session: Session,
+  commandId: string,
+  workspaceId: string,
+): Promise<void> {
+  const { status, body } = await postCommand(
+    session,
+    commandId,
+    { kind: "archive_workspace" },
+    { workspace_id: workspaceId, stream: { kind: "workspace" } },
+  );
+  if (status === 403) {
+    throw new Error(
+      "Only a workspace owner can close this workspace. CommonSwarm did not change anything.",
+    );
+  }
+  if (status !== 200) {
+    throw new Error(
+      `Workspace close failed (HTTP ${status}). CommonSwarm did not confirm a change.`,
+    );
+  }
+  if (body.status !== "accepted") {
+    throw new Error(
+      `Workspace close was refused: ${String(body.reason ?? "required condition not met")}. The workspace is still open.`,
+    );
+  }
+}
+
 /**
  * Ends an agent identity in this workspace: the principal and every live credential.
  * Browser surface is principal-only — there is no per-token UI.

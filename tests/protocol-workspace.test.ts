@@ -564,6 +564,61 @@ describe('invitations', () => {
   });
 });
 
+describe('workspace archive authority', () => {
+  it('lets an Owner archive at the decision timestamp', () => {
+    const world = makeWorld();
+    world.create();
+    const decision = world.apply({ kind: 'archive_workspace' });
+    assert.equal(decision.ok, true);
+    assert.equal(decision.ok && decision.events[0]?.type, 'WorkspaceArchived');
+    assert.equal(world.state()!.workspace.archived_at, NOW);
+  });
+
+  it('refuses an Admin with the named owner reason', () => {
+    const world = makeWorld();
+    world.create();
+    world.join('bob', 'admin');
+    rejected(
+      world.apply({ kind: 'archive_workspace' }, { actor: human('bob') }),
+      'not_workspace_owner',
+    );
+  });
+
+  it('refuses a Member with the named owner reason', () => {
+    const world = makeWorld();
+    world.create();
+    world.join('bob');
+    rejected(
+      world.apply({ kind: 'archive_workspace' }, { actor: human('bob') }),
+      'not_workspace_owner',
+    );
+  });
+
+  it('refuses an agent credential before role decisions', () => {
+    const world = makeWorld();
+    world.create();
+    rejected(
+      world.apply(
+        { kind: 'archive_workspace' },
+        { actor: agent('alice', 'principal-alice'), credential_kind: 'agent' },
+      ),
+      'credential_kind_forbidden',
+      'authz',
+    );
+  });
+
+  it('refuses an already archived workspace instead of claiming a second change', () => {
+    const world = makeWorld();
+    world.create();
+    assert.equal(world.apply({ kind: 'archive_workspace' }).ok, true);
+    rejected(
+      world.apply({ kind: 'archive_workspace' }, { now: NOW + 1 }),
+      'workspace_already_archived',
+    );
+    assert.equal(world.state()!.workspace.archived_at, NOW);
+  });
+});
+
 describe('membership and no-orphan authority', () => {
   it('remove_member accepts, but refuses last Owner and unresolved landing authority', () => {
     const world = makeWorld();
@@ -768,6 +823,7 @@ describe('agent token minting', () => {
       'transfer_ownership',
       'map_repository',
       'create_workspace',
+      'archive_workspace',
       'delete_workspace',
       'mint_capability_url',
       'force_discard',

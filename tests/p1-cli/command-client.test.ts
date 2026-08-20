@@ -177,6 +177,32 @@ test("remove_member uses the workspace route and names fresh-login recovery", as
   );
 });
 
+test("archive_workspace uses the workspace route with no caller-selected fields", async () => {
+  const target = cloudTarget("http://127.0.0.1:54321", "anon-key");
+  const workspaceId = randomUUID();
+  const requests: Array<Record<string, unknown>> = [];
+  const client = new ThinCommandClient(
+    target,
+    (async (_url, init) => {
+      requests.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      return new Response(JSON.stringify({
+        status: "accepted",
+        ok: true,
+        event_ids: [],
+      }), { status: 200 });
+    }) as typeof fetch,
+  );
+  await client.sendConnect({
+    workspaceId,
+    command: { kind: "archive_workspace" },
+    credential: "human-jwt",
+    commandId: "archive_workspace_test",
+  });
+  assert.equal(requests[0]?.workspace_id, workspaceId);
+  assert.deepEqual(requests[0]?.stream, { kind: "workspace" });
+  assert.deepEqual(requests[0]?.command, { kind: "archive_workspace" });
+});
+
 test("thin client sends the frozen wire contract and folds a dogfood sequence", async () => {
   const target = cloudTarget("http://127.0.0.1:54321", "anon-key");
   const workspaceId = randomUUID();

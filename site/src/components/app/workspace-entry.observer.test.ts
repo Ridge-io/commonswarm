@@ -60,6 +60,7 @@ test("/app is email-first, truthful about the free tier, and owns consent", () =
 
 test("the live dashboard offers peer agent and collaborator paths from an empty workspace", () => {
   const dashboard = read("src/components/app/LiveDashboard.astro");
+  const settings = read("src/lib/workspace-settings.ts");
   const connect = read("src/components/connect/AgentConnect.astro");
   const prompt = read("src/components/connect/agent-prompt.ts");
 
@@ -102,11 +103,9 @@ test("the live dashboard offers peer agent and collaborator paths from an empty 
     /<p class="dashboard__channel-id">/,
     "the primary channel header must not expose the workspace UUID",
   );
-  assert.match(
-    dashboard,
-    /data-workspace-details[\s\S]*data-channel-id/,
-    "support-only workspace details retain the ID in a collapsed disclosure",
-  );
+  assert.match(dashboard, /aria-label="Workspace settings"/);
+  assert.match(dashboard, /renderWorkspaceSettings\(root,/);
+  assert.match(settings, /id\.dataset\.channelId = ""/);
   assert.match(
     dashboard,
     /error instanceof WorkspaceLimitReached \|\| error instanceof WorkspaceOutcomeUnknown[\s\S]*\? ""[\s\S]*: "Trying again checks the same request; it cannot create a duplicate\."/,

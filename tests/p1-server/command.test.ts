@@ -66,6 +66,7 @@ type ConnectCommand =
   | { kind: "revoke_invitation"; invitation_id: string }
   | { kind: "accept_invitation"; token: string }
   | { kind: "remove_member"; user_id: string }
+  | { kind: "archive_workspace" }
   | { kind: "create_agent_principal"; name: string; model?: string }
   | { kind: "revoke_agent_principal"; principal_id: string }
   | {
@@ -3360,6 +3361,84 @@ test("remove_member revokes exactly one workspace membership at the event timest
       "projection timestamp is the MemberRemoved payload timestamp",
     );
     assert.equal(untouched?.revoked_at, null, "other workspace remains live");
+  });
+});
+
+test("archive_workspace is owner-only, hides the route, and leaves the workspace restorable", async () => {
+  await scenario(async (f) => {
+    const nonOwner = await issueConnect(
+      f,
+      f.ua2Jwt,
+      { kind: "archive_workspace" },
+    );
+    assert.equal(nonOwner.status, 200);
+    assert.equal(nonOwner.body.status, "rejected");
+    assert.equal(nonOwner.body.reason, "not_workspace_owner");
+
+    const agent = await issueConnect(
+      f,
+      f.agentToken,
+      { kind: "archive_workspace" },
+    );
+    assert.equal(agent.status, 403);
+    assert.deepEqual(agent.body, { error: "forbidden" });
+
+    const closed = await issueConnect(
+      f,
+      f.uaJwt,
+      { kind: "archive_workspace" },
+      commandId("archive_workspace"),
+    );
+    assert.equal(closed.status, 200);
+    assert.equal(closed.body.status, "accepted");
+
+    const [archived] = await sql<{
+      archived_at: Date | null;
+      event_at: Date;
+    }[]>`
+      SELECT w.archived_at, e.occurred_at_server AS event_at
+      FROM swarm.workspaces AS w
+      JOIN swarm.events AS e
+        ON e.workspace_id = w.workspace_id
+       AND e.type = 'WorkspaceArchived'
+      WHERE w.workspace_id = ${f.workspaceA}::uuid
+      ORDER BY e.seq DESC
+      LIMIT 1
+    `;
+    assert.ok(archived?.archived_at);
+    assert.equal(archived.archived_at.getTime(), archived.event_at.getTime());
+
+    const routedAgain = await issueConnect(
+      f,
+      f.uaJwt,
+      { kind: "archive_workspace" },
+    );
+    assert.equal(routedAgain.status, 403);
+    assert.deepEqual(routedAgain.body, { error: "forbidden" });
+
+    const listed = await fetch(
+      `${local.API_URL}/rest/v1/workspaces?select=workspace_id&workspace_id=eq.${f.workspaceA}`,
+      {
+        headers: {
+          authorization: `Bearer ${f.uaJwt}`,
+          apikey: local.ANON_KEY,
+          "accept-profile": "swarm_read",
+        },
+      },
+    );
+    assert.equal(listed.status, 200);
+    assert.deepEqual(await listed.json(), []);
+
+    const [audit] = await sql<{ outcome: string; reason: string | null }[]>`
+      SELECT outcome, reason
+      FROM swarm.audit_log
+      WHERE workspace_id = ${f.workspaceA}::uuid
+        AND command_kind = 'archive_workspace'
+        AND outcome = 'accepted'
+      ORDER BY created_at DESC
+      LIMIT 1
+    `;
+    assert.deepEqual(audit, { outcome: "accepted", reason: null });
   });
 });
 
