@@ -308,6 +308,7 @@ export function cloudWorkspaceDirectory(
           "workspaces",
           {
             select: "workspace_id,name,archived_at",
+            archived_at: "is.null",
             order: "workspace_id.asc",
           },
           fetcher,
@@ -318,28 +319,30 @@ export function cloudWorkspaceDirectory(
         const workspaceId = checkedUuid(row.workspace_id, "workspace_id");
         roles.set(workspaceId, checkedRole(row.role));
       }
-      const result = workspaceRows.map((row): WorkspaceSummary => {
+      const result: WorkspaceSummary[] = [];
+      for (const row of workspaceRows) {
         const workspaceId = checkedUuid(row.workspace_id, "workspace_id");
+        const archivedAt = checkedNullableTimestamp(
+          row.archived_at,
+          "archived_at",
+        );
+        if (archivedAt !== null) continue;
         const role = roles.get(workspaceId);
         if (!role) {
           throw new Error(
             "workspace read omitted the current user's live membership",
           );
         }
-        const archivedAt = checkedNullableTimestamp(
-          row.archived_at,
-          "archived_at",
-        );
-        return {
+        result.push({
           workspace_id: workspaceId,
           name: sanitizeDisplayLabel(
             checkedString(row.name, "workspace name"),
             "Unnamed workspace",
           ),
           role,
-          archived: archivedAt !== null,
-        };
-      });
+          archived: false,
+        });
+      }
       return sortWorkspaces(result);
     },
 
@@ -553,6 +556,51 @@ export async function clearWorkspaceDefault(
       principalName: null,
     });
     return true;
+  });
+}
+
+export interface WorkspaceCloseSelection {
+  closedWasSelected: boolean;
+  nextWorkspace: WorkspaceSummary | null;
+  selectedWorkspaceId: string | null;
+}
+
+/** Moves a closed default to a live successor, or clears it when none remains. */
+export async function updateWorkspaceDefaultAfterClose(
+  store: CredentialStore,
+  userId: string,
+  closedWorkspaceId: string,
+  workspaces: readonly WorkspaceSummary[],
+): Promise<WorkspaceCloseSelection> {
+  return await store.withLock(async () => {
+    const current = await store.readProfile();
+    if (
+      current.userId !== userId ||
+      current.workspaceId !== closedWorkspaceId
+    ) {
+      return {
+        closedWasSelected: false,
+        nextWorkspace: null,
+        selectedWorkspaceId: current.userId === userId
+          ? current.workspaceId
+          : null,
+      };
+    }
+    const nextWorkspace = sortWorkspaces(workspaces).find(
+      (workspace) =>
+        workspace.workspace_id !== closedWorkspaceId && !workspace.archived,
+    ) ?? null;
+    await store.writeProfile({
+      ...current,
+      workspaceId: nextWorkspace?.workspace_id ?? null,
+      principalId: null,
+      principalName: null,
+    });
+    return {
+      closedWasSelected: true,
+      nextWorkspace,
+      selectedWorkspaceId: nextWorkspace?.workspace_id ?? null,
+    };
   });
 }
 

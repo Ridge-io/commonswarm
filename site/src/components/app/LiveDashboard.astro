@@ -804,6 +804,10 @@ import "../../styles/tokens.css";
   import { PendingRefreshGate } from "../../lib/pending-refresh";
   import { BootFocusGate } from "../../lib/boot-focus";
   import { renderWorkspaceSettings } from "../../lib/workspace-settings";
+  import {
+    workspaceStateAfterClose,
+    type CloseableWorkspace,
+  } from "../../lib/workspace-close-state";
   import { agentEntityView, truncateEntityId } from "../../lib/entity-panel";
   import {
     filterSignals,
@@ -823,10 +827,7 @@ import "../../styles/tokens.css";
   import { buildAgentModelEditor } from "../../lib/agent-model-editor";
   import { renderFileList, type DisplayFile } from "../../lib/file-list";
 
-  interface Workspace {
-    id: string;
-    name: string;
-  }
+  interface Workspace extends CloseableWorkspace {}
 
   interface Agent {
     principalId: string;
@@ -1206,10 +1207,14 @@ import "../../styles/tokens.css";
           .range(offset, offset + pageSize - 1);
         if (error) throw new Error(error.message);
         const page = data ?? [];
-        result.push(...page.map((row) => ({
-          id: String(row.workspace_id ?? ""),
-          name: String(row.name ?? row.workspace_id ?? ""),
-        })).filter((workspace) => workspace.id.length > 0));
+        result.push(...page
+          .filter((row) => row.archived_at === null)
+          .map((row) => ({
+            id: String(row.workspace_id ?? ""),
+            name: String(row.name ?? row.workspace_id ?? ""),
+            archived: false,
+          }))
+          .filter((workspace) => workspace.id.length > 0));
         if (page.length < pageSize) return result;
       }
     };
@@ -3021,19 +3026,25 @@ import "../../styles/tokens.css";
           if (!session || sampleMode) return;
           const closingWorkspaceId = workspace.id;
           await archiveWorkspace(session, uuid(), closingWorkspaceId);
-          workspaces = workspaces.filter((item) => item.id !== closingWorkspaceId);
+          const closed = workspaceStateAfterClose(
+            activeWorkspaceId,
+            closingWorkspaceId,
+            workspaces,
+          );
+          workspaces = closed.workspaces;
           const popover = one<HTMLElement>("[data-workspace-details-popover]");
           const trigger = one<HTMLButtonElement>("[data-workspace-details-trigger]");
           if (popover) popover.hidden = true;
           trigger?.setAttribute("aria-expanded", "false");
-          if (activeWorkspaceId !== closingWorkspaceId) {
-            const current = workspaces.find((item) => item.id === activeWorkspaceId);
-            if (current) renderWorkspaceList(current);
+          if (closed.activeWorkspaceRemains) {
+            renderWorkspaceList(closed.nextWorkspace!);
             return;
           }
-          const next = workspaces[0];
+          activeWorkspaceId = "";
+          one<SecretHoldingAgentConnect>("agent-connect")?.clearPrompt(false);
+          const next = closed.nextWorkspace;
           if (next) {
-            await openWorkspace(next.id);
+            await openWorkspace(next.id, true);
             return;
           }
           ++requestVersion;
@@ -3092,7 +3103,10 @@ import "../../styles/tokens.css";
       submit.textContent = "Create invite link";
     };
 
-    const openWorkspace = async (workspaceId: string): Promise<void> => {
+    const openWorkspace = async (
+      workspaceId: string,
+      force = false,
+    ): Promise<void> => {
       const selected = workspaces.find((workspace) => workspace.id === workspaceId);
       if (!selected) return;
       closeEntityPanel(false);
@@ -3106,12 +3120,12 @@ import "../../styles/tokens.css";
       const promptWorkspaceId = connect?.getAttribute("workspace-id") ?? "";
       const connectState = connect?.dataset.state ?? "";
       const mintBusy = connect?.hasAttribute("data-mint-busy") ?? false;
-      if (connectState === "done") {
+      if (!force && connectState === "done") {
         pendingWorkspaceId = workspaceId;
         connect?.finishPrompt("back");
         return;
       }
-      if (mintBusy || connectState === "working") {
+      if (!force && (mintBusy || connectState === "working")) {
         const changesWorkspace =
           promptWorkspaceId.length > 0 && promptWorkspaceId !== workspaceId;
         pendingWorkspaceId = changesWorkspace ? workspaceId : "";
@@ -3453,7 +3467,11 @@ import "../../styles/tokens.css";
         );
         if (!isCurrent()) return;
         clearCreateIntent(value.user.id);
-        const madeWorkspace = { id: made.workspaceId, name: made.name };
+        const madeWorkspace = {
+          id: made.workspaceId,
+          name: made.name,
+          archived: false,
+        };
         workspaces = [
           madeWorkspace,
           ...workspaces.filter((workspace) => workspace.id !== made.workspaceId),
@@ -3490,7 +3508,7 @@ import "../../styles/tokens.css";
       syncPendingPoll();
       const now = Date.now();
       workspaces = [
-        { id: "sample-design-studio", name: "Design studio" },
+        { id: "sample-design-studio", name: "Design studio", archived: false },
       ];
       members = [
         { userId: "sample-owner", name: "Dana Rivera", role: "owner" },

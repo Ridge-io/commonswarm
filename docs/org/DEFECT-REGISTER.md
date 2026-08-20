@@ -4181,8 +4181,14 @@ do it unasked.
 `ad5a2d8` added the owner-only `archive_workspace` command, the
 `cswarm workspace close` verb, and the web settings action. The follow-up
 migration `20260820000001_hide_archived_workspaces.sql` closes the read-list gap
-found when the Lead ran the database suite. Archived rows remain durable for a
-support restore, and the live free-tier count still excludes them directly.
+found when the Lead ran the database suite. ~~That migration completed the
+access boundary.~~ **DEAD:** it hid only the workspace directory. The
+cross-family inversion then proved membership and agent reads still worked.
+Migration `20260820000002_archive_revokes_access.sql` moves the live check into
+the shared membership gate and the separate agent-read context. Archived rows
+remain durable for a support restore, and the live free-tier count still
+excludes them directly. Full correction and caller inventory:
+`docs/evidence/2026-08-20-close-workspace/README.md`.
 
 The historical finding and mitigation below remain as the reason for the fix.
 

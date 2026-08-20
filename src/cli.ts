@@ -119,8 +119,8 @@ import {
   renderCapabilityRevoke,
 } from "./cloud/capability-link.js";
 import {
-  clearWorkspaceDefault,
   archiveKnownGaps,
+  clearWorkspaceDefault,
   cloudWorkspaceDirectory,
   DEFAULT_MEMBERSHIP_REVOKED,
   renderStatus,
@@ -128,6 +128,7 @@ import {
   resolveWorkspace,
   resolveWorkspaceSelector,
   selectWorkspace,
+  updateWorkspaceDefaultAfterClose,
   WorkspaceCliError,
   WorkspaceUnavailableError,
   resolveWorkspaceMember,
@@ -1398,35 +1399,18 @@ async function runWorkspace(args: Arguments): Promise<void> {
     );
   }
 
-  const profile = await profileIdentity(human);
-  let nextWorkspace: WorkspaceSummary | null = null;
-  if (profile.workspaceId === selected.workspace_id) {
-    nextWorkspace = projects.find(
-      (project) => project.workspace_id !== selected.workspace_id,
-    ) ?? null;
-    if (nextWorkspace) {
-      await writeWorkspaceDefault(
-        human.store,
-        human.userId,
-        nextWorkspace.workspace_id,
-      );
-    } else {
-      await clearWorkspaceDefault(
-        human.store,
-        human.userId,
-        selected.workspace_id,
-      );
-    }
-  }
-
-  const closedWasSelected = profile.workspaceId === selected.workspace_id;
+  const { closedWasSelected, nextWorkspace, selectedWorkspaceId } =
+    await updateWorkspaceDefaultAfterClose(
+      human.store,
+      human.userId,
+      selected.workspace_id,
+      projects,
+    );
   const message = nextWorkspace
     ? `Closed workspace ${selected.name} (${selected.workspace_id}). It is hidden for everyone, and ${nextWorkspace.name} (${nextWorkspace.workspace_id}) is now selected.`
     : closedWasSelected
-    ? `Closed workspace ${selected.name} (${selected.workspace_id}). It is hidden for everyone and no replacement workspace was selected.`
+    ? `Closed workspace ${selected.name} (${selected.workspace_id}). It is hidden for everyone. No live workspace remains, so the selected workspace was cleared.`
     : `Closed workspace ${selected.name} (${selected.workspace_id}). It is hidden for everyone. Your selected workspace was not changed.`;
-  const selectedWorkspaceId = nextWorkspace?.workspace_id ??
-    (closedWasSelected ? null : profile.workspaceId);
   const output = {
     message,
     status: response.status,

@@ -686,6 +686,28 @@ async function humanSignalRead(
   };
 }
 
+async function humanWorkspaceViewRows(
+  token: string,
+  view: "member_profiles" | "signals" | "files",
+  workspaceId: string,
+): Promise<{ status: number; rows: Record<string, unknown>[] }> {
+  const url = new URL(`${local.API_URL}/rest/v1/${view}`);
+  url.searchParams.set("select", "*");
+  url.searchParams.set("workspace_id", `eq.${workspaceId}`);
+  const response = await fetch(url, {
+    headers: {
+      authorization: `Bearer ${token}`,
+      apikey: local.ANON_KEY,
+      "accept-profile": "swarm_read",
+    },
+  });
+  const text = await response.text();
+  return {
+    status: response.status,
+    rows: JSON.parse(text) as Record<string, unknown>[],
+  };
+}
+
 async function agentSignalRead(
   token: string,
   workspaceId: string,
@@ -3366,6 +3388,52 @@ test("remove_member revokes exactly one workspace membership at the event timest
 
 test("archive_workspace is owner-only, hides the route, and leaves the workspace restorable", async () => {
   await scenario(async (f) => {
+    const signalA = randomUUID();
+    const signalB = randomUUID();
+    const fileA = randomUUID();
+    const fileB = randomUUID();
+    await sql`
+      INSERT INTO swarm.signals (
+        id, workspace_id, from_principal, from_kind, kind, body, until
+      ) VALUES
+        (
+          ${signalA}::uuid, ${f.workspaceA}::uuid, ${f.ua}::uuid,
+          'user', 'note', 'archive read control A',
+          statement_timestamp() + interval '1 hour'
+        ),
+        (
+          ${signalB}::uuid, ${f.workspaceB}::uuid, ${f.ub}::uuid,
+          'user', 'note', 'archive read control B',
+          statement_timestamp() + interval '1 hour'
+        )
+    `;
+    await sql`
+      INSERT INTO swarm.files (
+        file_id, workspace_id, name, created_by_kind, created_by
+      ) VALUES
+        (${fileA}::uuid, ${f.workspaceA}::uuid, 'archive-a.txt', 'user', ${f.ua}::uuid),
+        (${fileB}::uuid, ${f.workspaceB}::uuid, 'archive-b.txt', 'user', ${f.ub}::uuid)
+    `;
+
+    for (const view of ["member_profiles", "signals", "files"] as const) {
+      const before = await humanWorkspaceViewRows(f.uaJwt, view, f.workspaceA);
+      assert.equal(before.status, 200, `${view} pre-archive status`);
+      assert.ok(before.rows.length > 0, `${view} pre-archive positive control`);
+    }
+    const agentBefore = await agentSignalRead(f.agentToken, f.workspaceA);
+    assert.equal(agentBefore.status, 200, agentBefore.text);
+    assert.ok(
+      Array.isArray(agentBefore.body.signals) && agentBefore.body.signals.length > 0,
+      "agent pre-archive positive control",
+    );
+    const [liveBefore] = await sql<{ count: string }[]>`
+      SELECT count(*)::text AS count
+      FROM swarm.workspaces
+      WHERE created_by = ${f.ua}::uuid
+        AND archived_at IS NULL
+    `;
+    assert.equal(liveBefore?.count, "1", "free-tier live-count positive control");
+
     const nonOwner = await issueConnect(
       f,
       f.ua2Jwt,
@@ -3429,6 +3497,36 @@ test("archive_workspace is owner-only, hides the route, and leaves the workspace
     assert.equal(listed.status, 200);
     assert.deepEqual(await listed.json(), []);
 
+    for (const view of ["member_profiles", "signals", "files"] as const) {
+      const archivedRows = await humanWorkspaceViewRows(
+        f.uaJwt,
+        view,
+        f.workspaceA,
+      );
+      assert.equal(archivedRows.status, 200, `${view} archived status`);
+      assert.deepEqual(archivedRows.rows, [], `${view} hides archived workspace`);
+
+      const liveRows = await humanWorkspaceViewRows(
+        f.ubJwt,
+        view,
+        f.workspaceB,
+      );
+      assert.equal(liveRows.status, 200, `${view} live control status`);
+      assert.ok(liveRows.rows.length > 0, `${view} live workspace is unaffected`);
+    }
+
+    const archivedAgentRead = await agentSignalRead(f.agentToken, f.workspaceA);
+    assert.equal(archivedAgentRead.status, 403);
+    assert.deepEqual(archivedAgentRead.body, { error: "forbidden" });
+
+    const [liveAfterClose] = await sql<{ count: string }[]>`
+      SELECT count(*)::text AS count
+      FROM swarm.workspaces
+      WHERE created_by = ${f.ua}::uuid
+        AND archived_at IS NULL
+    `;
+    assert.equal(liveAfterClose?.count, "0", "archive frees the live-workspace slot");
+
     const [audit] = await sql<{ outcome: string; reason: string | null }[]>`
       SELECT outcome, reason
       FROM swarm.audit_log
@@ -3439,6 +3537,28 @@ test("archive_workspace is owner-only, hides the route, and leaves the workspace
       LIMIT 1
     `;
     assert.deepEqual(audit, { outcome: "accepted", reason: null });
+
+    // Support restore uses the durable base row. The shared gates reopen from
+    // archived_at alone; memberships and agent tokens were not destroyed.
+    await sql`
+      UPDATE swarm.workspaces
+      SET archived_at = NULL
+      WHERE workspace_id = ${f.workspaceA}::uuid
+    `;
+    for (const view of ["member_profiles", "signals", "files"] as const) {
+      const restored = await humanWorkspaceViewRows(f.uaJwt, view, f.workspaceA);
+      assert.equal(restored.status, 200, `${view} restored status`);
+      assert.ok(restored.rows.length > 0, `${view} support restore reopens access`);
+    }
+    const restoredAgentRead = await agentSignalRead(f.agentToken, f.workspaceA);
+    assert.equal(restoredAgentRead.status, 200, restoredAgentRead.text);
+    const [liveAfterRestore] = await sql<{ count: string }[]>`
+      SELECT count(*)::text AS count
+      FROM swarm.workspaces
+      WHERE created_by = ${f.ua}::uuid
+        AND archived_at IS NULL
+    `;
+    assert.equal(liveAfterRestore?.count, "1", "support restore returns the live slot");
   });
 });
 

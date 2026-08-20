@@ -700,7 +700,7 @@ export async function archiveWorkspace(
   );
   if (status === 403) {
     throw new Error(
-      "Only a workspace owner can close this workspace. CommonSwarm did not change anything.",
+      "CommonSwarm could not close this workspace. Your credential may not own it, or the workspace may no longer be available. Nothing changed.",
     );
   }
   if (status !== 200) {

@@ -9,6 +9,7 @@ import { promisify } from "node:util";
 import { test } from "node:test";
 import { build } from "esbuild";
 import { findChrome } from "./participant-rail.fixture.js";
+import { workspaceStateAfterClose } from "../../lib/workspace-close-state.js";
 
 const run = promisify(execFile);
 const componentDir = dirname(fileURLToPath(import.meta.url));
@@ -112,20 +113,48 @@ test("the real settings renderer gates close on the exact workspace name", async
 });
 
 test("the dashboard closes through the human command and leaves the dead route", async () => {
-  const dashboard = await readFile(
-    new URL("./LiveDashboard.astro", import.meta.url),
-    "utf8",
-  );
+  const [dashboard, commonswarm] = await Promise.all([
+    readFile(new URL("./LiveDashboard.astro", import.meta.url), "utf8"),
+    readFile(new URL("../../lib/commonswarm.ts", import.meta.url), "utf8"),
+  ]);
   assert.match(dashboard, /archiveWorkspace\(session, uuid\(\), closingWorkspaceId\)/);
   assert.match(
     dashboard,
-    /workspaces = workspaces\.filter\(\(item\) => item\.id !== closingWorkspaceId\)/,
+    /workspaceStateAfterClose\(\s*activeWorkspaceId,\s*closingWorkspaceId,\s*workspaces/,
   );
-  assert.match(dashboard, /const next = workspaces\[0\]/);
-  assert.match(dashboard, /await openWorkspace\(next\.id\)/);
+  assert.match(dashboard, /activeWorkspaceId = ""/);
+  assert.match(dashboard, /await openWorkspace\(next\.id, true\)/);
   assert.match(dashboard, /resetWorkspaceSessionState\(\);\s*renderCreate\(session\)/);
   assert.match(
     dashboard,
     /wirePopover\("\[data-workspace-details-trigger\]", "\[data-workspace-details-popover\]"\)/,
   );
+  assert.match(commonswarm, /credential may not own it/);
+  assert.match(commonswarm, /workspace may no longer be available/);
+  assert.doesNotMatch(
+    commonswarm,
+    /Only a workspace owner can close this workspace\. CommonSwarm did not change anything/,
+  );
+});
+
+test("workspace close switches to a live successor and never keeps the archived id active", () => {
+  const state = workspaceStateAfterClose("closing", "closing", [
+    { id: "closing", name: "Closing", archived: false },
+    { id: "archived", name: "Archived", archived: true },
+    { id: "live", name: "Live", archived: false },
+  ]);
+  assert.deepEqual(state.workspaces.map((workspace) => workspace.id), ["live"]);
+  assert.equal(state.activeWorkspaceRemains, false);
+  assert.equal(state.nextWorkspace?.id, "live");
+  assert.notEqual(state.nextWorkspace?.id, "closing");
+});
+
+test("workspace close lands on the empty state when only archived workspaces remain", () => {
+  const state = workspaceStateAfterClose("closing", "closing", [
+    { id: "closing", name: "Closing", archived: false },
+    { id: "archived", name: "Archived", archived: true },
+  ]);
+  assert.deepEqual(state.workspaces, []);
+  assert.equal(state.activeWorkspaceRemains, false);
+  assert.equal(state.nextWorkspace, null);
 });

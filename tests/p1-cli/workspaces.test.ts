@@ -19,6 +19,7 @@ import {
   resolveWorkspaceMember,
   resolveWorkspace,
   selectWorkspace,
+  updateWorkspaceDefaultAfterClose,
   WorkspaceAmbiguousNameError,
   type WorkspaceDirectory,
   WorkspaceResolutionError,
@@ -133,6 +134,45 @@ function directory(
     },
   };
 }
+
+test("closing the selected workspace switches to another live workspace", async () => {
+  const store = new MemoryStore(USER_ID, WORKSPACE_A);
+  const selection = await updateWorkspaceDefaultAfterClose(
+    store,
+    USER_ID,
+    WORKSPACE_A,
+    [
+      project(WORKSPACE_A, "Closing", "owner"),
+      project(WORKSPACE_B, "Archived", "owner", true),
+      project(WORKSPACE_C, "Live", "member"),
+    ],
+  );
+  assert.equal(selection.closedWasSelected, true);
+  assert.equal(selection.nextWorkspace?.workspace_id, WORKSPACE_C);
+  assert.equal(selection.selectedWorkspaceId, WORKSPACE_C);
+  assert.equal(store.profile.workspaceId, WORKSPACE_C);
+  assert.equal(store.profile.principalId, null);
+});
+
+test("closing the last live selected workspace clears the default", async () => {
+  const store = new MemoryStore(USER_ID, WORKSPACE_A);
+  const selection = await updateWorkspaceDefaultAfterClose(
+    store,
+    USER_ID,
+    WORKSPACE_A,
+    [
+      project(WORKSPACE_A, "Closing", "owner"),
+      project(WORKSPACE_B, "Archived", "owner", true),
+    ],
+  );
+  assert.deepEqual(selection, {
+    closedWasSelected: true,
+    nextWorkspace: null,
+    selectedWorkspaceId: null,
+  });
+  assert.equal(store.profile.workspaceId, null);
+  assert.equal(store.profile.principalId, null);
+});
 
 async function runCli(
   values: string[],
@@ -468,11 +508,20 @@ test("cloud directory uses live swarm_read workspaces and sanitizes attacker-con
           role: "owner",
         },
       ],
-      workspaces: [{
-        workspace_id: WORKSPACE_A,
-        name: "\u001b[31mLaunch\u001b[0m\u202e",
-        archived_at: null,
-      }],
+      workspaces: [
+        {
+          workspace_id: WORKSPACE_A,
+          name: "\u001b[31mLaunch\u001b[0m\u202e",
+          archived_at: null,
+        },
+        {
+          // A stale or nonconforming view response still cannot feed archive
+          // rows into default or post-close successor selection.
+          workspace_id: WORKSPACE_B,
+          name: "Closed",
+          archived_at: "2026-08-20T12:00:00.000Z",
+        },
+      ],
       member_profiles: [{
         workspace_id: WORKSPACE_A,
         user_id: memberId,
@@ -512,6 +561,10 @@ test("cloud directory uses live swarm_read workspaces and sanitizes attacker-con
   assert.equal(projects.length, 1);
   assert.equal(projects[0]?.workspace_id, WORKSPACE_A);
   assert.equal(projects[0]?.name, "Launch");
+  const workspaceRequest = requests.find((request) =>
+    request.pathname.endsWith("/workspaces")
+  );
+  assert.equal(workspaceRequest?.searchParams.get("archived_at"), "is.null");
   const status = await cloud.status(session, WORKSPACE_A);
   assert.equal(status.members[0]?.name, "Quill");
   assert.equal(status.agents[0]?.name, "Agent");
