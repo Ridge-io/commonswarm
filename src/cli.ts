@@ -21,6 +21,7 @@ import {
   assertWorkspaceName,
   CAPABILITY_MAX_TTL_MS,
   CAPABILITY_MIN_TTL_MS,
+  CommandHttpError,
   CommandTransportError,
   newCommandId,
   ThinCommandClient,
@@ -466,6 +467,8 @@ Signals (intention sharing) accept the same credential selection. Agent mode
 never opens a browser or infers a human's saved workspace. Durations use a whole
 number plus m, h, or d (for example 90m, 24h, or 7d) and are capped at 30d.
 Place -- before signal text that itself begins with -- to stop option parsing.
+Signal text is at most 2000 characters and --about at most 500; a longer body is
+refused locally before any network call, so compose within the limit.
 
 listen start --turn-budget bounds ONE worker prompt turn (default 10m): how long
 the worker may think and use tools on a single message before the turn times out
@@ -2271,8 +2274,16 @@ export function resolveTurnBudgetOrDefer(
   return clampTurnBudgetToCredential(configuredBudgetMs, credentialExpiresAt, nowMs);
 }
 
+/* Signal body / --about caps, mirrored by the DB CHECK in the signals migration
+ * (char_length(body) BETWEEN 1 AND 2000; about <= 500). Hardcoded in several
+ * places (file-store.ts, signals.ts) — no shared module across the protocol
+ * boundary; if the DB cap moves, grep 2000/500 for the signal body/about. Named
+ * here so the usage text below and the validator cannot drift from each other. */
+const SIGNAL_BODY_MAX = 2000;
+const SIGNAL_ABOUT_MAX = 500;
+
 function signalText(value: string, label: "body" | "about"): string {
-  const maximum = label === "body" ? 2000 : 500;
+  const maximum = label === "body" ? SIGNAL_BODY_MAX : SIGNAL_ABOUT_MAX;
   if (value.length < (label === "body" ? 1 : 0) || value.length > maximum) {
     throw new Error(
       `${label === "body" ? "signal text" : "--about"} must be ${
@@ -2605,6 +2616,32 @@ async function runPostSignal(
   );
 }
 
+/**
+ * The reply verb refusal message. Exported and pure so it is unit-testable without a
+ * full CLI spawn. A 403 on REPLY means the referenced signal is not one this caller may
+ * answer — the audience is derived server-side and a reply is accepted only when the
+ * referenced signal was addressed TO the caller. The most common way to hit it is
+ * replying to your OWN ask (you addressed it to someone else, so you are not its
+ * addressee). Classify on the typed HTTP status, never the message (D-053). Returns null
+ * for anything that is not this case, so the original error propagates unchanged.
+ * Added for the Fastio feedback 2026-08-19: the bare "HTTP 403 forbidden" gave no next step.
+ */
+export function replyRefusalHint(error: unknown): string | null {
+  if (!(error instanceof CommandHttpError) || error.status !== 403) return null;
+  /* A 403 on this path is NOT always "you are not the addressee": the same status carries
+   * revoked credentials, non-membership, and other authorization refusals (the inversion arm
+   * on the Fastio fix round found the hint firing on all of them, which is misleading advice
+   * — the D-053 family one level up: right status, wrong CAUSE). So the hint is phrased as a
+   * possibility with the other causes named, never as a diagnosis. If the server ever
+   * distinguishes this refusal with its own code, branch on that code instead and drop the
+   * hedging — the hedge exists only because the status is ambiguous today. */
+  return "reply was refused (403). The most common cause is that the signal was not addressed " +
+    "to you — you cannot reply to your own ask; reply to the other party's signal, reach " +
+    "someone directly with cswarm ask --to <agent>, or post a channel-visible cswarm note. " +
+    "If you did receive that signal, the refusal is an authorization one instead: the " +
+    "credential may be revoked or expired, or it may not be a member of this workspace.";
+}
+
 async function runReply(args: Arguments): Promise<void> {
   args.assertShape([
     ...TARGET_FLAGS,
@@ -2637,7 +2674,21 @@ async function runReply(args: Arguments): Promise<void> {
     about: null,
     ...(untilMs === undefined ? {} : { until_ms: untilMs }),
   };
-  const result = await postSignalCommand(cloud, credential, command);
+  let result;
+  try {
+    result = await postSignalCommand(cloud, credential, command);
+  } catch (error) {
+    /* A 403 on the REPLY verb specifically means the referenced signal is not one this
+     * caller may answer — the audience is derived server-side and a reply is accepted only
+     * when the referenced signal was addressed TO the caller (command/index.ts reply target
+     * resolution). The most common way to hit it is replying to your OWN ask: you addressed
+     * that ask to someone else, so you are not its addressee. Classify on the typed HTTP
+     * status, never the message (D-053); the bare "HTTP 403 forbidden" gave the reader
+     * nowhere to go (Fastio feedback 2026-08-19). */
+    const hint = replyRefusalHint(error);
+    if (hint !== null) throw new Error(hint);
+    throw error;
+  }
   const signal = result.response.signal!;
   if (args.has("json")) {
     printJson({
