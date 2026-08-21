@@ -400,6 +400,9 @@ export function cloudWorkspaceDirectory(
           you: userId === session.userId,
         };
       });
+      if (!members.some((member) => member.you)) {
+        throw new WorkspaceUnavailableError();
+      }
       const memberNames = new Map(
         members.map((member) => [member.user_id, member.name]),
       );

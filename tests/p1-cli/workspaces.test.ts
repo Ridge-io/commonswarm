@@ -574,6 +574,38 @@ test("cloud directory uses live swarm_read workspaces and sanitizes attacker-con
   assert.ok(requests.every((request) => request.pathname.startsWith("/rest/v1/")));
 });
 
+test("status refuses a workspace hidden by membership-gated views", async () => {
+  const resources: string[] = [];
+  const cloud = cloudWorkspaceDirectory(
+    cloudTarget("http://127.0.0.1:54321", "anon-test-key"),
+    (async (input) => {
+      const url = new URL(
+        typeof input === "string" || input instanceof URL
+          ? input
+          : input.url,
+      );
+      resources.push(url.pathname.split("/").pop()!);
+      return new Response(JSON.stringify([]), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }) as typeof fetch,
+  );
+
+  await assert.rejects(
+    cloud.status(session, WORKSPACE_B),
+    (error) => {
+      assert.ok(error instanceof WorkspaceUnavailableError);
+      assert.equal(error.code, "project_not_available");
+      return true;
+    },
+  );
+  assert.deepEqual(
+    resources.sort(),
+    ["agent_principals", "member_profiles", "tasks"].sort(),
+  );
+});
+
 test("status rendering gives empty-work guidance and human lease time", () => {
   const selected = project(WORKSPACE_A, "Launch", "owner");
   const empty = renderStatus({

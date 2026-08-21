@@ -3533,7 +3533,7 @@ test("archive_workspace is owner-only, hides the route, and leaves the workspace
       WHERE workspace_id = ${f.workspaceA}::uuid
         AND command_kind = 'archive_workspace'
         AND outcome = 'accepted'
-      ORDER BY created_at DESC
+      ORDER BY audit_id DESC
       LIMIT 1
     `;
     assert.deepEqual(audit, { outcome: "accepted", reason: null });
