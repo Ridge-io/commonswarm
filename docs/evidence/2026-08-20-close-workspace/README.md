@@ -75,6 +75,12 @@ files, members, and other membership views remained readable. Agent reads also
 remained authorized. This file is the durable correction to that published
 commit claim.
 
+The `3eb680f` commit prose said: ~~“selection code no longer silently accepts
+an archived workspace.”~~ **DEAD at that commit:** the integration contract was
+corrected, but `selectWorkspace` still accepted an `archived: true` row and
+wrote it as the saved default. The direct selection guard and its live-row
+control land in the next fix commit.
+
 ### Access decision
 
 Migration `20260820000002_archive_revokes_access.sql` puts the live-workspace

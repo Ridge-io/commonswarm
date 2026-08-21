@@ -112,6 +112,8 @@ export const DEFAULT_MEMBERSHIP_REVOKED: WorkspaceWarning = {
 
 const PROJECT_NOT_AVAILABLE =
   "That workspace is not available to this account. Run cswarm workspaces to see workspaces you can select.";
+const ARCHIVED_PROJECT_NOT_AVAILABLE =
+  "That workspace is closed and cannot be selected. Run cswarm workspaces to see live workspaces you can select.";
 
 function compareText(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
@@ -167,8 +169,8 @@ export class WorkspaceResolutionError extends WorkspaceCliError {
 export class WorkspaceUnavailableError extends WorkspaceCliError {
   readonly code = "project_not_available";
 
-  constructor() {
-    super(PROJECT_NOT_AVAILABLE);
+  constructor(message = PROJECT_NOT_AVAILABLE) {
+    super(message);
     this.name = "WorkspaceUnavailableError";
   }
 
@@ -697,6 +699,9 @@ export async function selectWorkspace(
   userId: string,
 ): Promise<WorkspaceSummary> {
   const selected = resolveWorkspaceSelector(selector, workspaces);
+  if (selected.archived) {
+    throw new WorkspaceUnavailableError(ARCHIVED_PROJECT_NOT_AVAILABLE);
+  }
   await writeWorkspaceDefault(store, userId, selected.workspace_id);
   return selected;
 }

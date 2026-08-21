@@ -2277,6 +2277,8 @@ async function resolveInvitationRoute(
   if (auth.credentialKind !== "user" || invitationTokenForRoute(body) === null) {
     return null;
   }
+  // Invitation acceptance is the one non-member command and bypasses
+  // resolveRoute, so it must join the live workspace at this routing seam.
   const rows = await tx<{
     workspace_id: string;
     stream_id: string;
@@ -2289,6 +2291,9 @@ async function resolveInvitationRoute(
       m.role,
       m.revoked_at
     FROM swarm.invitations AS i
+    JOIN swarm.workspaces AS w
+      ON w.workspace_id = i.workspace_id
+     AND w.archived_at IS NULL
     JOIN swarm.streams AS s
       ON s.workspace_id = i.workspace_id
      AND s.kind = 'workspace'
@@ -4811,13 +4816,17 @@ async function capabilityPreamble(
   // Issuing a credential that discloses tenant data is at least as privileged as
   // issuing an invite, which §2.6 gates on Owner/Admin. A non-member and a
   // wrong-tenant workspace_id take this same branch, so the response is never an
-  // existence oracle for another tenant.
+  // existence oracle for another tenant. This preamble runs before resolveRoute,
+  // so its membership lookup must carry the same closed-workspace gate itself.
   const memberships = await tx<{ role: string }[]>`
-    SELECT role
-    FROM swarm.memberships
-    WHERE workspace_id = ${workspaceId}::uuid
-      AND user_id = ${userId}::uuid
-      AND revoked_at IS NULL
+    SELECT m.role
+    FROM swarm.memberships AS m
+    JOIN swarm.workspaces AS w
+      ON w.workspace_id = m.workspace_id
+     AND w.archived_at IS NULL
+    WHERE m.workspace_id = ${workspaceId}::uuid
+      AND m.user_id = ${userId}::uuid
+      AND m.revoked_at IS NULL
     LIMIT 1
   `;
   const role = memberships[0]?.role ?? null;

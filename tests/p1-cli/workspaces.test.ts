@@ -357,7 +357,7 @@ test("revoked saved default warns once, clears the agent checkpoint, and falls t
   assert.equal(warnings.length, 1);
 });
 
-test("selection is exact, collision-safe, and writes only after validation", async () => {
+test("selection is exact, refuses archived rows, and writes only after validation", async () => {
   const projects = [
     project(WORKSPACE_A, "Launch"),
     project(WORKSPACE_B, "Launch"),
@@ -372,11 +372,16 @@ test("selection is exact, collision-safe, and writes only after validation", asy
   assert.equal(byId.writes, 1);
 
   const byName = new MemoryStore(USER_ID);
-  assert.equal(
-    (await selectWorkspace("Other", projects, byName, USER_ID)).workspace_id,
-    WORKSPACE_C,
+  await assert.rejects(
+    selectWorkspace("Other", projects, byName, USER_ID),
+    (error) => {
+      assert.ok(error instanceof WorkspaceUnavailableError);
+      assert.match(error.message, /closed and cannot be selected/);
+      return true;
+    },
   );
-  assert.equal(byName.profile.workspaceId, WORKSPACE_C);
+  assert.equal(byName.writes, 0);
+  assert.equal(byName.profile.workspaceId, null);
 
   const ambiguous = new MemoryStore(USER_ID, WORKSPACE_C);
   await assert.rejects(

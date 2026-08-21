@@ -82,7 +82,11 @@ type ConnectCommand =
   | { kind: "revoke_agent_token"; token_id: string }
   | { kind: "renew_agent_token" };
 
-type WireCommand = Command | ConnectCommand;
+type CapabilityCommand =
+  | { kind: "mint_capability_url"; task_id: string; ttl_ms?: number }
+  | { kind: "revoke_capability_url"; capability_id: string };
+
+type WireCommand = Command | ConnectCommand | CapabilityCommand;
 type SignalCommand = {
   kind: "post_signal";
   signal_kind: "working-on" | "note" | "ask";
@@ -236,7 +240,10 @@ before(async () => {
   // free-tier abuse controls land; the suite turns it on here.
   envDir = mkdtempSync(join(tmpdir(), "cswarm-fn-env-"));
   const envFile = join(envDir, "test.env");
-  writeFileSync(envFile, "SWARM_ENV=test\nSWARM_SELF_SERVE=1\n");
+  writeFileSync(
+    envFile,
+    "SWARM_ENV=test\nSWARM_SELF_SERVE=1\nSWARM_CAPABILITY_URLS=1\n",
+  );
   functionProcess = spawn(
     "supabase",
     ["functions", "serve", "--no-verify-jwt", "--env-file", envFile],
@@ -827,6 +834,38 @@ async function issueConnect(
       "content-type": "application/json",
     },
     body: JSON.stringify(requestBody),
+  });
+  const text = await response.text();
+  return {
+    status: response.status,
+    text,
+    body: JSON.parse(text) as Record<string, unknown>,
+  };
+}
+
+async function issueCapability(
+  f: Fixture,
+  token: string,
+  command: CapabilityCommand,
+  id = commandId(command.kind),
+  workspaceId = f.workspaceA,
+): Promise<CommandResponse> {
+  const credential = f.credentials.get(token);
+  assert.ok(credential, "test credential is registered");
+  const ledgerKey = `${credential.kind}:${credential.id}:${id}`;
+  if (!f.firstRequests.has(ledgerKey)) f.firstRequests.set(ledgerKey, command);
+  const response = await fetch(`${local.API_URL}/functions/v1/command`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${token}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      command_id: id,
+      client_version: "0.1.0",
+      workspace_id: workspaceId,
+      command,
+    }),
   });
   const text = await response.text();
   return {
@@ -3559,6 +3598,107 @@ test("archive_workspace is owner-only, hides the route, and leaves the workspace
         AND archived_at IS NULL
     `;
     assert.equal(liveAfterRestore?.count, "1", "support restore returns the live slot");
+  });
+});
+
+test("pre-route capability mint and invitation acceptance refuse archived workspaces", async () => {
+  await scenario(async (f) => {
+    const taskId = randomUUID();
+    const created = await issue(
+      f,
+      f.ubJwt,
+      { kind: "create", task_id: taskId, slug: "archive-authz-control" },
+      commandId("archive_authz_task"),
+      {},
+      f.workspaceB,
+      { kind: "repo", repo_mapping_id: f.repoB },
+    );
+    assert.equal(created.status, 200, created.text);
+    assert.equal(created.body.status, "accepted", created.text);
+
+    const liveMint = await issueCapability(
+      f,
+      f.ubJwt,
+      { kind: "mint_capability_url", task_id: taskId },
+      commandId("live_capability_mint"),
+      f.workspaceB,
+    );
+    assert.equal(liveMint.status, 200, liveMint.text);
+    assert.equal(liveMint.body.status, "accepted", liveMint.text);
+    assert.match(
+      String(liveMint.body.capability_token),
+      /^swm_cap_[A-Za-z0-9_-]{43}$/,
+    );
+
+    await sql`
+      UPDATE swarm.workspaces
+      SET archived_at = statement_timestamp()
+      WHERE workspace_id = ${f.workspaceB}::uuid
+    `;
+    const archivedMint = await issueCapability(
+      f,
+      f.ubJwt,
+      { kind: "mint_capability_url", task_id: taskId },
+      commandId("archived_capability_mint"),
+      f.workspaceB,
+    );
+    assert.equal(archivedMint.status, 403, archivedMint.text);
+    assert.deepEqual(archivedMint.body, { error: "forbidden" });
+
+    const invitee = await createUser("archived-invitation");
+    registerHuman(f, invitee);
+    const invited = await issueConnect(f, f.uaJwt, {
+      kind: "invite_member",
+      email: invitee.email,
+    });
+    assert.equal(invited.status, 200, invited.text);
+    assert.equal(invited.body.status, "accepted", invited.text);
+    const invitationToken = String(invited.body.invitation_token);
+
+    await sql`
+      UPDATE swarm.workspaces
+      SET archived_at = statement_timestamp()
+      WHERE workspace_id = ${f.workspaceA}::uuid
+    `;
+    const archivedAccept = await issueConnect(
+      f,
+      invitee.jwt,
+      { kind: "accept_invitation", token: invitationToken },
+      commandId("archived_invitation_accept"),
+      undefined,
+    );
+    assert.equal(archivedAccept.status, 403, archivedAccept.text);
+    assert.deepEqual(archivedAccept.body, { error: "forbidden" });
+    const [pending] = await sql<{ consumed_at: Date | null; members: string }[]>`
+      SELECT
+        i.consumed_at,
+        (
+          SELECT count(*)::text
+          FROM swarm.memberships AS m
+          WHERE m.workspace_id = i.workspace_id
+            AND m.user_id = ${invitee.id}::uuid
+        ) AS members
+      FROM swarm.invitations AS i
+      WHERE i.token_hash = ${createHash("sha256").update(invitationToken).digest()}
+    `;
+    assert.equal(pending?.consumed_at, null, "archived refusal leaves invitation pending");
+    assert.equal(pending?.members, "0", "archived refusal does not add a member");
+
+    await sql`
+      UPDATE swarm.workspaces
+      SET archived_at = NULL
+      WHERE workspace_id = ${f.workspaceA}::uuid
+    `;
+    const liveAccept = await issueConnect(
+      f,
+      invitee.jwt,
+      { kind: "accept_invitation", token: invitationToken },
+      commandId("live_invitation_accept"),
+      undefined,
+    );
+    assert.equal(liveAccept.status, 200, liveAccept.text);
+    assert.equal(liveAccept.body.status, "accepted", liveAccept.text);
+    assert.equal(liveAccept.body.workspace_id, f.workspaceA);
   });
 });
 
