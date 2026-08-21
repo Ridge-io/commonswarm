@@ -35,8 +35,8 @@ const RETIRED_FOOTER =
  * number instead of an availability state: copy asserts deployment state, so grep every
  * surface when a gate flips. This one was found in EIGHT shipping places across two
  * spellings ("3" and "three"), one of which was dead code. */
-const CURRENT_HEADER = "Free — 10 workspaces, no card. Signup is open.";
-const CURRENT_FOOTER = "Signup is open. Free — 10 workspaces, no card.";
+const CURRENT_HEADER = "Free for 10 workspaces, no card. Signup is open.";
+const CURRENT_FOOTER = "Signup is open. Free for 10 workspaces, no card.";
 
 function decodeEntities(value) {
   return value
