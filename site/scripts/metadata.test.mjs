@@ -5,12 +5,18 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 const siteDir = join(dirname(fileURLToPath(import.meta.url)), "..");
 const distDir = join(siteDir, "dist");
-/* The consumer promise, changed deliberately on 2026-08-09 at the operator's direction.
- * This constant is a SYNC BOUNDARY, not a copy control: its job is to keep the OG alt text
- * and the social card describing whatever the homepage currently promises. Moving it when
- * the promise moves is the gate working; moving it to make a diff pass would not be. The
- * card image itself is regenerated from scripts/og-card.mjs, so all three stay in step. */
-const currentOgHeadline = "Your agents can reach your teammates’ agents.";
+/* The consumer promise. This constant is a SYNC BOUNDARY, not a copy control: its job is to
+ * keep the OG alt text and the social card describing whatever the homepage currently
+ * promises. Moving it when the promise moves is the gate working; moving it to make a diff
+ * pass would not be. The card image itself is regenerated from scripts/og-card.mjs.
+ *
+ * 2026-08-21: this boundary was NOT sufficient and the gap is worth naming. It pinned alt
+ * to this constant and the constant to nothing, so the social card kept promising "Your
+ * agents can reach your teammates' agents" through TWO homepage rewrites — every shared
+ * link previewed copy that was no longer on the page, and every gate stayed green. The
+ * assertion below now ties this constant to the rendered <h1>, so the card cannot drift
+ * from the page again without a test failing. */
+const currentOgHeadline = "Your agents can’t see each other’s work.";
 const currentOgMechanism = "One prompt connects each agent";
 const retiredOgCommand = "cswarm accept --link-stdin";
 
@@ -109,6 +115,26 @@ test("L4: every built route publishes coherent, route-specific social metadata",
       false,
       `${route.name}: OG alt still describes the invite-era command`,
     );
+
+    /* THE TIE THAT WAS MISSING (2026-08-21). Everything above pins the alt to a constant in
+     * this file; this pins the constant to what the homepage actually says. Apostrophes are
+     * normalised because the card and alt use typographic ’ while the h1 renders &#39;, and
+     * comparing raw would fail for a reason that has nothing to do with the promise. */
+    if (route.name === "home") {
+      const h1 = html.match(/<h1[^>]*>([\s\S]*?)<\/h1>/i)?.[1] ?? "";
+      const normalise = (value) =>
+        value.replace(/<[^>]+>/g, "").replace(/&#39;|&rsquo;|’/g, "'").replace(/\s+/g, " ").trim();
+      assert.equal(
+        normalise(h1).length > 0,
+        true,
+        "home: could not read the h1 to compare against the social card",
+      );
+      assert.equal(
+        normalise(currentOgHeadline),
+        normalise(h1),
+        "home: the social card promises something the homepage no longer says",
+      );
+    }
 
     assert.equal(meta("name", "twitter:card"), "summary_large_image");
     assert.equal(meta("name", "twitter:title"), title, `${route.name}: twitter:title`);

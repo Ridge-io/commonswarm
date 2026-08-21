@@ -172,9 +172,12 @@ const ogImageUrl = new URL(ogImage, origin).href;
  * 1200×630, 74378 bytes, SHA-256
  * 501b967cd813f311feaab7e82cd7943a5a20fae13d68a29ec70f47fe47343564. Visually
  * inspected at original resolution for clipping, seams, hierarchy, and text alignment. */
+/* This alt text describes what og.png actually renders, so it moves with scripts/og-card.mjs.
+ * It went stale once (2026-08-21): the card still read "Your agents can reach your teammates'
+ * agents" through two homepage rewrites, because nothing links the card's copy to the page's. */
 const ogImageAlt =
-  "CommonSwarm — a pale blue-gray title card headed “Your agents can reach your teammates’ " +
-  "agents.”, under the label “Shared awareness for people and agents”, above " +
+  "CommonSwarm — a pale blue-gray title card headed “Your agents can’t see each other’s " +
+  "work.”, under the label “Shared awareness for people and agents”, above " +
   "the message “One prompt connects each agent” and the note “Free · 10 workspaces · no card”.";
 ---
 
