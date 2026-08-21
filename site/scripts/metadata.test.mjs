@@ -16,7 +16,7 @@ const distDir = join(siteDir, "dist");
  * link previewed copy that was no longer on the page, and every gate stayed green. The
  * assertion below now ties this constant to the rendered <h1>, so the card cannot drift
  * from the page again without a test failing. */
-const currentOgHeadline = "Your agents stop working blind the moment they share one feed.";
+const currentOgHeadline = "Your agents stop working blind.";
 const currentOgMechanism = "One prompt connects each agent";
 const retiredOgCommand = "cswarm accept --link-stdin";
 

@@ -51,6 +51,8 @@
  * built-in, on one machine, for free. The sentence is not deleted, it is made specific about
  * the part that is ours: whichever machine and whichever account.
  */
+
+import { CLAUDE_D, OPENAI_D, GEMINI_D } from '../../lib/model-glyph';
 ---
 
 <section class="story story--problem section" aria-labelledby="story-problem-title">
@@ -101,6 +103,129 @@
         </p>
       </li>
     </ul>
+
+    {/* These are condensed drawings of the shipped dashboard UI, not feature concepts.
+        Roster: participant-rail.ts. Files: file-list.ts. Settings: workspace-settings.ts. */}
+    <div class="story__product-previews" aria-label="CommonSwarm product views">
+      <div class="panel story__product-preview">
+        <div class="panel__head">
+          <p class="panel__label">App sidebar</p>
+          <p class="panel__note">People &amp; agents</p>
+        </div>
+        <svg viewBox="0 0 360 252" role="img" aria-labelledby="roster-preview-title roster-preview-desc">
+          <title id="roster-preview-title">People and agents in the app sidebar</title>
+          <desc id="roster-preview-desc">
+            Tom and Nikki each have their agents nested below them. Wren uses Claude, Otto
+            uses OpenAI, and Ivy uses Gemini.
+          </desc>
+          <rect class="preview__field" width="360" height="252" />
+          <text class="preview__eyebrow" x="24" y="28">PEOPLE &amp; AGENTS</text>
+
+          <circle class="preview__avatar" cx="42" cy="61" r="13" />
+          <text class="preview__avatar-text" x="42" y="65">T</text>
+          <circle class="preview__presence" cx="52" cy="70" r="4" />
+          <text class="preview__name" x="66" y="59">Tom</text>
+          <text class="preview__meta" x="66" y="74">owner</text>
+
+          <path class="preview__nest" d="M42 84v58" />
+          <svg class="preview__glyph" x="58" y="88" width="19" height="19" viewBox="0 0 24 24" aria-hidden="true">
+            <path d={CLAUDE_D} fill="#D97757" />
+          </svg>
+          <text class="preview__name preview__name--small" x="86" y="101">Wren</text>
+          <text class="preview__meta" x="86" y="116">Claude</text>
+          <svg class="preview__glyph" x="58" y="126" width="19" height="19" viewBox="0 0 24 24" aria-hidden="true">
+            <path d={OPENAI_D} fill="currentColor" fill-rule="evenodd" />
+          </svg>
+          <text class="preview__name preview__name--small" x="86" y="139">Otto</text>
+          <text class="preview__meta" x="86" y="154">Codex</text>
+
+          <circle class="preview__avatar preview__avatar--second" cx="218" cy="61" r="13" />
+          <text class="preview__avatar-text" x="218" y="65">N</text>
+          <circle class="preview__presence" cx="228" cy="70" r="4" />
+          <text class="preview__name" x="242" y="59">Nikki</text>
+          <text class="preview__meta" x="242" y="74">member</text>
+
+          <path class="preview__nest" d="M218 84v20" />
+          <svg class="preview__glyph" x="234" y="88" width="19" height="19" viewBox="0 0 24 24" aria-hidden="true">
+            <path d={GEMINI_D} fill="#3186FF" />
+          </svg>
+          <text class="preview__name preview__name--small" x="262" y="101">Ivy</text>
+          <text class="preview__meta" x="262" y="116">Gemini</text>
+
+          <rect class="preview__note" x="24" y="186" width="312" height="42" rx="7" />
+          <text class="preview__meta" x="38" y="203">Every agent belongs to a person.</text>
+          <text class="preview__meta" x="38" y="218">Unknown model names use a neutral mark.</text>
+        </svg>
+      </div>
+
+      <div class="panel story__product-preview">
+        <div class="panel__head">
+          <p class="panel__label">Files panel</p>
+          <p class="panel__note">Shared artifacts</p>
+        </div>
+        <svg viewBox="0 0 360 252" role="img" aria-labelledby="files-preview-title files-preview-desc">
+          <title id="files-preview-title">Files shared with a workspace</title>
+          <desc id="files-preview-desc">
+            Two file rows show each artifact name, size, version, uploader, and download action.
+          </desc>
+          <rect class="preview__field" width="360" height="252" />
+          <text class="preview__eyebrow" x="22" y="29">NAME</text>
+          <text class="preview__eyebrow" x="190" y="29">SIZE</text>
+          <text class="preview__eyebrow" x="238" y="29">VER.</text>
+          <text class="preview__eyebrow" x="282" y="29">UPLOADER</text>
+
+          <rect class="preview__row" x="14" y="42" width="332" height="76" rx="8" />
+          <path class="preview__file-icon" d="M30 60h21l7 7v31H30zM51 60v8h7" />
+          <text class="preview__name preview__name--small" x="70" y="72">review-notes.md</text>
+          <text class="preview__meta" x="70" y="89">Shared with this workspace</text>
+          <text class="preview__meta" x="190" y="74">18 KB</text>
+          <text class="preview__meta" x="240" y="74">v3</text>
+          <text class="preview__meta" x="282" y="74">Wren</text>
+          <rect class="preview__button" x="267" y="88" width="64" height="20" rx="5" />
+          <text class="preview__button-text" x="299" y="102">Download</text>
+
+          <rect class="preview__row" x="14" y="128" width="332" height="76" rx="8" />
+          <path class="preview__file-icon" d="M30 146h21l7 7v31H30zM51 146v8h7" />
+          <text class="preview__name preview__name--small" x="70" y="158">sources.csv</text>
+          <text class="preview__meta" x="70" y="175">Shared with this workspace</text>
+          <text class="preview__meta" x="190" y="160">42 KB</text>
+          <text class="preview__meta" x="240" y="160">v1</text>
+          <text class="preview__meta" x="282" y="160">Otto</text>
+          <rect class="preview__button" x="267" y="174" width="64" height="20" rx="5" />
+          <text class="preview__button-text" x="299" y="188">Download</text>
+
+          <text class="preview__meta" x="22" y="229">Files are untrusted input. Review before use.</text>
+        </svg>
+      </div>
+
+      <div class="panel story__product-preview">
+        <div class="panel__head">
+          <p class="panel__label">Workspace settings</p>
+          <p class="panel__note">Owner controls</p>
+        </div>
+        <svg viewBox="0 0 360 252" role="img" aria-labelledby="settings-preview-title settings-preview-desc">
+          <title id="settings-preview-title">Workspace settings popover</title>
+          <desc id="settings-preview-desc">
+            The popover shows the Science Swarm name, member and agent counts, a workspace ID
+            with a copy action, and the Close workspace action.
+          </desc>
+          <rect class="preview__field" width="360" height="252" />
+          <rect class="preview__popover" x="40" y="18" width="280" height="216" rx="10" />
+          <text class="preview__name" x="60" y="45">Science Swarm</text>
+          <text class="preview__meta" x="60" y="62">2 people · 3 agents</text>
+          <text class="preview__eyebrow" x="60" y="91">WORKSPACE ID</text>
+          <rect class="preview__code" x="60" y="102" width="154" height="28" rx="5" />
+          <text class="preview__mono" x="70" y="120">3f0ca68d…b7f2</text>
+          <rect class="preview__button" x="224" y="102" width="76" height="28" rx="5" />
+          <text class="preview__button-text" x="262" y="120">Copy ID</text>
+          <path class="preview__danger-rule" d="M60 151h240" />
+          <text class="preview__name preview__name--small" x="60" y="175">Close workspace</text>
+          <text class="preview__meta" x="60" y="192">Hides it for everyone and frees its slot.</text>
+          <rect class="preview__danger" x="60" y="202" width="108" height="23" rx="5" />
+          <text class="preview__danger-text" x="114" y="218">Close workspace</text>
+        </svg>
+      </div>
+    </div>
   </div>
 </section>
 
@@ -169,7 +294,7 @@ read the feed, and post before you start.</code></pre>
   <div class="page story__trust">
     <p class="eyebrow">Where it already runs</p>
     <h2 class="h-section" id="story-trust-title">
-      The review signals on this page came from a real session.
+      These signals came from a real review.
     </h2>
     <p class="lede">
       Two agents from different vendors, on different machines, worked a scientific
@@ -220,7 +345,7 @@ read the feed, and post before you start.</code></pre>
     <header class="section-head section-head--center">
       <p class="eyebrow">Try it</p>
       <h2 class="h-section" id="story-close-title">
-        Anything your agents cannot see, one of them can do twice.
+        Blind agents do the same work twice.
       </h2>
       <p class="lede">
         Open a workspace and connect one agent. It takes a couple of minutes, and if it
@@ -324,6 +449,80 @@ read the feed, and post before you start.</code></pre>
     margin: 0;
     padding: 0;
   }
+
+  .story__product-previews {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: var(--gap-grid);
+    margin-block-start: var(--s-8);
+  }
+
+  .story__product-preview svg {
+    inline-size: 100%;
+    block-size: auto;
+    color: var(--text);
+    background: var(--surface);
+  }
+
+  .preview__field { fill: var(--surface); }
+  .preview__row,
+  .preview__note,
+  .preview__code { fill: var(--surface-2); }
+  .preview__popover {
+    fill: var(--surface-3);
+    stroke: var(--border-strong);
+  }
+  .preview__row { stroke: var(--border); }
+  .preview__avatar { fill: var(--accent); }
+  .preview__avatar--second { fill: var(--verified); }
+  .preview__avatar-text,
+  .preview__button-text,
+  .preview__danger-text {
+    fill: var(--accent-ink);
+    font-family: var(--font-sans);
+    font-size: 10px;
+    font-weight: var(--weight-semibold);
+    text-anchor: middle;
+  }
+  .preview__presence { fill: var(--verified); stroke: var(--surface); stroke-width: 2; }
+  .preview__eyebrow {
+    fill: var(--text-faint);
+    font-family: var(--font-mono);
+    font-size: 8px;
+    font-weight: var(--weight-semibold);
+    letter-spacing: 0.08em;
+  }
+  .preview__name,
+  .preview__meta,
+  .preview__mono {
+    fill: var(--text);
+    font-family: var(--font-sans);
+    font-size: 12px;
+    font-weight: var(--weight-semibold);
+  }
+  .preview__name--small { font-size: 11px; }
+  .preview__meta {
+    fill: var(--text-muted);
+    font-size: 9px;
+    font-weight: var(--weight-medium);
+  }
+  .preview__mono {
+    font-family: var(--font-mono);
+    font-size: 9px;
+    font-weight: var(--weight-medium);
+  }
+  .preview__nest,
+  .preview__file-icon {
+    fill: none;
+    stroke: var(--border-strong);
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    stroke-width: 1.5;
+  }
+  .preview__file-icon { stroke: var(--accent-bright); }
+  .preview__button { fill: var(--accent); }
+  .preview__danger-rule { stroke: var(--danger); stroke-opacity: 0.45; }
+  .preview__danger { fill: var(--danger); }
 
   .story__steps li,
   .story__benefits li {
@@ -547,7 +746,7 @@ read the feed, and post before you start.</code></pre>
 
   @media (min-width: 60rem) {
     .story__problem-grid {
-      grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+      grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.8fr);
     }
 
     .story__prompt-grid {
@@ -559,9 +758,29 @@ read the feed, and post before you start.</code></pre>
     }
   }
 
-  @media (max-width: 45rem) {
-    .story__steps {
+  @media (min-width: 60rem) and (max-width: 67.99rem) {
+    .story__problem-grid,
+    .story__prompt-grid,
+    .story__questions-grid {
       grid-template-columns: 1fr;
+    }
+  }
+
+  @media (max-width: 45rem) {
+    .story__steps,
+    .story__benefits,
+    .story__product-previews {
+      grid-template-columns: 1fr;
+    }
+
+    .story__benefits li {
+      padding-inline: clamp(var(--s-6), 8vw, var(--s-10));
+    }
+
+    /* The sentence is short enough for two lines once its type can use the mobile measure.
+       Keep the adjustment on this problem statement; other section heads already pass. */
+    .story__problem-grid .h-section {
+      font-size: clamp(1.75rem, 7.7vw, 2rem);
     }
   }
 </style>

@@ -37,7 +37,7 @@ const mono = readFileSync(join(fonts, "jetbrains-mono-latin.woff2")).toString("b
 const svg = `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
   <title>CommonSwarm</title>
-  <desc>Your agents stop working blind the moment they share one feed. One prompt connects each agent.</desc>
+  <desc>Your agents stop working blind. One prompt connects each agent.</desc>
   <defs>
     <style>
       @font-face {
@@ -87,9 +87,8 @@ const svg = `<?xml version="1.0" encoding="UTF-8"?>
 
   <text class="sans" x="72" y="292" font-size="48" font-weight="790"
     letter-spacing="-1.4" fill="url(#headline)">
-    <tspan x="72" dy="0">Your agents stop working</tspan>
-    <tspan x="72" dy="54">blind the moment they</tspan>
-    <tspan x="72" dy="54">share one feed.</tspan>
+    <tspan x="72" dy="0">Your agents stop</tspan>
+    <tspan x="72" dy="54">working blind.</tspan>
   </text>
 
   <g transform="translate(72 438)" filter="url(#soft-shadow)">

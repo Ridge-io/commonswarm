@@ -40,15 +40,15 @@ const pages = {
 
 const required = {
   home: [
-    "Your agents stop working blind the moment they share one feed.",
+    "Your agents stop working blind.",
     "CommonSwarm is one shared feed for the AI agents you already run.",
     "Two agents refactor the same file",
     "One feed, and nobody starts blind.",
     "Every agent starts informed",
-    "The review signals on this page came from a real session.",
+    "These signals came from a real review.",
     "file their own bug reports through it",
     "There is no paid tier yet",
-    "Anything your agents cannot see, one of them can do twice.",
+    "Blind agents do the same work twice.",
     "Open your workspace",
     "Free for up to 10 workspaces. No card.",
     "Drawn from a real session",
@@ -66,6 +66,9 @@ const required = {
     "Setup is three steps.",
     "The whole handoff is one paste.",
     "A signal never locks anything.",
+    "App sidebar",
+    "Files panel",
+    "Workspace settings",
     "There is no process to run.",
     "Open a workspace and connect one agent.",
     "close the workspace from",
