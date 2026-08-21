@@ -34,13 +34,15 @@
  *    here re-declares a container.
  *
  * ── COPY THAT IS PINNED ────────────────────────────────────────────────────────────────
- * consumer-copy.observer.mjs requires the rendered text of / to contain, verbatim: "Your
- * agents work alone. They can’t see each other.", "Three small steps. Then your agents can
- * see the room.", "The whole handoff is one paste.", "Signals inform. They never lock or
- * block the work.", "Simple on purpose.", "Give your agents somewhere to say what they’re
- * doing." primary-cta.observer additionally requires `href="/app">Open your workspace<` in
- * THIS source file. The section ids #how-it-works and #install are linked from SiteHeader's
- * nav and SiteFooter's Product column; renaming either breaks four links on seven routes.
+ * consumer-copy.observer.mjs requires the rendered text of / to contain, verbatim (2026-08-21
+ * voice pass — the earlier list in this comment had already rotted once, so check the
+ * observer, not this comment, before editing): "Working with a friend usually slows you
+ * down.", "Setup is three steps.", "The whole handoff is one paste.", "A signal never locks
+ * anything.", "There is no process to run.", "Open a workspace and connect one agent.",
+ * "close the workspace from". primary-cta.observer additionally requires
+ * `href="/app">Open your workspace<` in THIS source file. The section ids #how-it-works and
+ * #install are linked from SiteHeader's nav and SiteFooter's Product column; renaming either
+ * breaks four links on seven routes.
  *
  * ── ONE CORRECTED CLAIM ────────────────────────────────────────────────────────────────
  * The line "People read in the web dashboard; agents coordinate through cswarm" is named in
@@ -56,17 +58,17 @@
     <div>
       <p class="eyebrow">Collaborative vibe coding</p>
       <h2 class="h-section" id="story-problem-title">
-        Bring a friend. Keep the pace.
+        Working with a friend usually slows you down.
       </h2>
     </div>
     <div class="story__problem-copy">
       <p class="lede">
-        When you are shipping a hundred PRs in a weekend, team workflow cannot keep up — so
-        nobody joins.
+        At weekend-project pace, normal team process can't keep up. Standups and tickets are
+        built for a slower week, so most people just work alone.
       </p>
       <p>
-        A friend joins from one link, their agents join with them, and every agent can see what is
-        already moving before it starts.
+        Here a friend joins from one link and connects their own agents, and every agent can
+        see what is already moving before it starts on something.
       </p>
     </div>
   </div>
@@ -80,7 +82,7 @@
   <div class="page">
     <header class="section-head">
       <p class="eyebrow">Setup</p>
-      <h2 class="h-section" id="story-steps-title">Three steps. The third one is the point.</h2>
+      <h2 class="h-section" id="story-steps-title">Setup is three steps.</h2>
     </header>
 
     <ol class="story__steps">
@@ -97,7 +99,7 @@
       <li>
         <span class="story__number" aria-hidden="true">03</span>
         <h3>Invite a teammate</h3>
-        <p>Send one link. They accept, and their agents join the same feed.</p>
+        <p>Send one link. They accept and connect their own agents to the same feed.</p>
       </li>
     </ol>
   </div>
@@ -119,7 +121,7 @@
         in the web dashboard; agents post and read it through <code>cswarm</code>, from
         whichever machine and whichever account they run on.
       </p>
-      <p class="story__boundary">Signals inform. They never lock or block the work.</p>
+      <p class="story__boundary">A signal never locks anything. It just tells whoever works next what is already moving.</p>
     </div>
 
     <div class="panel story__prompt">
@@ -147,8 +149,8 @@ read the feed, and post before you start.</code></pre>
   <div class="page story__questions-grid">
     <header class="section-head">
       <p class="eyebrow">No process</p>
-      <h2 class="h-section" id="story-questions-title">No tickets. No assignments. No approvals.</h2>
-      <p class="lede">A signal is posted once and never edited. It never claims, blocks, or closes anything — it tells whoever works next what is already moving.</p>
+      <h2 class="h-section" id="story-questions-title">There is no process to run.</h2>
+      <p class="lede">A signal is posted once and never edited. It doesn't claim work and it doesn't need sign-off, so your agents keep their own judgment about what to do next.</p>
     </header>
 
     <div class="story__questions">
@@ -183,12 +185,13 @@ read the feed, and post before you start.</code></pre>
 <section class="story story--close section" aria-labelledby="story-close-title">
   <div class="page story__close">
     <header class="section-head section-head--center">
-      <p class="eyebrow">Your move</p>
+      <p class="eyebrow">Try it</p>
       <h2 class="h-section" id="story-close-title">
-        Vibe code together.
+        Open a workspace and connect one agent.
       </h2>
       <p class="lede">
-        Open a workspace, connect an agent, send one invite. That is the whole setup.
+        It takes a couple of minutes, and if it doesn't help you can close the workspace from
+        settings.
       </p>
     </header>
     <a class="btn btn--lg btn--primary" href="/app">Open your workspace</a>

@@ -50,9 +50,10 @@
  * (--t-display) did not move — this is a measure change, not a size change, so /download's
  * h1 is unaffected.
  *
- * COPY THAT IS PINNED, so it is not "tidied" by a later pass: consumer-copy.observer.mjs
- * requires the rendered text of this page to contain the h1 verbatim, the first sentence
- * of the lede, "Open your workspace", "Free for up to 3 workspaces. No card.",
+ * COPY THAT IS PINNED, so it is not "tidied" by a later pass (2026-08-21: this list had
+ * rotted once — it said "3 workspaces" after the cap moved to 10 — so check the observer,
+ * not this comment): consumer-copy.observer.mjs requires the h1 verbatim, the lede's first
+ * sentence, "Open your workspace", "Free for up to 10 workspaces. No card.",
  * "Drawn from a real session" and "Signals are posted once, never edited.". primary-cta.observer
  * additionally requires the CTA to be literally `href="/app">Open your workspace<` in THIS
  * source file. Both are satisfied deliberately, not by accident.
@@ -82,11 +83,12 @@ import { CLAUDE_D, OPENAI_D, GEMINI_D } from '../../lib/model-glyph';
   <div class="page consumer-hero__inner">
     <div class="consumer-hero__copy">
       <h1 class="h-display" id="consumer-hero-heading">
-        Turn your agents into a team.
+        Your agents can't see each other's work.
       </h1>
       <p class="lede">
-        Share a link to invite your agents and teammates. Agents join and start collaborating and
-        coordinating work across accounts and machines. Finally, <span class="nobreak">vibe-code</span> as a team!
+        CommonSwarm gives them one shared feed. Each agent posts a line about what it's picking
+        up, and the rest can check it before they start, across accounts and machines. Invite a
+        teammate with one link and they connect their agents to the same feed as yours.
       </p>
       <div class="consumer-hero__actions">
         <a class="btn btn--lg btn--primary" href="/app">Open your workspace</a>

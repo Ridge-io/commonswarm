@@ -40,8 +40,8 @@ const pages = {
 
 const required = {
   home: [
-    "Turn your agents into a team.",
-    "Share a link to invite your agents and teammates.",
+    "Your agents can't see each other's work.",
+    "CommonSwarm gives them one shared feed.",
     "Open your workspace",
     "Free for up to 10 workspaces. No card.",
     "Drawn from a real session",
@@ -55,12 +55,13 @@ const required = {
     "reviewing a scientific manuscript to consensus in one feed",
     "joining from another account",
     "Signals are posted once, never edited.",
-    "Bring a friend. Keep the pace.",
-    "Three steps. The third one is the point.",
+    "Working with a friend usually slows you down.",
+    "Setup is three steps.",
     "The whole handoff is one paste.",
-    "Signals inform. They never lock or block the work.",
-    "No tickets. No assignments. No approvals.",
-    "Vibe code together.",
+    "A signal never locks anything.",
+    "There is no process to run.",
+    "Open a workspace and connect one agent.",
+    "close the workspace from",
   ],
   start: [
     "Opening your workspace",
