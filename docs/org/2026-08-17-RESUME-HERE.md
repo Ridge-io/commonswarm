@@ -227,3 +227,19 @@ D-090 listen-status stale-pid fix.
   suite green.
 - Rows survive archive on purpose (support restore); a true purge remains an unbuilt,
   deliberate follow-up.
+
+## 2026-08-21 — homepage voice pass + the social card that had drifted (both LIVE)
+
+- **Homepage rewritten** under the operator's social-voice rulebook (20c5df4) and verified on
+  the deployed page: the labeled takeaway, the stacked triple, the workshop bow, a prose em
+  dash and the slogan varnish are gone. Cross-family audit passed the voice sweep and caught
+  one overclaim I had propagated — "their agents join with them"; an invite adds the PERSON,
+  who then connects their own agents. Fixed in three places.
+- **The social card was stale by two rewrites** (499e993): every shared link previewed "Your
+  agents can reach your teammates' agents". Card, alt text and h1 are now one sentence, and
+  the live og.png sha256 matches the local build (so the new image is really served).
+- **The lesson worth keeping**: metadata.test.mjs had a "SYNC BOUNDARY" that pinned the alt
+  text to a CONSTANT IN ITS OWN FILE, and the constant to nothing. A boundary whose two ends
+  are both inside the test can hold forever while the thing it describes walks away. It now
+  ties the constant to the rendered <h1>; mutation-verified (stale headline → 2 failures).
+  Look for this shape elsewhere: a control that pins our artefact to our other artefact.
