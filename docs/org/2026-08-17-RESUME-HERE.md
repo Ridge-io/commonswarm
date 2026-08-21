@@ -207,3 +207,23 @@ D-090 listen-status stale-pid fix.
   the one --wait 500 under load (request_id logged); the worker-can-receive-but-not-send
   onboarding note (--workspace-id per-command form). MrMarketing's crash cause remains a
   contention LEAD, now diagnosable the next time it flaps.
+
+## 2026-08-21 — close-a-workspace SHIPPED (v0.1.23)
+
+- **archive_workspace LIVE end to end**: owner-only, human-only; closing removes the
+  workspace from every listing, revokes member/agent reads (migration 20260820000002 gates
+  is_member + the three outside paths), refuses capability mint and invitation accept,
+  and successor selection excludes archived with a direct selectWorkspace guard. Two
+  migrations applied to prod; command/read redeployed; site deployed (settings panel behind
+  a real cog, type-the-name confirm); v0.1.23 on GitHub + npm; installer serves it.
+- **Live proof**: closed the duplicate "Cold Agent Test 0.1.12" (d22c0fa5…) on production
+  via `cswarm workspace close` — it left the list immediately; the web close flow verified
+  present in the live bundles (Close copy + archive_workspace in commonswarm.CrlY2bob.js).
+  NOT verified by an actual web click-through: the browser-harness lost its CDP permission
+  (needs a manual Allow in Chrome) — do that click-through when the browser is available.
+- Review trail: codex built, grok inverted across three rounds; five refutations, all fixed
+  and pinned (listing leak, successor selection, is_member reads, selectWorkspace
+  overclaim, capability/invitation authz). p1-server 102/102 on a fresh reset — the whole
+  suite green.
+- Rows survive archive on purpose (support restore); a true purge remains an unbuilt,
+  deliberate follow-up.
