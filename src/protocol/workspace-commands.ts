@@ -38,6 +38,7 @@ export const RENEWAL_MAX_SUCCESSORS_DEFAULT = 800;
 
 export type WorkspaceCommand =
   | { kind: 'create_workspace'; workspace_id: string; name: string }
+  | { kind: 'archive_workspace' }
   | {
       kind: 'invite_member';
       invitation_id: string;
@@ -298,6 +299,7 @@ export type WorkspaceDecision = WorkspaceDecisionAccepted | WorkspaceDecisionRej
  */
 const HUMAN_ONLY_COMMANDS = new Set<WorkspaceCommand['kind']>([
   'create_workspace',
+  'archive_workspace',
   'invite_member',
   'revoke_invitation',
   'accept_invitation',
@@ -607,6 +609,31 @@ export function decideWorkspace(
   }
 
   switch (cmd.kind) {
+    case 'archive_workspace': {
+      if (actorRole !== 'owner') {
+        return domain(
+          ctx,
+          cmd.kind,
+          'not_workspace_owner',
+          'closing a workspace requires the Owner role',
+        );
+      }
+      /* Refuse instead of treating a second archive as success. A close command that
+       * reaches the reducer twice with different command ids must not claim it changed
+       * anything twice; normal HTTP routing hides archived workspaces before this point. */
+      if (state.workspace.archived_at !== null) {
+        return domain(
+          ctx,
+          cmd.kind,
+          'workspace_already_archived',
+          'workspace is already closed',
+        );
+      }
+      return accept([
+        env(ctx, 'WorkspaceArchived', { archived_at: ctx.now }),
+      ]);
+    }
+
     case 'invite_member': {
       if (!ownerOrAdmin(actorRole)) {
         return domain(ctx, cmd.kind, 'role_forbidden', 'inviting members requires Owner/Admin');

@@ -12,6 +12,7 @@ export const WORKSPACE_ROLES: readonly WorkspaceRole[] = ['owner', 'admin', 'mem
 
 export type WorkspaceEventType =
   | 'WorkspaceCreated'
+  | 'WorkspaceArchived'
   | 'MemberInvited'
   | 'InvitationRevoked'
   | 'InvitationAccepted'
@@ -28,6 +29,7 @@ export type WorkspaceEventType =
 
 export const WORKSPACE_EVENT_TYPES: readonly WorkspaceEventType[] = [
   'WorkspaceCreated',
+  'WorkspaceArchived',
   'MemberInvited',
   'InvitationRevoked',
   'InvitationAccepted',
@@ -114,6 +116,10 @@ export interface WorkspaceCreated {
   name: string;
   created_by: string;
   created_at: number;
+}
+
+export interface WorkspaceArchived {
+  archived_at: number;
 }
 
 export interface MemberInvited {
@@ -220,8 +226,10 @@ export type WorkspaceRejectionReason =
   | 'workspace_exists'
   | 'operator_not_allowed'
   | 'workspace_not_found'
+  | 'workspace_already_archived'
   | 'credential_kind_forbidden'
   | 'role_forbidden'
+  | 'not_workspace_owner'
   | 'member_exists'
   | 'member_not_found'
   | 'invitation_ttl_invalid'

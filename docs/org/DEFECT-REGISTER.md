@@ -455,7 +455,19 @@ conflicts, suspect the base before resolving the content.
 
 ---
 
-## D-016 — Two surfaces disagree about whether an archived workspace is live · OPEN
+## D-016 — Two surfaces disagree about whether an archived workspace is live · FIXED IN TREE
+
+**Fixed 2026-08-20 on `codex-wsclose`; not established as deployed.** The
+`archive_workspace` command now writes the archive state, route resolution
+rejects archived workspaces before any later command can run, and migration
+`20260820000001_hide_archived_workspaces.sql` removes archived rows from
+`swarm_read.workspaces`. The server test reaches both boundaries: a second
+command returns 403 and PostgREST returns an empty workspace list.
+
+~~**Ruling: do not filter the list.**~~ **DEAD:** that ruling was correct only
+while the command path still accepted archived workspaces. The command boundary
+now exists, so keeping the row visible would preserve the old inconsistency in
+the opposite direction.
 
 **Found:** 2026-07-29. Cinder asked whether `archived` is a server state with an authorization
 consequence or a client-side label, correctly saying the answer would change the D-006 ruling.
@@ -477,7 +489,7 @@ core, and is then ignored by every decision.
 That HIDES this defect rather than fixing it, and it is exactly the shape this register keeps
 recording — presentation that a determined client bypasses, reading as enforcement.
 
-**Ruling: do not filter the list.** Enforcement, if it is wanted, belongs in the reducer where
+**Superseded ruling:** do not filter the list. Enforcement, if it is wanted, belongs in the reducer where
 the state already is. Until then the honest surface is a CLI that says archived projects are
 still live, which is what it says today.
 
@@ -4163,7 +4175,22 @@ means neither path has ever executed. Testing them needs a global `npm install -
 collaborator's machine — **an operator decision, not the Lead's**, and Wren correctly declined to
 do it unasked.
 
-## D-075 — workspace archiving is designed, honoured by the cap, and unreachable · MAJOR · MITIGATED, not fixed
+## D-075 — workspace archiving is designed, honoured by the cap, and unreachable · FIXED IN TREE
+
+**Fixed 2026-08-20 on `codex-wsclose`; not established as deployed.** Commit
+`ad5a2d8` added the owner-only `archive_workspace` command, the
+`cswarm workspace close` verb, and the web settings action. The follow-up
+migration `20260820000001_hide_archived_workspaces.sql` closes the read-list gap
+found when the Lead ran the database suite. ~~That migration completed the
+access boundary.~~ **DEAD:** it hid only the workspace directory. The
+cross-family inversion then proved membership and agent reads still worked.
+Migration `20260820000002_archive_revokes_access.sql` moves the live check into
+the shared membership gate and the separate agent-read context. Archived rows
+remain durable for a support restore, and the live free-tier count still
+excludes them directly. Full correction and caller inventory:
+`docs/evidence/2026-08-20-close-workspace/README.md`.
+
+The historical finding and mitigation below remain as the reason for the fix.
 
 > ### CAP RAISED 3 -> 10, DEPLOYED 2026-08-09. Archiving is still unreachable.
 >

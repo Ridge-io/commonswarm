@@ -337,7 +337,7 @@ test("dashboard blocks an in-flight mint but Done and Back can finish a visible 
   assert.match(reset, /activeWorkspaceId = ""/);
   assert.match(
     openWorkspace,
-    /if \(connectState === "done"\)[\s\S]*pendingWorkspaceId = workspaceId;[\s\S]*connect\?\.finishPrompt\("back"\)/,
+    /if \(!force && connectState === "done"\)[\s\S]*pendingWorkspaceId = workspaceId;[\s\S]*connect\?\.finishPrompt\("back"\)/,
   );
   assert.match(
     openNewWorkspace,
@@ -351,7 +351,7 @@ test("dashboard blocks an in-flight mint but Done and Back can finish a visible 
   );
   assert.match(
     openWorkspace,
-    /if \(mintBusy \|\| connectState === "working"\)/,
+    /if \(!force && \(mintBusy \|\| connectState === "working"\)\)/,
   );
   assert.match(
     openWorkspace,

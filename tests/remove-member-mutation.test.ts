@@ -7,12 +7,17 @@ test("remove_member edge security seams remain reachable and fail closed", async
     "supabase/functions/command/index.ts",
     "utf8",
   );
-  assert.match(source, /"remove_member",\s*\n\s*"create_agent_principal"/);
+  assert.match(
+    source,
+    /"remove_member",\s*\n\s*"archive_workspace",\s*\n\s*"create_agent_principal"/,
+  );
   assert.equal(
-    (source.match(/"remove_member",\s*\n\s*"create_agent_principal"/g) ?? [])
+    (source.match(
+      /"remove_member",\s*\n\s*"archive_workspace",\s*\n\s*"create_agent_principal"/g,
+    ) ?? [])
       .length,
     2,
-    "remove_member must remain in both the global and human-connect registries",
+    "remove_member and archive_workspace must remain in both registries",
   );
   assert.match(
     source,

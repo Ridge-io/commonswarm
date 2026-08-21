@@ -71,6 +71,7 @@ export type ConnectCommand =
   | { kind: "revoke_invitation"; invitation_id: string }
   | { kind: "accept_invitation"; token: string }
   | { kind: "create_workspace"; workspace_id: string; name: string }
+  | { kind: "archive_workspace" }
   | { kind: "remove_member"; user_id: string }
   | { kind: "create_agent_principal"; name: string; model?: string }
   | { kind: "revoke_agent_principal"; principal_id: string }
@@ -267,19 +268,12 @@ export function createWorkspaceError(
     return new CreateWorkspaceError(
       status,
       code,
-      /* D-067/D-075. This used to end "Archiving a workspace frees its slot; the CLI cannot archive
-       * one yet, so ask whoever operates this deployment." Both halves were dead ends. Archiving
-       * is unreachable from every surface — `archived_at` exists and nothing writes it — and on a
-       * self-serve deployment the reader IS the operator, so it named a person who does not exist
-       * to perform an action that does not exist.
-       *
-       * It now states the limit, does not offer a remedy that is unimplemented, and names the one
-       * route that does work: someone else's invitation, which is not capped. */
+      /* Closing one live workspace now frees a slot; name the exact confirmed command. */
       `${
         limit === null
           ? "You have already created as many workspaces as this account allows."
           : `You have already created ${limit} workspaces, which is the limit for one account.`
-      } Workspaces cannot be removed yet, so this limit is a ceiling rather than a queue. Workspaces you were invited to do not count against it — a collaborator can still add you to theirs.`,
+      } Close one with cswarm workspace close <full-id|exact-name> --confirm <same-selector>, then try again. Workspaces you were invited to do not count against it.`,
     );
   }
   if (status === 403) {

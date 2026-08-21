@@ -192,9 +192,7 @@ import "../../styles/tokens.css";
                 <path d="m4 6 4 4 4-4"></path>
               </svg>
             </button>
-            {/* Workspace details moved off the rail into this gear popover next to the
-                name (operator direction 2026-08-19). Same data-hooks (data-channel-id,
-                data-copy-workspace-id) so the copy wiring resolves unchanged. */}
+            {/* Workspace settings live beside the workspace name. */}
             <button
               class="dashboard__gear-button"
               type="button"
@@ -202,12 +200,12 @@ import "../../styles/tokens.css";
               aria-haspopup="dialog"
               aria-expanded="false"
               aria-controls="dashboard-workspace-details"
-              aria-label="Workspace details"
-              title="Workspace details"
+              aria-label="Workspace settings"
+              title="Workspace settings"
             >
               <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+                <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.09a2 2 0 0 1 1 1.74v.5a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.38a2 2 0 0 0-.73-2.73l-.15-.09a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path>
                 <circle cx="12" cy="12" r="3"></circle>
-                <path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M16.9 16.9l2.1 2.1M19.1 4.9l-2.1 2.1M7.1 16.9l-2.1 2.1"></path>
               </svg>
             </button>
             <div
@@ -236,16 +234,9 @@ import "../../styles/tokens.css";
               id="dashboard-workspace-details"
               data-workspace-details-popover
               role="dialog"
-              aria-label="Workspace details"
+              aria-label="Workspace settings"
               hidden
-            >
-              <p class="dashboard__popover-label">Workspace ID</p>
-              <code class="dashboard__workspace-id" data-channel-id></code>
-              <button class="dashboard__text-button" type="button" data-copy-workspace-id>
-                Copy workspace ID
-              </button>
-              <span class="dashboard__copy-status" role="status" aria-live="polite" data-workspace-id-status></span>
-            </div>
+            ></div>
           </div>
 
           <section class="dashboard__workspace-context" aria-label="Workspace signal summary">
@@ -783,6 +774,7 @@ import "../../styles/tokens.css";
     WorkspaceLimitReached,
     FILE_CONTENT_WARNING,
     agentAccessStatuses,
+    archiveWorkspace,
     client,
     createWorkspace,
     currentSession,
@@ -811,6 +803,11 @@ import "../../styles/tokens.css";
   import { isInviteSubmitCurrent } from "../../lib/invite-submit";
   import { PendingRefreshGate } from "../../lib/pending-refresh";
   import { BootFocusGate } from "../../lib/boot-focus";
+  import { renderWorkspaceSettings } from "../../lib/workspace-settings";
+  import {
+    workspaceStateAfterClose,
+    type CloseableWorkspace,
+  } from "../../lib/workspace-close-state";
   import { agentEntityView, truncateEntityId } from "../../lib/entity-panel";
   import {
     filterSignals,
@@ -830,10 +827,7 @@ import "../../styles/tokens.css";
   import { buildAgentModelEditor } from "../../lib/agent-model-editor";
   import { renderFileList, type DisplayFile } from "../../lib/file-list";
 
-  interface Workspace {
-    id: string;
-    name: string;
-  }
+  interface Workspace extends CloseableWorkspace {}
 
   interface Agent {
     principalId: string;
@@ -1213,10 +1207,14 @@ import "../../styles/tokens.css";
           .range(offset, offset + pageSize - 1);
         if (error) throw new Error(error.message);
         const page = data ?? [];
-        result.push(...page.map((row) => ({
-          id: String(row.workspace_id ?? ""),
-          name: String(row.name ?? row.workspace_id ?? ""),
-        })).filter((workspace) => workspace.id.length > 0));
+        result.push(...page
+          .filter((row) => row.archived_at === null)
+          .map((row) => ({
+            id: String(row.workspace_id ?? ""),
+            name: String(row.name ?? row.workspace_id ?? ""),
+            archived: false,
+          }))
+          .filter((workspace) => workspace.id.length > 0));
         if (page.length < pageSize) return result;
       }
     };
@@ -2878,7 +2876,7 @@ import "../../styles/tokens.css";
       renderRoster();
       for (const list of all<HTMLElement>(
         "[data-workspace-list], [data-access-list], [data-dialog-access-list], [data-feed-list], " +
-          "[data-sidebar-participant-list], [data-file-list]",
+          "[data-sidebar-participant-list], [data-file-list], [data-workspace-details-popover]",
       )) {
         list.replaceChildren();
       }
@@ -3011,6 +3009,51 @@ import "../../styles/tokens.css";
       syncPendingPoll();
     });
 
+    const renderWorkspaceSettingsPanel = (workspace: Workspace): void => {
+      const root = one<HTMLElement>("[data-workspace-details-popover]");
+      if (!root) return;
+      const me = members.find((member) => member.userId === session?.user.id);
+      renderWorkspaceSettings(root, {
+        name: workspace.name,
+        workspaceId: workspace.id,
+        memberCount: members.length,
+        agentCount: agents.length,
+        canClose: !sampleMode && me?.role === "owner",
+        onCopy: async () => {
+          await navigator.clipboard.writeText(workspace.id);
+        },
+        onClose: async () => {
+          if (!session || sampleMode) return;
+          const closingWorkspaceId = workspace.id;
+          await archiveWorkspace(session, uuid(), closingWorkspaceId);
+          const closed = workspaceStateAfterClose(
+            activeWorkspaceId,
+            closingWorkspaceId,
+            workspaces,
+          );
+          workspaces = closed.workspaces;
+          const popover = one<HTMLElement>("[data-workspace-details-popover]");
+          const trigger = one<HTMLButtonElement>("[data-workspace-details-trigger]");
+          if (popover) popover.hidden = true;
+          trigger?.setAttribute("aria-expanded", "false");
+          if (closed.activeWorkspaceRemains) {
+            renderWorkspaceList(closed.nextWorkspace!);
+            return;
+          }
+          activeWorkspaceId = "";
+          one<SecretHoldingAgentConnect>("agent-connect")?.clearPrompt(false);
+          const next = closed.nextWorkspace;
+          if (next) {
+            await openWorkspace(next.id, true);
+            return;
+          }
+          ++requestVersion;
+          resetWorkspaceSessionState();
+          renderCreate(session);
+        },
+      });
+    };
+
     const renderChannel = (workspace: Workspace, pending = false): void => {
       const name = one<HTMLElement>("[data-channel-name]");
       const description = one<HTMLElement>("[data-channel-description]");
@@ -3034,6 +3077,7 @@ import "../../styles/tokens.css";
       const count = one<HTMLElement>("[data-update-count]");
       if (count) count.hidden = pending || agents.length === 0 || signals.length === 0;
       renderWorkspaceList(workspace);
+      renderWorkspaceSettingsPanel(workspace);
       renderRoster();
       for (const target of all<HTMLElement>("[data-rail-account]")) {
         target.textContent = sampleMode || !session ? "Sample account" : accountName(session);
@@ -3059,7 +3103,10 @@ import "../../styles/tokens.css";
       submit.textContent = "Create invite link";
     };
 
-    const openWorkspace = async (workspaceId: string): Promise<void> => {
+    const openWorkspace = async (
+      workspaceId: string,
+      force = false,
+    ): Promise<void> => {
       const selected = workspaces.find((workspace) => workspace.id === workspaceId);
       if (!selected) return;
       closeEntityPanel(false);
@@ -3073,12 +3120,12 @@ import "../../styles/tokens.css";
       const promptWorkspaceId = connect?.getAttribute("workspace-id") ?? "";
       const connectState = connect?.dataset.state ?? "";
       const mintBusy = connect?.hasAttribute("data-mint-busy") ?? false;
-      if (connectState === "done") {
+      if (!force && connectState === "done") {
         pendingWorkspaceId = workspaceId;
         connect?.finishPrompt("back");
         return;
       }
-      if (mintBusy || connectState === "working") {
+      if (!force && (mintBusy || connectState === "working")) {
         const changesWorkspace =
           promptWorkspaceId.length > 0 && promptWorkspaceId !== workspaceId;
         pendingWorkspaceId = changesWorkspace ? workspaceId : "";
@@ -3420,7 +3467,11 @@ import "../../styles/tokens.css";
         );
         if (!isCurrent()) return;
         clearCreateIntent(value.user.id);
-        const madeWorkspace = { id: made.workspaceId, name: made.name };
+        const madeWorkspace = {
+          id: made.workspaceId,
+          name: made.name,
+          archived: false,
+        };
         workspaces = [
           madeWorkspace,
           ...workspaces.filter((workspace) => workspace.id !== made.workspaceId),
@@ -3457,7 +3508,7 @@ import "../../styles/tokens.css";
       syncPendingPoll();
       const now = Date.now();
       workspaces = [
-        { id: "sample-design-studio", name: "Design studio" },
+        { id: "sample-design-studio", name: "Design studio", archived: false },
       ];
       members = [
         { userId: "sample-owner", name: "Dana Rivera", role: "owner" },
@@ -4195,15 +4246,6 @@ import "../../styles/tokens.css";
       returnToChannel();
     });
     one<HTMLButtonElement>("[data-close-connect]")?.addEventListener("click", closeConnect);
-    one<HTMLButtonElement>("[data-copy-workspace-id]")?.addEventListener("click", async () => {
-      const status = one<HTMLElement>("[data-workspace-id-status]");
-      try {
-        await navigator.clipboard.writeText(activeWorkspaceId);
-        if (status) status.textContent = "Copied";
-      } catch {
-        if (status) status.textContent = "Could not copy";
-      }
-    });
     one<HTMLButtonElement>("[data-retry-workspace]")?.addEventListener("click", () => {
       if (activeWorkspaceId) void openWorkspace(activeWorkspaceId);
     });
@@ -4890,7 +4932,7 @@ import "../../styles/tokens.css";
     box-shadow: 0 1rem 2.5rem color-mix(in oklab, var(--text) 14%, transparent);
   }
 
-  /* Gear button beside the workspace name — opens the workspace-details popover. */
+  /* Toothed gear beside the workspace name — opens workspace settings. */
   .dashboard__gear-button {
     flex: none;
     display: grid;
@@ -4928,7 +4970,7 @@ import "../../styles/tokens.css";
     stroke-width: 1.6;
   }
 
-  /* Shared popover surface for the gear (workspace details) and the account menu.
+  /* Shared popover surface for the gear (workspace settings) and the account menu.
      Same visual language as the workspace switcher's menu. */
   .dashboard__popover {
     position: absolute;
@@ -4946,6 +4988,74 @@ import "../../styles/tokens.css";
   .dashboard__workspace-details-popover {
     inset-block-start: calc(100% + var(--s-2));
     inset-inline-end: 0;
+    inline-size: min(23rem, calc(100vw - 2rem));
+  }
+
+  .dashboard__workspace-settings-title,
+  .dashboard__workspace-danger h3 {
+    margin: 0;
+    color: var(--text);
+    font-size: var(--t-sm);
+  }
+
+  .dashboard__workspace-settings-counts,
+  .dashboard__workspace-danger p {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--t-xs);
+    line-height: 1.5;
+  }
+
+  .dashboard__workspace-danger {
+    display: grid;
+    gap: var(--s-2);
+    margin-block-start: var(--s-2);
+    padding-block-start: var(--s-3);
+    border-block-start: 1px solid color-mix(in oklab, var(--danger) 45%, var(--border));
+  }
+
+  .dashboard__workspace-danger form,
+  .dashboard__workspace-danger label {
+    display: grid;
+    gap: var(--s-2);
+  }
+
+  .dashboard__workspace-danger label {
+    color: var(--text-muted);
+    font-size: var(--t-xs);
+  }
+
+  .dashboard__workspace-danger input {
+    min-inline-size: 0;
+    inline-size: 100%;
+    padding: var(--s-2) var(--s-3);
+    color: var(--text);
+    background: var(--surface);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
+    font: inherit;
+  }
+
+  .dashboard__workspace-danger input:focus-visible {
+    outline: none;
+    box-shadow: var(--focus-ring);
+  }
+
+  .dashboard__danger-button {
+    justify-self: start;
+    padding: var(--s-2) var(--s-3);
+    color: var(--danger-ink);
+    background: var(--danger);
+    border: 1px solid color-mix(in oklab, var(--danger) 72%, black);
+    border-radius: var(--radius);
+    font: inherit;
+    font-weight: 700;
+    cursor: pointer;
+  }
+
+  .dashboard__danger-button:disabled {
+    cursor: not-allowed;
+    opacity: 0.45;
   }
 
   .dashboard__popover-label {

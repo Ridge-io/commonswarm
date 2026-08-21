@@ -119,14 +119,16 @@ import {
   renderCapabilityRevoke,
 } from "./cloud/capability-link.js";
 import {
-  clearWorkspaceDefault,
   archiveKnownGaps,
+  clearWorkspaceDefault,
   cloudWorkspaceDirectory,
   DEFAULT_MEMBERSHIP_REVOKED,
   renderStatus,
   renderWorkspaces,
   resolveWorkspace,
+  resolveWorkspaceSelector,
   selectWorkspace,
+  updateWorkspaceDefaultAfterClose,
   WorkspaceCliError,
   WorkspaceUnavailableError,
   resolveWorkspaceMember,
@@ -431,6 +433,7 @@ Usage:
   cswarm invite [--url <url> --anon-key <key>] [--workspace-id <uuid>] --email <email>
   cswarm invite revoke [--url <url> --anon-key <key>] [--workspace-id <uuid>] --invitation-id <uuid> [--json]
   cswarm member remove <full-user-id|exact-name> --confirm <same-selector> [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--json]
+  cswarm workspace close <full-id|exact-name> --confirm <same-selector> [--url <url> --anon-key <key>] [--json]
   cswarm accept --link-stdin [--name <name>] [--no-browser] [--json]
   cswarm accept <https://...#invite=...|cswarm://accept/...> [--name <name>] [--no-browser] [--json]  # unsafe: shell history/process list
   cswarm accept --invitation-token-stdin [--url <url> --anon-key <key>]
@@ -459,6 +462,7 @@ Credential selection for command/dogfood:
                             feedback      command only, nothing persisted     -- either form
                             listen start  persists durable state, rotates -- needs expires_at
                             token revoke  names what it revokes           -- needs token_id
+                            workspace close is human-session-only; it never accepts an agent token
 
 Found a bug or missing feature in cswarm itself? cswarm feedback sends it to the
 deployment's operators — agents are encouraged to report friction they hit.
@@ -481,7 +485,7 @@ TTL); a turn that lands just before a rotation can be clamped to the ~5m
 renewal lead, and if it times out there, durable delivery retries it on the
 fresh credential.
 
-Invite, legacy token accept, principal create/revoke, human token mint/revoke, link, and new require a
+Invite, legacy token accept, principal create/revoke, human token mint/revoke, link, new, and workspace close require a
 stored human login. Agent self-surrender of a token uses --agent-token-stdin and never takes the secret on argv. Invite-link accept signs in when needed, then accepts and
 registers one principal. Invitation links, agent credentials, and capability links
 appear only in fresh success responses.
@@ -1359,6 +1363,63 @@ async function runMember(args: Arguments): Promise<void> {
   } else {
     process.stdout.write(`${output.message}\n`);
   }
+}
+
+async function runWorkspace(args: Arguments): Promise<void> {
+  args.assertShape([...TARGET_FLAGS, "confirm", "json"], 3);
+  if (args.positionals[1] !== "close") {
+    throw new UsageError(
+      `unknown workspace command: ${args.positionals[1] ?? "(missing)"}`,
+    );
+  }
+  const selector = args.positionals[2]!;
+  if (args.required("confirm") !== selector) {
+    throw new Error(
+      "--confirm must exactly repeat the workspace selector; no request was sent",
+    );
+  }
+  const cloud = await target(args);
+  const human = await humanCredential(args, cloud);
+  const directory = cloudWorkspaceDirectory(cloud);
+  const projects = await directory.list(human);
+  const selected = resolveWorkspaceSelector(selector, projects);
+  const response = (
+    await sendConnectWithPending(
+      new ThinCommandClient(cloud),
+      human,
+      selected.workspace_id,
+      { kind: "archive_workspace" },
+    )
+  ).response;
+  if (response.status !== "accepted") {
+    throw new Error(
+      `Workspace close was rejected: ${
+        response.reason ?? "domain rejection"
+      }. The workspace is still open.`,
+    );
+  }
+
+  const { closedWasSelected, nextWorkspace, selectedWorkspaceId } =
+    await updateWorkspaceDefaultAfterClose(
+      human.store,
+      human.userId,
+      selected.workspace_id,
+      projects,
+    );
+  const message = nextWorkspace
+    ? `Closed workspace ${selected.name} (${selected.workspace_id}). It is hidden for everyone, and ${nextWorkspace.name} (${nextWorkspace.workspace_id}) is now selected.`
+    : closedWasSelected
+    ? `Closed workspace ${selected.name} (${selected.workspace_id}). It is hidden for everyone. No live workspace remains, so the selected workspace was cleared.`
+    : `Closed workspace ${selected.name} (${selected.workspace_id}). It is hidden for everyone. Your selected workspace was not changed.`;
+  const output = {
+    message,
+    status: response.status,
+    workspace_id: selected.workspace_id,
+    selected_workspace_id: selectedWorkspaceId,
+    command_event_ids: response.event_ids,
+  };
+  if (args.has("json")) printJson(output);
+  else process.stdout.write(`${message}\n`);
 }
 
 async function runLegacyAccept(args: Arguments): Promise<void> {
@@ -4834,6 +4895,10 @@ async function main(): Promise<void> {
   }
   if (verb === "member") {
     await runMember(args);
+    return;
+  }
+  if (verb === "workspace") {
+    await runWorkspace(args);
     return;
   }
   if (verb === "target") {

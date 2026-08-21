@@ -19,6 +19,7 @@ import {
   resolveWorkspaceMember,
   resolveWorkspace,
   selectWorkspace,
+  updateWorkspaceDefaultAfterClose,
   WorkspaceAmbiguousNameError,
   type WorkspaceDirectory,
   WorkspaceResolutionError,
@@ -133,6 +134,45 @@ function directory(
     },
   };
 }
+
+test("closing the selected workspace switches to another live workspace", async () => {
+  const store = new MemoryStore(USER_ID, WORKSPACE_A);
+  const selection = await updateWorkspaceDefaultAfterClose(
+    store,
+    USER_ID,
+    WORKSPACE_A,
+    [
+      project(WORKSPACE_A, "Closing", "owner"),
+      project(WORKSPACE_B, "Archived", "owner", true),
+      project(WORKSPACE_C, "Live", "member"),
+    ],
+  );
+  assert.equal(selection.closedWasSelected, true);
+  assert.equal(selection.nextWorkspace?.workspace_id, WORKSPACE_C);
+  assert.equal(selection.selectedWorkspaceId, WORKSPACE_C);
+  assert.equal(store.profile.workspaceId, WORKSPACE_C);
+  assert.equal(store.profile.principalId, null);
+});
+
+test("closing the last live selected workspace clears the default", async () => {
+  const store = new MemoryStore(USER_ID, WORKSPACE_A);
+  const selection = await updateWorkspaceDefaultAfterClose(
+    store,
+    USER_ID,
+    WORKSPACE_A,
+    [
+      project(WORKSPACE_A, "Closing", "owner"),
+      project(WORKSPACE_B, "Archived", "owner", true),
+    ],
+  );
+  assert.deepEqual(selection, {
+    closedWasSelected: true,
+    nextWorkspace: null,
+    selectedWorkspaceId: null,
+  });
+  assert.equal(store.profile.workspaceId, null);
+  assert.equal(store.profile.principalId, null);
+});
 
 async function runCli(
   values: string[],
@@ -317,7 +357,7 @@ test("revoked saved default warns once, clears the agent checkpoint, and falls t
   assert.equal(warnings.length, 1);
 });
 
-test("selection is exact, collision-safe, and writes only after validation", async () => {
+test("selection is exact, refuses archived rows, and writes only after validation", async () => {
   const projects = [
     project(WORKSPACE_A, "Launch"),
     project(WORKSPACE_B, "Launch"),
@@ -332,11 +372,16 @@ test("selection is exact, collision-safe, and writes only after validation", asy
   assert.equal(byId.writes, 1);
 
   const byName = new MemoryStore(USER_ID);
-  assert.equal(
-    (await selectWorkspace("Other", projects, byName, USER_ID)).workspace_id,
-    WORKSPACE_C,
+  await assert.rejects(
+    selectWorkspace("Other", projects, byName, USER_ID),
+    (error) => {
+      assert.ok(error instanceof WorkspaceUnavailableError);
+      assert.match(error.message, /closed and cannot be selected/);
+      return true;
+    },
   );
-  assert.equal(byName.profile.workspaceId, WORKSPACE_C);
+  assert.equal(byName.writes, 0);
+  assert.equal(byName.profile.workspaceId, null);
 
   const ambiguous = new MemoryStore(USER_ID, WORKSPACE_C);
   await assert.rejects(
@@ -437,7 +482,7 @@ test("TTY-marked multi-project resolution fails before a prompt can block", asyn
   }
 });
 
-test("cloud directory uses swarm_read and sanitizes attacker-controlled labels", async () => {
+test("cloud directory uses live swarm_read workspaces and sanitizes attacker-controlled labels", async () => {
   const memberId = USER_ID;
   const principalId = "33333333-3333-4333-8333-333333333333";
   const taskId = "44444444-4444-4444-8444-444444444444";
@@ -454,16 +499,34 @@ test("cloud directory uses swarm_read and sanitizes attacker-controlled labels",
     assert.equal(headers.get("apikey"), "anon-test-key");
     assert.equal(headers.get("accept-profile"), "swarm_read");
     const bodies: Record<string, unknown[]> = {
-      memberships: [{
-        workspace_id: WORKSPACE_A,
-        user_id: USER_ID,
-        role: "owner",
-      }],
-      workspaces: [{
-        workspace_id: WORKSPACE_A,
-        name: "\u001b[31mLaunch\u001b[0m\u202e",
-        archived_at: null,
-      }],
+      memberships: [
+        {
+          workspace_id: WORKSPACE_A,
+          user_id: USER_ID,
+          role: "owner",
+        },
+        {
+          // Archived memberships remain in swarm_read.memberships. The filtered
+          // workspaces view must drive the CLI list, so this row is omitted.
+          workspace_id: WORKSPACE_B,
+          user_id: USER_ID,
+          role: "owner",
+        },
+      ],
+      workspaces: [
+        {
+          workspace_id: WORKSPACE_A,
+          name: "\u001b[31mLaunch\u001b[0m\u202e",
+          archived_at: null,
+        },
+        {
+          // A stale or nonconforming view response still cannot feed archive
+          // rows into default or post-close successor selection.
+          workspace_id: WORKSPACE_B,
+          name: "Closed",
+          archived_at: "2026-08-20T12:00:00.000Z",
+        },
+      ],
       member_profiles: [{
         workspace_id: WORKSPACE_A,
         user_id: memberId,
@@ -500,7 +563,13 @@ test("cloud directory uses swarm_read and sanitizes attacker-controlled labels",
     fetcher,
   );
   const projects = await cloud.list(session);
+  assert.equal(projects.length, 1);
+  assert.equal(projects[0]?.workspace_id, WORKSPACE_A);
   assert.equal(projects[0]?.name, "Launch");
+  const workspaceRequest = requests.find((request) =>
+    request.pathname.endsWith("/workspaces")
+  );
+  assert.equal(workspaceRequest?.searchParams.get("archived_at"), "is.null");
   const status = await cloud.status(session, WORKSPACE_A);
   assert.equal(status.members[0]?.name, "Quill");
   assert.equal(status.agents[0]?.name, "Agent");
@@ -508,6 +577,38 @@ test("cloud directory uses swarm_read and sanitizes attacker-controlled labels",
   assert.equal(status.tasks[0]?.slug, "Fix task");
   assert.equal(status.tasks[0]?.holder?.name, "Agent");
   assert.ok(requests.every((request) => request.pathname.startsWith("/rest/v1/")));
+});
+
+test("status refuses a workspace hidden by membership-gated views", async () => {
+  const resources: string[] = [];
+  const cloud = cloudWorkspaceDirectory(
+    cloudTarget("http://127.0.0.1:54321", "anon-test-key"),
+    (async (input) => {
+      const url = new URL(
+        typeof input === "string" || input instanceof URL
+          ? input
+          : input.url,
+      );
+      resources.push(url.pathname.split("/").pop()!);
+      return new Response(JSON.stringify([]), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }) as typeof fetch,
+  );
+
+  await assert.rejects(
+    cloud.status(session, WORKSPACE_B),
+    (error) => {
+      assert.ok(error instanceof WorkspaceUnavailableError);
+      assert.equal(error.code, "project_not_available");
+      return true;
+    },
+  );
+  assert.deepEqual(
+    resources.sort(),
+    ["agent_principals", "member_profiles", "tasks"].sort(),
+  );
 });
 
 test("status rendering gives empty-work guidance and human lease time", () => {

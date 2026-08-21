@@ -40,6 +40,7 @@ import type {
 import {
   cloudWorkspaceDirectory,
   selectWorkspace,
+  WorkspaceUnavailableError,
 } from "../../src/cloud/workspaces.js";
 
 interface LocalEnvironment {
@@ -832,8 +833,11 @@ test("one-command invite link accept converges after a live local double-run", a
   }
 });
 
-test("live project reads list, select, and render status across two memberships", async () => {
+test("live project reads hide and refuse an archived second membership", async () => {
   const nonce = randomUUID();
+  const suffix = nonce.slice(0, 8);
+  const alphaName = `Alpha ${suffix}`;
+  const betaName = `Beta ${suffix}`;
   const email = `p2-projects-${nonce}@example.test`;
   const password = `T-${randomBytes(24).toString("base64url")}!`;
   const created = await admin.auth.admin.createUser({
@@ -857,7 +861,7 @@ test("live project reads list, select, and render status across two memberships"
     userId: created.data.user.id,
     deviceId,
     workspaceId: alphaId,
-    workspaceName: `Alpha ${nonce.slice(0, 8)}`,
+    workspaceName: alphaName,
     displayName: "P2\u202e Operator",
   });
   await seedDogfood({
@@ -865,9 +869,24 @@ test("live project reads list, select, and render status across two memberships"
     userId: created.data.user.id,
     deviceId,
     workspaceId: betaId,
-    workspaceName: `Beta ${nonce.slice(0, 8)}`,
+    workspaceName: betaName,
     displayName: "P2 Operator",
   });
+  const directory = cloudWorkspaceDirectory(
+    cloudTarget(local.API_URL, local.ANON_KEY),
+  );
+  const session = {
+    accessToken: signedIn.data.session.access_token,
+    userId: created.data.user.id,
+    deviceId,
+  };
+  const liveProjects = await directory.list(session);
+  assert.deepEqual(
+    liveProjects.map((project) => project.workspace_id).sort(),
+    [alphaId, betaId].sort(),
+  );
+  assert.ok(liveProjects.every((project) => !project.archived));
+
   const db = postgres(local.DB_URL, { prepare: false });
   try {
     await db`
@@ -879,40 +898,54 @@ test("live project reads list, select, and render status across two memberships"
     await db.end({ timeout: 5 });
   }
 
-  const directory = cloudWorkspaceDirectory(
-    cloudTarget(local.API_URL, local.ANON_KEY),
-  );
-  const session = {
-    accessToken: signedIn.data.session.access_token,
-    userId: created.data.user.id,
-    deviceId,
-  };
   const projects = await directory.list(session);
   assert.deepEqual(
-    projects.map((project) => project.workspace_id).sort(),
-    [alphaId, betaId].sort(),
+    projects.map((project) => project.workspace_id),
+    [alphaId],
   );
-  assert.equal(
-    projects.find((project) => project.workspace_id === betaId)?.archived,
-    true,
-  );
-  assert.ok(projects.every((project) => project.name.includes(nonce.slice(0, 8))));
+  assert.equal(projects.some((project) => project.workspace_id === betaId), false);
+  assert.ok(projects.every((project) => !project.archived));
+  assert.ok(projects.every((project) => project.name.includes(suffix)));
 
   const store = new LocalMemoryStore(created.data.user.id, email);
   const selected = await selectWorkspace(
-    `Beta ${nonce.slice(0, 8)}`,
+    alphaName,
     projects,
     store,
     created.data.user.id,
   );
-  assert.equal(selected.workspace_id, betaId);
-  assert.equal(store.profile.workspaceId, betaId);
+  assert.equal(selected.workspace_id, alphaId);
+  assert.equal(store.profile.workspaceId, alphaId);
 
-  const status = await directory.status(session, betaId);
+  const status = await directory.status(session, alphaId);
   assert.equal(status.members.length, 1);
   assert.equal(status.members[0]?.name, "P2 Operator");
   assert.equal(status.members[0]?.you, true);
   assert.ok(status.agents.length >= 1);
   assert.ok(status.agents.some((agent) => agent.this_machine));
   assert.deepEqual(status.tasks, []);
+
+  await assert.rejects(
+    selectWorkspace(
+      betaName,
+      projects,
+      store,
+      created.data.user.id,
+    ),
+    (error) => {
+      assert.ok(error instanceof WorkspaceUnavailableError);
+      assert.equal(error.code, "project_not_available");
+      return true;
+    },
+  );
+  assert.equal(store.profile.workspaceId, alphaId);
+
+  await assert.rejects(
+    directory.status(session, betaId),
+    (error) => {
+      assert.ok(error instanceof WorkspaceUnavailableError);
+      assert.equal(error.code, "project_not_available");
+      return true;
+    },
+  );
 });
