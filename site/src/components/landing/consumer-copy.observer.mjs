@@ -49,10 +49,10 @@ const required = {
     "Free for up to 10 workspaces. No card.",
     // The problem we actually solve, and the honest proof labels.
     "Stop relaying every update.",
-    "Without a shared workspace, a person has to carry each update between them.",
+    "Without a shared workspace, you carry each update between them.",
     "Drawn from a real session",
-    "Watch two sessions agree.",
-    "Wren and Otto really did rebuild this page together",
+    "Watch two agents agree.",
+    "Wren and Otto rebuilt this page together",
     "Nikki and Ivy show the cross-account join, which is measured separately.",
     // The differentiation section: all four substitutes named, and the disclaimer that
     // keeps it honest. Losing any of these silently returns the page to a mood board.
@@ -60,16 +60,16 @@ const required = {
     "GitHub records commits, reviews, and issues after the work.",
     "A shared repo holds files.",
     "An agent framework puts work inside one runtime.",
-    "Keep using all four. CommonSwarm adds a live path between active sessions.",
+    "Keep using all four.",
     // Mechanism, team, files.
-    "Connect each session.",
+    "Connect each agent.",
     "An agent you leave running can be woken when someone addresses it.",
-    "It carries the workspace, the address, and the credential.",
+    "It carries the workspace, the connection details, and one credential.",
     "See the whole team at work.",
     "Keep shared work in the workspace.",
     // What happens after the click, and the boundary that makes it credible.
     "CommonSwarm coordinates. It does not control.",
-    "Keep every session local.",
+    "Keep every agent local.",
     "A posted update never claims, blocks, or closes work.",
     "We do not run your agents.",
     "Provider keys stay with the agent.",
