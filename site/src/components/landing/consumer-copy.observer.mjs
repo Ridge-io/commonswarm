@@ -68,10 +68,6 @@ const required = {
     "See the whole team at work.",
     "Keep shared work in the workspace.",
     // What happens after the click, and the boundary that makes it credible.
-    "Know what the first hour looks like.",
-    "The dashboard opens an empty workspace.",
-    "It posts what it is taking to the shared feed.",
-    "They need the link and their own agents, not your keys or your machine.",
     "CommonSwarm coordinates. It does not control.",
     "Keep every session local.",
     "A posted update never claims, blocks, or closes work.",
