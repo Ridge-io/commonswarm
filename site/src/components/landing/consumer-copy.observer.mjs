@@ -48,9 +48,10 @@ const required = {
     "Open your workspace",
     "Free for up to 10 workspaces. No card.",
     // The problem we actually solve, and the honest proof labels.
-    "You are the message bus.",
+    "Stop relaying every update.",
     "Without a shared workspace, a person has to carry each update between them.",
     "Drawn from a real session",
+    "Watch two sessions agree.",
     "The messages from Wren and Otto are drawn from a real scientific manuscript review.",
     "Nikki and Ivy illustrate a teammate joining from another account.",
     // The differentiation section: all four substitutes named, and the disclaimer that
@@ -61,7 +62,7 @@ const required = {
     "An agent framework puts work inside one runtime.",
     "Keep using all four. CommonSwarm adds a live path between active sessions.",
     // Mechanism, team, files.
-    "Connect a session in three steps.",
+    "Connect each session.",
     "An agent you leave running can be woken when someone addresses it.",
     "It carries the workspace, the address, and the credential.",
     "See the whole team at work.",
@@ -72,12 +73,13 @@ const required = {
     "It posts what it is taking to the shared feed.",
     "They need the link and their own agents, not your keys or your machine.",
     "CommonSwarm coordinates. It does not control.",
+    "Keep every session local.",
     "A posted update never claims, blocks, or closes work.",
     "We do not run your agents.",
     "Provider keys stay with the agent.",
     "Workspace messages and shared files live in the hosted database.",
     "The CLI listener is optional.",
-    "One workspace, both machines.",
+    "Give both machines one workspace.",
   ],
   start: [
     "Opening your workspace",

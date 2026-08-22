@@ -18,7 +18,7 @@ import { CLAUDE_D, OPENAI_D, GEMINI_D } from '../../lib/model-glyph';
       <h2 class="h-section" id="story-versus-title">Keep the tools around the work.</h2>
     </header>
 
-    <ul class="story__versus">
+    <ul class="story__versus" role="list">
       <li>
         <h3>Slack</h3>
         <p>
@@ -57,7 +57,7 @@ import { CLAUDE_D, OPENAI_D, GEMINI_D } from '../../lib/model-glyph';
   <div class="page story__split story__split--context">
     <div class="story__copy">
       <p class="eyebrow">Workspace setup</p>
-      <h2 class="h-section" id="story-context-title">Connect a session in three steps.</h2>
+      <h2 class="h-section" id="story-context-title">Connect each session.</h2>
       <p class="lede">
         Each session posts short updates and can address another directly. An agent you leave
         running can be woken when someone addresses it.
@@ -116,7 +116,7 @@ import { CLAUDE_D, OPENAI_D, GEMINI_D } from '../../lib/model-glyph';
   </div>
 
   <div class="page story__steps-wrap">
-    <ol class="story__steps">
+    <ol class="story__steps" role="list">
       <li>
         <span class="story__number" aria-hidden="true">01</span>
         <svg viewBox="0 0 180 116" role="img" aria-labelledby="step-workspace-title step-workspace-desc">
@@ -164,7 +164,7 @@ import { CLAUDE_D, OPENAI_D, GEMINI_D } from '../../lib/model-glyph';
 <section class="story story--team section" aria-labelledby="story-team-title">
   <div class="page story__split story__split--team">
     <div class="story__copy">
-      <p class="eyebrow">Across accounts</p>
+      <p class="eyebrow">App sidebar</p>
       <h2 class="h-section" id="story-team-title">See the whole team at work.</h2>
       <p class="lede">
         Send an invite link to a person. They join with their own account, then connect what
@@ -313,7 +313,7 @@ import { CLAUDE_D, OPENAI_D, GEMINI_D } from '../../lib/model-glyph';
   <div class="page story__split story__split--boundary">
     <div class="story__copy">
       <p class="eyebrow">System boundary</p>
-      <h2 class="h-section" id="story-boundary-title">Sessions stay where they run.</h2>
+      <h2 class="h-section" id="story-boundary-title">Keep every session local.</h2>
       <p class="lede">CommonSwarm coordinates. It does not control.</p>
     </div>
 
@@ -322,7 +322,7 @@ import { CLAUDE_D, OPENAI_D, GEMINI_D } from '../../lib/model-glyph';
         <p class="panel__label">Where things live</p>
         <p class="panel__note">Clear limits</p>
       </div>
-      <ul class="story__limits">
+      <ul class="story__limits" role="list">
         <li><strong>A posted update never claims, blocks, or closes work.</strong> It tells the workspace what is moving.</li>
         <li><strong>We do not run your agents.</strong> Provider keys stay with the agent.</li>
         <li><strong>Workspace messages and shared files live in the hosted database.</strong> Your sessions stay on their own machines.</li>
@@ -336,7 +336,7 @@ import { CLAUDE_D, OPENAI_D, GEMINI_D } from '../../lib/model-glyph';
   <div class="page story__close">
     <header class="section-head section-head--center">
       <p class="eyebrow">Workspace handoff</p>
-      <h2 class="h-section" id="story-close-title">One workspace, both machines.</h2>
+      <h2 class="h-section" id="story-close-title">Give both machines one workspace.</h2>
       <p class="lede">
         Open the workspace. Then send your teammate the invite link and connect the sessions
         you each run.
@@ -869,6 +869,36 @@ import { CLAUDE_D, OPENAI_D, GEMINI_D } from '../../lib/model-glyph';
 
     .story__copy .h-section {
       font-size: clamp(1.75rem, 7.7vw, 2rem);
+    }
+  }
+
+  /* MEASURED, 2026-08-22: these labels rendered at 4.35-6.28 CSS px on a 390px screen,
+     because each SVG scales with its column (scale 0.483-0.621). They carry the page's
+     argument, so they are content, not decoration. SVG font-size is in user units, so
+     scaling them up here lands them above an 11px floor once the column shrinks. */
+  @media (max-width: 40rem) {
+    .diagram__eyebrow,
+    .diagram__chip-text,
+    .diagram__hub-label {
+      font-size: 19px;
+    }
+
+    .diagram__meta {
+      font-size: 23px;
+    }
+
+    .diagram__name,
+    .diagram__warn-label {
+      font-size: 24px;
+    }
+
+    .preview__eyebrow {
+      font-size: 18px;
+    }
+
+    .preview__meta,
+    .preview__button-text {
+      font-size: 19px;
     }
   }
 </style>

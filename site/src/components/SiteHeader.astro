@@ -452,6 +452,10 @@ const isCurrent = (href: string) => !href.includes("#") && href === path;
   }
 
   .hdr__burger {
+    /* 44px is the Enhanced target size (WCAG 2.5.5) and the HIG minimum. The burger is the
+       only route to navigation on a phone, so it gets the full target. */
+    min-inline-size: 44px;
+    min-block-size: 44px;
     display: none;
     align-items: center;
     justify-content: center;

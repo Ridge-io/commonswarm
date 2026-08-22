@@ -99,9 +99,12 @@
      give, because they now have a job.
      --border-interactive is the one to use when a border IS the control edge,
      e.g. an input or a checkbox — it is the only one that clears 3:1. */
-  --border: #dde3ec; /* structural hairline — 1.29:1 on white, 1.19:1 on --elev-0 */
-  --border-strong: #c6cfdc; /* emphasis edge — 1.57:1 on white, 1.45:1 on --elev-0 */
-  --border-interactive: #7c8697; /* control edges — 3.68:1 on white, 3.25:1 on --elev-3 (worst). Clears 1.4.11 on all five. */
+  --border-base: #dde3ec;
+  --border: var(--border-base); /* structural hairline — 1.29:1 on white, 1.19:1 on --elev-0 */
+  --border-strong-base: #c6cfdc;
+  --border-strong: var(--border-strong-base); /* emphasis edge — 1.57:1 on white, 1.45:1 on --elev-0 */
+  --border-interactive-base: #7c8697;
+  --border-interactive: var(--border-interactive-base); /* control edges — 3.68:1 on white, 3.25:1 on --elev-3 (worst). Clears 1.4.11 on all five. */
 
   /* ======================================================================
      2. INK (LIGHT)
@@ -109,7 +112,8 @@
      light means the value measured on --elev-3. AA body text is 4.5:1.
      ====================================================================== */
   --text: #10142a; /* body.      min 16.06:1 (on --elev-3), 18.17:1 on white */
-  --text-muted: #4f5769; /* secondary. min  6.40:1 (on --elev-3),  7.24:1 on white */
+  --text-muted-base: #4f5769;
+  --text-muted: var(--text-muted-base); /* secondary. min  6.40:1 (on --elev-3),  7.24:1 on white */
 
   /* --text-faint IS TEXT, and that rule survives the flip unchanged. It was established by
    * a runtime audit of the dark palette — composite each element's real backdrop, then
@@ -132,7 +136,8 @@
    * to --text-faint is a small step, so the two do not separate on colour alone at a glance.
    * Below tertiary, use size, weight or position to demote something — not a fourth, paler
    * grey. There is deliberately no token for that. */
-  --text-faint: #5e6779; /* tertiary.  min  5.03:1 (on --elev-3),  5.69:1 on white */
+  --text-faint-base: #5e6779;
+  --text-faint: var(--text-faint-base); /* tertiary.  min  5.03:1 (on --elev-3),  5.69:1 on white */
 
   /* THERE IS NO FOURTH GREY, AND THAT IS THE WHOLE RULE — see the paragraph above.
    *
@@ -506,12 +511,17 @@
     --elev-2: var(--d-elev-2);
     --elev-3: var(--d-elev-3);
     --elev-4: var(--d-elev-4);
-    --border: var(--d-border);
-    --border-strong: var(--d-border-strong);
-    --border-interactive: var(--d-border-interactive);
+    --border-base: var(--d-border);
+    --border: var(--border-base);
+    --border-strong-base: var(--d-border-strong);
+    --border-strong: var(--border-strong-base);
+    --border-interactive-base: var(--d-border-interactive);
+    --border-interactive: var(--border-interactive-base);
     --text: var(--d-text);
-    --text-muted: var(--d-text-muted);
-    --text-faint: var(--d-text-faint);
+    --text-muted-base: var(--d-text-muted);
+    --text-muted: var(--text-muted-base);
+    --text-faint-base: var(--d-text-faint);
+    --text-faint: var(--text-faint-base);
     --accent: var(--d-accent);
     --accent-bright: var(--d-accent-bright);
     --accent-dim: var(--d-accent-dim);
