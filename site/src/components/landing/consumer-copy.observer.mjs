@@ -52,8 +52,8 @@ const required = {
     "Without a shared workspace, a person has to carry each update between them.",
     "Drawn from a real session",
     "Watch two sessions agree.",
-    "The messages from Wren and Otto are drawn from a real scientific manuscript review.",
-    "Nikki and Ivy illustrate a teammate joining from another account.",
+    "Wren and Otto really did rebuild this page together",
+    "Nikki and Ivy show the cross-account join, which is measured separately.",
     // The differentiation section: all four substitutes named, and the disclaimer that
     // keeps it honest. Losing any of these silently returns the page to a mood board.
     "Slack is a room for people.",
