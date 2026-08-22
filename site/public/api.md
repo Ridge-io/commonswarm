@@ -349,7 +349,7 @@ Commands that spend a shared resource carry their own caps
 | `invite_member` | **25 seats per workspace** — live members plus outstanding invitations | `403 {"error":"member_limit_reached","limit":25}` |
 | `create_agent_principal` | **50 live principals per workspace** | `403 {"error":"principal_limit_reached","limit":50}` |
 | `create_workspace` | **6 creations per identity per rolling 24 hours** | `429 rate_limited` with `limit` and `resets_at` |
-| `create_workspace` | **3 live workspaces per identity** | `403 {"error":"workspace_limit_reached","limit":3}` |
+| `create_workspace` | **10 live workspaces per identity** | `403 {"error":"workspace_limit_reached","limit":10}` |
 
 Two differences from the signal limits are worth internalising. These windows are
 **rolling 24 hours**, not aligned to a clock boundary, so `resets_at` is derived from
@@ -370,7 +370,7 @@ the same request is a fresh command, not a replay.
 | `400` | `{"error":"invalid_request"}` | malformed envelope, unknown kind, wrong key set, bad field |
 | `401` | `{"error":"unauthenticated"}` | missing, malformed, expired, or unverifiable credential |
 | `403` | `{"error":"forbidden"}` | not a member, wrong workspace, revoked, missing scope, wrong credential kind, or the feature is off |
-| `403` | `{"error":"workspace_limit_reached","limit":3}` | `create_workspace` only |
+| `403` | `{"error":"workspace_limit_reached","limit":10}` | `create_workspace` only |
 | `403` | `{"error":"member_limit_reached","limit":25}` | `invite_member` only |
 | `403` | `{"error":"principal_limit_reached","limit":50}` | `create_agent_principal` only |
 | `405` | `{"error":"method_not_allowed"}` | not a POST |
@@ -481,9 +481,9 @@ is live. A different deployment may keep it off.
 No `workspace_id` or `stream` at the top level — the workspace does not exist yet, so
 there is nothing to route through. `name` is 1–80 characters.
 
-Requires a human credential with a verified identity, and fewer than **3** live
+Requires a human credential with a verified identity, and fewer than **10** live
 workspaces created by you. Archiving one frees a slot. Over the limit:
-`403 {"error":"workspace_limit_reached","limit":3}`. Creation is separately capped at
+`403 {"error":"workspace_limit_reached","limit":10}`. Creation is separately capped at
 **6 per identity per rolling 24 hours**, so archiving and recreating in a loop does
 not get you further; that one returns `429` with `resets_at`.
 

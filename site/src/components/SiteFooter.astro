@@ -331,6 +331,10 @@ const year = new Date().getFullYear();
   }
 
   .ft__link {
+    /* Inline links measured 17px tall. The vertical gap already clears WCAG 2.5.8, but the
+       target itself failed 2.5.5, so the padding grows and the list gap shrinks to match. */
+    display: inline-block;
+    padding-block: 0.5rem;
     font-size: var(--t-sm);
     color: var(--text-muted);
     text-decoration: none;

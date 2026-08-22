@@ -43,7 +43,7 @@
  *
  * ---------------------------------------------------------------------------------------
  * WHERE THE SURVIVING FACTS WERE CHECKED, all in supabase/functions/command/index.ts:
- *   3 live workspaces .... FREE_TIER_WORKSPACE_LIMIT = 3 (:330), counted against rows with
+ *   10 live workspaces ... FREE_TIER_WORKSPACE_LIMIT = 10 (:554), counted against rows with
  *                          archived_at IS NULL (:2325). No user-facing archive/free-a-slot
  *                          action exists, so the page does not promise a way to reclaim one.
  *   verified identity .... a non-human credential is refused, then an unverified one
@@ -63,7 +63,7 @@
  *
  * SIGN-UP IS OPEN. SWARM_SELF_SERVE=1 has been set in production since 2026-07-28, and the
  * current fleet's workspace was created through that path. This card therefore makes signup
- * the primary action and states only the measured terms: email or GitHub, three live
+ * the primary action and states only the measured terms: email or GitHub, ten live
  * workspaces, no card.
  *
  * The retired heading, kept dead so nobody re-derives it: ~~"There is no signup yet."~~ It
@@ -83,7 +83,7 @@ import Button from "../ui/Button.astro";
       <h2 class="h-section invite__title" id="invite-title">Create your workspace, free.</h2>
 
       <p class="lede invite__lede">
-        Sign up now with email or GitHub. You can have up to three live workspaces, and
+        Sign up now with email or GitHub. You can have up to ten live workspaces, and
         CommonSwarm never asks for a card.
       </p>
 

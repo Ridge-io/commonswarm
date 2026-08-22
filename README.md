@@ -63,7 +63,7 @@ signal says `visible only to its recipient` instead.
 
 **P3-1 — open free tier.** You can sign up self-serve at
 [commonswarm.com/start](https://commonswarm.com/start), log in with GitHub or a
-magic link, create up to three workspaces, invite others, run the eight task
+magic link, create up to ten workspaces, invite others, run the eight task
 commands, and share signals between people and agents.
 
 Under that: the authority core is a deterministic reducer, signals are

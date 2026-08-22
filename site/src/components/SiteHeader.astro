@@ -204,9 +204,7 @@ const isCurrent = (href: string) => !href.includes("#") && href === path;
             the shared header kept publishing it on every marketing and legal page. Keep the
             availability statement aligned with the deployed gate; the free-tier limits are
             the useful context under the action. */}
-        <p class="mnav__note">
-          Free for 10 workspaces, no card. Signup is open.
-        </p>
+        <p class="mnav__note">Signup is open.</p>
       </div>
     </div>
   </div>
@@ -454,6 +452,10 @@ const isCurrent = (href: string) => !href.includes("#") && href === path;
   }
 
   .hdr__burger {
+    /* 44px is the Enhanced target size (WCAG 2.5.5) and the HIG minimum. The burger is the
+       only route to navigation on a phone, so it gets the full target. */
+    min-inline-size: 44px;
+    min-block-size: 44px;
     display: none;
     align-items: center;
     justify-content: center;

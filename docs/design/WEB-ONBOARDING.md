@@ -39,7 +39,7 @@ spend circuit breaker to be **in place**, not merely written.
 | Public web front door | **Serving on Cloudflare** | `/`, `/start`, `/app`, and `/download` return 200; a nonexistent route returns 404 |
 | Auth email templates | **13 branded templates in production (operator-confirmed)** | the local template manifest independently enumerates 13 bodies; the production application is the operator's measured state |
 
-Signup is open and free: a verified identity may hold three live workspaces and no card is
+Signup is open and free: a verified identity may hold ten live workspaces and no card is
 required. This table records deployment state, not a claim that every human journey has
 been exercised. In particular, the first dogfood run used CLI GitHub OAuth rather than a
 cold browser signup.
@@ -285,8 +285,8 @@ redeploy the function to force fresh workers, then re-test. The same applies in 
 you ever need to close signup in a hurry, unsetting the secret alone does not evict warm
 workers.
 
-The free tier is real and server-enforced once this is on: **3 live workspaces per verified
-identity** (`FREE_TIER_WORKSPACE_LIMIT`, `:373`), counted inside the transaction so two
+The free tier is real and server-enforced once this is on: **10 live workspaces per verified
+identity** (`FREE_TIER_WORKSPACE_LIMIT`, `:554`), counted inside the transaction so two
 concurrent requests cannot both read limit−1 (`:2533-2551`), with archiving freeing a slot. A
 rolling daily creation cap of 6 (`:381`) stops archive-and-recreate looping past it.
 

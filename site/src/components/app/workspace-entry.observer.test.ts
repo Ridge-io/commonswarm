@@ -50,7 +50,7 @@ test("/app is email-first, truthful about the free tier, and owns consent", () =
   assert.ok(githubAt > emailAt, "email must appear before GitHub in the signed-out gateway");
   assert.match(dashboard, /data-auth-view="choices"/);
   assert.match(dashboard, /No password\./);
-  assert.match(dashboard, /up to three\s+workspaces, no card\./);
+  assert.match(dashboard, /up to ten\s+workspaces, no card\./);
   assert.match(dashboard, /href="\/terms"/);
   assert.match(dashboard, /href="\/privacy"/);
   assert.match(dashboard, /drafts published for review \(not yet in force\)/);

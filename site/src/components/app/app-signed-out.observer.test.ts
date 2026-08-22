@@ -20,7 +20,7 @@ test("signed-out /app onramp is cold-stranger, email-first, free, draft-legal", 
     panel,
     /Sign in\s+to open yours\. New here\? Signing in starts your free account/,
   );
-  assert.match(panel, /up to three\s+workspaces, no card\./);
+  assert.match(panel, /up to ten\s+workspaces, no card\./);
   assert.doesNotMatch(panel, /workspaces you belong to/i);
   assert.doesNotMatch(panel, /invitation/i);
 

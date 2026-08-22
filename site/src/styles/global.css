@@ -1070,15 +1070,23 @@ a.card:focus-visible,
  * the existing token toward --text, which is the highest-contrast ink in whichever palette is
  * live: near-black in light, near-white in dark. The ramp therefore tightens in both modes
  * for the same declaration, and it cannot go stale the next time the palette moves. */
+/* MEASURED DEFECT, 2026-08-22: these five rules used to read their own custom property, e.g.
+ * `--border: color-mix(in oklab, var(--border) 40%, var(--text) 60%)`. A property that reads
+ * itself is a dependency cycle, so it is invalid at computed-value time and resolves to the
+ * EMPTY STRING. 91 declarations write the shorthand `border: 1px solid var(--border*)`, and an
+ * invalid var() in a shorthand unsets every longhand, so border-style became none: 32 of the
+ * page's 36 borders DISAPPEARED for exactly the users who asked for more contrast. Pixel-probed
+ * at a panel edge: #dde3ec normally, the panel's own surface under `more`. The fix is to derive
+ * from a base token instead, so nothing reads itself. Do not reintroduce self-reference. */
 @media (prefers-contrast: more) {
   :root {
-    --text-muted: color-mix(in oklab, var(--text-muted) 35%, var(--text) 65%);
-    --text-faint: color-mix(in oklab, var(--text-faint) 25%, var(--text) 75%);
-    --border: color-mix(in oklab, var(--border) 40%, var(--text) 60%);
-    --border-strong: color-mix(in oklab, var(--border-strong) 30%, var(--text) 70%);
+    --text-muted: color-mix(in oklab, var(--text-muted-base) 35%, var(--text) 65%);
+    --text-faint: color-mix(in oklab, var(--text-faint-base) 25%, var(--text) 75%);
+    --border: color-mix(in oklab, var(--border-base) 40%, var(--text) 60%);
+    --border-strong: color-mix(in oklab, var(--border-strong-base) 30%, var(--text) 70%);
     --border-interactive: color-mix(
       in oklab,
-      var(--border-interactive) 30%,
+      var(--border-interactive-base) 30%,
       var(--text) 70%
     );
   }

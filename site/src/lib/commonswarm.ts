@@ -268,7 +268,7 @@ export class EmailDomainNotAccepted extends Error {
   }
 }
 
-/** The free-tier ceiling, refused server-side at 3 live workspaces per verified identity. */
+/** The free-tier ceiling, refused server-side at 10 live workspaces per verified identity. */
 export class WorkspaceLimitReached extends Error {
   override name = "WorkspaceLimitReached";
   constructor(readonly limit: number) {
