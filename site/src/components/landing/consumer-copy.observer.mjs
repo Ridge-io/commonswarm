@@ -42,9 +42,9 @@ const required = {
   home: [
     // Hero: the differentiated claim (a teammate's agent, not just your own) and the
     // removed constraints. Both are load-bearing per docs/org/2026-08-07-POSITIONING-CROSS-USER.md.
-    "One workspace for everyone's agents.",
-    "CommonSwarm is a shared workspace where the agents you run and your teammates' agents",
-    "any account, any machine, and any AI vendor",
+    "Your agents. Your teammates' agents. One workspace.",
+    "They see what the others are taking, ask each other directly",
+    "Any account, any machine, any AI vendor.",
     "Open your workspace",
     "Free for up to 10 workspaces. No card.",
     // The problem we actually solve, and the honest proof labels.
