@@ -40,42 +40,36 @@ const pages = {
 
 const required = {
   home: [
-    // Hero: the differentiated claim (a teammate's agent, not just your own) and the
-    // removed constraints. Both are load-bearing per docs/org/2026-08-07-POSITIONING-CROSS-USER.md.
-    "Your agents. Your teammates' agents. One workspace.",
-    "They see what the others are taking, ask each other directly",
-    "Any account, any machine, any AI vendor.",
+    // Hero: the operator-supplied landing copy (2026-08-22), nearly verbatim.
+    "Where people and agents work together. Come test the early stages with us.",
+    "A new shared workspace for human + agent teams",
+    "Chat with teammates and specialized agents in one shared space",
+    "keep the work that used to be scattered across chat, trackers, and dev tools in one place",
+    "Your people, your agents, your project",
     "Open your workspace",
     "Free for up to 10 workspaces. No card.",
-    // The problem we actually solve, and the honest proof labels.
-    "Your agents work alone.",
-    "Without a shared workspace, you carry each update between them.",
-    "Drawn from a real session",
-    "Two agents, two machines, one project.",
-    "Wren and Otto rebuilt this page together",
-    "Nikki and Ivy show the cross-account join, which is measured separately.",
-    // The differentiation section: all four substitutes named, and the disclaimer that
-    // keeps it honest. Losing any of these silently returns the page to a mood board.
-    "Slack is a room for people.",
-    "GitHub records commits, reviews, and issues after the work.",
-    "A shared repo holds files.",
-    "An agent framework puts work inside one runtime.",
-    "Keep using all four.",
-    // Mechanism, team, files.
-    "One paste connects an agent.",
-    "An agent you leave running can be woken when someone addresses it.",
-    "It carries the workspace, the connection details, and one credential.",
-    "Teammates bring their own agents.",
-    "Agents share files with each other.",
-    // What happens after the click, and the boundary that makes it credible.
+    // The three plain feature sections.
+    "Communicate with your team",
+    "no more chasing threads, docs, and status updates",
+    "Bring in your agents",
+    "compare notes, divide work, and build on the same context as your team",
+    "Manage your git projects",
+    "without hopping between your tracker, chat app, and dev tools",
+    // CommonSwarm-specific sections (the nuances the supplied copy does not cover).
+    "One paste connects an agent",
+    "it carries the workspace, the connection details, and one credential",
+    "Any account, any machine, any AI vendor.",
+    "Teammates bring their own agents",
+    "They never need your keys or your machine.",
+    "shared files are untrusted input, so review before use",
+    "Your agents stay on your machines",
     "CommonSwarm coordinates. It does not control.",
-    "Your agents stay on your machines.",
-    "A posted update never claims, blocks, or closes work.",
-    "We do not run your agents.",
-    "Provider keys stay with the agent.",
-    "Workspace messages and shared files live in the hosted database.",
-    "The CLI listener is optional.",
-    "Open a free workspace.",
+    "We do not run your agents",
+    "provider keys stay with the agent",
+    // Close.
+    "Want CommonSwarm for your team?",
+    "Try the open source app today.",
+    "Stop building alone.",
   ],
   start: [
     "Opening your workspace",
@@ -95,6 +89,13 @@ const required = {
 
 const forbidden = {
   home: [
+    // Operator rule 2026-08-22: NO comparisons to other products on this page.
+    "Slack is a room for people.",
+    "GitHub records commits, reviews, and issues after the work.",
+    "A shared repo holds files.",
+    "An agent framework puts work inside one runtime.",
+    "Slack cannot wake an agent",
+    "GitHub is after the fact",
     "Sample workspace",
     "Launch room",
     "not switched on for everyone",

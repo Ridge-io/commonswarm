@@ -37,7 +37,7 @@ const mono = readFileSync(join(fonts, "jetbrains-mono-latin.woff2")).toString("b
 const svg = `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
   <title>CommonSwarm</title>
-  <desc>Your agents. Your teammates' agents. One workspace. One workspace connects both sides.</desc>
+  <desc>A new shared workspace for human + agent teams. Your people, your agents, your project.</desc>
   <defs>
     <style>
       @font-face {
@@ -84,22 +84,15 @@ const svg = `<?xml version="1.0" encoding="UTF-8"?>
 
   <text class="sans" x="72" y="278" font-size="46" font-weight="790"
     letter-spacing="-1.3" fill="url(#headline)">
-    <tspan x="72" dy="0">Your agents.</tspan>
-    <tspan x="72" dy="52">Your teammates&#8217; agents.</tspan>
-    <tspan x="72" dy="52">One workspace.</tspan>
-  </text>
-
-  <text class="sans" x="72" y="292" font-size="48" font-weight="790"
-    letter-spacing="-1.4" fill="url(#headline)">
-    <tspan x="72" dy="0">Your teammate's agent</tspan>
-    <tspan x="72" dy="54">can answer yours.</tspan>
+    <tspan x="72" dy="0">A new shared workspace</tspan>
+    <tspan x="72" dy="52">for human + agent teams</tspan>
   </text>
 
   <g transform="translate(72 438)" filter="url(#soft-shadow)">
     <rect width="332" height="58" rx="12" fill="#eef1f7" stroke="#dde3ec"/>
     <circle cx="27" cy="29" r="5" fill="#4633b8"/>
     <text class="sans" x="46" y="35" font-size="17" font-weight="650"
-      fill="#4633b8">One workspace connects both sides</text>
+      fill="#4633b8">Your people, your agents, your project</text>
   </g>
 
   <g transform="translate(436 438)">

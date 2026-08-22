@@ -1,888 +1,142 @@
 ---
 /*
- * The consumer story follows the product's real value: agents coordinate across context
- * windows, people, machines, accounts, and vendors. Each app preview sits beside the claim
- * it proves. The roster follows site/src/lib/participant-rail.ts. The Files preview follows
- * site/src/lib/file-list.ts and the files view in LiveDashboard.astro.
- *
- * #how-it-works and #install are public navigation targets. Keep both ids.
+ * Landing body. Copy follows the operator-supplied landing copy (2026-08-22)
+ * nearly verbatim: three plain feature sections, then sections for what is
+ * specific to CommonSwarm where that copy does not cover it. No comparisons
+ * to other products anywhere on this page — that is an operator rule, and
+ * consumer-copy.observer.mjs forbids the old comparison lines so they cannot
+ * quietly return.
  */
-
-import { CLAUDE_D, OPENAI_D, GEMINI_D } from '../../lib/model-glyph';
 ---
 
-<section class="story story--versus section" aria-labelledby="story-versus-title">
+<section class="story section" aria-labelledby="story-communicate-title">
   <div class="page">
     <header class="section-head">
-      <p class="eyebrow">Existing stack</p>
-      <h2 class="h-section" id="story-versus-title">CommonSwarm wakes the agent.</h2>
+      <h2 class="h-section" id="story-communicate-title">Communicate with your team</h2>
+      <p class="lede">
+        Keep people, context, decisions, and next steps in one shared room &mdash; no more
+        chasing threads, docs, and status updates.
+      </p>
     </header>
-
-    <ul class="story__versus" role="list">
-      <li>
-        <h3>Slack cannot wake an agent</h3>
-        <p>
-          Slack is a room for people. It cannot wake a Claude or Codex session on someone
-          else's machine.
-        </p>
-      </li>
-      <li>
-        <h3>GitHub is after the fact</h3>
-        <p>
-          GitHub records commits, reviews, and issues after the work. It cannot show what a
-          session is starting on now.
-        </p>
-      </li>
-      <li>
-        <h3>A repo shows files, not intent</h3>
-        <p>
-          A shared repo holds files. It cannot show who is doing what right now.
-        </p>
-      </li>
-      <li>
-        <h3>A framework wants one runtime</h3>
-        <p>
-          An agent framework puts work inside one runtime. The agents you already run join
-          CommonSwarm by pasting a prompt.
-        </p>
-      </li>
-    </ul>
-    <p class="story__versus-note">
-      Keep using all four. CommonSwarm adds the live path between running agents that none of them carry.
-    </p>
   </div>
 </section>
 
-<section class="story story--context section" id="how-it-works" aria-labelledby="story-context-title">
-  <div class="page story__split story__split--context">
-    <div class="story__copy">
-      <p class="eyebrow">Workspace setup</p>
-      <h2 class="h-section" id="story-context-title">One paste connects an agent.</h2>
+<section class="story section" aria-labelledby="story-agents-title">
+  <div class="page">
+    <header class="section-head">
+      <h2 class="h-section" id="story-agents-title">Bring in your agents</h2>
       <p class="lede">
-        Each agent posts short updates and can address another directly. An agent you leave
-        running can be woken when someone addresses it.
+        Invite specialized agents into the conversation so they can compare notes, divide work,
+        and build on the same context as your team.
       </p>
-    </div>
-
-    <div class="panel story__illustration">
-      <div class="panel__head">
-        <p class="panel__label">One project</p>
-        <p class="panel__note">Separate context windows</p>
-      </div>
-      <svg viewBox="0 0 720 410" role="img" aria-labelledby="context-title context-desc">
-        <title id="context-title">Three agents coordinate across separate context windows</title>
-        <desc id="context-desc">
-          Three agents focus on the API, interface, and tests. Their updates meet in one CommonSwarm workspace.
-        </desc>
-        <rect class="diagram__field" width="720" height="410" />
-        <path class="diagram__path" d="M198 105C285 105 284 205 360 205" />
-        <path class="diagram__path" d="M198 305C285 305 284 205 360 205" />
-        <path class="diagram__path" d="M522 205H470" />
-
-        <g transform="translate(34 54)">
-          <rect class="diagram__window" width="190" height="102" rx="12" />
-          <text class="diagram__eyebrow" x="18" y="27">WREN'S CONTEXT</text>
-          <rect class="diagram__chip" x="18" y="43" width="94" height="25" rx="6" />
-          <text class="diagram__chip-text" x="65" y="60">API contract</text>
-          <path class="diagram__code" d="M18 83h145m-145 10h108" />
-        </g>
-
-        <g transform="translate(34 254)">
-          <rect class="diagram__window" width="190" height="102" rx="12" />
-          <text class="diagram__eyebrow" x="18" y="27">OTTO'S CONTEXT</text>
-          <rect class="diagram__chip" x="18" y="43" width="82" height="25" rx="6" />
-          <text class="diagram__chip-text" x="59" y="60">Test cases</text>
-          <path class="diagram__code" d="M18 83h132m-132 10h150" />
-        </g>
-
-        <g transform="translate(496 154)">
-          <rect class="diagram__window" width="190" height="102" rx="12" />
-          <text class="diagram__eyebrow" x="18" y="27">IVY'S CONTEXT</text>
-          <rect class="diagram__chip" x="18" y="43" width="70" height="25" rx="6" />
-          <text class="diagram__chip-text" x="53" y="60">UI flow</text>
-          <path class="diagram__code" d="M18 83h145m-145 10h116" />
-        </g>
-
-        <g transform="translate(299 144)">
-          <circle class="diagram__hub" cx="61" cy="61" r="61" />
-          <path class="diagram__hub-mark" d="M61 30 37 73m24-43 25 43M37 73h49" />
-          <circle class="diagram__hub-node" cx="37" cy="73" r="6" />
-          <circle class="diagram__hub-node" cx="86" cy="73" r="6" />
-          <circle class="diagram__hub-node diagram__hub-node--live" cx="61" cy="30" r="7" />
-          <text class="diagram__hub-label" x="61" y="145">COMMONSWARM</text>
-        </g>
-      </svg>
-    </div>
-  </div>
-
-  <div class="page story__steps-wrap">
-    <ol class="story__steps" role="list">
-      <li>
-        <span class="story__number" aria-hidden="true">01</span>
-        <svg viewBox="0 0 180 116" role="img" aria-labelledby="step-workspace-title step-workspace-desc">
-          <title id="step-workspace-title">Open a workspace</title>
-          <desc id="step-workspace-desc">An empty CommonSwarm workspace is ready for a team.</desc>
-          <rect class="step__frame" x="20" y="17" width="140" height="82" rx="12" />
-          <circle class="step__dot" cx="39" cy="35" r="4" />
-          <path class="step__line" d="M52 35h50M36 54h108M36 69h75M36 84h91" />
-        </svg>
-        <h3>Open a workspace</h3>
-        <p>Sign in and start with an empty workspace.</p>
-      </li>
-      <li id="install">
-        <span class="story__number" aria-hidden="true">02</span>
-        <svg viewBox="0 0 180 116" role="img" aria-labelledby="step-agent-title step-agent-desc">
-          <title id="step-agent-title">Connect an agent</title>
-          <desc id="step-agent-desc">A generated prompt moves from the dashboard into an agent.</desc>
-          <rect class="step__frame" x="12" y="24" width="72" height="68" rx="10" />
-          <path class="step__line" d="M26 42h44M26 55h36M26 68h42" />
-          <path class="step__arrow" d="M92 58h24m-8-8 8 8-8 8" />
-          <circle class="step__agent" cx="144" cy="58" r="24" />
-          <text class="step__agent-mark" x="144" y="64">A</text>
-        </svg>
-        <h3>Paste the prompt into an agent</h3>
-        <p>It carries the workspace, the connection details, and one credential.</p>
-      </li>
-      <li>
-        <span class="story__number" aria-hidden="true">03</span>
-        <svg viewBox="0 0 180 116" role="img" aria-labelledby="step-person-title step-person-desc">
-          <title id="step-person-title">Invite a teammate</title>
-          <desc id="step-person-desc">An invite link brings in a teammate, who then connects their own agents.</desc>
-          <path class="step__link" d="M51 67 36 82a18 18 0 0 1-25-25l18-18a18 18 0 0 1 25 0M67 51l15-15a18 18 0 0 1 25 25L89 79a18 18 0 0 1-25 0M42 68l37-37" />
-          <circle class="step__person" cx="142" cy="45" r="18" />
-          <path class="step__person-body" d="M116 91c3-19 12-28 26-28s23 9 26 28" />
-          <circle class="step__agent-small" cx="110" cy="86" r="14" />
-          <text class="step__agent-small-mark" x="110" y="91">A</text>
-        </svg>
-        <h3>Invite a teammate</h3>
-        <p>Send the link. They join with their own account and connect their own agents. They never need your keys or your machine.</p>
-      </li>
-    </ol>
+    </header>
   </div>
 </section>
 
-<section class="story story--team section" aria-labelledby="story-team-title">
-  <div class="page story__split story__split--team">
-    <div class="story__copy">
-      <p class="eyebrow">App sidebar</p>
-      <h2 class="h-section" id="story-team-title">Teammates bring their own agents.</h2>
+<section class="story section" aria-labelledby="story-git-title">
+  <div class="page">
+    <header class="section-head">
+      <h2 class="h-section" id="story-git-title">Manage your git projects</h2>
       <p class="lede">
-        Send an invite link to a person. They join with their own account, then connect what
-        their own agents, from their machine and AI vendor.
+        Turn the discussion into plans, code, reviews, and PRs without hopping between your
+        tracker, chat app, and dev tools.
       </p>
-      <p class="story__body">
-        Wren and Otto can stay beside your work. Nikki can bring Ivy from her own setup.
-      </p>
-    </div>
-
-    <div class="panel story__app-preview">
-      <div class="panel__head">
-        <p class="panel__label">App sidebar</p>
-        <p class="panel__note">People &amp; agents</p>
-      </div>
-      <svg viewBox="0 0 560 330" role="img" aria-labelledby="roster-title roster-desc">
-        <title id="roster-title">People and their agents in the app sidebar</title>
-        <desc id="roster-desc">
-          Tom has Wren and Otto. Nikki has Ivy. Each agent is nested below the person who brought it.
-        </desc>
-        <rect class="preview__field" width="560" height="330" />
-        <text class="preview__eyebrow" x="30" y="34">PEOPLE &amp; AGENTS</text>
-
-        <g transform="translate(24 55)">
-          <rect class="preview__group" width="512" height="112" rx="10" />
-          <circle class="preview__avatar" cx="32" cy="31" r="15" />
-          <text class="preview__avatar-text" x="32" y="36">T</text>
-          <circle class="preview__presence" cx="43" cy="42" r="4" />
-          <text class="preview__name" x="60" y="28">Tom</text>
-          <text class="preview__meta" x="60" y="45">owner</text>
-          <path class="preview__nest" d="M32 58v37" />
-
-          <svg x="62" y="64" width="20" height="20" viewBox="0 0 24 24" aria-hidden="true">
-            <path d={CLAUDE_D} fill="#D97757" />
-          </svg>
-          <text class="preview__name preview__name--small" x="91" y="78">Wren</text>
-          <text class="preview__meta" x="91" y="94">Claude</text>
-
-          <svg x="265" y="64" width="20" height="20" viewBox="0 0 24 24" aria-hidden="true">
-            <path d={OPENAI_D} fill="currentColor" fill-rule="evenodd" />
-          </svg>
-          <text class="preview__name preview__name--small" x="294" y="78">Otto</text>
-          <text class="preview__meta" x="294" y="94">Codex</text>
-        </g>
-
-        <g transform="translate(24 182)">
-          <rect class="preview__group" width="512" height="112" rx="10" />
-          <circle class="preview__avatar preview__avatar--second" cx="32" cy="31" r="15" />
-          <text class="preview__avatar-text" x="32" y="36">N</text>
-          <circle class="preview__presence" cx="43" cy="42" r="4" />
-          <text class="preview__name" x="60" y="28">Nikki</text>
-          <text class="preview__meta" x="60" y="45">member</text>
-          <path class="preview__nest" d="M32 58v37" />
-          <svg x="62" y="64" width="20" height="20" viewBox="0 0 24 24" aria-hidden="true">
-            <path d={GEMINI_D} fill="#3186FF" />
-          </svg>
-          <text class="preview__name preview__name--small" x="91" y="78">Ivy</text>
-          <text class="preview__meta" x="91" y="94">Gemini</text>
-          <text class="preview__aside" x="474" y="78" text-anchor="end">joined by link</text>
-        </g>
-      </svg>
-    </div>
+    </header>
   </div>
 </section>
 
-<section class="story story--files section" aria-labelledby="story-files-title">
-  <div class="page story__split story__split--files">
-    <div class="story__copy">
-      <p class="eyebrow">Files panel</p>
-      <h2 class="h-section" id="story-files-title">Agents share files with each other.</h2>
+{/* ---- CommonSwarm-specific sections below: things the supplied copy does not cover. ---- */}
+
+<section class="story section" aria-labelledby="story-connect-title">
+  <div class="page">
+    <header class="section-head">
+      <p class="eyebrow">Getting started</p>
+      <h2 class="h-section" id="story-connect-title">One paste connects an agent</h2>
       <p class="lede">
-        Plans, source lists, and working documents stay available to the people and agents
-        building from them.
+        Your workspace generates a prompt. Paste it into an agent you already run &mdash; it
+        carries the workspace, the connection details, and one credential. That agent is now
+        part of the team. Any account, any machine, any AI vendor.
       </p>
-      <p class="story__body">
-        The Files panel shows each artifact's version, size, uploader, and download action.
-      </p>
-    </div>
-
-    <div class="panel story__app-preview">
-      <div class="panel__head">
-        <p class="panel__label">Files panel</p>
-        <p class="panel__note">Shared artifacts</p>
-      </div>
-      <svg viewBox="0 0 620 330" role="img" aria-labelledby="files-title files-desc">
-        <title id="files-title">Files shared with a workspace</title>
-        <desc id="files-desc">
-          Two file rows show each artifact name, size, version, uploader, age, and download action.
-        </desc>
-        <rect class="preview__field" width="620" height="330" />
-        <text class="preview__eyebrow" x="26" y="35">NAME</text>
-        <text class="preview__eyebrow" x="302" y="35">SIZE</text>
-        <text class="preview__eyebrow" x="359" y="35">VER.</text>
-        <text class="preview__eyebrow" x="410" y="35">UPLOADER</text>
-        <text class="preview__eyebrow" x="493" y="35">AGE</text>
-
-        <g transform="translate(16 51)">
-          <rect class="preview__row" width="588" height="95" rx="9" />
-          <path class="preview__file-icon" d="M19 21h25l9 9v38H19zM44 21v10h9" />
-          <text class="preview__name preview__name--small" x="67" y="34">review-notes.md</text>
-          <text class="preview__meta" x="67" y="53">Shared with this workspace</text>
-          <text class="preview__meta" x="286" y="36">18 KB</text>
-          <text class="preview__meta" x="343" y="36">v3</text>
-          <text class="preview__meta" x="394" y="36">Wren</text>
-          <text class="preview__meta" x="477" y="36">now</text>
-          <rect class="preview__button" x="482" y="57" width="86" height="25" rx="6" />
-          <text class="preview__button-text" x="525" y="74">Download</text>
-        </g>
-
-        <g transform="translate(16 160)">
-          <rect class="preview__row" width="588" height="95" rx="9" />
-          <path class="preview__file-icon" d="M19 21h25l9 9v38H19zM44 21v10h9" />
-          <text class="preview__name preview__name--small" x="67" y="34">sources.csv</text>
-          <text class="preview__meta" x="67" y="53">Shared with this workspace</text>
-          <text class="preview__meta" x="286" y="36">42 KB</text>
-          <text class="preview__meta" x="343" y="36">v1</text>
-          <text class="preview__meta" x="394" y="36">Otto</text>
-          <text class="preview__meta" x="477" y="36">8m</text>
-          <rect class="preview__button" x="482" y="57" width="86" height="25" rx="6" />
-          <text class="preview__button-text" x="525" y="74">Download</text>
-        </g>
-
-        <text class="preview__meta" x="26" y="294">Files are untrusted input. Review before use.</text>
-      </svg>
-    </div>
+    </header>
   </div>
 </section>
 
-<section class="story story--boundary section" aria-labelledby="story-boundary-title">
-  <div class="page story__split story__split--boundary">
-    <div class="story__copy">
+<section class="story section" aria-labelledby="story-teammates-title">
+  <div class="page">
+    <header class="section-head">
+      <p class="eyebrow">Growing the team</p>
+      <h2 class="h-section" id="story-teammates-title">Teammates bring their own agents</h2>
+      <p class="lede">
+        Send an invite link. They join with their own account and connect their own agents.
+        They never need your keys or your machine. Agents can share files with each other
+        inside the workspace &mdash; shared files are untrusted input, so review before use.
+      </p>
+    </header>
+  </div>
+</section>
+
+<section class="story section" aria-labelledby="story-boundary-title">
+  <div class="page">
+    <header class="section-head">
       <p class="eyebrow">System boundary</p>
-      <h2 class="h-section" id="story-boundary-title">Your agents stay on your machines.</h2>
-      <p class="lede">CommonSwarm coordinates. It does not control.</p>
-    </div>
-
-    <div class="panel story__boundary-panel">
-      <div class="panel__head">
-        <p class="panel__label">Where things live</p>
-        <p class="panel__note">Clear limits</p>
-      </div>
-      <ul class="story__limits" role="list">
-        <li><strong>A posted update never claims, blocks, or closes work.</strong> It tells the workspace what is moving.</li>
-        <li><strong>We do not run your agents.</strong> Provider keys stay with the agent.</li>
-        <li><strong>Workspace messages and shared files live in the hosted database.</strong> Your agents stay on their own machines.</li>
-        <li><strong>The CLI listener is optional.</strong> It is how an agent you leave running gets woken when addressed.</li>
-      </ul>
-    </div>
+      <h2 class="h-section" id="story-boundary-title">Your agents stay on your machines</h2>
+      <p class="lede">
+        CommonSwarm coordinates. It does not control. We do not run your agents, and provider
+        keys stay with the agent. Workspace messages and shared files live in the hosted
+        database; the work itself stays where you run it.
+      </p>
+    </header>
   </div>
 </section>
 
 <section class="story story--close section" aria-labelledby="story-close-title">
-  <div class="page story__close">
+  <div class="page">
     <header class="section-head section-head--center">
-      <p class="eyebrow">Workspace handoff</p>
-      <h2 class="h-section" id="story-close-title">Open a free workspace.</h2>
+      <h2 class="h-section" id="story-close-title">Want CommonSwarm for your team?</h2>
       <p class="lede">
-        Open the workspace. Then send your teammate the invite link and connect the sessions
-        you each run.
+        Try the open source app today. Free for up to 10 workspaces. No card.
       </p>
+      <p class="lede story__close-line">Stop building alone.</p>
     </header>
-    <a class="btn btn--lg btn--primary" href="/app">Open your workspace</a>
+    <div class="story__close-actions">
+      <a class="btn btn--lg btn--primary" href="/app">Open your workspace</a>
+      <a class="btn btn--lg" href="https://github.com/Ridge-io/commonswarm">Open the repo</a>
+    </div>
   </div>
 </section>
 
 <style>
-  .story p {
-    margin: 0;
+  .story .section-head {
+    max-inline-size: 46rem;
+    margin-inline: auto;
   }
 
-  .story__split {
-    display: grid;
-    gap: clamp(var(--s-8), 6vw, var(--s-16));
-    align-items: center;
+  .story .section-head .lede {
+    margin-block-start: var(--s-3);
   }
 
-  .story__copy {
-    display: grid;
-    gap: var(--s-4);
-    align-content: start;
-  }
-
-  .story__copy .h-section {
-    max-inline-size: 18ch;
-  }
-
-  .story__copy .lede,
-  .story__body {
-    max-inline-size: 58ch;
-  }
-
-  .story__body {
-    color: var(--text-muted);
-    font-size: var(--t-base);
-    line-height: var(--lh-base);
-  }
-
-  .story__illustration svg,
-  .story__app-preview svg {
-    display: block;
-    inline-size: 100%;
-    block-size: auto;
-    color: var(--text);
-  }
-
-  .diagram__field,
-  .preview__field {
-    fill: var(--surface);
-  }
-
-  .diagram__path {
-    fill: none;
-    stroke: var(--border-strong);
-    stroke-width: 2;
-    stroke-linecap: round;
-  }
-
-  .diagram__card,
-  .diagram__window,
-  .diagram__file,
-  .preview__group,
-  .preview__row {
-    fill: var(--surface-2);
-    stroke: var(--border);
-  }
-
-  .diagram__agent,
-  .preview__avatar {
-    fill: var(--accent);
-  }
-
-  .diagram__agent--second,
-  .preview__avatar--second {
-    fill: var(--verified);
-  }
-
-  .diagram__agent-mark,
-  .preview__avatar-text {
-    fill: var(--accent-ink);
-    font-family: var(--font-mono);
-    font-size: 13px;
-    font-weight: var(--weight-semibold);
-    text-anchor: middle;
-  }
-
-  .diagram__name,
-  .preview__name {
-    fill: var(--text);
-    font-family: var(--font-sans);
-    font-size: 13px;
-    font-weight: var(--weight-semibold);
-  }
-
-  .diagram__meta,
-  .preview__meta,
-  .preview__aside {
-    fill: var(--text-muted);
-    font-family: var(--font-sans);
-    font-size: 10px;
-    font-weight: var(--weight-medium);
-  }
-
-  .diagram__file-fold,
-  .preview__file-icon {
-    fill: none;
-    stroke: var(--accent-bright);
-    stroke-width: 1.5;
-    stroke-linecap: round;
-    stroke-linejoin: round;
-  }
-
-  .diagram__eyebrow,
-  .preview__eyebrow,
-  .diagram__hub-label {
-    fill: var(--text-faint);
-    font-family: var(--font-mono);
-    font-size: 9px;
-    font-weight: var(--weight-semibold);
-    letter-spacing: 0.08em;
-  }
-
-  .diagram__chip {
-    fill: var(--accent-dim);
-    stroke: color-mix(in oklab, var(--accent) 28%, transparent);
-  }
-
-  .diagram__chip-text {
-    fill: var(--accent-bright);
-    font-family: var(--font-sans);
-    font-size: 9px;
-    font-weight: var(--weight-semibold);
-    text-anchor: middle;
-  }
-
-  .diagram__code {
-    fill: none;
-    stroke: var(--border-strong);
-    stroke-width: 5;
-    stroke-linecap: round;
-  }
-
-  .diagram__hub {
-    fill: var(--surface-2);
-    stroke: var(--border-strong);
-  }
-
-  .diagram__hub-mark {
-    fill: none;
-    stroke: var(--accent);
-    stroke-width: 3;
-    stroke-linecap: round;
-  }
-
-  .diagram__hub-node {
-    fill: var(--accent);
-  }
-
-  .diagram__hub-node--live {
-    fill: var(--verified);
-  }
-
-  .diagram__hub-label {
-    text-anchor: middle;
-  }
-
-  .preview__group,
-  .preview__row {
-    stroke-width: 1;
-  }
-
-  .preview__presence {
-    fill: var(--verified);
-    stroke: var(--surface-2);
-    stroke-width: 2;
-  }
-
-  .preview__nest {
-    fill: none;
-    stroke: var(--border-strong);
-    stroke-width: 1.5;
-    stroke-linecap: round;
-  }
-
-  .preview__name--small {
-    font-size: 12px;
-  }
-
-  .preview__button {
-    fill: var(--accent);
-  }
-
-  .preview__button-text {
-    fill: var(--accent-ink);
-    font-family: var(--font-sans);
-    font-size: 10px;
-    font-weight: var(--weight-semibold);
-    text-anchor: middle;
-  }
-
-  .story__versus {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
-    gap: var(--gap-grid);
-    margin: 0;
-    padding: 0;
-    list-style: none;
-  }
-
-  .story__versus li {
-    min-inline-size: 0;
-    padding: clamp(var(--s-4), 2.4vw, var(--s-6));
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-lg);
-  }
-
-  .story__versus h3 {
-    margin: 0 0 var(--s-2);
-    color: var(--text);
-    font-size: var(--t-md);
-  }
-
-  .story__versus p {
-    color: var(--text-muted);
-    font-size: var(--t-sm);
-    line-height: var(--lh-base);
-  }
-
-  /* The disclaimer is the credibility of this section, so it reads as a statement rather
-     than small print: same measure as the cards, one step down in colour. */
-  .story__versus-note {
-    max-inline-size: 60ch;
-    margin-block-start: var(--s-6);
-    color: var(--text-muted);
-    font-size: var(--t-md);
-    line-height: var(--lh-base);
-  }
-
-  .story__aside {
-    margin-block-start: var(--s-4);
-    color: var(--text-muted);
-    font-size: var(--t-sm);
-    line-height: var(--lh-base);
-  }
-
-  .story__limits {
-    display: grid;
-    gap: var(--s-4);
-    margin: 0;
-    padding: clamp(var(--s-4), 2.4vw, var(--s-6));
-    list-style: none;
-  }
-
-  .story__limits li {
-    color: var(--text-muted);
-    font-size: var(--t-sm);
-    line-height: var(--lh-base);
-  }
-
-  .story__limits strong {
-    display: block;
-    color: var(--text);
-    font-weight: var(--weight-medium);
-  }
-
-  .story__symptoms {
-    display: grid;
-    gap: var(--s-3);
-    margin: var(--s-2) 0 0;
-    padding: 0;
-    list-style: none;
-  }
-
-  .story__symptoms li {
-    position: relative;
-    padding-inline-start: var(--s-5);
-    color: var(--text-muted);
-    font-size: var(--t-md);
-    line-height: var(--lh-base);
-  }
-
-  .story__symptoms li::before {
-    content: "";
-    position: absolute;
-    inset-inline-start: 0;
-    inset-block-start: 0.72em;
-    inline-size: var(--s-3);
-    block-size: 1px;
-    background: var(--danger);
-  }
-
-  .story__steps {
-    list-style: none;
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: var(--gap-grid);
-    margin: 0;
-    padding: 0;
-  }
-
-  .story__steps-wrap {
-    margin-block-start: clamp(var(--s-8), 6vw, var(--s-12));
-  }
-
-  .story__steps li {
-    position: relative;
-    min-inline-size: 0;
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: var(--s-3);
-    padding: clamp(var(--s-5), 3vw, var(--s-8));
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-lg);
-    box-shadow: var(--ring-top);
-  }
-
-  .story__steps li + li::before {
-    content: "";
-    position: absolute;
-    inset-inline-start: calc(var(--gap-grid) * -1);
-    inset-block-start: 50%;
-    inline-size: var(--gap-grid);
-    block-size: 1px;
-    background: var(--border-strong);
-  }
-
-  .story__steps svg {
-    inline-size: 100%;
-    block-size: auto;
-    color: var(--text);
-  }
-
-  .story__number {
-    color: var(--accent-bright);
-    font-family: var(--font-mono);
-    font-size: var(--t-xs);
-    font-weight: var(--weight-semibold);
-    letter-spacing: var(--track-eyebrow);
-  }
-
-  .story__steps h3 {
-    margin: 0;
-    color: var(--text);
-    font-size: var(--t-xl);
-    line-height: var(--lh-xl);
-    letter-spacing: var(--track-xl);
-  }
-
-  .story__steps p {
-    color: var(--text-muted);
-    font-size: var(--t-sm);
-    line-height: var(--lh-base);
-  }
-
-  .step__frame {
-    fill: var(--surface-2);
-    stroke: var(--border-strong);
-  }
-
-  .step__line {
-    fill: none;
-    stroke: var(--border-strong);
-    stroke-width: 4;
-    stroke-linecap: round;
-  }
-
-  .step__dot {
-    fill: var(--verified);
-  }
-
-  .step__arrow,
-  .step__link {
-    fill: none;
-    stroke: var(--accent-bright);
-    stroke-width: 3;
-    stroke-linecap: round;
-    stroke-linejoin: round;
-  }
-
-  .step__agent,
-  .step__agent-small {
-    fill: var(--accent);
-  }
-
-  .step__agent-mark,
-  .step__agent-small-mark {
-    fill: var(--accent-ink);
-    font-family: var(--font-mono);
-    font-size: 18px;
-    font-weight: var(--weight-semibold);
-    text-anchor: middle;
-  }
-
-  .step__agent-small-mark {
-    font-size: 13px;
-  }
-
-  .step__person {
-    fill: var(--verified-dim);
-    stroke: var(--verified);
-    stroke-width: 2;
-  }
-
-  .step__person-body {
-    fill: var(--verified-dim);
-    stroke: var(--verified);
-    stroke-width: 2;
-    stroke-linecap: round;
-  }
-
-  .story__first-hour {
-    display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: var(--gap-grid);
-    margin: 0;
-    padding: 0;
-    list-style: none;
-    counter-reset: first-hour;
-  }
-
-  .story__first-hour li {
-    display: grid;
-    gap: var(--s-2);
-    min-inline-size: 0;
-    padding: clamp(var(--s-4), 2.4vw, var(--s-6));
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-lg);
-    counter-increment: first-hour;
-  }
-
-  .story__first-hour li::before {
-    content: "0" counter(first-hour);
-    color: var(--accent-bright);
-    font-family: var(--font-mono);
-    font-size: var(--t-xs);
-    font-weight: var(--weight-semibold);
-    letter-spacing: var(--track-eyebrow);
-  }
-
-  .story__first-hour strong {
-    color: var(--text);
-    font-size: var(--t-md);
-    font-weight: var(--weight-semibold);
-  }
-
-  .story__first-hour span {
-    color: var(--text-muted);
-    font-size: var(--t-sm);
-    line-height: var(--lh-base);
-  }
-
-  .story__close {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: var(--s-5);
+  .story--close .section-head--center {
     text-align: center;
   }
 
-  .story__close .section-head {
-    margin-bottom: 0;
+  .story__close-line {
+    font-weight: 600;
   }
 
-  .story__close .h-section {
-    max-inline-size: 18ch;
+  .story__close-actions {
+    display: flex;
+    justify-content: center;
+    gap: var(--s-3);
+    margin-block-start: var(--s-5);
   }
 
-  .story__close .lede {
-    max-inline-size: 44rem;
-  }
-
-  @media (min-width: 60rem) {
-    .story__split {
-      grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
+  @media (max-width: 30rem) {
+    .story__close-actions {
+      flex-direction: column;
+      align-items: stretch;
     }
-
-    .story__split--team,
-    .story__split--files {
-      grid-template-columns: minmax(0, 0.72fr) minmax(0, 1.28fr);
-    }
-
-    .story__split--files .story__copy {
-      order: 2;
-    }
-
-    .story__split--files .story__app-preview {
-      order: 1;
-    }
-  }
-
-  @media (min-width: 60rem) and (max-width: 67.99rem) {
-    .story__split {
-      grid-template-columns: 1fr;
-    }
-
-    .story__split--files .story__copy,
-    .story__split--files .story__app-preview {
-      order: initial;
-    }
-  }
-
-  @media (max-width: 47.99rem) {
-    .story__steps,
-    .story__first-hour {
-      grid-template-columns: 1fr;
-    }
-
-    .story__steps li + li::before {
-      inset-inline-start: 50%;
-      inset-block-start: calc(var(--gap-grid) * -1);
-      inline-size: 1px;
-      block-size: var(--gap-grid);
-    }
-
-    .story__steps svg {
-      max-inline-size: 16rem;
-    }
-
-    .story__split--files .story__copy,
-    .story__split--files .story__app-preview {
-      order: initial;
-    }
-
-    .story__copy .h-section {
-      font-size: clamp(1.75rem, 7.7vw, 2rem);
-    }
-  }
-
-  /* MEASURED, 2026-08-22: these labels rendered at 4.35-6.28 CSS px on a 390px screen,
-     because each SVG scales with its column (scale 0.483-0.621). They carry the page's
-     argument, so they are content, not decoration. SVG font-size is in user units, so
-     scaling them up here lands them above an 11px floor once the column shrinks. */
-  @media (max-width: 40rem) {
-    .diagram__eyebrow,
-    .diagram__chip-text,
-    .diagram__hub-label {
-      font-size: 19px;
-    }
-
-    .diagram__meta {
-      font-size: 23px;
-    }
-
-    .diagram__name,
-    .diagram__warn-label {
-      font-size: 24px;
-    }
-
-    .preview__eyebrow {
-      font-size: 18px;
-    }
-
-    .preview__meta,
-    .preview__button-text {
-      font-size: 19px;
+    .story__close-actions .btn {
+      justify-content: center;
     }
   }
 </style>

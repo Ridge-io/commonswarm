@@ -151,33 +151,27 @@ const measureAt = async (
   return JSON.parse(Buffer.from(encoded, "base64").toString("utf8")) as PageMeasurement;
 };
 
-test("story illustrations are labeled and app previews match real views", () => {
-  assert.equal(
-    [...storySource.matchAll(/class="panel story__app-preview"/g)].length,
-    2,
-    "the roster and Files panel must sit beside the claims they prove",
-  );
-  assert.equal(
-    [...storySource.matchAll(/<svg\b[^>]*role="img"[^>]*aria-labelledby="[^"]+"/g)].length,
-    // Six since the duplicate "two ways in" and first-hour sections were deleted.
-    6,
-    "every story illustration must have an accessible name and description",
-  );
-  for (const sourceBoundary of [
-    "participant-rail.ts",
-    "file-list.ts",
-    "CLAUDE_D",
-    "OPENAI_D",
-    "GEMINI_D",
-    "Download",
-    "joined by link",
-  ]) {
+test("story svgs are labeled and retired surfaces stay gone", () => {
+  /* 2026-08-22, operator directive: the landing page follows the supplied plain
+   * copy — no illustration panels, no product comparisons. The old pins on the
+   * roster/Files preview panels and their source markers are retired WITH those
+   * panels. What survives: any SVG that does exist must be accessible, and the
+   * retired surfaces must never return. */
+  const svgs = [...storySource.matchAll(/<svg\b[^>]*>/g)];
+  for (const svg of svgs) {
     assert.ok(
-      storySource.includes(sourceBoundary),
-      `product previews are missing ${sourceBoundary}`,
+      /role="img"/.test(svg[0]) && /aria-labelledby="[^"]+"/.test(svg[0]),
+      `story SVG without accessible name: ${svg[0].slice(0, 80)}`,
     );
   }
-  for (const retiredSurface of ["Workspace settings", "Close workspace", "No process"]) {
+  for (const retiredSurface of [
+    "Workspace settings",
+    "Close workspace",
+    "No process",
+    // Comparison strip retired by the same directive — must not return.
+    "Slack is a room for people.",
+    "GitHub records commits, reviews, and issues after the work.",
+  ]) {
     assert.equal(
       storySource.includes(retiredSurface),
       false,
