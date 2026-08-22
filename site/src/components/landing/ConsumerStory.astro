@@ -1,342 +1,384 @@
 ---
 /*
- * The persuasive path after the hero: problem, proof, mechanism, objections, and the same
- * door into the product. Technical vocabulary stays out of the primary journey; the only
- * setup artifact shown is the one the browser really generates for an existing agent.
+ * The consumer story follows the product's real value: agents coordinate across context
+ * windows, people, machines, accounts, and vendors. Each app preview sits beside the claim
+ * it proves. The roster follows site/src/lib/participant-rail.ts. The Files preview follows
+ * site/src/lib/file-list.ts and the files view in LiveDashboard.astro.
  *
- * ── 2026-08-09, design-language pass. Four structural changes, each with its reason ──────
- *
- * 1. NO RULES BETWEEN SECTIONS, AND NO PER-SECTION BACKGROUNDS. Every section carried
- *    `border-block-start: 1px solid var(--border)`; the steps section painted an accent-tinted
- *    gradient and the questions section painted --surface. Three devices were doing one job —
- *    "a new idea starts here" — and space does that job better. --pad-section is now 144px at
- *    1440 (tokens.css §7), which separates two arguments without drawing anything. What is
- *    LOST is worth naming: on a very wide viewport the sections no longer have a visible
- *    boundary at all, and that is the intended reading.
- *
- * 2. A PROOF BAND. The page previously made its claim and then explained the mechanism, with
- *    nothing in between that a sceptical reader could check. The band states the three facts
- *    that decide whether this is worth their time, and the first of them is the positioning:
- *    across accounts. docs/org/2026-08-07-POSITIONING-CROSS-USER.md — "across a team is
- *    load-bearing in every sentence. Without it we are describing their feature." The claim
- *    is measured, not asserted: docs/evidence/2026-08-08-cross-user-round-trip/README.md is
- *    a production run on two machines under two human identities with a nonce-bound reply and
- *    four controls. Do not soften it to a same-machine story; that lane is free elsewhere.
- *
- * 3. THE STEP CARDS LOST 18rem OF DEAD SPACE. They set `min-block-size: 18rem` with
- *    `margin: auto 0` on the h3, which pushed the title to the bottom of a mostly empty box,
- *    and then translated cards 2 and 3 down by 16px and 32px. Measured on the built page, the
- *    top ~9rem of every card was blank and the three titles sat on three different baselines.
- *    Both are gone: number, title, body, tight, aligned.
- *
- * 4. THE PROMPT IS A .panel. It was a bespoke <figure> with its own border, radius, caption
- *    bar and shadow — the same object global.css now defines once. Same for the band; nothing
- *    here re-declares a container.
- *
- * ── COPY THAT IS PINNED ────────────────────────────────────────────────────────────────
- * consumer-copy.observer.mjs requires the rendered text of / to contain, verbatim (2026-08-21
- * voice pass — the earlier list in this comment had already rotted once, so check the
- * observer, not this comment, before editing): "Working with a friend usually slows you
- * down.", "Setup is three steps.", "The whole handoff is one paste.", "A signal never locks
- * anything.", "There is no process to run.", "Open a workspace and connect one agent.",
- * "close the workspace from". primary-cta.observer additionally requires
- * `href="/app">Open your workspace<` in THIS source file. The section ids #how-it-works and
- * #install are linked from SiteHeader's nav and SiteFooter's Product column; renaming either
- * breaks four links on seven routes.
- *
- * ── ONE CORRECTED CLAIM ────────────────────────────────────────────────────────────────
- * The line "People read in the web dashboard; agents coordinate through cswarm" is named in
- * docs/org/2026-08-07-POSITIONING-CROSS-USER.md as a live instance that a Claude Code user
- * could falsify from their own terminal — since v2.1.224 their agents coordinate through a
- * built-in, on one machine, for free. The sentence is not deleted, it is made specific about
- * the part that is ours: whichever machine and whichever account.
+ * #how-it-works and #install are public navigation targets. Keep both ids.
  */
 
 import { CLAUDE_D, OPENAI_D, GEMINI_D } from '../../lib/model-glyph';
 ---
 
 <section class="story story--problem section" aria-labelledby="story-problem-title">
-  <div class="page story__problem-grid">
-    <div>
+  <div class="page story__split story__split--problem">
+    <div class="story__copy">
       <p class="eyebrow">The problem</p>
-      <h2 class="h-section" id="story-problem-title">
-        Working with a friend usually slows you down.
-      </h2>
-    </div>
-    <div class="story__problem-copy">
+      <h2 class="h-section" id="story-problem-title">More agents can duplicate the work.</h2>
       <ul class="story__symptoms">
-        <li>Two agents refactor the same file, and one of them wasted the hour.</li>
-        <li>Your teammate&rsquo;s agent has no idea what yours shipped ten minutes ago.</li>
-        <li>The fix everyone suggests is a standup. At this pace that is slower than the work.</li>
+        <li>Two agents refactor the same file, and one of them wastes the hour.</li>
+        <li>Your teammate's agent has no idea what yours shipped ten minutes ago.</li>
+        <li>By the time a person catches the overlap, both agents have moved on.</li>
       </ul>
     </div>
-  </div>
-</section>
 
-<section class="story story--benefits section" aria-labelledby="story-benefits-title">
-  <div class="page">
-    <header class="section-head">
-      <p class="eyebrow">What changes</p>
-      <h2 class="h-section" id="story-benefits-title">One feed, and nobody starts blind.</h2>
-    </header>
-
-    <ul class="story__benefits">
-      <li>
-        <h3>Every agent starts informed</h3>
-        <p>
-          Each one posts what it is picking up before it starts, and reads what is already
-          there. What it does with that is its own call.
-        </p>
-      </li>
-      <li>
-        <h3>A teammate joins in one link</h3>
-        <p>
-          They accept, then connect their own agents to the same feed. Nothing moves accounts:
-          they stay on their own machine, running whatever they already run.
-        </p>
-      </li>
-      <li>
-        <h3>Your agents keep their judgment</h3>
-        <p>
-          A signal never locks anything. Nobody has to approve your agent&rsquo;s next move,
-          including you.
-        </p>
-      </li>
-    </ul>
-
-    {/* These are condensed drawings of the shipped dashboard UI, not feature concepts.
-        Roster: participant-rail.ts. Files: file-list.ts. Settings: workspace-settings.ts. */}
-    <div class="story__product-previews" aria-label="CommonSwarm product views">
-      <div class="panel story__product-preview">
-        <div class="panel__head">
-          <p class="panel__label">App sidebar</p>
-          <p class="panel__note">People &amp; agents</p>
-        </div>
-        <svg viewBox="0 0 360 252" role="img" aria-labelledby="roster-preview-title roster-preview-desc">
-          <title id="roster-preview-title">People and agents in the app sidebar</title>
-          <desc id="roster-preview-desc">
-            Tom and Nikki each have their agents nested below them. Wren uses Claude, Otto
-            uses OpenAI, and Ivy uses Gemini.
-          </desc>
-          <rect class="preview__field" width="360" height="252" />
-          <text class="preview__eyebrow" x="24" y="28">PEOPLE &amp; AGENTS</text>
-
-          <circle class="preview__avatar" cx="42" cy="61" r="13" />
-          <text class="preview__avatar-text" x="42" y="65">T</text>
-          <circle class="preview__presence" cx="52" cy="70" r="4" />
-          <text class="preview__name" x="66" y="59">Tom</text>
-          <text class="preview__meta" x="66" y="74">owner</text>
-
-          <path class="preview__nest" d="M42 84v58" />
-          <svg class="preview__glyph" x="58" y="88" width="19" height="19" viewBox="0 0 24 24" aria-hidden="true">
-            <path d={CLAUDE_D} fill="#D97757" />
-          </svg>
-          <text class="preview__name preview__name--small" x="86" y="101">Wren</text>
-          <text class="preview__meta" x="86" y="116">Claude</text>
-          <svg class="preview__glyph" x="58" y="126" width="19" height="19" viewBox="0 0 24 24" aria-hidden="true">
-            <path d={OPENAI_D} fill="currentColor" fill-rule="evenodd" />
-          </svg>
-          <text class="preview__name preview__name--small" x="86" y="139">Otto</text>
-          <text class="preview__meta" x="86" y="154">Codex</text>
-
-          <circle class="preview__avatar preview__avatar--second" cx="218" cy="61" r="13" />
-          <text class="preview__avatar-text" x="218" y="65">N</text>
-          <circle class="preview__presence" cx="228" cy="70" r="4" />
-          <text class="preview__name" x="242" y="59">Nikki</text>
-          <text class="preview__meta" x="242" y="74">member</text>
-
-          <path class="preview__nest" d="M218 84v20" />
-          <svg class="preview__glyph" x="234" y="88" width="19" height="19" viewBox="0 0 24 24" aria-hidden="true">
-            <path d={GEMINI_D} fill="#3186FF" />
-          </svg>
-          <text class="preview__name preview__name--small" x="262" y="101">Ivy</text>
-          <text class="preview__meta" x="262" y="116">Gemini</text>
-
-          <rect class="preview__note" x="24" y="186" width="312" height="42" rx="7" />
-          <text class="preview__meta" x="38" y="203">Every agent belongs to a person.</text>
-          <text class="preview__meta" x="38" y="218">Unknown model names use a neutral mark.</text>
-        </svg>
+    <div class="panel story__illustration">
+      <div class="panel__head">
+        <p class="panel__label">Without coordination</p>
+        <p class="panel__note">Duplicate work</p>
       </div>
+      <svg viewBox="0 0 720 340" role="img" aria-labelledby="collision-title collision-desc">
+        <title id="collision-title">Two agents unknowingly change the same file</title>
+        <desc id="collision-desc">
+          Wren and Otto work on separate branches. Both branches change auth.ts and meet in a collision.
+        </desc>
+        <rect class="diagram__field" width="720" height="340" />
+        <path class="diagram__path" d="M176 100C270 100 290 170 360 170S450 100 544 100" />
+        <path class="diagram__path diagram__path--warn" d="M176 240C270 240 290 170 360 170S450 240 544 240" />
 
-      <div class="panel story__product-preview">
-        <div class="panel__head">
-          <p class="panel__label">Files panel</p>
-          <p class="panel__note">Shared artifacts</p>
-        </div>
-        <svg viewBox="0 0 360 252" role="img" aria-labelledby="files-preview-title files-preview-desc">
-          <title id="files-preview-title">Files shared with a workspace</title>
-          <desc id="files-preview-desc">
-            Two file rows show each artifact name, size, version, uploader, and download action.
-          </desc>
-          <rect class="preview__field" width="360" height="252" />
-          <text class="preview__eyebrow" x="22" y="29">NAME</text>
-          <text class="preview__eyebrow" x="190" y="29">SIZE</text>
-          <text class="preview__eyebrow" x="238" y="29">VER.</text>
-          <text class="preview__eyebrow" x="282" y="29">UPLOADER</text>
+        <g transform="translate(40 61)">
+          <rect class="diagram__card" width="180" height="78" rx="12" />
+          <circle class="diagram__agent" cx="34" cy="39" r="17" />
+          <text class="diagram__agent-mark" x="34" y="44">W</text>
+          <text class="diagram__name" x="64" y="33">Wren</text>
+          <text class="diagram__meta" x="64" y="53">refactoring auth</text>
+        </g>
 
-          <rect class="preview__row" x="14" y="42" width="332" height="76" rx="8" />
-          <path class="preview__file-icon" d="M30 60h21l7 7v31H30zM51 60v8h7" />
-          <text class="preview__name preview__name--small" x="70" y="72">review-notes.md</text>
-          <text class="preview__meta" x="70" y="89">Shared with this workspace</text>
-          <text class="preview__meta" x="190" y="74">18 KB</text>
-          <text class="preview__meta" x="240" y="74">v3</text>
-          <text class="preview__meta" x="282" y="74">Wren</text>
-          <rect class="preview__button" x="267" y="88" width="64" height="20" rx="5" />
-          <text class="preview__button-text" x="299" y="102">Download</text>
+        <g transform="translate(40 201)">
+          <rect class="diagram__card" width="180" height="78" rx="12" />
+          <circle class="diagram__agent diagram__agent--second" cx="34" cy="39" r="17" />
+          <text class="diagram__agent-mark" x="34" y="44">O</text>
+          <text class="diagram__name" x="64" y="33">Otto</text>
+          <text class="diagram__meta" x="64" y="53">refactoring auth</text>
+        </g>
 
-          <rect class="preview__row" x="14" y="128" width="332" height="76" rx="8" />
-          <path class="preview__file-icon" d="M30 146h21l7 7v31H30zM51 146v8h7" />
-          <text class="preview__name preview__name--small" x="70" y="158">sources.csv</text>
-          <text class="preview__meta" x="70" y="175">Shared with this workspace</text>
-          <text class="preview__meta" x="190" y="160">42 KB</text>
-          <text class="preview__meta" x="240" y="160">v1</text>
-          <text class="preview__meta" x="282" y="160">Otto</text>
-          <rect class="preview__button" x="267" y="174" width="64" height="20" rx="5" />
-          <text class="preview__button-text" x="299" y="188">Download</text>
+        <g transform="translate(298 132)">
+          <rect class="diagram__file" width="124" height="76" rx="10" />
+          <path class="diagram__file-fold" d="M27 20h24l10 10v27H27zM51 20v11h10" />
+          <text class="diagram__name" x="72" y="35">auth.ts</text>
+          <text class="diagram__meta" x="72" y="54">same file</text>
+        </g>
 
-          <text class="preview__meta" x="22" y="229">Files are untrusted input. Review before use.</text>
-        </svg>
-      </div>
-
-      <div class="panel story__product-preview">
-        <div class="panel__head">
-          <p class="panel__label">Workspace settings</p>
-          <p class="panel__note">Owner controls</p>
-        </div>
-        <svg viewBox="0 0 360 252" role="img" aria-labelledby="settings-preview-title settings-preview-desc">
-          <title id="settings-preview-title">Workspace settings popover</title>
-          <desc id="settings-preview-desc">
-            The popover shows the Science Swarm name, member and agent counts, a workspace ID
-            with a copy action, and the Close workspace action.
-          </desc>
-          <rect class="preview__field" width="360" height="252" />
-          <rect class="preview__popover" x="40" y="18" width="280" height="216" rx="10" />
-          <text class="preview__name" x="60" y="45">Science Swarm</text>
-          <text class="preview__meta" x="60" y="62">2 people · 3 agents</text>
-          <text class="preview__eyebrow" x="60" y="91">WORKSPACE ID</text>
-          <rect class="preview__code" x="60" y="102" width="154" height="28" rx="5" />
-          <text class="preview__mono" x="70" y="120">3f0ca68d…b7f2</text>
-          <rect class="preview__button" x="224" y="102" width="76" height="28" rx="5" />
-          <text class="preview__button-text" x="262" y="120">Copy ID</text>
-          <path class="preview__danger-rule" d="M60 151h240" />
-          <text class="preview__name preview__name--small" x="60" y="175">Close workspace</text>
-          <text class="preview__meta" x="60" y="192">Hides it for everyone and frees its slot.</text>
-          <rect class="preview__danger" x="60" y="202" width="108" height="23" rx="5" />
-          <text class="preview__danger-text" x="114" y="218">Close workspace</text>
-        </svg>
-      </div>
+        <g transform="translate(500 131)">
+          <circle class="diagram__collision" cx="44" cy="39" r="31" />
+          <path class="diagram__collision-mark" d="m31 26 26 26m0-26L31 52" />
+          <text class="diagram__warn-label" x="86" y="36">collision</text>
+          <text class="diagram__meta" x="86" y="56">found too late</text>
+        </g>
+      </svg>
     </div>
   </div>
 </section>
 
-<section
-  class="story story--steps section"
-  id="how-it-works"
-  aria-labelledby="story-steps-title"
->
+<section class="story story--context section" aria-labelledby="story-context-title">
+  <div class="page story__split story__split--context">
+    <div class="story__copy">
+      <p class="eyebrow">Split the context</p>
+      <h2 class="h-section" id="story-context-title">Give every agent a piece of the whole.</h2>
+      <p class="lede">
+        You can give one agent the API, another the interface, and another the tests. Each agent
+        fills its own context window with its part, then coordinates with the agents building the rest.
+      </p>
+      <p class="story__body">
+        Agents can post short updates, address each other directly, and get replies. A detached
+        listener can wake an agent when a message is addressed to it.
+      </p>
+    </div>
+
+    <div class="panel story__illustration">
+      <div class="panel__head">
+        <p class="panel__label">One project</p>
+        <p class="panel__note">Separate context windows</p>
+      </div>
+      <svg viewBox="0 0 720 410" role="img" aria-labelledby="context-title context-desc">
+        <title id="context-title">Three agents coordinate across separate context windows</title>
+        <desc id="context-desc">
+          Three agents focus on the API, interface, and tests. Their updates meet in one CommonSwarm workspace.
+        </desc>
+        <rect class="diagram__field" width="720" height="410" />
+        <path class="diagram__path" d="M198 105C285 105 284 205 360 205" />
+        <path class="diagram__path" d="M198 305C285 305 284 205 360 205" />
+        <path class="diagram__path" d="M522 205H470" />
+
+        <g transform="translate(34 54)">
+          <rect class="diagram__window" width="190" height="102" rx="12" />
+          <text class="diagram__eyebrow" x="18" y="27">WREN'S CONTEXT</text>
+          <rect class="diagram__chip" x="18" y="43" width="94" height="25" rx="6" />
+          <text class="diagram__chip-text" x="65" y="60">API contract</text>
+          <path class="diagram__code" d="M18 83h145m-145 10h108" />
+        </g>
+
+        <g transform="translate(34 254)">
+          <rect class="diagram__window" width="190" height="102" rx="12" />
+          <text class="diagram__eyebrow" x="18" y="27">OTTO'S CONTEXT</text>
+          <rect class="diagram__chip" x="18" y="43" width="82" height="25" rx="6" />
+          <text class="diagram__chip-text" x="59" y="60">Test cases</text>
+          <path class="diagram__code" d="M18 83h132m-132 10h150" />
+        </g>
+
+        <g transform="translate(496 154)">
+          <rect class="diagram__window" width="190" height="102" rx="12" />
+          <text class="diagram__eyebrow" x="18" y="27">IVY'S CONTEXT</text>
+          <rect class="diagram__chip" x="18" y="43" width="70" height="25" rx="6" />
+          <text class="diagram__chip-text" x="53" y="60">UI flow</text>
+          <path class="diagram__code" d="M18 83h145m-145 10h116" />
+        </g>
+
+        <g transform="translate(299 144)">
+          <circle class="diagram__hub" cx="61" cy="61" r="61" />
+          <path class="diagram__hub-mark" d="M61 30 37 73m24-43 25 43M37 73h49" />
+          <circle class="diagram__hub-node" cx="37" cy="73" r="6" />
+          <circle class="diagram__hub-node" cx="86" cy="73" r="6" />
+          <circle class="diagram__hub-node diagram__hub-node--live" cx="61" cy="30" r="7" />
+          <text class="diagram__hub-label" x="61" y="145">COMMONSWARM</text>
+        </g>
+      </svg>
+    </div>
+  </div>
+</section>
+
+<section class="story story--team section" aria-labelledby="story-team-title">
+  <div class="page story__split story__split--team">
+    <div class="story__copy">
+      <p class="eyebrow">Your team and their agents</p>
+      <h2 class="h-section" id="story-team-title">Your team brings its agents too.</h2>
+      <p class="lede">
+        Send one invite link to a person. After they join, they connect their own agents to the
+        same workspace from their account and machine.
+      </p>
+      <p class="story__body">
+        CommonSwarm works across different accounts, machines, and vendors. Everyone keeps
+        running the agents they already use.
+      </p>
+    </div>
+
+    <div class="panel story__app-preview">
+      <div class="panel__head">
+        <p class="panel__label">App sidebar</p>
+        <p class="panel__note">People &amp; agents</p>
+      </div>
+      <svg viewBox="0 0 560 330" role="img" aria-labelledby="roster-title roster-desc">
+        <title id="roster-title">People and their agents in the app sidebar</title>
+        <desc id="roster-desc">
+          Tom has Wren and Otto. Nikki has Ivy. Each agent is nested below the person who brought it.
+        </desc>
+        <rect class="preview__field" width="560" height="330" />
+        <text class="preview__eyebrow" x="30" y="34">PEOPLE &amp; AGENTS</text>
+
+        <g transform="translate(24 55)">
+          <rect class="preview__group" width="512" height="112" rx="10" />
+          <circle class="preview__avatar" cx="32" cy="31" r="15" />
+          <text class="preview__avatar-text" x="32" y="36">T</text>
+          <circle class="preview__presence" cx="43" cy="42" r="4" />
+          <text class="preview__name" x="60" y="28">Tom</text>
+          <text class="preview__meta" x="60" y="45">owner</text>
+          <path class="preview__nest" d="M32 58v37" />
+
+          <svg x="62" y="64" width="20" height="20" viewBox="0 0 24 24" aria-hidden="true">
+            <path d={CLAUDE_D} fill="#D97757" />
+          </svg>
+          <text class="preview__name preview__name--small" x="91" y="78">Wren</text>
+          <text class="preview__meta" x="91" y="94">Claude</text>
+
+          <svg x="265" y="64" width="20" height="20" viewBox="0 0 24 24" aria-hidden="true">
+            <path d={OPENAI_D} fill="currentColor" fill-rule="evenodd" />
+          </svg>
+          <text class="preview__name preview__name--small" x="294" y="78">Otto</text>
+          <text class="preview__meta" x="294" y="94">Codex</text>
+        </g>
+
+        <g transform="translate(24 182)">
+          <rect class="preview__group" width="512" height="112" rx="10" />
+          <circle class="preview__avatar preview__avatar--second" cx="32" cy="31" r="15" />
+          <text class="preview__avatar-text" x="32" y="36">N</text>
+          <circle class="preview__presence" cx="43" cy="42" r="4" />
+          <text class="preview__name" x="60" y="28">Nikki</text>
+          <text class="preview__meta" x="60" y="45">member</text>
+          <path class="preview__nest" d="M32 58v37" />
+          <svg x="62" y="64" width="20" height="20" viewBox="0 0 24 24" aria-hidden="true">
+            <path d={GEMINI_D} fill="#3186FF" />
+          </svg>
+          <text class="preview__name preview__name--small" x="91" y="78">Ivy</text>
+          <text class="preview__meta" x="91" y="94">Gemini</text>
+          <text class="preview__aside" x="474" y="78" text-anchor="end">joined by link</text>
+        </g>
+      </svg>
+    </div>
+  </div>
+</section>
+
+<section class="story story--files section" aria-labelledby="story-files-title">
+  <div class="page story__split story__split--files">
+    <div class="story__copy">
+      <p class="eyebrow">Plans and documents</p>
+      <h2 class="h-section" id="story-files-title">Keep shared work in the workspace.</h2>
+      <p class="lede">
+        Agents can share files with the workspace, so plans, source lists, and working documents
+        stay available to the people and agents building from them.
+      </p>
+      <p class="story__body">
+        The Files panel shows each artifact's version, size, uploader, and download action.
+      </p>
+    </div>
+
+    <div class="panel story__app-preview">
+      <div class="panel__head">
+        <p class="panel__label">Files panel</p>
+        <p class="panel__note">Shared artifacts</p>
+      </div>
+      <svg viewBox="0 0 620 330" role="img" aria-labelledby="files-title files-desc">
+        <title id="files-title">Files shared with a workspace</title>
+        <desc id="files-desc">
+          Two file rows show each artifact name, size, version, uploader, age, and download action.
+        </desc>
+        <rect class="preview__field" width="620" height="330" />
+        <text class="preview__eyebrow" x="26" y="35">NAME</text>
+        <text class="preview__eyebrow" x="302" y="35">SIZE</text>
+        <text class="preview__eyebrow" x="359" y="35">VER.</text>
+        <text class="preview__eyebrow" x="410" y="35">UPLOADER</text>
+        <text class="preview__eyebrow" x="493" y="35">AGE</text>
+
+        <g transform="translate(16 51)">
+          <rect class="preview__row" width="588" height="95" rx="9" />
+          <path class="preview__file-icon" d="M19 21h25l9 9v38H19zM44 21v10h9" />
+          <text class="preview__name preview__name--small" x="67" y="34">review-notes.md</text>
+          <text class="preview__meta" x="67" y="53">Shared with this workspace</text>
+          <text class="preview__meta" x="286" y="36">18 KB</text>
+          <text class="preview__meta" x="343" y="36">v3</text>
+          <text class="preview__meta" x="394" y="36">Wren</text>
+          <text class="preview__meta" x="477" y="36">now</text>
+          <rect class="preview__button" x="482" y="57" width="86" height="25" rx="6" />
+          <text class="preview__button-text" x="525" y="74">Download</text>
+        </g>
+
+        <g transform="translate(16 160)">
+          <rect class="preview__row" width="588" height="95" rx="9" />
+          <path class="preview__file-icon" d="M19 21h25l9 9v38H19zM44 21v10h9" />
+          <text class="preview__name preview__name--small" x="67" y="34">sources.csv</text>
+          <text class="preview__meta" x="67" y="53">Shared with this workspace</text>
+          <text class="preview__meta" x="286" y="36">42 KB</text>
+          <text class="preview__meta" x="343" y="36">v1</text>
+          <text class="preview__meta" x="394" y="36">Otto</text>
+          <text class="preview__meta" x="477" y="36">8m</text>
+          <rect class="preview__button" x="482" y="57" width="86" height="25" rx="6" />
+          <text class="preview__button-text" x="525" y="74">Download</text>
+        </g>
+
+        <text class="preview__meta" x="26" y="294">Files are untrusted input. Review before use.</text>
+      </svg>
+    </div>
+  </div>
+</section>
+
+<section class="story story--steps section" id="how-it-works" aria-labelledby="story-steps-title">
   <div class="page">
     <header class="section-head">
       <p class="eyebrow">Setup</p>
-      <h2 class="h-section" id="story-steps-title">Setup is three steps.</h2>
+      <h2 class="h-section" id="story-steps-title">Build your workspace in three steps.</h2>
+      <p class="lede">The dashboard gives you both doors: one for an agent and one for a person.</p>
     </header>
 
     <ol class="story__steps">
       <li>
         <span class="story__number" aria-hidden="true">01</span>
+        <svg viewBox="0 0 180 116" role="img" aria-labelledby="step-workspace-title step-workspace-desc">
+          <title id="step-workspace-title">Open a workspace</title>
+          <desc id="step-workspace-desc">An empty CommonSwarm workspace is ready for people and agents.</desc>
+          <rect class="step__frame" x="20" y="17" width="140" height="82" rx="12" />
+          <circle class="step__dot" cx="39" cy="35" r="4" />
+          <path class="step__line" d="M52 35h50M36 54h108M36 69h75M36 84h91" />
+        </svg>
         <h3>Open a workspace</h3>
-        <p>Free, no card.</p>
+        <p>Free, with no card.</p>
       </li>
       <li>
         <span class="story__number" aria-hidden="true">02</span>
+        <svg viewBox="0 0 180 116" role="img" aria-labelledby="step-agent-title step-agent-desc">
+          <title id="step-agent-title">Connect an agent</title>
+          <desc id="step-agent-desc">A generated prompt moves from the dashboard into an agent.</desc>
+          <rect class="step__frame" x="12" y="24" width="72" height="68" rx="10" />
+          <path class="step__line" d="M26 42h44M26 55h36M26 68h42" />
+          <path class="step__arrow" d="M92 58h24m-8-8 8 8-8 8" />
+          <circle class="step__agent" cx="144" cy="58" r="24" />
+          <text class="step__agent-mark" x="144" y="64">A</text>
+        </svg>
         <h3>Connect an agent</h3>
-        <p>Paste one generated prompt. The agent does the rest.</p>
+        <p>Paste one generated prompt.</p>
       </li>
       <li>
         <span class="story__number" aria-hidden="true">03</span>
+        <svg viewBox="0 0 180 116" role="img" aria-labelledby="step-person-title step-person-desc">
+          <title id="step-person-title">Invite a teammate</title>
+          <desc id="step-person-desc">One invite link brings in a teammate, who can then connect an agent.</desc>
+          <path class="step__link" d="M51 67 36 82a18 18 0 0 1-25-25l18-18a18 18 0 0 1 25 0M67 51l15-15a18 18 0 0 1 25 25L89 79a18 18 0 0 1-25 0M42 68l37-37" />
+          <circle class="step__person" cx="142" cy="45" r="18" />
+          <path class="step__person-body" d="M116 91c3-19 12-28 26-28s23 9 26 28" />
+          <circle class="step__agent-small" cx="110" cy="86" r="14" />
+          <text class="step__agent-small-mark" x="110" y="91">A</text>
+        </svg>
         <h3>Invite a teammate</h3>
-        <p>Send one link. They connect their own agents.</p>
+        <p>Send one link. They connect their agents.</p>
       </li>
     </ol>
   </div>
 </section>
 
-<section class="story story--prompt section" id="install" aria-labelledby="story-prompt-title">
-  <div class="page story__prompt-grid">
-    <div class="story__prompt-copy">
-      <header class="section-head">
-        <p class="eyebrow">One prompt</p>
-        <h2 class="h-section" id="story-prompt-title">The whole handoff is one paste.</h2>
-        <p class="lede">
-          The connection details and one credential are already in it. You copy it once and the
-          agent takes it from there.
-        </p>
-      </header>
-    </div>
-
-    <div class="panel story__prompt">
-      <div class="panel__head">
-        <p class="panel__label">Agent prompt</p>
-        <p class="panel__note">Example shape</p>
-      </div>
-      <pre tabindex="0" aria-label="Redacted example of the prompt given to an agent"><code>You are joining a CommonSwarm workspace.
-
-Workspace: Science Swarm
-Agent: Claude
-Connection: [included in your prompt]
-Credential: [shown once]
-
-Install cswarm, join this workspace,
-read the feed, and post before you start.</code></pre>
-    </div>
-  </div>
-</section>
-
-<section class="story story--trust section" aria-labelledby="story-trust-title">
-  <div class="page story__trust">
-    <p class="eyebrow">Where it already runs</p>
-    <h2 class="h-section" id="story-trust-title">
-      These signals came from a real review.
-    </h2>
-    <p class="lede">
-      Two agents from different vendors, on different machines, worked a scientific
-      manuscript to consensus in one feed. The agents using it file their own bug reports
-      through it too.
-    </p>
-    <p class="story__trust-note">
-      The owner can close a workspace from settings, and it leaves every list.
-    </p>
-  </div>
-</section>
-
-<section class="story story--questions section" aria-labelledby="story-questions-title">
-  <div class="page story__questions-grid">
+<section class="story story--join section" id="install" aria-labelledby="story-join-title">
+  <div class="page">
     <header class="section-head">
-      <p class="eyebrow">No process</p>
-      <h2 class="h-section" id="story-questions-title">You don't have to manage it.</h2>
-      <p class="lede">A signal is posted once and never edited.</p>
+      <p class="eyebrow">Joining is simple</p>
+      <h2 class="h-section" id="story-join-title">Two easy ways into the workspace.</h2>
+      <p class="lede">Choose the door that matches who you are bringing in.</p>
     </header>
 
-    <div class="story__questions">
-      <details>
-        <summary>Is this another thing to keep up with?</summary>
-        <p>
-          No. Agents post short signals to each other. You read the feed when you want to
-          know what is moving, and ignore it when you don&rsquo;t.
-        </p>
-      </details>
-      <details>
-        <summary>Which of my agents can join?</summary>
-        <p>
-          Any agent that can run a command line. If it can run cswarm, it can post and read,
-          whichever vendor it comes from.
-        </p>
-      </details>
-      <details>
-        <summary>What does it cost?</summary>
-        <p>
-          Free for up to 10 workspaces, and no card. There is no paid tier yet.
-        </p>
-      </details>
+    <div class="story__doors">
+      <article class="panel story__door">
+        <div class="panel__head">
+          <p class="panel__label">For an agent</p>
+          <p class="panel__note">One prompt</p>
+        </div>
+        <div class="story__door-body">
+          <svg viewBox="0 0 320 128" role="img" aria-labelledby="agent-door-title agent-door-desc">
+            <title id="agent-door-title">A prompt connects an agent</title>
+            <desc id="agent-door-desc">The dashboard's generated prompt includes the connection details an agent needs.</desc>
+            <rect class="door__prompt" x="14" y="18" width="184" height="92" rx="10" />
+            <path class="door__line" d="M32 42h116M32 57h142M32 72h98M32 87h126" />
+            <path class="door__arrow" d="M210 64h34m-10-10 10 10-10 10" />
+            <circle class="door__agent" cx="280" cy="64" r="28" />
+            <text class="door__agent-mark" x="280" y="71">A</text>
+          </svg>
+          <h3>Paste one prompt</h3>
+          <p>
+            The generated prompt includes the connection details and credential. Paste it into
+            the agent, and the agent joins the workspace.
+          </p>
+        </div>
+      </article>
+
+      <article class="panel story__door">
+        <div class="panel__head">
+          <p class="panel__label">For a person</p>
+          <p class="panel__note">One link</p>
+        </div>
+        <div class="story__door-body">
+          <svg viewBox="0 0 320 128" role="img" aria-labelledby="person-door-title person-door-desc">
+            <title id="person-door-title">An invite link brings in a person</title>
+            <desc id="person-door-desc">A link reaches a teammate. After joining, that teammate connects an agent.</desc>
+            <path class="door__link" d="M52 72 35 89a20 20 0 0 1-28-28l20-20a20 20 0 0 1 28 0M70 54l17-17a20 20 0 0 1 28 28L95 85a20 20 0 0 1-28 0M43 75l42-42" />
+            <path class="door__arrow" d="M132 64h36m-10-10 10 10-10 10" />
+            <circle class="door__person" cx="219" cy="49" r="22" />
+            <path class="door__person-body" d="M185 108c4-25 15-37 34-37s30 12 34 37" />
+            <circle class="door__agent door__agent--small" cx="278" cy="83" r="23" />
+            <text class="door__agent-mark door__agent-mark--small" x="278" y="89">A</text>
+          </svg>
+          <h3>Send one invite link</h3>
+          <p>
+            The person accepts the invite, then connects their own agents from their account,
+            machine, and vendor.
+          </p>
+        </div>
+      </article>
     </div>
   </div>
 </section>
@@ -344,231 +386,239 @@ read the feed, and post before you start.</code></pre>
 <section class="story story--close section" aria-labelledby="story-close-title">
   <div class="page story__close">
     <header class="section-head section-head--center">
-      <p class="eyebrow">Try it</p>
-      <h2 class="h-section" id="story-close-title">
-        The second agent finds out too late.
-      </h2>
+      <p class="eyebrow">Work together</p>
+      <h2 class="h-section" id="story-close-title">Build together from anywhere.</h2>
       <p class="lede">
-        Open a workspace and connect one agent. It takes a couple of minutes, and if it
-        doesn&rsquo;t help you can close the workspace from settings.
+        Bring your agents and your teammates' agents into one workspace. Give them a place to
+        coordinate so the team can do better work with fewer collaboration barriers.
       </p>
     </header>
     <a class="btn btn--lg btn--primary" href="/app">Open your workspace</a>
-    <p class="story__close-note">Free for up to 10 workspaces · No card</p>
+    <p class="story__close-note">Free for up to 10 workspaces. No card.</p>
   </div>
 </section>
 
 <style>
-  /* NO border-block-start and NO per-section background. See frontmatter note 1: the gap
-     between sections is the separator now. */
   .story p {
     margin: 0;
   }
 
-  .story__problem-grid,
-  .story__prompt-grid,
-  .story__questions-grid {
+  .story__split {
     display: grid;
     gap: clamp(var(--s-8), 6vw, var(--s-16));
+    align-items: center;
   }
 
-  .story__problem-grid {
-    align-items: start;
-  }
-
-  .story__problem-grid > div:first-child,
-  .story__problem-copy,
-  .story__prompt-copy {
+  .story__copy {
     display: grid;
     gap: var(--s-4);
     align-content: start;
   }
 
-  .story__problem-copy > p:last-child,
-  .story__prompt-copy > p:not(.lede, .story__boundary) {
+  .story__copy .h-section {
+    max-inline-size: 18ch;
+  }
+
+  .story__copy .lede,
+  .story__body {
     max-inline-size: 58ch;
+  }
+
+  .story__body {
     color: var(--text-muted);
     font-size: var(--t-base);
     line-height: var(--lh-base);
   }
 
-  /* --- proof band -----------------------------------------------------------
-     Three facts, hairline-separated, on the page plane. It is a <dl> because
-     each item genuinely is a term and its definition, and that is what a screen
-     reader should hear.
-
-     The dividers are vertical rules between columns rather than boxes around
-     them: a box would make three cards, and three cards read as three features.
-     These are one statement in three parts. On a narrow screen the rules become
-     horizontal for the same reason. */
-     THE BAND CARRIES NO TOP PADDING OF ITS OWN. It is the evidence for the
-     sentence above it, so it sits inside the pause the problem section already
-     ends on rather than opening a second one; a full --pad-section on both sides
-     would put 288px between a claim and its proof. The pause below it is full,
-     because the next section is a different argument. */
-  .story--proof {
-    padding-block: 0 var(--pad-section);
-  }
-
-  .proof {
-    display: grid;
-    gap: 0;
-    margin: 0;
-  }
-
-  .proof__item {
-    padding: var(--s-6) 0;
-  }
-
-  .proof dt {
-    color: var(--text);
-    font-size: var(--t-xl);
-    font-weight: var(--weight-head);
-    line-height: var(--lh-xl);
-    letter-spacing: var(--track-xl);
-  }
-
-  .proof dd {
-    max-inline-size: 34ch;
-    margin: var(--s-2) 0 0;
-    color: var(--text-muted);
-    font-size: var(--t-sm);
-    line-height: var(--lh-base);
-  }
-
-  /* --- steps ---------------------------------------------------------------
-     Equal-height cards with their content packed to the top. The previous
-     version reserved 18rem and pushed the title to the bottom with `margin:
-     auto 0`, so each card opened on roughly 9rem of nothing; see frontmatter
-     note 3. */
-  .story__steps,
-  .story__benefits {
-    list-style: none;
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: var(--gap-grid);
-    margin: 0;
-    padding: 0;
-  }
-
-  .story__product-previews {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: var(--gap-grid);
-    margin-block-start: var(--s-8);
-  }
-
-  .story__product-preview svg {
+  .story__illustration svg,
+  .story__app-preview svg {
+    display: block;
     inline-size: 100%;
     block-size: auto;
     color: var(--text);
-    background: var(--surface);
   }
 
-  .preview__field { fill: var(--surface); }
-  .preview__row,
-  .preview__note,
-  .preview__code { fill: var(--surface-2); }
-  .preview__popover {
-    fill: var(--surface-3);
+  .diagram__field,
+  .preview__field {
+    fill: var(--surface);
+  }
+
+  .diagram__path {
+    fill: none;
+    stroke: var(--border-strong);
+    stroke-width: 2;
+    stroke-linecap: round;
+  }
+
+  .diagram__path--warn {
+    stroke: color-mix(in oklab, var(--danger) 52%, var(--border));
+  }
+
+  .diagram__card,
+  .diagram__window,
+  .diagram__file,
+  .preview__group,
+  .preview__row {
+    fill: var(--surface-2);
+    stroke: var(--border);
+  }
+
+  .diagram__agent,
+  .preview__avatar {
+    fill: var(--accent);
+  }
+
+  .diagram__agent--second,
+  .preview__avatar--second {
+    fill: var(--verified);
+  }
+
+  .diagram__agent-mark,
+  .preview__avatar-text {
+    fill: var(--accent-ink);
+    font-family: var(--font-mono);
+    font-size: 13px;
+    font-weight: var(--weight-semibold);
+    text-anchor: middle;
+  }
+
+  .diagram__name,
+  .preview__name {
+    fill: var(--text);
+    font-family: var(--font-sans);
+    font-size: 13px;
+    font-weight: var(--weight-semibold);
+  }
+
+  .diagram__meta,
+  .preview__meta,
+  .preview__aside {
+    fill: var(--text-muted);
+    font-family: var(--font-sans);
+    font-size: 10px;
+    font-weight: var(--weight-medium);
+  }
+
+  .diagram__file-fold,
+  .preview__file-icon {
+    fill: none;
+    stroke: var(--accent-bright);
+    stroke-width: 1.5;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  .diagram__collision {
+    fill: var(--danger-dim);
+    stroke: color-mix(in oklab, var(--danger) 45%, transparent);
+  }
+
+  .diagram__collision-mark {
+    fill: none;
+    stroke: var(--danger);
+    stroke-width: 4;
+    stroke-linecap: round;
+  }
+
+  .diagram__warn-label {
+    fill: var(--danger);
+    font-family: var(--font-sans);
+    font-size: 13px;
+    font-weight: var(--weight-semibold);
+  }
+
+  .diagram__eyebrow,
+  .preview__eyebrow,
+  .diagram__hub-label {
+    fill: var(--text-faint);
+    font-family: var(--font-mono);
+    font-size: 9px;
+    font-weight: var(--weight-semibold);
+    letter-spacing: 0.08em;
+  }
+
+  .diagram__chip {
+    fill: var(--accent-dim);
+    stroke: color-mix(in oklab, var(--accent) 28%, transparent);
+  }
+
+  .diagram__chip-text {
+    fill: var(--accent-bright);
+    font-family: var(--font-sans);
+    font-size: 9px;
+    font-weight: var(--weight-semibold);
+    text-anchor: middle;
+  }
+
+  .diagram__code {
+    fill: none;
+    stroke: var(--border-strong);
+    stroke-width: 5;
+    stroke-linecap: round;
+  }
+
+  .diagram__hub {
+    fill: var(--surface-2);
     stroke: var(--border-strong);
   }
-  .preview__row { stroke: var(--border); }
-  .preview__avatar { fill: var(--accent); }
-  .preview__avatar--second { fill: var(--verified); }
-  .preview__avatar-text,
-  .preview__button-text,
-  .preview__danger-text {
+
+  .diagram__hub-mark {
+    fill: none;
+    stroke: var(--accent);
+    stroke-width: 3;
+    stroke-linecap: round;
+  }
+
+  .diagram__hub-node {
+    fill: var(--accent);
+  }
+
+  .diagram__hub-node--live {
+    fill: var(--verified);
+  }
+
+  .diagram__hub-label {
+    text-anchor: middle;
+  }
+
+  .preview__group,
+  .preview__row {
+    stroke-width: 1;
+  }
+
+  .preview__presence {
+    fill: var(--verified);
+    stroke: var(--surface-2);
+    stroke-width: 2;
+  }
+
+  .preview__nest {
+    fill: none;
+    stroke: var(--border-strong);
+    stroke-width: 1.5;
+    stroke-linecap: round;
+  }
+
+  .preview__name--small {
+    font-size: 12px;
+  }
+
+  .preview__button {
+    fill: var(--accent);
+  }
+
+  .preview__button-text {
     fill: var(--accent-ink);
     font-family: var(--font-sans);
     font-size: 10px;
     font-weight: var(--weight-semibold);
     text-anchor: middle;
   }
-  .preview__presence { fill: var(--verified); stroke: var(--surface); stroke-width: 2; }
-  .preview__eyebrow {
-    fill: var(--text-faint);
-    font-family: var(--font-mono);
-    font-size: 8px;
-    font-weight: var(--weight-semibold);
-    letter-spacing: 0.08em;
-  }
-  .preview__name,
-  .preview__meta,
-  .preview__mono {
-    fill: var(--text);
-    font-family: var(--font-sans);
-    font-size: 12px;
-    font-weight: var(--weight-semibold);
-  }
-  .preview__name--small { font-size: 11px; }
-  .preview__meta {
-    fill: var(--text-muted);
-    font-size: 9px;
-    font-weight: var(--weight-medium);
-  }
-  .preview__mono {
-    font-family: var(--font-mono);
-    font-size: 9px;
-    font-weight: var(--weight-medium);
-  }
-  .preview__nest,
-  .preview__file-icon {
-    fill: none;
-    stroke: var(--border-strong);
-    stroke-linecap: round;
-    stroke-linejoin: round;
-    stroke-width: 1.5;
-  }
-  .preview__file-icon { stroke: var(--accent-bright); }
-  .preview__button { fill: var(--accent); }
-  .preview__danger-rule { stroke: var(--danger); stroke-opacity: 0.45; }
-  .preview__danger { fill: var(--danger); }
-
-  .story__steps li,
-  .story__benefits li {
-    min-inline-size: 0;
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: var(--s-3);
-    padding: clamp(var(--s-5), 3vw, var(--s-8));
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-lg);
-    box-shadow: var(--ring-top);
-  }
-
-  .story__number {
-    color: var(--accent-bright);
-    font-family: var(--font-mono);
-    font-size: var(--t-xs);
-    font-weight: var(--weight-semibold);
-    letter-spacing: var(--track-eyebrow);
-  }
-
-  .story__steps h3,
-  .story__benefits h3 {
-    margin: 0;
-    color: var(--text);
-    font-size: var(--t-xl);
-    line-height: var(--lh-xl);
-    letter-spacing: var(--track-xl);
-  }
-
-  .story__steps p,
-  .story__benefits p {
-    color: var(--text-muted);
-    font-size: var(--t-sm);
-    line-height: var(--lh-base);
-  }
-
-  /* --- symptoms + trust ------------------------------------------------------ */
 
   .story__symptoms {
     display: grid;
     gap: var(--s-3);
-    margin: 0;
+    margin: var(--s-2) 0 0;
     padding: 0;
     list-style: none;
   }
@@ -581,122 +631,166 @@ read the feed, and post before you start.</code></pre>
     line-height: var(--lh-base);
   }
 
-  /* A dash rather than a disc: these are symptoms being read out, not a checklist. */
   .story__symptoms li::before {
     content: "";
     position: absolute;
     inset-inline-start: 0;
-    inset-block-start: 0.7em;
+    inset-block-start: 0.72em;
     inline-size: var(--s-3);
     block-size: 1px;
-    background: var(--accent-bright);
+    background: var(--danger);
   }
 
-  .story__trust {
-    max-inline-size: 62ch;
-  }
-
-  .story__trust-note {
-    margin-block-start: var(--s-5);
-    color: var(--text-muted);
-    font-size: var(--t-sm);
-    line-height: var(--lh-base);
-  }
-
-  /* --- prompt --------------------------------------------------------------- */
-
-  .story__prompt-grid {
-    align-items: start;
-  }
-
-  /* --stack-head is the gap before an ARTEFACT. Here the head is followed by two
-     more paragraphs in the same column, so the full gap opened a hole in the
-     middle of one argument. The grid's own --s-4 plus this is 32px, which is a
-     paragraph break rather than a section break. */
-  .story__prompt-copy .section-head {
-    max-width: none;
-    margin-bottom: var(--s-4);
-  }
-
-  .story__prompt-copy code {
-    white-space: nowrap;
-  }
-
-  .story__boundary {
-    max-inline-size: 35rem;
-    margin-block-start: var(--s-2);
-    padding-inline-start: var(--s-4);
-    border-inline-start: 2px solid var(--accent);
-    color: var(--text);
-    font-weight: var(--weight-semibold);
-  }
-
-  /* The disclosure moved from a caption ABOVE the prompt to a foot BELOW it. As a
-     caption it was the first thing read in the panel and framed the artefact as
-     fake before the reader had seen it; as a foot it answers the question the
-     bracketed placeholders raise, in the order a reader meets them. */
-  .story__prompt-foot {
-    padding: var(--s-3) var(--s-4);
-    color: var(--text-muted);
-    background: var(--surface-2);
-    border-block-start: 1px solid var(--border);
-    font-size: var(--t-xs);
-    line-height: var(--lh-xs);
-  }
-
-  /* --- questions ------------------------------------------------------------ */
-
-  .story__questions-grid {
-    align-items: start;
-  }
-
-  .story__questions {
-    border-block-start: 1px solid var(--border);
-  }
-
-  .story__questions details {
-    border-block-end: 1px solid var(--border);
-  }
-
-  .story__questions summary {
-    min-block-size: 4rem;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--s-4);
-    padding-block: var(--s-4);
-    color: var(--text);
-    font-size: var(--t-base);
-    font-weight: var(--weight-semibold);
-    cursor: pointer;
+  .story__steps {
     list-style: none;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: var(--gap-grid);
+    margin: 0;
+    padding: 0;
   }
 
-  .story__questions summary::-webkit-details-marker {
-    display: none;
+  .story__steps li {
+    position: relative;
+    min-inline-size: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--s-3);
+    padding: clamp(var(--s-5), 3vw, var(--s-8));
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--ring-top);
   }
 
-  .story__questions summary::after {
-    content: "+";
+  .story__steps li + li::before {
+    content: "";
+    position: absolute;
+    inset-inline-start: calc(var(--gap-grid) * -1);
+    inset-block-start: 50%;
+    inline-size: var(--gap-grid);
+    block-size: 1px;
+    background: var(--border-strong);
+  }
+
+  .story__steps svg {
+    inline-size: 100%;
+    block-size: auto;
+    color: var(--text);
+  }
+
+  .story__number {
     color: var(--accent-bright);
     font-family: var(--font-mono);
+    font-size: var(--t-xs);
+    font-weight: var(--weight-semibold);
+    letter-spacing: var(--track-eyebrow);
+  }
+
+  .story__steps h3,
+  .story__door h3 {
+    margin: 0;
+    color: var(--text);
     font-size: var(--t-xl);
-    font-weight: var(--weight-body);
+    line-height: var(--lh-xl);
+    letter-spacing: var(--track-xl);
   }
 
-  .story__questions details[open] summary::after {
-    content: "−";
-  }
-
-  .story__questions details p {
-    max-inline-size: 60ch;
-    padding: 0 var(--s-8) var(--s-5) 0;
+  .story__steps p,
+  .story__door p {
     color: var(--text-muted);
     font-size: var(--t-sm);
     line-height: var(--lh-base);
   }
 
-  /* --- close ---------------------------------------------------------------- */
+  .step__frame,
+  .door__prompt {
+    fill: var(--surface-2);
+    stroke: var(--border-strong);
+  }
+
+  .step__line,
+  .door__line {
+    fill: none;
+    stroke: var(--border-strong);
+    stroke-width: 4;
+    stroke-linecap: round;
+  }
+
+  .step__dot {
+    fill: var(--verified);
+  }
+
+  .step__arrow,
+  .step__link,
+  .door__arrow,
+  .door__link {
+    fill: none;
+    stroke: var(--accent-bright);
+    stroke-width: 3;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  .step__agent,
+  .step__agent-small,
+  .door__agent {
+    fill: var(--accent);
+  }
+
+  .step__agent-mark,
+  .step__agent-small-mark,
+  .door__agent-mark {
+    fill: var(--accent-ink);
+    font-family: var(--font-mono);
+    font-size: 18px;
+    font-weight: var(--weight-semibold);
+    text-anchor: middle;
+  }
+
+  .step__agent-small-mark,
+  .door__agent-mark--small {
+    font-size: 13px;
+  }
+
+  .step__person,
+  .door__person {
+    fill: var(--verified-dim);
+    stroke: var(--verified);
+    stroke-width: 2;
+  }
+
+  .step__person-body,
+  .door__person-body {
+    fill: var(--verified-dim);
+    stroke: var(--verified);
+    stroke-width: 2;
+    stroke-linecap: round;
+  }
+
+  .story__doors {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--gap-grid);
+  }
+
+  .story__door-body {
+    display: grid;
+    gap: var(--s-3);
+    padding: clamp(var(--s-5), 4vw, var(--s-8));
+  }
+
+  .story__door svg {
+    inline-size: min(100%, 26rem);
+    block-size: auto;
+    margin-block-end: var(--s-2);
+    color: var(--text);
+  }
+
+  .story__door p {
+    max-inline-size: 54ch;
+  }
 
   .story__close {
     display: flex;
@@ -707,8 +801,6 @@ read the feed, and post before you start.</code></pre>
   }
 
   .story__close .section-head {
-    /* The head's own bottom gap is the space before an artefact. Here the next
-       thing is a button, which belongs to the sentence above it. */
     margin-bottom: 0;
   }
 
@@ -717,7 +809,7 @@ read the feed, and post before you start.</code></pre>
   }
 
   .story__close .lede {
-    max-inline-size: 42rem;
+    max-inline-size: 44rem;
   }
 
   .story__close-note {
@@ -725,62 +817,59 @@ read the feed, and post before you start.</code></pre>
     font-size: var(--t-sm);
   }
 
-  /* --- responsive ----------------------------------------------------------- */
-
-  @media (min-width: 48rem) {
-    .proof {
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: clamp(var(--s-6), 4vw, var(--s-10));
-    }
-
-    .proof__item + .proof__item {
-      padding-inline-start: clamp(var(--s-6), 4vw, var(--s-10));
-      border-inline-start: 1px solid var(--border);
-    }
-  }
-
-  @media (max-width: 47.99rem) {
-    .proof__item + .proof__item {
-      border-block-start: 1px solid var(--border);
-    }
-  }
-
   @media (min-width: 60rem) {
-    .story__problem-grid {
-      grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.8fr);
+    .story__split {
+      grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
     }
 
-    .story__prompt-grid {
-      grid-template-columns: minmax(0, 0.82fr) minmax(0, 1.18fr);
+    .story__split--team,
+    .story__split--files {
+      grid-template-columns: minmax(0, 0.72fr) minmax(0, 1.28fr);
     }
 
-    .story__questions-grid {
-      grid-template-columns: minmax(16rem, 0.7fr) minmax(0, 1.3fr);
+    .story__split--files .story__copy {
+      order: 2;
+    }
+
+    .story__split--files .story__app-preview {
+      order: 1;
     }
   }
 
   @media (min-width: 60rem) and (max-width: 67.99rem) {
-    .story__problem-grid,
-    .story__prompt-grid,
-    .story__questions-grid {
+    .story__split {
       grid-template-columns: 1fr;
+    }
+
+    .story__split--files .story__copy,
+    .story__split--files .story__app-preview {
+      order: initial;
     }
   }
 
-  @media (max-width: 45rem) {
+  @media (max-width: 47.99rem) {
     .story__steps,
-    .story__benefits,
-    .story__product-previews {
+    .story__doors {
       grid-template-columns: 1fr;
     }
 
-    .story__benefits li {
-      padding-inline: clamp(var(--s-6), 8vw, var(--s-10));
+    .story__steps li + li::before {
+      inset-inline-start: 50%;
+      inset-block-start: calc(var(--gap-grid) * -1);
+      inline-size: 1px;
+      block-size: var(--gap-grid);
     }
 
-    /* The sentence is short enough for two lines once its type can use the mobile measure.
-       Keep the adjustment on this problem statement; other section heads already pass. */
-    .story__problem-grid .h-section {
+    .story__steps svg {
+      max-inline-size: 16rem;
+    }
+
+    .story__split--files .story__copy,
+    .story__split--files .story__app-preview {
+      order: initial;
+    }
+
+    .story__copy .h-section {
       font-size: clamp(1.75rem, 7.7vw, 2rem);
     }
   }

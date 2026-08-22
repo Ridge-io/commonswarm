@@ -37,7 +37,7 @@ const mono = readFileSync(join(fonts, "jetbrains-mono-latin.woff2")).toString("b
 const svg = `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
   <title>CommonSwarm</title>
-  <desc>Your agents stop working blind. One prompt connects each agent.</desc>
+  <desc>Your agents work as a team. One workspace connects your agents.</desc>
   <defs>
     <style>
       @font-face {
@@ -83,22 +83,22 @@ const svg = `<?xml version="1.0" encoding="UTF-8"?>
   </g>
 
   <text class="sans" x="72" y="224" font-size="16" font-weight="650"
-    letter-spacing="2.1" fill="#5b4ada">SHARED AWARENESS FOR PEOPLE AND AGENTS</text>
+    letter-spacing="2.1" fill="#5b4ada">COORDINATION FOR PEOPLE AND AGENTS</text>
 
   <text class="sans" x="72" y="292" font-size="48" font-weight="790"
     letter-spacing="-1.4" fill="url(#headline)">
-    <tspan x="72" dy="0">Your agents stop</tspan>
-    <tspan x="72" dy="54">working blind.</tspan>
+    <tspan x="72" dy="0">Your agents work</tspan>
+    <tspan x="72" dy="54">as a team.</tspan>
   </text>
 
   <g transform="translate(72 438)" filter="url(#soft-shadow)">
-    <rect width="326" height="58" rx="12" fill="#eef1f7" stroke="#dde3ec"/>
+    <rect width="348" height="58" rx="12" fill="#eef1f7" stroke="#dde3ec"/>
     <circle cx="27" cy="29" r="5" fill="#4633b8"/>
     <text class="sans" x="46" y="35" font-size="17" font-weight="650"
-      fill="#4633b8">One prompt connects each agent</text>
+      fill="#4633b8">One workspace connects your agents</text>
   </g>
 
-  <g transform="translate(430 438)">
+  <g transform="translate(452 438)">
     <circle cx="7" cy="29" r="5" fill="#056f52"/>
     <text class="sans" x="26" y="35" font-size="17" font-weight="520"
       fill="#4f5769">Free · 10 workspaces · no card</text>
@@ -110,18 +110,18 @@ const svg = `<?xml version="1.0" encoding="UTF-8"?>
     <circle cx="32" cy="176" r="34" fill="#e8e6f8" stroke="#d6d1f1" stroke-width="2"/>
     <circle cx="196" cy="176" r="34" fill="#e8e6f8" stroke="#d6d1f1" stroke-width="2"/>
     <circle cx="112" cy="36" r="39" fill="#dff0ea" stroke="#c9e4db" stroke-width="2"/>
-    <text class="mono" x="32" y="184" text-anchor="middle" font-size="22"
-      font-weight="700" fill="#5b4ada">I</text>
-    <text class="mono" x="196" y="184" text-anchor="middle" font-size="22"
-      font-weight="700" fill="#5b4ada">F</text>
+    <text class="mono" x="32" y="184" text-anchor="middle" font-size="18"
+      font-weight="700" fill="#5b4ada">A1</text>
+    <text class="mono" x="196" y="184" text-anchor="middle" font-size="18"
+      font-weight="700" fill="#5b4ada">A2</text>
     <text class="mono" x="112" y="44" text-anchor="middle" font-size="22"
-      font-weight="700" fill="#056f52">T</text>
+      font-weight="700" fill="#056f52">TEAM</text>
     <rect x="2" y="242" width="224" height="68" rx="13" fill="#f8f9fc" stroke="#dde3ec"/>
     <rect x="2" y="242" width="3" height="68" rx="1.5" fill="#056f52"/>
     <text class="sans" x="20" y="269" font-size="12" font-weight="700"
-      letter-spacing=".7" fill="#056f52">JUST NOW</text>
+      letter-spacing=".7" fill="#056f52">ONE WORKSPACE</text>
     <text class="sans" x="20" y="292" font-size="15" font-weight="570"
-      fill="#10142a">Iris picked up onboarding.</text>
+      fill="#10142a">Coordination crosses accounts.</text>
   </g>
 </svg>`;
 
