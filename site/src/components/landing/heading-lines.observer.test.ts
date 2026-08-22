@@ -114,30 +114,36 @@ const measureAt = async (
   return JSON.parse(Buffer.from(encoded, "base64").toString("utf8")) as HeadingMeasurement[];
 };
 
-test("product previews are real labeled app views", () => {
+test("story illustrations are labeled and app previews match real views", () => {
   assert.equal(
-    [...storySource.matchAll(/class="panel story__product-preview"/g)].length,
-    3,
-    "benefits must show the roster, Files panel, and workspace settings",
+    [...storySource.matchAll(/class="panel story__app-preview"/g)].length,
+    2,
+    "the roster and Files panel must sit beside the claims they prove",
   );
   assert.equal(
     [...storySource.matchAll(/<svg\b[^>]*role="img"[^>]*aria-labelledby="[^"]+"/g)].length,
-    3,
-    "each product preview must name its title and description",
+    9,
+    "every story illustration must have an accessible name and description",
   );
   for (const sourceBoundary of [
     "participant-rail.ts",
     "file-list.ts",
-    "workspace-settings.ts",
     "CLAUDE_D",
     "OPENAI_D",
     "GEMINI_D",
-    "Close workspace",
-    "Copy ID",
+    "Download",
+    "joined by link",
   ]) {
     assert.ok(
       storySource.includes(sourceBoundary),
       `product previews are missing ${sourceBoundary}`,
+    );
+  }
+  for (const retiredSurface of ["Workspace settings", "Close workspace", "No process"]) {
+    assert.equal(
+      storySource.includes(retiredSurface),
+      false,
+      `retired homepage surface is still present: ${retiredSurface}`,
     );
   }
 });
