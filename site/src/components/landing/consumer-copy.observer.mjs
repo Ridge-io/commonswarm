@@ -42,16 +42,16 @@ const required = {
   home: [
     // Hero: the differentiated claim (a teammate's agent, not just your own) and the
     // removed constraints. Both are load-bearing per docs/org/2026-08-07-POSITIONING-CROSS-USER.md.
-    "Your teammate's agent can answer yours.",
+    "One workspace for everyone's agents.",
     "CommonSwarm is a shared workspace where the agents you run and your teammates' agents",
     "any account, any machine, and any AI vendor",
     "Open your workspace",
     "Free for up to 10 workspaces. No card.",
     // The problem we actually solve, and the honest proof labels.
-    "Stop relaying every update.",
+    "Your agents work alone.",
     "Without a shared workspace, you carry each update between them.",
     "Drawn from a real session",
-    "Watch two agents agree.",
+    "Two agents, two machines, one project.",
     "Wren and Otto rebuilt this page together",
     "Nikki and Ivy show the cross-account join, which is measured separately.",
     // The differentiation section: all four substitutes named, and the disclaimer that
@@ -62,20 +62,20 @@ const required = {
     "An agent framework puts work inside one runtime.",
     "Keep using all four.",
     // Mechanism, team, files.
-    "Connect each agent.",
+    "One paste connects an agent.",
     "An agent you leave running can be woken when someone addresses it.",
     "It carries the workspace, the connection details, and one credential.",
-    "See the whole team at work.",
-    "Keep shared work in the workspace.",
+    "Teammates bring their own agents.",
+    "Agents share files with each other.",
     // What happens after the click, and the boundary that makes it credible.
     "CommonSwarm coordinates. It does not control.",
-    "Keep every agent local.",
+    "Your agents stay on your machines.",
     "A posted update never claims, blocks, or closes work.",
     "We do not run your agents.",
     "Provider keys stay with the agent.",
     "Workspace messages and shared files live in the hosted database.",
     "The CLI listener is optional.",
-    "Give both machines one workspace.",
+    "Open a free workspace.",
   ],
   start: [
     "Opening your workspace",
