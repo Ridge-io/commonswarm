@@ -146,7 +146,7 @@ const forbidden = {
     "Before you paste it",
     "Joining a teammate’s workspace",
     "Accept your invite",
-    "Your three workspaces are ready to use",
+    "Your ten workspaces are ready to use",
   ],
   acceptableUse: [
     "a cache, a file store, a chat transport",

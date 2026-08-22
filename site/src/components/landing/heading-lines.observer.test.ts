@@ -18,6 +18,13 @@ type HeadingMeasurement = {
   text: string;
 };
 
+type PageMeasurement = {
+  clientWidth: number;
+  headings: HeadingMeasurement[];
+  scrollWidth: number;
+  viewportWidth: number;
+};
+
 const contentTypes: Record<string, string> = {
   ".css": "text/css; charset=utf-8",
   ".html": "text/html; charset=utf-8",
@@ -40,8 +47,27 @@ const measurementScript = `<script>
           text: heading.textContent.replace(/\\s+/g, " ").trim(),
         };
       });
-    document.documentElement.dataset.headingLines = btoa(unescape(encodeURIComponent(JSON.stringify(headings))));
+    document.documentElement.dataset.pageMeasurement = btoa(unescape(encodeURIComponent(JSON.stringify({
+      clientWidth: document.documentElement.clientWidth,
+      headings,
+      scrollWidth: document.documentElement.scrollWidth,
+      viewportWidth: window.innerWidth,
+    }))));
   })();
+</script>`;
+
+const frameScript = `<script>
+  const frame = document.querySelector("iframe");
+  const copyMeasurement = () => {
+    const measurement = frame.contentDocument?.documentElement.dataset.pageMeasurement;
+    if (measurement) {
+      document.documentElement.dataset.pageMeasurement = measurement;
+      return;
+    }
+    setTimeout(copyMeasurement, 10);
+  };
+  frame.addEventListener("load", copyMeasurement);
+  copyMeasurement();
 </script>`;
 
 const startDistServer = async (): Promise<{
@@ -49,7 +75,18 @@ const startDistServer = async (): Promise<{
   origin: string;
 }> => {
   const server = createServer((request, response) => {
-    const pathname = new URL(request.url ?? "/", "http://127.0.0.1").pathname;
+    const url = new URL(request.url ?? "/", "http://127.0.0.1");
+    const pathname = url.pathname;
+    if (pathname === "/__measure") {
+      const width = Number.parseInt(url.searchParams.get("width") ?? "", 10);
+      if (!Number.isSafeInteger(width) || width <= 0) {
+        response.writeHead(400).end("Invalid width");
+        return;
+      }
+      response.writeHead(200, { "content-type": contentTypes[".html"] });
+      response.end(`<!doctype html><html><body><iframe title="Measurement viewport" src="/" style="border:0;width:${width}px;height:1200px"></iframe>${frameScript}</body></html>`);
+      return;
+    }
     const relative = pathname === "/" ? "index.html" : pathname.replace(/^\/+/, "");
     const filePath = normalize(join(distRoot, relative));
     if (!filePath.startsWith(`${distRoot}/`)) {
@@ -93,25 +130,25 @@ const measureAt = async (
   chrome: string,
   origin: string,
   width: number,
-): Promise<HeadingMeasurement[]> => {
+): Promise<PageMeasurement> => {
   const { stdout } = await run(chrome, [
     "--headless=new",
     "--disable-gpu",
     "--no-sandbox",
     "--single-process",
     "--no-zygote",
-    `--window-size=${width},1200`,
+    "--window-size=1600,1400",
     "--virtual-time-budget=5000",
     "--dump-dom",
-    origin,
+    `${origin}/__measure?width=${width}`,
   ], {
     maxBuffer: 10 * 1024 * 1024,
     timeout: 20_000,
     killSignal: "SIGKILL",
   });
-  const encoded = stdout.match(/data-heading-lines="([^"]+)"/)?.[1];
-  assert.ok(encoded, `${width}px: headless Chrome did not return heading measurements`);
-  return JSON.parse(Buffer.from(encoded, "base64").toString("utf8")) as HeadingMeasurement[];
+  const encoded = stdout.match(/data-page-measurement="([^"]+)"/)?.[1];
+  assert.ok(encoded, `${width}px: headless Chrome did not return page measurements`);
+  return JSON.parse(Buffer.from(encoded, "base64").toString("utf8")) as PageMeasurement;
 };
 
 test("story illustrations are labeled and app previews match real views", () => {
@@ -153,7 +190,13 @@ test("every homepage heading stays within two rendered lines", async () => {
   const server = await startDistServer();
   try {
     for (const width of [1440, 1024, 390]) {
-      const headings = await measureAt(chrome, server.origin, width);
+      const measurement = await measureAt(chrome, server.origin, width);
+      assert.equal(measurement.viewportWidth, width, `${width}px: iframe viewport width drifted`);
+      assert.ok(
+        measurement.scrollWidth <= measurement.clientWidth + 1,
+        `${width}px: horizontal overflow (${measurement.scrollWidth}px > ${measurement.clientWidth}px)`,
+      );
+      const { headings } = measurement;
       assert.ok(headings.length > 0, `${width}px: no headings found in main`);
       const failures = headings.filter((heading) => heading.lines > 2);
       assert.deepEqual(
