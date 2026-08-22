@@ -157,7 +157,7 @@ test("the workspace limit reads as a limit, not as a status code", async () => {
   const target = cloudTarget("http://127.0.0.1:54321", "anon-key");
   const fetcher = (async () =>
     new Response(
-      JSON.stringify({ error: "workspace_limit_reached", limit: 3 }),
+      JSON.stringify({ error: "workspace_limit_reached", limit: 10 }),
       { status: 403, headers: { "content-type": "application/json" } },
     )) as typeof fetch;
 
@@ -165,7 +165,7 @@ test("the workspace limit reads as a limit, not as a status code", async () => {
     command: {
       kind: "create_workspace",
       workspace_id: randomUUID(),
-      name: "Fourth",
+      name: "Eleventh",
     },
     credential: "human-jwt",
   }).then(() => null, (reason: unknown) => reason);
@@ -173,7 +173,7 @@ test("the workspace limit reads as a limit, not as a status code", async () => {
   assert.ok(error instanceof CreateWorkspaceError);
   assert.equal(error.status, 403);
   assert.equal(error.code, "workspace_limit_reached");
-  assert.match(error.message, /already created 3 workspaces/);
+  assert.match(error.message, /already created 10 workspaces/);
   assert.match(
     error.message,
     /cswarm workspace close <full-id\|exact-name> --confirm <same-selector>/,

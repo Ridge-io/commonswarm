@@ -263,7 +263,7 @@
   --t-lg: 1.125rem; /* 18px */
   --t-xl: clamp(1.25rem, 0.5vw + 1.1rem, 1.5rem);
   --t-2xl: clamp(1.6rem, 1.2vw + 1.3rem, 2.1rem);
-  --t-3xl: clamp(2.1rem, 2.4vw + 1.5rem, 3.1rem);
+  --t-3xl: clamp(1.6875rem, 2.4vw + 1.5rem, 3.1rem);
   /* INTEGRATION — ONE DISPLAY SIZE FOR THE WHOLE SITE. This was
      clamp(2.9rem, 6.2vw + 1rem, 5.6rem), which resolves to 89.6px at 1440 and 46.4px at 375.
      The landing hero overrode it down to the ramp below because that size sets two words a

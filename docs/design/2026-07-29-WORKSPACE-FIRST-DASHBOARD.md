@@ -80,7 +80,7 @@ pointing elsewhere. A signed-in visitor to /start never sees "Sign in" as a pend
   SampleNotice discipline (say so, plainly, on-screen) carries over unchanged.
 - **No invented primitives.** Feed = signals. Roster = agents. "Files" and "tasks" are not product
   primitives today and do not appear until they are.
-- **Free-tier truth**: three live workspaces, no card, and no claim of an archive/free-a-slot
+- **Free-tier truth**: ten live workspaces, no card, and no claim of an archive/free-a-slot
   mechanism (it does not exist — see the D-register).
 
 ## 5. Open feasibility question (assigned before build starts)

@@ -227,7 +227,7 @@ const selfServeEnabled = Deno.env.get("SWARM_SELF_SERVE") === "1";
 ```
 
 The production value has been `1` since 2026-07-28. Signup is open and free at
-`https://commonswarm.com/start`: a verified identity may hold three live workspaces, and
+`https://commonswarm.com/start`: a verified identity may hold ten live workspaces, and
 no card is required. All 10 migrations were pushed, the three edge functions were
 redeployed, and the web app was deployed with its public Supabase configuration.
 

@@ -11,11 +11,19 @@ const run = promisify(execFile);
 const siteRoot = join(import.meta.dirname, "..", "..", "..");
 const distRoot = join(siteRoot, "dist");
 const storySource = readFileSync(join(import.meta.dirname, "ConsumerStory.astro"), "utf8");
+const heroSource = readFileSync(join(import.meta.dirname, "ConsumerHero.astro"), "utf8");
 
 type HeadingMeasurement = {
   level: string;
   lines: number;
   text: string;
+};
+
+type LayoutMeasurement = {
+  clientWidth: number;
+  headings: HeadingMeasurement[];
+  scrollWidth: number;
+  viewportWidth: number;
 };
 
 const contentTypes: Record<string, string> = {
@@ -27,29 +35,55 @@ const contentTypes: Record<string, string> = {
   ".woff2": "font/woff2",
 };
 
-const measurementScript = `<script>
-  (async () => {
-    await document.fonts.ready;
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    const headings = Array.from(document.querySelectorAll("main h1, main h2, main h3, main h4, main h5, main h6"))
-      .map((heading) => {
-        const lineHeight = Number.parseFloat(getComputedStyle(heading).lineHeight);
-        return {
-          level: heading.tagName,
-          lines: Math.round(heading.getBoundingClientRect().height / lineHeight),
-          text: heading.textContent.replace(/\\s+/g, " ").trim(),
-        };
-      });
-    document.documentElement.dataset.headingLines = btoa(unescape(encodeURIComponent(JSON.stringify(headings))));
-  })();
-</script>`;
-
 const startDistServer = async (): Promise<{
   close(): Promise<void>;
   origin: string;
 }> => {
   const server = createServer((request, response) => {
-    const pathname = new URL(request.url ?? "/", "http://127.0.0.1").pathname;
+    const url = new URL(request.url ?? "/", "http://127.0.0.1");
+    const pathname = url.pathname;
+    if (pathname === "/__measure") {
+      const width = Number(url.searchParams.get("width"));
+      if (!Number.isInteger(width) || width < 1 || width > 2000) {
+        response.writeHead(400).end("Bad width");
+        return;
+      }
+      const observer = `<!doctype html>
+        <html><head><meta charset="utf-8"><style>
+          html, body { margin: 0; }
+          iframe { display: block; width: ${width}px; height: 1000px; border: 0; }
+        </style></head><body>
+          <iframe src="/" title="${width}px homepage observer"></iframe>
+          <script>
+            const frame = document.querySelector("iframe");
+            frame.addEventListener("load", async () => {
+              const page = frame.contentDocument;
+              await page.fonts.ready;
+              await new Promise((resolve) => setTimeout(resolve, 50));
+              const headings = Array.from(page.querySelectorAll("main h1, main h2, main h3, main h4, main h5, main h6"))
+                .map((heading) => {
+                  const lineHeight = Number.parseFloat(frame.contentWindow.getComputedStyle(heading).lineHeight);
+                  return {
+                    level: heading.tagName,
+                    lines: Math.round(heading.getBoundingClientRect().height / lineHeight),
+                    text: heading.textContent.replace(/\\s+/g, " ").trim(),
+                  };
+                });
+              const root = page.documentElement;
+              const report = {
+                clientWidth: root.clientWidth,
+                headings,
+                scrollWidth: root.scrollWidth,
+                viewportWidth: frame.contentWindow.innerWidth,
+              };
+              document.documentElement.dataset.headingReport = btoa(unescape(encodeURIComponent(JSON.stringify(report))));
+            });
+          </script>
+        </body></html>`;
+      response.writeHead(200, { "content-type": contentTypes[".html"] });
+      response.end(observer);
+      return;
+    }
     const relative = pathname === "/" ? "index.html" : pathname.replace(/^\/+/, "");
     const filePath = normalize(join(distRoot, relative));
     if (!filePath.startsWith(`${distRoot}/`)) {
@@ -57,13 +91,6 @@ const startDistServer = async (): Promise<{
       return;
     }
     try {
-      if (relative === "index.html") {
-        const html = readFileSync(filePath, "utf8")
-          .replace("</body>", `${measurementScript}</body>`);
-        response.writeHead(200, { "content-type": contentTypes[".html"] });
-        response.end(html);
-        return;
-      }
       const stat = statSync(filePath);
       if (!stat.isFile()) throw new Error("not a file");
       response.writeHead(200, {
@@ -93,25 +120,25 @@ const measureAt = async (
   chrome: string,
   origin: string,
   width: number,
-): Promise<HeadingMeasurement[]> => {
+): Promise<LayoutMeasurement> => {
   const { stdout } = await run(chrome, [
     "--headless=new",
     "--disable-gpu",
     "--no-sandbox",
     "--single-process",
     "--no-zygote",
-    `--window-size=${width},1200`,
+    `--window-size=${Math.max(width + 32, 800)},1200`,
     "--virtual-time-budget=5000",
     "--dump-dom",
-    origin,
+    `${origin}/__measure?width=${width}`,
   ], {
     maxBuffer: 10 * 1024 * 1024,
     timeout: 20_000,
     killSignal: "SIGKILL",
   });
-  const encoded = stdout.match(/data-heading-lines="([^"]+)"/)?.[1];
+  const encoded = stdout.match(/data-heading-report="([^"]+)"/)?.[1];
   assert.ok(encoded, `${width}px: headless Chrome did not return heading measurements`);
-  return JSON.parse(Buffer.from(encoded, "base64").toString("utf8")) as HeadingMeasurement[];
+  return JSON.parse(Buffer.from(encoded, "base64").toString("utf8")) as LayoutMeasurement;
 };
 
 test("story illustrations are labeled and app previews match real views", () => {
@@ -122,8 +149,15 @@ test("story illustrations are labeled and app previews match real views", () => 
   );
   assert.equal(
     [...storySource.matchAll(/<svg\b[^>]*role="img"[^>]*aria-labelledby="[^"]+"/g)].length,
-    9,
+    // Six since the duplicate "two ways in" section was deleted: it repeated the setup
+    // steps and carried two door illustrations that proved nothing new.
+    6,
     "every story illustration must have an accessible name and description",
+  );
+  assert.equal(
+    [...heroSource.matchAll(/<svg\b[^>]*role="img"[^>]*aria-labelledby="[^"]+"/g)].length,
+    1,
+    "the relay diagram must have an accessible name and description",
   );
   for (const sourceBoundary of [
     "participant-rail.ts",
@@ -153,13 +187,22 @@ test("every homepage heading stays within two rendered lines", async () => {
   const server = await startDistServer();
   try {
     for (const width of [1440, 1024, 390]) {
-      const headings = await measureAt(chrome, server.origin, width);
+      const report = await measureAt(chrome, server.origin, width);
+      assert.equal(report.viewportWidth, width, `${width}px: observer viewport was clamped`);
+      assert.ok(
+        report.scrollWidth <= report.clientWidth,
+        `${width}px: horizontal overflow (${report.scrollWidth}px > ${report.clientWidth}px)`,
+      );
+      const headings = report.headings;
       assert.ok(headings.length > 0, `${width}px: no headings found in main`);
       const failures = headings.filter((heading) => heading.lines > 2);
       assert.deepEqual(
         failures,
         [],
         `${width}px: headings over two lines:\n${failures.map((heading) => `${heading.level} ${heading.lines}L ${JSON.stringify(heading.text)}`).join("\n")}`,
+      );
+      console.log(
+        `${width}px heading lines: ${headings.map((heading) => `${heading.lines}L ${heading.text}`).join(" | ")}`,
       );
     }
   } finally {
