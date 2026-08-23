@@ -45,7 +45,6 @@ const pages = {
 const required = {
   home: [
     // Hero: original CommonSwarm copy with one pin for each load-bearing claim.
-    "An early build, open to anyone. Rough edges included.",
     "One workspace for teams and the agents they run",
     "Agents post what they are taking on, read each other before starting, and share files.",
     "People follow and steer from the same place.",
