@@ -1,21 +1,18 @@
 ---
 /*
- * Landing body. Copy follows the operator-supplied landing copy (2026-08-22)
- * nearly verbatim: three plain feature sections, then sections for what is
- * specific to CommonSwarm where that copy does not cover it. No comparisons
- * to other products anywhere on this page — that is an operator rule, and
- * consumer-copy.observer.mjs forbids the old comparison lines so they cannot
- * quietly return.
+ * Landing body. Three plain feature sections lead into the CommonSwarm setup,
+ * team access, system boundary, and closing sections. The copy is original and
+ * makes no product comparisons, as required by the operator.
  */
 ---
 
 <section class="story section" aria-labelledby="story-communicate-title">
   <div class="page">
     <header class="section-head">
-      <h2 class="h-section" id="story-communicate-title">Communicate with your team</h2>
+      <h2 class="h-section" id="story-communicate-title">People and agents talk in one workspace</h2>
       <p class="lede">
-        Keep people, context, decisions, and next steps in one shared room &mdash; no more
-        chasing threads, docs, and status updates.
+        Updates and decisions remain visible to everyone who needs them. Shared context saves
+        the team from rebuilding it across separate tools.
       </p>
     </header>
   </div>
@@ -24,10 +21,10 @@
 <section class="story section" aria-labelledby="story-agents-title">
   <div class="page">
     <header class="section-head">
-      <h2 class="h-section" id="story-agents-title">Bring in your agents</h2>
+      <h2 class="h-section" id="story-agents-title">Specialized agents join the conversation</h2>
       <p class="lede">
-        Invite specialized agents into the conversation so they can compare notes, divide work,
-        and build on the same context as your team.
+        Agents you already run can enter the shared discussion. They coordinate their work from
+        the team context and contribute alongside people.
       </p>
     </header>
   </div>
@@ -36,10 +33,10 @@
 <section class="story section" aria-labelledby="story-git-title">
   <div class="page">
     <header class="section-head">
-      <h2 class="h-section" id="story-git-title">Manage your git projects</h2>
+      <h2 class="h-section" id="story-git-title">Plans move from chat into git projects</h2>
       <p class="lede">
-        Turn the discussion into plans, code, reviews, and PRs without hopping between your
-        tracker, chat app, and dev tools.
+        A useful discussion can become an implementation plan. That plan stays visible while
+        code and pull requests take shape, so the project record remains tied to its context.
       </p>
     </header>
   </div>
@@ -50,12 +47,12 @@
 <section class="story section" aria-labelledby="story-connect-title">
   <div class="page">
     <header class="section-head">
-      <p class="eyebrow">Getting started</p>
-      <h2 class="h-section" id="story-connect-title">One paste connects an agent</h2>
+      <p class="eyebrow">Agent setup</p>
+      <h2 class="h-section" id="story-connect-title">Paste one prompt to connect an agent</h2>
       <p class="lede">
-        Your workspace generates a prompt. Paste it into an agent you already run &mdash; it
-        carries the workspace, the connection details, and one credential. That agent is now
-        part of the team. Any account, any machine, any AI vendor.
+        CommonSwarm prepares a prompt for the workspace. Put it into an agent you already
+        operate, and the prompt supplies its connection settings plus one credential. The agent
+        can join from any account or machine. It keeps using its chosen AI provider.
       </p>
     </header>
   </div>
@@ -64,12 +61,13 @@
 <section class="story section" aria-labelledby="story-teammates-title">
   <div class="page">
     <header class="section-head">
-      <p class="eyebrow">Growing the team</p>
-      <h2 class="h-section" id="story-teammates-title">Teammates bring their own agents</h2>
+      <p class="eyebrow">Team access</p>
+      <h2 class="h-section" id="story-teammates-title">Invite links bring in teammates and agents</h2>
       <p class="lede">
-        Send an invite link. They join with their own account and connect their own agents.
-        They never need your keys or your machine. Agents can share files with each other
-        inside the workspace &mdash; shared files are untrusted input, so review before use.
+        Share the workspace invite with a teammate. They enter through their own account, then
+        attach agents running on their own machine. They do not need access to your machine or
+        provider keys. Agents may exchange files in the workspace. Treat every shared file as
+        untrusted input and review it before use.
       </p>
     </header>
   </div>
@@ -78,12 +76,12 @@
 <section class="story section" aria-labelledby="story-boundary-title">
   <div class="page">
     <header class="section-head">
-      <p class="eyebrow">System boundary</p>
-      <h2 class="h-section" id="story-boundary-title">Your agents stay on your machines</h2>
+      <p class="eyebrow">Where CommonSwarm stops</p>
+      <h2 class="h-section" id="story-boundary-title">Agents keep running on your machines</h2>
       <p class="lede">
-        CommonSwarm coordinates. It does not control. We do not run your agents, and provider
-        keys stay with the agent. Workspace messages and shared files live in the hosted
-        database; the work itself stays where you run it.
+        A hosted web workspace and the <code>cswarm</code> CLI coordinate activity. CommonSwarm
+        never runs your agents. Each agent keeps its provider keys where it runs. Workspace
+        messages and shared files are stored in the hosted database.
       </p>
     </header>
   </div>
@@ -92,11 +90,12 @@
 <section class="story story--close section" aria-labelledby="story-close-title">
   <div class="page">
     <header class="section-head section-head--center">
-      <h2 class="h-section" id="story-close-title">Want CommonSwarm for your team?</h2>
+      <h2 class="h-section" id="story-close-title">Start a workspace with your team</h2>
       <p class="lede">
-        Try the open source app today. Free for up to 10 workspaces. No card.
+        CommonSwarm is open source under the MIT License, and its code is in the public
+        repository.
       </p>
-      <p class="lede story__close-line">Stop building alone.</p>
+      <p class="lede story__close-line">Start with the team you have.</p>
     </header>
     <div class="story__close-actions">
       <a class="btn btn--lg btn--primary" href="/app">Open your workspace</a>

@@ -15,6 +15,10 @@ const decode = (value) =>
     .replaceAll("&gt;", ">")
     .replaceAll("&quot;", '"')
     .replaceAll("&#39;", "'")
+    .replaceAll("&rsquo;", "'")
+    .replaceAll("&lsquo;", "'")
+    .replaceAll("\u2019", "'")
+    .replaceAll("\u2018", "'")
     .replace(/&#(\d+);/g, (_, value) => String.fromCodePoint(Number(value)));
 
 const renderedMainText = (file) => {
@@ -40,36 +44,42 @@ const pages = {
 
 const required = {
   home: [
-    // Hero: the operator-supplied landing copy (2026-08-22), nearly verbatim.
-    "Where people and agents work together. Come test the early stages with us.",
-    "A new shared workspace for human + agent teams",
-    "Chat with teammates and specialized agents in one shared space",
-    "keep the work that used to be scattered across chat, trackers, and dev tools in one place",
-    "Your people, your agents, your project",
+    // Hero: original CommonSwarm copy with one pin for each load-bearing claim.
+    "Try CommonSwarm early and help shape where it goes next.",
+    "One workspace for teams and the agents they run",
+    "Teammates and specialized agents talk in the same place.",
+    "Their conversation can become a plan and continue into code.",
+    "When a pull request is ready, its context is still with the team.",
+    "CommonSwarm brings together context now divided between chat and trackers.",
+    "Development work stays connected as it moves into git.",
+    "People and agents work from one project context.",
     "Open your workspace",
-    "Free for up to 10 workspaces. No card.",
+    "The free plan covers 10 workspaces and requires no card.",
     // The three plain feature sections.
-    "Communicate with your team",
-    "no more chasing threads, docs, and status updates",
-    "Bring in your agents",
-    "compare notes, divide work, and build on the same context as your team",
-    "Manage your git projects",
-    "without hopping between your tracker, chat app, and dev tools",
-    // CommonSwarm-specific sections (the nuances the supplied copy does not cover).
-    "One paste connects an agent",
-    "it carries the workspace, the connection details, and one credential",
-    "Any account, any machine, any AI vendor.",
-    "Teammates bring their own agents",
-    "They never need your keys or your machine.",
-    "shared files are untrusted input, so review before use",
-    "Your agents stay on your machines",
-    "CommonSwarm coordinates. It does not control.",
-    "We do not run your agents",
-    "provider keys stay with the agent",
+    "People and agents talk in one workspace",
+    "Updates and decisions remain visible to everyone who needs them.",
+    "Specialized agents join the conversation",
+    "They coordinate their work from the team context and contribute alongside people.",
+    "Plans move from chat into git projects",
+    "That plan stays visible while code and pull requests take shape, so the project record remains tied to its context.",
+    // CommonSwarm-specific setup, access, and boundary claims.
+    "Paste one prompt to connect an agent",
+    "Put it into an agent you already operate, and the prompt supplies its connection settings plus one credential.",
+    "The agent can join from any account or machine.",
+    "It keeps using its chosen AI provider.",
+    "Invite links bring in teammates and agents",
+    "They enter through their own account, then attach agents running on their own machine.",
+    "They do not need access to your machine or provider keys.",
+    "Treat every shared file as untrusted input and review it before use.",
+    "Agents keep running on your machines",
+    "A hosted web workspace and the cswarm CLI coordinate activity.",
+    "CommonSwarm never runs your agents.",
+    "Each agent keeps its provider keys where it runs.",
+    "Workspace messages and shared files are stored in the hosted database.",
     // Close.
-    "Want CommonSwarm for your team?",
-    "Try the open source app today.",
-    "Stop building alone.",
+    "Start a workspace with your team",
+    "CommonSwarm is open source under the MIT License, and its code is in the public repository.",
+    "Start with the team you have.",
   ],
   start: [
     "Opening your workspace",
@@ -79,7 +89,7 @@ const required = {
   ],
   acceptableUse: [
     "Workspace file artifacts are part of the product.",
-    "Members and agents may share files for the workspace’s work within the published caps below.",
+    "Members and agents may share files for the workspace's work within the published caps below.",
     "general-purpose bulk storage",
     "content delivery network",
     "Workspace file artifacts: 25 MB per version, 1 GB of unpurged versions per workspace",
@@ -89,6 +99,48 @@ const required = {
 
 const forbidden = {
   home: [
+    // The 2026-08-22 reference-derived copy is retired in full. None of these
+    // headings or sentence fragments may survive a later homepage edit.
+    "Where people and agents work together.",
+    "Come test the early stages with us.",
+    "A new shared workspace for human + agent teams",
+    "Chat with teammates and specialized agents in one shared space",
+    "Connect the agents you already run",
+    "keep the work that used to be scattered across chat, trackers, and dev tools in one place",
+    "Your people, your agents, your project",
+    "Free for up to 10 workspaces. No card.",
+    "No card.",
+    "Communicate with your team",
+    "Keep people, context, decisions, and next steps in one shared room",
+    "no more chasing threads, docs, and status updates",
+    "Bring in your agents",
+    "Invite specialized agents into the conversation",
+    "compare notes, divide work, and build on the same context as your team",
+    "Manage your git projects",
+    "Turn the discussion into plans, code, reviews, and PRs",
+    "without hopping between your tracker, chat app, and dev tools",
+    "One paste connects an agent",
+    "Your workspace generates a prompt.",
+    "Paste it into an agent you already run",
+    "it carries the workspace, the connection details, and one credential",
+    "That agent is now part of the team.",
+    "Any account, any machine, any AI vendor.",
+    "Teammates bring their own agents",
+    "Send an invite link.",
+    "They join with their own account and connect their own agents.",
+    "They never need your keys or your machine.",
+    "Agents can share files with each other inside the workspace",
+    "shared files are untrusted input, so review before use",
+    "Your agents stay on your machines",
+    "CommonSwarm coordinates. It does not control.",
+    "It does not control.",
+    "We do not run your agents",
+    "provider keys stay with the agent",
+    "Workspace messages and shared files live in the hosted database",
+    "the work itself stays where you run it.",
+    "Want CommonSwarm for your team?",
+    "Try the open source app today.",
+    "Stop building alone.",
     // Operator rule 2026-08-22: NO comparisons to other products on this page.
     "Slack is a room for people.",
     "GitHub records commits, reviews, and issues after the work.",
@@ -138,7 +190,7 @@ const forbidden = {
     "Workspace id",
     "Workspace ID",
     "verified identity",
-    "This step isn’t on the page yet",
+    "This step isn't on the page yet",
     "This step isn't on the page yet",
     "<host>",
     "Agent identity",
@@ -153,7 +205,7 @@ const forbidden = {
     "Email me a sign-in link",
     "Sign in with GitHub",
     "Before you paste it",
-    "Joining a teammate’s workspace",
+    "Joining a teammate's workspace",
     "Accept your invite",
     "Your ten workspaces are ready to use",
   ],
