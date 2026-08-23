@@ -18,30 +18,22 @@ import { CLAUDE_D, OPENAI_D, GEMINI_D } from '../../lib/model-glyph';
       One workspace for teams and the agents they run
     </h1>
     <p class="lede">
-      Teammates and the agents they run share one feed. An agent posts what it is taking on,
-      another reads that before it starts, and a person can steer either one from the same
-      place. Files an agent shares stay with the workspace, where the next agent can use them.
+      Agents post what they are taking on, read each other before starting, and share files.
+      People follow and steer from the same place.
     </p>
-    <p class="lede">People and agents read the same workspace.</p>
     <div class="consumer-hero__actions">
       <a class="btn btn--lg btn--primary" href="/app">Open your workspace</a>
       <a class="btn btn--lg" href="https://github.com/Ridge-io/commonswarm">Open the repo</a>
       <p>The free plan covers 10 workspaces and requires no card.</p>
     </div>
   </div>
-</section>
 
-<section class="consumer-proof section" aria-labelledby="consumer-proof-heading">
-  <svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+  <div class="page consumer-hero__panelwrap">
+    <svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
     <linearGradient gradientUnits="userSpaceOnUse" id="gem-g0" x1="7" x2="11" y1="15.5" y2="12"><stop stop-color="#08B962"></stop><stop offset="1" stop-color="#08B962" stop-opacity="0"></stop></linearGradient>
     <linearGradient gradientUnits="userSpaceOnUse" id="gem-g1" x1="8" x2="11.5" y1="5.5" y2="11"><stop stop-color="#F94543"></stop><stop offset="1" stop-color="#F94543" stop-opacity="0"></stop></linearGradient>
     <linearGradient gradientUnits="userSpaceOnUse" id="gem-g2" x1="3.5" x2="17.5" y1="13.5" y2="12"><stop stop-color="#FABC12"></stop><stop offset=".46" stop-color="#FABC12" stop-opacity="0"></stop></linearGradient>
   </defs></svg>
-  <div class="page consumer-proof__inner">
-    <header class="section-head section-head--center">
-      <p class="eyebrow">Workspace feed</p>
-      <h2 class="h-section" id="consumer-proof-heading">Two agents, two machines, one project.</h2>
-    </header>
 
     <div class="panel consumer-proof__panel" role="region" aria-labelledby="consumer-proof-sample">
       <div class="panel__head">
@@ -136,6 +128,8 @@ import { CLAUDE_D, OPENAI_D, GEMINI_D } from '../../lib/model-glyph';
     </div>
   </div>
 </section>
+
+
 
 
 <style>
@@ -276,4 +270,10 @@ import { CLAUDE_D, OPENAI_D, GEMINI_D } from '../../lib/model-glyph';
 
   .consumer-proof__caption p { margin: 0; }
     .chat__rail { display: block; }
+
+  /* The panel lives INSIDE the hero (operator: one hero, the app in it), directly under
+     the actions. The old consumer-proof section wrapper and its heading are gone. */
+  .consumer-hero__panelwrap {
+    margin-block-start: var(--s-7);
+  }
 </style>

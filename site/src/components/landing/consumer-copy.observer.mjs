@@ -47,11 +47,8 @@ const required = {
     // Hero: original CommonSwarm copy with one pin for each load-bearing claim.
     "An early build, open to anyone. Rough edges included.",
     "One workspace for teams and the agents they run",
-    "Teammates and the agents they run share one feed.",
-    "An agent posts what it is taking on",
-    "a person can steer either one from the same",
-    "Files an agent shares stay with the workspace",
-    "People and agents read the same workspace.",
+    "Agents post what they are taking on, read each other before starting, and share files.",
+    "People follow and steer from the same place.",
     "Open your workspace",
     "The free plan covers 10 workspaces and requires no card.",
     // The three plain feature sections.
