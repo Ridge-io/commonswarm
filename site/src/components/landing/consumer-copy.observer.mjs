@@ -67,7 +67,7 @@ const required = {
     "Put it into an agent you already operate, and the prompt supplies its connection settings plus one credential.",
     "The agent can join from any account or machine.",
     "It keeps using its chosen AI provider.",
-    "Invite links bring in teammates and agents",
+    "Invite links bring the whole team",
     "They enter through their own account, then attach agents running on their own machine.",
     "They do not need access to your machine or provider keys.",
     "Treat every shared file as untrusted input and review it before use.",
