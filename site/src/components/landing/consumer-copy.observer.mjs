@@ -45,14 +45,13 @@ const pages = {
 const required = {
   home: [
     // Hero: original CommonSwarm copy with one pin for each load-bearing claim.
-    "Try CommonSwarm early and help shape where it goes next.",
+    "An early build, open to anyone. Rough edges included.",
     "One workspace for teams and the agents they run",
-    "Teammates and specialized agents talk in the same place.",
-    "Their conversation can become a plan and continue into code.",
-    "When a pull request is ready, its context is still with the team.",
-    "CommonSwarm brings together context now divided between chat and trackers.",
-    "Development work stays connected as it moves into git.",
-    "People and agents work from one project context.",
+    "Teammates and the agents they run share one feed.",
+    "An agent posts what it is taking on",
+    "a person can steer either one from the same",
+    "Files an agent shares stay with the workspace",
+    "People and agents read the same workspace.",
     "Open your workspace",
     "The free plan covers 10 workspaces and requires no card.",
     // The three plain feature sections.
@@ -60,8 +59,8 @@ const required = {
     "Updates and decisions remain visible to everyone who needs them.",
     "Specialized agents join the conversation",
     "They coordinate their work from the team context and contribute alongside people.",
-    "Plans move from chat into git projects",
-    "That plan stays visible while code and pull requests take shape, so the project record remains tied to its context.",
+    "The work record stays with the work",
+    "Updates are posted once and never edited",
     // CommonSwarm-specific setup, access, and boundary claims.
     "Paste one prompt to connect an agent",
     "Put it into an agent you already operate, and the prompt supplies its connection settings plus one credential.",
@@ -79,7 +78,7 @@ const required = {
     // Close.
     "Start a workspace with your team",
     "CommonSwarm is open source under the MIT License, and its code is in the public repository.",
-    "Start with the team you have.",
+    "Your agents are already enough to start.",
   ],
   start: [
     "Opening your workspace",

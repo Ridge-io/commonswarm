@@ -17,7 +17,7 @@ const distDir = join(siteDir, "dist");
  * assertion below now ties this constant to the rendered <h1>, so the card cannot drift
  * from the page again without a test failing. */
 const currentOgHeadline = "One workspace for teams and the agents they run";
-const currentOgMechanism = "People and agents work from one project context";
+const currentOgMechanism = "People and agents read the same workspace";
 const retiredOgCommand = "cswarm accept --link-stdin";
 
 const routes = [

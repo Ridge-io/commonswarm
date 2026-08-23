@@ -37,7 +37,7 @@ const mono = readFileSync(join(fonts, "jetbrains-mono-latin.woff2")).toString("b
 const svg = `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
   <title>CommonSwarm</title>
-  <desc>One workspace for teams and the agents they run. People and agents work from one project context.</desc>
+  <desc>One workspace for teams and the agents they run. People and agents read the same workspace.</desc>
   <defs>
     <style>
       @font-face {
@@ -92,7 +92,7 @@ const svg = `<?xml version="1.0" encoding="UTF-8"?>
     <rect width="460" height="58" rx="12" fill="#eef1f7" stroke="#dde3ec"/>
     <circle cx="27" cy="29" r="5" fill="#4633b8"/>
     <text class="sans" x="46" y="35" font-size="17" font-weight="650"
-      fill="#4633b8">People and agents work from one project context</text>
+      fill="#4633b8">People and agents read the same workspace</text>
   </g>
 
   <g transform="translate(564 438)">
