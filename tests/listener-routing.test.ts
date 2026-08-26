@@ -50,11 +50,17 @@ test("the pending-main queue drops its oldest entry at 200 and emits a warning e
       stateDirectory: root,
     });
     const queue = new FilePendingMainQueue(paths.instanceDirectory);
-    let last = { count: 0, added: false, droppedOldest: false };
+    let last = { count: 0, added: false, droppedOldest: false, droppedCount: 0 };
     for (let index = 1; index <= 201; index += 1) {
       last = await queue.enqueue(entry(index));
     }
-    assert.deepEqual(last, { count: 200, added: true, droppedOldest: true });
+    assert.deepEqual(last, {
+      count: 200,
+      added: true,
+      droppedOldest: true,
+      droppedCount: 1,
+    });
+    assert.deepEqual(await queue.stats(), { count: 200, droppedCount: 1 });
     const stored = await queue.read();
     assert.equal(stored.length, 200);
     assert.equal(stored[0]?.signalId, entry(2).signalId);

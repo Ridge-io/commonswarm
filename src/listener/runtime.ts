@@ -167,6 +167,7 @@ export type ListenerRuntimeEvent =
     signalId: string;
     pendingCount: number;
     droppedOldest: boolean;
+    droppedCount: number;
     ts: string;
   };
 
@@ -769,6 +770,9 @@ export async function runListenerRuntime(
         // A display name is optional metadata. The durable queue keeps exact ids.
       }
     }
+    // Load-bearing crash order: the atomic, fsynced local queue write must
+    // finish before the terminal effect can prepare or send an observed ACK.
+    // If this throws, the journal stays leased and service redelivery recovers.
     const queued = await options.pendingMainQueue!.enqueue(
       pendingMainEntry(signal, options.principalId, provenance, now()),
     );
@@ -777,6 +781,7 @@ export async function runListenerRuntime(
       signalId: signal.id,
       pendingCount: queued.count,
       droppedOldest: queued.droppedOldest,
+      droppedCount: queued.droppedCount,
       ts: eventTime(now),
     });
     const existing = await options.store.read(signal.id);

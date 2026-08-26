@@ -4,11 +4,13 @@ import { isAbsolute, join } from "node:path";
 import type { SignalRecord } from "../cloud/command-client.js";
 import { cloudTarget, type CloudTarget } from "../cloud/config.js";
 import {
+  followHttpDetails,
   readAgentSignalDirectory,
   readAgentSignalPage,
   type SignalDirectory,
 } from "../cloud/signals.js";
 import {
+  deleteSecureJsonFile,
   readSecureJsonFile,
   withFileLock,
   writeSecureJsonFile,
@@ -26,7 +28,8 @@ const INSTANCE_KEY_RE = /^[0-9a-f]{64}$/;
 const MAX_HOOK_CREDENTIAL_BYTES = 8 * 1024;
 const MAX_HOOK_SURFACE_BYTES = 128 * 1024;
 const MAX_GLOBAL_STATE_BYTES = 4 * 1024;
-const HOOK_CREDENTIAL_FILE = "hook-credential.json";
+const LISTENER_CREDENTIAL_FILE = "listener-credential.json";
+const RETIRED_HOOK_CREDENTIAL_FILE = "hook-credential.json";
 const HOOK_SURFACE_FILE = "hook-surface.json";
 const GLOBAL_STATE_FILE = "hook-check.json";
 const HOOK_SURFACE_LOCK = "hook-surface";
@@ -38,7 +41,7 @@ export const HOOK_DEFAULT_COOLDOWN_SECONDS = 30;
 export const HOOK_SURFACED_IDS_MAX = 1_024;
 export const HOOK_BODY_PREVIEW_CHARS = 240;
 
-export interface ListenerHookCredential {
+export interface ListenerCredentialState {
   version: 1;
   profileId: string;
   targetUrl: string;
@@ -52,6 +55,8 @@ export interface ListenerHookCredential {
 interface HookSurfaceFile {
   version: 1;
   surfacedSignalIds: string[];
+  reportedDroppedCount: number;
+  credentialFailureReported: boolean;
 }
 
 interface HookGlobalState {
@@ -64,6 +69,7 @@ export interface HookCheckOptions {
   cooldownSeconds?: number;
   now?: () => number;
   fetcher?: typeof fetch;
+  write?: (output: string) => void | Promise<void>;
 }
 
 function exactKeys(row: Record<string, unknown>, keys: readonly string[]): boolean {
@@ -72,7 +78,7 @@ function exactKeys(row: Record<string, unknown>, keys: readonly string[]): boole
     Object.keys(row).every((key) => expected.has(key));
 }
 
-function parseHookCredential(raw: string): ListenerHookCredential {
+function parseListenerCredential(raw: string): ListenerCredentialState {
   let value: unknown;
   try {
     value = JSON.parse(raw);
@@ -121,8 +127,8 @@ function parseHookCredential(raw: string): ListenerHookCredential {
   };
 }
 
-/** Mirror only the listener's current bearer into its owned 0600 state directory. */
-export async function writeListenerHookCredential(
+/** Keep the listener and its read-only hook on one owned 0600 credential state file. */
+export async function writeListenerCredentialState(
   instanceDirectory: string,
   input: {
     target: CloudTarget;
@@ -135,7 +141,7 @@ export async function writeListenerHookCredential(
   if (!isAbsolute(instanceDirectory)) {
     throw new Error("listener hook state directory must be absolute");
   }
-  const record = parseHookCredential(JSON.stringify({
+  const record = parseListenerCredential(JSON.stringify({
     version: 1,
     profileId: input.target.profileId,
     targetUrl: input.target.url,
@@ -146,9 +152,23 @@ export async function writeListenerHookCredential(
     updatedAt: new Date(input.now ?? Date.now()).toISOString(),
   }));
   await writeSecureJsonFile(
-    join(instanceDirectory, HOOK_CREDENTIAL_FILE),
+    join(instanceDirectory, LISTENER_CREDENTIAL_FILE),
     JSON.stringify(record),
   );
+  await deleteSecureJsonFile(
+    join(instanceDirectory, RETIRED_HOOK_CREDENTIAL_FILE),
+  ).catch(() => undefined);
+}
+
+/** Read the exact credential state used by the listener after verifying mode 0600. */
+export async function readListenerCredentialState(
+  instanceDirectory: string,
+): Promise<ListenerCredentialState | null> {
+  const raw = await readSecureJsonFile(
+    join(instanceDirectory, LISTENER_CREDENTIAL_FILE),
+    MAX_HOOK_CREDENTIAL_BYTES,
+  );
+  return raw === null ? null : parseListenerCredential(raw);
 }
 
 function parseSurface(raw: string): HookSurfaceFile {
@@ -163,10 +183,18 @@ function parseSurface(raw: string): HookSurfaceFile {
   }
   const row = value as Record<string, unknown>;
   if (
-    !exactKeys(row, ["version", "surfacedSignalIds"]) ||
+    Object.keys(row).some((key) =>
+      key !== "version" && key !== "surfacedSignalIds" &&
+      key !== "reportedDroppedCount" && key !== "credentialFailureReported"
+    ) ||
     row.version !== 1 || !Array.isArray(row.surfacedSignalIds) ||
     row.surfacedSignalIds.length > HOOK_SURFACED_IDS_MAX ||
-    row.surfacedSignalIds.some((id) => typeof id !== "string" || !UUID_RE.test(id))
+    row.surfacedSignalIds.some((id) => typeof id !== "string" || !UUID_RE.test(id)) ||
+    !(row.reportedDroppedCount === undefined ||
+      (typeof row.reportedDroppedCount === "number" &&
+        Number.isSafeInteger(row.reportedDroppedCount) && row.reportedDroppedCount >= 0)) ||
+    !(row.credentialFailureReported === undefined ||
+      typeof row.credentialFailureReported === "boolean")
   ) {
     throw new Error("stored listener hook surface state is malformed");
   }
@@ -174,10 +202,23 @@ function parseSurface(raw: string): HookSurfaceFile {
   if (new Set(ids).size !== ids.length) {
     throw new Error("stored listener hook surface state repeats a signal");
   }
-  return { version: 1, surfacedSignalIds: ids };
+  return {
+    version: 1,
+    surfacedSignalIds: ids,
+    reportedDroppedCount: typeof row.reportedDroppedCount === "number"
+      ? row.reportedDroppedCount
+      : 0,
+    credentialFailureReported: row.credentialFailureReported === true,
+  };
 }
 
-/** Atomic high-water set: returned records have been marked before they can be printed. */
+export interface HookSurfaceStage<T> {
+  unseen: T[];
+  droppedSinceLastCheck: number;
+  credentialFailureReported: boolean;
+}
+
+/** Stage output without advancing the high-water; commit is called only after stdout. */
 export class FileHookSurfaceStore {
   private readonly path: string;
 
@@ -188,11 +229,19 @@ export class FileHookSurfaceStore {
     this.path = join(instanceDirectory, HOOK_SURFACE_FILE);
   }
 
-  async claimUnseen<T extends { signalId: string }>(items: readonly T[]): Promise<T[]> {
+  async stage<T extends { signalId: string }>(
+    items: readonly T[],
+    droppedCount: number,
+  ): Promise<HookSurfaceStage<T>> {
     return await withFileLock(this.instanceDirectory, HOOK_SURFACE_LOCK, async () => {
       const raw = await readSecureJsonFile(this.path, MAX_HOOK_SURFACE_BYTES);
       const state = raw === null
-        ? { version: 1 as const, surfacedSignalIds: [] }
+        ? {
+          version: 1 as const,
+          surfacedSignalIds: [],
+          reportedDroppedCount: 0,
+          credentialFailureReported: false,
+        }
         : parseSurface(raw);
       const seen = new Set(state.surfacedSignalIds);
       const unseen: T[] = [];
@@ -202,18 +251,55 @@ export class FileHookSurfaceStore {
         seen.add(signalId);
         unseen.push(item);
       }
-      if (unseen.length > 0) {
-        const surfacedSignalIds = [...seen].slice(-HOOK_SURFACED_IDS_MAX);
-        await writeSecureJsonFile(
-          this.path,
-          JSON.stringify(parseSurface(JSON.stringify({
-            version: 1,
-            surfacedSignalIds,
-          }))),
-        );
-      }
-      return unseen;
+      return {
+        unseen,
+        droppedSinceLastCheck: droppedCount < state.reportedDroppedCount
+          ? droppedCount
+          : droppedCount - state.reportedDroppedCount,
+        credentialFailureReported: state.credentialFailureReported,
+      };
     }, { timeoutMs: HOOK_LOCK_TIMEOUT_MS });
+  }
+
+  async commit(options: {
+    signalIds?: readonly string[];
+    droppedCount?: number;
+    credentialFailureReported?: boolean;
+  }): Promise<void> {
+    await withFileLock(this.instanceDirectory, HOOK_SURFACE_LOCK, async () => {
+      const raw = await readSecureJsonFile(this.path, MAX_HOOK_SURFACE_BYTES);
+      const state = raw === null
+        ? {
+          version: 1 as const,
+          surfacedSignalIds: [],
+          reportedDroppedCount: 0,
+          credentialFailureReported: false,
+        }
+        : parseSurface(raw);
+      const seen = new Set(state.surfacedSignalIds);
+      for (const signalId of options.signalIds ?? []) {
+        const checked = signalId.toLowerCase();
+        if (UUID_RE.test(checked)) seen.add(checked);
+      }
+      await writeSecureJsonFile(
+        this.path,
+        JSON.stringify(parseSurface(JSON.stringify({
+          version: 1,
+          surfacedSignalIds: [...seen].slice(-HOOK_SURFACED_IDS_MAX),
+          reportedDroppedCount: options.droppedCount ?? state.reportedDroppedCount,
+          credentialFailureReported: options.credentialFailureReported ??
+            state.credentialFailureReported,
+        }))),
+      );
+    }, { timeoutMs: HOOK_LOCK_TIMEOUT_MS });
+  }
+
+  async claimUnseen<T extends { signalId: string }>(items: readonly T[]): Promise<T[]> {
+    const staged = await this.stage(items, 0);
+    if (staged.unseen.length > 0) {
+      await this.commit({ signalIds: staged.unseen.map((item) => item.signalId) });
+    }
+    return staged.unseen;
   }
 }
 
@@ -255,7 +341,8 @@ async function reserveCheck(
 
 interface ListenerHookContext {
   instanceDirectory: string;
-  credential: ListenerHookCredential;
+  credential: ListenerCredentialState | null;
+  credentialReadFailed: boolean;
 }
 
 async function discoverContexts(stateDirectory: string): Promise<ListenerHookContext[]> {
@@ -270,16 +357,22 @@ async function discoverContexts(stateDirectory: string): Promise<ListenerHookCon
   for (const entry of entries) {
     if (!entry.isDirectory() || !INSTANCE_KEY_RE.test(entry.name)) continue;
     const instanceDirectory = join(stateDirectory, entry.name);
+    await deleteSecureJsonFile(
+      join(instanceDirectory, RETIRED_HOOK_CREDENTIAL_FILE),
+    ).catch(() => undefined);
     try {
-      const raw = await readSecureJsonFile(
-        join(instanceDirectory, HOOK_CREDENTIAL_FILE),
-        MAX_HOOK_CREDENTIAL_BYTES,
-      );
-      if (raw !== null) {
-        contexts.push({ instanceDirectory, credential: parseHookCredential(raw) });
-      }
+      const credential = await readListenerCredentialState(instanceDirectory);
+      const statusExists = credential === null && await readSecureJsonFile(
+        join(instanceDirectory, "status.json"),
+        16 * 1024,
+      ) !== null;
+      contexts.push({
+        instanceDirectory,
+        credential,
+        credentialReadFailed: statusExists,
+      });
     } catch {
-      // One damaged listener must not hide healthy listeners on the same machine.
+      contexts.push({ instanceDirectory, credential: null, credentialReadFailed: true });
     }
   }
   return contexts;
@@ -327,27 +420,11 @@ export function renderHookSignal(item: SurfaceItem): string {
   ].join("\n");
 }
 
-async function pendingItems(contexts: readonly ListenerHookContext[]): Promise<SurfaceItem[]> {
-  const surfaced: SurfaceItem[] = [];
-  for (const context of contexts) {
-    const queue = new FilePendingMainQueue(context.instanceDirectory);
-    const pending = await queue.read();
-    const store = new FileHookSurfaceStore(context.instanceDirectory);
-    const unseen = await store.claimUnseen(pending);
-    await queue.remove(
-      new Set(pending.map((entry) => entry.signalId)),
-      HOOK_LOCK_TIMEOUT_MS,
-    );
-    surfaced.push(...unseen);
-  }
-  return surfaced;
-}
-
 async function inboxItems(
   context: ListenerHookContext,
   options: { fetcher?: typeof fetch; signal: AbortSignal; deadlineMs: number; now: () => number },
 ): Promise<SurfaceItem[]> {
-  const stored = context.credential;
+  const stored = context.credential!;
   const target = cloudTarget(stored.targetUrl, stored.anonKey);
   const readOptions = {
     ...(options.fetcher ? { fetcher: options.fetcher } : {}),
@@ -388,10 +465,32 @@ async function inboxItems(
   const candidates = directed
     .map((signal) => entryFromSignal(signal, stored.principalId, directory, options.now()))
     .sort((left, right) => Date.parse(left.createdAt) - Date.parse(right.createdAt));
-  return await new FileHookSurfaceStore(context.instanceDirectory).claimUnseen(candidates);
+  return candidates;
 }
 
-/** Fail-silent hook body. The caller supplies the hard abort timer. */
+function renderDroppedAsks(count: number): string {
+  return `${count} routed asks were dropped from the overflow queue; ` +
+    "check cswarm inbox. The signals remain in the inbox.";
+}
+
+const CREDENTIAL_READ_WARNING =
+  "CommonSwarm could not read the configured listener credential safely. The hook is not checking routed asks. " +
+  "Restart the listener with a fresh credential; any credential state file must be mode 0600. Then run cswarm listen status.";
+const CREDENTIAL_401_WARNING =
+  "CommonSwarm could not authenticate a listener credential (HTTP 401). The hook is not checking routed asks. " +
+  "Restart the listener with a fresh credential, then run cswarm listen status.";
+
+interface ContextCheck {
+  context: ListenerHookContext;
+  queue: FilePendingMainQueue;
+  pending: SurfaceItem[];
+  droppedCount: number;
+  network: SurfaceItem[];
+  credentialFailure: "read" | "401" | null;
+  credentialHealthy: boolean;
+}
+
+/** Print first, then advance the high-water and remove local queue entries. */
 export async function checkListenerHooks(
   options: HookCheckOptions & { signal: AbortSignal; deadlineMs: number },
 ): Promise<string> {
@@ -405,24 +504,96 @@ export async function checkListenerHooks(
     }
     const contexts = await discoverContexts(stateDirectory);
     if (contexts.length === 0) return "";
-    const pending = await pendingItems(contexts);
-    if (!await reserveCheck(stateDirectory, cooldownSeconds * 1_000, now())) {
-      return pending.map(renderHookSignal).join("\n\n");
-    }
-    if (options.signal.aborted) return pending.map(renderHookSignal).join("\n\n");
-    const network = await Promise.all(contexts.map(async (context) => {
-      try {
-        return await inboxItems(context, {
-          ...(options.fetcher ? { fetcher: options.fetcher } : {}),
-          signal: options.signal,
-          deadlineMs: options.deadlineMs,
-          now,
-        });
-      } catch {
-        return [];
+    const networkAllowed = await reserveCheck(
+      stateDirectory,
+      cooldownSeconds * 1_000,
+      now(),
+    );
+    const checks = await Promise.all(contexts.map(async (context): Promise<ContextCheck> => {
+      const queue = new FilePendingMainQueue(context.instanceDirectory);
+      const pending = await queue.read();
+      const stats = await queue.stats();
+      let network: SurfaceItem[] = [];
+      let credentialFailure: ContextCheck["credentialFailure"] =
+        context.credentialReadFailed ? "read" : null;
+      let credentialHealthy = false;
+      if (networkAllowed && !options.signal.aborted && context.credential !== null) {
+        try {
+          network = await inboxItems(context, {
+            ...(options.fetcher ? { fetcher: options.fetcher } : {}),
+            signal: options.signal,
+            deadlineMs: options.deadlineMs,
+            now,
+          });
+          credentialHealthy = true;
+        } catch (error) {
+          if (followHttpDetails(error)?.status === 401) credentialFailure = "401";
+        }
       }
+      return {
+        context,
+        queue,
+        pending,
+        droppedCount: stats.droppedCount,
+        network,
+        credentialFailure,
+        credentialHealthy,
+      };
     }));
-    return [...pending, ...network.flat()].map(renderHookSignal).join("\n\n");
+
+    const commits: Array<{
+      check: ContextCheck;
+      store: FileHookSurfaceStore;
+      signalIds: string[];
+      reportDrops: boolean;
+      reportCredentialFailure: boolean;
+    }> = [];
+    const blocks: string[] = [];
+    for (const check of checks) {
+      const store = new FileHookSurfaceStore(check.context.instanceDirectory);
+      const staged = await store.stage(
+        [...check.pending, ...check.network],
+        check.droppedCount,
+      );
+      blocks.push(...staged.unseen.map(renderHookSignal));
+      const reportDrops = staged.droppedSinceLastCheck > 0;
+      if (reportDrops) blocks.push(renderDroppedAsks(staged.droppedSinceLastCheck));
+      const reportCredentialFailure = check.credentialFailure !== null &&
+        !staged.credentialFailureReported;
+      if (reportCredentialFailure) {
+        blocks.push(
+          check.credentialFailure === "401"
+            ? CREDENTIAL_401_WARNING
+            : CREDENTIAL_READ_WARNING,
+        );
+      }
+      commits.push({
+        check,
+        store,
+        signalIds: staged.unseen.map((item) => item.signalId),
+        reportDrops,
+        reportCredentialFailure,
+      });
+    }
+    const output = blocks.join("\n\n");
+    if (output.length > 0) await (options.write ?? (() => undefined))(output);
+
+    for (const commit of commits) {
+      await commit.store.commit({
+        signalIds: commit.signalIds,
+        ...(commit.reportDrops ? { droppedCount: commit.check.droppedCount } : {}),
+        ...(commit.reportCredentialFailure
+          ? { credentialFailureReported: true }
+          : commit.check.credentialHealthy
+          ? { credentialFailureReported: false }
+          : {}),
+      });
+      await commit.check.queue.remove(
+        new Set(commit.check.pending.map((entry) => entry.signalId)),
+        HOOK_LOCK_TIMEOUT_MS,
+      );
+    }
+    return output;
   } catch {
     return "";
   }

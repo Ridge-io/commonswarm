@@ -107,6 +107,7 @@ function statusFor(paths: ListenerPaths, state: ListenerStatus["state"]): Listen
     routeMode: "worker",
     deferOverChars: null,
     pendingForMainCount: 0,
+    droppedForMainCount: 0,
     logPath: paths.logPath,
   };
 }

@@ -188,8 +188,9 @@ import {
   waitForListenerReady,
   LISTENER_PROMPT_TIMEOUT_MS,
   ListenerRenewalUnavailableError,
+  readListenerCredentialState,
   runListenerHookCheck,
-  writeListenerHookCredential,
+  writeListenerCredentialState,
   LISTENER_DEFER_OVER_MAX,
   LISTENER_DEFER_OVER_MIN,
   type ListenerPermissionMode,
@@ -3522,6 +3523,7 @@ export function listenerStatusJson(
     routeMode: status.routeMode ?? "worker",
     deferOverChars: status.deferOverChars ?? null,
     pendingForMainCount: status.pendingForMainCount ?? 0,
+    droppedForMainCount: status.droppedForMainCount ?? 0,
     ...(mode
       ? {
         permission_mode: mode,
@@ -3547,6 +3549,7 @@ export function listenerStatusJson(
 export function renderListenerStatus(status: ListenerStatus): string {
   const routeMode = status.routeMode ?? "worker";
   const pendingForMainCount = status.pendingForMainCount ?? 0;
+  const droppedForMainCount = status.droppedForMainCount ?? 0;
   const lines = [
     `Listener ${status.state} for agent ${status.principalId}.`,
     `Provider: ${status.provider}; process: ${status.pid}; started: ${status.startedAt}.`,
@@ -3590,6 +3593,12 @@ export function renderListenerStatus(status: ListenerStatus): string {
   );
   if (routeMode !== "worker") {
     lines.push(`Asks waiting for this session: ${pendingForMainCount}.`);
+    lines.push(`Routed asks dropped from the overflow queue: ${droppedForMainCount}.`);
+    if (droppedForMainCount > 0) {
+      lines.push(
+        "The signals remain in the inbox. Recover them with: cswarm inbox",
+      );
+    }
     if (pendingForMainCount > 0) {
       lines.push(
         `${pendingForMainCount} asks waiting for this session; they surface at your next prompt, or run cswarm hook check.`,
@@ -3866,21 +3875,25 @@ async function runConfiguredListener(options: {
     options.workspaceId,
     options.agent,
   );
-  let mirroredCredential: string | null = null;
+  let storedCredential: string | null = null;
   const credentialSession = {
     bearer: async (): Promise<string> => {
       const credential = await liveCredentialSession.bearer();
-      if (credential !== mirroredCredential) {
-        await writeListenerHookCredential(paths.instanceDirectory, {
+      if (credential !== storedCredential) {
+        await writeListenerCredentialState(paths.instanceDirectory, {
           target: options.cloud,
           workspaceId: options.workspaceId,
           principalId: options.principalId,
           credential,
         }).then(() => {
-          mirroredCredential = credential;
-        }).catch(() => undefined);
+          storedCredential = credential;
+        });
       }
-      return credential;
+      const stored = await readListenerCredentialState(paths.instanceDirectory);
+      if (stored === null || stored.credential !== credential) {
+        throw new Error("listener credential state did not preserve the live credential");
+      }
+      return stored.credential;
     },
   };
   const resolveSenderProvenance = async (
@@ -4270,11 +4283,14 @@ async function runListenStart(args: Arguments): Promise<void> {
   }
   if ((status.routeMode ?? "worker") !== "worker") {
     const recordedPending = status.pendingForMainCount ?? 0;
+    const recordedDropped = status.droppedForMainCount ?? 0;
+    const queueStats = await new FilePendingMainQueue(
+      paths.instanceDirectory,
+    ).stats().catch(() => ({ count: recordedPending, droppedCount: recordedDropped }));
     status = {
       ...status,
-      pendingForMainCount: await new FilePendingMainQueue(
-        paths.instanceDirectory,
-      ).count().catch(() => recordedPending),
+      pendingForMainCount: queueStats.count,
+      droppedForMainCount: queueStats.droppedCount,
     };
   }
   if (args.has("json")) {
@@ -4435,11 +4451,14 @@ async function runListenStatusOrStop(
   }
   if ((status.routeMode ?? "worker") !== "worker") {
     const recordedPending = status.pendingForMainCount ?? 0;
+    const recordedDropped = status.droppedForMainCount ?? 0;
+    const queueStats = await new FilePendingMainQueue(
+      paths.instanceDirectory,
+    ).stats().catch(() => ({ count: recordedPending, droppedCount: recordedDropped }));
     status = {
       ...status,
-      pendingForMainCount: await new FilePendingMainQueue(
-        paths.instanceDirectory,
-      ).count().catch(() => recordedPending),
+      pendingForMainCount: queueStats.count,
+      droppedForMainCount: queueStats.droppedCount,
     };
   }
   if (args.has("json")) {
@@ -4574,11 +4593,29 @@ async function runHook(args: Arguments): Promise<void> {
     ) {
       return;
     }
-    const output = await runListenerHookCheck({
-      ...(cooldownSeconds === undefined ? {} : { cooldownSeconds }),
-    });
-    if (output.length > 0) process.stdout.write(`${output}\n`);
-    return;
+    // The fetch deadline only aborts cooperative I/O. This process ceiling also
+    // stops sockets that ignore abort; completed stdout writes have already
+    // called their callback before the hook advances its high-water.
+    const hardExit = setTimeout(() => {
+      process.exit(0);
+    }, 3_000);
+    hardExit.unref();
+    try {
+      await runListenerHookCheck({
+        ...(cooldownSeconds === undefined ? {} : { cooldownSeconds }),
+        write: async (output) => {
+          await new Promise<void>((resolve, reject) => {
+            process.stdout.write(`${output}\n`, (error) => {
+              if (error) reject(error);
+              else resolve();
+            });
+          });
+        },
+      });
+      return;
+    } finally {
+      clearTimeout(hardExit);
+    }
   }
   if (command !== "install" && command !== "uninstall") {
     throw new UsageError("hook requires check, install, or uninstall");

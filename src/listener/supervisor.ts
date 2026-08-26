@@ -211,6 +211,7 @@ export async function runListenerSupervisor(
     routeMode: options.routeMode ?? "worker",
     deferOverChars: options.deferOverChars ?? null,
     pendingForMainCount: 0,
+    droppedForMainCount: 0,
     logPath: options.paths.logPath,
   };
   let writes = Promise.resolve();
@@ -434,6 +435,7 @@ export async function runListenerSupervisor(
       status = {
         ...status,
         pendingForMainCount: event.pendingCount,
+        droppedForMainCount: event.droppedCount,
         lastSignalId: event.signalId,
         updatedAt: event.ts,
       };

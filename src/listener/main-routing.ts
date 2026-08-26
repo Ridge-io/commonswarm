@@ -70,6 +70,7 @@ export interface PendingMainEntry {
 interface PendingMainFile {
   version: 1;
   entries: PendingMainEntry[];
+  droppedCount: number;
 }
 
 function checkedTimestamp(value: unknown): value is string {
@@ -133,9 +134,14 @@ function parseFile(raw: string): PendingMainFile {
   }
   const row = value as Record<string, unknown>;
   if (
-    Object.keys(row).some((key) => key !== "version" && key !== "entries") ||
+    Object.keys(row).some((key) =>
+      key !== "version" && key !== "entries" && key !== "droppedCount"
+    ) ||
     row.version !== 1 || !Array.isArray(row.entries) ||
-    row.entries.length > LISTENER_MAIN_QUEUE_MAX
+    row.entries.length > LISTENER_MAIN_QUEUE_MAX ||
+    !(row.droppedCount === undefined ||
+      (typeof row.droppedCount === "number" &&
+        Number.isSafeInteger(row.droppedCount) && row.droppedCount >= 0))
   ) {
     throw new Error("stored pending-for-main queue is malformed");
   }
@@ -143,7 +149,7 @@ function parseFile(raw: string): PendingMainFile {
   if (new Set(entries.map((entry) => entry.signalId)).size !== entries.length) {
     throw new Error("stored pending-for-main queue repeats a signal");
   }
-  return { version: 1, entries };
+  return { version: 1, entries, droppedCount: row.droppedCount ?? 0 };
 }
 
 /** One bounded, locked queue beside status.json for asks reserved for the main session. */
@@ -161,7 +167,7 @@ export class FilePendingMainQueue {
 
   private async readUnlocked(): Promise<PendingMainFile> {
     const raw = await readSecureJsonFile(this.path, MAX_QUEUE_BYTES);
-    return raw === null ? { version: 1, entries: [] } : parseFile(raw);
+    return raw === null ? { version: 1, entries: [], droppedCount: 0 } : parseFile(raw);
   }
 
   private async writeUnlocked(file: PendingMainFile): Promise<void> {
@@ -177,22 +183,41 @@ export class FilePendingMainQueue {
     return (await this.readUnlocked()).entries.length;
   }
 
+  async stats(): Promise<{ count: number; droppedCount: number }> {
+    const file = await this.readUnlocked();
+    return { count: file.entries.length, droppedCount: file.droppedCount };
+  }
+
   async enqueue(entry: PendingMainEntry): Promise<{
     count: number;
     added: boolean;
     droppedOldest: boolean;
+    droppedCount: number;
   }> {
     const checked = parseEntry(entry);
     return await withFileLock(this.directory, QUEUE_LOCK, async () => {
       const file = await this.readUnlocked();
       if (file.entries.some((item) => item.signalId === checked.signalId)) {
-        return { count: file.entries.length, added: false, droppedOldest: false };
+        return {
+          count: file.entries.length,
+          added: false,
+          droppedOldest: false,
+          droppedCount: file.droppedCount,
+        };
       }
       file.entries.push(checked);
       const droppedOldest = file.entries.length > LISTENER_MAIN_QUEUE_MAX;
-      if (droppedOldest) file.entries.shift();
+      if (droppedOldest) {
+        file.entries.shift();
+        file.droppedCount += 1;
+      }
       await this.writeUnlocked(file);
-      return { count: file.entries.length, added: true, droppedOldest };
+      return {
+        count: file.entries.length,
+        added: true,
+        droppedOldest,
+        droppedCount: file.droppedCount,
+      };
     });
   }
 
@@ -202,7 +227,11 @@ export class FilePendingMainQueue {
       const file = await this.readUnlocked();
       const entries = file.entries.filter((entry) => !signalIds.has(entry.signalId));
       if (entries.length !== file.entries.length) {
-        await this.writeUnlocked({ version: 1, entries });
+        await this.writeUnlocked({
+          version: 1,
+          entries,
+          droppedCount: file.droppedCount,
+        });
       }
       return entries.length;
     }, lockTimeoutMs === undefined ? {} : { timeoutMs: lockTimeoutMs });

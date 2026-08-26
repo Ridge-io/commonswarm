@@ -74,6 +74,7 @@ export interface ListenerStatus {
   routeMode?: ListenerRouteMode;
   deferOverChars?: number | null;
   pendingForMainCount?: number;
+  droppedForMainCount?: number;
   logPath: string;
 }
 
@@ -149,6 +150,7 @@ const STATUS_ALLOWED_KEYS = new Set([
   "routeMode",
   "deferOverChars",
   "pendingForMainCount",
+  "droppedForMainCount",
 ]);
 // Sensitive aliases are rejected by name, not silently dropped, so a status
 // file can never smuggle a lease capability, command ID, credential, or body.
@@ -266,7 +268,10 @@ function parseStatus(raw: string): ListenerStatus {
         row.deferOverChars <= 10_000)) ||
     !(row.pendingForMainCount === undefined ||
       (typeof row.pendingForMainCount === "number" &&
-        Number.isSafeInteger(row.pendingForMainCount) && row.pendingForMainCount >= 0))
+        Number.isSafeInteger(row.pendingForMainCount) && row.pendingForMainCount >= 0)) ||
+    !(row.droppedForMainCount === undefined ||
+      (typeof row.droppedForMainCount === "number" &&
+        Number.isSafeInteger(row.droppedForMainCount) && row.droppedForMainCount >= 0))
   ) {
     throw new Error("stored listener status is malformed");
   }
@@ -294,6 +299,7 @@ function parseStatus(raw: string): ListenerStatus {
     routeMode,
     deferOverChars,
     pendingForMainCount: (row.pendingForMainCount ?? 0) as number,
+    droppedForMainCount: (row.droppedForMainCount ?? 0) as number,
   };
 }
 

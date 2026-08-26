@@ -1,7 +1,7 @@
 /** Pure CLI coverage. This file is reached by `npm run test:p1-cli`. */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -18,7 +18,7 @@ import {
   FilePendingMainQueue,
   listenerPaths,
   renderHookSignal,
-  writeListenerHookCredential,
+  writeListenerCredentialState,
   type PendingMainEntry,
 } from "../../src/listener/index.js";
 
@@ -67,7 +67,7 @@ async function installCredential(root: string, url = "https://cloud.example.test
     principalId: PRINCIPAL_ID,
     stateDirectory: root,
   });
-  await writeListenerHookCredential(paths.instanceDirectory, {
+  await writeListenerCredentialState(paths.instanceDirectory, {
     target,
     workspaceId: WORKSPACE_ID,
     principalId: PRINCIPAL_ID,
@@ -86,6 +86,27 @@ function emptyInboxFetch(calls: { count: number }): typeof fetch {
     }), { status: 200, headers: { "content-type": "application/json" } });
   }) as typeof fetch;
 }
+
+test("listener and hook share one 0600 credential state and remove the retired copy", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cswarm-hook-one-credential-"));
+  try {
+    const { target, paths } = state(root);
+    await mkdir(paths.instanceDirectory, { recursive: true, mode: 0o700 });
+    const retired = join(paths.instanceDirectory, "hook-credential.json");
+    await writeFile(retired, "retired duplicate", { mode: 0o600 });
+    await writeListenerCredentialState(paths.instanceDirectory, {
+      target,
+      workspaceId: WORKSPACE_ID,
+      principalId: PRINCIPAL_ID,
+      credential: TOKEN,
+    });
+    const live = join(paths.instanceDirectory, "listener-credential.json");
+    assert.equal((await stat(live)).mode & 0o777, 0o600);
+    await assert.rejects(readFile(retired, "utf8"), { code: "ENOENT" });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 test("hook check cooldown reserves a state-file timestamp and skips the network", async () => {
   const root = await mkdtemp(join(tmpdir(), "cswarm-hook-cooldown-"));
@@ -117,6 +138,49 @@ test("hook check cooldown reserves a state-file timestamp and skips the network"
     assert.equal(calls.count, 2);
     const cooldown = JSON.parse(await readFile(join(root, "hook-check.json"), "utf8"));
     assert.equal(cooldown.lastCheckAt, clock);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("hook print-before-mark ordering: a post-print failure re-surfaces once, then stops", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cswarm-hook-print-order-"));
+  try {
+    const { paths } = state(root);
+    await new FilePendingMainQueue(paths.instanceDirectory).enqueue(
+      pending(SIGNAL_ID, "survive the prompt crash"),
+    );
+    const controller = new AbortController();
+    let firstPrinted = "";
+    const first = await checkListenerHooks({
+      stateDirectory: root,
+      cooldownSeconds: 30,
+      signal: controller.signal,
+      deadlineMs: Date.now() + 3_000,
+      write(output) {
+        firstPrinted = output;
+        throw new Error("simulated crash after stdout and before high-water");
+      },
+    });
+    assert.equal(first, "");
+    assert.match(firstPrinted, /"survive the prompt crash"/);
+    assert.equal((await new FilePendingMainQueue(paths.instanceDirectory).read()).length, 1);
+
+    const second = await checkListenerHooks({
+      stateDirectory: root,
+      cooldownSeconds: 30,
+      signal: controller.signal,
+      deadlineMs: Date.now() + 3_000,
+    });
+    assert.match(second, /"survive the prompt crash"/);
+    assert.equal((await new FilePendingMainQueue(paths.instanceDirectory).read()).length, 0);
+    const third = await checkListenerHooks({
+      stateDirectory: root,
+      cooldownSeconds: 30,
+      signal: controller.signal,
+      deadlineMs: Date.now() + 3_000,
+    });
+    assert.equal(third, "", "mutation: skipping the post-print mark re-surfaces forever");
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -218,6 +282,115 @@ test("hook check fails silent against a refused network connection", async () =>
     assert.equal(result.status, 0);
     assert.equal(result.stdout, "");
     assert.equal(result.stderr, "");
+  } finally {
+    await rm(xdg, { recursive: true, force: true });
+  }
+});
+
+test("hook 401 credential failure prints once, then the failure state suppresses it", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cswarm-hook-401-once-"));
+  try {
+    await installCredential(root);
+    let calls = 0;
+    const unauthorized = (async () => {
+      calls += 1;
+      return new Response(JSON.stringify({ error: "no" }), { status: 401 });
+    }) as typeof fetch;
+    const controller = new AbortController();
+    const invoke = async () => await checkListenerHooks({
+      stateDirectory: root,
+      cooldownSeconds: 0,
+      fetcher: unauthorized,
+      signal: controller.signal,
+      deadlineMs: Date.now() + 3_000,
+    });
+    assert.match(await invoke(), /could not authenticate.*HTTP 401/);
+    assert.equal(await invoke(), "");
+    assert.equal(calls, 2, "the second check reached the 401 path and suppressed its warning");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("hook missing listener credential state is a normal silent state", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cswarm-hook-no-state-"));
+  try {
+    const { paths } = state(root);
+    await mkdir(paths.instanceDirectory, { recursive: true, mode: 0o700 });
+    const controller = new AbortController();
+    assert.equal(await checkListenerHooks({
+      stateDirectory: root,
+      cooldownSeconds: 0,
+      signal: controller.signal,
+      deadlineMs: Date.now() + 3_000,
+    }), "");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("hook refuses a listener credential state that is not mode 0600 and warns once", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cswarm-hook-mode-"));
+  try {
+    const paths = await installCredential(root);
+    await chmod(join(paths.instanceDirectory, "listener-credential.json"), 0o644);
+    const controller = new AbortController();
+    const invoke = async () => await checkListenerHooks({
+      stateDirectory: root,
+      cooldownSeconds: 0,
+      signal: controller.signal,
+      deadlineMs: Date.now() + 3_000,
+    });
+    assert.match(await invoke(), /could not read.*mode 0600/);
+    assert.equal(await invoke(), "");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("hook surfaces the overflow drop count with the inbox recovery path", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cswarm-hook-dropped-"));
+  try {
+    const { paths } = state(root);
+    const queue = new FilePendingMainQueue(paths.instanceDirectory);
+    for (let index = 0; index <= 200; index += 1) {
+      const signalId = `aaaaaaaa-aaaa-4aaa-8aaa-${index.toString(16).padStart(12, "0")}`;
+      await queue.enqueue(pending(signalId, `ask ${index}`));
+    }
+    const controller = new AbortController();
+    const output = await checkListenerHooks({
+      stateDirectory: root,
+      cooldownSeconds: 0,
+      signal: controller.signal,
+      deadlineMs: Date.now() + 3_000,
+    });
+    assert.match(
+      output,
+      /1 routed asks were dropped from the overflow queue; check cswarm inbox\. The signals remain in the inbox\./,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("hook hard deadline exits 0 under four seconds against a blackholed address", async () => {
+  const xdg = await mkdtemp(join(tmpdir(), "cswarm-hook-blackhole-"));
+  try {
+    const root = join(xdg, "cswarm", "listeners");
+    await installCredential(root, "http://10.255.255.1");
+    const started = Date.now();
+    const result = runCli(["hook", "check", "--cooldown", "0"], {
+      env: {
+        XDG_STATE_HOME: xdg,
+        NODE_OPTIONS: `--max-old-space-size=4096 --import=${join(
+          repoRoot,
+          "tests/fixtures/hanging-fetch.mjs",
+        )}`,
+      },
+    });
+    const elapsed = Date.now() - started;
+    assert.equal(result.status, 0);
+    assert.ok(elapsed < 4_000, `hard deadline took ${elapsed}ms`);
   } finally {
     await rm(xdg, { recursive: true, force: true });
   }
@@ -337,6 +510,7 @@ test("listen status names the route and the next step for waiting main asks", ()
     routeMode: "split",
     deferOverChars: 240,
     pendingForMainCount: 2,
+    droppedForMainCount: 3,
     logPath: "/tmp/events.ndjson",
   });
   assert.match(rendered, /Ask route: split; bodies over 240 characters/);
@@ -344,4 +518,6 @@ test("listen status names the route and the next step for waiting main asks", ()
     rendered,
     /2 asks waiting for this session; they surface at your next prompt, or run cswarm hook check/,
   );
+  assert.match(rendered, /Routed asks dropped from the overflow queue: 3/);
+  assert.match(rendered, /signals remain in the inbox.*cswarm inbox/i);
 });
