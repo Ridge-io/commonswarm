@@ -478,6 +478,7 @@ function entryFromSignal(
     principalId,
     fromId: signal.from,
     fromKind: signal.from_kind,
+    ...(signal.kind === "ask" || signal.kind === "note" ? { kind: signal.kind } : {}),
     senderName,
     body: signal.body,
     createdAt: signal.created_at,
@@ -493,13 +494,20 @@ function preview(value: string): string {
   return JSON.stringify(text);
 }
 
-/** Render untrusted teammate text only inside JSON quotes in a MESSAGE block. */
+/** Render untrusted teammate text only inside JSON quotes in a CommonSwarm block. */
 export function renderHookSignal(item: SurfaceItem): string {
   const sender = item.senderName === null ? item.fromId : item.senderName;
+  const senderKind = item.fromKind === "user" ? "teammate" : "agent";
+  const intent = item.kind === "ask"
+    ? "is asking you:"
+    : item.kind === "note"
+    ? "sent you a note:"
+    : "sent you a message:";
+  const replyLabel = item.kind === "note" ? "reply (optional):" : "reply:";
   return [
-    `[CSWARM MESSAGE from ${item.fromKind} ${JSON.stringify(sender)}; workspace ${item.workspaceId}]`,
+    `[CommonSwarm] ${senderKind} ${JSON.stringify(sender)} ${intent}`,
     preview(item.body),
-    `operator reply command: cswarm reply ${item.signalId} "<answer>" --workspace-id ${item.workspaceId}`,
+    `${replyLabel} cswarm reply ${item.signalId} "<answer>" --workspace-id ${item.workspaceId}`,
   ].join("\n");
 }
 

@@ -61,6 +61,7 @@ export interface PendingMainEntry {
   principalId: string;
   fromId: string;
   fromKind: "user" | "agent";
+  kind?: "ask" | "note";
   senderName: string | null;
   body: string;
   createdAt: string;
@@ -88,6 +89,7 @@ function parseEntry(value: unknown): PendingMainEntry {
     "principalId",
     "fromId",
     "fromKind",
+    "kind",
     "senderName",
     "body",
     "createdAt",
@@ -102,6 +104,7 @@ function parseEntry(value: unknown): PendingMainEntry {
     typeof row.principalId !== "string" || !UUID_RE.test(row.principalId) ||
     typeof row.fromId !== "string" || !UUID_RE.test(row.fromId) ||
     (row.fromKind !== "user" && row.fromKind !== "agent") ||
+    !(row.kind === undefined || row.kind === "ask" || row.kind === "note") ||
     !(row.senderName === null ||
       (typeof row.senderName === "string" && row.senderName.length <= 200)) ||
     typeof row.body !== "string" || row.body.length < 1 || row.body.length > 2_000 ||
@@ -115,6 +118,7 @@ function parseEntry(value: unknown): PendingMainEntry {
     principalId: row.principalId.toLowerCase(),
     fromId: row.fromId.toLowerCase(),
     fromKind: row.fromKind,
+    ...(row.kind === "ask" || row.kind === "note" ? { kind: row.kind } : {}),
     senderName: row.senderName,
     body: row.body,
     createdAt: row.createdAt,

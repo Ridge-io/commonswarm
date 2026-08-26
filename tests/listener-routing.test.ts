@@ -1,6 +1,6 @@
 /** Pure listener routing and queue tests. This file is named in `npm test`. */
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -86,6 +86,35 @@ test("the pending-main queue drops its oldest entry at 200 and emits a warning e
     assert.match(log, /"defer_over_chars":12,"body_length":13/);
     assert.match(log, /"event":"listener_main_queue_oldest_dropped"/);
     assert.match(log, /"dropped_count":1/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("the pending-main queue preserves valid kinds and accepts legacy entries without one", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cswarm-main-route-kind-"));
+  try {
+    const paths = listenerPaths({
+      profileId: "routing-kind-test",
+      workspaceId: WORKSPACE_ID,
+      principalId: PRINCIPAL_ID,
+      stateDirectory: root,
+    });
+    const queue = new FilePendingMainQueue(paths.instanceDirectory);
+    const legacy = entry(1);
+    await queue.enqueue(legacy);
+    assert.deepEqual(await queue.read(), [legacy]);
+
+    const ask = { ...entry(2), kind: "ask" as const };
+    await queue.enqueue(ask);
+    assert.deepEqual(await queue.read(), [legacy, ask]);
+
+    await writeFile(queue.path, JSON.stringify({
+      version: 1,
+      entries: [{ ...entry(3), kind: "bogus" }],
+      droppedCount: 0,
+    }));
+    await assert.rejects(queue.read(), /stored pending-for-main entry is malformed/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
