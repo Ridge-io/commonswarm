@@ -141,6 +141,8 @@ import {
 } from "./cloud/workspaces.js";
 import {
   ASK_WAIT_TIMEOUT_MESSAGE,
+  askCreateFailureMessage,
+  askReplyReadFailureMessage,
   askWaitJsonPayload,
   followStopFrame,
   formatFollowFrame,
@@ -2585,12 +2587,25 @@ async function runPostSignal(
     validateHumanWorkspace: true,
   });
   const toSelector = allowTo ? args.optional("to") : undefined;
-  const recipient: ResolvedSignalRecipient | null = toSelector === undefined
-    ? null
-    : resolveSignalRecipient(
-      toSelector,
-      await signalDirectory(cloud, credential.selectedWorkspace, credential),
-    );
+  let recipient: ResolvedSignalRecipient | null = null;
+  if (toSelector !== undefined) {
+    let directory: SignalDirectory;
+    try {
+      directory = await signalDirectory(
+        cloud,
+        credential.selectedWorkspace,
+        credential,
+      );
+    } catch (error) {
+      if (kind === "ask") {
+        throw new Error(
+          askCreateFailureMessage(credential.selectedWorkspace, error),
+        );
+      }
+      throw error;
+    }
+    recipient = resolveSignalRecipient(toSelector, directory);
+  }
   // Broadcast asks cannot receive authorized replies; waiting would never succeed.
   if (waitSeconds !== undefined && recipient === null) {
     throw new Error(
@@ -2610,23 +2625,40 @@ async function runPostSignal(
       ? {}
       : { until_ms: untilMs }),
   };
-  const result = await postSignalCommand(cloud, credential, command);
+  let result: PostSignalResult;
+  try {
+    result = await postSignalCommand(cloud, credential, command);
+  } catch (error) {
+    if (kind === "ask") {
+      throw new Error(
+        askCreateFailureMessage(credential.selectedWorkspace, error),
+      );
+    }
+    throw error;
+  }
   const signal = result.response.signal!;
 
   if (waitSeconds !== undefined) {
     const credentialForRead = signalCredentialOf(credential);
     const deadlineMs = waitDeadlineMs(waitSeconds);
-    const waitResult = await pollForSignals({
-      deadlineMs,
-      read: () =>
-        readSignals(cloud, credentialForRead, {
-          workspaceId: credential.selectedWorkspace,
-          inbox: true,
-          in_reply_to: signal.id,
-          includeStale: false,
-          limit: 1,
-        }, { deadlineMs }),
-    });
+    let waitResult;
+    try {
+      waitResult = await pollForSignals({
+        deadlineMs,
+        read: () =>
+          readSignals(cloud, credentialForRead, {
+            workspaceId: credential.selectedWorkspace,
+            inbox: true,
+            in_reply_to: signal.id,
+            includeStale: false,
+            limit: 1,
+          }, { deadlineMs }),
+      });
+    } catch (error) {
+      throw new Error(
+        askReplyReadFailureMessage(credential.selectedWorkspace, error),
+      );
+    }
     const reply = waitResult.signals[0] ?? null;
     if (args.has("json")) {
       printJson(askWaitJsonPayload(signal, reply, waitResult.timedOut));

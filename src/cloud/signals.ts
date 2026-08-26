@@ -2,11 +2,12 @@ import {
   readEndpoint,
   type CloudTarget,
 } from "./config.js";
-import type {
-  PostSignalCommand,
-  SenderOwnerRelation,
-  SignalKind,
-  SignalRecord,
+import {
+  CommandHttpError,
+  type PostSignalCommand,
+  type SenderOwnerRelation,
+  type SignalKind,
+  type SignalRecord,
 } from "./command-client.js";
 import {
   relativeAge,
@@ -439,12 +440,16 @@ export function parseRetryAfterMs(
  * The body is already parsed by fetchSignalRead; its envelope rides along so
  * classification can honour `retryable` and the operator sees `request_id`.
  */
-function throwSignalHttp(response: Response, body: unknown): never {
+function throwSignalHttp(
+  response: Response,
+  body: unknown,
+  failure = "signal read failed",
+): never {
   const status = response.status;
   const retryAfterMs = parseRetryAfterMs(response.headers.get("retry-after"));
   const envelope = parseServerErrorEnvelope(body);
   const error = new Error(
-    describeServerError(`signal read failed (HTTP ${status})`, envelope),
+    describeServerError(`${failure} (HTTP ${status})`, envelope),
   );
   plainHttpStatus.set(error, status);
   plainHttpRetryAfterMs.set(error, retryAfterMs);
@@ -1010,7 +1015,7 @@ export async function readAgentSignalDirectory(
   }
   const { response, body } = result;
   if (!response.ok) {
-    throw new Error(`member read failed (HTTP ${response.status})`);
+    throwSignalHttp(response, body, "member read failed");
   }
   if (!body || typeof body !== "object" || Array.isArray(body)) {
     throw new Error("member read returned malformed JSON");
@@ -1399,6 +1404,61 @@ export function postSignalTargets(
  */
 export const ASK_WAIT_TIMEOUT_MESSAGE =
   "Ask shared. No reply arrived before the wait ended; the ask remains live. Check for a reply with: cswarm inbox";
+
+function askFailureDetail(error: unknown): {
+  detail: string;
+  serverError: boolean;
+} {
+  const readHttp = followHttpDetails(error);
+  if (readHttp !== null) {
+    return {
+      detail: describeServerError(
+        `HTTP ${readHttp.status}`,
+        followErrorEnvelope(error),
+      ),
+      serverError: true,
+    };
+  }
+  if (error instanceof CommandHttpError) {
+    // Presentation cleanup only. cli.ts selects the phase by call boundary;
+    // this text never controls retry, success, or create-vs-read handling.
+    return {
+      detail: `HTTP ${error.status}; server detail: ${
+        error.message
+          .replace(/^signal read failed \(HTTP \d+\)(?:: )?/, "")
+          .slice(0, 240)
+      }`,
+      serverError: true,
+    };
+  }
+  return {
+    detail: error instanceof Error
+      ? error.message.slice(0, 300)
+      : "unknown error",
+    serverError: false,
+  };
+}
+
+/** Explain an ask failure that happened before the signal had a receipt. */
+export function askCreateFailureMessage(
+  workspaceId: string,
+  error: unknown,
+): string {
+  const failure = askFailureDetail(error);
+  const cause = failure.serverError
+    ? `server error before it was confirmed: ${failure.detail}`
+    : `request failure before it was confirmed: ${failure.detail}`;
+  return `Your message may not have been posted (${cause}). Check with: cswarm feed --workspace-id ${workspaceId} — and resend if it is not there.`;
+}
+
+/** Explain an ask reply-read failure only after the post returned its receipt. */
+export function askReplyReadFailureMessage(
+  workspaceId: string,
+  error: unknown,
+): string {
+  const failure = askFailureDetail(error);
+  return `Your message was posted, but its reply could not be fetched (${failure.detail}). Do not resend this ask. Check with: cswarm inbox --workspace-id ${workspaceId}`;
+}
 
 export function renderSignals(
   signals: readonly SignalRecord[],
