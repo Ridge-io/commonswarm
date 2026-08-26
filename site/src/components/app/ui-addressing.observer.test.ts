@@ -89,7 +89,7 @@ test("feed hierarchy is structural and makes no unmeasured visibility claim", ()
     ".dashboard__message-identity-badge",
     ".dashboard__message-operator",
     ".dashboard__message-meta time",
-    ".dashboard__message-body>p",
+    ".dashboard__message-markdown",
   ]) {
     assert.ok(builtAssets.includes(selector), `built /app CSS is missing ${selector}`);
   }
