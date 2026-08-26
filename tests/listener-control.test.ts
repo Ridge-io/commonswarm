@@ -104,6 +104,9 @@ function statusFor(paths: ListenerPaths, state: ListenerStatus["state"]): Listen
     lastTerminalDeliveryFailureAt: null,
     lastClaimAt: null,
     lastAckAt: null,
+    routeMode: "worker",
+    deferOverChars: null,
+    pendingForMainCount: 0,
     logPath: paths.logPath,
   };
 }
@@ -1863,4 +1866,3 @@ test("a second worker's failure never inherits the first worker's tail", async (
     "worker two's failure inherited worker one's tail",
   );
 });
-

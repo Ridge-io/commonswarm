@@ -26,6 +26,7 @@ const START_LOCK_WAIT_MS = 2_000;
 const START_LOCK_STALE_MS = 10_000;
 
 import type { ListenerPermissionMode } from "./types.js";
+import type { ListenerRouteMode } from "./main-routing.js";
 
 export type ListenerStatusState =
   | "starting"
@@ -70,6 +71,9 @@ export interface ListenerStatus {
   lastTerminalDeliveryFailureAt: string | null;
   lastClaimAt: string | null;
   lastAckAt: string | null;
+  routeMode?: ListenerRouteMode;
+  deferOverChars?: number | null;
+  pendingForMainCount?: number;
   logPath: string;
 }
 
@@ -142,6 +146,9 @@ const STATUS_ALLOWED_KEYS = new Set([
   "lastTerminalDeliveryFailureAt",
   "lastClaimAt",
   "lastAckAt",
+  "routeMode",
+  "deferOverChars",
+  "pendingForMainCount",
 ]);
 // Sensitive aliases are rejected by name, not silently dropped, so a status
 // file can never smuggle a lease capability, command ID, credential, or body.
@@ -250,9 +257,26 @@ function parseStatus(raw: string): ListenerStatus {
     !(row.lastClaimAt === undefined ||
       nullableTimestamp(row.lastClaimAt)) ||
     !(row.lastAckAt === undefined ||
-      nullableTimestamp(row.lastAckAt))
+      nullableTimestamp(row.lastAckAt)) ||
+    !(row.routeMode === undefined ||
+      row.routeMode === "worker" || row.routeMode === "main" || row.routeMode === "split") ||
+    !(row.deferOverChars === undefined || row.deferOverChars === null ||
+      (typeof row.deferOverChars === "number" &&
+        Number.isSafeInteger(row.deferOverChars) && row.deferOverChars >= 1 &&
+        row.deferOverChars <= 10_000)) ||
+    !(row.pendingForMainCount === undefined ||
+      (typeof row.pendingForMainCount === "number" &&
+        Number.isSafeInteger(row.pendingForMainCount) && row.pendingForMainCount >= 0))
   ) {
     throw new Error("stored listener status is malformed");
+  }
+  const routeMode = (row.routeMode ?? "worker") as ListenerRouteMode;
+  const deferOverChars = (row.deferOverChars ?? null) as number | null;
+  if (
+    (routeMode === "split" && deferOverChars === null) ||
+    (routeMode !== "split" && deferOverChars !== null)
+  ) {
+    throw new Error("stored listener status routing fields are malformed");
   }
   // Old version-1 files predate the delivery fields: normalize the absent
   // keys to null in memory without rewriting the stored bytes.
@@ -267,6 +291,9 @@ function parseStatus(raw: string): ListenerStatus {
     lastClaimAt: (row.lastClaimAt ?? null) as string | null,
     lastAckAt: (row.lastAckAt ?? null) as string | null,
     lastWorkerStderrTail: (row.lastWorkerStderrTail ?? null) as string | null,
+    routeMode,
+    deferOverChars,
+    pendingForMainCount: (row.pendingForMainCount ?? 0) as number,
   };
 }
 
@@ -322,6 +349,12 @@ export async function appendListenerEvent(
     // Local log only — this file never feeds a server payload.
     "worker_stderr_tail",
     "turn_budget_ms",
+    "route_mode",
+    "route_decision",
+    "defer_over_chars",
+    "body_length",
+    "pending_main_count",
+    "dropped_count",
   ]);
   const deliveryModes = new Set(["durable_claim", "cursor_fallback"]);
   const deliveryOutcomes = new Set([
@@ -330,6 +363,8 @@ export async function appendListenerEvent(
     "expired",
     "failed_terminal",
   ]);
+  const routeModes = new Set(["worker", "main", "split"]);
+  const routeDecisions = new Set(["worker", "main"]);
   for (const [key, value] of Object.entries(event)) {
     if (!allowed.has(key)) {
       throw new Error(`listener event field is not allowed: ${key}`);
@@ -357,6 +392,32 @@ export async function appendListenerEvent(
         (typeof value === "string" && deliveryOutcomes.has(value)))
     ) {
       throw new Error("listener event outcome is not allowed");
+    }
+    if (
+      key === "route_mode" &&
+      !(typeof value === "string" && routeModes.has(value))
+    ) {
+      throw new Error("listener event route mode is not allowed");
+    }
+    if (
+      key === "route_decision" &&
+      !(typeof value === "string" && routeDecisions.has(value))
+    ) {
+      throw new Error("listener event route decision is not allowed");
+    }
+    if (
+      key === "defer_over_chars" &&
+      !(value === null ||
+        (typeof value === "number" && Number.isSafeInteger(value) &&
+          value >= 1 && value <= 10_000))
+    ) {
+      throw new Error("listener event split threshold is not allowed");
+    }
+    if (
+      (key === "body_length" || key === "pending_main_count" || key === "dropped_count") &&
+      !(typeof value === "number" && Number.isSafeInteger(value) && value >= 0)
+    ) {
+      throw new Error("listener event main-route count is not allowed");
     }
     if (
       key === "worker_stderr_tail" &&

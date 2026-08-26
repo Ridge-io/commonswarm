@@ -40,7 +40,17 @@ import type {
   ListenerDeliveryJournalRecord,
 } from "./delivery-journal.js";
 import { ListenerEngine, newReceivedAskRecord } from "./engine.js";
-import { newObservedNoteRecord } from "./file-store.js";
+import {
+  newObservedNoteRecord,
+  newRoutedMainAskRecord,
+} from "./file-store.js";
+import {
+  decideListenerRoute,
+  pendingMainEntry,
+  type FilePendingMainQueue,
+  type ListenerRouteDecision,
+  type ListenerRouteMode,
+} from "./main-routing.js";
 import type {
   ListenerEffectRecord,
   ListenerEffectStore,
@@ -112,7 +122,7 @@ export type ListenerRuntimeEvent =
   | {
     type: "effect";
     signalId: string;
-    status: ListenerProcessResult["status"] | "observed";
+    status: ListenerProcessResult["status"] | "observed" | "routed_main";
     failureCode: string | null;
     ts: string;
   }
@@ -141,6 +151,22 @@ export type ListenerRuntimeEvent =
     type: "delivery_ack";
     signalId: string;
     outcome: DeliveryOutcome;
+    ts: string;
+  }
+  | {
+    type: "routing_decision";
+    signalId: string;
+    routeMode: ListenerRouteMode;
+    decision: ListenerRouteDecision;
+    threshold: number | null;
+    bodyLength: number;
+    ts: string;
+  }
+  | {
+    type: "main_queue";
+    signalId: string;
+    pendingCount: number;
+    droppedOldest: boolean;
     ts: string;
   };
 
@@ -180,6 +206,9 @@ export interface ListenerRuntimeOptions {
     signal: SignalRecord,
     context: ListenerSenderProvenanceContext,
   ) => Promise<ListenerSenderProvenance>;
+  routeMode?: ListenerRouteMode;
+  deferOverChars?: number | null;
+  pendingMainQueue?: Pick<FilePendingMainQueue, "enqueue">;
 }
 
 export type ListenerRuntimeStop =
@@ -355,6 +384,9 @@ function ackForTerminalEffect(
   if (record.state === "observed" && record.signalKind === "note") {
     return { outcome: "observed", lastErrorCode: null };
   }
+  if (record.state === "routed_main" && record.signalKind === "ask") {
+    return { outcome: "observed", lastErrorCode: null };
+  }
   if (
     record.state === "expired" &&
     record.signalKind === "ask" &&
@@ -390,6 +422,7 @@ function isAckableTerminalEffect(
       record.signalKind === "ask" &&
       !!record.replySignalId) ||
     (record.state === "observed" && record.signalKind === "note") ||
+    (record.state === "routed_main" && record.signalKind === "ask") ||
     (record.state === "expired" &&
       record.signalKind === "ask" &&
       Date.parse(record.askUntil) <= now()) ||
@@ -627,6 +660,8 @@ export async function runListenerRuntime(
   const random = options.random ?? Math.random;
   const pageLimit = options.pageLimit ?? LISTENER_PAGE_LIMIT;
   const pollMs = options.pollMs ?? LISTENER_IDLE_POLL_MS;
+  const routeMode = options.routeMode ?? "worker";
+  const deferOverChars = options.deferOverChars ?? null;
   const abort = options.signal;
   const hasInstanceId = options.listenerInstanceId !== undefined;
   const hasJournal = options.deliveryJournal !== undefined;
@@ -647,6 +682,14 @@ export async function runListenerRuntime(
       options.model,
       new Error("an injected delivery client requires durable delivery configuration"),
     );
+  }
+  try {
+    decideListenerRoute(routeMode, deferOverChars, 0);
+    if (routeMode !== "worker" && options.pendingMainQueue === undefined) {
+      throw new Error("main listener routing requires a pending queue");
+    }
+  } catch (error) {
+    return await closeBeforeStart(options.model, asError(error));
   }
   let initialJournal: ListenerDeliveryJournalRecord | null = null;
   if (hasJournal) {
@@ -708,6 +751,57 @@ export async function runListenerRuntime(
       : { resolveSenderProvenance: options.resolveSenderProvenance }),
     isCredentialFailure: isCredentialLoss,
   });
+  const routeAskToMain = async (
+    signal: SignalRecord,
+  ): Promise<ListenerEffectRecord> => {
+    let provenance: ListenerSenderProvenance = {
+      senderName: null,
+      operatorId: null,
+      operatorName: null,
+    };
+    if (options.resolveSenderProvenance) {
+      try {
+        provenance = await options.resolveSenderProvenance(signal, {
+          ...(abort ? { signal: abort } : {}),
+          deadlineMs: now() + SIGNAL_READ_TIMEOUT_MS,
+        });
+      } catch {
+        // A display name is optional metadata. The durable queue keeps exact ids.
+      }
+    }
+    const queued = await options.pendingMainQueue!.enqueue(
+      pendingMainEntry(signal, options.principalId, provenance, now()),
+    );
+    options.onEvent?.({
+      type: "main_queue",
+      signalId: signal.id,
+      pendingCount: queued.count,
+      droppedOldest: queued.droppedOldest,
+      ts: eventTime(now),
+    });
+    const existing = await options.store.read(signal.id);
+    if (existing !== null) {
+      if (!sameEffectSignal(existing, signal) || existing.state !== "routed_main") {
+        throw new Error("stored listener effect does not match the main-routed ask");
+      }
+      return existing;
+    }
+    await options.store.write(newRoutedMainAskRecord({
+      signalId: signal.id,
+      body: signal.body,
+      until: signal.until,
+      senderOwnerRelation: signal.sender_owner_relation ?? "unknown",
+      updatedAt: eventTime(now),
+    }));
+    const persisted = await options.store.read(signal.id);
+    if (
+      persisted === null || !sameEffectSignal(persisted, signal) ||
+      persisted.state !== "routed_main"
+    ) {
+      throw new Error("main-routed listener effect could not be verified");
+    }
+    return persisted;
+  };
   let malformedWarnings = 0;
   const readPage = options.readPage ?? (async (input) =>
     await readAgentSignalPage(
@@ -900,11 +994,13 @@ export async function runListenerRuntime(
       }
 
       if (!ready) {
-        try {
-          await options.model.start();
-        } catch (error) {
-          stop = { reason: "fatal", error: asError(error) };
-          break;
+        if (routeMode !== "main") {
+          try {
+            await options.model.start();
+          } catch (error) {
+            stop = { reason: "fatal", error: asError(error) };
+            break;
+          }
         }
         ready = true;
         options.onEvent?.({
@@ -1242,56 +1338,81 @@ export async function runListenerRuntime(
               ts: eventTime(now),
             });
           } else if (signal.kind === "ask") {
-            let processAttempt = 0;
-            while (terminal === null) {
-              const before = await options.store.read(signal.id);
-              if (before !== null && !sameEffectSignal(before, signal)) {
-                throw new Error("stored listener effect does not match the authoritative delivery");
-              }
-              const requiredBudget = effectPhaseBudget(before);
-              if (leasedUntilMs <= now() + requiredBudget) {
-                await sleep(
-                  Math.max(
-                    0,
-                    leasedUntilMs + LISTENER_DELIVERY_SAFETY_MARGIN_MS - now(),
-                  ),
-                  abort,
-                );
-                if (abort?.aborted) {
-                  stop = { reason: "cancelled" };
-                  break;
-                }
-                if (now() >= leasedUntilMs + LISTENER_DELIVERY_SAFETY_MARGIN_MS) {
-                  await journal.clearActive(eventTime(now));
-                  after = null;
-                }
-                break;
-              }
-              const processed = await engine.process(signal);
-              const effect = "record" in processed ? processed.record : null;
+            const decision = decideListenerRoute(
+              routeMode,
+              deferOverChars,
+              signal.body.length,
+            );
+            options.onEvent?.({
+              type: "routing_decision",
+              signalId: signal.id,
+              routeMode,
+              decision,
+              threshold: deferOverChars,
+              bodyLength: signal.body.length,
+              ts: eventTime(now),
+            });
+            if (decision === "main") {
+              terminal = await routeAskToMain(signal);
               options.onEvent?.({
                 type: "effect",
                 signalId: signal.id,
-                status: processed.status,
-                failureCode: effect?.failureCode ?? null,
+                status: "routed_main",
+                failureCode: null,
                 ts: eventTime(now),
               });
-              if (processed.status === "ignored") {
-                throw new Error("claimed delivery was ignored by the listener engine");
-              }
-              if (processed.status === "retry_pending") {
-                processAttempt += 1;
-                await sleep(
-                  deliveryRetryDelay(processAttempt, null, random),
-                  abort,
-                );
-                if (abort?.aborted) {
-                  stop = { reason: "cancelled" };
+            } else {
+              let processAttempt = 0;
+              while (terminal === null) {
+                const before = await options.store.read(signal.id);
+                if (before !== null && !sameEffectSignal(before, signal)) {
+                  throw new Error("stored listener effect does not match the authoritative delivery");
+                }
+                const requiredBudget = effectPhaseBudget(before);
+                if (leasedUntilMs <= now() + requiredBudget) {
+                  await sleep(
+                    Math.max(
+                      0,
+                      leasedUntilMs + LISTENER_DELIVERY_SAFETY_MARGIN_MS - now(),
+                    ),
+                    abort,
+                  );
+                  if (abort?.aborted) {
+                    stop = { reason: "cancelled" };
+                    break;
+                  }
+                  if (now() >= leasedUntilMs + LISTENER_DELIVERY_SAFETY_MARGIN_MS) {
+                    await journal.clearActive(eventTime(now));
+                    after = null;
+                  }
                   break;
                 }
-                continue;
+                const processed = await engine.process(signal);
+                const effect = "record" in processed ? processed.record : null;
+                options.onEvent?.({
+                  type: "effect",
+                  signalId: signal.id,
+                  status: processed.status,
+                  failureCode: effect?.failureCode ?? null,
+                  ts: eventTime(now),
+                });
+                if (processed.status === "ignored") {
+                  throw new Error("claimed delivery was ignored by the listener engine");
+                }
+                if (processed.status === "retry_pending") {
+                  processAttempt += 1;
+                  await sleep(
+                    deliveryRetryDelay(processAttempt, null, random),
+                    abort,
+                  );
+                  if (abort?.aborted) {
+                    stop = { reason: "cancelled" };
+                    break;
+                  }
+                  continue;
+                }
+                terminal = processed.record;
               }
-              terminal = processed.record;
             }
           } else {
             throw new Error("claimed delivery has an unsupported signal kind");
@@ -1368,6 +1489,31 @@ export async function runListenerRuntime(
         let result: ListenerProcessResult;
         try {
           await readOrReplaceUnreadableEffect(options.store, signal, now);
+          const decision = decideListenerRoute(
+            routeMode,
+            deferOverChars,
+            signal.body.length,
+          );
+          options.onEvent?.({
+            type: "routing_decision",
+            signalId: signal.id,
+            routeMode,
+            decision,
+            threshold: deferOverChars,
+            bodyLength: signal.body.length,
+            ts: eventTime(now),
+          });
+          if (decision === "main") {
+            const record = await routeAskToMain(signal);
+            options.onEvent?.({
+              type: "effect",
+              signalId: signal.id,
+              status: "routed_main",
+              failureCode: null,
+              ts: eventTime(now),
+            });
+            continue;
+          }
           result = await engine.process(signal);
         } catch (error) {
           if (abort?.aborted) {

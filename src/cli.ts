@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 
 import { randomUUID } from "node:crypto";
-import { readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { open, unlink } from "node:fs/promises";
-import { basename, isAbsolute } from "node:path";
+import { basename, dirname, isAbsolute, join } from "node:path";
 import { createInterface } from "node:readline/promises";
 import type { Command } from "./protocol/index.js";
 import {
@@ -173,6 +173,7 @@ import {
   ClaudeListenerModel,
   CodexListenerModel,
   FileListenerEffectStore,
+  FilePendingMainQueue,
   GrokListenerModel,
   ListenerStartupError,
   OpenCodeListenerModel,
@@ -187,11 +188,16 @@ import {
   waitForListenerReady,
   LISTENER_PROMPT_TIMEOUT_MS,
   ListenerRenewalUnavailableError,
+  runListenerHookCheck,
+  writeListenerHookCredential,
+  LISTENER_DEFER_OVER_MAX,
+  LISTENER_DEFER_OVER_MIN,
   type ListenerPermissionMode,
   type ListenerProviderId,
   type ListenerDeliveryJournal,
   type ListenerSenderProvenanceContext,
   type ListenerStatus,
+  type ListenerRouteMode,
 } from "./listener/index.js";
 
 /**
@@ -201,12 +207,12 @@ import {
  */
 const KNOWN_FLAGS = new Set([
   "about", "agent-token-stdin", "all-devices", "anon-key", "branch", "capability-id",
-  "claude-executable", "codex-executable", "confirm", "cwd", "device-id", "effort", "email",
+  "claude-executable", "codex-executable", "confirm", "cooldown", "cwd", "defer-over", "device-id", "effort", "email",
   "epoch", "evidence", "follow", "force", "force-file-store", "foreground", "grok-executable", "head-sha",
   "help", "include-stale", "include-tombstoned", "invitation-id", "invitation-token-stdin", "json", "kind", "limit",
   "link-stdin", "local", "model", "name", "ndjson", "no-browser", "opencode-executable", "out",
-  "permissions", "principal-id", "provider", "reveal-anon-key", "run-id", "since", "site", "slug",
-  "task-id", "to", "token-id", "ttl-ms", "turn-budget", "uid", "until", "url", "version", "wait", "workspace-id",
+  "permissions", "principal-id", "provider", "reveal-anon-key", "route", "run-id", "since", "site", "slug",
+  "task-id", "to", "token-id", "ttl-ms", "turn-budget", "uid", "until", "url", "version", "wait", "workspace-id", "write",
 ]);
 
 const BOOLEAN_FLAGS = new Set([
@@ -226,6 +232,7 @@ const BOOLEAN_FLAGS = new Set([
   "ndjson",
   "no-browser",
   "reveal-anon-key",
+  "write",
 ]);
 
 const UUID_RE =
@@ -423,9 +430,12 @@ Usage:
   cswarm file rm <name|file-id> [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--agent-token-stdin] [--json]
   cswarm file restore <name|file-id> [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--agent-token-stdin] [--json]
   cswarm feedback "<text>" --kind bug|idea|friction [--about <ref>] [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--agent-token-stdin] [--json]
-  cswarm listen start --agent-token-stdin [--url <url> --anon-key <key>] --workspace-id <uuid> --provider grok|opencode|claude|codex [--cwd <absolute-path>] [--model <model>] [--effort <level>] [--permissions deny|allow] [--grok-executable <path>] [--opencode-executable <path>] [--claude-executable <path>] [--codex-executable <path>] [--turn-budget <duration>] [--foreground] [--json]
+  cswarm listen start --agent-token-stdin [--url <url> --anon-key <key>] --workspace-id <uuid> --provider grok|opencode|claude|codex [--cwd <absolute-path>] [--model <model>] [--effort <level>] [--permissions deny|allow] [--grok-executable <path>] [--opencode-executable <path>] [--claude-executable <path>] [--codex-executable <path>] [--turn-budget <duration>] [--route worker|main|split] [--defer-over <chars>] [--foreground] [--json]
   cswarm listen status [--url <url> --anon-key <key>] --workspace-id <uuid> --principal-id <uuid> [--json]
   cswarm listen stop [--url <url> --anon-key <key>] --workspace-id <uuid> --principal-id <uuid> [--json]
+  cswarm hook check [--cooldown <seconds>]
+  cswarm hook install claude [--write]
+  cswarm hook uninstall claude --write
   cswarm new "<workspace name>" [--url <url> --anon-key <key>] [--json]
   cswarm new --name "<workspace name>" [--url <url> --anon-key <key>] [--json]
   cswarm workspaces [--url <url> --anon-key <key>] [--json]
@@ -461,6 +471,10 @@ Credential selection for command/dogfood:
                                           read and command, nothing persisted -- either form
                             feedback      command only, nothing persisted     -- either form
                             listen start  persists durable state, rotates -- needs expires_at
+                            hook check    reads the listener's owned 0600 credential state;
+                                          never accepts or prints a credential
+                            hook install/uninstall
+                                          edits only local Claude Code settings; no credential
                             token revoke  names what it revokes           -- needs token_id
                             workspace close is human-session-only; it never accepts an agent token
 
@@ -484,6 +498,15 @@ budget is available up to the token TTL minus 60s (about 59m on the default 1h
 TTL); a turn that lands just before a rotation can be clamped to the ~5m
 renewal lead, and if it times out there, durable delivery retries it on the
 fresh credential.
+
+listen start --route worker|main|split chooses where directed asks go. worker
+is the unchanged default. main queues every ask for the interactive session.
+split queues asks whose body is longer than --defer-over <chars>; the bound is
+1..10000 and an equal-length ask stays on the worker path. Run cswarm hook check
+to surface queued asks. hook check has its own 3s ceiling, exits 0 on every
+outcome, and skips network checks made within --cooldown seconds (default 30).
+hook install claude prints the UserPromptSubmit JSON by default and changes the
+project's .claude/settings.json only with --write; uninstall also requires --write.
 
 Invite, legacy token accept, principal create/revoke, human token mint/revoke, link, new, and workspace close require a
 stored human login. Agent self-surrender of a token uses --agent-token-stdin and never takes the secret on argv. Invite-link accept signs in when needed, then accepts and
@@ -2274,6 +2297,42 @@ function listenerTurnBudgetMs(value: string | undefined): number {
   return milliseconds;
 }
 
+/** Parse the public route pair before credentials or network work. */
+export function listenerRouteConfiguration(
+  routeValue: string | undefined,
+  deferOverValue: string | undefined,
+): { routeMode: ListenerRouteMode; deferOverChars: number | null } {
+  const routeMode = routeValue ?? "worker";
+  if (routeMode !== "worker" && routeMode !== "main" && routeMode !== "split") {
+    throw new Error("--route must be worker, main, or split");
+  }
+  if (routeMode !== "split") {
+    if (deferOverValue !== undefined) {
+      throw new Error("--defer-over is only valid with --route split");
+    }
+    return { routeMode, deferOverChars: null };
+  }
+  if (deferOverValue === undefined) {
+    throw new Error("--route split requires --defer-over <chars>");
+  }
+  if (!/^\d+$/.test(deferOverValue)) {
+    throw new Error(
+      `--defer-over must be an integer from ${LISTENER_DEFER_OVER_MIN} to ${LISTENER_DEFER_OVER_MAX}`,
+    );
+  }
+  const deferOverChars = Number(deferOverValue);
+  if (
+    !Number.isSafeInteger(deferOverChars) ||
+    deferOverChars < LISTENER_DEFER_OVER_MIN ||
+    deferOverChars > LISTENER_DEFER_OVER_MAX
+  ) {
+    throw new Error(
+      `--defer-over must be an integer from ${LISTENER_DEFER_OVER_MIN} to ${LISTENER_DEFER_OVER_MAX}`,
+    );
+  }
+  return { routeMode, deferOverChars };
+}
+
 /** Post-turn work (the ack, the reply post, the renewal request itself) must fit between turn end and credential expiry. */
 export const TURN_BUDGET_CREDENTIAL_MARGIN_MS = 60_000;
 
@@ -3460,16 +3519,23 @@ export function listenerStatusJson(
       status.lastTerminalDeliveryFailureAt ?? null,
     lastClaimAt: status.lastClaimAt ?? null,
     lastAckAt: status.lastAckAt ?? null,
+    routeMode: status.routeMode ?? "worker",
+    deferOverChars: status.deferOverChars ?? null,
+    pendingForMainCount: status.pendingForMainCount ?? 0,
     ...(mode
       ? {
         permission_mode: mode,
         /* "allowed once" alone overstates it: allowOnceOrDeny selects allow_once only when the
          * host OFFERS that option, and denies otherwise. Both review arms flagged the
          * unqualified form on 4844b4e7. */
-        same_owner_delivery: mode === "allow"
+        same_owner_delivery: status.routeMode === "main"
+          ? "interactive session; no ACP worker prompt"
+          : mode === "allow"
           ? "worker session; tool requests allowed once each when the host offers allow_once, otherwise denied"
           : "worker session; tool requests denied",
-        cross_owner_delivery: mode === "allow"
+        cross_owner_delivery: status.routeMode === "main"
+          ? "interactive session; no ACP worker prompt"
+          : mode === "allow"
           ? "same worker session with sender provenance; tool requests allowed once each when the host offers allow_once, otherwise denied"
           : "same worker session with sender provenance; tool requests denied",
       }
@@ -3478,7 +3544,9 @@ export function listenerStatusJson(
   };
 }
 
-function renderListenerStatus(status: ListenerStatus): string {
+export function renderListenerStatus(status: ListenerStatus): string {
+  const routeMode = status.routeMode ?? "worker";
+  const pendingForMainCount = status.pendingForMainCount ?? 0;
   const lines = [
     `Listener ${status.state} for agent ${status.principalId}.`,
     `Provider: ${status.provider}; process: ${status.pid}; started: ${status.startedAt}.`,
@@ -3512,6 +3580,21 @@ function renderListenerStatus(status: ListenerStatus): string {
     lines.push(
       `Pending deliveries reported by the service: ${status.pendingDeliveryCount}.`,
     );
+  }
+  lines.push(
+    routeMode === "split"
+      ? `Ask route: split; bodies over ${status.deferOverChars} characters wait for this interactive session.`
+      : routeMode === "main"
+      ? "Ask route: main; directed asks wait for this interactive session."
+      : "Ask route: worker (default).",
+  );
+  if (routeMode !== "worker") {
+    lines.push(`Asks waiting for this session: ${pendingForMainCount}.`);
+    if (pendingForMainCount > 0) {
+      lines.push(
+        `${pendingForMainCount} asks waiting for this session; they surface at your next prompt, or run cswarm hook check.`,
+      );
+    }
   }
   if (
     status.lastTerminalDeliveryFailureCount !== null &&
@@ -3752,6 +3835,8 @@ async function runConfiguredListener(options: {
   codexExecutable?: string;
   stateDirectory?: string;
   turnBudgetMs?: number;
+  routeMode?: ListenerRouteMode;
+  deferOverChars?: number | null;
 }): Promise<ListenerStatus> {
   if (options.provider === "opencode" && options.effort) {
     throw new Error(
@@ -3776,11 +3861,28 @@ async function runConfiguredListener(options: {
       ? { stateDirectory: options.stateDirectory }
       : {}),
   });
-  const credentialSession = await agentSession(
+  const liveCredentialSession = await agentSession(
     options.cloud,
     options.workspaceId,
     options.agent,
   );
+  let mirroredCredential: string | null = null;
+  const credentialSession = {
+    bearer: async (): Promise<string> => {
+      const credential = await liveCredentialSession.bearer();
+      if (credential !== mirroredCredential) {
+        await writeListenerHookCredential(paths.instanceDirectory, {
+          target: options.cloud,
+          workspaceId: options.workspaceId,
+          principalId: options.principalId,
+          credential,
+        }).then(() => {
+          mirroredCredential = credential;
+        }).catch(() => undefined);
+      }
+      return credential;
+    },
+  };
   const resolveSenderProvenance = async (
     signal: SignalRecord,
     context: ListenerSenderProvenanceContext,
@@ -3825,7 +3927,7 @@ async function runConfiguredListener(options: {
     }
     const applied = resolveTurnBudgetOrDefer(
       turnBudgetMs,
-      credentialSession.expiry,
+      liveCredentialSession.expiry,
       Date.now(),
       renewalFailed,
     );
@@ -3907,6 +4009,9 @@ async function runConfiguredListener(options: {
   };
   let selectedJournal: ListenerDeliveryJournal | undefined;
   let selectedListenerInstanceId: string | undefined;
+  const routeMode = options.routeMode ?? "worker";
+  const deferOverChars = options.deferOverChars ?? null;
+  const pendingMainQueue = new FilePendingMainQueue(paths.instanceDirectory);
   process.on("SIGINT", onProcessSignal);
   process.on("SIGTERM", onProcessSignal);
   try {
@@ -3917,6 +4022,8 @@ async function runConfiguredListener(options: {
       principalId: options.principalId,
       provider: options.provider,
       permissionMode: options.permissionMode,
+      routeMode,
+      deferOverChars,
       // The bound a timeout event reports: the last turn's clamped budget when
       // one has run, else the configured cap.
       getTurnBudgetMs: () => lastAppliedTurnBudgetMs ?? turnBudgetMs,
@@ -3962,6 +4069,9 @@ async function runConfiguredListener(options: {
           listenerInstanceId,
           deliveryJournal: selectedJournal,
           resolveSenderProvenance,
+          routeMode,
+          deferOverChars,
+          pendingMainQueue,
         });
       },
     });
@@ -3987,6 +4097,8 @@ async function runListenStart(args: Arguments): Promise<void> {
     "codex-executable",
     "state-dir",
     "turn-budget",
+    "route",
+    "defer-over",
     "foreground",
     "json",
   ], 2);
@@ -4001,6 +4113,10 @@ async function runListenStart(args: Arguments): Promise<void> {
   // fast; the detached path forwards the validated string for the supervisor
   // to re-parse.
   const turnBudgetMs = listenerTurnBudgetMs(args.optional("turn-budget"));
+  const routing = listenerRouteConfiguration(
+    args.optional("route"),
+    args.optional("defer-over"),
+  );
   const cloud = await target(args);
   const workspaceId = listenerUuid(
     args.optional("workspace-id") ?? process.env.SWARM_CLOUD_WORKSPACE_ID,
@@ -4042,6 +4158,7 @@ async function runListenStart(args: Arguments): Promise<void> {
       permissionMode,
       provider,
       turnBudgetMs,
+      ...routing,
       ...(args.optional("model") ? { model: args.required("model") } : {}),
       ...(args.optional("effort") ? { effort: args.required("effort") } : {}),
       ...(args.optional("grok-executable")
@@ -4102,6 +4219,10 @@ async function runListenStart(args: Arguments): Promise<void> {
         permissionMode,
         provider,
         nodeExecArgv: process.execArgv,
+        route: routing.routeMode,
+        ...(routing.deferOverChars === null
+          ? {}
+          : { deferOver: routing.deferOverChars }),
         ...(stateDirectory ? { stateDirectory } : {}),
         ...(args.optional("model") ? { model: args.required("model") } : {}),
         ...(args.optional("effort") ? { effort: args.required("effort") } : {}),
@@ -4147,17 +4268,36 @@ async function runListenStart(args: Arguments): Promise<void> {
       listenerFailureMessage(status.lastErrorCode ?? "unknown_error", provider),
     );
   }
+  if ((status.routeMode ?? "worker") !== "worker") {
+    const recordedPending = status.pendingForMainCount ?? 0;
+    status = {
+      ...status,
+      pendingForMainCount: await new FilePendingMainQueue(
+        paths.instanceDirectory,
+      ).count().catch(() => recordedPending),
+    };
+  }
   if (args.has("json")) {
     printJson(listenerStatusJson(status, permissionMode));
     return;
   }
+  const routingNote = routing.routeMode === "main"
+    ? "Directed asks are queued for your interactive session and never prompt the ACP worker. Run cswarm hook check to surface them.\n"
+    : routing.routeMode === "split"
+    ? `Directed asks over ${routing.deferOverChars} characters are queued for your interactive session; shorter asks use the worker. Run cswarm hook check to surface queued asks.\n`
+    : "";
+  const workerAudience = routing.routeMode === "main"
+    ? "Directed asks do not reach that worker."
+    : routing.routeMode === "split"
+    ? "Only asks at or below the split threshold reach that worker, with sender and operator provenance in the prompt."
+    : "Every sender reaches that worker with sender and operator provenance in the prompt.";
   const hostNote = provider === "opencode"
-    ? "The OpenCode worker uses one private auth/config home and your selected project cwd. Every sender reaches that worker with sender and operator provenance in the prompt. Tool requests are approved one at a time by default, when the worker asks and the host offers a one-time approval; --permissions deny refuses them. The deny canary does not cover steady-state allow.\n"
+    ? `The OpenCode worker uses one private auth/config home and your selected project cwd. ${workerAudience} Tool requests are approved one at a time by default, when the worker asks and the host offers a one-time approval; --permissions deny refuses them. The deny canary does not cover steady-state allow.\n`
     : provider === "claude"
-    ? "The Claude worker uses your selected cwd and normal Claude Code keychain/OAuth state through claude-agent-acp 0.64.2. Every sender reaches that worker with sender and operator provenance in the prompt.\n"
+    ? `The Claude worker uses your selected cwd and normal Claude Code keychain/OAuth state through claude-agent-acp 0.64.2. ${workerAudience}\n`
     : provider === "codex"
-    ? "The Codex worker uses your selected cwd and normal ChatGPT/Codex auth through codex-acp 1.1.9. CommonSwarm selects read-only mode before its deny canary. Every sender reaches that worker with sender and operator provenance in the prompt.\n"
-    : "The Grok worker uses your selected cwd and local Grok configuration, including user and cmux hooks. Every sender reaches that worker with sender and operator provenance in the prompt.\n";
+    ? `The Codex worker uses your selected cwd and normal ChatGPT/Codex auth through codex-acp 1.1.9. CommonSwarm selects read-only mode before its deny canary. ${workerAudience}\n`
+    : `The Grok worker uses your selected cwd and local Grok configuration, including user and cmux hooks. ${workerAudience}\n`;
   process.stdout.write(
     `${
       args.has("foreground")
@@ -4185,6 +4325,7 @@ async function runListenStart(args: Arguments): Promise<void> {
             "permission for; restart with --permissions allow if that is not what you want"
       }. The same permission mode applies to every sender relation.\n` +
       "The short credential rotates while this process remains alive and secure local state is available; a person reauthorises after the 30-day horizon.\n" +
+      routingNote +
       hostNote +
       `Use listen status/stop with --workspace-id ${workspaceId} --principal-id ${principalId} and the same Cloud target.\n`,
   );
@@ -4206,12 +4347,18 @@ async function runListenSupervisor(args: Arguments): Promise<void> {
     "codex-executable",
     "state-dir",
     "turn-budget",
+    "route",
+    "defer-over",
   ], 1);
   const provider = listenerProvider(args);
   validateListenerProviderFlags(args, provider);
   // Validated before the credential is read, like the public listen start
   // path: a bad duration must fail fast, not after secrets moved.
   const turnBudgetMs = listenerTurnBudgetMs(args.optional("turn-budget"));
+  const routing = listenerRouteConfiguration(
+    args.optional("route"),
+    args.optional("defer-over"),
+  );
   const cloud = await target(args);
   const workspaceId = listenerUuid(args.optional("workspace-id"), "workspace-id");
   const principalId = listenerUuid(args.optional("principal-id"), "principal-id");
@@ -4228,6 +4375,7 @@ async function runListenSupervisor(args: Arguments): Promise<void> {
     permissionMode: listenerPermissionMode(args.optional("permissions")),
     provider,
     turnBudgetMs,
+    ...routing,
     ...(args.optional("model") ? { model: args.required("model") } : {}),
     ...(args.optional("effort") ? { effort: args.required("effort") } : {}),
     ...(args.optional("grok-executable")
@@ -4274,7 +4422,7 @@ async function runListenStatusOrStop(
     principalId,
     ...(stateDirectory ? { stateDirectory } : {}),
   });
-  const status = command === "stop"
+  let status = command === "stop"
     ? await stopListener(paths)
     : await effectiveListenerStatus(paths);
   if (status === null) {
@@ -4284,6 +4432,15 @@ async function runListenStatusOrStop(
       process.stdout.write("No listener has been started for that agent.\n");
     }
     return;
+  }
+  if ((status.routeMode ?? "worker") !== "worker") {
+    const recordedPending = status.pendingForMainCount ?? 0;
+    status = {
+      ...status,
+      pendingForMainCount: await new FilePendingMainQueue(
+        paths.instanceDirectory,
+      ).count().catch(() => recordedPending),
+    };
   }
   if (args.has("json")) {
     printJson(listenerStatusJson(status));
@@ -4303,6 +4460,156 @@ async function runListen(args: Arguments): Promise<void> {
     return;
   }
   throw new UsageError("listen requires start, status, or stop");
+}
+
+const CLAUDE_HOOK_COMMAND = "cswarm hook check";
+
+/** Exact project-settings fragment printed by `cswarm hook install claude`. */
+export function claudeUserPromptHookSnippet(): Record<string, unknown> {
+  return {
+    hooks: {
+      UserPromptSubmit: [
+        {
+          hooks: [
+            {
+              type: "command",
+              command: CLAUDE_HOOK_COMMAND,
+            },
+          ],
+        },
+      ],
+    },
+  };
+}
+
+function projectClaudeSettingsPath(): string {
+  return join(process.cwd(), ".claude", "settings.json");
+}
+
+function readProjectSettings(path: string): Record<string, unknown> {
+  let raw: string;
+  try {
+    raw = readFileSync(path, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return {};
+    throw error;
+  }
+  const value = JSON.parse(raw) as unknown;
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("local .claude/settings.json must contain a JSON object");
+  }
+  return value as Record<string, unknown>;
+}
+
+function installClaudeHook(settings: Record<string, unknown>): Record<string, unknown> {
+  const hooks = settings.hooks && typeof settings.hooks === "object" &&
+      !Array.isArray(settings.hooks)
+    ? { ...(settings.hooks as Record<string, unknown>) }
+    : {};
+  const current = Array.isArray(hooks.UserPromptSubmit)
+    ? [...hooks.UserPromptSubmit]
+    : [];
+  const alreadyInstalled = current.some((group) => {
+    if (!group || typeof group !== "object" || Array.isArray(group)) return false;
+    const commands = (group as Record<string, unknown>).hooks;
+    return Array.isArray(commands) && commands.some((hook) =>
+      hook && typeof hook === "object" && !Array.isArray(hook) &&
+      (hook as Record<string, unknown>).type === "command" &&
+      (hook as Record<string, unknown>).command === CLAUDE_HOOK_COMMAND
+    );
+  });
+  if (!alreadyInstalled) {
+    const snippetHooks = (claudeUserPromptHookSnippet().hooks as Record<string, unknown>)
+      .UserPromptSubmit as unknown[];
+    current.push(snippetHooks[0]);
+  }
+  hooks.UserPromptSubmit = current;
+  return { ...settings, hooks };
+}
+
+function uninstallClaudeHook(settings: Record<string, unknown>): Record<string, unknown> {
+  if (!settings.hooks || typeof settings.hooks !== "object" || Array.isArray(settings.hooks)) {
+    return settings;
+  }
+  const hooks = { ...(settings.hooks as Record<string, unknown>) };
+  if (!Array.isArray(hooks.UserPromptSubmit)) return settings;
+  const groups: unknown[] = [];
+  for (const group of hooks.UserPromptSubmit) {
+    if (!group || typeof group !== "object" || Array.isArray(group)) {
+      groups.push(group);
+      continue;
+    }
+    const row = { ...(group as Record<string, unknown>) };
+    if (!Array.isArray(row.hooks)) {
+      groups.push(group);
+      continue;
+    }
+    row.hooks = row.hooks.filter((hook) => !(
+      hook && typeof hook === "object" && !Array.isArray(hook) &&
+      (hook as Record<string, unknown>).type === "command" &&
+      (hook as Record<string, unknown>).command === CLAUDE_HOOK_COMMAND
+    ));
+    if ((row.hooks as unknown[]).length > 0) groups.push(row);
+  }
+  if (groups.length > 0) hooks.UserPromptSubmit = groups;
+  else delete hooks.UserPromptSubmit;
+  if (Object.keys(hooks).length === 0) {
+    const result = { ...settings };
+    delete result.hooks;
+    return result;
+  }
+  return { ...settings, hooks };
+}
+
+async function runHook(args: Arguments): Promise<void> {
+  const command = args.positionals[1];
+  if (command === "check") {
+    args.assertShape(["cooldown"], 2);
+    const rawCooldown = args.optional("cooldown");
+    const cooldownSeconds = rawCooldown === undefined ? undefined : Number(rawCooldown);
+    if (
+      cooldownSeconds !== undefined &&
+      (!/^\d+$/.test(rawCooldown!) || !Number.isSafeInteger(cooldownSeconds) ||
+        cooldownSeconds < 0 || cooldownSeconds > 86_400)
+    ) {
+      return;
+    }
+    const output = await runListenerHookCheck({
+      ...(cooldownSeconds === undefined ? {} : { cooldownSeconds }),
+    });
+    if (output.length > 0) process.stdout.write(`${output}\n`);
+    return;
+  }
+  if (command !== "install" && command !== "uninstall") {
+    throw new UsageError("hook requires check, install, or uninstall");
+  }
+  args.assertShape(["write"], 3);
+  if (args.positionals[2] !== "claude") {
+    throw new Error("hook install/uninstall currently supports claude");
+  }
+  if (command === "uninstall" && !args.has("write")) {
+    throw new Error("hook uninstall claude requires --write");
+  }
+  const snippet = claudeUserPromptHookSnippet();
+  if (!args.has("write")) {
+    process.stdout.write(`${JSON.stringify(snippet, null, 2)}\n`);
+    return;
+  }
+  const path = projectClaudeSettingsPath();
+  const settings = readProjectSettings(path);
+  const updated = command === "install"
+    ? installClaudeHook(settings)
+    : uninstallClaudeHook(settings);
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, `${JSON.stringify(updated, null, 2)}\n`, {
+    encoding: "utf8",
+    mode: 0o600,
+  });
+  process.stdout.write(
+    command === "install"
+      ? `Installed the Claude Code UserPromptSubmit hook in ${path}. It runs: ${CLAUDE_HOOK_COMMAND}\n`
+      : `Removed the CommonSwarm UserPromptSubmit hook from ${path}. Other settings were kept.\n`,
+  );
 }
 
 /*
@@ -4838,6 +5145,10 @@ async function main(): Promise<void> {
     await runListenSupervisor(args);
     return;
   }
+  if (verb === "hook") {
+    await runHook(args);
+    return;
+  }
   if (verb === "listen") {
     await runListen(args);
     return;
@@ -5024,6 +5335,10 @@ function safeParagraph(message: string): string {
 }
 
 main().catch((error) => {
+  if (process.argv[2] === "hook" && process.argv[3] === "check") {
+    process.exitCode = 0;
+    return;
+  }
   // The renewal horizon is not a malfunction; it is the periodic human checkpoint §2.3
   // asks for, arriving on time. Printing it as `cswarm: <flattened 403>` would tell a
   // person their agent broke. It says instead what happened and what to run.

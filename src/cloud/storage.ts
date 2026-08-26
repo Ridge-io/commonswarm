@@ -301,10 +301,15 @@ export async function withFileLock<T>(
   stateDirectory: string,
   lockName: string,
   work: () => Promise<T>,
+  options: { timeoutMs?: number } = {},
 ): Promise<T> {
   await secureDirectory(stateDirectory);
   const lockPath = join(stateDirectory, `${lockName}.lock`);
-  const deadline = Date.now() + LOCK_TIMEOUT_MS;
+  const timeoutMs = options.timeoutMs ?? LOCK_TIMEOUT_MS;
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 0 || timeoutMs > LOCK_TIMEOUT_MS) {
+    throw new Error("credential refresh lock timeout is invalid");
+  }
+  const deadline = Date.now() + timeoutMs;
   let handle: Awaited<ReturnType<typeof open>> | null = null;
 
   while (handle === null) {

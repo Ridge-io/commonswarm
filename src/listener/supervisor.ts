@@ -17,6 +17,7 @@ import type {
 } from "./runtime.js";
 
 import type { ListenerPermissionMode } from "./types.js";
+import type { ListenerRouteMode } from "./main-routing.js";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -79,6 +80,8 @@ export interface ListenerSupervisorOptions {
   /** Host adapter id recorded in status metadata only. Default: grok. */
   provider?: ListenerProviderId;
   permissionMode?: ListenerPermissionMode;
+  routeMode?: ListenerRouteMode;
+  deferOverChars?: number | null;
   now?: () => number;
   /**
    * Runs under starting.lock after the live-socket rejection check, before
@@ -205,6 +208,9 @@ export async function runListenerSupervisor(
     lastTerminalDeliveryFailureAt: null,
     lastClaimAt: null,
     lastAckAt: null,
+    routeMode: options.routeMode ?? "worker",
+    deferOverChars: options.deferOverChars ?? null,
+    pendingForMainCount: 0,
     logPath: options.paths.logPath,
   };
   let writes = Promise.resolve();
@@ -409,6 +415,37 @@ export async function runListenerSupervisor(
         event: "listener_delivery_ack",
         signal_id: event.signalId,
         outcome: event.outcome,
+      });
+      return;
+    }
+    if (event.type === "routing_decision") {
+      log({
+        ts: event.ts,
+        event: "listener_routing_decision",
+        signal_id: event.signalId,
+        route_mode: event.routeMode,
+        route_decision: event.decision,
+        defer_over_chars: event.threshold,
+        body_length: event.bodyLength,
+      });
+      return;
+    }
+    if (event.type === "main_queue") {
+      status = {
+        ...status,
+        pendingForMainCount: event.pendingCount,
+        lastSignalId: event.signalId,
+        updatedAt: event.ts,
+      };
+      persist();
+      log({
+        ts: event.ts,
+        event: event.droppedOldest
+          ? "listener_main_queue_oldest_dropped"
+          : "listener_main_queue",
+        signal_id: event.signalId,
+        pending_main_count: event.pendingCount,
+        dropped_count: event.droppedOldest ? 1 : 0,
       });
       return;
     }

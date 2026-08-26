@@ -18,15 +18,17 @@ export type ListenerEffectState =
   | "done"
   | "expired"
   | "failed"
-  | "observed";
+  | "observed"
+  | "routed_main";
 
 /**
  * Schema version 2: the v1 ask file plus a closed `signalKind` discriminator.
  *
  * Version 1 files stay readable and upcast in memory to signalKind "ask"
- * without a re-write. `state: "observed"` is a terminal, note-only state:
- * an observed note carries zero prompt/post attempts, no reply body or reply
- * signal, and an empty `commandId` because it has no reply command. The
+ * without a re-write. `observed` is terminal for notes; `routed_main` is
+ * terminal for asks durably handed to the operator session. Both carry zero
+ * prompt/post attempts, no reply body or reply signal, and an empty
+ * `commandId` because neither has a reply command. The
  * cross-field invariants behind those words live in `parseListenerEffectRecord`;
  * the type alone does not encode them (§ Listener integration).
  */
