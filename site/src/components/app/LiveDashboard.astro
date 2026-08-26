@@ -826,6 +826,10 @@ import "../../styles/tokens.css";
   } from "../../lib/participant-rail";
   import { buildAgentModelEditor } from "../../lib/agent-model-editor";
   import { renderFileList, type DisplayFile } from "../../lib/file-list";
+  import {
+    MESSAGE_COLLAPSE_LINES,
+    setSanitizedMessageMarkdown,
+  } from "../../lib/message-markdown";
 
   interface Workspace extends CloseableWorkspace {}
 
@@ -943,6 +947,7 @@ import "../../styles/tokens.css";
     let mentionPickerIndex = 0;
     let composerIntent: { commandId: string; body: string; audienceKey: string } | null = null;
     const visualMentions = new Map<string, EntityRef[]>();
+    const expandedSignalIds = new Set<string>();
 
     /* 25, not 50. The operator asked for 20-30 on first paint with older pages fetched on
      * scroll-up. The FETCH size stays one larger so `hasMore` is known without a second query. */
@@ -2590,16 +2595,31 @@ import "../../styles/tokens.css";
         time.title = formatted.absolute;
         time.textContent = formatted.relative;
         meta.append(author, identityBadge, target, operator, badge, time);
-        const text = document.createElement("p");
-        for (const mention of visualMentions.get(signal.id) ?? []) {
-          text.append(entityControl(
-            `@${entityName(mention)}`,
-            mention,
-            "dashboard__mention-chip dashboard__message-mention",
-          ), " ");
+        body.append(meta);
+        const mentions = visualMentions.get(signal.id) ?? [];
+        if (mentions.length > 0) {
+          const mentionRow = document.createElement("div");
+          mentionRow.className = "dashboard__message-mentions";
+          for (const mention of mentions) {
+            mentionRow.append(entityControl(
+              `@${entityName(mention)}`,
+              mention,
+              "dashboard__mention-chip dashboard__message-mention",
+            ), " ");
+          }
+          body.append(mentionRow);
         }
-        text.append(signal.body);
-        body.append(meta, text);
+        const markdown = document.createElement("div");
+        markdown.className = "dashboard__message-markdown";
+        markdown.style.setProperty(
+          "--message-collapse-height",
+          `${MESSAGE_COLLAPSE_LINES * 1.62}em`,
+        );
+        setSanitizedMessageMarkdown(markdown, signal.body);
+        if (!expandedSignalIds.has(signal.id)) {
+          markdown.classList.add("dashboard__message-markdown--collapsed");
+        }
+        body.append(markdown);
         if (signal.about) {
           const about = document.createElement("code");
           about.className = "dashboard__message-about";
@@ -2608,6 +2628,26 @@ import "../../styles/tokens.css";
         }
         row.append(avatar, body);
         list.append(row);
+        window.requestAnimationFrame(() => {
+          if (!markdown.isConnected) return;
+          const expandedAtRender = expandedSignalIds.has(signal.id);
+          const overflowed = markdown.scrollHeight > markdown.clientHeight + 1;
+          if (!overflowed && !expandedAtRender) return;
+          const toggle = document.createElement("button");
+          toggle.type = "button";
+          toggle.className = "dashboard__message-toggle";
+          toggle.textContent = expandedAtRender ? "Show less" : "Show more";
+          toggle.setAttribute("aria-expanded", String(expandedAtRender));
+          toggle.addEventListener("click", () => {
+            const expanded = toggle.getAttribute("aria-expanded") !== "true";
+            toggle.setAttribute("aria-expanded", String(expanded));
+            toggle.textContent = expanded ? "Show less" : "Show more";
+            markdown.classList.toggle("dashboard__message-markdown--collapsed", !expanded);
+            if (expanded) expandedSignalIds.add(signal.id);
+            else expandedSignalIds.delete(signal.id);
+          });
+          markdown.after(toggle);
+        });
       }
       previousSignalIds = new Set(signals.map((signal) => signal.id));
       feedWasEmpty = false;
@@ -2861,6 +2901,7 @@ import "../../styles/tokens.css";
       liveFeedInFlight = false;
       rosterRefreshInFlight = false;
       rosterRefreshAttemptedAt = 0;
+      expandedSignalIds.clear();
       resetComposer();
       window.clearTimeout(signalExpiryTimer);
       signalExpiryTimer = undefined;
@@ -7111,12 +7152,102 @@ import "../../styles/tokens.css";
     font-weight: var(--weight-semibold);
   }
 
-  .dashboard__message-body > p {
+  .dashboard__message-mentions {
     margin: 0;
     color: var(--text);
     font-size: var(--t-base);
     line-height: var(--lh-base);
+  }
+
+  .dashboard__message-markdown {
+    min-inline-size: 0;
+    color: var(--text);
+    font-size: var(--t-base);
+    line-height: var(--lh-base);
     overflow-wrap: anywhere;
+  }
+
+  .dashboard__message-markdown--collapsed {
+    max-block-size: var(--message-collapse-height, 48.6em);
+    overflow: hidden;
+    mask-image: linear-gradient(to bottom, black 88%, transparent);
+    -webkit-mask-image: linear-gradient(to bottom, black 88%, transparent);
+  }
+
+  .dashboard__message-markdown :where(p, ul, ol, blockquote, pre) {
+    margin: 0;
+  }
+
+  .dashboard__message-markdown :where(p, ul, ol, blockquote, pre) +
+    :where(p, ul, ol, blockquote, pre) {
+    margin-block-start: var(--s-3);
+  }
+
+  .dashboard__message-markdown :where(ul, ol) {
+    padding-inline-start: var(--s-6);
+  }
+
+  .dashboard__message-markdown blockquote {
+    padding-inline-start: var(--s-3);
+    color: var(--text-muted);
+    border-inline-start: 3px solid var(--border-strong);
+  }
+
+  .dashboard__message-markdown :where(code, pre) {
+    font-family: var(--font-mono);
+  }
+
+  .dashboard__message-markdown :not(pre) > code {
+    padding: 0.08rem 0.3rem;
+    background: var(--elev-3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    font-size: 0.9em;
+  }
+
+  .dashboard__message-markdown pre {
+    max-inline-size: 100%;
+    padding: var(--s-3);
+    overflow-x: auto;
+    color: var(--text);
+    background: var(--elev-3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    white-space: pre;
+  }
+
+  .dashboard__message-markdown pre code {
+    font-size: var(--t-sm);
+  }
+
+  .dashboard__message-markdown a {
+    color: var(--accent-bright);
+    text-decoration: underline;
+    text-underline-offset: 0.14em;
+  }
+
+  .dashboard__message-markdown a:hover,
+  .dashboard__message-toggle:hover {
+    color: var(--accent);
+  }
+
+  .dashboard__message-markdown a:focus-visible,
+  .dashboard__message-toggle:focus-visible {
+    border-radius: var(--radius-sm);
+    outline: none;
+    box-shadow: var(--focus-ring);
+  }
+
+  .dashboard__message-toggle {
+    justify-self: start;
+    padding: 0;
+    color: var(--accent-bright);
+    background: transparent;
+    border: 0;
+    font: inherit;
+    font-size: var(--t-sm);
+    font-weight: var(--weight-semibold);
+    cursor: pointer;
   }
 
   .dashboard__message-about {
