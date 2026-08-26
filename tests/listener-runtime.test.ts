@@ -580,6 +580,14 @@ test("delivery events reduce into the closed supervisor status fields", async ()
       });
       onEvent({ type: "delivery_terminal_failures", count: 1, ts });
       onEvent({
+        type: "main_queue",
+        signalId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa13",
+        pendingCount: 200,
+        droppedOldest: true,
+        droppedCount: 7,
+        ts,
+      });
+      onEvent({
         type: "delivery_ack",
         signalId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa13",
         outcome: "replied",
@@ -595,6 +603,8 @@ test("delivery events reduce into the closed supervisor status fields", async ()
   assert.equal(status.lastClaimAt, ts);
   assert.equal(status.lastAckAt, ts);
   assert.equal(status.lastSignalId, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa13");
+  assert.equal(status.pendingForMainCount, 200);
+  assert.equal(status.droppedForMainCount, 7);
 });
 
 test("durable claim persists one command id across retries, uses fresh bearers, and clears zero results", async () => {
@@ -1759,6 +1769,123 @@ test("a durable ask reaches done, then persists prepareAck before replied ACK", 
   assert.equal((await store.read(claimedAsk.id))?.state, "done");
   assert.ok(audit.indexOf("journal:prepareAck") < audit.indexOf("network:ack"));
   assert.ok(audit.lastIndexOf("effect:read", audit.indexOf("journal:prepareAck")) >= 0);
+});
+
+test("route=main queues and acknowledges a durable ask without prompting the worker", async () => {
+  const journal = new MemoryDeliveryJournal();
+  const store = new MemoryStore();
+  const controller = new AbortController();
+  const model = new FakeModel();
+  const claimedAsk = ask(
+    "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa92",
+    "2026-07-30T00:00:01.000Z",
+  );
+  const queued: string[] = [];
+  const runtimeEvents: ListenerRuntimeEvent[] = [];
+  let ackOutcome: string | null = null;
+  const stop = await runListenerRuntime({
+    target: cloudTarget("https://cloud.example.test", "anon"),
+    workspaceId: WORKSPACE_ID,
+    principalId: PRINCIPAL_ID,
+    listenerInstanceId: journal.record.listenerInstanceId,
+    deliveryJournal: journal,
+    deliveryClient: {
+      async claimAgentInbox() {
+        return claimResult([{
+          signal: claimedAsk,
+          leaseId: "55555555-5555-4555-8555-555555555592",
+          leasedUntil: "2026-07-30T00:15:00.000Z",
+          senderOwnerRelation: "same_owner",
+        }], 1);
+      },
+      async ackAgentDelivery(request) {
+        ackOutcome = request.outcome;
+        controller.abort();
+        return { httpStatus: 200, signalId: request.signalId, outcome: request.outcome };
+      },
+    },
+    credentialSession: { async bearer() { return "token"; } },
+    store,
+    model,
+    routeMode: "main",
+    deferOverChars: null,
+    pendingMainQueue: {
+      async enqueue(entry) {
+        queued.push(entry.signalId);
+        return { count: 200, added: true, droppedOldest: true, droppedCount: 4 };
+      },
+    },
+    onEvent(event) {
+      runtimeEvents.push(event);
+    },
+    signal: controller.signal,
+    now: () => Date.parse("2026-07-30T00:00:00.000Z"),
+    sleep: async () => undefined,
+    readPage: async () => durablePage(),
+    poster: { async post() { throw new Error("main route must not post a worker reply"); } },
+  });
+  assert.equal(stop.reason, "cancelled");
+  assert.deepEqual(queued, [claimedAsk.id]);
+  assert.equal(ackOutcome, "observed");
+  assert.equal(model.starts, 0, "main route must not start an ACP worker session");
+  assert.equal(model.prompts.length, 0, "mutation control: forcing worker route must prompt once");
+  assert.ok(runtimeEvents.some((event) =>
+    event.type === "main_queue" && event.pendingCount === 200 &&
+    event.droppedOldest && event.droppedCount === 4
+  ), "a bounded-queue drop must reach the supervisor as a warning event");
+  assert.equal((await store.read(claimedAsk.id))?.state, "routed_main");
+  assert.equal(journal.record.active, null);
+});
+
+test("routed-main kill-between ordering: a pending persist failure leaves the lease unacked", async () => {
+  const journal = new MemoryDeliveryJournal();
+  const store = new MemoryStore();
+  const claimedAsk = ask(
+    "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa93",
+    "2026-07-30T00:00:01.000Z",
+  );
+  let ackCalls = 0;
+  const stop = await runListenerRuntime({
+    target: cloudTarget("https://cloud.example.test", "anon"),
+    workspaceId: WORKSPACE_ID,
+    principalId: PRINCIPAL_ID,
+    listenerInstanceId: journal.record.listenerInstanceId,
+    deliveryJournal: journal,
+    deliveryClient: {
+      async claimAgentInbox() {
+        return claimResult([{
+          signal: claimedAsk,
+          leaseId: "55555555-5555-4555-8555-555555555593",
+          leasedUntil: "2026-07-30T00:15:00.000Z",
+          senderOwnerRelation: "same_owner",
+        }], 1);
+      },
+      async ackAgentDelivery() {
+        ackCalls += 1;
+        throw new Error("mutation: ACK ran before the pending write completed");
+      },
+    },
+    credentialSession: { async bearer() { return "token"; } },
+    store,
+    model: new FakeModel(),
+    routeMode: "main",
+    deferOverChars: null,
+    pendingMainQueue: {
+      async enqueue() {
+        throw new Error("simulated crash before pending queue persistence");
+      },
+    },
+    now: () => Date.parse("2026-07-30T00:00:00.000Z"),
+    readPage: async () => durablePage(),
+  });
+  assert.equal(stop.reason, "fatal");
+  assert.match(
+    stop.reason === "fatal" ? stop.error.message : "",
+    /simulated crash before pending queue persistence/,
+  );
+  assert.equal(ackCalls, 0, "mutation: moving ACK before enqueue makes this 1");
+  assert.equal(journal.record.active?.phase, "leased");
+  assert.equal(await store.read(claimedAsk.id), null);
 });
 
 test("an authoritative claimed signal mismatch fails before engine write or ACK", async () => {

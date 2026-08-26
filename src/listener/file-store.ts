@@ -27,6 +27,7 @@ const STATES = new Set<ListenerEffectState>([
   "expired",
   "failed",
   "observed",
+  "routed_main",
 ]);
 const RELATIONS = new Set(["same_owner", "cross_owner", "unknown"]);
 const SIGNAL_KINDS = new Set<ListenerSignalKind>(["ask", "note"]);
@@ -135,7 +136,9 @@ export function parseListenerEffectRecord(
     // A real version-1 file never carried `signalKind`; it is ask-only, and
     // `observed` did not exist then. Reject both so a foreign/note-shaped row
     // cannot masquerade as a v1 ask.
-    if ("signalKind" in row || row.state === "observed") {
+    if (
+      "signalKind" in row || row.state === "observed" || row.state === "routed_main"
+    ) {
       throw new Error("stored listener effect is malformed");
     }
     return upcastV1Ask(row);
@@ -238,6 +241,18 @@ function parseV2Record(row: Record<string, unknown>): ListenerEffectRecord {
     ) {
       throw new Error("stored listener effect is malformed");
     }
+  } else if (row.state === "routed_main") {
+    if (
+      row.commandId !== "" ||
+      row.promptAttempts !== 0 ||
+      row.postAttempts !== 0 ||
+      row.replyBody !== null ||
+      row.replyTruncated !== false ||
+      row.replySignalId !== null ||
+      row.failureCode !== null
+    ) {
+      throw new Error("stored listener effect is malformed");
+    }
   } else {
     // Asks keep the deterministic reply command id and never carry the
     // note-only observed state.
@@ -317,6 +332,22 @@ export function newObservedNoteRecord(input: {
     replySignalId: null,
     failureCode: null,
     updatedAt: input.updatedAt,
+  };
+}
+
+/** The terminal ask effect proving it was durably queued for the main session. */
+export function newRoutedMainAskRecord(input: {
+  signalId: string;
+  body: string;
+  until: string;
+  senderOwnerRelation: SenderOwnerRelation;
+  updatedAt: string;
+}): ListenerEffectRecord {
+  const base = newObservedNoteRecord(input);
+  return {
+    ...base,
+    signalKind: "ask",
+    state: "routed_main",
   };
 }
 
@@ -453,4 +484,3 @@ export class FileListenerEffectStore implements ListenerEffectStore {
     return signalId.toLowerCase();
   }
 }
-
