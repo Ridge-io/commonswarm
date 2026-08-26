@@ -192,7 +192,8 @@ import "../../styles/tokens.css";
                 <path d="m4 6 4 4 4-4"></path>
               </svg>
             </button>
-            {/* Workspace settings live beside the workspace name. */}
+            {/* The settings trigger stays beside the workspace name. Its dialog lives
+                outside the scrolling rail so the rail cannot clip the settings surface. */}
             <button
               class="dashboard__gear-button"
               type="button"
@@ -229,14 +230,6 @@ import "../../styles/tokens.css";
                 </button>
               </div>
             </div>
-            <div
-              class="dashboard__popover dashboard__workspace-details-popover"
-              id="dashboard-workspace-details"
-              data-workspace-details-popover
-              role="dialog"
-              aria-label="Workspace settings"
-              hidden
-            ></div>
           </div>
 
           <section class="dashboard__workspace-context" aria-label="Workspace signal summary">
@@ -289,7 +282,7 @@ import "../../styles/tokens.css";
           {/* Manage people, Pending access, and Workspace details left the rail
               (operator direction 2026-08-19): member management folded into the
               header People & agents dialog, pending access already mirrored there,
-              workspace details into the gear popover above. The rail bottom is now
+              workspace details into the gear dialog outside the rail. The rail bottom is now
               just the user-menu button. */}
           <div class="dashboard__rail-foot" data-user-menu-root>
             <button
@@ -655,6 +648,33 @@ import "../../styles/tokens.css";
       </div>
     </section>
   </div>
+
+  {/* Native dialog keeps the destructive settings flow out of the rail's clipping and
+      gives it modal focus containment, Escape, and focus restore. The data hook stays on
+      the settings surface; rendered workspace data lives in the inner content node so
+      privacy resets do not remove the permanent close control. */}
+  <dialog
+    class="dashboard__workspace-details-dialog"
+    id="dashboard-workspace-details"
+    data-workspace-details-popover
+    aria-labelledby="dashboard-workspace-details-title"
+  >
+    <header class="dashboard__workspace-details-dialog-head">
+      <p id="dashboard-workspace-details-title">Workspace settings</p>
+      <button
+        class="dashboard__icon-button"
+        type="button"
+        data-workspace-details-close
+        aria-label="Close workspace settings"
+        title="Close workspace settings"
+      >
+        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+          <path d="M6 6l12 12M18 6L6 18"></path>
+        </svg>
+      </button>
+    </header>
+    <div class="dashboard__workspace-details-dialog-body" data-workspace-details-content></div>
+  </dialog>
 
   {/* The agent management dialog. A native <dialog>: Escape, modal focus containment,
       and focus restore to the stack button are the platform's, not ours. It lives outside
@@ -2295,6 +2315,19 @@ import "../../styles/tokens.css";
       if (dialog?.open) dialog.close();
     };
 
+    const openWorkspaceDetailsDialog = (): void => {
+      const dialog = one<HTMLDialogElement>("[data-workspace-details-popover]");
+      if (!dialog || dialog.open) return;
+      dialog.showModal();
+      one<HTMLButtonElement>("[data-workspace-details-trigger]")
+        ?.setAttribute("aria-expanded", "true");
+    };
+
+    const closeWorkspaceDetailsDialog = (): void => {
+      const dialog = one<HTMLDialogElement>("[data-workspace-details-popover]");
+      if (dialog?.open) dialog.close();
+    };
+
     const formatTime = (value: string): { relative: string; absolute: string } => {
       const date = new Date(value);
       if (Number.isNaN(date.getTime())) return { relative: "Time unavailable", absolute: "" };
@@ -2825,6 +2858,7 @@ import "../../styles/tokens.css";
       closeEntityPanel(false);
       closeWorkspaceMenu();
       closeRosterDialog();
+      closeWorkspaceDetailsDialog();
       one<SecretHoldingAgentConnect>("agent-connect")?.clearPrompt(false);
       connectFocusObserver?.disconnect();
       connectFocusObserver = null;
@@ -2876,7 +2910,7 @@ import "../../styles/tokens.css";
       renderRoster();
       for (const list of all<HTMLElement>(
         "[data-workspace-list], [data-access-list], [data-dialog-access-list], [data-feed-list], " +
-          "[data-sidebar-participant-list], [data-file-list], [data-workspace-details-popover]",
+          "[data-sidebar-participant-list], [data-file-list], [data-workspace-details-content]",
       )) {
         list.replaceChildren();
       }
@@ -3010,7 +3044,7 @@ import "../../styles/tokens.css";
     });
 
     const renderWorkspaceSettingsPanel = (workspace: Workspace): void => {
-      const root = one<HTMLElement>("[data-workspace-details-popover]");
+      const root = one<HTMLElement>("[data-workspace-details-content]");
       if (!root) return;
       const me = members.find((member) => member.userId === session?.user.id);
       renderWorkspaceSettings(root, {
@@ -3032,10 +3066,7 @@ import "../../styles/tokens.css";
             workspaces,
           );
           workspaces = closed.workspaces;
-          const popover = one<HTMLElement>("[data-workspace-details-popover]");
-          const trigger = one<HTMLButtonElement>("[data-workspace-details-trigger]");
-          if (popover) popover.hidden = true;
-          trigger?.setAttribute("aria-expanded", "false");
+          closeWorkspaceDetailsDialog();
           if (closed.activeWorkspaceRemains) {
             renderWorkspaceList(closed.nextWorkspace!);
             return;
@@ -3152,9 +3183,10 @@ import "../../styles/tokens.css";
           error.hidden = true;
         }
       }
-      /* The dialog shows the OLD workspace's roster from here on; close it rather than
-         let it outlive its data. The refresh cooldown resets with the workspace. */
+      /* The dialogs show the OLD workspace's data from here on; close them rather than
+         let either outlive its data. The refresh cooldown resets with the workspace. */
       closeRosterDialog();
+      closeWorkspaceDetailsDialog();
       rosterRefreshAttemptedAt = 0;
       pendingRefreshGate.resetCooldown();
       unknownAgentCandidates.clear();
@@ -4009,10 +4041,8 @@ import "../../styles/tokens.css";
       closeWorkspaceMenu();
     });
 
-    /* Two popovers rehomed from the rail (operator direction 2026-08-19): the
-       workspace-details gear and the account menu. Same show/hide + aria-expanded +
-       Escape + outside-click contract as the workspace switcher, kept as isolated
-       handlers so they never disturb the switcher's roving-focus logic. */
+    /* The account menu keeps the switcher's show/hide + aria-expanded + Escape +
+       outside-click contract. Workspace settings uses native <dialog> below. */
     const wirePopover = (triggerSel: string, popoverSel: string): void => {
       const trigger = one<HTMLButtonElement>(triggerSel);
       const popover = one<HTMLElement>(popoverSel);
@@ -4050,7 +4080,6 @@ import "../../styles/tokens.css";
       document.addEventListener("pointerdown", dismiss);
       document.addEventListener("focusin", dismiss);
     };
-    wirePopover("[data-workspace-details-trigger]", "[data-workspace-details-popover]");
     wirePopover("[data-user-menu-trigger]", "[data-user-menu]");
 
     one<HTMLButtonElement>("[data-new-workspace]")?.addEventListener(
@@ -4068,6 +4097,14 @@ import "../../styles/tokens.css";
     });
     one<HTMLButtonElement>("[data-roster-open]")?.addEventListener("click", openRosterDialog);
     one<HTMLButtonElement>("[data-roster-close]")?.addEventListener("click", closeRosterDialog);
+    one<HTMLButtonElement>("[data-workspace-details-trigger]")?.addEventListener(
+      "click",
+      openWorkspaceDetailsDialog,
+    );
+    one<HTMLButtonElement>("[data-workspace-details-close]")?.addEventListener(
+      "click",
+      closeWorkspaceDetailsDialog,
+    );
     one<HTMLButtonElement>("[data-entity-panel-close]")?.addEventListener(
       "click",
       () => closeEntityPanel(true),
@@ -4214,6 +4251,16 @@ import "../../styles/tokens.css";
         if (next !== "all" && next !== "broadcast" && next !== "direct-to-you") return;
         signalFilter = next;
         renderFeed();
+      });
+    }
+    {
+      const dialog = one<HTMLDialogElement>("[data-workspace-details-popover]");
+      dialog?.addEventListener("click", (event) => {
+        if (event.target === dialog) dialog.close();
+      });
+      dialog?.addEventListener("close", () => {
+        one<HTMLButtonElement>("[data-workspace-details-trigger]")
+          ?.setAttribute("aria-expanded", "false");
       });
     }
     {
@@ -4970,8 +5017,7 @@ import "../../styles/tokens.css";
     stroke-width: 1.6;
   }
 
-  /* Shared popover surface for the gear (workspace settings) and the account menu.
-     Same visual language as the workspace switcher's menu. */
+  /* Account popover. Workspace settings is a native dialog outside the rail. */
   .dashboard__popover {
     position: absolute;
     z-index: 6;
@@ -4985,15 +5031,51 @@ import "../../styles/tokens.css";
     box-shadow: 0 1rem 2.5rem color-mix(in oklab, var(--text) 14%, transparent);
   }
 
-  .dashboard__workspace-details-popover {
-    inset-block-start: calc(100% + var(--s-2));
-    /* LEFT-anchored on purpose. This was inset-inline-end: 0 — right-anchored to a trigger
-       that sits near the LEFT edge of the screen, so the 23rem panel extended past the
-       viewport's left edge and the danger zone's controls were cut off (operator screenshot,
-       2026-08-26). Anchoring to the control's left keeps the whole panel on screen at every
-       width: left edge ~1rem in, right edge at most min(23rem, 100vw - 2rem) further. */
-    inset-inline-start: 0;
-    inline-size: min(23rem, calc(100vw - 2rem));
+  .dashboard__workspace-details-dialog {
+    inline-size: min(calc(100% - var(--s-8)), 23rem);
+    max-inline-size: calc(100% - var(--s-8));
+    max-block-size: min(42rem, calc(100dvh - var(--s-8)));
+    margin: auto;
+    padding: 0;
+    color: var(--text);
+    background: var(--surface-3);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-lg);
+  }
+
+  .dashboard__workspace-details-dialog::backdrop {
+    background: color-mix(in oklab, var(--text) 32%, transparent);
+  }
+
+  .dashboard__workspace-details-dialog[open] {
+    display: flex;
+    flex-direction: column;
+    animation: dashboard-dialog-in var(--dur-3) var(--ease-decelerate);
+  }
+
+  .dashboard__workspace-details-dialog-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--s-3);
+    padding: var(--s-3) var(--s-3) var(--s-3) var(--s-4);
+    border-block-end: 1px solid var(--border);
+  }
+
+  .dashboard__workspace-details-dialog-head p {
+    margin: 0;
+    color: var(--text);
+    font-size: var(--t-sm);
+    font-weight: var(--weight-semibold);
+  }
+
+  .dashboard__workspace-details-dialog-body {
+    min-block-size: 0;
+    display: grid;
+    gap: var(--s-2);
+    padding: var(--s-4);
+    overflow-y: auto;
   }
 
   .dashboard__workspace-settings-title,
@@ -7292,6 +7374,16 @@ import "../../styles/tokens.css";
       border-radius: var(--radius-lg) var(--radius-lg) 0 0;
     }
 
+    .dashboard__workspace-details-dialog {
+      inline-size: 100%;
+      max-inline-size: 100%;
+      max-block-size: 82dvh;
+      margin-block-start: auto;
+      margin-block-end: 0;
+      border-block-end: 0;
+      border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    }
+
     .dashboard__roster-dialog-list {
       max-block-size: 46dvh;
     }
@@ -7433,6 +7525,7 @@ import "../../styles/tokens.css";
     .dashboard__button,
     .dashboard__message--fresh,
     .dashboard__roster-button,
+    .dashboard__workspace-details-dialog[open],
     .dashboard__roster-dialog[open],
     .dashboard__wordmark::after {
       transition: none;
@@ -7480,6 +7573,7 @@ import "../../styles/tokens.css";
   .dashboard__workspace-id,
   .dashboard__icon-button,
   .dashboard__roster-button,
+  .dashboard__workspace-details-dialog,
   .dashboard__roster-dialog,
   .dashboard__message-avatar,
   .dashboard__sidebar-person-avatar,

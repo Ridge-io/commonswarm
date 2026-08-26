@@ -127,13 +127,39 @@ test("the dashboard closes through the human command and leaves the dead route",
   assert.match(dashboard, /resetWorkspaceSessionState\(\);\s*renderCreate\(session\)/);
   assert.match(
     dashboard,
-    /wirePopover\("\[data-workspace-details-trigger\]", "\[data-workspace-details-popover\]"\)/,
+    /closeWorkspaceDetailsDialog\(\);[\s\S]*await openWorkspace\(next\.id, true\)/,
   );
   assert.match(commonswarm, /credential may not own it/);
   assert.match(commonswarm, /workspace may no longer be available/);
   assert.doesNotMatch(
     commonswarm,
     /Only a workspace owner can close this workspace\. CommonSwarm did not change anything/,
+  );
+});
+
+test("workspace settings is a modal dialog outside the scrolling rail", async () => {
+  const dashboard = await readFile(new URL("./LiveDashboard.astro", import.meta.url), "utf8");
+  const settingsTag = dashboard.match(
+    /<([a-z][\w-]*)\b[^>]*\bdata-workspace-details-popover\b[^>]*>/,
+  );
+  assert.equal(settingsTag?.[1], "dialog", "the settings surface must use native dialog");
+
+  const railStart = dashboard.indexOf('<aside class="dashboard__rail"');
+  const railEnd = dashboard.indexOf("</aside>", railStart);
+  assert.ok(railStart >= 0 && railEnd > railStart, "the dashboard rail must be enumerable");
+  assert.doesNotMatch(
+    dashboard.slice(railStart, railEnd),
+    /data-workspace-details-popover/,
+    "the rail scroll container must not own the settings dialog",
+  );
+  assert.match(dashboard, /openWorkspaceDetailsDialog[\s\S]*dialog\.showModal\(\)/);
+  assert.match(
+    dashboard,
+    /data-workspace-details-trigger[\s\S]*aria-expanded="false"[\s\S]*aria-controls="dashboard-workspace-details"/,
+  );
+  assert.match(
+    dashboard,
+    /data-workspace-details-popover[\s\S]*addEventListener\("close"[\s\S]*aria-expanded", "false"/,
   );
 });
 
