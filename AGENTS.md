@@ -264,19 +264,32 @@ The distilled operative rules. Full doctrine, with the incidents that produced i
   whoever pulls the repo tomorrow. Keep the superseded line, marked dead.
 - **Current model-inversion gate (operator ruling, 2026-08-02 — D-036): every SHA-changing
   lane runs BOTH an exact review and an independent cross-family inversion on the exact
-  SHA. Grok is credit-exhausted and is NOT a usable arm.** The permitted pairing is one
-  exact-review arm (Codex or Claude) plus one inversion arm from a *different* family
-  (Google Gemini via `agy`, or Kimi K3 via Pi). Both arms are still required — the
-  two-arm rule itself is unchanged and is the part that must not erode. Each arm must
-  return substantive findings or reasoning; **an empty PASS is not a review**, and no
-  single arm of any family substitutes for the pair. If either arm changes the SHA, both
-  rerun on the replacement SHA. See D-036 for the measured condition and its scope.
+  SHA.** The permitted pairing is one exact-review arm (Codex, Claude, or Grok) plus one
+  inversion arm from a *different* family (Google Gemini via `agy`, or Kimi K3 via Pi).
+  Both arms are still required — the two-arm rule itself is unchanged and is the part that
+  must not erode. Each arm must return substantive findings or reasoning; **an empty PASS
+  is not a review**, and no single arm of any family substitutes for the pair. If either
+  arm changes the SHA, both rerun on the replacement SHA. See D-036 for the measured
+  condition and its scope.
+
+  ★ **Grok has credit again and IS a usable arm (measured 2026-08-26).** The superseded
+  line — *"Grok is credit-exhausted and is NOT a usable arm"* — is **dead**. It was true
+  when written and rotted silently, which cost nothing only because someone re-probed
+  instead of trusting it. **Call it headlessly as `grok -p "<prompt>"`.** Two traps sit in
+  front of that: piping into `grok` returns `Device not configured (os error 6)`, and
+  `timeout 60 grok …` exits 127 with no stdout on macOS — both look exactly like "grok is
+  dead" while measuring nothing. On the release-0.1.27 lane Grok found a defect the other
+  two arms missed: a control that **hung the suite instead of failing it**, which it caught
+  by running its own mutation and watching the exit code, and it independently reproduced
+  a false positive Gemini had found by reading. **An availability claim about a tool is a
+  deployment fact with no expiry date on it — re-probe before repeating one.**
+
   ~~Superseded (2026-07-29 ruling, now dead): "every swarm mate runs BOTH Grok and Google
   Gemini via `agy` on the exact SHA, instead of Claude… neither Grok alone, Gemini alone,
-  Codex, nor an optional Claude read substitutes for the required pair."~~ That line named
-  Grok as a mandatory arm; Grok has no credit, so following it literally makes every lane
-  unreviewable. D-032's Grok-alone exception remains dead. Do not read this change as
-  permission to review with one arm.
+  Codex, nor an optional Claude read substitutes for the required pair."~~ That line made
+  Grok *mandatory*, which is a different error from calling it unusable: no single named
+  family is required, and D-032's Grok-alone exception remains dead. Do not read either
+  correction as permission to review with one arm.
 
 - **Durable by default.** Anything an operator or the system reads back later — audit rows,
   queued or in-flight work, resolved config, delivery state — must live in Postgres, never in
