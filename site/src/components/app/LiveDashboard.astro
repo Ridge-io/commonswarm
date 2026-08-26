@@ -4987,7 +4987,12 @@ import "../../styles/tokens.css";
 
   .dashboard__workspace-details-popover {
     inset-block-start: calc(100% + var(--s-2));
-    inset-inline-end: 0;
+    /* LEFT-anchored on purpose. This was inset-inline-end: 0 — right-anchored to a trigger
+       that sits near the LEFT edge of the screen, so the 23rem panel extended past the
+       viewport's left edge and the danger zone's controls were cut off (operator screenshot,
+       2026-08-26). Anchoring to the control's left keeps the whole panel on screen at every
+       width: left edge ~1rem in, right edge at most min(23rem, 100vw - 2rem) further. */
+    inset-inline-start: 0;
     inline-size: min(23rem, calc(100vw - 2rem));
   }
 
