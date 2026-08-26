@@ -105,7 +105,7 @@ fi
 Nothing was installed."
 
 # --- Install. ----------------------------------------------------------------
-mkdir -p "$INSTALL_DIR" || die "could not create $INSTALL_DIR"
+mkdir -p -- "$INSTALL_DIR" || die "could not create $INSTALL_DIR"
 
 # cswarm ships as a CommonJS bundle in a file with no extension. Node decides
 # CJS-vs-ESM from the NEAREST package.json, so installing under a directory tree that
@@ -113,7 +113,11 @@ mkdir -p "$INSTALL_DIR" || die "could not create $INSTALL_DIR"
 # `require is not defined in ES module scope` — a baffling error for an install that
 # otherwise succeeded. Standard bin dirs have no package.json; check anyway and say so
 # plainly rather than letting the user meet that message.
-_d="$INSTALL_DIR"
+# Start this parent walk from a physical absolute path. Besides making each parent real,
+# this prevents `dirname .` from looping forever for a relative install directory such as
+# `-bin` or `./bin`.
+_d="$(CDPATH='' cd -P -- "$INSTALL_DIR" 2>/dev/null && pwd -P)" \
+  || die "could not inspect $INSTALL_DIR after creating it"
 while [ "$_d" != "/" ] && [ -n "$_d" ]; do
   if [ -f "$_d/package.json" ] && grep -q '"type"[[:space:]]*:[[:space:]]*"module"' "$_d/package.json" 2>/dev/null; then
     die "$INSTALL_DIR sits under $_d, whose package.json declares \"type\": \"module\".
@@ -122,22 +126,124 @@ Node would load cswarm as an ES module and it would fail with a confusing error.
 Install somewhere outside that tree, e.g.:
   curl -fsSL https://commonswarm.com/install.sh | CSWARM_INSTALL_DIR=\$HOME/bin sh"
   fi
-  _d="$(dirname "$_d")"
+  _d="$(dirname -- "$_d")"
 done
 chmod +x "$TMP/cswarm"
-mv "$TMP/cswarm" "$INSTALL_DIR/cswarm" || die "could not write to $INSTALL_DIR
+mv -- "$TMP/cswarm" "$INSTALL_DIR/cswarm" || die "could not write to $INSTALL_DIR
 Try:  curl -fsSL https://commonswarm.com/install.sh | sudo env CSWARM_INSTALL_DIR=/usr/local/bin sh"
+
+# Select and normalize the same version line for both the installed-file and PATH probes.
+# A runtime can write a banner before it, and CRLF leaves a carriage return on the last field.
+cswarm_version_line() {
+  printf '%s\n' "${1:-}" | awk '
+    {
+      sub(/\r$/, "", $0)
+      if ($1 == "cswarm" && NF >= 2) {
+        line = $0
+        sub(/^[[:space:]]+/, "", line)
+        sub(/[[:space:]]+$/, "", line)
+        print line
+        found = 1
+        exit
+      }
+    }
+    END { if (!found) exit 1 }
+  '
+}
+
+cswarm_release() {
+  printf '%s\n' "${1:-}" | awk '
+    $1 == "cswarm" && NF >= 2 {
+      release = $2
+      sub(/\r$/, "", release)
+      print release
+      found = 1
+      exit
+    }
+    END { if (!found) exit 1 }
+  '
+}
 
 # Read the version back OUT OF THE INSTALLED FILE rather than echoing what we meant to
 # install. `--version` already prints "cswarm X.Y.Z (protocol A.B.C)", so print that line
 # as-is instead of prefixing it — an earlier draft produced "Installed cswarm cswarm 0.0.1".
-INSTALLED_VERSION="$("$INSTALL_DIR/cswarm" --version 2>/dev/null | head -1 || true)"
+_INSTALLED_VERSION_OUTPUT="$("$INSTALL_DIR/cswarm" --version 2>/dev/null || true)"
+INSTALLED_VERSION="$(cswarm_version_line "$_INSTALLED_VERSION_OUTPUT")" || INSTALLED_VERSION=""
+INSTALLED_RELEASE="$(cswarm_release "$INSTALLED_VERSION")" || INSTALLED_RELEASE=""
 if [ -n "$INSTALLED_VERSION" ]; then
   printf '\nInstalled %s\n  -> %s\n' "$INSTALLED_VERSION" "$INSTALL_DIR/cswarm"
 else
   printf '\nInstalled cswarm to %s\n' "$INSTALL_DIR/cswarm"
   printf '  (warning: the installed binary did not report a version)\n'
 fi
+
+# The installed file can be healthy while an older copy earlier in PATH keeps winning.
+# Check the command the user's shell will actually run, but never turn their PATH state into
+# an install failure. The direct installed-file probe above remains the source of truth for
+# the version we just wrote.
+warn_if_cswarm_is_shadowed() {
+  canonical_cswarm_path() {
+    _CANONICAL_INPUT="${1:-}"
+    [ -n "$_CANONICAL_INPUT" ] || return 1
+
+    # POSIX sh has no portable readlink -f. Follow file symlinks one hop at a time,
+    # resolving relative targets from the directory that contains each link.
+    _CANONICAL_HOPS=0
+    while [ -L "$_CANONICAL_INPUT" ]; do
+      _CANONICAL_HOPS=$((_CANONICAL_HOPS + 1))
+      [ "$_CANONICAL_HOPS" -le 32 ] || return 1
+      _CANONICAL_DIRNAME="$(dirname -- "$_CANONICAL_INPUT" 2>/dev/null)" || return 1
+      _CANONICAL_TARGET="$(readlink -- "$_CANONICAL_INPUT" 2>/dev/null)" || return 1
+      case "$_CANONICAL_TARGET" in
+        /*) _CANONICAL_INPUT="$_CANONICAL_TARGET" ;;
+        *) _CANONICAL_INPUT="$_CANONICAL_DIRNAME/$_CANONICAL_TARGET" ;;
+      esac
+    done
+
+    _CANONICAL_DIRNAME="$(dirname -- "$_CANONICAL_INPUT" 2>/dev/null)" || return 1
+    _CANONICAL_BASENAME="$(basename -- "$_CANONICAL_INPUT" 2>/dev/null)" || return 1
+    _CANONICAL_PARENT="$(CDPATH='' cd -P -- "$_CANONICAL_DIRNAME" 2>/dev/null && pwd -P)" || return 1
+    printf '%s/%s\n' "$_CANONICAL_PARENT" "$_CANONICAL_BASENAME"
+  }
+
+  PATH_CSWARM="$(command -v cswarm 2>/dev/null || true)"
+  [ -n "$PATH_CSWARM" ] || return 0
+
+  _PATH_VERSION_OUTPUT="$("$PATH_CSWARM" --version 2>/dev/null || true)"
+  PATH_VERSION="$(cswarm_version_line "$_PATH_VERSION_OUTPUT")" || PATH_VERSION=""
+  PATH_RELEASE="$(cswarm_release "$PATH_VERSION")" || PATH_RELEASE=""
+
+  INSTALLED_CANONICAL="$(canonical_cswarm_path "$INSTALL_DIR/cswarm")" || INSTALLED_CANONICAL=""
+  PATH_CANONICAL="$(canonical_cswarm_path "$PATH_CSWARM")" || PATH_CANONICAL=""
+
+  PATH_MISMATCH=""
+  if [ -n "$INSTALLED_CANONICAL" ] && [ -n "$PATH_CANONICAL" ]; then
+    if [ "$PATH_CANONICAL" != "$INSTALLED_CANONICAL" ]; then
+      PATH_MISMATCH="path"
+    elif [ -n "$INSTALLED_RELEASE" ] && [ -n "$PATH_RELEASE" ] && [ "$PATH_RELEASE" != "$INSTALLED_RELEASE" ]; then
+      PATH_MISMATCH="version"
+    fi
+  fi
+
+  if [ -n "$PATH_MISMATCH" ]; then
+    printf '\nWARNING: cswarm on PATH does not match the cswarm just installed.\n' >&2
+    printf '  installed: %s\n' "$INSTALL_DIR/cswarm" >&2
+    printf '  PATH uses: %s\n' "$PATH_CSWARM" >&2
+    printf '  installed version: %s\n' "${INSTALLED_VERSION:-unavailable}" >&2
+    printf '  PATH version: %s\n' "${PATH_VERSION:-unavailable (cswarm --version failed)}" >&2
+
+    UPDATE_VERSION="${INSTALLED_RELEASE:-${VERSION:-latest}}"
+    if [ "$PATH_MISMATCH" = "path" ]; then
+      printf '\nUpdate the copy that wins in PATH. If it is an npm-global install:\n\n' >&2
+      printf '  npm i -g commonswarm@%s\n\n' "$UPDATE_VERSION" >&2
+      printf 'Or put %s earlier in PATH.\n' "$INSTALL_DIR" >&2
+    else
+      printf '\nReinstall or update this copy. If it is an npm-global install:\n\n' >&2
+      printf '  npm i -g commonswarm@%s\n' "$UPDATE_VERSION" >&2
+    fi
+  fi
+}
+warn_if_cswarm_is_shadowed || true
 
 # --- PATH guidance. ----------------------------------------------------------
 # Silently installing to a directory the user's shell cannot see is the most common
