@@ -20,6 +20,14 @@ import {
   FilePendingMainQueue,
   type PendingMainEntry,
 } from "./main-routing.js";
+import {
+  listenerPaths,
+  queryListenerControl,
+  readListenerStatus,
+  writeListenerStatus,
+  type ListenerPaths,
+  type ListenerStatus,
+} from "./control.js";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -70,6 +78,10 @@ export interface HookCheckOptions {
   now?: () => number;
   fetcher?: typeof fetch;
   write?: (output: string) => void | Promise<void>;
+  isListenerLive?: (context: {
+    paths: ListenerPaths;
+    status: ListenerStatus;
+  }) => boolean | Promise<boolean>;
 }
 
 function exactKeys(row: Record<string, unknown>, keys: readonly string[]): boolean {
@@ -341,11 +353,68 @@ async function reserveCheck(
 
 interface ListenerHookContext {
   instanceDirectory: string;
+  paths: ListenerPaths | null;
+  status: ListenerStatus | null;
   credential: ListenerCredentialState | null;
   credentialReadFailed: boolean;
 }
 
-async function discoverContexts(stateDirectory: string): Promise<ListenerHookContext[]> {
+function processIsAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+async function statusContext(
+  stateDirectory: string,
+  key: string,
+  instanceDirectory: string,
+): Promise<{ paths: ListenerPaths; status: ListenerStatus } | null> {
+  const provisional: ListenerPaths = {
+    key,
+    instanceDirectory,
+    statusPath: join(instanceDirectory, "status.json"),
+    logPath: join(instanceDirectory, "events.ndjson"),
+    socketPath: "",
+  };
+  const status = await readListenerStatus(provisional).catch(() => null);
+  if (status === null) return null;
+  const paths = listenerPaths({
+    profileId: status.profileId,
+    workspaceId: status.workspaceId,
+    principalId: status.principalId,
+    stateDirectory,
+  });
+  if (paths.key !== key || paths.instanceDirectory !== instanceDirectory) return null;
+  return { paths, status };
+}
+
+async function listenerIsLive(context: {
+  paths: ListenerPaths;
+  status: ListenerStatus;
+}): Promise<boolean> {
+  if (
+    context.status.state === "stopped" ||
+    context.status.state === "failed" ||
+    !processIsAlive(context.status.pid)
+  ) {
+    return false;
+  }
+  try {
+    await queryListenerControl(context.paths, "status", 250);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function discoverContexts(
+  stateDirectory: string,
+  isListenerLive: NonNullable<HookCheckOptions["isListenerLive"]> = listenerIsLive,
+): Promise<ListenerHookContext[]> {
   let entries: Dirent<string>[];
   try {
     entries = await readdir(stateDirectory, { withFileTypes: true });
@@ -357,22 +426,36 @@ async function discoverContexts(stateDirectory: string): Promise<ListenerHookCon
   for (const entry of entries) {
     if (!entry.isDirectory() || !INSTANCE_KEY_RE.test(entry.name)) continue;
     const instanceDirectory = join(stateDirectory, entry.name);
+    const storedStatus = await statusContext(
+      stateDirectory,
+      entry.name,
+      instanceDirectory,
+    );
+    const statusIsLive = storedStatus === null
+      ? null
+      : await isListenerLive(storedStatus);
+    if (statusIsLive === false) continue;
     await deleteSecureJsonFile(
       join(instanceDirectory, RETIRED_HOOK_CREDENTIAL_FILE),
     ).catch(() => undefined);
     try {
       const credential = await readListenerCredentialState(instanceDirectory);
-      const statusExists = credential === null && await readSecureJsonFile(
-        join(instanceDirectory, "status.json"),
-        16 * 1024,
-      ) !== null;
       contexts.push({
         instanceDirectory,
+        paths: storedStatus?.paths ?? null,
+        status: storedStatus?.status ?? null,
         credential,
-        credentialReadFailed: statusExists,
+        credentialReadFailed: credential === null && storedStatus !== null,
       });
     } catch {
-      contexts.push({ instanceDirectory, credential: null, credentialReadFailed: true });
+      if (storedStatus === null) continue;
+      contexts.push({
+        instanceDirectory,
+        paths: storedStatus.paths,
+        status: storedStatus.status,
+        credential: null,
+        credentialReadFailed: true,
+      });
     }
   }
   return contexts;
@@ -502,7 +585,10 @@ export async function checkListenerHooks(
     if (!Number.isSafeInteger(cooldownSeconds) || cooldownSeconds < 0 || cooldownSeconds > 86_400) {
       return "";
     }
-    const contexts = await discoverContexts(stateDirectory);
+    const contexts = await discoverContexts(
+      stateDirectory,
+      options.isListenerLive ?? listenerIsLive,
+    );
     if (contexts.length === 0) return "";
     const networkAllowed = await reserveCheck(
       stateDirectory,
@@ -545,10 +631,12 @@ export async function checkListenerHooks(
       check: ContextCheck;
       store: FileHookSurfaceStore;
       signalIds: string[];
+      printedPendingSignalIds: string[];
       reportDrops: boolean;
       reportCredentialFailure: boolean;
     }> = [];
     const blocks: string[] = [];
+    const emittedCredentialWarnings = new Set<string>();
     for (const check of checks) {
       const store = new FileHookSurfaceStore(check.context.instanceDirectory);
       const staged = await store.stage(
@@ -561,16 +649,22 @@ export async function checkListenerHooks(
       const reportCredentialFailure = check.credentialFailure !== null &&
         !staged.credentialFailureReported;
       if (reportCredentialFailure) {
-        blocks.push(
-          check.credentialFailure === "401"
-            ? CREDENTIAL_401_WARNING
-            : CREDENTIAL_READ_WARNING,
-        );
+        const warning = check.credentialFailure === "401"
+          ? CREDENTIAL_401_WARNING
+          : CREDENTIAL_READ_WARNING;
+        if (!emittedCredentialWarnings.has(warning)) {
+          emittedCredentialWarnings.add(warning);
+          blocks.push(warning);
+        }
       }
+      const pendingSignalIds = new Set(check.pending.map((entry) => entry.signalId));
       commits.push({
         check,
         store,
         signalIds: staged.unseen.map((item) => item.signalId),
+        printedPendingSignalIds: staged.unseen
+          .map((item) => item.signalId)
+          .filter((signalId) => pendingSignalIds.has(signalId)),
         reportDrops,
         reportCredentialFailure,
       });
@@ -588,10 +682,19 @@ export async function checkListenerHooks(
           ? { credentialFailureReported: false }
           : {}),
       });
-      await commit.check.queue.remove(
-        new Set(commit.check.pending.map((entry) => entry.signalId)),
+      const remainingCount = await commit.check.queue.remove(
+        new Set(commit.printedPendingSignalIds),
         HOOK_LOCK_TIMEOUT_MS,
       );
+      if (commit.check.context.paths !== null && commit.check.context.status !== null) {
+        const latest = await readListenerStatus(commit.check.context.paths).catch(() => null);
+        if (latest !== null && latest.pendingForMainCount !== remainingCount) {
+          await writeListenerStatus(commit.check.context.paths, {
+            ...latest,
+            pendingForMainCount: remainingCount,
+          });
+        }
+      }
     }
     return output;
   } catch {

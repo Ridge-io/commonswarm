@@ -17,8 +17,12 @@ import {
   FileHookSurfaceStore,
   FilePendingMainQueue,
   listenerPaths,
+  readListenerStatus,
   renderHookSignal,
   writeListenerCredentialState,
+  writeListenerStatus,
+  type ListenerPaths,
+  type ListenerStatus,
   type PendingMainEntry,
 } from "../../src/listener/index.js";
 
@@ -48,15 +52,59 @@ function runCli(
   });
 }
 
-function state(root: string) {
+function state(root: string, principalId = PRINCIPAL_ID) {
   const target = cloudTarget("https://cloud.example.test", "anon");
   const paths = listenerPaths({
     profileId: target.profileId,
     workspaceId: WORKSPACE_ID,
-    principalId: PRINCIPAL_ID,
+    principalId,
     stateDirectory: root,
   });
   return { target, paths };
+}
+
+async function writeStatus(
+  paths: ListenerPaths,
+  principalId = PRINCIPAL_ID,
+  options: {
+    state?: "ready" | "stopped" | "failed";
+    pendingForMainCount?: number;
+    pid?: number;
+  } = {},
+): Promise<void> {
+  const statusState = options.state ?? "ready";
+  await writeListenerStatus(paths, {
+    version: 1,
+    instanceId: "44444444-4444-4444-8444-444444444444",
+    provider: "claude",
+    profileId: cloudTarget("https://cloud.example.test", "anon").profileId,
+    workspaceId: WORKSPACE_ID,
+    principalId,
+    pid: options.pid ?? process.pid,
+    state: statusState,
+    startedAt: "2026-08-26T00:00:00.000Z",
+    readyAt: statusState === "ready" ? "2026-08-26T00:00:01.000Z" : null,
+    updatedAt: "2026-08-26T00:00:02.000Z",
+    stoppedAt: statusState === "ready" ? null : "2026-08-26T00:00:02.000Z",
+    lastSignalId: SIGNAL_ID,
+    lastErrorCode: statusState === "failed" ? "listener_failed" : null,
+    lastWorkerStderrTail: null,
+    deliveryMode: "durable_claim",
+    pendingDeliveryCount: 0,
+    lastTerminalDeliveryFailureCount: null,
+    lastTerminalDeliveryFailureAt: null,
+    lastClaimAt: null,
+    lastAckAt: null,
+    routeMode: "main",
+    deferOverChars: null,
+    pendingForMainCount: options.pendingForMainCount ?? 0,
+    droppedForMainCount: 0,
+    logPath: paths.logPath,
+  });
+}
+
+function testListenerIsLive(context: { status: ListenerStatus }): boolean {
+  return context.status.state === "ready" && context.status.pid === process.pid;
 }
 
 async function installCredential(root: string, url = "https://cloud.example.test") {
@@ -329,15 +377,114 @@ test("hook missing listener credential state is a normal silent state", async ()
   }
 });
 
-test("hook refuses a listener credential state that is not mode 0600 and warns once", async () => {
+test("hook skips stale listener directories and emits one credential warning per run", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cswarm-hook-stale-credentials-"));
+  try {
+    const staleStoppedId = "55555555-5555-4555-8555-555555555555";
+    const staleDeadPidId = "66666666-6666-4666-8666-666666666666";
+    const staleFailedId = "77777777-7777-4777-8777-777777777777";
+    const secondLiveId = "88888888-8888-4888-8888-888888888888";
+    const staleStopped = state(root, staleStoppedId).paths;
+    const staleDeadPid = state(root, staleDeadPidId).paths;
+    const staleFailed = state(root, staleFailedId).paths;
+    const live = state(root).paths;
+    const secondLive = state(root, secondLiveId).paths;
+    await writeStatus(staleStopped, staleStoppedId, { state: "stopped" });
+    await writeStatus(staleDeadPid, staleDeadPidId, { pid: 2_147_483_647 });
+    await writeStatus(staleFailed, staleFailedId, { state: "failed" });
+    await writeStatus(live);
+    await writeStatus(secondLive, secondLiveId);
+
+    const controller = new AbortController();
+    const output = await checkListenerHooks({
+      stateDirectory: root,
+      cooldownSeconds: 0,
+      isListenerLive: testListenerIsLive,
+      signal: controller.signal,
+      deadlineMs: Date.now() + 3_000,
+    });
+    assert.equal(
+      output.match(/CommonSwarm could not read the configured listener credential safely/g)
+        ?.length,
+      1,
+      "live unreadable credentials share one warning; stale directories produce none",
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("hook removes only queued signals written by this run", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cswarm-hook-printed-removal-"));
+  try {
+    const staleId = "55555555-5555-4555-8555-555555555555";
+    const stale = state(root, staleId).paths;
+    const live = state(root).paths;
+    await writeStatus(stale, staleId, { state: "stopped" });
+    await writeStatus(live, PRINCIPAL_ID, { pendingForMainCount: 1 });
+    const queue = new FilePendingMainQueue(live.instanceDirectory);
+    const entry = pending(SIGNAL_ID, "do not drain an ask that was not printed");
+    await queue.enqueue(entry);
+    await new FileHookSurfaceStore(live.instanceDirectory).commit({
+      signalIds: [SIGNAL_ID],
+    });
+
+    const controller = new AbortController();
+    const output = await checkListenerHooks({
+      stateDirectory: root,
+      cooldownSeconds: 0,
+      isListenerLive: testListenerIsLive,
+      signal: controller.signal,
+      deadlineMs: Date.now() + 3_000,
+    });
+    assert.doesNotMatch(output, /do not drain an ask that was not printed/);
+    assert.deepEqual(
+      (await queue.read()).map((item) => item.signalId),
+      [SIGNAL_ID],
+      "mutation: restoring unconditional pending removal drains an unprinted ask",
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("hook drain keeps status pending count equal to the queue file", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cswarm-hook-status-count-"));
+  try {
+    const paths = await installCredential(root);
+    await writeStatus(paths, PRINCIPAL_ID, { pendingForMainCount: 1 });
+    const queue = new FilePendingMainQueue(paths.instanceDirectory);
+    await queue.enqueue(pending(SIGNAL_ID, "drain and update status"));
+    const controller = new AbortController();
+    const output = await checkListenerHooks({
+      stateDirectory: root,
+      cooldownSeconds: 0,
+      fetcher: emptyInboxFetch({ count: 0 }),
+      isListenerLive: testListenerIsLive,
+      signal: controller.signal,
+      deadlineMs: Date.now() + 3_000,
+    });
+    assert.match(output, /drain and update status/);
+    assert.equal(await queue.count(), 0);
+    assert.equal((await readListenerStatus(paths))?.pendingForMainCount, 0);
+    const stored = JSON.parse(await readFile(paths.statusPath, "utf8"));
+    assert.equal(stored.pendingForMainCount, 0);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("hook refuses a live listener credential state that is not mode 0600 and warns once", async () => {
   const root = await mkdtemp(join(tmpdir(), "cswarm-hook-mode-"));
   try {
     const paths = await installCredential(root);
+    await writeStatus(paths);
     await chmod(join(paths.instanceDirectory, "listener-credential.json"), 0o644);
     const controller = new AbortController();
     const invoke = async () => await checkListenerHooks({
       stateDirectory: root,
       cooldownSeconds: 0,
+      isListenerLive: testListenerIsLive,
       signal: controller.signal,
       deadlineMs: Date.now() + 3_000,
     });
