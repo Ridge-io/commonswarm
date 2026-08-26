@@ -58,11 +58,20 @@ test("hostile and obfuscated link schemes never become href attributes", () => {
     "vbscript:msgbox(1)", "file:///etc/passwd", "//example.com/path", " javaScript:alert(1)",
     "java\tscript:alert(1)", "java\nscript:alert(1)", "https:\n//example.com",
     "https://example.com/%0Aredirect",
+    /* Userinfo phishing (review finding): parses as https, passes the scheme check, and a
+       reader sees the trusted-looking half. Rejected outright. */
+    "https://trusted.example@evil.host/", "https://user:pass@evil.host/",
   ];
   for (const destination of vectors) {
     assert.equal(safeMessageLink(destination), null, destination);
     assert.doesNotMatch(renderMessageMarkdown(`[open](${destination})`), /<a\b|href=/u, destination);
   }
+});
+
+test("a link label containing inline code restores fully, with no stray token bytes", () => {
+  const rendered = renderMessageMarkdown("[run `cswarm feed` now](https://example.com/docs)");
+  assert.match(rendered, /<a href="https:\/\/example\.com\/docs">run <code>cswarm feed<\/code> now<\/a>/u);
+  assert.doesNotMatch(rendered, /[\uE000\uE001]/u);
 });
 
 test("the sanitizer keeps only the tag allowlist and href on anchors", () => {

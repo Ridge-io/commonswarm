@@ -54,6 +54,10 @@ export function safeMessageLink(value: string): string | null {
   try {
     const parsed = new URL(value);
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
+    /* Reject userinfo. https://trusted.example@evil.host parses fine, passes the scheme
+     * check, and reads as the wrong destination to a human - the classic phishing shape.
+     * Nothing legitimate in a chat message needs credentials embedded in a URL. */
+    if (parsed.username !== "" || parsed.password !== "") return null;
     return value;
   } catch {
     return null;
@@ -83,7 +87,20 @@ function stashToken(tokens: string[], html: string): string {
 }
 
 function restoreTokens(value: string, tokens: string[]): string {
-  return value.replace(/\uE000(\d+)\uE001/gu, (_, index: string) => tokens[Number(index)] ?? "");
+  /* Tokens can nest: a link label containing inline code stashes the <code> first, then the
+   * whole <a> - which still holds the inner placeholder - is stashed again. One pass left
+   * private-use characters in the rendered label (found in review). Iterate until stable,
+   * bounded by the token count so a cycle cannot spin. */
+  let restored = value;
+  for (let pass = 0; pass <= tokens.length; pass += 1) {
+    const next = restored.replace(
+      /\uE000(\d+)\uE001/gu,
+      (_, index: string) => tokens[Number(index)] ?? "",
+    );
+    if (next === restored) break;
+    restored = next;
+  }
+  return restored;
 }
 
 function renderEmphasis(value: string): string {
