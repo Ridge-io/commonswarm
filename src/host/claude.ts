@@ -37,13 +37,14 @@ import { AcpHostSession, createBoundTransport } from "./session.js";
 import {
   AcpHostError,
   AcpVersionError,
+  AcpVersionMismatchError,
   type HostSessionEvents,
   type PermissionCallback,
 } from "./types.js";
 
 export type ClaudeAcpOpenOptions = {
   cwd: string;
-  /** Absolute realpath to claude-agent-acp. Bare names are resolved once at open. */
+  /** Claude Code or claude-agent-acp path. Bare names resolve once at open. */
   executable?: string;
   permissionCallback?: PermissionCallback;
   events?: HostSessionEvents;
@@ -75,6 +76,8 @@ export type ClaudeAcpHandle = {
 
 const CHILD_EXIT_WAIT_MS = 3_000;
 const CHILD_KILL_WAIT_MS = 1_000;
+const STDERR_EXIT_GRACE_MS = 100;
+const READABLE_END_GRACE_MS = STDERR_EXIT_GRACE_MS + 50;
 const WINDOWS_NPM_SHIM_MAX_BYTES = 64 * 1024;
 const WINDOWS_NPM_ENTRYPOINT = [
   "node_modules",
@@ -83,6 +86,39 @@ const WINDOWS_NPM_ENTRYPOINT = [
   "dist",
   "index.js",
 ] as const;
+
+function isPackagedClaudeBridge(executable: string): boolean {
+  const normalized = executable.replaceAll("\\", "/");
+  return normalized.endsWith(
+    "/node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js",
+  );
+}
+
+/** Resolve only the package entrypoint, never an earlier arbitrary PATH shim. */
+export function resolvePackagedClaudeBridge(
+  pathEnv?: string,
+  platform: NodeJS.Platform = process.platform,
+): string {
+  const pathValue = pathEnv ?? process.env.PATH ?? "";
+  const names = platform === "win32"
+    ? ["claude-agent-acp.cmd"]
+    : ["claude-agent-acp"];
+  for (const dir of pathValue.split(delimiter)) {
+    if (!dir) continue;
+    for (const name of names) {
+      try {
+        const candidate = resolvedClaudeCandidate(join(dir, name), platform);
+        if (isPackagedClaudeBridge(candidate)) return candidate;
+      } catch {
+        // Keep walking: an earlier missing or invalid shim is not authoritative.
+      }
+    }
+  }
+  throw new AcpHostError(
+    "executable_missing",
+    "packaged claude-agent-acp executable not found; install @agentclientprotocol/claude-agent-acp@0.64.2",
+  );
+}
 
 function resolveWindowsNpmShim(shim: string): string {
   let source: string;
@@ -190,22 +226,26 @@ export function parseClaudeVersionOutput(stdout: string): string | null {
   return match?.[1] ?? null;
 }
 
-/** Run the resolved bridge with the exact environment used for its ACP process. */
-export async function assertClaudeMeasuredVersion(
+/** Parse the user-facing version shape printed by the Claude Code binary. */
+export function parseClaudeCodeVersionOutput(stdout: string): string | null {
+  const match = stdout.match(
+    /^(\d+\.\d+\.\d+(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?) \(Claude Code\)\s*$/m,
+  );
+  return match?.[1] ?? null;
+}
+
+async function readClaudeVersionOutput(
   executable: string,
   options?: {
-    expected?: string;
     timeoutMs?: number;
     env?: NodeJS.ProcessEnv | Record<string, string | undefined>;
-    /** Injected only to exercise native Windows launch shape in pure tests. */
     platform?: NodeJS.Platform;
   },
 ): Promise<string> {
-  const expected = options?.expected ?? CLAUDE_ACP_MEASURED_VERSION;
   const timeoutMs = options?.timeoutMs ?? ACP_VERSION_CHECK_TIMEOUT_MS;
   const env = options?.env ?? sanitizeChildEnv(process.env);
   const launch = buildClaudeLaunch(executable, ["--version"], options?.platform);
-  const stdout = await new Promise<string>((resolve, reject) => {
+  return await new Promise<string>((resolve, reject) => {
     execFile(
       launch.command,
       launch.args,
@@ -225,6 +265,21 @@ export async function assertClaudeMeasuredVersion(
       },
     );
   });
+}
+
+/** Run the resolved bridge with the exact environment used for its ACP process. */
+export async function assertClaudeMeasuredVersion(
+  executable: string,
+  options?: {
+    expected?: string;
+    timeoutMs?: number;
+    env?: NodeJS.ProcessEnv | Record<string, string | undefined>;
+    /** Injected only to exercise native Windows launch shape in pure tests. */
+    platform?: NodeJS.Platform;
+  },
+): Promise<string> {
+  const expected = options?.expected ?? CLAUDE_ACP_MEASURED_VERSION;
+  const stdout = await readClaudeVersionOutput(executable, options);
   const version = parseClaudeVersionOutput(stdout);
   if (!version) {
     throw new AcpVersionError(
@@ -232,9 +287,7 @@ export async function assertClaudeMeasuredVersion(
     );
   }
   if (version !== expected) {
-    throw new AcpVersionError(
-      `refusing claude-agent-acp ${version}; host core is measured for ${expected} only`,
-    );
+    throw new AcpVersionMismatchError(expected, version);
   }
   return version;
 }
@@ -247,8 +300,13 @@ export function buildClaudeAcpArgs(): string[] {
 /** Preserve the normal home while stripping CommonSwarm and credential variables. */
 export function buildClaudeChildEnv(
   parent: NodeJS.ProcessEnv | Record<string, string | undefined>,
+  claudeCodeExecutable?: string,
 ): Record<string, string> {
-  return sanitizeChildEnv(parent);
+  const env = sanitizeChildEnv(parent);
+  if (claudeCodeExecutable) {
+    env.CLAUDE_CODE_EXECUTABLE = claudeCodeExecutable;
+  }
+  return env;
 }
 
 function waitForChildExit(
@@ -305,13 +363,51 @@ export async function openClaudeAcpSession(
     );
   }
   const pathEnv = parentEnv.PATH;
-  const executable = resolveClaudeExecutable(
-    options.executable ?? "claude-agent-acp",
-    typeof pathEnv === "string" ? pathEnv : undefined,
-  );
-  const env = buildClaudeChildEnv(parentEnv);
-  if (!options.skipVersionCheck) {
-    await assertClaudeMeasuredVersion(executable, { env });
+  const resolvedPathEnv = typeof pathEnv === "string" ? pathEnv : undefined;
+  if (options.skipVersionCheck && options.executable) {
+    throw new AcpHostError(
+      "version_check_required",
+      "skipVersionCheck cannot classify an explicit Claude executable",
+    );
+  }
+  const requestedExecutable = options.executable
+    ? resolveClaudeExecutable(options.executable, resolvedPathEnv)
+    : null;
+  const baseEnv = buildClaudeChildEnv(parentEnv);
+  let executable: string;
+  let env = baseEnv;
+  let claudeCodeExecutable: string | undefined;
+  if (requestedExecutable) {
+    const output = await readClaudeVersionOutput(requestedExecutable, {
+      env: baseEnv,
+    });
+    const bridgeVersion = parseClaudeVersionOutput(output);
+    if (bridgeVersion) {
+      if (bridgeVersion !== CLAUDE_ACP_MEASURED_VERSION) {
+        throw new AcpVersionMismatchError(
+          CLAUDE_ACP_MEASURED_VERSION,
+          bridgeVersion,
+        );
+      }
+      executable = requestedExecutable;
+    } else if (parseClaudeCodeVersionOutput(output)) {
+      claudeCodeExecutable = requestedExecutable;
+      executable = resolvePackagedClaudeBridge(resolvedPathEnv);
+      env = buildClaudeChildEnv(parentEnv, claudeCodeExecutable);
+      await assertClaudeMeasuredVersion(executable, { env });
+    } else {
+      throw new AcpVersionError(
+        `could not identify Claude executable from: ${output.trim().slice(0, 200)}`,
+      );
+    }
+  } else {
+    executable = requestedExecutable ?? resolveClaudeExecutable(
+      "claude-agent-acp",
+      resolvedPathEnv,
+    );
+    if (!options.skipVersionCheck) {
+      await assertClaudeMeasuredVersion(executable, { env: baseEnv });
+    }
   }
   if (options.signal?.aborted) {
     throw new AcpHostError(
@@ -362,34 +458,40 @@ export async function openClaudeAcpSession(
     throw new AcpHostError("spawn_failed", "child missing stdio pipes");
   }
   const stderrTail = attachStderrTailRing(child.stderr);
-  if (options.onStderrTail) {
-    const deliverTail = options.onStderrTail;
-    /* Published on "exit", latched once, with "close" as a fallback. "exit" is
-     * the same event AcpChildExitError is derived from (the transport's exit
-     * handler below registers AFTER this one), so the tail is in its consumer's
-     * hands before the failure it explains can reach the supervisor — a
-     * "close"-only publish raced that read and could attach one worker's tail
-     * to the next worker's failure. The cost: stderr bytes not yet delivered
-     * at exit are dropped, acceptable for a tail whose job is the lines
-     * already written. */
-    let tailDelivered = false;
-    const publishTail = () => {
-      if (tailDelivered) return;
-      tailDelivered = true;
-      deliverTail(stderrTail.read());
-    };
-    child.once("exit", publishTail);
-    child.once("close", publishTail);
-  }
 
   let sessionRef: AcpHostSession | null = null;
   const transport = createBoundTransport({
     readable: child.stdout,
     writable: child.stdin,
     requestTimeoutMs: options.requestTimeoutMs ?? ACP_DEFAULT_REQUEST_TIMEOUT_MS,
+    readableEndGraceMs: READABLE_END_GRACE_MS,
     getSession: () => sessionRef,
     onChildExit: (handler) => {
-      child.on("exit", (code, signal) => handler(code, signal));
+      const observeExit = (
+        code: number | null,
+        signal: NodeJS.Signals | null,
+      ) => {
+        let completed = false;
+        let timer: NodeJS.Timeout | null = null;
+        const complete = () => {
+          if (completed) return;
+          completed = true;
+          if (timer) clearTimeout(timer);
+          child.removeListener("close", complete);
+          options.onStderrTail?.(stderrTail.read());
+          handler(code, signal);
+        };
+        /* `exit` is reliable even when a grandchild inherits stdio. `close` may
+         * flush the tail sooner, but the timer is the hard upper bound and the
+         * latch prevents a late close from publishing into a later worker. */
+        child.once("close", complete);
+        timer = setTimeout(complete, STDERR_EXIT_GRACE_MS);
+      };
+      if (child.exitCode !== null || child.signalCode !== null) {
+        observeExit(child.exitCode, child.signalCode);
+      } else {
+        child.once("exit", observeExit);
+      }
     },
   });
 

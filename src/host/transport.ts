@@ -52,6 +52,8 @@ export type AcpTransportOptions = {
   requestTimeoutMs?: number;
   /** Optional child-exit signal — rejects all pending when fired. */
   onChildExit?: (handler: (code: number | null, signal: NodeJS.Signals | null) => void) => void;
+  /** Bound a short stdout-EOF grace without ever waiting indefinitely for exit. */
+  readableEndGraceMs?: number;
 };
 
 /**
@@ -72,12 +74,27 @@ export class AcpTransport extends EventEmitter {
     this.writable = options.writable;
     this.handlers = options.handlers ?? {};
     this.requestTimeoutMs = options.requestTimeoutMs ?? ACP_DEFAULT_REQUEST_TIMEOUT_MS;
+    const readableEndGraceMs = Math.max(0, options.readableEndGraceMs ?? 0);
+    let readableEndTimer: NodeJS.Timeout | null = null;
 
     options.readable.on("data", (chunk: Buffer | string) => {
       this.onData(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
     });
     options.readable.on("end", () => {
-      this.failAll(new AcpChildExitError(this.childExit?.code ?? null, this.childExit?.signal ?? null));
+      const fail = () => {
+        readableEndTimer = null;
+        this.failAll(
+          new AcpChildExitError(
+            this.childExit?.code ?? null,
+            this.childExit?.signal ?? null,
+          ),
+        );
+      };
+      if (readableEndGraceMs > 0 && options.onChildExit) {
+        readableEndTimer = setTimeout(fail, readableEndGraceMs);
+      } else {
+        fail();
+      }
     });
     // Normalise at the boundary: everything leaving this transport carries a
     // code we assigned, so no downstream classifier has to read a message.
@@ -89,6 +106,10 @@ export class AcpTransport extends EventEmitter {
     });
 
     options.onChildExit?.((code, signal) => {
+      if (readableEndTimer) {
+        clearTimeout(readableEndTimer);
+        readableEndTimer = null;
+      }
       this.childExit = { code, signal };
       this.failAll(new AcpChildExitError(code, signal));
     });

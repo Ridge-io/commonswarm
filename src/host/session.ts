@@ -851,6 +851,7 @@ export function createBoundTransport(options: {
   writable: import("node:stream").Writable;
   requestTimeoutMs?: number;
   onChildExit?: (handler: (code: number | null, signal: NodeJS.Signals | null) => void) => void;
+  readableEndGraceMs?: number;
   getSession: () => AcpHostSession | null;
 }): AcpTransport {
   return new AcpTransport({
@@ -858,6 +859,7 @@ export function createBoundTransport(options: {
     writable: options.writable,
     requestTimeoutMs: options.requestTimeoutMs,
     onChildExit: options.onChildExit,
+    readableEndGraceMs: options.readableEndGraceMs,
     handlers: {
       onNotification: (method, params) => {
         options.getSession()?.handleAgentNotification(method, params);

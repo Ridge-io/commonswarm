@@ -182,6 +182,19 @@ export class AcpVersionError extends AcpHostError {
   }
 }
 
+/** Preserve expected and observed versions for exact bridge-pin failures. */
+export class AcpVersionMismatchError extends AcpVersionError {
+  constructor(
+    readonly expected: string,
+    readonly actual: string,
+  ) {
+    super(
+      `refusing claude-agent-acp ${actual}; host core is measured for ${expected} only`,
+    );
+    this.name = "AcpVersionMismatchError";
+  }
+}
+
 export class AcpPermissionCanaryError extends AcpHostError {
   constructor(message: string) {
     super("permission_canary_failed", message);
