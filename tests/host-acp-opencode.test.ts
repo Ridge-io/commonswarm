@@ -22,7 +22,7 @@ import {
   ACP_PROTOCOL_VERSION,
   AcpPromptsBlockedError,
   OPENCODE_FORCED_PERMISSION_TOOLS,
-  OPENCODE_MEASURED_VERSION,
+  OPENCODE_MIN_VERSION,
   buildOpenCodeAcpArgs,
   buildOpenCodeChildEnv,
   buildOpenCodeForcedPermissionConfig,
@@ -116,7 +116,7 @@ function createFakeChild(script: FakeAgentScript = {}) {
         api.result({
           protocolVersion: ACP_PROTOCOL_VERSION,
           agentCapabilities: { loadSession: true },
-          _meta: { agentVersion: OPENCODE_MEASURED_VERSION },
+          _meta: { agentVersion: OPENCODE_MIN_VERSION },
         });
         return;
       }
@@ -151,12 +151,12 @@ function createFakeChild(script: FakeAgentScript = {}) {
 }
 
 describe("OpenCode ACP host core (pure)", () => {
-  test("argv is only acp --pure; version pin; forced-ask config covers every tool + wildcard", () => {
+  test("argv is only acp --pure; version floor; forced-ask config covers every tool + wildcard", () => {
     assert.deepEqual(buildOpenCodeAcpArgs(), ["acp", "--pure"]);
     assert.equal(parseOpenCodeVersionOutput("1.18.10\n"), "1.18.10");
     assert.equal(parseOpenCodeVersionOutput("opencode 1.18.10"), "1.18.10");
     assert.equal(parseOpenCodeVersionOutput("1.19.0"), "1.19.0");
-    assert.equal(OPENCODE_MEASURED_VERSION, "1.18.10");
+    assert.equal(OPENCODE_MIN_VERSION, "1.18.10");
     const permission = buildOpenCodeForcedPermissionConfig();
     for (const tool of OPENCODE_FORCED_PERMISSION_TOOLS) {
       assert.equal(permission[tool], "ask", tool);
@@ -291,7 +291,7 @@ describe("OpenCode ACP host core (pure)", () => {
           if (method === "initialize") {
             api.result({
               protocolVersion: ACP_PROTOCOL_VERSION,
-              _meta: { agentVersion: OPENCODE_MEASURED_VERSION },
+              _meta: { agentVersion: OPENCODE_MIN_VERSION },
             });
             return;
           }

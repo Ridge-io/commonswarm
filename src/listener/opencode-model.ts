@@ -59,6 +59,8 @@ export interface OpenCodeListenerModelOptions {
   promptTimeoutMs?: number | (() => Promise<number>);
   /** Receives the worker's bounded stderr tail on child exit (local log only). */
   onWorkerStderrTail?: (tail: string) => void;
+  /** Receives one allowed newer-version notice for durable startup status. */
+  onVersionNotice?: NonNullable<OpenCodeAcpOpenOptions["onVersionNotice"]>;
 }
 
 
@@ -480,6 +482,9 @@ export class OpenCodeListenerModel implements ListenerModel {
         ...(this.options.executable ? { executable: this.options.executable } : {}),
         ...(this.options.model ? { model: this.options.model } : {}),
         ...(this.options.env ? { env: this.options.env } : {}),
+        ...(this.options.onVersionNotice
+          ? { onVersionNotice: this.options.onVersionNotice }
+          : {}),
         ...(this.options.allowMissingAuth === true
           ? { allowMissingAuth: true }
           : {}),

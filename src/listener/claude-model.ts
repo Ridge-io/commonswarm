@@ -46,6 +46,8 @@ export interface ClaudeListenerModelOptions {
   promptTimeoutMs?: number | (() => Promise<number>);
   /** Receives the worker's bounded stderr tail on child exit (local log only). */
   onWorkerStderrTail?: (tail: string) => void;
+  /** Receives one allowed newer-version notice for durable startup status. */
+  onVersionNotice?: NonNullable<ClaudeAcpOpenOptions["onVersionNotice"]>;
 }
 
 class ClaudeListenerClosedDuringOpen extends Error {
@@ -192,6 +194,9 @@ export class ClaudeListenerModel implements ListenerModel {
         permissionCallback,
         ...(this.options.executable ? { executable: this.options.executable } : {}),
         ...(this.options.env ? { env: this.options.env } : {}),
+        ...(this.options.onVersionNotice
+          ? { onVersionNotice: this.options.onVersionNotice }
+          : {}),
         signal: controller.signal,
       ...(this.options.onWorkerStderrTail
         ? { onStderrTail: this.options.onWorkerStderrTail }

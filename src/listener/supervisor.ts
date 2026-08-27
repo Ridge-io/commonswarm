@@ -111,6 +111,11 @@ export interface ListenerSupervisorOptions {
    * "error" was undiagnosable from the failing box's own log).
    */
   takeWorkerStderrTail?: () => string | null;
+  /** Read the allowed newer-version notice after the permission canary passes. */
+  getProviderVersionNotice?: () => {
+    runningVersion: string;
+    lastMeasuredVersion: string;
+  } | null;
   /**
    * The turn budget in ms to record on a timeout-class effect event. Returns
    * the budget ACTUALLY applied to the last turn (clamped to the credential's
@@ -201,6 +206,8 @@ export async function runListenerSupervisor(
     stoppedAt: null,
     lastSignalId: null,
     lastErrorCode: null,
+    providerVersion: null,
+    providerLastMeasuredVersion: null,
     lastWorkerStderrTail: null,
     deliveryMode: null,
     pendingDeliveryCount: null,
@@ -288,10 +295,13 @@ export async function runListenerSupervisor(
 
   const onEvent = (event: ListenerRuntimeEvent) => {
     if (event.type === "ready") {
+      const versionNotice = options.getProviderVersionNotice?.() ?? null;
       transition("ready", {
         readyAt: event.ts,
         lastErrorCode: null,
         lastWorkerStderrTail: null,
+        providerVersion: versionNotice?.runningVersion ?? null,
+        providerLastMeasuredVersion: versionNotice?.lastMeasuredVersion ?? null,
       });
       log({ ts: event.ts, event: "listener_ready" });
       return;
@@ -507,6 +517,8 @@ export async function runListenerSupervisor(
         readyAt: null,
         lastErrorCode: restartCode,
         lastWorkerStderrTail: restartStderrTail,
+        providerVersion: null,
+        providerLastMeasuredVersion: null,
       });
       await restartSleep(delayMs, controller.signal);
       if (controller.signal.aborted) {

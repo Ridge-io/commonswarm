@@ -48,11 +48,11 @@ test("listen start requires an explicit provider before target or credential wor
   assert.match(result.stderr, /opencode.*1\.18\.10/i);
   assert.match(
     result.stderr,
-    /npm install -g @agentclientprotocol\/claude-agent-acp@0\.64\.2/,
+    /npm install -g @agentclientprotocol\/claude-agent-acp@latest \(minimum 0\.64\.2\)/,
   );
   assert.match(
     result.stderr,
-    /npm install -g @agentclientprotocol\/codex-acp@1\.1\.9/,
+    /npm install -g @agentclientprotocol\/codex-acp@latest \(minimum 1\.1\.9\)/,
   );
   assert.match(result.stderr, /working-on, note, ask, and feed/);
   assert.match(result.stderr, /detached live receipt needs/i);
@@ -74,14 +74,14 @@ test("unsupported provider error lists the same four remedies", () => {
   assert.match(result.stderr, /grok.*opencode.*claude.*codex/i);
   assert.match(
     result.stderr,
-    /npm install -g @agentclientprotocol\/claude-agent-acp@0\.64\.2/,
+    /npm install -g @agentclientprotocol\/claude-agent-acp@latest/,
   );
 });
 
 test("Codex startup failures give install and bounded diagnostic remedies", () => {
-  const install = "npm install -g @agentclientprotocol/codex-acp@1.1.9";
+  const install = "npm install -g @agentclientprotocol/codex-acp@latest";
   assert.ok(listenerFailureMessage("executable_missing", "codex").includes(install));
-  assert.ok(listenerFailureMessage("version_refused", "codex").includes(install));
+  assert.match(listenerFailureMessage("version_below_floor", "codex"), /1\.1\.9 or newer/);
 
   const ambiguous = listenerFailureMessage("rpc_error", "codex");
   assert.match(ambiguous, /could not start \(rpc_error\)/i);
@@ -93,25 +93,25 @@ test("Codex startup failures give install and bounded diagnostic remedies", () =
   assert.match(canary, /no workspace signal prompt was delivered/i);
   assert.match(
     listenerFailureMessage("permission_mode_unavailable", "codex"),
-    /required read-only permission mode.*reinstall codex-acp 1\.1\.9/i,
+    /required read-only permission mode.*update or reinstall codex-acp/i,
   );
 });
 
-test("detached Codex resolution preserves the exact install remedy", () => {
+test("detached Codex resolution preserves the current install remedy", () => {
   assert.throws(
     () =>
       resolveDetachedCodexExecutable(
         "definitely-missing-codex-acp",
         "/definitely/missing",
       ),
-    /npm install -g @agentclientprotocol\/codex-acp@1\.1\.9/,
+    /npm install -g @agentclientprotocol\/codex-acp@latest/,
   );
 });
 
 test("Claude startup failures give install and bounded diagnostic remedies", () => {
-  const install = "npm install -g @agentclientprotocol/claude-agent-acp@0.64.2";
+  const install = "npm install -g @agentclientprotocol/claude-agent-acp@latest";
   assert.ok(listenerFailureMessage("executable_missing", "claude").includes(install));
-  assert.ok(listenerFailureMessage("version_refused", "claude").includes(install));
+  assert.match(listenerFailureMessage("version_below_floor", "claude"), /0\.64\.2 or newer/);
 
   const ambiguous = listenerFailureMessage("rpc_error", "claude");
   assert.match(ambiguous, /could not start \(rpc_error\)/i);
@@ -130,18 +130,18 @@ test("Claude startup failures give install and bounded diagnostic remedies", () 
   assert.match(canary, /no workspace signal prompt was delivered/i);
   assert.match(
     listenerFailureMessage("permission_mode_unavailable", "claude"),
-    /required manual permission mode.*reinstall claude-agent-acp 0\.64\.2/i,
+    /required manual permission mode.*update or reinstall claude-agent-acp/i,
   );
 });
 
-test("detached Claude resolution preserves the exact install remedy", () => {
+test("detached Claude resolution preserves the current install remedy", () => {
   assert.throws(
     () =>
       resolveDetachedClaudeExecutable(
         "definitely-missing-claude-agent-acp",
         "/definitely/missing",
       ),
-    /npm install -g @agentclientprotocol\/claude-agent-acp@0\.64\.2/,
+    /npm install -g @agentclientprotocol\/claude-agent-acp@latest/,
   );
 });
 
@@ -159,7 +159,7 @@ test("explicit unusable Claude path keeps its diagnostic and reinstall option", 
         assert.ok(message.includes(executable));
         assert.match(
           message,
-          /npm install -g @agentclientprotocol\/claude-agent-acp@0\.64\.2/,
+          /npm install -g @agentclientprotocol\/claude-agent-acp@latest/,
         );
         assert.doesNotMatch(message, /is not installed/);
         return true;
@@ -291,4 +291,3 @@ test("resolveTurnBudgetOrDefer enforces the invariant: a turn starts only with a
   // Unknown expiry (out of scope: such a credential never renews) -> no defer.
   assert.equal(resolveTurnBudgetOrDefer(budget, null, now, false), budget);
 });
-

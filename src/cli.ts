@@ -171,6 +171,7 @@ import {
 import { resolveOpenCodeExecutable } from "./host/opencode.js";
 import { resolveClaudeExecutable } from "./host/claude.js";
 import { resolveCodexExecutable } from "./host/codex.js";
+import type { ProviderVersionNotice } from "./host/version.js";
 import {
   ClaudeListenerModel,
   CodexListenerModel,
@@ -3362,7 +3363,7 @@ function listenerModelLabel(provider: ListenerProviderId): string {
 function listenerProvider(args: Arguments): ListenerProviderId {
   const provider = args.optional("provider");
   const hints =
-    "supported providers: grok — install Grok CLI 0.2.117 and run grok login; opencode — install OpenCode 1.18.10 and authenticate it; claude — npm install -g @agentclientprotocol/claude-agent-acp@0.64.2; codex — npm install -g @agentclientprotocol/codex-acp@1.1.9. You can use working-on, note, ask, and feed now; detached live receipt needs one of these adapters";
+    "supported providers: grok — install Grok CLI 0.2.117 or newer and run grok login; opencode — install OpenCode 1.18.10 or newer and authenticate it; claude — npm install -g @agentclientprotocol/claude-agent-acp@latest (minimum 0.64.2); codex — npm install -g @agentclientprotocol/codex-acp@latest (minimum 1.1.9). You can use working-on, note, ask, and feed now; detached live receipt needs one of these adapters";
   if (provider === undefined) {
     throw new Error(`--provider is required; ${hints}`);
   }
@@ -3452,7 +3453,7 @@ export function listenerHostLimits(
   }
   if (provider === "claude") {
     const host_configuration =
-      "The Claude worker uses the operator-selected cwd and the normal Claude Code home through claude-agent-acp 0.64.2. Keychain/OAuth auth was measured; ANTHROPIC_API_KEY is stripped by the listener environment sanitizer.";
+      "The Claude worker uses the operator-selected cwd and the normal Claude Code home through claude-agent-acp 0.64.2 or newer. Keychain/OAuth auth was measured; ANTHROPIC_API_KEY is stripped by the listener environment sanitizer.";
     const deny_canary_scope =
       "The deny canary proves host reject + correlated terminal deny only.";
     const steady_allow_unproven =
@@ -3481,7 +3482,7 @@ export function listenerHostLimits(
   }
   if (provider === "codex") {
     const host_configuration =
-      "The Codex worker uses the operator-selected cwd and normal ChatGPT/Codex auth through codex-acp 1.1.9. CommonSwarm explicitly selects read-only mode after every session/new; API-key variables are stripped by the listener environment sanitizer.";
+      "The Codex worker uses the operator-selected cwd and normal ChatGPT/Codex auth through codex-acp 1.1.9 or newer. CommonSwarm explicitly selects read-only mode after every session/new; API-key variables are stripped by the listener environment sanitizer.";
     const deny_canary_scope =
       "The deny canary proves host reject + correlated terminal deny only.";
     const steady_allow_unproven =
@@ -3604,6 +3605,11 @@ export function renderListenerStatus(status: ListenerStatus): string {
       lines.push(`  ${line}`);
     }
   }
+  if (status.providerVersion && status.providerLastMeasuredVersion) {
+    lines.push(
+      `Provider version ${status.providerVersion} is newer than the last measured version ${status.providerLastMeasuredVersion}. It is unverified but allowed because the startup permission canary passed. Next: verify this provider release with CommonSwarm and update the last-measured version.`,
+    );
+  }
   if (status.deliveryMode === "durable_claim") {
     lines.push("Delivery mode: durable claim and acknowledgement.");
   } else if (status.deliveryMode === "cursor_fallback") {
@@ -3666,29 +3672,35 @@ export function listenerFailureMessage(
   code: string,
   provider?: ListenerProviderId,
 ): string {
-  if (code === "version_refused") {
+  if (code === "version_below_floor") {
     if (provider === "codex") {
-      return "the Codex listener requires codex-acp 1.1.9; run npm install -g @agentclientprotocol/codex-acp@1.1.9, then retry";
+      return "the Codex listener requires codex-acp 1.1.9 or newer; update the bridge, then retry";
     }
     if (provider === "claude") {
-      return "the Claude listener requires claude-agent-acp 0.64.2; run npm install -g @agentclientprotocol/claude-agent-acp@0.64.2, then retry";
+      return "the Claude listener requires claude-agent-acp 0.64.2 or newer; update the bridge, then retry";
     }
     if (provider === "opencode") {
-      return "the OpenCode listener requires OpenCode 1.18.10; install that pinned build, then retry";
+      return "the OpenCode listener requires OpenCode 1.18.10 or newer; update OpenCode, then retry";
     }
-    return "the Grok listener requires Grok 0.2.117; install that pinned build and run grok login, then retry";
+    return "the Grok listener requires Grok 0.2.117 or newer; update Grok, confirm grok login, then retry";
+  }
+  if (code === "version_unparseable") {
+    return `the ${provider ?? "provider"} version output was not valid semantic version data, so startup stopped. Next: run the provider's --version command, then update or reinstall it`;
+  }
+  if (code === "version_refused") {
+    return `the ${provider ?? "provider"} version check could not run, so startup stopped. Next: run the provider's --version command and fix that error, then retry`;
   }
   if (code === "executable_missing" && provider === "claude") {
-    return "claude-agent-acp is not installed; run npm install -g @agentclientprotocol/claude-agent-acp@0.64.2, then retry";
+    return "claude-agent-acp is not installed; run npm install -g @agentclientprotocol/claude-agent-acp@latest (minimum 0.64.2), then retry";
   }
   if (code === "executable_missing" && provider === "codex") {
-    return "codex-acp is not installed; run npm install -g @agentclientprotocol/codex-acp@1.1.9, then retry";
+    return "codex-acp is not installed; run npm install -g @agentclientprotocol/codex-acp@latest (minimum 1.1.9), then retry";
   }
   if (code === "permission_mode_unavailable" && provider === "claude") {
-    return "the Claude bridge does not expose the required manual permission mode; reinstall claude-agent-acp 0.64.2, then retry";
+    return "the Claude bridge does not expose the required manual permission mode; update or reinstall claude-agent-acp, then retry";
   }
   if (code === "permission_mode_unavailable" && provider === "codex") {
-    return "the Codex bridge does not expose the required read-only permission mode; reinstall codex-acp 1.1.9, then retry";
+    return "the Codex bridge does not expose the required read-only permission mode; update or reinstall codex-acp, then retry";
   }
   if (
     provider === "claude" &&
@@ -3788,7 +3800,7 @@ export function resolveDetachedClaudeExecutable(
       ) {
         const detail = error instanceof Error ? error.message : code;
         throw new Error(
-          `could not use --claude-executable: ${detail}; reinstall the measured bridge with npm install -g @agentclientprotocol/claude-agent-acp@0.64.2 if this path should be replaced`,
+          `could not use --claude-executable: ${detail}; install the current bridge with npm install -g @agentclientprotocol/claude-agent-acp@latest if this path should be replaced`,
         );
       }
       throw new Error(listenerFailureMessage(code, "claude"));
@@ -3814,7 +3826,7 @@ export function resolveDetachedCodexExecutable(
       ) {
         const detail = error instanceof Error ? error.message : code;
         throw new Error(
-          `could not use --codex-executable: ${detail}; reinstall the measured bridge with npm install -g @agentclientprotocol/codex-acp@1.1.9 if this path should be replaced`,
+          `could not use --codex-executable: ${detail}; install the current bridge with npm install -g @agentclientprotocol/codex-acp@latest if this path should be replaced`,
         );
       }
       throw new Error(listenerFailureMessage(code, "codex"));
@@ -3984,6 +3996,10 @@ async function runConfiguredListener(options: {
   // never rides an error object or a server payload (D-090 family).
   let lastWorkerStderrTail: string | null = null;
   let workerStderrGeneration = 0;
+  let providerVersionNotice: ProviderVersionNotice | null = null;
+  const onVersionNotice = (notice: ProviderVersionNotice) => {
+    providerVersionNotice = notice;
+  };
   /* One sink per model (= per supervisor attempt). Creating a sink clears the
    * slot and expires every older sink, so a superseded worker whose exit
    * publishes late can never label its stderr as the current attempt's — the
@@ -4002,13 +4018,15 @@ async function runConfiguredListener(options: {
   // and a model is single-use (runListenerRuntime closes it on every exit, and
   // every adapter throws "listener model is closed" once closed). Constructing
   // one here and capturing it would make every restart fail instantly.
-  const newModel = () =>
-    options.provider === "opencode"
+  const newModel = () => {
+    providerVersionNotice = null;
+    return options.provider === "opencode"
     ? new OpenCodeListenerModel({
       cwd: options.cwd,
       permissionMode: options.permissionMode,
       promptTimeoutMs: resolveTurnBudgetMs,
       onWorkerStderrTail: newWorkerStderrTailSink(),
+      onVersionNotice,
       ...(options.model ? { model: options.model } : {}),
       ...(options.opencodeExecutable
         ? { executable: options.opencodeExecutable }
@@ -4022,6 +4040,7 @@ async function runConfiguredListener(options: {
       permissionMode: options.permissionMode,
       promptTimeoutMs: resolveTurnBudgetMs,
       onWorkerStderrTail: newWorkerStderrTailSink(),
+      onVersionNotice,
       ...(options.claudeExecutable
         ? { executable: options.claudeExecutable }
         : options.executable
@@ -4034,6 +4053,7 @@ async function runConfiguredListener(options: {
       permissionMode: options.permissionMode,
       promptTimeoutMs: resolveTurnBudgetMs,
       onWorkerStderrTail: newWorkerStderrTailSink(),
+      onVersionNotice,
       ...(options.codexExecutable
         ? { executable: options.codexExecutable }
         : options.executable
@@ -4045,10 +4065,12 @@ async function runConfiguredListener(options: {
       permissionMode: options.permissionMode,
       promptTimeoutMs: resolveTurnBudgetMs,
       onWorkerStderrTail: newWorkerStderrTailSink(),
+      onVersionNotice,
       ...(options.model ? { model: options.model } : {}),
       ...(options.effort ? { effort: options.effort } : {}),
       ...(options.executable ? { executable: options.executable } : {}),
     });
+  };
   const onProcessSignal = () => {
     void stopListener(paths);
   };
@@ -4072,6 +4094,7 @@ async function runConfiguredListener(options: {
       // The bound a timeout event reports: the last turn's clamped budget when
       // one has run, else the configured cap.
       getTurnBudgetMs: () => lastAppliedTurnBudgetMs ?? turnBudgetMs,
+      getProviderVersionNotice: () => providerVersionNotice,
       takeWorkerStderrTail: () => {
         const tail = lastWorkerStderrTail;
         lastWorkerStderrTail = null;
@@ -4342,9 +4365,9 @@ async function runListenStart(args: Arguments): Promise<void> {
   const hostNote = provider === "opencode"
     ? `The OpenCode worker uses one private auth/config home and your selected project cwd. ${workerAudience} Tool requests are approved one at a time by default, when the worker asks and the host offers a one-time approval; --permissions deny refuses them. The deny canary does not cover steady-state allow.\n`
     : provider === "claude"
-    ? `The Claude worker uses your selected cwd and normal Claude Code keychain/OAuth state through claude-agent-acp 0.64.2. ${workerAudience}\n`
+    ? `The Claude worker uses your selected cwd and normal Claude Code keychain/OAuth state through claude-agent-acp 0.64.2 or newer. ${workerAudience}\n`
     : provider === "codex"
-    ? `The Codex worker uses your selected cwd and normal ChatGPT/Codex auth through codex-acp 1.1.9. CommonSwarm selects read-only mode before its deny canary. ${workerAudience}\n`
+    ? `The Codex worker uses your selected cwd and normal ChatGPT/Codex auth through codex-acp 1.1.9 or newer. CommonSwarm selects read-only mode before its deny canary. ${workerAudience}\n`
     : `The Grok worker uses your selected cwd and local Grok configuration, including user and cmux hooks. ${workerAudience}\n`;
   process.stdout.write(
     `${

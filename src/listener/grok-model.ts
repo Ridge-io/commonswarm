@@ -47,6 +47,8 @@ export interface GrokListenerModelOptions {
   promptTimeoutMs?: number | (() => Promise<number>);
   /** Receives the worker's bounded stderr tail on child exit (local log only). */
   onWorkerStderrTail?: (tail: string) => void;
+  /** Receives one allowed newer-version notice for durable startup status. */
+  onVersionNotice?: NonNullable<GrokAcpOpenOptions["onVersionNotice"]>;
 }
 
 const MAX_GROK_AUTH_BYTES = 256 * 1024;
@@ -138,6 +140,9 @@ export class GrokListenerModel implements ListenerModel {
       ...(this.options.model ? { model: this.options.model } : {}),
       ...(this.options.effort ? { effort: this.options.effort } : {}),
       ...(this.options.env ? { env: this.options.env } : {}),
+      ...(this.options.onVersionNotice
+        ? { onVersionNotice: this.options.onVersionNotice }
+        : {}),
     ...(this.options.onWorkerStderrTail
       ? { onStderrTail: this.options.onWorkerStderrTail }
       : {}),

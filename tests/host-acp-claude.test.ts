@@ -21,12 +21,12 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
 import {
-  CLAUDE_ACP_MEASURED_VERSION,
+  CLAUDE_ACP_MIN_VERSION,
   AcpChildExitError,
   AcpHostError,
   AcpVersionError,
-  AcpVersionMismatchError,
-  assertClaudeMeasuredVersion,
+  AcpVersionBelowFloorError,
+  assertClaudeVersionFloor,
   buildClaudeAcpArgs,
   buildClaudeChildEnv,
   buildClaudeLaunch,
@@ -94,9 +94,9 @@ test("Claude bridge args enter ACP mode without flags", () => {
   assert.deepEqual(buildClaudeAcpArgs(), []);
 });
 
-test("Claude bridge version parser accepts only the measured bare semver shape", () => {
+test("Claude bridge version parser accepts bare and named SemVer shapes", () => {
   assert.equal(parseClaudeVersionOutput("0.64.2\n"), "0.64.2");
-  assert.equal(parseClaudeVersionOutput("claude-agent-acp 0.64.2\n"), null);
+  assert.equal(parseClaudeVersionOutput("claude-agent-acp 0.64.2\n"), "0.64.2");
   assert.equal(parseClaudeVersionOutput("no version"), null);
 });
 
@@ -194,8 +194,8 @@ test("Windows npm shim resolves to one Node-launched package entrypoint", async 
       args: [resolved],
     });
     assert.equal(
-      await assertClaudeMeasuredVersion(resolved, { platform: "win32" }),
-      CLAUDE_ACP_MEASURED_VERSION,
+      await assertClaudeVersionFloor(resolved, { platform: "win32" }),
+      CLAUDE_ACP_MIN_VERSION,
     );
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -220,11 +220,11 @@ test("Claude version probe uses the supplied spawn environment", async () => {
       SWARM_AGENT_TOKEN: "must-not-reach-probe",
     });
     assert.equal(
-      await assertClaudeMeasuredVersion(executable, { env }),
-      CLAUDE_ACP_MEASURED_VERSION,
+      await assertClaudeVersionFloor(executable, { env }),
+      CLAUDE_ACP_MIN_VERSION,
     );
     await assert.rejects(
-      () => assertClaudeMeasuredVersion(executable, { env: { ...env, HOME: "/wrong" } }),
+      () => assertClaudeVersionFloor(executable, { env: { ...env, HOME: "/wrong" } }),
       (error: unknown) => error instanceof AcpVersionError,
     );
   } finally {
@@ -232,13 +232,13 @@ test("Claude version probe uses the supplied spawn environment", async () => {
   }
 });
 
-test("Claude bridge mismatch preserves expected and actual versions in its type", async () => {
+test("Claude bridge below-floor error preserves the minimum and actual versions", async () => {
   const root = await mkdtemp(join(tmpdir(), "cswarm-claude-version-mismatch-"));
   const executable = join(root, "claude-agent-acp");
   try {
     await writeFile(
       executable,
-      `#!${process.execPath}\nprocess.stdout.write("0.65.0\\n");\n`,
+      `#!${process.execPath}\nprocess.stdout.write("0.63.9\\n");\n`,
       { mode: 0o700 },
     );
     await chmod(executable, 0o700);
@@ -250,10 +250,10 @@ test("Claude bridge mismatch preserves expected and actual versions in its type"
           env: { PATH: root, HOME: root },
         }),
       (error: unknown) =>
-        error instanceof AcpVersionMismatchError &&
-        error.expected === CLAUDE_ACP_MEASURED_VERSION &&
-        error.actual === "0.65.0" &&
-        error.code === "version_refused",
+        error instanceof AcpVersionBelowFloorError &&
+        error.minimum === CLAUDE_ACP_MIN_VERSION &&
+        error.actual === "0.63.9" &&
+        error.code === "version_below_floor",
     );
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -271,7 +271,7 @@ test("Claude version process failures stay inside the typed host error boundary"
     );
     await chmod(executable, 0o700);
     await assert.rejects(
-      () => assertClaudeMeasuredVersion(executable, { timeoutMs: 25 }),
+      () => assertClaudeVersionFloor(executable, { timeoutMs: 25 }),
       (error: unknown) =>
         error instanceof AcpVersionError && error.code === "version_refused",
     );

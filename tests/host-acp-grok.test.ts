@@ -22,8 +22,8 @@ import {
   AcpTransport,
   AcpTransportError,
   AcpVersionError,
-  GROK_MEASURED_VERSION,
-  assertGrokMeasuredVersion,
+  GROK_MIN_VERSION,
+  assertGrokVersionFloor,
   buildGrokChildEnv,
   buildGrokAcpArgs,
   createBoundTransport,
@@ -124,7 +124,7 @@ function createFakeChild(script: FakeAgentScript = {}) {
         api.result({
           protocolVersion: ACP_PROTOCOL_VERSION,
           agentCapabilities: { loadSession: true },
-          _meta: { agentVersion: GROK_MEASURED_VERSION },
+          _meta: { agentVersion: GROK_MIN_VERSION },
         });
         return;
       }
@@ -217,12 +217,12 @@ describe("Grok ACP host core (pure fake child)", () => {
     assert.equal(parseGrokVersionOutput("nope"), null);
     await assert.rejects(
       () =>
-        assertGrokMeasuredVersion("/bin/echo", GROK_MEASURED_VERSION, 2000).catch(async () => {
+        assertGrokVersionFloor("/bin/echo", { timeoutMs: 2000 }).catch(async () => {
           // Use a fake by testing the refusal path via parse + manual throw pattern.
           const v = parseGrokVersionOutput("grok 0.2.99 (x)");
-          if (v !== GROK_MEASURED_VERSION) {
+          if (v !== GROK_MIN_VERSION) {
             throw new AcpVersionError(
-              `refusing grok ${v}; host core is measured for ${GROK_MEASURED_VERSION} only`,
+              `refusing grok ${v}; host core requires ${GROK_MIN_VERSION} or newer`,
             );
           }
         }),
@@ -317,7 +317,7 @@ describe("Grok ACP host core (pure fake child)", () => {
       });
       assert.equal(session.info.protocolVersion, 1);
       assert.equal(session.info.sessionId, "sess-default");
-      assert.equal(session.info.agentVersion, GROK_MEASURED_VERSION);
+      assert.equal(session.info.agentVersion, GROK_MIN_VERSION);
       const result = await session.prompt("hi");
       assert.equal(result.stopReason, "end_turn");
       assert.equal(result.message, "hello world");
@@ -386,7 +386,7 @@ describe("Grok ACP host core (pure fake child)", () => {
           if (method === "initialize") {
             api.result({
               protocolVersion: 1,
-              _meta: { agentVersion: GROK_MEASURED_VERSION },
+              _meta: { agentVersion: GROK_MIN_VERSION },
             });
             return;
           }
@@ -422,7 +422,7 @@ describe("Grok ACP host core (pure fake child)", () => {
       const fake = createFakeChild({
         onRequest: async (_id, method, _params, api) => {
           if (method === "initialize") {
-            api.result({ protocolVersion: 1, _meta: { agentVersion: GROK_MEASURED_VERSION } });
+            api.result({ protocolVersion: 1, _meta: { agentVersion: GROK_MIN_VERSION } });
             return;
           }
           if (method === "session/new") {
@@ -511,7 +511,7 @@ describe("Grok ACP host core (pure fake child)", () => {
       const fake = createFakeChild({
         onRequest: async (id, method, params, api) => {
           if (method === "initialize") {
-            api.result({ protocolVersion: 1, _meta: { agentVersion: GROK_MEASURED_VERSION } });
+            api.result({ protocolVersion: 1, _meta: { agentVersion: GROK_MIN_VERSION } });
             return;
           }
           if (method === "session/new") {
@@ -600,7 +600,7 @@ describe("Grok ACP host core (pure fake child)", () => {
       const fake = createFakeChild({
         onRequest: async (_id, method, params, api) => {
           if (method === "initialize") {
-            api.result({ protocolVersion: 1, _meta: { agentVersion: GROK_MEASURED_VERSION } });
+            api.result({ protocolVersion: 1, _meta: { agentVersion: GROK_MIN_VERSION } });
             return;
           }
           if (method === "session/new") {
@@ -769,7 +769,7 @@ describe("Grok ACP host core (pure fake child)", () => {
         onRequest: async (_id, method, params, api) => {
           if (method === "initialize") {
             initParams = params;
-            api.result({ protocolVersion: 1, _meta: { agentVersion: GROK_MEASURED_VERSION } });
+            api.result({ protocolVersion: 1, _meta: { agentVersion: GROK_MIN_VERSION } });
             return;
           }
           if (method === "session/new") {
@@ -808,7 +808,7 @@ describe("Grok ACP host core (pure fake child)", () => {
       const fake = createFakeChild({
         onRequest: async (_id, method, params, api) => {
           if (method === "initialize") {
-            api.result({ protocolVersion: 1, _meta: { agentVersion: GROK_MEASURED_VERSION } });
+            api.result({ protocolVersion: 1, _meta: { agentVersion: GROK_MIN_VERSION } });
             return;
           }
           if (method === "session/new") {
@@ -871,7 +871,7 @@ describe("Grok ACP host core (pure fake child)", () => {
       const failFake = createFakeChild({
         onRequest: async (_id, method, _params, api) => {
           if (method === "initialize") {
-            api.result({ protocolVersion: 1, _meta: { agentVersion: GROK_MEASURED_VERSION } });
+            api.result({ protocolVersion: 1, _meta: { agentVersion: GROK_MIN_VERSION } });
             return;
           }
           if (method === "session/new") {
@@ -918,7 +918,7 @@ describe("Grok ACP host core (pure fake child)", () => {
       const fake = createFakeChild({
         onRequest: async (_id, method, params, api) => {
           if (method === "initialize") {
-            api.result({ protocolVersion: 1, _meta: { agentVersion: GROK_MEASURED_VERSION } });
+            api.result({ protocolVersion: 1, _meta: { agentVersion: GROK_MIN_VERSION } });
             return;
           }
           if (method === "session/new") {
@@ -953,7 +953,7 @@ describe("Grok ACP host core (pure fake child)", () => {
       const fake2 = createFakeChild({
         onRequest: async (_id, method, params, api) => {
           if (method === "initialize") {
-            api.result({ protocolVersion: 1, _meta: { agentVersion: GROK_MEASURED_VERSION } });
+            api.result({ protocolVersion: 1, _meta: { agentVersion: GROK_MIN_VERSION } });
             return;
           }
           if (method === "session/new") {
@@ -1034,7 +1034,7 @@ describe("Grok ACP host core (pure fake child)", () => {
       const fake = createFakeChild({
         onRequest: async (_id, method, _params, api) => {
           if (method === "initialize") {
-            api.result({ protocolVersion: 1, _meta: { agentVersion: GROK_MEASURED_VERSION } });
+            api.result({ protocolVersion: 1, _meta: { agentVersion: GROK_MIN_VERSION } });
             return;
           }
           if (method === "session/new") {
@@ -1099,7 +1099,7 @@ describe("Grok ACP host core (pure fake child)", () => {
         transport,
         cwd,
         sessionId: "attached",
-        agentVersion: GROK_MEASURED_VERSION,
+        agentVersion: GROK_MIN_VERSION,
         promptsEnabled: true,
       });
       sessionRef = session;

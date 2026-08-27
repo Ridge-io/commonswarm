@@ -21,9 +21,9 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
 import {
-  CODEX_ACP_MEASURED_VERSION,
+  CODEX_ACP_MIN_VERSION,
   AcpVersionError,
-  assertCodexMeasuredVersion,
+  assertCodexVersionFloor,
   buildCodexAcpArgs,
   buildCodexChildEnv,
   buildCodexLaunch,
@@ -79,12 +79,12 @@ test("Codex bridge args enter ACP mode without flags", () => {
   assert.deepEqual(buildCodexAcpArgs(), []);
 });
 
-test("Codex bridge version parser accepts only the measured package shape", () => {
+test("Codex bridge version parser accepts package and bare SemVer shapes", () => {
   assert.equal(
     parseCodexVersionOutput("@agentclientprotocol/codex-acp 1.1.9\n"),
     "1.1.9",
   );
-  assert.equal(parseCodexVersionOutput("1.1.9\n"), null);
+  assert.equal(parseCodexVersionOutput("1.1.9\n"), "1.1.9");
   assert.equal(parseCodexVersionOutput("no version"), null);
 });
 
@@ -157,8 +157,8 @@ test("Windows npm shim resolves to one Node-launched package entrypoint", async 
       args: [resolved],
     });
     assert.equal(
-      await assertCodexMeasuredVersion(resolved, { platform: "win32" }),
-      CODEX_ACP_MEASURED_VERSION,
+      await assertCodexVersionFloor(resolved, { platform: "win32" }),
+      CODEX_ACP_MIN_VERSION,
     );
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -183,11 +183,11 @@ test("Codex version probe uses the supplied spawn environment", async () => {
       SWARM_AGENT_TOKEN: "must-not-reach-probe",
     });
     assert.equal(
-      await assertCodexMeasuredVersion(executable, { env }),
-      CODEX_ACP_MEASURED_VERSION,
+      await assertCodexVersionFloor(executable, { env }),
+      CODEX_ACP_MIN_VERSION,
     );
     await assert.rejects(
-      () => assertCodexMeasuredVersion(executable, { env: { ...env, HOME: "/wrong" } }),
+      () => assertCodexVersionFloor(executable, { env: { ...env, HOME: "/wrong" } }),
       (error: unknown) => error instanceof AcpVersionError,
     );
   } finally {

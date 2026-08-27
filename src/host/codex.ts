@@ -29,7 +29,8 @@ import {
 import {
   ACP_DEFAULT_REQUEST_TIMEOUT_MS,
   ACP_VERSION_CHECK_TIMEOUT_MS,
-  CODEX_ACP_MEASURED_VERSION,
+  CODEX_ACP_LAST_MEASURED_VERSION,
+  CODEX_ACP_MIN_VERSION,
   CODEX_PERMISSION_MODE_ID,
 } from "./bounds.js";
 import { sanitizeChildEnv } from "./env.js";
@@ -37,9 +38,15 @@ import { AcpHostSession, createBoundTransport } from "./session.js";
 import {
   AcpHostError,
   AcpVersionError,
+  AcpVersionParseError,
   type HostSessionEvents,
   type PermissionCallback,
 } from "./types.js";
+import {
+  assertProviderVersionFloor,
+  parseProviderVersionOutput,
+  type ProviderVersionNotice,
+} from "./version.js";
 
 export type CodexAcpOpenOptions = {
   cwd: string;
@@ -57,6 +64,8 @@ export type CodexAcpOpenOptions = {
   clientVersion?: string;
   /** When true, prompts are enabled without canary (tests only). */
   promptsEnabled?: boolean;
+  /** Report a newer-than-measured version after the floor admits it. */
+  onVersionNotice?: (notice: ProviderVersionNotice) => void;
   /**
    * Bounded, sanitized stderr tail, delivered once when the child exits — for
    * the operator's LOCAL listener log only; never attach it to an error.
@@ -184,26 +193,26 @@ export function buildCodexLaunch(
     : { command: executable, args: [...args] };
 }
 
-/** Parse the bridge's measured package-name plus semver output. */
+/** Parse bridge SemVer, including prerelease/build and leading banners. */
 export function parseCodexVersionOutput(stdout: string): string | null {
-  const match = stdout.trim().match(
-    /^@agentclientprotocol\/codex-acp (\d+\.\d+\.\d+)$/,
-  );
-  return match?.[1] ?? null;
+  return parseProviderVersionOutput(stdout, /@agentclientprotocol\/codex-acp\b/i);
 }
 
 /** Run the resolved bridge with the exact environment used for its ACP process. */
-export async function assertCodexMeasuredVersion(
+export async function assertCodexVersionFloor(
   executable: string,
   options?: {
-    expected?: string;
+    minimumVersion?: string;
+    lastMeasuredVersion?: string;
     timeoutMs?: number;
     env?: NodeJS.ProcessEnv | Record<string, string | undefined>;
     /** Injected only to exercise native Windows launch shape in pure tests. */
     platform?: NodeJS.Platform;
+    onNewerVersion?: (notice: ProviderVersionNotice) => void;
   },
 ): Promise<string> {
-  const expected = options?.expected ?? CODEX_ACP_MEASURED_VERSION;
+  const minimumVersion = options?.minimumVersion ?? CODEX_ACP_MIN_VERSION;
+  const lastMeasuredVersion = options?.lastMeasuredVersion ?? CODEX_ACP_LAST_MEASURED_VERSION;
   const timeoutMs = options?.timeoutMs ?? ACP_VERSION_CHECK_TIMEOUT_MS;
   const env = options?.env ?? sanitizeChildEnv(process.env);
   const launch = buildCodexLaunch(executable, ["--version"], options?.platform);
@@ -229,15 +238,19 @@ export async function assertCodexMeasuredVersion(
   });
   const version = parseCodexVersionOutput(stdout);
   if (!version) {
-    throw new AcpVersionError(
+    throw new AcpVersionParseError(
       `could not parse codex-acp version from: ${stdout.trim().slice(0, 200)}`,
     );
   }
-  if (version !== expected) {
-    throw new AcpVersionError(
-      `refusing codex-acp ${version}; host core is measured for ${expected} only`,
-    );
-  }
+  assertProviderVersionFloor({
+    provider: "codex-acp",
+    version,
+    minimumVersion,
+    lastMeasuredVersion,
+    ...(options?.onNewerVersion
+      ? { onNewerVersion: options.onNewerVersion }
+      : {}),
+  });
   return version;
 }
 
@@ -313,7 +326,12 @@ export async function openCodexAcpSession(
   );
   const env = buildCodexChildEnv(parentEnv);
   if (!options.skipVersionCheck) {
-    await assertCodexMeasuredVersion(executable, { env });
+    await assertCodexVersionFloor(executable, {
+      env,
+      ...(options.onVersionNotice
+        ? { onNewerVersion: options.onVersionNotice }
+        : {}),
+    });
   }
   if (options.signal?.aborted) {
     throw new AcpHostError(
@@ -436,4 +454,8 @@ export async function openCodexAcpSession(
   }
 }
 
-export { CODEX_ACP_MEASURED_VERSION, CODEX_PERMISSION_MODE_ID };
+export {
+  CODEX_ACP_LAST_MEASURED_VERSION,
+  CODEX_ACP_MIN_VERSION,
+  CODEX_PERMISSION_MODE_ID,
+};

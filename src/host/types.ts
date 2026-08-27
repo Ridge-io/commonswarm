@@ -176,22 +176,32 @@ export class AcpTransportError extends AcpHostError {
 }
 
 export class AcpVersionError extends AcpHostError {
-  constructor(message: string) {
-    super("version_refused", message);
+  constructor(message: string, code = "version_refused") {
+    super(code, message);
     this.name = "AcpVersionError";
   }
 }
 
-/** Preserve expected and observed versions for exact bridge-pin failures. */
-export class AcpVersionMismatchError extends AcpVersionError {
+/** A provider version could not be parsed, so compatibility fails closed. */
+export class AcpVersionParseError extends AcpVersionError {
+  constructor(message: string) {
+    super(message, "version_unparseable");
+    this.name = "AcpVersionParseError";
+  }
+}
+
+/** Preserve the minimum and observed versions for below-floor failures. */
+export class AcpVersionBelowFloorError extends AcpVersionError {
   constructor(
-    readonly expected: string,
+    readonly provider: string,
+    readonly minimum: string,
     readonly actual: string,
   ) {
     super(
-      `refusing claude-agent-acp ${actual}; host core is measured for ${expected} only`,
+      `refusing ${provider} ${actual}; CommonSwarm requires ${minimum} or newer`,
+      "version_below_floor",
     );
-    this.name = "AcpVersionMismatchError";
+    this.name = "AcpVersionBelowFloorError";
   }
 }
 

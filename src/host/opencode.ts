@@ -36,7 +36,8 @@ import {
   ACP_DEFAULT_REQUEST_TIMEOUT_MS,
   ACP_VERSION_CHECK_TIMEOUT_MS,
   OPENCODE_FORCED_PERMISSION_TOOLS,
-  OPENCODE_MEASURED_VERSION,
+  OPENCODE_LAST_MEASURED_VERSION,
+  OPENCODE_MIN_VERSION,
 } from "./bounds.js";
 import { sanitizeChildEnv } from "./env.js";
 import { AcpHostSession, createBoundTransport } from "./session.js";
@@ -44,9 +45,15 @@ import { AcpTransport } from "./transport.js";
 import {
   AcpHostError,
   AcpVersionError,
+  AcpVersionParseError,
   type HostSessionEvents,
   type PermissionCallback,
 } from "./types.js";
+import {
+  assertProviderVersionFloor,
+  parseProviderVersionOutput,
+  type ProviderVersionNotice,
+} from "./version.js";
 
 /** Ownership marker written into every managed OpenCode home. */
 export const OPENCODE_HOME_OWNER_FILE = ".cswarm-opencode-owner.json";
@@ -77,6 +84,8 @@ export type OpenCodeAcpOpenOptions = {
   clientVersion?: string;
   /** When true, prompts are enabled without canary (tests only). */
   promptsEnabled?: boolean;
+  /** Report a newer-than-measured version after the floor admits it. */
+  onVersionNotice?: (notice: ProviderVersionNotice) => void;
   /**
    * Bounded, sanitized stderr tail, delivered once when the child exits — for
    * the operator's LOCAL listener log only; never attach it to an error.
@@ -250,22 +259,24 @@ export async function releaseOpenCodeHome(
   }
 }
 
-/** Parse `opencode --version` stdout. Measured target is exactly 1.18.10. */
+/** Parse `opencode --version`, including prerelease/build and leading banners. */
 export function parseOpenCodeVersionOutput(stdout: string): string | null {
-  const m = stdout.match(/\b(\d+\.\d+\.\d+)\b/);
-  return m?.[1] ?? null;
+  return parseProviderVersionOutput(stdout, /\bopencode\b/i);
 }
 
 /** Run absolute executable --version with the same env the child will use. */
-export async function assertOpenCodeMeasuredVersion(
+export async function assertOpenCodeVersionFloor(
   executable: string,
   options?: {
-    expected?: string;
+    minimumVersion?: string;
+    lastMeasuredVersion?: string;
     timeoutMs?: number;
     env?: NodeJS.ProcessEnv | Record<string, string | undefined>;
+    onNewerVersion?: (notice: ProviderVersionNotice) => void;
   },
 ): Promise<string> {
-  const expected = options?.expected ?? OPENCODE_MEASURED_VERSION;
+  const minimumVersion = options?.minimumVersion ?? OPENCODE_MIN_VERSION;
+  const lastMeasuredVersion = options?.lastMeasuredVersion ?? OPENCODE_LAST_MEASURED_VERSION;
   const timeoutMs = options?.timeoutMs ?? ACP_VERSION_CHECK_TIMEOUT_MS;
   const env = sanitizeChildEnv(options?.env ?? process.env);
   const stdout = await new Promise<string>((resolve, reject) => {
@@ -288,15 +299,19 @@ export async function assertOpenCodeMeasuredVersion(
   });
   const version = parseOpenCodeVersionOutput(stdout);
   if (!version) {
-    throw new AcpVersionError(
+    throw new AcpVersionParseError(
       `could not parse opencode version from: ${stdout.trim().slice(0, 200)}`,
     );
   }
-  if (version !== expected) {
-    throw new AcpVersionError(
-      `refusing opencode ${version}; host core is measured for ${expected} only`,
-    );
-  }
+  assertProviderVersionFloor({
+    provider: "opencode",
+    version,
+    minimumVersion,
+    lastMeasuredVersion,
+    ...(options?.onNewerVersion
+      ? { onNewerVersion: options.onNewerVersion }
+      : {}),
+  });
   return version;
 }
 
@@ -779,8 +794,11 @@ export async function openOpenCodeAcpSession(
 
   try {
     if (!options.skipVersionCheck) {
-      await assertOpenCodeMeasuredVersion(executable, {
+      await assertOpenCodeVersionFloor(executable, {
         env,
+        ...(options.onVersionNotice
+          ? { onNewerVersion: options.onVersionNotice }
+          : {}),
       });
     }
     if (!options.skipConfigProbe) {
@@ -889,4 +907,8 @@ export async function openOpenCodeAcpSession(
   }
 }
 
-export { OPENCODE_MEASURED_VERSION, OPENCODE_FORCED_PERMISSION_TOOLS };
+export {
+  OPENCODE_FORCED_PERMISSION_TOOLS,
+  OPENCODE_LAST_MEASURED_VERSION,
+  OPENCODE_MIN_VERSION,
+};

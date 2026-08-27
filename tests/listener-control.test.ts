@@ -97,6 +97,8 @@ function statusFor(paths: ListenerPaths, state: ListenerStatus["state"]): Listen
     stoppedAt: state === "stopped" || state === "failed" ? ts : null,
     lastSignalId: null,
     lastErrorCode: null,
+    providerVersion: null,
+    providerLastMeasuredVersion: null,
     lastWorkerStderrTail: null,
     deliveryMode: null,
     pendingDeliveryCount: null,

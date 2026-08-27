@@ -16,7 +16,8 @@ import { isAbsolute, resolve as resolvePath } from "node:path";
 import {
   ACP_DEFAULT_REQUEST_TIMEOUT_MS,
   ACP_VERSION_CHECK_TIMEOUT_MS,
-  GROK_MEASURED_VERSION,
+  GROK_LAST_MEASURED_VERSION,
+  GROK_MIN_VERSION,
 } from "./bounds.js";
 import { sanitizeChildEnv } from "./env.js";
 import { attachStderrTailRing } from "./stderr-tail.js";
@@ -25,9 +26,15 @@ import { AcpTransport } from "./transport.js";
 import {
   AcpHostError,
   AcpVersionError,
+  AcpVersionParseError,
   type HostSessionEvents,
   type PermissionCallback,
 } from "./types.js";
+import {
+  assertProviderVersionFloor,
+  parseProviderVersionOutput,
+  type ProviderVersionNotice,
+} from "./version.js";
 
 export type GrokAcpOpenOptions = {
   cwd: string;
@@ -46,6 +53,8 @@ export type GrokAcpOpenOptions = {
   clientVersion?: string;
   /** When true, prompts are enabled without canary (tests only). */
   promptsEnabled?: boolean;
+  /** Report a newer-than-measured version after the floor admits it. */
+  onVersionNotice?: (notice: ProviderVersionNotice) => void;
 
   /**
    * Bounded, sanitized stderr tail, delivered once when the child exits — for
@@ -84,21 +93,25 @@ export function resolveGrokExecutable(executable = "grok"): string {
 }
 
 /**
- * Parse `grok --version` stdout. Measured target is exactly 0.2.117.
+ * Parse `grok --version`, including prerelease/build and leading banners.
  */
 export function parseGrokVersionOutput(stdout: string): string | null {
-  const m = stdout.match(/\bgrok\s+(\d+\.\d+\.\d+)\b/i);
-  return m?.[1] ?? null;
+  return parseProviderVersionOutput(stdout, /\bgrok\b/i);
 }
 
-/**
- * Run `executable --version` and refuse anything other than the measured version.
- */
-export async function assertGrokMeasuredVersion(
+/** Run `executable --version` and refuse only versions below the floor. */
+export async function assertGrokVersionFloor(
   executable: string,
-  expected = GROK_MEASURED_VERSION,
-  timeoutMs = ACP_VERSION_CHECK_TIMEOUT_MS,
+  options?: {
+    minimumVersion?: string;
+    lastMeasuredVersion?: string;
+    timeoutMs?: number;
+    onNewerVersion?: (notice: ProviderVersionNotice) => void;
+  },
 ): Promise<string> {
+  const minimumVersion = options?.minimumVersion ?? GROK_MIN_VERSION;
+  const lastMeasuredVersion = options?.lastMeasuredVersion ?? GROK_LAST_MEASURED_VERSION;
+  const timeoutMs = options?.timeoutMs ?? ACP_VERSION_CHECK_TIMEOUT_MS;
   const stdout = await new Promise<string>((resolve, reject) => {
     execFile(
       executable,
@@ -119,15 +132,19 @@ export async function assertGrokMeasuredVersion(
   });
   const version = parseGrokVersionOutput(stdout);
   if (!version) {
-    throw new AcpVersionError(
+    throw new AcpVersionParseError(
       `could not parse grok version from: ${stdout.trim().slice(0, 200)}`,
     );
   }
-  if (version !== expected) {
-    throw new AcpVersionError(
-      `refusing grok ${version}; host core is measured for ${expected} only`,
-    );
-  }
+  assertProviderVersionFloor({
+    provider: "grok",
+    version,
+    minimumVersion,
+    lastMeasuredVersion,
+    ...(options?.onNewerVersion
+      ? { onNewerVersion: options.onNewerVersion }
+      : {}),
+  });
   return version;
 }
 
@@ -214,7 +231,11 @@ export async function openGrokAcpSession(
 ): Promise<GrokAcpHandle> {
   const executable = resolveGrokExecutable(options.executable ?? "grok");
   if (!options.skipVersionCheck) {
-    await assertGrokMeasuredVersion(executable);
+    await assertGrokVersionFloor(executable, {
+      ...(options.onVersionNotice
+        ? { onNewerVersion: options.onVersionNotice }
+        : {}),
+    });
   }
   const args = buildGrokAcpArgs({
     model: options.model,
@@ -337,4 +358,4 @@ export async function openAcpSessionOverStdio(options: {
   return { session, transport };
 }
 
-export { GROK_MEASURED_VERSION };
+export { GROK_LAST_MEASURED_VERSION, GROK_MIN_VERSION };

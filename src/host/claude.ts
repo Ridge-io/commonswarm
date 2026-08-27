@@ -29,7 +29,8 @@ import {
 import {
   ACP_DEFAULT_REQUEST_TIMEOUT_MS,
   ACP_VERSION_CHECK_TIMEOUT_MS,
-  CLAUDE_ACP_MEASURED_VERSION,
+  CLAUDE_ACP_LAST_MEASURED_VERSION,
+  CLAUDE_ACP_MIN_VERSION,
   CLAUDE_PERMISSION_MODE_ID,
 } from "./bounds.js";
 import { sanitizeChildEnv } from "./env.js";
@@ -37,10 +38,15 @@ import { AcpHostSession, createBoundTransport } from "./session.js";
 import {
   AcpHostError,
   AcpVersionError,
-  AcpVersionMismatchError,
+  AcpVersionParseError,
   type HostSessionEvents,
   type PermissionCallback,
 } from "./types.js";
+import {
+  assertProviderVersionFloor,
+  parseProviderVersionOutput,
+  type ProviderVersionNotice,
+} from "./version.js";
 
 export type ClaudeAcpOpenOptions = {
   cwd: string;
@@ -58,6 +64,8 @@ export type ClaudeAcpOpenOptions = {
   clientVersion?: string;
   /** When true, prompts are enabled without canary (tests only). */
   promptsEnabled?: boolean;
+  /** Report a newer-than-measured version after the floor admits it. */
+  onVersionNotice?: (notice: ProviderVersionNotice) => void;
   /**
    * Bounded, sanitized stderr tail, delivered once when the child exits — for
    * the operator's LOCAL listener log only; never attach it to an error.
@@ -116,7 +124,7 @@ export function resolvePackagedClaudeBridge(
   }
   throw new AcpHostError(
     "executable_missing",
-    "packaged claude-agent-acp executable not found; install @agentclientprotocol/claude-agent-acp@0.64.2",
+    "packaged claude-agent-acp executable not found; install @agentclientprotocol/claude-agent-acp@latest (minimum 0.64.2)",
   );
 }
 
@@ -220,18 +228,14 @@ export function buildClaudeLaunch(
     : { command: executable, args: [...args] };
 }
 
-/** Parse the bridge's measured bare semver version output. */
+/** Parse bridge SemVer, including prerelease/build and leading banners. */
 export function parseClaudeVersionOutput(stdout: string): string | null {
-  const match = stdout.trim().match(/^(\d+\.\d+\.\d+)$/);
-  return match?.[1] ?? null;
+  return parseProviderVersionOutput(stdout, /\bclaude-agent-acp\b/i);
 }
 
 /** Parse the user-facing version shape printed by the Claude Code binary. */
 export function parseClaudeCodeVersionOutput(stdout: string): string | null {
-  const match = stdout.match(
-    /^(\d+\.\d+\.\d+(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?) \(Claude Code\)\s*$/m,
-  );
-  return match?.[1] ?? null;
+  return parseProviderVersionOutput(stdout, /\bClaude Code\b/i, false);
 }
 
 async function readClaudeVersionOutput(
@@ -268,27 +272,36 @@ async function readClaudeVersionOutput(
 }
 
 /** Run the resolved bridge with the exact environment used for its ACP process. */
-export async function assertClaudeMeasuredVersion(
+export async function assertClaudeVersionFloor(
   executable: string,
   options?: {
-    expected?: string;
+    minimumVersion?: string;
+    lastMeasuredVersion?: string;
     timeoutMs?: number;
     env?: NodeJS.ProcessEnv | Record<string, string | undefined>;
     /** Injected only to exercise native Windows launch shape in pure tests. */
     platform?: NodeJS.Platform;
+    onNewerVersion?: (notice: ProviderVersionNotice) => void;
   },
 ): Promise<string> {
-  const expected = options?.expected ?? CLAUDE_ACP_MEASURED_VERSION;
+  const minimumVersion = options?.minimumVersion ?? CLAUDE_ACP_MIN_VERSION;
+  const lastMeasuredVersion = options?.lastMeasuredVersion ?? CLAUDE_ACP_LAST_MEASURED_VERSION;
   const stdout = await readClaudeVersionOutput(executable, options);
   const version = parseClaudeVersionOutput(stdout);
   if (!version) {
-    throw new AcpVersionError(
+    throw new AcpVersionParseError(
       `could not parse claude-agent-acp version from: ${stdout.trim().slice(0, 200)}`,
     );
   }
-  if (version !== expected) {
-    throw new AcpVersionMismatchError(expected, version);
-  }
+  assertProviderVersionFloor({
+    provider: "claude-agent-acp",
+    version,
+    minimumVersion,
+    lastMeasuredVersion,
+    ...(options?.onNewerVersion
+      ? { onNewerVersion: options.onNewerVersion }
+      : {}),
+  });
   return version;
 }
 
@@ -383,18 +396,26 @@ export async function openClaudeAcpSession(
     });
     const bridgeVersion = parseClaudeVersionOutput(output);
     if (bridgeVersion) {
-      if (bridgeVersion !== CLAUDE_ACP_MEASURED_VERSION) {
-        throw new AcpVersionMismatchError(
-          CLAUDE_ACP_MEASURED_VERSION,
-          bridgeVersion,
-        );
-      }
+      assertProviderVersionFloor({
+        provider: "claude-agent-acp",
+        version: bridgeVersion,
+        minimumVersion: CLAUDE_ACP_MIN_VERSION,
+        lastMeasuredVersion: CLAUDE_ACP_LAST_MEASURED_VERSION,
+        ...(options.onVersionNotice
+          ? { onNewerVersion: options.onVersionNotice }
+          : {}),
+      });
       executable = requestedExecutable;
     } else if (parseClaudeCodeVersionOutput(output)) {
       claudeCodeExecutable = requestedExecutable;
       executable = resolvePackagedClaudeBridge(resolvedPathEnv);
       env = buildClaudeChildEnv(parentEnv, claudeCodeExecutable);
-      await assertClaudeMeasuredVersion(executable, { env });
+      await assertClaudeVersionFloor(executable, {
+        env,
+        ...(options.onVersionNotice
+          ? { onNewerVersion: options.onVersionNotice }
+          : {}),
+      });
     } else {
       throw new AcpVersionError(
         `could not identify Claude executable from: ${output.trim().slice(0, 200)}`,
@@ -406,7 +427,12 @@ export async function openClaudeAcpSession(
       resolvedPathEnv,
     );
     if (!options.skipVersionCheck) {
-      await assertClaudeMeasuredVersion(executable, { env: baseEnv });
+      await assertClaudeVersionFloor(executable, {
+        env: baseEnv,
+        ...(options.onVersionNotice
+          ? { onNewerVersion: options.onVersionNotice }
+          : {}),
+      });
     }
   }
   if (options.signal?.aborted) {
@@ -536,4 +562,8 @@ export async function openClaudeAcpSession(
   }
 }
 
-export { CLAUDE_ACP_MEASURED_VERSION, CLAUDE_PERMISSION_MODE_ID };
+export {
+  CLAUDE_ACP_LAST_MEASURED_VERSION,
+  CLAUDE_ACP_MIN_VERSION,
+  CLAUDE_PERMISSION_MODE_ID,
+};

@@ -19,6 +19,8 @@ import {
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const SEMVER_RE =
+  /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-(?:0|[1-9]\d*|[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|[A-Za-z-][0-9A-Za-z-]*))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
 const MAX_STATUS_BYTES = 16 * 1024;
 const MAX_CONTROL_BYTES = 8 * 1024;
 const CONTROL_TIMEOUT_MS = 2_000;
@@ -53,6 +55,9 @@ export interface ListenerStatus {
   stoppedAt: string | null;
   lastSignalId: string | null;
   lastErrorCode: string | null;
+  /** Set only when the running provider is newer than the last measured version. */
+  providerVersion?: string | null;
+  providerLastMeasuredVersion?: string | null;
   /**
    * Final lines of the last failed worker's stderr, sanitized and bounded by
    * the supervisor. LOCAL diagnosis only (D-090 family) — this file is the
@@ -139,6 +144,8 @@ const STATUS_ALLOWED_KEYS = new Set([
   "stoppedAt",
   "lastSignalId",
   "lastErrorCode",
+  "providerVersion",
+  "providerLastMeasuredVersion",
   "lastWorkerStderrTail",
   "logPath",
   "deliveryMode",
@@ -238,6 +245,15 @@ function parseStatus(raw: string): ListenerStatus {
     !(row.lastErrorCode === null ||
       (typeof row.lastErrorCode === "string" &&
         /^[a-z0-9_-]{1,96}$/.test(row.lastErrorCode))) ||
+    !(row.providerVersion === undefined || row.providerVersion === null ||
+      (typeof row.providerVersion === "string" && SEMVER_RE.test(row.providerVersion))) ||
+    !(row.providerLastMeasuredVersion === undefined ||
+      row.providerLastMeasuredVersion === null ||
+      (typeof row.providerLastMeasuredVersion === "string" &&
+        SEMVER_RE.test(row.providerLastMeasuredVersion))) ||
+    ((row.providerVersion === null || row.providerVersion === undefined) !==
+      (row.providerLastMeasuredVersion === null ||
+        row.providerLastMeasuredVersion === undefined)) ||
     !(row.lastWorkerStderrTail === undefined ||
       row.lastWorkerStderrTail === null ||
       (typeof row.lastWorkerStderrTail === "string" &&
@@ -296,6 +312,9 @@ function parseStatus(raw: string): ListenerStatus {
     lastClaimAt: (row.lastClaimAt ?? null) as string | null,
     lastAckAt: (row.lastAckAt ?? null) as string | null,
     lastWorkerStderrTail: (row.lastWorkerStderrTail ?? null) as string | null,
+    providerVersion: (row.providerVersion ?? null) as string | null,
+    providerLastMeasuredVersion:
+      (row.providerLastMeasuredVersion ?? null) as string | null,
     routeMode,
     deferOverChars,
     pendingForMainCount: (row.pendingForMainCount ?? 0) as number,
