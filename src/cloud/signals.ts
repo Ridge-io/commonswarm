@@ -285,7 +285,7 @@ export function parseSignalRecord(value: unknown): SignalRecord {
     !SIGNAL_KINDS.has(row.kind as SignalKind) ||
     typeof row.body !== "string" ||
     row.body.length < 1 ||
-    row.body.length > 2000 ||
+    row.body.length > 8000 ||
     !(row.about === null ||
       (typeof row.about === "string" && row.about.length <= 500))
   ) {

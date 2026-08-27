@@ -1579,18 +1579,30 @@ test("P3-1 signals are authored, sanitized, isolated, idempotent, stale at read 
       /[\u001b\u061c\u200b-\u200f\u2028-\u202e\u2060\u2066-\u2069\ufeff\u{e0000}-\u{e007f}]/u,
       "stored signal text must contain no control, bidi, invisible, or tag code points",
     );
+    const structuredBody = [
+      "# Review",
+      "",
+      "First paragraph.",
+      "",
+      "- one",
+      "- two",
+      "",
+      "```ts",
+      "const answer = 42;",
+      "```",
+    ].join("\n");
     const multiline = await issueSignal(f, f.uaJwt, {
       kind: "post_signal",
       signal_kind: "note",
-      body: "blocked on review\n\tsee PR 31",
+      body: structuredBody,
       to_user_id: null,
       about: null,
     });
     assert.equal(multiline.status, 200);
     assert.equal(
       (multiline.body.signal as Record<string, unknown>).body,
-      "blocked on review see PR 31",
-      "C0 whitespace must preserve a word boundary in immutable signal text",
+      structuredBody,
+      "Markdown structure must survive in immutable signal text",
     );
 
     await delay(10);
@@ -2372,7 +2384,7 @@ test("wake-relation-contract: sender_owner_relation matrix, capabilities, and cu
       );
     }
 
-    // body/about DB limits equal the client bounds (2000 / 500).
+    // body/about DB limits equal the client bounds (8000 / 500).
     const bodyLimit = await sql<{ body_check: string | null }[]>`
       SELECT pg_get_constraintdef(oid) AS body_check
       FROM pg_constraint
@@ -2382,10 +2394,10 @@ test("wake-relation-contract: sender_owner_relation matrix, capabilities, and cu
     `;
     assert.ok(
       bodyLimit.some((row) =>
-        String(row.body_check).includes("2000") &&
+        String(row.body_check).includes("8000") &&
         String(row.body_check).toLowerCase().includes("char_length(body)")
       ),
-      "DB body check must match client 2000-char bound",
+      "DB body check must match client 8000-char bound",
     );
     const aboutLimit = await sql<{ about_check: string | null }[]>`
       SELECT pg_get_constraintdef(oid) AS about_check
@@ -2404,7 +2416,7 @@ test("wake-relation-contract: sender_owner_relation matrix, capabilities, and cu
     const overBody = await issueSignal(f, f.uaJwt, {
       kind: "post_signal",
       signal_kind: "note",
-      body: "x".repeat(2001),
+      body: "x".repeat(8001),
       to_user_id: null,
       to_agent_principal_id: receiver.principalId,
       in_reply_to: null,

@@ -24,8 +24,9 @@
  *     :117 devices  :127 workspaces  :135 memberships  :149 invitations
  *     :174 agent_principals  :184 agent_runs  :192 agent_tokens
  *     :281 events (payload capped at 65536 bytes)  :309 tasks  :384 audit_log
- *     migrations/20260724000003_signals.sql:3      signals (body 1-2000, about <= 500,
- *                                                  until <= 30 days)
+ *     migrations/20260827000001_expand_signal_body.sql
+ *                                                  signals (body 1-8000; about remains <= 500,
+ *                                                  until remains <= 30 days)
  *
  *   THE IP CLAIM IS THE ONE WORTH RE-CHECKING BEFORE ANY EDIT.
  *     swarm.audit_log HAS an `ip inet` column (p1_schema.sql:400), and the edge function

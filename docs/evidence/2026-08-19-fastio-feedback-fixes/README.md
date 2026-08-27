@@ -34,6 +34,10 @@ used in `runReply`. Message-only change. Covered by `tests/p1-cli/reply-refusal-
 
 ## 3 — the 2000-char signal cap surfaced only at send time
 
+**SUPERSEDED 2026-08-27:** the signal-body lane raised the cap to 8000, put the limit on
+the `ask` and `note` help lines, and changed an over-cap refusal to name both the actual
+length and the maximum. The paragraphs below record the earlier 2000-character state.
+
 > "the 2000-char signal cap surfaces only at send time, so long carefully-written asks bounce;
 > print the limit in --help or accept and truncate with a warning."
 

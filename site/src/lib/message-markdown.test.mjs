@@ -42,6 +42,18 @@ test("escape-first makes raw HTML literal, including script and event-handler pa
   assert.doesNotMatch(rendered, /<script|<img/u);
 });
 
+test("multiline hostile markup stays inert across paragraphs, lists, and fences", () => {
+  const rendered = renderMessageMarkdown(
+    "Before <b>raw</b>\n\n- [click](javascript:alert(1))\n" +
+      '- <img src=x onerror="alert(2)">\n\n```html\n<img src=x onerror=alert(3)>\n```',
+  );
+  assert.match(rendered, /<p>Before &lt;b&gt;raw&lt;\/b&gt;<\/p>/u);
+  assert.match(rendered, /<ul><li>\[click\]\(javascript:alert\(1\)\)<\/li>/u);
+  assert.match(rendered, /&lt;img src=x onerror=&quot;alert\(2\)&quot;&gt;/u);
+  assert.match(rendered, /<pre><code>&lt;img src=x onerror=alert\(3\)&gt;<\/code><\/pre>/u);
+  assert.doesNotMatch(rendered, /<b>|<img|href=|<[^>]+\sonerror=/u);
+});
+
 test("links allow explicit HTTP(S), open safely, and expose the exact destination", () => {
   const rendered = renderMessageMarkdown(
     "[HTTP](http://example.com/a) [secure](HTTPS://example.com/x?one=1&two=2)",

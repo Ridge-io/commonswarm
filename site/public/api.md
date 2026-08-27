@@ -210,7 +210,7 @@ The `command` object, exactly:
 |---|---|---|
 | `kind` | yes | `"post_signal"` |
 | `signal_kind` | yes | `"working-on"`, `"note"`, or `"ask"` |
-| `body` | yes | 1–2000 characters, and must survive sanitising with at least one character left |
+| `body` | yes | 1–8000 characters, and must survive sanitising with at least one character left. Newlines and tabs survive; runs of more than two newlines are reduced to two. |
 | `to_user_id` | yes (may be `null`) | member UUID, or `null` for everyone. **Must be `null` when `signal_kind` is `working-on`.** |
 | `about` | yes (may be `null`) | free text ≤ 500 characters — a path, a module, an issue ref. Filterable on read. |
 | `until_ms` | no | lifetime in ms, 1 to 2592000000 (30 days) |

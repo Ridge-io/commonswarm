@@ -16,6 +16,7 @@ const between = (source: string, start: string, end: string): string => {
 test("composer defaults to broadcast and keeps signal language", () => {
   const markup = between(dashboard, '<form class="dashboard__composer"', "</form>");
   assert.match(markup, /data-composer-audience/);
+  assert.match(markup, /maxlength="8000"/);
   assert.match(markup, /placeholder="What are you about to do\?"/);
   assert.doesNotMatch(markup, /Message #general|Message #all-signals/i);
   assert.doesNotMatch(markup, /only .* sees|will see|private|lock/i);

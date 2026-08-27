@@ -6,6 +6,12 @@ import {
   type AgentAuthRow,
 } from "../_shared/agent-auth.ts";
 import {
+  ANSI_ESCAPE_GLOBAL_RE,
+  sanitizeSignalText,
+  SIGNAL_BODY_MAX,
+  SIGNAL_UNSAFE_GLOBAL_RE,
+} from "../_shared/signal-text.ts";
+import {
   commandAllowedOrigins,
   commandPreflight,
   withCommandCors,
@@ -478,10 +484,6 @@ const SHA_RE = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i;
 const SEMVER_RE = /^(\d+)\.(\d+)\.(\d+)(?:-[0-9A-Za-z.-]+)?$/;
 const CONTROL_RE =
   /[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/;
-const SIGNAL_UNSAFE_GLOBAL_RE =
-  /[\u0000-\u001f\u007f-\u009f\u061c\u200b-\u200f\u2028-\u202e\u2060\u2066-\u2069\ufeff\u{e0000}-\u{e007f}]/gu;
-const SIGNAL_WHITESPACE_GLOBAL_RE = /[\t\n\v\f\r\u0085\u2028\u2029]+/gu;
-const ANSI_ESCAPE_GLOBAL_RE = /\u001b\[[0-?]*[ -/]*[@-~]/g;
 const REGISTER_DEVICE_KIND = "register_device";
 const CREATE_WORKSPACE_KIND = "create_workspace";
 const RENEW_AGENT_TOKEN_KIND = "renew_agent_token";
@@ -1121,13 +1123,6 @@ function stripControls(value: string | null | undefined): string | null {
   return value.replace(SIGNAL_UNSAFE_GLOBAL_RE, "").slice(0, 2048);
 }
 
-function sanitizeSignalText(value: string): string {
-  return value
-    .replace(ANSI_ESCAPE_GLOBAL_RE, "")
-    .replace(SIGNAL_WHITESPACE_GLOBAL_RE, " ")
-    .replace(SIGNAL_UNSAFE_GLOBAL_RE, "");
-}
-
 function displayLabel(value: string | null | undefined, fallback: string): string {
   const cleaned = stripControls(
     value?.replace(ANSI_ESCAPE_GLOBAL_RE, ""),
@@ -1487,7 +1482,7 @@ function validateCommand(
       signalKinds.includes(cmd.signal_kind as SignalKind) &&
       typeof cmd.body === "string" &&
       cmd.body.length >= 1 &&
-      cmd.body.length <= 2000 &&
+      cmd.body.length <= SIGNAL_BODY_MAX &&
       sanitizedBody.length >= 1 &&
       nullableUuid(cmd.to_user_id) &&
       (!modernShape ||

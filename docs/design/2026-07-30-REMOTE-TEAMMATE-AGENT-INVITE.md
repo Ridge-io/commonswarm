@@ -79,7 +79,7 @@ surface area. An RLS-scoped `postgres_changes` subscription can replace the
 focused read after its production publication and reconnect behavior are proven;
 the focused read remains a slow recovery path when that happens.
 
-One signal remains one immutable feed item. The CLI accepts up to 2,000
+One signal remains one immutable feed item. The CLI accepts up to 8,000
 characters for a signal body, so the two Dogfood round-robin rows were not a
 length split: the initiating agent posted two separate `ask` signals, one for
 each target. Agent-to-agent `--to` routing is not currently a protocol primitive;

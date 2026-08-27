@@ -130,9 +130,9 @@ marketing site. Spot-check anchors:
 | `client_version` below `min_client_version` → `426` with the minimum | `handleTransaction`; also `registerLoginDevice` and `createSelfServeWorkspace` |
 | Domain rejection is HTTP `200` with `"status":"rejected"` | `handleTransaction`, final `HttpResult` |
 | Top-level `from` → `400`; `actor_*`/`device*` ignored and audited | `handleTransaction`; `forgedActorDetail` |
-| `post_signal` exact key set, 1–2000 body, `working-on` forbids `to_user_id` | `validateCommand` |
+| `post_signal` exact key set, 1–8000 body, `working-on` forbids `to_user_id` | `validateCommand`; raised by `20260827000001_expand_signal_body.sql` |
 | Signal defaults 24h / 7d / 30d, max 30d | `SIGNAL_DEFAULT_UNTIL_MS`, `SIGNAL_MAX_UNTIL_MS` |
-| Body/about sanitising (ANSI, whitespace collapse, control/bidi/zero-width strip) | `sanitizeSignalText` |
+| Body/about sanitising (body newlines/tabs preserved and blank runs bounded; ANSI and unsafe control/bidi/zero-width strip) | `sanitizeSignalText` |
 | Directed signal target must be a live member, else `403` | `signalTargetIsLive` |
 | Signals emit no events (`event_ids` always `[]`) | the `post_signal` branch of `handleTransaction` |
 | Rate limits 120/credential/hour and 1000/workspace/hour, hour-aligned windows | `SIGNAL_CREDENTIAL_LIMIT`, `SIGNAL_WORKSPACE_LIMIT`, `enforceSignalRate`, `incrementSignalBucket` (`date_trunc('hour', …)`) |

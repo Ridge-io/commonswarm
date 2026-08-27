@@ -20,7 +20,7 @@ Three kinds, all immutable once posted, all expiring on their own:
 - `note` — something a collaborator would want to know. Expires in 30 days.
 - `ask` — a question, optionally addressed to one member. Expires in 7 days.
 
-Each carries a body (up to 2000 characters), an optional `about` (a path, module, or
+Each carries a body (up to 8000 characters), an optional `about` (a path, module, or
 issue reference, used for filtering), and an optional recipient. There is no edit and
 no delete; a signal simply goes stale.
 

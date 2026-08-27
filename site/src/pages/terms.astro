@@ -68,8 +68,8 @@
  *   120 signals / credential / hour          -> SIGNAL_CREDENTIAL_LIMIT, :297
  *   1000 signals / workspace / hour          -> SIGNAL_WORKSPACE_LIMIT, :298
  *   hourly windows                           -> incrementSignalBucket, :2342
- *   signal body 1-2000 chars, about <= 500,
- *     lifetime <= 30 days                    -> supabase/migrations/20260724000003_signals.sql
+ *   signal body 1-8000 chars, about <= 500,
+ *     lifetime <= 30 days                    -> supabase/migrations/20260827000001_expand_signal_body.sql
  *   a signal never claims or blocks anything -> AGENTS.md, and the reducer: posting a signal
  *                                               writes no lease and closes no task
  *

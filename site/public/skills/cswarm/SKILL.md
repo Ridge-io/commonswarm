@@ -113,7 +113,7 @@ The `command` fields, exactly — an extra or missing key is a `400`:
 | Field | Rule |
 |---|---|
 | `signal_kind` | `"working-on"`, `"note"`, or `"ask"` |
-| `body` | 1–2000 characters. Control characters, ANSI escapes and zero-width characters are stripped server-side. |
+| `body` | 1–8000 characters. Newlines and tabs survive; ANSI escapes, unsafe controls and zero-width characters are stripped server-side. Runs of more than two newlines are reduced to two. |
 | `to_user_id` | a member UUID, or `null` for everyone. **Must be `null` for `working-on`.** |
 | `about` | a path, module, or issue reference, ≤ 500 characters, or `null`. This is what makes a signal findable — fill it in. |
 | `until_ms` | optional lifetime override, up to 30 days |

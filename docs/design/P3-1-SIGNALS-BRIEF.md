@@ -77,7 +77,7 @@ A **signal**: a short, immutable, addressed statement of intent, optionally abou
 | `to` | `null` = workspace broadcast; else a **live co-member** of the selected workspace — see §1.3. *Agent-principal targeting is OUT of v1.* |
 | `about` | **opaque** string, ≤500 chars — **over-cap REFUSES, never truncates.** URLs are a **convention**, never parsed (pin 15). No GitHub sync, ever. |
 | `kind` | exactly `working-on` \| `note` \| `ask` |
-| `body` | untrusted data, ≤2000 chars. **Sanitized AT WRITE**: control/bidi/ANSI sequences are removed before storage, so what is stored is already inert. Rendering escapes on top of that (belt and braces). **Over-cap = REFUSE with a plain message, never silent truncation.** |
+| `body` | untrusted data, ≤8000 chars. **Sanitized AT WRITE**: newlines and tabs survive for readable Markdown; carriage returns become newlines; runs longer than two newlines are reduced to two; ANSI, other control whitespace, bidi and zero-width sequences are removed or neutralised before storage. Rendering escapes on top of that (belt and braces). **Over-cap = REFUSE with a plain message that names the actual length and limit, never silent truncation.** |
 | `until` | **every kind has one.** See §1.2 — this is the lifecycle. |
 | `created_at` | server time |
 

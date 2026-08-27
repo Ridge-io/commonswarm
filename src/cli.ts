@@ -422,8 +422,8 @@ Usage:
   cswarm status [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--json]
   cswarm members [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--agent-token-stdin] [--json]
   cswarm working-on "<what>" [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--about <ref>] [--until <dur>] [--json]
-  cswarm note "<text>" [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--to <member|agent>] [--about <ref>] [--until <dur>] [--json]
-  cswarm ask "<text>" [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--to <member|agent>] [--about <ref>] [--until <dur>] [--wait <seconds>] [--json]
+  cswarm note "<text>" [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--to <member|agent>] [--about <ref>] [--until <dur>] [--json]  # text: 1..8000 characters
+  cswarm ask "<text>" [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--to <member|agent>] [--about <ref>] [--until <dur>] [--wait <seconds>] [--json]  # text: 1..8000 characters
   cswarm reply <signal-id> "<text>" [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--until <dur>] [--json]
   cswarm feed [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--about <ref>] [--kind <kind>] [--since <timestamp>] [--limit <n>] [--include-stale] [--json]
   cswarm inbox [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--kind <kind>] [--about <ref>] [--since <timestamp>] [--limit <n>] [--include-stale] [--wait <seconds>] [--json]
@@ -489,7 +489,7 @@ Signals (intention sharing) accept the same credential selection. Agent mode
 never opens a browser or infers a human's saved workspace. Durations use a whole
 number plus m, h, or d (for example 90m, 24h, or 7d) and are capped at 30d.
 Place -- before signal text that itself begins with -- to stop option parsing.
-Signal text is at most 2000 characters and --about at most 500; a longer body is
+Signal text is at most 8000 characters and --about at most 500; a longer body is
 refused locally before any network call, so compose within the limit.
 
 listen start --turn-budget bounds ONE worker prompt turn (default 10m): how long
@@ -2399,20 +2399,23 @@ export function resolveTurnBudgetOrDefer(
 }
 
 /* Signal body / --about caps, mirrored by the DB CHECK in the signals migration
- * (char_length(body) BETWEEN 1 AND 2000; about <= 500). Hardcoded in several
+ * (char_length(body) BETWEEN 1 AND 8000; about <= 500). Hardcoded in several
  * places (file-store.ts, signals.ts) — no shared module across the protocol
- * boundary; if the DB cap moves, grep 2000/500 for the signal body/about. Named
+ * boundary; if the DB cap moves, grep 8000/500 for the signal body/about. Named
  * here so the usage text below and the validator cannot drift from each other. */
-const SIGNAL_BODY_MAX = 2000;
+const SIGNAL_BODY_MAX = 8000;
 const SIGNAL_ABOUT_MAX = 500;
 
 function signalText(value: string, label: "body" | "about"): string {
   const maximum = label === "body" ? SIGNAL_BODY_MAX : SIGNAL_ABOUT_MAX;
   if (value.length < (label === "body" ? 1 : 0) || value.length > maximum) {
+    if (label === "body") {
+      throw new Error(
+        `signal text is ${value.length} characters; the maximum is ${maximum}`,
+      );
+    }
     throw new Error(
-      `${label === "body" ? "signal text" : "--about"} must be ${
-        label === "body" ? "1.." : "at most "
-      }${maximum} characters`,
+      `--about must be at most ${maximum} characters`,
     );
   }
   return value;

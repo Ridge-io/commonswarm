@@ -5573,4 +5573,5 @@ first real harvest.
    possible; whether a fresh-context worker SHOULD take them is an operator judgment. Proposed:
    `listen start --defer-over <chars>` or a per-ask `--route main` that hands heavyweight asks
    to the operator's own session instead of the ACP worker. Feature-sized; queue behind the
-   quick-fix batch (.html, reply-403 copy, 2000-char surfacing — D-091-adjacent, in flight).
+   quick-fix batch (.html and reply-403 copy; the signal-body lane later raised the surfaced
+   cap from 2000 to 8000 — D-091-adjacent).
