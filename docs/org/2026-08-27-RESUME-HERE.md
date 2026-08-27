@@ -181,6 +181,35 @@ Commit messages cannot be edited and reviewers quote them. These are wrong or in
 
 ---
 
+## 6b. A trap that makes a healthy release binary look broken
+
+**`node dist-release/cswarm --version` FAILS from the repo root** with
+`ReferenceError: module is not defined in ES module scope`. The bundle is CJS and the repo's
+`package.json` says `"type": "module"`, so Node parses it as ESM. **This is not a product
+defect** — an installed user has the file outside this repo (or as `cswarm.cjs`, whose
+extension pins CJS) and it runs fine. But anyone "verifying the release binary in place" will
+see a crash and conclude the release is broken. Verify a copy outside the repo, or run the
+`.cjs`-suffixed staged file in `dist-npm/`.
+
+Found by the adversarial verification arm on the 0.1.28 release, which also established
+something stronger than any of the release checks: re-running the esbuild command against the
+current tree produces a bundle **byte-identical** to the shipped `dist-release/cswarm`
+(`f7add17a…`), and that same digest is served by
+`releases/latest/download/cswarm`, matches the published `.sha256`, and matches the npm
+tarball. The shipped artifact provably *is* this source.
+
+It also closed the reported grok bug against the **real** binary rather than a fixture:
+`assertGrokVersionFloor` run against `/opt/homebrew/bin/grok` parses `1.0.5` from
+`grok 1.0.5 (5115b46bc909) [stable]` and **accepts** it, with the newer-than-measured notice
+emitted; `0.2.116` throws `AcpVersionBelowFloorError` / `version_below_floor`. Lexical traps
+(`0.2.99`, where the string `"99" > "117"`), prerelease (`0.2.117-beta.1`), and version-smuggling
+via banner lines or build metadata were each probed and all refused correctly.
+
+**Still not established:** whether the floor *numbers* are right — that `0.2.117` is genuinely
+the oldest safe Grok is untested and was out of scope. The floors were set to the previously
+pinned versions, so they are no stricter than what shipped before, but they are not themselves
+a measurement.
+
 ## 7. Two things worth keeping as method
 
 - **A mutation that does not apply reports a clean pass.** My first attempt to mutation-test the
