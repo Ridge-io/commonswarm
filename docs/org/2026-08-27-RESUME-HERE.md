@@ -2,7 +2,8 @@
 
 Written for a successor reading this repo cold. Supersedes `2026-08-17-RESUME-HERE.md`.
 
-Session covered: v0.1.26 → v0.1.28, plus a live production migration and edge deploy.
+Session covered: v0.1.26 → v0.1.29, plus a live production migration and edge deploy — and a
+regression v0.1.28 introduced that v0.1.29 fixes (§6a).
 
 ---
 
@@ -50,9 +51,12 @@ Nothing is RED. All lanes above are merged to `main` and pushed.
 - v0.1.27's three fixes (install.sh PATH-shadow warning, `--claude-executable` authoritative,
   honest `ask` failure wording) — live since earlier in the session.
 
-**ORDER MATTERS AND WAS FOLLOWED: migration → edge function → client release.** The reverse
+~~**ORDER MATTERS AND WAS FOLLOWED: migration → edge function → client release.** The reverse
 leaves the CLI accepting bodies the database rejects. A self-hoster applying this must do the
-same.
+same.~~ **HALF DEAD — this is the claim §6a corrects.** That order is right for WRITES and
+BACKWARDS for READS: it let the server emit rows older clients throw on, and it broke every
+deployed client below 0.1.28. The complete rule is **retire the readers before you widen the
+writers** — ship a tolerant reader first, then the migration, then the server, then the client.
 
 **Merely written / not yet applied:** nothing outstanding in the repo. But see §5 —
 `read` and `capability` edge functions were **not** redeployed.
@@ -64,10 +68,12 @@ same.
 **Pick up the deferred lanes in §4.** The release itself is finished and verified; there is no
 outstanding release work.
 
-The site redeploy for 0.1.28 **succeeded and was verified live** (measured, not read from a
-deploy log): `/download` shows only `0.1.0` and `0.1.28`, `install.sh` 200 and still carrying
-the PATH-shadow warning, `nope.sh` 404 as the control, `/start` naming
-`https://api.commonswarm.com`, and zero service-role JWTs.
+The site is deployed and verified live at **0.1.29** (measured, not read from a deploy log):
+`/download` shows only `0.1.0` and `0.1.29`; `api.md` no longer claims newlines are collapsed
+(0 matches, positive control 1 on the same fetch); terms/privacy/acceptable-use each publish
+8,000 and no longer 2,000; `install.sh` 200 and still carrying the PATH-shadow warning;
+`nope.sh` 404 as the control; `/start` naming `https://api.commonswarm.com`; zero
+service-role JWTs.
 
 Highest-value next lane, and the one an operator is actively waiting on: **the human web UI
 cannot prompt agents** (§4). Root cause is already located and the `@`-mention plumbing already
