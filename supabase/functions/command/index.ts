@@ -21,6 +21,14 @@ import {
   newestInteractiveAmrSeconds,
 } from "./fresh-auth.ts";
 import {
+  classifyCommandFailure,
+  dbCode,
+  durableCommandFailure,
+  finishCommandFailure,
+  safeError,
+  type DurableCommandFailure,
+} from "./failures.ts";
+import {
   ACK_AGENT_DELIVERY_KIND,
   ackAgentDelivery,
   CLAIM_AGENT_INBOX_KIND,
@@ -1268,13 +1276,6 @@ async function insertAudit(tx: Sql, audit: Audit): Promise<void> {
   `;
 }
 
-function safeError(error: unknown): string {
-  if (error instanceof Error) {
-    return `${error.name}: ${stripControls(error.message) ?? ""}`.slice(0, 512);
-  }
-  return "unknown error";
-}
-
 function logCommandFailure(
   event: "command_pre_auth_failure" | "command_request_failure",
   commandKind: string,
@@ -2107,10 +2108,6 @@ function replayResult(
       ...response,
     },
   };
-}
-
-function dbCode(error: unknown): string | null {
-  return record(error)?.code as string | null ?? null;
 }
 
 /**
@@ -7377,6 +7374,27 @@ async function resolveLedgerRace(error: LedgerRace): Promise<HttpResult> {
   });
 }
 
+/** Persist one allowlisted failure row after the command transaction is gone. */
+async function insertCommandFailure(
+  failure: DurableCommandFailure,
+): Promise<void> {
+  /* handleTransaction's db.begin promise rejects only after postgres.js has
+   * rolled that transaction back. Using the pool here therefore obtains a
+   * usable connection outside it. This is one autocommit INSERT: no BEGIN,
+   * role setup, retry, or second diagnostic round trip can amplify an outage. */
+  await db`
+    INSERT INTO swarm.command_failures (
+      command_kind, reason, db_code, detail, request_id
+    ) VALUES (
+      ${failure.command_kind},
+      ${failure.reason},
+      ${failure.db_code},
+      ${failure.detail},
+      ${failure.request_id}::uuid
+    )
+  `;
+}
+
 async function handlePostRequest(request: Request): Promise<Response> {
   if (request.method !== "POST") {
     return json(405, { error: "method_not_allowed" });
@@ -7463,6 +7481,7 @@ async function handlePostRequest(request: Request): Promise<Response> {
     };
   }
 
+  const requestId = crypto.randomUUID();
   try {
     const result = await handleTransaction(
       body,
@@ -7510,22 +7529,33 @@ async function handlePostRequest(request: Request): Promise<Response> {
         console.error("command race resolution failed", safeError(raceError));
       }
     }
-    const isTestRollback = error instanceof TestRollback;
-    const isLockTimeout = dbCode(error) === "55P03";
+    const code = dbCode(error);
+    const reason = classifyCommandFailure(error instanceof TestRollback, code);
     logCommandFailure(
       "command_request_failure",
       kind,
       "error",
-      isTestRollback
-        ? "test_rollback"
-        : isLockTimeout
-        ? "lock_timeout"
-        : "internal_error",
+      reason,
       safeError(error),
     );
-    return isLockTimeout
-      ? json(503, { error: "temporarily_unavailable" })
-      : json(500, { error: "internal_error" });
+    // 40001 (serialization failure) and 40P01 (deadlock) deliberately still
+    // fall through to the existing 500. The durable SQLSTATE will provide the
+    // data needed to decide a later retryable-503 change in its own lane.
+    const failure = durableCommandFailure({
+      commandKind: kind,
+      reason,
+      code,
+      error,
+      requestId,
+    });
+    const result = await finishCommandFailure(
+      failure,
+      insertCommandFailure,
+      (insertError) => {
+        console.error("command failure persistence failed", safeError(insertError));
+      },
+    );
+    return json(result.status, result.body);
   }
 }
 
