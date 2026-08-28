@@ -98,7 +98,16 @@ seat fell back to a separate channel because of it.
 | 8 writes in PARALLEL | 7 ok, 1 fail |
 | 6 writes SPACED 8s apart | **6 ok, 0 fail** |
 
-**ESTABLISHED:** write path only — reads never failed. Affects EVERY signal kind. Load-related.
+**ESTABLISHED:** write path only — reads never failed. Affects EVERY signal kind.
+
+★ **CORRECTION, same session: it is EPISODIC, and "load-related" was my error.** About an hour
+after the table above, 22 further writes — 10 sequential rapid-fire, then 12 as two waves of 6 in
+parallel — produced **0 failures and 0 retries**. Same commands, same workspace, heavier
+concurrency. So the `6 spaced writes, 0 failures` row does NOT establish that spacing helps; it
+coincided with a healthy window. I read a causal story into two runs separated by time, which is
+the same mistake as measuring the wrong end of a pipe: the variable I thought I was controlling
+was not the one that changed. **Treat rate-dependence as UNESTABLISHED.** The real shape is
+episodic: roughly 30-50% for a period, then nothing.
 
 **REFUTED, and both refutations matter because they were the obvious guesses:**
 - *"ask verb only; notes and feed work"* — this was the fleet's working diagnosis, from Finisher,
@@ -108,7 +117,8 @@ seat fell back to a separate channel because of it.
   isolation. One bug, two messages.
 - *"delivery-ledger contention"* — `working-on` creates no delivery and failed MOST of all.
 - *"lock contention on the sharded spend counter"* — 8 PARALLEL writes failed LESS (12%) than
-  sequential rapid-fire (40%). Backwards for contention.
+  sequential rapid-fire (40%). Backwards for contention. (And see the correction above: with the
+  episode over, 12 parallel writes failed 0%.)
 
 **NOT ESTABLISHED — the root cause.** The real error is logged by `console.error` in the
 catch-all at `supabase/functions/command/index.ts:7514-7528` and goes to the platform log, which
@@ -120,7 +130,14 @@ One thing worth checking early: the top-level handler maps only `55P03` to a ret
 `40001` (serialization failure) and `40P01` (deadlock) fall through to a plain 500. That is a
 real gap whether or not it is THIS bug.
 
-**Mitigation in flight (lane/write-retry):** every command carries a `commandId` and the server
+**Mitigation LANDED (`beafa20`), and NOT yet observed working against a real 500.** Three
+attempts, same `commandId`, 5xx and transport only, jittered backoff, inside the existing 30s
+deadline; `--json` reports `retried`/`attempts`. It is mutation-verified in unit tests. But the
+live burst above hit no 500s, so **the retry has never actually fired against the production
+fault** — that is not evidence it works there, only that the window was clean. Re-run a burst
+during an episode to confirm.
+
+**Original note (lane/write-retry):** every command carries a `commandId` and the server
 keeps an idempotency ledger that replays a repeated id — see `src/cloud/command-client.ts:54-57`.
 The product already tells the operator to retry by hand (*"retry the same signal to resolve its
 pending outcome"*), so automating the sanctioned recovery is not a workaround; the manual
