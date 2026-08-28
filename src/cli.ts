@@ -175,6 +175,7 @@ import type { ProviderVersionNotice } from "./host/version.js";
 import {
   ClaudeListenerModel,
   CodexListenerModel,
+  FileHookSurfaceStore,
   FileListenerEffectStore,
   FilePendingMainQueue,
   GrokListenerModel,
@@ -191,6 +192,7 @@ import {
   waitForListenerReady,
   LISTENER_PROMPT_TIMEOUT_MS,
   ListenerRenewalUnavailableError,
+  listenerRestartCommand,
   readListenerCredentialState,
   runListenerHookCheck,
   writeListenerCredentialState,
@@ -3650,7 +3652,9 @@ export function renderListenerStatus(status: ListenerStatus): string {
     }
     if (pendingForMainCount > 0) {
       lines.push(
-        `${pendingForMainCount} asks waiting for this session; they surface at your next prompt, or run cswarm hook check.`,
+        status.state === "stopped" || status.state === "failed"
+          ? `${pendingForMainCount} asks are stranded because this listener is not running. Restart it by piping the same agent credential into: ${listenerRestartCommand(status)}`
+          : `${pendingForMainCount} asks waiting for this session; they surface at your next prompt, or run cswarm hook check.`,
       );
     }
   }
@@ -3677,6 +3681,24 @@ export function renderListenerStatus(status: ListenerStatus): string {
     );
   }
   return lines.join("\n");
+}
+
+async function unsurfacedPendingMainStats(
+  instanceDirectory: string,
+  fallback: { count: number; droppedCount: number },
+): Promise<{ count: number; droppedCount: number }> {
+  try {
+    const queue = new FilePendingMainQueue(instanceDirectory);
+    const pending = await queue.read();
+    const stats = await queue.stats();
+    const staged = await new FileHookSurfaceStore(instanceDirectory).stage(
+      pending,
+      stats.droppedCount,
+    );
+    return { count: staged.unseen.length, droppedCount: stats.droppedCount };
+  } catch {
+    return fallback;
+  }
 }
 
 export function listenerFailureMessage(
@@ -4350,9 +4372,10 @@ async function runListenStart(args: Arguments): Promise<void> {
   if ((status.routeMode ?? "worker") !== "worker") {
     const recordedPending = status.pendingForMainCount ?? 0;
     const recordedDropped = status.droppedForMainCount ?? 0;
-    const queueStats = await new FilePendingMainQueue(
+    const queueStats = await unsurfacedPendingMainStats(
       paths.instanceDirectory,
-    ).stats().catch(() => ({ count: recordedPending, droppedCount: recordedDropped }));
+      { count: recordedPending, droppedCount: recordedDropped },
+    );
     status = {
       ...status,
       pendingForMainCount: queueStats.count,
@@ -4518,9 +4541,10 @@ async function runListenStatusOrStop(
   if ((status.routeMode ?? "worker") !== "worker") {
     const recordedPending = status.pendingForMainCount ?? 0;
     const recordedDropped = status.droppedForMainCount ?? 0;
-    const queueStats = await new FilePendingMainQueue(
+    const queueStats = await unsurfacedPendingMainStats(
       paths.instanceDirectory,
-    ).stats().catch(() => ({ count: recordedPending, droppedCount: recordedDropped }));
+      { count: recordedPending, droppedCount: recordedDropped },
+    );
     status = {
       ...status,
       pendingForMainCount: queueStats.count,

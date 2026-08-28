@@ -355,6 +355,7 @@ interface ListenerHookContext {
   instanceDirectory: string;
   paths: ListenerPaths | null;
   status: ListenerStatus | null;
+  listenerLive: boolean | null;
   credential: ListenerCredentialState | null;
   credentialReadFailed: boolean;
 }
@@ -434,7 +435,17 @@ async function discoverContexts(
     const statusIsLive = storedStatus === null
       ? null
       : await isListenerLive(storedStatus);
-    if (statusIsLive === false) continue;
+    if (statusIsLive === false) {
+      contexts.push({
+        instanceDirectory,
+        paths: storedStatus!.paths,
+        status: storedStatus!.status,
+        listenerLive: false,
+        credential: null,
+        credentialReadFailed: false,
+      });
+      continue;
+    }
     await deleteSecureJsonFile(
       join(instanceDirectory, RETIRED_HOOK_CREDENTIAL_FILE),
     ).catch(() => undefined);
@@ -444,6 +455,7 @@ async function discoverContexts(
         instanceDirectory,
         paths: storedStatus?.paths ?? null,
         status: storedStatus?.status ?? null,
+        listenerLive: statusIsLive,
         credential,
         credentialReadFailed: credential === null && storedStatus !== null,
       });
@@ -453,6 +465,7 @@ async function discoverContexts(
         instanceDirectory,
         paths: storedStatus.paths,
         status: storedStatus.status,
+        listenerLive: statusIsLive,
         credential: null,
         credentialReadFailed: true,
       });
@@ -509,6 +522,33 @@ export function renderHookSignal(item: SurfaceItem): string {
     preview(item.body),
     `${replyLabel} cswarm reply ${item.signalId} "<answer>" --workspace-id ${item.workspaceId}`,
   ].join("\n");
+}
+
+/** Give hook and status output one restart command that preserves recorded routing. */
+export function listenerRestartCommand(status: ListenerStatus): string {
+  const routeMode = status.routeMode ?? "worker";
+  return [
+    "cswarm listen start",
+    "--agent-token-stdin",
+    `--workspace-id ${status.workspaceId}`,
+    `--provider ${status.provider}`,
+    ...(status.permissionMode ? [`--permissions ${status.permissionMode}`] : []),
+    `--route ${routeMode}`,
+    ...(routeMode === "split" && status.deferOverChars !== null &&
+        status.deferOverChars !== undefined
+      ? [`--defer-over ${status.deferOverChars}`]
+      : []),
+  ].join(" ");
+}
+
+function renderStrandedQueue(context: ListenerHookContext, count: number): string {
+  const status = context.status!;
+  const noun = count === 1 ? "message" : "messages";
+  const verb = count === 1 ? "was" : "were";
+  return `[CommonSwarm] ${count} ${noun} ${verb} waiting for agent ${status.principalId} ` +
+    `in listener ${status.instanceId}, but that listener is no longer running. ` +
+    "Restart it by piping the same agent credential into: " +
+    listenerRestartCommand(status);
 }
 
 async function inboxItems(
@@ -598,11 +638,13 @@ export async function checkListenerHooks(
       options.isListenerLive ?? listenerIsLive,
     );
     if (contexts.length === 0) return "";
-    const networkAllowed = await reserveCheck(
-      stateDirectory,
-      cooldownSeconds * 1_000,
-      now(),
-    );
+    const networkAllowed = contexts.some((context) => context.listenerLive !== false)
+      ? await reserveCheck(
+        stateDirectory,
+        cooldownSeconds * 1_000,
+        now(),
+      )
+      : false;
     const checks = await Promise.all(contexts.map(async (context): Promise<ContextCheck> => {
       const queue = new FilePendingMainQueue(context.instanceDirectory);
       const pending = await queue.read();
@@ -628,7 +670,7 @@ export async function checkListenerHooks(
         context,
         queue,
         pending,
-        droppedCount: stats.droppedCount,
+        droppedCount: context.listenerLive === false ? 0 : stats.droppedCount,
         network,
         credentialFailure,
         credentialHealthy,
@@ -639,7 +681,7 @@ export async function checkListenerHooks(
       check: ContextCheck;
       store: FileHookSurfaceStore;
       signalIds: string[];
-      printedPendingSignalIds: string[];
+      settledPendingSignalIds: string[];
       reportDrops: boolean;
       reportCredentialFailure: boolean;
     }> = [];
@@ -652,6 +694,11 @@ export async function checkListenerHooks(
         check.droppedCount,
       );
       blocks.push(...staged.unseen.map(renderHookSignal));
+      const pendingSignalIds = new Set(check.pending.map((entry) => entry.signalId));
+      const unseenPending = staged.unseen.filter((item) => pendingSignalIds.has(item.signalId));
+      if (check.context.listenerLive === false && unseenPending.length > 0) {
+        blocks.push(renderStrandedQueue(check.context, unseenPending.length));
+      }
       const reportDrops = staged.droppedSinceLastCheck > 0;
       if (reportDrops) blocks.push(renderDroppedAsks(staged.droppedSinceLastCheck));
       const reportCredentialFailure = check.credentialFailure !== null &&
@@ -665,14 +712,14 @@ export async function checkListenerHooks(
           blocks.push(warning);
         }
       }
-      const pendingSignalIds = new Set(check.pending.map((entry) => entry.signalId));
       commits.push({
         check,
         store,
         signalIds: staged.unseen.map((item) => item.signalId),
-        printedPendingSignalIds: staged.unseen
-          .map((item) => item.signalId)
-          .filter((signalId) => pendingSignalIds.has(signalId)),
+        // Every staged queue entry is either written by this run or was committed
+        // after an earlier successful write. Removing both keeps the queue bounded
+        // without re-printing entries below the exactly-once high-water.
+        settledPendingSignalIds: check.pending.map((item) => item.signalId),
         reportDrops,
         reportCredentialFailure,
       });
@@ -691,7 +738,7 @@ export async function checkListenerHooks(
           : {}),
       });
       const remainingCount = await commit.check.queue.remove(
-        new Set(commit.printedPendingSignalIds),
+        new Set(commit.settledPendingSignalIds),
         HOOK_LOCK_TIMEOUT_MS,
       );
       if (commit.check.context.paths !== null && commit.check.context.status !== null) {

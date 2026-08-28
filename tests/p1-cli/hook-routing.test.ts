@@ -420,7 +420,231 @@ test("hook skips stale listener directories and emits one credential warning per
   }
 });
 
-test("hook removes only queued signals written by this run", async () => {
+test("hook drains an unsurfaced dead listener queue and gives the exact restart step", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cswarm-hook-dead-queue-"));
+  try {
+    const deadId = "55555555-5555-4555-8555-555555555555";
+    const paths = state(root, deadId).paths;
+    await writeStatus(paths, deadId, { pid: 2_147_483_647, pendingForMainCount: 1 });
+    const queue = new FilePendingMainQueue(paths.instanceDirectory);
+    await queue.enqueue({ ...pending(SIGNAL_ID, "recover this ask"), principalId: deadId });
+    const controller = new AbortController();
+    const output = await checkListenerHooks({
+      stateDirectory: root,
+      cooldownSeconds: 0,
+      signal: controller.signal,
+      deadlineMs: Date.now() + 3_000,
+    });
+    assert.notEqual(output, "");
+    assert.match(output, /1 message was waiting/);
+    assert.match(output, /listener 44444444-4444-4444-8444-444444444444, but that listener is no longer running/);
+    assert.match(output, new RegExp(
+      `cswarm listen start --agent-token-stdin --workspace-id ${WORKSPACE_ID} --provider claude --route main`,
+    ));
+    assert.equal(await queue.count(), 0);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("hook keeps a dead listener queue below the surface high-water silent", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cswarm-hook-dead-surfaced-"));
+  try {
+    const deadId = "55555555-5555-4555-8555-555555555555";
+    const paths = state(root, deadId).paths;
+    await writeStatus(paths, deadId, { pid: 2_147_483_647, pendingForMainCount: 0 });
+    const queue = new FilePendingMainQueue(paths.instanceDirectory);
+    await queue.enqueue({ ...pending(SIGNAL_ID, "already handled first"), principalId: deadId });
+    await queue.enqueue({ ...pending(SECOND_SIGNAL_ID, "already handled second"), principalId: deadId });
+    await new FileHookSurfaceStore(paths.instanceDirectory).commit({
+      signalIds: [SIGNAL_ID, SECOND_SIGNAL_ID],
+    });
+    const controller = new AbortController();
+    const output = await checkListenerHooks({
+      stateDirectory: root,
+      cooldownSeconds: 0,
+      signal: controller.signal,
+      deadlineMs: Date.now() + 3_000,
+    });
+    assert.equal(output, "");
+    assert.equal(await queue.count(), 0);
+    assert.equal((await readListenerStatus(paths))?.pendingForMainCount, 0);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("listen status filters surfaced queue entries before reporting stranded asks", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cswarm-status-dead-surfaced-"));
+  try {
+    const paths = state(root).paths;
+    await writeStatus(paths, PRINCIPAL_ID, { state: "stopped", pendingForMainCount: 0 });
+    const queue = new FilePendingMainQueue(paths.instanceDirectory);
+    await queue.enqueue(pending(SIGNAL_ID, "already handled first"));
+    await queue.enqueue(pending(SECOND_SIGNAL_ID, "already handled second"));
+    await new FileHookSurfaceStore(paths.instanceDirectory).commit({
+      signalIds: [SIGNAL_ID, SECOND_SIGNAL_ID],
+    });
+    const result = runCli([
+      "listen",
+      "status",
+      "--url",
+      "https://cloud.example.test",
+      "--anon-key",
+      "anon",
+      "--workspace-id",
+      WORKSPACE_ID,
+      "--principal-id",
+      PRINCIPAL_ID,
+      "--state-dir",
+      root,
+    ]);
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /Asks waiting for this session: 0/);
+    assert.doesNotMatch(result.stdout, /asks are stranded/);
+    assert.equal(await queue.count(), 2, "status is read-only; hook check owns queue pruning");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("hook counts only unsurfaced entries in a mixed dead listener queue", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cswarm-hook-dead-mixed-"));
+  try {
+    const deadId = "55555555-5555-4555-8555-555555555555";
+    const paths = state(root, deadId).paths;
+    await writeStatus(paths, deadId, { pid: 2_147_483_647, pendingForMainCount: 1 });
+    const queue = new FilePendingMainQueue(paths.instanceDirectory);
+    await queue.enqueue({ ...pending(SIGNAL_ID, "already handled"), principalId: deadId });
+    await queue.enqueue({ ...pending(SECOND_SIGNAL_ID, "still waiting"), principalId: deadId });
+    await new FileHookSurfaceStore(paths.instanceDirectory).commit({ signalIds: [SIGNAL_ID] });
+    const controller = new AbortController();
+    const output = await checkListenerHooks({
+      stateDirectory: root,
+      cooldownSeconds: 0,
+      signal: controller.signal,
+      deadlineMs: Date.now() + 3_000,
+    });
+    assert.doesNotMatch(output, /already handled/);
+    assert.match(output, /still waiting/);
+    assert.match(output, /1 message was waiting/);
+    assert.doesNotMatch(output, /2 messages were waiting/);
+    assert.equal(await queue.count(), 0);
+    assert.equal((await readListenerStatus(paths))?.pendingForMainCount, 0);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("hook keeps an empty dead listener directory fully silent", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cswarm-hook-dead-empty-"));
+  try {
+    const deadId = "55555555-5555-4555-8555-555555555555";
+    await writeStatus(state(root, deadId).paths, deadId, { pid: 2_147_483_647 });
+    const calls = { count: 0 };
+    const controller = new AbortController();
+    const output = await checkListenerHooks({
+      stateDirectory: root,
+      cooldownSeconds: 0,
+      fetcher: emptyInboxFetch(calls),
+      signal: controller.signal,
+      deadlineMs: Date.now() + 3_000,
+    });
+    assert.equal(output, "");
+    assert.equal(calls.count, 0);
+    await assert.rejects(readFile(join(root, "hook-check.json"), "utf8"), { code: "ENOENT" });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("dead listener print failure preserves every entry and success prunes settled ids", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cswarm-hook-dead-print-failure-"));
+  try {
+    const deadId = "55555555-5555-4555-8555-555555555555";
+    const paths = state(root, deadId).paths;
+    await writeStatus(paths, deadId, { pid: 2_147_483_647, pendingForMainCount: 2 });
+    const queue = new FilePendingMainQueue(paths.instanceDirectory);
+    const first = { ...pending(SIGNAL_ID, "already surfaced elsewhere"), principalId: deadId };
+    const second = { ...pending(SECOND_SIGNAL_ID, "print this after retry"), principalId: deadId };
+    await queue.enqueue(first);
+    await queue.enqueue(second);
+    const controller = new AbortController();
+    let attempted = "";
+    assert.equal(await checkListenerHooks({
+      stateDirectory: root,
+      cooldownSeconds: 0,
+      signal: controller.signal,
+      deadlineMs: Date.now() + 3_000,
+      write(output) {
+        attempted = output;
+        throw new Error("simulated stdout failure");
+      },
+    }), "");
+    assert.match(attempted, /already surfaced elsewhere/);
+    assert.match(attempted, /2 messages were waiting/);
+    assert.deepEqual((await queue.read()).map((item) => item.signalId), [SIGNAL_ID, SECOND_SIGNAL_ID]);
+
+    await new FileHookSurfaceStore(paths.instanceDirectory).commit({ signalIds: [SIGNAL_ID] });
+    const retry = await checkListenerHooks({
+      stateDirectory: root,
+      cooldownSeconds: 0,
+      signal: controller.signal,
+      deadlineMs: Date.now() + 3_000,
+    });
+    assert.doesNotMatch(retry, /already surfaced elsewhere/);
+    assert.match(retry, /print this after retry/);
+    assert.match(retry, /1 message was waiting/);
+    assert.doesNotMatch(retry, /2 messages were waiting/);
+    assert.deepEqual(await queue.read(), []);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("hook accounts for every message across multiple dead listener queues", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cswarm-hook-multiple-dead-"));
+  try {
+    const groups = [
+      { principalId: "55555555-5555-4555-8555-555555555555", count: 4 },
+      { principalId: "66666666-6666-4666-8666-666666666666", count: 2 },
+    ];
+    for (const [groupIndex, group] of groups.entries()) {
+      const paths = state(root, group.principalId).paths;
+      await writeStatus(paths, group.principalId, {
+        pid: 2_147_483_647,
+        pendingForMainCount: group.count,
+      });
+      const queue = new FilePendingMainQueue(paths.instanceDirectory);
+      for (let index = 0; index < group.count; index += 1) {
+        const signalId = `0000000${groupIndex + 1}-0000-4000-8000-${String(index + 1).padStart(12, "0")}`;
+        await queue.enqueue({
+          ...pending(signalId, `dead ${groupIndex + 1} message ${index + 1}`),
+          principalId: group.principalId,
+        });
+      }
+    }
+    const controller = new AbortController();
+    const output = await checkListenerHooks({
+      stateDirectory: root,
+      cooldownSeconds: 0,
+      signal: controller.signal,
+      deadlineMs: Date.now() + 3_000,
+    });
+    assert.match(output, /4 messages were waiting for agent 55555555-5555-4555-8555-555555555555/);
+    assert.match(output, /2 messages were waiting for agent 66666666-6666-4666-8666-666666666666/);
+    for (const [groupIndex, group] of groups.entries()) {
+      for (let index = 0; index < group.count; index += 1) {
+        assert.match(output, new RegExp(`dead ${groupIndex + 1} message ${index + 1}`));
+      }
+      assert.equal(await new FilePendingMainQueue(state(root, group.principalId).paths.instanceDirectory).count(), 0);
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("hook prunes queued signals written by an earlier live run without reprinting", async () => {
   const root = await mkdtemp(join(tmpdir(), "cswarm-hook-printed-removal-"));
   try {
     const staleId = "55555555-5555-4555-8555-555555555555";
@@ -444,11 +668,8 @@ test("hook removes only queued signals written by this run", async () => {
       deadlineMs: Date.now() + 3_000,
     });
     assert.doesNotMatch(output, /do not drain an ask that was not printed/);
-    assert.deepEqual(
-      (await queue.read()).map((item) => item.signalId),
-      [SIGNAL_ID],
-      "mutation: restoring unconditional pending removal drains an unprinted ask",
-    );
+    assert.deepEqual(await queue.read(), []);
+    assert.equal((await readListenerStatus(live))?.pendingForMainCount, 0);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -471,6 +692,7 @@ test("hook drain keeps status pending count equal to the queue file", async () =
       deadlineMs: Date.now() + 3_000,
     });
     assert.match(output, /drain and update status/);
+    assert.doesNotMatch(output, /no longer running/);
     assert.equal(await queue.count(), 0);
     assert.equal((await readListenerStatus(paths))?.pendingForMainCount, 0);
     const stored = JSON.parse(await readFile(paths.statusPath, "utf8"));
@@ -701,4 +923,40 @@ test("listen status names the route and the next step for waiting main asks", ()
   );
   assert.match(rendered, /Routed asks dropped from the overflow queue: 3/);
   assert.match(rendered, /signals remain in the inbox.*cswarm inbox/i);
+});
+
+test("listen status calls dead-listener asks stranded and gives the restart command", () => {
+  const rendered = renderListenerStatus({
+    version: 1,
+    instanceId: "44444444-4444-4444-8444-444444444444",
+    provider: "claude",
+    profileId: "profile",
+    workspaceId: WORKSPACE_ID,
+    principalId: PRINCIPAL_ID,
+    pid: 2_147_483_647,
+    state: "stopped",
+    startedAt: "2026-08-26T00:00:00.000Z",
+    readyAt: "2026-08-26T00:00:01.000Z",
+    updatedAt: "2026-08-26T00:00:02.000Z",
+    stoppedAt: "2026-08-26T00:00:02.000Z",
+    lastSignalId: SIGNAL_ID,
+    lastErrorCode: null,
+    lastWorkerStderrTail: null,
+    deliveryMode: "durable_claim",
+    pendingDeliveryCount: 0,
+    lastTerminalDeliveryFailureCount: null,
+    lastTerminalDeliveryFailureAt: null,
+    lastClaimAt: null,
+    lastAckAt: null,
+    routeMode: "main",
+    deferOverChars: null,
+    pendingForMainCount: 2,
+    droppedForMainCount: 0,
+    logPath: "/tmp/events.ndjson",
+  });
+  assert.doesNotMatch(rendered, /surface at your next prompt/);
+  assert.match(rendered, /2 asks are stranded because this listener is not running/);
+  assert.match(rendered, new RegExp(
+    `cswarm listen start --agent-token-stdin --workspace-id ${WORKSPACE_ID} --provider claude --route main`,
+  ));
 });
