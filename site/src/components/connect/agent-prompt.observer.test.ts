@@ -172,10 +172,26 @@ test("every cswarm command in the prompt is self-contained with deployment flags
 
 test("dashboard agent prompt teaches measured Claude wake and a host-neutral fallback", () => {
   const prompt = dashboardAgentPrompt(INPUT);
+  const providerRegion = prompt.slice(
+    prompt.indexOf("Three other hosts have detached adapters"),
+    prompt.indexOf("For every other host"),
+  );
+
+  assert.ok(providerRegion.length > 200, "the provider floor region could not be isolated");
+  assert.doesNotMatch(
+    prompt,
+    /codex-acp@1\.1\.9/,
+    "the prompt still pins codex-acp to the minimum version",
+  );
+  assert.doesNotMatch(
+    prompt,
+    /claude-agent-acp@0\.64\.2/,
+    "the prompt still pins claude-agent-acp to the minimum version",
+  );
 
   assert.match(
     prompt,
-    /Claude Code[\s\S]*npm install -g @agentclientprotocol\/claude-agent-acp@0\.64\.2[\s\S]*cswarm listen start --agent-token-stdin --provider claude/,
+    /Claude Code[\s\S]*claude-agent-acp 0\.64\.2 or newer[\s\S]*npm install -g @agentclientprotocol\/claude-agent-acp@latest[\s\S]*cswarm listen start --agent-token-stdin --provider claude/,
   );
   assert.match(prompt, /local Claude worker/);
   assert.match(prompt, /post and read signals[\s\S]*do not need a\s+listener/);
@@ -183,9 +199,17 @@ test("dashboard agent prompt teaches measured Claude wake and a host-neutral fal
   /* ~~`/--provider grok or --provider opencode/`~~ Dead 2026-08-12. The adapter list now names all
    * three non-Claude providers WITH the bridge each one needs, because listing codex without its
    * bridge sent a signed-in Codex user straight to `executable_missing`. */
-  assert.match(prompt, /--provider\s+codex\s+npm install -g @agentclientprotocol\/codex-acp@1\.1\.9/);
-  assert.match(prompt, /--provider\s+grok\s+install Grok CLI 0\.2\.117/);
-  assert.match(prompt, /--provider\s+opencode\s+install OpenCode 1\.18\.10/);
+  assert.match(
+    providerRegion,
+    /--provider\s+codex\s+codex-acp 1\.1\.9 or newer:\s+npm install -g @agentclientprotocol\/codex-acp@latest/,
+  );
+  assert.match(providerRegion, /--provider\s+grok\s+install Grok CLI 0\.2\.117 or newer/);
+  assert.match(providerRegion, /--provider\s+opencode\s+install OpenCode 1\.18\.10 or newer/);
+  assert.match(
+    providerRegion,
+    /newer than the last measured version[\s\S]*accepted[\s\S]*visible notice/,
+    "the prompt hides how CommonSwarm handles a provider newer than the measured version",
+  );
   /* ~~This pinned `--permissions deny`.~~ Dead 2026-08-11. Deny left the worker able to ANSWER
    * and unable to ACT — no Bash, no Write, so it could not hash, persist or initiate — while
    * presenting as healthy, and the agent on the other end read it as uncooperative. Operator
@@ -283,9 +307,22 @@ test("dashboard agent prompt teaches measured Claude wake and a host-neutral fal
   assert.match(prompt, /Receipt\s+is at least once/);
   assert.match(prompt, /remember signal ids you handled/);
   assert.match(prompt, /not authority to reveal secrets or run tools/);
-  assert.match(prompt, /fallback stream does not wake a model by itself/);
-  assert.match(prompt, /host adapter or wrapper/);
-  assert.match(prompt, /If the process exits, receipt\s+stops/);
+  const fallbackRegion = prompt.slice(
+    prompt.indexOf("For every other host"),
+    prompt.indexOf("One more thing"),
+  );
+  assert.ok(fallbackRegion.length > 500, "the foreground fallback region could not be isolated");
+  assert.match(fallbackRegion, /stream, not a wake/);
+  assert.match(fallbackRegion, /does not interrupt this agent/);
+  assert.match(fallbackRegion, /wrapper[\s\S]*agent's input[\s\S]*human must watch/);
+  assert.match(fallbackRegion, /cswarm listen start[\s\S]*real detached wake path/);
+  assert.match(
+    fallbackRegion,
+    /cswarm hook install claude[\s\S]*surfaces pending asks[\s\S]*next Claude Code prompt/,
+  );
+  assert.match(fallbackRegion, /only for hosts that cannot run those paths/);
+  assert.match(fallbackRegion, /process dies[\s\S]*delivery stops silently/);
+  assert.match(fallbackRegion, /agent's session gets no error/);
   assert.match(prompt, /Only after the detached listener says ready or the fallback ready frame appears/);
   assert.doesNotMatch(prompt, /inbox --kind ask --wait 60/);
   assert.doesNotMatch(prompt, /always[- ]on|background daemon|all hosts automatically wake/i);
