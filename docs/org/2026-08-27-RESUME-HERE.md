@@ -130,6 +130,11 @@ One thing worth checking early: the top-level handler maps only `55P03` to a ret
 `40001` (serialization failure) and `40P01` (deadlock) fall through to a plain 500. That is a
 real gap whether or not it is THIS bug.
 
+**Instrument LANDED but NOT DEPLOYED (`f254899`):** `swarm.command_failures`, written from the
+catch-all with the SQLSTATE, because the reason this is unsolved is that a failed command leaves
+no durable trace at all. It needs a migration and an edge deploy — the operator's call. It does
+not fix the 500; it makes the next episode diagnosable instead of guessable.
+
 **Mitigation LANDED (`beafa20`), and NOT yet observed working against a real 500.** Three
 attempts, same `commandId`, 5xx and transport only, jittered backoff, inside the existing 30s
 deadline; `--json` reports `retried`/`attempts`. It is mutation-verified in unit tests. But the
@@ -142,6 +147,30 @@ keeps an idempotency ledger that replays a repeated id — see `src/cloud/comman
 The product already tells the operator to retry by hand (*"retry the same signal to resolve its
 pending outcome"*), so automating the sanctioned recovery is not a workaround; the manual
 instruction was. **This hides the symptom. The server bug stays open.**
+
+## 3c. A FLAKY TEST that costs an hour and manufactures false attributions
+
+`tests/p1-cli/signals.test.ts` — *"fake-server ask/wait/inbox/reply journey with typed agent
+recipient"* — is **environment-sensitive and currently failing on `main`**. It is NOT a
+regression:
+
+- it fails at `9d5d586` (v0.1.28) and `b2258a0` (v0.1.26), so it predates this session's work;
+- it **passed** in this session's own lane gates (`test:p1-cli` reported `309 pass, 0 fail`);
+- **the product path is fine** — `inbox --wait 6` against production returns
+  `waited: true, timed_out: false, 22 signals`.
+
+Why it is fragile: its fake server returns the signal only on the **second** inbox read
+(`inboxReads >= 2`), while the CLI is invoked with `--wait 2`. Two polls must complete inside two
+seconds, so any scheduling delay flips it.
+
+**It cost real time and nearly produced a false claim.** `git log` showed `beafa20` (the
+write-retry lane) as the last commit to touch that file, and I began attributing the failure to
+it. `beafa20` had only added a test option. **"Last touched this file" is not attribution** —
+checking out the parent commit and re-running is. Do that first next time.
+
+Worth making deterministic (poll count or a longer wait) rather than leaving a control that goes
+red for reasons unrelated to the code under test. A gate that cries wolf gets ignored, and this
+one already consumed an investigation.
 
 ## 4. Deliberately DEFERRED — do not "fix" these as if they were oversights
 
