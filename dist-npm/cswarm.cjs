@@ -33068,7 +33068,7 @@ function parseV2Record(row) {
     throw new Error("stored listener effect is malformed");
   }
   if (signalKind2 === "note") {
-    if (typeof row.commandId !== "string" || row.commandId !== "" || row.state !== "observed" || row.promptAttempts !== 0 || row.postAttempts !== 0 || row.replyBody !== null || row.replyTruncated !== false || row.replySignalId !== null || row.failureCode !== null) {
+    if (typeof row.commandId !== "string" || row.commandId !== "" || row.state !== "observed" && row.state !== "routed_main" || row.promptAttempts !== 0 || row.postAttempts !== 0 || row.replyBody !== null || row.replyTruncated !== false || row.replySignalId !== null || row.failureCode !== null) {
       throw new Error("stored listener effect is malformed");
     }
   } else if (row.state === "routed_main") {
@@ -33137,11 +33137,11 @@ function newObservedNoteRecord(input) {
     updatedAt: input.updatedAt
   };
 }
-function newRoutedMainAskRecord(input) {
+function newRoutedMainRecord(input) {
   const base = newObservedNoteRecord(input);
   return {
     ...base,
-    signalKind: "ask",
+    signalKind: input.signalKind,
     state: "routed_main"
   };
 }
@@ -35076,8 +35076,8 @@ var FilePendingMainQueue = class {
   }
 };
 function pendingMainEntry(signal, principalId, provenance, now, options = {}) {
-  if (signal.kind !== "ask") {
-    throw new Error("only directed asks can enter the pending-for-main queue");
+  if (signal.kind !== "ask" && signal.kind !== "note") {
+    throw new Error("only directed asks and notes can enter the pending-for-main queue");
   }
   return parseEntry({
     signalId: signal.id,
@@ -35085,6 +35085,7 @@ function pendingMainEntry(signal, principalId, provenance, now, options = {}) {
     principalId,
     fromId: signal.from,
     fromKind: signal.from_kind,
+    kind: signal.kind,
     senderName: provenance.senderName,
     body: signal.body,
     createdAt: signal.created_at,
@@ -35182,7 +35183,7 @@ function ackForTerminalEffect(record, now) {
   if (record.state === "observed" && record.signalKind === "note") {
     return { outcome: "observed", lastErrorCode: null };
   }
-  if (record.state === "routed_main" && record.signalKind === "ask") {
+  if (record.state === "routed_main") {
     return { outcome: "queued", lastErrorCode: null };
   }
   if (record.state === "expired" && record.signalKind === "ask" && Date.parse(record.askUntil) <= now()) {
@@ -35204,7 +35205,7 @@ function ackForTerminalEffect(record, now) {
   return { outcome: "failed_terminal", lastErrorCode: "local_effect_failed" };
 }
 function isAckableTerminalEffect(record, now) {
-  return record.state === "done" && record.signalKind === "ask" && !!record.replySignalId || record.state === "observed" && record.signalKind === "note" || record.state === "routed_main" && record.signalKind === "ask" || record.state === "expired" && record.signalKind === "ask" && Date.parse(record.askUntil) <= now() || record.state === "failed" && record.signalKind === "ask";
+  return record.state === "done" && record.signalKind === "ask" && !!record.replySignalId || record.state === "observed" && record.signalKind === "note" || record.state === "routed_main" || record.state === "expired" && record.signalKind === "ask" && Date.parse(record.askUntil) <= now() || record.state === "failed" && record.signalKind === "ask";
 }
 function effectPhaseBudget(record) {
   if (record === null || record.state === "received" || record.state === "prompting") {
@@ -35214,6 +35215,9 @@ function effectPhaseBudget(record) {
     return LISTENER_REPLY_ONLY_MINIMUM_MS;
   }
   return LISTENER_ACK_ONLY_MINIMUM_MS;
+}
+function observedNoteNeedsMainRoute(record, routeMode, deferOverChars) {
+  return record?.state === "observed" && record.signalKind === "note" && decideListenerRoute(routeMode, deferOverChars, record.askBody.length) === "main";
 }
 function verifyPreparedAckEffect(record, active, now) {
   if (record === null || record.signalId !== active.signalId || active.ack === null) {
@@ -35450,7 +35454,11 @@ async function runListenerRuntime(options) {
     ...options.resolveSenderProvenance === void 0 ? {} : { resolveSenderProvenance: options.resolveSenderProvenance },
     isCredentialFailure: isCredentialLoss
   });
-  const routeAskToMain = async (signal) => {
+  const routeSignalToMain = async (signal) => {
+    if (signal.kind !== "ask" && signal.kind !== "note") {
+      throw new Error("only directed asks and notes can route to the main session");
+    }
+    const signalKind2 = signal.kind;
     let provenance = {
       senderName: null,
       operatorId: null,
@@ -35480,13 +35488,19 @@ async function runListenerRuntime(options) {
     });
     const existing = await options.store.read(signal.id);
     if (existing !== null) {
-      if (!sameEffectSignal(existing, signal) || existing.state !== "routed_main") {
-        throw new Error("stored listener effect does not match the main-routed ask");
+      if (!sameEffectSignal(existing, signal)) {
+        throw new Error("stored listener effect does not match the main-routed message");
       }
-      return existing;
+      if (existing.state === "routed_main") {
+        return existing;
+      }
+      if (!(existing.signalKind === "note" && existing.state === "observed")) {
+        throw new Error("stored listener effect does not match the main-routed message");
+      }
     }
-    await options.store.write(newRoutedMainAskRecord({
+    await options.store.write(newRoutedMainRecord({
       signalId: signal.id,
+      signalKind: signalKind2,
       body: signal.body,
       until: signal.until,
       senderOwnerRelation: signal.sender_owner_relation ?? "unknown",
@@ -35494,7 +35508,7 @@ async function runListenerRuntime(options) {
     }));
     const persisted = await options.store.read(signal.id);
     if (persisted === null || !sameEffectSignal(persisted, signal) || persisted.state !== "routed_main") {
-      throw new Error("main-routed listener effect could not be verified");
+      throw new Error("main-routed message effect could not be verified");
     }
     return persisted;
   };
@@ -35716,7 +35730,20 @@ async function runListenerRuntime(options) {
       const recovery = currentJournalRecord?.active ?? null;
       if (recovery?.phase === "ack_pending") {
         const horizon = Date.parse(recovery.leasedUntil) + LISTENER_DELIVERY_SAFETY_MARGIN_MS;
-        if (page.capabilities.deliveryAck && now() < horizon) {
+        let preparedNeedsMainRoute = false;
+        if (recovery.signalId !== null) {
+          try {
+            preparedNeedsMainRoute = observedNoteNeedsMainRoute(
+              await options.store.read(recovery.signalId),
+              routeMode,
+              deferOverChars
+            );
+          } catch (error) {
+            stop = { reason: "fatal", error: asError2(error) };
+            break;
+          }
+        }
+        if (page.capabilities.deliveryAck && now() < horizon && !preparedNeedsMainRoute) {
           const ackStop = await sendPreparedAck(recovery);
           if (ackStop !== null) {
             stop = ackStop;
@@ -35755,7 +35782,7 @@ async function runListenerRuntime(options) {
               terminal = null;
             }
           }
-          if (terminal !== null && sameRecoveredEffect(recovery, terminal) && isAckableTerminalEffect(terminal, now)) {
+          if (terminal !== null && sameRecoveredEffect(recovery, terminal) && !observedNoteNeedsMainRoute(terminal, routeMode, deferOverChars) && isAckableTerminalEffect(terminal, now)) {
             try {
               const mapped = ackForTerminalEffect(terminal, now);
               await options.deliveryJournal.prepareAck({
@@ -35949,7 +35976,33 @@ async function runListenerRuntime(options) {
           if (existing !== null && !sameEffectSignal(existing, signal)) {
             throw new Error("stored listener effect does not match the authoritative delivery");
           }
-          if (signal.kind === "note") {
+          if (signal.kind !== "ask" && signal.kind !== "note") {
+            throw new Error("claimed delivery has an unsupported signal kind");
+          }
+          const decision = decideListenerRoute(
+            routeMode,
+            deferOverChars,
+            signal.body.length
+          );
+          options.onEvent?.({
+            type: "routing_decision",
+            signalId: signal.id,
+            routeMode,
+            decision,
+            threshold: deferOverChars,
+            bodyLength: signal.body.length,
+            ts: eventTime(now)
+          });
+          if (decision === "main") {
+            terminal = await routeSignalToMain(signal);
+            options.onEvent?.({
+              type: "effect",
+              signalId: signal.id,
+              status: "routed_main",
+              failureCode: null,
+              ts: eventTime(now)
+            });
+          } else if (signal.kind === "note") {
             if (existing === null) {
               await options.store.write(newObservedNoteRecord({
                 signalId: signal.id,
@@ -35970,85 +36023,58 @@ async function runListenerRuntime(options) {
               failureCode: null,
               ts: eventTime(now)
             });
-          } else if (signal.kind === "ask") {
-            const decision = decideListenerRoute(
-              routeMode,
-              deferOverChars,
-              signal.body.length
-            );
-            options.onEvent?.({
-              type: "routing_decision",
-              signalId: signal.id,
-              routeMode,
-              decision,
-              threshold: deferOverChars,
-              bodyLength: signal.body.length,
-              ts: eventTime(now)
-            });
-            if (decision === "main") {
-              terminal = await routeAskToMain(signal);
+          } else {
+            let processAttempt = 0;
+            while (terminal === null) {
+              const before = await options.store.read(signal.id);
+              if (before !== null && !sameEffectSignal(before, signal)) {
+                throw new Error("stored listener effect does not match the authoritative delivery");
+              }
+              const requiredBudget = effectPhaseBudget(before);
+              if (leasedUntilMs <= now() + requiredBudget) {
+                await sleep2(
+                  Math.max(
+                    0,
+                    leasedUntilMs + LISTENER_DELIVERY_SAFETY_MARGIN_MS - now()
+                  ),
+                  abort
+                );
+                if (abort?.aborted) {
+                  stop = { reason: "cancelled" };
+                  break;
+                }
+                if (now() >= leasedUntilMs + LISTENER_DELIVERY_SAFETY_MARGIN_MS) {
+                  await journal.clearActive(eventTime(now));
+                  after = null;
+                }
+                break;
+              }
+              const processed = await engine.process(signal);
+              const effect = "record" in processed ? processed.record : null;
               options.onEvent?.({
                 type: "effect",
                 signalId: signal.id,
-                status: "routed_main",
-                failureCode: null,
+                status: processed.status,
+                failureCode: effect?.failureCode ?? null,
                 ts: eventTime(now)
               });
-            } else {
-              let processAttempt = 0;
-              while (terminal === null) {
-                const before = await options.store.read(signal.id);
-                if (before !== null && !sameEffectSignal(before, signal)) {
-                  throw new Error("stored listener effect does not match the authoritative delivery");
-                }
-                const requiredBudget = effectPhaseBudget(before);
-                if (leasedUntilMs <= now() + requiredBudget) {
-                  await sleep2(
-                    Math.max(
-                      0,
-                      leasedUntilMs + LISTENER_DELIVERY_SAFETY_MARGIN_MS - now()
-                    ),
-                    abort
-                  );
-                  if (abort?.aborted) {
-                    stop = { reason: "cancelled" };
-                    break;
-                  }
-                  if (now() >= leasedUntilMs + LISTENER_DELIVERY_SAFETY_MARGIN_MS) {
-                    await journal.clearActive(eventTime(now));
-                    after = null;
-                  }
+              if (processed.status === "ignored") {
+                throw new Error("claimed delivery was ignored by the listener engine");
+              }
+              if (processed.status === "retry_pending") {
+                processAttempt += 1;
+                await sleep2(
+                  deliveryRetryDelay(processAttempt, null, random),
+                  abort
+                );
+                if (abort?.aborted) {
+                  stop = { reason: "cancelled" };
                   break;
                 }
-                const processed = await engine.process(signal);
-                const effect = "record" in processed ? processed.record : null;
-                options.onEvent?.({
-                  type: "effect",
-                  signalId: signal.id,
-                  status: processed.status,
-                  failureCode: effect?.failureCode ?? null,
-                  ts: eventTime(now)
-                });
-                if (processed.status === "ignored") {
-                  throw new Error("claimed delivery was ignored by the listener engine");
-                }
-                if (processed.status === "retry_pending") {
-                  processAttempt += 1;
-                  await sleep2(
-                    deliveryRetryDelay(processAttempt, null, random),
-                    abort
-                  );
-                  if (abort?.aborted) {
-                    stop = { reason: "cancelled" };
-                    break;
-                  }
-                  continue;
-                }
-                terminal = processed.record;
+                continue;
               }
+              terminal = processed.record;
             }
-          } else {
-            throw new Error("claimed delivery has an unsupported signal kind");
           }
         } catch (error) {
           if (abort?.aborted) {
@@ -36097,24 +36123,7 @@ async function runListenerRuntime(options) {
           stop = { reason: "cancelled" };
           break;
         }
-        if (signal.kind === "note") {
-          try {
-            await readOrReplaceUnreadableEffect(options.store, signal, now);
-            const record2 = await observeFallbackNote(options.store, signal, now);
-            options.onEvent?.({
-              type: "effect",
-              signalId: signal.id,
-              status: "observed",
-              failureCode: record2.failureCode,
-              ts: eventTime(now)
-            });
-          } catch (error) {
-            stop = { reason: "fatal", error: asError2(error) };
-            break;
-          }
-          continue;
-        }
-        if (signal.kind !== "ask") continue;
+        if (signal.kind !== "ask" && signal.kind !== "note") continue;
         let result;
         try {
           await readOrReplaceUnreadableEffect(options.store, signal, now);
@@ -36133,12 +36142,23 @@ async function runListenerRuntime(options) {
             ts: eventTime(now)
           });
           if (decision === "main") {
-            const record2 = await routeAskToMain(signal);
+            await routeSignalToMain(signal);
             options.onEvent?.({
               type: "effect",
               signalId: signal.id,
               status: "routed_main",
               failureCode: null,
+              ts: eventTime(now)
+            });
+            continue;
+          }
+          if (signal.kind === "note") {
+            const record2 = await observeFallbackNote(options.store, signal, now);
+            options.onEvent?.({
+              type: "effect",
+              signalId: signal.id,
+              status: "observed",
+              failureCode: record2.failureCode,
               ts: eventTime(now)
             });
             continue;
@@ -38620,8 +38640,8 @@ var ACCEPTED_AGENT_CREDENTIAL_MESSAGES = [
   AGENT_CREDENTIAL_MESSAGE_D088
 ];
 function packageVersion() {
-  if ("0.1.33".length > 0) {
-    return "0.1.33";
+  if ("0.1.34".length > 0) {
+    return "0.1.34";
   }
   try {
     const value = JSON.parse(
@@ -38820,11 +38840,11 @@ TTL); a turn that lands just before a rotation can be clamped to the ~5m
 renewal lead, and if it times out there, durable delivery retries it on the
 fresh credential.
 
-listen start --route worker|main|split chooses where directed asks go. worker
-is the unchanged default. main queues every ask for the interactive session.
-split queues asks whose body is longer than --defer-over <chars>; the bound is
-1..10000 and an equal-length ask stays on the worker path. Run cswarm hook check
-to surface queued asks. hook check has its own 3s ceiling, exits 0 on every
+listen start --route worker|main|split chooses where directed messages go. worker
+is the unchanged default. main queues every ask or note for the interactive session.
+split queues messages whose body is longer than --defer-over <chars>; the bound is
+1..10000 and an equal-length message stays on the worker path. Run cswarm hook check
+to surface queued messages. hook check has its own 3s ceiling, exits 0 on every
 outcome, and skips network checks made within --cooldown seconds (default 30).
 hook install claude prints the UserPromptSubmit JSON by default and changes the
 project's .claude/settings.json only with --write; uninstall also requires --write.
