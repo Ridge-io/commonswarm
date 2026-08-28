@@ -86,7 +86,7 @@ test("signal sanitising keeps tabs and line feeds but removes terminal controls"
   assert.equal(sanitizeSignalText("windows\r\nline"), "windows\nline");
 });
 
-test("CLI, edge, read client, browser, and forward DB migration use one body cap", async () => {
+test("write surfaces share one body cap while the read client stays forward-compatible", async () => {
   const [cli, cloud, command, migration, historical, dashboard] = await Promise.all([
     readFile("src/cli.ts", "utf8"),
     readFile("src/cloud/signals.ts", "utf8"),
@@ -98,9 +98,6 @@ test("CLI, edge, read client, browser, and forward DB migration use one body cap
   const cliCap = numberLiteral(
     /const SIGNAL_BODY_MAX = ([\d_]+);/u.exec(cli)?.[1] ?? "missing",
   );
-  const cloudCap = numberLiteral(
-    /row\.body\.length > ([\d_]+)/u.exec(cloud)?.[1] ?? "missing",
-  );
   const dbCap = numberLiteral(
     /char_length\(body\) BETWEEN 1 AND ([\d_]+)/u.exec(migration)?.[1] ?? "missing",
   );
@@ -111,9 +108,12 @@ test("CLI, edge, read client, browser, and forward DB migration use one body cap
 
   assert.equal(SIGNAL_BODY_MAX, 8_000);
   assert.deepEqual(
-    { cliCap, edgeCap: SIGNAL_BODY_MAX, cloudCap, dbCap, browserCap },
-    { cliCap: 8_000, edgeCap: 8_000, cloudCap: 8_000, dbCap: 8_000, browserCap: 8_000 },
+    { cliCap, edgeCap: SIGNAL_BODY_MAX, dbCap, browserCap },
+    { cliCap: 8_000, edgeCap: 8_000, dbCap: 8_000, browserCap: 8_000 },
   );
+  assert.match(cloud, /row\.body\.length < 1/u);
+  assert.doesNotMatch(cloud, /row\.body\.length >/u);
+  assert.doesNotMatch(cloud, /row\.about\.length [><=]/u);
   assert.match(command, /cmd\.body\.length <= SIGNAL_BODY_MAX/u);
   assert.match(migration, /DROP CONSTRAINT signals_body_check/u);
   assert.match(historical, /char_length\(body\) BETWEEN 1 AND 2000/u);

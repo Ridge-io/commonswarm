@@ -107,7 +107,7 @@ function parseEntry(value: unknown): PendingMainEntry {
     !(row.kind === undefined || row.kind === "ask" || row.kind === "note") ||
     !(row.senderName === null ||
       (typeof row.senderName === "string" && row.senderName.length <= 200)) ||
-    typeof row.body !== "string" || row.body.length < 1 || row.body.length > 2_000 ||
+    typeof row.body !== "string" || row.body.length < 1 ||
     !checkedTimestamp(row.createdAt) || !checkedTimestamp(row.queuedAt)
   ) {
     throw new Error("stored pending-for-main entry is malformed");

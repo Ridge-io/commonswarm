@@ -17,7 +17,7 @@ import type {
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const COMMAND_ID_RE = /^[A-Za-z0-9_-]{8,72}$/;
-const MAX_EFFECT_BYTES = 32 * 1024;
+const MAX_EFFECT_BYTES = 1024 * 1024;
 const STATES = new Set<ListenerEffectState>([
   "received",
   "prompting",
@@ -154,7 +154,6 @@ function upcastV1Ask(row: Record<string, unknown>): ListenerEffectRecord {
     !COMMAND_ID_RE.test(row.commandId) ||
     typeof row.askBody !== "string" ||
     row.askBody.length < 1 ||
-    row.askBody.length > 2_000 ||
     typeof row.askUntil !== "string" ||
     !Number.isFinite(Date.parse(row.askUntil)) ||
     typeof row.senderOwnerRelation !== "string" ||
@@ -206,7 +205,6 @@ function parseV2Record(row: Record<string, unknown>): ListenerEffectRecord {
     row.effectOrdinal !== 0 ||
     typeof row.askBody !== "string" ||
     row.askBody.length < 1 ||
-    row.askBody.length > 2_000 ||
     typeof row.askUntil !== "string" ||
     !Number.isFinite(Date.parse(row.askUntil)) ||
     typeof row.senderOwnerRelation !== "string" ||
@@ -303,7 +301,7 @@ export function newObservedNoteRecord(input: {
   if (!UUID_RE.test(input.signalId)) {
     throw new Error("listener note signal id must be a UUID");
   }
-  if (input.body.length < 1 || input.body.length > 2_000) {
+  if (input.body.length < 1) {
     throw new Error("listener note body is invalid");
   }
   if (!Number.isFinite(Date.parse(input.until))) {

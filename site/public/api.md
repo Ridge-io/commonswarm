@@ -219,10 +219,9 @@ Defaults for `until_ms` when omitted (`SIGNAL_DEFAULT_UNTIL_MS`): `working-on` 2
 hours, `ask` 7 days, `note` 30 days. After that the signal is stale and drops out of
 reads unless you ask for stale ones.
 
-`body` and `about` are sanitised server-side before storage: ANSI escapes removed,
-runs of tab/newline/vertical whitespace collapsed to a single space, and control,
-bidi, zero-width, and tag characters stripped (`sanitizeSignalText`). What comes back
-on read is the sanitised text, not what you sent.
+`body` and `about` are sanitised server-side before storage: ANSI escapes and control,
+bidi, zero-width, and tag characters are stripped (`sanitizeSignalText`). What comes
+back on read is the sanitised text, not what you sent.
 
 A named `to_user_id` must be a live member of the workspace, or the call is `403`.
 

@@ -43,6 +43,7 @@ import {
   postSignalTargets,
   readAgentSignalPage,
   readSignals,
+  renderSignals,
   resolveSignalRecipient,
   followErrorEnvelope,
   DEFAULT_REFUSAL_TOLERANCE_MS,
@@ -1037,6 +1038,55 @@ test("parseSignalRecord ignores unknown fields and fails closed on bad required 
   assert.throws(
     () => parseSignalRecord({ ...base, kind: "redirect" }),
     /malformed signal data/,
+  );
+});
+
+test("read parsing accepts newer server string bounds but still rejects structural damage", () => {
+  const base = row();
+  const longBody = "b".repeat(8_001);
+  const longAbout = "a".repeat(501);
+  const parsed = parseSignalRecord({
+    ...base,
+    body: longBody,
+    about: longAbout,
+  });
+  assert.equal(parsed.body, longBody);
+  assert.equal(parsed.about, longAbout);
+
+  const malformedRows = [
+    { name: "missing id", value: { ...base, id: undefined } },
+    { name: "non-string body", value: { ...base, body: 42 } },
+    { name: "bad UUID", value: { ...base, id: "not-a-uuid" } },
+    { name: "bad created_at", value: { ...base, created_at: "not-a-time" } },
+  ];
+  for (const malformed of malformedRows) {
+    assert.throws(
+      () => parseSignalRecord(malformed.value),
+      undefined,
+      malformed.name,
+    );
+  }
+});
+
+test("human rendering bounds forward-compatible strings and reports original lengths", () => {
+  const body = "b".repeat(100_000);
+  const about = "a".repeat(10_000);
+  const parsed = parseSignalRecord({ ...row(), body, about });
+  const rendered = renderSignals([parsed], {
+    inbox: false,
+    includeStale: true,
+  });
+
+  assert.equal(parsed.body.length, 100_000);
+  assert.equal(parsed.about?.length, 10_000);
+  assert.ok(rendered.length < 10_000, `render grew to ${rendered.length} characters`);
+  assert.match(
+    rendered,
+    /WARNING: Body clipped for display\. Showing 8000 of 100000 characters\. Use --json to read the full body\./,
+  );
+  assert.match(
+    rendered,
+    /WARNING: About reference clipped for display\. Showing 500 of 10000 characters\. Use --json to read the full reference\./,
   );
 });
 

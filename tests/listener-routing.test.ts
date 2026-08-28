@@ -119,3 +119,21 @@ test("the pending-main queue preserves valid kinds and accepts legacy entries wi
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("the pending-main queue preserves a body beyond an older server maximum", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cswarm-main-route-forward-body-"));
+  try {
+    const paths = listenerPaths({
+      profileId: "routing-forward-body-test",
+      workspaceId: WORKSPACE_ID,
+      principalId: PRINCIPAL_ID,
+      stateDirectory: root,
+    });
+    const queue = new FilePendingMainQueue(paths.instanceDirectory);
+    const body = "b".repeat(100_000);
+    await queue.enqueue({ ...entry(1), body });
+    assert.equal((await queue.read())[0]?.body, body);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

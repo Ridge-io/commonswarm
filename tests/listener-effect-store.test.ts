@@ -304,6 +304,24 @@ test("v2 observed-note records round-trip with zero prompt/post effects", async 
   assert.deepEqual(await store.read(SIGNAL_ID), note);
 });
 
+test("listener effects preserve signal bodies beyond an older server maximum", async () => {
+  const body = "b".repeat(100_000);
+  const ask = v2AskRow({ askBody: body });
+  const note = noteRecord({ askBody: body });
+  assert.equal(parse(ask).askBody, body);
+  assert.equal(parse(note).askBody, body);
+
+  const root = await mkdtemp(join(tmpdir(), "cswarm-effect-forward-body-"));
+  const store = new FileListenerEffectStore({
+    profileId: "profile-test",
+    workspaceId: "11111111-1111-4111-8111-111111111111",
+    principalId: "22222222-2222-4222-8222-222222222222",
+    stateDirectory: root,
+  });
+  await store.write(ask);
+  assert.equal((await store.read(SIGNAL_ID))?.askBody, body);
+});
+
 test("malformed versions and signalKinds fail closed", () => {
   assert.throws(() => parse({ ...v1Row(), version: 3 }), malformed);
   assert.throws(() => parse({ ...v1Row(), version: "1" }), malformed);

@@ -854,6 +854,48 @@ test("agent feed resolves only member labels and JSON skips enrichment", async (
   }
 });
 
+test("feed accepts a body beyond the client's compiled write maximum", async () => {
+  const body = "forward-compatible".repeat(500);
+  assert.ok(body.length > 8_000);
+  const server = createServer((request, response) => {
+    request.resume();
+    request.on("end", () => {
+      response.statusCode = 200;
+      response.setHeader("content-type", "application/json");
+      response.end(JSON.stringify({ signals: [signal({ body })] }));
+    });
+  });
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  try {
+    const address = server.address();
+    assert.ok(address && typeof address === "object");
+    const result = await runCli([
+      "feed",
+      "--url",
+      `http://127.0.0.1:${address.port}`,
+      "--anon-key",
+      "anon",
+      "--workspace-id",
+      WORKSPACE,
+      "--agent-token-stdin",
+      "--json",
+    ], TOKEN);
+    assert.equal(result.code, 0, result.stderr);
+    assert.equal(result.stderr, "");
+    const payload = JSON.parse(result.stdout) as {
+      signals: Array<{ body: string }>;
+    };
+    assert.equal(payload.signals[0]?.body, body);
+  } finally {
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => error ? reject(error) : resolve());
+    });
+  }
+});
+
 test("agent credential stdin accepts a closed mint artifact and degrades loudly", async () => {
   const base = [
     "note",

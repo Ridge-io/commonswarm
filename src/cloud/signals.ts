@@ -24,6 +24,8 @@ import {
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SIGNAL_KINDS = new Set<SignalKind>(["working-on", "note", "ask"]);
+const SIGNAL_BODY_DISPLAY_MAX = 8_000;
+const SIGNAL_ABOUT_DISPLAY_MAX = 500;
 /** Default per-read ceiling when no wait deadline is active. */
 export const SIGNAL_READ_TIMEOUT_MS = 30_000;
 
@@ -272,6 +274,8 @@ const SENDER_OWNER_RELATIONS = new Set<SenderOwnerRelation>([
  *
  * Fail-closed: required identity/body/kind/time fields must be well-formed;
  * a present optional UUID/enum that is invalid is refused rather than coerced.
+ * Server-controlled string maxima are not structural: a newer server may
+ * legitimately raise them, so reads preserve longer body/about values.
  */
 export function parseSignalRecord(value: unknown): SignalRecord {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -285,9 +289,8 @@ export function parseSignalRecord(value: unknown): SignalRecord {
     !SIGNAL_KINDS.has(row.kind as SignalKind) ||
     typeof row.body !== "string" ||
     row.body.length < 1 ||
-    row.body.length > 8000 ||
     !(row.about === null ||
-      (typeof row.about === "string" && row.about.length <= 500))
+      typeof row.about === "string")
   ) {
     throw new Error("signal read returned malformed signal data");
   }
@@ -1495,9 +1498,14 @@ export function renderSignals(
           : ""
       }`;
     const expired = Date.parse(signal.until) <= now ? " (expired)" : "";
-    const about = signal.about === null
+    const aboutClipped = signal.about !== null &&
+      signal.about.length > SIGNAL_ABOUT_DISPLAY_MAX;
+    const displayedAbout = aboutClipped
+      ? signal.about!.slice(0, SIGNAL_ABOUT_DISPLAY_MAX)
+      : signal.about;
+    const about = displayedAbout === null
       ? ""
-      : ` about ${JSON.stringify(signal.about)}`;
+      : ` about ${JSON.stringify(displayedAbout)}`;
     /* F-4 of the 2026-08-10 dogfood. `reply` sets in_reply_to and the field survives all the way
      * into the JSON surface, where it was MEASURED carrying the exact ask id. The human line
      * dropped it, so a reply arrives in the inbox rendered `[note]`, indistinguishable from an
@@ -1518,13 +1526,27 @@ export function renderSignals(
      * Shown only for kinds that can BE replied to, so every other row stays quiet. */
     const replyable = signal.kind === "ask";
     const idHint = replyable ? ` — reply with: cswarm reply ${signal.id}` : "";
+    const bodyClipped = signal.body.length > SIGNAL_BODY_DISPLAY_MAX;
+    const displayedBody = bodyClipped
+      ? signal.body.slice(0, SIGNAL_BODY_DISPLAY_MAX)
+      : signal.body;
     lines.push(
       `- [${signal.kind}] ${author} — ${
         relativeAge(signal.created_at, now)
       } — ${relativeExpiry(signal.until, now)}${expired}${about}${replyTo}: ${
-        JSON.stringify(signal.body)
+        JSON.stringify(displayedBody)
       }${idHint}`,
     );
+    if (bodyClipped) {
+      lines.push(
+        `  WARNING: Body clipped for display. Showing ${SIGNAL_BODY_DISPLAY_MAX} of ${signal.body.length} characters. Use --json to read the full body.`,
+      );
+    }
+    if (aboutClipped) {
+      lines.push(
+        `  WARNING: About reference clipped for display. Showing ${SIGNAL_ABOUT_DISPLAY_MAX} of ${signal.about!.length} characters. Use --json to read the full reference.`,
+      );
+    }
   }
   return lines.join("\n");
 }
