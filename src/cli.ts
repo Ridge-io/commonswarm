@@ -171,6 +171,12 @@ import {
   type ResolvedSignalRecipient,
 } from "./cloud/signals.js";
 import {
+  arrivalNotification,
+  fileArrivalCursorStore,
+  formatArrivalNotification,
+  runArrivalWatch,
+} from "./cloud/arrival-watch.js";
+import {
   renderSignalReceiptReport,
   signalReceiptJsonPayload,
 } from "./cloud/receipts.js";
@@ -226,7 +232,7 @@ const KNOWN_FLAGS = new Set([
   "claude-executable", "codex-executable", "confirm", "cooldown", "cwd", "defer-over", "device-id", "effort", "email",
   "epoch", "evidence", "follow", "force", "force-file-store", "foreground", "grok-executable", "head-sha",
   "help", "include-stale", "include-tombstoned", "invitation-id", "invitation-token-stdin", "json", "kind", "limit",
-  "link-stdin", "local", "model", "name", "ndjson", "no-browser", "opencode-executable", "out",
+  "link-stdin", "local", "model", "name", "ndjson", "no-browser", "notify", "opencode-executable", "out",
   "permissions", "principal-id", "provider", "reveal-anon-key", "route", "run-id", "since", "site", "slug",
   "task-id", "to", "token-id", "ttl-ms", "turn-budget", "uid", "until", "url", "version", "wait", "workspace-id", "write",
 ]);
@@ -246,6 +252,7 @@ const BOOLEAN_FLAGS = new Set([
   "link-stdin",
   "local",
   "ndjson",
+  "notify",
   "no-browser",
   "reveal-anon-key",
   "write",
@@ -440,6 +447,7 @@ Usage:
   cswarm receipt <signal-id> --agent-token-stdin [--url <url> --anon-key <key>] --workspace-id <uuid> [--json]
   cswarm feed [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--about <ref>] [--kind <kind>] [--since <timestamp>] [--limit <n>] [--include-stale] [--json]
   cswarm inbox [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--kind <kind>] [--about <ref>] [--since <timestamp>] [--limit <n>] [--include-stale] [--wait <seconds>] [--json]
+  cswarm inbox --notify --agent-token-stdin [--url <url> --anon-key <key>] --workspace-id <uuid> [--json]
   cswarm inbox --follow --ndjson [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--kind <kind>] [--about <ref>] [--since <timestamp>] [--limit <n>] [--include-stale]
   cswarm file put <local-path> [--name <name>] [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--agent-token-stdin] [--json]
   cswarm file ls [--include-tombstoned] [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--agent-token-stdin] [--json]
@@ -485,6 +493,7 @@ Credential selection for command/dogfood:
                           JSON artifact, because it needs a field a bare secret does not carry:
                             members       reads only          -- either form
                             receipt       reads only          -- either form
+                            inbox --notify persists a per-agent cursor -- needs principal_id
                             file put, file ls, file get, file rm, file restore
                                           read and command, nothing persisted -- either form
                             feedback      command only, nothing persisted     -- either form
@@ -3085,18 +3094,32 @@ async function runSignalRead(
   args: Arguments,
   inbox: boolean,
 ): Promise<void> {
-  args.assertShape([
-    ...TARGET_FLAGS,
-    "workspace-id",
-    ...CREDENTIAL_FLAGS,
-    "about",
-    "kind",
-    ...(inbox ? ["wait", "follow", "ndjson"] : []),
-    "since",
-    "limit",
-    "include-stale",
-    "json",
-  ], 1);
+  const notify = inbox && args.has("notify");
+  args.assertShape(notify
+    ? [
+      ...TARGET_FLAGS,
+      "workspace-id",
+      ...CREDENTIAL_FLAGS,
+      "notify",
+      "json",
+    ]
+    : [
+      ...TARGET_FLAGS,
+      "workspace-id",
+      ...CREDENTIAL_FLAGS,
+      "about",
+      "kind",
+      ...(inbox ? ["wait", "follow", "ndjson", "notify"] : []),
+      "since",
+      "limit",
+      "include-stale",
+      "json",
+    ], 1);
+
+  if (notify) {
+    await runInboxNotifyCommand(args);
+    return;
+  }
 
   if (inbox && args.has("follow")) {
     if (!args.has("ndjson")) {
@@ -3187,6 +3210,102 @@ async function runSignalRead(
     includeStale: args.has("include-stale"),
     authors,
   })}\n`);
+}
+
+/** Write one complete monitor line and wait until Node flushes it to stdout. */
+async function writeMonitorLine(line: string): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    process.stdout.write(`${line}\n`, (error) => {
+      if (error) reject(error);
+      else resolve();
+    });
+  });
+}
+
+/**
+ * Human-visible arrival surface for a host Monitor. It reads signal pages and
+ * advances only a local cursor; delivery claim/ack state belongs to the
+ * listener and interactive hook paths and is never touched here.
+ */
+async function runInboxNotifyCommand(args: Arguments): Promise<void> {
+  if (!args.has("agent-token-stdin")) {
+    throw new Error(
+      "inbox --notify is for one agent; provide its JSON credential with --agent-token-stdin",
+    );
+  }
+  const cloud = await target(args);
+  const selected = await commandWorkspaceAndCredential(args, cloud, {
+    validateHumanWorkspace: true,
+  });
+  const principalId = selected.agent?.principalId ?? null;
+  if (selected.kind !== "agent" || principalId === null) {
+    throw new Error(
+      "inbox --notify needs the full JSON agent credential so its durable cursor is tied to one agent",
+    );
+  }
+
+  const controller = new AbortController();
+  const stop = () => controller.abort();
+  process.on("SIGINT", stop);
+  process.on("SIGTERM", stop);
+  try {
+    const cursorStore = fileArrivalCursorStore({
+      target: cloud,
+      workspaceId: selected.selectedWorkspace,
+      principalId,
+    });
+    const result = await runArrivalWatch({
+      workspaceId: selected.selectedWorkspace,
+      principalId,
+      store: cursorStore,
+      signal: controller.signal,
+      readPage: async ({ after, baseline, limit }) => {
+        const token = selected.session
+          ? await selected.session.bearer()
+          : selected.bearer;
+        return await readAgentSignalPage(
+          cloud,
+          { kind: "agent", token },
+          {
+            workspaceId: selected.selectedWorkspace,
+            inbox: true,
+            limit,
+            includeStale: false,
+            ...(baseline
+              ? {}
+              : {
+                ascending: true as const,
+                ...(after === null ? {} : { after }),
+              }),
+          },
+          { signal: controller.signal },
+        );
+      },
+      emit: async (signal) => {
+        const notification = arrivalNotification(
+          signal,
+          selected.selectedWorkspace,
+          cloud,
+        );
+        await writeMonitorLine(
+          args.has("json")
+            ? JSON.stringify(notification)
+            : formatArrivalNotification(notification),
+        );
+      },
+      onRetry: (_error, delayMs) => {
+        process.stderr.write(
+          `cswarm: arrival read failed; still watching and retrying in ${delayMs}ms.\n`,
+        );
+      },
+    });
+    if (result.reason === "error") {
+      throw result.error ?? new Error("arrival watch stopped");
+    }
+  } finally {
+    process.off("SIGINT", stop);
+    process.off("SIGTERM", stop);
+  }
 }
 
 async function runReceipt(args: Arguments): Promise<void> {

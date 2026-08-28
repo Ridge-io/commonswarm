@@ -58,7 +58,7 @@ test("dashboard agent prompt is one complete, secret-safe handoff", () => {
      deployment details and once per self-contained command (working-on, listen, the stdin
      follow, the file-redirect follow, reply), so a fresh agent can copy any single command
      block and have it work. */
-  assert.equal(prompt.split("public-anon-observer").length - 1, 6);
+  assert.equal(prompt.split("public-anon-observer").length - 1, 7);
   assert.doesNotMatch(prompt, /<the anon key above>/);
   assert.match(prompt, /DO NOT ECHO THIS CREDENTIAL BACK/);
   assert.match(prompt, /separate stdin channel/);
@@ -343,6 +343,26 @@ test("dashboard agent prompt teaches measured Claude wake and a host-neutral fal
   assert.doesNotMatch(prompt, /inbox --kind ask --wait 60/);
   assert.doesNotMatch(prompt, /always[- ]on|background daemon|all hosts automatically wake/i);
   assert.equal(prompt.split(TOKEN).length - 1, 1, "receive guidance must not duplicate the credential");
+});
+
+test("dashboard agent prompt arms visible arrival and keeps all three receive layers distinct", () => {
+  const prompt = dashboardAgentPrompt(INPUT);
+  const layers = prompt.slice(
+    prompt.indexOf("THREE RECEIVE LAYERS"),
+    prompt.indexOf("For every other host"),
+  );
+
+  assert.ok(layers.length > 500, "the three-layer receive guidance could not be isolated");
+  assert.match(layers, /cswarm listen start[\s\S]*durable delivery[\s\S]*claims, routes, and acknowledges/);
+  assert.match(
+    layers,
+    /cswarm hook install claude[\s\S]*model's context[\s\S]*marks them[\s\S]*observed/,
+  );
+  assert.match(layers, /background Monitor[\s\S]*stdout[\s\S]*terminal notifications/);
+  assert.match(layers, /cswarm inbox --notify --agent-token-stdin/);
+  assert.match(layers, /does\s+not wake this model or mark a message observed/);
+  assert.match(layers, /durable local cursor[\s\S]*arrived while it was down[\s\S]*without replaying/);
+  assert.match(layers, /read-only for delivery state/);
 });
 
 test("dashboard agent prompt requires cswarm 0.1.6+ before receive commands", () => {
