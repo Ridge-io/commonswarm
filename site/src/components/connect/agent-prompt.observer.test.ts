@@ -39,9 +39,10 @@ test("dashboard agent prompt is one complete, secret-safe handoff", () => {
   assert.match(prompt, /URL:\s+https:\/\/example\.supabase\.co/);
   assert.match(prompt, /Anon key: public-anon-observer/);
   /* The anon key is a public identifier, not the credential: it appears once in the
-     deployment details and once per self-contained command (working-on, listen, follow, reply),
-     so a fresh agent can copy any single command block and have it work. */
-  assert.equal(prompt.split("public-anon-observer").length - 1, 5);
+     deployment details and once per self-contained command (working-on, listen, the stdin
+     follow, the file-redirect follow, reply), so a fresh agent can copy any single command
+     block and have it work. */
+  assert.equal(prompt.split("public-anon-observer").length - 1, 6);
   assert.doesNotMatch(prompt, /<the anon key above>/);
   assert.match(prompt, /DO NOT ECHO THIS CREDENTIAL BACK/);
   assert.match(prompt, /separate stdin channel/);
@@ -113,6 +114,30 @@ test("dashboard agent prompt is one complete, secret-safe handoff", () => {
   assert.match(prompt, /already\s+there,\s+because\s+that\s+is\s+where\s+you/, "it hides the transcript exposure");
   assert.match(prompt, /DO NOT ECHO THIS CREDENTIAL BACK/);
   assert.match(prompt, /--agent-token-stdin/);
+});
+
+test("one-command-string hosts get a 0600 file redirect for the long-lived receiver", () => {
+  const prompt = dashboardAgentPrompt(INPUT);
+
+  assert.match(prompt, /save the exact\s+JSON line outside every repo/);
+  assert.match(prompt, /umask 077/);
+  assert.match(prompt, /chmod 600 ~\/\.config\/cswarm-token/);
+  assert.match(prompt, /file is now a secret at rest/);
+  assert.match(
+    prompt,
+    /cswarm inbox --kind ask --follow --ndjson --agent-token-stdin[\s\S]*< ~\/\.config\/cswarm-token/,
+    "the long-lived receiver no longer reads the credential through shell redirection",
+  );
+  assert.match(
+    prompt,
+    /does carry the whole command line, credential included/,
+    "the honest wrapper-argv warning was removed",
+  );
+  assert.match(
+    prompt,
+    /WHOLE TIME the receiver runs/,
+    "the prompt no longer states the full duration of the printf-wrapper exposure",
+  );
 });
 
 test("every cswarm command in the prompt is self-contained with deployment flags", () => {
