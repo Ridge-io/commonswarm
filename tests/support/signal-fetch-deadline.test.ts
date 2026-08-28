@@ -453,7 +453,7 @@ test("sendSignal caller abort settles an abort-ignoring pending body as AbortErr
   );
 });
 
-test("sendSignal first winner: an already-rejected fetch survives a later caller abort", async (t) => {
+test("sendSignal caller abort wins once a transport failure enters retry backoff", async (t) => {
   t.mock.timers.enable({ apis: ["setTimeout"] });
   const observed: AbortSignal[] = [];
   const fetcher = (async (_input: unknown, init?: RequestInit) => {
@@ -466,22 +466,20 @@ test("sendSignal first winner: an already-rejected fetch survives a later caller
   const caller = new AbortController();
   const pending = client.sendSignal(signalPostRequest(caller.signal));
 
-  // One microtask lets the already-rejected work arm win the race; the public
-  // promise cannot have settled yet, so the caller abort lands strictly after
-  // the winner was chosen and must not reclassify it.
+  // One microtask lets the transport failure enter retry backoff. Cancellation
+  // then owns the unfinished call and no later attempt may start.
   await Promise.resolve();
   caller.abort();
   const caught = await boundedRealWait(
     pending.then(() => null, (error: unknown) => error),
-    "first-winner pre-response failure",
+    "caller abort during transport retry backoff",
   );
-  assert.ok(caught instanceof CommandTransportError, "got: " + String(caught));
-  assert.equal(caught.message, "signal request failed before a response");
-  assert.notEqual(caught.name, "AbortError");
-  assert.notEqual(caught.message, "signal request timed out");
+  assert.ok(caught instanceof Error, "got: " + String(caught));
+  assert.equal(caught.name, "AbortError");
+  assert.equal(caught instanceof CommandTransportError, false);
 });
 
-test("sendSignal first winner: a fetch rejection survives a later internal deadline", async (t) => {
+test("sendSignal retry after a fetch rejection cannot outlive the internal deadline", async (t) => {
   t.mock.timers.enable({ apis: ["setTimeout"] });
   const observed: AbortSignal[] = [];
   let rejectFetch: ((error: unknown) => void) | undefined;
@@ -498,17 +496,16 @@ test("sendSignal first winner: a fetch rejection survives a later internal deadl
   assert.equal(observed.length, 1, "the signal post reached the fetcher");
 
   rejectFetch!(new Error("network down first"));
-  // One microtask lets the work arm win; the timer is advanced only after the
-  // winner was chosen, so the deadline must not reclassify it as a timeout.
+  // The first attempt failed, but the retry still belongs to this same bounded
+  // call. Advancing the one overall deadline must stop the backoff.
   await Promise.resolve();
   t.mock.timers.tick(SIGNAL_REQUEST_TIMEOUT_MS);
   const caught = await pending.then(() => null, (error: unknown) => error);
   assert.ok(caught instanceof CommandTransportError, "got: " + String(caught));
-  assert.equal(caught.message, "signal request failed before a response");
-  assert.notEqual(caught.message, "signal request timed out");
+  assert.equal(caught.message, "signal request timed out");
 });
 
-test("sendSignal first winner: a 5xx body rejection survives a later caller abort", async (t) => {
+test("sendSignal caller abort wins once a 5xx body failure enters retry backoff", async (t) => {
   t.mock.timers.enable({ apis: ["setTimeout"] });
   const observed: AbortSignal[] = [];
   let rejectBody: ((error: unknown) => void) | undefined;
@@ -536,11 +533,7 @@ test("sendSignal first winner: a 5xx body rejection survives a later caller abor
   assert.equal(observed.length, 1, "headers arrived");
   assert.ok(rejectBody !== undefined, "the body read started");
   rejectBody(new Error("body stream broke"));
-  // The body failure hops text() -> parsedJson's catch -> the race work arm
-  // (settled after three microtasks); the public promise settles two hops
-  // later. Four microtasks therefore land strictly after the body work arm won
-  // and strictly before public settlement, so the caller abort must not
-  // reclassify the typed HTTP failure.
+  // Let the typed 5xx reach retry backoff, then cancel the unfinished call.
   await Promise.resolve();
   await Promise.resolve();
   await Promise.resolve();
@@ -548,12 +541,11 @@ test("sendSignal first winner: a 5xx body rejection survives a later caller abor
   caller.abort();
   const caught = await boundedRealWait(
     pending.then(() => null, (error: unknown) => error),
-    "first-winner 5xx body failure",
+    "caller abort during 5xx retry backoff",
   );
-  assert.ok(caught instanceof CommandHttpError, "got: " + String(caught));
-  assert.equal(caught.status, 500);
-  assert.equal(caught.message, "signal failed (HTTP 500)");
-  assert.notEqual(caught.name, "AbortError");
+  assert.ok(caught instanceof Error, "got: " + String(caught));
+  assert.equal(caught.name, "AbortError");
+  assert.equal(caught instanceof CommandHttpError, false);
 });
 
 test("sendSignal keeps a 401 body-read failure as a typed HTTP error", async () => {
@@ -611,6 +603,7 @@ test("sendSignal preserves a sub-400 body-read failure as transport", async () =
     signalResponseWithBody(399, async () => {
       throw new Error("body stream interrupted");
     }),
+    { signalRetryBaseMs: 0 },
   );
 
   const caught = await client.sendSignal(signalPostRequest()).then(
@@ -631,6 +624,7 @@ test("sendSignal preserves typed HTTP precedence for a 503 body-read failure", a
     signalResponseWithBody(503, async () => {
       throw new Error("body stream interrupted");
     }),
+    { signalRetryBaseMs: 0 },
   );
 
   const caught = await client.sendSignal(signalPostRequest()).then(
@@ -669,7 +663,9 @@ test("sendSignal turns a synchronous fetch throw into the generic transport erro
     }) as typeof fetch;
 
     const counted = countingSignal();
-    const client = new ThinCommandClient(TARGET, throwingFetcher);
+    const client = new ThinCommandClient(TARGET, throwingFetcher, {
+      signalRetryBaseMs: 0,
+    });
     const pending = client.sendSignal(signalPostRequest(counted.signal));
     assert.equal(
       calls,
@@ -716,7 +712,9 @@ test("sendSignal removes its caller-abort listener on every outcome", async (t) 
   // HTTP refusal.
   {
     const counted = countingSignal();
-    const client = new ThinCommandClient(TARGET, signalRefusal([]));
+    const client = new ThinCommandClient(TARGET, signalRefusal([]), {
+      signalRetryBaseMs: 0,
+    });
     await assert.rejects(
       client.sendSignal(signalPostRequest(counted.signal)),
       CommandHttpError,
@@ -740,7 +738,9 @@ test("sendSignal removes its caller-abort listener on every outcome", async (t) 
   // Transport failure before a response.
   {
     const counted = countingSignal();
-    const client = new ThinCommandClient(TARGET, signalRejectingFetch([]));
+    const client = new ThinCommandClient(TARGET, signalRejectingFetch([]), {
+      signalRetryBaseMs: 0,
+    });
     await assert.rejects(
       client.sendSignal(signalPostRequest(counted.signal)),
       { name: "CommandTransportError" },

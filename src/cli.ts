@@ -2665,7 +2665,11 @@ async function runPostSignal(
     }
     const reply = waitResult.signals[0] ?? null;
     if (args.has("json")) {
-      printJson(askWaitJsonPayload(signal, reply, waitResult.timedOut));
+      printJson({
+        ...askWaitJsonPayload(signal, reply, waitResult.timedOut),
+        retried: result.retried,
+        attempts: result.attempts,
+      });
       return;
     }
     const authors = await settleSignalAuthorLabels(
@@ -2705,6 +2709,8 @@ async function runPostSignal(
       message:
         "Signal shared. It is immutable, tenancy-scoped, and will quietly expire at its horizon.",
       signal,
+      retried: result.retried,
+      attempts: result.attempts,
     });
     return;
   }
@@ -2853,6 +2859,8 @@ async function runReply(args: Arguments): Promise<void> {
       message:
         "Reply shared. It is immutable, tenancy-scoped, and will quietly expire at its horizon.",
       signal,
+      retried: result.retried,
+      attempts: result.attempts,
     });
     return;
   }

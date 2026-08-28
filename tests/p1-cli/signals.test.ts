@@ -352,11 +352,10 @@ test("supplementary signal failures degrade without hiding core status", async (
   assert.equal(available.warning, null);
 });
 
-test("agent signal retries survive credential rotation using stable principal identity", async () => {
+test("pending signal recovery after exhausted retries survives credential rotation", async () => {
   const store = new MemoryStore();
   const requestBodies: Array<Record<string, unknown>> = [];
   const authorizations: Array<string | null> = [];
-  let fail = true;
   const client = new ThinCommandClient(
     target,
     (async (_input, init) => {
@@ -364,10 +363,7 @@ test("agent signal retries survive credential rotation using stable principal id
         JSON.parse(String(init?.body)) as Record<string, unknown>,
       );
       authorizations.push(new Headers(init?.headers).get("authorization"));
-      if (fail) {
-        fail = false;
-        throw new Error("connection reset");
-      }
+      if (requestBodies.length <= 3) throw new Error("connection reset");
       return new Response(JSON.stringify({
         status: "accepted",
         ok: true,
@@ -378,6 +374,7 @@ test("agent signal retries survive credential rotation using stable principal id
         headers: { "content-type": "application/json" },
       });
     }) as typeof fetch,
+    { signalRetryBaseMs: 0 },
   );
   const command = {
     kind: "post_signal" as const,
@@ -413,13 +410,18 @@ test("agent signal retries survive credential rotation using stable principal id
     command,
   );
   assert.equal(result.response.signal?.id, SIGNAL);
-  assert.equal(requestBodies[0]?.command_id, requestBodies[1]?.command_id);
+  assert.equal(requestBodies.length, 4);
+  assert.ok(requestBodies.every(
+    (body) => body.command_id === requestBodies[0]?.command_id,
+  ));
   assert.deepEqual(authorizations, [
+    `Bearer ${TOKEN}`,
+    `Bearer ${TOKEN}`,
     `Bearer ${TOKEN}`,
     `Bearer ${ROTATED_TOKEN}`,
   ]);
   assert.deepEqual(store.profile.pendingCommands, {});
-  const sentCommand = requestBodies[1]?.command as Record<string, unknown>;
+  const sentCommand = requestBodies[3]?.command as Record<string, unknown>;
   assert.equal(sentCommand.from, undefined);
   assert.deepEqual(Object.keys(sentCommand).sort(), [
     "about",
@@ -442,6 +444,7 @@ test("agent pending recovery expires one hour after the first attempt", async ()
       commandIds.push(String(body.command_id));
       throw new Error("connection reset");
     }) as typeof fetch,
+    { signalRetryBaseMs: 0 },
   );
   const command = {
     kind: "post_signal" as const,
@@ -467,22 +470,22 @@ test("agent pending recovery expires one hour after the first attempt", async ()
   const firstRecord = Object.values(store.profile.pendingCommands)[0]!;
   firstRecord.createdAt = Date.now() - SIGNAL_PENDING_RECOVERY_MS;
   await assert.rejects(attempt(), CommandTransportError);
-  assert.equal(commandIds.length, 2);
-  assert.notEqual(commandIds[0], commandIds[1]);
+  assert.equal(commandIds.length, 6);
+  assert.equal(new Set(commandIds.slice(0, 3)).size, 1);
+  assert.equal(new Set(commandIds.slice(3)).size, 1);
+  assert.notEqual(commandIds[0], commandIds[3]);
   assert.equal(Object.keys(store.profile.pendingCommands).length, 1);
 });
 
-test("gateway 5xx keeps the pending signal id for an ambiguity-safe retry", async () => {
+test("gateway 5xx after exhausted retries keeps the pending signal id", async () => {
   const store = new MemoryStore();
   const commandIds: string[] = [];
-  let first = true;
   const client = new ThinCommandClient(
     target,
     (async (_input, init) => {
       const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
       commandIds.push(String(body.command_id));
-      if (first) {
-        first = false;
+      if (commandIds.length <= 3) {
         return new Response("<html>gateway timeout</html>", {
           status: 504,
           headers: { "content-type": "text/html" },
@@ -498,6 +501,7 @@ test("gateway 5xx keeps the pending signal id for an ambiguity-safe retry", asyn
         headers: { "content-type": "application/json" },
       });
     }) as typeof fetch,
+    { signalRetryBaseMs: 0 },
   );
   const command = {
     kind: "post_signal" as const,
@@ -537,7 +541,8 @@ test("gateway 5xx keeps the pending signal id for an ambiguity-safe retry", asyn
     WORKSPACE,
     command,
   );
-  assert.equal(commandIds[0], commandIds[1]);
+  assert.equal(commandIds.length, 4);
+  assert.ok(commandIds.every((commandId) => commandId === commandIds[0]));
   assert.deepEqual(store.profile.pendingCommands, {});
 });
 
@@ -668,6 +673,7 @@ test("human-readable signal post states permanence and tenancy while its row own
   const postedSignal = signal({
     until: new Date(Date.now() + 3_600_000).toISOString(),
   });
+  let signalPosts = 0;
   const server = createServer((request, response) => {
     let body = "";
     request.setEncoding("utf8");
@@ -675,6 +681,15 @@ test("human-readable signal post states permanence and tenancy while its row own
     request.on("end", () => {
       const parsed = JSON.parse(body) as Record<string, unknown>;
       const command = parsed.command as Record<string, unknown> | undefined;
+      if (command?.kind === "post_signal") {
+        signalPosts += 1;
+        if (signalPosts === 3) {
+          response.statusCode = 500;
+          response.setHeader("content-type", "application/json");
+          response.end(JSON.stringify({ error: "controlled_transient" }));
+          return;
+        }
+      }
       response.statusCode = 200;
       response.setHeader("content-type", "application/json");
       response.end(
@@ -752,7 +767,15 @@ test("human-readable signal post states permanence and tenancy while its row own
     const json = await runCli([...base, "--json"], TOKEN);
     assert.equal(json.code, 0, json.stderr);
     const payload = JSON.parse(json.stdout) as Record<string, unknown>;
-    assert.deepEqual(Object.keys(payload), ["status", "message", "signal"]);
+    assert.deepEqual(Object.keys(payload), [
+      "status",
+      "message",
+      "signal",
+      "retried",
+      "attempts",
+    ]);
+    assert.equal(payload.retried, true);
+    assert.equal(payload.attempts, 2);
     assert.equal(
       payload.message,
       "Signal shared. It is immutable, tenancy-scoped, and will quietly expire at its horizon.",

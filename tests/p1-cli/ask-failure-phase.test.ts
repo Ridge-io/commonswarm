@@ -144,7 +144,7 @@ async function askAgainst(
 test("an ask create 500 says the message may be absent and tells the sender to verify and resend", async () => {
   const { result, posts } = await askAgainst("create");
   assert.equal(result.code, 1);
-  assert.equal(posts, 1);
+  assert.equal(posts, 3, "persistent create failure must exhaust the bounded retry set");
   assert.match(result.stderr, /Your message may not have been posted/);
   assert.match(result.stderr, /server error before it was confirmed/);
   assert.match(
