@@ -82,6 +82,50 @@ exists, so it is a small change plus a threading decision.
 
 ---
 
+## 3b. ★ THE `ask`/write 500 — measured, root cause NOT found, mitigation in flight
+
+The single most operationally damaging open bug. Every fleet agent hits it; the PromptEden lead
+seat fell back to a separate channel because of it.
+
+**Measured against production 2026-08-28, not theorised:**
+
+| probe | result |
+|---|---|
+| reads (`members`) x8 | **8 ok, 0 fail** |
+| `ask` x6 | 4 ok, 2 fail |
+| `note` x8 | 5 ok, 3 fail |
+| `working-on` x8 | 4 ok, **4 fail** |
+| 8 writes in PARALLEL | 7 ok, 1 fail |
+| 6 writes SPACED 8s apart | **6 ok, 0 fail** |
+
+**ESTABLISHED:** write path only — reads never failed. Affects EVERY signal kind. Load-related.
+
+**REFUTED, and both refutations matter because they were the obvious guesses:**
+- *"ask verb only; notes and feed work"* — this was the fleet's working diagnosis, from Finisher,
+  and LeadG was relying on notes as a safe fallback. **Notes fail at the same rate.** The two
+  failures print DIFFERENT text (the ask wording is the v0.1.27 create-phase message; the note
+  wording is the older pending-retry path), which is almost certainly what produced the false
+  isolation. One bug, two messages.
+- *"delivery-ledger contention"* — `working-on` creates no delivery and failed MOST of all.
+- *"lock contention on the sharded spend counter"* — 8 PARALLEL writes failed LESS (12%) than
+  sequential rapid-fire (40%). Backwards for contention.
+
+**NOT ESTABLISHED — the root cause.** The real error is logged by `console.error` in the
+catch-all at `supabase/functions/command/index.ts:7514-7528` and goes to the platform log, which
+Supabase CLI v2.98.2 cannot fetch (`functions logs` does not exist; there is no
+`~/.supabase/access-token`). **Getting those logs is the next concrete step** — dashboard, a
+newer CLI, or the Management API. Do not guess in code.
+
+One thing worth checking early: the top-level handler maps only `55P03` to a retryable 503.
+`40001` (serialization failure) and `40P01` (deadlock) fall through to a plain 500. That is a
+real gap whether or not it is THIS bug.
+
+**Mitigation in flight (lane/write-retry):** every command carries a `commandId` and the server
+keeps an idempotency ledger that replays a repeated id — see `src/cloud/command-client.ts:54-57`.
+The product already tells the operator to retry by hand (*"retry the same signal to resolve its
+pending outcome"*), so automating the sanctioned recovery is not a workaround; the manual
+instruction was. **This hides the symptom. The server bug stays open.**
+
 ## 4. Deliberately DEFERRED — do not "fix" these as if they were oversights
 
 - **True never-expiring agent credentials.** The operator asked for them and pushed back on the
