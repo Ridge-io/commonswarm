@@ -386,7 +386,7 @@ function ackForTerminalEffect(
     return { outcome: "observed", lastErrorCode: null };
   }
   if (record.state === "routed_main" && record.signalKind === "ask") {
-    return { outcome: "observed", lastErrorCode: null };
+    return { outcome: "queued", lastErrorCode: null };
   }
   if (
     record.state === "expired" &&
@@ -771,10 +771,12 @@ export async function runListenerRuntime(
       }
     }
     // Load-bearing crash order: the atomic, fsynced local queue write must
-    // finish before the terminal effect can prepare or send an observed ACK.
+    // finish before the terminal effect can prepare or send a queued ACK.
     // If this throws, the journal stays leased and service redelivery recovers.
     const queued = await options.pendingMainQueue!.enqueue(
-      pendingMainEntry(signal, options.principalId, provenance, now()),
+      pendingMainEntry(signal, options.principalId, provenance, now(), {
+        observationPending: deliveryMode === "durable_claim",
+      }),
     );
     options.onEvent?.({
       type: "main_queue",

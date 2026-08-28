@@ -6295,7 +6295,7 @@ type DeliveryCommand =
     signal_id: string;
     lease_id: string;
     listener_instance_id: string;
-    outcome: "replied" | "observed" | "expired" | "failed_terminal";
+    outcome: "replied" | "observed" | "queued" | "expired" | "failed_terminal";
     last_error_code?: string | null;
   };
 

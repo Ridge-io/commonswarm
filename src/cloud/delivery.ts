@@ -23,6 +23,7 @@ const SENDER_OWNER_RELATIONS = new Set<SenderOwnerRelation>([
 const DELIVERY_ACK_OUTCOMES = new Set<DeliveryOutcome>([
   "replied",
   "observed",
+  "queued",
   "expired",
   "failed_terminal",
 ]);
@@ -84,6 +85,7 @@ export const DELIVERY_UNKNOWN_ERROR_CODE = "unknown_error";
 export type DeliveryOutcome =
   | "replied"
   | "observed"
+  | "queued"
   | "expired"
   | "failed_terminal";
 
@@ -156,6 +158,13 @@ export interface DeliveryAckRequest {
   lastErrorCode: string | null;
 }
 
+export interface DeliveryObservationRequest {
+  workspaceId: string;
+  credential: string;
+  commandId: string;
+  signalId: string;
+}
+
 export interface DeliveryClientOptions {
   /**
    * Per-request deadline in ms covering fetch and the response body read.
@@ -169,6 +178,12 @@ export interface DeliveryClientOptions {
   clearTimeout?: typeof clearTimeout;
   /** Injected AbortController factory to verify abort listener cleanup in causal tests. */
   createAbortController?: () => AbortController;
+}
+
+/** Keep hook observation retries idempotent without persisting another command id. */
+export function observationCommandId(signalId: string): string {
+  checkedUuidRequest(signalId, "signalId");
+  return `observe_${signalId.toLowerCase().replaceAll("-", "")}`;
 }
 
 /** Transport refused the round trip before a bounded HTTP status existed. */
@@ -529,7 +544,7 @@ function assertAckRequest(request: DeliveryAckRequest): void {
   checkedUuidRequest(request.listenerInstanceId, "listenerInstanceId");
   if (!DELIVERY_ACK_OUTCOMES.has(request.outcome as DeliveryOutcome)) {
     throw new Error(
-      "a delivery outcome must be replied, observed, expired, or failed_terminal",
+      "a delivery outcome must be replied, observed, queued, expired, or failed_terminal",
     );
   }
   if (request.outcome === "failed_terminal") {
@@ -757,6 +772,37 @@ export class DeliveryCommandClient {
       httpStatus: response.status,
       signalId: request.signalId.toLowerCase(),
       outcome: request.outcome,
+    };
+  }
+
+  /** Mark a queued delivery observed only after the interactive hook surfaced it. */
+  async observeQueuedAgentDelivery(
+    request: DeliveryObservationRequest,
+  ): Promise<DeliveryAckResult> {
+    checkedCommandId(request.commandId);
+    assertAgentToken(request.credential);
+    checkedUuidRequest(request.workspaceId, "workspaceId");
+    checkedUuidRequest(request.signalId, "signalId");
+    const { response, text } = await this.post(request, {
+      kind: "ack_agent_delivery",
+      signal_id: request.signalId.toLowerCase(),
+      lease_id: null,
+      listener_instance_id: null,
+      outcome: "observed",
+      last_error_code: null,
+    }, "delivery observation");
+    if (!response.ok) throw refusal(response, text);
+    parseAckSuccess(
+      successBody(response, text, "delivery observation"),
+      {
+        signalId: request.signalId.toLowerCase(),
+        outcome: "observed",
+      },
+    );
+    return {
+      httpStatus: response.status,
+      signalId: request.signalId.toLowerCase(),
+      outcome: "observed",
     };
   }
 }

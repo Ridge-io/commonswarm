@@ -25,6 +25,7 @@ export const DELIVERY_MAX_OUTSTANDING_LEASES = 100;
 export const DELIVERY_ACK_OUTCOMES = [
   "replied",
   "observed",
+  "queued",
   "expired",
   "failed_terminal",
 ] as const;
@@ -49,8 +50,8 @@ export interface ClaimAgentInboxCommand {
 export interface AckAgentDeliveryCommand {
   kind: "ack_agent_delivery";
   signal_id: string;
-  lease_id: string;
-  listener_instance_id: string;
+  lease_id: string | null;
+  listener_instance_id: string | null;
   outcome: DeliveryAckOutcome;
   last_error_code: string | null;
 }
@@ -434,8 +435,7 @@ export type AckResult =
   | { status: "unavailable" };
 
 /**
- * Acknowledge a live lease for the exact recipient, or accept same-outcome
- * idempotent replay after the lease has been cleared.
+ * Acknowledge a live lease, or promote a queued receipt after hook surfacing.
  */
 export async function ackAgentDelivery(
   tx: Sql,
@@ -443,8 +443,8 @@ export async function ackAgentDelivery(
     workspaceId: string;
     recipientPrincipalId: string;
     signalId: string;
-    leaseId: string;
-    listenerInstanceId: string;
+    leaseId: string | null;
+    listenerInstanceId: string | null;
     outcome: DeliveryAckOutcome;
     lastErrorCode: string | null;
   },
@@ -467,6 +467,50 @@ export async function ackAgentDelivery(
   `;
   const row = existing[0];
   if (!row) return { status: "unavailable" };
+
+  const queuedObservation =
+    args.outcome === "observed" &&
+    args.lastErrorCode === null &&
+    args.leaseId === null &&
+    args.listenerInstanceId === null;
+  if (queuedObservation) {
+    if (row.acked_at === null) return { status: "unavailable" };
+    if (row.ack_outcome === "observed") {
+      return {
+        status: "idempotent",
+        response: {
+          ok: true,
+          event_ids: [],
+          signal_id: args.signalId,
+          outcome: "observed",
+        },
+      };
+    }
+    if (row.ack_outcome !== "queued") return { status: "conflict" };
+    await tx`
+      UPDATE swarm.signal_deliveries
+      SET
+        acked_at = statement_timestamp(),
+        ack_outcome = 'observed',
+        updated_at = statement_timestamp()
+      WHERE workspace_id = ${args.workspaceId}::uuid
+        AND signal_id = ${args.signalId}::uuid
+        AND recipient_agent_principal_id = ${args.recipientPrincipalId}::uuid
+        AND ack_outcome = 'queued'
+    `;
+    return {
+      status: "accepted",
+      response: {
+        ok: true,
+        event_ids: [],
+        signal_id: args.signalId,
+        outcome: "observed",
+      },
+    };
+  }
+  if (args.leaseId === null || args.listenerInstanceId === null) {
+    return { status: "unavailable" };
+  }
   if (row.acked_at !== null) {
     const identityMatches =
       row.last_lease_id !== null &&

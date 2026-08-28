@@ -88,7 +88,7 @@ export interface ListenerActiveClaim {
   signalFingerprint?: string | null;
   ack: null | {
     commandId: string;
-    outcome: "replied" | "observed" | "expired" | "failed_terminal";
+    outcome: "replied" | "observed" | "queued" | "expired" | "failed_terminal";
     lastErrorCode:
       | "provider_refused"
       | "local_effect_failed"
@@ -118,7 +118,7 @@ export interface RecordLeaseInput {
 }
 
 export interface PrepareAckInput {
-  outcome: "replied" | "observed" | "expired" | "failed_terminal";
+  outcome: "replied" | "observed" | "queued" | "expired" | "failed_terminal";
   lastErrorCode:
     | "provider_refused"
     | "local_effect_failed"
@@ -189,6 +189,7 @@ const ALLOWED_PHASES = new Set(["claim_pending", "leased", "ack_pending"]);
 const ALLOWED_OUTCOMES = new Set([
   "replied",
   "observed",
+  "queued",
   "expired",
   "failed_terminal",
 ]);

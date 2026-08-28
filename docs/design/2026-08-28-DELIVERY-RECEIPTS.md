@@ -20,15 +20,19 @@ acted on*.
 
 ## The good news, measured
 
-`swarm.signal_deliveries` (migration `20260731000001`) **already records every state the operator
-asked for**. This is a read/display problem, not new tracking:
+~~`swarm.signal_deliveries` (migration `20260731000001`) already records every state the operator
+asked for. This is a read/display problem, not new tracking.~~ **DEAD, 2026-08-28:** routing to
+the interactive session was stored as `observed` before the session saw it. Forward migration
+`20260828000003_queue_before_observed.sql` adds the missing `queued` state, and the hook promotes
+that row to `observed` only after it writes the message to the session.
 
 | column | receipt meaning |
 |---|---|
 | `enqueued_at` | accepted by CommonSwarm (one tick) |
 | `delivered_at` | handed to the agent's listener (two ticks) |
 | `lease_id` / `leased_until` | the agent is working on it right now |
-| `acked_at` + `ack_outcome` | the agent finished with it (`replied` / `observed` / `expired` / `failed_terminal`) |
+| `acked_at` + `ack_outcome=queued` | routed to the interactive session; it will appear at the next prompt but has not been seen |
+| `acked_at` + other `ack_outcome` | the agent finished with it (`replied` / `observed` / `expired` / `failed_terminal`); `observed` means it was actually surfaced |
 | `attempt_count`, `lease_expiry_count`, `last_error_code` | why it is stuck |
 
 **The blocker:** `REVOKE ALL … FROM … swarm_read` (line 103) — nothing outside `swarm_command`
@@ -67,7 +71,8 @@ L1, L2, L4, L5 are independent and run in parallel. L3 follows L1 and L2.
 ## Honesty requirements
 
 - A receipt must never claim more than the ledger knows. "Delivered" means `delivered_at` is set,
-  not that a model read it. `observed` is not `replied` — do not collapse them into one tick.
+  not that a model read it. `queued` means routed but not seen. `observed` means the agent actually
+  saw it, and is not `replied` — do not collapse these states into one tick.
 - Absence of a delivery row for a broadcast must render as *"no recipient — nobody was woken"*,
   not as a pending or failed state.
 - The UI must distinguish "not yet delivered" from "delivered and the agent went quiet".

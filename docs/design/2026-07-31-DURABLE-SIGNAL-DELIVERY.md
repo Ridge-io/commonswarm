@@ -117,7 +117,7 @@ CREATE TABLE swarm.signal_deliveries (
     OR delivered_at IS NOT NULL
   ),
   CHECK (ack_outcome IS NULL OR ack_outcome IN
-    ('replied', 'observed', 'expired', 'failed_terminal')),
+    ('replied', 'observed', 'queued', 'expired', 'failed_terminal')),
   CHECK (last_error_code IS NULL OR last_error_code ~ '^[a-z][a-z0-9_]{0,63}$'),
   CHECK (num_nonnulls(last_lease_id, last_leased_by) IN (0, 2)),
   CHECK (
@@ -304,10 +304,15 @@ Agent-only request:
   "signal_id": "uuid",
   "lease_id": "uuid",
   "listener_instance_id": "uuid",
-  "outcome": "replied|observed|expired|failed_terminal",
+  "outcome": "replied|observed|queued|expired|failed_terminal",
   "last_error_code": null
 }
 ```
+
+The hook uses the same authenticated command after stdout succeeds, with `lease_id` and
+`listener_instance_id` both null and `outcome: "observed"`. That special shape can only promote
+the exact recipient's existing `queued` row. It cannot acknowledge an unleased row or rewrite
+another terminal outcome.
 
 - The authenticated agent must be the exact recipient.
 - A live acknowledgement must match `lease_id`, `leased_by`, workspace, and recipient.
@@ -325,7 +330,8 @@ Agent-only request:
   `delivery_attempts_exhausted` path is a distinct automatic terminalization.
 - Retrying the same command ID is a normal idempotency-ledger replay.
 - A row already acknowledged with the same outcome is idempotent even if the lease has been
-  cleared. A different outcome/identity is a conflict, not a rewrite.
+  cleared. A different outcome/identity is a conflict, except for the single guarded
+  `queued` -> `observed` transition after hook surfacing.
 - Wrong/stale lease, wrong principal, removed membership, revoked token, cross-workspace ID, and
   unknown signal all return the same non-enumerating refusal class.
 - A missing or mismatched immutable signal during fresh/replay hydration returns that same generic
@@ -357,11 +363,15 @@ Server tests must exercise the read and claim matrices side by side so drift is 
 4. For each claimed row, persist/verify the existing `ListenerEffectRecord` before prompting.
 5. Keep processing a `retry_pending` effect locally with bounded backoff while its lease has enough
    time remaining. Stop before lease expiry rather than prompting under an invalid lease.
-6. Ack only terminal outcomes:
+6. Ack only lease-ending outcomes:
    - reply accepted/replayed -> `replied`;
    - direct note/no model -> `observed`;
+   - routed to the interactive session -> `queued`; this releases the lease after the durable
+     local queue write, so the delivery is not redelivered while it waits for the next prompt;
    - signal expired -> `expired`;
    - bounded terminal refusal/error -> `failed_terminal` plus enum error code.
+   After the hook writes a queued message to stdout, it promotes only that row to `observed`.
+   A failed promotion leaves the local queue entry for a silent retry and cannot print it twice.
 7. A crash before ack causes redelivery after lease expiry. The durable effect record suppresses a
    second prompt on the same state directory and replays the exact body/command ID after response
    loss.

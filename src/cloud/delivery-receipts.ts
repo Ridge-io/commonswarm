@@ -10,6 +10,7 @@ const UUID_RE =
 export type DeliveryAckOutcome =
   | "replied"
   | "observed"
+  | "queued"
   | "expired"
   | "failed_terminal";
 
@@ -63,6 +64,7 @@ export class DeliveryReceiptReadError extends Error {
 const ACK_OUTCOMES = new Set<DeliveryAckOutcome>([
   "replied",
   "observed",
+  "queued",
   "expired",
   "failed_terminal",
 ]);

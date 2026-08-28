@@ -14,6 +14,7 @@ type SignalReceiptCliState =
   | "not_delivered"
   | "delivered"
   | "working"
+  | "queued"
   | "finished";
 
 function signalReceiptCliState(
@@ -24,6 +25,7 @@ function signalReceiptCliState(
   if (state === "enqueued") return "not_delivered";
   if (state === "leased") return "working";
   if (state === "delivered") return "delivered";
+  if (state === "queued") return "queued";
   return "finished";
 }
 
@@ -79,6 +81,14 @@ export function renderSignalReceiptReport(
       ].join("\n");
     }
 
+    if (state === "queued") {
+      return [
+        `Queued for agent ${receipt.recipient_agent_principal_id}'s interactive session ${relativeAge(receipt.acked_at!, nowMs)}. The agent has not seen it yet.`,
+        "It will appear at the agent's next prompt.",
+        `Check again with: ${receiptCheckCommand(report)}`,
+      ].join("\n");
+    }
+
     const finished = `Agent ${receipt.recipient_agent_principal_id} finished with outcome ${state} ${relativeAge(receipt.acked_at!, nowMs)}.`;
     if (state === "replied") {
       return [
@@ -89,7 +99,7 @@ export function renderSignalReceiptReport(
     if (state === "observed") {
       return [
         finished,
-        "The agent acknowledged the signal without sending a reply.",
+        "The agent saw the signal without sending a reply.",
         `If you need an answer, send a new ask with: ${newAskCommand(report, receipt)}`,
       ].join("\n");
     }

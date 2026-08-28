@@ -1780,7 +1780,7 @@ test("route=main queues and acknowledges a durable ask without prompting the wor
     "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa92",
     "2026-07-30T00:00:01.000Z",
   );
-  const queued: string[] = [];
+  const queued: Array<{ signalId: string; observationPending?: true }> = [];
   const runtimeEvents: ListenerRuntimeEvent[] = [];
   let ackOutcome: string | null = null;
   const stop = await runListenerRuntime({
@@ -1811,7 +1811,10 @@ test("route=main queues and acknowledges a durable ask without prompting the wor
     deferOverChars: null,
     pendingMainQueue: {
       async enqueue(entry) {
-        queued.push(entry.signalId);
+        queued.push({
+          signalId: entry.signalId,
+          ...(entry.observationPending === true ? { observationPending: true } : {}),
+        });
         return { count: 200, added: true, droppedOldest: true, droppedCount: 4 };
       },
     },
@@ -1825,8 +1828,12 @@ test("route=main queues and acknowledges a durable ask without prompting the wor
     poster: { async post() { throw new Error("main route must not post a worker reply"); } },
   });
   assert.equal(stop.reason, "cancelled");
-  assert.deepEqual(queued, [claimedAsk.id]);
-  assert.equal(ackOutcome, "observed");
+  assert.deepEqual(queued, [{ signalId: claimedAsk.id, observationPending: true }]);
+  assert.equal(
+    ackOutcome,
+    "queued",
+    "routing to the interactive session is not observation before hook output",
+  );
   assert.equal(model.starts, 0, "main route must not start an ACP worker session");
   assert.equal(model.prompts.length, 0, "mutation control: forcing worker route must prompt once");
   assert.ok(runtimeEvents.some((event) =>

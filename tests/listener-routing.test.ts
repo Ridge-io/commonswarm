@@ -120,6 +120,27 @@ test("the pending-main queue preserves valid kinds and accepts legacy entries wi
   }
 });
 
+test("a redelivered queued signal stays one durable local message", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cswarm-routing-redelivery-"));
+  try {
+    const paths = listenerPaths({
+      profileId: "routing-redelivery-test",
+      workspaceId: WORKSPACE_ID,
+      principalId: PRINCIPAL_ID,
+      stateDirectory: root,
+    });
+    const queue = new FilePendingMainQueue(paths.instanceDirectory);
+    const routed = { ...entry(1), observationPending: true as const };
+    const first = await queue.enqueue(routed);
+    const redelivery = await queue.enqueue(routed);
+    assert.equal(first.added, true);
+    assert.equal(redelivery.added, false);
+    assert.deepEqual(await queue.read(), [routed]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("the pending-main queue preserves a body beyond an older server maximum", async () => {
   const root = await mkdtemp(join(tmpdir(), "cswarm-main-route-forward-body-"));
   try {

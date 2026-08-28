@@ -1010,7 +1010,7 @@ export interface BrowserDeliveryReceipt {
   deliveredAt: string | null;
   leasedUntil: string | null;
   ackedAt: string | null;
-  ackOutcome: "replied" | "observed" | "expired" | "failed_terminal" | null;
+  ackOutcome: "replied" | "observed" | "queued" | "expired" | "failed_terminal" | null;
   attemptCount: number;
   leaseExpiryCount: number;
   lastErrorCode: string | null;
@@ -1028,6 +1028,7 @@ export type BrowserDeliveryIndicatorState =
   | "sent"
   | "delivered"
   | "working"
+  | "queued"
   | "done"
   | "stuck";
 
@@ -1128,6 +1129,16 @@ export function browserDeliveryIndicator(
   if (total === 1) {
     const receipt = result.receipts[0]!;
     if (receipt.ackedAt !== null && receipt.ackOutcome !== null) {
+      if (receipt.ackOutcome === "queued") {
+        return {
+          state: "queued",
+          outcome: "queued",
+          glyph: "…",
+          label: "Queued",
+          detail: "Queued for the agent's interactive session. The agent has not seen it yet; it will appear at the next prompt.",
+          terminal: false,
+        };
+      }
       if (receipt.ackOutcome === "replied") {
         return {
           state: "done",
@@ -1144,7 +1155,7 @@ export function browserDeliveryIndicator(
           outcome: "observed",
           glyph: "◎",
           label: "Observed",
-          detail: "The agent acknowledged this delivery without replying.",
+          detail: "The agent saw this delivery without replying.",
           terminal: true,
         };
       }
@@ -1218,11 +1229,14 @@ export function browserDeliveryIndicator(
     };
   }
 
-  const outcomeCounts = new Map<NonNullable<BrowserDeliveryReceipt["ackOutcome"]>, number>();
-  for (const receipt of terminalRows) {
-    outcomeCounts.set(receipt.ackOutcome!, (outcomeCounts.get(receipt.ackOutcome!) ?? 0) + 1);
+  const queuedRows = terminalRows.filter((receipt) => receipt.ackOutcome === "queued");
+  const finishedRows = terminalRows.filter((receipt) => receipt.ackOutcome !== "queued");
+  const outcomeCounts = new Map<Exclude<NonNullable<BrowserDeliveryReceipt["ackOutcome"]>, "queued">, number>();
+  for (const receipt of finishedRows) {
+    const outcome = receipt.ackOutcome as Exclude<NonNullable<BrowserDeliveryReceipt["ackOutcome"]>, "queued">;
+    outcomeCounts.set(outcome, (outcomeCounts.get(outcome) ?? 0) + 1);
   }
-  const outcomeLabels: Record<NonNullable<BrowserDeliveryReceipt["ackOutcome"]>, string> = {
+  const outcomeLabels: Record<Exclude<NonNullable<BrowserDeliveryReceipt["ackOutcome"]>, "queued">, string> = {
     replied: "replied",
     observed: "observed without reply",
     expired: "expired",
@@ -1230,6 +1244,7 @@ export function browserDeliveryIndicator(
   };
   const detailParts = [
     ...Array.from(outcomeCounts, ([outcome, count]) => `${count} ${outcomeLabels[outcome]}`),
+    queuedRows.length > 0 ? `${queuedRows.length} queued for the next prompt` : null,
     workingRows.length > 0 ? `${workingRows.length} working` : null,
     stuckRows.length > 0 ? `${stuckRows.length} need attention` : null,
     deliveredOnlyRows.length > 0
@@ -1258,11 +1273,21 @@ export function browserDeliveryIndicator(
       terminal: false,
     };
   }
-  if (terminalRows.length === total) {
-    const outcomes = new Set(terminalRows.map((receipt) => receipt.ackOutcome));
+  if (queuedRows.length > 0) {
+    return {
+      state: "queued",
+      outcome: queuedRows.length === total ? "queued" : "mixed",
+      glyph: "…",
+      label: `${queuedRows.length} of ${total} queued`,
+      detail,
+      terminal: false,
+    };
+  }
+  if (finishedRows.length === total) {
+    const outcomes = new Set(finishedRows.map((receipt) => receipt.ackOutcome));
     return {
       state: "done",
-      outcome: outcomes.size === 1 ? terminalRows[0]!.ackOutcome! : "mixed",
+      outcome: outcomes.size === 1 ? finishedRows[0]!.ackOutcome! : "mixed",
       glyph: "✓✓",
       label: `${total} of ${total} done`,
       detail,
@@ -1409,7 +1434,7 @@ export async function browserDeliveryReceipts(
   if (typeof result.addressed !== "boolean" || !Array.isArray(result.receipts)) {
     throw new Error("Delivery receipts returned malformed data.");
   }
-  const outcomes = new Set(["replied", "observed", "expired", "failed_terminal"]);
+  const outcomes = new Set(["replied", "observed", "queued", "expired", "failed_terminal"]);
   return {
     addressed: result.addressed,
     receipts: result.receipts.map((value) => {

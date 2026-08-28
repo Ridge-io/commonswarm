@@ -4,6 +4,10 @@ import { isAbsolute, join } from "node:path";
 import type { SignalRecord } from "../cloud/command-client.js";
 import { cloudTarget, type CloudTarget } from "../cloud/config.js";
 import {
+  DeliveryCommandClient,
+  observationCommandId,
+} from "../cloud/delivery.js";
+import {
   followHttpDetails,
   readAgentSignalDirectory,
   readAgentSignalPage,
@@ -621,6 +625,41 @@ interface ContextCheck {
   credentialHealthy: boolean;
 }
 
+async function recordQueuedObservations(
+  check: ContextCheck,
+  signalIds: readonly string[],
+  options: HookCheckOptions & { signal: AbortSignal; deadlineMs: number },
+  now: () => number,
+): Promise<Set<string>> {
+  const stored = check.context.credential;
+  const remainingMs = options.deadlineMs - now();
+  if (
+    signalIds.length === 0 || stored === null || options.signal.aborted ||
+    remainingMs <= 0
+  ) {
+    return new Set();
+  }
+  const client = new DeliveryCommandClient(
+    cloudTarget(stored.targetUrl, stored.anonKey),
+    options.fetcher ?? fetch,
+    { deadlineMs: remainingMs, now },
+  );
+  const results = await Promise.all(signalIds.map(async (signalId) => {
+    try {
+      await client.observeQueuedAgentDelivery({
+        workspaceId: stored.workspaceId,
+        credential: stored.credential,
+        commandId: observationCommandId(signalId),
+        signalId,
+      });
+      return signalId;
+    } catch {
+      return null;
+    }
+  }));
+  return new Set(results.filter((signalId): signalId is string => signalId !== null));
+}
+
 /** Print first, then advance the high-water and remove local queue entries. */
 export async function checkListenerHooks(
   options: HookCheckOptions & { signal: AbortSignal; deadlineMs: number },
@@ -681,7 +720,8 @@ export async function checkListenerHooks(
       check: ContextCheck;
       store: FileHookSurfaceStore;
       signalIds: string[];
-      settledPendingSignalIds: string[];
+      plainPendingSignalIds: string[];
+      observationPendingSignalIds: string[];
       reportDrops: boolean;
       reportCredentialFailure: boolean;
     }> = [];
@@ -716,10 +756,12 @@ export async function checkListenerHooks(
         check,
         store,
         signalIds: staged.unseen.map((item) => item.signalId),
-        // Every staged queue entry is either written by this run or was committed
-        // after an earlier successful write. Removing both keeps the queue bounded
-        // without re-printing entries below the exactly-once high-water.
-        settledPendingSignalIds: check.pending.map((item) => item.signalId),
+        plainPendingSignalIds: check.pending
+          .filter((item) => item.observationPending !== true)
+          .map((item) => item.signalId),
+        observationPendingSignalIds: check.pending
+          .filter((item) => item.observationPending === true)
+          .map((item) => item.signalId),
         reportDrops,
         reportCredentialFailure,
       });
@@ -737,8 +779,20 @@ export async function checkListenerHooks(
           ? { credentialFailureReported: false }
           : {}),
       });
+      // Stdout and the exact surfaced-id high-water are durable before this
+      // network write. A failure therefore retains the queue entry for a silent
+      // retry, while the high-water prevents the next hook from printing twice.
+      const observedSignalIds = await recordQueuedObservations(
+        commit.check,
+        commit.observationPendingSignalIds,
+        options,
+        now,
+      );
       const remainingCount = await commit.check.queue.remove(
-        new Set(commit.settledPendingSignalIds),
+        new Set([
+          ...commit.plainPendingSignalIds,
+          ...observedSignalIds,
+        ]),
         HOOK_LOCK_TIMEOUT_MS,
       );
       if (commit.check.context.paths !== null && commit.check.context.status !== null) {

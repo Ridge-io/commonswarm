@@ -19,6 +19,7 @@ import {
   listenerPaths,
   readListenerStatus,
   renderHookSignal,
+  runListenerHookCheck,
   writeListenerCredentialState,
   writeListenerStatus,
   type ListenerPaths,
@@ -267,6 +268,109 @@ function pending(
     queuedAt: "2026-08-26T00:00:01.000Z",
   };
 }
+
+test("hook marks a queued delivery observed only after stdout and retries silently", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cswarm-hook-observed-writeback-"));
+  try {
+    const paths = await installCredential(root);
+    await writeStatus(paths, PRINCIPAL_ID, { pendingForMainCount: 1 });
+    const queue = new FilePendingMainQueue(paths.instanceDirectory);
+    await queue.enqueue({
+      ...pending(SIGNAL_ID, "surface before observation", "ask"),
+      observationPending: true,
+    });
+    let observationSucceeds = false;
+    let observationAttempts = 0;
+    const fetcher: typeof fetch = async (_input, init) => {
+      const body = JSON.parse(String(init?.body)) as Record<string, any>;
+      if (body.command?.kind === "ack_agent_delivery") {
+        observationAttempts += 1;
+        return observationSucceeds
+          ? new Response(JSON.stringify({
+            status: "accepted",
+            ok: true,
+            signal_id: SIGNAL_ID,
+            outcome: "observed",
+            event_ids: [],
+            events: [],
+          }), { status: 200 })
+          : new Response(JSON.stringify({ error: "temporarily_unavailable" }), { status: 503 });
+      }
+      return new Response(JSON.stringify({
+        signals: [],
+        capabilities: { sender_owner_relation: 1, cursor_after: 1 },
+      }), { status: 200 });
+    };
+    const invoke = async () => {
+      const controller = new AbortController();
+      return await checkListenerHooks({
+        stateDirectory: root,
+        cooldownSeconds: 0,
+        fetcher,
+        isListenerLive: testListenerIsLive,
+        signal: controller.signal,
+        deadlineMs: Date.now() + 3_000,
+      });
+    };
+
+    const first = await invoke();
+    assert.match(first, /surface before observation/);
+    assert.doesNotMatch(first, /write|ledger|failed|error/i);
+    assert.equal(await queue.count(), 1, "failed write-back keeps the durable local message");
+
+    observationSucceeds = true;
+    const retry = await invoke();
+    assert.equal(retry, "", "the write-back retry must not print the message twice");
+    assert.equal(observationAttempts, 2);
+    assert.equal(await queue.count(), 0, "only a successful observed write-back drains the queue");
+    assert.equal((await readListenerStatus(paths))?.pendingForMainCount, 0);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a hung observation write-back stays inside the hook ceiling and emits no error", { timeout: 5_000 }, async () => {
+  const root = await mkdtemp(join(tmpdir(), "cswarm-hook-observed-ceiling-"));
+  try {
+    const paths = await installCredential(root);
+    await writeStatus(paths, PRINCIPAL_ID, { pendingForMainCount: 1 });
+    const queue = new FilePendingMainQueue(paths.instanceDirectory);
+    await queue.enqueue({
+      ...pending(SIGNAL_ID, "printed before the bounded update", "ask"),
+      observationPending: true,
+    });
+    const writes: string[] = [];
+    const fetcher: typeof fetch = async (_input, init) => {
+      const body = JSON.parse(String(init?.body)) as Record<string, any>;
+      if (body.command?.kind === "ack_agent_delivery") {
+        return await new Promise<Response>(() => undefined);
+      }
+      return new Response(JSON.stringify({
+        signals: [],
+        capabilities: { sender_owner_relation: 1, cursor_after: 1 },
+      }), { status: 200 });
+    };
+    const started = Date.now();
+    const result = await runListenerHookCheck({
+      stateDirectory: root,
+      cooldownSeconds: 0,
+      fetcher,
+      isListenerLive: testListenerIsLive,
+      write: (output) => {
+        writes.push(output);
+      },
+    });
+    const elapsed = Date.now() - started;
+    assert.ok(elapsed < 3_500, `hook exceeded its hard ceiling: ${elapsed}ms`);
+    assert.equal(result, "");
+    assert.equal(writes.length, 1, "the message reaches stdout before write-back starts");
+    assert.match(writes[0]!, /printed before the bounded update/);
+    assert.doesNotMatch(writes[0]!, /write|ledger|failed|error/i);
+    assert.equal(await queue.count(), 1, "a timed-out write-back keeps the retry record");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 test("pending-for-main blocks surface before inbox novelty and untrusted text stays quoted", async () => {
   const root = await mkdtemp(join(tmpdir(), "cswarm-hook-order-"));

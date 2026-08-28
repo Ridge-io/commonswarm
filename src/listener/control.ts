@@ -385,6 +385,7 @@ export async function appendListenerEvent(
   const deliveryOutcomes = new Set([
     "replied",
     "observed",
+    "queued",
     "expired",
     "failed_terminal",
   ]);

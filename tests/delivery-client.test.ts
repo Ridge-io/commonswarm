@@ -23,6 +23,7 @@ import {
   DeliveryTransportError,
   DELIVERY_SERVER_ERROR_CODES,
   DELIVERY_UNKNOWN_ERROR_CODE,
+  observationCommandId,
   type DeliveryAckRequest,
   type DeliveryClaimRequest,
 } from "../src/cloud/delivery.js";
@@ -910,6 +911,35 @@ test("ack sends the exact shape with explicit null and parses the echo", async (
   assert.equal(result.outcome, "replied");
 });
 
+test("hook observation uses a distinct idempotent command and no expired lease capability", async () => {
+  const captures: CapturedRequest[] = [];
+  const client = new DeliveryCommandClient(
+    target,
+    capturingFetch(captures, () => jsonResponse(200, ackBody({ outcome: "observed" }))),
+  );
+  const result = await client.observeQueuedAgentDelivery({
+    workspaceId: WORKSPACE,
+    credential: TOKEN,
+    commandId: observationCommandId(SIGNAL),
+    signalId: SIGNAL,
+  });
+  assert.deepEqual(captures[0]!.body, {
+    command_id: `observe_${SIGNAL.replaceAll("-", "")}`,
+    client_version: CLIENT_PROTOCOL_VERSION,
+    workspace_id: WORKSPACE,
+    stream: { kind: "workspace" },
+    command: {
+      kind: "ack_agent_delivery",
+      signal_id: SIGNAL,
+      lease_id: null,
+      listener_instance_id: null,
+      outcome: "observed",
+      last_error_code: null,
+    },
+  });
+  assert.equal(result.outcome, "observed");
+});
+
 test("ack enforces explicit-null and failed-terminal code rules before the round trip", async () => {
   await assert.rejects(
     Promise.resolve().then(() =>
@@ -937,7 +967,7 @@ test("ack enforces explicit-null and failed-terminal code rules before the round
       new DeliveryCommandClient(target, capturingFetch([], () => jsonResponse(200, ackBody())))
         .ackAgentDelivery(ackRequest({ outcome: "evade" as never, lastErrorCode: null })),
     ),
-    /must be replied, observed, expired, or failed_terminal/,
+    /must be replied, observed, queued, expired, or failed_terminal/,
   );
 
   const captures: CapturedRequest[] = [];

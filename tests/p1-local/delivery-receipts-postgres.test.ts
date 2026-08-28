@@ -9,6 +9,7 @@ import { execFileSync } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
 import { test } from "node:test";
 import postgres from "postgres";
+import { ackAgentDelivery } from "../../supabase/functions/command/durable-delivery.js";
 
 interface LocalEnvironment {
   DB_URL: string;
@@ -217,6 +218,142 @@ test("delivery receipts work for agent, human, broadcast, and cross-sender paths
           humanRow?.result.receipts[0]?.recipient_agent_principal_id,
           recipient,
         );
+
+        throw ROLLBACK;
+      }),
+      (error: unknown) => error === ROLLBACK,
+    );
+  } finally {
+    await sql.end();
+  }
+});
+
+test("queued becomes observed only when the hook-style write reaches real Postgres", async () => {
+  const sql = postgres(databaseUrl(), { max: 1 });
+  const userId = randomUUID();
+  const workspaceId = randomUUID();
+  const deviceId = randomUUID();
+  const recipient = randomUUID();
+  const signalId = randomUUID();
+  const leaseId = randomUUID();
+  const listenerInstanceId = randomUUID();
+
+  try {
+    await assert.rejects(
+      sql.begin(async (tx) => {
+        await tx`
+          INSERT INTO auth.users (
+            id, aud, role, email, encrypted_password, email_confirmed_at,
+            raw_app_meta_data, raw_user_meta_data, created_at, updated_at
+          ) VALUES (
+            ${userId}::uuid, 'authenticated', 'authenticated',
+            ${`observed-${userId}@example.test`}, '', statement_timestamp(),
+            '{}'::jsonb, '{}'::jsonb, statement_timestamp(), statement_timestamp()
+          )
+        `;
+        await tx`
+          INSERT INTO swarm.users (user_id, display_name)
+          VALUES (${userId}::uuid, 'Observed owner')
+        `;
+        await tx`
+          INSERT INTO swarm.devices (device_id, user_id, label)
+          VALUES (${deviceId}::uuid, ${userId}::uuid, 'observed-test')
+        `;
+        await tx`
+          INSERT INTO swarm.workspaces (workspace_id, name, created_by)
+          VALUES (${workspaceId}::uuid, 'Observed workspace', ${userId}::uuid)
+        `;
+        await tx`
+          INSERT INTO swarm.memberships (workspace_id, user_id, role)
+          VALUES (${workspaceId}::uuid, ${userId}::uuid, 'owner')
+        `;
+        await tx`
+          INSERT INTO swarm.agent_principals (
+            principal_id, workspace_id, owner_user_id, name
+          ) VALUES (
+            ${recipient}::uuid, ${workspaceId}::uuid, ${userId}::uuid, 'recipient'
+          )
+        `;
+        await tx`
+          INSERT INTO swarm.signals (
+            id, workspace_id, from_principal, from_kind,
+            to_agent_principal_id, kind, body, until
+          ) VALUES (
+            ${signalId}::uuid, ${workspaceId}::uuid, ${userId}::uuid, 'user',
+            ${recipient}::uuid, 'ask', 'show this at the next prompt',
+            statement_timestamp() + interval '1 hour'
+          )
+        `;
+        await tx`
+          UPDATE swarm.signal_deliveries
+          SET
+            lease_id = ${leaseId}::uuid,
+            leased_by = ${listenerInstanceId}::uuid,
+            leased_until = statement_timestamp() + interval '15 minutes',
+            delivered_at = statement_timestamp(),
+            attempt_count = 1,
+            updated_at = statement_timestamp()
+          WHERE signal_id = ${signalId}::uuid
+            AND recipient_agent_principal_id = ${recipient}::uuid
+        `;
+
+        const queued = await ackAgentDelivery(tx, {
+          workspaceId,
+          recipientPrincipalId: recipient,
+          signalId,
+          leaseId,
+          listenerInstanceId,
+          outcome: "queued",
+          lastErrorCode: null,
+        });
+        assert.equal(queued.status, "accepted");
+        const [queuedRow] = await tx<{ ack_outcome: string; acked_at: Date }[]>`
+          SELECT ack_outcome, acked_at
+          FROM swarm.signal_deliveries
+          WHERE signal_id = ${signalId}::uuid
+            AND recipient_agent_principal_id = ${recipient}::uuid
+        `;
+        assert.equal(queuedRow?.ack_outcome, "queued");
+
+        await tx`SELECT pg_sleep(0.01)`;
+        const observed = await ackAgentDelivery(tx, {
+          workspaceId,
+          recipientPrincipalId: recipient,
+          signalId,
+          leaseId: null,
+          listenerInstanceId: null,
+          outcome: "observed",
+          lastErrorCode: null,
+        });
+        assert.equal(observed.status, "accepted");
+        const [observedRow] = await tx<{ ack_outcome: string; acked_at: Date }[]>`
+          SELECT ack_outcome, acked_at
+          FROM swarm.signal_deliveries
+          WHERE signal_id = ${signalId}::uuid
+            AND recipient_agent_principal_id = ${recipient}::uuid
+        `;
+        assert.equal(observedRow?.ack_outcome, "observed");
+        assert.ok(observedRow!.acked_at > queuedRow!.acked_at);
+
+        await tx`
+          SELECT set_config(
+            'request.jwt.claims',
+            ${JSON.stringify({ sub: userId, role: "authenticated" })},
+            true
+          )
+        `;
+        await tx.unsafe("SET LOCAL ROLE authenticated");
+        const [receiptRow] = await tx<{
+          result: { receipts: Array<{ ack_outcome: string }> };
+        }[]>`
+          SELECT swarm_read.signal_delivery_receipts(
+            ${workspaceId}::uuid,
+            ${signalId}::uuid,
+            NULL
+          ) AS result
+        `;
+        await tx.unsafe("RESET ROLE");
+        assert.equal(receiptRow?.result.receipts[0]?.ack_outcome, "observed");
 
         throw ROLLBACK;
       }),

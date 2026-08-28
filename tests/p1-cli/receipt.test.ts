@@ -108,10 +108,11 @@ test("an expired lease is delivered and untouched, not current work", () => {
   assert.match(renderSignalReceiptReport(report(row), NOW), /has not acted on it/);
 });
 
-test("each finished outcome keeps its exact meaning and next step", () => {
+test("each receipt outcome keeps its exact meaning and next step", () => {
   const expected: Record<DeliveryAckOutcome, RegExp[]> = {
     replied: [/outcome replied/, /cswarm inbox/],
-    observed: [/outcome observed/, /without sending a reply/, /cswarm ask/],
+    observed: [/outcome observed/, /saw the signal/, /cswarm ask/],
+    queued: [/Queued for agent/, /has not seen it yet/, /next prompt/, /cswarm receipt/],
     expired: [/outcome expired/, /expired before/, /cswarm ask/],
     failed_terminal: [
       /outcome failed_terminal/,
@@ -130,6 +131,10 @@ test("each finished outcome keeps its exact meaning and next step", () => {
         : null,
     })), NOW);
     for (const pattern of expected[outcome]) assert.match(rendered, pattern);
+    if (outcome === "queued") {
+      assert.doesNotMatch(rendered, /finished|outcome observed|saw the signal/);
+      continue;
+    }
     for (const other of Object.keys(expected) as DeliveryAckOutcome[]) {
       if (other === outcome) continue;
       assert.doesNotMatch(rendered, new RegExp(`outcome ${other}(?:\\s|\\.)`));
@@ -175,6 +180,17 @@ test("--json payload carries the machine state, outcome, recipient, and ledger f
   assert.ok("delivered_at" in rows[0]!);
   assert.ok("leased_until" in rows[0]!);
   assert.ok("acked_at" in rows[0]!);
+});
+
+test("--json keeps queued separate from a finished or observed delivery", () => {
+  const payload = signalReceiptJsonPayload(report(receipt({
+    delivered_at: "2026-08-28T12:02:00.000Z",
+    acked_at: "2026-08-28T12:03:00.000Z",
+    ack_outcome: "queued",
+  })), NOW);
+  const row = (payload.receipts as Array<Record<string, unknown>>)[0]!;
+  assert.equal(row.state, "queued");
+  assert.equal(row.outcome, "queued");
 });
 
 test("the client seam sends the narrow author-scoped request with the agent credential", async () => {

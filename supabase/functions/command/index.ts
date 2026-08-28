@@ -1418,10 +1418,11 @@ function validateCommand(
     ]) &&
       typeof cmd.signal_id === "string" &&
       UUID_RE.test(cmd.signal_id) &&
-      typeof cmd.lease_id === "string" &&
-      UUID_RE.test(cmd.lease_id) &&
-      typeof cmd.listener_instance_id === "string" &&
-      UUID_RE.test(cmd.listener_instance_id) &&
+      ((typeof cmd.lease_id === "string" && UUID_RE.test(cmd.lease_id) &&
+        typeof cmd.listener_instance_id === "string" &&
+        UUID_RE.test(cmd.listener_instance_id)) ||
+        (cmd.lease_id === null && cmd.listener_instance_id === null &&
+          outcome === "observed")) &&
       validOutcome &&
       validError;
     return valid
@@ -1430,9 +1431,12 @@ function validateCommand(
         command: {
           kind: "ack_agent_delivery",
           signal_id: (cmd.signal_id as string).toLowerCase(),
-          lease_id: (cmd.lease_id as string).toLowerCase(),
-          listener_instance_id: (cmd.listener_instance_id as string)
-            .toLowerCase(),
+          lease_id: typeof cmd.lease_id === "string"
+            ? cmd.lease_id.toLowerCase()
+            : null,
+          listener_instance_id: typeof cmd.listener_instance_id === "string"
+            ? cmd.listener_instance_id.toLowerCase()
+            : null,
           outcome: outcome as DeliveryAckOutcome,
           last_error_code: lastError as string | null,
         },

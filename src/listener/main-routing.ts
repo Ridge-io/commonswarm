@@ -66,6 +66,8 @@ export interface PendingMainEntry {
   body: string;
   createdAt: string;
   queuedAt: string;
+  /** True only when the delivery ledger is waiting for hook-surfaced observation. */
+  observationPending?: true;
 }
 
 interface PendingMainFile {
@@ -94,6 +96,7 @@ function parseEntry(value: unknown): PendingMainEntry {
     "body",
     "createdAt",
     "queuedAt",
+    "observationPending",
   ]);
   if (Object.keys(row).some((key) => !allowed.has(key))) {
     throw new Error("stored pending-for-main entry is malformed");
@@ -108,7 +111,8 @@ function parseEntry(value: unknown): PendingMainEntry {
     !(row.senderName === null ||
       (typeof row.senderName === "string" && row.senderName.length <= 200)) ||
     typeof row.body !== "string" || row.body.length < 1 ||
-    !checkedTimestamp(row.createdAt) || !checkedTimestamp(row.queuedAt)
+    !checkedTimestamp(row.createdAt) || !checkedTimestamp(row.queuedAt) ||
+    !(row.observationPending === undefined || row.observationPending === true)
   ) {
     throw new Error("stored pending-for-main entry is malformed");
   }
@@ -123,6 +127,7 @@ function parseEntry(value: unknown): PendingMainEntry {
     body: row.body,
     createdAt: row.createdAt,
     queuedAt: row.queuedAt,
+    ...(row.observationPending === true ? { observationPending: true as const } : {}),
   };
 }
 
@@ -242,12 +247,13 @@ export class FilePendingMainQueue {
   }
 }
 
-/** Project one claimed ask into the local queue without carrying lease capabilities. */
+/** Project one ask into the local queue without carrying lease capabilities. */
 export function pendingMainEntry(
   signal: SignalRecord,
   principalId: string,
   provenance: ListenerSenderProvenance,
   now: number,
+  options: { observationPending?: boolean } = {},
 ): PendingMainEntry {
   if (signal.kind !== "ask") {
     throw new Error("only directed asks can enter the pending-for-main queue");
@@ -262,5 +268,6 @@ export function pendingMainEntry(
     body: signal.body,
     createdAt: signal.created_at,
     queuedAt: new Date(now).toISOString(),
+    ...(options.observationPending ? { observationPending: true } : {}),
   });
 }

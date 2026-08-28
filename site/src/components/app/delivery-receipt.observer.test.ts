@@ -69,8 +69,8 @@ test("every ledger state has a distinct text-and-symbol indicator", () => {
   assert.doesNotMatch(indicators.map(({ detail }) => detail).join(" "), /\bread\b/i);
 });
 
-test("all four acknowledgements stay distinct, especially observed and replied", () => {
-  const outcomes = ["replied", "observed", "expired", "failed_terminal"] as const;
+test("queued, observed, replied, expired, and failed stay distinct", () => {
+  const outcomes = ["queued", "replied", "observed", "expired", "failed_terminal"] as const;
   const indicators = outcomes.map((ackOutcome) => browserDeliveryIndicator(addressed(receipt({
     deliveredAt: "2026-08-28T14:40:00.000Z",
     ackedAt: "2026-08-28T14:50:00.000Z",
@@ -80,14 +80,17 @@ test("all four acknowledgements stay distinct, especially observed and replied",
 
   assert.deepEqual(indicators.map(({ outcome }) => outcome), outcomes);
   assert.deepEqual(indicators.map(({ label }) => label), [
+    "Queued",
     "Replied",
     "Observed",
     "Expired",
     "Failed",
   ]);
-  assert.equal(new Set(indicators.map(({ label, detail }) => `${label}:${detail}`)).size, 4);
-  assert.match(indicators[1]!.detail, /without replying/);
-  assert.doesNotMatch(indicators[1]!.detail, /replied|read/i);
+  assert.equal(new Set(indicators.map(({ label, detail }) => `${label}:${detail}`)).size, 5);
+  assert.match(indicators[0]!.detail, /has not seen it yet.*next prompt/);
+  assert.equal(indicators[0]!.terminal, false);
+  assert.match(indicators[2]!.detail, /saw this delivery without replying/);
+  assert.doesNotMatch(indicators[2]!.detail, /acknowledged|read/i);
 });
 
 test("broadcast uses addressed=false and can never look pending or failed", () => {

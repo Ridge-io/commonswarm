@@ -98,10 +98,11 @@ test("same-workspace different sender and another-workspace caller see no receip
   assert.deepEqual(hidden, { addressed: null, receipts: [] });
 });
 
-test("every ledger state stays distinct, including observed and replied", () => {
+test("every ledger state stays distinct, including queued, observed, and replied", () => {
   const outcomes: readonly DeliveryAckOutcome[] = [
     "replied",
     "observed",
+    "queued",
     "expired",
     "failed_terminal",
   ];
