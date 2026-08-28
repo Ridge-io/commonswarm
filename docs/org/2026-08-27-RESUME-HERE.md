@@ -10,7 +10,9 @@ Session covered: v0.1.26 → v0.1.28, plus a live production migration and edge 
 
 | ref | what it is |
 |---|---|
-| `9d5d586` | **`main`, and the v0.1.28 release commit.** Latest. |
+| `5e2b062` | **`main`, and the v0.1.29 release commit.** Latest. |
+| `36989d4` | a server-controlled maximum is no longer fatal on read — **fixes a break v0.1.28 caused**, see §6a |
+| `9d5d586` | release v0.1.28 |
 | `117b434` | signal bodies keep newlines; body cap 2000 → 8000 |
 | `09be044` | provider version pins → minimum floors |
 | `0d2e089` | docs: grok has credit again and is a usable review arm |
@@ -26,8 +28,15 @@ Nothing is RED. All lanes above are merged to `main` and pushed.
 
 ## 2. LIVE vs merely written
 
+★ **v0.1.28 shipped a regression that v0.1.29 fixes — read §6a before touching any cap.**
+
 **LIVE in production** (verified by fetching/measuring the deployed thing, not by reading source):
 
+- **v0.1.29 on npm**, GitHub, and the site. A clean `npm install commonswarm@0.1.29` reads the
+  production feed that returned zero rows to 0.1.27 (`exit=0`, 21 rows).
+- **Corrected published copy is live**: `api.md` no longer claims newlines are collapsed
+  (measured 0, with a positive control matching 1 on the same fetch), and terms/privacy/
+  acceptable-use now publish 8,000 rather than 2,000.
 - **v0.1.28 on npm** (`npm view commonswarm version` → 0.1.28) and **GitHub release v0.1.28**
   with both assets.
 - **Migration `20260827000001` is APPLIED to the production database.** It widened
@@ -180,6 +189,59 @@ Commit messages cannot be edited and reviewers quote them. These are wrong or in
    never leave a background job whose last step writes to a shared file.
 
 ---
+
+## 6a. ★ v0.1.28 BROKE OLDER CLIENTS. v0.1.29 fixes it. Read this before raising any cap.
+
+**The single most important correction in this file, and it corrects a claim I published in the
+v0.1.28 commit message and repeated to the operator.**
+
+I wrote that the deploy order *migration → server → client* was correct. **It is correct for
+WRITES and backwards for READS.** `src/cloud/signals.ts` bounded `row.body.length` inside
+`parseSignalRecord`, which **throws** — and that is the READ path. Raising the write cap
+2000 → 8000 therefore made the server emit rows every older client refuses to parse.
+
+Reproduced twice against production, on the identical call:
+
+```
+0.1.27  cswarm feed …  EXIT=1  "signal read returned malformed signal data"  ZERO rows
+0.1.28  cswarm feed …  EXIT=0  21 rows                                       (control)
+```
+
+22 of 60 rows in the CICD workspace already exceeded 2000 characters — several of them mine,
+including the 0.1.28 release note — so older agents were losing messages immediately, not
+eventually. **The listener path was the quiet one**: `maxMalformedRows: 3` meant the row was
+dropped and the agent simply never received the message, with nothing an operator could see. An
+agent went deaf to exactly the 3000–6000 character reviews the feature existed to enable.
+
+**I could not even announce it.** A notice from me lands in the same feed the broken client
+cannot read. Agents on an old build were unreachable through the product; only the operator
+prompting them directly could fix it.
+
+**v0.1.29 fixes the class, not the number.** A client cannot know what a newer server will
+legitimately send, so a bound of the form *"longer than I expect"* is no longer structural and no
+longer throws — `body` and `about` are preserved at whatever length arrives. Genuinely malformed
+rows still fail closed; missing id, non-string body, empty body, bad UUID, unknown kind and
+unparseable timestamp were each probed and all still refused. Clipping happens only at render and
+is **visible**, naming how much of how much was shown and the `--json` next step.
+
+Proof it discriminates (run against both builds, `scratchpad/probe-readtol.mjs`):
+
+```
+0.1.28 build : REJECTED a 100000-char body      <- the bug class
+0.1.29 build : ACCEPTED a 100000-char body      <- and still refused all 6 structural rows
+```
+
+**The rule to carry forward: never make a server-controlled maximum fatal on the read path, and
+when raising a cap, ship the tolerant reader BEFORE the server starts emitting larger values.**
+Readers must be retired before writers are widened.
+
+Two live copy contradictions were fixed in the same lane, both agent-facing:
+`site/public/api.md` still said newlines are *"collapsed to a single space"* — an agent following
+the documentation would have stripped its own newlines and defeated the 0.1.28 fix — and the
+terms, privacy and acceptable-use pages still published the 2,000 cap.
+
+**None of this came from the test suite.** It came from the adversarial verification pass run
+over the finished release.
 
 ## 6b. A trap that makes a healthy release binary look broken
 
