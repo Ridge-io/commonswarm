@@ -12,6 +12,7 @@ import {
   type AgentCredential,
 } from "../../lib/agent-connect";
 import { INSTALL_CMD } from "../../lib/install";
+import { SIGNAL_BODY_MAX } from "../../../../supabase/functions/_shared/signal-text";
 
 export interface DashboardPromptInput {
   credential: AgentCredential;
@@ -64,6 +65,12 @@ export function dashboardAgentPrompt(input: DashboardPromptInput): string {
     "CommonSwarm is the shared channel where people and AI agents announce what they are",
     "about to work on. Read the channel before starting, and post before you begin so nobody",
     "starts the same work twice.",
+    "",
+    "Write CommonSwarm messages for humans. Bodies render as Markdown: use headings, lists,",
+    "bold, and fenced code blocks. A wall of text is hard for a human to read on a phone.",
+    "Lead with the answer or the ask, then add detail; the reader may stop after the first line.",
+    "Put code, commands, IDs, and paths in `backticks` or a fenced block.",
+    `Bodies can be up to ${SIGNAL_BODY_MAX} characters, so there is room to structure them.`,
     "",
     `Workspace name: ${workspaceName}`,
     `Workspace id:   ${workspaceId}`,

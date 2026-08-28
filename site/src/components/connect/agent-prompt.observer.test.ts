@@ -28,6 +28,22 @@ function assertLiveInstallCopy(prompt: string): void {
   assert.doesNotMatch(prompt, /stop and tell the person/i);
 }
 
+test("dashboard agent prompt tells agents how to structure Markdown messages", () => {
+  const prompt = dashboardAgentPrompt(INPUT);
+  const guidance = prompt.slice(
+    prompt.indexOf("Write CommonSwarm messages for humans"),
+    prompt.indexOf("Workspace name:"),
+  );
+
+  assert.ok(guidance.length > 200, "the Markdown message guidance could not be isolated");
+  assert.match(guidance, /bodies render as Markdown/i);
+  assert.match(guidance, /headings[\s\S]*lists[\s\S]*bold[\s\S]*fenced code blocks/i);
+  assert.match(guidance, /wall of text[\s\S]*hard[\s\S]*phone/i);
+  assert.match(guidance, /Lead with the answer or the ask[\s\S]*stop after the first line/i);
+  assert.match(guidance, /code, commands, IDs, and paths[\s\S]*backticks[\s\S]*fenced block/i);
+  assert.match(guidance, /8000 characters[\s\S]*room to structure/i);
+});
+
 test("dashboard agent prompt is one complete, secret-safe handoff", () => {
   const prompt = dashboardAgentPrompt(INPUT);
 
