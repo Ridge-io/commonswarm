@@ -161,6 +161,8 @@ import {
   runInboxFollow,
   settleSignalAuthorLabels,
   settleSignalStatus,
+  SIGNAL_READ_TIMEOUT_MS,
+  SignalReadTimeoutError,
   signalReadJsonPayload,
   waitDeadlineMs,
   type SignalAuthorLabels,
@@ -168,6 +170,14 @@ import {
   type SignalDirectory,
   type ResolvedSignalRecipient,
 } from "./cloud/signals.js";
+import {
+  renderSignalReceiptReport,
+  signalReceiptJsonPayload,
+} from "./cloud/receipts.js";
+import {
+  DeliveryReceiptReadError,
+  readAgentDeliveryReceipts,
+} from "./cloud/delivery-receipts.js";
 import { resolveOpenCodeExecutable } from "./host/opencode.js";
 import { resolveClaudeExecutable } from "./host/claude.js";
 import { resolveCodexExecutable } from "./host/codex.js";
@@ -427,6 +437,7 @@ Usage:
   cswarm note "<text>" [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--to <member|agent>] [--about <ref>] [--until <dur>] [--json]  # text: 1..8000 characters
   cswarm ask "<text>" [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--to <member|agent>] [--about <ref>] [--until <dur>] [--wait <seconds>] [--json]  # text: 1..8000 characters
   cswarm reply <signal-id> "<text>" [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--until <dur>] [--json]
+  cswarm receipt <signal-id> --agent-token-stdin [--url <url> --anon-key <key>] --workspace-id <uuid> [--json]
   cswarm feed [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--about <ref>] [--kind <kind>] [--since <timestamp>] [--limit <n>] [--include-stale] [--json]
   cswarm inbox [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--kind <kind>] [--about <ref>] [--since <timestamp>] [--limit <n>] [--include-stale] [--wait <seconds>] [--json]
   cswarm inbox --follow --ndjson [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--kind <kind>] [--about <ref>] [--since <timestamp>] [--limit <n>] [--include-stale]
@@ -473,6 +484,7 @@ Credential selection for command/dogfood:
                           One that persists or references the credential needs the complete
                           JSON artifact, because it needs a field a bare secret does not carry:
                             members       reads only          -- either form
+                            receipt       reads only          -- either form
                             file put, file ls, file get, file rm, file restore
                                           read and command, nothing persisted -- either form
                             feedback      command only, nothing persisted     -- either form
@@ -3177,6 +3189,60 @@ async function runSignalRead(
   })}\n`);
 }
 
+async function runReceipt(args: Arguments): Promise<void> {
+  args.assertShape([
+    ...TARGET_FLAGS,
+    "workspace-id",
+    ...CREDENTIAL_FLAGS,
+    "json",
+  ], 2);
+  const signalId = args.positionals[1]!;
+  if (!UUID_RE.test(signalId)) {
+    throw new Error("signal-id must be a UUID");
+  }
+  if (!args.has("agent-token-stdin")) {
+    throw new Error(
+      "receipt reads signals sent by an agent; provide --agent-token-stdin and --workspace-id",
+    );
+  }
+  const cloud = await target(args);
+  const selected = await commandWorkspaceAndCredential(args, cloud, {
+    validateHumanWorkspace: true,
+  });
+  let result;
+  try {
+    result = await readAgentDeliveryReceipts(
+      cloud,
+      selected.bearer,
+      selected.selectedWorkspace,
+      signalId,
+    );
+  } catch (error) {
+    const reason = error instanceof SignalReadTimeoutError
+      ? `the read reached its ${SIGNAL_READ_TIMEOUT_MS / 1000}-second deadline`
+      : error instanceof DeliveryReceiptReadError && error.status !== null
+      ? `the read service refused it with HTTP ${error.status}`
+      : error instanceof DeliveryReceiptReadError && error.code === "not_author"
+      ? "the service could not verify that this agent sent the signal"
+      : error instanceof DeliveryReceiptReadError && error.code === "protocol"
+      ? "the read service returned an invalid receipt response"
+      : "the read service could not be reached";
+    throw new Error(
+      `Delivery receipt lookup failed because ${reason}. No delivery state was shown, so do not treat this signal as pending, delivered, or failed. Retry with: cswarm receipt ${signalId.toLowerCase()} --workspace-id ${selected.selectedWorkspace}`,
+    );
+  }
+  const report = {
+    ...result,
+    workspaceId: selected.selectedWorkspace,
+    signalId: signalId.toLowerCase(),
+  };
+  if (args.has("json")) {
+    printJson(signalReceiptJsonPayload(report));
+    return;
+  }
+  process.stdout.write(`${renderSignalReceiptReport(report)}\n`);
+}
+
 /**
  * Host-neutral resilient inbox receiver. NDJSON frames only; never claims to
  * wake a model or execute message bodies. Rearms with AgentCredentialSession
@@ -5367,6 +5433,10 @@ async function main(): Promise<void> {
     await runReply(args);
     return;
   }
+  if (verb === "receipt") {
+    await runReceipt(args);
+    return;
+  }
   if (verb === "feed" || verb === "inbox") {
     await runSignalRead(args, verb === "inbox");
     return;
@@ -5489,6 +5559,7 @@ main().catch((error) => {
         verb === "note" ||
         verb === "ask" ||
         verb === "reply" ||
+        verb === "receipt" ||
         verb === "feed" ||
         verb === "inbox"
       );
