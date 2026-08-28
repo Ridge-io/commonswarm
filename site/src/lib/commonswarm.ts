@@ -1004,6 +1004,24 @@ export function browserSignalAddress(recipient: BrowserSignalRecipient): {
   };
 }
 
+export interface BrowserDeliveryReceipt {
+  recipientAgentPrincipalId: string;
+  enqueuedAt: string;
+  deliveredAt: string | null;
+  leasedUntil: string | null;
+  ackedAt: string | null;
+  ackOutcome: "replied" | "observed" | "expired" | "failed_terminal" | null;
+  attemptCount: number;
+  leaseExpiryCount: number;
+  lastErrorCode: string | null;
+}
+
+export interface BrowserDeliveryReceiptResult {
+  /** Null means this signed-in person did not author a matching signal. */
+  addressed: boolean | null;
+  receipts: BrowserDeliveryReceipt[];
+}
+
 /** Posts one browser-authored note with either broadcast or one direct addressee. */
 export async function postBrowserSignal(
   session: Session,
@@ -1091,6 +1109,62 @@ export async function feed(workspaceId: string, limit = 50): Promise<Signal[]> {
     until: row.until === null || row.until === undefined ? null : String(row.until),
     createdAt: String(row.created_at ?? ""),
   }));
+}
+
+/** Reads only receipts for a signal authored by the signed-in human. */
+export async function browserDeliveryReceipts(
+  workspaceId: string,
+  signalId: string,
+): Promise<BrowserDeliveryReceiptResult> {
+  const c = client();
+  if (!c) throw new NoDeployment();
+  const { data, error } = await readWithDeadline(
+    "message delivery receipts",
+    (signal) =>
+      c
+        .schema("swarm_read")
+        .rpc("signal_delivery_receipts", {
+          p_workspace_id: workspaceId,
+          p_signal_id: signalId,
+        })
+        .abortSignal(signal),
+  );
+  if (error) throw new Error(error.message);
+  if (data === null) return { addressed: null, receipts: [] };
+  if (!data || typeof data !== "object" || Array.isArray(data)) {
+    throw new Error("Delivery receipts returned malformed data.");
+  }
+  const result = data as Record<string, unknown>;
+  if (typeof result.addressed !== "boolean" || !Array.isArray(result.receipts)) {
+    throw new Error("Delivery receipts returned malformed data.");
+  }
+  const outcomes = new Set(["replied", "observed", "expired", "failed_terminal"]);
+  return {
+    addressed: result.addressed,
+    receipts: result.receipts.map((value) => {
+      if (!value || typeof value !== "object" || Array.isArray(value)) {
+        throw new Error("Delivery receipts returned a malformed row.");
+      }
+      const row = value as Record<string, unknown>;
+      const outcome = row.ack_outcome;
+      if (!(outcome === null || (typeof outcome === "string" && outcomes.has(outcome)))) {
+        throw new Error("Delivery receipts returned a malformed outcome.");
+      }
+      return {
+        recipientAgentPrincipalId: String(row.recipient_agent_principal_id ?? ""),
+        enqueuedAt: String(row.enqueued_at ?? ""),
+        deliveredAt: row.delivered_at === null ? null : String(row.delivered_at ?? ""),
+        leasedUntil: row.leased_until === null ? null : String(row.leased_until ?? ""),
+        ackedAt: row.acked_at === null ? null : String(row.acked_at ?? ""),
+        ackOutcome: outcome as BrowserDeliveryReceipt["ackOutcome"],
+        attemptCount: Number(row.attempt_count),
+        leaseExpiryCount: Number(row.lease_expiry_count),
+        lastErrorCode: row.last_error_code === null
+          ? null
+          : String(row.last_error_code ?? ""),
+      };
+    }),
+  };
 }
 
 /**

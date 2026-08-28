@@ -60,6 +60,12 @@ interface FileReadRequest {
   workspace_id: string;
 }
 
+interface ReceiptReadRequest {
+  resource: "delivery_receipts";
+  workspace_id: string;
+  signal_id: string;
+}
+
 /**
  * Explicit read-contract capability markers for agent-authenticated signals.
  * delivery_claim/ack advertise that the command edge supports the durable path;
@@ -132,7 +138,7 @@ function exactKeys(
 
 function parseBody(
   value: unknown,
-): SignalReadRequest | MemberReadRequest | FileReadRequest | null {
+): SignalReadRequest | MemberReadRequest | FileReadRequest | ReceiptReadRequest | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const body = value as Record<string, unknown>;
   if (
@@ -155,6 +161,20 @@ function parseBody(
     return {
       resource: "files",
       workspace_id: body.workspace_id.toLowerCase(),
+    };
+  }
+  if (
+    body.resource === "delivery_receipts" &&
+    exactKeys(body, ["resource", "workspace_id", "signal_id"]) &&
+    typeof body.workspace_id === "string" &&
+    UUID_RE.test(body.workspace_id) &&
+    typeof body.signal_id === "string" &&
+    UUID_RE.test(body.signal_id)
+  ) {
+    return {
+      resource: "delivery_receipts",
+      workspace_id: body.workspace_id.toLowerCase(),
+      signal_id: body.signal_id.toLowerCase(),
     };
   }
   const modernShape = Object.hasOwn(body, "in_reply_to");
@@ -314,6 +334,9 @@ async function handle(
           content_warning: FILE_CONTENT_WARNING,
         });
       }
+      if (body.resource === "delivery_receipts") {
+        return json(200, { addressed: null, receipts: [] });
+      }
       return json(200, {
         signals: [],
         capabilities: SIGNAL_CAPABILITIES,
@@ -322,6 +345,36 @@ async function handle(
     }
 
     setPhase("query");
+    if (body.resource === "delivery_receipts") {
+      // No request.jwt.claims are installed yet. That absence selects the
+      // function's agent-token branch; a browser JWT instead selects its human
+      // branch and cannot smuggle an agent hash through PostgREST.
+      const receiptRows = await tx<{ receipt: unknown }[]>`
+        SELECT swarm_read.signal_delivery_receipts(
+          ${body.workspace_id}::uuid,
+          ${body.signal_id}::uuid,
+          ${tokenHash}
+        ) AS receipt
+      `;
+      const receipt = receiptRows[0]?.receipt;
+      if (
+        receipt === null || receipt === undefined ||
+        typeof receipt !== "object" || Array.isArray(receipt)
+      ) {
+        return json(200, { addressed: null, receipts: [] });
+      }
+      const result = receipt as Record<string, unknown>;
+      if (
+        typeof result.addressed !== "boolean" ||
+        !Array.isArray(result.receipts)
+      ) {
+        throw new Error("delivery receipt function returned malformed JSON");
+      }
+      return json(200, {
+        addressed: result.addressed,
+        receipts: result.receipts,
+      });
+    }
     await tx`
       SELECT set_config(
         'request.jwt.claims',
