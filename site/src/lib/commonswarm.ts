@@ -988,15 +988,31 @@ export interface Signal {
   createdAt: string;
 }
 
+export type BrowserSignalRecipient =
+  | { kind: "everyone" }
+  | { kind: "person"; id: string }
+  | { kind: "agent"; id: string };
+
+/** Keeps the browser's single visible recipient and the two nullable wire fields in lockstep. */
+export function browserSignalAddress(recipient: BrowserSignalRecipient): {
+  toUserId: string | null;
+  toAgentPrincipalId: string | null;
+} {
+  return {
+    toUserId: recipient.kind === "person" ? recipient.id : null,
+    toAgentPrincipalId: recipient.kind === "agent" ? recipient.id : null,
+  };
+}
+
 /** Posts one browser-authored note with either broadcast or one direct addressee. */
 export async function postBrowserSignal(
   session: Session,
   commandId: string,
   workspaceId: string,
   bodyText: string,
-  toUserId: string | null,
-  toAgentPrincipalId: string | null,
+  recipient: BrowserSignalRecipient,
 ): Promise<Signal> {
+  const address = browserSignalAddress(recipient);
   const { status, body } = await postCommand(
     session,
     commandId,
@@ -1004,8 +1020,8 @@ export async function postBrowserSignal(
       kind: "post_signal",
       signal_kind: "note",
       body: bodyText,
-      to_user_id: toUserId,
-      to_agent_principal_id: toAgentPrincipalId,
+      to_user_id: address.toUserId,
+      to_agent_principal_id: address.toAgentPrincipalId,
       in_reply_to: null,
       about: null,
     },

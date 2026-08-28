@@ -585,7 +585,7 @@ import "../../styles/tokens.css";
               <div class="dashboard__composer-audience">
                 <label for="dashboard-composer-audience">TO</label>
                 <select id="dashboard-composer-audience" data-composer-audience></select>
-                <span data-composer-audience-count>0 agents · 0 people in workspace</span>
+                <span data-composer-audience-count>No recipient · broadcast · no agent will be woken</span>
               </div>
               <div class="dashboard__composer-box">
                 <div
@@ -610,7 +610,7 @@ import "../../styles/tokens.css";
                     type="submit"
                     data-composer-send
                     aria-label="Post signal"
-                    title="Post signal"
+                    title="Post signal (Cmd/Ctrl+Enter)"
                   >
                     <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
                       <path d="m5 12 7-7 7 7M12 5v14"></path>
@@ -803,6 +803,7 @@ import "../../styles/tokens.css";
     inviteWorkspaceMember,
     inviteEmailValidationMessage,
     pendingMemberInvites,
+    browserSignalAddress,
     postBrowserSignal,
     revokeAgentToken,
     revokeWorkspaceInvitation,
@@ -817,6 +818,7 @@ import "../../styles/tokens.css";
     type Signal,
     type AgentAccessStatus,
     type PendingMemberInvite,
+    type BrowserSignalRecipient,
     type WorkspaceFile,
   } from "../../lib/commonswarm";
   import { memberInviteUrl } from "../../lib/member-invite";
@@ -886,7 +888,7 @@ import "../../styles/tokens.css";
     | { kind: "agent"; id: string }
     | { kind: "person"; id: string };
 
-  type ComposerAudience = { kind: "everyone" } | EntityRef;
+  type ComposerAudience = BrowserSignalRecipient;
 
   const app = document.querySelector<HTMLElement>("live-dashboard");
 
@@ -963,7 +965,7 @@ import "../../styles/tokens.css";
     let entityPanelOrigin: HTMLElement | null = null;
     let selectedEntity: EntityRef | null = null;
     let composerAudience: ComposerAudience = { kind: "everyone" };
-    let composerMentions: EntityRef[] = [];
+    let composerMention: EntityRef | null = null;
     let mentionPickerIndex = 0;
     let composerIntent: { commandId: string; body: string; audienceKey: string } | null = null;
     const visualMentions = new Map<string, EntityRef[]>();
@@ -1808,7 +1810,7 @@ import "../../styles/tokens.css";
       select.replaceChildren();
       const everyone = document.createElement("option");
       everyone.value = "everyone";
-      everyone.textContent = "Everyone in # all-signals";
+      everyone.textContent = "Everyone · nobody is notified";
       select.append(everyone);
       for (const member of members) {
         const option = document.createElement("option");
@@ -1825,22 +1827,25 @@ import "../../styles/tokens.css";
       const selectedExists = Array.from(select.options).some(
         (option) => option.value === selectedKey,
       );
-      if (!selectedExists) composerAudience = { kind: "everyone" };
+      if (!selectedExists) {
+        composerAudience = { kind: "everyone" };
+        composerMention = null;
+        renderComposerMentions();
+      }
       select.value = composerAudienceKey(composerAudience);
       count.textContent = composerAudience.kind === "everyone"
-        ? `${agents.length} ${agents.length === 1 ? "agent" : "agents"} · ${members.length} ${
-            members.length === 1 ? "person" : "people"
-          } in workspace`
+        ? "No recipient · broadcast · no agent will be woken"
         : composerAudience.kind === "agent"
-        ? "1 agent addressed"
-        : "1 person addressed";
+        ? "One recipient · agent addressed · its listener can wake it"
+        : "One recipient · person addressed · no agent will be woken";
     };
 
     const renderComposerMentions = (): void => {
       const wrap = one<HTMLElement>("[data-composer-mentions]");
       if (!wrap) return;
       wrap.replaceChildren();
-      composerMentions.forEach((mention, index) => {
+      const mention = composerMention;
+      if (mention) {
         const chip = document.createElement("span");
         chip.className = "dashboard__mention-chip";
         chip.append(entityControl(
@@ -1854,13 +1859,16 @@ import "../../styles/tokens.css";
         remove.textContent = "×";
         remove.setAttribute("aria-label", `Remove mention of ${entityName(mention)}`);
         remove.addEventListener("click", () => {
-          composerMentions.splice(index, 1);
+          composerMention = null;
+          composerAudience = { kind: "everyone" };
+          composerIntent = null;
           renderComposerMentions();
+          renderComposerAudience();
           one<HTMLTextAreaElement>("[data-composer-input]")?.focus({ preventScroll: true });
         });
         chip.append(remove);
         wrap.append(chip);
-      });
+      }
     };
 
     const mentionSearch = (): { query: string; start: number } | null => {
@@ -1876,13 +1884,13 @@ import "../../styles/tokens.css";
     };
 
     const mentionCandidates = (query: string): EntityRef[] => {
-      const selected = new Set(composerMentions.map((mention) => `${mention.kind}:${mention.id}`));
       const candidates: EntityRef[] = [
         ...members.map((member) => ({ kind: "person" as const, id: member.userId })),
         ...agents.map((agent) => ({ kind: "agent" as const, id: agent.principalId })),
       ];
       return candidates.filter((candidate) =>
-        !selected.has(`${candidate.kind}:${candidate.id}`) &&
+        (composerMention === null ||
+          `${candidate.kind}:${candidate.id}` !== `${composerMention.kind}:${composerMention.id}`) &&
         entityName(candidate).toLocaleLowerCase().includes(query)
       );
     };
@@ -1894,8 +1902,11 @@ import "../../styles/tokens.css";
       const cursor = input.selectionStart ?? input.value.length;
       input.value = `${input.value.slice(0, search.start)}${input.value.slice(cursor)}`;
       input.setSelectionRange(search.start, search.start);
-      composerMentions.push(mention);
+      composerMention = mention;
+      composerAudience = { ...mention };
+      composerIntent = null;
       renderComposerMentions();
+      renderComposerAudience();
       closeMentionPicker();
       input.focus({ preventScroll: true });
       input.dispatchEvent(new Event("input"));
@@ -1948,7 +1959,7 @@ import "../../styles/tokens.css";
 
     const resetComposer = (): void => {
       composerAudience = { kind: "everyone" };
-      composerMentions = [];
+      composerMention = null;
       composerIntent = null;
       visualMentions.clear();
       const input = one<HTMLTextAreaElement>("[data-composer-input]");
@@ -4196,8 +4207,10 @@ import "../../styles/tokens.css";
         } else if (value.startsWith("agent:")) {
           composerAudience = { kind: "agent", id: value.slice("agent:".length) };
         }
+        composerMention = composerAudience.kind === "everyone" ? null : { ...composerAudience };
         composerIntent = null;
         renderComposerAudience();
+        renderComposerMentions();
       },
     );
     one<HTMLTextAreaElement>("[data-composer-input]")?.addEventListener(
@@ -4216,9 +4229,18 @@ import "../../styles/tokens.css";
       (event) => {
         const input = event.currentTarget as HTMLTextAreaElement;
         const picker = one<HTMLElement>("[data-mention-picker]");
-        if (event.key === "Backspace" && input.value === "" && composerMentions.length > 0) {
-          composerMentions.pop();
+        if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && !event.isComposing) {
+          event.preventDefault();
+          closeMentionPicker();
+          one<HTMLFormElement>("[data-composer]")?.requestSubmit();
+          return;
+        }
+        if (event.key === "Backspace" && input.value === "" && composerMention) {
+          composerMention = null;
+          composerAudience = { kind: "everyone" };
+          composerIntent = null;
           renderComposerMentions();
+          renderComposerAudience();
           return;
         }
         if (!picker || picker.hidden) return;
@@ -4233,7 +4255,13 @@ import "../../styles/tokens.css";
             ? (mentionPickerIndex + 1) % candidates.length
             : (mentionPickerIndex - 1 + candidates.length) % candidates.length;
           renderMentionPicker();
-        } else if (event.key === "Enter" && !event.shiftKey && candidates.length > 0) {
+        } else if (
+          event.key === "Enter" &&
+          !event.shiftKey &&
+          !event.metaKey &&
+          !event.ctrlKey &&
+          candidates.length > 0
+        ) {
           event.preventDefault();
           const mention = candidates[mentionPickerIndex];
           if (mention) selectMention(mention);
@@ -4251,13 +4279,14 @@ import "../../styles/tokens.css";
         return;
       }
       const audience = composerAudience;
+      const address = browserSignalAddress(audience);
       const audienceKey = composerAudienceKey(audience);
       let intent = composerIntent;
       if (!intent || intent.body !== body || intent.audienceKey !== audienceKey) {
         intent = { commandId: uuid(), body, audienceKey };
         composerIntent = intent;
       }
-      const mentions = composerMentions.map((mention) => ({ ...mention }));
+      const mentions = composerMention ? [{ ...composerMention }] : [];
       if (send) send.disabled = true;
       input.disabled = true;
       if (status) status.textContent = "Posting…";
@@ -4267,8 +4296,8 @@ import "../../styles/tokens.css";
               id: `sample-composer-${Date.now()}`,
               from: "sample-owner",
               fromKind: "user",
-              to: audience.kind === "person" ? audience.id : null,
-              toAgent: audience.kind === "agent" ? audience.id : null,
+              to: address.toUserId,
+              toAgent: address.toAgentPrincipalId,
               kind: "note",
               body,
               about: null,
@@ -4280,16 +4309,13 @@ import "../../styles/tokens.css";
               intent.commandId,
               activeWorkspaceId,
               body,
-              audience.kind === "person" ? audience.id : null,
-              audience.kind === "agent" ? audience.id : null,
+              audience,
             );
         visualMentions.set(signal.id, mentions);
         signals.unshift(signal);
         composerIntent = null;
-        composerMentions = [];
         input.value = "";
         input.style.blockSize = "auto";
-        renderComposerMentions();
         closeMentionPicker();
         renderFeed();
         if (status) status.textContent = "Posted.";
