@@ -105,15 +105,23 @@ const {
           model). "Never" is deliberately absent: the 30-day renewal horizon is the
           ceiling on any bearer credential, and a pasted prompt is a standing transcript —
           a non-expiring secret in one is a backdoor. 30d IS the horizon, so it is the
-          honest "as long as possible". */}
+          honest "as long as possible".
+
+          DEFAULT IS 30d (operator ruling 2026-08-27). It was 24h, which meant an agent
+          connected through this page stopped working the next day — the single most
+          common way a working setup died, and it read as a product fault rather than a
+          deliberate expiry. 30d is the ceiling already enforced elsewhere, so defaulting
+          to it grants nothing the operator could not already pick; it only stops the
+          shortest option being chosen by people who never saw the question. Shorter
+          remains one click away for anyone who wants it. */}
       <select class="ac__control" id="ac-ttl" data-field="ttl">
-        <option value="86400000" selected>24 hours</option>
+        <option value="86400000">24 hours</option>
         <option value="604800000">7 days</option>
-        <option value="2592000000">30 days</option>
+        <option value="2592000000" selected>30 days</option>
       </select>
       <p class="ac__hint">
         How long the pasted key works before the agent must be running to renew it.
-        Shorter is safer; pick longer if setup on the other machine may take a while.
+        30 days is the maximum; pick shorter if you want the key to lapse sooner.
       </p>
     </div>
 
