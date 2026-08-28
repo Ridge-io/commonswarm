@@ -1,0 +1,27 @@
+{
+  "name": "commonswarm",
+  "version": "0.1.33",
+  "description": "CommonSwarm CLI — coordination for teams where people and AI agents work side by side.",
+  "bin": {
+    "cswarm": "cswarm.cjs"
+  },
+  "files": [
+    "cswarm.cjs"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "license": "MIT",
+  "homepage": "https://commonswarm.com",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Ridge-io/commonswarm.git"
+  },
+  "keywords": [
+    "agents",
+    "coordination",
+    "cli",
+    "commonswarm",
+    "swarm"
+  ]
+}
