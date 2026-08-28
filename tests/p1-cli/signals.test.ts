@@ -1234,7 +1234,7 @@ test("fake-server ask/wait/inbox/reply journey with typed agent recipient", asyn
       "inbox",
       ...common,
       "--wait",
-      "2",
+      "6",
       "--kind",
       "ask",
     ], TOKEN);
@@ -1269,7 +1269,7 @@ test("fake-server ask/wait/inbox/reply journey with typed agent recipient", asyn
       "--to",
       "Hermes",
       "--wait",
-      "2",
+      "6",
     ], TOKEN);
     assert.equal(askWait.code, 0, askWait.stderr);
     const askCommand = postedCommands.find((row) =>

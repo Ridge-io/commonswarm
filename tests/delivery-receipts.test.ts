@@ -17,6 +17,8 @@ const ENQUEUED = "2026-08-28T12:00:00.000Z";
 const DELIVERED = "2026-08-28T12:00:01.000Z";
 const LEASED = "2026-08-28T12:10:00.000Z";
 const ACKED = "2026-08-28T12:00:02.000Z";
+const RECEIPT_MIGRATION =
+  "supabase/migrations/20260828000002_fix_signal_delivery_receipts_auth.sql";
 
 function receipt(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -141,10 +143,7 @@ test("every ledger state stays distinct, including observed and replied", () => 
 });
 
 test("cross-sender mutation control pins caller kind, author id, and workspace", async () => {
-  const migration = await readFile(
-    "supabase/migrations/20260828000001_signal_delivery_receipts.sql",
-    "utf8",
-  );
+  const migration = await readFile(RECEIPT_MIGRATION, "utf8");
   assert.match(migration, /v_author_kind := 'user';[\s\S]*v_author_id := v_human_user_id;/);
   assert.match(migration, /v_author_kind := 'agent';[\s\S]*v_author_id := v_agent_principal_id;/);
   assert.match(
@@ -155,7 +154,7 @@ test("cross-sender mutation control pins caller kind, author id, and workspace",
   assert.match(
     migration,
     /p_agent_token_hash IS NOT NULL\s+OR NOT swarm\.is_member\(p_workspace_id, v_human_user_id\)/,
-    "a human must use auth.uid and cannot opt into agent-token identity",
+    "a human must use the JWT subject and cannot opt into agent-token identity",
   );
   assert.match(
     migration,
@@ -165,11 +164,14 @@ test("cross-sender mutation control pins caller kind, author id, and workspace",
 });
 
 test("migration exposes only the receipt fields and grants only read callers", async () => {
-  const migration = await readFile(
-    "supabase/migrations/20260828000001_signal_delivery_receipts.sql",
-    "utf8",
+  const migration = await readFile(RECEIPT_MIGRATION, "utf8");
+  assert.match(migration, /SECURITY DEFINER\s+SET search_path = swarm, pg_catalog/);
+  assert.match(
+    migration,
+    /current_setting\('request\.jwt\.claims', true\)/,
+    "human identity must come from the transaction JWT claims without auth schema access",
   );
-  assert.match(migration, /SECURITY DEFINER\s+SET search_path = pg_catalog/);
+  assert.doesNotMatch(migration, /auth\.uid\(\)/);
   assert.match(
     migration,
     /ALTER FUNCTION swarm_read\.signal_delivery_receipts\(uuid, uuid, bytea\)\s+OWNER TO swarm_admin;/,
