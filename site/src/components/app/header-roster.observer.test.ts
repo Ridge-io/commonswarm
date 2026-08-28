@@ -166,15 +166,25 @@ test("the dialog is a bottom sheet at mobile widths", () => {
   );
 });
 
-test("the stack gets its own header row and the body floor gives it back at mobile widths", () => {
+test("the narrow header pairs the stack with the title and leaves the body free to shrink", () => {
   assert.match(
     dashboard,
-    /@media \(max-width: 52rem\)[\s\S]*\.dashboard__channel-roster\s*\{[\s\S]*flex:\s*1 1 100%/,
-    "the roster row never depends on the workspace name's length",
+    /@media \(max-width: 34rem\)[\s\S]*\.dashboard__channel-head\s*\{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\) auto/,
+    "the narrow header reserves a stable title column and one roster-control column",
   );
   assert.match(
     dashboard,
-    /\.dashboard__channel--roster \.dashboard__channel-body\s*\{[\s\S]*min-block-size:\s*calc\(100svh - 5\.5rem - 4\.5rem - 3\.5rem\)/,
+    /@media \(max-width: 34rem\)[\s\S]*\.dashboard__channel-roster\s*\{[\s\S]*grid-column:\s*2;[\s\S]*grid-row:\s*1/,
+    "the roster shares the title row instead of adding a third header band",
+  );
+  assert.match(
+    dashboard,
+    /@media \(max-width: 34rem\)[\s\S]*\.dashboard__channel-actions\s*\{[\s\S]*grid-column:\s*1 \/ -1;[\s\S]*grid-row:\s*2/,
+  );
+  assert.doesNotMatch(
+    dashboard,
+    /\.dashboard__channel(?:--roster)? \.dashboard__channel-body\s*\{[\s\S]*min-block-size:\s*calc\(100svh/,
+    "a viewport-derived body floor can push the composer below the bounded frame",
   );
 });
 
