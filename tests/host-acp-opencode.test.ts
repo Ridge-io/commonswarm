@@ -29,12 +29,30 @@ import {
   buildOpenCodeSafeConfigJson,
   isEnvKeyDenied,
   openAcpSessionOverStdio,
+  openOpenCodeAcpSession,
   parseOpenCodeVersionOutput,
   prepareOpenCodeIsolatedHome,
   readValidatedOpenCodeAuth,
   resolveOpenCodeExecutable,
   sanitizeChildEnv,
 } from "../src/host/index.js";
+import { registerStderrExitParityTests } from "./support/host-stderr-exit-parity.js";
+
+registerStderrExitParityTests({
+  provider: "OpenCode",
+  executableName: "opencode.cjs",
+  open: ({ cwd, executable, onStderrTail }) =>
+    openOpenCodeAcpSession({
+      cwd,
+      executable,
+      env: { PATH: "/usr/bin", HOME: join(cwd, "operator-home") },
+      requestTimeoutMs: 2_000,
+      skipVersionCheck: true,
+      skipConfigProbe: true,
+      allowMissingAuth: true,
+      onStderrTail,
+    }),
+});
 
 function tempCwd(): Promise<string> {
   return mkdtemp(join(tmpdir(), "cswarm-oc-acp-"));

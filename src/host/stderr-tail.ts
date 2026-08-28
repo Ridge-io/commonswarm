@@ -1,3 +1,4 @@
+import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import type { Readable } from "node:stream";
 
 /**
@@ -16,6 +17,11 @@ import type { Readable } from "node:stream";
 
 const RING_CAPACITY_BYTES = 4_096;
 const TAIL_MAX_CHARS = 2_048;
+
+/** Hard bound between child exit and delivery of its final stderr tail. */
+export const STDERR_EXIT_GRACE_MS = 100;
+/** Keep stdout EOF from winning the bounded stderr-exit observation. */
+export const STDERR_READABLE_END_GRACE_MS = STDERR_EXIT_GRACE_MS + 50;
 
 /* ONE definition of "a character that ends a token or a line", so the eviction
  * boundary and the redactor's terminator can never disagree about where a token
@@ -135,5 +141,60 @@ export function attachStderrTailRing(stderr: Readable): StderrTailRing {
       }
       return sanitizeStderrTail(text);
     },
+  };
+}
+
+type ChildExitHandler = (
+  code: number | null,
+  signal: NodeJS.Signals | null,
+) => void;
+
+/**
+ * Couple one child's stderr tail to its exit before the failure is published.
+ *
+ * A fast Grok worker on 0.1.29 reproduced the measured failure this fixes: its
+ * exit reached the supervisor before pending stderr bytes, leaving the local
+ * diagnostic tail null. Waiting only for close is unsafe too: a grandchild can
+ * inherit stdio and delay close indefinitely. The short timer is therefore the
+ * hard upper bound, while close can complete sooner when the final bytes flush.
+ *
+ * The latch and removed close listener are per child. They preserve the other
+ * measured invariant: a late close from worker A can never publish A's stderr
+ * into the callback state already serving worker B.
+ */
+export function attachStderrTailExitObserver(
+  child: ChildProcessWithoutNullStreams,
+  onStderrTail?: (tail: string) => void,
+): (handler: ChildExitHandler) => void {
+  const stderrTail = attachStderrTailRing(child.stderr);
+
+  return (handler) => {
+    const observeExit = (
+      code: number | null,
+      signal: NodeJS.Signals | null,
+    ) => {
+      let completed = false;
+      let timer: NodeJS.Timeout | null = null;
+      const complete = () => {
+        if (completed) return;
+        completed = true;
+        if (timer) clearTimeout(timer);
+        child.removeListener("close", complete);
+        try {
+          onStderrTail?.(stderrTail.read());
+        } finally {
+          handler(code, signal);
+        }
+      };
+      child.once("close", complete);
+      timer = setTimeout(complete, STDERR_EXIT_GRACE_MS);
+      timer.unref();
+    };
+
+    if (child.exitCode !== null || child.signalCode !== null) {
+      observeExit(child.exitCode, child.signalCode);
+    } else {
+      child.once("exit", observeExit);
+    }
   };
 }

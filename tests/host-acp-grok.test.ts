@@ -30,11 +30,27 @@ import {
   defaultPermissionCallback,
   isEnvKeyDenied,
   openAcpSessionOverStdio,
+  openGrokAcpSession,
   parseGrokVersionOutput,
   sanitizeChildEnv,
   terminateGrokChild,
   type PermissionDecision,
 } from "../src/host/index.js";
+import { registerStderrExitParityTests } from "./support/host-stderr-exit-parity.js";
+
+registerStderrExitParityTests({
+  provider: "Grok",
+  executableName: "grok.cjs",
+  open: ({ cwd, executable, onStderrTail }) =>
+    openGrokAcpSession({
+      cwd,
+      executable,
+      env: { PATH: "/usr/bin", HOME: join(cwd, "operator-home") },
+      requestTimeoutMs: 2_000,
+      skipVersionCheck: true,
+      onStderrTail,
+    }),
+});
 
 function tempCwd(): string {
   return mkdtempSync(join(tmpdir(), "cswarm-acp-"));

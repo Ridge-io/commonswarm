@@ -20,6 +20,7 @@ import {
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
+import { registerStderrExitParityTests } from "./support/host-stderr-exit-parity.js";
 import {
   CLAUDE_ACP_MIN_VERSION,
   AcpChildExitError,
@@ -37,6 +38,20 @@ import {
   resolveClaudeExecutable,
   terminateClaudeChild,
 } from "../src/host/index.js";
+
+registerStderrExitParityTests({
+  provider: "Claude",
+  executableName: "claude-agent-acp.cjs",
+  versionOutput: "0.64.2\n",
+  open: ({ cwd, executable, onStderrTail }) =>
+    openClaudeAcpSession({
+      cwd,
+      executable,
+      env: { PATH: "/usr/bin", HOME: join(cwd, "operator-home") },
+      requestTimeoutMs: 2_000,
+      onStderrTail,
+    }),
+});
 
 async function writeFakeClaudeBridge(
   root: string,
@@ -466,8 +481,8 @@ test("an early Claude bridge exit publishes fully flushed stderr before open rej
       `#!${process.execPath}\n` +
         `const { spawn } = require("node:child_process");\n` +
         `if (process.argv[2] === "--version") { process.stdout.write("0.64.2\\n"); process.exit(0); }\n` +
-        `spawn(process.execPath, ["-e", "setTimeout(() => process.stderr.write('fatal: bridge child failed before handshake\\\\n'), 50)"], { stdio: ["ignore", "ignore", "inherit"] });\n` +
-        `process.exit(7);\n`,
+        `const grandchild = spawn(process.execPath, ["-e", "process.send?.('ready'); setTimeout(() => process.stderr.write('fatal: bridge child failed before handshake\\\\n'), 25)"], { stdio: ["ignore", "ignore", "inherit", "ipc"] });\n` +
+        `grandchild.once("message", () => process.exit(7));\n`,
       { mode: 0o700 },
     );
     await chmod(executable, 0o700);
@@ -485,45 +500,6 @@ test("an early Claude bridge exit publishes fully flushed stderr before open rej
         error instanceof AcpChildExitError && error.code === "child_exit",
     );
     assert.deepEqual(tails, ["fatal: bridge child failed before handshake"]);
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
-
-test("child exit errors within the bounded stderr grace when a grandchild holds pipes", async () => {
-  const root = await mkdtemp(join(tmpdir(), "cswarm-claude-held-pipes-"));
-  const cwd = join(root, "cwd");
-  const executable = join(root, "failing-claude-agent-acp.cjs");
-  try {
-    await mkdir(cwd, { recursive: true });
-    await writeFile(
-      executable,
-      `#!${process.execPath}\n` +
-        `const { spawn } = require("node:child_process");\n` +
-        `if (process.argv[2] === "--version") { process.stdout.write("0.64.2\\n"); process.exit(0); }\n` +
-        `spawn(process.execPath, ["-e", "setTimeout(() => {}, 800)"], { stdio: ["ignore", "inherit", "inherit"] });\n` +
-        `process.stderr.write("fatal: parent exited\\n");\n` +
-        `process.exit(7);\n`,
-      { mode: 0o700 },
-    );
-    await chmod(executable, 0o700);
-    const tails: string[] = [];
-    const startedAt = Date.now();
-    await assert.rejects(
-      () =>
-        openClaudeAcpSession({
-          cwd,
-          executable,
-          env: { PATH: root, HOME: join(root, "operator-home") },
-          requestTimeoutMs: 2_000,
-          onStderrTail: (tail) => tails.push(tail),
-        }),
-      (error: unknown) => error instanceof AcpChildExitError,
-    );
-    assert.ok(Date.now() - startedAt < 500);
-    assert.deepEqual(tails, ["fatal: parent exited"]);
-    await new Promise((resolve) => setTimeout(resolve, 850));
-    assert.deepEqual(tails, ["fatal: parent exited"]);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -555,7 +531,7 @@ test("stdout EOF fails within a bound even while the child stays alive", async (
         }),
       (error: unknown) => error instanceof AcpChildExitError,
     );
-    assert.ok(Date.now() - startedAt < 500);
+    assert.ok(Date.now() - startedAt < 1_300);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

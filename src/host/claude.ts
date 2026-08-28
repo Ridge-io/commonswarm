@@ -6,7 +6,10 @@
  * operator's normal HOME for Claude Code keychain/OAuth state.
  */
 
-import { attachStderrTailRing } from "./stderr-tail.js";
+import {
+  attachStderrTailExitObserver,
+  STDERR_READABLE_END_GRACE_MS,
+} from "./stderr-tail.js";
 import {
   execFile,
   spawn,
@@ -84,8 +87,6 @@ export type ClaudeAcpHandle = {
 
 const CHILD_EXIT_WAIT_MS = 3_000;
 const CHILD_KILL_WAIT_MS = 1_000;
-const STDERR_EXIT_GRACE_MS = 100;
-const READABLE_END_GRACE_MS = STDERR_EXIT_GRACE_MS + 50;
 const WINDOWS_NPM_SHIM_MAX_BYTES = 64 * 1024;
 const WINDOWS_NPM_ENTRYPOINT = [
   "node_modules",
@@ -483,42 +484,19 @@ export async function openClaudeAcpSession(
     await terminateClaudeChild(child);
     throw new AcpHostError("spawn_failed", "child missing stdio pipes");
   }
-  const stderrTail = attachStderrTailRing(child.stderr);
+  const observeStderrTailOnExit = attachStderrTailExitObserver(
+    child,
+    options.onStderrTail,
+  );
 
   let sessionRef: AcpHostSession | null = null;
   const transport = createBoundTransport({
     readable: child.stdout,
     writable: child.stdin,
     requestTimeoutMs: options.requestTimeoutMs ?? ACP_DEFAULT_REQUEST_TIMEOUT_MS,
-    readableEndGraceMs: READABLE_END_GRACE_MS,
+    readableEndGraceMs: STDERR_READABLE_END_GRACE_MS,
     getSession: () => sessionRef,
-    onChildExit: (handler) => {
-      const observeExit = (
-        code: number | null,
-        signal: NodeJS.Signals | null,
-      ) => {
-        let completed = false;
-        let timer: NodeJS.Timeout | null = null;
-        const complete = () => {
-          if (completed) return;
-          completed = true;
-          if (timer) clearTimeout(timer);
-          child.removeListener("close", complete);
-          options.onStderrTail?.(stderrTail.read());
-          handler(code, signal);
-        };
-        /* `exit` is reliable even when a grandchild inherits stdio. `close` may
-         * flush the tail sooner, but the timer is the hard upper bound and the
-         * latch prevents a late close from publishing into a later worker. */
-        child.once("close", complete);
-        timer = setTimeout(complete, STDERR_EXIT_GRACE_MS);
-      };
-      if (child.exitCode !== null || child.signalCode !== null) {
-        observeExit(child.exitCode, child.signalCode);
-      } else {
-        child.once("exit", observeExit);
-      }
-    },
+    onChildExit: observeStderrTailOnExit,
   });
 
   try {

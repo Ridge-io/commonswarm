@@ -6,7 +6,10 @@
  * operator's normal HOME for ChatGPT/Codex file-backed auth state.
  */
 
-import { attachStderrTailRing } from "./stderr-tail.js";
+import {
+  attachStderrTailExitObserver,
+  STDERR_READABLE_END_GRACE_MS,
+} from "./stderr-tail.js";
 import {
   execFile,
   spawn,
@@ -381,36 +384,19 @@ export async function openCodexAcpSession(
     await terminateCodexChild(child);
     throw new AcpHostError("spawn_failed", "child missing stdio pipes");
   }
-  const stderrTail = attachStderrTailRing(child.stderr);
-  if (options.onStderrTail) {
-    const deliverTail = options.onStderrTail;
-    /* Published on "exit", latched once, with "close" as a fallback. "exit" is
-     * the same event AcpChildExitError is derived from (the transport's exit
-     * handler below registers AFTER this one), so the tail is in its consumer's
-     * hands before the failure it explains can reach the supervisor — a
-     * "close"-only publish raced that read and could attach one worker's tail
-     * to the next worker's failure. The cost: stderr bytes not yet delivered
-     * at exit are dropped, acceptable for a tail whose job is the lines
-     * already written. */
-    let tailDelivered = false;
-    const publishTail = () => {
-      if (tailDelivered) return;
-      tailDelivered = true;
-      deliverTail(stderrTail.read());
-    };
-    child.once("exit", publishTail);
-    child.once("close", publishTail);
-  }
+  const observeStderrTailOnExit = attachStderrTailExitObserver(
+    child,
+    options.onStderrTail,
+  );
 
   let sessionRef: AcpHostSession | null = null;
   const transport = createBoundTransport({
     readable: child.stdout,
     writable: child.stdin,
     requestTimeoutMs: options.requestTimeoutMs ?? ACP_DEFAULT_REQUEST_TIMEOUT_MS,
+    readableEndGraceMs: STDERR_READABLE_END_GRACE_MS,
     getSession: () => sessionRef,
-    onChildExit: (handler) => {
-      child.on("exit", (code, signal) => handler(code, signal));
-    },
+    onChildExit: observeStderrTailOnExit,
   });
 
   try {

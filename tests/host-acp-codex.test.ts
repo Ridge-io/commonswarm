@@ -20,6 +20,7 @@ import {
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
+import { registerStderrExitParityTests } from "./support/host-stderr-exit-parity.js";
 import {
   CODEX_ACP_MIN_VERSION,
   AcpVersionError,
@@ -32,6 +33,20 @@ import {
   resolveCodexExecutable,
   terminateCodexChild,
 } from "../src/host/index.js";
+
+registerStderrExitParityTests({
+  provider: "Codex",
+  executableName: "codex-acp.cjs",
+  open: ({ cwd, executable, onStderrTail }) =>
+    openCodexAcpSession({
+      cwd,
+      executable,
+      env: { PATH: "/usr/bin", HOME: join(cwd, "operator-home") },
+      requestTimeoutMs: 2_000,
+      skipVersionCheck: true,
+      onStderrTail,
+    }),
+});
 
 async function writeFakeCodexBridge(
   root: string,
