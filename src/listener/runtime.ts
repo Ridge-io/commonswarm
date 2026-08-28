@@ -42,7 +42,7 @@ import type {
 import { ListenerEngine, newReceivedAskRecord } from "./engine.js";
 import {
   newObservedNoteRecord,
-  newRoutedMainAskRecord,
+  newRoutedMainRecord,
 } from "./file-store.js";
 import {
   decideListenerRoute,
@@ -385,7 +385,7 @@ function ackForTerminalEffect(
   if (record.state === "observed" && record.signalKind === "note") {
     return { outcome: "observed", lastErrorCode: null };
   }
-  if (record.state === "routed_main" && record.signalKind === "ask") {
+  if (record.state === "routed_main") {
     return { outcome: "queued", lastErrorCode: null };
   }
   if (
@@ -423,7 +423,7 @@ function isAckableTerminalEffect(
       record.signalKind === "ask" &&
       !!record.replySignalId) ||
     (record.state === "observed" && record.signalKind === "note") ||
-    (record.state === "routed_main" && record.signalKind === "ask") ||
+    record.state === "routed_main" ||
     (record.state === "expired" &&
       record.signalKind === "ask" &&
       Date.parse(record.askUntil) <= now()) ||
@@ -438,6 +438,15 @@ function effectPhaseBudget(record: ListenerEffectRecord | null): number {
     return LISTENER_REPLY_ONLY_MINIMUM_MS;
   }
   return LISTENER_ACK_ONLY_MINIMUM_MS;
+}
+
+function observedNoteNeedsMainRoute(
+  record: ListenerEffectRecord | null,
+  routeMode: ListenerRouteMode,
+  deferOverChars: number | null,
+): boolean {
+  return record?.state === "observed" && record.signalKind === "note" &&
+    decideListenerRoute(routeMode, deferOverChars, record.askBody.length) === "main";
 }
 
 function verifyPreparedAckEffect(
@@ -752,9 +761,13 @@ export async function runListenerRuntime(
       : { resolveSenderProvenance: options.resolveSenderProvenance }),
     isCredentialFailure: isCredentialLoss,
   });
-  const routeAskToMain = async (
+  const routeSignalToMain = async (
     signal: SignalRecord,
   ): Promise<ListenerEffectRecord> => {
+    if (signal.kind !== "ask" && signal.kind !== "note") {
+      throw new Error("only directed asks and notes can route to the main session");
+    }
+    const signalKind = signal.kind;
     let provenance: ListenerSenderProvenance = {
       senderName: null,
       operatorId: null,
@@ -788,13 +801,19 @@ export async function runListenerRuntime(
     });
     const existing = await options.store.read(signal.id);
     if (existing !== null) {
-      if (!sameEffectSignal(existing, signal) || existing.state !== "routed_main") {
-        throw new Error("stored listener effect does not match the main-routed ask");
+      if (!sameEffectSignal(existing, signal)) {
+        throw new Error("stored listener effect does not match the main-routed message");
       }
-      return existing;
+      if (existing.state === "routed_main") {
+        return existing;
+      }
+      if (!(existing.signalKind === "note" && existing.state === "observed")) {
+        throw new Error("stored listener effect does not match the main-routed message");
+      }
     }
-    await options.store.write(newRoutedMainAskRecord({
+    await options.store.write(newRoutedMainRecord({
       signalId: signal.id,
+      signalKind,
       body: signal.body,
       until: signal.until,
       senderOwnerRelation: signal.sender_owner_relation ?? "unknown",
@@ -805,7 +824,7 @@ export async function runListenerRuntime(
       persisted === null || !sameEffectSignal(persisted, signal) ||
       persisted.state !== "routed_main"
     ) {
-      throw new Error("main-routed listener effect could not be verified");
+      throw new Error("main-routed message effect could not be verified");
     }
     return persisted;
   };
@@ -1064,7 +1083,23 @@ export async function runListenerRuntime(
       if (recovery?.phase === "ack_pending") {
         const horizon = Date.parse(recovery.leasedUntil!) +
           LISTENER_DELIVERY_SAFETY_MARGIN_MS;
-        if (page.capabilities.deliveryAck && now() < horizon) {
+        let preparedNeedsMainRoute = false;
+        if (recovery.signalId !== null) {
+          try {
+            preparedNeedsMainRoute = observedNoteNeedsMainRoute(
+              await options.store.read(recovery.signalId),
+              routeMode,
+              deferOverChars,
+            );
+          } catch (error) {
+            stop = { reason: "fatal", error: asError(error) };
+            break;
+          }
+        }
+        if (
+          page.capabilities.deliveryAck && now() < horizon &&
+          !preparedNeedsMainRoute
+        ) {
           const ackStop = await sendPreparedAck(recovery);
           if (ackStop !== null) {
             stop = ackStop;
@@ -1109,6 +1144,7 @@ export async function runListenerRuntime(
           if (
             terminal !== null &&
             sameRecoveredEffect(recovery, terminal) &&
+            !observedNoteNeedsMainRoute(terminal, routeMode, deferOverChars) &&
             isAckableTerminalEffect(terminal, now)
           ) {
             try {
@@ -1319,7 +1355,33 @@ export async function runListenerRuntime(
           if (existing !== null && !sameEffectSignal(existing, signal)) {
             throw new Error("stored listener effect does not match the authoritative delivery");
           }
-          if (signal.kind === "note") {
+          if (signal.kind !== "ask" && signal.kind !== "note") {
+            throw new Error("claimed delivery has an unsupported signal kind");
+          }
+          const decision = decideListenerRoute(
+            routeMode,
+            deferOverChars,
+            signal.body.length,
+          );
+          options.onEvent?.({
+            type: "routing_decision",
+            signalId: signal.id,
+            routeMode,
+            decision,
+            threshold: deferOverChars,
+            bodyLength: signal.body.length,
+            ts: eventTime(now),
+          });
+          if (decision === "main") {
+            terminal = await routeSignalToMain(signal);
+            options.onEvent?.({
+              type: "effect",
+              signalId: signal.id,
+              status: "routed_main",
+              failureCode: null,
+              ts: eventTime(now),
+            });
+          } else if (signal.kind === "note") {
             if (existing === null) {
               await options.store.write(newObservedNoteRecord({
                 signalId: signal.id,
@@ -1344,85 +1406,58 @@ export async function runListenerRuntime(
               failureCode: null,
               ts: eventTime(now),
             });
-          } else if (signal.kind === "ask") {
-            const decision = decideListenerRoute(
-              routeMode,
-              deferOverChars,
-              signal.body.length,
-            );
-            options.onEvent?.({
-              type: "routing_decision",
-              signalId: signal.id,
-              routeMode,
-              decision,
-              threshold: deferOverChars,
-              bodyLength: signal.body.length,
-              ts: eventTime(now),
-            });
-            if (decision === "main") {
-              terminal = await routeAskToMain(signal);
+          } else {
+            let processAttempt = 0;
+            while (terminal === null) {
+              const before = await options.store.read(signal.id);
+              if (before !== null && !sameEffectSignal(before, signal)) {
+                throw new Error("stored listener effect does not match the authoritative delivery");
+              }
+              const requiredBudget = effectPhaseBudget(before);
+              if (leasedUntilMs <= now() + requiredBudget) {
+                await sleep(
+                  Math.max(
+                    0,
+                    leasedUntilMs + LISTENER_DELIVERY_SAFETY_MARGIN_MS - now(),
+                  ),
+                  abort,
+                );
+                if (abort?.aborted) {
+                  stop = { reason: "cancelled" };
+                  break;
+                }
+                if (now() >= leasedUntilMs + LISTENER_DELIVERY_SAFETY_MARGIN_MS) {
+                  await journal.clearActive(eventTime(now));
+                  after = null;
+                }
+                break;
+              }
+              const processed = await engine.process(signal);
+              const effect = "record" in processed ? processed.record : null;
               options.onEvent?.({
                 type: "effect",
                 signalId: signal.id,
-                status: "routed_main",
-                failureCode: null,
+                status: processed.status,
+                failureCode: effect?.failureCode ?? null,
                 ts: eventTime(now),
               });
-            } else {
-              let processAttempt = 0;
-              while (terminal === null) {
-                const before = await options.store.read(signal.id);
-                if (before !== null && !sameEffectSignal(before, signal)) {
-                  throw new Error("stored listener effect does not match the authoritative delivery");
-                }
-                const requiredBudget = effectPhaseBudget(before);
-                if (leasedUntilMs <= now() + requiredBudget) {
-                  await sleep(
-                    Math.max(
-                      0,
-                      leasedUntilMs + LISTENER_DELIVERY_SAFETY_MARGIN_MS - now(),
-                    ),
-                    abort,
-                  );
-                  if (abort?.aborted) {
-                    stop = { reason: "cancelled" };
-                    break;
-                  }
-                  if (now() >= leasedUntilMs + LISTENER_DELIVERY_SAFETY_MARGIN_MS) {
-                    await journal.clearActive(eventTime(now));
-                    after = null;
-                  }
+              if (processed.status === "ignored") {
+                throw new Error("claimed delivery was ignored by the listener engine");
+              }
+              if (processed.status === "retry_pending") {
+                processAttempt += 1;
+                await sleep(
+                  deliveryRetryDelay(processAttempt, null, random),
+                  abort,
+                );
+                if (abort?.aborted) {
+                  stop = { reason: "cancelled" };
                   break;
                 }
-                const processed = await engine.process(signal);
-                const effect = "record" in processed ? processed.record : null;
-                options.onEvent?.({
-                  type: "effect",
-                  signalId: signal.id,
-                  status: processed.status,
-                  failureCode: effect?.failureCode ?? null,
-                  ts: eventTime(now),
-                });
-                if (processed.status === "ignored") {
-                  throw new Error("claimed delivery was ignored by the listener engine");
-                }
-                if (processed.status === "retry_pending") {
-                  processAttempt += 1;
-                  await sleep(
-                    deliveryRetryDelay(processAttempt, null, random),
-                    abort,
-                  );
-                  if (abort?.aborted) {
-                    stop = { reason: "cancelled" };
-                    break;
-                  }
-                  continue;
-                }
-                terminal = processed.record;
+                continue;
               }
+              terminal = processed.record;
             }
-          } else {
-            throw new Error("claimed delivery has an unsupported signal kind");
           }
         } catch (error) {
           if (abort?.aborted) {
@@ -1475,24 +1510,7 @@ export async function runListenerRuntime(
           stop = { reason: "cancelled" };
           break;
         }
-        if (signal.kind === "note") {
-          try {
-            await readOrReplaceUnreadableEffect(options.store, signal, now);
-            const record = await observeFallbackNote(options.store, signal, now);
-            options.onEvent?.({
-              type: "effect",
-              signalId: signal.id,
-              status: "observed",
-              failureCode: record.failureCode,
-              ts: eventTime(now),
-            });
-          } catch (error) {
-            stop = { reason: "fatal", error: asError(error) };
-            break;
-          }
-          continue;
-        }
-        if (signal.kind !== "ask") continue;
+        if (signal.kind !== "ask" && signal.kind !== "note") continue;
         let result: ListenerProcessResult;
         try {
           await readOrReplaceUnreadableEffect(options.store, signal, now);
@@ -1511,12 +1529,23 @@ export async function runListenerRuntime(
             ts: eventTime(now),
           });
           if (decision === "main") {
-            const record = await routeAskToMain(signal);
+            await routeSignalToMain(signal);
             options.onEvent?.({
               type: "effect",
               signalId: signal.id,
               status: "routed_main",
               failureCode: null,
+              ts: eventTime(now),
+            });
+            continue;
+          }
+          if (signal.kind === "note") {
+            const record = await observeFallbackNote(options.store, signal, now);
+            options.onEvent?.({
+              type: "effect",
+              signalId: signal.id,
+              status: "observed",
+              failureCode: record.failureCode,
               ts: eventTime(now),
             });
             continue;

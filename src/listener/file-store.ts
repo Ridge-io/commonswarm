@@ -223,13 +223,13 @@ function parseV2Record(row: Record<string, unknown>): ListenerEffectRecord {
     throw new Error("stored listener effect is malformed");
   }
   if (signalKind === "note") {
-    // A direct note never enters the model: a terminal observed effect with
-    // zero prompt/post attempts, no reply body or reply signal, and no reply
-    // command id. Anything else is an invalid mixed state and fails closed.
+    // A direct note never enters the reply path. It is either observed by the
+    // worker or durably routed to the interactive session, with zero
+    // prompt/post attempts and no reply effect.
     if (
       typeof row.commandId !== "string" ||
       row.commandId !== "" ||
-      row.state !== "observed" ||
+      (row.state !== "observed" && row.state !== "routed_main") ||
       row.promptAttempts !== 0 ||
       row.postAttempts !== 0 ||
       row.replyBody !== null ||
@@ -333,9 +333,10 @@ export function newObservedNoteRecord(input: {
   };
 }
 
-/** The terminal ask effect proving it was durably queued for the main session. */
-export function newRoutedMainAskRecord(input: {
+/** The terminal effect proving a direct message was durably queued for the main session. */
+export function newRoutedMainRecord(input: {
   signalId: string;
+  signalKind: ListenerSignalKind;
   body: string;
   until: string;
   senderOwnerRelation: SenderOwnerRelation;
@@ -344,7 +345,7 @@ export function newRoutedMainAskRecord(input: {
   const base = newObservedNoteRecord(input);
   return {
     ...base,
-    signalKind: "ask",
+    signalKind: input.signalKind,
     state: "routed_main",
   };
 }

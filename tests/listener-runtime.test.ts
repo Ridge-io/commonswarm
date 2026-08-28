@@ -1659,7 +1659,7 @@ test("MAJOR-3: failureCode error ACKs local_effect_failed and the runtime surviv
   assert.equal(journal.record.active, null);
 });
 
-test("a durable note is persisted and reread before prepareAck and network ACK", async () => {
+test("route=worker observes a durable note before prepareAck and network ACK", async () => {
   const audit: string[] = [];
   const journal = new MemoryDeliveryJournal(null, audit);
   const store = new RecordingStore(audit);
@@ -1696,6 +1696,7 @@ test("a durable note is persisted and reread before prepareAck and network ACK",
     credentialSession: { async bearer() { return "token"; } },
     store,
     model: new FakeModel(),
+    routeMode: "worker",
     signal: controller.signal,
     now: () => Date.parse("2026-07-30T00:00:00.000Z"),
     sleep: async () => undefined,
@@ -1717,7 +1718,7 @@ test("a durable note is persisted and reread before prepareAck and network ACK",
   assert.ok(prepareAt < ackAt);
 });
 
-test("a durable ask reaches done, then persists prepareAck before replied ACK", async () => {
+test("route=worker replies to a durable ask after persisting prepareAck", async () => {
   const audit: string[] = [];
   const journal = new MemoryDeliveryJournal(null, audit);
   const store = new RecordingStore(audit);
@@ -1752,6 +1753,7 @@ test("a durable ask reaches done, then persists prepareAck before replied ACK", 
     credentialSession: { async bearer() { return "token"; } },
     store,
     model,
+    routeMode: "worker",
     signal: controller.signal,
     now: () => Date.parse("2026-07-30T00:00:00.000Z"),
     sleep: async () => undefined,
@@ -1841,6 +1843,181 @@ test("route=main queues and acknowledges a durable ask without prompting the wor
     event.droppedOldest && event.droppedCount === 4
   ), "a bounded-queue drop must reach the supervisor as a warning event");
   assert.equal((await store.read(claimedAsk.id))?.state, "routed_main");
+  assert.equal(journal.record.active, null);
+});
+
+test("route=main queues a durable note before the hook observes it", async () => {
+  const journal = new MemoryDeliveryJournal();
+  const store = new MemoryStore();
+  const controller = new AbortController();
+  const model = new FakeModel();
+  const claimedNote = note(
+    "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaac1",
+    "2026-07-30T00:00:01.000Z",
+  );
+  const queued: Array<{
+    signalId: string;
+    kind?: "ask" | "note";
+    observationPending?: true;
+  }> = [];
+  let ackOutcome: string | null = null;
+  const stop = await runListenerRuntime({
+    target: cloudTarget("https://cloud.example.test", "anon"),
+    workspaceId: WORKSPACE_ID,
+    principalId: PRINCIPAL_ID,
+    listenerInstanceId: journal.record.listenerInstanceId,
+    deliveryJournal: journal,
+    deliveryClient: {
+      async claimAgentInbox() {
+        return claimResult([{
+          signal: claimedNote,
+          leaseId: "55555555-5555-4555-8555-5555555555c1",
+          leasedUntil: "2026-07-30T00:15:00.000Z",
+          senderOwnerRelation: "same_owner",
+        }], 1);
+      },
+      async ackAgentDelivery(request) {
+        ackOutcome = request.outcome;
+        controller.abort();
+        return { httpStatus: 200, signalId: request.signalId, outcome: request.outcome };
+      },
+    },
+    credentialSession: { async bearer() { return "token"; } },
+    store,
+    model,
+    routeMode: "main",
+    deferOverChars: null,
+    pendingMainQueue: {
+      async enqueue(entry) {
+        queued.push({
+          signalId: entry.signalId,
+          ...(entry.kind === undefined ? {} : { kind: entry.kind }),
+          ...(entry.observationPending === true ? { observationPending: true } : {}),
+        });
+        return { count: 1, added: true, droppedOldest: false, droppedCount: 0 };
+      },
+    },
+    signal: controller.signal,
+    now: () => Date.parse("2026-07-30T00:00:00.000Z"),
+    sleep: async () => undefined,
+    readPage: async () => durablePage(),
+    poster: { async post() { throw new Error("main-routed note must not post"); } },
+  });
+  assert.equal(stop.reason, "cancelled");
+  assert.deepEqual(queued, [{
+    signalId: claimedNote.id,
+    kind: "note",
+    observationPending: true,
+  }]);
+  assert.equal(
+    ackOutcome,
+    "queued",
+    "receipt cannot say observed before the interactive hook prints the note",
+  );
+  assert.equal(model.starts, 0);
+  assert.equal(model.prompts.length, 0);
+  assert.equal((await store.read(claimedNote.id))?.state, "routed_main");
+  assert.equal(journal.record.active, null);
+});
+
+test("route=split queues an over-threshold note instead of claiming observation", async () => {
+  const journal = new MemoryDeliveryJournal();
+  const controller = new AbortController();
+  const claimedNote = note(
+    "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaac2",
+    "2026-07-30T00:00:01.000Z",
+  );
+  let queuedKind: "ask" | "note" | undefined;
+  let ackOutcome: string | null = null;
+  const stop = await runListenerRuntime({
+    target: cloudTarget("https://cloud.example.test", "anon"),
+    workspaceId: WORKSPACE_ID,
+    principalId: PRINCIPAL_ID,
+    listenerInstanceId: journal.record.listenerInstanceId,
+    deliveryJournal: journal,
+    deliveryClient: {
+      async claimAgentInbox() {
+        return claimResult([{
+          signal: claimedNote,
+          leaseId: "55555555-5555-4555-8555-5555555555c2",
+          leasedUntil: "2026-07-30T00:15:00.000Z",
+          senderOwnerRelation: "same_owner",
+        }], 1);
+      },
+      async ackAgentDelivery(request) {
+        ackOutcome = request.outcome;
+        controller.abort();
+        return { httpStatus: 200, signalId: request.signalId, outcome: request.outcome };
+      },
+    },
+    credentialSession: { async bearer() { return "token"; } },
+    store: new MemoryStore(),
+    model: new FakeModel(),
+    routeMode: "split",
+    deferOverChars: 1,
+    pendingMainQueue: {
+      async enqueue(entry) {
+        queuedKind = entry.kind;
+        return { count: 1, added: true, droppedOldest: false, droppedCount: 0 };
+      },
+    },
+    signal: controller.signal,
+    now: () => Date.parse("2026-07-30T00:00:00.000Z"),
+    sleep: async () => undefined,
+    readPage: async () => durablePage(),
+  });
+  assert.equal(stop.reason, "cancelled");
+  assert.equal(queuedKind, "note");
+  assert.equal(ackOutcome, "queued");
+  assert.equal(journal.record.active, null);
+});
+
+test("route=split keeps an under-threshold note on the observed worker path", async () => {
+  const journal = new MemoryDeliveryJournal();
+  const controller = new AbortController();
+  const claimedNote = note(
+    "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaac4",
+    "2026-07-30T00:00:01.000Z",
+  );
+  let ackOutcome: string | null = null;
+  const stop = await runListenerRuntime({
+    target: cloudTarget("https://cloud.example.test", "anon"),
+    workspaceId: WORKSPACE_ID,
+    principalId: PRINCIPAL_ID,
+    listenerInstanceId: journal.record.listenerInstanceId,
+    deliveryJournal: journal,
+    deliveryClient: {
+      async claimAgentInbox() {
+        return claimResult([{
+          signal: claimedNote,
+          leaseId: "55555555-5555-4555-8555-5555555555c4",
+          leasedUntil: "2026-07-30T00:15:00.000Z",
+          senderOwnerRelation: "same_owner",
+        }], 1);
+      },
+      async ackAgentDelivery(request) {
+        ackOutcome = request.outcome;
+        controller.abort();
+        return { httpStatus: 200, signalId: request.signalId, outcome: request.outcome };
+      },
+    },
+    credentialSession: { async bearer() { return "token"; } },
+    store: new MemoryStore(),
+    model: new FakeModel(),
+    routeMode: "split",
+    deferOverChars: 100,
+    pendingMainQueue: {
+      async enqueue() {
+        throw new Error("an under-threshold note must stay on the worker path");
+      },
+    },
+    signal: controller.signal,
+    now: () => Date.parse("2026-07-30T00:00:00.000Z"),
+    sleep: async () => undefined,
+    readPage: async () => durablePage(),
+  });
+  assert.equal(stop.reason, "cancelled");
+  assert.equal(ackOutcome, "observed");
   assert.equal(journal.record.active, null);
 });
 
@@ -2016,6 +2193,65 @@ test("ack_pending recovery retries one deterministic ACK body and clears only af
   assert.deepEqual(requests[0], requests[1]);
   assert.equal(requests[0]?.commandId, active.ack?.commandId);
   assert.equal(journal.record.active, null);
+});
+
+test("route=main does not replay a pre-fix observed-note ACK after restart", async () => {
+  const directNote = note(
+    "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaac3",
+    "2026-07-30T00:00:01.000Z",
+  );
+  const active = leasedActive({
+    signalId: directNote.id,
+    phase: "ack_pending",
+    outcome: "observed",
+    leasedUntil: "2026-07-30T00:01:00.000Z",
+  });
+  const journal = new MemoryDeliveryJournal(active);
+  const store = new MemoryStore();
+  await store.write(newObservedNoteRecord({
+    signalId: directNote.id,
+    body: directNote.body,
+    until: directNote.until,
+    senderOwnerRelation: "same_owner",
+    updatedAt: "2026-07-30T00:00:02.000Z",
+  }));
+  const controller = new AbortController();
+  let ackCalls = 0;
+  const originalClear = journal.clearActive.bind(journal);
+  journal.clearActive = async (now) => {
+    await originalClear(now);
+    controller.abort();
+  };
+  const stop = await runListenerRuntime({
+    target: cloudTarget("https://cloud.example.test", "anon"),
+    workspaceId: WORKSPACE_ID,
+    principalId: PRINCIPAL_ID,
+    listenerInstanceId: journal.record.listenerInstanceId,
+    deliveryJournal: journal,
+    deliveryClient: {
+      async claimAgentInbox() { throw new Error("claim waits for the next loop"); },
+      async ackAgentDelivery() {
+        ackCalls += 1;
+        throw new Error("a pre-fix observed ACK must not be sent on the main route");
+      },
+    },
+    credentialSession: { async bearer() { return "token"; } },
+    store,
+    model: new FakeModel(),
+    routeMode: "main",
+    pendingMainQueue: {
+      async enqueue() {
+        throw new Error("recovery must wait for authoritative redelivery before queueing");
+      },
+    },
+    signal: controller.signal,
+    now: () => Date.parse("2026-07-30T00:01:30.000Z"),
+    sleep: async () => undefined,
+    readPage: async () => durablePage([], 1),
+  });
+  assert.equal(stop.reason, "cancelled");
+  assert.equal(ackCalls, 0);
+  assert.equal(journal.record.active, null, "redelivery remains available after lease cleanup");
 });
 
 test("MAJOR-4: delivery_unavailable at exact lease expiry clears stale state", async () => {

@@ -161,7 +161,7 @@ function parseFile(raw: string): PendingMainFile {
   return { version: 1, entries, droppedCount: row.droppedCount ?? 0 };
 }
 
-/** One bounded, locked queue beside status.json for asks reserved for the main session. */
+/** One bounded, locked queue beside status.json for messages reserved for the main session. */
 export class FilePendingMainQueue {
   readonly path: string;
   private readonly directory: string;
@@ -247,7 +247,7 @@ export class FilePendingMainQueue {
   }
 }
 
-/** Project one ask into the local queue without carrying lease capabilities. */
+/** Project one directed message into the local queue without carrying lease capabilities. */
 export function pendingMainEntry(
   signal: SignalRecord,
   principalId: string,
@@ -255,8 +255,8 @@ export function pendingMainEntry(
   now: number,
   options: { observationPending?: boolean } = {},
 ): PendingMainEntry {
-  if (signal.kind !== "ask") {
-    throw new Error("only directed asks can enter the pending-for-main queue");
+  if (signal.kind !== "ask" && signal.kind !== "note") {
+    throw new Error("only directed asks and notes can enter the pending-for-main queue");
   }
   return parseEntry({
     signalId: signal.id,
@@ -264,6 +264,7 @@ export function pendingMainEntry(
     principalId,
     fromId: signal.from,
     fromKind: signal.from_kind,
+    kind: signal.kind,
     senderName: provenance.senderName,
     body: signal.body,
     createdAt: signal.created_at,

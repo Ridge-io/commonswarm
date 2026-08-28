@@ -304,6 +304,18 @@ test("v2 observed-note records round-trip with zero prompt/post effects", async 
   assert.deepEqual(await store.read(SIGNAL_ID), note);
 });
 
+test("v2 main-routed notes keep the same zero-effect shape", () => {
+  const routed = noteRecord({ state: "routed_main" });
+  assert.equal(routed.signalKind, "note");
+  assert.equal(routed.state, "routed_main");
+  assert.equal(routed.commandId, "");
+  assert.equal(routed.promptAttempts, 0);
+  assert.equal(routed.postAttempts, 0);
+  assert.equal(routed.replyBody, null);
+  assert.equal(routed.replySignalId, null);
+  assert.deepEqual(parse(routed), routed);
+});
+
 test("listener effects preserve signal bodies beyond an older server maximum", async () => {
   const body = "b".repeat(100_000);
   const ask = v2AskRow({ askBody: body });

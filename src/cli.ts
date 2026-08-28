@@ -517,11 +517,11 @@ TTL); a turn that lands just before a rotation can be clamped to the ~5m
 renewal lead, and if it times out there, durable delivery retries it on the
 fresh credential.
 
-listen start --route worker|main|split chooses where directed asks go. worker
-is the unchanged default. main queues every ask for the interactive session.
-split queues asks whose body is longer than --defer-over <chars>; the bound is
-1..10000 and an equal-length ask stays on the worker path. Run cswarm hook check
-to surface queued asks. hook check has its own 3s ceiling, exits 0 on every
+listen start --route worker|main|split chooses where directed messages go. worker
+is the unchanged default. main queues every ask or note for the interactive session.
+split queues messages whose body is longer than --defer-over <chars>; the bound is
+1..10000 and an equal-length message stays on the worker path. Run cswarm hook check
+to surface queued messages. hook check has its own 3s ceiling, exits 0 on every
 outcome, and skips network checks made within --cooldown seconds (default 30).
 hook install claude prints the UserPromptSubmit JSON by default and changes the
 project's .claude/settings.json only with --write; uninstall also requires --write.

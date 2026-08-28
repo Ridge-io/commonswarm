@@ -276,7 +276,7 @@ test("hook marks a queued delivery observed only after stdout and retries silent
     await writeStatus(paths, PRINCIPAL_ID, { pendingForMainCount: 1 });
     const queue = new FilePendingMainQueue(paths.instanceDirectory);
     await queue.enqueue({
-      ...pending(SIGNAL_ID, "surface before observation", "ask"),
+      ...pending(SIGNAL_ID, "surface before observation", "note"),
       observationPending: true,
     });
     let observationSucceeds = false;

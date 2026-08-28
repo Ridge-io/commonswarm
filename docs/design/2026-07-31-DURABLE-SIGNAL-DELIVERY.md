@@ -188,7 +188,8 @@ Creating the trigger before backfill closes the deploy race: inserts committed a
 DDL cannot fall between backfill and trigger activation. Broadcast rows are the negative control.
 
 Direct `ask` and `note` signals enqueue. The automatic reply engine still prompts only for asks;
-notes become terminal `observed` effects and are acknowledged without a model turn. Directed
+notes on the worker route become terminal `observed` effects without a reply turn, while notes on
+the main route become `routed_main` and stay `queued` until the hook surfaces them. Directed
 `working-on` is currently ineligible at the command surface, but the trigger remains typed-recipient
 based so a future intentional addition cannot silently skip delivery.
 
@@ -365,7 +366,7 @@ Server tests must exercise the read and claim matrices side by side so drift is 
    time remaining. Stop before lease expiry rather than prompting under an invalid lease.
 6. Ack only lease-ending outcomes:
    - reply accepted/replayed -> `replied`;
-   - direct note/no model -> `observed`;
+   - direct note observed on the worker route -> `observed`;
    - routed to the interactive session -> `queued`; this releases the lease after the durable
      local queue write, so the delivery is not redelivered while it waits for the next prompt;
    - signal expired -> `expired`;
@@ -380,9 +381,10 @@ Server tests must exercise the read and claim matrices side by side so drift is 
    reply effect remains single because the deterministic command ID rejects a different body.
 
 Local effect storage becomes version 2 by adding `signalKind`. Version-1 records upcast to
-`signalKind: "ask"` without rewriting their durable body/command identity. A direct note writes a
-terminal `observed` v2 record before ack and never enters the model. This keeps existing v0.1.4 ask
-effects readable while making note acknowledgements causally durable.
+`signalKind: "ask"` without rewriting their durable body/command identity. A direct note writes
+either a terminal worker-`observed` record or a main-`routed_main` record before ack and never enters
+the reply engine. This keeps existing v0.1.4 ask effects readable while making note acknowledgements
+causally durable.
 
 If claim capability disappears during controlled rollback, the listener finishes and acknowledges
 any leases it already holds but requests no new ones. Before entering cursor fallback it resets the
@@ -472,7 +474,7 @@ Client/runtime:
 - lost claim/ack/post response retries the same deterministic command ID/body;
 - terminal effect is persisted before ack (mutation control reverses order and must fail);
 - `retry_pending` stays within lease bound and never acks early;
-- note is observed/acked with zero model prompts;
+- a worker-routed note is observed with zero reply prompts, while a main-routed note stays queued;
 - two listeners prompt at most one model while one lease is live;
 - ~~hostile cross-owner claim reaches a fresh zero-tool host session;~~ **[DEAD — D-044, 2026-08-04: no local sandbox; cross-owner reaches the same worker and cwd.]** This acceptance criterion is unmeetable by current code and is not outstanding work.
 - credential absent from argv, env, status, logs, and raw host frames;
