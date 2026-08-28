@@ -1053,16 +1053,26 @@ test("read parsing accepts newer server string bounds but still rejects structur
   assert.equal(parsed.body, longBody);
   assert.equal(parsed.about, longAbout);
 
+  /* Each row pins WHY it is refused, not merely THAT it is. The original passed
+   * `undefined` as the predicate: that is not a valid AssertPredicate, so it failed
+   * `check:tests` — the only script that typechecks this directory — and it also
+   * asserted nothing about the reason, so a row refused for the wrong cause passed
+   * silently. Tightening it immediately surfaced that a bad id reports a DISTINCT,
+   * more specific error than the generic one, which the loose form had hidden. */
   const malformedRows = [
-    { name: "missing id", value: { ...base, id: undefined } },
-    { name: "non-string body", value: { ...base, body: 42 } },
-    { name: "bad UUID", value: { ...base, id: "not-a-uuid" } },
-    { name: "bad created_at", value: { ...base, created_at: "not-a-time" } },
+    { name: "missing id", value: { ...base, id: undefined }, expect: /malformed id/ },
+    { name: "non-string body", value: { ...base, body: 42 }, expect: /malformed signal data/ },
+    { name: "bad UUID", value: { ...base, id: "not-a-uuid" }, expect: /malformed id/ },
+    {
+      name: "bad created_at",
+      value: { ...base, created_at: "not-a-time" },
+      expect: /malformed created_at/,
+    },
   ];
   for (const malformed of malformedRows) {
     assert.throws(
       () => parseSignalRecord(malformed.value),
-      undefined,
+      malformed.expect,
       malformed.name,
     );
   }
