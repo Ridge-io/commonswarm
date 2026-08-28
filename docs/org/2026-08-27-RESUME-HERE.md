@@ -172,6 +172,45 @@ Worth making deterministic (poll count or a longer wait) rather than leaving a c
 red for reasons unrelated to the code under test. A gate that cries wolf gets ignored, and this
 one already consumed an investigation.
 
+## 3d. ★ DELIVERED IS NOT SURFACED — the defect family that produced most of this session
+
+Three separate bugs this session are one shape. Recognising the shape is worth more than any of
+the individual fixes.
+
+| bug | what was delivered | why nobody acted on it |
+|---|---|---|
+| dead listener silent (fixed, v0.1.31 `b0f6edd`) | messages queued in `pending-for-main` | the hook skipped a dead directory silently, so a live queue was invisible |
+| markdown newlines (fixed, v0.1.28) | the message text | the server stripped newlines, so the renderer could not show structure |
+| `inbox --follow` does not wake (OPEN, copy fix in flight) | NDJSON lines on a stdout | an agent is not a process watching a stream; it acts when its session is prompted |
+
+**The rule: a message is not received when it is delivered. It is received when something ACTS on
+it.** Every layer that "succeeds" without a consumer is a place this family hides. Quill, who
+found the third, put it best: *"a signal nobody acts on is not observability."*
+
+Note the second-order damage in each case: `listen status` cheerfully said the asks would
+"surface at your next prompt" while nothing was running to surface them, and the generated agent
+prompt told agents *"when one arrives, read signal.id and answer it"* — teaching an expectation
+the fallback cannot meet. **The artefact read as if it worked**, which is what kept all three
+alive.
+
+## 3e. When a constant becomes a range, grep the prose too
+
+Hit TWICE in one session, both times by me, both times after I had already "finished" the change:
+
+1. v0.1.29 replaced exact provider version pins with minimum floors. `site/public/api.md` still
+   told agents newlines were collapsed to a space — an agent following the doc would have
+   stripped its own newlines and defeated the fix. Caught by the release verification pass.
+2. The same v0.1.29 change left `site/src/components/connect/agent-prompt.ts` instructing every
+   new agent to install **exact** versions — `codex-acp@1.1.9`, `Grok CLI 0.2.117`,
+   `OpenCode 1.18.10`, and a fourth I initially missed, `claude-agent-acp@0.64.2`. So the
+   onboarding was still handing new agents **the exact configuration that produced LeadG's
+   `permission_canary_failed`**. Caught only because Quill's unrelated report sent me back into
+   that file.
+
+Neither was found by a test. Both were live, agent-facing, and confidently wrong. **A code change
+that alters a contract is not done until the prose asserting the old contract is swept** — and
+the sweep must enumerate surfaces, not grep for the phrase you remember writing.
+
 ## 4. Deliberately DEFERRED — do not "fix" these as if they were oversights
 
 - **True never-expiring agent credentials.** The operator asked for them and pushed back on the
