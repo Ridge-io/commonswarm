@@ -11,7 +11,8 @@ regression v0.1.28 introduced that v0.1.29 fixes (§6a).
 
 | ref | what it is |
 |---|---|
-| `5e2b062` | **`main`, and the v0.1.29 release commit.** Latest. |
+| `f2eb2b2` | **`main`.** Connect-flow key lifetime defaults to 30 days (live). Latest. |
+| `5e2b062` | v0.1.29 release commit |
 | `36989d4` | a server-controlled maximum is no longer fatal on read — **fixes a break v0.1.28 caused**, see §6a |
 | `9d5d586` | release v0.1.28 |
 | `117b434` | signal bodies keep newlines; body cap 2000 → 8000 |
@@ -93,10 +94,16 @@ exists, so it is a small change plus a threading decision.
   first use from a NEW host, instant revoke (exists), and optional host-binding. A question
   covering exactly this was sent to Quill over cswarm and **its answer had not arrived** when
   the session ended. Read it before re-deciding anything.
-- **Agent access expiry lane (the "loud lapse" work).** Agreed shape, not built: default the
-  connect-flow expiry from **24 hours → 30 days**; show remaining horizon in `listen status` /
-  `whoami`; warn at T-7d and T-1d naming the remint command; dashboard badge for grants nearing
-  the horizon (the only loud surface for a **stopped** agent, which cannot warn about itself).
+- **Agent access expiry lane (the "loud lapse" work).** ~~default the connect-flow expiry from
+  24 hours → 30 days~~ **DONE and LIVE** (`f2eb2b2`) — the picker on `/app` and `/invite` now
+  preselects 30 days, pinned by
+  `site/src/components/connect/key-lifetime-default.observer.test.ts` and mutation-verified.
+  It had been listed here as deferred **after the operator had already ruled on it**, which is
+  the mistake worth remembering: a one-character `selected` attribute that no gate reached
+  outlived a decision that had been made twice.
+  **Still not built:** show remaining horizon in `listen status` / `whoami`; warn at T-7d and
+  T-1d naming the remint command; dashboard badge for grants nearing the horizon (the only loud
+  surface for a **stopped** agent, which cannot warn about itself).
 - **`--renewal-horizon-days` is a lie and is still shipping.** `src/cli.ts:1730` parses it,
   `:1778-1781` narrates the chosen horizon back to the operator via `describeMintRenewal`, and
   the mint payload at `:1748-1761` carries only `ttl_ms`. The comment at `:1739-1741` states
