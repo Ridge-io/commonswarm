@@ -803,6 +803,8 @@ import "../../styles/tokens.css";
     inviteWorkspaceMember,
     inviteEmailValidationMessage,
     pendingMemberInvites,
+    browserDeliveryIndicator,
+    browserDeliveryReceipts,
     browserSignalAddress,
     postBrowserSignal,
     revokeAgentToken,
@@ -818,6 +820,8 @@ import "../../styles/tokens.css";
     type Signal,
     type AgentAccessStatus,
     type PendingMemberInvite,
+    type BrowserDeliveryIndicator,
+    type BrowserDeliveryReceiptResult,
     type BrowserSignalRecipient,
     type WorkspaceFile,
   } from "../../lib/commonswarm";
@@ -882,6 +886,11 @@ import "../../styles/tokens.css";
   interface SignalCursor {
     createdAt: string;
     id: string;
+  }
+
+  interface DeliveryReceiptCacheEntry {
+    result: BrowserDeliveryReceiptResult | null;
+    checkedAt: number;
   }
 
   type EntityRef =
@@ -970,6 +979,8 @@ import "../../styles/tokens.css";
     let composerIntent: { commandId: string; body: string; audienceKey: string } | null = null;
     const visualMentions = new Map<string, EntityRef[]>();
     const expandedSignalIds = new Set<string>();
+    const deliveryReceiptCache = new Map<string, DeliveryReceiptCacheEntry>();
+    let deliveryReceiptRefreshOwner = "";
 
     /* 25, not 50. The operator asked for 20-30 on first paint with older pages fetched on
      * scroll-up. The FETCH size stays one larger so `hasMore` is known without a second query. */
@@ -2436,6 +2447,48 @@ import "../../styles/tokens.css";
       if (directTarget) directTarget.textContent = String(directCount);
     };
 
+    const appendDeliveryReceipt = (
+      body: HTMLElement,
+      signal: Signal,
+      viewerId: string,
+    ): void => {
+      if (!viewerId || signal.fromKind !== "user" || signal.from !== viewerId) return;
+      /* The ledger tracks agent delivery, not person-to-person viewing. Its addressed=false
+       * result is authoritative for broadcasts, but a direct person target is visible on the
+       * signal itself and must not be relabelled as a broadcast. */
+      const indicator: BrowserDeliveryIndicator = signal.to !== null && signal.toAgent === null
+        ? {
+            state: "unavailable",
+            outcome: null,
+            glyph: "?",
+            label: "Receipt unavailable",
+            detail: "This message addresses a person. Agent delivery receipts do not apply.",
+            terminal: true,
+          }
+        : browserDeliveryIndicator(deliveryReceiptCache.get(signal.id)?.result ?? null);
+      const details = document.createElement("details");
+      details.className = "dashboard__message-receipt";
+      details.dataset.receiptState = indicator.state;
+      if (indicator.outcome !== null) details.dataset.receiptOutcome = indicator.outcome;
+      const summary = document.createElement("summary");
+      summary.title = indicator.detail;
+      summary.setAttribute(
+        "aria-label",
+        `Delivery status: ${indicator.label}. ${indicator.detail}`,
+      );
+      const glyph = document.createElement("span");
+      glyph.className = "dashboard__message-receipt-glyph";
+      glyph.setAttribute("aria-hidden", "true");
+      glyph.textContent = indicator.glyph;
+      const label = document.createElement("span");
+      label.textContent = indicator.label;
+      summary.append(glyph, label);
+      const detail = document.createElement("p");
+      detail.textContent = indicator.detail;
+      details.append(summary, detail);
+      body.append(details);
+    };
+
     /* The transcript scrolls to its own end, so that end must include the whole composer.
      * Its textarea, mention chips, and picker can change the form's height after first paint;
      * ResizeObserver keeps the scroll clearance tied to the rendered box instead of a rest-state
@@ -2691,6 +2744,7 @@ import "../../styles/tokens.css";
           about.textContent = signal.about;
           body.append(about);
         }
+        appendDeliveryReceipt(body, signal, viewerId);
         row.append(avatar, body);
         list.append(row);
         window.requestAnimationFrame(() => {
@@ -2744,6 +2798,71 @@ import "../../styles/tokens.css";
       connect.setAttribute("workspace-id", workspace.id);
     };
 
+    const RECEIPT_ACTIVE_REFRESH_MS = 4_000;
+    const RECEIPT_UNAVAILABLE_REFRESH_MS = 30_000;
+    const RECEIPT_REQUESTS_PER_TICK = 8;
+
+    /* Receipt reads reuse the existing visible-feed refresh. There is no receipt timer.
+     * Missing rows load first; later ticks revisit the stalest active rows. This keeps a
+     * 25-message page from turning one two-second feed tick into a 25-request burst. */
+    const refreshDeliveryReceipts = async (
+      workspaceId: string,
+      version: number,
+    ): Promise<void> => {
+      const viewerId = session?.user.id ?? "";
+      if (sampleMode || !viewerId) return;
+      const owner = `${workspaceId}:${version}`;
+      if (deliveryReceiptRefreshOwner === owner) return;
+      const now = Date.now();
+      const candidates = signals
+        .filter(
+          (signal) =>
+            signal.fromKind === "user" &&
+            signal.from === viewerId &&
+            signal.to === null,
+        )
+        .filter((signal) => {
+          const cached = deliveryReceiptCache.get(signal.id);
+          if (!cached) return true;
+          const indicator = browserDeliveryIndicator(cached.result, now);
+          if (indicator.terminal) return false;
+          const cadence = indicator.state === "unavailable"
+            ? RECEIPT_UNAVAILABLE_REFRESH_MS
+            : RECEIPT_ACTIVE_REFRESH_MS;
+          return now - cached.checkedAt >= cadence;
+        })
+        .sort((left, right) =>
+          (deliveryReceiptCache.get(left.id)?.checkedAt ?? 0) -
+          (deliveryReceiptCache.get(right.id)?.checkedAt ?? 0)
+        )
+        .slice(0, RECEIPT_REQUESTS_PER_TICK);
+      if (candidates.length === 0) return;
+      deliveryReceiptRefreshOwner = owner;
+      try {
+        const reads = await Promise.all(candidates.map(async (signal) => {
+          try {
+            return {
+              signalId: signal.id,
+              result: await browserDeliveryReceipts(workspaceId, signal.id),
+            };
+          } catch {
+            return { signalId: signal.id, result: null };
+          }
+        }));
+        if (version !== requestVersion || workspaceId !== activeWorkspaceId) return;
+        let changed = false;
+        const checkedAt = Date.now();
+        for (const read of reads) {
+          const previous = deliveryReceiptCache.get(read.signalId)?.result;
+          if (JSON.stringify(previous) !== JSON.stringify(read.result)) changed = true;
+          deliveryReceiptCache.set(read.signalId, { result: read.result, checkedAt });
+        }
+        if (changed && !addAgentViewOpen()) renderFeed();
+      } finally {
+        if (deliveryReceiptRefreshOwner === owner) deliveryReceiptRefreshOwner = "";
+      }
+    };
+
     const loadSignals = async (
       workspaceId: string,
       reset: boolean,
@@ -2767,6 +2886,7 @@ import "../../styles/tokens.css";
       signalCursor = last ? { createdAt: last.createdAt, id: last.id } : cursor;
       signalHasMore = page.hasMore;
       renderFeed();
+      void refreshDeliveryReceipts(workspaceId, version);
     };
 
     const refreshLatestSignals = async (): Promise<void> => {
@@ -2810,6 +2930,7 @@ import "../../styles/tokens.css";
           signals = next;
           renderFeed();
         }
+        void refreshDeliveryReceipts(workspaceId, version);
         /* The dedicated access cadence owns discovery; a healthy feed tick also
            offers a catch-up, and the shared gate keeps the requests bounded. */
         void refreshPendingAccess(workspaceId, version);
@@ -2945,6 +3066,8 @@ import "../../styles/tokens.css";
       renderedPendingAccessKey = "";
       people = new Map();
       signals = [];
+      deliveryReceiptCache.clear();
+      deliveryReceiptRefreshOwner = "";
       files = [];
       fileLoadError = "";
       signalCursor = null;
@@ -3279,6 +3402,8 @@ import "../../styles/tokens.css";
       syncPendingPoll();
       people = new Map();
       signals = [];
+      deliveryReceiptCache.clear();
+      deliveryReceiptRefreshOwner = "";
       files = [];
       fileLoadError = "";
       signalFilter = "all";
@@ -4318,6 +4443,7 @@ import "../../styles/tokens.css";
         input.style.blockSize = "auto";
         closeMentionPicker();
         renderFeed();
+        void refreshDeliveryReceipts(activeWorkspaceId, requestVersion);
         if (status) status.textContent = "Posted.";
         input.focus({ preventScroll: true });
       } catch (caught) {
@@ -7396,6 +7522,81 @@ import "../../styles/tokens.css";
     font-size: var(--t-xs);
     white-space: normal;
     overflow-wrap: anywhere;
+  }
+
+  .dashboard__message-receipt {
+    justify-self: end;
+    color: var(--text-muted);
+    font-size: var(--t-xs);
+  }
+
+  .dashboard__message-receipt summary {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s-1);
+    min-block-size: 1.75rem;
+    padding: 0.16rem 0.46rem;
+    background: var(--elev-3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-pill);
+    font-weight: var(--weight-semibold);
+    cursor: pointer;
+    list-style: none;
+  }
+
+  .dashboard__message-receipt summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .dashboard__message-receipt summary::after {
+    content: "›";
+    margin-inline-start: 0.1rem;
+    transition: transform var(--dur-1) var(--ease-standard);
+  }
+
+  .dashboard__message-receipt[open] summary::after {
+    transform: rotate(90deg);
+  }
+
+  .dashboard__message-receipt summary:hover {
+    border-color: var(--border-strong);
+  }
+
+  .dashboard__message-receipt summary:focus-visible {
+    outline: none;
+    box-shadow: var(--focus-ring);
+  }
+
+  .dashboard__message-receipt p {
+    max-inline-size: 34rem;
+    margin: var(--s-2) 0 0;
+    padding: var(--s-2) var(--s-3);
+    color: var(--text-muted);
+    background: var(--elev-3);
+    border-radius: var(--radius);
+    line-height: var(--lh-sm);
+  }
+
+  .dashboard__message-receipt-glyph {
+    min-inline-size: 1.15rem;
+    color: currentColor;
+    font-family: var(--font-mono);
+    text-align: center;
+  }
+
+  .dashboard__message-receipt[data-receipt-state="delivered"],
+  .dashboard__message-receipt[data-receipt-state="working"],
+  .dashboard__message-receipt[data-receipt-state="done"] {
+    color: var(--success);
+  }
+
+  .dashboard__message-receipt[data-receipt-state="stuck"],
+  .dashboard__message-receipt[data-receipt-outcome="expired"] {
+    color: var(--warning);
+  }
+
+  .dashboard__message-receipt[data-receipt-outcome="failed_terminal"] {
+    color: var(--danger);
   }
 
   .dashboard__filter-empty {

@@ -1022,6 +1022,277 @@ export interface BrowserDeliveryReceiptResult {
   receipts: BrowserDeliveryReceipt[];
 }
 
+export type BrowserDeliveryIndicatorState =
+  | "unavailable"
+  | "no-recipient"
+  | "sent"
+  | "delivered"
+  | "working"
+  | "done"
+  | "stuck";
+
+export interface BrowserDeliveryIndicator {
+  state: BrowserDeliveryIndicatorState;
+  outcome: BrowserDeliveryReceipt["ackOutcome"] | "mixed";
+  glyph: string;
+  label: string;
+  detail: string;
+  terminal: boolean;
+}
+
+const deliveryAge = (timestamp: string, now: number): string => {
+  const elapsed = Math.max(0, now - new Date(timestamp).getTime());
+  if (!Number.isFinite(elapsed) || elapsed < 60_000) return "less than a minute ago";
+  const minutes = Math.floor(elapsed / 60_000);
+  if (minutes < 60) return `${minutes} minute${minutes === 1 ? "" : "s"} ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
+  const days = Math.floor(hours / 24);
+  return `${days} day${days === 1 ? "" : "s"} ago`;
+};
+
+const receiptIsWorking = (receipt: BrowserDeliveryReceipt, now: number): boolean =>
+  receipt.ackedAt === null &&
+  receipt.leasedUntil !== null &&
+  new Date(receipt.leasedUntil).getTime() > now;
+
+const receiptIsStuck = (receipt: BrowserDeliveryReceipt): boolean =>
+  receipt.ackedAt === null && (
+    receipt.attemptCount > 1 ||
+    receipt.leaseExpiryCount > 0 ||
+    receipt.lastErrorCode !== null
+  );
+
+/** Turns ledger facts into compact copy without claiming that a model read a message. */
+export function browserDeliveryIndicator(
+  result: BrowserDeliveryReceiptResult | null,
+  now = Date.now(),
+): BrowserDeliveryIndicator {
+  if (result === null || result.addressed === null) {
+    return {
+      state: "unavailable",
+      outcome: null,
+      glyph: "?",
+      label: "Receipt unavailable",
+      detail: "Delivery status is unavailable. CommonSwarm cannot confirm what happened.",
+      terminal: false,
+    };
+  }
+  /* `addressed` is the authority. An empty receipt array must never turn a broadcast into
+   * a pending or failed delivery. */
+  if (result.addressed === false) {
+    return {
+      state: "no-recipient",
+      outcome: null,
+      glyph: "○",
+      label: "No recipient",
+      detail: "Broadcast — nobody was addressed or woken.",
+      terminal: true,
+    };
+  }
+  if (result.receipts.length === 0) {
+    return {
+      state: "unavailable",
+      outcome: null,
+      glyph: "?",
+      label: "Receipt unavailable",
+      detail: "This message was addressed, but CommonSwarm returned no delivery record.",
+      terminal: false,
+    };
+  }
+
+  const total = result.receipts.length;
+  const terminalRows = result.receipts.filter(
+    (receipt) => receipt.ackedAt !== null && receipt.ackOutcome !== null,
+  );
+  const workingRows = result.receipts.filter((receipt) => receiptIsWorking(receipt, now));
+  const stuckRows = result.receipts.filter(
+    (receipt) => !receiptIsWorking(receipt, now) && receiptIsStuck(receipt),
+  );
+  const deliveredRows = result.receipts.filter((receipt) => receipt.deliveredAt !== null);
+  const deliveredOnlyRows = result.receipts.filter(
+    (receipt) =>
+      receipt.ackedAt === null &&
+      !receiptIsWorking(receipt, now) &&
+      !receiptIsStuck(receipt) &&
+      receipt.deliveredAt !== null,
+  );
+  const sentRows = result.receipts.filter(
+    (receipt) =>
+      receipt.ackedAt === null &&
+      !receiptIsWorking(receipt, now) &&
+      !receiptIsStuck(receipt) &&
+      receipt.deliveredAt === null,
+  );
+
+  if (total === 1) {
+    const receipt = result.receipts[0]!;
+    if (receipt.ackedAt !== null && receipt.ackOutcome !== null) {
+      if (receipt.ackOutcome === "replied") {
+        return {
+          state: "done",
+          outcome: "replied",
+          glyph: "↩",
+          label: "Replied",
+          detail: "The agent completed this delivery with a reply.",
+          terminal: true,
+        };
+      }
+      if (receipt.ackOutcome === "observed") {
+        return {
+          state: "done",
+          outcome: "observed",
+          glyph: "◎",
+          label: "Observed",
+          detail: "The agent acknowledged this delivery without replying.",
+          terminal: true,
+        };
+      }
+      if (receipt.ackOutcome === "expired") {
+        return {
+          state: "done",
+          outcome: "expired",
+          glyph: "⌛",
+          label: "Expired",
+          detail: "The delivery expired before the agent completed it.",
+          terminal: true,
+        };
+      }
+      return {
+        state: "done",
+        outcome: "failed_terminal",
+        glyph: "!",
+        label: "Failed",
+        detail: receipt.lastErrorCode
+          ? `Delivery stopped with error ${receipt.lastErrorCode}.`
+          : "Delivery stopped after its attempts were exhausted.",
+        terminal: true,
+      };
+    }
+    if (receiptIsWorking(receipt, now)) {
+      return {
+        state: "working",
+        outcome: null,
+        glyph: "●",
+        label: "Working",
+        detail: "The agent has an active delivery lease. Work is in progress.",
+        terminal: false,
+      };
+    }
+    if (receiptIsStuck(receipt)) {
+      const reasons = [
+        receipt.attemptCount > 1
+          ? `${receipt.attemptCount} delivery attempts`
+          : null,
+        receipt.leaseExpiryCount > 0
+          ? `${receipt.leaseExpiryCount} expired lease${receipt.leaseExpiryCount === 1 ? "" : "s"}`
+          : null,
+        receipt.lastErrorCode ? `error ${receipt.lastErrorCode}` : null,
+      ].filter((reason): reason is string => reason !== null);
+      return {
+        state: "stuck",
+        outcome: null,
+        glyph: "!",
+        label: "Needs attention",
+        detail: `Delivery is stuck: ${reasons.join(", ")}.`,
+        terminal: false,
+      };
+    }
+    if (receipt.deliveredAt !== null) {
+      return {
+        state: "delivered",
+        outcome: null,
+        glyph: "✓✓",
+        label: "Delivered",
+        detail: `Handed to the agent's listener ${deliveryAge(receipt.deliveredAt, now)}. No response yet.`,
+        terminal: false,
+      };
+    }
+    return {
+      state: "sent",
+      outcome: null,
+      glyph: "✓",
+      label: "Sent",
+      detail: "Accepted by CommonSwarm. Not delivered to the agent's listener yet.",
+      terminal: false,
+    };
+  }
+
+  const outcomeCounts = new Map<NonNullable<BrowserDeliveryReceipt["ackOutcome"]>, number>();
+  for (const receipt of terminalRows) {
+    outcomeCounts.set(receipt.ackOutcome!, (outcomeCounts.get(receipt.ackOutcome!) ?? 0) + 1);
+  }
+  const outcomeLabels: Record<NonNullable<BrowserDeliveryReceipt["ackOutcome"]>, string> = {
+    replied: "replied",
+    observed: "observed without reply",
+    expired: "expired",
+    failed_terminal: "failed",
+  };
+  const detailParts = [
+    ...Array.from(outcomeCounts, ([outcome, count]) => `${count} ${outcomeLabels[outcome]}`),
+    workingRows.length > 0 ? `${workingRows.length} working` : null,
+    stuckRows.length > 0 ? `${stuckRows.length} need attention` : null,
+    deliveredOnlyRows.length > 0
+      ? `${deliveredOnlyRows.length} delivered with no response`
+      : null,
+    sentRows.length > 0 ? `${sentRows.length} sent but not delivered` : null,
+  ].filter((part): part is string => part !== null);
+  const detail = `${detailParts.join("; ")}. Delivery is tracked for each recipient.`;
+  if (stuckRows.length > 0) {
+    return {
+      state: "stuck",
+      outcome: null,
+      glyph: "!",
+      label: `${stuckRows.length} of ${total} need attention`,
+      detail,
+      terminal: false,
+    };
+  }
+  if (workingRows.length > 0) {
+    return {
+      state: "working",
+      outcome: null,
+      glyph: "●",
+      label: `${workingRows.length} of ${total} working`,
+      detail,
+      terminal: false,
+    };
+  }
+  if (terminalRows.length === total) {
+    const outcomes = new Set(terminalRows.map((receipt) => receipt.ackOutcome));
+    return {
+      state: "done",
+      outcome: outcomes.size === 1 ? terminalRows[0]!.ackOutcome! : "mixed",
+      glyph: "✓✓",
+      label: `${total} of ${total} done`,
+      detail,
+      terminal: true,
+    };
+  }
+  if (deliveredRows.length > 0 || terminalRows.length > 0) {
+    const progressed = new Set([
+      ...deliveredRows.map((receipt) => receipt.recipientAgentPrincipalId),
+      ...terminalRows.map((receipt) => receipt.recipientAgentPrincipalId),
+    ]).size;
+    return {
+      state: "delivered",
+      outcome: null,
+      glyph: "✓✓",
+      label: `${progressed} of ${total} delivered`,
+      detail,
+      terminal: false,
+    };
+  }
+  return {
+    state: "sent",
+    outcome: null,
+    glyph: "✓",
+    label: `Sent to ${total}`,
+    detail,
+    terminal: false,
+  };
+}
+
 /** Posts one browser-authored note with either broadcast or one direct addressee. */
 export async function postBrowserSignal(
   session: Session,
