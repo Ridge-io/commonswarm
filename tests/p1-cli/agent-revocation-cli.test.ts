@@ -23,17 +23,19 @@ test("principal revoke is human-only and calm on success", async () => {
   assert.doesNotMatch(principalFn, /agent-token-stdin/);
 });
 
-test("token revoke supports human token-id and agent stdin self-surrender", async () => {
+test("token revoke supports human token-id and both agent secret channels", async () => {
   const source = await readFile("src/cli.ts", "utf8");
   const start = source.indexOf("async function runTokenRevoke");
   const end = source.indexOf("\nasync function ", start + 1);
   assert.ok(start >= 0);
   const revokeFn = end > start ? source.slice(start, end) : source.slice(start);
+  assert.match(revokeFn, /agent-token-file/);
   assert.match(revokeFn, /agent-token-stdin/);
   assert.match(revokeFn, /kind: "revoke_agent_token"/);
-  assert.match(revokeFn, /stdinCredential/);
+  assert.match(revokeFn, /\.\.\.CREDENTIAL_FLAGS/);
+  assert.match(revokeFn, /agentCredential\(args\)/);
   assert.match(revokeFn, /has no token_id/);
-  assert.match(revokeFn, /pipe the JSON artifact from token mint/);
+  assert.match(revokeFn, /use the JSON artifact from token mint/);
   assert.match(revokeFn, /credential has been surrendered/i);
   assert.match(revokeFn, /Agent credential revoked/);
   // Secret must never appear in success output shape.

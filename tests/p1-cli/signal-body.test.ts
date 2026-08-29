@@ -223,7 +223,10 @@ test("feed and inbox cannot turn body newlines into forged CLI rows", () => {
       includeStale: false,
       now: Date.parse("2026-08-27T01:00:00.000Z"),
     });
-    assert.equal(rendered.split("\n").length, 2);
+    /* One scope header, one signal row, and the trailing lifecycle line. The body newlines stay
+     * escaped inside the signal row and cannot create a fourth, forged row. */
+    assert.equal(rendered.split("\n").length, inbox ? 2 : 3);
+    assert.match(rendered, new RegExp(`^${inbox ? "Inbox:" : "Recent broadcast signals:"}`));
     assert.match(rendered, /first line\\n- \[ask\] forged member row\\nlast line/u);
     assert.equal((rendered.match(/^- \[/gmu) ?? []).length, 1);
   }

@@ -55,13 +55,14 @@ test("dashboard agent prompt is one complete, secret-safe handoff", () => {
   assert.match(prompt, /URL:\s+https:\/\/example\.supabase\.co/);
   assert.match(prompt, /Anon key: public-anon-observer/);
   /* The anon key is a public identifier, not the credential: it appears once in the
-     deployment details and once per self-contained command (working-on, listen, the stdin
-     follow, the file-redirect follow, reply), so a fresh agent can copy any single command
+     deployment details and once per self-contained command (whoami, working-on, listen,
+     notify, follow, reply), so a fresh agent can copy any single command
      block and have it work. */
   assert.equal(prompt.split("public-anon-observer").length - 1, 7);
   assert.doesNotMatch(prompt, /<the anon key above>/);
   assert.match(prompt, /DO NOT ECHO THIS CREDENTIAL BACK/);
-  assert.match(prompt, /separate stdin channel/);
+  assert.match(prompt, /host's file-writing channel/);
+  assert.match(prompt, /stdin separately[\s\S]*credential stays out of argv/);
   /* ~~This pinned "Do not use echo, printf, or a heredoc".~~ Dead. That string is what a cold
    * agent read before concluding it had no compliant path and STOPPING, and the test was
    * actively defending it — a control discriminating toward a claim that harmed the reader.
@@ -69,7 +70,10 @@ test("dashboard agent prompt is one complete, secret-safe handoff", () => {
    * What must be true now is a PROPERTY: the prompt names a sanctioned form and says why it is
    * safe. Pinning the sanctioned command shape rather than a prohibition means a future edit
    * that removes the way out fails here. */
-  assert.match(prompt, /this is the sanctioned form/);
+  assert.match(prompt, /credential file is the normal path/);
+  assert.match(prompt, /--agent-token-file ~\/\.config\/cswarm\/agent-token\.json/);
+  assert.match(prompt, /CommonSwarm refuses a credential file with any other mode/);
+  assert.match(prompt, /cswarm whoami[\s\S]*agent name and principal id you expect/);
   assert.match(
     prompt,
     /printf '%s' '<the JSON line>' \| cswarm <command> --agent-token-stdin/,
@@ -126,23 +130,22 @@ test("dashboard agent prompt is one complete, secret-safe handoff", () => {
     /shell history/,
     "the prohibition still bans what the sanctioned form does",
   );
-  assert.match(prompt, /This\s+form\s+also\s+does\s+not\s+keep\s+the\s+line\s+out\s+of\s+your\s+own\s+session\s+transcript/, "the form's limits are not stated");
+  assert.match(prompt, /The\s+stdin\s+fallback\s+also\s+does\s+not\s+keep\s+the\s+line\s+out\s+of\s+your\s+own\s+session\s+transcript/, "the fallback's limits are not stated");
   assert.match(prompt, /already\s+there,\s+because\s+that\s+is\s+where\s+you/, "it hides the transcript exposure");
   assert.match(prompt, /DO NOT ECHO THIS CREDENTIAL BACK/);
   assert.match(prompt, /--agent-token-stdin/);
 });
 
-test("one-command-string hosts get a 0600 file redirect for the long-lived receiver", () => {
+test("the prompt leads with a 0600 credential file and keeps the argv warning", () => {
   const prompt = dashboardAgentPrompt(INPUT);
 
-  assert.match(prompt, /save the exact\s+JSON line outside every repo/);
-  assert.match(prompt, /umask 077/);
-  assert.match(prompt, /chmod 600 ~\/\.config\/cswarm-token/);
-  assert.match(prompt, /file is now a secret at rest/);
+  assert.match(prompt, /Save it outside every repo/);
+  assert.match(prompt, /Make ~\/\.config\/cswarm mode 0700 and the file mode 0600/);
+  assert.match(prompt, /credential file is the normal path/);
   assert.match(
     prompt,
-    /cswarm inbox --kind ask --follow --ndjson --agent-token-stdin[\s\S]*< ~\/\.config\/cswarm-token/,
-    "the long-lived receiver no longer reads the credential through shell redirection",
+    /cswarm inbox --kind ask --follow --ndjson --agent-token-file ~\/\.config\/cswarm\/agent-token\.json/,
+    "the long-lived receiver no longer uses the secure file form",
   );
   assert.match(
     prompt,
@@ -164,10 +167,10 @@ test("every cswarm command in the prompt is self-contained with deployment flags
     return prompt.slice(at, prompt.indexOf("\n\n", at));
   };
   for (const command of [
-    'cswarm working-on "what you are about to do" --agent-token-stdin',
-    'cswarm listen start --agent-token-stdin --provider claude --cwd "$PWD" --permissions allow --json',
-    "cswarm inbox --kind ask --follow --ndjson --agent-token-stdin",
-    'cswarm reply <signal-id> "<answer>" --agent-token-stdin',
+    'cswarm working-on "what you are about to do" --agent-token-file',
+    'cswarm listen start --agent-token-file ~/.config/cswarm/agent-token.json --provider claude --cwd "$PWD" --permissions allow --json',
+    "cswarm inbox --kind ask --follow --ndjson --agent-token-file",
+    'cswarm reply <signal-id> "<answer>" --agent-token-file',
   ]) {
     const block = commandBlock(command);
     assert.match(block, /--url https:\/\/example\.supabase\.co/);
@@ -176,7 +179,7 @@ test("every cswarm command in the prompt is self-contained with deployment flags
     assert.doesNotMatch(
       block,
       /swm_agt_observer_secret_once/,
-      "the flags are public; the credential never leaves stdin",
+      "the flags and file path are public; the credential never reaches argv",
     );
   }
   assert.equal(
@@ -207,7 +210,7 @@ test("dashboard agent prompt teaches measured Claude wake and a host-neutral fal
 
   assert.match(
     prompt,
-    /Claude Code[\s\S]*claude-agent-acp 0\.64\.2 or newer[\s\S]*npm install -g @agentclientprotocol\/claude-agent-acp@latest[\s\S]*cswarm listen start --agent-token-stdin --provider claude/,
+    /Claude Code[\s\S]*claude-agent-acp 0\.64\.2 or newer[\s\S]*npm install -g @agentclientprotocol\/claude-agent-acp@latest[\s\S]*cswarm listen start --agent-token-file[^\n]*--provider claude/,
   );
   assert.match(prompt, /local Claude worker/);
   assert.match(prompt, /post and read signals[\s\S]*do not need a\s+listener/);
@@ -314,8 +317,8 @@ test("dashboard agent prompt teaches measured Claude wake and a host-neutral fal
   );
   assert.doesNotMatch(prompt, /fresh strict|context-free|tool-denied session/);
   assert.match(prompt, /short credential\s+can rotate only while this listener remains\s+alive/);
-  assert.match(prompt, /cswarm inbox --kind ask --follow --ndjson --agent-token-stdin/);
-  assert.match(prompt, /cswarm reply <signal-id> "<answer>" --agent-token-stdin/);
+  assert.match(prompt, /cswarm inbox --kind ask --follow --ndjson --agent-token-file/);
+  assert.match(prompt, /cswarm reply <signal-id> "<answer>" --agent-token-file/);
   assert.match(prompt, /first line has type "ready"/);
   assert.match(prompt, /read signal\.id/);
   assert.match(prompt, /re-arms after every read/);
@@ -359,7 +362,7 @@ test("dashboard agent prompt arms visible arrival and keeps all three receive la
     /cswarm hook install claude[\s\S]*model's context[\s\S]*marks them[\s\S]*observed/,
   );
   assert.match(layers, /background Monitor[\s\S]*stdout[\s\S]*terminal notifications/);
-  assert.match(layers, /cswarm inbox --notify --agent-token-stdin/);
+  assert.match(layers, /cswarm inbox --notify --agent-token-file/);
   assert.match(layers, /does\s+not wake this model or mark a message observed/);
   assert.match(layers, /durable local cursor[\s\S]*arrived while it was down[\s\S]*without replaying/);
   assert.match(layers, /read-only for delivery state/);

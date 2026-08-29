@@ -408,7 +408,20 @@ async function handle(
           AND p.revoked_at IS NULL
         ORDER BY p.principal_id ASC
       `;
-      return json(200, { members, agents });
+      return json(200, {
+        members,
+        agents,
+        /* Derived from agent_delivery_read_context for the bearer used on THIS request.
+         * Client artifact fields are deliberately not involved. A successful response also
+         * proves the credential passed current token, principal, run, device and membership
+         * liveness checks above. */
+        identity: {
+          credential_valid: true,
+          principal_id: agent.principal_id,
+          owner_user_id: agent.owner_user_id,
+          workspace_id: agent.principal_workspace_id,
+        },
+      });
     }
     if (body.resource === "files") {
       // File artifacts list (FILE-ARTIFACTS.md §7): the membership-gated view

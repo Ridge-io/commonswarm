@@ -153,9 +153,15 @@ test("inbox --notify flushes one readable line and never calls delivery mutation
     assert.match(
       lines[0]!,
       new RegExp(
-        `cswarm reply ${NEW_SIGNAL} "<answer>" --agent-token-stdin --url ${url} --anon-key anon-key-for-arrival-test --workspace-id ${WORKSPACE}`,
+        `cswarm reply ${NEW_SIGNAL} "<answer>" --workspace-id ${WORKSPACE}`,
       ),
     );
+    /* The monitor line can reach terminal notification history. It names the public workspace
+     * route only; credentials and target configuration stay in the process that owns them. */
+    assert.doesNotMatch(lines[0]!, /--agent-token-stdin|--agent-token-file/);
+    assert.doesNotMatch(lines[0]!, new RegExp(url));
+    assert.doesNotMatch(lines[0]!, /anon-key-for-arrival-test/);
+    assert.doesNotMatch(lines[0]!, new RegExp(TOKEN));
     assert.deepEqual(
       requests.map(({ path }) => path),
       ["/functions/v1/read"],

@@ -944,10 +944,20 @@ export interface SignalAgent {
   owner_user_id?: string;
 }
 
+/** The principal proven by the bearer credential, not by client-held metadata. */
+export interface SignalAgentIdentity {
+  credential_valid: true;
+  owner_user_id: string;
+  principal_id: string;
+  workspace_id: string;
+}
+
 /** Live members and agents available as signal targets in one workspace. */
 export interface SignalDirectory {
   members: readonly SignalMember[];
   agents: readonly SignalAgent[];
+  /** Absent on older compatible deployments. */
+  identity?: SignalAgentIdentity;
 }
 
 export type ResolvedSignalRecipient =
@@ -982,6 +992,22 @@ function parseMemberRow(value: unknown): SignalMember {
   return {
     user_id: checkedUuid(row.user_id, "member user_id"),
     display_name: row.display_name,
+  };
+}
+
+function parseAgentIdentity(value: unknown): SignalAgentIdentity {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("member read returned a malformed credential identity");
+  }
+  const row = value as Record<string, unknown>;
+  if (row.credential_valid !== true) {
+    throw new Error("member read returned a malformed credential validity");
+  }
+  return {
+    credential_valid: true,
+    owner_user_id: checkedUuid(row.owner_user_id, "identity owner_user_id"),
+    principal_id: checkedUuid(row.principal_id, "identity principal_id"),
+    workspace_id: checkedUuid(row.workspace_id, "identity workspace_id"),
   };
 }
 
@@ -1039,6 +1065,9 @@ export async function readAgentSignalDirectory(
   return {
     members: payload.members.map(parseMemberRow),
     agents,
+    ...(payload.identity === undefined
+      ? {}
+      : { identity: parseAgentIdentity(payload.identity) }),
   };
 }
 
