@@ -29218,14 +29218,16 @@ function askReplyReadFailureMessage(workspaceId2, error) {
   return `Your message was posted, but its reply could not be fetched (${failure.detail}). Do not resend this ask. Check with: cswarm inbox --workspace-id ${workspaceId2}`;
 }
 function renderSignals(signals, options) {
+  const feedScopeGuidance = "This feed shows broadcast signals only. It omits directed messages, including messages you sent. Read messages directed to you with: cswarm inbox";
   if (signals.length === 0) {
     return [
-      options.inbox ? "Inbox:" : "Recent signals:",
-      options.inbox ? "Nothing is waiting for you." : options.includeStale ? "No signals have been shared in this workspace yet." : "No live signals in this workspace yet."
+      options.inbox ? "Inbox:" : "Recent broadcast signals:",
+      options.inbox ? "Nothing is waiting for you." : options.includeStale ? "No broadcast signals have been shared in this workspace yet." : "No live broadcast signals in this workspace yet.",
+      ...options.inbox ? [] : [feedScopeGuidance]
     ].join("\n");
   }
   const now = options.now ?? Date.now();
-  const lines = [options.inbox ? "Inbox:" : "Recent signals:"];
+  const lines = [options.inbox ? "Inbox:" : "Recent broadcast signals:"];
   for (const signal of signals) {
     const authorKind = signal.from_kind === "agent" ? "agent" : "member";
     const authorName = signal.from_kind === "agent" ? options.authors?.agents.get(signal.from) : options.authors?.users.get(signal.from);
@@ -29253,6 +29255,7 @@ function renderSignals(signals, options) {
       );
     }
   }
+  if (!options.inbox) lines.push(feedScopeGuidance);
   return lines.join("\n");
 }
 function renderSignalStatus(recent, waitingAsks, options = {}) {
@@ -38829,8 +38832,8 @@ var ACCEPTED_AGENT_CREDENTIAL_MESSAGES = [
   AGENT_CREDENTIAL_MESSAGE_D088
 ];
 function packageVersion() {
-  if ("0.1.36".length > 0) {
-    return "0.1.36";
+  if ("0.1.37".length > 0) {
+    return "0.1.37";
   }
   try {
     const value = JSON.parse(
