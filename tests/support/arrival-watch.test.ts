@@ -97,10 +97,26 @@ test("one directed message renders one bounded line with sender and exact reply 
   assert.match(
     output,
     new RegExp(
-      `cswarm reply ${signal.id} "<answer>" --agent-token-stdin --url ${TARGET.url} --anon-key ${TARGET.anonKey} --workspace-id ${WORKSPACE}`,
+      `cswarm reply ${signal.id} "<answer>" --workspace-id ${WORKSPACE}`,
     ),
   );
-});
+
+
+/* A monitor line becomes a chat notification, so anything in it is read by a
+ * human on a phone. The anon key is a JWT: repeating it per message made the
+ * line unreadable and taught agents to paste credentials into commands. It is
+ * public-by-design, so this is noise and habit rather than a secret leak — but
+ * the hook never included it and neither should this. */
+test("an arrival notification never carries the anon key or the url", () => {
+  const notification = arrivalNotification(
+    row("11111111-1111-4111-8111-111111111111", "hello", "2026-08-28T10:00:00.000Z"),
+    WORKSPACE,
+    TARGET,
+  );
+  const rendered = JSON.stringify(notification);
+  assert.equal(rendered.includes(TARGET.anonKey), false);
+  assert.equal(rendered.includes(TARGET.url), false);
+});});
 
 test("a multiline body still produces exactly one notification line", () => {
   const signal = row(

@@ -4381,8 +4381,8 @@ var require_RealtimeChannel = __commonJS({
       }
       /** @internal */
       _notThisChannelEvent(event, ref) {
-        const { close, error, leave, join: join17 } = constants_1.CHANNEL_EVENTS;
-        const events = [close, error, leave, join17];
+        const { close, error, leave, join: join18 } = constants_1.CHANNEL_EVENTS;
+        const events = [close, error, leave, join18];
         return ref && events.includes(event) && ref !== this.joinPush.ref;
       }
       /** @internal */
@@ -13523,7 +13523,7 @@ module.exports = __toCommonJS(cli_exports);
 var import_node_crypto19 = require("node:crypto");
 var import_node_fs7 = require("node:fs");
 var import_promises11 = require("node:fs/promises");
-var import_node_path19 = require("node:path");
+var import_node_path20 = require("node:path");
 var import_promises12 = require("node:readline/promises");
 
 // src/cloud/auth.ts
@@ -29571,8 +29571,195 @@ async function runInboxFollow(options) {
   }
 }
 
-// src/cloud/delivery-receipts.ts
+// src/cloud/arrival-watch.ts
+var import_node_os4 = require("node:os");
+var import_node_path4 = require("node:path");
 var UUID_RE8 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+var CURSOR_MAX_BYTES = 4 * 1024;
+var ARRIVAL_SNIPPET_MAX = 180;
+var ARRIVAL_WATCH_POLL_MS = 25e3;
+function stateRoot() {
+  return process.env.XDG_STATE_HOME ? (0, import_node_path4.join)(process.env.XDG_STATE_HOME, "cswarm", "arrival-cursors") : (0, import_node_path4.join)((0, import_node_os4.homedir)(), ".cswarm", "arrival-cursors");
+}
+function arrivalCursorPath(target2, workspaceId2, principalId, root = stateRoot()) {
+  return (0, import_node_path4.join)(
+    root,
+    `${target2.profileId}-${workspaceId2.toLowerCase()}-${principalId.toLowerCase()}.json`
+  );
+}
+function parseCursor(raw, workspaceId2, principalId) {
+  let value;
+  try {
+    value = JSON.parse(raw);
+  } catch {
+    throw new Error("stored arrival cursor is malformed");
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("stored arrival cursor is malformed");
+  }
+  const row = value;
+  const keys = Object.keys(row).sort();
+  const cursor = row.cursor;
+  if (keys.join(",") !== "cursor,principal_id,version,workspace_id" || row.version !== 1 || row.workspace_id !== workspaceId2.toLowerCase() || row.principal_id !== principalId.toLowerCase() || !(cursor === null || typeof cursor === "object" && !Array.isArray(cursor) && Object.keys(cursor).sort().join(",") === "created_at,id" && typeof cursor.created_at === "string" && Number.isFinite(Date.parse(cursor.created_at)) && typeof cursor.id === "string" && UUID_RE8.test(cursor.id))) {
+    throw new Error("stored arrival cursor is malformed");
+  }
+  if (cursor === null) return null;
+  return {
+    created_at: cursor.created_at,
+    id: cursor.id.toLowerCase()
+  };
+}
+function fileArrivalCursorStore(options) {
+  const workspaceId2 = options.workspaceId.toLowerCase();
+  const principalId = options.principalId.toLowerCase();
+  if (!UUID_RE8.test(workspaceId2) || !UUID_RE8.test(principalId)) {
+    throw new Error("arrival cursor identity must use workspace and principal UUIDs");
+  }
+  const location2 = arrivalCursorPath(
+    options.target,
+    workspaceId2,
+    principalId,
+    options.stateDirectory
+  );
+  return {
+    location: location2,
+    async read() {
+      const raw = await readSecureJsonFile(location2, CURSOR_MAX_BYTES);
+      return raw === null ? void 0 : parseCursor(raw, workspaceId2, principalId);
+    },
+    async write(cursor) {
+      const record = {
+        version: 1,
+        workspace_id: workspaceId2,
+        principal_id: principalId,
+        cursor
+      };
+      await writeSecureJsonFile(location2, JSON.stringify(record));
+    }
+  };
+}
+function arrivalSnippet(body) {
+  const oneLine = body.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").replace(/\s+/g, " ").trim();
+  if (oneLine.length <= ARRIVAL_SNIPPET_MAX) return oneLine;
+  return `${oneLine.slice(0, ARRIVAL_SNIPPET_MAX - 1).trimEnd()}\u2026`;
+}
+function arrivalReplyCommand(signalId, workspaceId2, target2) {
+  return `cswarm reply ${signalId} "<answer>" --agent-token-stdin --url ${target2.url} --anon-key ${target2.anonKey} --workspace-id ${workspaceId2}`;
+}
+function arrivalNotification(signal, workspaceId2, target2) {
+  return {
+    type: "arrival",
+    workspace_id: workspaceId2,
+    signal_id: signal.id,
+    sender: signal.from,
+    sender_kind: signal.from_kind,
+    kind: signal.kind,
+    snippet: arrivalSnippet(signal.body),
+    reply_command: arrivalReplyCommand(signal.id, workspaceId2, target2)
+  };
+}
+function formatArrivalNotification(notification) {
+  return `CommonSwarm from ${notification.sender_kind} ${notification.sender}: ${notification.snippet} \u2014 reply: ${notification.reply_command}`;
+}
+function cursorOf(signal) {
+  return { created_at: signal.created_at, id: signal.id };
+}
+function assertCursorPage(page) {
+  if (!page.capabilities.cursorAfter || page.legacyCursorFallback) {
+    throw new Error(
+      "arrival watch needs a read service with durable cursor support"
+    );
+  }
+}
+async function runArrivalWatch(options) {
+  const pollMs = options.pollMs ?? ARRIVAL_WATCH_POLL_MS;
+  const random = options.random ?? Math.random;
+  let cursor = await options.store.read();
+  let baseline = cursor === void 0;
+  let attempt = 0;
+  const cancelled = () => options.signal?.aborted === true;
+  const wait = async (ms) => {
+    if (options.sleep) {
+      await options.sleep(ms);
+      return;
+    }
+    await new Promise((resolve) => {
+      let timer2;
+      const finish = () => {
+        if (timer2 !== void 0) clearTimeout(timer2);
+        options.signal?.removeEventListener("abort", finish);
+        resolve();
+      };
+      if (cancelled() || ms <= 0) {
+        resolve();
+        return;
+      }
+      options.signal?.addEventListener("abort", finish, { once: true });
+      timer2 = setTimeout(finish, ms);
+    });
+  };
+  while (!cancelled()) {
+    try {
+      const page = await options.readPage({
+        after: cursor ?? null,
+        baseline,
+        limit: baseline ? 1 : SIGNAL_FOLLOW_PAGE_LIMIT
+      });
+      assertCursorPage(page);
+      if (page.signals.some(
+        (row) => row.workspace_id !== options.workspaceId || row.to_agent !== options.principalId
+      )) {
+        throw new Error(
+          "arrival read returned a message directed to another workspace or agent"
+        );
+      }
+      attempt = 0;
+      if (baseline) {
+        if (page.rawCount > 0 && page.nextCursor === null) {
+          throw new Error("arrival baseline returned no safe terminal cursor");
+        }
+        cursor = page.nextCursor;
+        await options.store.write(cursor);
+        baseline = false;
+        if (cancelled()) break;
+        await wait(pollMs);
+        continue;
+      }
+      for (const row of page.signals) {
+        if (cancelled()) break;
+        await options.emit(row);
+        cursor = cursorOf(row);
+        await options.store.write(cursor);
+      }
+      if (cancelled()) break;
+      const fullPage = page.rawCount >= SIGNAL_FOLLOW_PAGE_LIMIT;
+      await wait(fullPage ? 0 : pollMs);
+    } catch (error) {
+      if (cancelled()) break;
+      const http = followHttpDetails(error);
+      const retryable = isRetryableFollowError(error) || http?.status === 429 || http !== null && http.status >= 500;
+      if (!retryable) {
+        return {
+          reason: "error",
+          error: error instanceof Error ? error : new Error(String(error))
+        };
+      }
+      attempt += 1;
+      const delayMs = nextFollowBackoffMs(
+        attempt,
+        http?.retryAfterMs ?? null,
+        random
+      );
+      const typed = error instanceof Error ? error : new Error(String(error));
+      options.onRetry?.(typed, delayMs);
+      await wait(delayMs);
+    }
+  }
+  return { reason: "cancelled" };
+}
+
+// src/cloud/delivery-receipts.ts
+var UUID_RE9 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 var DeliveryReceiptReadError = class extends Error {
   constructor(code, message, status = null) {
     super(message);
@@ -29591,7 +29778,7 @@ var ACK_OUTCOMES = /* @__PURE__ */ new Set([
   "failed_terminal"
 ]);
 function uuid3(value, field) {
-  if (typeof value !== "string" || !UUID_RE8.test(value)) {
+  if (typeof value !== "string" || !UUID_RE9.test(value)) {
     throw new DeliveryReceiptReadError(
       "protocol",
       `delivery receipt returned a malformed ${field}`
@@ -29980,8 +30167,8 @@ function attachStderrTailExitObserver(child, onStderrTail) {
 // src/host/opencode.ts
 var import_node_fs3 = require("node:fs");
 var import_promises4 = require("node:fs/promises");
-var import_node_os4 = require("node:os");
-var import_node_path5 = require("node:path");
+var import_node_os5 = require("node:os");
+var import_node_path6 = require("node:path");
 
 // src/host/bounds.ts
 var ACP_MAX_LINE_BYTES = 1048576;
@@ -30063,7 +30250,7 @@ function sanitizeChildEnv(parent = process.env) {
 
 // src/host/session.ts
 var import_node_fs2 = require("node:fs");
-var import_node_path4 = require("node:path");
+var import_node_path5 = require("node:path");
 
 // src/host/permission.ts
 function allowOnceOrDeny(request) {
@@ -30544,7 +30731,7 @@ function assertAbsoluteExistingCwd(cwd) {
   if (!cwd || typeof cwd !== "string") {
     throw new AcpProtocolError("cwd is required", "invalid_cwd");
   }
-  if (!(0, import_node_path4.isAbsolute)(cwd)) {
+  if (!(0, import_node_path5.isAbsolute)(cwd)) {
     throw new AcpProtocolError("cwd must be an absolute path", "invalid_cwd");
   }
   let st;
@@ -31254,8 +31441,8 @@ function isProcessAlive(pid) {
   }
 }
 function resolveOpenCodeExecutable(executable = "opencode", pathEnv) {
-  if ((0, import_node_path5.isAbsolute)(executable) || executable.includes("/")) {
-    const abs = (0, import_node_path5.resolve)(executable);
+  if ((0, import_node_path6.isAbsolute)(executable) || executable.includes("/")) {
+    const abs = (0, import_node_path6.resolve)(executable);
     try {
       (0, import_node_fs3.accessSync)(abs, import_node_fs3.constants.X_OK);
     } catch {
@@ -31273,7 +31460,7 @@ function resolveOpenCodeExecutable(executable = "opencode", pathEnv) {
   const pathValue = pathEnv ?? process.env.PATH ?? "";
   for (const dir of pathValue.split(":")) {
     if (!dir) continue;
-    const candidate = (0, import_node_path5.join)(dir, executable);
+    const candidate = (0, import_node_path6.join)(dir, executable);
     try {
       (0, import_node_fs3.accessSync)(candidate, import_node_fs3.constants.X_OK);
       try {
@@ -31305,7 +31492,7 @@ function buildOpenCodeHomeOwner(options) {
   };
 }
 async function writeOpenCodeHomeOwner(home, owner) {
-  const path = (0, import_node_path5.join)(home, OPENCODE_HOME_OWNER_FILE);
+  const path = (0, import_node_path6.join)(home, OPENCODE_HOME_OWNER_FILE);
   await (0, import_promises4.writeFile)(path, `${JSON.stringify(owner)}
 `, {
     flag: "wx",
@@ -31314,7 +31501,7 @@ async function writeOpenCodeHomeOwner(home, owner) {
   await (0, import_promises4.chmod)(path, 384);
 }
 async function readOpenCodeHomeOwner(home) {
-  const path = (0, import_node_path5.join)(home, OPENCODE_HOME_OWNER_FILE);
+  const path = (0, import_node_path6.join)(home, OPENCODE_HOME_OWNER_FILE);
   let raw;
   try {
     raw = await (0, import_promises4.readFile)(path, "utf8");
@@ -31332,7 +31519,7 @@ async function readOpenCodeHomeOwner(home) {
   }
 }
 async function releaseOpenCodeHome(home, instanceId) {
-  if (!(0, import_node_path5.isAbsolute)(home)) return;
+  if (!(0, import_node_path6.isAbsolute)(home)) return;
   const owner = await readOpenCodeHomeOwner(home);
   if (owner && owner.instanceId !== instanceId) {
     return;
@@ -31457,15 +31644,15 @@ async function readValidatedOpenCodeAuth(sourceAuthPath, options) {
 }
 function resolveOpenCodeAuthSourcePath(parent = process.env) {
   const xdgData = parent.XDG_DATA_HOME;
-  if (typeof xdgData === "string" && (0, import_node_path5.isAbsolute)(xdgData)) {
-    return (0, import_node_path5.join)(xdgData, "opencode", "auth.json");
+  if (typeof xdgData === "string" && (0, import_node_path6.isAbsolute)(xdgData)) {
+    return (0, import_node_path6.join)(xdgData, "opencode", "auth.json");
   }
-  const home = parent.HOME ?? (0, import_node_os4.homedir)();
-  return (0, import_node_path5.join)(home, ".local", "share", "opencode", "auth.json");
+  const home = parent.HOME ?? (0, import_node_os5.homedir)();
+  return (0, import_node_path6.join)(home, ".local", "share", "opencode", "auth.json");
 }
 async function prepareOpenCodeIsolatedHome(options) {
-  const home = options.home ?? await (0, import_promises4.mkdtemp)((0, import_node_path5.join)((0, import_node_os4.tmpdir)(), OPENCODE_HOME_PREFIX));
-  if (!(0, import_node_path5.isAbsolute)(home)) {
+  const home = options.home ?? await (0, import_promises4.mkdtemp)((0, import_node_path6.join)((0, import_node_os5.tmpdir)(), OPENCODE_HOME_PREFIX));
+  if (!(0, import_node_path6.isAbsolute)(home)) {
     throw new AcpHostError(
       "isolated_home_invalid",
       "isolated OpenCode home must be absolute"
@@ -31473,21 +31660,21 @@ async function prepareOpenCodeIsolatedHome(options) {
   }
   await (0, import_promises4.chmod)(home, 448);
   try {
-    const xdgConfig = (0, import_node_path5.join)(home, "xdg-config");
-    const xdgData = (0, import_node_path5.join)(home, "xdg-data");
-    const xdgCache = (0, import_node_path5.join)(home, "xdg-cache");
-    const xdgState = (0, import_node_path5.join)(home, "xdg-state");
+    const xdgConfig = (0, import_node_path6.join)(home, "xdg-config");
+    const xdgData = (0, import_node_path6.join)(home, "xdg-data");
+    const xdgCache = (0, import_node_path6.join)(home, "xdg-cache");
+    const xdgState = (0, import_node_path6.join)(home, "xdg-state");
     for (const dir of [xdgConfig, xdgData, xdgCache, xdgState]) {
       await (0, import_promises4.mkdir)(dir, { recursive: true, mode: 448 });
       await (0, import_promises4.chmod)(dir, 448);
     }
-    const configDir = (0, import_node_path5.join)(xdgConfig, "opencode");
-    const dataDir = (0, import_node_path5.join)(xdgData, "opencode");
+    const configDir = (0, import_node_path6.join)(xdgConfig, "opencode");
+    const dataDir = (0, import_node_path6.join)(xdgData, "opencode");
     await (0, import_promises4.mkdir)(configDir, { recursive: true, mode: 448 });
     await (0, import_promises4.mkdir)(dataDir, { recursive: true, mode: 448 });
     await (0, import_promises4.chmod)(configDir, 448);
     await (0, import_promises4.chmod)(dataDir, 448);
-    const configPath = (0, import_node_path5.join)(configDir, "opencode.json");
+    const configPath = (0, import_node_path6.join)(configDir, "opencode.json");
     await (0, import_promises4.writeFile)(
       configPath,
       buildOpenCodeSafeConfigJson(
@@ -31501,7 +31688,7 @@ async function prepareOpenCodeIsolatedHome(options) {
       allowMissing: options.allowMissingAuth === true
     });
     if (authBytes) {
-      const destAuth = (0, import_node_path5.join)(dataDir, "auth.json");
+      const destAuth = (0, import_node_path6.join)(dataDir, "auth.json");
       await (0, import_promises4.writeFile)(destAuth, authBytes, { flag: "wx", mode: 384 });
       await (0, import_promises4.chmod)(destAuth, 384);
     }
@@ -31516,7 +31703,7 @@ async function prepareOpenCodeIsolatedHome(options) {
   }
 }
 function buildOpenCodeChildEnv(parent, home) {
-  if (!(0, import_node_path5.isAbsolute)(home)) {
+  if (!(0, import_node_path6.isAbsolute)(home)) {
     throw new AcpHostError(
       "isolated_home_invalid",
       "isolated OpenCode home must be absolute"
@@ -31526,20 +31713,20 @@ function buildOpenCodeChildEnv(parent, home) {
   return {
     ...base,
     HOME: home,
-    XDG_CONFIG_HOME: (0, import_node_path5.join)(home, "xdg-config"),
-    XDG_DATA_HOME: (0, import_node_path5.join)(home, "xdg-data"),
-    XDG_CACHE_HOME: (0, import_node_path5.join)(home, "xdg-cache"),
-    XDG_STATE_HOME: (0, import_node_path5.join)(home, "xdg-state"),
+    XDG_CONFIG_HOME: (0, import_node_path6.join)(home, "xdg-config"),
+    XDG_DATA_HOME: (0, import_node_path6.join)(home, "xdg-data"),
+    XDG_CACHE_HOME: (0, import_node_path6.join)(home, "xdg-cache"),
+    XDG_STATE_HOME: (0, import_node_path6.join)(home, "xdg-state"),
     // Measured 1.18.10: private home alone still merges project opencode.json.
     OPENCODE_DISABLE_PROJECT_CONFIG: "1"
   };
 }
 async function assertOpenCodeEffectiveConfig(options) {
-  const hostile = await (0, import_promises4.mkdtemp)((0, import_node_path5.join)((0, import_node_os4.tmpdir)(), "cswarm-opencode-hostile-"));
+  const hostile = await (0, import_promises4.mkdtemp)((0, import_node_path6.join)((0, import_node_os5.tmpdir)(), "cswarm-opencode-hostile-"));
   try {
     await (0, import_promises4.chmod)(hostile, 448);
     await (0, import_promises4.writeFile)(
-      (0, import_node_path5.join)(hostile, "opencode.json"),
+      (0, import_node_path6.join)(hostile, "opencode.json"),
       `${JSON.stringify({
         permission: {
           bash: "allow",
@@ -31647,7 +31834,7 @@ async function sweepStaleOpenCodeHomes(options) {
   const maxAgeMs = options?.maxAgeMs ?? STALE_HOME_MAX_AGE_MS;
   const now = options?.now ?? Date.now();
   const alive = options?.isAlive ?? isProcessAlive;
-  const root = options?.root ?? (0, import_node_os4.tmpdir)();
+  const root = options?.root ?? (0, import_node_os5.tmpdir)();
   const selfUid = typeof process.getuid === "function" ? process.getuid() : null;
   let removed = 0;
   let entries;
@@ -31658,7 +31845,7 @@ async function sweepStaleOpenCodeHomes(options) {
   }
   for (const name of entries) {
     if (!name.startsWith(OPENCODE_HOME_PREFIX)) continue;
-    const full = (0, import_node_path5.join)(root, name);
+    const full = (0, import_node_path6.join)(root, name);
     try {
       const st = await (0, import_promises4.lstat)(full);
       if (!st.isDirectory() || st.isSymbolicLink()) continue;
@@ -31836,7 +32023,7 @@ async function openOpenCodeAcpSession(options) {
 // src/host/claude.ts
 var import_node_child_process4 = require("node:child_process");
 var import_node_fs4 = require("node:fs");
-var import_node_path6 = require("node:path");
+var import_node_path7 = require("node:path");
 var CHILD_EXIT_WAIT_MS2 = 3e3;
 var CHILD_KILL_WAIT_MS2 = 1e3;
 var WINDOWS_NPM_SHIM_MAX_BYTES = 64 * 1024;
@@ -31856,11 +32043,11 @@ function isPackagedClaudeBridge(executable) {
 function resolvePackagedClaudeBridge(pathEnv, platform = process.platform) {
   const pathValue = pathEnv ?? process.env.PATH ?? "";
   const names = platform === "win32" ? ["claude-agent-acp.cmd"] : ["claude-agent-acp"];
-  for (const dir of pathValue.split(import_node_path6.delimiter)) {
+  for (const dir of pathValue.split(import_node_path7.delimiter)) {
     if (!dir) continue;
     for (const name of names) {
       try {
-        const candidate = resolvedClaudeCandidate((0, import_node_path6.join)(dir, name), platform);
+        const candidate = resolvedClaudeCandidate((0, import_node_path7.join)(dir, name), platform);
         if (isPackagedClaudeBridge(candidate)) return candidate;
       } catch {
       }
@@ -31889,7 +32076,7 @@ function resolveWindowsNpmShim(shim) {
       `unrecognized claude-agent-acp npm shim: ${shim}`
     );
   }
-  const target2 = (0, import_node_path6.join)((0, import_node_path6.dirname)(shim), ...WINDOWS_NPM_ENTRYPOINT);
+  const target2 = (0, import_node_path7.join)((0, import_node_path7.dirname)(shim), ...WINDOWS_NPM_ENTRYPOINT);
   try {
     (0, import_node_fs4.accessSync)(target2, import_node_fs4.constants.R_OK);
     return (0, import_node_fs4.realpathSync)(target2);
@@ -31903,12 +32090,12 @@ function resolveWindowsNpmShim(shim) {
 function resolvedClaudeCandidate(candidate, platform) {
   (0, import_node_fs4.accessSync)(candidate, import_node_fs4.constants.X_OK);
   const real = (0, import_node_fs4.realpathSync)(candidate);
-  return platform === "win32" && (0, import_node_path6.extname)(real).toLowerCase() === ".cmd" ? resolveWindowsNpmShim(real) : real;
+  return platform === "win32" && (0, import_node_path7.extname)(real).toLowerCase() === ".cmd" ? resolveWindowsNpmShim(real) : real;
 }
 function resolveClaudeExecutable(executable = "claude-agent-acp", pathEnv, platform = process.platform) {
-  if ((0, import_node_path6.isAbsolute)(executable) || executable.includes("/") || executable.includes("\\")) {
-    const abs = (0, import_node_path6.resolve)(executable);
-    const candidates = platform === "win32" && (0, import_node_path6.extname)(abs) === "" ? [`${abs}.cmd`] : [abs];
+  if ((0, import_node_path7.isAbsolute)(executable) || executable.includes("/") || executable.includes("\\")) {
+    const abs = (0, import_node_path7.resolve)(executable);
+    const candidates = platform === "win32" && (0, import_node_path7.extname)(abs) === "" ? [`${abs}.cmd`] : [abs];
     for (const candidate of candidates) {
       try {
         return resolvedClaudeCandidate(candidate, platform);
@@ -31919,11 +32106,11 @@ function resolveClaudeExecutable(executable = "claude-agent-acp", pathEnv, platf
     throw new AcpHostError("executable_missing", `not executable: ${abs}`);
   }
   const pathValue = pathEnv ?? process.env.PATH ?? "";
-  const names = platform === "win32" && (0, import_node_path6.extname)(executable) === "" ? [`${executable}.cmd`] : [executable];
-  for (const dir of pathValue.split(import_node_path6.delimiter)) {
+  const names = platform === "win32" && (0, import_node_path7.extname)(executable) === "" ? [`${executable}.cmd`] : [executable];
+  for (const dir of pathValue.split(import_node_path7.delimiter)) {
     if (!dir) continue;
     for (const name of names) {
-      const candidate = (0, import_node_path6.join)(dir, name);
+      const candidate = (0, import_node_path7.join)(dir, name);
       try {
         return resolvedClaudeCandidate(candidate, platform);
       } catch (error) {
@@ -31937,7 +32124,7 @@ function resolveClaudeExecutable(executable = "claude-agent-acp", pathEnv, platf
   );
 }
 function buildClaudeLaunch(executable, args, platform = process.platform) {
-  return platform === "win32" && (0, import_node_path6.extname)(executable).toLowerCase() === ".js" ? { command: process.execPath, args: [executable, ...args] } : { command: executable, args: [...args] };
+  return platform === "win32" && (0, import_node_path7.extname)(executable).toLowerCase() === ".js" ? { command: process.execPath, args: [executable, ...args] } : { command: executable, args: [...args] };
 }
 function parseClaudeVersionOutput(stdout) {
   return parseProviderVersionOutput(stdout, /\bclaude-agent-acp\b/i);
@@ -32190,7 +32377,7 @@ async function openClaudeAcpSession(options) {
 // src/host/codex.ts
 var import_node_child_process5 = require("node:child_process");
 var import_node_fs5 = require("node:fs");
-var import_node_path7 = require("node:path");
+var import_node_path8 = require("node:path");
 var CHILD_EXIT_WAIT_MS3 = 3e3;
 var CHILD_KILL_WAIT_MS3 = 1e3;
 var WINDOWS_NPM_SHIM_MAX_BYTES2 = 64 * 1024;
@@ -32219,7 +32406,7 @@ function resolveWindowsNpmShim2(shim) {
       `unrecognized codex-acp npm shim: ${shim}`
     );
   }
-  const target2 = (0, import_node_path7.join)((0, import_node_path7.dirname)(shim), ...WINDOWS_NPM_ENTRYPOINT2);
+  const target2 = (0, import_node_path8.join)((0, import_node_path8.dirname)(shim), ...WINDOWS_NPM_ENTRYPOINT2);
   try {
     (0, import_node_fs5.accessSync)(target2, import_node_fs5.constants.R_OK);
     return (0, import_node_fs5.realpathSync)(target2);
@@ -32233,12 +32420,12 @@ function resolveWindowsNpmShim2(shim) {
 function resolvedCodexCandidate(candidate, platform) {
   (0, import_node_fs5.accessSync)(candidate, import_node_fs5.constants.X_OK);
   const real = (0, import_node_fs5.realpathSync)(candidate);
-  return platform === "win32" && (0, import_node_path7.extname)(real).toLowerCase() === ".cmd" ? resolveWindowsNpmShim2(real) : real;
+  return platform === "win32" && (0, import_node_path8.extname)(real).toLowerCase() === ".cmd" ? resolveWindowsNpmShim2(real) : real;
 }
 function resolveCodexExecutable(executable = "codex-acp", pathEnv, platform = process.platform) {
-  if ((0, import_node_path7.isAbsolute)(executable) || executable.includes("/") || executable.includes("\\")) {
-    const abs = (0, import_node_path7.resolve)(executable);
-    const candidates = platform === "win32" && (0, import_node_path7.extname)(abs) === "" ? [`${abs}.cmd`] : [abs];
+  if ((0, import_node_path8.isAbsolute)(executable) || executable.includes("/") || executable.includes("\\")) {
+    const abs = (0, import_node_path8.resolve)(executable);
+    const candidates = platform === "win32" && (0, import_node_path8.extname)(abs) === "" ? [`${abs}.cmd`] : [abs];
     for (const candidate of candidates) {
       try {
         return resolvedCodexCandidate(candidate, platform);
@@ -32249,11 +32436,11 @@ function resolveCodexExecutable(executable = "codex-acp", pathEnv, platform = pr
     throw new AcpHostError("executable_missing", `not executable: ${abs}`);
   }
   const pathValue = pathEnv ?? process.env.PATH ?? "";
-  const names = platform === "win32" && (0, import_node_path7.extname)(executable) === "" ? [`${executable}.cmd`] : [executable];
-  for (const dir of pathValue.split(import_node_path7.delimiter)) {
+  const names = platform === "win32" && (0, import_node_path8.extname)(executable) === "" ? [`${executable}.cmd`] : [executable];
+  for (const dir of pathValue.split(import_node_path8.delimiter)) {
     if (!dir) continue;
     for (const name of names) {
-      const candidate = (0, import_node_path7.join)(dir, name);
+      const candidate = (0, import_node_path8.join)(dir, name);
       try {
         return resolvedCodexCandidate(candidate, platform);
       } catch (error) {
@@ -32267,7 +32454,7 @@ function resolveCodexExecutable(executable = "codex-acp", pathEnv, platform = pr
   );
 }
 function buildCodexLaunch(executable, args, platform = process.platform) {
-  return platform === "win32" && (0, import_node_path7.extname)(executable).toLowerCase() === ".js" ? { command: process.execPath, args: [executable, ...args] } : { command: executable, args: [...args] };
+  return platform === "win32" && (0, import_node_path8.extname)(executable).toLowerCase() === ".js" ? { command: process.execPath, args: [executable, ...args] } : { command: executable, args: [...args] };
 }
 function parseCodexVersionOutput(stdout) {
   return parseProviderVersionOutput(stdout, /@agentclientprotocol\/codex-acp\b/i);
@@ -32481,7 +32668,7 @@ async function resolveBudgetAndPrompt(session, prompt, budget) {
 }
 
 // src/listener/engine.ts
-var UUID_RE9 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+var UUID_RE10 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 var TERMINAL_STATES = /* @__PURE__ */ new Set(["done", "expired", "failed"]);
 var REPLY_MAX_CODE_UNITS = 2e3;
 var TRUNCATION_SUFFIX = "\n[Reply truncated by CommonSwarm]";
@@ -32489,7 +32676,7 @@ var UNSAFE_CONTROLS_RE = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u
 var LISTENER_MAX_PROMPT_ATTEMPTS = 3;
 var LISTENER_MAX_POST_ATTEMPTS = 5;
 function listenerReplyCommandId(signalId, effectOrdinal = 0) {
-  if (!UUID_RE9.test(signalId)) {
+  if (!UUID_RE10.test(signalId)) {
     throw new Error("listener signal id must be a UUID");
   }
   if (!Number.isSafeInteger(effectOrdinal) || effectOrdinal < 0) {
@@ -32950,10 +33137,10 @@ var ListenerEngine = class {
 
 // src/listener/file-store.ts
 var import_node_crypto13 = require("node:crypto");
-var import_node_os5 = require("node:os");
-var import_node_path8 = require("node:path");
+var import_node_os6 = require("node:os");
+var import_node_path9 = require("node:path");
 var import_node_util = require("node:util");
-var UUID_RE10 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+var UUID_RE11 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 var COMMAND_ID_RE2 = /^[A-Za-z0-9_-]{8,72}$/;
 var MAX_EFFECT_BYTES = 1024 * 1024;
 var STATES = /* @__PURE__ */ new Set([
@@ -32988,10 +33175,10 @@ var V1_EFFECT_KEYS = /* @__PURE__ */ new Set([
 ]);
 var V2_EFFECT_KEYS = /* @__PURE__ */ new Set([...V1_EFFECT_KEYS, "signalKind"]);
 function defaultListenerStateDirectory() {
-  return process.env.XDG_STATE_HOME ? (0, import_node_path8.join)(process.env.XDG_STATE_HOME, "cswarm", "listeners") : (0, import_node_path8.join)((0, import_node_os5.homedir)(), ".cswarm", "listeners");
+  return process.env.XDG_STATE_HOME ? (0, import_node_path9.join)(process.env.XDG_STATE_HOME, "cswarm", "listeners") : (0, import_node_path9.join)((0, import_node_os6.homedir)(), ".cswarm", "listeners");
 }
 function listenerInstanceKey(input) {
-  if (!UUID_RE10.test(input.workspaceId) || !UUID_RE10.test(input.principalId)) {
+  if (!UUID_RE11.test(input.workspaceId) || !UUID_RE11.test(input.principalId)) {
     throw new Error("listener workspace and principal ids must be UUIDs");
   }
   if (!input.profileId || input.profileId.includes("\0")) {
@@ -33023,7 +33210,7 @@ function parseListenerEffectRecord(raw, expectedId) {
     throw new Error("stored listener effect is malformed");
   }
   const row = value;
-  if (typeof row.version !== "number" || row.version !== 1 && row.version !== 2 || typeof row.signalId !== "string" || row.signalId.toLowerCase() !== expectedId || !UUID_RE10.test(row.signalId)) {
+  if (typeof row.version !== "number" || row.version !== 1 && row.version !== 2 || typeof row.signalId !== "string" || row.signalId.toLowerCase() !== expectedId || !UUID_RE11.test(row.signalId)) {
     throw new Error("stored listener effect is malformed");
   }
   if (row.version === 1) {
@@ -33040,7 +33227,7 @@ function upcastV1Ask(row) {
   if (row.effectOrdinal !== 0 || typeof row.commandId !== "string" || !COMMAND_ID_RE2.test(row.commandId) || typeof row.askBody !== "string" || row.askBody.length < 1 || typeof row.askUntil !== "string" || !Number.isFinite(Date.parse(row.askUntil)) || typeof row.senderOwnerRelation !== "string" || !RELATIONS.has(row.senderOwnerRelation) || typeof row.state !== "string" || !STATES.has(row.state) || !integer(row.promptAttempts) || !integer(row.postAttempts) || !nullableString(row.replyBody, 2e3) || typeof row.replyTruncated !== "boolean" || !nullableString(row.replySignalId, 64) || !nullableString(row.failureCode, 96) || typeof row.updatedAt !== "string" || !Number.isFinite(Date.parse(row.updatedAt))) {
     throw new Error("stored listener effect is malformed");
   }
-  if (row.replySignalId !== null && !UUID_RE10.test(row.replySignalId)) {
+  if (row.replySignalId !== null && !UUID_RE11.test(row.replySignalId)) {
     throw new Error("stored listener effect is malformed");
   }
   return {
@@ -33079,7 +33266,7 @@ function parseV2Record(row) {
     if (typeof row.commandId !== "string" || !COMMAND_ID_RE2.test(row.commandId) || row.state === "observed") {
       throw new Error("stored listener effect is malformed");
     }
-    if (row.replySignalId !== null && !UUID_RE10.test(row.replySignalId)) {
+    if (row.replySignalId !== null && !UUID_RE11.test(row.replySignalId)) {
       throw new Error("stored listener effect is malformed");
     }
   }
@@ -33103,7 +33290,7 @@ function parseV2Record(row) {
   };
 }
 function newObservedNoteRecord(input) {
-  if (!UUID_RE10.test(input.signalId)) {
+  if (!UUID_RE11.test(input.signalId)) {
     throw new Error("listener note signal id must be a UUID");
   }
   if (input.body.length < 1) {
@@ -33210,16 +33397,16 @@ var FileListenerEffectStore = class {
   effectsDirectory;
   constructor(options) {
     const root = options.stateDirectory ?? defaultListenerStateDirectory();
-    if (!(0, import_node_path8.isAbsolute)(root)) {
+    if (!(0, import_node_path9.isAbsolute)(root)) {
       throw new Error("listener state directory must be absolute");
     }
-    this.instanceDirectory = (0, import_node_path8.join)(root, listenerInstanceKey(options));
-    this.effectsDirectory = (0, import_node_path8.join)(this.instanceDirectory, "effects");
+    this.instanceDirectory = (0, import_node_path9.join)(root, listenerInstanceKey(options));
+    this.effectsDirectory = (0, import_node_path9.join)(this.instanceDirectory, "effects");
   }
   async read(signalId) {
     const id = this.checkedId(signalId);
     const raw = await readSecureJsonFile(
-      (0, import_node_path8.join)(this.effectsDirectory, `${id}.json`),
+      (0, import_node_path9.join)(this.effectsDirectory, `${id}.json`),
       MAX_EFFECT_BYTES
     );
     return raw === null ? null : parseListenerEffectRecord(raw, id);
@@ -33232,12 +33419,12 @@ var FileListenerEffectStore = class {
       throw new Error("listener effect is too large");
     }
     await writeSecureJsonFile(
-      (0, import_node_path8.join)(this.effectsDirectory, `${id}.json`),
+      (0, import_node_path9.join)(this.effectsDirectory, `${id}.json`),
       serialized
     );
   }
   checkedId(signalId) {
-    if (!UUID_RE10.test(signalId)) {
+    if (!UUID_RE11.test(signalId)) {
       throw new Error("listener signal id must be a UUID");
     }
     return signalId.toLowerCase();
@@ -33246,18 +33433,18 @@ var FileListenerEffectStore = class {
 
 // src/listener/grok-model.ts
 var import_promises5 = require("node:fs/promises");
-var import_node_os6 = require("node:os");
-var import_node_path10 = require("node:path");
+var import_node_os7 = require("node:os");
+var import_node_path11 = require("node:path");
 
 // src/host/grok.ts
 var import_node_child_process6 = require("node:child_process");
 var import_node_fs6 = require("node:fs");
-var import_node_path9 = require("node:path");
+var import_node_path10 = require("node:path");
 var CHILD_EXIT_WAIT_MS4 = 3e3;
 var CHILD_KILL_WAIT_MS4 = 1e3;
 function resolveGrokExecutable(executable = "grok") {
-  if ((0, import_node_path9.isAbsolute)(executable) || executable.includes("/")) {
-    const abs = (0, import_node_path9.resolve)(executable);
+  if ((0, import_node_path10.isAbsolute)(executable) || executable.includes("/")) {
+    const abs = (0, import_node_path10.resolve)(executable);
     try {
       (0, import_node_fs6.accessSync)(abs, import_node_fs6.constants.X_OK);
     } catch {
@@ -33502,11 +33689,11 @@ var GrokListenerModel = class {
   async validateLocalAuth() {
     if (this.options.open) return;
     const parent = this.options.env ?? process.env;
-    const sourceHome = parent.GROK_HOME ?? (0, import_node_path10.join)(parent.HOME ?? (0, import_node_os6.homedir)(), ".grok");
-    if (!(0, import_node_path10.isAbsolute)(sourceHome)) {
+    const sourceHome = parent.GROK_HOME ?? (0, import_node_path11.join)(parent.HOME ?? (0, import_node_os7.homedir)(), ".grok");
+    if (!(0, import_node_path11.isAbsolute)(sourceHome)) {
       throw new Error("Grok home must be an absolute path");
     }
-    const sourceAuth = (0, import_node_path10.join)(sourceHome, "auth.json");
+    const sourceAuth = (0, import_node_path11.join)(sourceHome, "auth.json");
     let info;
     try {
       info = await (0, import_promises5.lstat)(sourceAuth);
@@ -33556,7 +33743,7 @@ var GrokListenerModel = class {
 // src/listener/opencode-model.ts
 var import_node_crypto14 = require("node:crypto");
 var import_promises6 = require("node:fs/promises");
-var import_node_path11 = require("node:path");
+var import_node_path12 = require("node:path");
 function asError(error) {
   return error instanceof Error ? error : new Error(String(error));
 }
@@ -33567,7 +33754,7 @@ var OpenCodeListenerModel = class {
     this.openSession = options.open ?? openOpenCodeAcpSession;
     this.prepareHome = options.prepareHome ?? prepareOpenCodeIsolatedHome;
     this.prepareWorkerCwd = options.prepareWorkerCwd ?? (async (home) => {
-      const cwd = await (0, import_promises6.mkdtemp)((0, import_node_path11.join)(home, "canary-cwd-"));
+      const cwd = await (0, import_promises6.mkdtemp)((0, import_node_path12.join)(home, "canary-cwd-"));
       await (0, import_promises6.chmod)(cwd, 448);
       return cwd;
     });
@@ -33989,8 +34176,8 @@ var OpenCodeListenerModel = class {
 // src/listener/claude-model.ts
 var import_node_crypto15 = require("node:crypto");
 var import_promises7 = require("node:fs/promises");
-var import_node_os7 = require("node:os");
-var import_node_path12 = require("node:path");
+var import_node_os8 = require("node:os");
+var import_node_path13 = require("node:path");
 var ClaudeListenerClosedDuringOpen = class extends Error {
   constructor() {
     super("listener model closed while the Claude worker was opening");
@@ -34128,8 +34315,8 @@ var ClaudeListenerModel = class {
   }
   /** Force Claude's measured Write permission path without changing worker cwd. */
   async enablePromptsAfterClaudeCanary(handle) {
-    const sentinelPath = (0, import_node_path12.join)(
-      (0, import_node_os7.tmpdir)(),
+    const sentinelPath = (0, import_node_path13.join)(
+      (0, import_node_os8.tmpdir)(),
       `cswarm-claude-permission-canary-${process.pid}-${(0, import_node_crypto15.randomUUID)()}`
     );
     let sentinelCreated = false;
@@ -34158,8 +34345,8 @@ var ClaudeListenerModel = class {
 // src/listener/codex-model.ts
 var import_node_crypto16 = require("node:crypto");
 var import_promises8 = require("node:fs/promises");
-var import_node_os8 = require("node:os");
-var import_node_path13 = require("node:path");
+var import_node_os9 = require("node:os");
+var import_node_path14 = require("node:path");
 var CodexListenerClosedDuringOpen = class extends Error {
   constructor() {
     super("listener model closed while the Codex worker was opening");
@@ -34297,8 +34484,8 @@ var CodexListenerModel = class {
   }
   /** Force Codex's measured shell permission path without changing worker cwd. */
   async enablePromptsAfterCodexCanary(handle) {
-    const sentinelPath = (0, import_node_path13.join)(
-      (0, import_node_os8.tmpdir)(),
+    const sentinelPath = (0, import_node_path14.join)(
+      (0, import_node_os9.tmpdir)(),
       `cswarm-codex-permission-canary-${process.pid}-${(0, import_node_crypto16.randomUUID)()}`
     );
     let sentinelCreated = false;
@@ -34328,7 +34515,7 @@ var CodexListenerModel = class {
 var import_node_crypto17 = require("node:crypto");
 
 // src/cloud/delivery.ts
-var UUID_RE11 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+var UUID_RE12 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 var RFC3339_TIMESTAMP_RE = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|([+-]\d{2}):(\d{2}))$/i;
 var DELIVERY_KINDS = /* @__PURE__ */ new Set(["ask", "note"]);
 var SENDER_OWNER_RELATIONS2 = /* @__PURE__ */ new Set([
@@ -34415,7 +34602,7 @@ var DeliveryProtocolError = class extends Error {
   }
 };
 function checkedUuid3(value, field) {
-  if (typeof value !== "string" || !UUID_RE11.test(value)) {
+  if (typeof value !== "string" || !UUID_RE12.test(value)) {
     throw new DeliveryProtocolError(
       `delivery response returned a malformed ${field}`
     );
@@ -34526,7 +34713,7 @@ function checkedClaimCapabilities(value) {
 }
 function checkedOptionalUuidArray(value, field) {
   if (value === void 0) return;
-  if (!Array.isArray(value) || value.some((item) => typeof item !== "string" || !UUID_RE11.test(item))) {
+  if (!Array.isArray(value) || value.some((item) => typeof item !== "string" || !UUID_RE12.test(item))) {
     throw new DeliveryProtocolError(
       `delivery response returned a malformed ${field}`
     );
@@ -34673,7 +34860,7 @@ function checkedCommandId(value) {
   return value;
 }
 function checkedUuidRequest(value, field) {
-  if (!UUID_RE11.test(value)) {
+  if (!UUID_RE12.test(value)) {
     throw new Error(`${field} must be a UUID for an agent delivery command`);
   }
 }
@@ -34909,8 +35096,8 @@ var DeliveryCommandClient = class {
 };
 
 // src/listener/main-routing.ts
-var import_node_path14 = require("node:path");
-var UUID_RE12 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+var import_node_path15 = require("node:path");
+var UUID_RE13 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 var MAX_QUEUE_BYTES = 1024 * 1024;
 var QUEUE_FILE = "pending-for-main.json";
 var QUEUE_LOCK = "pending-for-main";
@@ -34965,7 +35152,7 @@ function parseEntry(value) {
   if (Object.keys(row).some((key2) => !allowed.has(key2))) {
     throw new Error("stored pending-for-main entry is malformed");
   }
-  if (typeof row.signalId !== "string" || !UUID_RE12.test(row.signalId) || typeof row.workspaceId !== "string" || !UUID_RE12.test(row.workspaceId) || typeof row.principalId !== "string" || !UUID_RE12.test(row.principalId) || typeof row.fromId !== "string" || !UUID_RE12.test(row.fromId) || row.fromKind !== "user" && row.fromKind !== "agent" || !(row.kind === void 0 || row.kind === "ask" || row.kind === "note") || !(row.senderName === null || typeof row.senderName === "string" && row.senderName.length <= 200) || typeof row.body !== "string" || row.body.length < 1 || !checkedTimestamp2(row.createdAt) || !checkedTimestamp2(row.queuedAt) || !(row.observationPending === void 0 || row.observationPending === true)) {
+  if (typeof row.signalId !== "string" || !UUID_RE13.test(row.signalId) || typeof row.workspaceId !== "string" || !UUID_RE13.test(row.workspaceId) || typeof row.principalId !== "string" || !UUID_RE13.test(row.principalId) || typeof row.fromId !== "string" || !UUID_RE13.test(row.fromId) || row.fromKind !== "user" && row.fromKind !== "agent" || !(row.kind === void 0 || row.kind === "ask" || row.kind === "note") || !(row.senderName === null || typeof row.senderName === "string" && row.senderName.length <= 200) || typeof row.body !== "string" || row.body.length < 1 || !checkedTimestamp2(row.createdAt) || !checkedTimestamp2(row.queuedAt) || !(row.observationPending === void 0 || row.observationPending === true)) {
     throw new Error("stored pending-for-main entry is malformed");
   }
   return {
@@ -35008,11 +35195,11 @@ var FilePendingMainQueue = class {
   path;
   directory;
   constructor(instanceDirectory) {
-    if (!(0, import_node_path14.isAbsolute)(instanceDirectory)) {
+    if (!(0, import_node_path15.isAbsolute)(instanceDirectory)) {
       throw new Error("pending-for-main directory must be absolute");
     }
     this.directory = instanceDirectory;
-    this.path = (0, import_node_path14.join)(instanceDirectory, QUEUE_FILE);
+    this.path = (0, import_node_path15.join)(instanceDirectory, QUEUE_FILE);
   }
   async readUnlocked() {
     const raw = await readSecureJsonFile(this.path, MAX_QUEUE_BYTES);
@@ -35104,7 +35291,7 @@ var LISTENER_REPLY_ONLY_MINIMUM_MS = SIGNAL_REQUEST_TIMEOUT_MS + LISTENER_ACK_ON
 var LISTENER_PROMPT_START_MINIMUM_MS = SIGNAL_READ_TIMEOUT_MS + ACP_DEFAULT_REQUEST_TIMEOUT_MS + LISTENER_REPLY_ONLY_MINIMUM_MS;
 var LISTENER_DELIVERY_RETRY_INITIAL_MS = 500;
 var LISTENER_DELIVERY_RETRY_MAX_MS = 3e4;
-var UUID_RE13 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+var UUID_RE14 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 var ListenerCapabilityError = class extends Error {
   code;
   constructor(code, message) {
@@ -35382,7 +35569,7 @@ async function runListenerRuntime(options) {
       new Error("listener instance id and delivery journal must be configured together")
     );
   }
-  if (hasInstanceId && !UUID_RE13.test(options.listenerInstanceId)) {
+  if (hasInstanceId && !UUID_RE14.test(options.listenerInstanceId)) {
     return await closeBeforeStart(
       options.model,
       new Error("listener instance id must be a UUID")
@@ -36222,8 +36409,8 @@ async function runListenerRuntime(options) {
 // src/listener/control.ts
 var import_node_net = require("node:net");
 var import_promises9 = require("node:fs/promises");
-var import_node_path15 = require("node:path");
-var UUID_RE14 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+var import_node_path16 = require("node:path");
+var UUID_RE15 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 var SEMVER_RE2 = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-(?:0|[1-9]\d*|[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|[A-Za-z-][0-9A-Za-z-]*))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
 var MAX_STATUS_BYTES = 16 * 1024;
 var MAX_CONTROL_BYTES = 8 * 1024;
@@ -36238,19 +36425,19 @@ var ListenerAlreadyRunningError = class extends Error {
 };
 function listenerPaths(options) {
   const root = options.stateDirectory ?? defaultListenerStateDirectory();
-  if (!(0, import_node_path15.isAbsolute)(root)) {
+  if (!(0, import_node_path16.isAbsolute)(root)) {
     throw new Error("listener state directory must be absolute");
   }
   const key2 = listenerInstanceKey(options);
-  const instanceDirectory = (0, import_node_path15.join)(root, key2);
+  const instanceDirectory = (0, import_node_path16.join)(root, key2);
   const uid2 = typeof process.getuid === "function" ? process.getuid() : process.pid;
-  const controlDirectory = process.platform === "win32" ? "" : (0, import_node_path15.join)("/tmp", `cswarm-control-${uid2}`);
-  const socketPath = process.platform === "win32" ? `\\\\.\\pipe\\cswarm-${key2}` : (0, import_node_path15.join)(controlDirectory, `${key2.slice(0, 32)}.sock`);
+  const controlDirectory = process.platform === "win32" ? "" : (0, import_node_path16.join)("/tmp", `cswarm-control-${uid2}`);
+  const socketPath = process.platform === "win32" ? `\\\\.\\pipe\\cswarm-${key2}` : (0, import_node_path16.join)(controlDirectory, `${key2.slice(0, 32)}.sock`);
   return {
     key: key2,
     instanceDirectory,
-    statusPath: (0, import_node_path15.join)(instanceDirectory, "status.json"),
-    logPath: (0, import_node_path15.join)(instanceDirectory, "events.ndjson"),
+    statusPath: (0, import_node_path16.join)(instanceDirectory, "status.json"),
+    logPath: (0, import_node_path16.join)(instanceDirectory, "events.ndjson"),
     socketPath
   };
 }
@@ -36329,10 +36516,10 @@ function parseStatus(raw) {
       throw new Error("stored listener status is malformed");
     }
   }
-  const nullableUuid2 = (candidate) => candidate === null || typeof candidate === "string" && UUID_RE14.test(candidate);
+  const nullableUuid2 = (candidate) => candidate === null || typeof candidate === "string" && UUID_RE15.test(candidate);
   const nullableCount = (candidate) => candidate === null || typeof candidate === "number" && Number.isSafeInteger(candidate) && candidate >= 0;
   const nullableTimestamp2 = (candidate) => candidate === null || typeof candidate === "string" && Number.isFinite(Date.parse(candidate));
-  if (row.version !== 1 || typeof row.instanceId !== "string" || !UUID_RE14.test(row.instanceId) || row.provider !== "grok" && row.provider !== "opencode" && row.provider !== "claude" && row.provider !== "codex" || typeof row.profileId !== "string" || typeof row.workspaceId !== "string" || !UUID_RE14.test(row.workspaceId) || typeof row.principalId !== "string" || !UUID_RE14.test(row.principalId) || !Number.isSafeInteger(row.pid) || row.pid < 1 || typeof row.state !== "string" || !["starting", "ready", "stopping", "stopped", "failed"].includes(row.state) || typeof row.startedAt !== "string" || !Number.isFinite(Date.parse(row.startedAt)) || !(row.readyAt === null || typeof row.readyAt === "string" && Number.isFinite(Date.parse(row.readyAt))) || typeof row.updatedAt !== "string" || !Number.isFinite(Date.parse(row.updatedAt)) || !(row.stoppedAt === null || typeof row.stoppedAt === "string" && Number.isFinite(Date.parse(row.stoppedAt))) || !nullableUuid2(row.lastSignalId) || !(row.lastErrorCode === null || typeof row.lastErrorCode === "string" && /^[a-z0-9_-]{1,96}$/.test(row.lastErrorCode)) || !(row.providerVersion === void 0 || row.providerVersion === null || typeof row.providerVersion === "string" && SEMVER_RE2.test(row.providerVersion)) || !(row.providerLastMeasuredVersion === void 0 || row.providerLastMeasuredVersion === null || typeof row.providerLastMeasuredVersion === "string" && SEMVER_RE2.test(row.providerLastMeasuredVersion)) || (row.providerVersion === null || row.providerVersion === void 0) !== (row.providerLastMeasuredVersion === null || row.providerLastMeasuredVersion === void 0) || !(row.lastWorkerStderrTail === void 0 || row.lastWorkerStderrTail === null || typeof row.lastWorkerStderrTail === "string" && row.lastWorkerStderrTail.length > 0 && row.lastWorkerStderrTail.length <= 2048 && !/swm_(?:agt|inv|cap)_/i.test(row.lastWorkerStderrTail)) || typeof row.logPath !== "string" || !(0, import_node_path15.isAbsolute)(row.logPath) || !(row.deliveryMode === void 0 || row.deliveryMode === null || typeof row.deliveryMode === "string" && STATUS_DELIVERY_MODES.has(row.deliveryMode)) || !(row.pendingDeliveryCount === void 0 || nullableCount(row.pendingDeliveryCount)) || !(row.lastTerminalDeliveryFailureCount === void 0 || nullableCount(row.lastTerminalDeliveryFailureCount)) || !(row.lastTerminalDeliveryFailureAt === void 0 || nullableTimestamp2(row.lastTerminalDeliveryFailureAt)) || !(row.lastClaimAt === void 0 || nullableTimestamp2(row.lastClaimAt)) || !(row.lastAckAt === void 0 || nullableTimestamp2(row.lastAckAt)) || !(row.routeMode === void 0 || row.routeMode === "worker" || row.routeMode === "main" || row.routeMode === "split") || !(row.deferOverChars === void 0 || row.deferOverChars === null || typeof row.deferOverChars === "number" && Number.isSafeInteger(row.deferOverChars) && row.deferOverChars >= 1 && row.deferOverChars <= 1e4) || !(row.pendingForMainCount === void 0 || typeof row.pendingForMainCount === "number" && Number.isSafeInteger(row.pendingForMainCount) && row.pendingForMainCount >= 0) || !(row.droppedForMainCount === void 0 || typeof row.droppedForMainCount === "number" && Number.isSafeInteger(row.droppedForMainCount) && row.droppedForMainCount >= 0)) {
+  if (row.version !== 1 || typeof row.instanceId !== "string" || !UUID_RE15.test(row.instanceId) || row.provider !== "grok" && row.provider !== "opencode" && row.provider !== "claude" && row.provider !== "codex" || typeof row.profileId !== "string" || typeof row.workspaceId !== "string" || !UUID_RE15.test(row.workspaceId) || typeof row.principalId !== "string" || !UUID_RE15.test(row.principalId) || !Number.isSafeInteger(row.pid) || row.pid < 1 || typeof row.state !== "string" || !["starting", "ready", "stopping", "stopped", "failed"].includes(row.state) || typeof row.startedAt !== "string" || !Number.isFinite(Date.parse(row.startedAt)) || !(row.readyAt === null || typeof row.readyAt === "string" && Number.isFinite(Date.parse(row.readyAt))) || typeof row.updatedAt !== "string" || !Number.isFinite(Date.parse(row.updatedAt)) || !(row.stoppedAt === null || typeof row.stoppedAt === "string" && Number.isFinite(Date.parse(row.stoppedAt))) || !nullableUuid2(row.lastSignalId) || !(row.lastErrorCode === null || typeof row.lastErrorCode === "string" && /^[a-z0-9_-]{1,96}$/.test(row.lastErrorCode)) || !(row.providerVersion === void 0 || row.providerVersion === null || typeof row.providerVersion === "string" && SEMVER_RE2.test(row.providerVersion)) || !(row.providerLastMeasuredVersion === void 0 || row.providerLastMeasuredVersion === null || typeof row.providerLastMeasuredVersion === "string" && SEMVER_RE2.test(row.providerLastMeasuredVersion)) || (row.providerVersion === null || row.providerVersion === void 0) !== (row.providerLastMeasuredVersion === null || row.providerLastMeasuredVersion === void 0) || !(row.lastWorkerStderrTail === void 0 || row.lastWorkerStderrTail === null || typeof row.lastWorkerStderrTail === "string" && row.lastWorkerStderrTail.length > 0 && row.lastWorkerStderrTail.length <= 2048 && !/swm_(?:agt|inv|cap)_/i.test(row.lastWorkerStderrTail)) || typeof row.logPath !== "string" || !(0, import_node_path16.isAbsolute)(row.logPath) || !(row.deliveryMode === void 0 || row.deliveryMode === null || typeof row.deliveryMode === "string" && STATUS_DELIVERY_MODES.has(row.deliveryMode)) || !(row.pendingDeliveryCount === void 0 || nullableCount(row.pendingDeliveryCount)) || !(row.lastTerminalDeliveryFailureCount === void 0 || nullableCount(row.lastTerminalDeliveryFailureCount)) || !(row.lastTerminalDeliveryFailureAt === void 0 || nullableTimestamp2(row.lastTerminalDeliveryFailureAt)) || !(row.lastClaimAt === void 0 || nullableTimestamp2(row.lastClaimAt)) || !(row.lastAckAt === void 0 || nullableTimestamp2(row.lastAckAt)) || !(row.routeMode === void 0 || row.routeMode === "worker" || row.routeMode === "main" || row.routeMode === "split") || !(row.deferOverChars === void 0 || row.deferOverChars === null || typeof row.deferOverChars === "number" && Number.isSafeInteger(row.deferOverChars) && row.deferOverChars >= 1 && row.deferOverChars <= 1e4) || !(row.pendingForMainCount === void 0 || typeof row.pendingForMainCount === "number" && Number.isSafeInteger(row.pendingForMainCount) && row.pendingForMainCount >= 0) || !(row.droppedForMainCount === void 0 || typeof row.droppedForMainCount === "number" && Number.isSafeInteger(row.droppedForMainCount) && row.droppedForMainCount >= 0)) {
     throw new Error("stored listener status is malformed");
   }
   const routeMode = row.routeMode ?? "worker";
@@ -36506,7 +36693,7 @@ function writeResponse(socket, response) {
 }
 async function startupLock(paths) {
   await ensureSecureStateDirectory(paths.instanceDirectory);
-  const lockPath = (0, import_node_path15.join)(paths.instanceDirectory, "starting.lock");
+  const lockPath = (0, import_node_path16.join)(paths.instanceDirectory, "starting.lock");
   const deadline = Date.now() + START_LOCK_WAIT_MS;
   while (Date.now() < deadline) {
     let handle;
@@ -36547,7 +36734,7 @@ async function startupLock(paths) {
 async function prepareSocket(paths) {
   if (process.platform !== "win32") {
     const uid2 = typeof process.getuid === "function" ? process.getuid() : process.pid;
-    const directory = (0, import_node_path15.join)("/tmp", `cswarm-control-${uid2}`);
+    const directory = (0, import_node_path16.join)("/tmp", `cswarm-control-${uid2}`);
     await ensureSecureStateDirectory(directory);
   }
   try {
@@ -36682,7 +36869,7 @@ async function queryListenerControl(paths, command2, timeoutMs = CONTROL_TIMEOUT
 
 // src/listener/supervisor.ts
 var import_node_crypto18 = require("node:crypto");
-var UUID_RE15 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+var UUID_RE16 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 var LISTENER_RESTART_MAX_ATTEMPTS = 5;
 var LISTENER_RESTART_INITIAL_MS = 1e3;
 var LISTENER_RESTART_MAX_MS = 6e4;
@@ -36811,7 +36998,7 @@ async function runListenerSupervisor(options) {
     // before the socket can answer, before any status/event persistence.
     initialize: prepare ? async () => {
       const selected = await prepare(proposedInstanceId);
-      if (!selected || typeof selected !== "object" || typeof selected.instanceId !== "string" || !UUID_RE15.test(selected.instanceId)) {
+      if (!selected || typeof selected !== "object" || typeof selected.instanceId !== "string" || !UUID_RE16.test(selected.instanceId)) {
         throw new Error("listener prepare returned an invalid instance id");
       }
       status = { ...status, instanceId: selected.instanceId };
@@ -37167,9 +37354,9 @@ async function waitForListenerReady(paths, options = {}) {
 }
 
 // src/listener/delivery-journal.ts
-var import_node_path16 = require("node:path");
+var import_node_path17 = require("node:path");
 var import_node_util2 = require("node:util");
-var UUID_RE16 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+var UUID_RE17 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 var COMMAND_ID_RE3 = /^[A-Za-z0-9_-]{8,72}$/;
 var SIGNAL_FINGERPRINT_RE = /^[0-9a-f]{64}$/;
 var MAX_JOURNAL_BYTES = 8192;
@@ -37264,7 +37451,7 @@ var ALLOWED_ERROR_CODES = /* @__PURE__ */ new Set([
   "credential_unavailable"
 ]);
 function claimCommandId(listenerInstanceId, claimOrdinal) {
-  if (!UUID_RE16.test(listenerInstanceId)) {
+  if (!UUID_RE17.test(listenerInstanceId)) {
     throw new Error("stored delivery journal is malformed");
   }
   if (!Number.isSafeInteger(claimOrdinal) || claimOrdinal < 0) {
@@ -37279,7 +37466,7 @@ function claimCommandId(listenerInstanceId, claimOrdinal) {
   return id;
 }
 function ackCommandId(leaseId) {
-  if (!UUID_RE16.test(leaseId)) {
+  if (!UUID_RE17.test(leaseId)) {
     throw new Error("stored delivery journal is malformed");
   }
   const cleanLease = leaseId.toLowerCase().replace(/-/g, "");
@@ -37362,19 +37549,19 @@ function parseJournalRecord(raw, expectedWorkspaceId, expectedPrincipalId) {
   if (row.version !== 1) {
     throw new Error("stored delivery journal is malformed");
   }
-  if (typeof row.workspaceId !== "string" || !UUID_RE16.test(row.workspaceId) || row.workspaceId !== row.workspaceId.toLowerCase()) {
+  if (typeof row.workspaceId !== "string" || !UUID_RE17.test(row.workspaceId) || row.workspaceId !== row.workspaceId.toLowerCase()) {
     throw new Error("stored delivery journal is malformed");
   }
   if (expectedWorkspaceId && row.workspaceId !== expectedWorkspaceId.toLowerCase()) {
     throw new Error("stored delivery journal is malformed");
   }
-  if (typeof row.principalId !== "string" || !UUID_RE16.test(row.principalId) || row.principalId !== row.principalId.toLowerCase()) {
+  if (typeof row.principalId !== "string" || !UUID_RE17.test(row.principalId) || row.principalId !== row.principalId.toLowerCase()) {
     throw new Error("stored delivery journal is malformed");
   }
   if (expectedPrincipalId && row.principalId !== expectedPrincipalId.toLowerCase()) {
     throw new Error("stored delivery journal is malformed");
   }
-  if (typeof row.listenerInstanceId !== "string" || !UUID_RE16.test(row.listenerInstanceId) || row.listenerInstanceId !== row.listenerInstanceId.toLowerCase()) {
+  if (typeof row.listenerInstanceId !== "string" || !UUID_RE17.test(row.listenerInstanceId) || row.listenerInstanceId !== row.listenerInstanceId.toLowerCase()) {
     throw new Error("stored delivery journal is malformed");
   }
   if (!Number.isSafeInteger(row.nextClaimOrdinal) || row.nextClaimOrdinal < 0) {
@@ -37438,10 +37625,10 @@ function parseJournalRecord(raw, expectedWorkspaceId, expectedPrincipalId) {
     if (active.claimLastAttemptAt === null) {
       throw new Error("stored delivery journal is malformed");
     }
-    if (typeof active.signalId !== "string" || !UUID_RE16.test(active.signalId) || active.signalId !== active.signalId.toLowerCase()) {
+    if (typeof active.signalId !== "string" || !UUID_RE17.test(active.signalId) || active.signalId !== active.signalId.toLowerCase()) {
       throw new Error("stored delivery journal is malformed");
     }
-    if (typeof active.leaseId !== "string" || !UUID_RE16.test(active.leaseId) || active.leaseId !== active.leaseId.toLowerCase()) {
+    if (typeof active.leaseId !== "string" || !UUID_RE17.test(active.leaseId) || active.leaseId !== active.leaseId.toLowerCase()) {
       throw new Error("stored delivery journal is malformed");
     }
     if (!isValidIsoTimestamp(active.leasedUntil) || Date.parse(active.leasedUntil) <= Date.parse(active.claimCreatedAt)) {
@@ -37513,7 +37700,7 @@ var FileListenerDeliveryJournal = class {
       ["profileId", "workspaceId", "principalId"],
       "delivery journal configuration rejected"
     );
-    if (typeof options.profileId !== "string" || !options.profileId || options.profileId.includes("\0") || typeof options.workspaceId !== "string" || !UUID_RE16.test(options.workspaceId) || typeof options.principalId !== "string" || !UUID_RE16.test(options.principalId)) {
+    if (typeof options.profileId !== "string" || !options.profileId || options.profileId.includes("\0") || typeof options.workspaceId !== "string" || !UUID_RE17.test(options.workspaceId) || typeof options.principalId !== "string" || !UUID_RE17.test(options.principalId)) {
       throw new Error("delivery journal configuration rejected");
     }
     if (options.stateDirectory !== void 0) {
@@ -37528,11 +37715,11 @@ var FileListenerDeliveryJournal = class {
       stateDirectory: options.stateDirectory
     });
     const root = this.options.stateDirectory ?? defaultListenerStateDirectory();
-    if (!(0, import_node_path16.isAbsolute)(root)) {
+    if (!(0, import_node_path17.isAbsolute)(root)) {
       throw new Error("delivery journal configuration rejected");
     }
-    this.instanceDirectory = (0, import_node_path16.join)(root, listenerInstanceKey(this.options));
-    this.journalPath = (0, import_node_path16.join)(this.instanceDirectory, "delivery-journal.json");
+    this.instanceDirectory = (0, import_node_path17.join)(root, listenerInstanceKey(this.options));
+    this.journalPath = (0, import_node_path17.join)(this.instanceDirectory, "delivery-journal.json");
   }
   async readRecordUnlocked() {
     let raw;
@@ -37634,7 +37821,7 @@ var FileListenerDeliveryJournal = class {
       ["signalId", "leaseId", "leasedUntil"],
       "delivery journal mutation rejected"
     );
-    if (typeof input.signalId !== "string" || !UUID_RE16.test(input.signalId) || typeof input.leaseId !== "string" || !UUID_RE16.test(input.leaseId) || !isValidIsoTimestamp(input.leasedUntil) || input.signalFingerprint !== void 0 && (typeof input.signalFingerprint !== "string" || !SIGNAL_FINGERPRINT_RE.test(input.signalFingerprint))) {
+    if (typeof input.signalId !== "string" || !UUID_RE17.test(input.signalId) || typeof input.leaseId !== "string" || !UUID_RE17.test(input.leaseId) || !isValidIsoTimestamp(input.leasedUntil) || input.signalFingerprint !== void 0 && (typeof input.signalFingerprint !== "string" || !SIGNAL_FINGERPRINT_RE.test(input.signalFingerprint))) {
       throw new Error("delivery journal mutation rejected");
     }
     const canonicalSignalId = input.signalId.toLowerCase();
@@ -37766,7 +37953,7 @@ async function openListenerDeliveryJournal(options) {
     ["profileId", "workspaceId", "principalId", "proposedListenerInstanceId"],
     "delivery journal configuration rejected"
   );
-  if (typeof options.profileId !== "string" || !options.profileId || options.profileId.includes("\0") || typeof options.workspaceId !== "string" || !UUID_RE16.test(options.workspaceId) || typeof options.principalId !== "string" || !UUID_RE16.test(options.principalId) || typeof options.proposedListenerInstanceId !== "string" || !UUID_RE16.test(options.proposedListenerInstanceId)) {
+  if (typeof options.profileId !== "string" || !options.profileId || options.profileId.includes("\0") || typeof options.workspaceId !== "string" || !UUID_RE17.test(options.workspaceId) || typeof options.principalId !== "string" || !UUID_RE17.test(options.principalId) || typeof options.proposedListenerInstanceId !== "string" || !UUID_RE17.test(options.proposedListenerInstanceId)) {
     throw new Error("delivery journal configuration rejected");
   }
   if (options.stateDirectory !== void 0) {
@@ -37861,9 +38048,9 @@ async function openListenerDeliveryJournal(options) {
 
 // src/listener/detach.ts
 var import_node_child_process7 = require("node:child_process");
-var import_node_path17 = require("node:path");
+var import_node_path18 = require("node:path");
 function isNativeAbsolutePath(value, platform = process.platform) {
-  return platform === "win32" ? import_node_path17.win32.isAbsolute(value) : import_node_path17.posix.isAbsolute(value);
+  return platform === "win32" ? import_node_path18.win32.isAbsolute(value) : import_node_path18.posix.isAbsolute(value);
 }
 function listenerNodeExecArgv(values2) {
   const safe = [];
@@ -37980,8 +38167,8 @@ async function spawnDetachedListener(options) {
 
 // src/listener/hook.ts
 var import_promises10 = require("node:fs/promises");
-var import_node_path18 = require("node:path");
-var UUID_RE17 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+var import_node_path19 = require("node:path");
+var UUID_RE18 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 var TOKEN_RE = /^swm_agt_[A-Za-z0-9_-]{43}$/;
 var INSTANCE_KEY_RE = /^[0-9a-f]{64}$/;
 var MAX_HOOK_CREDENTIAL_BYTES = 8 * 1024;
@@ -38022,7 +38209,7 @@ function parseListenerCredential(raw) {
     "principalId",
     "credential",
     "updatedAt"
-  ]) || row.version !== 1 || typeof row.profileId !== "string" || !/^[0-9a-f]{24}$/.test(row.profileId) || typeof row.targetUrl !== "string" || typeof row.anonKey !== "string" || row.anonKey.length < 1 || row.anonKey.length > 4096 || typeof row.workspaceId !== "string" || !UUID_RE17.test(row.workspaceId) || typeof row.principalId !== "string" || !UUID_RE17.test(row.principalId) || typeof row.credential !== "string" || !TOKEN_RE.test(row.credential) || typeof row.updatedAt !== "string" || !Number.isFinite(Date.parse(row.updatedAt))) {
+  ]) || row.version !== 1 || typeof row.profileId !== "string" || !/^[0-9a-f]{24}$/.test(row.profileId) || typeof row.targetUrl !== "string" || typeof row.anonKey !== "string" || row.anonKey.length < 1 || row.anonKey.length > 4096 || typeof row.workspaceId !== "string" || !UUID_RE18.test(row.workspaceId) || typeof row.principalId !== "string" || !UUID_RE18.test(row.principalId) || typeof row.credential !== "string" || !TOKEN_RE.test(row.credential) || typeof row.updatedAt !== "string" || !Number.isFinite(Date.parse(row.updatedAt))) {
     throw new Error("stored listener hook credential is malformed");
   }
   const target2 = cloudTarget(row.targetUrl, row.anonKey);
@@ -38041,7 +38228,7 @@ function parseListenerCredential(raw) {
   };
 }
 async function writeListenerCredentialState(instanceDirectory, input) {
-  if (!(0, import_node_path18.isAbsolute)(instanceDirectory)) {
+  if (!(0, import_node_path19.isAbsolute)(instanceDirectory)) {
     throw new Error("listener hook state directory must be absolute");
   }
   const record = parseListenerCredential(JSON.stringify({
@@ -38055,16 +38242,16 @@ async function writeListenerCredentialState(instanceDirectory, input) {
     updatedAt: new Date(input.now ?? Date.now()).toISOString()
   }));
   await writeSecureJsonFile(
-    (0, import_node_path18.join)(instanceDirectory, LISTENER_CREDENTIAL_FILE),
+    (0, import_node_path19.join)(instanceDirectory, LISTENER_CREDENTIAL_FILE),
     JSON.stringify(record)
   );
   await deleteSecureJsonFile(
-    (0, import_node_path18.join)(instanceDirectory, RETIRED_HOOK_CREDENTIAL_FILE)
+    (0, import_node_path19.join)(instanceDirectory, RETIRED_HOOK_CREDENTIAL_FILE)
   ).catch(() => void 0);
 }
 async function readListenerCredentialState(instanceDirectory) {
   const raw = await readSecureJsonFile(
-    (0, import_node_path18.join)(instanceDirectory, LISTENER_CREDENTIAL_FILE),
+    (0, import_node_path19.join)(instanceDirectory, LISTENER_CREDENTIAL_FILE),
     MAX_HOOK_CREDENTIAL_BYTES
   );
   return raw === null ? null : parseListenerCredential(raw);
@@ -38082,7 +38269,7 @@ function parseSurface(raw) {
   const row = value;
   if (Object.keys(row).some(
     (key2) => key2 !== "version" && key2 !== "surfacedSignalIds" && key2 !== "reportedDroppedCount" && key2 !== "credentialFailureReported"
-  ) || row.version !== 1 || !Array.isArray(row.surfacedSignalIds) || row.surfacedSignalIds.length > HOOK_SURFACED_IDS_MAX || row.surfacedSignalIds.some((id) => typeof id !== "string" || !UUID_RE17.test(id)) || !(row.reportedDroppedCount === void 0 || typeof row.reportedDroppedCount === "number" && Number.isSafeInteger(row.reportedDroppedCount) && row.reportedDroppedCount >= 0) || !(row.credentialFailureReported === void 0 || typeof row.credentialFailureReported === "boolean")) {
+  ) || row.version !== 1 || !Array.isArray(row.surfacedSignalIds) || row.surfacedSignalIds.length > HOOK_SURFACED_IDS_MAX || row.surfacedSignalIds.some((id) => typeof id !== "string" || !UUID_RE18.test(id)) || !(row.reportedDroppedCount === void 0 || typeof row.reportedDroppedCount === "number" && Number.isSafeInteger(row.reportedDroppedCount) && row.reportedDroppedCount >= 0) || !(row.credentialFailureReported === void 0 || typeof row.credentialFailureReported === "boolean")) {
     throw new Error("stored listener hook surface state is malformed");
   }
   const ids = row.surfacedSignalIds.map((id) => String(id).toLowerCase());
@@ -38099,10 +38286,10 @@ function parseSurface(raw) {
 var FileHookSurfaceStore = class {
   constructor(instanceDirectory) {
     this.instanceDirectory = instanceDirectory;
-    if (!(0, import_node_path18.isAbsolute)(instanceDirectory)) {
+    if (!(0, import_node_path19.isAbsolute)(instanceDirectory)) {
       throw new Error("listener hook surface directory must be absolute");
     }
-    this.path = (0, import_node_path18.join)(instanceDirectory, HOOK_SURFACE_FILE);
+    this.path = (0, import_node_path19.join)(instanceDirectory, HOOK_SURFACE_FILE);
   }
   instanceDirectory;
   path;
@@ -38119,7 +38306,7 @@ var FileHookSurfaceStore = class {
       const unseen = [];
       for (const item of items) {
         const signalId = item.signalId.toLowerCase();
-        if (!UUID_RE17.test(signalId) || seen.has(signalId)) continue;
+        if (!UUID_RE18.test(signalId) || seen.has(signalId)) continue;
         seen.add(signalId);
         unseen.push(item);
       }
@@ -38142,7 +38329,7 @@ var FileHookSurfaceStore = class {
       const seen = new Set(state.surfacedSignalIds);
       for (const signalId of options.signalIds ?? []) {
         const checked = signalId.toLowerCase();
-        if (UUID_RE17.test(checked)) seen.add(checked);
+        if (UUID_RE18.test(checked)) seen.add(checked);
       }
       await writeSecureJsonFile(
         this.path,
@@ -38181,7 +38368,7 @@ function parseGlobalState(raw) {
 }
 async function reserveCheck(stateDirectory2, cooldownMs, now) {
   return await withFileLock(stateDirectory2, GLOBAL_STATE_LOCK, async () => {
-    const path = (0, import_node_path18.join)(stateDirectory2, GLOBAL_STATE_FILE);
+    const path = (0, import_node_path19.join)(stateDirectory2, GLOBAL_STATE_FILE);
     const raw = await readSecureJsonFile(path, MAX_GLOBAL_STATE_BYTES);
     const previous = raw === null ? null : parseGlobalState(raw);
     if (previous !== null && now - previous.lastCheckAt < cooldownMs) return false;
@@ -38201,8 +38388,8 @@ async function statusContext(stateDirectory2, key2, instanceDirectory) {
   const provisional = {
     key: key2,
     instanceDirectory,
-    statusPath: (0, import_node_path18.join)(instanceDirectory, "status.json"),
-    logPath: (0, import_node_path18.join)(instanceDirectory, "events.ndjson"),
+    statusPath: (0, import_node_path19.join)(instanceDirectory, "status.json"),
+    logPath: (0, import_node_path19.join)(instanceDirectory, "events.ndjson"),
     socketPath: ""
   };
   const status = await readListenerStatus(provisional).catch(() => null);
@@ -38238,7 +38425,7 @@ async function discoverContexts(stateDirectory2, isListenerLive = listenerIsLive
   const contexts = [];
   for (const entry of entries) {
     if (!entry.isDirectory() || !INSTANCE_KEY_RE.test(entry.name)) continue;
-    const instanceDirectory = (0, import_node_path18.join)(stateDirectory2, entry.name);
+    const instanceDirectory = (0, import_node_path19.join)(stateDirectory2, entry.name);
     const storedStatus = await statusContext(
       stateDirectory2,
       entry.name,
@@ -38257,7 +38444,7 @@ async function discoverContexts(stateDirectory2, isListenerLive = listenerIsLive
       continue;
     }
     await deleteSecureJsonFile(
-      (0, import_node_path18.join)(instanceDirectory, RETIRED_HOOK_CREDENTIAL_FILE)
+      (0, import_node_path19.join)(instanceDirectory, RETIRED_HOOK_CREDENTIAL_FILE)
     ).catch(() => void 0);
     try {
       const credential = await readListenerCredentialState(instanceDirectory);
@@ -38408,7 +38595,7 @@ async function recordQueuedObservations(check, signalIds, options, now) {
 async function checkListenerHooks(options) {
   try {
     const stateDirectory2 = options.stateDirectory ?? defaultListenerStateDirectory();
-    if (!(0, import_node_path18.isAbsolute)(stateDirectory2)) return "";
+    if (!(0, import_node_path19.isAbsolute)(stateDirectory2)) return "";
     const now = options.now ?? Date.now;
     const cooldownSeconds = options.cooldownSeconds ?? HOOK_DEFAULT_COOLDOWN_SECONDS;
     if (!Number.isSafeInteger(cooldownSeconds) || cooldownSeconds < 0 || cooldownSeconds > 86400) {
@@ -38589,6 +38776,7 @@ var KNOWN_FLAGS = /* @__PURE__ */ new Set([
   "name",
   "ndjson",
   "no-browser",
+  "notify",
   "opencode-executable",
   "out",
   "permissions",
@@ -38628,11 +38816,12 @@ var BOOLEAN_FLAGS = /* @__PURE__ */ new Set([
   "link-stdin",
   "local",
   "ndjson",
+  "notify",
   "no-browser",
   "reveal-anon-key",
   "write"
 ]);
-var UUID_RE18 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+var UUID_RE19 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 var AGENT_CREDENTIAL_MESSAGE = "Agent credential minted. It is bound to this task and run so the agent's work stays scoped and attributable.";
 var AGENT_CREDENTIAL_MESSAGE_D088 = "Agent credential minted. It is bound to this run, so the agent's work is attributable to it.";
 var ACCEPTED_AGENT_CREDENTIAL_MESSAGES = [
@@ -38640,8 +38829,8 @@ var ACCEPTED_AGENT_CREDENTIAL_MESSAGES = [
   AGENT_CREDENTIAL_MESSAGE_D088
 ];
 function packageVersion() {
-  if ("0.1.34".length > 0) {
-    return "0.1.34";
+  if ("0.1.35".length > 0) {
+    return "0.1.35";
   }
   try {
     const value = JSON.parse(
@@ -38763,6 +38952,7 @@ Usage:
   cswarm receipt <signal-id> --agent-token-stdin [--url <url> --anon-key <key>] --workspace-id <uuid> [--json]
   cswarm feed [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--about <ref>] [--kind <kind>] [--since <timestamp>] [--limit <n>] [--include-stale] [--json]
   cswarm inbox [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--kind <kind>] [--about <ref>] [--since <timestamp>] [--limit <n>] [--include-stale] [--wait <seconds>] [--json]
+  cswarm inbox --notify --agent-token-stdin [--url <url> --anon-key <key>] --workspace-id <uuid> [--json]
   cswarm inbox --follow --ndjson [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--kind <kind>] [--about <ref>] [--since <timestamp>] [--limit <n>] [--include-stale]
   cswarm file put <local-path> [--name <name>] [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--agent-token-stdin] [--json]
   cswarm file ls [--include-tombstoned] [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--agent-token-stdin] [--json]
@@ -38808,6 +38998,7 @@ Credential selection for command/dogfood:
                           JSON artifact, because it needs a field a bare secret does not carry:
                             members       reads only          -- either form
                             receipt       reads only          -- either form
+                            inbox --notify persists a per-agent cursor -- needs principal_id
                             file put, file ls, file get, file rm, file restore
                                           read and command, nothing persisted -- either form
                             feedback      command only, nothing persisted     -- either form
@@ -38977,7 +39168,7 @@ function parsedAgentCredential(value) {
   const withExpiry = [...requiredKeys, "expires_at"].sort();
   const actualKeys = Object.keys(artifact).sort();
   const shape = actualKeys.length === requiredKeys.length ? requiredKeys : withExpiry;
-  if (actualKeys.length !== shape.length || !actualKeys.every((key2, index) => key2 === shape[index]) || !ACCEPTED_AGENT_CREDENTIAL_MESSAGES.includes(artifact.message) || artifact.status !== "accepted" || typeof artifact.principal_id !== "string" || !UUID_RE18.test(artifact.principal_id) || typeof artifact.token_id !== "string" || !UUID_RE18.test(artifact.token_id) || typeof artifact.run_id !== "string" || !UUID_RE18.test(artifact.run_id) || typeof artifact.agent_token !== "string") {
+  if (actualKeys.length !== shape.length || !actualKeys.every((key2, index) => key2 === shape[index]) || !ACCEPTED_AGENT_CREDENTIAL_MESSAGES.includes(artifact.message) || artifact.status !== "accepted" || typeof artifact.principal_id !== "string" || !UUID_RE19.test(artifact.principal_id) || typeof artifact.token_id !== "string" || !UUID_RE19.test(artifact.token_id) || typeof artifact.run_id !== "string" || !UUID_RE19.test(artifact.run_id) || typeof artifact.agent_token !== "string") {
     throw new Error("agent credential JSON is malformed");
   }
   let expiresAt = null;
@@ -39215,7 +39406,7 @@ async function runNew(args) {
       project: {
         workspace_id: created,
         name,
-        stream_id: typeof response.stream_id === "string" && UUID_RE18.test(response.stream_id) ? response.stream_id : null
+        stream_id: typeof response.stream_id === "string" && UUID_RE19.test(response.stream_id) ? response.stream_id : null
       }
     });
     return;
@@ -39989,7 +40180,7 @@ async function runLinkNew(args) {
     2
   );
   const taskId = args.required("task-id");
-  if (!UUID_RE18.test(taskId)) {
+  if (!UUID_RE19.test(taskId)) {
     throw new Error("--task-id must be the work item's UUID");
   }
   const site = capabilitySiteOrigin(
@@ -40049,7 +40240,7 @@ async function runLinkRevoke(args) {
     2
   );
   const capabilityId = args.required("capability-id");
-  if (!UUID_RE18.test(capabilityId)) {
+  if (!UUID_RE19.test(capabilityId)) {
     throw new Error(
       "--capability-id must be the id printed when the link was created"
     );
@@ -40628,7 +40819,7 @@ async function runReply(args) {
     "json"
   ], 3);
   const signalId = args.positionals[1];
-  if (signalId === void 0 || !UUID_RE18.test(signalId)) {
+  if (signalId === void 0 || !UUID_RE19.test(signalId)) {
     throw new Error("reply requires the signal UUID being answered");
   }
   const body = args.positionals[2];
@@ -40770,18 +40961,29 @@ async function runMembers(args) {
   process.stdout.write(renderRoster(directory, memberNames));
 }
 async function runSignalRead(args, inbox) {
-  args.assertShape([
+  const notify = inbox && args.has("notify");
+  args.assertShape(notify ? [
+    ...TARGET_FLAGS,
+    "workspace-id",
+    ...CREDENTIAL_FLAGS,
+    "notify",
+    "json"
+  ] : [
     ...TARGET_FLAGS,
     "workspace-id",
     ...CREDENTIAL_FLAGS,
     "about",
     "kind",
-    ...inbox ? ["wait", "follow", "ndjson"] : [],
+    ...inbox ? ["wait", "follow", "ndjson", "notify"] : [],
     "since",
     "limit",
     "include-stale",
     "json"
   ], 1);
+  if (notify) {
+    await runInboxNotifyCommand(args);
+    return;
+  }
   if (inbox && args.has("follow")) {
     if (!args.has("ndjson")) {
       throw new Error("inbox --follow requires --ndjson");
@@ -40858,6 +41060,89 @@ async function runSignalRead(args, inbox) {
   })}
 `);
 }
+async function writeMonitorLine(line) {
+  await new Promise((resolve, reject) => {
+    process.stdout.write(`${line}
+`, (error) => {
+      if (error) reject(error);
+      else resolve();
+    });
+  });
+}
+async function runInboxNotifyCommand(args) {
+  if (!args.has("agent-token-stdin")) {
+    throw new Error(
+      "inbox --notify is for one agent; provide its JSON credential with --agent-token-stdin"
+    );
+  }
+  const cloud = await target(args);
+  const selected = await commandWorkspaceAndCredential(args, cloud, {
+    validateHumanWorkspace: true
+  });
+  const principalId = selected.agent?.principalId ?? null;
+  if (selected.kind !== "agent" || principalId === null) {
+    throw new Error(
+      "inbox --notify needs the full JSON agent credential so its durable cursor is tied to one agent"
+    );
+  }
+  const controller = new AbortController();
+  const stop = () => controller.abort();
+  process.on("SIGINT", stop);
+  process.on("SIGTERM", stop);
+  try {
+    const cursorStore = fileArrivalCursorStore({
+      target: cloud,
+      workspaceId: selected.selectedWorkspace,
+      principalId
+    });
+    const result = await runArrivalWatch({
+      workspaceId: selected.selectedWorkspace,
+      principalId,
+      store: cursorStore,
+      signal: controller.signal,
+      readPage: async ({ after, baseline, limit }) => {
+        const token = selected.session ? await selected.session.bearer() : selected.bearer;
+        return await readAgentSignalPage(
+          cloud,
+          { kind: "agent", token },
+          {
+            workspaceId: selected.selectedWorkspace,
+            inbox: true,
+            limit,
+            includeStale: false,
+            ...baseline ? {} : {
+              ascending: true,
+              ...after === null ? {} : { after }
+            }
+          },
+          { signal: controller.signal }
+        );
+      },
+      emit: async (signal) => {
+        const notification = arrivalNotification(
+          signal,
+          selected.selectedWorkspace,
+          cloud
+        );
+        await writeMonitorLine(
+          args.has("json") ? JSON.stringify(notification) : formatArrivalNotification(notification)
+        );
+      },
+      onRetry: (_error, delayMs) => {
+        process.stderr.write(
+          `cswarm: arrival read failed; still watching and retrying in ${delayMs}ms.
+`
+        );
+      }
+    });
+    if (result.reason === "error") {
+      throw result.error ?? new Error("arrival watch stopped");
+    }
+  } finally {
+    process.off("SIGINT", stop);
+    process.off("SIGTERM", stop);
+  }
+}
 async function runReceipt(args) {
   args.assertShape([
     ...TARGET_FLAGS,
@@ -40866,7 +41151,7 @@ async function runReceipt(args) {
     "json"
   ], 2);
   const signalId = args.positionals[1];
-  if (!UUID_RE18.test(signalId)) {
+  if (!UUID_RE19.test(signalId)) {
     throw new Error("signal-id must be a UUID");
   }
   if (!args.has("agent-token-stdin")) {
@@ -41004,7 +41289,7 @@ async function runInboxFollowCommand(args) {
   }
 }
 function listenerUuid(value, flag) {
-  if (!value || !UUID_RE18.test(value)) {
+  if (!value || !UUID_RE19.test(value)) {
     throw new Error(`--${flag} must be a UUID`);
   }
   return value.toLowerCase();
@@ -41017,7 +41302,7 @@ function listenerPermissionMode(value) {
 function listenerStateDirectory(args) {
   const value = args.optional("state-dir");
   if (value === void 0) return void 0;
-  if (!(0, import_node_path19.isAbsolute)(value)) {
+  if (!(0, import_node_path20.isAbsolute)(value)) {
     throw new Error("--state-dir must be an absolute path");
   }
   return value;
@@ -41348,7 +41633,7 @@ function resolveDetachedClaudeExecutable(executable = "claude-agent-acp", pathEn
   } catch (error) {
     const code = error.code;
     if (typeof code === "string") {
-      if ((0, import_node_path19.isAbsolute)(executable) || executable.includes("/") || executable.includes("\\")) {
+      if ((0, import_node_path20.isAbsolute)(executable) || executable.includes("/") || executable.includes("\\")) {
         const detail = error instanceof Error ? error.message : code;
         throw new Error(
           `could not use --claude-executable: ${detail}; install the current bridge with npm install -g @agentclientprotocol/claude-agent-acp@latest if this path should be replaced`
@@ -41365,7 +41650,7 @@ function resolveDetachedCodexExecutable(executable = "codex-acp", pathEnv = proc
   } catch (error) {
     const code = error.code;
     if (typeof code === "string") {
-      if ((0, import_node_path19.isAbsolute)(executable) || executable.includes("/") || executable.includes("\\")) {
+      if ((0, import_node_path20.isAbsolute)(executable) || executable.includes("/") || executable.includes("\\")) {
         const detail = error instanceof Error ? error.message : code;
         throw new Error(
           `could not use --codex-executable: ${detail}; install the current bridge with npm install -g @agentclientprotocol/codex-acp@latest if this path should be replaced`
@@ -41632,7 +41917,7 @@ async function runListenStart(args) {
   assertDurableListenerCredential(agent);
   const principalId = agent.principalId;
   const cwd = args.optional("cwd") ?? process.cwd();
-  if (!(0, import_node_path19.isAbsolute)(cwd)) throw new Error("--cwd must be an absolute path");
+  if (!(0, import_node_path20.isAbsolute)(cwd)) throw new Error("--cwd must be an absolute path");
   const permissionMode = listenerPermissionMode(args.optional("permissions"));
   const stateDirectory2 = listenerStateDirectory(args);
   const paths = listenerPaths({
@@ -41669,7 +41954,7 @@ async function runListenStart(args) {
     });
   } else {
     const entrypoint = process.argv[1];
-    if (!entrypoint || !(0, import_node_path19.isAbsolute)(entrypoint)) {
+    if (!entrypoint || !(0, import_node_path20.isAbsolute)(entrypoint)) {
       throw new Error("cannot locate the cswarm executable for detached start");
     }
     const artifact = JSON.stringify(agentCredentialArtifact({
@@ -41807,7 +42092,7 @@ async function runListenSupervisor(args) {
   const agent = await stdinCredential();
   assertDurableListenerCredential(agent, principalId);
   const cwd = args.required("cwd");
-  if (!(0, import_node_path19.isAbsolute)(cwd)) throw new Error("--cwd must be an absolute path");
+  if (!(0, import_node_path20.isAbsolute)(cwd)) throw new Error("--cwd must be an absolute path");
   const status = await runConfiguredListener({
     cloud,
     workspaceId: workspaceId2,
@@ -41909,7 +42194,7 @@ function claudeUserPromptHookSnippet() {
   };
 }
 function projectClaudeSettingsPath() {
-  return (0, import_node_path19.join)(process.cwd(), ".claude", "settings.json");
+  return (0, import_node_path20.join)(process.cwd(), ".claude", "settings.json");
 }
 function readProjectSettings(path) {
   let raw;
@@ -42021,7 +42306,7 @@ async function runHook(args) {
   const path = projectClaudeSettingsPath();
   const settings = readProjectSettings(path);
   const updated = command2 === "install" ? installClaudeHook(settings) : uninstallClaudeHook(settings);
-  (0, import_node_fs7.mkdirSync)((0, import_node_path19.dirname)(path), { recursive: true });
+  (0, import_node_fs7.mkdirSync)((0, import_node_path20.dirname)(path), { recursive: true });
   (0, import_node_fs7.writeFileSync)(path, `${JSON.stringify(updated, null, 2)}
 `, {
     encoding: "utf8",
@@ -42067,7 +42352,7 @@ async function fileRows(context) {
   );
 }
 async function resolveFileSelector(context, selector) {
-  if (UUID_RE18.test(selector)) return selector.toLowerCase();
+  if (UUID_RE19.test(selector)) return selector.toLowerCase();
   const rows3 = await fileRows(context);
   const match = rows3.find(
     (row) => row.name.toLowerCase() === selector.toLowerCase()
@@ -42089,7 +42374,7 @@ async function runFilePut(args) {
   } catch {
     throw new Error(`could not read ${localPath}; check the path and permissions`);
   }
-  const name = args.optional("name") ?? (0, import_node_path19.basename)(localPath);
+  const name = args.optional("name") ?? (0, import_node_path20.basename)(localPath);
   if (bytes.byteLength > FILE_MAX_VERSION_BYTES) {
     throw new Error(
       `this file is ${formatFileSize(bytes.byteLength)}; the per-file limit is ${formatFileSize(FILE_MAX_VERSION_BYTES)}, so the upload was not started`
@@ -42191,7 +42476,7 @@ async function runFileGet(args) {
     credential: context.selected.bearer
   };
   const grant = await fileDownloadUrl(send, { fileId, versionN });
-  const destination = args.optional("out") ?? (0, import_node_path19.basename)(grant.name);
+  const destination = args.optional("out") ?? (0, import_node_path20.basename)(grant.name);
   const bytes = await getObject(context.cloud, grant.download_path);
   writeDestination(destination, bytes, args.has("force"), import_node_fs7.writeFileSync);
   if (args.has("json")) {
@@ -42407,7 +42692,7 @@ async function runSeed(args) {
     throw new Error("DATABASE_URL is required for the fixture bridge");
   }
   const tokenOut = process.env.SEED_TOKEN_OUT;
-  if (!tokenOut || !(0, import_node_path19.isAbsolute)(tokenOut)) {
+  if (!tokenOut || !(0, import_node_path20.isAbsolute)(tokenOut)) {
     throw new Error("SEED_TOKEN_OUT must be an absolute path");
   }
   const tokenFile = await (0, import_promises11.open)(tokenOut, "wx", 384).catch((error) => {

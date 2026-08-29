@@ -171,12 +171,16 @@ export function arrivalSnippet(body: string): string {
 }
 
 /** The exact CLI shape needed to answer the signal named by a notification. */
+/* Matches the hook's reply hint deliberately. The url and anon key come from the
+ * agent's saved target, so repeating them here only bloated every notification —
+ * the anon key is a JWT, and a monitor line carrying it is unreadable on a phone
+ * and teaches an agent to paste credentials into commands. Found by dogfooding
+ * this feature within minutes of shipping it. */
 export function arrivalReplyCommand(
   signalId: string,
   workspaceId: string,
-  target: Pick<CloudTarget, "url" | "anonKey">,
 ): string {
-  return `cswarm reply ${signalId} "<answer>" --agent-token-stdin --url ${target.url} --anon-key ${target.anonKey} --workspace-id ${workspaceId}`;
+  return `cswarm reply ${signalId} "<answer>" --workspace-id ${workspaceId}`;
 }
 
 /** Build the stable fields shared by readable and JSON monitor output. */
@@ -193,7 +197,7 @@ export function arrivalNotification(
     sender_kind: signal.from_kind,
     kind: signal.kind,
     snippet: arrivalSnippet(signal.body),
-    reply_command: arrivalReplyCommand(signal.id, workspaceId, target),
+    reply_command: arrivalReplyCommand(signal.id, workspaceId),
   };
 }
 
