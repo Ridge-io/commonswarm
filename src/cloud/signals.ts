@@ -1472,18 +1472,21 @@ export function renderSignals(
     authors?: SignalAuthorLabels;
   },
 ): string {
+  const feedScopeGuidance =
+    "This feed shows broadcast signals only. It omits directed messages, including messages you sent. Read messages directed to you with: cswarm inbox";
   if (signals.length === 0) {
     return [
-      options.inbox ? "Inbox:" : "Recent signals:",
+      options.inbox ? "Inbox:" : "Recent broadcast signals:",
       options.inbox
         ? "Nothing is waiting for you."
         : options.includeStale
-        ? "No signals have been shared in this workspace yet."
-        : "No live signals in this workspace yet.",
+        ? "No broadcast signals have been shared in this workspace yet."
+        : "No live broadcast signals in this workspace yet.",
+      ...(options.inbox ? [] : [feedScopeGuidance]),
     ].join("\n");
   }
   const now = options.now ?? Date.now();
-  const lines = [options.inbox ? "Inbox:" : "Recent signals:"];
+  const lines = [options.inbox ? "Inbox:" : "Recent broadcast signals:"];
   for (const signal of signals) {
     const authorKind = signal.from_kind === "agent" ? "agent" : "member";
     const authorName = signal.from_kind === "agent"
@@ -1548,6 +1551,7 @@ export function renderSignals(
       );
     }
   }
+  if (!options.inbox) lines.push(feedScopeGuidance);
   return lines.join("\n");
 }
 

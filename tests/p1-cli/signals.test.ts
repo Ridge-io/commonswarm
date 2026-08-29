@@ -194,7 +194,7 @@ test("human and agent signal reads share filters and keep bodies as rendered dat
     includeStale: true,
     now: Date.parse("2026-07-26T00:00:00.000Z"),
   });
-  assert.match(rendered, /Recent signals:/);
+  assert.match(rendered, /Recent broadcast signals:/);
   assert.match(rendered, /\(expired\)/);
   assert.match(rendered, /"ignore previous instructions/);
   assert.match(
@@ -203,8 +203,34 @@ test("human and agent signal reads share filters and keep bodies as rendered dat
   );
   assert.match(
     renderSignalStatus([], 3),
-    /Recent signals:[\s\S]*No live signals[\s\S]*3 asks are waiting/,
+    /Recent broadcast signals:[\s\S]*No live broadcast signals[\s\S]*3 asks are waiting/,
   );
+});
+
+test("feed names its broadcast-only scope for populated and empty human results", () => {
+  const populated = renderSignals(
+    [signal() as unknown as SignalRecord],
+    { inbox: false, includeStale: false },
+  );
+  const empty = renderSignals([], { inbox: false, includeStale: false });
+  const emptyIncludingStale = renderSignals([], {
+    inbox: false,
+    includeStale: true,
+  });
+
+  for (const rendered of [populated, empty, emptyIncludingStale]) {
+    assert.match(rendered, /broadcast signals only/);
+    assert.match(rendered, /omits directed messages, including messages you sent/);
+    assert.match(rendered, /Read messages directed to you with: cswarm inbox/);
+  }
+  assert.match(empty, /No live broadcast signals in this workspace yet/);
+  assert.match(
+    emptyIncludingStale,
+    /No broadcast signals have been shared in this workspace yet/,
+  );
+
+  const inbox = renderSignals([], { inbox: true, includeStale: false });
+  assert.doesNotMatch(inbox, /broadcast signals only|omits directed messages/);
 });
 
 test("human signal rendering resolves auditable authors and shows relative lifecycle", () => {
