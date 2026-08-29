@@ -29643,8 +29643,8 @@ function arrivalSnippet(body) {
   if (oneLine.length <= ARRIVAL_SNIPPET_MAX) return oneLine;
   return `${oneLine.slice(0, ARRIVAL_SNIPPET_MAX - 1).trimEnd()}\u2026`;
 }
-function arrivalReplyCommand(signalId, workspaceId2, target2) {
-  return `cswarm reply ${signalId} "<answer>" --agent-token-stdin --url ${target2.url} --anon-key ${target2.anonKey} --workspace-id ${workspaceId2}`;
+function arrivalReplyCommand(signalId, workspaceId2) {
+  return `cswarm reply ${signalId} "<answer>" --workspace-id ${workspaceId2}`;
 }
 function arrivalNotification(signal, workspaceId2, target2) {
   return {
@@ -29655,7 +29655,7 @@ function arrivalNotification(signal, workspaceId2, target2) {
     sender_kind: signal.from_kind,
     kind: signal.kind,
     snippet: arrivalSnippet(signal.body),
-    reply_command: arrivalReplyCommand(signal.id, workspaceId2, target2)
+    reply_command: arrivalReplyCommand(signal.id, workspaceId2)
   };
 }
 function formatArrivalNotification(notification) {
@@ -38829,8 +38829,8 @@ var ACCEPTED_AGENT_CREDENTIAL_MESSAGES = [
   AGENT_CREDENTIAL_MESSAGE_D088
 ];
 function packageVersion() {
-  if ("0.1.35".length > 0) {
-    return "0.1.35";
+  if ("0.1.36".length > 0) {
+    return "0.1.36";
   }
   try {
     const value = JSON.parse(
