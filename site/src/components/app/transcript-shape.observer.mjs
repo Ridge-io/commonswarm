@@ -46,7 +46,21 @@ test("transcript: the feed pane is the scroller, not the page", () => {
     /\.dashboard__feed-view \{[\s\S]{0,300}?align-self: start/,
     "align-self:start is back; the page will scroll instead of the transcript",
   );
-  assert.match(src, /\.dashboard__frame \{[\s\S]{0,300}?block-size: 100svh/);
+  assert.match(
+    src,
+    /\.dashboard__product \{[\s\S]{0,300}?block-size: var\(--dashboard-viewport-height, 100dvh\)[\s\S]{0,200}?overflow: hidden/,
+    "the product shell no longer consumes the measured visual viewport",
+  );
+  assert.match(
+    src,
+    /\.dashboard__frame \{[\s\S]{0,500}?block-size: 100%;[\s\S]{0,100}?min-block-size: 0/,
+    "the frame can grow past the bounded product shell",
+  );
+  assert.match(
+    src,
+    /visualViewport\?\.addEventListener\("resize", syncDashboardViewport\)/,
+    "software-keyboard viewport changes no longer reach the shell",
+  );
 });
 
 test("transcript: the load-older control sits ABOVE the list", () => {

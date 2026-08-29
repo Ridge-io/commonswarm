@@ -14,6 +14,7 @@
 
 import AgentConnect from "../connect/AgentConnect.astro";
 import SampleNotice from "./SampleNotice.astro";
+import { SIGNAL_BODY_MAX } from "../../../../supabase/functions/_shared/signal-text";
 import "../../styles/tokens.css";
 ---
 
@@ -584,12 +585,19 @@ import "../../styles/tokens.css";
             <form class="dashboard__composer" data-composer hidden>
               <div class="dashboard__composer-audience">
                 <label for="dashboard-composer-audience">TO</label>
-                <select id="dashboard-composer-audience" data-composer-audience></select>
-                <span data-composer-audience-count>No recipient · broadcast · no agent will be woken</span>
+                <select
+                  id="dashboard-composer-audience"
+                  data-composer-audience
+                  aria-describedby="dashboard-composer-audience-count"
+                ></select>
+                <span id="dashboard-composer-audience-count" data-composer-audience-count>
+                  No recipient · broadcast · no agent will be woken
+                </span>
               </div>
               <div class="dashboard__composer-box">
                 <div
                   class="dashboard__mention-picker"
+                  id="dashboard-composer-mention-picker"
                   data-mention-picker
                   role="listbox"
                   aria-label="Mention a person or agent"
@@ -599,9 +607,14 @@ import "../../styles/tokens.css";
                   <div class="dashboard__composer-mentions" data-composer-mentions></div>
                   <textarea
                     rows="1"
-                    maxlength="8000"
+                    maxlength={SIGNAL_BODY_MAX}
                     placeholder="What are you about to do?"
                     aria-label="Signal"
+                    role="combobox"
+                    aria-autocomplete="list"
+                    aria-haspopup="listbox"
+                    aria-controls="dashboard-composer-mention-picker"
+                    aria-expanded="false"
                     data-composer-input
                     required
                   ></textarea>
@@ -610,15 +623,27 @@ import "../../styles/tokens.css";
                     type="submit"
                     data-composer-send
                     aria-label="Post signal"
-                    title="Post signal (Cmd/Ctrl+Enter)"
+                    title="Post signal (Enter)"
                   >
-                    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
-                      <path d="m5 12 7-7 7 7M12 5v14"></path>
-                    </svg>
+                    <span class="dashboard__composer-send-icon" aria-hidden="true">
+                      <svg viewBox="0 0 24 24" width="18" height="18">
+                        <path d="m5 12 7-7 7 7M12 5v14"></path>
+                      </svg>
+                    </span>
+                    <span class="dashboard__composer-send-progress" aria-hidden="true"></span>
                   </button>
                 </div>
               </div>
-              <p class="dashboard__composer-status" data-composer-status role="status" aria-live="polite"></p>
+              <div class="dashboard__composer-meta">
+                <p class="dashboard__composer-hint">Enter to send · Shift+Enter for a new line</p>
+                <p class="dashboard__composer-count" data-composer-count role="status" aria-live="polite" hidden></p>
+              </div>
+              <div class="dashboard__composer-feedback" data-composer-feedback hidden>
+                <p class="dashboard__composer-status" data-composer-status role="status" aria-live="polite"></p>
+                <button class="dashboard__composer-retry" type="button" data-composer-retry hidden>
+                  Retry send
+                </button>
+              </div>
             </form>
           </div>
         </section>
@@ -803,8 +828,10 @@ import "../../styles/tokens.css";
     inviteWorkspaceMember,
     inviteEmailValidationMessage,
     pendingMemberInvites,
+    browserAcceptedDeliveryIndicator,
     browserDeliveryIndicator,
     browserDeliveryReceipts,
+    browserPostingDeliveryIndicator,
     browserSignalAddress,
     postBrowserSignal,
     revokeAgentToken,
@@ -856,6 +883,7 @@ import "../../styles/tokens.css";
     MESSAGE_COLLAPSE_LINES,
     setSanitizedMessageMarkdown,
   } from "../../lib/message-markdown";
+  import { SIGNAL_BODY_MAX } from "../../../../supabase/functions/_shared/signal-text";
 
   interface Workspace extends CloseableWorkspace {}
 
@@ -891,6 +919,12 @@ import "../../styles/tokens.css";
   interface DeliveryReceiptCacheEntry {
     result: BrowserDeliveryReceiptResult | null;
     checkedAt: number;
+    phase?: "posting" | "accepted";
+  }
+
+  interface ComposerDraft {
+    body: string;
+    audienceKey: string;
   }
 
   type EntityRef =
@@ -977,6 +1011,9 @@ import "../../styles/tokens.css";
     let composerMention: EntityRef | null = null;
     let mentionPickerIndex = 0;
     let composerIntent: { commandId: string; body: string; audienceKey: string } | null = null;
+    let composerSending = false;
+    let restoredComposerDraftKey = "";
+    let focusedComposerWorkspaceId = "";
     const visualMentions = new Map<string, EntityRef[]>();
     const expandedSignalIds = new Set<string>();
     const deliveryReceiptCache = new Map<string, DeliveryReceiptCacheEntry>();
@@ -1052,8 +1089,7 @@ import "../../styles/tokens.css";
       if (composer) composer.hidden = name !== "feed" && name !== "feed-empty";
       if (composer && !composer.hidden) queueMicrotask(syncComposerClearance);
       if (composer?.hidden) {
-        const picker = one<HTMLElement>("[data-mention-picker]");
-        if (picker) picker.hidden = true;
+        closeMentionPicker();
       }
       app.dataset.channelView = name;
       /* The Live chip is true exactly while armLiveFeed is allowed to run. */
@@ -1807,9 +1843,202 @@ import "../../styles/tokens.css";
     const composerAudienceKey = (audience: ComposerAudience): string =>
       audience.kind === "everyone" ? "everyone" : `${audience.kind}:${audience.id}`;
 
+    const COMPOSER_COUNTER_THRESHOLD = 500;
+    const COMPOSER_DRAFT_STORAGE_MAX = SIGNAL_BODY_MAX * 2;
+    const COMPOSER_STREAM = "all-signals";
+
+    const composerDraftKey = (): string | null => {
+      if (!activeWorkspaceId) return null;
+      const owner = session?.user.id ?? (sampleMode ? "sample-owner" : "");
+      if (!owner) return null;
+      return `commonswarm:composer-draft:${owner}:${activeWorkspaceId}:${COMPOSER_STREAM}`;
+    };
+
+    const composerAudienceFromKey = (key: string): ComposerAudience | null => {
+      if (key === "everyone") return { kind: "everyone" };
+      if (key.startsWith("person:") && key.length > "person:".length) {
+        return { kind: "person", id: key.slice("person:".length) };
+      }
+      if (key.startsWith("agent:") && key.length > "agent:".length) {
+        return { kind: "agent", id: key.slice("agent:".length) };
+      }
+      return null;
+    };
+
+    const readComposerDraft = (key: string): ComposerDraft | null => {
+      try {
+        const raw = window.localStorage.getItem(key);
+        if (!raw) return null;
+        const value = JSON.parse(raw) as Partial<ComposerDraft>;
+        if (typeof value.body !== "string" || typeof value.audienceKey !== "string") {
+          return null;
+        }
+        return {
+          body: value.body.slice(0, COMPOSER_DRAFT_STORAGE_MAX),
+          audienceKey: value.audienceKey,
+        };
+      } catch {
+        return null;
+      }
+    };
+
+    const clearComposerDraft = (): void => {
+      const key = composerDraftKey();
+      if (!key) return;
+      try {
+        window.localStorage.removeItem(key);
+      } catch {
+        // The live input remains authoritative when storage is unavailable.
+      }
+    };
+
+    const persistComposerDraft = (): void => {
+      const key = composerDraftKey();
+      const input = one<HTMLTextAreaElement>("[data-composer-input]");
+      if (!key || !input) return;
+      const body = input.value.slice(0, COMPOSER_DRAFT_STORAGE_MAX);
+      const audienceKey = composerAudienceKey(composerAudience);
+      try {
+        if (body === "" && audienceKey === "everyone") {
+          window.localStorage.removeItem(key);
+          return;
+        }
+        window.localStorage.setItem(key, JSON.stringify({ body, audienceKey }));
+      } catch {
+        // A private or full storage area must not break composing or sending.
+      }
+    };
+
+    const resizeComposerInput = (input: HTMLTextAreaElement): void => {
+      input.style.blockSize = "auto";
+      input.style.blockSize = `${input.scrollHeight}px`;
+      syncComposerClearance();
+    };
+
+    const setComposerStatus = (
+      message: string,
+      state: "idle" | "posting" | "error" = "idle",
+    ): void => {
+      const status = one<HTMLElement>("[data-composer-status]");
+      const feedback = one<HTMLElement>("[data-composer-feedback]");
+      if (!status) return;
+      status.textContent = message;
+      status.dataset.state = state;
+      if (feedback) feedback.hidden = message === "";
+    };
+
+    const syncComposerControls = (): void => {
+      const input = one<HTMLTextAreaElement>("[data-composer-input]");
+      const send = one<HTMLButtonElement>("[data-composer-send]");
+      const count = one<HTMLElement>("[data-composer-count]");
+      if (!input || !send || !count) return;
+      const length = input.value.length;
+      const remaining = SIGNAL_BODY_MAX - length;
+      count.hidden = remaining > COMPOSER_COUNTER_THRESHOLD;
+      if (!count.hidden) {
+        const limitLabel = SIGNAL_BODY_MAX.toLocaleString();
+        count.textContent = remaining > 0
+          ? `${remaining.toLocaleString()} ${remaining === 1 ? "character" : "characters"} left`
+          : remaining === 0
+          ? `${limitLabel}-character limit reached`
+          : `${Math.abs(remaining).toLocaleString()} ${remaining === -1 ? "character" : "characters"} over the ${limitLabel}-character limit`;
+        count.dataset.state = remaining <= 0 ? "firm" : "near";
+      }
+      const empty = input.value.trim() === "";
+      const overLimit = length > SIGNAL_BODY_MAX;
+      send.disabled = composerSending || empty || overLimit;
+      if (composerSending) {
+        send.title = "Posting signal…";
+      } else if (empty) {
+        send.title = "Write a signal before posting";
+      } else if (overLimit) {
+        send.title = `Shorten the signal by ${length - SIGNAL_BODY_MAX} characters`;
+      } else {
+        send.title = "Post signal (Enter)";
+      }
+    };
+
+    const setComposerSending = (sending: boolean): void => {
+      composerSending = sending;
+      const input = one<HTMLTextAreaElement>("[data-composer-input]");
+      const send = one<HTMLButtonElement>("[data-composer-send]");
+      if (input) {
+        input.readOnly = sending;
+        if (sending) {
+          input.setAttribute("aria-busy", "true");
+          input.setAttribute("aria-disabled", "true");
+        } else {
+          input.removeAttribute("aria-busy");
+          input.removeAttribute("aria-disabled");
+        }
+      }
+      if (send) {
+        send.dataset.state = sending ? "posting" : "ready";
+        send.setAttribute("aria-label", sending ? "Posting signal" : "Post signal");
+        if (sending) send.setAttribute("aria-busy", "true");
+        else send.removeAttribute("aria-busy");
+      }
+      syncComposerControls();
+    };
+
+    const restoreComposerDraft = (): void => {
+      const key = composerDraftKey();
+      if (!key || restoredComposerDraftKey === key) {
+        syncComposerControls();
+        return;
+      }
+      restoredComposerDraftKey = key;
+      const draft = readComposerDraft(key);
+      const input = one<HTMLTextAreaElement>("[data-composer-input]");
+      const select = one<HTMLSelectElement>("[data-composer-audience]");
+      if (!draft || !input || !select) {
+        syncComposerControls();
+        return;
+      }
+      input.value = draft.body;
+      const audience = composerAudienceFromKey(draft.audienceKey);
+      const audienceExists = audience && Array.from(select.options).some(
+        (option) => option.value === draft.audienceKey,
+      );
+      composerAudience = audienceExists ? audience : { kind: "everyone" };
+      composerMention = composerAudience.kind === "everyone" ? null : { ...composerAudience };
+      composerIntent = null;
+      resizeComposerInput(input);
+      renderComposerAudience();
+      renderComposerMentions();
+      syncComposerControls();
+    };
+
+    const focusComposerOnEntry = (): void => {
+      if (
+        !activeWorkspaceId ||
+        focusedComposerWorkspaceId === activeWorkspaceId ||
+        window.matchMedia("(max-width: 52rem)").matches
+      ) return;
+      focusedComposerWorkspaceId = activeWorkspaceId;
+      window.requestAnimationFrame(() => {
+        one<HTMLTextAreaElement>("[data-composer-input]")?.focus({ preventScroll: true });
+      });
+    };
+
+    /* The visual viewport is the usable screen while a software keyboard is open. CSS viewport
+     * units can still describe the larger layout viewport, which leaves the composer behind the
+     * keyboard on mobile Chrome. Keep one measured height on the product shell. */
+    const syncDashboardViewport = (): void => {
+      const height = window.visualViewport?.height ?? window.innerHeight;
+      app.style.setProperty("--dashboard-viewport-height", `${Math.round(height)}px`);
+    };
+    syncDashboardViewport();
+    window.addEventListener("resize", syncDashboardViewport);
+    window.visualViewport?.addEventListener("resize", syncDashboardViewport);
+    window.visualViewport?.addEventListener("scroll", syncDashboardViewport);
+
     const closeMentionPicker = (): void => {
       const picker = one<HTMLElement>("[data-mention-picker]");
       if (picker) picker.hidden = true;
+      const input = one<HTMLTextAreaElement>("[data-composer-input]");
+      input?.setAttribute("aria-expanded", "false");
+      input?.removeAttribute("aria-activedescendant");
       mentionPickerIndex = 0;
     };
 
@@ -1849,6 +2078,7 @@ import "../../styles/tokens.css";
         : composerAudience.kind === "agent"
         ? "One recipient · agent addressed · its listener can wake it"
         : "One recipient · person addressed · no agent will be woken";
+      restoreComposerDraft();
     };
 
     const renderComposerMentions = (): void => {
@@ -1875,6 +2105,7 @@ import "../../styles/tokens.css";
           composerIntent = null;
           renderComposerMentions();
           renderComposerAudience();
+          persistComposerDraft();
           one<HTMLTextAreaElement>("[data-composer-input]")?.focus({ preventScroll: true });
         });
         chip.append(remove);
@@ -1919,6 +2150,7 @@ import "../../styles/tokens.css";
       renderComposerMentions();
       renderComposerAudience();
       closeMentionPicker();
+      persistComposerDraft();
       input.focus({ preventScroll: true });
       input.dispatchEvent(new Event("input"));
     };
@@ -1940,6 +2172,8 @@ import "../../styles/tokens.css";
       candidates.forEach((candidate, index) => {
         const button = document.createElement("button");
         button.type = "button";
+        button.id = `dashboard-composer-mention-option-${index}`;
+        button.tabIndex = -1;
         button.setAttribute("role", "option");
         button.setAttribute("aria-selected", String(index === mentionPickerIndex));
         const avatar = document.createElement("span");
@@ -1966,6 +2200,12 @@ import "../../styles/tokens.css";
         picker.append(button);
       });
       picker.hidden = false;
+      const input = one<HTMLTextAreaElement>("[data-composer-input]");
+      input?.setAttribute("aria-expanded", "true");
+      input?.setAttribute(
+        "aria-activedescendant",
+        `dashboard-composer-mention-option-${mentionPickerIndex}`,
+      );
     };
 
     const resetComposer = (): void => {
@@ -1978,11 +2218,14 @@ import "../../styles/tokens.css";
         input.value = "";
         input.style.blockSize = "auto";
       }
-      const status = one<HTMLElement>("[data-composer-status]");
-      if (status) status.textContent = "";
+      setComposerStatus("");
+      const retry = one<HTMLButtonElement>("[data-composer-retry]");
+      if (retry) retry.hidden = true;
+      setComposerSending(false);
       renderComposerAudience();
       renderComposerMentions();
       closeMentionPicker();
+      syncComposerControls();
     };
 
     /* The rail mirrors participants as presence/navigation only. Its shared renderer keeps
@@ -2453,10 +2696,20 @@ import "../../styles/tokens.css";
       viewerId: string,
     ): void => {
       if (!viewerId || signal.fromKind !== "user" || signal.from !== viewerId) return;
+      const cached = deliveryReceiptCache.get(signal.id);
+      const recipient: ComposerAudience = signal.toAgent !== null
+        ? { kind: "agent", id: signal.toAgent }
+        : signal.to !== null
+        ? { kind: "person", id: signal.to }
+        : { kind: "everyone" };
       /* The ledger tracks agent delivery, not person-to-person viewing. Its addressed=false
        * result is authoritative for broadcasts, but a direct person target is visible on the
        * signal itself and must not be relabelled as a broadcast. */
-      const indicator: BrowserDeliveryIndicator = signal.to !== null && signal.toAgent === null
+      const indicator: BrowserDeliveryIndicator = cached?.phase === "posting"
+        ? browserPostingDeliveryIndicator()
+        : cached?.phase === "accepted"
+        ? browserAcceptedDeliveryIndicator(recipient)
+        : signal.to !== null && signal.toAgent === null
         ? {
             state: "unavailable",
             outcome: null,
@@ -2465,7 +2718,7 @@ import "../../styles/tokens.css";
             detail: "This message addresses a person. Agent delivery receipts do not apply.",
             terminal: true,
           }
-        : browserDeliveryIndicator(deliveryReceiptCache.get(signal.id)?.result ?? null);
+        : browserDeliveryIndicator(cached?.result ?? null);
       const details = document.createElement("details");
       details.className = "dashboard__message-receipt";
       details.dataset.receiptState = indicator.state;
@@ -2539,7 +2792,7 @@ import "../../styles/tokens.css";
       if (el) el.scrollTop = el.scrollHeight;
     };
 
-    const renderFeed = (): void => {
+    const renderFeed = (change: "history" | "latest" = "history"): void => {
       window.clearTimeout(signalExpiryTimer);
       signalExpiryTimer = undefined;
       if (addAgentViewOpen()) return;
@@ -2588,6 +2841,7 @@ import "../../styles/tokens.css";
         previousSignalIds.clear();
         feedWasEmpty = true;
         showChannelView("feed-empty");
+        focusComposerOnEntry();
         return;
       }
       const agentById = new Map(agents.map((agent) => [agent.principalId, agent]));
@@ -2787,8 +3041,13 @@ import "../../styles/tokens.css";
         scrollToNewest();
       } else {
         const el = feedScroller();
-        if (el && heightBefore > 0) el.scrollTop = topBefore + (el.scrollHeight - heightBefore);
+        if (el && change === "latest") {
+          el.scrollTop = topBefore;
+        } else if (el && heightBefore > 0) {
+          el.scrollTop = topBefore + (el.scrollHeight - heightBefore);
+        }
       }
+      focusComposerOnEntry();
     };
 
     const syncConnectWorkspace = (workspace: Workspace): void => {
@@ -2823,6 +3082,7 @@ import "../../styles/tokens.css";
         )
         .filter((signal) => {
           const cached = deliveryReceiptCache.get(signal.id);
+          if (cached?.phase === "posting") return false;
           if (!cached) return true;
           const indicator = browserDeliveryIndicator(cached.result, now);
           if (indicator.terminal) return false;
@@ -2853,8 +3113,12 @@ import "../../styles/tokens.css";
         let changed = false;
         const checkedAt = Date.now();
         for (const read of reads) {
-          const previous = deliveryReceiptCache.get(read.signalId)?.result;
-          if (JSON.stringify(previous) !== JSON.stringify(read.result)) changed = true;
+          const cached = deliveryReceiptCache.get(read.signalId);
+          const previous = cached?.result;
+          if (
+            cached?.phase !== undefined ||
+            JSON.stringify(previous) !== JSON.stringify(read.result)
+          ) changed = true;
           deliveryReceiptCache.set(read.signalId, { result: read.result, checkedAt });
         }
         if (changed && !addAgentViewOpen()) renderFeed();
@@ -2928,7 +3192,7 @@ import "../../styles/tokens.css";
         signalHasMore = signalHasMore || page.hasMore;
         if (changed) {
           signals = next;
-          renderFeed();
+          renderFeed("latest");
         }
         void refreshDeliveryReceipts(workspaceId, version);
         /* The dedicated access cadence owns discovery; a healthy feed tick also
@@ -3056,6 +3320,8 @@ import "../../styles/tokens.css";
       connectFocusObserver?.disconnect();
       connectFocusObserver = null;
       activeWorkspaceId = "";
+      restoredComposerDraftKey = "";
+      focusedComposerWorkspaceId = "";
       pendingWorkspaceId = "";
       pendingWorkspaceCreate = false;
       workspaces = [];
@@ -4336,17 +4602,58 @@ import "../../styles/tokens.css";
         composerIntent = null;
         renderComposerAudience();
         renderComposerMentions();
+        persistComposerDraft();
+        syncComposerControls();
       },
     );
     one<HTMLTextAreaElement>("[data-composer-input]")?.addEventListener(
       "input",
       (event) => {
         const input = event.currentTarget as HTMLTextAreaElement;
-        input.style.blockSize = "auto";
-        input.style.blockSize = `${Math.min(input.scrollHeight, 144)}px`;
-        syncComposerClearance();
+        resizeComposerInput(input);
         mentionPickerIndex = 0;
+        composerIntent = null;
+        const retry = one<HTMLButtonElement>("[data-composer-retry]");
+        if (retry) retry.hidden = true;
+        const statusState = one<HTMLElement>("[data-composer-status]")?.dataset.state;
+        if (statusState === "error" || statusState === "idle") {
+          setComposerStatus("");
+        }
+        persistComposerDraft();
+        syncComposerControls();
         renderMentionPicker();
+      },
+    );
+    one<HTMLTextAreaElement>("[data-composer-input]")?.addEventListener(
+      "beforeinput",
+      (event) => {
+        if (composerSending) event.preventDefault();
+      },
+    );
+    one<HTMLTextAreaElement>("[data-composer-input]")?.addEventListener(
+      "paste",
+      (event) => {
+        const input = event.currentTarget as HTMLTextAreaElement;
+        const pasted = event.clipboardData?.getData("text/plain");
+        if (pasted === undefined) return;
+        if (composerSending) {
+          event.preventDefault();
+          return;
+        }
+        /* Native maxlength silently cuts a large paste. Put the complete text into the draft so
+         * the shared limit, counter, and disabled send state can explain what must change. */
+        event.preventDefault();
+        input.setRangeText(
+          pasted,
+          input.selectionStart ?? input.value.length,
+          input.selectionEnd ?? input.value.length,
+          "end",
+        );
+        input.dispatchEvent(new InputEvent("input", {
+          bubbles: true,
+          data: pasted,
+          inputType: "insertFromPaste",
+        }));
       },
     );
     one<HTMLTextAreaElement>("[data-composer-input]")?.addEventListener(
@@ -4366,65 +4673,106 @@ import "../../styles/tokens.css";
           composerIntent = null;
           renderComposerMentions();
           renderComposerAudience();
+          persistComposerDraft();
           return;
         }
-        if (!picker || picker.hidden) return;
-        const search = mentionSearch();
-        const candidates = search ? mentionCandidates(search.query) : [];
-        if (event.key === "Escape") {
+        if (picker && !picker.hidden) {
+          const search = mentionSearch();
+          const candidates = search ? mentionCandidates(search.query) : [];
+          if (event.key === "Escape") {
+            event.preventDefault();
+            closeMentionPicker();
+            return;
+          }
+          if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+            event.preventDefault();
+            mentionPickerIndex = event.key === "ArrowDown"
+              ? (mentionPickerIndex + 1) % candidates.length
+              : (mentionPickerIndex - 1 + candidates.length) % candidates.length;
+            renderMentionPicker();
+            return;
+          }
+          if (
+            event.key === "Enter" &&
+            !event.shiftKey &&
+            !event.isComposing &&
+            candidates.length > 0
+          ) {
+            event.preventDefault();
+            const mention = candidates[mentionPickerIndex];
+            if (mention) selectMention(mention);
+            return;
+          }
+        }
+        if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
           event.preventDefault();
           closeMentionPicker();
-        } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-          event.preventDefault();
-          mentionPickerIndex = event.key === "ArrowDown"
-            ? (mentionPickerIndex + 1) % candidates.length
-            : (mentionPickerIndex - 1 + candidates.length) % candidates.length;
-          renderMentionPicker();
-        } else if (
-          event.key === "Enter" &&
-          !event.shiftKey &&
-          !event.metaKey &&
-          !event.ctrlKey &&
-          candidates.length > 0
-        ) {
-          event.preventDefault();
-          const mention = candidates[mentionPickerIndex];
-          if (mention) selectMention(mention);
+          one<HTMLFormElement>("[data-composer]")?.requestSubmit();
         }
       },
     );
     one<HTMLFormElement>("[data-composer]")?.addEventListener("submit", async (event) => {
       event.preventDefault();
       const input = one<HTMLTextAreaElement>("[data-composer-input]");
-      const send = one<HTMLButtonElement>("[data-composer-send]");
-      const status = one<HTMLElement>("[data-composer-status]");
-      const body = input?.value.trim() ?? "";
-      if (!input || body === "" || !activeWorkspaceId) {
+      const rawBody = input?.value ?? "";
+      const body = rawBody.trim();
+      if (
+        !input ||
+        composerSending ||
+        body === "" ||
+        rawBody.length > SIGNAL_BODY_MAX ||
+        !activeWorkspaceId
+      ) {
         input?.focus();
         return;
       }
-      const audience = composerAudience;
+      const workspaceId = activeWorkspaceId;
+      const version = requestVersion;
+      const audience: ComposerAudience = { ...composerAudience };
       const address = browserSignalAddress(audience);
       const audienceKey = composerAudienceKey(audience);
       let intent = composerIntent;
-      if (!intent || intent.body !== body || intent.audienceKey !== audienceKey) {
-        intent = { commandId: uuid(), body, audienceKey };
+      if (!intent || intent.body !== rawBody || intent.audienceKey !== audienceKey) {
+        intent = { commandId: uuid(), body: rawBody, audienceKey };
         composerIntent = intent;
       }
       const mentions = composerMention ? [{ ...composerMention }] : [];
-      if (send) send.disabled = true;
-      input.disabled = true;
-      if (status) status.textContent = "Posting…";
+      const pendingId = `composer-pending-${intent.commandId}`;
+      const optimisticSignal: Signal = {
+        id: pendingId,
+        from: session?.user.id ?? "sample-owner",
+        fromKind: "user",
+        to: address.toUserId,
+        toAgent: address.toAgentPrincipalId,
+        kind: "note",
+        body: rawBody,
+        about: null,
+        until: null,
+        createdAt: new Date().toISOString(),
+      };
+      const retry = one<HTMLButtonElement>("[data-composer-retry]");
+      if (retry) retry.hidden = true;
+      setComposerStatus("Posting…", "posting");
+      setComposerSending(true);
+      visualMentions.set(pendingId, mentions);
+      deliveryReceiptCache.set(pendingId, { result: null, checkedAt: 0, phase: "posting" });
+      signals.unshift(optimisticSignal);
+      input.value = "";
+      input.style.blockSize = "auto";
+      closeMentionPicker();
+      syncComposerControls();
+      renderFeed("latest");
+      input.focus({ preventScroll: true });
       try {
         const signal: Signal = sampleMode
           ? {
-              id: `sample-composer-${Date.now()}`,
+              id: `sample-composer-${intent.commandId}`,
               from: "sample-owner",
               fromKind: "user",
               to: address.toUserId,
               toAgent: address.toAgentPrincipalId,
               kind: "note",
-              body,
+              body: rawBody,
               about: null,
               until: null,
               createdAt: new Date().toISOString(),
@@ -4432,28 +4780,51 @@ import "../../styles/tokens.css";
           : await postBrowserSignal(
               session!,
               intent.commandId,
-              activeWorkspaceId,
-              body,
+              workspaceId,
+              rawBody,
               audience,
             );
+        if (version !== requestVersion || workspaceId !== activeWorkspaceId) return;
+        signals = [signal, ...signals.filter(
+          (entry) => entry.id !== pendingId && entry.id !== signal.id,
+        )];
+        visualMentions.delete(pendingId);
+        deliveryReceiptCache.delete(pendingId);
         visualMentions.set(signal.id, mentions);
-        signals.unshift(signal);
+        deliveryReceiptCache.set(signal.id, { result: null, checkedAt: 0, phase: "accepted" });
         composerIntent = null;
-        input.value = "";
-        input.style.blockSize = "auto";
-        closeMentionPicker();
-        renderFeed();
-        void refreshDeliveryReceipts(activeWorkspaceId, requestVersion);
-        if (status) status.textContent = "Posted.";
-        input.focus({ preventScroll: true });
+        clearComposerDraft();
+        renderFeed("latest");
+        void refreshDeliveryReceipts(workspaceId, version);
+        setComposerStatus("Posted.");
       } catch (caught) {
+        if (version !== requestVersion || workspaceId !== activeWorkspaceId) return;
+        signals = signals.filter((signal) => signal.id !== pendingId);
+        visualMentions.delete(pendingId);
+        deliveryReceiptCache.delete(pendingId);
+        input.value = rawBody;
+        composerAudience = { ...audience };
+        composerMention = mentions[0] ?? null;
+        renderComposerAudience();
+        renderComposerMentions();
+        resizeComposerInput(input);
+        persistComposerDraft();
         if (!(caught instanceof CommandOutcomeUnknown)) composerIntent = null;
-        if (status) status.textContent = readableError(caught);
+        setComposerStatus(readableError(caught), "error");
+        if (retry) retry.hidden = false;
+        renderFeed("latest");
       } finally {
-        if (send) send.disabled = false;
-        input.disabled = false;
+        if (version === requestVersion && workspaceId === activeWorkspaceId) {
+          setComposerSending(false);
+          syncComposerControls();
+          input.focus({ preventScroll: true });
+        }
       }
     });
+    one<HTMLButtonElement>("[data-composer-retry]")?.addEventListener("click", () => {
+      one<HTMLFormElement>("[data-composer]")?.requestSubmit();
+    });
+    syncComposerControls();
     for (const button of all<HTMLButtonElement>("[data-workspace-view]")) {
       button.addEventListener("click", () => {
         const view = button.dataset.workspaceView;
@@ -5057,7 +5428,11 @@ import "../../styles/tokens.css";
   }
 
   .dashboard__product {
-    min-block-size: 100svh;
+    block-size: var(--dashboard-viewport-height, 100dvh);
+    min-block-size: 0;
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    overflow: hidden;
     padding: 0;
     background: var(--bg);
   }
@@ -5072,8 +5447,8 @@ import "../../styles/tokens.css";
      * viewport — and the PAGE scrolled instead of the transcript. `overflow: hidden` below was
      * already here and was doing nothing, because nothing ever exceeded a bound that did not
      * exist. Measured in the browser before and after. */
-    block-size: 100svh;
-    min-block-size: 100svh;
+    block-size: 100%;
+    min-block-size: 0;
     display: grid;
     grid-template-columns: var(--dashboard-rail) minmax(0, 1fr);
     overflow: hidden;
@@ -5092,13 +5467,13 @@ import "../../styles/tokens.css";
      * was enough while the frame had no block-size — the frame grew to content and the minimum
      * was the only thing holding it up. Now that the frame is pinned to 100svh, a minimum alone
      * cannot SHRINK it, so the sample notice would push the frame's last 3.5rem below the fold. */
-    block-size: calc(100svh - 3.5rem);
-    min-block-size: calc(100svh - 3.5rem);
+    block-size: 100%;
+    min-block-size: 0;
   }
 
   .dashboard__rail {
     min-inline-size: 0;
-    max-block-size: 100svh;
+    max-block-size: var(--dashboard-viewport-height, 100dvh);
     display: flex;
     flex-direction: column;
     padding: var(--s-5) var(--s-4) var(--s-4);
@@ -7059,13 +7434,17 @@ import "../../styles/tokens.css";
     z-index: 3;
     grid-row: 2;
     display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
     gap: var(--s-2);
-    padding: var(--s-3) clamp(var(--s-5), 4vw, var(--s-8)) var(--s-4);
+    padding: var(--s-3) clamp(var(--s-5), 4vw, var(--s-8))
+      calc(var(--s-4) + env(safe-area-inset-bottom));
     background: var(--surface);
     border-block-start: 1px solid var(--border);
   }
 
   .dashboard__composer-audience {
+    grid-column: 1;
+    grid-row: 1;
     display: flex;
     align-items: center;
     gap: var(--s-2);
@@ -7090,6 +7469,18 @@ import "../../styles/tokens.css";
     border-radius: var(--radius-pill);
     font: inherit;
     font-weight: var(--weight-semibold);
+    cursor: pointer;
+    transition: background var(--dur-1) var(--ease-standard),
+      box-shadow var(--dur-1) var(--ease-standard);
+  }
+
+  .dashboard__composer-audience select:hover {
+    background: var(--elev-3);
+  }
+
+  .dashboard__composer-audience select:focus-visible {
+    outline: none;
+    box-shadow: var(--focus-ring);
   }
 
   .dashboard__composer-audience [data-composer-audience-count] {
@@ -7101,6 +7492,8 @@ import "../../styles/tokens.css";
 
   .dashboard__composer-box {
     position: relative;
+    grid-column: 1 / -1;
+    grid-row: 2;
   }
 
   .dashboard__composer-input {
@@ -7151,6 +7544,7 @@ import "../../styles/tokens.css";
   }
 
   .dashboard__mention-entity {
+    min-block-size: 2.75rem;
     min-inline-size: 0;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -7158,6 +7552,8 @@ import "../../styles/tokens.css";
   }
 
   .dashboard__mention-remove {
+    min-inline-size: 2.75rem;
+    min-block-size: 2.75rem;
     padding-inline-start: 0;
     color: var(--text-muted);
     font-size: var(--t-base);
@@ -7179,7 +7575,7 @@ import "../../styles/tokens.css";
     flex: 1 1 14rem;
     min-inline-size: 7rem;
     min-block-size: 2rem;
-    max-block-size: 9rem;
+    max-block-size: min(40dvh, 20rem);
     padding: 0.34rem var(--s-2);
     overflow-y: auto;
     resize: none;
@@ -7197,8 +7593,8 @@ import "../../styles/tokens.css";
 
   .dashboard__composer-send {
     flex: 0 0 auto;
-    inline-size: 2.25rem;
-    block-size: 2.25rem;
+    inline-size: 2.75rem;
+    block-size: 2.75rem;
     display: grid;
     place-items: center;
     padding: 0;
@@ -7207,10 +7603,17 @@ import "../../styles/tokens.css";
     border: 0;
     border-radius: 50%;
     cursor: pointer;
+    transition: background var(--dur-1) var(--ease-standard),
+      opacity var(--dur-1) var(--ease-standard),
+      transform var(--dur-1) var(--ease-standard);
   }
 
-  .dashboard__composer-send:hover {
+  .dashboard__composer-send:hover:not(:disabled) {
     background: var(--accent-bright);
+  }
+
+  .dashboard__composer-send:active:not(:disabled) {
+    transform: translateY(1px) scale(0.97);
   }
 
   .dashboard__composer-send:focus-visible {
@@ -7219,8 +7622,13 @@ import "../../styles/tokens.css";
   }
 
   .dashboard__composer-send:disabled {
-    cursor: wait;
+    cursor: default;
     opacity: 0.55;
+  }
+
+  .dashboard__composer-send[data-state="posting"] {
+    cursor: wait;
+    opacity: 0.82;
   }
 
   .dashboard__composer-send svg {
@@ -7231,16 +7639,107 @@ import "../../styles/tokens.css";
     stroke-linejoin: round;
   }
 
+  .dashboard__composer-send-icon,
+  .dashboard__composer-send-progress {
+    grid-area: 1 / 1;
+  }
+
+  .dashboard__composer-send-progress {
+    inline-size: 1rem;
+    block-size: 1rem;
+    display: none;
+    border: 2px solid color-mix(in oklab, currentColor 35%, transparent);
+    border-block-start-color: currentColor;
+    border-radius: 50%;
+    animation: dashboard-composer-spin 700ms linear infinite;
+  }
+
+  .dashboard__composer-send[data-state="posting"] .dashboard__composer-send-icon {
+    visibility: hidden;
+  }
+
+  .dashboard__composer-send[data-state="posting"] .dashboard__composer-send-progress {
+    display: block;
+  }
+
+  @keyframes dashboard-composer-spin {
+    to {
+      transform: rotate(1turn);
+    }
+  }
+
+  .dashboard__composer-meta,
+  .dashboard__composer-feedback {
+    min-inline-size: 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--s-3);
+  }
+
+  .dashboard__composer-meta {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .dashboard__composer-feedback {
+    grid-column: 1 / -1;
+    grid-row: 3;
+  }
+
+  .dashboard__composer-hint,
+  .dashboard__composer-count {
+    margin: 0;
+    color: var(--text-faint);
+    font-size: var(--t-xs);
+    line-height: var(--lh-xs);
+  }
+
+  .dashboard__composer-count {
+    margin-inline-start: auto;
+    text-align: end;
+  }
+
+  .dashboard__composer-count[data-state="firm"] {
+    color: var(--danger);
+  }
+
   .dashboard__composer-status {
-    min-block-size: var(--lh-xs);
     margin: 0;
     color: var(--text-muted);
     font-size: var(--t-xs);
     line-height: var(--lh-xs);
   }
 
+  .dashboard__composer-status[data-state="error"] {
+    color: var(--danger);
+  }
+
   .dashboard__composer-status:empty {
     display: none;
+  }
+
+  .dashboard__composer-retry {
+    min-block-size: 2.75rem;
+    margin-inline-start: auto;
+    padding-inline: var(--s-3);
+    color: var(--text);
+    background: var(--elev-2);
+    border: 0;
+    border-radius: var(--radius-sm);
+    font: inherit;
+    font-size: var(--t-xs);
+    font-weight: var(--weight-semibold);
+    cursor: pointer;
+  }
+
+  .dashboard__composer-retry:hover {
+    background: var(--elev-3);
+  }
+
+  .dashboard__composer-retry:focus-visible {
+    outline: none;
+    box-shadow: var(--focus-ring);
   }
 
   .dashboard__mention-picker {
@@ -7631,13 +8130,18 @@ import "../../styles/tokens.css";
     }
 
     .dashboard__frame {
-      min-block-size: 100svh;
+      block-size: 100%;
+      min-block-size: 0;
       inline-size: 100%;
       max-inline-size: 100%;
       grid-template-columns: minmax(0, 1fr);
       grid-template-rows: auto minmax(0, 1fr);
       border: 0;
       border-radius: 0;
+    }
+
+    .dashboard__composer textarea {
+      font-size: 16px;
     }
 
     .dashboard__frame--entity-panel {
@@ -7831,6 +8335,7 @@ import "../../styles/tokens.css";
       grid-template-columns: minmax(0, 1fr) auto;
       align-items: start;
       gap: var(--s-2) var(--s-3);
+      padding-block: var(--s-2);
     }
 
     .dashboard__channel-titleblock {
@@ -7905,6 +8410,40 @@ import "../../styles/tokens.css";
       padding-inline: var(--s-4);
     }
 
+    .dashboard__composer {
+      grid-template-columns: minmax(0, 1fr);
+      gap: var(--s-1);
+      padding-inline: var(--s-4);
+      padding-block: var(--s-1);
+    }
+
+    .dashboard__composer-audience,
+    .dashboard__composer-box,
+    .dashboard__composer-meta,
+    .dashboard__composer-feedback {
+      grid-column: 1;
+      grid-row: auto;
+    }
+
+    .dashboard__composer-input {
+      padding-block: var(--s-1);
+    }
+
+    .dashboard__composer-audience {
+      flex-wrap: nowrap;
+    }
+
+    .dashboard__composer-audience select {
+      min-block-size: 2.75rem;
+    }
+
+    .dashboard__composer-audience [data-composer-audience-count] {
+      flex: 1 1 auto;
+      overflow: visible;
+      text-overflow: clip;
+      white-space: normal;
+    }
+
     .dashboard__message-meta time {
       margin-inline-start: 0;
     }
@@ -7914,12 +8453,45 @@ import "../../styles/tokens.css";
     }
   }
 
+  @media (max-width: 52rem) and (max-height: 36rem) {
+    .dashboard__sample-notice {
+      margin: var(--s-1);
+    }
+
+    .dashboard__rail {
+      padding-block: var(--s-1);
+    }
+
+    .dashboard__channel-head {
+      min-block-size: 0;
+      padding-block: var(--s-2);
+    }
+
+    .dashboard__channel-description,
+    .dashboard__feed-toolbar,
+    .dashboard__composer-meta {
+      display: none;
+    }
+
+    .dashboard__composer {
+      gap: var(--s-1);
+      padding-block-start: var(--s-1);
+      padding-block-end: calc(var(--s-1) + env(safe-area-inset-bottom));
+    }
+
+    .dashboard__composer textarea {
+      max-block-size: 2.75rem;
+    }
+  }
+
   @media (prefers-reduced-motion: reduce) {
     .dashboard__spinner {
       animation-duration: 1.4s;
     }
 
     .dashboard__button,
+    .dashboard__composer-send,
+    .dashboard__composer-send-progress,
     .dashboard__message--fresh,
     .dashboard__roster-button,
     .dashboard__workspace-details-dialog[open],

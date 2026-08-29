@@ -23,7 +23,8 @@ type ComposerMeasurement = {
   };
   replacement: { chipCount: number; chipText: string; selectedValue: string };
   selectSync: { chipCount: number; chipText: string };
-  plainEnter: { insertedNewline: boolean; prevented: boolean; submitted: boolean };
+  plainEnter: { prevented: boolean; submitted: boolean };
+  shiftEnter: { insertedNewline: boolean; prevented: boolean; submitted: boolean };
   metaEnter: { recipient: string; submitted: boolean };
   ctrlEnter: { recipient: string; submitted: boolean };
 };
@@ -133,7 +134,7 @@ const frameScript = `<script>
       chipText: chips()[0]?.textContent ?? "",
     };
 
-    input.value = "line one";
+    input.value = "sent with enter";
     input.setSelectionRange(input.value.length, input.value.length);
     const beforePlain = list.children.length;
     const plain = new view.KeyboardEvent("keydown", {
@@ -141,15 +142,32 @@ const frameScript = `<script>
       cancelable: true,
       key: "Enter",
     });
-    const defaultAllowed = input.dispatchEvent(plain);
-    if (defaultAllowed) {
+    input.dispatchEvent(plain);
+    await new Promise((resolve) => view.setTimeout(resolve, 0));
+    const plainEnter = {
+      prevented: plain.defaultPrevented,
+      submitted: list.children.length === beforePlain + 1 &&
+        list.lastElementChild?.querySelector(".dashboard__message-markdown")?.textContent === "sent with enter",
+    };
+
+    input.value = "line one";
+    input.setSelectionRange(input.value.length, input.value.length);
+    const beforeShift = list.children.length;
+    const shift = new view.KeyboardEvent("keydown", {
+      bubbles: true,
+      cancelable: true,
+      key: "Enter",
+      shiftKey: true,
+    });
+    const shiftDefaultAllowed = input.dispatchEvent(shift);
+    if (shiftDefaultAllowed) {
       input.setRangeText("\\n", input.selectionStart, input.selectionEnd, "end");
       input.dispatchEvent(new view.InputEvent("input", { bubbles: true, inputType: "insertLineBreak" }));
     }
-    const plainEnter = {
+    const shiftEnter = {
       insertedNewline: input.value === "line one\\n",
-      prevented: plain.defaultPrevented,
-      submitted: list.children.length !== beforePlain,
+      prevented: shift.defaultPrevented,
+      submitted: list.children.length !== beforeShift,
     };
     const metaEnter = await sendWith("metaKey", "sent with command enter");
     const ctrlEnter = await sendWith("ctrlKey", "sent with control enter");
@@ -160,6 +178,7 @@ const frameScript = `<script>
       replacement,
       selectSync,
       plainEnter,
+      shiftEnter,
       metaEnter,
       ctrlEnter,
     }))));
@@ -271,6 +290,10 @@ test("rendered composer uses one visible recipient and preserves multiline keybo
     });
     assert.deepEqual(measured.selectSync, { chipCount: 1, chipText: "@Dana Rivera×" });
     assert.deepEqual(measured.plainEnter, {
+      prevented: true,
+      submitted: true,
+    });
+    assert.deepEqual(measured.shiftEnter, {
       insertedNewline: true,
       prevented: false,
       submitted: false,

@@ -16,7 +16,9 @@ const between = (source: string, start: string, end: string): string => {
 test("composer defaults to broadcast and keeps signal language", () => {
   const markup = between(dashboard, '<form class="dashboard__composer"', "</form>");
   assert.match(markup, /data-composer-audience/);
-  assert.match(markup, /maxlength="8000"/);
+  assert.match(markup, /maxlength=\{SIGNAL_BODY_MAX\}/);
+  assert.match(dashboard, /import \{ SIGNAL_BODY_MAX \} from/);
+  assert.doesNotMatch(markup, /maxlength="8000"/);
   assert.match(markup, /placeholder="What are you about to do\?"/);
   assert.doesNotMatch(markup, /Message #general|Message #all-signals/i);
   assert.doesNotMatch(markup, /only .* sees|will see|private|lock/i);
@@ -46,7 +48,7 @@ test("browser-authored signals use the existing broadcast and direct target fiel
   assert.match(submit, /const address = browserSignalAddress\(audience\)/);
   assert.match(submit, /to: address\.toUserId/);
   assert.match(submit, /toAgent: address\.toAgentPrincipalId/);
-  assert.match(submit, /body,\s*audience,\s*\);/);
+  assert.match(submit, /rawBody,\s*audience,\s*\);/);
   assert.match(submit, /await postBrowserSignal/);
 });
 

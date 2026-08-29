@@ -1023,6 +1023,7 @@ export interface BrowserDeliveryReceiptResult {
 }
 
 export type BrowserDeliveryIndicatorState =
+  | "pending"
   | "unavailable"
   | "no-recipient"
   | "sent"
@@ -1314,6 +1315,45 @@ export function browserDeliveryIndicator(
     glyph: "✓",
     label: `Sent to ${total}`,
     detail,
+    terminal: false,
+  };
+}
+
+/** Keeps pre-receipt post progress inside the same indicator model as delivery receipts. */
+export function browserPostingDeliveryIndicator(): BrowserDeliveryIndicator {
+  return {
+    state: "pending",
+    outcome: null,
+    glyph: "…",
+    label: "Sending",
+    detail: "Posting to CommonSwarm. This is still in progress; delivery is not confirmed yet.",
+    terminal: false,
+  };
+}
+
+/** Shows only what the accepted post established while its delivery receipt is loading. */
+export function browserAcceptedDeliveryIndicator(
+  recipient: BrowserSignalRecipient,
+): BrowserDeliveryIndicator {
+  if (recipient.kind === "everyone") {
+    return browserDeliveryIndicator({ addressed: false, receipts: [] });
+  }
+  if (recipient.kind === "person") {
+    return {
+      state: "unavailable",
+      outcome: null,
+      glyph: "✓",
+      label: "Posted",
+      detail: "Accepted by CommonSwarm for a person. Agent delivery receipts do not apply.",
+      terminal: true,
+    };
+  }
+  return {
+    state: "sent",
+    outcome: null,
+    glyph: "✓",
+    label: "Sent",
+    detail: "Accepted by CommonSwarm. The delivery receipt is loading; delivery is not confirmed yet.",
     terminal: false,
   };
 }
