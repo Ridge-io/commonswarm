@@ -590,6 +590,7 @@ import "../../styles/tokens.css";
                   data-composer-audience
                   aria-describedby="dashboard-composer-audience-count"
                 ></select>
+                <div class="dashboard__composer-mentions" data-composer-mentions></div>
                 <span id="dashboard-composer-audience-count" data-composer-audience-count>
                   No recipient · broadcast · no agent will be woken
                 </span>
@@ -604,7 +605,6 @@ import "../../styles/tokens.css";
                   hidden
                 ></div>
                 <div class="dashboard__composer-input">
-                  <div class="dashboard__composer-mentions" data-composer-mentions></div>
                   <textarea
                     rows="1"
                     maxlength={SIGNAL_BODY_MAX}
@@ -2073,6 +2073,7 @@ import "../../styles/tokens.css";
         renderComposerMentions();
       }
       select.value = composerAudienceKey(composerAudience);
+      select.hidden = composerMention !== null;
       count.textContent = composerAudience.kind === "everyone"
         ? "No recipient · broadcast · no agent will be woken"
         : composerAudience.kind === "agent"
@@ -4796,7 +4797,7 @@ import "../../styles/tokens.css";
         clearComposerDraft();
         renderFeed("latest");
         void refreshDeliveryReceipts(workspaceId, version);
-        setComposerStatus("Posted.");
+        setComposerStatus("");
       } catch (caught) {
         if (version !== requestVersion || workspaceId !== activeWorkspaceId) return;
         signals = signals.filter((signal) => signal.id !== pendingId);
@@ -7431,13 +7432,19 @@ import "../../styles/tokens.css";
   }
 
   .dashboard__composer {
+    --composer-border-width: 1px;
+    --composer-inset: var(--s-2);
+    --composer-recipient-max: min(14rem, 44vw);
+    --composer-target: 2.75rem;
+    --composer-text-rest: calc(var(--s-6) + var(--s-4));
+
     z-index: 3;
     grid-row: 2;
     display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    gap: var(--s-2);
-    padding: var(--s-3) clamp(var(--s-5), 4vw, var(--s-8))
-      calc(var(--s-4) + env(safe-area-inset-bottom));
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--s-1);
+    padding: var(--s-1) clamp(var(--s-5), 4vw, var(--s-8))
+      calc(var(--s-1) + env(safe-area-inset-bottom));
     background: var(--surface);
     border-block-start: 1px solid var(--border);
   }
@@ -7449,6 +7456,7 @@ import "../../styles/tokens.css";
     align-items: center;
     gap: var(--s-2);
     min-inline-size: 0;
+    padding-inline: calc(var(--composer-border-width) + var(--composer-inset));
     color: var(--text-muted);
     font-size: var(--t-xs);
   }
@@ -7461,7 +7469,7 @@ import "../../styles/tokens.css";
   }
 
   .dashboard__composer-audience select {
-    max-inline-size: min(14rem, 44vw);
+    max-inline-size: var(--composer-recipient-max);
     padding: var(--s-1) var(--s-6) var(--s-1) var(--s-2);
     color: var(--text);
     background: var(--elev-2);
@@ -7497,14 +7505,16 @@ import "../../styles/tokens.css";
   }
 
   .dashboard__composer-input {
-    display: flex;
-    align-items: flex-end;
-    flex-wrap: wrap;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
     gap: var(--s-2);
-    min-block-size: 3.25rem;
-    padding: var(--s-2);
+    min-block-size: calc(
+      var(--composer-target) + var(--composer-border-width) + var(--composer-border-width)
+    );
+    padding: var(--composer-inset);
     background: var(--elev-1);
-    border: 1px solid var(--border-interactive);
+    border: var(--composer-border-width) solid var(--border-interactive);
     border-radius: var(--radius);
     transition: border-color var(--dur-1) var(--ease-standard),
       box-shadow var(--dur-1) var(--ease-standard);
@@ -7516,13 +7526,20 @@ import "../../styles/tokens.css";
   }
 
   .dashboard__composer-mentions {
-    display: contents;
+    min-inline-size: 0;
+    max-inline-size: var(--composer-recipient-max);
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
   }
 
   .dashboard__mention-chip {
+    position: relative;
+    block-size: var(--s-8);
     display: inline-flex;
     align-items: center;
     max-inline-size: 100%;
+    padding-inline-end: var(--s-6);
     color: var(--accent-bright);
     background: var(--accent-dim);
     border: 1px solid color-mix(in oklab, var(--accent) 28%, var(--border));
@@ -7535,7 +7552,6 @@ import "../../styles/tokens.css";
   .dashboard__mention-entity,
   .dashboard__mention-remove,
   .dashboard__message-mention {
-    padding: 0.18rem var(--s-2);
     color: inherit;
     background: transparent;
     border: 0;
@@ -7544,20 +7560,25 @@ import "../../styles/tokens.css";
   }
 
   .dashboard__mention-entity {
-    min-block-size: 2.75rem;
+    min-block-size: var(--s-8);
     min-inline-size: 0;
+    padding: 0 var(--s-2);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
   .dashboard__mention-remove {
-    min-inline-size: 2.75rem;
-    min-block-size: 2.75rem;
-    padding-inline-start: 0;
+    position: absolute;
+    inset-block-start: 50%;
+    inset-inline-end: calc((var(--composer-target) - var(--s-6)) / -2);
+    min-inline-size: var(--composer-target);
+    min-block-size: var(--composer-target);
+    padding: 0;
     color: var(--text-muted);
     font-size: var(--t-base);
     line-height: 1;
+    transform: translateY(-50%);
   }
 
   .dashboard__mention-entity:focus-visible,
@@ -7568,15 +7589,16 @@ import "../../styles/tokens.css";
   }
 
   .dashboard__message-mention {
-    padding-block: 0;
+    padding: 0 var(--s-2);
   }
 
   .dashboard__composer textarea {
     flex: 1 1 14rem;
+    align-self: center;
     min-inline-size: 7rem;
-    min-block-size: 2rem;
+    min-block-size: var(--composer-text-rest);
     max-block-size: min(40dvh, 20rem);
-    padding: 0.34rem var(--s-2);
+    padding: var(--s-2) 0;
     overflow-y: auto;
     resize: none;
     color: var(--text);
@@ -7584,7 +7606,7 @@ import "../../styles/tokens.css";
     border: 0;
     outline: 0;
     font: inherit;
-    line-height: var(--lh-base);
+    line-height: var(--s-6);
   }
 
   .dashboard__composer textarea::placeholder {
@@ -7595,13 +7617,14 @@ import "../../styles/tokens.css";
     flex: 0 0 auto;
     inline-size: 2.75rem;
     block-size: 2.75rem;
+    align-self: end;
     display: grid;
     place-items: center;
     padding: 0;
     color: var(--accent-ink);
     background: var(--accent);
     border: 0;
-    border-radius: 50%;
+    border-radius: var(--radius-sm);
     cursor: pointer;
     transition: background var(--dur-1) var(--ease-standard),
       opacity var(--dur-1) var(--ease-standard),
@@ -7678,13 +7701,15 @@ import "../../styles/tokens.css";
   }
 
   .dashboard__composer-meta {
-    grid-column: 2;
-    grid-row: 1;
+    grid-column: 1;
+    grid-row: 3;
+    padding-inline: calc(var(--composer-border-width) + var(--composer-inset));
   }
 
   .dashboard__composer-feedback {
-    grid-column: 1 / -1;
-    grid-row: 3;
+    grid-column: 1;
+    grid-row: 4;
+    padding-inline: calc(var(--composer-border-width) + var(--composer-inset));
   }
 
   .dashboard__composer-hint,

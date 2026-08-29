@@ -442,8 +442,11 @@ const assertComposerSprint = (value: ComposerArtifact): void => {
     "combobox: closed picker must clear stale active state");
   const sendWidth = Number(sendCss.match(/inline-size: ([\d.]+)rem;/)?.[1]);
   const sendHeight = Number(sendCss.match(/block-size: ([\d.]+)rem;/)?.[1]);
-  const removeWidth = Number(removeCss.match(/min-inline-size: ([\d.]+)rem;/)?.[1]);
-  const removeHeight = Number(removeCss.match(/min-block-size: ([\d.]+)rem;/)?.[1]);
+  const composerTarget = Number(dashboard.match(/--composer-target: ([\d.]+)rem;/)?.[1]);
+  const resolveTarget = (value: string | undefined): number =>
+    value === "var(--composer-target)" ? composerTarget : Number(value?.replace("rem", ""));
+  const removeWidth = resolveTarget(removeCss.match(/min-inline-size: ([^;]+);/)?.[1]);
+  const removeHeight = resolveTarget(removeCss.match(/min-block-size: ([^;]+);/)?.[1]);
   assert.ok(sendWidth * 16 >= 44 && sendHeight * 16 >= 44,
     "send-target: send must be at least 44x44px");
   assert.ok(removeWidth * 16 >= 44 && removeHeight * 16 >= 44,
@@ -593,8 +596,8 @@ const mutations: Mutation[] = [
   {
     name: "mention remove target shrinks below 44px",
     key: "dashboard",
-    target: ".dashboard__mention-remove {\n    min-inline-size: 2.75rem;",
-    replacement: ".dashboard__mention-remove {\n    min-inline-size: 2rem;",
+    target: "min-inline-size: var(--composer-target);\n    min-block-size: var(--composer-target);",
+    replacement: "min-inline-size: 2rem;\n    min-block-size: var(--composer-target);",
     expectedFailure: "remove-target",
   },
   {
