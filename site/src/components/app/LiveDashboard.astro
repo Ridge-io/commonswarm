@@ -7520,17 +7520,24 @@ import "../../styles/tokens.css";
       box-shadow var(--dur-1) var(--ease-standard);
   }
 
-  /* Operator feedback 2026-08-29: the ring on click was "very strong". Pointer
-   * focus gets only the accent border — Slack's behaviour — while the full ring
-   * stays for :focus-visible, which the browser applies exactly when the user is
-   * navigating by keyboard (or has an OS accessibility signal). No mode toggle
-   * needed: the platform already tells us who needs the loud ring. */
+  /* Operator feedback 2026-08-29, twice: the focus ring on the entry box was
+   * "very strong" and the first fix did not quiet it. The first fix keyed on
+   * :focus-visible, which works for buttons — but browsers deliberately treat a
+   * clicked TEXT FIELD as :focus-visible too, so both the global ring in
+   * global.css and the shell ring still fired on every click.
+   *
+   * The composer's focus indicator is therefore the SHELL BORDER turning accent
+   * — a clear visible change, Slack's own pattern — and the textarea opts out of
+   * the global outline/halo, which cannot distinguish click from keyboard on an
+   * editable element. Every non-editable control (send, chips, select) keeps the
+   * full global ring, where :focus-visible really is keyboard-only. */
   .dashboard__composer-input:focus-within {
     border-color: var(--accent);
   }
 
-  .dashboard__composer-input:has(:focus-visible) {
-    box-shadow: var(--focus-ring);
+  .dashboard__composer-input textarea:focus-visible {
+    outline: none;
+    box-shadow: none;
   }
 
   .dashboard__composer-mentions {

@@ -35,6 +35,15 @@ type RestGeometry = {
 };
 
 type PolishMeasurement = {
+  focus: {
+    matchesFocusVisible: boolean;
+    shellBorderBlurred: string;
+    shellBorderFocused: string;
+    shellBoxShadow: string;
+    textareaBoxShadow: string;
+    textareaOutlineStyle: string;
+    textareaOutlineWidth: string;
+  };
   rest: RestGeometry;
   success: {
     feedbackHidden: boolean;
@@ -204,6 +213,36 @@ const measurementPage = (url: URL): string | null => {
         verticalAsymmetry: Math.abs(topTextInset - bottomTextInset),
       };
 
+      /* Operator complaint, twice: clicking the box drew an aggressive ring.
+       * Chrome treats a focused TEXT FIELD as :focus-visible even on click, so
+       * this must be measured on the rendered page, not reasoned about. The
+       * indicator that MUST remain is the shell border colour change. */
+      /* The border-color change animates over --dur-1; reading mid-transition
+       * made the probe report "no change" while the real page changes fine
+       * (verified in an isolated reproduction). Transitions are suppressed for
+       * this read so the probe measures the destination, not an interpolation
+       * frame. */
+      const killTransitions = doc.createElement("style");
+      killTransitions.textContent = "* { transition: none !important; }";
+      doc.head.append(killTransitions);
+      const shellBorderBlurred = view.getComputedStyle(shell).borderTopColor;
+      input.focus();
+      await settle();
+      const focusedInputStyle = view.getComputedStyle(input);
+      const focusedShellStyle = view.getComputedStyle(shell);
+      const focus = {
+        matchesFocusVisible: input.matches(":focus-visible"),
+        shellBorderBlurred,
+        shellBorderFocused: focusedShellStyle.borderTopColor,
+        shellBoxShadow: focusedShellStyle.boxShadow,
+        textareaBoxShadow: focusedInputStyle.boxShadow,
+        textareaOutlineStyle: focusedInputStyle.outlineStyle,
+        textareaOutlineWidth: focusedInputStyle.outlineWidth,
+      };
+      input.blur();
+      killTransitions.remove();
+      await settle();
+
       setAudience("agent:sample-river");
       setInput("First line\\nSecond line");
       input.blur();
@@ -243,10 +282,7 @@ const measurementPage = (url: URL): string | null => {
         statusText: status.textContent ?? "",
         statusVisible: !feedback.hidden && view.getComputedStyle(status).display !== "none",
       };
-      document.documentElement.dataset.composerPolishMeasurement = btoa(unescape(encodeURIComponent(JSON.stringify({
-        rest,
-        success,
-        twoLine,
+      document.documentElement.dataset.composerPolishMeasurement = btoa(unescape(encodeURIComponent(JSON.stringify({ focus, rest, success, twoLine,
         variant: ${JSON.stringify(variant)},
         viewport: { height: view.innerHeight, width: view.innerWidth },
       }))));
@@ -295,6 +331,23 @@ const measure = async (
 
 const geometryFailures = (measurement: PolishMeasurement): string[] => {
   const failures: string[] = [];
+  const focus = measurement.focus;
+  if (focus.textareaOutlineStyle !== "none" && focus.textareaOutlineWidth !== "0px") {
+    failures.push(
+      `focused textarea draws the global outline (${focus.textareaOutlineStyle} ${focus.textareaOutlineWidth})`,
+    );
+  }
+  if (focus.textareaBoxShadow !== "none") {
+    failures.push(`focused textarea draws a box-shadow halo (${focus.textareaBoxShadow})`);
+  }
+  if (focus.shellBoxShadow !== "none") {
+    failures.push(`focused shell draws a focus ring (${focus.shellBoxShadow})`);
+  }
+  if (focus.shellBorderFocused === focus.shellBorderBlurred) {
+    failures.push(
+      "shell border does not change on focus - the quiet indicator is missing, which removes the focus indicator entirely",
+    );
+  }
   if (measurement.rest.verticalAsymmetry > 1) {
     failures.push(`text vertical asymmetry ${measurement.rest.verticalAsymmetry.toFixed(2)}px > 1px`);
   }
