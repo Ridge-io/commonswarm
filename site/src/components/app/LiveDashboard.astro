@@ -7520,8 +7520,16 @@ import "../../styles/tokens.css";
       box-shadow var(--dur-1) var(--ease-standard);
   }
 
+  /* Operator feedback 2026-08-29: the ring on click was "very strong". Pointer
+   * focus gets only the accent border — Slack's behaviour — while the full ring
+   * stays for :focus-visible, which the browser applies exactly when the user is
+   * navigating by keyboard (or has an OS accessibility signal). No mode toggle
+   * needed: the platform already tells us who needs the loud ring. */
   .dashboard__composer-input:focus-within {
     border-color: var(--accent);
+  }
+
+  .dashboard__composer-input:has(:focus-visible) {
     box-shadow: var(--focus-ring);
   }
 
