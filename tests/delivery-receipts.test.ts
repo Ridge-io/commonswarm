@@ -18,7 +18,7 @@ const DELIVERED = "2026-08-28T12:00:01.000Z";
 const LEASED = "2026-08-28T12:10:00.000Z";
 const ACKED = "2026-08-28T12:00:02.000Z";
 const RECEIPT_MIGRATION =
-  "supabase/migrations/20260828000002_fix_signal_delivery_receipts_auth.sql";
+  "supabase/migrations/20260829000001_member_signal_delivery_receipts.sql";
 
 function receipt(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -143,14 +143,13 @@ test("every ledger state stays distinct, including queued, observed, and replied
   }
 });
 
-test("cross-sender mutation control pins caller kind, author id, and workspace", async () => {
+test("agent cross-sender mutation control pins author id and workspace", async () => {
   const migration = await readFile(RECEIPT_MIGRATION, "utf8");
-  assert.match(migration, /v_author_kind := 'user';[\s\S]*v_author_id := v_human_user_id;/);
   assert.match(migration, /v_author_kind := 'agent';[\s\S]*v_author_id := v_agent_principal_id;/);
   assert.match(
     migration,
-    /WHERE signal\.id = p_signal_id\s+AND signal\.workspace_id = p_workspace_id\s+AND signal\.from_kind = v_author_kind\s+AND signal\.from_principal = v_author_id;/,
-    "receipt lookup must bind the signal to the authenticated sender and workspace",
+    /WHERE signal\.id = p_signal_id\s+AND signal\.workspace_id = p_workspace_id\s+AND \(\s+v_human_user_id IS NOT NULL\s+OR \(\s+signal\.from_kind = v_author_kind\s+AND signal\.from_principal = v_author_id\s+\)\s+\);/,
+    "agent receipt lookup must bind the signal to the authenticated sender and workspace",
   );
   assert.match(
     migration,
@@ -161,6 +160,11 @@ test("cross-sender mutation control pins caller kind, author id, and workspace",
     migration,
     /FROM swarm\.agent_delivery_read_context\([\s\S]*v_agent_workspace_id <> p_workspace_id/,
     "an agent must pass the existing credential and home-workspace gate",
+  );
+  assert.equal(
+    migration.match(/signal\.from_kind = v_author_kind/g)?.length,
+    1,
+    "the author-kind predicate must exist only in the agent side of the human-or-agent gate",
   );
 });
 
@@ -227,7 +231,7 @@ test("browser client reaches the human RPC without an agent identity argument", 
   assert.doesNotMatch(
     helper,
     /p_agent_token_hash/,
-    "a human RPC must derive auth.uid and never choose an agent identity",
+    "a human RPC must derive the JWT subject and never choose an agent identity",
   );
 });
 

@@ -1017,9 +1017,15 @@ export interface BrowserDeliveryReceipt {
 }
 
 export interface BrowserDeliveryReceiptResult {
-  /** Null means this signed-in person did not author a matching signal. */
+  /** Null means the caller cannot inspect a matching signal or the endpoint could not answer. */
   addressed: boolean | null;
   receipts: BrowserDeliveryReceipt[];
+}
+
+export interface BrowserDeliveryReceiptCacheEntry {
+  result: BrowserDeliveryReceiptResult | null;
+  checkedAt: number;
+  phase?: "posting" | "accepted";
 }
 
 export type BrowserDeliveryIndicatorState =
@@ -1041,6 +1047,10 @@ export interface BrowserDeliveryIndicator {
   detail: string;
   terminal: boolean;
 }
+
+export const BROWSER_RECEIPT_ACTIVE_REFRESH_MS = 4_000;
+export const BROWSER_RECEIPT_UNAVAILABLE_REFRESH_MS = 30_000;
+export const BROWSER_RECEIPT_REQUESTS_PER_TICK = 8;
 
 const deliveryAge = (timestamp: string, now: number): string => {
   const elapsed = Math.max(0, now - new Date(timestamp).getTime());
@@ -1319,6 +1329,44 @@ export function browserDeliveryIndicator(
   };
 }
 
+/** Bounds receipt reads while favoring visible and newly-arrived directed agent messages. */
+export function browserDeliveryReceiptCandidates(
+  signals: readonly Signal[],
+  cache: ReadonlyMap<string, BrowserDeliveryReceiptCacheEntry>,
+  visibleSignalIds: ReadonlySet<string>,
+  now = Date.now(),
+  limit = BROWSER_RECEIPT_REQUESTS_PER_TICK,
+): Signal[] {
+  return signals
+    .filter((signal) => signal.toAgent !== null)
+    .filter((signal) => {
+      const cached = cache.get(signal.id);
+      if (cached?.phase === "posting") return false;
+      if (!cached) return true;
+      const indicator = browserDeliveryIndicator(cached.result, now);
+      if (indicator.terminal) return false;
+      const cadence = indicator.state === "unavailable"
+        ? BROWSER_RECEIPT_UNAVAILABLE_REFRESH_MS
+        : BROWSER_RECEIPT_ACTIVE_REFRESH_MS;
+      return now - cached.checkedAt >= cadence;
+    })
+    .sort((left, right) => {
+      const visibleDifference = Number(visibleSignalIds.has(right.id)) -
+        Number(visibleSignalIds.has(left.id));
+      if (visibleDifference !== 0) return visibleDifference;
+      const leftCached = cache.get(left.id);
+      const rightCached = cache.get(right.id);
+      const missingDifference = Number(leftCached !== undefined) -
+        Number(rightCached !== undefined);
+      if (missingDifference !== 0) return missingDifference;
+      if (leftCached && rightCached && leftCached.checkedAt !== rightCached.checkedAt) {
+        return leftCached.checkedAt - rightCached.checkedAt;
+      }
+      return new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime();
+    })
+    .slice(0, Math.max(0, limit));
+}
+
 /** Keeps pre-receipt post progress inside the same indicator model as delivery receipts. */
 export function browserPostingDeliveryIndicator(): BrowserDeliveryIndicator {
   return {
@@ -1447,7 +1495,7 @@ export async function feed(workspaceId: string, limit = 50): Promise<Signal[]> {
   }));
 }
 
-/** Reads only receipts for a signal authored by the signed-in human. */
+/** Reads receipts for any signal visible to the signed-in workspace member. */
 export async function browserDeliveryReceipts(
   workspaceId: string,
   signalId: string,

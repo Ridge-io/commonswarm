@@ -828,8 +828,10 @@ import "../../styles/tokens.css";
     inviteWorkspaceMember,
     inviteEmailValidationMessage,
     pendingMemberInvites,
+    BROWSER_RECEIPT_REQUESTS_PER_TICK,
     browserAcceptedDeliveryIndicator,
     browserDeliveryIndicator,
+    browserDeliveryReceiptCandidates,
     browserDeliveryReceipts,
     browserPostingDeliveryIndicator,
     browserSignalAddress,
@@ -848,7 +850,7 @@ import "../../styles/tokens.css";
     type AgentAccessStatus,
     type PendingMemberInvite,
     type BrowserDeliveryIndicator,
-    type BrowserDeliveryReceiptResult,
+    type BrowserDeliveryReceiptCacheEntry,
     type BrowserSignalRecipient,
     type WorkspaceFile,
   } from "../../lib/commonswarm";
@@ -914,12 +916,6 @@ import "../../styles/tokens.css";
   interface SignalCursor {
     createdAt: string;
     id: string;
-  }
-
-  interface DeliveryReceiptCacheEntry {
-    result: BrowserDeliveryReceiptResult | null;
-    checkedAt: number;
-    phase?: "posting" | "accepted";
   }
 
   interface ComposerDraft {
@@ -1016,7 +1012,7 @@ import "../../styles/tokens.css";
     let focusedComposerWorkspaceId = "";
     const visualMentions = new Map<string, EntityRef[]>();
     const expandedSignalIds = new Set<string>();
-    const deliveryReceiptCache = new Map<string, DeliveryReceiptCacheEntry>();
+    const deliveryReceiptCache = new Map<string, BrowserDeliveryReceiptCacheEntry>();
     let deliveryReceiptRefreshOwner = "";
 
     /* 25, not 50. The operator asked for 20-30 on first paint with older pages fetched on
@@ -2694,9 +2690,7 @@ import "../../styles/tokens.css";
     const appendDeliveryReceipt = (
       body: HTMLElement,
       signal: Signal,
-      viewerId: string,
     ): void => {
-      if (!viewerId || signal.fromKind !== "user" || signal.from !== viewerId) return;
       const cached = deliveryReceiptCache.get(signal.id);
       const recipient: ComposerAudience = signal.toAgent !== null
         ? { kind: "agent", id: signal.toAgent }
@@ -2719,6 +2713,8 @@ import "../../styles/tokens.css";
             detail: "This message addresses a person. Agent delivery receipts do not apply.",
             terminal: true,
           }
+        : signal.toAgent === null
+        ? browserDeliveryIndicator({ addressed: false, receipts: [] })
         : browserDeliveryIndicator(cached?.result ?? null);
       const details = document.createElement("details");
       details.className = "dashboard__message-receipt";
@@ -2871,6 +2867,7 @@ import "../../styles/tokens.css";
       for (const signal of [...visibleSignals].reverse()) {
         const row = document.createElement("li");
         row.className = "dashboard__message";
+        row.dataset.signalId = signal.id;
         if ((feedWasEmpty || previousSignalIds.size > 0) && !previousSignalIds.has(signal.id)) {
           row.classList.add("dashboard__message--fresh");
         }
@@ -2999,7 +2996,7 @@ import "../../styles/tokens.css";
           about.textContent = signal.about;
           body.append(about);
         }
-        appendDeliveryReceipt(body, signal, viewerId);
+        appendDeliveryReceipt(body, signal);
         row.append(avatar, body);
         list.append(row);
         window.requestAnimationFrame(() => {
@@ -3058,13 +3055,26 @@ import "../../styles/tokens.css";
       connect.setAttribute("workspace-id", workspace.id);
     };
 
-    const RECEIPT_ACTIVE_REFRESH_MS = 4_000;
-    const RECEIPT_UNAVAILABLE_REFRESH_MS = 30_000;
-    const RECEIPT_REQUESTS_PER_TICK = 8;
-
     /* Receipt reads reuse the existing visible-feed refresh. There is no receipt timer.
-     * Missing rows load first; later ticks revisit the stalest active rows. This keeps a
-     * 25-message page from turning one two-second feed tick into a 25-request burst. */
+     * Visible rows load first. New off-screen rows follow newest-first, while later ticks
+     * revisit the stalest active rows. This keeps a 25-message page from turning one
+     * two-second feed tick into a 25-request burst without starving old active receipts. */
+    const visibleReceiptSignalIds = (): Set<string> => {
+      const viewport = one<HTMLElement>(".dashboard__feed-view");
+      if (!viewport) return new Set();
+      const viewportBounds = viewport.getBoundingClientRect();
+      return new Set(
+        all<HTMLElement>("[data-signal-id]")
+          .filter((row) => {
+            const rowBounds = row.getBoundingClientRect();
+            return rowBounds.bottom >= viewportBounds.top &&
+              rowBounds.top <= viewportBounds.bottom;
+          })
+          .map((row) => row.dataset.signalId ?? "")
+          .filter(Boolean),
+      );
+    };
+
     const refreshDeliveryReceipts = async (
       workspaceId: string,
       version: number,
@@ -3074,29 +3084,13 @@ import "../../styles/tokens.css";
       const owner = `${workspaceId}:${version}`;
       if (deliveryReceiptRefreshOwner === owner) return;
       const now = Date.now();
-      const candidates = signals
-        .filter(
-          (signal) =>
-            signal.fromKind === "user" &&
-            signal.from === viewerId &&
-            signal.to === null,
-        )
-        .filter((signal) => {
-          const cached = deliveryReceiptCache.get(signal.id);
-          if (cached?.phase === "posting") return false;
-          if (!cached) return true;
-          const indicator = browserDeliveryIndicator(cached.result, now);
-          if (indicator.terminal) return false;
-          const cadence = indicator.state === "unavailable"
-            ? RECEIPT_UNAVAILABLE_REFRESH_MS
-            : RECEIPT_ACTIVE_REFRESH_MS;
-          return now - cached.checkedAt >= cadence;
-        })
-        .sort((left, right) =>
-          (deliveryReceiptCache.get(left.id)?.checkedAt ?? 0) -
-          (deliveryReceiptCache.get(right.id)?.checkedAt ?? 0)
-        )
-        .slice(0, RECEIPT_REQUESTS_PER_TICK);
+      const candidates = browserDeliveryReceiptCandidates(
+        signals,
+        deliveryReceiptCache,
+        visibleReceiptSignalIds(),
+        now,
+        BROWSER_RECEIPT_REQUESTS_PER_TICK,
+      );
       if (candidates.length === 0) return;
       deliveryReceiptRefreshOwner = owner;
       try {

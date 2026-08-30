@@ -101,10 +101,15 @@ test("write surfaces share one body cap while the read client stays forward-comp
   const dbCap = numberLiteral(
     /char_length\(body\) BETWEEN 1 AND ([\d_]+)/u.exec(migration)?.[1] ?? "missing",
   );
-  const browserCap = numberLiteral(
-    /<textarea[\s\S]{0,500}?maxlength="([\d_]+)"[\s\S]{0,500}?data-composer-input/u
-      .exec(dashboard)?.[1] ?? "missing",
+  assert.match(
+    dashboard,
+    /import \{ SIGNAL_BODY_MAX \} from "\.\.\/\.\.\/\.\.\/\.\.\/supabase\/functions\/_shared\/signal-text"/u,
   );
+  assert.match(
+    dashboard,
+    /<textarea[\s\S]{0,500}?maxlength=\{SIGNAL_BODY_MAX\}[\s\S]{0,500}?data-composer-input/u,
+  );
+  const browserCap = SIGNAL_BODY_MAX;
 
   assert.equal(SIGNAL_BODY_MAX, 8_000);
   assert.deepEqual(

@@ -50,9 +50,11 @@ it is the reason addressing has to be fixed first.
 broadcast to nobody. Also no Cmd/Ctrl+Enter to send. Also decide the broadcast default.
 *Files: `site/src/components/app/LiveDashboard.astro`, `site/src/lib/commonswarm.ts`.*
 
-**L2 — Receipt read path.** A definer function exposing delivery state for signals the caller
-authored, plus the command/read surface to reach it. Author-only; never leak another workspace's
-rows. *Files: `supabase/`.*
+**L2 — Receipt read path.** A definer function exposing delivery state, plus the command/read
+surface to reach it. ~~Author-only for every caller.~~ **DEAD, 2026-08-29:** a human workspace
+member may read receipts for every signal in that workspace because the dashboard already exposes
+every message body there. An agent remains author-only; cross-sender refusal is the security
+boundary. A non-member never receives a row. *Files: `supabase/`.*
 
 **L3 — Receipt UI.** The indicator itself, per message. *Depends on L1 and L2. Same file as L1,
 so it must not run concurrently with it.*

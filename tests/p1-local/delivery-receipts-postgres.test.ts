@@ -32,9 +32,10 @@ function databaseUrl(): string {
   return parsed.DB_URL;
 }
 
-test("delivery receipts work for agent, human, broadcast, and cross-sender paths", async () => {
+test("delivery receipt authorization matrix holds on real Postgres", async () => {
   const sql = postgres(databaseUrl(), { max: 1 });
   const userId = randomUUID();
+  const nonMemberId = randomUUID();
   const workspaceId = randomUUID();
   const deviceId = randomUUID();
   const senderA = randomUUID();
@@ -55,22 +56,37 @@ test("delivery receipts work for agent, human, broadcast, and cross-sender paths
           INSERT INTO auth.users (
             id, aud, role, email, encrypted_password, email_confirmed_at,
             raw_app_meta_data, raw_user_meta_data, created_at, updated_at
-          ) VALUES (
-            ${userId}::uuid,
-            'authenticated',
-            'authenticated',
-            ${`receipt-${userId}@example.test`},
-            '',
-            statement_timestamp(),
-            '{}'::jsonb,
-            '{}'::jsonb,
-            statement_timestamp(),
-            statement_timestamp()
-          )
+          ) VALUES
+            (
+              ${userId}::uuid,
+              'authenticated',
+              'authenticated',
+              ${`receipt-${userId}@example.test`},
+              '',
+              statement_timestamp(),
+              '{}'::jsonb,
+              '{}'::jsonb,
+              statement_timestamp(),
+              statement_timestamp()
+            ),
+            (
+              ${nonMemberId}::uuid,
+              'authenticated',
+              'authenticated',
+              ${`receipt-${nonMemberId}@example.test`},
+              '',
+              statement_timestamp(),
+              '{}'::jsonb,
+              '{}'::jsonb,
+              statement_timestamp(),
+              statement_timestamp()
+            )
         `;
         await tx`
           INSERT INTO swarm.users (user_id, display_name)
-          VALUES (${userId}::uuid, 'Receipt owner')
+          VALUES
+            (${userId}::uuid, 'Receipt owner'),
+            (${nonMemberId}::uuid, 'Receipt non-member')
         `;
         await tx`
           INSERT INTO swarm.devices (device_id, user_id, label)
@@ -210,14 +226,41 @@ test("delivery receipts work for agent, human, broadcast, and cross-sender paths
             NULL
           ) AS result
         `;
-        await tx.unsafe("RESET ROLE");
-
         assert.deepEqual(humanRow?.result.addressed, true);
         assert.deepEqual(humanRow?.result.receipts.length, 1);
         assert.deepEqual(
           humanRow?.result.receipts[0]?.recipient_agent_principal_id,
           recipient,
         );
+
+        const [humanAgentRow] = await tx<{ result: ReceiptResult }[]>`
+          SELECT swarm_read.signal_delivery_receipts(
+            ${workspaceId}::uuid,
+            ${agentSignal}::uuid,
+            NULL
+          ) AS result
+        `;
+        assert.deepEqual(humanAgentRow?.result.addressed, true);
+        assert.deepEqual(humanAgentRow?.result.receipts.length, 1);
+
+        await tx.unsafe("RESET ROLE");
+        await tx`
+          SELECT set_config(
+            'request.jwt.claims',
+            ${JSON.stringify({ sub: nonMemberId, role: "authenticated" })},
+            true
+          )
+        `;
+        await tx.unsafe("SET LOCAL ROLE authenticated");
+        const [nonMemberRow] = await tx<{ result: unknown }[]>`
+          SELECT swarm_read.signal_delivery_receipts(
+            ${workspaceId}::uuid,
+            ${agentSignal}::uuid,
+            NULL
+          ) AS result
+        `;
+        await tx.unsafe("RESET ROLE");
+        assert.equal(nonMemberRow?.result, null);
 
         throw ROLLBACK;
       }),

@@ -94,7 +94,9 @@ function ask(
     about: null,
     kind: "ask",
     body: `ask-${id.slice(-4)}`,
-    until: "2026-08-30T00:00:00.000Z",
+    // Keep the shared non-expiry fixture far from wall-clock time. When this
+    // was 2026-08-30, the gate began looping before its fetch-driven aborts.
+    until: "2036-08-30T00:00:00.000Z",
     created_at: createdAt,
     sender_owner_relation: "same_owner",
   };
