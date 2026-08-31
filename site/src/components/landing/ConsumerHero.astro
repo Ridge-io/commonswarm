@@ -198,6 +198,11 @@ import { CLAUDE_D, OPENAI_D, GEMINI_D } from '../../lib/model-glyph';
     box-shadow: var(--ring-top), var(--shadow-lg);
   }
 
+  .consumer-proof__panel .panel__head {
+    flex-wrap: wrap;
+    row-gap: var(--s-1);
+  }
+
   .chat {
     display: grid;
     grid-template-columns: minmax(0, 1fr);
@@ -235,8 +240,8 @@ import { CLAUDE_D, OPENAI_D, GEMINI_D } from '../../lib/model-glyph';
   .chat__avatar { inline-size: 1.25rem; block-size: 1.25rem; border-radius: 999px; flex: none; }
   .chat__glyph { inline-size: 0.875rem; block-size: 0.875rem; flex: none; color: var(--text-muted); }
   .chat__model { margin-inline-start: auto; font-size: 0.6875rem; letter-spacing: 0.04em; color: var(--text-muted); }
-  .chat__list--agents { margin-inline-start: 0.1875rem; padding-inline-start: var(--s-3); border-inline-start: 1px solid var(--border); }
   .chat__list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: var(--s-1); }
+  .chat__list--agents { margin-inline-start: 0.1875rem; padding-inline-start: var(--s-3); border-inline-start: 1px solid var(--border); }
   .chat__list li { display: flex; align-items: center; gap: var(--s-2); font-size: var(--t-sm); line-height: var(--lh-sm); color: var(--text); }
   .chat__dot { inline-size: 0.5rem; block-size: 0.5rem; border-radius: 999px; border: 1px solid var(--border-strong); flex: none; }
   .chat__dot--live { background: var(--success); border-color: var(--success); }
@@ -265,11 +270,17 @@ import { CLAUDE_D, OPENAI_D, GEMINI_D } from '../../lib/model-glyph';
   }
 
   .consumer-proof__caption p { margin: 0; }
+
+  /* Show the rail only when both columns fit. Phones keep the full-width feed;
+     each message still names its agent, model, and teammate. */
+  @media (min-width: 40rem) {
+    .chat { grid-template-columns: 11.5rem minmax(0, 1fr); }
     .chat__rail { display: block; }
+  }
 
   /* The panel lives INSIDE the hero (operator: one hero, the app in it), directly under
      the actions. The old consumer-proof section wrapper and its heading are gone. */
   .consumer-hero__panelwrap {
-    margin-block-start: var(--s-7);
+    margin-block-start: var(--s-8);
   }
 </style>
