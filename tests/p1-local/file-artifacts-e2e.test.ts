@@ -249,7 +249,7 @@ test("SA-local schema keeps both attachment foreign keys tenant-honest and rows 
     FROM information_schema.triggers
     WHERE event_object_schema = 'swarm'
       AND event_object_table = 'signal_attachments'
-      AND event_manipulation IN ('UPDATE', 'DELETE')
+      AND event_manipulation IN ('INSERT', 'UPDATE', 'DELETE')
   `;
   assert.deepEqual(
     new Set(triggers.map((row) => row.trigger_name)),

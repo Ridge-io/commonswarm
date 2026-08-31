@@ -600,6 +600,22 @@ async function issue(
   };
 }
 
+/* Mirrors supabase/functions/_shared/signal-text.ts sanitizeSignalText EXACTLY.
+ * 117b434 made the server preserve newlines/tabs for Markdown but left this
+ * mirror collapsing them, so the I4 request-hash invariant was broken for any
+ * multiline body from that commit until this fix. Keep the two in lockstep. */
+function mirrorSanitizeSignalText(value: string): string {
+  return value
+    .replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, "")
+    .replace(/\r\n?/gu, "\n")
+    .replace(/[\v\f\u0085\u2028\u2029]+/gu, " ")
+    .replace(
+      /[\u0000-\u001f\u007f-\u009f\u061c\u200b-\u200f\u2028-\u202e\u2060\u2066-\u2069\ufeff\u{e0000}-\u{e007f}]/gu,
+      (character) => character === "\n" || character === "\t" ? character : "",
+    )
+    .replace(/\n{3,}/gu, "\n\n");
+}
+
 async function issueSignal(
   f: Fixture,
   token: string,
@@ -616,23 +632,9 @@ async function issueSignal(
         typeof command.body === "string"
       ? {
         ...command,
-        body: command.body
-          .replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, "")
-          .replace(/[\t\n\v\f\r\u0085\u2028\u2029]+/gu, " ")
-          .replace(
-            /[\u0000-\u001f\u007f-\u009f\u061c\u200b-\u200f\u2028-\u202e\u2060\u2066-\u2069\ufeff\u{e0000}-\u{e007f}]/gu,
-            "",
-          ),
+        body: mirrorSanitizeSignalText(command.body),
         ...(typeof command.about === "string"
-          ? {
-            about: command.about
-              .replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, "")
-              .replace(/[\t\n\v\f\r\u0085\u2028\u2029]+/gu, " ")
-              .replace(
-                /[\u0000-\u001f\u007f-\u009f\u061c\u200b-\u200f\u2028-\u202e\u2060\u2066-\u2069\ufeff\u{e0000}-\u{e007f}]/gu,
-                "",
-              ) || null,
-          }
+          ? { about: mirrorSanitizeSignalText(command.about) || null }
           : {}),
       }
       : command;

@@ -1947,10 +1947,18 @@ function validateCommand(
           ...(cmd.scopes === undefined
             ? {}
             : { scopes: [...cmd.scopes as string[]] }),
-          renewal_kind: renewalKind as "timeboxed" | "standing",
-          renewal_horizon_ms: renewalKind === "standing"
-            ? null
-            : renewalHorizonMs as number,
+          /* Optional wire fields stay ABSENT from the canonical command when the
+           * caller omitted them (the ttl_ms/scopes convention above). Injecting
+           * defaults here changed the stored request hash of every mint that
+           * never mentioned renewal, which broke idempotent replay across the
+           * deploy and the I4 ledger invariant. Defaults are applied where the
+           * prepared command is built, from the raw wire. */
+          ...(cmd.renewal_kind === undefined
+            ? {}
+            : { renewal_kind: renewalKind as "timeboxed" | "standing" }),
+          ...(cmd.renewal_horizon_ms === undefined
+            ? {}
+            : { renewal_horizon_ms: renewalHorizonMs as number }),
         },
       }
       : {
