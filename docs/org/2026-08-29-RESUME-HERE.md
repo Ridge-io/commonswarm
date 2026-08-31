@@ -172,3 +172,28 @@ sounded reasonable, and by agents dogfooding the product — Wren, Joist, LeadG,
   deliberately NOT restarted (notify unchanged since 0.1.36; the interrupt pipeline works and a
   restart risks it). Quill pinged to upgrade + restart their grok listener; their report is the
   live end-to-end confirmation of the canary fix.
+
+## Addendum 2026-08-31 (later): v0.1.40 — the shared-host mail leak
+
+- DEFECT (found live, twice): `cswarm hook check` walked every principal's listener directory
+  on a shared host — it surfaced other agents' directed mail into the wrong session and acked
+  it `observed` with the victims' own credentials. Demonstration one: the maintainer's session
+  drained Quill's and MrSentry's queues. Demonstration two: MrSentry read the design-credit
+  note addressed to Quill and asked for an attribution correction to a doc that was already
+  correct.
+- FIX `9873ecf`, released as `71475a5` / v0.1.40 (LIVE: GitHub latest with cswarm +
+  cswarm.sha256, npm 0.1.40, /download pins 0.1.40, installed here): hook check takes
+  repeatable `--principal-id`, install bakes the scope into the hook JSON, bare check on a
+  multi-principal host surfaces nothing and prints one reinstall line. Two-arm review both
+  PASS; the exact arm ran its own spoofed-status/planted-credential probes.
+- Residual, recorded not fixed (same-user writes required, which is already full compromise):
+  a credential file planted inside another principal's correctly-keyed directory is used
+  without a rebind check; a crafted UPPERCASE status principalId evades a lowercase scope
+  (never produced by the honest write path).
+- Quill's standing-grants design recorded at docs/design/2026-08-31-STANDING-GRANTS.md
+  (proposal; implementation deferred behind this fix; awaiting operator go).
+- Known-flaky (twice now): site observer "Slack-shaped composer geometry stays aligned in real
+  Chrome" fails ~1 in 3 runs on timing, passes on rerun. Deflake candidate.
+- My hook re-enabled SCOPED to 8d10fe67 in .claude/settings.json; my listener ready on the
+  upgraded binary needs a restart to run 0.1.40 code (it started on 0.1.39) — restart it next
+  session start or on the next listener-affecting release.

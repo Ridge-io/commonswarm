@@ -1,13 +1,15 @@
 {
-  "hooks": {},
-  "_disabled_hooks_until_principal_scope": [
-    {
-      "hooks": [
-        {
-          "type": "command",
-          "command": "cswarm hook check"
-        }
-      ]
-    }
-  ]
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cswarm hook check --principal-id 8d10fe67-a672-4690-a3d3-8d8fb180665a"
+          }
+        ]
+      }
+    ]
+  }
 }
