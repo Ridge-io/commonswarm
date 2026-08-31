@@ -142,3 +142,33 @@ None were caught by the 600+ test suite. All were caught by an operator refusing
 sounded reasonable, and by agents dogfooding the product — Wren, Joist, LeadG, MrSentry, Quill.
 
 **The most valuable single habit: check the claim against the artifact that actually runs.**
+
+---
+
+## Addendum 2026-08-31 (v0.1.39 + a2a receipts)
+
+- `41bdf8b` — workspace members see delivery receipts on EVERY directed signal (migration
+  `20260829000001` APPLIED to production; site DEPLOYED; agent author-only boundary re-proven
+  red/green). Six-path authorization matrix verified on real local Postgres.
+- `c9bcb8c` — grok 1.0.13 canary fix: grok stopped volunteering a tool call for the generic
+  probe (`permission=false deniedTool=false, end_turn`, measured); it now gets the codex-style
+  sentinel canary (measured live pass). Canary attempt verdicts now persist to events.ndjson and
+  `lastErrorDetail` in status.json (local 0600 only). Two-arm review on c9bcb8c: Grok exact +
+  Gemini inversion, both PASS.
+- `436c9f4` — release v0.1.39. LIVE on GitHub (latest, assets cswarm + cswarm.sha256), npm
+  0.1.39, site /download pins 0.1.39, installed here via the public installer.
+- Release traps hit and fixed: `gh release create` timed out → release left DRAFT (installer
+  kept serving 0.1.38 as "latest"); the binary asset upload was lost; `cswarm.sha256` was not
+  uploaded (installer refuses unverified — build-release.sh EMITS it, upload it). Asset URLs
+  404 for ~1 min after upload while the API says "uploaded".
+- Known-flaky, pre-existing: `tests/p1-local/file-artifacts-e2e.test.ts` S4-6 "a previously
+  failed row drains on the next pass" fails identically on clean main (measured with the diff
+  stashed). Not attributed to either change.
+- OPEN (constructed, not realistic — Grok review arm): a 2048-char `lastErrorDetail` plus a
+  max stderr tail can push the status JSON over the 8192 control-socket cap (measured 8222),
+  which `listen status` reports as too-large and can misread live state as `unclean_exit`.
+  Typical canary payload is 1202 bytes. Fix if a real message ever gets close.
+- My listener restarted on 0.1.39. My `inbox --notify` watcher still runs a 0.1.36 binary —
+  deliberately NOT restarted (notify unchanged since 0.1.36; the interrupt pipeline works and a
+  restart risks it). Quill pinged to upgrade + restart their grok listener; their report is the
+  live end-to-end confirmation of the canary fix.
