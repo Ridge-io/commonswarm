@@ -179,6 +179,11 @@ test("agent-to-agent and viewer-authored directed rows use the same receipt path
     1,
     "every transcript row must call the single indicator builder once",
   );
+  assert.match(
+    dashboard,
+    /renderMessageAttachments\(body, signal\);[\s\S]{0,500}?appendDeliveryReceipt\(body, signal\)/,
+    "attachment cards must extend the same transcript row before its one receipt",
+  );
 });
 
 test("receipt candidates cap each feed tick and favor visible rows then newest rows", () => {

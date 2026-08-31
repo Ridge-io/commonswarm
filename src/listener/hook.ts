@@ -553,6 +553,9 @@ function entryFromSignal(
     ...(signal.kind === "ask" || signal.kind === "note" ? { kind: signal.kind } : {}),
     senderName,
     body: signal.body,
+    ...((signal.attachments?.length ?? 0) > 0
+      ? { attachmentCount: signal.attachments!.length }
+      : {}),
     createdAt: signal.created_at,
     queuedAt: new Date(now).toISOString(),
   };
@@ -579,6 +582,9 @@ export function renderHookSignal(item: SurfaceItem): string {
   return [
     `[CommonSwarm] ${senderKind} ${JSON.stringify(sender)} ${intent}`,
     preview(item.body),
+    ...(item.attachmentCount === undefined
+      ? []
+      : [`Attachments: ${item.attachmentCount}. Run cswarm inbox to see names and exact retrieval commands.`]),
     `${replyLabel} cswarm reply ${item.signalId} "<answer>" --workspace-id ${item.workspaceId}`,
   ].join("\n");
 }

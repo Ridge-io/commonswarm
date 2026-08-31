@@ -234,6 +234,37 @@ async function createAndUpload(
 
 const BYTES = new TextEncoder().encode("# s4 e2e\n\nreal bytes, real storage\n");
 
+test("SA-local schema keeps both attachment foreign keys tenant-honest and rows immutable", async () => {
+  const constraints = await sql<{ definition: string }[]>`
+    SELECT pg_get_constraintdef(oid) AS definition
+    FROM pg_constraint
+    WHERE conrelid = 'swarm.signal_attachments'::regclass
+  `;
+  const definitions = constraints.map((row) => row.definition).join("\n");
+  assert.match(definitions, /FOREIGN KEY \(signal_id, workspace_id\)/);
+  assert.match(definitions, /FOREIGN KEY \(file_id, workspace_id, version_n\)/);
+  assert.match(definitions, /position.*0.*7/i);
+  const triggers = await sql<{ trigger_name: string }[]>`
+    SELECT trigger_name
+    FROM information_schema.triggers
+    WHERE event_object_schema = 'swarm'
+      AND event_object_table = 'signal_attachments'
+      AND event_manipulation IN ('UPDATE', 'DELETE')
+  `;
+  assert.deepEqual(
+    new Set(triggers.map((row) => row.trigger_name)),
+    new Set([
+      "signal_attachments_append_only",
+      "signal_attachments_same_transaction",
+    ]),
+  );
+  const guards = await sql<{ definition: string }[]>`
+    SELECT pg_get_functiondef('swarm.require_new_signal_for_attachment()'::regprocedure)
+      AS definition
+  `;
+  assert.match(guards[0]?.definition ?? "", /signal\.xmin[\s\S]*pg_current_xact_id/);
+});
+
 test("S4-1 size lie low: an object larger than its declaration is refused at commit", async () => {
   const big = new TextEncoder().encode("x".repeat(64));
   const { fileId, versionId } = await createAndUpload("liar.md", big, 10);

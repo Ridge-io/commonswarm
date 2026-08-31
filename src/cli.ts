@@ -172,6 +172,10 @@ import {
   type ResolvedSignalRecipient,
 } from "./cloud/signals.js";
 import {
+  SIGNAL_ATTACHMENT_MAX,
+  type SignalAttachmentRef,
+} from "./cloud/attachments.js";
+import {
   arrivalNotification,
   fileArrivalCursorStore,
   formatArrivalNotification,
@@ -232,7 +236,7 @@ import {
  * usage text and requires every flag printed there to appear here.
  */
 const KNOWN_FLAGS = new Set([
-  "about", "agent-token-file", "agent-token-stdin", "all-devices", "anon-key", "branch", "capability-id",
+  "about", "agent-token-file", "agent-token-stdin", "all-devices", "anon-key", "attach", "branch", "capability-id",
   "claude-executable", "codex-executable", "confirm", "cooldown", "cwd", "defer-over", "device-id", "effort", "email",
   "epoch", "evidence", "follow", "force", "force-file-store", "foreground", "grok-executable", "head-sha",
   "help", "include-stale", "include-tombstoned", "invitation-id", "invitation-token-stdin", "json", "kind", "limit",
@@ -448,9 +452,9 @@ Usage:
   cswarm whoami ${requiredAgentCredential} [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--json]
   cswarm members [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential} [--json]
   cswarm working-on "<what>" [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential} [--about <ref>] [--until <dur>] [--json]
-  cswarm note "<text>" [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential} [--to <member|agent>] [--about <ref>] [--until <dur>] [--json]  # text: 1..8000 characters
-  cswarm ask "<text>" [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential} [--to <member|agent>] [--about <ref>] [--until <dur>] [--wait <seconds>] [--json]  # text: 1..8000 characters
-  cswarm reply <signal-id> "<text>" [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential} [--until <dur>] [--json]
+  cswarm note "<text>" [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential} [--to <member|agent>] [--about <ref>] [--attach <path> ...] [--until <dur>] [--json]  # text: 1..8000 characters
+  cswarm ask "<text>" [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential} [--to <member|agent>] [--about <ref>] [--attach <path> ...] [--until <dur>] [--wait <seconds>] [--json]  # text: 1..8000 characters
+  cswarm reply <signal-id> "<text>" [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential} [--attach <path> ...] [--until <dur>] [--json]
   cswarm receipt <signal-id> ${requiredAgentCredential} [--url <url> --anon-key <key>] --workspace-id <uuid> [--json]
   cswarm feed [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential} [--about <ref>] [--kind <kind>] [--since <timestamp>] [--limit <n>] [--include-stale] [--json]
   cswarm inbox [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential} [--kind <kind>] [--about <ref>] [--since <timestamp>] [--limit <n>] [--include-stale] [--wait <seconds>] [--json]
@@ -2664,6 +2668,118 @@ function signalCredentialOf(
     };
 }
 
+interface PreparedSignalAttachment {
+  localPath: string;
+  name: string;
+  bytes: Uint8Array;
+  contentType: string;
+  fileId: string;
+  versionId: string;
+  createCommandId: string;
+  commitCommandId: string;
+}
+
+/** Reads and validates every attachment before the first upload can start. */
+function prepareSignalAttachments(
+  localPaths: readonly string[],
+): PreparedSignalAttachment[] {
+  if (localPaths.length > SIGNAL_ATTACHMENT_MAX) {
+    throw new Error(
+      `a signal can attach at most ${SIGNAL_ATTACHMENT_MAX} files; no upload was started`,
+    );
+  }
+  return localPaths.map((localPath) => {
+    let bytes: Uint8Array;
+    try {
+      bytes = readFileSync(localPath);
+    } catch {
+      throw new Error(
+        `could not read ${localPath}; check the path and permissions; no upload was started`,
+      );
+    }
+    const name = basename(localPath);
+    if (bytes.byteLength < 1) {
+      throw new Error(`${localPath} is empty; no upload was started`);
+    }
+    if (bytes.byteLength > FILE_MAX_VERSION_BYTES) {
+      throw new Error(
+        `${localPath} is ${formatFileSize(bytes.byteLength)}; the per-file limit is ${
+          formatFileSize(FILE_MAX_VERSION_BYTES)
+        }, so no upload was started`,
+      );
+    }
+    const contentType = contentTypeForName(name);
+    if (contentType === null) {
+      throw new Error(
+        `"${
+          sanitizeDisplayLabel(name, "that name")
+        }" has no allowed file extension; the workspace accepts ${
+          allowedExtensionList()
+        }; no upload was started`,
+      );
+    }
+    return {
+      localPath,
+      name,
+      bytes,
+      contentType,
+      fileId: randomUUID(),
+      versionId: randomUUID(),
+      createCommandId: newCommandId(),
+      commitCommandId: newCommandId(),
+    };
+  });
+}
+
+/** Uploads prepared files through the existing create, PUT, commit path. */
+async function uploadSignalAttachments(
+  cloud: CloudTarget,
+  selected: Awaited<ReturnType<typeof commandWorkspaceAndCredential>>,
+  prepared: readonly PreparedSignalAttachment[],
+): Promise<SignalAttachmentRef[]> {
+  const send = {
+    target: cloud,
+    workspaceId: selected.selectedWorkspace,
+    credential: selected.bearer,
+  };
+  const refs: SignalAttachmentRef[] = [];
+  for (const [index, attachment] of prepared.entries()) {
+    process.stderr.write(
+      `Uploading attachment ${index + 1} of ${prepared.length}: ${attachment.name}\n`,
+    );
+    const created = await onceRetried(() =>
+      fileVersionCreate(
+        { ...send, commandId: attachment.createCommandId },
+        {
+          fileId: attachment.fileId,
+          versionId: attachment.versionId,
+          name: attachment.name,
+          declaredSizeBytes: attachment.bytes.byteLength,
+          contentType: attachment.contentType,
+        },
+      )
+    );
+    await onceRetried(() =>
+      putObject(cloud, created.upload_path, attachment.bytes, attachment.contentType)
+    );
+    const committed = await onceRetried(() =>
+      fileVersionCommit(
+        { ...send, commandId: attachment.commitCommandId },
+        {
+          fileId: created.file_id,
+          versionId: created.version_id,
+          sha256: sha256Hex(attachment.bytes),
+        },
+      )
+    );
+    refs.push({
+      file_id: committed.file_id,
+      version_n: committed.version_n,
+    });
+  }
+  return refs;
+}
+
 async function runPostSignal(
   args: Arguments,
   kind: SignalKind,
@@ -2678,8 +2794,12 @@ async function runPostSignal(
     "about",
     "until",
     ...(allowWait ? ["wait"] : []),
+    ...(allowTo ? ["attach"] : []),
     "json",
   ], 2);
+  const preparedAttachments = allowTo
+    ? prepareSignalAttachments(args.all("attach"))
+    : [];
   const waitSeconds = allowWait && args.optional("wait") !== undefined
     ? parseWaitSeconds(args.required("wait"))
     : undefined;
@@ -2714,6 +2834,11 @@ async function runPostSignal(
     );
   }
   const untilMs = signalDuration(args.optional("until"));
+  const attachments = await uploadSignalAttachments(
+    cloud,
+    credential,
+    preparedAttachments,
+  );
   const command: PostSignalCommand = {
     kind: "post_signal",
     signal_kind: kind,
@@ -2722,6 +2847,7 @@ async function runPostSignal(
     about: args.optional("about") === undefined
       ? null
       : signalText(args.required("about"), "about"),
+    ...(attachments.length === 0 ? {} : { attachments }),
     ...(untilMs === undefined
       ? {}
       : { until_ms: untilMs }),
@@ -2907,6 +3033,7 @@ async function runReply(args: Arguments): Promise<void> {
     ...TARGET_FLAGS,
     "workspace-id",
     ...CREDENTIAL_FLAGS,
+    "attach",
     "until",
     "json",
   ], 3);
@@ -2918,11 +3045,17 @@ async function runReply(args: Arguments): Promise<void> {
   if (body === undefined) {
     throw new Error("reply requires the reply text");
   }
+  const preparedAttachments = prepareSignalAttachments(args.all("attach"));
   const cloud = await target(args);
   const credential = await commandWorkspaceAndCredential(args, cloud, {
     validateHumanWorkspace: true,
   });
   const untilMs = signalDuration(args.optional("until"));
+  const attachments = await uploadSignalAttachments(
+    cloud,
+    credential,
+    preparedAttachments,
+  );
   // Audience is derived server-side from the referenced signal; client sends null targets.
   const command: PostSignalCommand = {
     kind: "post_signal",
@@ -2932,6 +3065,7 @@ async function runReply(args: Arguments): Promise<void> {
     to_agent_principal_id: null,
     in_reply_to: signalId.toLowerCase(),
     about: null,
+    ...(attachments.length === 0 ? {} : { attachments }),
     ...(untilMs === undefined ? {} : { until_ms: untilMs }),
   };
   let result;

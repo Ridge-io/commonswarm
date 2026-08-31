@@ -66,6 +66,12 @@ import {
   type FileStorage,
 } from "./file-artifacts.ts";
 import { drainFilePurgeQueue } from "./file-artifacts.ts";
+import {
+  parseSignalAttachmentRefs,
+  signalAttachmentListRefusal,
+  SIGNAL_ATTACHMENT_MAX,
+  type SignalAttachmentRef,
+} from "./signal-attachments.ts";
 // Supabase's edge graph cannot resolve the NodeNext `.js` specifiers in the
 // frozen TypeScript core. This checked-in bundle is regenerated directly from
 // src/protocol/index.ts by build:command-core; it is not a second implementation.
@@ -167,7 +173,14 @@ interface SignalCommand {
   to_agent_principal_id?: string | null;
   in_reply_to?: string | null;
   about: string | null;
+  attachments?: SignalAttachmentRef[];
   until_ms?: number;
+}
+
+interface SignalAttachment extends SignalAttachmentRef {
+  name: string;
+  content_type: string;
+  size_bytes: number;
 }
 
 interface SignalRecord {
@@ -181,6 +194,7 @@ interface SignalRecord {
   about: string | null;
   kind: SignalKind;
   body: string;
+  attachments: SignalAttachment[];
   until: string;
   created_at: string;
 }
@@ -1460,6 +1474,9 @@ function validateCommand(
       Object.hasOwn(cmd, "to_agent_principal_id") ||
       Object.hasOwn(cmd, "in_reply_to");
     const optionalKeys = Object.hasOwn(cmd, "until_ms") ? ["until_ms"] : [];
+    const attachmentKeys = Object.hasOwn(cmd, "attachments")
+      ? ["attachments"]
+      : [];
     const modernKeys = modernShape
       ? ["to_agent_principal_id", "in_reply_to"]
       : [];
@@ -1481,6 +1498,7 @@ function validateCommand(
       "to_user_id",
       "about",
       ...modernKeys,
+      ...attachmentKeys,
       ...optionalKeys,
     ]) &&
       typeof cmd.signal_kind === "string" &&
@@ -1529,7 +1547,12 @@ function validateCommand(
           integer(cmd.until_ms, 1) &&
           cmd.until_ms <= SIGNAL_MAX_UNTIL_MS
         )
-      );
+      ) &&
+      (!Object.hasOwn(cmd, "attachments") ||
+        parseSignalAttachmentRefs(cmd.attachments) !== null);
+    const attachments = Object.hasOwn(cmd, "attachments")
+      ? parseSignalAttachmentRefs(cmd.attachments)
+      : undefined;
     return valid
       ? {
         ok: true,
@@ -1545,6 +1568,7 @@ function validateCommand(
             }
             : {}),
           about: sanitizedAbout,
+          ...(attachments === undefined ? {} : { attachments: attachments! }),
           ...(cmd.until_ms === undefined
             ? {}
             : { until_ms: cmd.until_ms as number }),
@@ -5626,12 +5650,124 @@ async function resolveSignalWriteTarget(
     : null;
 }
 
+type SignalAttachmentResolution =
+  | { ok: true; attachments: SignalAttachment[] }
+  | {
+    ok: false;
+    status: number;
+    error: string;
+    reason: string;
+    message: string;
+  };
+
+/**
+ * Pins only readable, committed versions from the routed workspace. The file
+ * and version locks keep tombstone/purge from crossing the signal insert.
+ */
+async function resolveSignalAttachments(
+  tx: Sql,
+  route: Route,
+  refs: readonly SignalAttachmentRef[],
+): Promise<SignalAttachmentResolution> {
+  const listRefusal = signalAttachmentListRefusal(refs);
+  if (listRefusal === "signal_attachment_limit") {
+    return {
+      ok: false,
+      status: 400,
+      error: "signal_attachment_limit",
+      reason: "signal attachment count exceeds limit",
+      message: `A signal can attach at most ${SIGNAL_ATTACHMENT_MAX} files. Nothing was posted.`,
+    };
+  }
+  if (listRefusal === "signal_attachment_duplicate") {
+    return {
+      ok: false,
+      status: 400,
+      error: "signal_attachment_duplicate",
+      reason: "signal attachment reference repeats",
+      message: "The same file version can be attached only once. Nothing was posted.",
+    };
+  }
+  const attachments: SignalAttachment[] = [];
+  for (const ref of refs) {
+    // Compound-key lookup is the ★R14 tenant-honesty boundary. A file in a
+    // different workspace has the same response as a missing id.
+    const files = await tx<{
+      file_id: string;
+      name: string;
+      tombstoned_at: Date | null;
+      purged_at: Date | null;
+    }[]>`
+      SELECT file_id, name, tombstoned_at, purged_at
+      FROM swarm.files
+      WHERE file_id = ${ref.file_id}::uuid
+        AND workspace_id = ${route.workspaceId}::uuid
+      FOR SHARE
+    `;
+    const file = files[0];
+    if (
+      file === undefined || file.tombstoned_at !== null ||
+      file.purged_at !== null
+    ) {
+      return {
+        ok: false,
+        status: 404,
+        error: "signal_attachment_unavailable",
+        reason: "attachment file is missing, unreadable, or outside the workspace",
+        message: "An attached file is not available in this workspace. Nothing was posted.",
+      };
+    }
+
+    const versions = await tx<{
+      version_n: number;
+      state: string;
+      content_type: string;
+      size_bytes: string;
+    }[]>`
+      SELECT version_n, state, content_type, size_bytes::text
+      FROM swarm.file_versions
+      WHERE file_id = ${ref.file_id}::uuid
+        AND workspace_id = ${route.workspaceId}::uuid
+        AND version_n = ${ref.version_n}
+      FOR SHARE
+    `;
+    const version = versions[0];
+    if (version === undefined) {
+      return {
+        ok: false,
+        status: 404,
+        error: "signal_attachment_version_unavailable",
+        reason: "attachment version is missing in the routed workspace",
+        message: "An attached file version does not exist in this workspace. Nothing was posted.",
+      };
+    }
+    if (version.state !== "live") {
+      return {
+        ok: false,
+        status: 409,
+        error: "signal_attachment_not_live",
+        reason: "attachment version is not committed and live",
+        message: "An attached file version is not committed and live. Nothing was posted.",
+      };
+    }
+    attachments.push({
+      file_id: ref.file_id,
+      version_n: version.version_n,
+      name: file.name,
+      content_type: version.content_type,
+      size_bytes: Number(version.size_bytes),
+    });
+  }
+  return { ok: true, attachments };
+}
+
 async function postSignal(
   tx: Sql,
   route: Route,
   auth: AuthContext,
   command: SignalCommand,
   target: SignalWriteTarget,
+  attachments: readonly SignalAttachment[],
 ): Promise<SignalRecord> {
   const untilMs = command.until_ms ??
     SIGNAL_DEFAULT_UNTIL_MS[command.signal_kind];
@@ -5675,6 +5811,19 @@ async function postSignal(
   `;
   const signal = rows[0];
   if (!signal) throw new Error("signal insert did not return a row");
+  for (const [position, attachment] of attachments.entries()) {
+    await tx`
+      INSERT INTO swarm.signal_attachments (
+        signal_id, workspace_id, file_id, version_n, position
+      ) VALUES (
+        ${signal.id}::uuid,
+        ${route.workspaceId}::uuid,
+        ${attachment.file_id}::uuid,
+        ${attachment.version_n},
+        ${position}
+      )
+    `;
+  }
   return {
     id: signal.id,
     workspace_id: signal.workspace_id,
@@ -5686,6 +5835,7 @@ async function postSignal(
     about: signal.about,
     kind: signal.kind,
     body: signal.body,
+    attachments: [...attachments],
     until: signal.until.toISOString(),
     created_at: signal.created_at.toISOString(),
   };
@@ -6172,6 +6322,32 @@ async function handleTransaction(
         });
         return { status: 403, body: { error: "forbidden" } };
       }
+      const attachmentResolution = await resolveSignalAttachments(
+        tx,
+        route,
+        command.attachments ?? [],
+      );
+      if (!attachmentResolution.ok) {
+        await insertAudit(tx, {
+          auth,
+          commandKind: kind,
+          workspaceId: route.workspaceId,
+          streamId: route.streamId,
+          outcome: attachmentResolution.status === 404 ? "authz" : "domain",
+          reason: attachmentResolution.reason,
+          hash,
+        });
+        return {
+          status: attachmentResolution.status,
+          body: {
+            error: attachmentResolution.error,
+            message: attachmentResolution.message,
+            ...(attachmentResolution.error === "signal_attachment_limit"
+              ? { limit: SIGNAL_ATTACHMENT_MAX }
+              : {}),
+          },
+        };
+      }
       const rateLimit = await enforceSignalRate(
         tx,
         auth,
@@ -6221,6 +6397,7 @@ async function handleTransaction(
         auth,
         command,
         signalTarget,
+        attachmentResolution.attachments,
       );
       const signalResponse: StoredResponse = {
         ok: true,

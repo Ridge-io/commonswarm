@@ -586,6 +586,137 @@ test("F8 direct table access is refused: the anon client cannot reach swarm.file
   assert.ok(insert.error, "anon insert against swarm.files must be refused");
 });
 
+async function committedAttachment(
+  token: string,
+  workspaceId: string,
+  name: string,
+): Promise<{ file_id: string; version_n: number }> {
+  const fileId = randomUUID();
+  const versionId = randomUUID();
+  const create = await postCommand(token, {
+    kind: "file_version_create",
+    file_id: fileId,
+    version_id: versionId,
+    name,
+    declared_size_bytes: PLAN_BYTES.length,
+    content_type: "text/markdown",
+  }, workspaceId);
+  assert.equal(create.status, 200, JSON.stringify(create.body));
+  const put = await fetch(`${local.API_URL}${String(create.body.upload_path)}`, {
+    method: "PUT",
+    headers: { "content-type": "text/markdown" },
+    body: PLAN_BYTES,
+  });
+  assert.ok(put.ok, `attachment PUT failed: ${put.status}`);
+  const commit = await postCommand(token, {
+    kind: "file_version_commit",
+    file_id: fileId,
+    version_id: versionId,
+    sha256: sha256hex(PLAN_BYTES),
+  }, workspaceId);
+  assert.equal(commit.status, 200, JSON.stringify(commit.body));
+  return { file_id: fileId, version_n: Number(commit.body.version_n) };
+}
+
+const signalCommand = (
+  attachments: Array<{ file_id: string; version_n: number }>,
+  toAgent: string | null = null,
+): Record<string, unknown> => ({
+  kind: "post_signal",
+  signal_kind: "note",
+  body: "Read the attached plan.",
+  to_user_id: null,
+  to_agent_principal_id: toAgent,
+  in_reply_to: null,
+  about: null,
+  attachments,
+});
+
+test("SA1 signal attachments post atomically, read metadata, and refuse tenant/live/cap violations", async () => {
+  const attached = await committedAttachment(f.uaJwt, f.workspaceA, "attached-plan.md");
+
+  // Broadcasts and directed signals share the same immutable link path.
+  const broadcast = await postCommand(
+    f.uaJwt,
+    signalCommand([attached]),
+    f.workspaceA,
+  );
+  assert.equal(broadcast.status, 200, JSON.stringify(broadcast.body));
+  const broadcastSignal = broadcast.body.signal as Record<string, unknown>;
+  assert.deepEqual(broadcastSignal.attachments, [{
+    ...attached,
+    name: "attached-plan.md",
+    content_type: "text/markdown",
+    size_bytes: PLAN_BYTES.length,
+  }]);
+
+  const directed = await postCommand(
+    f.uaJwt,
+    signalCommand([attached], f.agentPrincipal),
+    f.workspaceA,
+  );
+  assert.equal(directed.status, 200, JSON.stringify(directed.body));
+
+  const read = await fetch(`${local.API_URL}/functions/v1/read`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${f.agentToken}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      resource: "signals",
+      workspace_id: f.workspaceA,
+      inbox: false,
+      about: null,
+      kind: null,
+      since: null,
+      include_stale: true,
+      limit: 100,
+    }),
+  });
+  assert.equal(read.status, 200);
+  const readBody = await read.json() as { signals: Array<Record<string, unknown>> };
+  const readBack = readBody.signals.find((row) => row.id === broadcastSignal.id);
+  assert.deepEqual(readBack?.attachments, broadcastSignal.attachments);
+  assert.equal(JSON.stringify(readBack).includes("download_path"), false);
+
+  const foreign = await postCommand(
+    f.ubJwt,
+    signalCommand([attached]),
+    f.workspaceB,
+  );
+  assert.equal(foreign.status, 404, JSON.stringify(foreign.body));
+  assert.equal(foreign.body.error, "signal_attachment_unavailable");
+
+  const pendingFile = randomUUID();
+  const pendingVersion = randomUUID();
+  const pending = await postCommand(f.uaJwt, {
+    kind: "file_version_create",
+    file_id: pendingFile,
+    version_id: pendingVersion,
+    name: "pending.md",
+    declared_size_bytes: PLAN_BYTES.length,
+    content_type: "text/markdown",
+  }, f.workspaceA);
+  assert.equal(pending.status, 200, JSON.stringify(pending.body));
+  const notLive = await postCommand(
+    f.uaJwt,
+    signalCommand([{ file_id: pendingFile, version_n: Number(pending.body.version_n) }]),
+    f.workspaceA,
+  );
+  assert.equal(notLive.status, 409, JSON.stringify(notLive.body));
+  assert.equal(notLive.body.error, "signal_attachment_not_live");
+
+  const overCap = await postCommand(
+    f.uaJwt,
+    signalCommand(Array.from({ length: 9 }, () => attached)),
+    f.workspaceA,
+  );
+  assert.equal(overCap.status, 400, JSON.stringify(overCap.body));
+  assert.equal(overCap.body.error, "signal_attachment_limit");
+  assert.equal(overCap.body.limit, 8);
+});
+
 test("F2 IDOR control: a member of workspace B cannot reach A's file through B's route", async () => {
   const fileId = randomUUID();
   const versionId = randomUUID();

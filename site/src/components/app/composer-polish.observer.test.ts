@@ -166,6 +166,10 @@ const measurementPage = (url: URL): string | null => {
       }
       input.blur();
       await settle();
+      const focusSink = doc.querySelector("[data-channel-name]");
+      focusSink?.setAttribute("tabindex", "-1");
+      focusSink?.focus();
+      await settle();
       const shellBox = shell.getBoundingClientRect();
       const inputBox = input.getBoundingClientRect();
       const audienceBox = audience.getBoundingClientRect();

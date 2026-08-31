@@ -90,6 +90,13 @@ export interface HydratedDelivery {
     about: string | null;
     kind: string;
     body: string;
+    attachments: Array<{
+      file_id: string;
+      version_n: number;
+      name: string;
+      content_type: string;
+      size_bytes: number;
+    }>;
     until: string;
     created_at: string;
   };
@@ -348,6 +355,13 @@ export async function hydrateDeliveryRefs(
     about: string | null;
     kind: string;
     body: string;
+    attachments: Array<{
+      file_id: string;
+      version_n: number;
+      name: string;
+      content_type: string;
+      size_bytes: number;
+    }>;
     until: Date;
     created_at: Date;
     sender_owner_relation: SenderOwnerRelation;
@@ -363,6 +377,30 @@ export async function hydrateDeliveryRefs(
       s.about,
       s.kind,
       s.body,
+      COALESCE(
+        (
+          SELECT jsonb_agg(
+            jsonb_build_object(
+              'file_id', attachment.file_id,
+              'version_n', attachment.version_n,
+              'name', file.name,
+              'content_type', version.content_type,
+              'size_bytes', version.size_bytes::double precision
+            ) ORDER BY attachment.position
+          )
+          FROM swarm.signal_attachments AS attachment
+          JOIN swarm.files AS file
+            ON file.file_id = attachment.file_id
+           AND file.workspace_id = attachment.workspace_id
+          JOIN swarm.file_versions AS version
+            ON version.file_id = attachment.file_id
+           AND version.workspace_id = attachment.workspace_id
+           AND version.version_n = attachment.version_n
+          WHERE attachment.signal_id = s.id
+            AND attachment.workspace_id = s.workspace_id
+        ),
+        '[]'::jsonb
+      ) AS attachments,
       s.until,
       s.created_at,
       CASE
@@ -417,6 +455,7 @@ export async function hydrateDeliveryRefs(
         about: signal.about,
         kind: signal.kind,
         body: signal.body,
+        attachments: signal.attachments,
         until: asIso(signal.until),
         created_at: asIso(signal.created_at),
       },

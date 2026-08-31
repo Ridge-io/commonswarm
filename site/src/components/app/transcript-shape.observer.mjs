@@ -78,3 +78,29 @@ test("transcript: first paint loads a window, not the whole history", () => {
   const size = Number(m[1]);
   assert.ok(size >= 20 && size <= 30, `page size ${size} is outside the requested 20-30`);
 });
+
+test("transcript: image and generic attachments share one card renderer and download path", () => {
+  const renderer = src.slice(
+    src.indexOf("const renderMessageAttachments"),
+    src.indexOf("const renderFeed ="),
+  );
+  assert.match(renderer, /dataset\.attachmentKind = inlineImage \? "image" : "file"/);
+  assert.match(renderer, /dashboard__attachment-card--image/);
+  assert.match(renderer, /download\.textContent = "Download"/);
+  assert.match(renderer, /freshAttachmentDownload/);
+  assert.match(src, /renderMessageAttachments\(body, signal\)/);
+});
+
+test("transcript: image bytes load only after their card reaches the visible feed", () => {
+  const renderer = src.slice(
+    src.indexOf("const renderMessageAttachments"),
+    src.indexOf("const renderFeed ="),
+  );
+  const observerAt = renderer.indexOf("new IntersectionObserver");
+  const downloadAt = renderer.indexOf("await freshAttachmentDownload");
+  assert.ok(observerAt > 0 && downloadAt > 0, "lazy image anchors are missing");
+  assert.match(renderer, /entry\.isIntersecting/);
+  assert.match(renderer, /observer\.disconnect\(\)/);
+  assert.match(renderer, /root: feedScroller\(\)/);
+  assert.doesNotMatch(renderer.slice(0, observerAt), /void load\(\)/);
+});

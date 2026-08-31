@@ -64,6 +64,7 @@ export interface PendingMainEntry {
   kind?: "ask" | "note";
   senderName: string | null;
   body: string;
+  attachmentCount?: number;
   createdAt: string;
   queuedAt: string;
   /** True only when the delivery ledger is waiting for hook-surfaced observation. */
@@ -94,6 +95,7 @@ function parseEntry(value: unknown): PendingMainEntry {
     "kind",
     "senderName",
     "body",
+    "attachmentCount",
     "createdAt",
     "queuedAt",
     "observationPending",
@@ -111,6 +113,10 @@ function parseEntry(value: unknown): PendingMainEntry {
     !(row.senderName === null ||
       (typeof row.senderName === "string" && row.senderName.length <= 200)) ||
     typeof row.body !== "string" || row.body.length < 1 ||
+    !(row.attachmentCount === undefined ||
+      (typeof row.attachmentCount === "number" &&
+        Number.isSafeInteger(row.attachmentCount) &&
+        row.attachmentCount >= 1 && row.attachmentCount <= 8)) ||
     !checkedTimestamp(row.createdAt) || !checkedTimestamp(row.queuedAt) ||
     !(row.observationPending === undefined || row.observationPending === true)
   ) {
@@ -125,6 +131,9 @@ function parseEntry(value: unknown): PendingMainEntry {
     ...(row.kind === "ask" || row.kind === "note" ? { kind: row.kind } : {}),
     senderName: row.senderName,
     body: row.body,
+    ...(typeof row.attachmentCount === "number"
+      ? { attachmentCount: row.attachmentCount }
+      : {}),
     createdAt: row.createdAt,
     queuedAt: row.queuedAt,
     ...(row.observationPending === true ? { observationPending: true as const } : {}),
@@ -267,6 +276,9 @@ export function pendingMainEntry(
     kind: signal.kind,
     senderName: provenance.senderName,
     body: signal.body,
+    ...((signal.attachments?.length ?? 0) > 0
+      ? { attachmentCount: signal.attachments!.length }
+      : {}),
     createdAt: signal.created_at,
     queuedAt: new Date(now).toISOString(),
     ...(options.observationPending ? { observationPending: true } : {}),

@@ -131,9 +131,9 @@ const patchClient = (source: string, variant: Variant): string => {
     }, "sample-post-control");
   }
   if (variant === "failure-reverted") {
-    const restore = /,([A-Za-z_$][\w$]*)\.value=([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)=\{\.\.\.([A-Za-z_$][\w$]*)\},([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\[0\]\?\?null,/;
+    const restore = /,([A-Za-z_$][\w$]*)\.value=([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\(\),([A-Za-z_$][\w$]*)=\{\.\.\.([A-Za-z_$][\w$]*)\},([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\[0\]\?\?null,/;
     result = replaceOne(result, restore, (...values: string[]) =>
-      `,${values[1]}.value=\`\`,${values[3]}={...${values[4]}},${values[5]}=${values[6]}[0]??null,`,
+      `,${values[1]}.value=\`\`,${values[3]}=${values[4]},${values[5]}(),${values[6]}={...${values[7]}},${values[8]}=${values[9]}[0]??null,`,
     "text-survival-reversion");
   }
   if (variant === "double-reverted") {
@@ -503,7 +503,7 @@ const measure = async <T extends Measurement>(
     encoded,
     `${scenario}/${variant}: Chrome returned no composer measurement\n` +
       `page error: ${encodedError
-        ? decodeURIComponent(escape(Buffer.from(encodedError, "base64").toString("utf8")))
+        ? Buffer.from(encodedError, "base64").toString("utf8")
         : "none"}\n` +
       `stderr: ${stderr.slice(-1_000)}\nDOM: ${stdout.slice(-2_000)}`,
   );

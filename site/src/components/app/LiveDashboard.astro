@@ -605,6 +605,22 @@ import "../../styles/tokens.css";
                   hidden
                 ></div>
                 <div class="dashboard__composer-input">
+                  <div class="dashboard__composer-attachments" data-composer-attachments hidden></div>
+                  <div class="dashboard__composer-drop-target" data-composer-drop-target hidden>
+                    Drop files here to attach them
+                  </div>
+                  <input type="file" multiple data-composer-file-input hidden />
+                  <button
+                    class="dashboard__composer-attach"
+                    type="button"
+                    data-composer-attach
+                    aria-label="Attach files"
+                    title="Attach files"
+                  >
+                    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+                      <path d="m9.5 12.5 5.9-5.9a3 3 0 0 1 4.2 4.2l-8.5 8.5a5 5 0 0 1-7.1-7.1l8.1-8.1"></path>
+                    </svg>
+                  </button>
                   <textarea
                     rows="1"
                     maxlength={SIGNAL_BODY_MAX}
@@ -638,6 +654,9 @@ import "../../styles/tokens.css";
                 <p class="dashboard__composer-hint">Enter to send · Shift+Enter for a new line</p>
                 <p class="dashboard__composer-count" data-composer-count role="status" aria-live="polite" hidden></p>
               </div>
+              <p class="dashboard__composer-reload-warning" data-composer-reload-warning role="status" hidden>
+                Files from this saved draft are not attached after reload. Add them again before sending.
+              </p>
               <div class="dashboard__composer-feedback" data-composer-feedback hidden>
                 <p class="dashboard__composer-status" data-composer-status role="status" aria-live="polite"></p>
                 <button class="dashboard__composer-retry" type="button" data-composer-retry hidden>
@@ -818,6 +837,7 @@ import "../../styles/tokens.css";
     WorkspaceOutcomeUnknown,
     WorkspaceLimitReached,
     FILE_CONTENT_WARNING,
+    BROWSER_ATTACHMENT_MAX,
     agentAccessStatuses,
     archiveWorkspace,
     client,
@@ -835,7 +855,10 @@ import "../../styles/tokens.css";
     browserDeliveryReceipts,
     browserPostingDeliveryIndicator,
     browserSignalAddress,
+    parseBrowserSignalAttachments,
+    prepareBrowserAttachments,
     postBrowserSignal,
+    uploadBrowserAttachment,
     revokeAgentToken,
     revokeWorkspaceInvitation,
     signInWithEmail,
@@ -852,6 +875,7 @@ import "../../styles/tokens.css";
     type BrowserDeliveryIndicator,
     type BrowserDeliveryReceiptCacheEntry,
     type BrowserSignalRecipient,
+    type BrowserAttachmentUploadIntent,
     type WorkspaceFile,
   } from "../../lib/commonswarm";
   import { memberInviteUrl } from "../../lib/member-invite";
@@ -921,6 +945,12 @@ import "../../styles/tokens.css";
   interface ComposerDraft {
     body: string;
     audienceKey: string;
+    hadAttachments?: boolean;
+  }
+
+  interface StagedComposerAttachment {
+    intent: BrowserAttachmentUploadIntent;
+    previewUrl: string | null;
   }
 
   type EntityRef =
@@ -1006,12 +1036,21 @@ import "../../styles/tokens.css";
     let composerAudience: ComposerAudience = { kind: "everyone" };
     let composerMention: EntityRef | null = null;
     let mentionPickerIndex = 0;
-    let composerIntent: { commandId: string; body: string; audienceKey: string } | null = null;
+    let composerIntent: {
+      commandId: string;
+      body: string;
+      audienceKey: string;
+      attachmentKey: string;
+    } | null = null;
     let composerSending = false;
+    let stagedAttachments: StagedComposerAttachment[] = [];
+    let composerAttachmentsMissingAfterReload = false;
+    let composerDragDepth = 0;
     let restoredComposerDraftKey = "";
     let focusedComposerWorkspaceId = "";
     const visualMentions = new Map<string, EntityRef[]>();
     const expandedSignalIds = new Set<string>();
+    const attachmentObjectUrls = new Map<string, string>();
     const deliveryReceiptCache = new Map<string, BrowserDeliveryReceiptCacheEntry>();
     let deliveryReceiptRefreshOwner = "";
 
@@ -1571,7 +1610,7 @@ import "../../styles/tokens.css";
       let query = api
         .schema("swarm_read")
         .from("signals")
-        .select("id,from,from_kind,to,to_agent,kind,body,about,until,created_at")
+        .select("id,from,from_kind,to,to_agent,kind,body,about,until,created_at,attachments")
         .eq("workspace_id", workspaceId)
         .or(`until.is.null,until.gt.${cutoff}`);
       if (cursor) {
@@ -1597,6 +1636,7 @@ import "../../styles/tokens.css";
             : String(row.to_agent),
           kind: String(row.kind ?? ""),
           body: String(row.body ?? ""),
+          attachments: parseBrowserSignalAttachments(row.attachments),
           about: row.about === null || row.about === undefined ? null : String(row.about),
           until: row.until === null || row.until === undefined ? null : String(row.until),
           createdAt: String(row.created_at ?? ""),
@@ -1872,6 +1912,7 @@ import "../../styles/tokens.css";
         return {
           body: value.body.slice(0, COMPOSER_DRAFT_STORAGE_MAX),
           audienceKey: value.audienceKey,
+          ...(value.hadAttachments === true ? { hadAttachments: true } : {}),
         };
       } catch {
         return null;
@@ -1894,12 +1935,16 @@ import "../../styles/tokens.css";
       if (!key || !input) return;
       const body = input.value.slice(0, COMPOSER_DRAFT_STORAGE_MAX);
       const audienceKey = composerAudienceKey(composerAudience);
+      const hadAttachments = stagedAttachments.length > 0 || composerAttachmentsMissingAfterReload;
       try {
-        if (body === "" && audienceKey === "everyone") {
+        if (body === "" && audienceKey === "everyone" && !hadAttachments) {
           window.localStorage.removeItem(key);
           return;
         }
-        window.localStorage.setItem(key, JSON.stringify({ body, audienceKey }));
+        window.localStorage.setItem(
+          key,
+          JSON.stringify({ body, audienceKey, ...(hadAttachments ? { hadAttachments: true } : {}) }),
+        );
       } catch {
         // A private or full storage area must not break composing or sending.
       }
@@ -1921,6 +1966,89 @@ import "../../styles/tokens.css";
       status.textContent = message;
       status.dataset.state = state;
       if (feedback) feedback.hidden = message === "";
+    };
+
+    const formatAttachmentSize = (bytes: number): string => {
+      if (bytes < 1024) return `${bytes} B`;
+      if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+      return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+    };
+
+    const renderStagedAttachments = (): void => {
+      const container = one<HTMLElement>("[data-composer-attachments]");
+      if (!container) return;
+      container.replaceChildren();
+      container.hidden = stagedAttachments.length === 0;
+      for (const attachment of stagedAttachments) {
+        const chip = document.createElement("span");
+        chip.className = "dashboard__attachment-chip";
+        chip.dataset.stagedAttachment = attachment.intent.name;
+        if (attachment.previewUrl) {
+          const image = document.createElement("img");
+          image.src = attachment.previewUrl;
+          image.alt = "";
+          image.setAttribute("aria-hidden", "true");
+          chip.append(image);
+        }
+        const copy = document.createElement("span");
+        const name = document.createElement("strong");
+        name.textContent = attachment.intent.name;
+        const size = document.createElement("small");
+        size.textContent = formatAttachmentSize(attachment.intent.file.size);
+        copy.append(name, size);
+        const remove = document.createElement("button");
+        remove.type = "button";
+        remove.dataset.removeAttachment = attachment.intent.fileId;
+        remove.setAttribute("aria-label", `Remove ${attachment.intent.name}`);
+        remove.textContent = "×";
+        remove.disabled = composerSending;
+        remove.addEventListener("click", () => {
+          if (composerSending) return;
+          const index = stagedAttachments.indexOf(attachment);
+          if (index < 0) return;
+          if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
+          stagedAttachments.splice(index, 1);
+          composerIntent = null;
+          renderStagedAttachments();
+          persistComposerDraft();
+          syncComposerControls();
+        });
+        chip.append(copy, remove);
+        container.append(chip);
+      }
+      syncComposerClearance();
+    };
+
+    const stageComposerFiles = (files: readonly File[]): void => {
+      if (composerSending || files.length === 0) return;
+      try {
+        const prepared = prepareBrowserAttachments(files, stagedAttachments.length);
+        stagedAttachments.push(...prepared.map((intent) => ({
+          intent,
+          previewUrl: intent.contentType.startsWith("image/")
+            ? URL.createObjectURL(intent.file)
+            : null,
+        })));
+        composerAttachmentsMissingAfterReload = false;
+        composerIntent = null;
+        const warning = one<HTMLElement>("[data-composer-reload-warning]");
+        if (warning) warning.hidden = true;
+        setComposerStatus(
+          `${stagedAttachments.length} of ${BROWSER_ATTACHMENT_MAX} files attached. They upload when you send.`,
+        );
+        renderStagedAttachments();
+        persistComposerDraft();
+        syncComposerControls();
+      } catch (error) {
+        setComposerStatus(readableError(error), "error");
+      }
+    };
+
+    const setComposerDropTarget = (active: boolean): void => {
+      const shell = one<HTMLElement>(".dashboard__composer-input");
+      const target = one<HTMLElement>("[data-composer-drop-target]");
+      shell?.classList.toggle("dashboard__composer-input--drop", active);
+      if (target) target.hidden = !active;
     };
 
     const syncComposerControls = (): void => {
@@ -1974,6 +2102,11 @@ import "../../styles/tokens.css";
         if (sending) send.setAttribute("aria-busy", "true");
         else send.removeAttribute("aria-busy");
       }
+      const attach = one<HTMLButtonElement>("[data-composer-attach]");
+      const picker = one<HTMLInputElement>("[data-composer-file-input]");
+      if (attach) attach.disabled = sending;
+      if (picker) picker.disabled = sending;
+      renderStagedAttachments();
       syncComposerControls();
     };
 
@@ -1999,6 +2132,9 @@ import "../../styles/tokens.css";
       composerAudience = audienceExists ? audience : { kind: "everyone" };
       composerMention = composerAudience.kind === "everyone" ? null : { ...composerAudience };
       composerIntent = null;
+      const warning = one<HTMLElement>("[data-composer-reload-warning]");
+      composerAttachmentsMissingAfterReload = draft.hadAttachments === true;
+      if (warning) warning.hidden = !composerAttachmentsMissingAfterReload;
       resizeComposerInput(input);
       renderComposerAudience();
       renderComposerMentions();
@@ -2206,6 +2342,12 @@ import "../../styles/tokens.css";
     };
 
     const resetComposer = (): void => {
+      for (const attachment of stagedAttachments) {
+        if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
+      }
+      stagedAttachments = [];
+      composerAttachmentsMissingAfterReload = false;
+      composerDragDepth = 0;
       composerAudience = { kind: "everyone" };
       composerMention = null;
       composerIntent = null;
@@ -2218,7 +2360,11 @@ import "../../styles/tokens.css";
       setComposerStatus("");
       const retry = one<HTMLButtonElement>("[data-composer-retry]");
       if (retry) retry.hidden = true;
+      const warning = one<HTMLElement>("[data-composer-reload-warning]");
+      if (warning) warning.hidden = true;
+      setComposerDropTarget(false);
       setComposerSending(false);
+      renderStagedAttachments();
       renderComposerAudience();
       renderComposerMentions();
       closeMentionPicker();
@@ -2789,6 +2935,105 @@ import "../../styles/tokens.css";
       if (el) el.scrollTop = el.scrollHeight;
     };
 
+    const attachmentKey = (fileId: string, version: number): string =>
+      `${fileId}:${version}`;
+
+    const freshAttachmentDownload = async (
+      fileId: string,
+      version: number,
+    ): Promise<string> => {
+      if (!session || !activeWorkspaceId) throw new SessionExpired();
+      return (await fileDownloadUrl(
+        session,
+        uuid(),
+        activeWorkspaceId,
+        fileId,
+        version,
+      )).url;
+    };
+
+    const renderMessageAttachments = (body: HTMLElement, signal: Signal): void => {
+      const attachments = signal.attachments ?? [];
+      if (attachments.length === 0) return;
+      const list = document.createElement("div");
+      list.className = "dashboard__message-attachments";
+      list.dataset.messageAttachments = String(attachments.length);
+      for (const attachment of attachments) {
+        const card = document.createElement("article");
+        const inlineImage = /^(image\/(png|jpeg|gif|webp))$/.test(attachment.content_type);
+        card.className = `dashboard__attachment-card${
+          inlineImage ? " dashboard__attachment-card--image" : ""
+        }`;
+        card.dataset.attachmentKind = inlineImage ? "image" : "file";
+        if (inlineImage) {
+          const image = document.createElement("img");
+          image.alt = attachment.name;
+          image.loading = "lazy";
+          const key = attachmentKey(attachment.file_id, attachment.version_n);
+          const cachedUrl = attachmentObjectUrls.get(key);
+          const load = async (): Promise<void> => {
+            if (image.src) return;
+            try {
+              const signedUrl = await freshAttachmentDownload(
+                attachment.file_id,
+                attachment.version_n,
+              );
+              const response = await fetch(signedUrl);
+              if (!response.ok) throw new Error(`HTTP ${response.status}`);
+              const objectUrl = URL.createObjectURL(await response.blob());
+              attachmentObjectUrls.set(key, objectUrl);
+              if (image.isConnected) image.src = objectUrl;
+            } catch {
+              image.alt = `${attachment.name} preview unavailable`;
+              card.dataset.previewState = "unavailable";
+            }
+          };
+          if (cachedUrl) {
+            image.src = cachedUrl;
+          } else if ("IntersectionObserver" in window) {
+            const observer = new IntersectionObserver((entries) => {
+              if (!entries.some((entry) => entry.isIntersecting)) return;
+              observer.disconnect();
+              void load();
+            }, { root: feedScroller(), rootMargin: "120px" });
+            observer.observe(card);
+          } else {
+            void load();
+          }
+          card.append(image);
+        }
+        const details = document.createElement("div");
+        const name = document.createElement("strong");
+        name.textContent = attachment.name;
+        const metadata = document.createElement("span");
+        metadata.textContent = `${formatAttachmentSize(attachment.size_bytes)} · ${attachment.content_type}`;
+        const download = document.createElement("button");
+        download.type = "button";
+        download.className = "dashboard__attachment-download";
+        download.textContent = "Download";
+        download.addEventListener("click", async () => {
+          download.disabled = true;
+          const oldLabel = download.textContent;
+          download.textContent = "Getting link…";
+          try {
+            window.location.assign(await freshAttachmentDownload(
+              attachment.file_id,
+              attachment.version_n,
+            ));
+          } catch (error) {
+            setComposerStatus(readableError(error), "error");
+          } finally {
+            download.disabled = false;
+            download.textContent = oldLabel;
+          }
+        });
+        details.append(name, metadata, download);
+        card.append(details);
+        list.append(card);
+      }
+      body.append(list);
+    };
+
     const renderFeed = (change: "history" | "latest" = "history"): void => {
       window.clearTimeout(signalExpiryTimer);
       signalExpiryTimer = undefined;
@@ -2990,6 +3235,7 @@ import "../../styles/tokens.css";
           markdown.classList.add("dashboard__message-markdown--collapsed");
         }
         body.append(markdown);
+        renderMessageAttachments(body, signal);
         if (signal.about) {
           const about = document.createElement("code");
           about.className = "dashboard__message-about";
@@ -3329,6 +3575,8 @@ import "../../styles/tokens.css";
       signals = [];
       deliveryReceiptCache.clear();
       deliveryReceiptRefreshOwner = "";
+      for (const url of attachmentObjectUrls.values()) URL.revokeObjectURL(url);
+      attachmentObjectUrls.clear();
       files = [];
       fileLoadError = "";
       signalCursor = null;
@@ -4601,6 +4849,43 @@ import "../../styles/tokens.css";
         syncComposerControls();
       },
     );
+    one<HTMLButtonElement>("[data-composer-attach]")?.addEventListener("click", () => {
+      one<HTMLInputElement>("[data-composer-file-input]")?.click();
+    });
+    one<HTMLInputElement>("[data-composer-file-input]")?.addEventListener(
+      "change",
+      (event) => {
+        const picker = event.currentTarget as HTMLInputElement;
+        stageComposerFiles(Array.from(picker.files ?? []));
+        picker.value = "";
+      },
+    );
+    {
+      const shell = one<HTMLElement>(".dashboard__composer-input");
+      shell?.addEventListener("dragenter", (event) => {
+        if (!event.dataTransfer?.types.includes("Files") || composerSending) return;
+        event.preventDefault();
+        composerDragDepth += 1;
+        setComposerDropTarget(true);
+      });
+      shell?.addEventListener("dragover", (event) => {
+        if (!event.dataTransfer?.types.includes("Files") || composerSending) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "copy";
+        setComposerDropTarget(true);
+      });
+      shell?.addEventListener("dragleave", () => {
+        composerDragDepth = Math.max(0, composerDragDepth - 1);
+        if (composerDragDepth === 0) setComposerDropTarget(false);
+      });
+      shell?.addEventListener("drop", (event) => {
+        if (!event.dataTransfer?.files.length || composerSending) return;
+        event.preventDefault();
+        composerDragDepth = 0;
+        setComposerDropTarget(false);
+        stageComposerFiles(Array.from(event.dataTransfer.files));
+      });
+    }
     one<HTMLTextAreaElement>("[data-composer-input]")?.addEventListener(
       "input",
       (event) => {
@@ -4629,6 +4914,27 @@ import "../../styles/tokens.css";
       "paste",
       (event) => {
         const input = event.currentTarget as HTMLTextAreaElement;
+        const pastedImages = Array.from(event.clipboardData?.items ?? [])
+          .filter((item) => item.kind === "file" && item.type.startsWith("image/"))
+          .map((item) => item.getAsFile())
+          .filter((file): file is File => file !== null)
+          .map((file, index) => {
+            if (file.name) return file;
+            const extension = ({
+              "image/png": "png",
+              "image/jpeg": "jpg",
+              "image/gif": "gif",
+              "image/webp": "webp",
+            } as Record<string, string>)[file.type] ?? "image";
+            return new File([file], `pasted-image-${index + 1}.${extension}`, {
+              type: file.type,
+            });
+          });
+        if (pastedImages.length > 0) {
+          event.preventDefault();
+          stageComposerFiles(pastedImages);
+          return;
+        }
         const pasted = event.clipboardData?.getData("text/plain");
         if (pasted === undefined) return;
         if (composerSending) {
@@ -4726,9 +5032,16 @@ import "../../styles/tokens.css";
       const audience: ComposerAudience = { ...composerAudience };
       const address = browserSignalAddress(audience);
       const audienceKey = composerAudienceKey(audience);
+      const attachmentSnapshot = [...stagedAttachments];
+      const attachmentKey = attachmentSnapshot
+        .map((attachment) => attachment.intent.fileId)
+        .join(":");
       let intent = composerIntent;
-      if (!intent || intent.body !== rawBody || intent.audienceKey !== audienceKey) {
-        intent = { commandId: uuid(), body: rawBody, audienceKey };
+      if (
+        !intent || intent.body !== rawBody || intent.audienceKey !== audienceKey ||
+        intent.attachmentKey !== attachmentKey
+      ) {
+        intent = { commandId: uuid(), body: rawBody, audienceKey, attachmentKey };
         composerIntent = intent;
       }
       const mentions = composerMention ? [{ ...composerMention }] : [];
@@ -4741,6 +5054,13 @@ import "../../styles/tokens.css";
         toAgent: address.toAgentPrincipalId,
         kind: "note",
         body: rawBody,
+        attachments: attachmentSnapshot.map((attachment) => ({
+          file_id: attachment.intent.fileId,
+          version_n: attachment.intent.created?.versionN ?? 1,
+          name: attachment.intent.name,
+          content_type: attachment.intent.contentType,
+          size_bytes: attachment.intent.file.size,
+        })),
         about: null,
         until: null,
         createdAt: new Date().toISOString(),
@@ -4753,12 +5073,34 @@ import "../../styles/tokens.css";
       deliveryReceiptCache.set(pendingId, { result: null, checkedAt: 0, phase: "posting" });
       signals.unshift(optimisticSignal);
       input.value = "";
+      stagedAttachments = [];
+      renderStagedAttachments();
       input.style.blockSize = "auto";
       closeMentionPicker();
       syncComposerControls();
       renderFeed("latest");
       input.focus({ preventScroll: true });
       try {
+        const attachmentRefs = sampleMode
+          ? attachmentSnapshot.map((attachment) => ({
+              file_id: attachment.intent.fileId,
+              version_n: attachment.intent.created?.versionN ?? 1,
+            }))
+          : [];
+        if (!sampleMode) {
+          for (const [index, attachment] of attachmentSnapshot.entries()) {
+            setComposerStatus(
+              `Uploading file ${index + 1} of ${attachmentSnapshot.length}: ${attachment.intent.name}…`,
+              "posting",
+            );
+            attachmentRefs.push(await uploadBrowserAttachment(
+              session!,
+              workspaceId,
+              attachment.intent,
+            ));
+          }
+        }
+        setComposerStatus("Posting message…", "posting");
         const signal: Signal = sampleMode
           ? {
               id: `sample-composer-${intent.commandId}`,
@@ -4768,6 +5110,7 @@ import "../../styles/tokens.css";
               toAgent: address.toAgentPrincipalId,
               kind: "note",
               body: rawBody,
+              attachments: optimisticSignal.attachments,
               about: null,
               until: null,
               createdAt: new Date().toISOString(),
@@ -4778,8 +5121,14 @@ import "../../styles/tokens.css";
               workspaceId,
               rawBody,
               audience,
+              attachmentRefs,
             );
-        if (version !== requestVersion || workspaceId !== activeWorkspaceId) return;
+        if (version !== requestVersion || workspaceId !== activeWorkspaceId) {
+          for (const attachment of attachmentSnapshot) {
+            if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
+          }
+          return;
+        }
         signals = [signal, ...signals.filter(
           (entry) => entry.id !== pendingId && entry.id !== signal.id,
         )];
@@ -4788,6 +5137,10 @@ import "../../styles/tokens.css";
         visualMentions.set(signal.id, mentions);
         deliveryReceiptCache.set(signal.id, { result: null, checkedAt: 0, phase: "accepted" });
         composerIntent = null;
+        composerAttachmentsMissingAfterReload = false;
+        for (const attachment of attachmentSnapshot) {
+          if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
+        }
         clearComposerDraft();
         renderFeed("latest");
         void refreshDeliveryReceipts(workspaceId, version);
@@ -4798,6 +5151,8 @@ import "../../styles/tokens.css";
         visualMentions.delete(pendingId);
         deliveryReceiptCache.delete(pendingId);
         input.value = rawBody;
+        stagedAttachments = attachmentSnapshot;
+        renderStagedAttachments();
         composerAudience = { ...audience };
         composerMention = mentions[0] ?? null;
         renderComposerAudience();
@@ -7499,6 +7854,7 @@ import "../../styles/tokens.css";
   }
 
   .dashboard__composer-input {
+    position: relative;
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
     align-items: center;
@@ -7512,6 +7868,123 @@ import "../../styles/tokens.css";
     border-radius: var(--radius);
     transition: border-color var(--dur-1) var(--ease-standard),
       box-shadow var(--dur-1) var(--ease-standard);
+  }
+
+  .dashboard__composer-input--drop {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-dim);
+  }
+
+  .dashboard__composer-drop-target {
+    position: absolute;
+    z-index: 4;
+    inset: var(--composer-inset);
+    display: grid;
+    place-items: center;
+    color: var(--accent-bright);
+    background: color-mix(in oklab, var(--elev-1) 90%, var(--accent-dim));
+    border: 1px dashed var(--accent);
+    border-radius: var(--radius-sm);
+    font-size: var(--t-sm);
+    font-weight: var(--weight-semibold);
+    pointer-events: none;
+  }
+
+  .dashboard__composer-attachments {
+    grid-column: 1 / -1;
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s-2);
+    padding: var(--s-1);
+  }
+
+  .dashboard__attachment-chip {
+    display: inline-flex;
+    align-items: center;
+    min-inline-size: 0;
+    max-inline-size: min(100%, 20rem);
+    min-block-size: var(--composer-target);
+    padding: var(--s-1);
+    gap: var(--s-2);
+    background: var(--elev-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+  }
+
+  .dashboard__attachment-chip img {
+    inline-size: 2rem;
+    block-size: 2rem;
+    object-fit: cover;
+    border-radius: calc(var(--radius-sm) / 2);
+  }
+
+  .dashboard__attachment-chip > span {
+    display: grid;
+    min-inline-size: 0;
+    line-height: 1.15;
+  }
+
+  .dashboard__attachment-chip strong,
+  .dashboard__attachment-chip small {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .dashboard__attachment-chip strong {
+    color: var(--text);
+    font-size: var(--t-xs);
+  }
+
+  .dashboard__attachment-chip small {
+    color: var(--text-muted);
+    font-size: var(--t-2xs);
+  }
+
+  .dashboard__attachment-chip button,
+  .dashboard__composer-attach {
+    display: grid;
+    place-items: center;
+    color: var(--text-muted);
+    background: transparent;
+    border: 0;
+    cursor: pointer;
+  }
+
+  .dashboard__attachment-chip button {
+    inline-size: 2rem;
+    block-size: 2rem;
+    padding: 0;
+    font-size: var(--t-lg);
+  }
+
+  .dashboard__composer-attach {
+    position: absolute;
+    z-index: 2;
+    inset-inline-end: calc(var(--composer-inset) + var(--composer-target) + var(--s-2));
+    inset-block-end: var(--composer-inset);
+    inline-size: var(--composer-target);
+    block-size: var(--composer-target);
+    border-radius: var(--radius-sm);
+  }
+
+  .dashboard__composer-attach:hover:not(:disabled),
+  .dashboard__attachment-chip button:hover:not(:disabled) {
+    color: var(--text);
+    background: var(--elev-3);
+  }
+
+  .dashboard__composer-attach:disabled,
+  .dashboard__attachment-chip button:disabled {
+    cursor: default;
+    opacity: 0.5;
+  }
+
+  .dashboard__composer-attach svg {
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.8;
+    stroke-linecap: round;
   }
 
   /* Operator feedback 2026-08-29, twice: the focus ring on the entry box was
@@ -7607,7 +8080,7 @@ import "../../styles/tokens.css";
     min-inline-size: 7rem;
     min-block-size: var(--composer-text-rest);
     max-block-size: min(40dvh, 20rem);
-    padding: var(--s-2) 0;
+    padding: var(--s-2) calc(var(--composer-target) + var(--s-2)) var(--s-2) 0;
     overflow-y: auto;
     resize: none;
     color: var(--text);
@@ -7616,6 +8089,12 @@ import "../../styles/tokens.css";
     outline: 0;
     font: inherit;
     line-height: var(--s-6);
+  }
+
+  .dashboard__composer-reload-warning {
+    margin: var(--s-1) 0 0;
+    color: var(--warning);
+    font-size: var(--t-xs);
   }
 
   .dashboard__composer textarea::placeholder {
@@ -8043,6 +8522,83 @@ import "../../styles/tokens.css";
     font-size: var(--t-sm);
     font-weight: var(--weight-semibold);
     cursor: pointer;
+  }
+
+  .dashboard__message-attachments {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr));
+    gap: var(--s-2);
+    margin-block-start: var(--s-1);
+  }
+
+  .dashboard__attachment-card {
+    min-inline-size: 0;
+    display: flex;
+    align-items: center;
+    gap: var(--s-3);
+    padding: var(--s-3);
+    background: var(--elev-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+  }
+
+  .dashboard__attachment-card--image {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .dashboard__attachment-card--image > img {
+    inline-size: 100%;
+    max-block-size: 18rem;
+    min-block-size: 7rem;
+    object-fit: contain;
+    background: var(--elev-3);
+    border-radius: var(--radius-sm);
+  }
+
+  .dashboard__attachment-card > div {
+    min-inline-size: 0;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: var(--s-1) var(--s-3);
+  }
+
+  .dashboard__attachment-card strong,
+  .dashboard__attachment-card span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .dashboard__attachment-card strong {
+    color: var(--text);
+    font-size: var(--t-sm);
+  }
+
+  .dashboard__attachment-card span {
+    grid-column: 1;
+    color: var(--text-muted);
+    font-size: var(--t-xs);
+  }
+
+  .dashboard__attachment-download {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+    min-block-size: 2.25rem;
+    padding: 0 var(--s-3);
+    color: var(--accent-bright);
+    background: transparent;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+    font: inherit;
+    font-size: var(--t-xs);
+    font-weight: var(--weight-semibold);
+    cursor: pointer;
+  }
+
+  .dashboard__attachment-download:hover:not(:disabled) {
+    background: var(--accent-dim);
   }
 
   .dashboard__message-about {
