@@ -33,12 +33,12 @@ test("built dashboard carries to_agent from the read query into Signal.toAgent",
   assert.match(clientSource, /toAgent: string \| null/);
   assert.match(
     clientSource,
-    /\.select\("id,from,from_kind,to,to_agent,kind,body,about,until,created_at"\)/,
+    /\.select\("id,from,from_kind,to,to_agent,kind,body,about,until,created_at,attachments"\)/,
   );
   assert.match(clientSource, /toAgent: row\.to_agent === null \|\| row\.to_agent === undefined/);
   assert.match(
     builtAssets,
-    /select\([`'"]id,from,from_kind,to,to_agent,kind,body,about,until,created_at[`'"]\)/,
+    /select\([`'"]id,from,from_kind,to,to_agent,kind,body,about,until,created_at,attachments[`'"]\)/,
   );
   assert.match(builtAssets, /toAgent:[^,}]*to_agent/);
 });

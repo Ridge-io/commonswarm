@@ -20,6 +20,11 @@ import {
   serverRefusedRetry,
   type ServerErrorEnvelope,
 } from "./error-envelope.js";
+import {
+  attachmentRetrievalCommand,
+  formatAttachmentSize,
+  parseSignalAttachments,
+} from "./attachments.js";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -277,7 +282,10 @@ const SENDER_OWNER_RELATIONS = new Set<SenderOwnerRelation>([
  * Server-controlled string maxima are not structural: a newer server may
  * legitimately raise them, so reads preserve longer body/about values.
  */
-export function parseSignalRecord(value: unknown): SignalRecord {
+export function parseSignalRecord(
+  value: unknown,
+  options: { attachmentsEnabled?: boolean } = {},
+): SignalRecord {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error("signal read returned a malformed row");
   }
@@ -324,6 +332,9 @@ export function parseSignalRecord(value: unknown): SignalRecord {
     about: row.about as string | null,
     kind: row.kind as SignalKind,
     body: row.body,
+    attachments: parseSignalAttachments(row.attachments, {
+      enabled: options.attachmentsEnabled !== false,
+    }),
     until: checkedTimestamp(row.until, "until"),
     created_at: checkedTimestamp(row.created_at, "created_at"),
     sender_owner_relation: senderOwnerRelation,
@@ -754,7 +765,7 @@ async function humanSignals(
   const url = new URL("/rest/v1/signals", target.url);
   url.searchParams.set(
     "select",
-    "id,workspace_id,from,from_kind,to,to_agent,in_reply_to,about,kind,body,until,created_at",
+    "id,workspace_id,from,from_kind,to,to_agent,in_reply_to,about,kind,body,attachments,until,created_at",
   );
   url.searchParams.set("workspace_id", `eq.${query.workspaceId}`);
   if (query.inbox) url.searchParams.set("to", `eq.${credential.userId}`);
@@ -806,7 +817,7 @@ async function humanSignals(
   if (!Array.isArray(body)) {
     throw new Error("signal read returned malformed JSON");
   }
-  const parsed = body.map(parseSignalRecord);
+  const parsed = body.map((value) => parseSignalRecord(value));
   return sortSignals(rowsAfterCursor(parsed, query.after), ascending);
 }
 
@@ -1569,6 +1580,16 @@ export function renderSignals(
         JSON.stringify(displayedBody)
       }${idHint}`,
     );
+    for (const [index, attachment] of (signal.attachments ?? []).entries()) {
+      lines.push(
+        `  Attachment ${index + 1}: ${JSON.stringify(attachment.name)} · ${
+          formatAttachmentSize(attachment.size_bytes)
+        } · ${attachment.content_type}`,
+      );
+      lines.push(
+        `  Get: ${attachmentRetrievalCommand(signal.workspace_id, attachment)}`,
+      );
+    }
     if (bodyClipped) {
       lines.push(
         `  WARNING: Body clipped for display. Showing ${SIGNAL_BODY_DISPLAY_MAX} of ${signal.body.length} characters. Use --json to read the full body.`,

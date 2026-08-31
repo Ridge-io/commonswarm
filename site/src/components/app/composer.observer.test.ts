@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
+import {
+  BROWSER_ATTACHMENT_MAX,
+  BROWSER_ATTACHMENT_MAX_BYTES,
+  prepareBrowserAttachments,
+} from "../../lib/commonswarm.js";
 
 const dashboard = readFileSync(new URL("./LiveDashboard.astro", import.meta.url), "utf8");
 const client = readFileSync(new URL("../../lib/commonswarm.ts", import.meta.url), "utf8");
@@ -22,7 +27,7 @@ test("composer defaults to broadcast and keeps signal language", () => {
   assert.match(markup, /placeholder="What are you about to do\?"/);
   assert.doesNotMatch(markup, /Message #general|Message #all-signals/i);
   assert.doesNotMatch(markup, /only .* sees|will see|private|lock/i);
-  assert.doesNotMatch(markup, /attach|emoji|reaction|thread/i);
+  assert.doesNotMatch(markup, /emoji|reaction|thread/i);
 
   assert.match(dashboard, /let composerAudience: ComposerAudience = \{ kind: "everyone" \}/);
   assert.match(dashboard, /everyone\.textContent = "Everyone · nobody is notified"/);
@@ -48,8 +53,76 @@ test("browser-authored signals use the existing broadcast and direct target fiel
   assert.match(submit, /const address = browserSignalAddress\(audience\)/);
   assert.match(submit, /to: address\.toUserId/);
   assert.match(submit, /toAgent: address\.toAgentPrincipalId/);
-  assert.match(submit, /rawBody,\s*audience,\s*\);/);
+  assert.match(submit, /rawBody,\s*audience,\s*attachmentRefs,\s*\);/);
   assert.match(submit, /await postBrowserSignal/);
+});
+
+test("attachments use one picker, drop, paste, staging, and failure-restore path", () => {
+  const markup = between(dashboard, '<form class="dashboard__composer"', "</form>");
+  assert.match(markup, /type="file" multiple data-composer-file-input/);
+  assert.match(markup, /data-composer-attach[\s\S]*aria-label="Attach files"/);
+  assert.match(markup, /data-composer-attachments/);
+  assert.match(markup, /data-composer-drop-target/);
+
+  const staging = between(dashboard, "const renderStagedAttachments", "const syncComposerControls");
+  assert.match(staging, /dashboard__attachment-chip/);
+  assert.match(staging, /dataset\.removeAttachment/);
+  assert.match(staging, /stagedAttachments\.splice/);
+  assert.match(staging, /URL\.createObjectURL/);
+  assert.match(staging, /prepareBrowserAttachments\(files, stagedAttachments\.length\)/);
+
+  const wiring = between(
+    dashboard,
+    'one<HTMLButtonElement>("[data-composer-attach]")',
+    'one<HTMLFormElement>("[data-composer]")?.addEventListener("submit"',
+  );
+  for (const event of ["dragenter", "dragover", "dragleave", "drop", "paste"]) {
+    assert.ok(wiring.includes(`"${event}"`), `composer is missing ${event}`);
+  }
+  assert.match(wiring, /item\.type\.startsWith\("image\/"\)/);
+  assert.match(wiring, /setComposerDropTarget\(true\)/);
+  assert.match(wiring, /setComposerDropTarget\(false\)/);
+
+  const submit = between(
+    dashboard,
+    'one<HTMLFormElement>("[data-composer]")?.addEventListener("submit"',
+    'for (const button of all<HTMLButtonElement>("[data-feed-filter]")',
+  );
+  assert.match(submit, /setComposerSending\(true\)/);
+  assert.match(submit, /uploadBrowserAttachment/);
+  assert.match(submit, /Uploading file \$\{index \+ 1\} of/);
+  assert.match(submit, /stagedAttachments = \[\]/);
+  assert.match(submit, /stagedAttachments = attachmentSnapshot;\s*renderStagedAttachments\(\)/);
+  assert.match(submit, /input\.value = rawBody/);
+  assert.match(dashboard, /hadAttachments/);
+  assert.match(dashboard, /Files from this saved draft are not attached after reload/);
+});
+
+test("browser attachment preflight mirrors the eight-file and 25 MB limits", () => {
+  const file = (name: string, size: number): File => ({ name, size } as File);
+  assert.equal(
+    prepareBrowserAttachments([file("screen.png", 100)], 0)[0]?.contentType,
+    "image/png",
+  );
+  assert.throws(
+    () => prepareBrowserAttachments(
+      Array.from({ length: BROWSER_ATTACHMENT_MAX + 1 }, (_, i) => file(`${i}.md`, 1)),
+    ),
+    /up to 8 files/,
+  );
+  assert.throws(
+    () => prepareBrowserAttachments([file("too-big.png", BROWSER_ATTACHMENT_MAX_BYTES + 1)]),
+    /25 MB/,
+  );
+  assert.throws(() => prepareBrowserAttachments([file("run.exe", 1)]), /file type/);
+  const upload = between(
+    client,
+    "export async function uploadBrowserAttachment",
+    "/** Gets a short-lived signed download URL",
+  );
+  assert.match(upload, /if \(!intent\.uploaded\)/);
+  assert.match(upload, /intent\.uploaded = true/);
+  assert.match(upload, /intent\.commitCommandId/);
 });
 
 test("mention picker resolves people and agents into one removable address chip", () => {

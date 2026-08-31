@@ -463,8 +463,11 @@ const assertComposerSprint = (value: ComposerArtifact): void => {
   );
   assert.match(draft, /COMPOSER_STREAM = "all-signals";/,
     "draft-scope: stream identity must be explicit");
-  assert.match(draft, /JSON\.stringify\(\{ body, audienceKey \}\)/,
-    "draft-audience: body and audience must persist together");
+  assert.match(
+    draft,
+    /JSON\.stringify\(\{ body, audienceKey, \.\.\.\(hadAttachments/,
+    "draft-audience: body, audience, and the lost-attachment marker must persist together",
+  );
   assert.match(draft, /input\.value = draft\.body;/,
     "draft-restore: reload must restore the exact body");
   assert.match(draft, /composerAudienceFromKey\(draft\.audienceKey\)/,

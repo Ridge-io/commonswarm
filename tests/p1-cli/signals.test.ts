@@ -138,6 +138,7 @@ test("human and agent signal reads share filters and keep bodies as rendered dat
   );
   assert.equal(human.length, 1);
   assert.equal(humanUrl!.pathname, "/rest/v1/signals");
+  assert.match(humanUrl!.searchParams.get("select") ?? "", /attachments/);
   assert.equal(humanUrl!.searchParams.get("to"), `eq.${USER}`);
   assert.equal(humanUrl!.searchParams.get("kind"), "eq.ask");
   assert.equal(humanUrl!.searchParams.get("until"), "gt.now");

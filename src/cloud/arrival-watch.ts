@@ -57,6 +57,7 @@ export interface ArrivalNotification {
   sender_kind: SignalRecord["from_kind"];
   kind: SignalRecord["kind"];
   snippet: string;
+  attachment_count: number;
   reply_command: string;
 }
 
@@ -197,6 +198,7 @@ export function arrivalNotification(
     sender_kind: signal.from_kind,
     kind: signal.kind,
     snippet: arrivalSnippet(signal.body),
+    attachment_count: signal.attachments?.length ?? 0,
     reply_command: arrivalReplyCommand(signal.id, workspaceId),
   };
 }
@@ -205,7 +207,10 @@ export function arrivalNotification(
 export function formatArrivalNotification(
   notification: ArrivalNotification,
 ): string {
-  return `CommonSwarm from ${notification.sender_kind} ${notification.sender}: ${notification.snippet} — reply: ${notification.reply_command}`;
+  const attachmentCopy = notification.attachment_count === 0
+    ? ""
+    : ` — ${notification.attachment_count} attachment${notification.attachment_count === 1 ? "" : "s"}`;
+  return `CommonSwarm from ${notification.sender_kind} ${notification.sender}: ${notification.snippet}${attachmentCopy} — reply: ${notification.reply_command}`;
 }
 
 function cursorOf(signal: SignalRecord): SignalCursor {

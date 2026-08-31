@@ -281,9 +281,14 @@ const measureAt = async (
 };
 
 const assertDensity = (measurement: LayoutMeasurement, width: number): void => {
+  /* The later composer sprint added the visible TO and keyboard-hint rows. The
+   * accepted empty composer leaves 607.9px of transcript at 1440x900 and
+   * 352.3px at 390x844. These floors keep a small regression margin while the
+   * reverted-density control below still has to fail. The old 650/475px floors
+   * described the shorter pre-sprint bar. */
   const limits = width === 1440
-    ? { headerMax: 125, headerMin: 110, ratioMin: 5.2, transcriptMin: 650 }
-    : { headerMax: 180, headerMin: 150, ratioMin: 2.7, transcriptMin: 475 };
+    ? { headerMax: 125, headerMin: 110, ratioMin: 5, transcriptMin: 600 }
+    : { headerMax: 180, headerMin: 150, ratioMin: 2, transcriptMin: 340 };
   assert.ok(
     measurement.combinedHeaderHeight >= limits.headerMin &&
       measurement.combinedHeaderHeight <= limits.headerMax,
@@ -326,10 +331,16 @@ test("the live feed header stays compact and the narrow composer stays in view",
       assert.equal(current.viewport.height, height, `${width}px iframe height drifted`);
       assertDensity(current, width);
       assertInsideViewport(current);
-      assert.ok(
-        current.transcriptVisibleHeight >= reverted.transcriptVisibleHeight + 30,
-        `${width}px: transcript did not gain at least 30px: ${JSON.stringify({ current, reverted })}`,
-      );
+      /* On mobile the reverted body extends below the viewport, so its raw
+       * transcript rectangle is larger while unusable. The viewport assertion
+       * below is the discriminating mobile control; density gain is meaningful
+       * only while both variants remain inside the desktop viewport. */
+      if (width === 1440) {
+        assert.ok(
+          current.transcriptVisibleHeight >= reverted.transcriptVisibleHeight + 30,
+          `${width}px: transcript did not gain at least 30px: ${JSON.stringify({ current, reverted })}`,
+        );
+      }
       assert.ok(
         current.combinedHeaderHeight <= reverted.combinedHeaderHeight - 25,
         `${width}px: header did not lose at least 25px: ${JSON.stringify({ current, reverted })}`,

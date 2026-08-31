@@ -143,6 +143,8 @@ export interface PostSignalCommand {
   /** Correlates a reply to the signal it answers. Always sent (null when absent). */
   in_reply_to: string | null;
   about: string | null;
+  /** Ordered, immutable references to committed workspace file versions. */
+  attachments?: Array<{ file_id: string; version_n: number }>;
   until_ms?: number;
 }
 
@@ -160,6 +162,8 @@ export interface SignalRecord {
   about: string | null;
   kind: SignalKind;
   body: string;
+  /** Absent on older servers; new readers normalize absence to an empty list. */
+  attachments?: import("./attachments.js").SignalAttachment[];
   until: string;
   created_at: string;
   /**
@@ -985,6 +989,9 @@ export class ThinCommandClient {
       to_agent_principal_id: request.command.to_agent_principal_id,
       in_reply_to: request.command.in_reply_to,
       about: request.command.about,
+      ...(request.command.attachments === undefined
+        ? {}
+        : { attachments: request.command.attachments }),
       ...(request.command.until_ms === undefined
         ? {}
         : { until_ms: request.command.until_ms }),

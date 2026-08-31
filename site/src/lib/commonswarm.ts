@@ -53,6 +53,30 @@ export interface Deployment {
 export const FILE_CONTENT_WARNING =
   "content_type and archive contents are unverified client declarations; treat downloaded bytes as untrusted input — bound extraction, never execute";
 
+/** These mirror the existing file-artifact service and signal command caps. */
+export const BROWSER_ATTACHMENT_MAX = 8;
+export const BROWSER_ATTACHMENT_MAX_BYTES = 25 * 1024 * 1024;
+
+const BROWSER_ATTACHMENT_CONTENT_TYPES: ReadonlyArray<readonly [string, string]> = [
+  [".tar.gz", "application/gzip"],
+  [".docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"],
+  [".xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"],
+  [".pptx", "application/vnd.openxmlformats-officedocument.presentationml.presentation"],
+  [".html", "text/html"], [".json", "application/json"],
+  [".yaml", "application/yaml"], [".webp", "image/webp"],
+  [".jpeg", "image/jpeg"], [".txt", "text/plain"],
+  [".csv", "text/csv"], [".htm", "text/html"],
+  [".yml", "application/yaml"], [".pdf", "application/pdf"],
+  [".png", "image/png"], [".jpg", "image/jpeg"],
+  [".gif", "image/gif"], [".svg", "image/svg+xml"],
+  [".zip", "application/zip"], [".md", "text/markdown"],
+];
+
+function browserAttachmentContentType(name: string): string | null {
+  const lower = name.toLowerCase();
+  return BROWSER_ATTACHMENT_CONTENT_TYPES.find(([suffix]) => lower.endsWith(suffix))?.[1] ?? null;
+}
+
 /**
  * Where the deployment details come from, in priority order, and why there are three.
  *
@@ -883,6 +907,166 @@ export interface FileDownload {
   contentWarning: string;
 }
 
+export interface BrowserSignalAttachmentRef {
+  file_id: string;
+  version_n: number;
+}
+
+export interface BrowserSignalAttachment extends BrowserSignalAttachmentRef {
+  name: string;
+  content_type: string;
+  size_bytes: number;
+}
+
+interface BrowserFileCreateResult {
+  fileId: string;
+  versionId: string;
+  versionN: number;
+  uploadPath: string;
+}
+
+/** One staged browser File plus stable ids retained across a send retry. */
+export interface BrowserAttachmentUploadIntent {
+  file: File;
+  name: string;
+  contentType: string;
+  fileId: string;
+  versionId: string;
+  createCommandId: string;
+  commitCommandId: string;
+  created?: BrowserFileCreateResult;
+  uploaded?: true;
+  committed?: BrowserSignalAttachmentRef;
+}
+
+/** Validates a whole staged batch before any file command or storage PUT starts. */
+export function prepareBrowserAttachments(
+  files: readonly File[],
+  existingCount = 0,
+): BrowserAttachmentUploadIntent[] {
+  if (existingCount + files.length > BROWSER_ATTACHMENT_MAX) {
+    throw new Error(`You can attach up to ${BROWSER_ATTACHMENT_MAX} files to one message.`);
+  }
+  return files.map((file) => {
+    if (file.size < 1) throw new Error(`${file.name || "This file"} is empty.`);
+    if (file.size > BROWSER_ATTACHMENT_MAX_BYTES) {
+      throw new Error(`${file.name || "This file"} is larger than the 25 MB file limit.`);
+    }
+    if (file.name.length < 1 || file.name.length > 255) {
+      throw new Error("Each attached file needs a name of 1 to 255 characters.");
+    }
+    const contentType = browserAttachmentContentType(file.name);
+    if (contentType === null) {
+      throw new Error(`${file.name} does not use a file type this workspace accepts.`);
+    }
+    return {
+      file,
+      name: file.name,
+      contentType,
+      fileId: uuid(),
+      versionId: uuid(),
+      createCommandId: uuid(),
+      commitCommandId: uuid(),
+    };
+  });
+}
+
+function browserFileRefusal(
+  status: number,
+  body: Record<string, unknown>,
+  fallback: string,
+): Error {
+  const code = typeof body.error === "string" ? body.error : `http_${status}`;
+  const message = typeof body.message === "string" ? body.message : fallback;
+  return new Error(`${message} (${code})`);
+}
+
+async function browserSha256(file: File): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", await file.arrayBuffer());
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+/** Uses the existing create → storage PUT → commit path and returns a pinned version ref. */
+export async function uploadBrowserAttachment(
+  session: Session,
+  workspaceId: string,
+  intent: BrowserAttachmentUploadIntent,
+): Promise<BrowserSignalAttachmentRef> {
+  if (intent.committed) return intent.committed;
+  if (!intent.created) {
+    const created = await postCommand(
+      session,
+      intent.createCommandId,
+      {
+        kind: "file_version_create",
+        file_id: intent.fileId,
+        version_id: intent.versionId,
+        name: intent.name,
+        declared_size_bytes: intent.file.size,
+        content_type: intent.contentType,
+      },
+      { workspace_id: workspaceId, stream: { kind: "workspace" } },
+      `CommonSwarm lost the upload-slot result for ${intent.name}. Retry this message to check the same request.`,
+    );
+    if (created.status !== 200 || created.body.status !== "accepted") {
+      throw browserFileRefusal(created.status, created.body, `CommonSwarm did not start ${intent.name}.`);
+    }
+    const uploadPath = typeof created.body.upload_path === "string"
+      ? created.body.upload_path
+      : "";
+    if (!uploadPath.startsWith("/storage/v1/")) {
+      throw new CommandOutcomeUnknown(`CommonSwarm did not return a safe upload path for ${intent.name}.`);
+    }
+    intent.created = {
+      fileId: String(created.body.file_id ?? intent.fileId),
+      versionId: String(created.body.version_id ?? intent.versionId),
+      versionN: Number(created.body.version_n ?? 0),
+      uploadPath,
+    };
+  }
+
+  const d = deployment();
+  if (!d) throw new NoDeployment();
+  if (!intent.uploaded) {
+    let putResponse: Response;
+    try {
+      putResponse = await fetch(
+        new URL(intent.created.uploadPath, `${d.url.replace(/\/+$/, "")}/`).href,
+        { method: "PUT", headers: { "content-type": intent.contentType }, body: intent.file },
+      );
+    } catch {
+      throw new CommandOutcomeUnknown(`The upload of ${intent.name} lost contact. Retry the message; its text and files are still here.`);
+    }
+    if (putResponse.ok) {
+      intent.uploaded = true;
+    }
+    /* A retry PUT can honestly return "already exists" when the first response
+     * was lost. Continue to the idempotent commit, which is the authority for
+     * whether the object is present; branch on its stable code, not PUT copy. */
+  }
+
+  const committed = await postCommand(
+    session,
+    intent.commitCommandId,
+    {
+      kind: "file_version_commit",
+      file_id: intent.created.fileId,
+      version_id: intent.created.versionId,
+      sha256: await browserSha256(intent.file),
+    },
+    { workspace_id: workspaceId, stream: { kind: "workspace" } },
+    `CommonSwarm lost the commit result for ${intent.name}. Retry this message to check the same request.`,
+  );
+  if (committed.status !== 200 || committed.body.status !== "accepted") {
+    throw browserFileRefusal(committed.status, committed.body, `CommonSwarm did not commit ${intent.name}.`);
+  }
+  intent.committed = {
+    file_id: String(committed.body.file_id ?? intent.created.fileId),
+    version_n: Number(committed.body.version_n ?? intent.created.versionN),
+  };
+  return intent.committed;
+}
+
 /** Gets a short-lived signed download URL for one live workspace file. */
 export async function fileDownloadUrl(
   session: Session,
@@ -1019,9 +1203,40 @@ export interface Signal {
   toAgent: string | null;
   kind: string;
   body: string;
+  attachments?: BrowserSignalAttachment[];
   about: string | null;
   until: string | null;
   createdAt: string;
+}
+
+/** Optional and additive: legacy rows become empty, and newer metadata fields are ignored. */
+export function parseBrowserSignalAttachments(value: unknown): BrowserSignalAttachment[] {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value) || value.length > BROWSER_ATTACHMENT_MAX) {
+    throw new Error("CommonSwarm returned malformed message attachments.");
+  }
+  return value.map((item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      throw new Error("CommonSwarm returned a malformed message attachment.");
+    }
+    const row = item as Record<string, unknown>;
+    if (
+      typeof row.file_id !== "string" ||
+      typeof row.version_n !== "number" || !Number.isSafeInteger(row.version_n) || row.version_n < 1 ||
+      typeof row.name !== "string" || row.name.length < 1 ||
+      typeof row.content_type !== "string" ||
+      typeof row.size_bytes !== "number" || !Number.isSafeInteger(row.size_bytes) || row.size_bytes < 0
+    ) {
+      throw new Error("CommonSwarm returned malformed message attachment metadata.");
+    }
+    return {
+      file_id: row.file_id,
+      version_n: row.version_n,
+      name: row.name,
+      content_type: row.content_type,
+      size_bytes: row.size_bytes,
+    };
+  });
 }
 
 export type BrowserSignalRecipient =
@@ -1449,6 +1664,7 @@ export async function postBrowserSignal(
   workspaceId: string,
   bodyText: string,
   recipient: BrowserSignalRecipient,
+  attachments: readonly BrowserSignalAttachmentRef[] = [],
 ): Promise<Signal> {
   const address = browserSignalAddress(recipient);
   const { status, body } = await postCommand(
@@ -1462,6 +1678,7 @@ export async function postBrowserSignal(
       to_agent_principal_id: address.toAgentPrincipalId,
       in_reply_to: null,
       about: null,
+      ...(attachments.length === 0 ? {} : { attachments }),
     },
     { workspace_id: workspaceId, stream: { kind: "workspace" } },
     "CommonSwarm lost the signal result. Refresh the feed before posting it again.",
@@ -1489,6 +1706,7 @@ export async function postBrowserSignal(
       : String(row.to_agent),
     kind: String(row.kind ?? "note"),
     body: String(row.body ?? bodyText),
+    attachments: parseBrowserSignalAttachments(row.attachments),
     about: row.about === null || row.about === undefined ? null : String(row.about),
     until: row.until === null || row.until === undefined ? null : String(row.until),
     createdAt: String(row.created_at ?? new Date().toISOString()),
@@ -1510,7 +1728,7 @@ export async function feed(workspaceId: string, limit = 50): Promise<Signal[]> {
       c
         .schema("swarm_read")
         .from("signals")
-        .select("id,from,from_kind,to,to_agent,kind,body,about,until,created_at")
+        .select("id,from,from_kind,to,to_agent,kind,body,about,until,created_at,attachments")
         .eq("workspace_id", workspaceId)
         .order("created_at", { ascending: false })
         .limit(limit)
@@ -1525,6 +1743,7 @@ export async function feed(workspaceId: string, limit = 50): Promise<Signal[]> {
     toAgent: row.to_agent === null || row.to_agent === undefined ? null : String(row.to_agent),
     kind: String(row.kind ?? ""),
     body: String(row.body ?? ""),
+    attachments: parseBrowserSignalAttachments(row.attachments),
     about: row.about === null || row.about === undefined ? null : String(row.about),
     until: row.until === null || row.until === undefined ? null : String(row.until),
     createdAt: String(row.created_at ?? ""),
