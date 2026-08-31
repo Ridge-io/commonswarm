@@ -68,12 +68,12 @@ const APP_NAV = [
   { href: "/app", label: "Workspace" },
 ];
 
-const REPO = "https://github.com/Ridge-io/commonswarm";
-
 const nav = signedIn ? APP_NAV : MARKETING_NAV;
 /* /app discovers the visitor's real state, then offers the one appropriate next action:
  * sign in, create a workspace, or open the workspace they already have. */
-const cta = { href: "/app", label: "Open workspace" };
+const cta = signedIn
+  ? { href: "/app", label: "Open workspace" }
+  : { href: "/app", label: "Sign up" };
 
 /* Only a real route can be the current page. A hash link points inside the page we are
  * already on, so aria-current would be a lie on every one of them. */
@@ -99,21 +99,7 @@ const isCurrent = (href: string) => !href.includes("#") && href === path;
     </nav>
 
     <div class="hdr__actions">
-      <a
-        class="hdr__icon"
-        href={REPO}
-        target="_blank"
-        rel="noopener noreferrer"
-        title="GitHub"
-      >
-        <svg viewBox="0 0 16 16" width="17" height="17" aria-hidden="true" focusable="false">
-          <path
-            fill="currentColor"
-            d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"
-          ></path>
-        </svg>
-        <span class="hdr__sr">GitHub repository (opens in a new tab)</span>
-      </a>
+      {!signedIn && <Button href="/app" variant="ghost" class="hdr__login">Log in</Button>}
 
       <Button href={cta.href} variant="primary" class="hdr__cta">{cta.label}</Button>
 
@@ -173,26 +159,7 @@ const isCurrent = (href: string) => !href.includes("#") && href === path;
             </a>
           ))
         }
-        <a class="mnav__link" href={REPO} target="_blank" rel="noopener noreferrer">
-          GitHub<span class="hdr__sr"> (opens in a new tab)</span>
-          <svg
-            class="mnav__ext"
-            viewBox="0 0 24 24"
-            width="15"
-            height="15"
-            aria-hidden="true"
-            focusable="false"
-          >
-            <path
-              fill="none"
-              stroke="currentColor"
-              stroke-width="1.8"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              d="M14 5h5v5M19 5l-8 8M17 14v4a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V8a1 1 0 0 1 1-1h4"
-            ></path>
-          </svg>
-        </a>
+        {!signedIn && <a class="mnav__link" href="/app">Log in</a>}
       </nav>
 
       <div class="mnav__foot">
@@ -407,26 +374,6 @@ const isCurrent = (href: string) => !href.includes("#") && href === path;
     gap: var(--s-3);
   }
 
-  .hdr__icon {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    inline-size: 2.25rem;
-    block-size: 2.25rem;
-    flex: none;
-    color: var(--text-muted);
-    border-radius: var(--radius-sm);
-    text-decoration: none;
-    transition:
-      color var(--dur-1) var(--ease-standard),
-      background var(--dur-1) var(--ease-standard);
-  }
-
-  .hdr__icon:hover {
-    color: var(--text);
-    background: color-mix(in oklab, var(--text) 8%, transparent);
-  }
-
   /* Component-local visually-hidden. global.css has .visually-hidden, but this one is used
      inside the dialog too and keeping one name for both halves of the component is simpler
      than remembering which of the two files owns which element. */
@@ -445,6 +392,7 @@ const isCurrent = (href: string) => !href.includes("#") && href === path;
   /* The Button primitive renders its own element, which carries ITS scope id and not this
      file’s — so a plain `.hdr__cta` rule here would compile to a selector that can never
      match. :global is the correct tool, and the class is namespaced so it cannot leak. */
+  .hdr__actions :global(.hdr__login),
   .hdr__actions :global(.hdr__cta) {
     --btn-h: 2.25rem;
     flex: none;
@@ -536,8 +484,7 @@ const isCurrent = (href: string) => !href.includes("#") && href === path;
       font-size: var(--t-xs);
     }
 
-    .hdr[data-menu-ready] .hdr__nav,
-    .hdr[data-menu-ready] .hdr__icon {
+    .hdr[data-menu-ready] .hdr__nav {
       display: none;
     }
 
@@ -557,30 +504,16 @@ const isCurrent = (href: string) => !href.includes("#") && href === path;
       margin-left: auto;
     }
 
-    /* --- the no-JS collapse ladder ---------------------------------------
-       Everything above assumes the burger exists. When it does not, the bar still has to
-       fit, and it cannot: wordmark + two links + icon + CTA is around 450px of content in
-       335px of usable width at 375 — and the "CommonSwarm" rename added roughly 45px more
-       wordmark to that, so the ladder is under MORE pressure now, not less. (The 450 was
-       measured against the old 7-glyph word and has not been re-measured since; treat it as
-       a floor.) The nav is the only flexible item, so it shrinks below
-       its content and its nowrap children spill straight over the CTA — the links and the
-       button render on top of each other, unreadable.
-
-       That failure is INVISIBLE to the usual `scrollWidth === innerWidth` check, because
-       global.css puts `overflow-x: clip` on <body>, which clips the spill and leaves the
-       measurement looking perfect. It was caught by screenshot and then confirmed by
-       comparing the elements' bounding boxes for intersection.
-
-       So the no-JS bar sheds items on a ladder instead, longest-reach first. Nothing is
-       lost outright: every link here is also in the footer, which needs no JavaScript.
-       ---------------------------------------------------------------------- */
-    .hdr:not([data-menu-ready]) .hdr__icon {
+    /* Log in remains in the menu, hero, and footer on narrow screens. */
+    .hdr__actions :global(.hdr__login) {
       display: none;
     }
+
+    /* Without JavaScript, trim the inline nav below so it cannot overlap the CTA.
+       Every destination remains available in the footer. */
   }
 
-  @media (max-width: 30rem) {
+  @media (max-width: 40rem) {
     .hdr:not([data-menu-ready]) .hdr__link:nth-of-type(n + 2) {
       display: none;
     }
@@ -732,15 +665,6 @@ const isCurrent = (href: string) => !href.includes("#") && href === path;
 
   .mnav__link[aria-current="page"] {
     color: var(--accent-bright);
-  }
-
-  /* --text-faint is 4.09:1 on --elev-1, which is under AA for text — but this is a decorative
-     glyph beside a label that already says "GitHub", and the "(opens in a new tab)" part is
-     carried by hidden text, so the 3:1 non-text bar is the one that applies and it clears it.
-     Do not copy this colour onto anything anyone has to read. */
-  .mnav__ext {
-    flex: none;
-    color: var(--text-faint);
   }
 
   .mnav__foot {

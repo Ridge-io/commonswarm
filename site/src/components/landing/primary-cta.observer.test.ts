@@ -7,20 +7,20 @@ const PRIMARY_CTAS = [
   {
     path: "../SiteHeader.astro",
     patterns: [
-      /href: "\/app", label: "Open workspace"/,
+      /href: "\/app", label: "Sign up"/,
     ],
   },
   {
     path: "../SiteFooter.astro",
-    patterns: [/href: "\/app", label: "Open workspace"/],
+    patterns: [/href: "\/app", label: "Sign up"/],
   },
   {
     path: "./ConsumerHero.astro",
-    patterns: [/href="\/app">Open your workspace</],
+    patterns: [/href="\/app">Sign up</, /href="\/app">Log in</],
   },
   {
     path: "./ConsumerStory.astro",
-    patterns: [/href="\/app">Open your workspace</],
+    patterns: [/href="\/app">Sign up</, /href="\/app">Log in</],
   },
   {
     path: "../download/AfterInstall.astro",

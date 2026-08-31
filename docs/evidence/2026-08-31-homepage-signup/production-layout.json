@@ -1,0 +1,624 @@
+[
+  {
+    "actions": [
+      {
+        "bottom": 434.328125,
+        "height": 52,
+        "href": "/app",
+        "right": 300,
+        "text": "Sign up",
+        "width": 280,
+        "x": 20,
+        "y": 382.328125
+      },
+      {
+        "bottom": 498.328125,
+        "height": 52,
+        "href": "/app",
+        "right": 300,
+        "text": "Log in",
+        "width": 280,
+        "x": 20,
+        "y": 446.328125
+      }
+    ],
+    "feed": {
+      "bottom": 1225.8125,
+      "height": 515.9375,
+      "right": 283,
+      "width": 246,
+      "x": 37,
+      "y": 709.875
+    },
+    "header": [
+      {
+        "bottom": 43,
+        "height": 22,
+        "right": 42,
+        "text": "CommonSwarm",
+        "width": 22,
+        "x": 20,
+        "y": 21
+      },
+      {
+        "bottom": 50,
+        "height": 36,
+        "right": 256,
+        "text": "Sign up",
+        "width": 69.15625,
+        "x": 186.84375,
+        "y": 14
+      },
+      {
+        "bottom": 54,
+        "height": 44,
+        "right": 308,
+        "text": "Menu",
+        "width": 44,
+        "x": 264,
+        "y": 10
+      }
+    ],
+    "rail": {
+      "bottom": 0,
+      "height": 0,
+      "right": 0,
+      "width": 0,
+      "x": 0,
+      "y": 0
+    },
+    "scrollWidth": 320,
+    "width": 320
+  },
+  {
+    "actions": [
+      {
+        "bottom": 383.28125,
+        "height": 52,
+        "href": "/app",
+        "right": 370,
+        "text": "Sign up",
+        "width": 350,
+        "x": 20,
+        "y": 331.28125
+      },
+      {
+        "bottom": 447.28125,
+        "height": 52,
+        "href": "/app",
+        "right": 370,
+        "text": "Log in",
+        "width": 350,
+        "x": 20,
+        "y": 395.28125
+      }
+    ],
+    "feed": {
+      "bottom": 1088.015625,
+      "height": 429.1875,
+      "right": 353,
+      "width": 316,
+      "x": 37,
+      "y": 658.828125
+    },
+    "header": [
+      {
+        "bottom": 44.953125,
+        "height": 25.90625,
+        "right": 170.203125,
+        "text": "CommonSwarm",
+        "width": 150.203125,
+        "x": 20,
+        "y": 19.046875
+      },
+      {
+        "bottom": 50,
+        "height": 36,
+        "right": 326,
+        "text": "Sign up",
+        "width": 69.15625,
+        "x": 256.84375,
+        "y": 14
+      },
+      {
+        "bottom": 54,
+        "height": 44,
+        "right": 378,
+        "text": "Menu",
+        "width": 44,
+        "x": 334,
+        "y": 10
+      }
+    ],
+    "rail": {
+      "bottom": 0,
+      "height": 0,
+      "right": 0,
+      "width": 0,
+      "x": 0,
+      "y": 0
+    },
+    "scrollWidth": 390,
+    "width": 390
+  },
+  {
+    "actions": [
+      {
+        "bottom": 358.1875,
+        "height": 52,
+        "href": "/app",
+        "right": 460,
+        "text": "Sign up",
+        "width": 440,
+        "x": 20,
+        "y": 306.1875
+      },
+      {
+        "bottom": 422.1875,
+        "height": 52,
+        "href": "/app",
+        "right": 460,
+        "text": "Log in",
+        "width": 440,
+        "x": 20,
+        "y": 370.1875
+      }
+    ],
+    "feed": {
+      "bottom": 976.46875,
+      "height": 385.8125,
+      "right": 443,
+      "width": 406,
+      "x": 37,
+      "y": 590.65625
+    },
+    "header": [
+      {
+        "bottom": 45.765625,
+        "height": 27.53125,
+        "right": 177.671875,
+        "text": "CommonSwarm",
+        "width": 157.671875,
+        "x": 20,
+        "y": 18.234375
+      },
+      {
+        "bottom": 50,
+        "height": 36,
+        "right": 412,
+        "text": "Sign up",
+        "width": 80.34375,
+        "x": 331.65625,
+        "y": 14
+      },
+      {
+        "bottom": 54,
+        "height": 44,
+        "right": 468,
+        "text": "Menu",
+        "width": 44,
+        "x": 424,
+        "y": 10
+      }
+    ],
+    "rail": {
+      "bottom": 0,
+      "height": 0,
+      "right": 0,
+      "width": 0,
+      "x": 0,
+      "y": 0
+    },
+    "scrollWidth": 480,
+    "width": 480
+  },
+  {
+    "actions": [
+      {
+        "bottom": 358.25,
+        "height": 52,
+        "href": "/app",
+        "right": 240.140625,
+        "text": "Sign up",
+        "width": 107.53125,
+        "x": 132.609375,
+        "y": 306.25
+      },
+      {
+        "bottom": 358.25,
+        "height": 52,
+        "href": "/app",
+        "right": 348.375,
+        "text": "Log in",
+        "width": 96.234375,
+        "x": 252.140625,
+        "y": 306.25
+      }
+    ],
+    "feed": {
+      "bottom": 912.53125,
+      "height": 385.8125,
+      "right": 444,
+      "width": 407,
+      "x": 37,
+      "y": 526.71875
+    },
+    "header": [
+      {
+        "bottom": 45.765625,
+        "height": 27.53125,
+        "right": 177.671875,
+        "text": "CommonSwarm",
+        "width": 157.671875,
+        "x": 20,
+        "y": 18.234375
+      },
+      {
+        "bottom": 50,
+        "height": 36,
+        "right": 413,
+        "text": "Sign up",
+        "width": 80.34375,
+        "x": 332.65625,
+        "y": 14
+      },
+      {
+        "bottom": 54,
+        "height": 44,
+        "right": 469,
+        "text": "Menu",
+        "width": 44,
+        "x": 425,
+        "y": 10
+      }
+    ],
+    "rail": {
+      "bottom": 0,
+      "height": 0,
+      "right": 0,
+      "width": 0,
+      "x": 0,
+      "y": 0
+    },
+    "scrollWidth": 481,
+    "width": 481
+  },
+  {
+    "actions": [
+      {
+        "bottom": 342.40625,
+        "height": 52,
+        "href": "/app",
+        "right": 319.640625,
+        "text": "Sign up",
+        "width": 107.53125,
+        "x": 212.109375,
+        "y": 290.40625
+      },
+      {
+        "bottom": 342.40625,
+        "height": 52,
+        "href": "/app",
+        "right": 427.875,
+        "text": "Log in",
+        "width": 96.234375,
+        "x": 331.640625,
+        "y": 290.40625
+      }
+    ],
+    "feed": {
+      "bottom": 896.6875,
+      "height": 385.8125,
+      "right": 597.40625,
+      "width": 370.8125,
+      "x": 226.59375,
+      "y": 510.875
+    },
+    "header": [
+      {
+        "bottom": 45.765625,
+        "height": 27.53125,
+        "right": 183.265625,
+        "text": "CommonSwarm",
+        "width": 157.671875,
+        "x": 25.59375,
+        "y": 18.234375
+      },
+      {
+        "bottom": 50,
+        "height": 36,
+        "right": 566.40625,
+        "text": "Sign up",
+        "width": 80.34375,
+        "x": 486.0625,
+        "y": 14
+      },
+      {
+        "bottom": 54,
+        "height": 44,
+        "right": 622.40625,
+        "text": "Menu",
+        "width": 44,
+        "x": 578.40625,
+        "y": 10
+      }
+    ],
+    "rail": {
+      "bottom": 912.6875,
+      "height": 460.203125,
+      "right": 210.59375,
+      "width": 184,
+      "x": 26.59375,
+      "y": 452.484375
+    },
+    "scrollWidth": 640,
+    "width": 640
+  },
+  {
+    "actions": [
+      {
+        "bottom": 342.46875,
+        "height": 52,
+        "href": "/app",
+        "right": 320.140625,
+        "text": "Sign up",
+        "width": 107.53125,
+        "x": 212.609375,
+        "y": 290.46875
+      },
+      {
+        "bottom": 342.46875,
+        "height": 52,
+        "href": "/app",
+        "right": 428.375,
+        "text": "Log in",
+        "width": 96.234375,
+        "x": 332.140625,
+        "y": 290.46875
+      }
+    ],
+    "feed": {
+      "bottom": 896.75,
+      "height": 385.8125,
+      "right": 598.375,
+      "width": 371.75,
+      "x": 226.625,
+      "y": 510.9375
+    },
+    "header": [
+      {
+        "bottom": 45.765625,
+        "height": 27.53125,
+        "right": 183.296875,
+        "text": "CommonSwarm",
+        "width": 157.671875,
+        "x": 25.625,
+        "y": 18.234375
+      },
+      {
+        "bottom": 50,
+        "height": 36,
+        "right": 567.375,
+        "text": "Sign up",
+        "width": 80.34375,
+        "x": 487.03125,
+        "y": 14
+      },
+      {
+        "bottom": 54,
+        "height": 44,
+        "right": 623.375,
+        "text": "Menu",
+        "width": 44,
+        "x": 579.375,
+        "y": 10
+      }
+    ],
+    "rail": {
+      "bottom": 912.75,
+      "height": 460.203125,
+      "right": 210.625,
+      "width": 184,
+      "x": 26.625,
+      "y": 452.546875
+    },
+    "scrollWidth": 641,
+    "width": 641
+  },
+  {
+    "actions": [
+      {
+        "bottom": 365.65625,
+        "height": 52,
+        "href": "/app",
+        "right": 415.640625,
+        "text": "Sign up",
+        "width": 107.53125,
+        "x": 308.109375,
+        "y": 313.65625
+      },
+      {
+        "bottom": 365.65625,
+        "height": 52,
+        "href": "/app",
+        "right": 523.875,
+        "text": "Log in",
+        "width": 96.234375,
+        "x": 427.640625,
+        "y": 313.65625
+      }
+    ],
+    "feed": {
+      "bottom": 833.1875,
+      "height": 299.0625,
+      "right": 781.734375,
+      "width": 547.46875,
+      "x": 234.265625,
+      "y": 534.125
+    },
+    "header": [
+      {
+        "bottom": 45.765625,
+        "height": 27.53125,
+        "right": 190.9375,
+        "text": "CommonSwarm",
+        "width": 157.671875,
+        "x": 33.265625,
+        "y": 18.234375
+      },
+      {
+        "bottom": 43.328125,
+        "height": 22.671875,
+        "right": 422.65625,
+        "text": "How it works",
+        "width": 86.34375,
+        "x": 336.3125,
+        "y": 20.65625
+      },
+      {
+        "bottom": 43.328125,
+        "height": 22.671875,
+        "right": 548.53125,
+        "text": "See the prompt",
+        "width": 101.875,
+        "x": 446.65625,
+        "y": 20.65625
+      },
+      {
+        "bottom": 43.328125,
+        "height": 22.671875,
+        "right": 611.9375,
+        "text": "Install",
+        "width": 39.40625,
+        "x": 572.53125,
+        "y": 20.65625
+      },
+      {
+        "bottom": 50,
+        "height": 36,
+        "right": 706.390625,
+        "text": "Log in",
+        "width": 70.453125,
+        "x": 635.9375,
+        "y": 14
+      },
+      {
+        "bottom": 50,
+        "height": 36,
+        "right": 798.734375,
+        "text": "Sign up",
+        "width": 80.34375,
+        "x": 718.390625,
+        "y": 14
+      }
+    ],
+    "rail": {
+      "bottom": 849.1875,
+      "height": 373.453125,
+      "right": 218.265625,
+      "width": 184,
+      "x": 34.265625,
+      "y": 475.734375
+    },
+    "scrollWidth": 832,
+    "width": 832
+  },
+  {
+    "actions": [
+      {
+        "bottom": 443.28125,
+        "height": 52,
+        "href": "/app",
+        "right": 719.640625,
+        "text": "Sign up",
+        "width": 107.53125,
+        "x": 612.109375,
+        "y": 391.28125
+      },
+      {
+        "bottom": 443.28125,
+        "height": 52,
+        "href": "/app",
+        "right": 827.875,
+        "text": "Log in",
+        "width": 96.234375,
+        "x": 731.640625,
+        "y": 391.28125
+      }
+    ],
+    "feed": {
+      "bottom": 910.8125,
+      "height": 299.0625,
+      "right": 1119,
+      "width": 614,
+      "x": 505,
+      "y": 611.75
+    },
+    "header": [
+      {
+        "bottom": 45.765625,
+        "height": 27.53125,
+        "right": 269.671875,
+        "text": "CommonSwarm",
+        "width": 157.671875,
+        "x": 112,
+        "y": 18.234375
+      },
+      {
+        "bottom": 43.328125,
+        "height": 22.671875,
+        "right": 951.921875,
+        "text": "How it works",
+        "width": 86.34375,
+        "x": 865.578125,
+        "y": 20.65625
+      },
+      {
+        "bottom": 43.328125,
+        "height": 22.671875,
+        "right": 1077.796875,
+        "text": "See the prompt",
+        "width": 101.875,
+        "x": 975.921875,
+        "y": 20.65625
+      },
+      {
+        "bottom": 43.328125,
+        "height": 22.671875,
+        "right": 1141.203125,
+        "text": "Install",
+        "width": 39.40625,
+        "x": 1101.796875,
+        "y": 20.65625
+      },
+      {
+        "bottom": 50,
+        "height": 36,
+        "right": 1235.65625,
+        "text": "Log in",
+        "width": 70.453125,
+        "x": 1165.203125,
+        "y": 14
+      },
+      {
+        "bottom": 50,
+        "height": 36,
+        "right": 1328,
+        "text": "Sign up",
+        "width": 80.34375,
+        "x": 1247.65625,
+        "y": 14
+      }
+    ],
+    "rail": {
+      "bottom": 926.8125,
+      "height": 373.453125,
+      "right": 489,
+      "width": 184,
+      "x": 305,
+      "y": 553.359375
+    },
+    "scrollWidth": 1440,
+    "width": 1440
+  }
+]

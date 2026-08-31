@@ -1,0 +1,116 @@
+{
+  "origin": "https://commonswarm.com",
+  "code": "59c190bbd77ed352baf902cb50bf5e88eeda00f1",
+  "pages": 8,
+  "checks": [
+    {
+      "path": "/acceptable-use",
+      "status": 200,
+      "sha256": "2f86af74a46704a9df0c1219e551ce07ef15e4fcfb03627c22675b4af2d99031",
+      "expected": "2f86af74a46704a9df0c1219e551ce07ef15e4fcfb03627c22675b4af2d99031",
+      "match": true
+    },
+    {
+      "path": "/app",
+      "status": 200,
+      "sha256": "f4a0c48baf53329f10a2d01d2c491baf2d75fc9ca2c173fce339b7170a30ea41",
+      "expected": "f4a0c48baf53329f10a2d01d2c491baf2d75fc9ca2c173fce339b7170a30ea41",
+      "match": true
+    },
+    {
+      "path": "/download",
+      "status": 200,
+      "sha256": "36360bb9fb0395a23c6fd03c980ea0c7992dca5ac7f60f8d7cf3c3467d418f5a",
+      "expected": "36360bb9fb0395a23c6fd03c980ea0c7992dca5ac7f60f8d7cf3c3467d418f5a",
+      "match": true
+    },
+    {
+      "path": "/",
+      "status": 200,
+      "sha256": "1be2ac17fc6f55367066d266e981b1288043123f4fbc860d634fb6af050ade53",
+      "expected": "1be2ac17fc6f55367066d266e981b1288043123f4fbc860d634fb6af050ade53",
+      "match": true
+    },
+    {
+      "path": "/invite",
+      "status": 200,
+      "sha256": "e83cd61e670c16c4c9b20a2b884d573776d2aabfcfec8b23629ddc743f73013e",
+      "expected": "e83cd61e670c16c4c9b20a2b884d573776d2aabfcfec8b23629ddc743f73013e",
+      "match": true
+    },
+    {
+      "path": "/privacy",
+      "status": 200,
+      "sha256": "cfa54e7072e5bcc7fe13d46750065f13c403162c8654c2636815c047663ceea4",
+      "expected": "cfa54e7072e5bcc7fe13d46750065f13c403162c8654c2636815c047663ceea4",
+      "match": true
+    },
+    {
+      "path": "/start",
+      "status": 200,
+      "sha256": "d1f305094ddbbf53ec6007152bce062fe304c30131781b1f8278d49c21cb3e1c",
+      "expected": "d1f305094ddbbf53ec6007152bce062fe304c30131781b1f8278d49c21cb3e1c",
+      "match": true
+    },
+    {
+      "path": "/terms",
+      "status": 200,
+      "sha256": "8c8dac991a0486bf5354408e29c2b531a962d23e5e138589012d59e2e769d723",
+      "expected": "8c8dac991a0486bf5354408e29c2b531a962d23e5e138589012d59e2e769d723",
+      "match": true
+    },
+    {
+      "path": "/_astro/AgentConnect.B4y3yEHi.css",
+      "status": 200,
+      "sha256": "0e99c2064ccab307209c04a2cd5f9185f8079a6799fdffa82dd86e44c0a791b2",
+      "expected": "0e99c2064ccab307209c04a2cd5f9185f8079a6799fdffa82dd86e44c0a791b2",
+      "match": true
+    },
+    {
+      "path": "/_astro/AgentConnect.astro_astro_type_script_index_0_lang.wLaavcuH.js",
+      "status": 200,
+      "sha256": "ac154f2c36a38551ab63c071c78138ebb74b583d0e81feb18adaa67dbcbf2f9f",
+      "expected": "ac154f2c36a38551ab63c071c78138ebb74b583d0e81feb18adaa67dbcbf2f9f",
+      "match": true
+    },
+    {
+      "path": "/_astro/Base.CU6LT-wJ.css",
+      "status": 200,
+      "sha256": "05b49444e4d0371908823c777c1260c3feac2dc0ff8457207d5f532cdefb66a1",
+      "expected": "05b49444e4d0371908823c777c1260c3feac2dc0ff8457207d5f532cdefb66a1",
+      "match": true
+    },
+    {
+      "path": "/_astro/LiveDashboard.astro_astro_type_script_index_0_lang.uLuh_uYB.js",
+      "status": 200,
+      "sha256": "25b202afa02cd42fd484caae9894e5302da9e443005e6ff039b7253cdd15b3f9",
+      "expected": "25b202afa02cd42fd484caae9894e5302da9e443005e6ff039b7253cdd15b3f9",
+      "match": true
+    },
+    {
+      "path": "/_astro/app.wx9Srql1.css",
+      "status": 200,
+      "sha256": "5d9f85cf30bb52b3b30697cf117b055045fa9b0d036a55e9a3c2126e112958ec",
+      "expected": "5d9f85cf30bb52b3b30697cf117b055045fa9b0d036a55e9a3c2126e112958ec",
+      "match": true
+    },
+    {
+      "path": "/_astro/index.C86F041I.css",
+      "status": 200,
+      "sha256": "f8aeac24c40a6ae4c9ad334684bac6340e1b6b42cccfe1647dd56857d0d4fd0f",
+      "expected": "f8aeac24c40a6ae4c9ad334684bac6340e1b6b42cccfe1647dd56857d0d4fd0f",
+      "match": true
+    },
+    {
+      "path": "/install.sh",
+      "status": 200,
+      "sha256": "310b826afb97be774f5180283b39ff435f70e8363a94c1bbcf197f35422c6299",
+      "expected": "310b826afb97be774f5180283b39ff435f70e8363a94c1bbcf197f35422c6299",
+      "match": true
+    }
+  ],
+  "missingControl": {
+    "path": "/nope.sh",
+    "status": 404
+  }
+}

@@ -14,11 +14,11 @@ test("signed-out /app onramp is cold-stranger, email-first, free, draft-legal", 
   const panel = source.slice(panelStart, panelEnd);
 
   assert.match(panel, /data-signed-out-onramp/);
-  assert.match(panel, /See what your agents are doing\./);
+  assert.match(panel, /Sign up or log in<\/h1>/);
   assert.match(panel, /<p class="dashboard__eyebrow">CommonSwarm<\/p>/);
   assert.match(
     panel,
-    /Sign in\s+to open yours\. New here\? Signing in starts your free account/,
+    /Use your email to create an account or log in\./,
   );
   assert.match(panel, /up to ten\s+workspaces, no card\./);
   assert.doesNotMatch(panel, /workspaces you belong to/i);

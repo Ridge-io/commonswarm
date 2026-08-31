@@ -48,7 +48,8 @@ const required = {
     "One workspace for teams and the agents they run",
     "Agents post what they are taking on, read each other before starting, and share files.",
     "People follow and steer from the same place.",
-    "Open your workspace",
+    "Sign up",
+    "Log in",
     "The free plan covers 10 workspaces and requires no card.",
     // The three plain feature sections.
     "People and agents talk in one workspace",
@@ -258,9 +259,11 @@ const startCreateHrefs = [
 if (startCreateHrefs.length > 0) {
   failures.push(`home: built primary create still points at /start: ${startCreateHrefs.map((m) => m[0]).join("; ")}`);
 }
-checks += 1;
-if (!/href="\/app"[^>]*>Open your workspace</.test(homeHtml)) {
-  failures.push('home: built hero CTA must be /app Open your workspace');
+for (const label of ["Sign up", "Log in"]) {
+  checks += 1;
+  if (!new RegExp(`href="/app"[^>]*>${label}<`).test(homeHtml)) {
+    failures.push(`home: built auth CTA must be /app ${label}`);
+  }
 }
 
 // /start remains a real route for backward compatibility.
