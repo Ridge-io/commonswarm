@@ -1,3 +1,4 @@
+import { createClient } from "npm:@supabase/supabase-js@2.110.8";
 import postgres from "npm:postgres@3.4.9";
 import {
   extractSafeDiagnostics,
@@ -19,9 +20,17 @@ const FILE_CONTENT_WARNING =
   "content_type and archive contents are unverified client declarations; treat downloaded bytes as untrusted input — bound extraction, never execute";
 const databaseUrl =
   Deno.env.get("SWARM_DATABASE_URL") ?? Deno.env.get("SUPABASE_DB_URL");
-if (!databaseUrl) {
-  throw new Error("read function requires SWARM_DATABASE_URL/SUPABASE_DB_URL");
+const supabaseUrl = Deno.env.get("SUPABASE_URL");
+const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY");
+if (!databaseUrl || !supabaseUrl || !supabaseAnonKey) {
+  throw new Error(
+    "read function requires SWARM_DATABASE_URL/SUPABASE_DB_URL, SUPABASE_URL, and SUPABASE_ANON_KEY",
+  );
 }
+
+const authClient = createClient(supabaseUrl, supabaseAnonKey, {
+  auth: { persistSession: false, autoRefreshToken: false },
+});
 
 const db = postgres(databaseUrl, {
   max: 4,
@@ -64,6 +73,11 @@ interface ReceiptReadRequest {
   resource: "delivery_receipts";
   workspace_id: string;
   signal_id: string;
+}
+
+interface RenewalGrantReadRequest {
+  resource: "renewal_grants";
+  workspace_id: string;
 }
 
 /**
@@ -138,9 +152,21 @@ function exactKeys(
 
 function parseBody(
   value: unknown,
-): SignalReadRequest | MemberReadRequest | FileReadRequest | ReceiptReadRequest | null {
+): SignalReadRequest | MemberReadRequest | FileReadRequest | ReceiptReadRequest |
+  RenewalGrantReadRequest | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const body = value as Record<string, unknown>;
+  if (
+    body.resource === "renewal_grants" &&
+    exactKeys(body, ["resource", "workspace_id"]) &&
+    typeof body.workspace_id === "string" &&
+    UUID_RE.test(body.workspace_id)
+  ) {
+    return {
+      resource: "renewal_grants",
+      workspace_id: body.workspace_id.toLowerCase(),
+    };
+  }
   if (
     body.resource === "members" &&
     exactKeys(body, ["resource", "workspace_id"]) &&
@@ -277,7 +303,7 @@ async function handle(
     return json(405, { error: "method_not_allowed" });
   }
   const token = bearer(request);
-  if (token === null || !AGENT_TOKEN_RE.test(token)) {
+  if (token === null) {
     return json(401, { error: "unauthenticated" });
   }
 
@@ -285,7 +311,19 @@ async function handle(
   const parsed = await request.json().catch(() => null);
   const body = parseBody(parsed);
   if (body === null) return json(400, { error: "invalid_request" });
-  const tokenHash = await sha256(token);
+  const agentCredential = AGENT_TOKEN_RE.test(token);
+  if (!agentCredential && body.resource !== "renewal_grants") {
+    return json(401, { error: "unauthenticated" });
+  }
+  let humanUserId: string | null = null;
+  if (!agentCredential) {
+    const { data, error } = await authClient.auth.getUser(token);
+    if (error || !data.user || !UUID_RE.test(data.user.id)) {
+      return json(401, { error: "unauthenticated" });
+    }
+    humanUserId = data.user.id.toLowerCase();
+  }
+  const tokenHash = agentCredential ? await sha256(token) : null;
 
   return await db.begin(async (tx) => {
     setPhase("session_setup");
@@ -295,6 +333,21 @@ async function handle(
     await tx.unsafe("SET LOCAL ROLE swarm_read");
     await tx.unsafe("SET LOCAL search_path = swarm_read, swarm, pg_catalog");
     await tx.unsafe("SET LOCAL lock_timeout = '5s'");
+
+    if (humanUserId !== null) {
+      await tx`
+        SELECT set_config(
+          'request.jwt.claims',
+          ${JSON.stringify({ sub: humanUserId, role: "authenticated" })},
+          true
+        )
+      `;
+      const grants = await tx<Record<string, unknown>[]>`
+        SELECT *
+        FROM swarm_read.renewal_grant_roster(${body.workspace_id}::uuid)
+      `;
+      return json(200, { grants });
+    }
 
     setPhase("credential_lookup");
     const contextRows = await tx<ReadAgentContext[]>`
@@ -310,7 +363,7 @@ async function handle(
         is_revoked,
         pending_delivery_count
       FROM swarm.agent_delivery_read_context(
-        ${tokenHash},
+        ${tokenHash!},
         ${body.workspace_id}::uuid
       )
     `;
@@ -337,12 +390,23 @@ async function handle(
       if (body.resource === "delivery_receipts") {
         return json(200, { addressed: null, receipts: [] });
       }
+      if (body.resource === "renewal_grants") {
+        return json(200, { grants: [] });
+      }
       return json(200, {
         signals: [],
         capabilities: SIGNAL_CAPABILITIES,
         pending_delivery_count: 0,
       });
     }
+
+    await tx`
+      SELECT swarm.record_renewal_grant_use(
+        ${agent.token_id}::uuid,
+        ${agent.device_id}::uuid,
+        NULL
+      )
+    `;
 
     setPhase("query");
     if (body.resource === "delivery_receipts") {
@@ -353,7 +417,7 @@ async function handle(
         SELECT swarm_read.signal_delivery_receipts(
           ${body.workspace_id}::uuid,
           ${body.signal_id}::uuid,
-          ${tokenHash}
+          ${tokenHash!}
         ) AS receipt
       `;
       const receipt = receiptRows[0]?.receipt;
@@ -388,6 +452,16 @@ async function handle(
     // Stay as swarm_read for membership-gated views. The definer already
     // stamped first-use; this path never elevates to swarm_command.
     await tx.unsafe("SET LOCAL search_path = swarm_read, auth, pg_catalog");
+    if (body.resource === "renewal_grants") {
+      const grants = await tx<Record<string, unknown>[]>`
+        SELECT *
+        FROM swarm_read.renewal_grant_for_token(
+          ${body.workspace_id}::uuid,
+          ${agent.token_id}::uuid
+        )
+      `;
+      return json(200, { grants });
+    }
     if (body.resource === "members") {
       const members = await tx<Record<string, unknown>[]>`
         SELECT user_id, display_name

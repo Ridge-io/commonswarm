@@ -81,6 +81,7 @@ import {
   RENEWAL_MAX_SUCCESSORS_DEFAULT,
   RenewalReauthorisationRequired,
   RenewalRevoked,
+  RenewalSuspended,
 } from "./cloud/renewal.js";
 import {
   agentSignalPendingStore,
@@ -140,6 +141,10 @@ import {
   type WorkspaceSummary,
   type WorkspaceWarning,
 } from "./cloud/workspaces.js";
+import {
+  describeRenewalGrant,
+  readRenewalGrants,
+} from "./cloud/renewal-grants.js";
 import {
   ASK_WAIT_TIMEOUT_MESSAGE,
   askCreateFailureMessage,
@@ -233,17 +238,18 @@ import {
  */
 const KNOWN_FLAGS = new Set([
   "about", "agent-token-file", "agent-token-stdin", "all-devices", "anon-key", "branch", "capability-id",
-  "claude-executable", "codex-executable", "confirm", "cooldown", "cwd", "defer-over", "device-id", "effort", "email",
+  "claude-executable", "codex-executable", "confirm", "confirm-standing", "cooldown", "cwd", "defer-over", "device-id", "effort", "email",
   "epoch", "evidence", "follow", "force", "force-file-store", "foreground", "grok-executable", "head-sha",
   "help", "include-stale", "include-tombstoned", "invitation-id", "invitation-token-stdin", "json", "kind", "limit",
   "link-stdin", "local", "model", "name", "ndjson", "no-browser", "notify", "opencode-executable", "out",
   "permissions", "principal-id", "provider", "reveal-anon-key", "route", "run-id", "since", "site", "slug",
-  "task-id", "to", "token-id", "ttl-ms", "turn-budget", "uid", "until", "url", "version", "wait", "workspace-id", "write",
+  "renewal-horizon-days", "standing", "task-id", "to", "token-id", "ttl-ms", "turn-budget", "uid", "until", "url", "version", "wait", "workspace-id", "write",
 ]);
 
 const BOOLEAN_FLAGS = new Set([
   "agent-token-stdin",
   "all-devices",
+  "confirm-standing",
   "force-file-store",
   "follow",
   "force",
@@ -259,6 +265,7 @@ const BOOLEAN_FLAGS = new Set([
   "notify",
   "no-browser",
   "reveal-anon-key",
+  "standing",
   "write",
 ]);
 
@@ -482,7 +489,7 @@ Usage:
   cswarm accept <invitation-token> [--url <url> --anon-key <key>]  # unsafe: shell history/process list
   cswarm principal create [--url <url> --anon-key <key>] [--workspace-id <uuid>] --name <name>
   cswarm principal revoke [--url <url> --anon-key <key>] [--workspace-id <uuid>] --principal-id <uuid>
-  cswarm token mint [--url <url> --anon-key <key>] [--workspace-id <uuid>] --principal-id <uuid> --run-id <uuid> --task-id <uuid> --epoch <n> [--ttl-ms <ms>]
+  cswarm token mint [--url <url> --anon-key <key>] [--workspace-id <uuid>] --principal-id <uuid> --run-id <uuid> --task-id <uuid> --epoch <n> [--ttl-ms <ms>] [--renewal-horizon-days <1..90> | --standing --confirm-standing]
   cswarm token revoke [--url <url> --anon-key <key>] [--workspace-id <uuid>] --token-id <uuid>
   cswarm token revoke ${requiredAgentCredential} [--url <url> --anon-key <key>] --workspace-id <uuid> [--token-id <uuid>]
   cswarm link new [--url <url> --anon-key <key>] [--workspace-id <uuid>] --task-id <uuid> [--ttl-ms <ms>] [--site <origin>] [--json]
@@ -1254,7 +1261,7 @@ async function runStatus(args: Arguments): Promise<void> {
     (project) => project.workspace_id === selectedWorkspaceId,
   );
   if (!selected) throw new WorkspaceUnavailableError();
-  const [status, signalStatus] = await Promise.all([
+  const [baseStatus, signalStatus, renewalGrants] = await Promise.all([
     directory.status(human, selectedWorkspaceId),
     settleSignalStatus(
       readSignals(cloud, {
@@ -1277,7 +1284,24 @@ async function runStatus(args: Arguments): Promise<void> {
         limit: 100,
       }),
     ),
+    readRenewalGrants(
+      cloud,
+      human.accessToken,
+      selectedWorkspaceId,
+    ),
   ]);
+  const grantsByPrincipal = new Map(
+    renewalGrants.map((grant) => [grant.principal_id, grant]),
+  );
+  const status: WorkspaceStatus = {
+    ...baseStatus,
+    agents: baseStatus.agents.map((agent) => ({
+      ...agent,
+      ...(grantsByPrincipal.has(agent.principal_id)
+        ? { renewal_grant: grantsByPrincipal.get(agent.principal_id)! }
+        : {}),
+    })),
+  };
   const statusWarnings: Array<
     WorkspaceWarning | { code: "signal_status_unavailable"; message: string }
   > = [...warnings];
@@ -1298,6 +1322,7 @@ async function runStatus(args: Arguments): Promise<void> {
       selected_project: selected,
       members: status.members,
       agents: status.agents,
+      renewal_grants: renewalGrants,
       tasks: status.tasks,
       recent_signals: signalStatus.recentSignals,
       inbox_asks_waiting: signalStatus.waitingAsks,
@@ -1808,6 +1833,8 @@ async function runToken(args: Arguments): Promise<void> {
       "epoch",
       "ttl-ms",
       "renewal-horizon-days",
+      "standing",
+      "confirm-standing",
       /* `--json` accepted, no effect — see the note on `runInvite`. D-064. */
       "json",
     ],
@@ -1815,6 +1842,20 @@ async function runToken(args: Arguments): Promise<void> {
   );
   if (action !== "mint") {
     throw new Error(`unknown token command: ${action ?? "(missing)"}`);
+  }
+  const standing = args.has("standing");
+  if (standing && !args.has("confirm-standing")) {
+    throw new UsageError(
+      "--standing requires --confirm-standing because the grant has no expiry and must be revoked to stop renewal",
+    );
+  }
+  if (!standing && args.has("confirm-standing")) {
+    throw new UsageError("--confirm-standing is valid only with --standing");
+  }
+  if (standing && args.optional("renewal-horizon-days") !== undefined) {
+    throw new UsageError(
+      "--standing and --renewal-horizon-days conflict: a standing grant has no renewal horizon",
+    );
   }
   const cloud = await target(args);
   const human = await humanCredential(args, cloud);
@@ -1824,17 +1865,17 @@ async function runToken(args: Arguments): Promise<void> {
   const runId = args.required("run-id");
   // Days, not milliseconds: this is the one renewal number a person chooses, and the
   // honest unit for "how long before I am asked again" is days.
-  const horizonMs = args.optional("renewal-horizon-days") === undefined
+  const horizonMs = standing
+    ? null
+    : args.optional("renewal-horizon-days") === undefined
     ? RENEWAL_HORIZON_DEFAULT_MS
     : integer(args, "renewal-horizon-days", {
       minimum: 1,
       maximum: Math.floor(RENEWAL_HORIZON_MAX_MS / 86_400_000),
     }) * 86_400_000;
   /* No separate grant call. The server creates the renewal grant in the same transaction
-     as the token, so a successful mint IS a grant — see the removed createRenewalGrant
-     above for why this used to be its own request and why that was wrong. The horizon is
-     still read from the flag because it is reported to the operator below; the server
-     applies its own default and ceiling regardless of what is asked for here. */
+     as the token, so a successful mint IS a grant. The selected horizon is part of that
+     same request and is enforced by the server; standing carries no horizon. */
   const response = acceptedConnect(
     "token mint",
     await sendConnectWithPending(
@@ -1848,6 +1889,8 @@ async function runToken(args: Arguments): Promise<void> {
         task_id: args.required("task-id"),
         epoch: integer(args, "epoch"),
         device_id: human.deviceId,
+        renewal_kind: standing ? "standing" : "timeboxed",
+        ...(horizonMs === null ? {} : { renewal_horizon_ms: horizonMs }),
         ...(ttl === undefined
           ? {}
           : {
@@ -1874,7 +1917,8 @@ async function runToken(args: Arguments): Promise<void> {
   process.stderr.write(
     describeMintRenewal(
       expiresAt !== null,
-      Math.round(horizonMs / 86_400_000),
+      Math.round((horizonMs ?? RENEWAL_HORIZON_DEFAULT_MS) / 86_400_000),
+      standing ? "standing" : "timeboxed",
     ),
   );
   printJson(agentCredentialArtifact({
@@ -3186,6 +3230,11 @@ async function runWhoami(args: Arguments): Promise<void> {
     selected.bearer,
     selected.selectedWorkspace,
   );
+  const renewalGrants = await readRenewalGrants(
+    cloud,
+    selected.bearer,
+    selected.selectedWorkspace,
+  );
   const identity = directory.identity;
   if (identity === undefined) {
     throw new Error(
@@ -3229,6 +3278,9 @@ async function runWhoami(args: Arguments): Promise<void> {
     owner_user_id: identity.owner_user_id,
     owner_display_name: ownerName,
     credential_metadata_match: artifactMatches,
+    renewal_grant: renewalGrants.find(
+      (grant) => grant.principal_id === identity.principal_id,
+    ) ?? null,
   };
   if (args.has("json")) {
     printJson(output);
@@ -3238,7 +3290,10 @@ async function runWhoami(args: Arguments): Promise<void> {
     `You are ${displayName} (${identity.principal_id}).\n` +
       `Credential valid now: yes.\n` +
       `Workspace: ${identity.workspace_id}.\n` +
-      `Owner: ${ownerName} (${identity.owner_user_id}).\n`,
+      `Owner: ${ownerName} (${identity.owner_user_id}).\n` +
+      (output.renewal_grant === null
+        ? "Grant: no current renewal grant is visible. Next step: ask a workspace owner to mint a new credential.\n"
+        : `${describeRenewalGrant(output.renewal_grant).join("\n")}\n`),
   );
 }
 
@@ -3569,7 +3624,8 @@ async function runInboxFollowCommand(args: Arguments): Promise<void> {
       isCredentialFailure: (error) =>
         isFollowCredentialFailure(error) ||
         error instanceof RenewalReauthorisationRequired ||
-        error instanceof RenewalRevoked,
+        error instanceof RenewalRevoked ||
+        error instanceof RenewalSuspended,
       arm: async ({ after, limit }) => {
         // Renewal is checked on every arm for agent credentials; humans reuse
         // the session bearer already resolved for this process.
@@ -4116,7 +4172,7 @@ export function listenerFailureMessage(
     return `the deployed read service lacks the safe listener capability (${code}); update/deploy the read edge before starting a model`;
   }
   if (code === "credential_stopped") {
-    return "the agent credential expired, was revoked, or reached its renewal horizon; ask the signed-in workspace owner for a new onboarding prompt";
+    return "the agent credential expired, was revoked, reached its renewal horizon, or its grant was suspended; run cswarm whoami with this credential to see the grant state, then follow its next step";
   }
   if (code === "permission_canary_failed") {
     if (provider === "claude") {
@@ -4792,7 +4848,7 @@ async function runListenStart(args: Arguments): Promise<void> {
           : "denied. This worker can reply to messages but cannot do anything it must ask " +
             "permission for; restart with --permissions allow if that is not what you want"
       }. The same permission mode applies to every sender relation.\n` +
-      "The short credential rotates while this process remains alive and secure local state is available; a person reauthorises after the 30-day horizon.\n" +
+      "The short credential rotates while this process remains alive and secure local state is available. Run cswarm whoami with this credential to see whether its grant is timeboxed or standing.\n" +
       routingNote +
       hostNote +
       `Use listen status/stop with --workspace-id ${workspaceId} --principal-id ${principalId} and the same Cloud target.\n`,
@@ -5900,7 +5956,8 @@ main().catch((error) => {
   // person their agent broke. It says instead what happened and what to run.
   if (
     error instanceof RenewalReauthorisationRequired ||
-    error instanceof RenewalRevoked
+    error instanceof RenewalRevoked ||
+    error instanceof RenewalSuspended
   ) {
     process.stderr.write(`${safeParagraph(error.message)}\n`);
     process.exitCode = 1;

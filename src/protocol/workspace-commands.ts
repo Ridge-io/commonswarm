@@ -144,7 +144,9 @@ export type WorkspaceCommand =
 /** Bounded renewal grant created at human `join`/`spawn` (§2.3). */
 export interface RenewalGrantFacts {
   renewal_grant_id: string;
-  max_successors: number;
+  kind: 'timeboxed' | 'standing';
+  /** NULL means unlimited and is valid only for a standing grant. */
+  max_successors: number | null;
   successors_used: number;
   /**
    * Successors this grant issued that were never used, because the response
@@ -158,9 +160,10 @@ export interface RenewalGrantFacts {
    * a record of something that happened, never an unwinding.
    */
   successors_stranded: number;
-  /** Hard continuous-renewal horizon; past it a human must reauthorise. */
-  horizon_expires_at: number;
+  /** NULL means no horizon and is valid only for a standing grant. */
+  horizon_expires_at: number | null;
   revoked_at: number | null;
+  suspended_at: number | null;
 }
 
 /** Transaction-time renewal facts, all read from server state (§2.3). */
@@ -193,6 +196,19 @@ export interface RenewalFacts {
   predecessor_pending: boolean;
   /** Any token in the lineage is revoked, or the lineage carries a tombstone. */
   lineage_revoked: boolean;
+  /**
+   * Stable result of the database's lazy standing-grant check. It can persist an
+   * idle suspension or new-host stamp before the pure reducer refuses renewal.
+   */
+  grant_preflight_code:
+    | 'renewal_grant_not_found'
+    | 'renewal_grant_revoked'
+    | 'renewal_grant_suspended'
+    | 'renewal_idle_suspended'
+    | 'renewal_horizon_reached'
+    | 'renewal_device_unavailable'
+    | 'renewal_device_mismatch'
+    | null;
 }
 
 export interface DecideWorkspaceCtx {
@@ -254,6 +270,10 @@ export type RenewalRejectionReason =
   | 'renewal_grant_not_found'
   | 'renewal_grant_mismatch'
   | 'renewal_grant_revoked'
+  | 'renewal_grant_suspended'
+  | 'renewal_idle_suspended'
+  | 'renewal_device_unavailable'
+  | 'renewal_device_mismatch'
   | 'renewal_horizon_reached'
   | 'renewal_horizon_invalid'
   | 'renewal_successors_exhausted'
@@ -1095,20 +1115,75 @@ export function decideWorkspace(
       if (grant.revoked_at !== null) {
         return domain(ctx, cmd.kind, 'renewal_grant_revoked', 'renewal grant is revoked');
       }
-      // A grant row whose horizon exceeds the maximum is refused rather than
-      // honoured: the cap has to hold even against a corrupted or hostile row.
+      if (facts.grant_preflight_code === 'renewal_idle_suspended') {
+        return domain(
+          ctx,
+          cmd.kind,
+          'renewal_idle_suspended',
+          'standing grant was idle for more than 14 days and is now suspended',
+        );
+      }
       if (
-        !Number.isFinite(grant.horizon_expires_at)
-        || grant.horizon_expires_at - ctx.now > RENEWAL_HORIZON_MAX_MS
+        facts.grant_preflight_code === 'renewal_grant_suspended'
+        || grant.suspended_at !== null
       ) {
         return domain(
           ctx,
           cmd.kind,
-          'renewal_horizon_invalid',
-          'renewal horizon exceeds the 90-day maximum',
+          'renewal_grant_suspended',
+          'renewal grant is suspended; an owner must resume or revoke it',
         );
       }
-      if (grant.horizon_expires_at <= ctx.now) {
+      if (facts.grant_preflight_code === 'renewal_device_unavailable') {
+        return domain(
+          ctx,
+          cmd.kind,
+          'renewal_device_unavailable',
+          'the bound grant cannot verify a device for this renewal',
+        );
+      }
+      if (facts.grant_preflight_code === 'renewal_device_mismatch') {
+        return domain(
+          ctx,
+          cmd.kind,
+          'renewal_device_mismatch',
+          'the renewal device does not match the grant binding',
+        );
+      }
+      if (
+        grant.kind === 'timeboxed'
+        && facts.grant_preflight_code === 'renewal_horizon_reached'
+      ) {
+        return domain(
+          ctx,
+          cmd.kind,
+          'renewal_horizon_reached',
+          'the continuous-renewal horizon has passed; a human must reauthorise this run',
+        );
+      }
+      // A timeboxed row whose horizon exceeds the maximum, or a row whose
+      // nullability disagrees with its kind, is refused rather than honoured.
+      const timeboxedHorizonValid = grant.kind === 'timeboxed'
+        && Number.isFinite(grant.horizon_expires_at)
+        && grant.horizon_expires_at !== null
+        && grant.max_successors !== null
+        && grant.horizon_expires_at - ctx.now <= RENEWAL_HORIZON_MAX_MS;
+      const standingShapeValid = grant.kind === 'standing'
+        && grant.horizon_expires_at === null
+        && grant.max_successors === null;
+      if (!timeboxedHorizonValid && !standingShapeValid) {
+        return domain(
+          ctx,
+          cmd.kind,
+          'renewal_horizon_invalid',
+          'renewal grant kind, horizon, or successor ceiling is invalid',
+        );
+      }
+      if (
+        grant.kind === 'timeboxed'
+        && grant.horizon_expires_at !== null
+        && grant.horizon_expires_at <= ctx.now
+      ) {
         return domain(
           ctx,
           cmd.kind,
@@ -1182,10 +1257,15 @@ export function decideWorkspace(
       const effectiveUsed = grant.successors_used - grant.successors_stranded;
       const successorsUsed = replacing ? effectiveUsed - 1 : effectiveUsed;
       if (
-        !Number.isInteger(grant.max_successors)
-        || !Number.isInteger(grant.successors_used)
+        !Number.isInteger(grant.successors_used)
         || !Number.isInteger(grant.successors_stranded)
-        || successorsUsed >= grant.max_successors
+        || (
+          grant.max_successors !== null
+          && (
+            !Number.isInteger(grant.max_successors)
+            || successorsUsed >= grant.max_successors
+          )
+        )
       ) {
         return domain(
           ctx,
@@ -1216,10 +1296,12 @@ export function decideWorkspace(
       }
       // The successor never outlives the horizon: the last renewal before it
       // is short, not a free hour on the far side of the checkpoint.
-      const expires_at = Math.min(
-        ctx.now + AGENT_TOKEN_DEFAULT_TTL_MS,
-        grant.horizon_expires_at,
-      );
+      const expires_at = grant.kind === 'standing'
+        ? ctx.now + AGENT_TOKEN_DEFAULT_TTL_MS
+        : Math.min(
+          ctx.now + AGENT_TOKEN_DEFAULT_TTL_MS,
+          grant.horizon_expires_at!,
+        );
       return accept([
         env(ctx, 'AgentTokenMinted', {
           token_id: cmd.successor_token_id,

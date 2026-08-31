@@ -207,8 +207,11 @@ test("agent edge reaches the definer before installing human JWT claims", async 
     edge,
     /body\.resource === "delivery_receipts"[\s\S]*exactKeys\(body, \["resource", "workspace_id", "signal_id"\]\)/,
   );
-  const call = edge.indexOf("SELECT swarm_read.signal_delivery_receipts(");
-  const claims = edge.indexOf("'request.jwt.claims'");
+  const agentPathStart = edge.indexOf('setPhase("credential_lookup")');
+  const agentPath = edge.slice(agentPathStart);
+  const call = agentPath.indexOf("SELECT swarm_read.signal_delivery_receipts(");
+  const claims = agentPath.indexOf("'request.jwt.claims'");
+  assert.ok(agentPathStart >= 0, "the read edge must have an agent-authenticated path");
   assert.ok(call >= 0, "the read edge must call the receipt definer");
   assert.ok(claims > call, "agent receipt auth must run before human JWT claims exist");
   assert.match(

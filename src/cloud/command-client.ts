@@ -57,6 +57,9 @@ export interface CommandHttpResponse extends StoredResponse {
    */
   capability_token?: string;
   expires_at?: string;
+  grant_kind?: "timeboxed" | "standing";
+  horizon_expires_at?: string | null;
+  successors_remaining?: number | null;
   revoked_at?: string;
 }
 
@@ -83,6 +86,8 @@ export type ConnectCommand =
     epoch: number;
     device_id: string;
     ttl_ms?: number;
+    renewal_kind?: "timeboxed" | "standing";
+    renewal_horizon_ms?: number;
   }
   | { kind: "revoke_agent_token"; token_id: string };
 

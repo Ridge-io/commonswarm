@@ -606,44 +606,80 @@ export interface AgentAccessStatus {
   expiresAt: string;
   firstUsedAt: string | null;
   revokedAt: string | null;
+  grantId: string;
+  grantKind: "timeboxed" | "standing";
+  horizonExpiresAt: string | null;
+  boundDeviceId: string | null;
+  lastUsedAt: string | null;
+  lastUsedDeviceId: string | null;
+  lastUsedFrom: string | null;
+  newHostAt: string | null;
+  suspendedAt: string | null;
+  grantRevokedAt: string | null;
 }
 
-/** Initial agent credentials visible to their owner or a workspace Owner/Admin. */
+/** Member-scoped grant status through the read edge; no direct table query. */
 export async function agentAccessStatuses(
   workspaceId: string,
   tokenId?: string,
 ): Promise<AgentAccessStatus[]> {
-  const c = client();
-  if (!c) throw new NoDeployment();
-  const { data, error } = await readWithDeadline(
-    "agent access status",
-    (signal) => {
-      let query = c
-        .schema("swarm_read")
-        .from("agent_access_status")
-        .select(
-          "workspace_id,principal_id,owner_user_id,agent_name,model,token_id,issued_at,expires_at,first_used_at,revoked_at",
-        )
-        .eq("workspace_id", workspaceId)
-        .order("issued_at", { ascending: false })
-        .limit(tokenId ? 1 : 100);
-      if (tokenId) query = query.eq("token_id", tokenId);
-      return query.abortSignal(signal);
-    },
-  );
-  if (error) throw new Error(error.message);
-  return (data ?? []).map((row) => ({
-    workspaceId: String(row.workspace_id),
-    principalId: String(row.principal_id),
-    ownerUserId: String(row.owner_user_id),
-    agentName: String(row.agent_name),
-    model: row.model === null ? null : String(row.model),
-    tokenId: String(row.token_id),
-    issuedAt: String(row.issued_at),
-    expiresAt: String(row.expires_at),
-    firstUsedAt: row.first_used_at === null ? null : String(row.first_used_at),
-    revokedAt: row.revoked_at === null ? null : String(row.revoked_at),
-  }));
+  const d = deployment();
+  if (!d) throw new NoDeployment();
+  const session = await currentSession();
+  if (!session) throw new SessionExpired();
+  const deadline = requestDeadline();
+  try {
+    const response = await fetch(`${d.url}/functions/v1/read`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${session.access_token}`,
+        apikey: d.anonKey,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        resource: "renewal_grants",
+        workspace_id: workspaceId,
+      }),
+      signal: deadline.controller.signal,
+    });
+    if (!response.ok) {
+      throw new Error(`Grant status read failed (${response.status}).`);
+    }
+    const body = await response.json() as { grants?: Array<Record<string, unknown>> };
+    if (!Array.isArray(body.grants)) {
+      throw new Error("Grant status read returned malformed data.");
+    }
+    return body.grants
+      .map((row): AgentAccessStatus => ({
+        workspaceId,
+        principalId: String(row.principal_id),
+        ownerUserId: String(row.owner_user_id),
+        agentName: String(row.agent_name),
+        model: row.model === null ? null : String(row.model),
+        tokenId: String(row.token_id),
+        issuedAt: String(row.issued_at),
+        expiresAt: String(row.token_expires_at),
+        firstUsedAt: row.first_used_at === null ? null : String(row.first_used_at),
+        revokedAt: row.token_revoked_at === null ? null : String(row.token_revoked_at),
+        grantId: String(row.renewal_grant_id),
+        grantKind: row.kind === "standing" ? "standing" : "timeboxed",
+        horizonExpiresAt: row.horizon_expires_at === null
+          ? null
+          : String(row.horizon_expires_at),
+        boundDeviceId: row.bound_device_id === null ? null : String(row.bound_device_id),
+        lastUsedAt: row.last_used_at === null ? null : String(row.last_used_at),
+        lastUsedDeviceId: row.last_used_device_id === null
+          ? null
+          : String(row.last_used_device_id),
+        lastUsedFrom: row.last_used_from === null ? null : String(row.last_used_from),
+        newHostAt: row.new_host_at === null ? null : String(row.new_host_at),
+        suspendedAt: row.suspended_at === null ? null : String(row.suspended_at),
+        grantRevokedAt: row.revoked_at === null ? null : String(row.revoked_at),
+      }))
+      .filter((row) => tokenId === undefined || row.tokenId === tokenId);
+  } finally {
+    deadline.clear();
+  }
 }
 
 export async function removeWorkspaceMember(

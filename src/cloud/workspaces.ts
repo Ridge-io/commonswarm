@@ -1,5 +1,9 @@
 import type { CloudTarget } from "./config.js";
 import { sanitizeDisplayLabel } from "./invite-link.js";
+import {
+  describeRenewalGrant,
+  type RenewalGrantStatus,
+} from "./renewal-grants.js";
 import type {
   CredentialProfile,
   CredentialStore,
@@ -77,6 +81,7 @@ export interface WorkspaceAgent {
   owner_name: string | null;
   revoked: boolean;
   this_machine: boolean;
+  renewal_grant?: RenewalGrantStatus;
 }
 
 export interface WorkspaceHolder {
@@ -846,6 +851,11 @@ export function renderStatus(options: RenderStatusOptions): string {
           agent.this_machine ? " — this machine" : ""
         }`,
       );
+      if (agent.renewal_grant !== undefined) {
+        for (const grantLine of describeRenewalGrant(agent.renewal_grant)) {
+          lines.push(`  ${grantLine}`);
+        }
+      }
     }
   }
   lines.push("", "Tasks:");

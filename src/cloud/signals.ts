@@ -1969,7 +1969,8 @@ export function isFollowCredentialFailure(error: unknown): boolean {
   }
   if (
     error.name === "RenewalReauthorisationRequired" ||
-    error.name === "RenewalRevoked"
+    error.name === "RenewalRevoked" ||
+    error.name === "RenewalSuspended"
   ) {
     return true;
   }

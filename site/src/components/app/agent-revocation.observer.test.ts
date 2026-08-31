@@ -30,7 +30,8 @@ test("browser helpers keep identity removal distinct from pending-token cancella
   );
   assert.match(source, /stream: \{ kind: "workspace" \}/);
   assert.match(source, /\{ kind: "revoke_agent_token", token_id: tokenId \}/);
-  assert.match(source, /agent_access_status/);
+  assert.match(source, /resource: "renewal_grants"/);
+  assert.doesNotMatch(source, /\.from\("agent_access_status"\)/);
 });
 
 test("Done on connect panel forgets the visible secret without revoking", async () => {

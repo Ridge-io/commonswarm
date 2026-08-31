@@ -237,13 +237,19 @@ const ARTIFACT = JSON.stringify({
 test("whoami trusts the live credential identity and file input keeps the token out of ps", async () => {
   let releaseResponse: (() => void) | undefined;
   let requestReached: (() => void) | undefined;
+  let requestCount = 0;
   const reached = new Promise<void>((resolveReached) => requestReached = resolveReached);
   const server = createServer(async (request, response) => {
     assert.equal(request.headers.authorization, `Bearer ${AGENT_TOKEN}`);
     request.resume();
+    response.writeHead(200, { "content-type": "application/json" });
+    requestCount += 1;
+    if (requestCount > 1) {
+      response.end(JSON.stringify({ grants: [] }));
+      return;
+    }
     requestReached?.();
     await new Promise<void>((resolveRelease) => releaseResponse = resolveRelease);
-    response.writeHead(200, { "content-type": "application/json" });
     response.end(JSON.stringify({
       members: [{ user_id: OWNER, display_name: "Operator" }],
       agents: [{
@@ -353,10 +359,16 @@ test("agent token file accepts 0600, refuses 0644, and missing has a distinct co
 });
 
 test("--agent-token-stdin still authenticates the same whoami path", async () => {
+  let requestCount = 0;
   const server = createServer((request, response) => {
     assert.equal(request.headers.authorization, `Bearer ${AGENT_TOKEN}`);
     request.resume();
     response.writeHead(200, { "content-type": "application/json" });
+    requestCount += 1;
+    if (requestCount > 1) {
+      response.end(JSON.stringify({ grants: [] }));
+      return;
+    }
     response.end(JSON.stringify({
       members: [{ user_id: OWNER, display_name: "Operator" }],
       agents: [{

@@ -73,9 +73,16 @@ export const RENEWAL_HORIZON_MAX_MS = 90 * 24 * 60 * 60 * 1_000;
 export function describeMintRenewal(
   hasExpiry: boolean,
   horizonDays: number,
+  kind: "timeboxed" | "standing" = "timeboxed",
 ): string {
   if (!hasExpiry) {
     return "This credential does not renew itself; re-issue one by hand when it expires.\n";
+  }
+  if (kind === "standing") {
+    return (
+      "Standing grant created. This does not expire. Revoke is the only kill switch. " +
+      "The bearer credential still rotates before expiry while a cswarm process remains running and secure local state is available.\n"
+    );
   }
   const days = Number.isFinite(horizonDays) && horizonDays > 0
     ? Math.round(horizonDays)
@@ -149,6 +156,14 @@ export class RenewalReauthorisationRequired extends Error {
 /** The lineage was revoked, or the predecessor no longer authenticates. Fail closed. */
 export class RenewalRevoked extends Error {
   override name = "RenewalRevoked";
+  constructor(readonly code: string, message: string) {
+    super(message);
+  }
+}
+
+/** A standing grant lapsed or was suspended. An owner must act before renewal continues. */
+export class RenewalSuspended extends Error {
+  override name = "RenewalSuspended";
   constructor(readonly code: string, message: string) {
     super(message);
   }
@@ -493,6 +508,17 @@ export async function requestSuccessor(options: {
    * RenewalRejectionReason union. */
   if (body.status === "rejected") {
     const reason = typeof body.reason === "string" ? body.reason : "unknown";
+    if (
+      reason === "renewal_idle_suspended" ||
+      reason === "renewal_grant_suspended"
+    ) {
+      throw new RenewalSuspended(
+        reason,
+        reason === "renewal_idle_suspended"
+          ? "This standing grant was idle for more than 14 days, so CommonSwarm suspended it and refused renewal. Ask a workspace owner to revoke this grant and mint a new credential before this agent continues."
+          : "This renewal grant is suspended, so CommonSwarm refused renewal. Ask a workspace owner to revoke this grant and mint a new credential before this agent continues.",
+      );
+    }
     if (reason === "renewal_horizon_reached") {
       throw new RenewalReauthorisationRequired(
         "horizon_reached",
@@ -524,6 +550,18 @@ export async function requestSuccessor(options: {
       throw new RenewalRevoked(
         reason,
         "This agent credential expired before it could renew itself. Ask whoever set this agent up for a new one; nothing that was already posted is affected.",
+      );
+    }
+    if (
+      reason === "renewal_device_unavailable" ||
+      reason === "renewal_device_mismatch"
+    ) {
+      throw new RenewalRefused(
+        200,
+        reason,
+        reason === "renewal_device_unavailable"
+          ? "The standing grant is device-bound, but this renewal carried no device identity. Ask a workspace owner to revoke this grant and mint a new credential on the intended device."
+          : "The standing grant is bound to another device, so CommonSwarm refused renewal. Ask a workspace owner to revoke this grant and mint a new credential on the intended device.",
       );
     }
     throw new RenewalRefused(
@@ -824,7 +862,10 @@ export class AgentCredentialSession {
       if (error instanceof RenewalUnsupported) {
         this.unsupported = true;
         this.warn(`${(error as Error).message}.`);
-      } else if (error instanceof RenewalReauthorisationRequired) {
+      } else if (
+        error instanceof RenewalReauthorisationRequired ||
+        error instanceof RenewalSuspended
+      ) {
         throw error;
       } else {
         this.warn(

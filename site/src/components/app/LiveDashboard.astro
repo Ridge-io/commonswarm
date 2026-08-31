@@ -880,6 +880,10 @@ import "../../styles/tokens.css";
     rosterAgentsFromRows,
   } from "../../lib/participant-rail";
   import { buildAgentModelEditor } from "../../lib/agent-model-editor";
+  import {
+    grantRiskBadge,
+    STANDING_GRANT_COPY,
+  } from "../../lib/standing-grants";
   import { renderFileList, type DisplayFile } from "../../lib/file-list";
   import {
     MESSAGE_COLLAPSE_LINES,
@@ -2415,6 +2419,9 @@ import "../../styles/tokens.css";
       }
       const me = members.find((member) => member.userId === session?.user.id);
       for (const agent of visible) {
+        const grant = accessStatuses.find(
+          (candidate) => candidate.principalId === agent.principalId,
+        );
         const row = document.createElement("li");
         row.className = "dashboard__agent";
         row.dataset.agentRow = agent.principalId;
@@ -2434,6 +2441,49 @@ import "../../styles/tokens.css";
             people.get(agent.ownerUserId) ?? "Workspace member"
           }`;
         copy.append(name, state);
+        if (grant) {
+          const grantLine = document.createElement("span");
+          grantLine.className = "dashboard__grant-state";
+          grantLine.textContent = grant.grantKind === "standing"
+            ? `Standing · last used ${
+              grant.lastUsedAt === null
+                ? "never"
+                : formatTime(grant.lastUsedAt).relative
+            }`
+            : `Timeboxed · horizon ${
+              grant.horizonExpiresAt === null
+                ? "not available"
+                : formatTime(grant.horizonExpiresAt).relative
+            } · last used ${
+              grant.lastUsedAt === null
+                ? "never"
+                : formatTime(grant.lastUsedAt).relative
+            }`;
+          copy.append(grantLine);
+          if (grant.grantKind === "standing") {
+            const standingCopy = document.createElement("span");
+            standingCopy.className = "dashboard__grant-standing-copy";
+            standingCopy.textContent = STANDING_GRANT_COPY;
+            copy.append(standingCopy);
+          }
+          const risk = grantRiskBadge({
+            kind: grant.grantKind,
+            horizonExpiresAt: grant.horizonExpiresAt,
+            boundDeviceId: grant.boundDeviceId,
+            lastUsedAt: grant.lastUsedAt,
+            issuedAt: grant.issuedAt,
+            newHostAt: grant.newHostAt,
+            suspendedAt: grant.suspendedAt,
+            revokedAt: grant.grantRevokedAt ?? grant.revokedAt,
+          });
+          if (risk !== null) {
+            const badge = document.createElement("span");
+            badge.className = "dashboard__grant-risk";
+            badge.textContent = risk;
+            badge.dataset.grantRisk = risk;
+            copy.append(badge);
+          }
+        }
         row.append(avatar, copy);
         /* Model is editable under the SAME gate as removal (owner/admin any
            agent, member their own) — the human mirror of the agent's own
@@ -2498,6 +2548,42 @@ import "../../styles/tokens.css";
             agent.ownerUserId === me.userId
           ),
         );
+        if (
+          mayRemove &&
+          !sampleMode &&
+          grant &&
+          grant.grantRevokedAt === null &&
+          grant.revokedAt === null
+        ) {
+          const revokeButton = document.createElement("button");
+          revokeButton.type = "button";
+          revokeButton.className = "dashboard__text-button";
+          revokeButton.textContent = "Revoke grant";
+          revokeButton.dataset.revokeGrant = grant.grantId;
+          revokeButton.addEventListener("click", async () => {
+            if (!session || !activeWorkspaceId) return;
+            if (!window.confirm(`Revoke ${agent.name}’s renewal grant? The agent will stop when its current bearer expires.`)) return;
+            revokeButton.disabled = true;
+            try {
+              await revokeAgentToken(
+                session,
+                uuid(),
+                activeWorkspaceId,
+                grant.tokenId,
+              );
+              await openWorkspace(activeWorkspaceId);
+            } catch (error) {
+              const errorTarget = one<HTMLElement>("[data-agent-error]");
+              if (errorTarget) {
+                errorTarget.textContent = readableError(error);
+                errorTarget.hidden = false;
+              }
+            } finally {
+              revokeButton.disabled = false;
+            }
+          });
+          row.append(revokeButton);
+        }
         if (mayRemove && !sampleMode) {
           const button = document.createElement("button");
           button.type = "button";
@@ -4023,6 +4109,16 @@ import "../../styles/tokens.css";
           expiresAt: new Date(now + 7 * 60 * 60_000).toISOString(),
           firstUsedAt: null,
           revokedAt: null,
+          grantId: "sample-grant-river",
+          grantKind: "standing",
+          horizonExpiresAt: null,
+          boundDeviceId: "sample-device-river",
+          lastUsedAt: new Date(now - 50 * 60_000).toISOString(),
+          lastUsedDeviceId: "sample-device-river",
+          lastUsedFrom: null,
+          newHostAt: null,
+          suspendedAt: null,
+          grantRevokedAt: null,
         },
         {
           workspaceId: "sample-design-studio",
@@ -4035,6 +4131,16 @@ import "../../styles/tokens.css";
           expiresAt: new Date(now + 6 * 60 * 60_000).toISOString(),
           firstUsedAt: new Date(now - 82 * 60_000).toISOString(),
           revokedAt: new Date(now - 12 * 60_000).toISOString(),
+          grantId: "sample-grant-orbit",
+          grantKind: "timeboxed",
+          horizonExpiresAt: new Date(now + 20 * 24 * 60 * 60_000).toISOString(),
+          boundDeviceId: null,
+          lastUsedAt: new Date(now - 82 * 60_000).toISOString(),
+          lastUsedDeviceId: null,
+          lastUsedFrom: null,
+          newHostAt: null,
+          suspendedAt: null,
+          grantRevokedAt: new Date(now - 12 * 60_000).toISOString(),
         },
         {
           workspaceId: "sample-design-studio",
@@ -4047,6 +4153,16 @@ import "../../styles/tokens.css";
           expiresAt: new Date(now + 6 * 60 * 60_000).toISOString(),
           firstUsedAt: new Date(now - 68 * 60_000).toISOString(),
           revokedAt: null,
+          grantId: "sample-grant-lumen",
+          grantKind: "timeboxed",
+          horizonExpiresAt: new Date(now + 3 * 24 * 60 * 60_000).toISOString(),
+          boundDeviceId: null,
+          lastUsedAt: new Date(now - 68 * 60_000).toISOString(),
+          lastUsedDeviceId: null,
+          lastUsedFrom: null,
+          newHostAt: null,
+          suspendedAt: null,
+          grantRevokedAt: null,
         },
       ];
       signals = [
@@ -6302,6 +6418,24 @@ import "../../styles/tokens.css";
   .dashboard__agent-empty {
     color: var(--text-muted);
     font-size: var(--t-xs);
+  }
+
+  .dashboard__agent-copy > .dashboard__grant-standing-copy {
+    color: var(--text);
+    line-height: 1.4;
+  }
+
+  .dashboard__agent-copy > .dashboard__grant-risk {
+    inline-size: max-content;
+    margin-block-start: var(--s-1);
+    padding: 0.1rem 0.35rem;
+    color: var(--warning-text, var(--text));
+    background: var(--warning-dim, var(--elev-3));
+    border: 1px solid var(--warning, var(--border-strong));
+    border-radius: 999px;
+    font-family: var(--font-mono);
+    font-size: 0.62rem;
+    font-weight: var(--weight-semibold);
   }
 
   .dashboard__agent-empty {

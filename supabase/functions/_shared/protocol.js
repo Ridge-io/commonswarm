@@ -1401,15 +1401,57 @@ function decideWorkspace(state, cmd, ctx) {
       if (grant.revoked_at !== null) {
         return domain2(ctx, cmd.kind, "renewal_grant_revoked", "renewal grant is revoked");
       }
-      if (!Number.isFinite(grant.horizon_expires_at) || grant.horizon_expires_at - ctx.now > RENEWAL_HORIZON_MAX_MS) {
+      if (facts.grant_preflight_code === "renewal_idle_suspended") {
+        return domain2(
+          ctx,
+          cmd.kind,
+          "renewal_idle_suspended",
+          "standing grant was idle for more than 14 days and is now suspended"
+        );
+      }
+      if (facts.grant_preflight_code === "renewal_grant_suspended" || grant.suspended_at !== null) {
+        return domain2(
+          ctx,
+          cmd.kind,
+          "renewal_grant_suspended",
+          "renewal grant is suspended; an owner must resume or revoke it"
+        );
+      }
+      if (facts.grant_preflight_code === "renewal_device_unavailable") {
+        return domain2(
+          ctx,
+          cmd.kind,
+          "renewal_device_unavailable",
+          "the bound grant cannot verify a device for this renewal"
+        );
+      }
+      if (facts.grant_preflight_code === "renewal_device_mismatch") {
+        return domain2(
+          ctx,
+          cmd.kind,
+          "renewal_device_mismatch",
+          "the renewal device does not match the grant binding"
+        );
+      }
+      if (grant.kind === "timeboxed" && facts.grant_preflight_code === "renewal_horizon_reached") {
+        return domain2(
+          ctx,
+          cmd.kind,
+          "renewal_horizon_reached",
+          "the continuous-renewal horizon has passed; a human must reauthorise this run"
+        );
+      }
+      const timeboxedHorizonValid = grant.kind === "timeboxed" && Number.isFinite(grant.horizon_expires_at) && grant.horizon_expires_at !== null && grant.max_successors !== null && grant.horizon_expires_at - ctx.now <= RENEWAL_HORIZON_MAX_MS;
+      const standingShapeValid = grant.kind === "standing" && grant.horizon_expires_at === null && grant.max_successors === null;
+      if (!timeboxedHorizonValid && !standingShapeValid) {
         return domain2(
           ctx,
           cmd.kind,
           "renewal_horizon_invalid",
-          "renewal horizon exceeds the 90-day maximum"
+          "renewal grant kind, horizon, or successor ceiling is invalid"
         );
       }
-      if (grant.horizon_expires_at <= ctx.now) {
+      if (grant.kind === "timeboxed" && grant.horizon_expires_at !== null && grant.horizon_expires_at <= ctx.now) {
         return domain2(
           ctx,
           cmd.kind,
@@ -1428,7 +1470,7 @@ function decideWorkspace(state, cmd, ctx) {
       const replacing = facts.superseded && facts.successor_pending;
       const effectiveUsed = grant.successors_used - grant.successors_stranded;
       const successorsUsed = replacing ? effectiveUsed - 1 : effectiveUsed;
-      if (!Number.isInteger(grant.max_successors) || !Number.isInteger(grant.successors_used) || !Number.isInteger(grant.successors_stranded) || successorsUsed >= grant.max_successors) {
+      if (!Number.isInteger(grant.successors_used) || !Number.isInteger(grant.successors_stranded) || grant.max_successors !== null && (!Number.isInteger(grant.max_successors) || successorsUsed >= grant.max_successors)) {
         return domain2(
           ctx,
           cmd.kind,
@@ -1451,7 +1493,7 @@ function decideWorkspace(state, cmd, ctx) {
       if (state.tokens[cmd.successor_token_id]) {
         return domain2(ctx, cmd.kind, "bad_state", "successor token id already exists");
       }
-      const expires_at = Math.min(
+      const expires_at = grant.kind === "standing" ? ctx.now + AGENT_TOKEN_DEFAULT_TTL_MS : Math.min(
         ctx.now + AGENT_TOKEN_DEFAULT_TTL_MS,
         grant.horizon_expires_at
       );

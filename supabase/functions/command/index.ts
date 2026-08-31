@@ -77,6 +77,7 @@ import {
   reduceTask,
   reduceWorkspace,
   RENEWAL_HORIZON_DEFAULT_MS,
+  RENEWAL_HORIZON_MAX_MS,
   RENEWAL_MAX_SUCCESSORS_DEFAULT,
   requestHash,
 } from "../_shared/protocol.js";
@@ -138,6 +139,8 @@ type ConnectCommand =
     ttl_ms?: number;
     device_id: string;
     scopes?: string[];
+    renewal_kind?: "timeboxed" | "standing";
+    renewal_horizon_ms?: number | null;
   }
   | { kind: "revoke_agent_token"; token_id: string }
   // Self-description: no target field on purpose — the presenting agent
@@ -274,6 +277,8 @@ type WorkspaceCommand =
     epoch: number;
     scopes: string[];
     ttl_ms?: number;
+    renewal_kind: "timeboxed" | "standing";
+    renewal_horizon_ms: number | null;
   }
   | { kind: "revoke_agent_token"; token_id: string }
   | { kind: "declare_agent_model"; model: string | null }
@@ -293,12 +298,14 @@ type WorkspaceCommand =
 
 interface RenewalGrantFacts {
   renewal_grant_id: string;
-  max_successors: number;
+  kind: "timeboxed" | "standing";
+  max_successors: number | null;
   successors_used: number;
   /** Issued but never delivered; subtracted from `successors_used` for the ceiling. */
   successors_stranded: number;
-  horizon_expires_at: number;
+  horizon_expires_at: number | null;
   revoked_at: number | null;
+  suspended_at: number | null;
 }
 
 interface RenewalFacts {
@@ -312,6 +319,15 @@ interface RenewalFacts {
   /** The presenting predecessor's own first-use state, read before this request. */
   predecessor_pending: boolean;
   lineage_revoked: boolean;
+  grant_preflight_code:
+    | "renewal_grant_not_found"
+    | "renewal_grant_revoked"
+    | "renewal_grant_suspended"
+    | "renewal_idle_suspended"
+    | "renewal_horizon_reached"
+    | "renewal_device_unavailable"
+    | "renewal_device_mismatch"
+    | null;
 }
 
 interface WorkspaceDecideCtx {
@@ -375,6 +391,9 @@ interface StoredResponse {
    */
   capability_id?: string;
   expires_at?: string;
+  grant_kind?: "timeboxed" | "standing";
+  horizon_expires_at?: string | null;
+  successors_remaining?: number | null;
   revoked_at?: string;
   signal?: SignalRecord;
 }
@@ -1846,6 +1865,10 @@ function validateCommand(
     const optionalKeys = [
       ...(Object.hasOwn(cmd, "ttl_ms") ? ["ttl_ms"] : []),
       ...(Object.hasOwn(cmd, "scopes") ? ["scopes"] : []),
+      ...(Object.hasOwn(cmd, "renewal_kind") ? ["renewal_kind"] : []),
+      ...(Object.hasOwn(cmd, "renewal_horizon_ms")
+        ? ["renewal_horizon_ms"]
+        : []),
     ];
     const validScopes = cmd.scopes === undefined ||
       (
@@ -1856,6 +1879,19 @@ function validateCommand(
       );
     const validTtl = cmd.ttl_ms === undefined ||
       (integer(cmd.ttl_ms, 1) && cmd.ttl_ms <= AGENT_TOKEN_MAX_TTL_MS);
+    const renewalKind = cmd.renewal_kind === undefined
+      ? "timeboxed"
+      : cmd.renewal_kind;
+    const renewalHorizonMs = cmd.renewal_horizon_ms === undefined
+      ? RENEWAL_HORIZON_DEFAULT_MS
+      : cmd.renewal_horizon_ms;
+    const validRenewal =
+      (renewalKind === "standing" && cmd.renewal_horizon_ms === undefined) ||
+      (
+        renewalKind === "timeboxed" &&
+        integer(renewalHorizonMs, 1) &&
+        renewalHorizonMs <= RENEWAL_HORIZON_MAX_MS
+      );
     const valid = exactKeys(cmd, [
       "kind",
       "principal_id",
@@ -1871,7 +1907,8 @@ function validateCommand(
       integer(cmd.epoch) &&
       typeof cmd.device_id === "string" && UUID_RE.test(cmd.device_id) &&
       validScopes &&
-      validTtl;
+      validTtl &&
+      validRenewal;
     return valid
       ? {
         ok: true,
@@ -1886,6 +1923,10 @@ function validateCommand(
           ...(cmd.scopes === undefined
             ? {}
             : { scopes: [...cmd.scopes as string[]] }),
+          renewal_kind: renewalKind as "timeboxed" | "standing",
+          renewal_horizon_ms: renewalKind === "standing"
+            ? null
+            : renewalHorizonMs as number,
         },
       }
       : {
@@ -2054,6 +2095,17 @@ function storedResponse(value: unknown): StoredResponse {
       : {}),
     ...(typeof response.expires_at === "string"
       ? { expires_at: response.expires_at }
+      : {}),
+    ...(response.grant_kind === "timeboxed" || response.grant_kind === "standing"
+      ? { grant_kind: response.grant_kind }
+      : {}),
+    ...(typeof response.horizon_expires_at === "string" ||
+        response.horizon_expires_at === null
+      ? { horizon_expires_at: response.horizon_expires_at as string | null }
+      : {}),
+    ...(typeof response.successors_remaining === "number" ||
+        response.successors_remaining === null
+      ? { successors_remaining: response.successors_remaining as number | null }
       : {}),
     ...(typeof response.revoked_at === "string"
       ? { revoked_at: response.revoked_at }
@@ -2712,7 +2764,12 @@ async function prepareWorkspaceCommand(
       : state.tokens[predecessorTokenId];
     renewalFacts = predecessorTokenId === null
       ? null
-      : await loadRenewalFacts(tx, predecessorTokenId, auth.agentFirstUse);
+      : await loadRenewalFacts(
+        tx,
+        predecessorTokenId,
+        auth.agentFirstUse,
+        auth.agent?.device_id ?? null,
+      );
     if (renewalFacts !== null && !selfHealStranded) {
       renewalFacts = { ...renewalFacts, successor_pending: false };
     }
@@ -2739,6 +2796,10 @@ async function prepareWorkspaceCommand(
       epoch: wire.epoch,
       scopes: [...(wire.scopes ?? P0_AGENT_SCOPES)],
       ...(wire.ttl_ms === undefined ? {} : { ttl_ms: wire.ttl_ms }),
+      renewal_kind: wire.renewal_kind ?? "timeboxed",
+      renewal_horizon_ms: wire.renewal_kind === "standing"
+        ? null
+        : wire.renewal_horizon_ms ?? RENEWAL_HORIZON_DEFAULT_MS,
     };
   } else {
     // Exhaustiveness: every ConnectCommand kind is armed above. Falling into a
@@ -2838,14 +2899,27 @@ async function loadRenewalFacts(
   tx: Sql,
   predecessorTokenId: string,
   predecessorPending: boolean,
+  deviceId: string | null,
 ): Promise<RenewalFacts | null> {
+  const preflight = await tx<{ code: string | null }[]>`
+    SELECT swarm.prepare_renewal_grant(
+      (
+        SELECT token.renewal_grant_id
+        FROM swarm.agent_tokens AS token
+        WHERE token.token_id = ${predecessorTokenId}::uuid
+      ),
+      ${deviceId}::uuid
+    ) AS code
+  `;
   const rows = await tx<{
     renewal_grant_id: string | null;
+    kind: string | null;
     max_successors: number | null;
     successors_used: number | null;
     successors_stranded: number | null;
     horizon_expires_at: Date | null;
     grant_revoked_at: Date | null;
+    grant_suspended_at: Date | null;
     grant_bound_to_token: boolean | null;
     successor_token_id: string | null;
     successor_pending: boolean | null;
@@ -2853,11 +2927,13 @@ async function loadRenewalFacts(
   }[]>`
     SELECT
       g.renewal_grant_id,
+      g.kind,
       g.max_successors,
       g.successors_used,
       g.successors_stranded,
       g.horizon_expires_at,
       g.revoked_at AS grant_revoked_at,
+      g.suspended_at AS grant_suspended_at,
       (
         g.principal_id = t.principal_id
         AND g.run_id = t.run_id
@@ -2928,19 +3004,27 @@ async function loadRenewalFacts(
   // The grant is the one the PREDECESSOR ROW names, not one found by searching
   // for the run's most generous. A predecessor that names no grant has none:
   // renewal is authorised at join/spawn or not at all.
+  const validKind = row.kind === "timeboxed" || row.kind === "standing";
+  const validShape = row.kind === "standing"
+    ? row.max_successors === null && row.horizon_expires_at === null
+    : row.max_successors !== null && row.horizon_expires_at !== null;
   const grant = row.renewal_grant_id === null ||
-      row.max_successors === null ||
       row.successors_used === null ||
       row.successors_stranded === null ||
-      row.horizon_expires_at === null
+      !validKind ||
+      !validShape
     ? null
     : {
       renewal_grant_id: row.renewal_grant_id,
-      max_successors: Number(row.max_successors),
+      kind: row.kind as "timeboxed" | "standing",
+      max_successors: row.max_successors === null
+        ? null
+        : Number(row.max_successors),
       successors_used: Number(row.successors_used),
       successors_stranded: Number(row.successors_stranded),
-      horizon_expires_at: millis(row.horizon_expires_at) ?? 0,
+      horizon_expires_at: millis(row.horizon_expires_at),
       revoked_at: millis(row.grant_revoked_at),
+      suspended_at: millis(row.grant_suspended_at),
     };
   return {
     grant,
@@ -2952,6 +3036,7 @@ async function loadRenewalFacts(
     successor_pending: row.successor_pending === true,
     predecessor_pending: predecessorPending,
     lineage_revoked: row.lineage_revoked,
+    grant_preflight_code: (preflight[0]?.code ?? null) as RenewalFacts["grant_preflight_code"],
   };
 }
 
@@ -2964,8 +3049,14 @@ async function loadRenewalFacts(
 function renewalReplayFields(
   prepared: PreparedWorkspace,
   events: readonly EventEnvelope[],
-): Record<string, string> {
+): Record<string, string | number | null> {
   const payload = record(events[0]?.payload) ?? {};
+  const grant = prepared.renewalFacts?.grant ?? null;
+  const replacing = prepared.renewalFacts?.superseded === true &&
+    prepared.renewalFacts.successor_pending;
+  const effectiveUsed = grant === null
+    ? 0
+    : grant.successors_used - grant.successors_stranded;
   return {
     ...(prepared.command.kind === RENEW_AGENT_TOKEN_KIND
       ? { token_id: prepared.command.successor_token_id }
@@ -2977,6 +3068,20 @@ function renewalReplayFields(
     ...(typeof payload.expires_at === "number"
       ? { expires_at: new Date(payload.expires_at).toISOString() }
       : {}),
+    ...(grant === null
+      ? {}
+      : {
+        grant_kind: grant.kind,
+        horizon_expires_at: grant.horizon_expires_at === null
+          ? null
+          : new Date(grant.horizon_expires_at).toISOString(),
+        successors_remaining: grant.max_successors === null
+          ? null
+          : Math.max(
+            0,
+            grant.max_successors - effectiveUsed - (replacing ? 0 : 1),
+          ),
+      }),
   };
 }
 
@@ -3713,7 +3818,11 @@ async function updateWorkspaceProjection(
       const tokenId = payload.token_id;
       const revokedAt = new Date(payload.revoked_at);
       const createdBy = authUser(prepared.ctx.actor);
-      const revoked = await tx<{ token_id: string; lineage_id: string }[]>`
+      const revoked = await tx<{
+        token_id: string;
+        lineage_id: string;
+        renewal_grant_id: string | null;
+      }[]>`
         UPDATE swarm.agent_tokens
         SET revoked_at = ${revokedAt}
         WHERE token_id = ${tokenId}::uuid
@@ -3723,7 +3832,7 @@ async function updateWorkspaceProjection(
             FROM swarm.agent_principals
             WHERE workspace_id = ${route.workspaceId}::uuid
           )
-        RETURNING token_id, lineage_id
+        RETURNING token_id, lineage_id, renewal_grant_id
       `;
       if (revoked.length !== 1) {
         throw new Error(
@@ -3731,6 +3840,7 @@ async function updateWorkspaceProjection(
         );
       }
       const lineageId = revoked[0]!.lineage_id;
+      const renewalGrantId = revoked[0]!.renewal_grant_id;
       await tx`
         INSERT INTO swarm.revocation_tombstones (kind, target_id, created_by)
         VALUES (
@@ -3740,6 +3850,15 @@ async function updateWorkspaceProjection(
         )
         ON CONFLICT (kind, target_id) DO NOTHING
       `;
+      if (renewalGrantId !== null) {
+        await tx`
+          UPDATE swarm.renewal_grants
+          SET revoked_at = ${revokedAt},
+              revoked_by = ${createdBy}::uuid
+          WHERE renewal_grant_id = ${renewalGrantId}::uuid
+            AND revoked_at IS NULL
+        `;
+      }
       // Distinct lineage tombstone so successors and renewals fail closed even
       // when only this one token was named.
       await tx`
@@ -3839,21 +3958,31 @@ async function updateWorkspaceProjection(
          grant and the credential it authorises start from the same instant — a horizon that
          drifts from its token by even a few milliseconds is a boundary two clocks disagree
          about, and this one decides when a human is asked to reauthorise. */
-      const horizonExpiresAt = new Date(
-        token.issued_at + RENEWAL_HORIZON_DEFAULT_MS,
-      ).toISOString();
+      if (prepared.command.kind !== "mint_agent_token") {
+        throw new Error("token mint projection lost its mint command");
+      }
+      const mintCommand = prepared.command;
+      const standing = mintCommand.renewal_kind === "standing";
+      const horizonExpiresAt = standing
+        ? null
+        : new Date(
+          token.issued_at + mintCommand.renewal_horizon_ms!,
+        ).toISOString();
       await tx`
         INSERT INTO swarm.renewal_grants (
           renewal_grant_id, workspace_id, principal_id, run_id,
-          max_successors, successors_used, horizon_expires_at, created_by
+          kind, max_successors, successors_used, horizon_expires_at,
+          bound_device_id, created_by
         ) VALUES (
           ${grantId}::uuid,
           ${route.workspaceId}::uuid,
           ${token.principal_id}::uuid,
           ${token.run_id}::uuid,
-          ${RENEWAL_MAX_SUCCESSORS_DEFAULT},
+          ${mintCommand.renewal_kind},
+          ${standing ? null : RENEWAL_MAX_SUCCESSORS_DEFAULT},
           0,
           ${horizonExpiresAt},
+          ${standing ? prepared.wire.device_id : null}::uuid,
           (
             SELECT p.owner_user_id
             FROM swarm.agent_principals AS p
@@ -7059,6 +7188,16 @@ async function handleTransaction(
                   ).toISOString(),
                 }
                 : {}),
+              grant_kind: prepared.command.renewal_kind,
+              horizon_expires_at: prepared.command.renewal_horizon_ms === null
+                ? null
+                : new Date(
+                  now + prepared.command.renewal_horizon_ms,
+                ).toISOString(),
+              successors_remaining:
+                prepared.command.renewal_kind === "standing"
+                  ? null
+                  : RENEWAL_MAX_SUCCESSORS_DEFAULT,
             }
             : prepared.command.kind === RENEW_AGENT_TOKEN_KIND
             ? renewalReplayFields(prepared, decision.events)
@@ -7143,6 +7282,19 @@ async function handleTransaction(
     await beforeStep(13);
     if (prepared === null) {
       await applyEventSideEffects(tx, outcome.events);
+    }
+    if (
+      outcome.decision.ok &&
+      auth.agent !== null &&
+      prepared?.command.kind !== RENEW_AGENT_TOKEN_KIND
+    ) {
+      await tx`
+        SELECT swarm.record_renewal_grant_use(
+          ${auth.agent.token_id}::uuid,
+          ${auth.agent.device_id}::uuid,
+          NULL
+        )
+      `;
     }
     await afterStep(13);
 
