@@ -231,3 +231,34 @@ sounded reasonable, and by agents dogfooding the product — Wren, Joist, LeadG,
   keyboard case. Existing open issues earlier in this file remain open. DEFERRED:
   a pre-existing /download copy mismatch says Node 22 in its heading but Node 24 in
   one instruction; no install-page copy was changed in this layout repair.
+
+
+## Addendum 2026-08-31: clear homepage signup and login
+
+- Code `59c190bbd77ed352baf902cb50bf5e88eeda00f1` is LANDED on GitHub main and LIVE
+  at https://commonswarm.com. PR #2 merged at that exact SHA. Base was
+  `e6cb5d768a41c42c91b0b87e3f3f6b3d34860103`.
+- Work used codex/homepage-signup in `/Users/yulanbot/Developer/Ridge.io/commonswarm-signup`.
+  The shared cloud-swarm checkout had unrelated source/migration edits and was left alone.
+- Header, hero, closing section, and footer now say Sign up and Log in. Both lead to
+  the existing unified email form at /app. Its title and copy explain both actions.
+  Repository links stay in the footer; GitHub auth stays optional. No auth logic changed.
+- Also fixed pre-existing no-script header overlap at 481/520px: collapse extra links
+  through 40rem. Independent reviewer reproduced the old fault, then confirmed the fix
+  with a failing/restored control. Previous mock sidebar and anchor fixes remain intact.
+- Both required review arms passed final SHA: independent Codex exact review and
+  Gemini 3.1 Pro inversion. Site: 212 pass,1 existing diagnostic skip. Root: 656 pass with
+  concurrency 1. Default parallel root runs remain timing-sensitive in the unchanged
+  OpenCode 1300ms bound; two failures are preserved in evidence, not claimed green.
+- Deployment `dpl_tHg4twNBQJc9ovWSsnK4kA6PM5zq`, coswarm-site/ridgedotio.
+  All 8 pages,6 homepage/app assets, and installer match build/source bytes. Missing-path
+  control 404. Eight live widths 320–1440 passed. Live Log in reached the email form.
+- Evidence: `docs/evidence/2026-08-31-homepage-signup/README.md`. Final source was
+  reviewed before landing; this evidence/handoff is a separate ungated docs commit.
+- No remaining work in this request. Next edit starts at
+  `site/src/components/landing/ConsumerHero.astro` or `site/src/components/SiteHeader.astro`;
+  keep clear account labels and script-free fallback, then build and run site tests.
+- NOT established: email delivery, live OAuth completion, physical phones, Safari/Firefox,
+  or manual signed-in behavior. No account created, email sent, CLI release, or DB change.
+  DEFERRED: existing open issues above, including the Node 22/24 download-copy mismatch,
+  remain outside this request. Interim signup code f962c86 is superseded by 59c190b.

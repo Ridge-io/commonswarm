@@ -1,0 +1,134 @@
+[
+  {
+    "path": "_astro/AgentConnect.B4y3yEHi.css",
+    "sha256": "0e99c2064ccab307209c04a2cd5f9185f8079a6799fdffa82dd86e44c0a791b2"
+  },
+  {
+    "path": "_astro/AgentConnect.astro_astro_type_script_index_0_lang.wLaavcuH.js",
+    "sha256": "ac154f2c36a38551ab63c071c78138ebb74b583d0e81feb18adaa67dbcbf2f9f"
+  },
+  {
+    "path": "_astro/Base.CU6LT-wJ.css",
+    "sha256": "05b49444e4d0371908823c777c1260c3feac2dc0ff8457207d5f532cdefb66a1"
+  },
+  {
+    "path": "_astro/InviteOnramp.astro_astro_type_script_index_0_lang.X8UDccY4.js",
+    "sha256": "aeff72909337fd1d815ef18d964259968e1f67e9ccd8ec260ee3c820f885c5b1"
+  },
+  {
+    "path": "_astro/LegalDoc.Daa6a9l3.css",
+    "sha256": "3b03b17c5eef1379c9f6e18479ba873aaef83b88b0c87c69a044e0661f73caa7"
+  },
+  {
+    "path": "_astro/LiveDashboard.astro_astro_type_script_index_0_lang.uLuh_uYB.js",
+    "sha256": "25b202afa02cd42fd484caae9894e5302da9e443005e6ff039b7253cdd15b3f9"
+  },
+  {
+    "path": "_astro/app.wx9Srql1.css",
+    "sha256": "5d9f85cf30bb52b3b30697cf117b055045fa9b0d036a55e9a3c2126e112958ec"
+  },
+  {
+    "path": "_astro/commonswarm.DX4k7Ife.js",
+    "sha256": "b814046286a9643248e089c0c2c2a528280f9c2b7a2516fdd48cf631d137e850"
+  },
+  {
+    "path": "_astro/download.DVdIFD0c.css",
+    "sha256": "5fb99c9c0c7fb6ca87d052bad27aa2f4869e72e94046b5e40f7aa2b811a70080"
+  },
+  {
+    "path": "_astro/index.C86F041I.css",
+    "sha256": "f8aeac24c40a6ae4c9ad334684bac6340e1b6b42cccfe1647dd56857d0d4fd0f"
+  },
+  {
+    "path": "_astro/invite.CFHQvjpI.css",
+    "sha256": "8f3a443e7384c706157376988eebda0b9f31d0be5c15de327b6de8415dd15280"
+  },
+  {
+    "path": "_astro/member-invite.BwXJ_Iex.js",
+    "sha256": "026a1660d5ada33d6576f57b812d287b9eacf4cafeb9d65b3ec030cdd1f6936e"
+  },
+  {
+    "path": "_astro/signal-text.CbUCfI_r.js",
+    "sha256": "19623459e8595bd1d7f0d5527476829ebaa57709b55ee16d17e90adbe8892b49"
+  },
+  {
+    "path": "acceptable-use/index.html",
+    "sha256": "2f86af74a46704a9df0c1219e551ce07ef15e4fcfb03627c22675b4af2d99031"
+  },
+  {
+    "path": "api.md",
+    "sha256": "d48e2832841ce17924f462be19a852745c960a7514a22e09c1e1d687e1c0d2e6"
+  },
+  {
+    "path": "app/index.html",
+    "sha256": "f4a0c48baf53329f10a2d01d2c491baf2d75fc9ca2c173fce339b7170a30ea41"
+  },
+  {
+    "path": "apple-touch-icon.png",
+    "sha256": "03bbed8e2d355a6cd88e96d6f97c9fb530ad339c7ba5aaa9fe7bbcc49bada2de"
+  },
+  {
+    "path": "download/index.html",
+    "sha256": "36360bb9fb0395a23c6fd03c980ea0c7992dca5ac7f60f8d7cf3c3467d418f5a"
+  },
+  {
+    "path": "favicon.svg",
+    "sha256": "60e3a3bfd8440da55f0dd16bdb4fb9968879b43a5c1ebfd9b07c608f0c7ab681"
+  },
+  {
+    "path": "fonts/inter-latin-ext.woff2",
+    "sha256": "a28eb6d3ccb534ae0c94ca999371df024aab60b08c3c8a5720ee9e32fa0faaa2"
+  },
+  {
+    "path": "fonts/inter-latin.woff2",
+    "sha256": "c940764593d0fe5d596be327ca7558855e018039fb78509aa21921fd3644c3e4"
+  },
+  {
+    "path": "fonts/jetbrains-mono-latin-ext.woff2",
+    "sha256": "7db7affbce1fdee69c1ffc2641bbca289b049867f524c9d861fe35ab6670bf29"
+  },
+  {
+    "path": "fonts/jetbrains-mono-latin.woff2",
+    "sha256": "1e06740a02a443fb7f3eeda8fcaa685a0f6c620e3f01e6666e847295469ce3ad"
+  },
+  {
+    "path": "index.html",
+    "sha256": "1be2ac17fc6f55367066d266e981b1288043123f4fbc860d634fb6af050ade53"
+  },
+  {
+    "path": "install.sh",
+    "sha256": "310b826afb97be774f5180283b39ff435f70e8363a94c1bbcf197f35422c6299"
+  },
+  {
+    "path": "invite/index.html",
+    "sha256": "e83cd61e670c16c4c9b20a2b884d573776d2aabfcfec8b23629ddc743f73013e"
+  },
+  {
+    "path": "llms.txt",
+    "sha256": "4dbb9b4076f31420a7fdf2d903b71761deb18046d41c24322483c1c663d6aa8a"
+  },
+  {
+    "path": "og.png",
+    "sha256": "b0c80ebd5950d8b914b5e33286d54529d179cdcb58e476dfb2276426139a007e"
+  },
+  {
+    "path": "privacy/index.html",
+    "sha256": "cfa54e7072e5bcc7fe13d46750065f13c403162c8654c2636815c047663ceea4"
+  },
+  {
+    "path": "site.webmanifest",
+    "sha256": "c45b613ac0ad81ff4095af328e5253b114d4537b18d7545dda876aff49e7ac0f"
+  },
+  {
+    "path": "skills/cswarm/SKILL.md",
+    "sha256": "f871591c3c72f9960c129bc99be8a6b89de9bf8edb47cbf1fb5d22658b803e5c"
+  },
+  {
+    "path": "start/index.html",
+    "sha256": "d1f305094ddbbf53ec6007152bce062fe304c30131781b1f8278d49c21cb3e1c"
+  },
+  {
+    "path": "terms/index.html",
+    "sha256": "8c8dac991a0486bf5354408e29c2b531a962d23e5e138589012d59e2e769d723"
+  }
+]
