@@ -118,6 +118,14 @@ export interface ListenerRuntimeModel extends ListenerModel {
 
 export type ListenerRuntimeEvent =
   | { type: "ready"; workspaceId: string; principalId: string; ts: string }
+  | {
+    type: "canary_attempt";
+    attempt: number;
+    total: number;
+    passed: boolean;
+    reason: string | null;
+    ts: string;
+  }
   | { type: "model_declared"; ok: boolean; model: string; ts: string }
   | {
     type: "effect";

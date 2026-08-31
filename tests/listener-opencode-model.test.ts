@@ -73,8 +73,15 @@ function fakeOpen(records: Array<{
       get arePromptsEnabled() {
         return false;
       },
-      async enablePromptsAfterCanary() {
+      async enablePromptsAfterCanary(canaryOptions?: {
+        onAttempt?: (
+          attempt: number,
+          total: number,
+          result: { passed: boolean; reason?: string },
+        ) => void;
+      }) {
         record.canaryDecision = await options.permissionCallback?.(REQUEST);
+        canaryOptions?.onAttempt?.(1, 2, { passed: true });
       },
       async openWorkCwd(cwd: string) {
         record.workCwd = cwd;
@@ -109,9 +116,11 @@ function fakeOpen(records: Array<{
 test("OpenCode worker canary denies on empty cwd then openWorkCwd retargets", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "cswarm-oc-worker-"));
   const records: Parameters<typeof fakeOpen>[0] = [];
+  const attempts: number[] = [];
   const adapter = new OpenCodeListenerModel({
     cwd,
     permissionMode: "allow",
+    onCanaryAttempt: (attempt) => attempts.push(attempt),
     allowMissingAuth: true,
     open: fakeOpen(records),
   });
@@ -121,6 +130,7 @@ test("OpenCode worker canary denies on empty cwd then openWorkCwd retargets", as
     outcome: "selected",
     optionId: "deny",
   });
+  assert.deepEqual(attempts, [1]);
   // Canary cwd is not the worker project cwd.
   assert.notEqual(records[0]?.options.cwd, cwd);
   assert.equal(records[0]?.workCwd, cwd);

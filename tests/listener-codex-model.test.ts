@@ -55,7 +55,15 @@ const SIGNAL = {
 
 type Record = {
   options: CodexAcpOpenOptions;
-  canaryOptions?: { probeText?: string; timeoutMs?: number };
+  canaryOptions?: {
+    probeText?: string;
+    timeoutMs?: number;
+    onAttempt?: (
+      attempt: number,
+      total: number,
+      result: { passed: boolean; reason?: string },
+    ) => void;
+  };
   canaryDecision?: PermissionDecision;
   promptDecision?: PermissionDecision;
   closed: boolean;
@@ -70,9 +78,15 @@ function fakeOpen(records: Record[]): OpenCodexSession {
       async enablePromptsAfterCanary(canaryOptions?: {
         probeText?: string;
         timeoutMs?: number;
+        onAttempt?: (
+          attempt: number,
+          total: number,
+          result: { passed: boolean; reason?: string },
+        ) => void;
       }) {
         record.canaryOptions = canaryOptions;
         record.canaryDecision = await options.permissionCallback?.(REQUEST);
+        canaryOptions?.onAttempt?.(1, 2, { passed: true });
       },
       async prompt(text: string) {
         record.promptDecision = await options.permissionCallback?.(REQUEST);
@@ -102,9 +116,11 @@ function fakeOpen(records: Record[]): OpenCodexSession {
 test("Codex worker canary denies before explicit allow mode", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "cswarm-codex-worker-"));
   const records: Record[] = [];
+  const attempts: number[] = [];
   const adapter = new CodexListenerModel({
     cwd,
     permissionMode: "allow",
+    onCanaryAttempt: (attempt) => attempts.push(attempt),
     open: fakeOpen(records),
   });
   await adapter.start();
@@ -116,6 +132,7 @@ test("Codex worker canary denies before explicit allow mode", async () => {
   assert.match(records[0]?.canaryOptions?.probeText ?? "", /cswarm-codex-permission-canary/);
   assert.doesNotMatch(records[0]?.canaryOptions?.probeText ?? "", new RegExp(cwd));
   assert.equal(records[0]?.canaryOptions?.timeoutMs, 30_000);
+  assert.deepEqual(attempts, [1]);
   const result = await adapter.prompt(SIGNAL, "worker", "work");
   assert.equal(result.message, "reply:work");
   assert.deepEqual(records[0]?.promptDecision, {

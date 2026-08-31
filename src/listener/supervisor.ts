@@ -146,6 +146,20 @@ function safeErrorCode(error: Error): string {
   return name.slice(0, 96) || "listener_error";
 }
 
+/** Keep provider messages local, bounded, and free of credential-shaped text. */
+function localDiagnostic(message: string, maxChars: number): string | null {
+  const redacted = message.replace(
+    /swm_(?:agt|inv|cap)_[^\s"'\\]*/gi,
+    "[redacted]",
+  ).trim();
+  if (redacted.length === 0) return null;
+  return redacted.slice(0, maxChars);
+}
+
+function safeErrorDetail(error: Error): string | null {
+  return localDiagnostic(error.message, 2_048);
+}
+
 /**
  * events.ndjson lines are capped at 4096 bytes (appendListenerEvent), and the
  * validator also caps the tail at 2048 characters. Both bounds are enforced
@@ -206,6 +220,7 @@ export async function runListenerSupervisor(
     stoppedAt: null,
     lastSignalId: null,
     lastErrorCode: null,
+    lastErrorDetail: null,
     providerVersion: null,
     providerLastMeasuredVersion: null,
     lastWorkerStderrTail: null,
@@ -299,11 +314,25 @@ export async function runListenerSupervisor(
       transition("ready", {
         readyAt: event.ts,
         lastErrorCode: null,
+        lastErrorDetail: null,
         lastWorkerStderrTail: null,
         providerVersion: versionNotice?.runningVersion ?? null,
         providerLastMeasuredVersion: versionNotice?.lastMeasuredVersion ?? null,
       });
       log({ ts: event.ts, event: "listener_ready" });
+      return;
+    }
+    if (event.type === "canary_attempt") {
+      log({
+        ts: event.ts,
+        event: "listener_canary_attempt",
+        attempt: event.attempt,
+        total: event.total,
+        passed: event.passed,
+        reason: event.reason === null
+          ? null
+          : localDiagnostic(event.reason, 128),
+      });
       return;
     }
     if (event.type === "effect") {
@@ -516,6 +545,7 @@ export async function runListenerSupervisor(
       transition("starting", {
         readyAt: null,
         lastErrorCode: restartCode,
+        lastErrorDetail: safeErrorDetail(stop.error),
         lastWorkerStderrTail: restartStderrTail,
         providerVersion: null,
         providerLastMeasuredVersion: null,
@@ -532,6 +562,7 @@ export async function runListenerSupervisor(
       transition("stopped", {
         stoppedAt,
         lastErrorCode: null,
+        lastErrorDetail: null,
         lastWorkerStderrTail: null,
       });
       log({ ts: stoppedAt, event: "listener_stopped" });
@@ -543,6 +574,7 @@ export async function runListenerSupervisor(
       transition("failed", {
         stoppedAt,
         lastErrorCode: code,
+        lastErrorDetail: safeErrorDetail(stop.error),
         lastWorkerStderrTail: failedStderrTail,
       });
       // Record why it is down and why it stopped trying — a listener left down
@@ -569,6 +601,9 @@ export async function runListenerSupervisor(
     transition("failed", {
       stoppedAt,
       lastErrorCode: code,
+      lastErrorDetail: safeErrorDetail(
+        error instanceof Error ? error : new Error(String(error)),
+      ),
       lastWorkerStderrTail: failedStderrTail,
     });
     log({

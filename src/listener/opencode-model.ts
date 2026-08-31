@@ -22,6 +22,7 @@ import {
   resolveBudgetAndPrompt,
 } from "./types.js";
 import type {
+  ListenerCanaryAttemptCallback,
   ListenerModel,
   ListenerPermissionMode,
   ListenerPromptMode,
@@ -59,6 +60,8 @@ export interface OpenCodeListenerModelOptions {
   promptTimeoutMs?: number | (() => Promise<number>);
   /** Receives the worker's bounded stderr tail on child exit (local log only). */
   onWorkerStderrTail?: (tail: string) => void;
+  /** Receives each bounded permission-canary verdict for local diagnostics. */
+  onCanaryAttempt?: ListenerCanaryAttemptCallback;
   /** Receives one allowed newer-version notice for durable startup status. */
   onVersionNotice?: NonNullable<OpenCodeAcpOpenOptions["onVersionNotice"]>;
 }
@@ -540,7 +543,13 @@ export class OpenCodeListenerModel implements ListenerModel {
         await this.performSingleOwnerCleanup(handle, home, this.instanceId, pending);
       }
 
-      await handle.session.enablePromptsAfterCanary();
+      if (this.options.onCanaryAttempt) {
+        await handle.session.enablePromptsAfterCanary({
+          onAttempt: this.options.onCanaryAttempt,
+        });
+      } else {
+        await handle.session.enablePromptsAfterCanary();
+      }
       if (this.closed || this.cancelled || generation !== this.openGeneration) {
         await this.performSingleOwnerCleanup(handle, home, this.instanceId, pending);
       }

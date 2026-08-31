@@ -154,7 +154,7 @@ const pending = new Map();
 const send = (frame) => process.stdout.write(JSON.stringify(frame) + "\\n");
 
 function finishPrompt(hostId, text, optionId) {
-  const canary = text.includes("cswarm-permission-boundary-canary");
+  const canary = text.includes("CSWARM_CANARY_NOOP");
   const denied = optionId === "deny";
   appendFileSync(audit, JSON.stringify({
     event: "permission",
@@ -615,7 +615,12 @@ test("detached CLI completes durable claim reply ACK with one startup UUID and n
     const permissions = audit.filter((row) =>
       row.event === "permission" && row.canary === false
     );
+    const canaryPermissions = audit.filter((row) =>
+      row.event === "permission" && row.canary === true
+    );
     assert.equal(directoryReads, asks.length);
+    assert.equal(canaryPermissions.length, 1);
+    assert.equal(canaryPermissions[0]?.option_id, "deny");
     assert.equal(permissions.length, 2);
     assert.equal(
       permissions.every((row) =>
@@ -871,6 +876,7 @@ test("listen status distinguishes delivery modes and null zero positive counts",
     stoppedAt: null,
     lastSignalId: null,
     lastErrorCode: null,
+    lastErrorDetail: null,
     lastWorkerStderrTail: null,
     deliveryMode: "durable_claim",
     pendingDeliveryCount: null,

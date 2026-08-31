@@ -102,6 +102,7 @@ test("listenerStatusJson emits host_limits as a structured object, not a string"
     stoppedAt: null,
     lastSignalId: null,
     lastErrorCode: null,
+    lastErrorDetail: null,
     lastWorkerStderrTail: null,
     deliveryMode: null,
     pendingDeliveryCount: null,

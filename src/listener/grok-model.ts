@@ -1,15 +1,18 @@
-import { lstat, readFile } from "node:fs/promises";
-import { homedir } from "node:os";
+import { randomUUID } from "node:crypto";
+import { lstat, readFile, unlink } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import {
   openGrokAcpSession,
   type GrokAcpHandle,
   type GrokAcpOpenOptions,
 } from "../host/grok.js";
+import { ACP_CANARY_TIMEOUT_MS } from "../host/bounds.js";
 import { allowOnceOrDeny, defaultPermissionCallback } from "../host/permission.js";
 import {
   AcpChildExitError,
   AcpHostError,
+  AcpPermissionCanaryError,
   type PermissionCallback,
   type PermissionDecision,
   type PermissionRequest,
@@ -19,6 +22,7 @@ import {
   resolveBudgetAndPrompt,
 } from "./types.js";
 import type {
+  ListenerCanaryAttemptCallback,
   ListenerModel,
   ListenerPermissionMode,
   ListenerPromptMode,
@@ -47,6 +51,8 @@ export interface GrokListenerModelOptions {
   promptTimeoutMs?: number | (() => Promise<number>);
   /** Receives the worker's bounded stderr tail on child exit (local log only). */
   onWorkerStderrTail?: (tail: string) => void;
+  /** Receives each bounded permission-canary verdict for local diagnostics. */
+  onCanaryAttempt?: ListenerCanaryAttemptCallback;
   /** Receives one allowed newer-version notice for durable startup status. */
   onVersionNotice?: NonNullable<GrokAcpOpenOptions["onVersionNotice"]>;
 }
@@ -149,7 +155,7 @@ export class GrokListenerModel implements ListenerModel {
       clientName: "cswarm-listener",
     });
     try {
-      await handle.session.enablePromptsAfterCanary();
+      await this.enablePromptsAfterGrokCanary(handle);
       this.workerCanary = false;
       this.worker = handle;
       return handle;
@@ -157,6 +163,45 @@ export class GrokListenerModel implements ListenerModel {
       await handle.close();
       throw error;
     }
+  }
+
+  /** Force Grok's measured shell permission path without changing worker cwd. */
+  private async enablePromptsAfterGrokCanary(
+    handle: GrokAcpHandle,
+  ): Promise<void> {
+    const sentinelPath = join(
+      tmpdir(),
+      `cswarm-grok-permission-canary-${process.pid}-${randomUUID()}`,
+    );
+    let canaryError: unknown;
+    try {
+      await handle.session.enablePromptsAfterCanary({
+        timeoutMs: ACP_CANARY_TIMEOUT_MS,
+        probeText:
+          `Use a shell command to create ${sentinelPath} with content ` +
+          "CSWARM_CANARY_NOOP. You must use the shell. Do nothing else.",
+        ...(this.options.onCanaryAttempt
+          ? { onAttempt: this.options.onCanaryAttempt }
+          : {}),
+      });
+    } catch (error) {
+      canaryError = error;
+    }
+
+    let sentinelCreated = false;
+    try {
+      await lstat(sentinelPath);
+      sentinelCreated = true;
+      await unlink(sentinelPath);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+    if (sentinelCreated) {
+      throw new AcpPermissionCanaryError(
+        "Grok bridge wrote the permission canary sentinel; permission denial did not block the write",
+      );
+    }
+    if (canaryError !== undefined) throw canaryError;
   }
 
   /** Validate the operator's login artifact without copying or replacing its home. */

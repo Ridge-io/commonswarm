@@ -215,6 +215,7 @@ import {
   writeListenerCredentialState,
   LISTENER_DEFER_OVER_MAX,
   LISTENER_DEFER_OVER_MIN,
+  type ListenerCanaryAttemptCallback,
   type ListenerPermissionMode,
   type ListenerProviderId,
   type ListenerDeliveryJournal,
@@ -3940,6 +3941,11 @@ export function renderListenerStatus(status: ListenerStatus): string {
       ? `Last status code: ${status.lastErrorCode}.`
       : "No listener error is recorded.",
   ];
+  if (status.lastErrorDetail) {
+    const [first, ...rest] = status.lastErrorDetail.split("\n");
+    lines.push(`Last error detail (local only): ${first}`);
+    for (const line of rest) lines.push(`  ${line}`);
+  }
   if (status.lastWorkerStderrTail) {
     // Local diagnosis for the D-090 family: the failing box's own log is the
     // only place the cause exists, so surface the end of it here.
@@ -4115,6 +4121,9 @@ export function listenerFailureMessage(
     }
     if (provider === "codex") {
       return "the Codex bridge did not complete the read-only ACP permission canary; no workspace signal prompt was delivered. Confirm ChatGPT/Codex sign-in, then retry";
+    }
+    if (provider === "grok") {
+      return "the Grok bridge did not complete the ACP permission canary; no workspace signal prompt was delivered. The local cswarm listen status output includes the final error detail; read it, then retry";
     }
     return "the host did not prove that CommonSwarm controls ACP tool permissions; no model prompt was delivered";
   }
@@ -4384,7 +4393,7 @@ async function runConfiguredListener(options: {
   // and a model is single-use (runListenerRuntime closes it on every exit, and
   // every adapter throws "listener model is closed" once closed). Constructing
   // one here and capturing it would make every restart fail instantly.
-  const newModel = () => {
+  const newModel = (onCanaryAttempt: ListenerCanaryAttemptCallback) => {
     providerVersionNotice = null;
     return options.provider === "opencode"
     ? new OpenCodeListenerModel({
@@ -4392,6 +4401,7 @@ async function runConfiguredListener(options: {
       permissionMode: options.permissionMode,
       promptTimeoutMs: resolveTurnBudgetMs,
       onWorkerStderrTail: newWorkerStderrTailSink(),
+      onCanaryAttempt,
       onVersionNotice,
       ...(options.model ? { model: options.model } : {}),
       ...(options.opencodeExecutable
@@ -4406,6 +4416,7 @@ async function runConfiguredListener(options: {
       permissionMode: options.permissionMode,
       promptTimeoutMs: resolveTurnBudgetMs,
       onWorkerStderrTail: newWorkerStderrTailSink(),
+      onCanaryAttempt,
       onVersionNotice,
       ...(options.claudeExecutable
         ? { executable: options.claudeExecutable }
@@ -4419,6 +4430,7 @@ async function runConfiguredListener(options: {
       permissionMode: options.permissionMode,
       promptTimeoutMs: resolveTurnBudgetMs,
       onWorkerStderrTail: newWorkerStderrTailSink(),
+      onCanaryAttempt,
       onVersionNotice,
       ...(options.codexExecutable
         ? { executable: options.codexExecutable }
@@ -4431,6 +4443,7 @@ async function runConfiguredListener(options: {
       permissionMode: options.permissionMode,
       promptTimeoutMs: resolveTurnBudgetMs,
       onWorkerStderrTail: newWorkerStderrTailSink(),
+      onCanaryAttempt,
       onVersionNotice,
       ...(options.model ? { model: options.model } : {}),
       ...(options.effort ? { effort: options.effort } : {}),
@@ -4490,13 +4503,27 @@ async function runConfiguredListener(options: {
             "listener delivery journal was not selected for this instance",
           );
         }
+        const onCanaryAttempt: ListenerCanaryAttemptCallback = (
+          attempt,
+          total,
+          result,
+        ) => {
+          onEvent({
+            type: "canary_attempt",
+            attempt,
+            total,
+            passed: result.passed,
+            reason: result.reason ?? null,
+            ts: new Date().toISOString(),
+          });
+        };
         return await runListenerRuntime({
           target: options.cloud,
           workspaceId: options.workspaceId,
           principalId: options.principalId,
           credentialSession,
           store: effectStore,
-          model: newModel(),
+          model: newModel(onCanaryAttempt),
           signal,
           onEvent,
           declareModel: listenerModelLabel(options.provider),

@@ -55,6 +55,8 @@ export interface ListenerStatus {
   stoppedAt: string | null;
   lastSignalId: string | null;
   lastErrorCode: string | null;
+  /** Final local error message for diagnosis; never sent to CommonSwarm. */
+  lastErrorDetail: string | null;
   /** Set only when the running provider is newer than the last measured version. */
   providerVersion?: string | null;
   providerLastMeasuredVersion?: string | null;
@@ -144,6 +146,7 @@ const STATUS_ALLOWED_KEYS = new Set([
   "stoppedAt",
   "lastSignalId",
   "lastErrorCode",
+  "lastErrorDetail",
   "providerVersion",
   "providerLastMeasuredVersion",
   "lastWorkerStderrTail",
@@ -245,6 +248,12 @@ function parseStatus(raw: string): ListenerStatus {
     !(row.lastErrorCode === null ||
       (typeof row.lastErrorCode === "string" &&
         /^[a-z0-9_-]{1,96}$/.test(row.lastErrorCode))) ||
+    !(row.lastErrorDetail === undefined ||
+      row.lastErrorDetail === null ||
+      (typeof row.lastErrorDetail === "string" &&
+        row.lastErrorDetail.length > 0 &&
+        row.lastErrorDetail.length <= 2_048 &&
+        !/swm_(?:agt|inv|cap)_/i.test(row.lastErrorDetail))) ||
     !(row.providerVersion === undefined || row.providerVersion === null ||
       (typeof row.providerVersion === "string" && SEMVER_RE.test(row.providerVersion))) ||
     !(row.providerLastMeasuredVersion === undefined ||
@@ -311,6 +320,7 @@ function parseStatus(raw: string): ListenerStatus {
       (row.lastTerminalDeliveryFailureAt ?? null) as string | null,
     lastClaimAt: (row.lastClaimAt ?? null) as string | null,
     lastAckAt: (row.lastAckAt ?? null) as string | null,
+    lastErrorDetail: (row.lastErrorDetail ?? null) as string | null,
     lastWorkerStderrTail: (row.lastWorkerStderrTail ?? null) as string | null,
     providerVersion: (row.providerVersion ?? null) as string | null,
     providerLastMeasuredVersion:
@@ -333,6 +343,9 @@ export async function writeListenerStatus(
     if (!(key in parsed)) {
       throw new Error("listener status is missing delivery metadata fields");
     }
+  }
+  if (!("lastErrorDetail" in parsed)) {
+    throw new Error("listener status is missing local error detail metadata");
   }
   parseStatus(serialized);
   await writeSecureJsonFile(paths.statusPath, serialized);
@@ -359,6 +372,9 @@ export async function appendListenerEvent(
     "status",
     "failure_code",
     "attempt",
+    "total",
+    "passed",
+    "reason",
     "delay_ms",
     "index",
     "delivery_mode",
@@ -394,6 +410,21 @@ export async function appendListenerEvent(
   for (const [key, value] of Object.entries(event)) {
     if (!allowed.has(key)) {
       throw new Error(`listener event field is not allowed: ${key}`);
+    }
+    if (
+      (key === "attempt" || key === "total") &&
+      !(typeof value === "number" && Number.isSafeInteger(value) && value >= 1)
+    ) {
+      throw new Error("listener event attempt count is not allowed");
+    }
+    if (key === "passed" && typeof value !== "boolean") {
+      throw new Error("listener event canary result is not allowed");
+    }
+    if (
+      key === "reason" &&
+      !(value === null || (typeof value === "string" && value.length > 0))
+    ) {
+      throw new Error("listener event canary reason is not allowed");
     }
     if (
       key === "delivery_mode" &&
@@ -467,6 +498,16 @@ export async function appendListenerEvent(
     ) {
       throw new Error("listener event contains unsafe text");
     }
+  }
+  if (
+    event.event === "listener_canary_attempt" &&
+    (typeof event.attempt !== "number" ||
+      typeof event.total !== "number" ||
+      event.attempt > event.total ||
+      typeof event.passed !== "boolean" ||
+      !(event.reason === null || typeof event.reason === "string"))
+  ) {
+    throw new Error("listener canary attempt event is incomplete");
   }
   await ensureSecureStateDirectory(paths.instanceDirectory);
   const serialized = `${JSON.stringify(event)}\n`;

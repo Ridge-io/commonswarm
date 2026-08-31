@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp } from "node:fs/promises";
+import { lstat, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -8,6 +8,7 @@ import type {
   GrokAcpHandle,
   GrokAcpOpenOptions,
 } from "../src/host/grok.js";
+import { ACP_CANARY_TIMEOUT_MS } from "../src/host/bounds.js";
 import type {
   PermissionDecision,
   PermissionRequest,
@@ -89,6 +90,99 @@ function fakeOpen(records: Array<{
     } as unknown as GrokAcpHandle;
   };
 }
+
+test("Grok canary uses the measured shell sentinel and enables prompts after denial", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "cswarm-worker-test-"));
+  const attempts: Array<{ attempt: number; total: number; passed: boolean }> = [];
+  let probeText = "";
+  let timeoutMs: number | undefined;
+  let prompted = false;
+  const adapter = new GrokListenerModel({
+    cwd,
+    onCanaryAttempt: (attempt, total, result) => {
+      attempts.push({ attempt, total, passed: result.passed });
+    },
+    open: async () => ({
+      session: {
+        async enablePromptsAfterCanary(options?: {
+          probeText?: string;
+          timeoutMs?: number;
+          onAttempt?: (
+            attempt: number,
+            total: number,
+            result: { passed: boolean; reason?: string },
+          ) => void;
+        }) {
+          probeText = options?.probeText ?? "";
+          timeoutMs = options?.timeoutMs;
+          options?.onAttempt?.(1, 2, { passed: true });
+        },
+        async prompt() {
+          prompted = true;
+          return { message: "ready", stopReason: "end_turn", updates: [] };
+        },
+        cancel() {},
+      },
+      child: {},
+      executable: "grok",
+      args: [],
+      env: {},
+      async close() {},
+    } as unknown as GrokAcpHandle),
+  });
+
+  await adapter.start();
+  assert.equal(timeoutMs, ACP_CANARY_TIMEOUT_MS);
+  assert.match(
+    probeText,
+    /Use a shell command to create \/.*cswarm-grok-permission-canary-.* with content CSWARM_CANARY_NOOP\./,
+  );
+  assert.match(probeText, /You must use the shell\. Do nothing else\.$/);
+  assert.deepEqual(attempts, [{ attempt: 1, total: 2, passed: true }]);
+  await adapter.prompt(SIGNAL, "worker", "work");
+  assert.equal(prompted, true);
+  await adapter.close();
+});
+
+test("Grok canary removes a written sentinel and reports that denial did not block it", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "cswarm-worker-test-"));
+  let sentinelPath = "";
+  const adapter = new GrokListenerModel({
+    cwd,
+    open: async () => ({
+      session: {
+        async enablePromptsAfterCanary(options?: { probeText?: string }) {
+          const match = options?.probeText?.match(/create (\S+) with content/);
+          assert.ok(match, "sentinel path missing from Grok probe");
+          sentinelPath = match[1]!;
+          await writeFile(sentinelPath, "CSWARM_CANARY_NOOP", "utf8");
+          throw new AcpPermissionCanaryError("generic canary result");
+        },
+        async prompt() {
+          throw new Error("unreachable");
+        },
+        cancel() {},
+      },
+      child: {},
+      executable: "grok",
+      args: [],
+      env: {},
+      async close() {},
+    } as unknown as GrokAcpHandle),
+  });
+
+  await assert.rejects(
+    () => adapter.start(),
+    (error: unknown) =>
+      error instanceof AcpPermissionCanaryError &&
+      error.message ===
+        "Grok bridge wrote the permission canary sentinel; permission denial did not block the write",
+  );
+  await assert.rejects(
+    lstat(sentinelPath),
+    (error: unknown) => (error as NodeJS.ErrnoException).code === "ENOENT",
+  );
+});
 
 test("worker canary always denies before explicit same-owner allow mode", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "cswarm-worker-test-"));

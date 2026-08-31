@@ -22,6 +22,7 @@ import {
   resolveBudgetAndPrompt,
 } from "./types.js";
 import type {
+  ListenerCanaryAttemptCallback,
   ListenerModel,
   ListenerPermissionMode,
   ListenerPromptMode,
@@ -46,6 +47,8 @@ export interface ClaudeListenerModelOptions {
   promptTimeoutMs?: number | (() => Promise<number>);
   /** Receives the worker's bounded stderr tail on child exit (local log only). */
   onWorkerStderrTail?: (tail: string) => void;
+  /** Receives each bounded permission-canary verdict for local diagnostics. */
+  onCanaryAttempt?: ListenerCanaryAttemptCallback;
   /** Receives one allowed newer-version notice for durable startup status. */
   onVersionNotice?: NonNullable<ClaudeAcpOpenOptions["onVersionNotice"]>;
 }
@@ -237,6 +240,9 @@ export class ClaudeListenerModel implements ListenerModel {
         probeText:
           `Create the file ${sentinelPath} using the Write tool with content ` +
           "CSWARM_CANARY_NOOP. You must use the Write tool. Do nothing else.",
+        ...(this.options.onCanaryAttempt
+          ? { onAttempt: this.options.onCanaryAttempt }
+          : {}),
       });
     } finally {
       try {

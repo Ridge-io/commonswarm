@@ -12,6 +12,7 @@ import test from "node:test";
 import {
   ListenerAlreadyRunningError,
   LISTENER_RESTART_MAX_MS,
+  GrokListenerModel,
   ackCommandId,
   appendListenerEvent,
   claimCommandId,
@@ -33,6 +34,7 @@ import {
   type ListenerRuntimeStop,
   type ListenerStatus,
 } from "../src/listener/index.js";
+import type { GrokAcpHandle } from "../src/host/grok.js";
 import {
   readSecureJsonFile,
   writeSecureJsonFile,
@@ -97,6 +99,7 @@ function statusFor(paths: ListenerPaths, state: ListenerStatus["state"]): Listen
     stoppedAt: state === "stopped" || state === "failed" ? ts : null,
     lastSignalId: null,
     lastErrorCode: null,
+    lastErrorDetail: null,
     providerVersion: null,
     providerLastMeasuredVersion: null,
     lastWorkerStderrTail: null,
@@ -143,6 +146,132 @@ test("listener status and event log are secure and reject secret-shaped fields",
       event: "swm_agt_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
     }),
     /unsafe text/,
+  );
+});
+
+test("Grok canary attempts reach the local event log and terminal detail", async () => {
+  const runCanary = async (passed: boolean) => {
+    const root = await mkdtemp(join(tmpdir(), "cswarm-control-canary-test-"));
+    const target = paths(root);
+    const workspaceId = randomUUID();
+    const principalId = randomUUID();
+    const final = await runListenerSupervisor({
+      paths: target,
+      profileId: "profile-canary",
+      workspaceId,
+      principalId,
+      restart: { maxAttempts: 0 },
+      run: async (_signal, onEvent) => {
+        const model = new GrokListenerModel({
+          cwd: root,
+          onCanaryAttempt: (attempt, total, result) => {
+            onEvent({
+              type: "canary_attempt",
+              attempt,
+              total,
+              passed: result.passed,
+              reason: result.reason ?? null,
+              ts: new Date().toISOString(),
+            });
+          },
+          open: async () => ({
+            session: {
+              async enablePromptsAfterCanary(options?: {
+                onAttempt?: (
+                  attempt: number,
+                  total: number,
+                  result: { passed: boolean; reason?: string },
+                ) => void;
+              }) {
+                if (passed) {
+                  options?.onAttempt?.(1, 2, { passed: true });
+                  return;
+                }
+                const reason =
+                  "canary incomplete: permission=false deniedTool=false";
+                options?.onAttempt?.(1, 2, { passed: false, reason });
+                options?.onAttempt?.(2, 2, { passed: false, reason });
+                throw new AcpPermissionCanaryError(
+                  `${reason} (failed 2 attempts)`,
+                );
+              },
+              async prompt() {
+                throw new Error("unreachable");
+              },
+              cancel() {},
+            },
+            child: {},
+            executable: "grok",
+            args: [],
+            env: {},
+            async close() {},
+          } as unknown as GrokAcpHandle),
+        });
+        try {
+          await model.start();
+          onEvent({
+            type: "ready",
+            workspaceId,
+            principalId,
+            ts: new Date().toISOString(),
+          });
+          await model.close();
+          return { reason: "cancelled" as const };
+        } catch (error) {
+          return {
+            reason: "fatal" as const,
+            error: error instanceof Error ? error : new Error(String(error)),
+          };
+        }
+      },
+    });
+    const stored = await readListenerStatus(target);
+    const events = (await readFile(target.logPath, "utf8"))
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    return { final, stored, events };
+  };
+
+  const failed = await runCanary(false);
+  assert.equal(failed.final.state, "failed");
+  assert.equal(
+    failed.stored?.lastErrorDetail,
+    "canary incomplete: permission=false deniedTool=false (failed 2 attempts)",
+  );
+  assert.deepEqual(
+    failed.events
+      .filter((event) => event.event === "listener_canary_attempt")
+      .map(({ attempt, total, passed, reason }) => ({
+        attempt,
+        total,
+        passed,
+        reason,
+      })),
+    [
+      {
+        attempt: 1,
+        total: 2,
+        passed: false,
+        reason: "canary incomplete: permission=false deniedTool=false",
+      },
+      {
+        attempt: 2,
+        total: 2,
+        passed: false,
+        reason: "canary incomplete: permission=false deniedTool=false",
+      },
+    ],
+  );
+
+  const healthy = await runCanary(true);
+  assert.equal(healthy.final.state, "stopped");
+  assert.equal(healthy.stored?.lastErrorDetail, null);
+  assert.deepEqual(
+    healthy.events
+      .filter((event) => event.event === "listener_canary_attempt")
+      .map(({ passed, reason }) => ({ passed, reason })),
+    [{ passed: true, reason: null }],
   );
 });
 
@@ -813,6 +942,7 @@ test("old status without delivery fields reads as six nulls and is never rewritt
     stoppedAt: null,
     lastSignalId: null,
     lastErrorCode: null,
+    lastErrorDetail: null,
     lastWorkerStderrTail: null,
     logPath: target.logPath,
   };
@@ -1617,6 +1747,32 @@ test("status lastWorkerStderrTail: round-trips, absent key normalizes to null, s
   assert.equal((await readListenerStatus(target))?.lastWorkerStderrTail, null);
   // A credential-shaped tail is rejected by name, never displayed.
   raw.lastWorkerStderrTail = "token swm_agt_abc";
+  await writeSecureJsonFile(target.statusPath, JSON.stringify(raw));
+  await assert.rejects(readListenerStatus(target), /malformed/);
+});
+
+test("status lastErrorDetail: round-trips and old files without it normalize to null", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cswarm-control-test-"));
+  const target = paths(root);
+  const base = statusFor(target, "failed");
+  await writeListenerStatus(target, {
+    ...base,
+    lastErrorDetail:
+      "canary incomplete: permission=false deniedTool=false (failed 2 attempts)",
+  });
+  assert.equal(
+    (await readListenerStatus(target))?.lastErrorDetail,
+    "canary incomplete: permission=false deniedTool=false (failed 2 attempts)",
+  );
+
+  const raw = JSON.parse(
+    await readFile(target.statusPath, "utf8"),
+  ) as { lastErrorDetail?: unknown };
+  delete raw.lastErrorDetail;
+  await writeSecureJsonFile(target.statusPath, JSON.stringify(raw));
+  assert.equal((await readListenerStatus(target))?.lastErrorDetail, null);
+
+  raw.lastErrorDetail = "token swm_agt_abc";
   await writeSecureJsonFile(target.statusPath, JSON.stringify(raw));
   await assert.rejects(readListenerStatus(target), /malformed/);
 });

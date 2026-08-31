@@ -142,6 +142,7 @@ test("newer version reports exactly once to the startup status path", () => {
     readyAt: "2026-08-27T00:00:01.000Z",
     lastSignalId: null,
     lastErrorCode: null,
+    lastErrorDetail: null,
     lastWorkerStderrTail: null,
     providerVersion: "1.0.5",
     providerLastMeasuredVersion: "0.2.117",

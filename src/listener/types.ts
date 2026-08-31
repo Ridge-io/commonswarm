@@ -128,6 +128,18 @@ export type ListenerPermissionMode = "deny" | "allow";
 
 export type ListenerPromptMode = "worker";
 
+export interface ListenerCanaryVerdict {
+  passed: boolean;
+  reason?: string;
+}
+
+/** Reports each bounded permission-canary attempt to local listener diagnostics. */
+export type ListenerCanaryAttemptCallback = (
+  attempt: number,
+  total: number,
+  result: ListenerCanaryVerdict,
+) => void;
+
 export interface ListenerSenderProvenance {
   senderName: string | null;
   operatorId: string | null;

@@ -11,12 +11,16 @@ import test from "node:test";
 import {
   clampTurnBudgetToCredential,
   listenerFailureMessage,
+  renderListenerStatus,
   resolveDetachedClaudeExecutable,
   resolveDetachedCodexExecutable,
   resolveTurnBudgetOrDefer,
   TURN_BUDGET_CREDENTIAL_MARGIN_MS,
 } from "../../src/cli.js";
-import { ListenerRenewalUnavailableError } from "../../src/listener/index.js";
+import {
+  ListenerRenewalUnavailableError,
+  type ListenerStatus,
+} from "../../src/listener/index.js";
 
 function runCli(args: string[]) {
   return spawnSync(
@@ -75,6 +79,49 @@ test("unsupported provider error lists the same four remedies", () => {
   assert.match(
     result.stderr,
     /npm install -g @agentclientprotocol\/claude-agent-acp@latest/,
+  );
+});
+
+test("Grok canary guidance points to the local detail rendered by listen status", () => {
+  const guidance = listenerFailureMessage("permission_canary_failed", "grok");
+  assert.match(guidance, /no workspace signal prompt was delivered/i);
+  assert.match(guidance, /listen status.*final error detail/i);
+
+  const status: ListenerStatus = {
+    version: 1,
+    instanceId: "44444444-4444-4444-8444-444444444444",
+    provider: "grok",
+    profileId: "profile",
+    workspaceId: "11111111-1111-4111-8111-111111111111",
+    principalId: "33333333-3333-4333-8333-333333333333",
+    pid: 123,
+    state: "failed",
+    startedAt: "2026-08-31T00:00:00.000Z",
+    readyAt: null,
+    updatedAt: "2026-08-31T00:00:01.000Z",
+    stoppedAt: "2026-08-31T00:00:01.000Z",
+    lastSignalId: null,
+    lastErrorCode: "permission_canary_failed",
+    lastErrorDetail:
+      "canary incomplete: permission=false deniedTool=false (failed 2 attempts)",
+    providerVersion: null,
+    providerLastMeasuredVersion: null,
+    lastWorkerStderrTail: null,
+    deliveryMode: null,
+    pendingDeliveryCount: null,
+    lastTerminalDeliveryFailureCount: null,
+    lastTerminalDeliveryFailureAt: null,
+    lastClaimAt: null,
+    lastAckAt: null,
+    routeMode: "worker",
+    deferOverChars: null,
+    pendingForMainCount: 0,
+    droppedForMainCount: 0,
+    logPath: "/tmp/events.ndjson",
+  };
+  assert.match(
+    renderListenerStatus(status),
+    /Last error detail \(local only\): canary incomplete: permission=false deniedTool=false \(failed 2 attempts\)/,
   );
 });
 
