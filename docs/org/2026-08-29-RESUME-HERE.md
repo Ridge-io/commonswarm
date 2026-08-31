@@ -262,3 +262,27 @@ sounded reasonable, and by agents dogfooding the product — Wren, Joist, LeadG,
   or manual signed-in behavior. No account created, email sent, CLI release, or DB change.
   DEFERRED: existing open issues above, including the Node 22/24 download-copy mismatch,
   remain outside this request. Interim signup code f962c86 is superseded by 59c190b.
+
+## Addendum 2026-08-31 (night): v0.1.41 + THE EPISODIC 500 IS SOLVED
+
+- **v0.1.41 LIVE** (`6e2d6d2`; GitHub latest with both assets, npm, /download pins, installed
+  here, listener restarted): standing grants (93a2a64) + signal attachments (3ea1a9d) +
+  idempotency fix (dc32d30). Two-arm review over the full range, both PASS. Both migrations
+  applied to production; command/read deployed. First production attachment delivered to Quill.
+- **The month-long "episodic 500" root cause is MEASURED**: `EMAXCONNSESSION — max clients
+  reached in session mode, pool_size 38` in production function logs, dominated by
+  claim_agent_inbox. The deployed SWARM_DATABASE_URL pointed at the SESSION pooler; the design
+  (P1-COMMAND-API §3.2/R13) specified the TRANSACTION pooler all along. Fix (`2ba75f3` + ops):
+  DB password rotated per R3 (new one: ~/.config/cswarm-prod-db-password.txt on the mini, 0600),
+  SWARM_DATABASE_URL repointed to port 6543 transaction mode, all three functions redeployed,
+  per-isolate footprint shrunk (max 2, idle 3s). Verified: 5/5 reads, write OK, zero
+  EMAXCONNSESSION since. Production log access without the DB password: Management API
+  `analytics/endpoints/logs.all` with the CLI's keyring access token (decode the
+  go-keyring-base64 wrapper).
+- Merge-window catches worth remembering: p1-server had not been RUN since the markdown change
+  (queued-gate trap) and was hiding a broken hash mirror; the mint parser injected defaults into
+  the canonical command (idempotency hazard); the SA-local test contradicted its own event
+  filter. All fixed in dc32d30.
+- NEXT: L16 dashboard lane (Get-prompt, Cmd+Enter mention fix, full-height shell, bottom gap,
+  deflake the geometry observer), then L17 human receipts, then L18 workspace brain — specs in
+  the session scratchpad. Operator's standing order: all of it, released.

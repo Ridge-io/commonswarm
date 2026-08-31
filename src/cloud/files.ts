@@ -216,7 +216,7 @@ async function sendFileCommand<T>(
     const code = typeof body?.error === "string" ? body.error : "http_error";
     const message = typeof body?.message === "string"
       ? body.message
-      : `file command failed (HTTP ${response.status})`;
+      : `file command failed (HTTP ${response.status}) DEBUGBODY=${JSON.stringify(body).slice(0, 300)}`;
     throw new FileCommandRefused(response.status, code, message);
   }
   if (!body || typeof body !== "object") {
