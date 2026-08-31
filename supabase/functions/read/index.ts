@@ -33,9 +33,13 @@ const authClient = createClient(supabaseUrl, supabaseAnonKey, {
 });
 
 const db = postgres(databaseUrl, {
-  max: 4,
+  /* Session-mode pooling measured EXHAUSTED (EMAXCONNSESSION, pool_size 38,
+   * 2026-08-31): warm isolates pinning max*idle slots ate the pool and every
+   * "episodic 500" this month was this. Keep the per-isolate footprint minimal;
+   * the durable fix is SWARM_DATABASE_URL on the transaction pooler (6543). */
+  max: 2,
   prepare: false,
-  idle_timeout: 20,
+  idle_timeout: 3,
   connect_timeout: 10,
 });
 
