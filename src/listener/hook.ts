@@ -52,6 +52,9 @@ export const HOOK_CHECK_TIMEOUT_MS = 3_000;
 export const HOOK_DEFAULT_COOLDOWN_SECONDS = 30;
 export const HOOK_SURFACED_IDS_MAX = 1_024;
 export const HOOK_BODY_PREVIEW_CHARS = 240;
+export const HOOK_MULTI_PRINCIPAL_GUIDANCE =
+  "This host runs multiple agents. The CommonSwarm hook needs --principal-id. " +
+  "Reinstall it for this agent: cswarm hook install claude --principal-id <uuid> --write";
 
 export interface ListenerCredentialState {
   version: 1;
@@ -78,6 +81,7 @@ interface HookGlobalState {
 
 export interface HookCheckOptions {
   stateDirectory?: string;
+  principalIds?: readonly string[];
   cooldownSeconds?: number;
   now?: () => number;
   fetcher?: typeof fetch;
@@ -364,6 +368,17 @@ interface ListenerHookContext {
   credentialReadFailed: boolean;
 }
 
+interface StoredStatusContext {
+  instanceDirectory: string;
+  paths: ListenerPaths;
+  status: ListenerStatus;
+}
+
+interface HookContextDiscovery {
+  contexts: ListenerHookContext[];
+  requiresPrincipalScope: boolean;
+}
+
 function processIsAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
@@ -416,10 +431,9 @@ async function listenerIsLive(context: {
   }
 }
 
-async function discoverContexts(
+async function discoverStoredStatusContexts(
   stateDirectory: string,
-  isListenerLive: NonNullable<HookCheckOptions["isListenerLive"]> = listenerIsLive,
-): Promise<ListenerHookContext[]> {
+): Promise<StoredStatusContext[]> {
   let entries: Dirent<string>[];
   try {
     entries = await readdir(stateDirectory, { withFileTypes: true });
@@ -427,7 +441,7 @@ async function discoverContexts(
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
     throw error;
   }
-  const contexts: ListenerHookContext[] = [];
+  const contexts: StoredStatusContext[] = [];
   for (const entry of entries) {
     if (!entry.isDirectory() || !INSTANCE_KEY_RE.test(entry.name)) continue;
     const instanceDirectory = join(stateDirectory, entry.name);
@@ -436,14 +450,56 @@ async function discoverContexts(
       entry.name,
       instanceDirectory,
     );
-    const statusIsLive = storedStatus === null
-      ? null
-      : await isListenerLive(storedStatus);
-    if (statusIsLive === false) {
+    if (storedStatus !== null) {
       contexts.push({
         instanceDirectory,
-        paths: storedStatus!.paths,
-        status: storedStatus!.status,
+        paths: storedStatus.paths,
+        status: storedStatus.status,
+      });
+    }
+  }
+  return contexts;
+}
+
+/** Enumerate only principal identities authenticated by a valid local status.json. */
+export async function discoverListenerHookPrincipalIds(
+  stateDirectory = defaultListenerStateDirectory(),
+): Promise<string[]> {
+  if (!isAbsolute(stateDirectory)) return [];
+  const stored = await discoverStoredStatusContexts(stateDirectory);
+  return [...new Set(stored.map((context) => context.status.principalId))].sort();
+}
+
+async function discoverContexts(
+  stateDirectory: string,
+  principalIds: readonly string[] | undefined,
+  isListenerLive: NonNullable<HookCheckOptions["isListenerLive"]> = listenerIsLive,
+): Promise<HookContextDiscovery> {
+  const storedContexts = await discoverStoredStatusContexts(stateDirectory);
+  const availablePrincipals = new Set(
+    storedContexts.map((context) => context.status.principalId),
+  );
+  let selectedPrincipals: Set<string>;
+  if (principalIds === undefined) {
+    if (availablePrincipals.size > 1) {
+      return { contexts: [], requiresPrincipalScope: true };
+    }
+    selectedPrincipals = availablePrincipals;
+  } else {
+    if (principalIds.some((principalId) => !UUID_RE.test(principalId))) {
+      return { contexts: [], requiresPrincipalScope: false };
+    }
+    selectedPrincipals = new Set(principalIds.map((principalId) => principalId.toLowerCase()));
+  }
+  const contexts: ListenerHookContext[] = [];
+  for (const storedStatus of storedContexts) {
+    if (!selectedPrincipals.has(storedStatus.status.principalId)) continue;
+    const statusIsLive = await isListenerLive(storedStatus);
+    if (statusIsLive === false) {
+      contexts.push({
+        instanceDirectory: storedStatus.instanceDirectory,
+        paths: storedStatus.paths,
+        status: storedStatus.status,
         listenerLive: false,
         credential: null,
         credentialReadFailed: false,
@@ -451,22 +507,21 @@ async function discoverContexts(
       continue;
     }
     await deleteSecureJsonFile(
-      join(instanceDirectory, RETIRED_HOOK_CREDENTIAL_FILE),
+      join(storedStatus.instanceDirectory, RETIRED_HOOK_CREDENTIAL_FILE),
     ).catch(() => undefined);
     try {
-      const credential = await readListenerCredentialState(instanceDirectory);
+      const credential = await readListenerCredentialState(storedStatus.instanceDirectory);
       contexts.push({
-        instanceDirectory,
-        paths: storedStatus?.paths ?? null,
-        status: storedStatus?.status ?? null,
+        instanceDirectory: storedStatus.instanceDirectory,
+        paths: storedStatus.paths,
+        status: storedStatus.status,
         listenerLive: statusIsLive,
         credential,
-        credentialReadFailed: credential === null && storedStatus !== null,
+        credentialReadFailed: credential === null,
       });
     } catch {
-      if (storedStatus === null) continue;
       contexts.push({
-        instanceDirectory,
+        instanceDirectory: storedStatus.instanceDirectory,
         paths: storedStatus.paths,
         status: storedStatus.status,
         listenerLive: statusIsLive,
@@ -475,7 +530,7 @@ async function discoverContexts(
       });
     }
   }
-  return contexts;
+  return { contexts, requiresPrincipalScope: false };
 }
 
 type SurfaceItem = PendingMainEntry;
@@ -672,10 +727,16 @@ export async function checkListenerHooks(
     if (!Number.isSafeInteger(cooldownSeconds) || cooldownSeconds < 0 || cooldownSeconds > 86_400) {
       return "";
     }
-    const contexts = await discoverContexts(
+    const discovery = await discoverContexts(
       stateDirectory,
+      options.principalIds,
       options.isListenerLive ?? listenerIsLive,
     );
+    if (discovery.requiresPrincipalScope) {
+      await (options.write ?? (() => undefined))(HOOK_MULTI_PRINCIPAL_GUIDANCE);
+      return HOOK_MULTI_PRINCIPAL_GUIDANCE;
+    }
+    const contexts = discovery.contexts;
     if (contexts.length === 0) return "";
     const networkAllowed = contexts.some((context) => context.listenerLive !== false)
       ? await reserveCheck(

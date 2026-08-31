@@ -200,6 +200,8 @@ import {
   OpenCodeListenerModel,
   effectiveListenerStatus,
   listenerPaths,
+  defaultListenerStateDirectory,
+  discoverListenerHookPrincipalIds,
   listenerSenderProvenance,
   openListenerDeliveryJournal,
   runListenerRuntime,
@@ -463,8 +465,8 @@ Usage:
   cswarm listen start ${requiredAgentCredential} [--url <url> --anon-key <key>] --workspace-id <uuid> --provider grok|opencode|claude|codex [--cwd <absolute-path>] [--model <model>] [--effort <level>] [--permissions deny|allow] [--grok-executable <path>] [--opencode-executable <path>] [--claude-executable <path>] [--codex-executable <path>] [--turn-budget <duration>] [--route worker|main|split] [--defer-over <chars>] [--foreground] [--json]
   cswarm listen status [--url <url> --anon-key <key>] --workspace-id <uuid> --principal-id <uuid> [--json]
   cswarm listen stop [--url <url> --anon-key <key>] --workspace-id <uuid> --principal-id <uuid> [--json]
-  cswarm hook check [--cooldown <seconds>]
-  cswarm hook install claude [--write]
+  cswarm hook check [--principal-id <uuid> ...] [--cooldown <seconds>]
+  cswarm hook install claude [--principal-id <uuid>] [--write]
   cswarm hook uninstall claude --write
   cswarm new "<workspace name>" [--url <url> --anon-key <key>] [--json]
   cswarm new --name "<workspace name>" [--url <url> --anon-key <key>] [--json]
@@ -510,7 +512,7 @@ Credential selection for command/dogfood:
                             command, dogfood
                                           task protocol commands              -- either form
                             listen start  persists durable state, rotates -- needs expires_at
-                            hook check    reads the listener's owned 0600 credential state;
+                            hook check    reads only the selected listener's owned 0600 credential state;
                                           never accepts or prints a credential
                             hook install/uninstall
                                           edits only local Claude Code settings; no credential
@@ -542,10 +544,11 @@ listen start --route worker|main|split chooses where directed messages go. worke
 is the unchanged default. main queues every ask or note for the interactive session.
 split queues messages whose body is longer than --defer-over <chars>; the bound is
 1..10000 and an equal-length message stays on the worker path. Run cswarm hook check
-to surface queued messages. hook check has its own 3s ceiling, exits 0 on every
-outcome, and skips network checks made within --cooldown seconds (default 30).
-hook install claude prints the UserPromptSubmit JSON by default and changes the
-project's .claude/settings.json only with --write; uninstall also requires --write.
+--principal-id <uuid> to surface that agent's queued messages. A bare check works only
+when the state directory holds one principal. hook check has its own 3s ceiling, exits 0
+on every outcome, and skips network checks made within --cooldown seconds (default 30).
+hook install claude prints principal-scoped UserPromptSubmit JSON by default and changes
+the project's .claude/settings.json only with --write; uninstall also requires --write.
 
 Invite, legacy token accept, principal create/revoke, human token mint/revoke, link, new, and workspace close require a
 stored human login. Agent self-surrender of a token uses --agent-token-file or --agent-token-stdin and never takes the secret on argv. Invite-link accept signs in when needed, then accepts and
@@ -4936,8 +4939,19 @@ async function runListen(args: Arguments): Promise<void> {
 
 const CLAUDE_HOOK_COMMAND = "cswarm hook check";
 
+function scopedClaudeHookCommand(principalId: string): string {
+  return `${CLAUDE_HOOK_COMMAND} --principal-id ${listenerUuid(principalId, "principal-id")}`;
+}
+
+function isCommonSwarmClaudeHook(value: unknown): boolean {
+  return typeof value === "string" && (
+    value === CLAUDE_HOOK_COMMAND ||
+    /^cswarm hook check --principal-id [0-9a-f-]{36}$/.test(value)
+  );
+}
+
 /** Exact project-settings fragment printed by `cswarm hook install claude`. */
-export function claudeUserPromptHookSnippet(): Record<string, unknown> {
+export function claudeUserPromptHookSnippet(principalId: string): Record<string, unknown> {
   return {
     hooks: {
       UserPromptSubmit: [
@@ -4945,7 +4959,7 @@ export function claudeUserPromptHookSnippet(): Record<string, unknown> {
           hooks: [
             {
               type: "command",
-              command: CLAUDE_HOOK_COMMAND,
+              command: scopedClaudeHookCommand(principalId),
             },
           ],
         },
@@ -4973,7 +4987,10 @@ function readProjectSettings(path: string): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
-function installClaudeHook(settings: Record<string, unknown>): Record<string, unknown> {
+function installClaudeHook(
+  settings: Record<string, unknown>,
+  principalId: string,
+): Record<string, unknown> {
   const hooks = settings.hooks && typeof settings.hooks === "object" &&
       !Array.isArray(settings.hooks)
     ? { ...(settings.hooks as Record<string, unknown>) }
@@ -4981,21 +4998,42 @@ function installClaudeHook(settings: Record<string, unknown>): Record<string, un
   const current = Array.isArray(hooks.UserPromptSubmit)
     ? [...hooks.UserPromptSubmit]
     : [];
-  const alreadyInstalled = current.some((group) => {
-    if (!group || typeof group !== "object" || Array.isArray(group)) return false;
-    const commands = (group as Record<string, unknown>).hooks;
-    return Array.isArray(commands) && commands.some((hook) =>
-      hook && typeof hook === "object" && !Array.isArray(hook) &&
-      (hook as Record<string, unknown>).type === "command" &&
-      (hook as Record<string, unknown>).command === CLAUDE_HOOK_COMMAND
-    );
-  });
-  if (!alreadyInstalled) {
-    const snippetHooks = (claudeUserPromptHookSnippet().hooks as Record<string, unknown>)
-      .UserPromptSubmit as unknown[];
-    current.push(snippetHooks[0]);
+  const command = scopedClaudeHookCommand(principalId);
+  let installed = false;
+  const groups: unknown[] = [];
+  for (const group of current) {
+    if (!group || typeof group !== "object" || Array.isArray(group)) {
+      groups.push(group);
+      continue;
+    }
+    const row = { ...(group as Record<string, unknown>) };
+    if (!Array.isArray(row.hooks)) {
+      groups.push(group);
+      continue;
+    }
+    const commands: unknown[] = [];
+    for (const hook of row.hooks) {
+      if (
+        hook && typeof hook === "object" && !Array.isArray(hook) &&
+        (hook as Record<string, unknown>).type === "command" &&
+        isCommonSwarmClaudeHook((hook as Record<string, unknown>).command)
+      ) {
+        if (!installed) {
+          commands.push({ ...(hook as Record<string, unknown>), command });
+          installed = true;
+        }
+        continue;
+      }
+      commands.push(hook);
+    }
+    if (commands.length > 0) groups.push({ ...row, hooks: commands });
   }
-  hooks.UserPromptSubmit = current;
+  if (!installed) {
+    const snippetHooks = (claudeUserPromptHookSnippet(principalId).hooks as Record<string, unknown>)
+      .UserPromptSubmit as unknown[];
+    groups.push(snippetHooks[0]);
+  }
+  hooks.UserPromptSubmit = groups;
   return { ...settings, hooks };
 }
 
@@ -5019,7 +5057,7 @@ function uninstallClaudeHook(settings: Record<string, unknown>): Record<string, 
     row.hooks = row.hooks.filter((hook) => !(
       hook && typeof hook === "object" && !Array.isArray(hook) &&
       (hook as Record<string, unknown>).type === "command" &&
-      (hook as Record<string, unknown>).command === CLAUDE_HOOK_COMMAND
+      isCommonSwarmClaudeHook((hook as Record<string, unknown>).command)
     ));
     if ((row.hooks as unknown[]).length > 0) groups.push(row);
   }
@@ -5033,10 +5071,32 @@ function uninstallClaudeHook(settings: Record<string, unknown>): Record<string, 
   return { ...settings, hooks };
 }
 
+async function hookInstallPrincipalId(args: Arguments): Promise<string> {
+  const explicit = args.optional("principal-id");
+  if (explicit !== undefined) return listenerUuid(explicit, "principal-id");
+  const principalIds = await discoverListenerHookPrincipalIds(
+    defaultListenerStateDirectory(),
+  );
+  if (principalIds.length === 1) return principalIds[0]!;
+  if (principalIds.length > 1) {
+    throw new Error(
+      "hook install claude found multiple agents on this host. " +
+      "Choose this agent explicitly: cswarm hook install claude --principal-id <uuid> [--write]",
+    );
+  }
+  throw new Error(
+    "hook install claude could not find a listener principal. " +
+    "Name this agent explicitly: cswarm hook install claude --principal-id <uuid> [--write]",
+  );
+}
+
 async function runHook(args: Arguments): Promise<void> {
   const command = args.positionals[1];
   if (command === "check") {
-    args.assertShape(["cooldown"], 2);
+    args.assertShape(["cooldown", "principal-id"], 2);
+    const rawPrincipalIds = args.all("principal-id");
+    if (rawPrincipalIds.some((principalId) => !UUID_RE.test(principalId))) return;
+    const principalIds = rawPrincipalIds.map((principalId) => principalId.toLowerCase());
     const rawCooldown = args.optional("cooldown");
     const cooldownSeconds = rawCooldown === undefined ? undefined : Number(rawCooldown);
     if (
@@ -5053,42 +5113,40 @@ async function runHook(args: Arguments): Promise<void> {
       process.exit(0);
     }, 3_000);
     hardExit.unref();
-    try {
-      await runListenerHookCheck({
-        ...(cooldownSeconds === undefined ? {} : { cooldownSeconds }),
-        write: async (output) => {
-          await new Promise<void>((resolve, reject) => {
-            process.stdout.write(`${output}\n`, (error) => {
-              if (error) reject(error);
-              else resolve();
-            });
+    await runListenerHookCheck({
+      ...(cooldownSeconds === undefined ? {} : { cooldownSeconds }),
+      ...(principalIds.length === 0 ? {} : { principalIds }),
+      write: async (output) => {
+        await new Promise<void>((resolve, reject) => {
+          process.stdout.write(`${output}\n`, (error) => {
+            if (error) reject(error);
+            else resolve();
           });
-        },
-      });
-      return;
-    } finally {
-      clearTimeout(hardExit);
-    }
+        });
+      },
+    });
+    return;
   }
   if (command !== "install" && command !== "uninstall") {
     throw new UsageError("hook requires check, install, or uninstall");
   }
-  args.assertShape(["write"], 3);
+  args.assertShape(command === "install" ? ["write", "principal-id"] : ["write"], 3);
   if (args.positionals[2] !== "claude") {
     throw new Error("hook install/uninstall currently supports claude");
   }
   if (command === "uninstall" && !args.has("write")) {
     throw new Error("hook uninstall claude requires --write");
   }
-  const snippet = claudeUserPromptHookSnippet();
-  if (!args.has("write")) {
+  const principalId = command === "install" ? await hookInstallPrincipalId(args) : null;
+  const snippet = principalId === null ? null : claudeUserPromptHookSnippet(principalId);
+  if (command === "install" && !args.has("write")) {
     process.stdout.write(`${JSON.stringify(snippet, null, 2)}\n`);
     return;
   }
   const path = projectClaudeSettingsPath();
   const settings = readProjectSettings(path);
   const updated = command === "install"
-    ? installClaudeHook(settings)
+    ? installClaudeHook(settings, principalId!)
     : uninstallClaudeHook(settings);
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, `${JSON.stringify(updated, null, 2)}\n`, {
@@ -5097,7 +5155,7 @@ async function runHook(args: Arguments): Promise<void> {
   });
   process.stdout.write(
     command === "install"
-      ? `Installed the Claude Code UserPromptSubmit hook in ${path}. It runs: ${CLAUDE_HOOK_COMMAND}\n`
+      ? `Installed the Claude Code UserPromptSubmit hook in ${path}. It runs: ${scopedClaudeHookCommand(principalId!)}\n`
       : `Removed the CommonSwarm UserPromptSubmit hook from ${path}. Other settings were kept.\n`,
   );
 }

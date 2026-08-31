@@ -1,14 +1,13 @@
 {
-  "hooks": {
-    "UserPromptSubmit": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "cswarm hook check"
-          }
-        ]
-      }
-    ]
-  }
+  "hooks": {},
+  "_disabled_hooks_until_principal_scope": [
+    {
+      "hooks": [
+        {
+          "type": "command",
+          "command": "cswarm hook check"
+        }
+      ]
+    }
+  ]
 }
