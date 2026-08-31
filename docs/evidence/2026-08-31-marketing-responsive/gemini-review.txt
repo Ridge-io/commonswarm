@@ -1,0 +1,34 @@
+**Review: CommonSwarm D-036**
+**Model:** Gemini 3.1 Pro
+**Target SHA:** 77f701bc3c8b20df4c57eb2feec42620d86f33d1
+**Base SHA:** 820a9e32cf68fed914afd1031946f078352b0e7c
+
+**Assessment: PASS**
+
+**Substantive Reasoning:**
+
+1. **Responsive sidebar toggle (Grid & Display)**
+   - **Fix Validation:** The media query is placed correctly at the end of the `<style>` block. At `< 40rem` (e.g., 320-639px), the layout falls back to the base single `1fr` column, and `.chat__rail` uses `display: none`. At `>= 40rem` (640px+), the override applies `grid-template-columns: 11.5rem minmax(0, 1fr)` and reinstates the rail with `display: block`.
+   - **Anti-Clipping:** At exactly 640px, the 11.5rem (184px) rail leaves roughly 424px for the feed column (after accounting for page margins and 2px container borders). This easily accommodates the inner 32px padding and 40px avatar column, leaving over 350px for the text to wrap. The grid's `minmax(0, 1fr)` and the feed's `min-inline-size: 0` explicitly defend against horizontal blowouts. No clipping occurs.
+   - **Context Preservation:** Since `.msg__meta` statically prints the agent, model, and teammate names on each message, discarding the sidebar rail at mobile widths results in zero context loss.
+
+2. **Undefined `--s-7` gap**
+   - **Fix Validation:** `tokens.css` jumps straight from `--s-6` (1.5rem) to `--s-8` (2rem). The update to `margin-block-start: var(--s-8)` on `.consumer-hero__panelwrap` resolves the silent failure of the undefined variable and restores the correct visual pacing.
+
+3. **Lost Owner/Agent Indent (Cascade Specificity)**
+   - **Fix Validation:** The `margin: 0` shorthand in `.chat__list` inherently resets `margin-inline-start` to 0. Because `.chat__list` and `.chat__list--agents` share an identical specificity weight of (0,1,0), source order governs precedence.
+   - By successfully swapping the declarations so `.chat__list--agents` follows `.chat__list`, its `margin-inline-start: 0.1875rem` wins the tie. This restores the 3px + 12px nested indentation without adding heavy selector hacks.
+
+4. **Wrapping Panel Header & Note Alignment**
+   - **Fix Validation:** `.panel__head` safely gains `flex-wrap: wrap` and `row-gap: var(--s-1)`. 
+   - Because `.panel__note` is an inline `<p>` without `width: 100%` or `flex-grow: 1`, its width shrink-wraps to its text content. When it wraps to its own line, `justify-content: space-between` has no sibling elements to push against, so it naturally drops to the flex container's `start` (left edge).
+   - This aligns flawlessly with the visual verification constraints in the prompt: it left-aligns on narrow screens but continues to push to the right edge when sharing a line on desktop. 
+
+5. **Restoring `/#how-it-works` and `/#install` (Anchor Padding)**
+   - **Fix Validation:** Placing the IDs on the inner `<header class="section-head">` wrappers is structurally brilliant. 
+   - By navigating directly to the inner header, the browser's native scroll (influenced by `scroll-padding-top: calc(var(--header-h) + var(--s-8))`) cleanly bypasses the massive `var(--pad-section)` top padding on the parent `<section>`.
+   - Crucially, `aria-labelledby` on the `<section>` elements survives completely unbroken because the original target IDs (`story-communicate-title`, `story-connect-title`) were left intact on the actual `h2` elements.
+
+**Assumptions & Limits:**
+- **Double-Border Observation:** The `.chat` component has a `border-block-start`, and the `.panel__head` sibling directly above it has a `border-bottom`. This results in a doubled 2px horizontal border. However, inspection of the base SHA confirms this existed prior to the layout fix. It is not a regression of this patch, so it does not fail the review.
+- We accept the prompt's condition that actual browser innerWidth geometries behave as specified without inferring hypothetical device-specific scaling/viewport bugs.

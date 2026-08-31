@@ -1,0 +1,26 @@
+**Review Meta**
+* **Model Family:** Gemini 3.1 Pro
+* **Target SHA:** `834a703727bc3c3168751e47e688ace9539ca149`
+* **Base SHA:** `820a9e32cf68fed914afd1031946f078352b0e7c`
+
+### Assessment of Intent vs. Execution
+The structural fixes in this diff are largely sound:
+* **`--s-7` Gap:** Updating the undefined variable to `margin-block-start: var(--s-8)` correctly restores the missing structural gap using the established token scale.
+* **Agent Indent:** Reordering `.chat__list` before `.chat__list--agents` correctly utilizes CSS cascade order. The base `margin: 0` shorthand no longer wipes out the modifier's `margin-inline-start`, restoring the expected indent.
+* **Sidebar Media Query:** Wrapping `.chat__rail { display: block; }` and redefining the `.chat` grid inside the `(min-width: 40rem)` media query correctly establishes a robust 2-column layout on large screens while gracefully degrading to the single-column `.chat__main` feed on mobile.
+
+### Actionable Problems & Regressions
+
+**1. Left-Alignment Regression on Panel Wrap**
+* **File:** `site/src/components/landing/ConsumerHero.astro`
+* **Line:** 201-204 (`.consumer-proof__panel .panel__head`)
+* **Defect:** Adding `flex-wrap: wrap` to the panel header prevents horizontal blowout on <360px phones, but it breaks the alignment of `.panel__note` ("commonswarm/site"). 
+* **Reasoning:** In `global.css`, `.panel__head` is a flex container with `justify-content: space-between`. When the header wraps, `.panel__note` drops to become the only item on a new flex line. `space-between` falls back to `flex-start` for single-item lines. Although the note has `text-align: right`, its block width is strictly its max-content width (it does not have `flex-grow: 1`). Consequently, it aligns abruptly to the left side of the panel rather than staying flush right.
+* **Fix Constraint:** To preserve right-alignment when wrapped, `.panel__note` requires `margin-inline-start: auto;` or `width: 100%;`.
+
+**2. Scroll Offset Regression on Restored Anchor Targets**
+* **File:** `site/src/components/landing/ConsumerStory.astro`
+* **Line:** 9 & 47 (`<section class="story section" id="...">`)
+* **Defect:** Placing the missing hash targets (`#how-it-works`, `#install`) directly on the `<section>` wrappers restores link functionality but introduces a severe vertical offset when navigating to those URLs.
+* **Reasoning:** The `<section>` wrapper carries the `.section` class, which applies a massive padding block (`var(--pad-section)`, up to 144px). The global `scroll-padding-top` (96px) correctly clears the fixed header, but because the browser targets the top margin edge of the section, the user is left staring at 144px of empty space *before* the heading appears. 
+* **Fix Constraint:** The anchors should ideally be placed directly on the `<h2>` elements (updating their existing `story-communicate-title` IDs to match the required URLs and updating `aria-labelledby` attributes accordingly), which would ensure the headings dock perfectly under the `scroll-padding-top` clearance.

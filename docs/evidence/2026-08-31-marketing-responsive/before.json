@@ -1,0 +1,378 @@
+[
+  {
+    "feed": {
+      "display": "block",
+      "height": 590.328125,
+      "width": 278,
+      "x": 21,
+      "y": 856.09375
+    },
+    "header": [
+      {
+        "right": 42,
+        "text": "CommonSwarm"
+      },
+      {
+        "right": 256,
+        "text": "Open workspace"
+      },
+      {
+        "right": 308,
+        "text": "Menu"
+      }
+    ],
+    "overflow": [],
+    "panelMargin": "0px",
+    "rail": {
+      "display": "block",
+      "height": 205.828125,
+      "width": 278,
+      "x": 21,
+      "y": 650.265625
+    },
+    "scrollWidth": 320,
+    "width": 320
+  },
+  {
+    "feed": {
+      "display": "block",
+      "height": 525.265625,
+      "width": 333,
+      "x": 21,
+      "y": 770.265625
+    },
+    "header": [
+      {
+        "right": 42,
+        "text": "CommonSwarm"
+      },
+      {
+        "right": 311,
+        "text": "Open workspace"
+      },
+      {
+        "right": 363,
+        "text": "Menu"
+      }
+    ],
+    "overflow": [],
+    "panelMargin": "0px",
+    "rail": {
+      "display": "block",
+      "height": 205.828125,
+      "width": 333,
+      "x": 21,
+      "y": 564.4375
+    },
+    "scrollWidth": 375,
+    "width": 375
+  },
+  {
+    "feed": {
+      "display": "block",
+      "height": 503.578125,
+      "width": 348,
+      "x": 21,
+      "y": 770.265625
+    },
+    "header": [
+      {
+        "right": 170.203125,
+        "text": "CommonSwarm"
+      },
+      {
+        "right": 326,
+        "text": "Open workspace"
+      },
+      {
+        "right": 378,
+        "text": "Menu"
+      }
+    ],
+    "overflow": [],
+    "panelMargin": "0px",
+    "rail": {
+      "display": "block",
+      "height": 205.828125,
+      "width": 348,
+      "x": 21,
+      "y": 564.4375
+    },
+    "scrollWidth": 390,
+    "width": 390
+  },
+  {
+    "feed": {
+      "display": "block",
+      "height": 460.203125,
+      "width": 438,
+      "x": 21,
+      "y": 706.09375
+    },
+    "header": [
+      {
+        "right": 177.671875,
+        "text": "CommonSwarm"
+      },
+      {
+        "right": 412,
+        "text": "Open workspace"
+      },
+      {
+        "right": 468,
+        "text": "Menu"
+      }
+    ],
+    "overflow": [],
+    "panelMargin": "0px",
+    "rail": {
+      "display": "block",
+      "height": 205.828125,
+      "width": 438,
+      "x": 21,
+      "y": 500.265625
+    },
+    "scrollWidth": 480,
+    "width": 480
+  },
+  {
+    "feed": {
+      "display": "block",
+      "height": 373.453125,
+      "width": 585.90625,
+      "x": 26.546875,
+      "y": 690.25
+    },
+    "header": [
+      {
+        "right": 183.21875,
+        "text": "CommonSwarm"
+      },
+      {
+        "right": 565.453125,
+        "text": "Open workspace"
+      },
+      {
+        "right": 621.453125,
+        "text": "Menu"
+      }
+    ],
+    "overflow": [],
+    "panelMargin": "0px",
+    "rail": {
+      "display": "block",
+      "height": 205.828125,
+      "width": 585.90625,
+      "x": 26.546875,
+      "y": 484.421875
+    },
+    "scrollWidth": 639,
+    "width": 639
+  },
+  {
+    "feed": {
+      "display": "block",
+      "height": 373.453125,
+      "width": 586.8125,
+      "x": 26.59375,
+      "y": 690.3125
+    },
+    "header": [
+      {
+        "right": 183.265625,
+        "text": "CommonSwarm"
+      },
+      {
+        "right": 566.40625,
+        "text": "Open workspace"
+      },
+      {
+        "right": 622.40625,
+        "text": "Menu"
+      }
+    ],
+    "overflow": [],
+    "panelMargin": "0px",
+    "rail": {
+      "display": "block",
+      "height": 205.828125,
+      "width": 586.8125,
+      "x": 26.59375,
+      "y": 484.484375
+    },
+    "scrollWidth": 640,
+    "width": 640
+  },
+  {
+    "feed": {
+      "display": "block",
+      "height": 373.453125,
+      "width": 704.5625,
+      "x": 31.71875,
+      "y": 703.671875
+    },
+    "header": [
+      {
+        "right": 188.390625,
+        "text": "CommonSwarm"
+      },
+      {
+        "right": 689.28125,
+        "text": "Open workspace"
+      },
+      {
+        "right": 745.28125,
+        "text": "Menu"
+      }
+    ],
+    "overflow": [],
+    "panelMargin": "0px",
+    "rail": {
+      "display": "block",
+      "height": 205.828125,
+      "width": 704.5625,
+      "x": 31.71875,
+      "y": 497.84375
+    },
+    "scrollWidth": 768,
+    "width": 768
+  },
+  {
+    "feed": {
+      "display": "block",
+      "height": 373.453125,
+      "width": 763.46875,
+      "x": 34.265625,
+      "y": 713.5625
+    },
+    "header": [
+      {
+        "right": 190.9375,
+        "text": "CommonSwarm"
+      },
+      {
+        "right": 393.890625,
+        "text": "How it works"
+      },
+      {
+        "right": 519.765625,
+        "text": "See the prompt"
+      },
+      {
+        "right": 583.171875,
+        "text": "Install"
+      },
+      {
+        "right": 643.171875,
+        "text": "GitHub repository (opens in a new tab)"
+      },
+      {
+        "right": 798.734375,
+        "text": "Open workspace"
+      }
+    ],
+    "overflow": [],
+    "panelMargin": "0px",
+    "rail": {
+      "display": "block",
+      "height": 205.828125,
+      "width": 763.46875,
+      "x": 34.265625,
+      "y": 507.734375
+    },
+    "scrollWidth": 832,
+    "width": 832
+  },
+  {
+    "feed": {
+      "display": "block",
+      "height": 351.765625,
+      "width": 830,
+      "x": 97,
+      "y": 743.21875
+    },
+    "header": [
+      {
+        "right": 197.671875,
+        "text": "CommonSwarm"
+      },
+      {
+        "right": 579.15625,
+        "text": "How it works"
+      },
+      {
+        "right": 705.03125,
+        "text": "See the prompt"
+      },
+      {
+        "right": 768.4375,
+        "text": "Install"
+      },
+      {
+        "right": 828.4375,
+        "text": "GitHub repository (opens in a new tab)"
+      },
+      {
+        "right": 984,
+        "text": "Open workspace"
+      }
+    ],
+    "overflow": [],
+    "panelMargin": "0px",
+    "rail": {
+      "display": "block",
+      "height": 205.828125,
+      "width": 830,
+      "x": 97,
+      "y": 537.390625
+    },
+    "scrollWidth": 1024,
+    "width": 1024
+  },
+  {
+    "feed": {
+      "display": "block",
+      "height": 351.765625,
+      "width": 830,
+      "x": 305,
+      "y": 791.1875
+    },
+    "header": [
+      {
+        "right": 269.671875,
+        "text": "CommonSwarm"
+      },
+      {
+        "right": 923.15625,
+        "text": "How it works"
+      },
+      {
+        "right": 1049.03125,
+        "text": "See the prompt"
+      },
+      {
+        "right": 1112.4375,
+        "text": "Install"
+      },
+      {
+        "right": 1172.4375,
+        "text": "GitHub repository (opens in a new tab)"
+      },
+      {
+        "right": 1328,
+        "text": "Open workspace"
+      }
+    ],
+    "overflow": [],
+    "panelMargin": "0px",
+    "rail": {
+      "display": "block",
+      "height": 205.828125,
+      "width": 830,
+      "x": 305,
+      "y": 585.359375
+    },
+    "scrollWidth": 1440,
+    "width": 1440
+  }
+]

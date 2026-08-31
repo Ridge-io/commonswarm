@@ -1,0 +1,58 @@
+[
+  {
+    "path": "acceptable-use/index.html",
+    "backendURL": "https://api.commonswarm.com",
+    "keyPresent": true,
+    "keyRole": "anon",
+    "sha256": "ae12e855e245d9a890fe796749d94f1ac1db84a983fc3beda8bd04ff9e82f2f0"
+  },
+  {
+    "path": "app/index.html",
+    "backendURL": "https://api.commonswarm.com",
+    "keyPresent": true,
+    "keyRole": "anon",
+    "sha256": "0e5030aface2e328f475b7310e9cbc34dc9fc3a55658180c19187d74452d6b53"
+  },
+  {
+    "path": "download/index.html",
+    "backendURL": "https://api.commonswarm.com",
+    "keyPresent": true,
+    "keyRole": "anon",
+    "sha256": "b83f7f55bb27ae34508b332bfd6515d12ec5eb5a6b3f082e507550f9a604e799"
+  },
+  {
+    "path": "index.html",
+    "backendURL": "https://api.commonswarm.com",
+    "keyPresent": true,
+    "keyRole": "anon",
+    "sha256": "9c73e20ed9ddaf2c0c47f64be27f048d0e7f82e8d5d23fa65ad0dedf1a6c3004"
+  },
+  {
+    "path": "invite/index.html",
+    "backendURL": "https://api.commonswarm.com",
+    "keyPresent": true,
+    "keyRole": "anon",
+    "sha256": "2628c793ed15ab175601c5c1ad9814ad35d7c036b5362eae62e92714ea569563"
+  },
+  {
+    "path": "privacy/index.html",
+    "backendURL": "https://api.commonswarm.com",
+    "keyPresent": true,
+    "keyRole": "anon",
+    "sha256": "67e40fd1a9962170144d7ec38fabba666bf4876346fdc7337286df9c01e1cca8"
+  },
+  {
+    "path": "start/index.html",
+    "backendURL": "https://api.commonswarm.com",
+    "keyPresent": true,
+    "keyRole": "anon",
+    "sha256": "3602dc4f27b901e2b568b3dc21189cb08656861a9844a08eca1d1926d605bead"
+  },
+  {
+    "path": "terms/index.html",
+    "backendURL": "https://api.commonswarm.com",
+    "keyPresent": true,
+    "keyRole": "anon",
+    "sha256": "870eac80bcd4a439d1f951e456b69c8d46625541eff2871f7243bb4f452f501c"
+  }
+]

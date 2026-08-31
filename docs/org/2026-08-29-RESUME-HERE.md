@@ -197,3 +197,37 @@ sounded reasonable, and by agents dogfooding the product — Wren, Joist, LeadG,
 - My hook re-enabled SCOPED to 8d10fe67 in .claude/settings.json; my listener ready on the
   upgraded binary needs a restart to run 0.1.40 code (it started on 0.1.39) — restart it next
   session start or on the next listener-affecting release.
+
+
+## Addendum 2026-08-31: marketing responsive repair
+
+- Base `820a9e32cf68fed914afd1031946f078352b0e7c`; final code
+  `77f701bc3c8b20df4c57eb2feec42620d86f33d1` is LANDED on GitHub `main` and LIVE at
+  https://commonswarm.com. PR #1 merged by fast-forward to that exact SHA.
+- Work used `codex/marketing-responsive` in
+  `/Users/yulanbot/Developer/Ridge.io/commonswarm-responsive`. Other feature branches
+  were not changed. Evidence is added separately as an ungated docs commit.
+- Fixed the mock sidebar stacking above the feed: show two columns from 40rem,
+  and a full-width feed below it. Also fixed missing panel spacing, agent indentation,
+  header-label wrapping, and missing homepage navigation targets. Anchor targets sit
+  on inner headers so section padding does not add an empty gap after navigation.
+- Vercel `coswarm-site` / `ridgedotio`, deployment `dpl_3JtXhJBHcyGQd62pxLnyyPGzZyGp`.
+  All eight public page bodies and both homepage CSS assets match the tested build.
+  Installer 200 plus missing-file 404 control passed. CLI stays at 0.1.40.
+- Both D-036 arms passed on final code SHA: independent Codex exact review and
+  Gemini 3.1 Pro inversion. Final site suite: 212 pass / 0 fail / 1 existing diagnostic
+  skip. Root suite: 656 pass / 0 fail. Ten live widths, 320 through 1440px, passed.
+  Codex also ran non-author stacking and hidden-clipping controls, each red then green.
+- Durable record: `docs/evidence/2026-08-31-marketing-responsive/README.md` with raw
+  measurements, screenshots, test output, review reasoning, and a replay command.
+  `production-geometry-invalid.json` is explicitly INVALID: it measured 1440px ten
+  times in an unselected tab. The width control caught it; the replacement has ten
+  verified widths. Do not count the invalid file as responsive coverage.
+- No remaining repair step. For the next edit, start at
+  `site/src/components/landing/ConsumerHero.astro` and keep the rail display and
+  two-column media rule together; run `npm --prefix site run build` then
+  `npm --prefix site test`, and read the evidence before changing the breakpoint.
+- NOT established: Safari/Firefox, physical phones, signed-in flows, or the mobile
+  keyboard case. Existing open issues earlier in this file remain open. DEFERRED:
+  a pre-existing /download copy mismatch says Node 22 in its heading but Node 24 in
+  one instruction; no install-page copy was changed in this layout repair.
