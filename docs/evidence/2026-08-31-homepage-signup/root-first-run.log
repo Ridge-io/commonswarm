@@ -1,0 +1,1368 @@
+
+> cloud-swarm@0.1.40 test
+> node --import tsx --test tests/host-version-floor.test.ts tests/protocol-next.test.ts tests/protocol-workspace.test.ts tests/protocol-agent-token-binding.test.ts tests/support/cold-start-retry.test.ts tests/support/signal-fetch-deadline.test.ts tests/support/agent-receive-cli.test.ts tests/support/arrival-watch.test.ts tests/delivery-client.test.ts tests/delivery-receipts.test.ts tests/p1-cli/d038-invite-form.test.ts tests/p1-cli/listener-provider.test.ts tests/p1-cli/test-gate-coverage.test.ts tests/command-cors.test.ts tests/command-durable-failures.test.ts tests/fresh-auth.test.ts tests/remove-member-mutation.test.ts tests/agent-revocation-mutation.test.ts tests/read-edge-diagnostics.test.ts tests/host-acp-grok.test.ts tests/host-permission-session-scope.test.ts tests/host-acp-claude.test.ts tests/host-acp-codex.test.ts tests/host-stderr-tail.test.ts tests/listener-engine.test.ts tests/listener-effect-store.test.ts tests/listener-grok-model.test.ts tests/listener-claude-model.test.ts tests/listener-codex-model.test.ts tests/listener-runtime.test.ts tests/listener-routing.test.ts tests/listener-control.test.ts tests/listener-detach.test.ts tests/listener-cli-process.test.ts tests/host-acp-opencode.test.ts tests/listener-opencode-model.test.ts tests/host-acp-opencode-homes.test.ts tests/listener-host-limits.test.ts tests/listener-delivery-journal.test.ts tests/claim-ledger-parse.test.ts
+
+✔ edge registers revoke kinds and refuses mint fallthrough (16.43025ms)
+✔ agent sibling gate stays in the pure reducer and edge scope path (15.989083ms)
+✔ site identity removal stays distinct from cancelling pending access (19.146125ms)
+✔ production parseClaimLedger behavior (0.452792ms)
+✔ command preflight authorizes the production browser request (55.484875ms)
+✔ command responses preserve status and body while exposing only allowed origins (6.72575ms)
+✔ configured origins replace defaults and loopback is development-only (0.302083ms)
+✔ edge entrypoint wires preflight before the command handler and CORS onto responses (0.962875ms)
+✔ command failure writes exactly one classified row with its SQLSTATE (6.000333ms)
+✔ a diagnostic insert failure cannot replace the original 500 response (0.198958ms)
+✔ credentials and signal input are not fields of the durable row (0.1075ms)
+✔ the bounded purge removes old failures and leaves fresh failures (10.4075ms)
+✔ the edge catch uses one post-rollback insert and keeps retry policy unchanged (1.928166ms)
+✔ the failure table is operator-read and agent-append only (0.550542ms)
+✔ claim_agent_inbox sends the exact command envelope, limit:1, and caller command id (74.556375ms)
+✔ claim rejects a response containing more than one delivery (1.13025ms)
+✔ header-immediate/body-never-settles claim times out at the injected deadline (20.196083ms)
+✔ header-immediate/body-never-settles non-2xx refusal and ACK body time out at injected deadline (44.297791ms)
+✔ scheduler timer teardown and abort-listener cleanup are strictly executed (1.964667ms)
+✔ duplicate signal ids reject separately without leaking sentinels (0.727833ms)
+✔ duplicate lease ids reject separately without leaking sentinels (0.641375ms)
+✔ outer relation normalizes absent, hostile, or cross inner relations to outer value (4.023083ms)
+✔ strict component-semantic RFC3339 validation rejects non-leap Feb 29 and hour 24 (0.83875ms)
+✔ already-expired lease rejects without reflecting timestamp (0.147459ms)
+✔ malformed event_ids elements and non-array events reject for claim and ACK (0.6535ms)
+✔ missing, fractional, negative, or unsafe terminal failure count rejects; valid zero and positive return (0.6935ms)
+✔ claim rejects all malformed response envelopes, delivery rows, and count bounds in causal regression loop (9.965625ms)
+✔ vocabularies are unexported Sets backed by exported frozen tuples, resisting prototype add bypass (0.26325ms)
+✔ 429 Retry-After produces bounded retry metadata without reflecting raw body (0.755667ms)
+✔ claim maps bounded HTTP refusals without body or bearer leakage (1.871625ms)
+✔ refusal throws a synchronous DeliveryHttpError instance and not a Promise for claim and ACK (1.614125ms)
+✔ ack sends the exact shape with explicit null and parses the echo (0.7945ms)
+✔ hook observation uses a distinct idempotent command and no expired lease capability (1.835166ms)
+✔ ack enforces explicit-null and failed-terminal code rules before the round trip (0.857875ms)
+✔ ack rejects an echo that does not repeat the requested signal id or outcome (1.331958ms)
+✔ command-ID validator authority is unexported and strictly enforced via runtime controls (0.939458ms)
+✔ delivery marker present as 0, 2, string, or null rejects; total absence remains false/false/null (40.833458ms)
+✔ delivery-client.test.ts is literally named by the root npm test script (18.362417ms)
+✔ sender reads one minimal receipt per recipient through the agent read surface (32.553041ms)
+✔ broadcast is empty and distinguishable from an addressed pending delivery (2.398917ms)
+✔ same-workspace different sender and another-workspace caller see no receipts (0.159958ms)
+✔ every ledger state stays distinct, including queued, observed, and replied (0.331125ms)
+✔ agent cross-sender mutation control pins author id and workspace (21.448625ms)
+✔ migration exposes only the receipt fields and grants only read callers (2.826709ms)
+✔ agent edge reaches the definer before installing human JWT claims (3.143375ms)
+✔ browser client reaches the human RPC without an agent identity argument (4.4655ms)
+✔ root npm test literally reaches the delivery receipt controls (1.130208ms)
+✔ D-035 / Decision 198 interactive AMR allowlist is complete (1.015334ms)
+✔ fresh auth uses newest interactive AMR, never refresh or JWT iat (0.226458ms)
+✔ fresh auth fails closed for excluded, missing, malformed AMR entries (0.169333ms)
+✔ fresh auth age bounds: clock skew floor and 300s ceiling (0.190583ms)
+✔ fresh auth rejects malformed and nonfinite inputs (0.470458ms)
+✔ Claude: an immediate exit flushes a non-empty stderr tail (983.602917ms)
+✔ Claude: a held close cannot hang the child failure (911.5985ms)
+✔ Claude: worker A's late close cannot publish into worker B (2540.734459ms)
+✔ Claude: stderr arrives before the child failure (742.999208ms)
+✔ Claude bridge args enter ACP mode without flags (0.406459ms)
+✔ Claude bridge version parser accepts bare and named SemVer shapes (0.51525ms)
+✔ Claude Code version parser cannot be confused with the bridge version (2.493042ms)
+✔ Claude child env preserves HOME but strips inherited Claude and credential state (0.236625ms)
+✔ Claude child env pins an explicit Claude Code realpath after sanitizing (0.112958ms)
+✔ Claude executable PATH walk resolves an npm-style shim to one real path (19.379584ms)
+✔ Windows npm shim resolves to one Node-launched package entrypoint (135.952042ms)
+✔ Claude version probe uses the supplied spawn environment (435.210167ms)
+✔ Claude bridge below-floor error preserves the minimum and actual versions (314.898291ms)
+✔ Claude version process failures stay inside the typed host error boundary (41.649ms)
+✔ skipVersionCheck rejects an ambiguous explicit executable before spawn (19.444708ms)
+✔ Claude teardown escalates from ignored SIGTERM to SIGKILL and confirms exit (3080.4875ms)
+✔ openClaudeAcpSession default probes and spawns one bridge realpath with one sanitized env (541.306458ms)
+✔ an explicit Claude Code executable skips an earlier unpackaged bridge PATH decoy (588.338625ms)
+✔ an early Claude bridge exit publishes fully flushed stderr before open rejects (248.247542ms)
+✔ stdout EOF fails within a bound even while the child stays alive (358.195125ms)
+✔ openClaudeAcpSession confirms child exit after initialization failure (230.20375ms)
+✔ openClaudeAcpSession converts a post-probe spawn race to spawn_failed (187.680209ms)
+✔ aborting Claude initialization terminates the spawned bridge (270.110958ms)
+✔ missing Claude bridge reports executable_missing (0.230292ms)
+✔ source contains no isolated-home or temporary-cwd lifecycle (0.705042ms)
+✔ Codex: an immediate exit flushes a non-empty stderr tail (949.320041ms)
+✔ Codex: a held close cannot hang the child failure (398.906709ms)
+✔ Codex: worker A's late close cannot publish into worker B (2942.811291ms)
+✔ Codex: stderr arrives before the child failure (362.764375ms)
+✔ Codex bridge args enter ACP mode without flags (0.425875ms)
+✔ Codex bridge version parser accepts package and bare SemVer shapes (2.413958ms)
+✔ Codex child env preserves HOME but strips inherited Codex and credential state (0.294083ms)
+✔ Codex executable PATH walk resolves an npm-style shim to one real path (40.294708ms)
+✔ Windows npm shim resolves to one Node-launched package entrypoint (130.283667ms)
+✔ Codex version probe uses the supplied spawn environment (541.728542ms)
+✔ Codex teardown escalates from ignored SIGTERM to SIGKILL and confirms exit (3094.625375ms)
+✔ openCodexAcpSession probes and spawns one realpath with one sanitized env (774.405584ms)
+✔ openCodexAcpSession confirms child exit after initialization failure (305.922ms)
+✔ openCodexAcpSession converts a post-probe spawn race to spawn_failed (245.973041ms)
+✔ aborting Codex initialization terminates the spawned bridge (407.00225ms)
+✔ missing Codex bridge reports executable_missing (0.201542ms)
+✔ source contains no isolated-home or temporary-cwd lifecycle (0.732625ms)
+✔ Grok: an immediate exit flushes a non-empty stderr tail (775.860334ms)
+✔ Grok: a held close cannot hang the child failure (882.5735ms)
+✔ Grok: worker A's late close cannot publish into worker B (2866.982042ms)
+✔ Grok: stderr arrives before the child failure (492.813208ms)
+▶ Grok ACP host core (pure fake child)
+  ✔ Grok teardown escalates from ignored SIGTERM to SIGKILL and confirms exit (3094.123916ms)
+  ✔ buildGrokAcpArgs: --no-leader, stdio, optional model/effort, never always-approve (0.466625ms)
+  ✔ parseGrokVersionOutput + version refusal (4.599333ms)
+  ✔ env allowlist: keeps PATH/HOME/locale, strips SWARM and credential-like keys (0.1295ms)
+  ✔ listener env keeps operator home and only pins the updater (0.0815ms)
+  ✔ listener env does not install sandbox, hook, or tool kill-switches (0.091208ms)
+  ✔ framing + correlation + chunk accumulation (8.57375ms)
+  ✔ malformed JSON line is ignored without killing the session (1.552458ms)
+  ✔ oversize inbound line is rejected as protocol error (not applied) (6.942291ms)
+  ✔ request timeout rejects (53.26125ms)
+  ✔ child death rejects in-flight requests (4.175334ms)
+  ✔ cancel is a notification with no id (2.884708ms)
+  ✔ permission default is reject_once; allow/ask callbacks work; no auto-allow (24.351334ms)
+  ✔ session/new sends empty mcpServers and yoloMode false (0.549791ms)
+  ✔ required permission mode is explicitly selected after session/new (0.393375ms)
+  ✔ required permission mode fails closed when the adapter omits it (0.328833ms)
+  ✔ required permission mode maps a selection refusal to the actionable code (0.359917ms)
+  ✔ initialize advertises fs false/write false and terminal false (0.265792ms)
+  ✔ real prompts blocked until canary observes permission + denied tool (22.096958ms)
+  ✔ session/load with cwd + empty mcpServers; fallback to session/new (2.059583ms)
+  ✔ unknown notifications are ignored safely (22.339125ms)
+  ✔ cwd must be absolute and existing (0.294667ms)
+  ✔ thought chunks are exposed without raw secrets; clean close (2.763ms)
+  ✔ createBoundTransport + attachInitialized wiring (1.251417ms)
+✔ Grok ACP host core (pure fake child) (3257.3025ms)
+✔ D-051: a readable error event with a request pending is normalised to an assigned code (1.212875ms)
+✔ D-051: an already-typed ACP error is not re-wrapped at the boundary (0.287ms)
+✔ resolveOpenCodeExecutable fails closed when realpath cannot resolve (1.389042ms)
+✔ assertForcedAskPermissionMap requires every forced tool (or wildcard ask) (0.679667ms)
+✔ sweep never removes a live-owner home even when mtime is >1h old (22.368375ms)
+✔ sweep removes home when owner PID is dead (positive reclaim) (11.210209ms)
+✔ releaseOpenCodeHome respects ownership boundary (230.896875ms)
+✔ terminateOpenCodeChild fails closed when child never exits (4009.290875ms)
+✔ prepareOpenCodeIsolatedHome writes 0600 owner marker (71.249ms)
+✔ OpenCode: an immediate exit flushes a non-empty stderr tail (1302.193833ms)
+✖ OpenCode: a held close cannot hang the child failure (1876.480292ms)
+✔ OpenCode: worker A's late close cannot publish into worker B (1942.889792ms)
+✔ OpenCode: stderr arrives before the child failure (776.132709ms)
+▶ OpenCode ACP host core (pure)
+  ✔ argv is only acp --pure; version floor; forced-ask config covers every tool + wildcard (9.094167ms)
+  ✔ child env strips secrets and CommonSwarm credentials (causal control) (4.81975ms)
+  ✔ OpenCode child env keeps forced-ask config without a relation kill-switch (0.18975ms)
+  ✔ auth validation requires owned 0600 regular bounded JSON (39.211916ms)
+  ✔ prepareOpenCodeIsolatedHome copies auth only and writes forced-ask config (71.606375ms)
+  ✔ resolveOpenCodeExecutable requires absolute realpath (no bare ambiguous spawn) (6.689041ms)
+  ✔ canary requires permission request AND denied tool result (negative + positive) (65.107292ms)
+✔ OpenCode ACP host core (pure) (198.650417ms)
+✔ D-086: an allow-mode listener does not approve a request for another session (251.73225ms)
+✔ D-086 CONTROL: the matching session still reaches the callback and is approved (46.842459ms)
+✔ D-086: allow falls back to deny when the host offers no allow_once (51.267334ms)
+✔ D-086 malformed id: sessionId omitted entirely is not treated as ours (57.125167ms)
+✔ D-086 malformed id: sessionId null is not treated as ours (42.882459ms)
+✔ D-086 malformed id: sessionId a number is not treated as ours (47.286375ms)
+✔ D-086 malformed id: sessionId an object is not treated as ours (46.969792ms)
+✔ D-086: session/load returning a DIFFERENT id is not adopted (5.397584ms)
+✔ D-086 CONTROL: session/load returning the SAME id still loads (5.429083ms)
+✔ D-086 REGRESSION GUARD: an agent returning an EMPTY load result still resumes (2.632084ms)
+✔ D-086 reply text: a chunk with an explicit foreign id does not enter the reply (47.521791ms)
+✔ D-086 reply text: a chunk with an omitted id does not enter the reply (45.411166ms)
+✔ D-086 reply text: a chunk with a null id does not enter the reply (42.529375ms)
+✔ D-086 reply text: a chunk with a numeric id does not enter the reply (44.338708ms)
+✔ D-086 reply text CONTROL: our own session's chunk still becomes the reply (42.619041ms)
+✔ D-086 load: a PRESENT null session id is not a successful load (2.42775ms)
+✔ D-086 load: a PRESENT a number session id is not a successful load (1.44ms)
+✔ D-086 load: a PRESENT an array session id is not a successful load (1.621833ms)
+✔ D-086 load: a PRESENT an object session id is not a successful load (0.921125ms)
+✔ D-086 load: a PRESENT a boolean session id is not a successful load (0.727542ms)
+✔ D-086 load CONTROL: an ABSENT session id (an empty object) still resumes (1.167125ms)
+✔ D-086 load CONTROL: an ABSENT session id (an explicitly undefined field) still resumes (0.625417ms)
+✔ D-086 load CONTROL: an ABSENT session id (an explicit null result) still resumes (0.5955ms)
+✔ D-086 load: an unrecognised top-level result (a bare string) is not a successful load (0.461375ms)
+✔ D-086 load: an unrecognised top-level result (an array) is not a successful load (0.609459ms)
+✔ D-086 load: an unrecognised top-level result (a number) is not a successful load (0.275ms)
+✔ D-086 load: an unrecognised top-level result (a boolean) is not a successful load (0.235667ms)
+✔ D-086 canary: a terminal deny from a foreign session does not satisfy the boundary proof (43.162584ms)
+✔ D-086 canary: a terminal deny from an omitted session does not satisfy the boundary proof (43.469584ms)
+✔ D-086 canary: a terminal deny from a null session does not satisfy the boundary proof (42.513667ms)
+✔ D-086 canary: a terminal deny from a numeric session does not satisfy the boundary proof (42.787916ms)
+✔ D-086 canary CONTROL: our own session's terminal deny still proves the boundary (43.570291ms)
+✔ D-086 canary: a colliding (session, toolCall) pair does not satisfy the boundary proof (44.326166ms)
+✔ D-086: a duplicate optionId is dropped, because it cannot identify our answer (0.342208ms)
+✔ D-086 CONTROL: distinct optionIds are all kept (0.296833ms)
+✔ D-086: an ambiguous option set still denies rather than failing open (0.443334ms)
+✔ D-086: a JSON-RPC frame with neither result nor error is not a success (1792.603041ms)
+✔ ring overflow keeps the TAIL, not the head (2.55075ms)
+✔ sanitizer strips ANSI and control characters but keeps newline and tab (0.224167ms)
+✔ sanitizer redacts credential-shaped substrings so the event validator cannot drop the line (0.18825ms)
+✔ sanitizer output is bounded at 2048 characters and keeps the end (0.192542ms)
+✔ a real child that writes stderr and dies delivers one sanitized tail, exactly once across exit and close (370.360208ms)
+✔ a credential bisected by ring eviction does not survive as an unrecognizable suffix (3.9825ms)
+✔ separators inside a token do not defeat the redactor (0.519333ms)
+✔ a single unterminated line too long for the ring is dropped WHOLE, not truncated-and-kept (0.429333ms)
+cswarm 0.1.40 (protocol 0.1.0)
+
+Usage:
+  cswarm login [--url <project-url> --anon-key <key>] [--no-browser]
+  cswarm logout [--url <project-url> --anon-key <key>] [--all-devices] [--local]
+  cswarm target [show] [--json] [--reveal-anon-key]
+  cswarm target set --url <project-url> --anon-key <key> [--json]
+  cswarm target clear [--json]
+  cswarm status [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--json]
+  cswarm whoami (--agent-token-file <path> | --agent-token-stdin) [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--json]
+  cswarm members [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--agent-token-file <path> | --agent-token-stdin] [--json]
+  cswarm working-on "<what>" [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--agent-token-file <path> | --agent-token-stdin] [--about <ref>] [--until <dur>] [--json]
+  cswarm note "<text>" [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--agent-token-file <path> | --agent-token-stdin] [--to <member|agent>] [--about <ref>] [--until <dur>] [--json]  # text: 1..8000 characters
+  cswarm ask "<text>" [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--agent-token-file <path> | --agent-token-stdin] [--to <member|agent>] [--about <ref>] [--until <dur>] [--wait <seconds>] [--json]  # text: 1..8000 characters
+  cswarm reply <signal-id> "<text>" [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--agent-token-file <path> | --agent-token-stdin] [--until <dur>] [--json]
+  cswarm receipt <signal-id> (--agent-token-file <path> | --agent-token-stdin) [--url <url> --anon-key <key>] --workspace-id <uuid> [--json]
+  cswarm feed [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--agent-token-file <path> | --agent-token-stdin] [--about <ref>] [--kind <kind>] [--since <timestamp>] [--limit <n>] [--include-stale] [--json]
+  cswarm inbox [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--agent-token-file <path> | --agent-token-stdin] [--kind <kind>] [--about <ref>] [--since <timestamp>] [--limit <n>] [--include-stale] [--wait <seconds>] [--json]
+  cswarm inbox --notify (--agent-token-file <path> | --agent-token-stdin) [--url <url> --anon-key <key>] --workspace-id <uuid> [--json]
+  cswarm inbox --follow --ndjson [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--agent-token-file <path> | --agent-token-stdin] [--kind <kind>] [--about <ref>] [--since <timestamp>] [--limit <n>] [--include-stale]
+  cswarm file put <local-path> [--name <name>] [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--agent-token-file <path> | --agent-token-stdin] [--json]
+  cswarm file ls [--include-tombstoned] [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--agent-token-file <path> | --agent-token-stdin] [--json]
+  cswarm file get <name|file-id> [--version <n>] [--out <local-path>] [--force] [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--agent-token-file <path> | --agent-token-stdin] [--json]
+  cswarm file rm <name|file-id> [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--agent-token-file <path> | --agent-token-stdin] [--json]
+  cswarm file restore <name|file-id> [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--agent-token-file <path> | --agent-token-stdin] [--json]
+  cswarm feedback "<text>" --kind bug|idea|friction [--about <ref>] [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--agent-token-file <path> | --agent-token-stdin] [--json]
+  cswarm listen start (--agent-token-file <path> | --agent-token-stdin) [--url <url> --anon-key <key>] --workspace-id <uuid> --provider grok|opencode|claude|codex [--cwd <absolute-path>] [--model <model>] [--effort <level>] [--permissions deny|allow] [--grok-executable <path>] [--opencode-executable <path>] [--claude-executable <path>] [--codex-executable <path>] [--turn-budget <duration>] [--route worker|main|split] [--defer-over <chars>] [--foreground] [--json]
+  cswarm listen status [--url <url> --anon-key <key>] --workspace-id <uuid> --principal-id <uuid> [--json]
+  cswarm listen stop [--url <url> --anon-key <key>] --workspace-id <uuid> --principal-id <uuid> [--json]
+  cswarm hook check [--principal-id <uuid> ...] [--cooldown <seconds>]
+  cswarm hook install claude [--principal-id <uuid>] [--write]
+  cswarm hook uninstall claude --write
+  cswarm new "<workspace name>" [--url <url> --anon-key <key>] [--json]
+  cswarm new --name "<workspace name>" [--url <url> --anon-key <key>] [--json]
+  cswarm workspaces [--url <url> --anon-key <key>] [--json]
+  cswarm use <full-id|exact-name> [--url <url> --anon-key <key>] [--json]
+  cswarm invite [--url <url> --anon-key <key>] [--workspace-id <uuid>] --email <email>
+  cswarm invite revoke [--url <url> --anon-key <key>] [--workspace-id <uuid>] --invitation-id <uuid> [--json]
+  cswarm member remove <full-user-id|exact-name> --confirm <same-selector> [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--json]
+  cswarm workspace close <full-id|exact-name> --confirm <same-selector> [--url <url> --anon-key <key>] [--json]
+  cswarm accept --link-stdin [--name <name>] [--no-browser] [--json]
+  cswarm accept <https://...#invite=...|cswarm://accept/...> [--name <name>] [--no-browser] [--json]  # unsafe: shell history/process list
+  cswarm accept --invitation-token-stdin [--url <url> --anon-key <key>]
+  cswarm accept <invitation-token> [--url <url> --anon-key <key>]  # unsafe: shell history/process list
+  cswarm principal create [--url <url> --anon-key <key>] [--workspace-id <uuid>] --name <name>
+  cswarm principal revoke [--url <url> --anon-key <key>] [--workspace-id <uuid>] --principal-id <uuid>
+  cswarm token mint [--url <url> --anon-key <key>] [--workspace-id <uuid>] --principal-id <uuid> --run-id <uuid> --task-id <uuid> --epoch <n> [--ttl-ms <ms>]
+  cswarm token revoke [--url <url> --anon-key <key>] [--workspace-id <uuid>] --token-id <uuid>
+  cswarm token revoke (--agent-token-file <path> | --agent-token-stdin) [--url <url> --anon-key <key>] --workspace-id <uuid> [--token-id <uuid>]
+  cswarm link new [--url <url> --anon-key <key>] [--workspace-id <uuid>] --task-id <uuid> [--ttl-ms <ms>] [--site <origin>] [--json]
+  cswarm link revoke [--url <url> --anon-key <key>] [--workspace-id <uuid>] --capability-id <uuid> [--json]
+  cswarm command <kind> [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--agent-token-file <path> | --agent-token-stdin] [command fields]
+  cswarm dogfood [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--agent-token-file <path> | --agent-token-stdin] --slug <slug> --branch <branch> --head-sha <sha> --evidence <ref>
+  cswarm seed-fixture --uid <auth-user-uuid> [--device-id <uuid>] [--workspace-id <uuid>]
+
+Credential selection for command/dogfood:
+  default                 refresh the human login from secure storage
+  --agent-token-file      read the credential from an owned 0600 regular file in an owned
+                          0700 directory. The path may appear in argv; the secret never does.
+  --agent-token-stdin     read a mint/seed credential artifact, or a bare swm_agt_ token, from
+                          stdin. WHICH FORMS ARE ACCEPTED DEPENDS ON WHAT THE SUBCOMMAND DOES
+                          WITH THE CREDENTIAL. A subcommand that only reads takes either form.
+                          One that persists or references the credential needs the complete
+                          JSON artifact, because it needs a field a bare secret does not carry:
+                            whoami        reads server-proven identity -- complete or bare form
+                            members       reads only          -- either form
+                            working-on, note, ask, reply, feed, inbox
+                                          signal command/read only         -- either form
+                            receipt       reads only          -- either form
+                            inbox --notify persists a per-agent cursor -- needs principal_id
+                            file put, file ls, file get, file rm, file restore
+                                          read and command, nothing persisted -- either form
+                            feedback      command only, nothing persisted     -- either form
+                            command, dogfood
+                                          task protocol commands              -- either form
+                            listen start  persists durable state, rotates -- needs expires_at
+                            hook check    reads only the selected listener's owned 0600 credential state;
+                                          never accepts or prints a credential
+                            hook install/uninstall
+                                          edits only local Claude Code settings; no credential
+                            token revoke  names what it revokes           -- needs token_id
+                            workspace close is human-session-only; it never accepts an agent token
+
+Found a bug or missing feature in cswarm itself? cswarm feedback sends it to the
+deployment's operators — agents are encouraged to report friction they hit.
+
+Signals (intention sharing) accept the same credential selection. Agent mode
+never opens a browser or infers a human's saved workspace. Durations use a whole
+number plus m, h, or d (for example 90m, 24h, or 7d) and are capped at 30d.
+Place -- before signal text that itself begins with -- to stop option parsing.
+Signal text is at most 8000 characters and --about at most 500; a longer body is
+refused locally before any network call, so compose within the limit.
+
+listen start --turn-budget bounds ONE worker prompt turn (default 10m): how long
+the worker may think and use tools on a single message before the turn times out
+and durable delivery retries it. A whole number plus s, m, or h (for example
+90s, 5m, 1h), at least 30s and at most 60m. Each turn is additionally clamped
+to the live credential's remaining lifetime minus 60s, after renewing it when
+due — a turn never outlives its credential. Right after a rotation the full
+budget is available up to the token TTL minus 60s (about 59m on the default 1h
+TTL); a turn that lands just before a rotation can be clamped to the ~5m
+renewal lead, and if it times out there, durable delivery retries it on the
+fresh credential.
+
+listen start --route worker|main|split chooses where directed messages go. worker
+is the unchanged default. main queues every ask or note for the interactive session.
+split queues messages whose body is longer than --defer-over <chars>; the bound is
+1..10000 and an equal-length message stays on the worker path. Run cswarm hook check
+--principal-id <uuid> to surface that agent's queued messages. A bare check works only
+when the state directory holds one principal. hook check has its own 3s ceiling, exits 0
+on every outcome, and skips network checks made within --cooldown seconds (default 30).
+hook install claude prints principal-scoped UserPromptSubmit JSON by default and changes
+the project's .claude/settings.json only with --write; uninstall also requires --write.
+
+Invite, legacy token accept, principal create/revoke, human token mint/revoke, link, new, and workspace close require a
+stored human login. Agent self-surrender of a token uses --agent-token-file or --agent-token-stdin and never takes the secret on argv. Invite-link accept signs in when needed, then accepts and
+registers one principal. Invitation links, agent credentials, and capability links
+appear only in fresh success responses.
+
+cswarm link new hands someone a browser link to ONE work item before they install
+anything. It shows that item's name and state, the repository it belongs to, who
+invited them, and how long the workspace has existed — and reaches nothing else, not
+the member list, not the message feed, not another work item. The link is printed
+once and never again, because only its hash is stored; it lasts a day by default
+and at most 7 days, and cswarm link revoke --capability-id <uuid> withdraws it
+sooner. Only an owner or admin signed in as a human can create or revoke one; an
+agent credential never can, and cswarm says so without contacting the server. The
+token rides in the link's # fragment, which browsers never send to any server.
+--site (or CSWARM_SITE_ORIGIN) chooses which CommonSwarm page the link points at
+and accepts only https://coswarm-site.vercel.app (the default),
+https://commonswarm.com, https://www.commonswarm.com, or a loopback host while
+that page is being developed — the link is a live credential, so it may not be
+aimed at anyone else's server.
+GitHub identities with the same verified email may resolve to one GoTrue user;
+a second human must log in with a distinct verified email before accepting.
+
+Successful login and invite acceptance save the current Cloud target. Override it
+per command with --url/--anon-key or SWARM_CLOUD_URL/SWARM_CLOUD_ANON_KEY;
+flags take precedence over environment, which takes precedence over the saved target.
+Agent credentials never inherit a human's saved target. Workspace flags may also
+be set with SWARM_CLOUD_WORKSPACE_ID. cswarm new starts a workspace of your own
+(a name of 1 to 80 characters) and selects it; whether a deployment accepts that
+is a setting on the deployment, and an invite link is the other way in.
+Normal workspace selection is:
+cswarm workspaces, then cswarm use <full-id|exact-name>. A sole accepted
+workspace is saved automatically; ambiguous names require the full id and CommonSwarm
+never guesses. The workspace-id environment variable is a power-user override,
+with --workspace-id taking precedence. An invite link supplies its whole target
+and cannot be combined with --url or --anon-key.
+For an unrecognized origin, --link-stdin and --json hard-fail without a prompt;
+use a positional link without --json when an interactive confirmation is needed.
+The fixture bridge is test-only. It reads its privileged database connection only
+from DATABASE_URL and writes a newly minted agent token only to the absolute
+create-new path in SEED_TOKEN_OUT. --workspace-id selects an explicit fixture
+workspace only for callers who already hold that full-database credential; it
+grants no new authority and is not a governed product workspace-creation path.
+✔ floor boundary refuses floor-1 and accepts the floor and floor+1 (4.237459ms)
+✔ real Grok drift 1.0.5 is accepted above the 0.2.117 floor (0.120167ms)
+✔ SemVer precedence is numeric, not lexical (0.098334ms)
+✔ provider parsers handle prerelease, build, product suffix, and leading banners (3.003542ms)
+✔ unparseable version fails closed with a code distinct from below-floor (713.57025ms)
+✔ newer version reports exactly once to the startup status path (9.532083ms)
+✔ a comfortably newer version cannot bypass a failing permission canary (1567.673833ms)
+✔ Claude worker canary denies before explicit allow mode (11.771541ms)
+✔ Claude sender relations share one worker, cwd, and permission mode (1.032917ms)
+✔ Claude listener cancel reaches the active host handle (2.056208ms)
+✔ Claude canary removes a sentinel written before denial and refuses startup (1.690833ms)
+✔ Claude close waits for an opening worker and closes it before installation (0.363375ms)
+✔ Claude close cancels and closes a canary already in flight (0.451834ms)
+✔ Claude close settles opening work before propagating teardown failure (1.052167ms)
+✔ D-050: Claude close timeout is runtime-fatal before replacement opens (3.143166ms)
+✔ worker prompt turns get the 10-minute default budget; the handshake keeps the tight transport default (0.746209ms)
+✔ promptTimeoutMs overrides the prompt-turn budget and onWorkerStderrTail threads into the host open (2.502666ms)
+✔ a promptTimeoutMs resolver is awaited at each turn start (1.7815ms)
+✔ a resolver that defers (throws) is not caught by the model and never reaches the worker prompt (2.117042ms)
+✔ a worker death + slow respawn with an expired credential defers, never prompting on the dead credential (1.019667ms)
+✔ detached CLI completes durable claim reply ACK with one startup UUID and no secret leakage (5492.884083ms)
+✔ detached CLI cursor fallback still receives and replies (1633.249125ms)
+✔ listen status distinguishes delivery modes and null zero positive counts (1849.21225ms)
+✔ detached CLI reports missing Grok login without starting a model (712.906125ms)
+✔ Codex worker canary denies before explicit allow mode (10.566459ms)
+✔ Codex sender relations share one worker, cwd, and permission mode (36.030083ms)
+✔ Codex listener cancel reaches the active host handle (60.003459ms)
+✔ Codex canary removes a sentinel written before denial and refuses startup (12.37875ms)
+✔ Codex close waits for an opening worker and closes it before installation (2.697708ms)
+✔ Codex close cancels and closes a canary already in flight (5.753708ms)
+✔ Codex close settles opening work before propagating teardown failure (8.120042ms)
+✔ D-050: Codex close timeout is runtime-fatal before replacement opens (9.216ms)
+✔ listener status and event log are secure and reject secret-shaped fields (1097.30225ms)
+✔ Grok canary attempts reach the local event log and terminal detail (472.773417ms)
+✔ Claude is a durable listener status provider (43.102666ms)
+✔ Codex is a durable listener status provider (33.762208ms)
+✔ lifetime control socket enforces one listener and supports status/stop (62.532584ms)
+✔ control socket answers one bounded response to oversized input (26.931042ms)
+✔ supervisor becomes ready, stops through the socket, and logs metadata only (134.102167ms)
+✔ missing socket converts a live-looking status to unclean_exit (17.190042ms)
+✔ control socket handles peer RST and connection reset without crashing (150.980292ms)
+✔ two starters race the startup lock: the winner selects the journal UUID and the loser's initialize never runs (119.997ms)
+ℹ [two-starter race] winner inside initialize, holding starting.lock
+ℹ [two-starter race] releasing the winner initialize gate
+ℹ [two-starter race] winner reached listen and released starting.lock
+ℹ [two-starter race] journal generation unchanged and winner socket live
+ℹ [two-starter race] all starters settled and closed
+✔ control initialize runs after live-socket rejection and before listen (70.888375ms)
+✔ control initialize never runs on win32 when a live listener control socket exists (28.956875ms)
+✔ supervisor carries one prepare-selected instance UUID through status, events, and run (110.120708ms)
+✔ supervisor rejects a prepare-selected id that is not a UUID and releases the lock (254.189042ms)
+✔ prepare failure rejects cleanly, releases the startup lock, and allows one subsequent starter (201.932667ms)
+✔ old status without delivery fields reads as six nulls and is never rewritten (48.806916ms)
+✔ new status with delivery metadata round-trips exactly and writes require all six fields (26.369166ms)
+✔ status rejects unknown keys, sensitive aliases, and malformed delivery values (673.22825ms)
+✔ listener events accept the four new bounded delivery keys and reject sensitive fields (75.011458ms)
+✔ the delivery journal module resolves from the listener index (0.400083ms)
+✔ D-051: a transient stop restarts a bounded number of times, then stays down and says why (182.903959ms)
+✔ D-051: a cause that cannot clear stops permanently and is never restarted (173.208875ms)
+✔ D-051: a listener that recovers on a restart is not reported as failed (124.832125ms)
+✔ D-051: the restart classifier separates what can clear from what cannot (0.678125ms)
+✔ D-051: the restart delay is bounded by its own cap, not the read backoff cap (0.119875ms)
+✔ D-051: one rejected write does not poison the rest of the supervisor's writes (90.836291ms)
+✔ D-057: every fatal error CLASS, and representative codes, has an explicit restart verdict (0.28675ms)
+✔ D-057: classification is closed — an unrecognised failure never restarts (0.083333ms)
+✔ D-057: a non-restartable delivery failure is not restarted by the supervisor (89.560542ms)
+✔ appendListenerEvent: worker_stderr_tail is exempt from the 128-char cap but keeps its own bound and the secret scan (8.906666ms)
+✔ appendListenerEvent: turn_budget_ms must be a positive safe integer (9.577917ms)
+✔ status lastWorkerStderrTail: round-trips, absent key normalizes to null, secrets are rejected (38.72975ms)
+✔ status lastErrorDetail: round-trips and old files without it normalize to null (62.13825ms)
+✔ a failing worker's stderr tail reaches the terminal failure event and status (99.766875ms)
+✔ a restart carries the dead worker's tail; reaching ready clears it; a healthy stop writes NO tail field (208.962333ms)
+✔ an oversized tail is fitted from the front so the event line stays under its byte cap (86.901875ms)
+✔ a tail that expands under JSON escaping is fitted by SERIALIZED size, and the failure line survives (171.159833ms)
+✔ a second worker's failure never inherits the first worker's tail (74.901833ms)
+✔ 1. Generation selection API: missing file initializes, active resumes old ID, inactive starts fresh generation (346.64375ms)
+✔ 2. Reserve claim, claim ID generation, attempt recording, and retries (64.105583ms)
+✔ 3. Comprehensive schema, phase/null invariants, strict RFC3339 timestamps, letter-bearing UUIDs, and storage error normalization (40.775917ms)
+✔ 4. Record lease idempotence and hostile mismatch controls (82.772417ms)
+✔ 5. Prepare ACK idempotence, ACK command ID, and outcome/error immutability (136.19075ms)
+✔ 6. Outcome/error pairings and reversed invalid pairings (625.642291ms)
+✔ 7. Clear active preserves next ordinal and future reserve gets next ID (172.469542ms)
+✔ 8. Crash-boundary re-open after reserve, attempt, lease, ACK prepare, and clear (302.9095ms)
+✔ 9. Required filesystem causality: wrong-mode dir/file, symlinks, and atomic replacement controls (135.6495ms)
+✔ 10. Serialized positive metadata exists, while known bearer/body/owner/prompt/reply sentinels are absent (96.34125ms)
+✔ 11. Public mutation inputs reject non-plain objects, proxies, getters, symbols, extra keys, and pre-path non-strings (48.929708ms)
+✔ 12. Generic error sanitization: no sentinel values in thrown error messages for all hostile operations (57.001125ms)
+✔ 13. TOCTOU deferred-read snapshot controls for open, recordLease, and prepareAck (147.270958ms)
+✔ 14. Causal defect table for numeric offset timestamps across all record fields and valid offset controls (275.387667ms)
+✔ 15. Concurrency and locking causality: concurrent recordLease + recordClaimAttempt, two concurrent reserveClaim (4615.670833ms)
+✔ 16. Oversize fractional timestamps: fresh open, inactive rotation, and transition guards (17.855125ms)
+✔ 17. Fractional timestamp precision (3- and 9-digit) and immediate post-write read <= 8192 bytes (19.029041ms)
+✔ 18. All five timestamp fields accept 1- and 9-digit fractional offset timestamps, non-fraction offset, and positive Z; reject 10-digit fractions (1.115459ms)
+✔ detached argv is public-only and strips ambient Node hooks (0.841291ms)
+✔ opencode detached argv pins provider, requires absolute executable, rejects effort (0.256583ms)
+✔ claude detached argv pins the resolved bridge and rejects unmapped flags (0.130459ms)
+✔ claude detached path validation accepts native Windows absolute paths (0.06225ms)
+✔ codex detached argv pins the resolved bridge and rejects unmapped flags (0.098375ms)
+✔ credential travels only over child stdin, never argv or env (4.004167ms)
+✔ v1 records upcast to v2 ask records with every durable field preserved (1.757833ms)
+✔ v1 read never rewrites the durable file (33.11025ms)
+✔ a terminal v1 upcast suppresses a second prompt without a write (2.674667ms)
+✔ v2 ask records round-trip through the parser and the file store (25.359667ms)
+✔ v2 observed-note records round-trip with zero prompt/post effects (48.88125ms)
+✔ v2 main-routed notes keep the same zero-effect shape (0.382875ms)
+✔ listener effects preserve signal bodies beyond an older server maximum (10.961667ms)
+✔ malformed versions and signalKinds fail closed (0.643125ms)
+✔ notes cannot carry reply, post, or failure effects (0.984458ms)
+✔ notes with reply/post effects fail closed on write (1.705667ms)
+✔ ask records cannot carry the note-only observed state (0.391667ms)
+✔ v1 and v2 parsers reject forbidden extras instead of returning them (0.378167ms)
+✔ an on-disk file with a forbidden extra fails on read for v1 and v2 (188.521833ms)
+✔ a rejected write with a forbidden extra creates no file for v1 and v2 (4.8265ms)
+✔ hidden extras that JSON.stringify would erase cannot reach disk (0.8745ms)
+✔ a valid version-1 record is rejected on write, never persisted (4.439542ms)
+✔ a null-prototype plain record is an allowed write shape (16.275708ms)
+✔ write-boundary failures use one generic message and echo no key or value (0.765583ms)
+✔ a proxy that hides an own extra is rejected with the generic message and no file (5.341083ms)
+✔ a proxy reflection trap throwing a sentinel error never runs before rejection (7.298542ms)
+✔ a revoked proxy is rejected with the generic message and no file (0.484459ms)
+✔ listener reply command id is deterministic and server-compatible (1.273459ms)
+✔ exact body and command id are durable before the first post (4.297292ms)
+✔ lost response replays the persisted body/id without prompting again (0.419583ms)
+✔ same signal id with different immutable content fails closed (0.232791ms)
+✔ every sender relation reaches the operator worker with relation-specific provenance (0.72775ms)
+✔ resolved sender and operator provenance reaches the model prompt (0.367041ms)
+✔ agent prompts retry without a model turn when operator provenance is unavailable (0.471583ms)
+✔ provenance lookup cannot start a model turn after expiry or cancellation (0.561667ms)
+✔ prompt envelope JSON-escapes untrusted controls and instructions (0.380291ms)
+✔ expiry is terminal at intake, after prompt, and during post retry (0.774333ms)
+✔ reply truncation is visible, bounded, and surrogate-safe (1.904708ms)
+✔ prompt retries are bounded and terminal records suppress re-emission (0.80225ms)
+✔ refusal, blank output, and HTTP 409 become terminal failures (0.8335ms)
+✔ non-ask signals are ignored without model or reply effects (0.187ms)
+✔ file effect store uses secure atomic files and round-trips records (71.529292ms)
+✔ post 401 and post 403 restore reply_ready and rethrow the exact error (2.434792ms)
+✔ HTTP 429 and 5xx with cancellation-looking text stay retryable, never cancellation (1.39375ms)
+✔ an already-aborted signal before the prompt starts no model or post effect (0.298417ms)
+✔ an already-aborted signal before the reply post restores reply_ready (0.962375ms)
+✔ provider cancelled after caller abort restores received; without abort it stays terminal (0.239458ms)
+✔ the engine passes its caller signal to the reply poster as abortSignal (0.3165ms)
+✔ abort during prompt or post restores the resumable record and escapes (0.388542ms)
+✔ post credential-classified errors restore exact reply_ready and rethrow by identity (1.353042ms)
+✔ credential errors whose message contains cancelled are escapes, never aborts (1.111708ms)
+✔ typed HTTP errors never reach the credential classifier (2.098791ms)
+✔ a throwing credential classifier restores the record and rethrows its own exception (0.562583ms)
+✔ ordinary noncredential message text cannot impersonate credential loss or cancellation (0.906292ms)
+✔ D-051: a provider refusal worded like a retry does not buy another prompt (0.728708ms)
+✔ D-051: codes we assign at the ACP boundary still retry (1.291083ms)
+✔ D-051: a plain untyped error is not retryable however it is worded (0.26525ms)
+✔ a deferred turn (credential unrenewable) is retry_pending with the renewal_unavailable code, and the ask survives (0.625ms)
+✔ a persistently-unrenewable ask defers across transient failures, then goes terminal after bounded retries with the honest code (0.691667ms)
+✔ Grok canary uses the measured shell sentinel and enables prompts after denial (23.721667ms)
+✔ Grok canary removes a written sentinel and reports that denial did not block it (35.129333ms)
+✔ worker canary always denies before explicit same-owner allow mode (17.804667ms)
+✔ cross-owner turns reach the operator worker, cwd, home, and permission mode (5.159ms)
+✔ listener cancel reaches active host handles without logging prompts (18.911083ms)
+✔ Grok prompt surfaces child_exit_timeout instead of opening a replacement (26.052875ms)
+✔ Grok runtime close surfaces child_exit_timeout (23.788834ms)
+✔ Grok failed canary surfaces cleanup child_exit_timeout (19.831959ms)
+cswarm 0.1.40 (protocol 0.1.0)
+
+Usage:
+  cswarm login [--url <project-url> --anon-key <key>] [--no-browser]
+  cswarm logout [--url <project-url> --anon-key <key>] [--all-devices] [--local]
+  cswarm target [show] [--json] [--reveal-anon-key]
+  cswarm target set --url <project-url> --anon-key <key> [--json]
+  cswarm target clear [--json]
+  cswarm status [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--json]
+  cswarm whoami (--agent-token-file <path> | --agent-token-stdin) [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--json]
+  cswarm members [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--agent-token-file <path> | --agent-token-stdin] [--json]
+  cswarm working-on "<what>" [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--agent-token-file <path> | --agent-token-stdin] [--about <ref>] [--until <dur>] [--json]
+  cswarm note "<text>" [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--agent-token-file <path> | --agent-token-stdin] [--to <member|agent>] [--about <ref>] [--until <dur>] [--json]  # text: 1..8000 characters
+  cswarm ask "<text>" [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--agent-token-file <path> | --agent-token-stdin] [--to <member|agent>] [--about <ref>] [--until <dur>] [--wait <seconds>] [--json]  # text: 1..8000 characters
+  cswarm reply <signal-id> "<text>" [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--agent-token-file <path> | --agent-token-stdin] [--until <dur>] [--json]
+  cswarm receipt <signal-id> (--agent-token-file <path> | --agent-token-stdin) [--url <url> --anon-key <key>] --workspace-id <uuid> [--json]
+  cswarm feed [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--agent-token-file <path> | --agent-token-stdin] [--about <ref>] [--kind <kind>] [--since <timestamp>] [--limit <n>] [--include-stale] [--json]
+  cswarm inbox [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--agent-token-file <path> | --agent-token-stdin] [--kind <kind>] [--about <ref>] [--since <timestamp>] [--limit <n>] [--include-stale] [--wait <seconds>] [--json]
+  cswarm inbox --notify (--agent-token-file <path> | --agent-token-stdin) [--url <url> --anon-key <key>] --workspace-id <uuid> [--json]
+  cswarm inbox --follow --ndjson [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--agent-token-file <path> | --agent-token-stdin] [--kind <kind>] [--about <ref>] [--since <timestamp>] [--limit <n>] [--include-stale]
+  cswarm file put <local-path> [--name <name>] [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--agent-token-file <path> | --agent-token-stdin] [--json]
+  cswarm file ls [--include-tombstoned] [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--agent-token-file <path> | --agent-token-stdin] [--json]
+  cswarm file get <name|file-id> [--version <n>] [--out <local-path>] [--force] [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--agent-token-file <path> | --agent-token-stdin] [--json]
+  cswarm file rm <name|file-id> [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--agent-token-file <path> | --agent-token-stdin] [--json]
+  cswarm file restore <name|file-id> [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--agent-token-file <path> | --agent-token-stdin] [--json]
+  cswarm feedback "<text>" --kind bug|idea|friction [--about <ref>] [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--agent-token-file <path> | --agent-token-stdin] [--json]
+  cswarm listen start (--agent-token-file <path> | --agent-token-stdin) [--url <url> --anon-key <key>] --workspace-id <uuid> --provider grok|opencode|claude|codex [--cwd <absolute-path>] [--model <model>] [--effort <level>] [--permissions deny|allow] [--grok-executable <path>] [--opencode-executable <path>] [--claude-executable <path>] [--codex-executable <path>] [--turn-budget <duration>] [--route worker|main|split] [--defer-over <chars>] [--foreground] [--json]
+  cswarm listen status [--url <url> --anon-key <key>] --workspace-id <uuid> --principal-id <uuid> [--json]
+  cswarm listen stop [--url <url> --anon-key <key>] --workspace-id <uuid> --principal-id <uuid> [--json]
+  cswarm hook check [--principal-id <uuid> ...] [--cooldown <seconds>]
+  cswarm hook install claude [--principal-id <uuid>] [--write]
+  cswarm hook uninstall claude --write
+  cswarm new "<workspace name>" [--url <url> --anon-key <key>] [--json]
+  cswarm new --name "<workspace name>" [--url <url> --anon-key <key>] [--json]
+  cswarm workspaces [--url <url> --anon-key <key>] [--json]
+  cswarm use <full-id|exact-name> [--url <url> --anon-key <key>] [--json]
+  cswarm invite [--url <url> --anon-key <key>] [--workspace-id <uuid>] --email <email>
+  cswarm invite revoke [--url <url> --anon-key <key>] [--workspace-id <uuid>] --invitation-id <uuid> [--json]
+  cswarm member remove <full-user-id|exact-name> --confirm <same-selector> [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--json]
+  cswarm workspace close <full-id|exact-name> --confirm <same-selector> [--url <url> --anon-key <key>] [--json]
+  cswarm accept --link-stdin [--name <name>] [--no-browser] [--json]
+  cswarm accept <https://...#invite=...|cswarm://accept/...> [--name <name>] [--no-browser] [--json]  # unsafe: shell history/process list
+  cswarm accept --invitation-token-stdin [--url <url> --anon-key <key>]
+  cswarm accept <invitation-token> [--url <url> --anon-key <key>]  # unsafe: shell history/process list
+  cswarm principal create [--url <url> --anon-key <key>] [--workspace-id <uuid>] --name <name>
+  cswarm principal revoke [--url <url> --anon-key <key>] [--workspace-id <uuid>] --principal-id <uuid>
+  cswarm token mint [--url <url> --anon-key <key>] [--workspace-id <uuid>] --principal-id <uuid> --run-id <uuid> --task-id <uuid> --epoch <n> [--ttl-ms <ms>]
+  cswarm token revoke [--url <url> --anon-key <key>] [--workspace-id <uuid>] --token-id <uuid>
+  cswarm token revoke (--agent-token-file <path> | --agent-token-stdin) [--url <url> --anon-key <key>] --workspace-id <uuid> [--token-id <uuid>]
+  cswarm link new [--url <url> --anon-key <key>] [--workspace-id <uuid>] --task-id <uuid> [--ttl-ms <ms>] [--site <origin>] [--json]
+  cswarm link revoke [--url <url> --anon-key <key>] [--workspace-id <uuid>] --capability-id <uuid> [--json]
+  cswarm command <kind> [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--agent-token-file <path> | --agent-token-stdin] [command fields]
+  cswarm dogfood [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--agent-token-file <path> | --agent-token-stdin] --slug <slug> --branch <branch> --head-sha <sha> --evidence <ref>
+  cswarm seed-fixture --uid <auth-user-uuid> [--device-id <uuid>] [--workspace-id <uuid>]
+
+Credential selection for command/dogfood:
+  default                 refresh the human login from secure storage
+  --agent-token-file      read the credential from an owned 0600 regular file in an owned
+                          0700 directory. The path may appear in argv; the secret never does.
+  --agent-token-stdin     read a mint/seed credential artifact, or a bare swm_agt_ token, from
+                          stdin. WHICH FORMS ARE ACCEPTED DEPENDS ON WHAT THE SUBCOMMAND DOES
+                          WITH THE CREDENTIAL. A subcommand that only reads takes either form.
+                          One that persists or references the credential needs the complete
+                          JSON artifact, because it needs a field a bare secret does not carry:
+                            whoami        reads server-proven identity -- complete or bare form
+                            members       reads only          -- either form
+                            working-on, note, ask, reply, feed, inbox
+                                          signal command/read only         -- either form
+                            receipt       reads only          -- either form
+                            inbox --notify persists a per-agent cursor -- needs principal_id
+                            file put, file ls, file get, file rm, file restore
+                                          read and command, nothing persisted -- either form
+                            feedback      command only, nothing persisted     -- either form
+                            command, dogfood
+                                          task protocol commands              -- either form
+                            listen start  persists durable state, rotates -- needs expires_at
+                            hook check    reads only the selected listener's owned 0600 credential state;
+                                          never accepts or prints a credential
+                            hook install/uninstall
+                                          edits only local Claude Code settings; no credential
+                            token revoke  names what it revokes           -- needs token_id
+                            workspace close is human-session-only; it never accepts an agent token
+
+Found a bug or missing feature in cswarm itself? cswarm feedback sends it to the
+deployment's operators — agents are encouraged to report friction they hit.
+
+Signals (intention sharing) accept the same credential selection. Agent mode
+never opens a browser or infers a human's saved workspace. Durations use a whole
+number plus m, h, or d (for example 90m, 24h, or 7d) and are capped at 30d.
+Place -- before signal text that itself begins with -- to stop option parsing.
+Signal text is at most 8000 characters and --about at most 500; a longer body is
+refused locally before any network call, so compose within the limit.
+
+listen start --turn-budget bounds ONE worker prompt turn (default 10m): how long
+the worker may think and use tools on a single message before the turn times out
+and durable delivery retries it. A whole number plus s, m, or h (for example
+90s, 5m, 1h), at least 30s and at most 60m. Each turn is additionally clamped
+to the live credential's remaining lifetime minus 60s, after renewing it when
+due — a turn never outlives its credential. Right after a rotation the full
+budget is available up to the token TTL minus 60s (about 59m on the default 1h
+TTL); a turn that lands just before a rotation can be clamped to the ~5m
+renewal lead, and if it times out there, durable delivery retries it on the
+fresh credential.
+
+listen start --route worker|main|split chooses where directed messages go. worker
+is the unchanged default. main queues every ask or note for the interactive session.
+split queues messages whose body is longer than --defer-over <chars>; the bound is
+1..10000 and an equal-length message stays on the worker path. Run cswarm hook check
+--principal-id <uuid> to surface that agent's queued messages. A bare check works only
+when the state directory holds one principal. hook check has its own 3s ceiling, exits 0
+on every outcome, and skips network checks made within --cooldown seconds (default 30).
+hook install claude prints principal-scoped UserPromptSubmit JSON by default and changes
+the project's .claude/settings.json only with --write; uninstall also requires --write.
+
+Invite, legacy token accept, principal create/revoke, human token mint/revoke, link, new, and workspace close require a
+stored human login. Agent self-surrender of a token uses --agent-token-file or --agent-token-stdin and never takes the secret on argv. Invite-link accept signs in when needed, then accepts and
+registers one principal. Invitation links, agent credentials, and capability links
+appear only in fresh success responses.
+
+cswarm link new hands someone a browser link to ONE work item before they install
+anything. It shows that item's name and state, the repository it belongs to, who
+invited them, and how long the workspace has existed — and reaches nothing else, not
+the member list, not the message feed, not another work item. The link is printed
+once and never again, because only its hash is stored; it lasts a day by default
+and at most 7 days, and cswarm link revoke --capability-id <uuid> withdraws it
+sooner. Only an owner or admin signed in as a human can create or revoke one; an
+agent credential never can, and cswarm says so without contacting the server. The
+token rides in the link's # fragment, which browsers never send to any server.
+--site (or CSWARM_SITE_ORIGIN) chooses which CommonSwarm page the link points at
+and accepts only https://coswarm-site.vercel.app (the default),
+https://commonswarm.com, https://www.commonswarm.com, or a loopback host while
+that page is being developed — the link is a live credential, so it may not be
+aimed at anyone else's server.
+GitHub identities with the same verified email may resolve to one GoTrue user;
+a second human must log in with a distinct verified email before accepting.
+
+Successful login and invite acceptance save the current Cloud target. Override it
+per command with --url/--anon-key or SWARM_CLOUD_URL/SWARM_CLOUD_ANON_KEY;
+flags take precedence over environment, which takes precedence over the saved target.
+Agent credentials never inherit a human's saved target. Workspace flags may also
+be set with SWARM_CLOUD_WORKSPACE_ID. cswarm new starts a workspace of your own
+(a name of 1 to 80 characters) and selects it; whether a deployment accepts that
+is a setting on the deployment, and an invite link is the other way in.
+Normal workspace selection is:
+cswarm workspaces, then cswarm use <full-id|exact-name>. A sole accepted
+workspace is saved automatically; ambiguous names require the full id and CommonSwarm
+never guesses. The workspace-id environment variable is a power-user override,
+with --workspace-id taking precedence. An invite link supplies its whole target
+and cannot be combined with --url or --anon-key.
+For an unrecognized origin, --link-stdin and --json hard-fail without a prompt;
+use a positional link without --json when an interactive confirmation is needed.
+The fixture bridge is test-only. It reads its privileged database connection only
+from DATABASE_URL and writes a newly minted agent token only to the absolute
+create-new path in SEED_TOKEN_OUT. --workspace-id selects an explicit fixture
+workspace only for callers who already hold that full-database credential; it
+grants no new authority and is not a governed product workspace-creation path.
+✔ listenerHostLimits opencode states DISABLE_PROJECT_CONFIG probe, not private-home alone (1.954208ms)
+✔ listenerHostLimits grok does not claim OpenCode project-config disable (0.120292ms)
+✔ listenerHostLimits claude states measured auth and no temporary lifecycle (0.101333ms)
+✔ listenerHostLimits codex states explicit read-only mode and auth boundary (0.113125ms)
+✔ bounds.ts does not claim wildcard stops project allow merging (0.156ms)
+✔ listenerStatusJson emits host_limits as a structured object, not a string (0.117667ms)
+✔ OpenCode worker canary denies on empty cwd then openWorkCwd retargets (121.665583ms)
+✔ ensureWorker canary failure abandons workerHome without later close() (258.080459ms)
+✔ OpenCode cross-owner turns reuse the operator worker, project cwd, and permission mode (98.8175ms)
+✔ cross-owner OpenCode prompts keep the worker ACP canary and request path (81.4665ms)
+✔ OpenCode cancel reaches the shared worker (60.211583ms)
+✔ cross-owner prompts create no second open for close to settle (77.702167ms)
+✔ close during gated worker open waits for settle; home remains until verified close (101.225917ms)
+✔ pending open that never settles retains home and fails close (91.405167ms)
+✔ close during gated worker enablePromptsAfterCanary waits for settle; handle closed once (84.5815ms)
+✔ close during gated worker openWorkCwd waits for settle; handle closed once (125.218083ms)
+✔ close during in-flight open propagates exact child_exit_timeout cleanup failure (77.463125ms)
+✔ openSession failure propagating child_exit_timeout retains home directory in model (85.532958ms)
+✔ concurrent model.close() calls share single performClose; handle closed once; both receive exact error (46.629458ms)
+✔ process signal handler close failure is memoized so later runtime close sees exact error (48.224625ms)
+✔ openSession failure with AcpChildExitError releases home directory (child is dead) (67.361ms)
+✔ worker prompt AcpChildExitError plus close timeout retains home and surfaces cleanup failure (43.65725ms)
+✔ ensureWorker openWorkCwd failure plus cleanup timeout surfaces cleanup failure and retains home (100.712292ms)
+✔ cross-owner prompt errors leave the shared worker open until listener close (56.462708ms)
+✔ releaseOpenCodeHome failure records home in retainedHomes and surfaces exact cleanup failure to caller (14.0535ms)
+✔ MAJOR-1 review: canary cwd creation failure releases the prepared worker home (14.189625ms)
+✔ MAJOR-1 review: close during canary cwd preparation cannot start an untracked worker (50.220833ms)
+✔ cross-owner prompt does not finalize the shared worker home after the turn (35.205042ms)
+✔ close failure during a cross-owner worker turn retains the shared home (63.372958ms)
+✔ performSingleOwnerCleanup home deletion failure overrides cause error and retains home (18.749041ms)
+✔ ensureWorkerHome cancellation home deletion failure surfaces cleanup error and retains home (28.033ms)
+✔ allowMissingAuth is explicit — not implied by fake open alone (17.4395ms)
+✔ one-winner: closed model rejects new prompts (52.034916ms)
+✔ cancel during deferred ensureWorkerHome releases registered home (30.533666ms)
+✔ close child_exit_timeout retains worker home; runtime+supervisor fail (154.59775ms)
+✔ the pure route decision keeps equal and smaller split asks on the worker (0.4495ms)
+✔ the pending-main queue drops its oldest entry at 200 and emits a warning event (4242.103834ms)
+✔ the pending-main queue preserves valid kinds and accepts legacy entries without one (14.582375ms)
+✔ a redelivered queued signal stays one durable local message (7.380625ms)
+✔ the pending-main queue preserves a body beyond an older server maximum (12.237ms)
+✔ prompt-start lease budget reserves the provenance directory deadline (0.531959ms)
+✔ incomplete durable configuration fails before credential or provider work (0.624583ms)
+✔ cursor fallback observes direct notes without model or reply effects (1.696458ms)
+✔ durable markers select durable mode before probe rows can be cursor-processed (0.275667ms)
+✔ claim without ACK capability fails before provider work (0.300417ms)
+✔ delivery events reduce into the closed supervisor status fields (255.9545ms)
+✔ durable claim persists one command id across retries, uses fresh bearers, and clears zero results (2.385958ms)
+✔ claim-pending recovery replays the exact persisted command without reserving a new claim (0.424625ms)
+✔ C-1 composition: stale claim_pending clears before durable replay (1.06225ms)
+✔ a claimed lease is persisted before any effect work begins (0.660167ms)
+✔ C-1: an expired durable leased claim without an effect clears and re-claims (1.298709ms)
+✔ D-041a: a corrupt recovered effect cannot block stale leased recovery (60.424417ms)
+✔ D-041a enumeration: a requeued corrupt ask fails safely without a second reply (67.8545ms)
+✔ D-041 enumeration: a fresh claim repairs corruption without process-local recovery state (48.984583ms)
+✔ D-041 enumeration: cursor fallback consumes a corrupt-effect repair (49.79825ms)
+✔ D-041b: fatal ACK replay recovers after the persisted lease horizon (0.844708ms)
+✔ C-1: an expired durable leased claim with a terminal effect ACKs before clearing (0.651625ms)
+✔ C-1 review: recovered terminal effects must match authoritative signal fields before ACK (0.234708ms)
+✔ C-1 composition: an expired leased claim with a resumable effect re-claims and finishes (1.324208ms)
+✔ C-1 composition: a live leased claim with a resumable effect replays immediately (0.600333ms)
+✔ C-1 composition: an unverified terminal-shaped effect does not brick recovery (0.237459ms)
+✔ MAJOR-3: failureCode error ACKs local_effect_failed and the runtime survives (0.551708ms)
+✔ route=worker observes a durable note before prepareAck and network ACK (1.04775ms)
+✔ route=worker replies to a durable ask after persisting prepareAck (2.010625ms)
+✔ route=main queues and acknowledges a durable ask without prompting the worker (1.015708ms)
+✔ route=main queues a durable note before the hook observes it (0.409667ms)
+✔ route=split queues an over-threshold note instead of claiming observation (0.2765ms)
+✔ route=split keeps an under-threshold note on the observed worker path (0.196792ms)
+✔ routed-main kill-between ordering: a pending persist failure leaves the lease unacked (0.251417ms)
+✔ an authoritative claimed signal mismatch fails before engine write or ACK (0.251375ms)
+✔ ack_pending recovery retries one deterministic ACK body and clears only after success (0.279916ms)
+✔ route=main does not replay a pre-fix observed-note ACK after restart (0.216542ms)
+✔ MAJOR-4: delivery_unavailable at exact lease expiry clears stale state (0.195625ms)
+✔ MAJOR-4: delivery_unavailable before lease expiry remains credential loss (0.171417ms)
+✔ ACK-only rollback waits past a recovered nonterminal lease before clearing and rewinding (0.287292ms)
+✔ caller abort during claim retry sleep starts no later delivery request (0.211334ms)
+✔ caller abort during ACK retry sleep starts no later ACK request (0.475042ms)
+✔ a lease beyond the fixed server maximum fails before effect work (0.137583ms)
+✔ MAJOR-4: a mid-run expired lease 403 clears stale state without credential stop (0.826209ms)
+✔ runtime refuses old edges before starting or prompting a model (0.384ms)
+✔ runtime reports agent read revocation as a credential stop (2.87325ms)
+✔ runtime drains pages, resets scan cursor, and posts stable replies (2.929959ms)
+✔ runtime asks the credential session immediately before the real reply post (30.487208ms)
+✔ runtime abort cancels model immediately while a hung prompt is pending (6.0905ms)
+✔ runtime emits only bounded malformed-row metadata (1.492375ms)
+✔ default poster credential failures stop as credential with the identical error and no reply fetch (4.492292ms)
+✔ an injected poster throwing typed 401 with hostile text stops as credential, never cancelled (0.766917ms)
+✔ the default-post HTTP 401/403 path stops as credential, not fatal or cancelled (5.068042ms)
+✔ a trusted injected poster receives the same closed runtime credential classification (1.427459ms)
+✔ an explicitly already-aborted runtime stays cancelled even for credential-shaped errors (0.495292ms)
+✔ runtime classifies noncredential secret wording only by the closed fleet convention (0.519125ms)
+✔ the default poster forwards the runtime caller signal and stays bounded (0.369041ms)
+✔ an already-aborted runtime caller never starts the reply fetch and stays resumable (0.217583ms)
+✔ D-038: 1 exact product web form decodes like the CLI form (1.485833ms)
+✔ D-038: 2 current cswarm wrapper remains accepted beside the web form (0.220042ms)
+✔ D-038: 3 bare invitation capability remains accepted beside the web form (0.128584ms)
+✔ D-038: 4 retired coswarm wrapper is a compatibility alias (0.088167ms)
+✔ D-038: 5 malformed payload in a web wrapper keeps strict base64url validation (0.263292ms)
+✔ D-038: 6 unrecognized wrapper is not blamed on payload encoding (0.22275ms)
+cswarm 0.1.40 (protocol 0.1.0)
+
+Usage:
+  cswarm login [--url <project-url> --anon-key <key>] [--no-browser]
+  cswarm logout [--url <project-url> --anon-key <key>] [--all-devices] [--local]
+  cswarm target [show] [--json] [--reveal-anon-key]
+  cswarm target set --url <project-url> --anon-key <key> [--json]
+  cswarm target clear [--json]
+  cswarm status [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--json]
+  cswarm whoami (--agent-token-file <path> | --agent-token-stdin) [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--json]
+  cswarm members [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--agent-token-file <path> | --agent-token-stdin] [--json]
+  cswarm working-on "<what>" [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--agent-token-file <path> | --agent-token-stdin] [--about <ref>] [--until <dur>] [--json]
+  cswarm note "<text>" [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--agent-token-file <path> | --agent-token-stdin] [--to <member|agent>] [--about <ref>] [--until <dur>] [--json]  # text: 1..8000 characters
+  cswarm ask "<text>" [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--agent-token-file <path> | --agent-token-stdin] [--to <member|agent>] [--about <ref>] [--until <dur>] [--wait <seconds>] [--json]  # text: 1..8000 characters
+  cswarm reply <signal-id> "<text>" [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--agent-token-file <path> | --agent-token-stdin] [--until <dur>] [--json]
+  cswarm receipt <signal-id> (--agent-token-file <path> | --agent-token-stdin) [--url <url> --anon-key <key>] --workspace-id <uuid> [--json]
+  cswarm feed [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--agent-token-file <path> | --agent-token-stdin] [--about <ref>] [--kind <kind>] [--since <timestamp>] [--limit <n>] [--include-stale] [--json]
+  cswarm inbox [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--agent-token-file <path> | --agent-token-stdin] [--kind <kind>] [--about <ref>] [--since <timestamp>] [--limit <n>] [--include-stale] [--wait <seconds>] [--json]
+  cswarm inbox --notify (--agent-token-file <path> | --agent-token-stdin) [--url <url> --anon-key <key>] --workspace-id <uuid> [--json]
+  cswarm inbox --follow --ndjson [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--agent-token-file <path> | --agent-token-stdin] [--kind <kind>] [--about <ref>] [--since <timestamp>] [--limit <n>] [--include-stale]
+  cswarm file put <local-path> [--name <name>] [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--agent-token-file <path> | --agent-token-stdin] [--json]
+  cswarm file ls [--include-tombstoned] [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--agent-token-file <path> | --agent-token-stdin] [--json]
+  cswarm file get <name|file-id> [--version <n>] [--out <local-path>] [--force] [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--agent-token-file <path> | --agent-token-stdin] [--json]
+  cswarm file rm <name|file-id> [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--agent-token-file <path> | --agent-token-stdin] [--json]
+  cswarm file restore <name|file-id> [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--agent-token-file <path> | --agent-token-stdin] [--json]
+  cswarm feedback "<text>" --kind bug|idea|friction [--about <ref>] [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--agent-token-file <path> | --agent-token-stdin] [--json]
+  cswarm listen start (--agent-token-file <path> | --agent-token-stdin) [--url <url> --anon-key <key>] --workspace-id <uuid> --provider grok|opencode|claude|codex [--cwd <absolute-path>] [--model <model>] [--effort <level>] [--permissions deny|allow] [--grok-executable <path>] [--opencode-executable <path>] [--claude-executable <path>] [--codex-executable <path>] [--turn-budget <duration>] [--route worker|main|split] [--defer-over <chars>] [--foreground] [--json]
+  cswarm listen status [--url <url> --anon-key <key>] --workspace-id <uuid> --principal-id <uuid> [--json]
+  cswarm listen stop [--url <url> --anon-key <key>] --workspace-id <uuid> --principal-id <uuid> [--json]
+  cswarm hook check [--principal-id <uuid> ...] [--cooldown <seconds>]
+  cswarm hook install claude [--principal-id <uuid>] [--write]
+  cswarm hook uninstall claude --write
+  cswarm new "<workspace name>" [--url <url> --anon-key <key>] [--json]
+  cswarm new --name "<workspace name>" [--url <url> --anon-key <key>] [--json]
+  cswarm workspaces [--url <url> --anon-key <key>] [--json]
+  cswarm use <full-id|exact-name> [--url <url> --anon-key <key>] [--json]
+  cswarm invite [--url <url> --anon-key <key>] [--workspace-id <uuid>] --email <email>
+  cswarm invite revoke [--url <url> --anon-key <key>] [--workspace-id <uuid>] --invitation-id <uuid> [--json]
+  cswarm member remove <full-user-id|exact-name> --confirm <same-selector> [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--json]
+  cswarm workspace close <full-id|exact-name> --confirm <same-selector> [--url <url> --anon-key <key>] [--json]
+  cswarm accept --link-stdin [--name <name>] [--no-browser] [--json]
+  cswarm accept <https://...#invite=...|cswarm://accept/...> [--name <name>] [--no-browser] [--json]  # unsafe: shell history/process list
+  cswarm accept --invitation-token-stdin [--url <url> --anon-key <key>]
+  cswarm accept <invitation-token> [--url <url> --anon-key <key>]  # unsafe: shell history/process list
+  cswarm principal create [--url <url> --anon-key <key>] [--workspace-id <uuid>] --name <name>
+  cswarm principal revoke [--url <url> --anon-key <key>] [--workspace-id <uuid>] --principal-id <uuid>
+  cswarm token mint [--url <url> --anon-key <key>] [--workspace-id <uuid>] --principal-id <uuid> --run-id <uuid> --task-id <uuid> --epoch <n> [--ttl-ms <ms>]
+  cswarm token revoke [--url <url> --anon-key <key>] [--workspace-id <uuid>] --token-id <uuid>
+  cswarm token revoke (--agent-token-file <path> | --agent-token-stdin) [--url <url> --anon-key <key>] --workspace-id <uuid> [--token-id <uuid>]
+  cswarm link new [--url <url> --anon-key <key>] [--workspace-id <uuid>] --task-id <uuid> [--ttl-ms <ms>] [--site <origin>] [--json]
+  cswarm link revoke [--url <url> --anon-key <key>] [--workspace-id <uuid>] --capability-id <uuid> [--json]
+  cswarm command <kind> [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--agent-token-file <path> | --agent-token-stdin] [command fields]
+  cswarm dogfood [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--agent-token-file <path> | --agent-token-stdin] --slug <slug> --branch <branch> --head-sha <sha> --evidence <ref>
+  cswarm seed-fixture --uid <auth-user-uuid> [--device-id <uuid>] [--workspace-id <uuid>]
+
+Credential selection for command/dogfood:
+  default                 refresh the human login from secure storage
+  --agent-token-file      read the credential from an owned 0600 regular file in an owned
+                          0700 directory. The path may appear in argv; the secret never does.
+  --agent-token-stdin     read a mint/seed credential artifact, or a bare swm_agt_ token, from
+                          stdin. WHICH FORMS ARE ACCEPTED DEPENDS ON WHAT THE SUBCOMMAND DOES
+                          WITH THE CREDENTIAL. A subcommand that only reads takes either form.
+                          One that persists or references the credential needs the complete
+                          JSON artifact, because it needs a field a bare secret does not carry:
+                            whoami        reads server-proven identity -- complete or bare form
+                            members       reads only          -- either form
+                            working-on, note, ask, reply, feed, inbox
+                                          signal command/read only         -- either form
+                            receipt       reads only          -- either form
+                            inbox --notify persists a per-agent cursor -- needs principal_id
+                            file put, file ls, file get, file rm, file restore
+                                          read and command, nothing persisted -- either form
+                            feedback      command only, nothing persisted     -- either form
+                            command, dogfood
+                                          task protocol commands              -- either form
+                            listen start  persists durable state, rotates -- needs expires_at
+                            hook check    reads only the selected listener's owned 0600 credential state;
+                                          never accepts or prints a credential
+                            hook install/uninstall
+                                          edits only local Claude Code settings; no credential
+                            token revoke  names what it revokes           -- needs token_id
+                            workspace close is human-session-only; it never accepts an agent token
+
+Found a bug or missing feature in cswarm itself? cswarm feedback sends it to the
+deployment's operators — agents are encouraged to report friction they hit.
+
+Signals (intention sharing) accept the same credential selection. Agent mode
+never opens a browser or infers a human's saved workspace. Durations use a whole
+number plus m, h, or d (for example 90m, 24h, or 7d) and are capped at 30d.
+Place -- before signal text that itself begins with -- to stop option parsing.
+Signal text is at most 8000 characters and --about at most 500; a longer body is
+refused locally before any network call, so compose within the limit.
+
+listen start --turn-budget bounds ONE worker prompt turn (default 10m): how long
+the worker may think and use tools on a single message before the turn times out
+and durable delivery retries it. A whole number plus s, m, or h (for example
+90s, 5m, 1h), at least 30s and at most 60m. Each turn is additionally clamped
+to the live credential's remaining lifetime minus 60s, after renewing it when
+due — a turn never outlives its credential. Right after a rotation the full
+budget is available up to the token TTL minus 60s (about 59m on the default 1h
+TTL); a turn that lands just before a rotation can be clamped to the ~5m
+renewal lead, and if it times out there, durable delivery retries it on the
+fresh credential.
+
+listen start --route worker|main|split chooses where directed messages go. worker
+is the unchanged default. main queues every ask or note for the interactive session.
+split queues messages whose body is longer than --defer-over <chars>; the bound is
+1..10000 and an equal-length message stays on the worker path. Run cswarm hook check
+--principal-id <uuid> to surface that agent's queued messages. A bare check works only
+when the state directory holds one principal. hook check has its own 3s ceiling, exits 0
+on every outcome, and skips network checks made within --cooldown seconds (default 30).
+hook install claude prints principal-scoped UserPromptSubmit JSON by default and changes
+the project's .claude/settings.json only with --write; uninstall also requires --write.
+
+Invite, legacy token accept, principal create/revoke, human token mint/revoke, link, new, and workspace close require a
+stored human login. Agent self-surrender of a token uses --agent-token-file or --agent-token-stdin and never takes the secret on argv. Invite-link accept signs in when needed, then accepts and
+registers one principal. Invitation links, agent credentials, and capability links
+appear only in fresh success responses.
+
+cswarm link new hands someone a browser link to ONE work item before they install
+anything. It shows that item's name and state, the repository it belongs to, who
+invited them, and how long the workspace has existed — and reaches nothing else, not
+the member list, not the message feed, not another work item. The link is printed
+once and never again, because only its hash is stored; it lasts a day by default
+and at most 7 days, and cswarm link revoke --capability-id <uuid> withdraws it
+sooner. Only an owner or admin signed in as a human can create or revoke one; an
+agent credential never can, and cswarm says so without contacting the server. The
+token rides in the link's # fragment, which browsers never send to any server.
+--site (or CSWARM_SITE_ORIGIN) chooses which CommonSwarm page the link points at
+and accepts only https://coswarm-site.vercel.app (the default),
+https://commonswarm.com, https://www.commonswarm.com, or a loopback host while
+that page is being developed — the link is a live credential, so it may not be
+aimed at anyone else's server.
+GitHub identities with the same verified email may resolve to one GoTrue user;
+a second human must log in with a distinct verified email before accepting.
+
+Successful login and invite acceptance save the current Cloud target. Override it
+per command with --url/--anon-key or SWARM_CLOUD_URL/SWARM_CLOUD_ANON_KEY;
+flags take precedence over environment, which takes precedence over the saved target.
+Agent credentials never inherit a human's saved target. Workspace flags may also
+be set with SWARM_CLOUD_WORKSPACE_ID. cswarm new starts a workspace of your own
+(a name of 1 to 80 characters) and selects it; whether a deployment accepts that
+is a setting on the deployment, and an invite link is the other way in.
+Normal workspace selection is:
+cswarm workspaces, then cswarm use <full-id|exact-name>. A sole accepted
+workspace is saved automatically; ambiguous names require the full id and CommonSwarm
+never guesses. The workspace-id environment variable is a power-user override,
+with --workspace-id taking precedence. An invite link supplies its whole target
+and cannot be combined with --url or --anon-key.
+For an unrecognized origin, --link-stdin and --json hard-fail without a prompt;
+use a positional link without --json when an interactive confirmation is needed.
+The fixture bridge is test-only. It reads its privileged database connection only
+from DATABASE_URL and writes a newly minted agent token only to the absolute
+create-new path in SEED_TOKEN_OUT. --workspace-id selects an explicit fixture
+workspace only for callers who already hold that full-database credential; it
+grants no new authority and is not a governed product workspace-creation path.
+✔ listen start requires an explicit provider before target or credential work (427.657916ms)
+✔ unsupported provider error lists the same four remedies (247.658792ms)
+✔ Grok canary guidance points to the local detail rendered by listen status (1.3205ms)
+✔ Codex startup failures give install and bounded diagnostic remedies (0.329458ms)
+✔ detached Codex resolution preserves the current install remedy (0.483541ms)
+✔ Claude startup failures give install and bounded diagnostic remedies (0.22475ms)
+✔ detached Claude resolution preserves the current install remedy (0.141458ms)
+✔ explicit unusable Claude path keeps its diagnostic and reinstall option (12.28375ms)
+✔ hidden supervisor rejects another provider's executable before credentials (220.745125ms)
+✔ --turn-budget rejects out-of-bounds and malformed durations before any credential work (1646.960792ms)
+✔ a worker turn budget is clamped to the live credential's remaining lifetime (0.655042ms)
+✔ resolveTurnBudgetOrDefer enforces the invariant: a turn starts only with a credential proven to outlast it (0.905583ms)
+✔ D-030: every test file is reached by an npm execution script (18.31ms)
+✔ D-030: check:tests structurally includes every test source (22.860875ms)
+✔ D-030: the pure CLI gate cannot reach the stack-touching suite (3.902667ms)
+▶ mint_agent_token binding validation
+  ✔ CONTROL: rejects a negative epoch — proves the check exists and can fire (1.314292ms)
+  ✔ CONTROL: rejects a non-integer epoch — the same check, second arm (0.116875ms)
+  ✔ CURRENT BEHAVIOUR (wrong): mints against a well-formed task_id that names no task (1.314125ms)
+  ✔ CURRENT BEHAVIOUR (wrong): mints epoch 0 and epoch 999999 for the same task (0.398792ms)
+✔ mint_agent_token binding validation (3.763042ms)
+▶ reducer
+  ✔ unknown event type HALTS (never skips) (0.541541ms)
+  ✔ a non-create event before TaskCreated is a stream-integrity error (0.282708ms)
+  ✔ out-of-order / duplicate seq is rejected (0.184208ms)
+  ✔ a non-monotonic lease epoch halts the fold (0.213959ms)
+✔ reducer (2.919375ms)
+▶ lease race → exactly one epoch wins
+  ✔ two acquires against the same head: one commits, the other conflicts (1.660292ms)
+✔ lease race → exactly one epoch wins (1.841541ms)
+▶ epoch fencing
+  ✔ renew/submit/handoff with a stale epoch is rejected (0.874625ms)
+  ✔ expired-lease mutation (renew) is rejected (0.296708ms)
+✔ epoch fencing (1.376125ms)
+▶ takeover
+  ✔ live lease requires a takeover grant bound to the CURRENT epoch (0.736417ms)
+  ✔ a takeover grant does NOT work after the epoch changed (grant dies on epoch change) (0.353583ms)
+  ✔ takeover of an EXPIRED lease needs no grant (0.308791ms)
+  ✔ a takeover grant cannot be spent by a different recipient (0.284ms)
+  ✔ a live lease cannot be taken over while its submission awaits review (0.1295ms)
+✔ takeover (2.075292ms)
+▶ handoff
+  ✔ to a non-member is rejected (0.092875ms)
+  ✔ to a member bumps epoch and transfers ownership (0.064625ms)
+  ✔ is rejected while a submission awaits review (0.074666ms)
+✔ handoff (0.315416ms)
+▶ submission survives lease expiry and supersession works
+  ✔ submission stays valid after the lease expires; close works against the frozen epoch (0.094209ms)
+  ✔ expired awaiting-review reacquisition preserves the frozen submission and remains closeable (1.039875ms)
+  ✔ a new submit supersedes the prior frozen submission (0.078209ms)
+  ✔ submit without evidence is rejected (0.04775ms)
+✔ submission survives lease expiry and supersession works (1.310125ms)
+▶ close gating (§2.4)
+  ✔ a gated claim cannot be closed by the owner without a valid close grant (0.0935ms)
+  ✔ a gated claim CAN be closed with a grant bound to the frozen version, epoch, and SHA (0.067833ms)
+  ✔ a human Owner/Admin may close a gated claim directly (0.0555ms)
+  ✔ a close grant does not survive reopen plus a same-SHA resubmission (0.086292ms)
+✔ close gating (§2.4) (0.347083ms)
+▶ task-head optimistic commit guard
+  ✔ allows exactly one of two same-grant close decisions to commit (1.754541ms)
+  ✔ rejects a submit decision made stale by a concurrently committed close (0.347542ms)
+✔ task-head optimistic commit guard (2.197708ms)
+▶ reopen invalidates the open submission
+  ✔ reopen clears the submission, bumps version, and re-opens for acquire (0.248375ms)
+  ✔ a non-admin task owner cannot reopen with a stale epoch (0.178375ms)
+✔ reopen invalidates the open submission (0.536ms)
+▶ idempotency
+  ✔ retry with the same (principal,command_id,hash) returns the original result and appends no new event (0.803792ms)
+  ✔ reusing a command_id with a DIFFERENT request → 409 conflict (0.272166ms)
+  ✔ the stored response covers a rejection too (a retried rejection replays, not re-executes) (0.106709ms)
+  ✔ does not ledger an authz rejection, so a later-member retry is evaluated again (0.102916ms)
+  ✔ namespaces user and agent principals that share the same textual id (0.09925ms)
+✔ idempotency (1.568125ms)
+▶ rejection classes (§2.1)
+  ✔ a non-member is refused with NO stream event (authz, audit-only) (0.16925ms)
+  ✔ a member hitting a bad precondition gets a committed CommandRejected event (domain) (0.138042ms)
+✔ rejection classes (§2.1) (0.417958ms)
+▶ upcasters + golden full-history replay
+  ✔ a v0 TaskCreated upcasts to v1 and folds identically (1.134209ms)
+  ✔ upcasts a non-first old-version event within a full stream fold (0.0805ms)
+  ✔ an event NEWER than supported halts on upcast (0.06825ms)
+  ✔ golden replay: create→acquire→submit→close folds to a done task at epoch 1 (0.106208ms)
+✔ upcasters + golden full-history replay (1.465833ms)
+▶ workspace creation and reducer
+  ✔ creates the workspace with its creator as the sole Owner (1.073667ms)
+  ✔ rejects non-allowlisted creation and agent credential creation without events (0.288667ms)
+  ✔ does not let a non-member probe an existing workspace with create_workspace (0.193084ms)
+  ✔ classifies commands against absent workspace state as authz and emits nothing (0.081834ms)
+  ✔ halts on malformed owner-orphaning history (0.252917ms)
+  ✔ halts on duplicate invitation token_hash and invalid role enums (0.368083ms)
+  ✔ every emitted accepted/domain decision folds without a harness carve-out (0.180459ms)
+✔ workspace creation and reducer (3.316667ms)
+▶ invitations
+  ✔ invite_member accepts for Owner/Admin and rejects role/TTL violations (0.263375ms)
+  ✔ invite_member rejects duplicate id/hash and Admin inviting an Owner (0.176666ms)
+  ✔ revoke_invitation accepts only a live invitation (0.111ms)
+  ✔ accept_invitation selects only by token_hash and joins a verified non-member (0.628708ms)
+  ✔ accept_invitation rejects invalid capability, identity, and replay (0.102375ms)
+  ✔ accepts a forwarded invite for a different verified identity by design (0.090833ms)
+  ✔ accept rejects revoked and boundary-expired matched invitations as domain (0.105625ms)
+✔ invitations (1.64675ms)
+▶ workspace archive authority
+  ✔ lets an Owner archive at the decision timestamp (0.065667ms)
+  ✔ refuses an Admin with the named owner reason (0.077ms)
+  ✔ refuses a Member with the named owner reason (0.057041ms)
+  ✔ refuses an agent credential before role decisions (0.037791ms)
+  ✔ refuses an already archived workspace instead of claiming a second change (0.043875ms)
+✔ workspace archive authority (0.337333ms)
+▶ membership and no-orphan authority
+  ✔ remove_member accepts, but refuses last Owner and unresolved landing authority (0.165125ms)
+  ✔ change_role accepts and protects ownership transitions (0.850334ms)
+  ✔ Admin cannot remove an Owner, while a second Owner can be removed/demoted (0.555708ms)
+  ✔ change_role rejects same-role and unresolved landing-authority changes (0.351167ms)
+✔ membership and no-orphan authority (2.246208ms)
+▶ agent principals
+  ✔ create_agent_principal creates an owned principal and rejects duplicate names (0.506709ms)
+  ✔ create/revoke principal are human-only; a Member may revoke only their own (0.35275ms)
+✔ agent principals (1.109ms)
+▶ agent token minting
+  ✔ the intrinsic denylist covers every §2.3 authority category (0.761833ms)
+  ✔ mints only token metadata with narrow binding and the one-hour default (0.175208ms)
+  ✔ rejects denylisted/excess scopes, missing binding, and TTL above 8h (0.145959ms)
+  ✔ rejects empty and non-tokenizable scope sets (0.109584ms)
+  ✔ pins mint TTL/epoch boundaries, duplicate ids, and revoked principals (0.284125ms)
+✔ agent token minting (1.579833ms)
+▶ agent token revocation
+  ✔ human Owner/Admin may revoke any token; Member only an owned token (0.239375ms)
+  ✔ Admin revokes any token and Member revokes an owned token (0.320708ms)
+  ✔ agent may revoke only its exact presenting token, never a sibling (0.15725ms)
+✔ agent token revocation (0.782333ms)
+▶ declare_agent_model
+  ✔ an agent describes ITSELF: model lands on the presenting principal (0.161208ms)
+  ✔ trims, and a whitespace-only declaration clears to null (0.117ms)
+  ✔ null clears an earlier declaration (0.069416ms)
+  ✔ bounds mirror agent_principals_model_bounded: >120 and control chars refuse (0.094041ms)
+  ✔ a HUMAN credential is refused here: humans use set_agent_model instead (0.062041ms)
+  ✔ an agent credential with no resolved principal is refused (1.036291ms)
+  ✔ a revoked presenting principal is refused (0.355333ms)
+✔ declare_agent_model (2.011542ms)
+▶ submit_feedback
+  ✔ an AGENT submits: attribution is the presenting principal, state unchanged (0.226375ms)
+  ✔ a HUMAN member submits: attribution is the user (0.322958ms)
+  ✔ a non-member human is refused (0.238875ms)
+  ✔ bounds: bad category, empty body, oversize body, hidden controls, bad context (0.305542ms)
+✔ submit_feedback (1.201625ms)
+▶ set_agent_model
+  ✔ the workspace owner relabels another member's agent, attributed to the human (0.13725ms)
+  ✔ a member relabels their OWN agent; another plain member is refused (0.119375ms)
+  ✔ an AGENT credential is refused: an agent may only describe itself (0.077167ms)
+  ✔ bounds are the shared helper: over-bound and revoked-target refused, empty clears (0.154666ms)
+  ✔ a missing principal is refused (0.084209ms)
+✔ set_agent_model (0.637542ms)
+✔ newRequestId returns a UUID-shaped correlation id (1.15325ms)
+✔ extractSafeDiagnostics keeps Postgres identity fields and drops secrets (0.537125ms)
+✔ extractSafeDiagnostics classifies connection failures as retryable (0.111083ms)
+✔ isRetryableErrorCode covers SQLSTATE connection class and known codes (0.059875ms)
+✔ publicReadErrorBody stays generic with request_id and retryable only (0.110125ms)
+✔ handler phase is preserved across phases including top_level fallback (0.081625ms)
+✔ non-Error throws produce name unknown and no secrets (0.051875ms)
+✔ read/index.ts wires structured diagnostics (source contract) (0.412417ms)
+✔ m-2: sender relation comment agrees that revoked agent authors are filtered (0.099875ms)
+✔ remove_member edge security seams remain reachable and fail closed (9.41825ms)
+✔ fresh-auth helper cannot be weakened to JWT iat or token refresh (2.362667ms)
+✔ idempotency replay is resolved before remove_member fresh-auth refusal (1.6645ms)
+✔ fresh-login refusal preserves pending remove_member command id (1.120625ms)
+✔ MemberRemoved event timestamp is the projection write timestamp (4.051333ms)
+cswarm 0.1.40 (protocol 0.1.0)
+
+Usage:
+  cswarm login [--url <project-url> --anon-key <key>] [--no-browser]
+  cswarm logout [--url <project-url> --anon-key <key>] [--all-devices] [--local]
+  cswarm target [show] [--json] [--reveal-anon-key]
+  cswarm target set --url <project-url> --anon-key <key> [--json]
+  cswarm target clear [--json]
+  cswarm status [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--json]
+  cswarm whoami (--agent-token-file <path> | --agent-token-stdin) [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--json]
+  cswarm members [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--agent-token-file <path> | --agent-token-stdin] [--json]
+  cswarm working-on "<what>" [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--agent-token-file <path> | --agent-token-stdin] [--about <ref>] [--until <dur>] [--json]
+  cswarm note "<text>" [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--agent-token-file <path> | --agent-token-stdin] [--to <member|agent>] [--about <ref>] [--until <dur>] [--json]  # text: 1..8000 characters
+  cswarm ask "<text>" [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--agent-token-file <path> | --agent-token-stdin] [--to <member|agent>] [--about <ref>] [--until <dur>] [--wait <seconds>] [--json]  # text: 1..8000 characters
+  cswarm reply <signal-id> "<text>" [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--agent-token-file <path> | --agent-token-stdin] [--until <dur>] [--json]
+  cswarm receipt <signal-id> (--agent-token-file <path> | --agent-token-stdin) [--url <url> --anon-key <key>] --workspace-id <uuid> [--json]
+  cswarm feed [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--agent-token-file <path> | --agent-token-stdin] [--about <ref>] [--kind <kind>] [--since <timestamp>] [--limit <n>] [--include-stale] [--json]
+  cswarm inbox [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--agent-token-file <path> | --agent-token-stdin] [--kind <kind>] [--about <ref>] [--since <timestamp>] [--limit <n>] [--include-stale] [--wait <seconds>] [--json]
+  cswarm inbox --notify (--agent-token-file <path> | --agent-token-stdin) [--url <url> --anon-key <key>] --workspace-id <uuid> [--json]
+  cswarm inbox --follow --ndjson [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--agent-token-file <path> | --agent-token-stdin] [--kind <kind>] [--about <ref>] [--since <timestamp>] [--limit <n>] [--include-stale]
+  cswarm file put <local-path> [--name <name>] [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--agent-token-file <path> | --agent-token-stdin] [--json]
+  cswarm file ls [--include-tombstoned] [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--agent-token-file <path> | --agent-token-stdin] [--json]
+  cswarm file get <name|file-id> [--version <n>] [--out <local-path>] [--force] [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--agent-token-file <path> | --agent-token-stdin] [--json]
+  cswarm file rm <name|file-id> [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--agent-token-file <path> | --agent-token-stdin] [--json]
+  cswarm file restore <name|file-id> [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--agent-token-file <path> | --agent-token-stdin] [--json]
+  cswarm feedback "<text>" --kind bug|idea|friction [--about <ref>] [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--agent-token-file <path> | --agent-token-stdin] [--json]
+  cswarm listen start (--agent-token-file <path> | --agent-token-stdin) [--url <url> --anon-key <key>] --workspace-id <uuid> --provider grok|opencode|claude|codex [--cwd <absolute-path>] [--model <model>] [--effort <level>] [--permissions deny|allow] [--grok-executable <path>] [--opencode-executable <path>] [--claude-executable <path>] [--codex-executable <path>] [--turn-budget <duration>] [--route worker|main|split] [--defer-over <chars>] [--foreground] [--json]
+  cswarm listen status [--url <url> --anon-key <key>] --workspace-id <uuid> --principal-id <uuid> [--json]
+  cswarm listen stop [--url <url> --anon-key <key>] --workspace-id <uuid> --principal-id <uuid> [--json]
+  cswarm hook check [--principal-id <uuid> ...] [--cooldown <seconds>]
+  cswarm hook install claude [--principal-id <uuid>] [--write]
+  cswarm hook uninstall claude --write
+  cswarm new "<workspace name>" [--url <url> --anon-key <key>] [--json]
+  cswarm new --name "<workspace name>" [--url <url> --anon-key <key>] [--json]
+  cswarm workspaces [--url <url> --anon-key <key>] [--json]
+  cswarm use <full-id|exact-name> [--url <url> --anon-key <key>] [--json]
+  cswarm invite [--url <url> --anon-key <key>] [--workspace-id <uuid>] --email <email>
+  cswarm invite revoke [--url <url> --anon-key <key>] [--workspace-id <uuid>] --invitation-id <uuid> [--json]
+  cswarm member remove <full-user-id|exact-name> --confirm <same-selector> [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--json]
+  cswarm workspace close <full-id|exact-name> --confirm <same-selector> [--url <url> --anon-key <key>] [--json]
+  cswarm accept --link-stdin [--name <name>] [--no-browser] [--json]
+  cswarm accept <https://...#invite=...|cswarm://accept/...> [--name <name>] [--no-browser] [--json]  # unsafe: shell history/process list
+  cswarm accept --invitation-token-stdin [--url <url> --anon-key <key>]
+  cswarm accept <invitation-token> [--url <url> --anon-key <key>]  # unsafe: shell history/process list
+  cswarm principal create [--url <url> --anon-key <key>] [--workspace-id <uuid>] --name <name>
+  cswarm principal revoke [--url <url> --anon-key <key>] [--workspace-id <uuid>] --principal-id <uuid>
+  cswarm token mint [--url <url> --anon-key <key>] [--workspace-id <uuid>] --principal-id <uuid> --run-id <uuid> --task-id <uuid> --epoch <n> [--ttl-ms <ms>]
+  cswarm token revoke [--url <url> --anon-key <key>] [--workspace-id <uuid>] --token-id <uuid>
+  cswarm token revoke (--agent-token-file <path> | --agent-token-stdin) [--url <url> --anon-key <key>] --workspace-id <uuid> [--token-id <uuid>]
+  cswarm link new [--url <url> --anon-key <key>] [--workspace-id <uuid>] --task-id <uuid> [--ttl-ms <ms>] [--site <origin>] [--json]
+  cswarm link revoke [--url <url> --anon-key <key>] [--workspace-id <uuid>] --capability-id <uuid> [--json]
+  cswarm command <kind> [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--agent-token-file <path> | --agent-token-stdin] [command fields]
+  cswarm dogfood [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--agent-token-file <path> | --agent-token-stdin] --slug <slug> --branch <branch> --head-sha <sha> --evidence <ref>
+  cswarm seed-fixture --uid <auth-user-uuid> [--device-id <uuid>] [--workspace-id <uuid>]
+
+Credential selection for command/dogfood:
+  default                 refresh the human login from secure storage
+  --agent-token-file      read the credential from an owned 0600 regular file in an owned
+                          0700 directory. The path may appear in argv; the secret never does.
+  --agent-token-stdin     read a mint/seed credential artifact, or a bare swm_agt_ token, from
+                          stdin. WHICH FORMS ARE ACCEPTED DEPENDS ON WHAT THE SUBCOMMAND DOES
+                          WITH THE CREDENTIAL. A subcommand that only reads takes either form.
+                          One that persists or references the credential needs the complete
+                          JSON artifact, because it needs a field a bare secret does not carry:
+                            whoami        reads server-proven identity -- complete or bare form
+                            members       reads only          -- either form
+                            working-on, note, ask, reply, feed, inbox
+                                          signal command/read only         -- either form
+                            receipt       reads only          -- either form
+                            inbox --notify persists a per-agent cursor -- needs principal_id
+                            file put, file ls, file get, file rm, file restore
+                                          read and command, nothing persisted -- either form
+                            feedback      command only, nothing persisted     -- either form
+                            command, dogfood
+                                          task protocol commands              -- either form
+                            listen start  persists durable state, rotates -- needs expires_at
+                            hook check    reads only the selected listener's owned 0600 credential state;
+                                          never accepts or prints a credential
+                            hook install/uninstall
+                                          edits only local Claude Code settings; no credential
+                            token revoke  names what it revokes           -- needs token_id
+                            workspace close is human-session-only; it never accepts an agent token
+
+Found a bug or missing feature in cswarm itself? cswarm feedback sends it to the
+deployment's operators — agents are encouraged to report friction they hit.
+
+Signals (intention sharing) accept the same credential selection. Agent mode
+never opens a browser or infers a human's saved workspace. Durations use a whole
+number plus m, h, or d (for example 90m, 24h, or 7d) and are capped at 30d.
+Place -- before signal text that itself begins with -- to stop option parsing.
+Signal text is at most 8000 characters and --about at most 500; a longer body is
+refused locally before any network call, so compose within the limit.
+
+listen start --turn-budget bounds ONE worker prompt turn (default 10m): how long
+the worker may think and use tools on a single message before the turn times out
+and durable delivery retries it. A whole number plus s, m, or h (for example
+90s, 5m, 1h), at least 30s and at most 60m. Each turn is additionally clamped
+to the live credential's remaining lifetime minus 60s, after renewing it when
+due — a turn never outlives its credential. Right after a rotation the full
+budget is available up to the token TTL minus 60s (about 59m on the default 1h
+TTL); a turn that lands just before a rotation can be clamped to the ~5m
+renewal lead, and if it times out there, durable delivery retries it on the
+fresh credential.
+
+listen start --route worker|main|split chooses where directed messages go. worker
+is the unchanged default. main queues every ask or note for the interactive session.
+split queues messages whose body is longer than --defer-over <chars>; the bound is
+1..10000 and an equal-length message stays on the worker path. Run cswarm hook check
+--principal-id <uuid> to surface that agent's queued messages. A bare check works only
+when the state directory holds one principal. hook check has its own 3s ceiling, exits 0
+on every outcome, and skips network checks made within --cooldown seconds (default 30).
+hook install claude prints principal-scoped UserPromptSubmit JSON by default and changes
+the project's .claude/settings.json only with --write; uninstall also requires --write.
+
+Invite, legacy token accept, principal create/revoke, human token mint/revoke, link, new, and workspace close require a
+stored human login. Agent self-surrender of a token uses --agent-token-file or --agent-token-stdin and never takes the secret on argv. Invite-link accept signs in when needed, then accepts and
+registers one principal. Invitation links, agent credentials, and capability links
+appear only in fresh success responses.
+
+cswarm link new hands someone a browser link to ONE work item before they install
+anything. It shows that item's name and state, the repository it belongs to, who
+invited them, and how long the workspace has existed — and reaches nothing else, not
+the member list, not the message feed, not another work item. The link is printed
+once and never again, because only its hash is stored; it lasts a day by default
+and at most 7 days, and cswarm link revoke --capability-id <uuid> withdraws it
+sooner. Only an owner or admin signed in as a human can create or revoke one; an
+agent credential never can, and cswarm says so without contacting the server. The
+token rides in the link's # fragment, which browsers never send to any server.
+--site (or CSWARM_SITE_ORIGIN) chooses which CommonSwarm page the link points at
+and accepts only https://coswarm-site.vercel.app (the default),
+https://commonswarm.com, https://www.commonswarm.com, or a loopback host while
+that page is being developed — the link is a live credential, so it may not be
+aimed at anyone else's server.
+GitHub identities with the same verified email may resolve to one GoTrue user;
+a second human must log in with a distinct verified email before accepting.
+
+Successful login and invite acceptance save the current Cloud target. Override it
+per command with --url/--anon-key or SWARM_CLOUD_URL/SWARM_CLOUD_ANON_KEY;
+flags take precedence over environment, which takes precedence over the saved target.
+Agent credentials never inherit a human's saved target. Workspace flags may also
+be set with SWARM_CLOUD_WORKSPACE_ID. cswarm new starts a workspace of your own
+(a name of 1 to 80 characters) and selects it; whether a deployment accepts that
+is a setting on the deployment, and an invite link is the other way in.
+Normal workspace selection is:
+cswarm workspaces, then cswarm use <full-id|exact-name>. A sole accepted
+workspace is saved automatically; ambiguous names require the full id and CommonSwarm
+never guesses. The workspace-id environment variable is a power-user override,
+with --workspace-id taking precedence. An invite link supplies its whole target
+and cannot be combined with --url or --anon-key.
+For an unrecognized origin, --link-stdin and --json hard-fail without a prompt;
+use a positional link without --json when an interactive confirmation is needed.
+The fixture bridge is test-only. It reads its privileged database connection only
+from DATABASE_URL and writes a newly minted agent token only to the absolute
+create-new path in SEED_TOKEN_OUT. --workspace-id selects an explicit fixture
+workspace only for callers who already hold that full-database credential; it
+grants no new authority and is not a governed product workspace-creation path.
+✔ typed recipient resolution prefers exact UUID and unique name across members and agents (1.265167ms)
+✔ postSignalTargets always emits both target fields and null in_reply_to (0.221041ms)
+✔ wait seconds accept only integers in 1..300 (0.358042ms)
+✔ wait deadline and sleep math clamp to remaining time (0.13425ms)
+✔ pollForSignals returns immediately on a match and times out without swallowing errors (0.671584ms)
+✔ pollForSignals probes after the last sleep so late arrivals are observed (0.425709ms)
+✔ hung wait reads abort at the remaining deadline, not the 30s read ceiling (150.140084ms)
+✔ SignalReadTimeoutError during poll is a successful wait timeout, not a failure (0.191666ms)
+✔ inbox wait JSON keeps one document and marks timeout without failing (0.126917ms)
+✔ ask wait JSON returns ask plus reply or explicit timed_out success (0.101542ms)
+✔ follow backoff is exponential with jitter and respects Retry-After (0.203792ms)
+✔ follow error classification: retryable 5xx/429/transport; fatal 4xx/malformed (0.263417ms)
+✔ BoundedSignalIdSet suppresses duplicates and evicts oldest when full (0.061792ms)
+✔ formatFollowFrame emits one-line NDJSON without a trailing newline (0.064ms)
+✔ follow emits ready only after first successful arm, then signals (1.153375ms)
+✔ follow recovers from transient 500 then emits ready and signals (0.22675ms)
+✔ follow emits retrying after ready when a later 500 occurs, then recovers (0.173ms)
+✔ follow stops on non-credential fatal 4xx without retrying (0.17925ms)
+✔ follow rearm after signal and suppresses duplicate live rows (0.174916ms)
+✔ follow cancellation during idle poll stops cleanly (0.096375ms)
+✔ follow removes its abort listener after every completed idle poll (0.116667ms)
+✔ follow secret/credential absence never emits ready (0.136792ms)
+✔ follow classifies agent read 401/403 as credential stop (0.165208ms)
+✔ follow cancels during retry backoff and clears the delay timer (0.172667ms)
+✔ follow recovers from 429 using Retry-After delay and rearm (0.145292ms)
+✔ follow rearm after signal uses post-emit spacing not zero delay (0.089667ms)
+✔ readSignals keeps plain Error taxonomy while carrying Retry-After for follow (0.766167ms)
+✔ agent signal pages expose capabilities and fail closed on absent markers (1.547625ms)
+✔ legacy cursor fallback is explicit and a capable 400 still fails (0.526292ms)
+✔ follow-only row quarantine is bounded and preserves a raw page cursor (0.509166ms)
+✔ follow refuses a full quarantined page without a safe terminal cursor (0.096292ms)
+✔ parseSignalRecord ignores unknown fields and fails closed on bad required data (0.332ms)
+✔ read parsing accepts newer server string bounds but still rejects structural damage (0.104292ms)
+✔ human rendering bounds forward-compatible strings and reports original lengths (0.198ms)
+✔ compareSignalCursor orders by created_at then id (0.040416ms)
+✔ follow pages a backlog larger than one page without dropping older rows (0.193709ms)
+✔ follow resets the page cursor after each scan so late older rows arrive (0.119542ms)
+✔ describeMintRenewal states process and local-state conditions, not unconditional self-renewal (0.081792ms)
+✔ legacy listener status JSON normalizes exactly six delivery fields to null (0.318ms)
+✔ unrecognized supervisor runtime events never become delivery ACKs (268.181084ms)
+✔ D-051: retryable:false stops the read loop; the same 500 retries without it (4.054583ms)
+✔ D-056 independent control (Plumb, adapted): recovered refusals do not spend a process-lifetime budget (2.497167ms)
+✔ D-056: the refusal budget env knob resolves safely (2.239084ms)
+✔ D-056: refusals are tolerated for a bounded WINDOW, then the loop stops (3.003291ms)
+✔ D-056: the budget is PER BURST -- isolated refusals never exhaust it (4.244708ms)
+✔ D-051: the refusal is surfaced with the server's request_id (0.925833ms)
+✔ D-051: readSignals carries the failure envelope off the wire (1.141ms)
+✔ D-051: a 500 with no readable body keeps the status-only behaviour (1.834458ms)
+✔ D-051: the retryable veto is one-directional (0.106417ms)
+✔ D-051: envelope parsing is total and cannot be steered by a body (0.087875ms)
+✔ D-051: a hostile error body cannot forge a credential failure (0.258333ms)
+✔ D-051: an isolated success does not wipe the backoff the failures earned (0.23925ms)
+✔ D-051: decay reaches the cap under sustained failure and clears when healthy (0.704083ms)
+✔ D-051: an error body saying 'aborted' cannot forge a cancellation (1.823916ms)
+✔ D-051: only a typed AbortError cancels, and our own abort state outranks it (0.500125ms)
+✔ D-051: a credential verdict off the wire is decided by status, not wording (0.167708ms)
+✔ D-055: every line of a refused follow stream parses, including the last (0.893417ms)
+✔ D-055: a clean cancellation ends the stream without an error frame (0.325625ms)
+✔ D-055: the terminal frame distinguishes a refusal from other stops (0.1135ms)
+✔ D-058: a real HTTP failure still carries its status without the regex (2.011958ms)
+✔ D-058: a real transport failure is still recognised by identity (0.432084ms)
+✔ D-058: an impostor spelled exactly like ours gets no verdict (0.407791ms)
+▶ one directed message renders one bounded line with sender and exact reply command
+  ✔ an arrival notification never carries the anon key or the url (0.59225ms)
+✔ one directed message renders one bounded line with sender and exact reply command (1.997958ms)
+✔ a multiline body still produces exactly one notification line (0.070209ms)
+✔ restart neither replays an emitted row nor skips a row received while down (3.065083ms)
+✔ a transient failure and a 5xx keep the watcher armed without a busy loop (2.722ms)
+✔ emitting a notification does not acknowledge, dequeue, or mutate delivery receipts (0.157833ms)
+[cold-start] unlabelled: cleared after 3 attempts, 200ms
+[cold-start] unlabelled: EXHAUSTED after 4 attempts, 300ms, last HTTP 502
+[cold-start] unlabelled: EXHAUSTED after 4 attempts, 300ms, last HTTP 502
+[cold-start] unlabelled: EXHAUSTED after 3 attempts, 200ms, last HTTP 502
+✔ D-025: a cold-start 502 that clears returns the real response (13.098667ms)
+✔ D-025: exhausting the retries THROWS rather than returning the last 502 (1.800834ms)
+✔ D-025: the exhaustion error carries attempts, elapsed and last status (0.518417ms)
+✔ D-025: it makes exactly the number of attempts it was given (0.173166ms)
+✔ D-025: a decided status is returned on the first attempt, never retried (0.232959ms)
+✔ D-025: a 500 is not treated as a cold start (0.072ms)
+✔ D-025: a call that never waited emits no trace line (0.412542ms)
+✔ D-025: a call that waited reports its call site, attempts and elapsed (0.192333ms)
+✔ D-025: exhaustion is traced as well as thrown, so it is visible in a failing run (0.143667ms)
+✔ sendSignal keeps one deadline through response-body settlement (4.7395ms)
+✔ sendSignal caller abort during fetch is AbortError, never CommandTransportError (0.660958ms)
+✔ sendSignal caller abort during body settlement is AbortError (0.418334ms)
+✔ sendSignal caller abort settles an abort-ignoring pending fetch as AbortError without the deadline (0.281959ms)
+✔ sendSignal caller abort settles an abort-ignoring pending body as AbortError without the deadline (0.182375ms)
+✔ sendSignal caller abort wins once a transport failure enters retry backoff (0.272375ms)
+✔ sendSignal retry after a fetch rejection cannot outlive the internal deadline (0.38975ms)
+✔ sendSignal caller abort wins once a 5xx body failure enters retry backoff (0.917583ms)
+✔ sendSignal keeps a 401 body-read failure as a typed HTTP error (0.273375ms)
+✔ sendSignal keeps a non-JSON 403 as a typed HTTP error (0.489792ms)
+✔ sendSignal keeps a 429 interrupted body as a retryable typed HTTP error (2.798875ms)
+✔ sendSignal preserves a sub-400 body-read failure as transport (0.776917ms)
+✔ sendSignal preserves typed HTTP precedence for a 503 body-read failure (0.450167ms)
+✔ sendSignal turns a synchronous fetch throw into the generic transport error without deferring invocation (1.276083ms)
+✔ sendSignal removes its caller-abort listener on every outcome (2.209792ms)
+✔ D-034: every signal fetch aborts at the 30 second application deadline (14.2075ms)
+✔ D-034: response headers cannot end the deadline before the body settles (0.267209ms)
+✔ D-034: the signal status fallback settles when providers never answer (1.283583ms)
+ℹ tests 656
+ℹ suites 25
+ℹ pass 655
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 12467.6745
+
+✖ failing tests:
+
+test at tests/support/host-stderr-exit-parity.ts:11:1593
+✖ OpenCode: a held close cannot hang the child failure (1876.480292ms)
+  AssertionError [ERR_ASSERTION]: failure took 1858 ms
+      at TestContext.<anonymous> (/Users/yulanbot/Developer/Ridge.io/commonswarm-signup/tests/support/host-stderr-exit-parity.ts:156:14)
+      at async Test.run (node:internal/test_runner/test:1404:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:969:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
