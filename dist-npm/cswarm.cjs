@@ -13520,7 +13520,7 @@ __export(cli_exports, {
   resolveTurnBudgetOrDefer: () => resolveTurnBudgetOrDefer
 });
 module.exports = __toCommonJS(cli_exports);
-var import_node_crypto19 = require("node:crypto");
+var import_node_crypto20 = require("node:crypto");
 var import_node_fs7 = require("node:fs");
 var import_promises11 = require("node:fs/promises");
 var import_node_path20 = require("node:path");
@@ -33451,6 +33451,7 @@ var FileListenerEffectStore = class {
 };
 
 // src/listener/grok-model.ts
+var import_node_crypto14 = require("node:crypto");
 var import_promises5 = require("node:fs/promises");
 var import_node_os7 = require("node:os");
 var import_node_path11 = require("node:path");
@@ -33695,7 +33696,7 @@ var GrokListenerModel = class {
       clientName: "cswarm-listener"
     });
     try {
-      await handle.session.enablePromptsAfterCanary();
+      await this.enablePromptsAfterGrokCanary(handle);
       this.workerCanary = false;
       this.worker = handle;
       return handle;
@@ -33703,6 +33704,37 @@ var GrokListenerModel = class {
       await handle.close();
       throw error;
     }
+  }
+  /** Force Grok's measured shell permission path without changing worker cwd. */
+  async enablePromptsAfterGrokCanary(handle) {
+    const sentinelPath = (0, import_node_path11.join)(
+      (0, import_node_os7.tmpdir)(),
+      `cswarm-grok-permission-canary-${process.pid}-${(0, import_node_crypto14.randomUUID)()}`
+    );
+    let canaryError;
+    try {
+      await handle.session.enablePromptsAfterCanary({
+        timeoutMs: ACP_CANARY_TIMEOUT_MS,
+        probeText: `Use a shell command to create ${sentinelPath} with content CSWARM_CANARY_NOOP. You must use the shell. Do nothing else.`,
+        ...this.options.onCanaryAttempt ? { onAttempt: this.options.onCanaryAttempt } : {}
+      });
+    } catch (error) {
+      canaryError = error;
+    }
+    let sentinelCreated = false;
+    try {
+      await (0, import_promises5.lstat)(sentinelPath);
+      sentinelCreated = true;
+      await (0, import_promises5.unlink)(sentinelPath);
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+    }
+    if (sentinelCreated) {
+      throw new AcpPermissionCanaryError(
+        "Grok bridge wrote the permission canary sentinel; permission denial did not block the write"
+      );
+    }
+    if (canaryError !== void 0) throw canaryError;
   }
   /** Validate the operator's login artifact without copying or replacing its home. */
   async validateLocalAuth() {
@@ -33760,7 +33792,7 @@ var GrokListenerModel = class {
 };
 
 // src/listener/opencode-model.ts
-var import_node_crypto14 = require("node:crypto");
+var import_node_crypto15 = require("node:crypto");
 var import_promises6 = require("node:fs/promises");
 var import_node_path12 = require("node:path");
 function asError(error) {
@@ -33786,7 +33818,7 @@ var OpenCodeListenerModel = class {
   prepareWorkerCwd;
   permissionMode;
   pendingOpenWaitMs;
-  instanceId = (0, import_node_crypto14.randomUUID)();
+  instanceId = (0, import_node_crypto15.randomUUID)();
   worker = null;
   workerHome = null;
   /** Worker homes retained after failed close or unsettled open. */
@@ -34148,7 +34180,13 @@ var OpenCodeListenerModel = class {
       if (this.closed || this.cancelled || generation !== this.openGeneration) {
         await this.performSingleOwnerCleanup(handle, home, this.instanceId, pending);
       }
-      await handle.session.enablePromptsAfterCanary();
+      if (this.options.onCanaryAttempt) {
+        await handle.session.enablePromptsAfterCanary({
+          onAttempt: this.options.onCanaryAttempt
+        });
+      } else {
+        await handle.session.enablePromptsAfterCanary();
+      }
       if (this.closed || this.cancelled || generation !== this.openGeneration) {
         await this.performSingleOwnerCleanup(handle, home, this.instanceId, pending);
       }
@@ -34193,7 +34231,7 @@ var OpenCodeListenerModel = class {
 };
 
 // src/listener/claude-model.ts
-var import_node_crypto15 = require("node:crypto");
+var import_node_crypto16 = require("node:crypto");
 var import_promises7 = require("node:fs/promises");
 var import_node_os8 = require("node:os");
 var import_node_path13 = require("node:path");
@@ -34336,13 +34374,14 @@ var ClaudeListenerModel = class {
   async enablePromptsAfterClaudeCanary(handle) {
     const sentinelPath = (0, import_node_path13.join)(
       (0, import_node_os8.tmpdir)(),
-      `cswarm-claude-permission-canary-${process.pid}-${(0, import_node_crypto15.randomUUID)()}`
+      `cswarm-claude-permission-canary-${process.pid}-${(0, import_node_crypto16.randomUUID)()}`
     );
     let sentinelCreated = false;
     try {
       await handle.session.enablePromptsAfterCanary({
         timeoutMs: ACP_CANARY_TIMEOUT_MS,
-        probeText: `Create the file ${sentinelPath} using the Write tool with content CSWARM_CANARY_NOOP. You must use the Write tool. Do nothing else.`
+        probeText: `Create the file ${sentinelPath} using the Write tool with content CSWARM_CANARY_NOOP. You must use the Write tool. Do nothing else.`,
+        ...this.options.onCanaryAttempt ? { onAttempt: this.options.onCanaryAttempt } : {}
       });
     } finally {
       try {
@@ -34362,7 +34401,7 @@ var ClaudeListenerModel = class {
 };
 
 // src/listener/codex-model.ts
-var import_node_crypto16 = require("node:crypto");
+var import_node_crypto17 = require("node:crypto");
 var import_promises8 = require("node:fs/promises");
 var import_node_os9 = require("node:os");
 var import_node_path14 = require("node:path");
@@ -34505,13 +34544,14 @@ var CodexListenerModel = class {
   async enablePromptsAfterCodexCanary(handle) {
     const sentinelPath = (0, import_node_path14.join)(
       (0, import_node_os9.tmpdir)(),
-      `cswarm-codex-permission-canary-${process.pid}-${(0, import_node_crypto16.randomUUID)()}`
+      `cswarm-codex-permission-canary-${process.pid}-${(0, import_node_crypto17.randomUUID)()}`
     );
     let sentinelCreated = false;
     try {
       await handle.session.enablePromptsAfterCanary({
         timeoutMs: ACP_CANARY_TIMEOUT_MS,
-        probeText: `Use a shell command to create ${sentinelPath} with content CSWARM_CANARY_NOOP. You must use the shell. Do nothing else.`
+        probeText: `Use a shell command to create ${sentinelPath} with content CSWARM_CANARY_NOOP. You must use the shell. Do nothing else.`,
+        ...this.options.onCanaryAttempt ? { onAttempt: this.options.onCanaryAttempt } : {}
       });
     } finally {
       try {
@@ -34531,7 +34571,7 @@ var CodexListenerModel = class {
 };
 
 // src/listener/runtime.ts
-var import_node_crypto17 = require("node:crypto");
+var import_node_crypto18 = require("node:crypto");
 
 // src/cloud/delivery.ts
 var UUID_RE12 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -35487,7 +35527,7 @@ function sameEffectSignal(record, signal) {
   return record.signalId === signal.id.toLowerCase() && record.signalKind === signal.kind && record.askBody === signal.body && record.askUntil === signal.until && record.senderOwnerRelation === (signal.sender_owner_relation ?? "unknown");
 }
 function immutableSignalFingerprint(signalId, signalKind2, body, until, senderOwnerRelation) {
-  return (0, import_node_crypto17.createHash)("sha256").update(JSON.stringify([
+  return (0, import_node_crypto18.createHash)("sha256").update(JSON.stringify([
     signalId,
     signalKind2,
     body,
@@ -36477,6 +36517,7 @@ var STATUS_ALLOWED_KEYS = /* @__PURE__ */ new Set([
   "stoppedAt",
   "lastSignalId",
   "lastErrorCode",
+  "lastErrorDetail",
   "providerVersion",
   "providerLastMeasuredVersion",
   "lastWorkerStderrTail",
@@ -36538,7 +36579,7 @@ function parseStatus(raw) {
   const nullableUuid2 = (candidate) => candidate === null || typeof candidate === "string" && UUID_RE15.test(candidate);
   const nullableCount = (candidate) => candidate === null || typeof candidate === "number" && Number.isSafeInteger(candidate) && candidate >= 0;
   const nullableTimestamp2 = (candidate) => candidate === null || typeof candidate === "string" && Number.isFinite(Date.parse(candidate));
-  if (row.version !== 1 || typeof row.instanceId !== "string" || !UUID_RE15.test(row.instanceId) || row.provider !== "grok" && row.provider !== "opencode" && row.provider !== "claude" && row.provider !== "codex" || typeof row.profileId !== "string" || typeof row.workspaceId !== "string" || !UUID_RE15.test(row.workspaceId) || typeof row.principalId !== "string" || !UUID_RE15.test(row.principalId) || !Number.isSafeInteger(row.pid) || row.pid < 1 || typeof row.state !== "string" || !["starting", "ready", "stopping", "stopped", "failed"].includes(row.state) || typeof row.startedAt !== "string" || !Number.isFinite(Date.parse(row.startedAt)) || !(row.readyAt === null || typeof row.readyAt === "string" && Number.isFinite(Date.parse(row.readyAt))) || typeof row.updatedAt !== "string" || !Number.isFinite(Date.parse(row.updatedAt)) || !(row.stoppedAt === null || typeof row.stoppedAt === "string" && Number.isFinite(Date.parse(row.stoppedAt))) || !nullableUuid2(row.lastSignalId) || !(row.lastErrorCode === null || typeof row.lastErrorCode === "string" && /^[a-z0-9_-]{1,96}$/.test(row.lastErrorCode)) || !(row.providerVersion === void 0 || row.providerVersion === null || typeof row.providerVersion === "string" && SEMVER_RE2.test(row.providerVersion)) || !(row.providerLastMeasuredVersion === void 0 || row.providerLastMeasuredVersion === null || typeof row.providerLastMeasuredVersion === "string" && SEMVER_RE2.test(row.providerLastMeasuredVersion)) || (row.providerVersion === null || row.providerVersion === void 0) !== (row.providerLastMeasuredVersion === null || row.providerLastMeasuredVersion === void 0) || !(row.lastWorkerStderrTail === void 0 || row.lastWorkerStderrTail === null || typeof row.lastWorkerStderrTail === "string" && row.lastWorkerStderrTail.length > 0 && row.lastWorkerStderrTail.length <= 2048 && !/swm_(?:agt|inv|cap)_/i.test(row.lastWorkerStderrTail)) || typeof row.logPath !== "string" || !(0, import_node_path16.isAbsolute)(row.logPath) || !(row.deliveryMode === void 0 || row.deliveryMode === null || typeof row.deliveryMode === "string" && STATUS_DELIVERY_MODES.has(row.deliveryMode)) || !(row.pendingDeliveryCount === void 0 || nullableCount(row.pendingDeliveryCount)) || !(row.lastTerminalDeliveryFailureCount === void 0 || nullableCount(row.lastTerminalDeliveryFailureCount)) || !(row.lastTerminalDeliveryFailureAt === void 0 || nullableTimestamp2(row.lastTerminalDeliveryFailureAt)) || !(row.lastClaimAt === void 0 || nullableTimestamp2(row.lastClaimAt)) || !(row.lastAckAt === void 0 || nullableTimestamp2(row.lastAckAt)) || !(row.routeMode === void 0 || row.routeMode === "worker" || row.routeMode === "main" || row.routeMode === "split") || !(row.deferOverChars === void 0 || row.deferOverChars === null || typeof row.deferOverChars === "number" && Number.isSafeInteger(row.deferOverChars) && row.deferOverChars >= 1 && row.deferOverChars <= 1e4) || !(row.pendingForMainCount === void 0 || typeof row.pendingForMainCount === "number" && Number.isSafeInteger(row.pendingForMainCount) && row.pendingForMainCount >= 0) || !(row.droppedForMainCount === void 0 || typeof row.droppedForMainCount === "number" && Number.isSafeInteger(row.droppedForMainCount) && row.droppedForMainCount >= 0)) {
+  if (row.version !== 1 || typeof row.instanceId !== "string" || !UUID_RE15.test(row.instanceId) || row.provider !== "grok" && row.provider !== "opencode" && row.provider !== "claude" && row.provider !== "codex" || typeof row.profileId !== "string" || typeof row.workspaceId !== "string" || !UUID_RE15.test(row.workspaceId) || typeof row.principalId !== "string" || !UUID_RE15.test(row.principalId) || !Number.isSafeInteger(row.pid) || row.pid < 1 || typeof row.state !== "string" || !["starting", "ready", "stopping", "stopped", "failed"].includes(row.state) || typeof row.startedAt !== "string" || !Number.isFinite(Date.parse(row.startedAt)) || !(row.readyAt === null || typeof row.readyAt === "string" && Number.isFinite(Date.parse(row.readyAt))) || typeof row.updatedAt !== "string" || !Number.isFinite(Date.parse(row.updatedAt)) || !(row.stoppedAt === null || typeof row.stoppedAt === "string" && Number.isFinite(Date.parse(row.stoppedAt))) || !nullableUuid2(row.lastSignalId) || !(row.lastErrorCode === null || typeof row.lastErrorCode === "string" && /^[a-z0-9_-]{1,96}$/.test(row.lastErrorCode)) || !(row.lastErrorDetail === void 0 || row.lastErrorDetail === null || typeof row.lastErrorDetail === "string" && row.lastErrorDetail.length > 0 && row.lastErrorDetail.length <= 2048 && !/swm_(?:agt|inv|cap)_/i.test(row.lastErrorDetail)) || !(row.providerVersion === void 0 || row.providerVersion === null || typeof row.providerVersion === "string" && SEMVER_RE2.test(row.providerVersion)) || !(row.providerLastMeasuredVersion === void 0 || row.providerLastMeasuredVersion === null || typeof row.providerLastMeasuredVersion === "string" && SEMVER_RE2.test(row.providerLastMeasuredVersion)) || (row.providerVersion === null || row.providerVersion === void 0) !== (row.providerLastMeasuredVersion === null || row.providerLastMeasuredVersion === void 0) || !(row.lastWorkerStderrTail === void 0 || row.lastWorkerStderrTail === null || typeof row.lastWorkerStderrTail === "string" && row.lastWorkerStderrTail.length > 0 && row.lastWorkerStderrTail.length <= 2048 && !/swm_(?:agt|inv|cap)_/i.test(row.lastWorkerStderrTail)) || typeof row.logPath !== "string" || !(0, import_node_path16.isAbsolute)(row.logPath) || !(row.deliveryMode === void 0 || row.deliveryMode === null || typeof row.deliveryMode === "string" && STATUS_DELIVERY_MODES.has(row.deliveryMode)) || !(row.pendingDeliveryCount === void 0 || nullableCount(row.pendingDeliveryCount)) || !(row.lastTerminalDeliveryFailureCount === void 0 || nullableCount(row.lastTerminalDeliveryFailureCount)) || !(row.lastTerminalDeliveryFailureAt === void 0 || nullableTimestamp2(row.lastTerminalDeliveryFailureAt)) || !(row.lastClaimAt === void 0 || nullableTimestamp2(row.lastClaimAt)) || !(row.lastAckAt === void 0 || nullableTimestamp2(row.lastAckAt)) || !(row.routeMode === void 0 || row.routeMode === "worker" || row.routeMode === "main" || row.routeMode === "split") || !(row.deferOverChars === void 0 || row.deferOverChars === null || typeof row.deferOverChars === "number" && Number.isSafeInteger(row.deferOverChars) && row.deferOverChars >= 1 && row.deferOverChars <= 1e4) || !(row.pendingForMainCount === void 0 || typeof row.pendingForMainCount === "number" && Number.isSafeInteger(row.pendingForMainCount) && row.pendingForMainCount >= 0) || !(row.droppedForMainCount === void 0 || typeof row.droppedForMainCount === "number" && Number.isSafeInteger(row.droppedForMainCount) && row.droppedForMainCount >= 0)) {
     throw new Error("stored listener status is malformed");
   }
   const routeMode = row.routeMode ?? "worker";
@@ -36554,6 +36595,7 @@ function parseStatus(raw) {
     lastTerminalDeliveryFailureAt: row.lastTerminalDeliveryFailureAt ?? null,
     lastClaimAt: row.lastClaimAt ?? null,
     lastAckAt: row.lastAckAt ?? null,
+    lastErrorDetail: row.lastErrorDetail ?? null,
     lastWorkerStderrTail: row.lastWorkerStderrTail ?? null,
     providerVersion: row.providerVersion ?? null,
     providerLastMeasuredVersion: row.providerLastMeasuredVersion ?? null,
@@ -36570,6 +36612,9 @@ async function writeListenerStatus(paths, status) {
     if (!(key2 in parsed)) {
       throw new Error("listener status is missing delivery metadata fields");
     }
+  }
+  if (!("lastErrorDetail" in parsed)) {
+    throw new Error("listener status is missing local error detail metadata");
   }
   parseStatus(serialized);
   await writeSecureJsonFile(paths.statusPath, serialized);
@@ -36588,6 +36633,9 @@ async function appendListenerEvent(paths, event) {
     "status",
     "failure_code",
     "attempt",
+    "total",
+    "passed",
+    "reason",
     "delay_ms",
     "index",
     "delivery_mode",
@@ -36624,6 +36672,15 @@ async function appendListenerEvent(paths, event) {
     if (!allowed.has(key2)) {
       throw new Error(`listener event field is not allowed: ${key2}`);
     }
+    if ((key2 === "attempt" || key2 === "total") && !(typeof value === "number" && Number.isSafeInteger(value) && value >= 1)) {
+      throw new Error("listener event attempt count is not allowed");
+    }
+    if (key2 === "passed" && typeof value !== "boolean") {
+      throw new Error("listener event canary result is not allowed");
+    }
+    if (key2 === "reason" && !(value === null || typeof value === "string" && value.length > 0)) {
+      throw new Error("listener event canary reason is not allowed");
+    }
     if (key2 === "delivery_mode" && !(value === null || typeof value === "string" && deliveryModes.has(value))) {
       throw new Error("listener event delivery mode is not allowed");
     }
@@ -36657,6 +36714,9 @@ async function appendListenerEvent(paths, event) {
     (key2 !== "worker_stderr_tail" && value.length > 128 || /swm_(?:agt|inv|cap)_/i.test(value))) {
       throw new Error("listener event contains unsafe text");
     }
+  }
+  if (event.event === "listener_canary_attempt" && (typeof event.attempt !== "number" || typeof event.total !== "number" || event.attempt > event.total || typeof event.passed !== "boolean" || !(event.reason === null || typeof event.reason === "string"))) {
+    throw new Error("listener canary attempt event is incomplete");
   }
   await ensureSecureStateDirectory(paths.instanceDirectory);
   const serialized = `${JSON.stringify(event)}
@@ -36887,7 +36947,7 @@ async function queryListenerControl(paths, command2, timeoutMs = CONTROL_TIMEOUT
 }
 
 // src/listener/supervisor.ts
-var import_node_crypto18 = require("node:crypto");
+var import_node_crypto19 = require("node:crypto");
 var UUID_RE16 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 var LISTENER_RESTART_MAX_ATTEMPTS = 5;
 var LISTENER_RESTART_INITIAL_MS = 1e3;
@@ -36931,6 +36991,17 @@ function safeErrorCode(error) {
   const name = error.name.toLowerCase().replace(/[^a-z0-9_-]+/g, "_");
   return name.slice(0, 96) || "listener_error";
 }
+function localDiagnostic(message, maxChars) {
+  const redacted = message.replace(
+    /swm_(?:agt|inv|cap)_[^\s"'\\]*/gi,
+    "[redacted]"
+  ).trim();
+  if (redacted.length === 0) return null;
+  return redacted.slice(0, maxChars);
+}
+function safeErrorDetail(error) {
+  return localDiagnostic(error.message, 2048);
+}
 var TAIL_SERIALIZED_BUDGET_BYTES = 3e3;
 function fitWorkerStderrTailForLog(tail) {
   let fitted = tail.trim();
@@ -36952,7 +37023,7 @@ async function runListenerSupervisor(options) {
   const now = options.now ?? Date.now;
   const startedAt = iso2(now);
   const controller = new AbortController();
-  const proposedInstanceId = (0, import_node_crypto18.randomUUID)();
+  const proposedInstanceId = (0, import_node_crypto19.randomUUID)();
   let status = {
     version: 1,
     instanceId: proposedInstanceId,
@@ -36969,6 +37040,7 @@ async function runListenerSupervisor(options) {
     stoppedAt: null,
     lastSignalId: null,
     lastErrorCode: null,
+    lastErrorDetail: null,
     providerVersion: null,
     providerLastMeasuredVersion: null,
     lastWorkerStderrTail: null,
@@ -37044,11 +37116,23 @@ async function runListenerSupervisor(options) {
       transition("ready", {
         readyAt: event.ts,
         lastErrorCode: null,
+        lastErrorDetail: null,
         lastWorkerStderrTail: null,
         providerVersion: versionNotice?.runningVersion ?? null,
         providerLastMeasuredVersion: versionNotice?.lastMeasuredVersion ?? null
       });
       log({ ts: event.ts, event: "listener_ready" });
+      return;
+    }
+    if (event.type === "canary_attempt") {
+      log({
+        ts: event.ts,
+        event: "listener_canary_attempt",
+        attempt: event.attempt,
+        total: event.total,
+        passed: event.passed,
+        reason: event.reason === null ? null : localDiagnostic(event.reason, 128)
+      });
       return;
     }
     if (event.type === "effect") {
@@ -37244,6 +37328,7 @@ async function runListenerSupervisor(options) {
       transition("starting", {
         readyAt: null,
         lastErrorCode: restartCode,
+        lastErrorDetail: safeErrorDetail(stop.error),
         lastWorkerStderrTail: restartStderrTail,
         providerVersion: null,
         providerLastMeasuredVersion: null
@@ -37259,6 +37344,7 @@ async function runListenerSupervisor(options) {
       transition("stopped", {
         stoppedAt,
         lastErrorCode: null,
+        lastErrorDetail: null,
         lastWorkerStderrTail: null
       });
       log({ ts: stoppedAt, event: "listener_stopped" });
@@ -37268,6 +37354,7 @@ async function runListenerSupervisor(options) {
       transition("failed", {
         stoppedAt,
         lastErrorCode: code,
+        lastErrorDetail: safeErrorDetail(stop.error),
         lastWorkerStderrTail: failedStderrTail
       });
       log({
@@ -37289,6 +37376,9 @@ async function runListenerSupervisor(options) {
     transition("failed", {
       stoppedAt,
       lastErrorCode: code,
+      lastErrorDetail: safeErrorDetail(
+        error instanceof Error ? error : new Error(String(error))
+      ),
       lastWorkerStderrTail: failedStderrTail
     });
     log({
@@ -38849,8 +38939,8 @@ var ACCEPTED_AGENT_CREDENTIAL_MESSAGES = [
   AGENT_CREDENTIAL_MESSAGE_D088
 ];
 function packageVersion() {
-  if ("0.1.38".length > 0) {
-    return "0.1.38";
+  if ("0.1.39".length > 0) {
+    return "0.1.39";
   }
   try {
     const value = JSON.parse(
@@ -39449,7 +39539,7 @@ async function runNew(args) {
   assertWorkspaceName(name);
   const cloud = await target(args);
   const human = await humanCredential(args, cloud);
-  const proposedId = (0, import_node_crypto19.randomUUID)();
+  const proposedId = (0, import_node_crypto20.randomUUID)();
   let result;
   try {
     result = await new ThinCommandClient(cloud).sendConnect({
@@ -41637,6 +41727,11 @@ function renderListenerStatus(status) {
     status.lastSignalId ? `Last handled signal: ${status.lastSignalId}.` : "No signal has been handled yet.",
     status.lastErrorCode ? `Last status code: ${status.lastErrorCode}.` : "No listener error is recorded."
   ];
+  if (status.lastErrorDetail) {
+    const [first, ...rest] = status.lastErrorDetail.split("\n");
+    lines.push(`Last error detail (local only): ${first}`);
+    for (const line of rest) lines.push(`  ${line}`);
+  }
   if (status.lastWorkerStderrTail) {
     const tailLines = status.lastWorkerStderrTail.split("\n").filter((line) => line.trim().length > 0);
     lines.push("Worker stderr (local log only):");
@@ -41765,6 +41860,9 @@ function listenerFailureMessage(code, provider) {
     }
     if (provider === "codex") {
       return "the Codex bridge did not complete the read-only ACP permission canary; no workspace signal prompt was delivered. Confirm ChatGPT/Codex sign-in, then retry";
+    }
+    if (provider === "grok") {
+      return "the Grok bridge did not complete the ACP permission canary; no workspace signal prompt was delivered. The local cswarm listen status output includes the final error detail; read it, then retry";
     }
     return "the host did not prove that CommonSwarm controls ACP tool permissions; no model prompt was delivered";
   }
@@ -41918,13 +42016,14 @@ async function runConfiguredListener(options) {
       lastWorkerStderrTail = tail.length > 0 ? tail : null;
     };
   };
-  const newModel = () => {
+  const newModel = (onCanaryAttempt) => {
     providerVersionNotice = null;
     return options.provider === "opencode" ? new OpenCodeListenerModel({
       cwd: options.cwd,
       permissionMode: options.permissionMode,
       promptTimeoutMs: resolveTurnBudgetMs,
       onWorkerStderrTail: newWorkerStderrTailSink(),
+      onCanaryAttempt,
       onVersionNotice,
       ...options.model ? { model: options.model } : {},
       ...options.opencodeExecutable ? { executable: options.opencodeExecutable } : options.executable ? { executable: options.executable } : {}
@@ -41933,6 +42032,7 @@ async function runConfiguredListener(options) {
       permissionMode: options.permissionMode,
       promptTimeoutMs: resolveTurnBudgetMs,
       onWorkerStderrTail: newWorkerStderrTailSink(),
+      onCanaryAttempt,
       onVersionNotice,
       ...options.claudeExecutable ? { executable: options.claudeExecutable } : options.executable ? { executable: options.executable } : {}
     }) : options.provider === "codex" ? new CodexListenerModel({
@@ -41940,6 +42040,7 @@ async function runConfiguredListener(options) {
       permissionMode: options.permissionMode,
       promptTimeoutMs: resolveTurnBudgetMs,
       onWorkerStderrTail: newWorkerStderrTailSink(),
+      onCanaryAttempt,
       onVersionNotice,
       ...options.codexExecutable ? { executable: options.codexExecutable } : options.executable ? { executable: options.executable } : {}
     }) : new GrokListenerModel({
@@ -41947,6 +42048,7 @@ async function runConfiguredListener(options) {
       permissionMode: options.permissionMode,
       promptTimeoutMs: resolveTurnBudgetMs,
       onWorkerStderrTail: newWorkerStderrTailSink(),
+      onCanaryAttempt,
       onVersionNotice,
       ...options.model ? { model: options.model } : {},
       ...options.effort ? { effort: options.effort } : {},
@@ -42000,13 +42102,23 @@ async function runConfiguredListener(options) {
             "listener delivery journal was not selected for this instance"
           );
         }
+        const onCanaryAttempt = (attempt, total, result) => {
+          onEvent({
+            type: "canary_attempt",
+            attempt,
+            total,
+            passed: result.passed,
+            reason: result.reason ?? null,
+            ts: (/* @__PURE__ */ new Date()).toISOString()
+          });
+        };
         return await runListenerRuntime({
           target: options.cloud,
           workspaceId: options.workspaceId,
           principalId: options.principalId,
           credentialSession,
           store: effectStore,
-          model: newModel(),
+          model: newModel(onCanaryAttempt),
           signal,
           onEvent,
           declareModel: listenerModelLabel(options.provider),
@@ -42541,8 +42653,8 @@ async function runFilePut(args) {
     workspaceId: context.selected.selectedWorkspace,
     credential: context.selected.bearer
   };
-  const fileId = (0, import_node_crypto19.randomUUID)();
-  const versionId = (0, import_node_crypto19.randomUUID)();
+  const fileId = (0, import_node_crypto20.randomUUID)();
+  const versionId = (0, import_node_crypto20.randomUUID)();
   const createCommandId = newCommandId();
   const commitCommandId = newCommandId();
   const created = await onceRetried(
@@ -42779,7 +42891,7 @@ async function runDogfood(args) {
   const { selectedWorkspace, bearer } = await commandWorkspaceAndCredential(args, cloud);
   const client = new ThinCommandClient(cloud);
   const route = stream(args);
-  const taskId = args.optional("task-id") ?? (0, import_node_crypto19.randomUUID)();
+  const taskId = args.optional("task-id") ?? (0, import_node_crypto20.randomUUID)();
   const ttl = Number(args.optional("ttl-ms") ?? "3600000");
   if (!Number.isSafeInteger(ttl) || ttl <= 0 || ttl > 144e5) {
     throw new Error("--ttl-ms must be an integer in 1..14400000");
