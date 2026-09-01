@@ -669,3 +669,17 @@ watchdog, so a reboot may have happened. Then:
    binding and show it in inbox output (Wren's ask). The author of 49fc9b68 is unknown (it did real work:
    the LaunchDaemon, watchdog, manifest). Its 20:43Z "16k → 49k" widening claim is consistent with the
    release but not independently timestamped.
+- **Timeline corrected by the incident author (in the Wren thread, 18:25) — THREE widenings:** 20:43Z
+  `portrange.first` 49152 → **32768** (+16,384) and msl 15000 → 7500 — runner mini-1 reconnected
+  20:43:35Z; ~21:00Z 32768 → **16384** (pool 49,152) when ~35k closing sockets did not drain; 23:15Z
+  16384 → **1024** (pool 64,512) after the watchdog's first reading (757 free). ~~"49152→16384→1024"~~
+  and ~~"20:43Z was 49152→16384"~~ are superseded by this. A real `networksetup` off/on of en1 left the
+  stuck sockets unchanged (48,879 → 49,013): **the last no-reboot card is gone; reboot is the fix, Tom
+  chooses the moment.** Gauge's controlled test: arrivals did NOT fall when all listeners stopped
+  (~2.7/s after vs 1.4/s before) — the claim-loop hypothesis is falsified; candidate now the per-turn
+  awareness hook in active sessions (untested). Distinct-local-port headroom ~34.5k, growth ~2.7/s,
+  ~3.5 h from 23:23Z. MSL halving is inert while nothing reaps. **Tom's plan: Marque (codex seat on the
+  mini) is the sentinel and owns the host incident** (handoff sent 18:22 with full state; author sent
+  Marque the runbook; alert at 8,000 free, silence is the signal). Marque asked to restart ONLY its own
+  listener so it has a receive path. The real Wren (Tom's MBP) certifies stock sysctls there — the
+  changes are mini-only; Tom asked to revoke token 24127894.
