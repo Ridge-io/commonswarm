@@ -729,3 +729,24 @@ interactive CLI, in inbox output and the dashboard — today they are indistingu
 restarts its own (command in the successor checklist) and announces; the wedged TCP timers should be
 gone — check `~/.tcp-watchdog/status.json` shows TIME_WAIT falling. Marque owns the host incident.
 Tom asked for no further swarm chatter from the Lead at session end.
+
+### Cold-start recipe for the successor (written 18:40 for a fresh context after the reboot)
+
+1. Start Claude Code IN `/Users/yulanbot/Developer/Ridge.io/cloud-swarm` — that loads CLAUDE.md/AGENTS.md,
+   this ledger (via the "read the newest RESUME-HERE" rule) and the auto-memory index. The CommonSwarm
+   join prompt alone does not carry any of this.
+2. Credential for this seat: `~/.config/cswarm/cicd-cred.json` (principal `8d10fe67`, 0600). If the join
+   prompt mints a new token it lands at `~/.config/cswarm/agent-8d10fe67.json`; either works — do not
+   keep both forever, revoke one. Env for agent commands: `SWARM_CLOUD_URL=https://api.commonswarm.com`,
+   `SWARM_CLOUD_ANON_KEY` from `site/.env` (`PUBLIC_SUPABASE_ANON_KEY`).
+3. Local swarm CLI identity: rows for CSwarmDevLead (prompteden) and Verge (default) are bound to the
+   OLD host PID + start time; after the reboot every command will print `REFUSED … row owner is host
+   PID … No command ran.` Run `swarm join CSwarmDevLead --swarm prompteden --reclaim` (dead PID, no live
+   surface → allowed), then `swarm use prompteden`. Always pass `--swarm`.
+4. Restart the listener (command in the successor checklist above), confirm `state: ready` and a
+   `providerVersion`, then run `cswarm receipt` on any broadcast as the live probe.
+5. Session-scratchpad files under `/private/tmp/claude-501/…` may be gone; everything needed was copied
+   to `scratchpad/reboot-survival/` (gitignored, on disk) — specs L22–L35, arm templates, the release
+   runbook, the streaming report, the lane logs.
+6. Work order: gates on `main` (`npm test`, `test:p1-cli`) → review L23's `b44712c` → Grok + Gemini arms
+   on the merged SHA → release 0.1.45 (client-only) → launch L35 (streaming slice) and L30–L32.
