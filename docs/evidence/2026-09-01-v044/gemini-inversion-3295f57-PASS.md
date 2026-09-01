@@ -53,7 +53,7 @@ Waiting for task completion...
 - **Method**: Ran focused test `hook install --user honors CLAUDE_CONFIG_DIR and warns about shared hosts` in [`tests/p1-cli/hook-routing.test.ts`](file:///Users/yulanbot/Developer/Ridge.io/cloud-swarm/tests/p1-cli/hook-routing.test.ts#L1489-L1595).
 - **Observed Output**: Passed cleanly:
   - `--user` with `CLAUDE_CONFIG_DIR` set wrote to `$CLAUDE_CONFIG_DIR/settings.json` and left `~/.claude/settings.json` untouched.
-  - `--user` printed the required warning: `Warning: --user scope affects EVERY Claude Code session for this OS user and is wrong on a shared host.`
+  - `--user` printed the then-required warning: ~~`Warning: --user scope affects EVERY Claude Code session for this OS user and is wrong on a shared host.`~~ **Dead as a product claim:** this arm verified that the string was printed, but did not check it against the configured-directory behavior. L29 replaces it with a warning that names the resolved directory and the sessions that read it.
   - `--user` without `CLAUDE_CONFIG_DIR` fell back to `~/.claude/settings.json`.
   - Mutual exclusion between `--user` and `--repo` exited 1 with `--user and --repo cannot be used together`.
 
@@ -79,8 +79,8 @@ Waiting for task completion...
 ### User-Facing Strings & Claims Audit
 
 1. **Claude Hook Warnings & Scopes** ([`src/cli.ts:5257-5545`](file:///Users/yulanbot/Developer/Ridge.io/cloud-swarm/src/cli.ts#L5257-L5545)):
-   - String: `Warning: --user scope affects EVERY Claude Code session for this OS user and is wrong on a shared host.`
-     - *Verified*: Emitted exclusively when `--user` is passed to hook install/uninstall.
+   - Historical string: ~~`Warning: --user scope affects EVERY Claude Code session for this OS user and is wrong on a shared host.`~~ **Dead as a product claim.**
+     - *What this arm established*: It was emitted exclusively when `--user` was passed. It did not establish that its OS-user-wide claim was true when `CLAUDE_CONFIG_DIR` was set.
    - String: `This scope applies only to Claude Code sessions started in <projectRoot>.`
      - *Verified*: Emitted only for local scope and accurately reports the resolved project root.
    - String: `Refusing to write <path>: repository Claude settings could be staged and shared with every checkout...`
@@ -95,7 +95,9 @@ Waiting for task completion...
 
 - **P1 Findings**: None.
 - **P2 Findings**: None.
-- **P3 Findings**: None.
+- ~~**P3 Findings**: None.~~ **Dead.** This arm missed the two P3 copy defects recorded by the
+  Grok exact arm on the same SHA: the file-read timeout wording and the OS-user-wide `--user`
+  warning.
 
 All four findings from the Codex exact review on `fc88624` (migration sequence transaction hazard, response body read deadline evasion, shared-host user-scope hook install default, and ignored `CLAUDE_CONFIG_DIR`) have been verified fixed with discriminating mutation controls.
 

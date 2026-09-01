@@ -588,8 +588,9 @@ on every outcome, and skips network checks made within --cooldown seconds (defau
 hook install claude prints principal-scoped UserPromptSubmit JSON by default. --write changes
 <project>/.claude/settings.local.json, which applies only to Claude Code sessions started in
 that project. Inside a git repository, the local file must be ignored. --user opts in to
-\${CLAUDE_CONFIG_DIR:-~/.claude}/settings.json and warns about shared hosts. --repo keeps the
-repository-wide .claude/settings.json scope and also requires an ignored file. Uninstall also
+\${CLAUDE_CONFIG_DIR:-~/.claude}/settings.json and warns that every Claude Code session reading
+that directory is affected. --repo keeps the repository-wide .claude/settings.json scope and
+also requires an ignored file. Uninstall also
 requires --write and uses the same scope selection.
 
 Invite, legacy token accept, principal create/revoke, human token mint/revoke, link, new, and workspace close require a
@@ -5254,8 +5255,10 @@ export function claudeUserPromptHookSnippet(principalId: string): Record<string,
 
 const CLAUDE_PROJECT_SETTINGS_IGNORE_LINE = ".claude/settings.local.json";
 const CLAUDE_REPO_SETTINGS_IGNORE_LINE = ".claude/settings.json";
-const CLAUDE_USER_SCOPE_WARNING =
-  "Warning: --user scope affects EVERY Claude Code session for this OS user and is wrong on a shared host.";
+
+function claudeUserScopeWarning(settingsPath: string): string {
+  return `Warning: --user scope writes settings to ${dirname(settingsPath)} and applies to every Claude Code session that reads that directory.`;
+}
 
 type ClaudeSettingsTarget = {
   path: string;
@@ -5528,7 +5531,7 @@ async function runHook(args: Arguments): Promise<void> {
     ? installClaudeHook(settings, principalId!)
     : uninstallClaudeHook(settings);
   if (target.scope === "user") {
-    process.stdout.write(`${CLAUDE_USER_SCOPE_WARNING}\n`);
+    process.stdout.write(`${claudeUserScopeWarning(path)}\n`);
   }
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, `${JSON.stringify(updated, null, 2)}\n`, {

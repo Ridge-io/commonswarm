@@ -1458,8 +1458,8 @@ test("hook install default isolates two principals in project-local settings", a
     assert.ok(installB.stdout.includes(settingsPathB));
     assert.match(installA.stdout, /applies only to Claude Code sessions started in/);
     assert.match(installB.stdout, /applies only to Claude Code sessions started in/);
-    assert.doesNotMatch(installA.stdout, /EVERY Claude Code session|shared host/);
-    assert.doesNotMatch(installB.stdout, /EVERY Claude Code session|shared host/);
+    assert.doesNotMatch(installA.stdout, /--user scope/);
+    assert.doesNotMatch(installB.stdout, /--user scope/);
     await assert.rejects(readFile(userSettingsPath, "utf8"));
 
     const settingsA = await readFile(settingsPathA, "utf8");
@@ -1486,7 +1486,7 @@ test("hook install default isolates two principals in project-local settings", a
   }
 });
 
-test("hook install --user honors CLAUDE_CONFIG_DIR and warns about shared hosts", async () => {
+test("hook install --user names CLAUDE_CONFIG_DIR and the sessions it affects", async () => {
   const project = await mkdtemp(join(tmpdir(), "cswarm-hook-user-project-"));
   const home = await mkdtemp(join(tmpdir(), "cswarm-hook-user-home-"));
   const config = await mkdtemp(join(tmpdir(), "cswarm-hook-user-config-"));
@@ -1526,9 +1526,9 @@ test("hook install --user honors CLAUDE_CONFIG_DIR and warns about shared hosts"
     });
     assert.equal(written.status, 0, written.stderr);
     const lines = written.stdout.trimEnd().split("\n");
-    assert.match(
+    assert.equal(
       lines[0]!,
-      /^Warning: --user scope affects EVERY Claude Code session for this OS user and is wrong on a shared host\.$/,
+      `Warning: --user scope writes settings to ${config} and applies to every Claude Code session that reads that directory.`,
     );
     assert.match(lines[1]!, /Installed the Claude Code UserPromptSubmit hook/);
     assert.match(written.stdout, new RegExp(`--principal-id ${PRINCIPAL_ID}`));
@@ -1558,7 +1558,10 @@ test("hook install --user honors CLAUDE_CONFIG_DIR and warns about shared hosts"
       env,
     });
     assert.equal(removed.status, 0);
-    assert.match(removed.stdout.split("\n")[0]!, /EVERY Claude Code session.*shared host/);
+    assert.equal(
+      removed.stdout.split("\n")[0]!,
+      `Warning: --user scope writes settings to ${config} and applies to every Claude Code session that reads that directory.`,
+    );
     assert.ok(removed.stdout.includes(customSettingsPath));
     const afterRemove = JSON.parse(await readFile(customSettingsPath, "utf8")) as {
       theme: string;
@@ -1579,6 +1582,10 @@ test("hook install --user honors CLAUDE_CONFIG_DIR and warns about shared hosts"
       "hook", "install", "claude", "--principal-id", PRINCIPAL_ID, "--write", "--user",
     ], { cwd: project, env: { ...env, CLAUDE_CONFIG_DIR: "" } });
     assert.equal(fallback.status, 0, fallback.stderr);
+    assert.equal(
+      fallback.stdout.split("\n")[0]!,
+      `Warning: --user scope writes settings to ${join(home, ".claude")} and applies to every Claude Code session that reads that directory.`,
+    );
     assert.ok(fallback.stdout.includes(homeSettingsPath));
     const fallbackSettings = JSON.parse(await readFile(homeSettingsPath, "utf8")) as {
       theme: string;
@@ -1800,7 +1807,14 @@ test("listen route flags parse before credential work and enforce split bounds",
     /hook check\s+reads only the selected listener's owned 0600 credential state/,
   );
   assert.match(help.stdout, /--write changes\s+<project>\/\.claude\/settings\.local\.json/);
-  assert.match(help.stdout, /--user opts in to\s+\$\{CLAUDE_CONFIG_DIR:-~\/\.claude\}\/settings\.json/);
+  assert.match(
+    help.stdout,
+    /--user opts in to\s+\$\{CLAUDE_CONFIG_DIR:-~\/\.claude\}\/settings\.json and warns that every Claude Code session reading\s+that directory is affected/,
+  );
+  assert.doesNotMatch(
+    help.stdout,
+    /\$\{CLAUDE_CONFIG_DIR:-~\/\.claude\}\/settings\.json and warns about shared hosts/,
+  );
   assert.match(help.stdout, /--repo keeps the\s+repository-wide \.claude\/settings\.json/);
   assert.match(help.stdout, /listen status \[--agent-token-file <path> \| --agent-token-stdin\]/);
   assert.match(help.stdout, /listen stop \[--agent-token-file <path> \| --agent-token-stdin\]/);

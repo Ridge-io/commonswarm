@@ -93,9 +93,9 @@ export class FileCommandRefused extends Error {
 export class FileTransportError extends Error {
   override name = "FileTransportError";
   /**
-   * True when no HTTP response arrived (connection failure, timeout), so the
-   * outcome is UNKNOWN and one same-id retry is safe under the server's
-   * command-id replay. A received refusal is a known outcome: never retried.
+   * True when the request did not complete: no response arrived, or an
+   * idempotent read's body stalled. Reads may retry; writes reuse the same ids
+   * because their outcome is unknown. A received refusal is never retried.
    */
   constructor(message: string, readonly noResponse: boolean = false) {
     super(message);
@@ -348,10 +348,9 @@ export async function putObject(
 }
 
 /**
- * One retry for steps whose outcome is UNKNOWN (no response arrived). Writes
- * omit `budget` and keep their existing same-id replay behavior. Reads pass a
- * budget so both attempts share one absolute deadline and a nearly-expired
- * operation does not start another attempt.
+ * One retry for incomplete requests. Writes set the flag only when no response
+ * arrived and keep their same-id replay behavior. Reads also set it when the
+ * response body stalls, and share one absolute budget across both attempts.
  */
 export function onceRetried<T>(step: () => Promise<T>): Promise<T>;
 export function onceRetried<T>(
@@ -406,7 +405,7 @@ export async function getObject(
       options,
     ));
   } catch {
-    throw new FileTransportError("the download failed before a response", true);
+    throw new FileTransportError("the download did not complete", true);
   }
   if (!response.ok || body === null) {
     throw new FileTransportError(
@@ -533,7 +532,7 @@ export async function listFilesAsAgent(
       options,
     ));
   } catch {
-    throw new FileTransportError("file list could not reach the cloud service", true);
+    throw new FileTransportError("the file list did not complete", true);
   }
   if (!response.ok) {
     throw new FileCommandRefused(
@@ -592,7 +591,7 @@ export async function listFilesAsHuman(
       options,
     ));
   } catch {
-    throw new FileTransportError("file list could not reach the cloud service", true);
+    throw new FileTransportError("the file list did not complete", true);
   }
   if (!response.ok) {
     throw new FileCommandRefused(
