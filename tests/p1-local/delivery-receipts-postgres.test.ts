@@ -17,7 +17,7 @@ interface LocalEnvironment {
 }
 
 /* `receipts` never carries an agent tracking row: pre-roster clients read any
- * non-human `receipts` row as a delivery ledger row (20260902000002). Agents
+ * non-human `receipts` row as a delivery ledger row (20260902000001). Agents
  * are listed under broadcast_roster.agents.principals. */
 interface UntrackedAgentRow {
   recipient_agent_principal_id: string;

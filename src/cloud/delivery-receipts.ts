@@ -43,7 +43,7 @@ export interface HumanDeliveryReceipt {
 /**
  * A live agent listed on a broadcast. Never a `receipts` row: pre-roster clients
  * parse every non-human `receipts` row as a delivery ledger row, so this shape
- * lives only under `broadcast_roster.agents.principals` (20260902000002).
+ * lives only under `broadcast_roster.agents.principals` (20260902000001, the folded roster migration).
  */
 export interface UntrackedBroadcastAgentReceipt {
   recipient_agent_principal_id: string;
@@ -187,7 +187,7 @@ export function parseDeliveryReceipt(value: unknown): DeliveryReceiptRow {
   }
   if (Object.hasOwn(row, "tracking_state")) {
     // 20260902000001 put these rows here and broke every installed client;
-    // 20260902000002 moved them under broadcast_roster.agents.principals.
+    // the folded 20260902000001 keeps them under broadcast_roster.agents.principals.
     throw new DeliveryReceiptReadError(
       "protocol",
       "delivery receipt returned an agent tracking row inside receipts",

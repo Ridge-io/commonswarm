@@ -2,9 +2,70 @@
 -- sparse attestation tables. A NULL seen_at is therefore an honest not-seen
 -- member state. Broadcasts still create no delivery rows and do not wake or
 -- track agents.
-
+--
 -- Forward replacement of 20260901000020_signal_human_receipts.sql.
 -- Human members remain workspace-wide readers. Agents remain author-only.
+--
+-- REWRITTEN IN PLACE BEFORE ANY PRODUCTION APPLY (2026-09-01). The first draft
+-- of this file (the tree at fc88624) put agent tracking rows into `receipts`,
+-- and a second file, 20260902000002_broadcast_roster_compat.sql, moved them out
+-- again. That pair was folded into this one file and the second file deleted,
+-- because the Supabase CLI (2.98.2: pkg/migration/apply.go ApplyMigrations
+-- loops the pending files; file.go ExecBatch runs each file, schema_migrations
+-- insert included, as one implicitly transactional batch) applies migration
+-- files ONE PER TRANSACTION. A breaking shape committed by file N is visible to
+-- every client between N's commit and N+1's, and it STAYS applied if N+1
+-- fails. Compatibility cannot be delegated to the next file — the shape one
+-- file commits is the shape clients see, so the final shape has to be the only
+-- shape this file ever commits. Neither draft was applied to production.
+-- Anyone who applied the first draft locally must `npm run db:reset`: the CLI
+-- records this filename as applied and will not re-run it.
+--
+-- WHY THE SHAPE RULE EXISTS: old client x new server on the broadcast path.
+--
+-- The clients installed from npm as commonswarm 0.1.42 and 0.1.43 carry a
+-- two-branch parser: a `receipts` row with `recipient_user_id` is a human row,
+-- anything else is an agent DELIVERY row and must carry enqueued_at / acked_at /
+-- attempt_count. An agent tracking row
+--   {recipient_agent_principal_id, display_name, tracking_state, observed_at}
+-- inside `receipts` hard-fails that parser on every broadcast receipt in any
+-- workspace with one live agent, and the cached dashboard bundle swallows the
+-- throw and blanks the indicator. There is no client-version negotiation on
+-- this wire, and the server migrates independently of the installed base.
+-- Measured 2026-09-01 by running the 619ff1f^ parser (the 0.1.42/0.1.43 blob)
+-- against a hand-built wire from this file: it PARSES this shape and THROWS on
+-- the first draft's — the control discriminates.
+--
+-- ~~"commonswarm <= 0.1.17"~~ Dead before it shipped: measured against the npm
+-- tarballs, 0.1.17..0.1.41 carry a ONE-branch parser that already throws on ANY
+-- human attestation row under today's live function (20260901000020). Those
+-- clients predate human receipts and are broken on attested broadcasts
+-- regardless of this file; this file widens that to every broadcast because the
+-- author's owner is always a member row. They must upgrade; that is not a
+-- compatibility promise this migration can make.
+--
+-- The shape rule: `receipts` carries ONLY row kinds every installed client
+-- already parses —
+--   * directed reads: agent delivery rows and the one directed human row,
+--     byte-identical to 20260901000020;
+--   * broadcast reads: human rows {recipient_user_id, display_name, seen_at}.
+--     The old human branch reads recipient_user_id and seen_at and ignores
+--     display_name; a NULL seen_at is the not-seen state it already renders.
+-- Agent tracking rows live EXCLUSIVELY under broadcast_roster.agents.principals,
+-- a key the old parsers never read. The old client renders a plain member list;
+-- the new client renders the roster. Neither throws.
+--
+-- APPLY ORDER (all three matter): (1) `supabase db push` this file and verify
+-- via a schema_migrations query, not the push output; (2) DEPLOY THE `read`
+-- EDGE FUNCTION — the 619ff1f^ read function forwards only {addressed,
+-- receipts} and drops broadcast_roster, so a NEW client against an
+-- un-redeployed edge throws "malformed broadcast roster"; (3) only then publish
+-- a client that requires broadcast_roster. Old clients keep working at every
+-- step of that order.
+--
+-- Identity, authorization, and the directed path are unchanged: identity comes
+-- from the PostgREST JWT GUC and never from an auth-schema identity helper,
+-- members read every receipt in their workspace, agents remain author-only.
 CREATE OR REPLACE FUNCTION swarm_read.signal_delivery_receipts(
   p_workspace_id uuid,
   p_signal_id uuid,
@@ -30,6 +91,7 @@ DECLARE
   v_to_agent_principal_id uuid;
   v_addressed boolean;
   v_receipts jsonb;
+  v_agent_principals jsonb;
   v_member_total bigint;
   v_member_seen_total bigint;
   v_member_returned bigint;
@@ -109,7 +171,7 @@ BEGIN
     WHERE membership.workspace_id = p_workspace_id
       AND membership.revoked_at IS NULL;
 
-    -- Agents have no honest broadcast-observation surface. Include every live
+    -- Agents have no honest broadcast-observation surface. Count every live
     -- principal owned by a live member, but label it not_tracked rather than
     -- turning missing telemetry into a false not-seen claim.
     SELECT count(*)
@@ -122,66 +184,75 @@ BEGIN
     WHERE principal.workspace_id = p_workspace_id
       AND principal.revoked_at IS NULL;
 
+    -- `receipts` holds member rows ONLY. Seen members sort first so the one
+    -- member who has seen a broadcast survives the cap whatever their name.
     SELECT
-      COALESCE(jsonb_agg(row.receipt ORDER BY row.sort_key), '[]'::jsonb),
-      count(*) FILTER (WHERE row.recipient_kind = 'member'),
-      count(*) FILTER (WHERE row.recipient_kind = 'agent')
-    INTO v_receipts, v_member_returned, v_agent_returned
+      COALESCE(
+        jsonb_agg(
+          jsonb_build_object(
+            'recipient_user_id', member.user_id,
+            'display_name', member.display_name,
+            'seen_at', member.first_seen_at
+          )
+          ORDER BY
+            member.first_seen_at IS NULL,
+            lower(member.display_name),
+            member.user_id
+        ),
+        '[]'::jsonb
+      ),
+      count(*)
+    INTO v_receipts, v_member_returned
     FROM (
       SELECT
-        'member:' || CASE WHEN member.first_seen_at IS NULL THEN '1' ELSE '0' END || ':' ||
-          lower(member.display_name) || ':' || member.user_id::text AS sort_key,
-        'member'::text AS recipient_kind,
-        jsonb_build_object(
-          'recipient_user_id', member.user_id,
-          'display_name', member.display_name,
-          'seen_at', member.first_seen_at
-        ) AS receipt
-      FROM (
-        SELECT
-          membership.user_id,
-          member_user.display_name,
-          human.first_seen_at
-        FROM swarm.memberships AS membership
-        JOIN swarm.users AS member_user
-          ON member_user.user_id = membership.user_id
-        LEFT JOIN swarm.signal_human_receipts AS human
-          ON human.workspace_id = membership.workspace_id
-         AND human.signal_id = p_signal_id
-         AND human.user_id = membership.user_id
-        WHERE membership.workspace_id = p_workspace_id
-          AND membership.revoked_at IS NULL
-        ORDER BY
-          human.first_seen_at IS NULL,
-          lower(member_user.display_name),
-          membership.user_id
-        LIMIT v_roster_limit
-      ) AS member
+        membership.user_id,
+        member_user.display_name,
+        human.first_seen_at
+      FROM swarm.memberships AS membership
+      JOIN swarm.users AS member_user
+        ON member_user.user_id = membership.user_id
+      LEFT JOIN swarm.signal_human_receipts AS human
+        ON human.workspace_id = membership.workspace_id
+       AND human.signal_id = p_signal_id
+       AND human.user_id = membership.user_id
+      WHERE membership.workspace_id = p_workspace_id
+        AND membership.revoked_at IS NULL
+      ORDER BY
+        human.first_seen_at IS NULL,
+        lower(member_user.display_name),
+        membership.user_id
+      LIMIT v_roster_limit
+    ) AS member;
 
-      UNION ALL
-
-      SELECT
-        'agent:' || lower(agent.name) || ':' || agent.principal_id::text AS sort_key,
-        'agent'::text AS recipient_kind,
-        jsonb_build_object(
-          'recipient_agent_principal_id', agent.principal_id,
-          'display_name', agent.name,
-          'tracking_state', 'not_tracked',
-          'observed_at', NULL
-        ) AS receipt
-      FROM (
-        SELECT principal.principal_id, principal.name
-        FROM swarm.agent_principals AS principal
-        JOIN swarm.memberships AS owner_membership
-          ON owner_membership.workspace_id = principal.workspace_id
-         AND owner_membership.user_id = principal.owner_user_id
-         AND owner_membership.revoked_at IS NULL
-        WHERE principal.workspace_id = p_workspace_id
-          AND principal.revoked_at IS NULL
-        ORDER BY lower(principal.name), principal.principal_id
-        LIMIT v_roster_limit
-      ) AS agent
-    ) AS row;
+    -- Agent tracking rows live under broadcast_roster.agents.principals and
+    -- never in `receipts` — see the header comment.
+    SELECT
+      COALESCE(
+        jsonb_agg(
+          jsonb_build_object(
+            'recipient_agent_principal_id', agent.principal_id,
+            'display_name', agent.name,
+            'tracking_state', 'not_tracked',
+            'observed_at', NULL
+          )
+          ORDER BY lower(agent.name), agent.principal_id
+        ),
+        '[]'::jsonb
+      ),
+      count(*)
+    INTO v_agent_principals, v_agent_returned
+    FROM (
+      SELECT principal.principal_id, principal.name
+      FROM swarm.agent_principals AS principal
+      JOIN swarm.memberships AS owner_membership
+        ON owner_membership.workspace_id = principal.workspace_id
+       AND owner_membership.user_id = principal.owner_user_id
+       AND owner_membership.revoked_at IS NULL
+      WHERE principal.workspace_id = p_workspace_id
+        AND principal.revoked_at IS NULL
+      ORDER BY lower(principal.name), principal.principal_id
+      LIMIT v_roster_limit
+    ) AS agent;
 
     RETURN jsonb_build_object(
       'addressed', false,
@@ -199,7 +270,8 @@ BEGIN
           'returned', v_agent_returned,
           'limit', v_roster_limit,
           'truncated', v_agent_total > v_agent_returned,
-          'tracking_state', 'not_tracked'
+          'tracking_state', 'not_tracked',
+          'principals', v_agent_principals
         )
       )
     );
@@ -257,4 +329,4 @@ GRANT EXECUTE ON FUNCTION swarm_read.signal_delivery_receipts(uuid, uuid, bytea)
   TO authenticated, swarm_read;
 
 COMMENT ON FUNCTION swarm_read.signal_delivery_receipts(uuid, uuid, bytea) IS
-  'Members may inspect workspace receipts; agents remain author-only. Broadcast members are rostered with focused-viewport seen state (50-row cap); live agents are rostered as not_tracked because broadcasts do not wake or track agents.';
+  'Members may inspect workspace receipts; agents remain author-only. Broadcast `receipts` carries member rows only (focused-viewport seen state, 50-row cap, seen first) so pre-roster clients keep parsing; live agents are listed as not_tracked under broadcast_roster.agents.principals because broadcasts do not wake or track agents.';

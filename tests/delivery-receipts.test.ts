@@ -22,12 +22,14 @@ const ENQUEUED = "2026-08-28T12:00:00.000Z";
 const DELIVERED = "2026-08-28T12:00:01.000Z";
 const LEASED = "2026-08-28T12:10:00.000Z";
 const ACKED = "2026-08-28T12:00:02.000Z";
-/* The live definition. 20260902000001 introduced the roster and put agent
- * tracking rows in `receipts`, which broke every installed client on the
- * broadcast path; 20260902000002 is its forward replacement and the file the
- * source pins below must guard. */
+/* The live definition: the forward replacement of 20260901000020. Its first
+ * draft (fc88624) put agent tracking rows in `receipts`, which broke every
+ * installed client on the broadcast path; it was rewritten in place before any
+ * production apply, because the Supabase CLI applies files one per transaction
+ * and a breaking shape in one file is live until the next file commits. The
+ * source pins below guard the shape this single file commits. */
 const RECEIPT_MIGRATION =
-  "supabase/migrations/20260902000002_broadcast_roster_compat.sql";
+  "supabase/migrations/20260902000001_broadcast_recipient_roster.sql";
 const HUMAN_RECEIPT_MIGRATION =
   "supabase/migrations/20260901000020_signal_human_receipts.sql";
 
@@ -262,8 +264,8 @@ test("broadcast receipts carry only rows the pre-roster parser accepted", async 
   ));
   assert.equal(parsed.broadcast_roster?.agents.principals.length, 1);
 
-  // Mutation control: the 20260902000001 shape (an agent tracking row inside
-  // `receipts`) is refused, with the reason named.
+  // Mutation control: the first-draft shape (fc88624's 20260902000001, an agent
+  // tracking row inside `receipts`) is refused, with the reason named.
   assert.throws(
     () =>
       parseDeliveryReceiptResult({

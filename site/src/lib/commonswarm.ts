@@ -1279,7 +1279,7 @@ export interface BrowserHumanDeliveryReceipt {
 /**
  * A live agent listed on a broadcast. Never a `receipts` row: a cached bundle's
  * parser treats every non-human `receipts` row as a delivery ledger row, so this
- * lives only under `broadcastRoster.agents.principals` (20260902000002).
+ * lives only under `broadcastRoster.agents.principals` (20260902000001, the folded roster migration).
  */
 export interface BrowserUntrackedAgentReceipt {
   recipientAgentPrincipalId: string;
@@ -1999,7 +1999,7 @@ export async function browserDeliveryReceipts(
       }
       if (Object.hasOwn(row, "tracking_state")) {
         // 20260902000001 put these rows here and blanked every cached bundle's
-        // indicator; 20260902000002 moved them under broadcast_roster.agents.
+        // indicator; the folded 20260902000001 keeps them under broadcast_roster.agents.
         throw new Error("Delivery receipts returned an agent tracking row inside receipts.");
       }
       const outcome = row.ack_outcome;

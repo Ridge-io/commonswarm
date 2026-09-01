@@ -170,7 +170,7 @@ test("broadcast uses addressed=false and can never look pending or failed", () =
 test("broadcast summary and detail model split seen, not-seen, and untracked agents", () => {
   /* Agents live under broadcastRoster.agents.principals, never in `receipts`:
    * a cached bundle's parser reads any non-human `receipts` row as a delivery
-   * ledger row and would blank the indicator (20260902000002). */
+   * ledger row and would blank the indicator (20260902000001, folded). */
   const result: BrowserDeliveryReceiptResult = {
     addressed: false,
     receipts: [

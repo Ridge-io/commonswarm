@@ -62,7 +62,7 @@ function humanReport(row: HumanDeliveryReceipt): SignalReceiptReport {
 
 /* Agents are listed under broadcast_roster.agents.principals, never in
  * `receipts` — the pre-roster parser reads any non-human `receipts` row as a
- * delivery ledger row (20260902000002). */
+ * delivery ledger row (20260902000001, folded). */
 const QUILL: UntrackedBroadcastAgentReceipt = {
   recipient_agent_principal_id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
   display_name: "Quill",
