@@ -267,6 +267,14 @@ import "../../styles/tokens.css";
               <span class="dashboard__sidebar-place-mark" aria-hidden="true">↧</span>
               <span>Files</span>
             </button>
+            <button
+              class="dashboard__sidebar-place"
+              type="button"
+              data-workspace-view="brain"
+            >
+              <span class="dashboard__sidebar-place-mark" aria-hidden="true">◇</span>
+              <span>Brain</span>
+            </button>
           </nav>
 
           <section class="dashboard__rail-section dashboard__rail-section--participants" aria-labelledby="dashboard-participants-label">
@@ -372,6 +380,13 @@ import "../../styles/tokens.css";
                 data-workspace-view="files"
               >
                 Files
+              </button>
+              <button
+                class="dashboard__text-button dashboard__mobile-view"
+                type="button"
+                data-workspace-view="brain"
+              >
+                Brain
               </button>
               {/* The one promise the header owes a first-timer: this feed moves by
                   itself. Shown exactly while the two-second poll can be armed
@@ -579,6 +594,41 @@ import "../../styles/tokens.css";
               <p class="dashboard__file-empty" data-file-empty hidden>No files shared yet.</p>
               <p class="dashboard__form-error dashboard__file-error" data-file-error role="alert" hidden></p>
               <ul class="dashboard__file-list" data-file-list hidden></ul>
+            </section>
+
+            <section class="dashboard__brain-view" data-channel-view="brain" hidden>
+              <aside class="dashboard__brain-index" aria-label="Brain topics">
+                <p class="dashboard__brain-empty" data-brain-empty></p>
+                <ul class="dashboard__brain-list" data-brain-list hidden></ul>
+              </aside>
+              <article class="dashboard__brain-topic" id="dashboard-brain-topic" data-brain-detail hidden>
+                <header class="dashboard__brain-topic-head">
+                  <div>
+                    <h2 data-brain-title></h2>
+                    <p data-brain-meta></p>
+                  </div>
+                  <button class="dashboard__button dashboard__button--secondary" type="button" data-brain-edit>
+                    Edit
+                  </button>
+                </header>
+                <p class="dashboard__form-error" role="alert" data-brain-error hidden></p>
+                <div class="dashboard__message-markdown dashboard__brain-markdown" data-brain-markdown></div>
+                <form class="dashboard__brain-form" data-brain-form hidden>
+                  <label for="dashboard-brain-editor">Markdown</label>
+                  <textarea id="dashboard-brain-editor" rows="16" data-brain-textarea required></textarea>
+                  <div class="dashboard__brain-form-actions">
+                    <button class="dashboard__button dashboard__button--primary" type="submit" data-brain-save>
+                      Save new version
+                    </button>
+                    <button class="dashboard__text-button" type="button" data-brain-cancel>Cancel</button>
+                  </div>
+                </form>
+                <p class="dashboard__brain-status" role="status" aria-live="polite" data-brain-status></p>
+                <details class="dashboard__brain-history" data-brain-history>
+                  <summary>Version history</summary>
+                  <ul data-brain-history-list></ul>
+                </details>
+              </article>
             </section>
 
             <form class="dashboard__composer" data-composer hidden>
@@ -911,6 +961,14 @@ import "../../styles/tokens.css";
   } from "../../lib/standing-grants";
   import { renderFileList, type DisplayFile } from "../../lib/file-list";
   import {
+    brainTopics,
+    BrainSaveCompletedElsewhere,
+    createBrainView,
+    type BrainTopic,
+    type BrainView,
+    type BrainViewTargets,
+  } from "../../lib/brain-view";
+  import {
     MESSAGE_COLLAPSE_LINES,
     setSanitizedMessageMarkdown,
   } from "../../lib/message-markdown";
@@ -994,6 +1052,7 @@ import "../../styles/tokens.css";
     let signals: Signal[] = [];
     let files: WorkspaceFile[] = [];
     let fileLoadError = "";
+    let brainView: BrainView | null = null;
     let signalFilter: SignalFilter = "all";
     let activeWorkspaceId = "";
     let requestVersion = 0;
@@ -1138,7 +1197,8 @@ import "../../styles/tokens.css";
         | "feed-empty"
         | "feed-error"
         | "feed"
-        | "files",
+        | "files"
+        | "brain",
     ): void => {
       if (name !== "feed") {
         window.clearTimeout(signalExpiryTimer);
@@ -2907,6 +2967,11 @@ import "../../styles/tokens.css";
       };
     };
 
+    const workspaceFileUploaderName = (file: WorkspaceFile): string =>
+      file.uploadedByKind === "agent"
+        ? agents.find((agent) => agent.principalId === file.uploadedBy)?.name ?? "Former agent"
+        : people.get(file.uploadedBy) ?? "Former member";
+
     const renderFiles = (): void => {
       const list = one<HTMLUListElement>("[data-file-list]");
       const empty = one<HTMLElement>("[data-file-empty]");
@@ -2915,9 +2980,7 @@ import "../../styles/tokens.css";
       if (!list || !empty || !warning) return;
       const rows: DisplayFile[] = files.map((file) => ({
         ...file,
-        uploaderName: file.uploadedByKind === "agent"
-          ? agents.find((agent) => agent.principalId === file.uploadedBy)?.name ?? "Former agent"
-          : people.get(file.uploadedBy) ?? "Former member",
+        uploaderName: workspaceFileUploaderName(file),
       }));
       renderFileList(
         { list, empty, warning },
@@ -2948,6 +3011,103 @@ import "../../styles/tokens.css";
         list.hidden = true;
         empty.hidden = true;
         warning.hidden = true;
+      }
+    };
+
+    const brainViewTargets = (): BrainViewTargets | null => {
+      const list = one<HTMLUListElement>("[data-brain-list]");
+      const empty = one<HTMLElement>("[data-brain-empty]");
+      const detail = one<HTMLElement>("[data-brain-detail]");
+      const title = one<HTMLElement>("[data-brain-title]");
+      const meta = one<HTMLElement>("[data-brain-meta]");
+      const markdown = one<HTMLElement>("[data-brain-markdown]");
+      const error = one<HTMLElement>("[data-brain-error]");
+      const edit = one<HTMLButtonElement>("[data-brain-edit]");
+      const form = one<HTMLFormElement>("[data-brain-form]");
+      const textarea = one<HTMLTextAreaElement>("[data-brain-textarea]");
+      const save = one<HTMLButtonElement>("[data-brain-save]");
+      const cancel = one<HTMLButtonElement>("[data-brain-cancel]");
+      const status = one<HTMLElement>("[data-brain-status]");
+      const history = one<HTMLDetailsElement>("[data-brain-history]");
+      const historyList = one<HTMLUListElement>("[data-brain-history-list]");
+      if (
+        !list || !empty || !detail || !title || !meta || !markdown || !error ||
+        !edit || !form || !textarea || !save || !cancel || !status || !history ||
+        !historyList
+      ) return null;
+      return {
+        list, empty, detail, title, meta, markdown, error, edit, form, textarea,
+        save, cancel, status, history, historyList,
+      };
+    };
+
+    const renderBrain = (): void => {
+      if (!brainView) {
+        const targets = brainViewTargets();
+        if (!targets) return;
+        brainView = createBrainView(targets, {
+          read: async (topic, version) => {
+            if (!session || !activeWorkspaceId) throw new SessionExpired();
+            const grant = await fileDownloadUrl(
+              session,
+              uuid(),
+              activeWorkspaceId,
+              topic.fileId,
+              version,
+            );
+            const response = await fetch(grant.url);
+            if (!response.ok) {
+              throw new Error(`Topic download failed (HTTP ${response.status}).`);
+            }
+            return await response.text();
+          },
+          save: async (topic, markdown) => {
+            if (!session || !activeWorkspaceId) throw new SessionExpired();
+            const workspaceId = activeWorkspaceId;
+            const version = requestVersion;
+            const intent = prepareBrowserAttachments([
+              new File([markdown], topic.name, { type: "text/markdown" }),
+            ])[0];
+            if (!intent) throw new Error("The topic upload could not be prepared.");
+            const committed = await uploadBrowserAttachment(
+              session,
+              workspaceId,
+              intent,
+            );
+            if (version !== requestVersion || workspaceId !== activeWorkspaceId) {
+              throw new BrainSaveCompletedElsewhere(topic.topic, committed.version_n);
+            }
+            const updatedFile: WorkspaceFile = {
+              ...topic,
+              fileId: committed.file_id,
+              currentVersion: committed.version_n,
+              sizeBytes: new Blob([markdown]).size,
+              uploadedByKind: "user",
+              uploadedBy: session.user.id,
+              committedAt: new Date().toISOString(),
+              tombstonedAt: null,
+            };
+            files = files
+              .filter((file) => file.fileId !== topic.fileId)
+              .concat(updatedFile)
+              .sort((left, right) => left.name.localeCompare(right.name));
+            renderFiles();
+            return {
+              ...updatedFile,
+              topic: topic.topic,
+              updaterName: people.get(session.user.id) ?? accountName(session),
+            } satisfies BrainTopic;
+          },
+        });
+      }
+      brainView.setTopics(brainTopics(files, workspaceFileUploaderName));
+      const empty = one<HTMLElement>("[data-brain-empty]");
+      if (empty && fileLoadError) {
+        empty.textContent = fileLoadError;
+        empty.classList.add("dashboard__form-error");
+        empty.hidden = false;
+      } else {
+        empty?.classList.remove("dashboard__form-error");
       }
     };
 
@@ -4097,6 +4257,7 @@ import "../../styles/tokens.css";
         renderMembers();
         renderPendingAccess();
         renderFiles();
+        renderBrain();
         if (agents.length > 0) {
           await loadSignals(selected.id, true, version);
         }
@@ -4278,7 +4439,7 @@ import "../../styles/tokens.css";
       }
     };
 
-    const activateWorkspaceView = (view: "signals" | "files"): void => {
+    const activateWorkspaceView = (view: "signals" | "files" | "brain"): void => {
       if (keepConnectCredentialVisible()) return;
       const name = one<HTMLElement>("[data-channel-name]");
       const description = one<HTMLElement>("[data-channel-description]");
@@ -4297,6 +4458,18 @@ import "../../styles/tokens.css";
         if (count) count.hidden = true;
         renderFiles();
         showChannelView("files");
+      } else if (view === "brain") {
+        if (name) name.textContent = "Brain";
+        if (description) {
+          description.textContent =
+            "Durable Markdown notes kept by this workspace. Each save creates a new file version.";
+        }
+        const refresh = one<HTMLButtonElement>("[data-refresh]");
+        const count = one<HTMLElement>("[data-update-count]");
+        if (refresh) refresh.hidden = true;
+        if (count) count.hidden = true;
+        renderBrain();
+        showChannelView("brain");
       } else {
         if (name) name.textContent = "# all-signals";
         if (description) {
@@ -5348,7 +5521,9 @@ import "../../styles/tokens.css";
     for (const button of all<HTMLButtonElement>("[data-workspace-view]")) {
       button.addEventListener("click", () => {
         const view = button.dataset.workspaceView;
-        if (view === "signals" || view === "files") activateWorkspaceView(view);
+        if (view === "signals" || view === "files" || view === "brain") {
+          activateWorkspaceView(view);
+        }
       });
     }
     for (const button of all<HTMLButtonElement>("[data-feed-filter]")) {
@@ -7882,6 +8057,173 @@ import "../../styles/tokens.css";
     text-align: end;
   }
 
+  .dashboard__channel-body > .dashboard__brain-view {
+    align-self: stretch;
+    min-inline-size: 0;
+    min-block-size: 0;
+    display: grid;
+    grid-template-columns: minmax(13rem, 18rem) minmax(0, 1fr);
+    overflow: hidden;
+  }
+
+  .dashboard__brain-index,
+  .dashboard__brain-topic {
+    min-inline-size: 0;
+    min-block-size: 0;
+    overflow: auto;
+  }
+
+  .dashboard__brain-index {
+    padding: var(--s-4);
+    background: var(--bg);
+  }
+
+  .dashboard__brain-empty,
+  .dashboard__brain-status {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--t-sm);
+  }
+
+  .dashboard__brain-list,
+  .dashboard__brain-history ul {
+    display: grid;
+    gap: var(--s-1);
+    padding: 0;
+    margin: 0;
+    list-style: none;
+  }
+
+  .dashboard__brain-list button {
+    inline-size: 100%;
+    display: grid;
+    gap: var(--s-1);
+    padding: var(--s-3);
+    color: var(--text);
+    background: transparent;
+    border: 0;
+    border-radius: var(--radius-sm);
+    font: inherit;
+    text-align: start;
+    cursor: pointer;
+  }
+
+  .dashboard__brain-list button:hover,
+  .dashboard__brain-list button[aria-current="page"] {
+    background: var(--elev-2);
+  }
+
+  .dashboard__brain-list button:focus-visible {
+    outline: none;
+    box-shadow: var(--focus-ring);
+  }
+
+  .dashboard__brain-list strong {
+    overflow-wrap: anywhere;
+    font-size: var(--t-sm);
+  }
+
+  .dashboard__brain-list span {
+    color: var(--text-muted);
+    font-size: var(--t-2xs);
+    line-height: var(--lh-sm);
+  }
+
+  .dashboard__brain-topic {
+    padding: clamp(var(--s-5), 4vw, var(--s-8));
+  }
+
+  .dashboard__brain-topic-head {
+    display: flex;
+    align-items: start;
+    justify-content: space-between;
+    gap: var(--s-4);
+    margin-block-end: var(--s-5);
+  }
+
+  .dashboard__brain-topic-head h2,
+  .dashboard__brain-topic-head p {
+    margin: 0;
+  }
+
+  .dashboard__brain-topic-head h2 {
+    overflow-wrap: anywhere;
+    font-size: var(--t-xl);
+  }
+
+  .dashboard__brain-topic-head p {
+    margin-block-start: var(--s-1);
+    color: var(--text-muted);
+    font-size: var(--t-xs);
+  }
+
+  .dashboard__brain-markdown {
+    max-inline-size: 52rem;
+  }
+
+  .dashboard__brain-form {
+    max-inline-size: 52rem;
+    display: grid;
+    gap: var(--s-3);
+  }
+
+  .dashboard__brain-form label {
+    color: var(--text-muted);
+    font-size: var(--t-xs);
+    font-weight: var(--weight-semibold);
+  }
+
+  .dashboard__brain-form textarea {
+    inline-size: 100%;
+    min-block-size: 18rem;
+    resize: vertical;
+    padding: var(--s-4);
+    color: var(--text);
+    background: var(--elev-1);
+    border: 1px solid var(--border-interactive);
+    border-radius: var(--radius);
+    font-family: var(--font-mono);
+    font-size: var(--t-sm);
+    line-height: var(--lh-base);
+  }
+
+  .dashboard__brain-form textarea:focus-visible {
+    outline: none;
+    box-shadow: var(--focus-ring);
+  }
+
+  .dashboard__brain-form-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--s-3);
+  }
+
+  .dashboard__brain-status {
+    min-block-size: 1.25rem;
+    margin-block-start: var(--s-3);
+  }
+
+  .dashboard__brain-history {
+    max-inline-size: 52rem;
+    margin-block-start: var(--s-5);
+    color: var(--text-muted);
+    font-size: var(--t-sm);
+  }
+
+  .dashboard__brain-history summary {
+    inline-size: fit-content;
+    color: var(--text);
+    cursor: pointer;
+  }
+
+  .dashboard__brain-history ul {
+    margin-block-start: var(--s-3);
+  }
+
+  .dashboard__brain-history a {
+    color: var(--accent-bright);
+  }
+
   .dashboard__mobile-view {
     display: none;
   }
@@ -9081,6 +9423,20 @@ import "../../styles/tokens.css";
 
     .dashboard__update-count {
       display: none;
+    }
+
+    .dashboard__channel-body > .dashboard__brain-view {
+      grid-template-columns: minmax(0, 1fr);
+      overflow: auto;
+    }
+
+    .dashboard__brain-index,
+    .dashboard__brain-topic {
+      overflow: visible;
+    }
+
+    .dashboard__brain-index {
+      max-block-size: 13rem;
     }
 
   }

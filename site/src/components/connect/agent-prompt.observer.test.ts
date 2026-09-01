@@ -441,3 +441,21 @@ test("the credential path is per-agent and the identity guard names the expected
     /The output MUST read: You are Observer \(11111111-1111-4111-8111-111111111111\)\./,
   );
 });
+
+test("the prompt teaches the workspace brain with this agent's credential path", () => {
+  const prompt = dashboardAgentPrompt(INPUT);
+  const brain = prompt.slice(
+    prompt.indexOf("Keep durable facts in the workspace brain"),
+    prompt.indexOf("TWO VERBS"),
+  );
+
+  assert.ok(brain.length > 180, "the brain section could not be isolated");
+  assert.match(brain, /Before a big task[\s\S]*cswarm brain ls/);
+  assert.match(brain, /read relevant topics[\s\S]*cswarm brain get <topic>/);
+  assert.match(brain, /establish something durable[\s\S]*write it as Markdown/);
+  assert.match(
+    brain,
+    /cswarm brain put <topic> <markdown-path> --agent-token-file ~\/\.config\/cswarm\/agent-11111111\.json/,
+  );
+  assert.doesNotMatch(brain, /agent-token\.json/);
+});
