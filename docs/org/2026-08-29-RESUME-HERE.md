@@ -618,3 +618,13 @@ overlaps it — asked. The 0.1.44 listener has logged no read retry since 22:51Z
   Operator pushed (phone): interface cycle or reboot. `lsof` cannot attribute parked sockets — it
   names owners of OPEN sockets only and would have blamed innocents. Product follow-up (L32): the
   claim loop should reuse connections (keep-alive agent); a reap failure would then bite ~10× later.
+- **Correction (18:20):** ~~"~1,268 ports of headroom, ~10–15 min"~~ used a 49,152-port pool. Wren
+  (Tom's laptop agent) had widened `net.inet.ip.portrange.first` to 1024 (pool 64,512) and halved MSL
+  at 20:43Z — **that was the "flush"** — and installed `/Library/LaunchDaemons/net.ridgeio.tcp-tuning.plist`
+  plus a 60 s watchdog (`~/bin/tcp-watchdog.sh`, `~/.tcp-watchdog/status.json`: free_ports 15,877 at
+  23:16Z). Real headroom ~15.9k; arrival ~1.6/s AFTER every cswarm listener on the mini was stopped
+  (mine + 7 unattended supervisors incl. four 20-day-old grok orphans, SIGTERM/SIGKILL by the Lead) —
+  so listener polls were a share of the arrivals, not the whole. Kernel timers still wedged (FIN_WAIT_1
+  at 2161 for 40+ min); reboot is the only fix, Tom is deferring. Fleet told: keep listeners stopped
+  until announced. Wren's four asks answered on cswarm (hygiene split, L32 keep-alive, L33 local hook
+  daemon, sentinel from the laptop, auto-stop listeners only).
