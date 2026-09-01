@@ -544,3 +544,19 @@ CJS. Run it from a directory with no `package.json` above it (or install it), wh
 **Queued next (Codex lanes):** L29 — the two P3 wording fixes from Grok's review; L22 — `cswarm resume`
 + notify orphan detection; L23 — connected ≠ attended (`listen status` warns on `pendingForMainCount`,
 `main`/`split` refuse without a hook surface, `listen canary`).
+
+### 2026-09-01 17:52 — post-release: Claude listeners were broken by a bridge version, not by 0.1.44
+
+Restarting the Lead's listener on 0.1.44 failed: `permission_canary_failed`, stderr "Confirm Claude
+Code keychain/OAuth sign-in". The measured cause (`lastErrorDetail`): "Claude Code 2.1.232 does not
+support this model; version 2.1.251 or newer is required". The listener never spawns the `claude`
+CLI (2.1.258 on PATH); it spawns `claude-agent-acp`, and the globally installed 0.70.0 bundles
+`@anthropic-ai/claude-agent-sdk` 0.3.232. Anthropic raised the floor today. Fix on this host:
+`npm i -g @agentclientprotocol/claude-agent-acp@0.73.0` (SDK 0.3.257); listener ready 22:51Z,
+`providerVersion` 0.73.0. Both swarms told to restart Claude-provider listeners. Also seen while
+diagnosing: the Claude session limit ("resets 5:50pm") — a second, independent way the same canary
+fails. Product follow-up L30 (spec in the scratchpad, launch when a lane slot frees): status/start
+must name the resolved bridge executable and the bundled Claude Code version; the canary copy must
+quote the bridge's error and give the remedy for the version-required shape (update the bridge),
+never assert sign-in as the cause without measuring it. Two of Codex's lanes (L22 resume, L23
+attended) and L29 (P3 copy) are running.
