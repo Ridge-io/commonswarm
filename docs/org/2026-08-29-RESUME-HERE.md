@@ -596,3 +596,14 @@ overlaps it — asked. The 0.1.44 listener has logged no read retry since 22:51Z
   established (narrow unified-log predicates found nothing). L31's primary signal becomes the
   throughput ratio (would have fired at 13Z), not retry depth (19:33Z). Memory pressure on the mini
   was level 2 at 17:55 with five Codex lanes running; L30/L31 launch only at level 1.
+- **Acute phase named (Gauge, 18:03; shared finding):** `~/actions-runner/_diag/` on this Mac holds
+  2918 × `SocketException (49): Can't assign requested address` = **EADDRNOTAVAIL, host-wide ephemeral
+  source-port exhaustion**, first 19:35:20Z, last 20:43:03Z — two seconds after both listeners' last
+  retry. Per-minute counts 79, 98, 193, 195, 196 then stop dead (ports released, not backoff). The
+  runner itself executed zero jobs and restarted twice (19:46Z, 20:38Z) — a victim and a plausible
+  amplifier, not the proven origin. The server-side elimination made the host the only suspect; the
+  throughput table dated the onset; Gauge found the errno. **The 13:00–19:33Z impairment is a separate,
+  still unexplained condition** (no EADDRNOTAVAIL before 19:35Z) — not folded into this one. For L31:
+  EADDRNOTAVAIL becomes a named, non-backoff reason; a retry loop amplifies it. Operator note: the mini
+  is meant to take no CI, yet the runner service runs and long-polls; stopping it (`~/actions-runner/
+  svc.sh stop`) is a cheap port-pressure reduction — an operator call, not taken by the Lead.
