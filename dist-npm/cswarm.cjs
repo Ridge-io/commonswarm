@@ -22943,7 +22943,7 @@ async function sendFileCommand(options, command2) {
   const body = await response.json().catch(() => null);
   if (!response.ok) {
     const code = typeof body?.error === "string" ? body.error : "http_error";
-    const message = typeof body?.message === "string" ? body.message : `file command failed (HTTP ${response.status})`;
+    const message = typeof body?.message === "string" ? body.message : `file command failed (HTTP ${response.status}) DEBUGBODY=${JSON.stringify(body).slice(0, 300)}`;
     throw new FileCommandRefused(response.status, code, message);
   }
   if (!body || typeof body !== "object") {
@@ -30034,6 +30034,12 @@ function parseDeliveryReceipt(value) {
     );
   }
   const row = value;
+  if (Object.hasOwn(row, "recipient_user_id")) {
+    return {
+      recipient_user_id: uuid4(row.recipient_user_id, "recipient_user_id"),
+      seen_at: nullableTimestamp2(row.seen_at, "seen_at")
+    };
+  }
   const ackedAt = nullableTimestamp2(row.acked_at, "acked_at");
   const ackOutcome = row.ack_outcome === null ? null : typeof row.ack_outcome === "string" && ACK_OUTCOMES.has(row.ack_outcome) ? row.ack_outcome : (() => {
     throw new DeliveryReceiptReadError(
@@ -30085,10 +30091,10 @@ function parseDeliveryReceiptResult(value) {
     );
   }
   const receipts = body.receipts.map(parseDeliveryReceipt);
-  if (body.addressed === false && receipts.length !== 0) {
+  if (body.addressed === false && receipts.some((row) => "recipient_agent_principal_id" in row)) {
     throw new DeliveryReceiptReadError(
       "protocol",
-      "delivery receipt read returned recipients for a broadcast"
+      "delivery receipt read returned an agent recipient for a broadcast"
     );
   }
   if (body.addressed === true && receipts.length === 0) {
@@ -30098,7 +30104,9 @@ function parseDeliveryReceiptResult(value) {
     );
   }
   const recipientIds = new Set(
-    receipts.map((row) => row.recipient_agent_principal_id)
+    receipts.map(
+      (row) => "recipient_agent_principal_id" in row ? `agent:${row.recipient_agent_principal_id}` : `human:${row.recipient_user_id}`
+    )
   );
   if (recipientIds.size !== receipts.length) {
     throw new DeliveryReceiptReadError(
@@ -30197,6 +30205,9 @@ async function readAgentDeliveryReceipts(target2, token, workspaceId2, signalId,
 }
 
 // src/cloud/receipts.ts
+function humanReceipt(receipt) {
+  return "recipient_user_id" in receipt;
+}
 function signalReceiptCliState(receipt, nowMs) {
   const state = deliveryReceiptState(receipt, nowMs);
   if (state === "enqueued") return "not_delivered";
@@ -30215,13 +30226,24 @@ function newAskCommand(report, receipt) {
   return `cswarm ask "<question>" --to ${receipt.recipient_agent_principal_id} --workspace-id ${report.workspaceId}`;
 }
 function renderSignalReceiptReport(report, nowMs = Date.now()) {
+  const humanReceipts = report.receipts.filter(humanReceipt);
+  const agentReceipts = report.receipts.filter(
+    (receipt) => !humanReceipt(receipt)
+  );
+  const humanSections = humanReceipts.map(
+    (receipt) => receipt.seen_at === null ? `Not seen yet \u2014 the member's browser reports seen state when the message is viewed.` : [
+      `Seen by ${receipt.recipient_user_id} at ${receipt.seen_at}.`,
+      "This is a browser proxy: the message row was in view while the document had focus."
+    ].join("\n")
+  );
   if (!report.addressed) {
     return [
       "This was a broadcast; no agent was addressed and none was woken.",
+      ...humanSections,
       `To wake an agent, send a new ask with: cswarm ask "<text>" --to <agent> --workspace-id ${report.workspaceId}`
     ].join("\n");
   }
-  const sections = report.receipts.map((receipt) => {
+  const sections = agentReceipts.map((receipt) => {
     const state = deliveryReceiptState(receipt, nowMs);
     if (state === "enqueued") {
       return [
@@ -30276,25 +30298,31 @@ function renderSignalReceiptReport(report, nowMs = Date.now()) {
       `Ask the agent's operator to check its listener with: ${listenerStatusCommand(report, receipt)}`
     ].join("\n");
   });
-  return sections.join("\n\n");
+  return [...humanSections, ...sections].join("\n\n");
 }
 function signalReceiptJsonPayload(report, nowMs = Date.now()) {
   return {
     workspace_id: report.workspaceId,
     signal_id: report.signalId,
     broadcast: !report.addressed,
-    receipts: report.receipts.map((receipt) => ({
-      recipient_agent_principal_id: receipt.recipient_agent_principal_id,
-      state: signalReceiptCliState(receipt, nowMs),
-      outcome: receipt.ack_outcome,
-      enqueued_at: receipt.enqueued_at,
-      delivered_at: receipt.delivered_at,
-      leased_until: receipt.leased_until,
-      acked_at: receipt.acked_at,
-      attempt_count: receipt.attempt_count,
-      lease_expiry_count: receipt.lease_expiry_count,
-      last_error_code: receipt.last_error_code
-    }))
+    receipts: report.receipts.map(
+      (receipt) => humanReceipt(receipt) ? {
+        recipient_user_id: receipt.recipient_user_id,
+        state: receipt.seen_at === null ? "not_seen" : "seen",
+        seen_at: receipt.seen_at
+      } : {
+        recipient_agent_principal_id: receipt.recipient_agent_principal_id,
+        state: signalReceiptCliState(receipt, nowMs),
+        outcome: receipt.ack_outcome,
+        enqueued_at: receipt.enqueued_at,
+        delivered_at: receipt.delivered_at,
+        leased_until: receipt.leased_until,
+        acked_at: receipt.acked_at,
+        attempt_count: receipt.attempt_count,
+        lease_expiry_count: receipt.lease_expiry_count,
+        last_error_code: receipt.last_error_code
+      }
+    )
   };
 }
 
@@ -39209,8 +39237,8 @@ var ACCEPTED_AGENT_CREDENTIAL_MESSAGES = [
   AGENT_CREDENTIAL_MESSAGE_D088
 ];
 function packageVersion() {
-  if ("0.1.41".length > 0) {
-    return "0.1.41";
+  if ("0.1.42".length > 0) {
+    return "0.1.42";
   }
   try {
     const value = JSON.parse(
