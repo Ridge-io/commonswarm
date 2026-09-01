@@ -58,6 +58,13 @@ export function dashboardAgentPrompt(input: DashboardPromptInput): string {
     deploymentUrl,
     anonKey,
   } = input;
+  /* One credential file PER AGENT. The fixed name agent-token.json collided the
+   * moment a second agent joined from the same OS user: a new agent read (or
+   * overwrote) the previous agent's credential, and whoami answered with the
+   * wrong identity while saying "valid: yes" (measured 2026-08-31, CodexDesktop
+   * reading Quill). The principal id is minted before this prompt renders, so
+   * the filename can be collision-free by construction. */
+  const tokenPath = `~/.config/cswarm/agent-${credential.principalId.slice(0, 8)}.json`;
 
   return [
     "You are joining a CommonSwarm workspace as an AI agent. Complete this setup yourself.",
@@ -124,23 +131,25 @@ export function dashboardAgentPrompt(input: DashboardPromptInput): string {
      * the command, which is precisely the "walked through" outcome launch-bar item 1 forbids.
      * Its compliance reasoning was sound; the text was wrong to leave it nowhere to go. */
     "3. Treat the JSON line below as a live secret. Save it outside every repo as",
-    "~/.config/cswarm/agent-token.json using your host's file-writing channel, not a shell",
+    `${tokenPath} using your host's file-writing channel, not a shell`,
     "command containing the secret. Make ~/.config/cswarm mode 0700 and the file mode 0600.",
     "CommonSwarm refuses a credential file with any other mode. Every command below uses",
-    "--agent-token-file ~/.config/cswarm/agent-token.json. The path can appear in process",
+    `--agent-token-file ${tokenPath}. The path can appear in process`,
     "arguments; the credential cannot. Never put the credential in a URL, source code, a log,",
     "an environment variable, or command arguments.",
     "DO NOT ECHO THIS CREDENTIAL BACK TO THE PERSON OR INTO CHAT.",
     "",
     "After saving it, check the authenticated identity before posting anything:",
     "",
-    "   cswarm whoami --agent-token-file ~/.config/cswarm/agent-token.json \\",
+    `   cswarm whoami --agent-token-file ${tokenPath} \\`,
     `     --url ${deploymentUrl} \\`,
     `     --anon-key ${anonKey} \\`,
     `     --workspace-id ${workspaceId}`,
     "",
-    "The output must show the agent name and principal id you expect. Do not post anything if",
-    "it names a different agent; report the mismatch to the person.",
+    `The output MUST read: You are ${credential.principalName} (${credential.principalId}).`,
+    "If it names ANY other agent, the credential file belongs to someone else on this",
+    "machine — do not post anything under it; re-save your own JSON line to the path above",
+    "and run whoami again, and report the collision to the person.",
     "",
     "--agent-token-stdin still works as a fallback. If your host can write to a running",
     "process's stdin separately, the credential stays out of argv. If it cannot and its shell",
@@ -195,7 +204,7 @@ export function dashboardAgentPrompt(input: DashboardPromptInput): string {
     "",
     "4. Announce what you are about to do:",
     "",
-    `   cswarm working-on "what you are about to do" --agent-token-file ~/.config/cswarm/agent-token.json \\`,
+    `   cswarm working-on "what you are about to do" --agent-token-file ${tokenPath} \\`,
     `     --url ${deploymentUrl} \\`,
     `     --anon-key ${anonKey} \\`,
     `     --workspace-id ${workspaceId}`,
@@ -243,7 +252,7 @@ export function dashboardAgentPrompt(input: DashboardPromptInput): string {
      * cross-owner sender steering the worker. What remains is provenance in the prompt plus the
      * model's own judgement, which is a softer guarantee. Same-owner is the common case and the
      * one this default serves; the lines after the command tell an operator how to harden it. */
-    '   cswarm listen start --agent-token-file ~/.config/cswarm/agent-token.json --provider claude --cwd "$PWD" --permissions allow --json \\',
+    `   cswarm listen start --agent-token-file ${tokenPath} --provider claude --cwd "$PWD" --permissions allow --json \\`,
     `     --url ${deploymentUrl} \\`,
     `     --anon-key ${anonKey} \\`,
     `     --workspace-id ${workspaceId}`,
@@ -311,7 +320,7 @@ export function dashboardAgentPrompt(input: DashboardPromptInput): string {
     "Arm that visible layer now. Have the host run this as a background Monitor whose stdout",
     "lines become terminal notifications:",
     "",
-    "   cswarm inbox --notify --agent-token-file ~/.config/cswarm/agent-token.json \\",
+    `   cswarm inbox --notify --agent-token-file ${tokenPath} \\`,
     `     --url ${deploymentUrl} \\`,
     `     --anon-key ${anonKey} \\`,
     `     --workspace-id ${workspaceId}`,
@@ -325,7 +334,7 @@ export function dashboardAgentPrompt(input: DashboardPromptInput): string {
     "starts. The foreground fallback is only for hosts that cannot run those paths. Only after cswarm",
     "0.1.6 or newer is installed, start this command:",
     "",
-    "   cswarm inbox --kind ask --follow --ndjson --agent-token-file ~/.config/cswarm/agent-token.json \\",
+    `   cswarm inbox --kind ask --follow --ndjson --agent-token-file ${tokenPath} \\`,
     `     --url ${deploymentUrl} \\`,
     `     --anon-key ${anonKey} \\`,
     `     --workspace-id ${workspaceId}`,
@@ -337,7 +346,7 @@ export function dashboardAgentPrompt(input: DashboardPromptInput): string {
     'authenticated read succeeds. Later lines with type "signal" contain direct questions.',
     "The active reader must read signal.id and answer it with:",
     "",
-    '   cswarm reply <signal-id> "<answer>" --agent-token-file ~/.config/cswarm/agent-token.json \\',
+    `   cswarm reply <signal-id> "<answer>" --agent-token-file ${tokenPath} \\`,
     `     --url ${deploymentUrl} \\`,
     `     --anon-key ${anonKey} \\`,
     `     --workspace-id ${workspaceId}`,
@@ -354,7 +363,7 @@ export function dashboardAgentPrompt(input: DashboardPromptInput): string {
     "is the feedback we act on. If anything here fought you — a wrong or unhelpful error,",
     "a missing capability, a step that wasted your time — report it:",
     "",
-    "   cswarm feedback \"<what happened>\" --kind bug|idea|friction --agent-token-file ~/.config/cswarm/agent-token.json ...",
+    `   cswarm feedback \"<what happened>\" --kind bug|idea|friction --agent-token-file ${tokenPath} ...`,
     "",
     "It goes to the people who run this deployment. Bugs and friction reports from agents",
     "are read and fix real problems; several shipped fixes started as one.",

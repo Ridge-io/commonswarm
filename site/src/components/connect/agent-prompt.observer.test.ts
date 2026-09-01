@@ -71,9 +71,9 @@ test("dashboard agent prompt is one complete, secret-safe handoff", () => {
    * safe. Pinning the sanctioned command shape rather than a prohibition means a future edit
    * that removes the way out fails here. */
   assert.match(prompt, /credential file is the normal path/);
-  assert.match(prompt, /--agent-token-file ~\/\.config\/cswarm\/agent-token\.json/);
+  assert.match(prompt, /--agent-token-file ~\/\.config\/cswarm\/agent-11111111\.json/);
   assert.match(prompt, /CommonSwarm refuses a credential file with any other mode/);
-  assert.match(prompt, /cswarm whoami[\s\S]*agent name and principal id you expect/);
+  assert.match(prompt, /cswarm whoami[\s\S]*The output MUST read: You are Observer/);
   assert.match(
     prompt,
     /printf '%s' '<the JSON line>' \| cswarm <command> --agent-token-stdin/,
@@ -144,7 +144,7 @@ test("the prompt leads with a 0600 credential file and keeps the argv warning", 
   assert.match(prompt, /credential file is the normal path/);
   assert.match(
     prompt,
-    /cswarm inbox --kind ask --follow --ndjson --agent-token-file ~\/\.config\/cswarm\/agent-token\.json/,
+    /cswarm inbox --kind ask --follow --ndjson --agent-token-file ~\/\.config\/cswarm\/agent-11111111\.json/,
     "the long-lived receiver no longer uses the secure file form",
   );
   assert.match(
@@ -168,7 +168,7 @@ test("every cswarm command in the prompt is self-contained with deployment flags
   };
   for (const command of [
     'cswarm working-on "what you are about to do" --agent-token-file',
-    'cswarm listen start --agent-token-file ~/.config/cswarm/agent-token.json --provider claude --cwd "$PWD" --permissions allow --json',
+    'cswarm listen start --agent-token-file ~/.config/cswarm/agent-11111111.json --provider claude --cwd "$PWD" --permissions allow --json',
     "cswarm inbox --kind ask --follow --ndjson --agent-token-file",
     'cswarm reply <signal-id> "<answer>" --agent-token-file',
   ]) {
@@ -425,4 +425,19 @@ test("dashboard agent prompt never promises unconditional renewal", () => {
   assert.match(renewable, /receiver remains running and secure local state is available/);
   assert.match(renewable, /stopped or idle CLI cannot renew it/);
   assert.doesNotMatch(renewable, /renews it automatically/i);
+});
+
+
+test("the credential path is per-agent and the identity guard names the expected principal", () => {
+  const prompt = dashboardAgentPrompt(INPUT);
+  /* The fixed agent-token.json name collided on multi-agent hosts (2026-08-31:
+   * CodexDesktop read Quill's file and whoami said "valid: yes" for the wrong
+   * agent). The path must embed this principal's id, and the guard must state
+   * the exact expected identity so a mismatch cannot read as success. */
+  assert.match(prompt, /agent-11111111\.json/);
+  assert.doesNotMatch(prompt, /agent-token\.json/);
+  assert.match(
+    prompt,
+    /The output MUST read: You are Observer \(11111111-1111-4111-8111-111111111111\)\./,
+  );
 });
