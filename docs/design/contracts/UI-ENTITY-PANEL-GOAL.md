@@ -41,7 +41,9 @@ focus to the name that opened it. Follow the existing header-roster dialog's sem
 (`docs/evidence/2026-07-30-header-agent-roster/`) rather than inventing a second pattern.
 
 **For an agent** — every field below already exists on `AgentAccessStatus`
-(`site/src/lib/commonswarm.ts:594-605`), so this is display work, not new plumbing:
+(`AgentAccessStatus` in `site/src/lib/commonswarm.ts` — cited by SYMBOL, not line: the
+previous `:594-605` cite had already drifted to `:623-644` and the shape now carries more
+fields than listed here), so this is display work, not new plumbing:
 
 - `agentName`, an `AGENT` badge, and **`operated by <person>` as a link**
 - `model`, or **`Model not specified`** — the honest default. Do not hide the field and do not guess;
@@ -72,7 +74,9 @@ showing an operator that their agent is affected by a **named, open defect**, in
 yet deployed*.
 
 That is now more concrete than when it was written. **Durable delivery is disabled in production on
-purpose** (D-044 era; the `read` function is not deployed), and four brick-class defects — D-040,
+purpose** (D-044 era; ~~the `read` function is not deployed~~ **dead 2026-09-01 — it IS
+deployed, measured 405-vs-404 with `x-served-by: supabase-edge-runtime`; the known-issues
+section below still reasons from that stale state), and four brick-class defects — D-040,
 D-041a, D-041b, D-042 — are open against the durable path.
 
 **If you build this section, derive it from a committed source** (`docs/org/DEFECT-REGISTER.md` or a

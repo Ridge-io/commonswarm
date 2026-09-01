@@ -652,7 +652,9 @@ const FREE_TIER_PRINCIPAL_LIMIT = 50;
  *                      returns a token to the caller — so this counts
  *                      invitations ISSUED, not messages delivered. Wired now
  *                      because the day mail is added is the day it costs money.
- *   signal_post        row writes plus Realtime fan-out
+ *   signal_post        row writes (an earlier version of this line said "plus Realtime
+ *                      fan-out" — there is no Realtime fan-out; it was aspirational and read
+ *                      as current behaviour)
  *   agent_token_mint   credentials, each of which becomes invocation volume
  *
  * capability_read WAS a fifth proxy and was REMOVED as a denial-of-service hole:

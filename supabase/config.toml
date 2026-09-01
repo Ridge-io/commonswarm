@@ -429,8 +429,9 @@ s3_secret_key = "env(S3_SECRET_KEY)"
 # in the product, offline.
 #
 # The function does the authentication itself, first thing and unconditionally:
-# functions/command/index.ts:4516 rejects a missing bearer with 401; :4529 routes a
-# `swm_agt_` credential through AGENT_TOKEN_RE and a hash lookup; :4541 requires
+# functions/command/index.ts (cited by behaviour, not line — the previous 4516/4529/4541
+# cites had drifted to 7890/7895/7911): the handler rejects a missing bearer with 401; routes a
+# `swm_agt_` credential through AGENT_TOKEN_RE and a hash lookup; and requires
 # `auth.getUser(credential)` to succeed for anything else, 401 otherwise. Turning verify_jwt
 # on would break agents and add nothing a human caller is not already subject to.
 [functions.command]
