@@ -314,3 +314,22 @@ sounded reasonable, and by agents dogfooding the product — Wren, Joist, LeadG,
   aa2bb3b7 (FK), harmless.
 - REMAINING: L18 workspace brain lane (launched); one review pass on its commit; then the
   operator's "get it all done" list is complete.
+
+## Addendum 2026-09-01 (later): v0.1.43 — the brain, and a FAIL that earned its arm
+
+- **v0.1.43 LIVE** (workspace brain, a0b6734 + 4cbe4e7): GitHub latest both assets, npm,
+  /download pins (cache-busted verify — a plain fetch HIT a stale CDN page and read as a failed
+  deploy), Brain view on deployed /app, installed here, listener restarted. Live probe: brain
+  put/ls/get round-trip against production; first topic 'releases' seeds the release ritual.
+- **The exact arm FAILED a0b6734 with a measured counterexample** — the Brain pane keyed by slug
+  let a workspace switch save workspace A's text into workspace B's file. Fixed in 4cbe4e7
+  (fileId binding + save guard), the reviewer's counterexample is now a permanent observer,
+  mutation-verified, and BOTH arms re-ran PASS on the replacement SHA. First FAIL verdict of
+  this cycle; record that the two-arm gate caught a cross-workspace leak no test suite did.
+- Grok-arm residuals recorded, not fixed: raw `file put --name brain--x.md` can enter the
+  namespace (shared store, invisible to brain ls); `brain put --agent-token-file` with no path
+  uploads stdin (the prompt teaches a path); the prompt's brain put line is not in the
+  self-contained-command list.
+- **The operator's 'get it all done and released' list is COMPLETE**: grants, attachments, a2a
+  receipts, grok canary, hook scope, pooler root cause, CORS outage, dashboard follow-ups,
+  per-agent credential paths, human receipts, brain. v0.1.39→v0.1.43 in one arc.
