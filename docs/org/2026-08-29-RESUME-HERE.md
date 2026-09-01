@@ -464,3 +464,26 @@ listener → `cswarm receipt` on broadcast a945274b.
 
 **Deferred, deliberately.** L22 (`cswarm resume` + notify orphan detection) and L23
 (connected≠attended) wait for v0.1.44. Renaming the Supabase project stays an operator action.
+
+### 2026-09-01 ~17:35 — L25 merged, real-Postgres leg done, swarm identity fix under review
+
+- `1851e35` merges `lane/l25-read-deadline` (Codex, `d357344`): every file/brain read consumes its
+  body under the same 30 s deadline; one logical read has ONE absolute budget across its single
+  retry, with a 2 s floor below which no retry starts. Mutations observed RED for both. Evidence:
+  `docs/evidence/2026-09-01-v044/l25-read-deadline-lane-report.md`.
+- `37ac375`: the 0.1.42/0.1.43 parser is now run on the wire REAL Postgres returns (p1-local test)
+  and on the fixture (pure gate), via `tests/support/old-receipts-parser.ts`. Local `db reset`
+  applied the folded `20260902000001` as one file; the applied function contains `'principals'`.
+  Evidence: `docs/evidence/2026-09-01-v044/real-postgres-fold-apply.md`. Production still has
+  only `20260901000020` (checked read-only with `supabase migration list --linked`).
+- Swarm CLI (other repo): L24+L27 committed as `a072d0b` on `feat/swarm-next-v1`. **dist/ NOT
+  rebuilt.** Gemini (`agy`) inversion: PASS with traced controls + focused tests (7/7). Grok exact
+  arm still running. Rebuild + fleet notice only after Grok also passes.
+- **Instrument trap, `agy` headless (2026-09-01):** without `--dangerously-skip-permissions`, a
+  tool needing `read_file` is auto-denied and the run ends with no verdict (307 bytes). With the
+  flag, long tool calls (full `npm test`) end in `Error: timeout waiting for response` — the same
+  dead-instrument face as the 4-hour outage. A prompt that keeps each command under ~20 s and
+  leaves the long runs to the other arm produced a full review. Both faces were caught by the
+  monitor asserting a VERDICT line is PRESENT.
+- L26 (hook scope + CLAUDE_CONFIG_DIR, Codex) still running. Release runbook drafted at the
+  session scratchpad `release-v044.sh` (gitignored; steps are the apply order above).
