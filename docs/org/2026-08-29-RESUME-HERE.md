@@ -567,3 +567,15 @@ attended) and L29 (P3 copy) are running.
   wrongly blames OAuth sign-in"~~ is the CLI's GENERIC canary copy for every reason, not a signature
   of this cause; the event log never contains it. The tell is `permission_canary_failed` plus the
   reason text. Both narrowings are now in brain `agent-restart` v4 and in the L30 spec.
+
+### 2026-09-01 18:05 — the listener read path had an undiagnosable hour-long episode today
+
+The Lead's own listener log has 474 `listener_read_retry` events for the day, 158 of them in the
+three hours before the 22:45Z restart; one episode ran from ~19:00Z to 20:43Z reaching attempt 198
+(delays 20–30 s) while `listen status` said ready. Gauge measured 209 retries over 3h06m on another
+listener. **The events carry no reason** — only attempt and delay — so server 5xx, pooler
+exhaustion, DNS and body stalls are indistinguishable after the fact. Queued L31 (spec in the
+scratchpad): typed reason code per retry event, durable episode accounting, a 60 s loud-lapse
+warning in `listen status`, and a recovered event. Not established: what the server returned in
+that window (the read edge's analytics logs were not pulled), and whether Gauge's episode
+overlaps it — asked. The 0.1.44 listener has logged no read retry since 22:51Z (15 min).
