@@ -2,6 +2,8 @@ import {
   deliveryReceiptState,
   type AgentDeliveryReceiptResult,
   type DeliveryReceipt,
+  type DeliveryReceiptRow,
+  type HumanDeliveryReceipt,
 } from "./delivery-receipts.js";
 import { relativeAge, relativeExpiry } from "./workspaces.js";
 
@@ -16,6 +18,12 @@ type SignalReceiptCliState =
   | "working"
   | "queued"
   | "finished";
+
+function humanReceipt(
+  receipt: DeliveryReceiptRow,
+): receipt is HumanDeliveryReceipt {
+  return "recipient_user_id" in receipt;
+}
 
 function signalReceiptCliState(
   receipt: DeliveryReceipt,
@@ -52,14 +60,27 @@ export function renderSignalReceiptReport(
   report: SignalReceiptReport,
   nowMs: number = Date.now(),
 ): string {
+  const humanReceipts = report.receipts.filter(humanReceipt);
+  const agentReceipts = report.receipts.filter(
+    (receipt): receipt is DeliveryReceipt => !humanReceipt(receipt),
+  );
+  const humanSections = humanReceipts.map((receipt) =>
+    receipt.seen_at === null
+      ? `Not seen yet — the member's browser reports seen state when the message is viewed.`
+      : [
+        `Seen by ${receipt.recipient_user_id} at ${receipt.seen_at}.`,
+        "This is a browser proxy: the message row was in view while the document had focus.",
+      ].join("\n")
+  );
   if (!report.addressed) {
     return [
       "This was a broadcast; no agent was addressed and none was woken.",
+      ...humanSections,
       `To wake an agent, send a new ask with: cswarm ask "<text>" --to <agent> --workspace-id ${report.workspaceId}`,
     ].join("\n");
   }
 
-  const sections = report.receipts.map((receipt) => {
+  const sections = agentReceipts.map((receipt) => {
     const state = deliveryReceiptState(receipt, nowMs);
     if (state === "enqueued") {
       return [
@@ -116,7 +137,7 @@ export function renderSignalReceiptReport(
       `Ask the agent's operator to check its listener with: ${listenerStatusCommand(report, receipt)}`,
     ].join("\n");
   });
-  return sections.join("\n\n");
+  return [...humanSections, ...sections].join("\n\n");
 }
 
 /** Keep the CLI's machine state explicit while retaining every ledger field. */
@@ -128,17 +149,25 @@ export function signalReceiptJsonPayload(
     workspace_id: report.workspaceId,
     signal_id: report.signalId,
     broadcast: !report.addressed,
-    receipts: report.receipts.map((receipt) => ({
-      recipient_agent_principal_id: receipt.recipient_agent_principal_id,
-      state: signalReceiptCliState(receipt, nowMs),
-      outcome: receipt.ack_outcome,
-      enqueued_at: receipt.enqueued_at,
-      delivered_at: receipt.delivered_at,
-      leased_until: receipt.leased_until,
-      acked_at: receipt.acked_at,
-      attempt_count: receipt.attempt_count,
-      lease_expiry_count: receipt.lease_expiry_count,
-      last_error_code: receipt.last_error_code,
-    })),
+    receipts: report.receipts.map((receipt) =>
+      humanReceipt(receipt)
+        ? {
+          recipient_user_id: receipt.recipient_user_id,
+          state: receipt.seen_at === null ? "not_seen" : "seen",
+          seen_at: receipt.seen_at,
+        }
+        : {
+          recipient_agent_principal_id: receipt.recipient_agent_principal_id,
+          state: signalReceiptCliState(receipt, nowMs),
+          outcome: receipt.ack_outcome,
+          enqueued_at: receipt.enqueued_at,
+          delivered_at: receipt.delivered_at,
+          leased_until: receipt.leased_until,
+          acked_at: receipt.acked_at,
+          attempt_count: receipt.attempt_count,
+          lease_expiry_count: receipt.lease_expiry_count,
+          last_error_code: receipt.last_error_code,
+        }
+    ),
   };
 }

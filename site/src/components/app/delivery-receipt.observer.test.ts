@@ -6,9 +6,12 @@ import {
   BROWSER_RECEIPT_REQUESTS_PER_TICK,
   browserDeliveryIndicator,
   browserDeliveryReceiptCandidates,
+  browserHumanDeliveryIndicator,
   type BrowserDeliveryReceipt,
   type BrowserDeliveryReceiptCacheEntry,
   type BrowserDeliveryReceiptResult,
+  type BrowserHumanDeliveryReceipt,
+  type BrowserReceiptRow,
   type Signal,
 } from "../../lib/commonswarm.js";
 
@@ -31,9 +34,17 @@ const receipt = (
   ...changes,
 });
 
-const addressed = (...receipts: BrowserDeliveryReceipt[]): BrowserDeliveryReceiptResult => ({
+const addressed = (...receipts: BrowserReceiptRow[]): BrowserDeliveryReceiptResult => ({
   addressed: true,
   receipts,
+});
+
+const humanReceipt = (
+  changes: Partial<BrowserHumanDeliveryReceipt> = {},
+): BrowserHumanDeliveryReceipt => ({
+  recipientUserId: "person",
+  seenAt: null,
+  ...changes,
 });
 
 const signal = (
@@ -143,7 +154,7 @@ test("broadcast uses addressed=false and can never look pending or failed", () =
   );
 });
 
-test("agent-to-agent and viewer-authored directed rows use the same receipt path", () => {
+test("agent and human directed rows use the same bounded receipt path", () => {
   const rows = [
     signal("agent-to-agent", "2026-08-28T14:59:00.000Z"),
     signal("viewer-to-agent", "2026-08-28T14:58:00.000Z", {
@@ -162,7 +173,11 @@ test("agent-to-agent and viewer-authored directed rows use the same receipt path
     new Set(rows.map((row) => row.id)),
     NOW,
   );
-  assert.deepEqual(selected.map((row) => row.id), ["agent-to-agent", "viewer-to-agent"]);
+  assert.deepEqual(selected.map((row) => row.id), [
+    "agent-to-agent",
+    "viewer-to-agent",
+    "person-directed",
+  ]);
 
   const renderer = dashboard.slice(
     dashboard.indexOf("const appendDeliveryReceipt ="),
@@ -253,20 +268,36 @@ test("missing or unusable receipt data renders unavailable, never a fabricated t
   }
 });
 
-test("a direct person target is not relabelled as a broadcast", () => {
+test("a direct person target stays Sent until the server returns focused-viewport seen", () => {
+  const unseen = browserHumanDeliveryIndicator("person", addressed(humanReceipt()));
+  const seen = browserHumanDeliveryIndicator("person", addressed(humanReceipt({
+    seenAt: "2026-08-28T14:59:30.000Z",
+  })));
+  assert.deepEqual(
+    { state: unseen.state, label: unseen.label, detail: unseen.detail },
+    {
+      state: "sent",
+      label: "Sent",
+      detail: "Delivered to the workspace — not seen yet.",
+    },
+  );
+  assert.equal(seen.state, "seen");
+  assert.equal(seen.label, "Seen");
+  assert.match(seen.detail, /row was in view and the document had focus/);
+  assert.doesNotMatch(`${unseen.label} ${unseen.detail}`, /Receipt unavailable/);
+
   const renderer = dashboard.slice(
     dashboard.indexOf("const appendDeliveryReceipt ="),
     dashboard.indexOf("const feedScroller ="),
   );
   assert.match(renderer, /signal\.to !== null && signal\.toAgent === null/);
-  assert.match(renderer, /This message addresses a person\. Agent delivery receipts do not apply\./);
-  assert.match(renderer, /state: "unavailable"/);
+  assert.match(renderer, /browserHumanDeliveryIndicator\(signal\.to, cached\?\.result \?\? null\)/);
   assert.doesNotMatch(
     renderer.slice(
       renderer.indexOf("signal.to !== null && signal.toAgent === null"),
       renderer.indexOf(": browserDeliveryIndicator"),
     ),
-    /No recipient|broadcast/i,
+    /Receipt unavailable|No recipient|broadcast/i,
   );
 });
 
@@ -280,6 +311,7 @@ test("rendered receipt has an accessible name and does not rely on colour", () =
   assert.match(renderer, /glyph\.setAttribute\("aria-hidden", "true"\)/);
   assert.match(renderer, /label\.textContent = indicator\.label/);
   assert.match(renderer, /detail\.textContent = indicator\.detail/);
+  assert.match(dashboard, /data-receipt-state="seen"/);
   assert.match(dashboard, /\.dashboard__message-receipt\[data-receipt-state="stuck"\]/);
 });
 

@@ -25,6 +25,7 @@
  */
 
 import { createClient, type SupabaseClient, type Session } from "@supabase/supabase-js";
+import { HUMAN_SEEN_BATCH_MAX } from "./human-seen-reporter.js";
 
 /** Must match src/cloud/config.ts:CLIENT_PROTOCOL_VERSION — the server refuses a mismatch. */
 export const CLIENT_PROTOCOL_VERSION = "0.1.0";
@@ -1267,10 +1268,18 @@ export interface BrowserDeliveryReceipt {
   lastErrorCode: string | null;
 }
 
+export interface BrowserHumanDeliveryReceipt {
+  recipientUserId: string;
+  /** Null is the authoritative "not seen yet" state for a directed member. */
+  seenAt: string | null;
+}
+
+export type BrowserReceiptRow = BrowserDeliveryReceipt | BrowserHumanDeliveryReceipt;
+
 export interface BrowserDeliveryReceiptResult {
   /** Null means the caller cannot inspect a matching signal or the endpoint could not answer. */
   addressed: boolean | null;
-  receipts: BrowserDeliveryReceipt[];
+  receipts: BrowserReceiptRow[];
 }
 
 export interface BrowserDeliveryReceiptCacheEntry {
@@ -1287,6 +1296,7 @@ export type BrowserDeliveryIndicatorState =
   | "delivered"
   | "working"
   | "queued"
+  | "seen"
   | "done"
   | "stuck";
 
@@ -1326,6 +1336,10 @@ const receiptIsStuck = (receipt: BrowserDeliveryReceipt): boolean =>
     receipt.lastErrorCode !== null
   );
 
+const isBrowserHumanDeliveryReceipt = (
+  receipt: BrowserReceiptRow,
+): receipt is BrowserHumanDeliveryReceipt => "recipientUserId" in receipt;
+
 /** Turns ledger facts into compact copy without claiming that a model read a message. */
 export function browserDeliveryIndicator(
   result: BrowserDeliveryReceiptResult | null,
@@ -1364,23 +1378,60 @@ export function browserDeliveryIndicator(
     };
   }
 
-  const total = result.receipts.length;
-  const terminalRows = result.receipts.filter(
+  const humanReceipts = result.receipts.filter(isBrowserHumanDeliveryReceipt);
+  const agentReceipts = result.receipts.filter(
+    (receipt): receipt is BrowserDeliveryReceipt =>
+      !isBrowserHumanDeliveryReceipt(receipt),
+  );
+  if (humanReceipts.length === 1 && agentReceipts.length === 0) {
+    const human = humanReceipts[0]!;
+    return human.seenAt === null
+      ? {
+        state: "sent",
+        outcome: null,
+        glyph: "✓",
+        label: "Sent",
+        detail: "Delivered to the workspace — not seen yet.",
+        terminal: false,
+      }
+      : {
+        state: "seen",
+        outcome: null,
+        glyph: "✓✓",
+        label: "Seen",
+        detail:
+          "The member's browser reported this message as seen when the row was in view and the document had focus.",
+        terminal: true,
+      };
+  }
+  if (humanReceipts.length > 0) {
+    return {
+      state: "unavailable",
+      outcome: null,
+      glyph: "?",
+      label: "Receipt unavailable",
+      detail: "CommonSwarm returned incompatible recipient receipt types.",
+      terminal: false,
+    };
+  }
+
+  const total = agentReceipts.length;
+  const terminalRows = agentReceipts.filter(
     (receipt) => receipt.ackedAt !== null && receipt.ackOutcome !== null,
   );
-  const workingRows = result.receipts.filter((receipt) => receiptIsWorking(receipt, now));
-  const stuckRows = result.receipts.filter(
+  const workingRows = agentReceipts.filter((receipt) => receiptIsWorking(receipt, now));
+  const stuckRows = agentReceipts.filter(
     (receipt) => !receiptIsWorking(receipt, now) && receiptIsStuck(receipt),
   );
-  const deliveredRows = result.receipts.filter((receipt) => receipt.deliveredAt !== null);
-  const deliveredOnlyRows = result.receipts.filter(
+  const deliveredRows = agentReceipts.filter((receipt) => receipt.deliveredAt !== null);
+  const deliveredOnlyRows = agentReceipts.filter(
     (receipt) =>
       receipt.ackedAt === null &&
       !receiptIsWorking(receipt, now) &&
       !receiptIsStuck(receipt) &&
       receipt.deliveredAt !== null,
   );
-  const sentRows = result.receipts.filter(
+  const sentRows = agentReceipts.filter(
     (receipt) =>
       receipt.ackedAt === null &&
       !receiptIsWorking(receipt, now) &&
@@ -1389,7 +1440,7 @@ export function browserDeliveryIndicator(
   );
 
   if (total === 1) {
-    const receipt = result.receipts[0]!;
+    const receipt = agentReceipts[0]!;
     if (receipt.ackedAt !== null && receipt.ackOutcome !== null) {
       if (receipt.ackOutcome === "queued") {
         return {
@@ -1580,7 +1631,27 @@ export function browserDeliveryIndicator(
   };
 }
 
-/** Bounds receipt reads while favoring visible and newly-arrived directed agent messages. */
+/**
+ * Keep a known human-directed row at Sent until the RPC returns the server's
+ * seen timestamp. Missing or failed reads may withhold Seen, never invent it.
+ */
+export function browserHumanDeliveryIndicator(
+  recipientUserId: string,
+  result: BrowserDeliveryReceiptResult | null,
+): BrowserDeliveryIndicator {
+  const human = result?.receipts.find((receipt) =>
+    isBrowserHumanDeliveryReceipt(receipt) &&
+    receipt.recipientUserId === recipientUserId
+  );
+  return browserDeliveryIndicator({
+    addressed: true,
+    receipts: [human && isBrowserHumanDeliveryReceipt(human)
+      ? human
+      : { recipientUserId, seenAt: null }],
+  });
+}
+
+/** Bounds receipt reads while favoring visible and newly-arrived directed messages. */
 export function browserDeliveryReceiptCandidates(
   signals: readonly Signal[],
   cache: ReadonlyMap<string, BrowserDeliveryReceiptCacheEntry>,
@@ -1589,12 +1660,14 @@ export function browserDeliveryReceiptCandidates(
   limit = BROWSER_RECEIPT_REQUESTS_PER_TICK,
 ): Signal[] {
   return signals
-    .filter((signal) => signal.toAgent !== null)
+    .filter((signal) => signal.toAgent !== null || signal.to !== null)
     .filter((signal) => {
       const cached = cache.get(signal.id);
       if (cached?.phase === "posting") return false;
       if (!cached) return true;
-      const indicator = browserDeliveryIndicator(cached.result, now);
+      const indicator = signal.to !== null && signal.toAgent === null
+        ? browserHumanDeliveryIndicator(signal.to, cached.result)
+        : browserDeliveryIndicator(cached.result, now);
       if (indicator.terminal) return false;
       const cadence = indicator.state === "unavailable"
         ? BROWSER_RECEIPT_UNAVAILABLE_REFRESH_MS
@@ -1638,14 +1711,7 @@ export function browserAcceptedDeliveryIndicator(
     return browserDeliveryIndicator({ addressed: false, receipts: [] });
   }
   if (recipient.kind === "person") {
-    return {
-      state: "unavailable",
-      outcome: null,
-      glyph: "✓",
-      label: "Posted",
-      detail: "Accepted by CommonSwarm for a person. Agent delivery receipts do not apply.",
-      terminal: true,
-    };
+    return browserHumanDeliveryIndicator(recipient.id, null);
   }
   return {
     state: "sent",
@@ -1711,6 +1777,29 @@ export async function postBrowserSignal(
     until: row.until === null || row.until === undefined ? null : String(row.until),
     createdAt: String(row.created_at ?? new Date().toISOString()),
   };
+}
+
+/** Best-effort command write for focused-viewport human receipt attestations. */
+export async function reportBrowserSignalsSeen(
+  session: Session,
+  commandId: string,
+  workspaceId: string,
+  signalIds: readonly string[],
+): Promise<void> {
+  if (signalIds.length < 1 || signalIds.length > HUMAN_SEEN_BATCH_MAX) {
+    throw new Error(
+      `A seen report must contain 1..${HUMAN_SEEN_BATCH_MAX} signal ids.`,
+    );
+  }
+  const { status, body } = await postCommand(
+    session,
+    commandId,
+    { kind: "signals_seen", signal_ids: [...signalIds] },
+    { workspace_id: workspaceId, stream: { kind: "workspace" } },
+  );
+  if (status !== 200 || body.status !== "accepted") {
+    throw new Error("CommonSwarm did not record the seen report.");
+  }
 }
 
 /**
@@ -1785,6 +1874,21 @@ export async function browserDeliveryReceipts(
         throw new Error("Delivery receipts returned a malformed row.");
       }
       const row = value as Record<string, unknown>;
+      if (Object.hasOwn(row, "recipient_user_id")) {
+        const recipientUserId = row.recipient_user_id;
+        const seenAt = row.seen_at;
+        if (
+          typeof recipientUserId !== "string" || recipientUserId.length === 0 ||
+          !(seenAt === null ||
+            (typeof seenAt === "string" && Number.isFinite(Date.parse(seenAt))))
+        ) {
+          throw new Error("Delivery receipts returned a malformed human row.");
+        }
+        return {
+          recipientUserId,
+          seenAt: seenAt as string | null,
+        };
+      }
       const outcome = row.ack_outcome;
       if (!(outcome === null || (typeof outcome === "string" && outcomes.has(outcome)))) {
         throw new Error("Delivery receipts returned a malformed outcome.");

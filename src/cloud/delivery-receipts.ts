@@ -32,10 +32,18 @@ export interface DeliveryReceipt {
   last_error_code: string | null;
 }
 
+export interface HumanDeliveryReceipt {
+  recipient_user_id: string;
+  /** Null means the member's browser has not attested focused viewport display. */
+  seen_at: string | null;
+}
+
+export type DeliveryReceiptRow = DeliveryReceipt | HumanDeliveryReceipt;
+
 export interface DeliveryReceiptResult {
   /** Null means this credential did not author a matching signal. */
   addressed: boolean | null;
-  receipts: DeliveryReceipt[];
+  receipts: DeliveryReceiptRow[];
 }
 
 export interface AgentDeliveryReceiptResult extends DeliveryReceiptResult {
@@ -103,8 +111,8 @@ function nonNegativeInteger(value: unknown, field: string): number {
   return value;
 }
 
-/** Parse the narrow receipt wire shape without accepting invented outcomes. */
-export function parseDeliveryReceipt(value: unknown): DeliveryReceipt {
+/** Parse the narrow agent-or-human receipt wire without inventing either kind. */
+export function parseDeliveryReceipt(value: unknown): DeliveryReceiptRow {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new DeliveryReceiptReadError(
       "protocol",
@@ -112,6 +120,12 @@ export function parseDeliveryReceipt(value: unknown): DeliveryReceipt {
     );
   }
   const row = value as Record<string, unknown>;
+  if (Object.hasOwn(row, "recipient_user_id")) {
+    return {
+      recipient_user_id: uuid(row.recipient_user_id, "recipient_user_id"),
+      seen_at: nullableTimestamp(row.seen_at, "seen_at"),
+    };
+  }
   const ackedAt = nullableTimestamp(row.acked_at, "acked_at");
   const ackOutcome = row.ack_outcome === null
     ? null
@@ -178,10 +192,13 @@ export function parseDeliveryReceiptResult(value: unknown): DeliveryReceiptResul
     );
   }
   const receipts = body.receipts.map(parseDeliveryReceipt);
-  if (body.addressed === false && receipts.length !== 0) {
+  if (
+    body.addressed === false &&
+    receipts.some((row) => "recipient_agent_principal_id" in row)
+  ) {
     throw new DeliveryReceiptReadError(
       "protocol",
-      "delivery receipt read returned recipients for a broadcast",
+      "delivery receipt read returned an agent recipient for a broadcast",
     );
   }
   if (body.addressed === true && receipts.length === 0) {
@@ -191,7 +208,11 @@ export function parseDeliveryReceiptResult(value: unknown): DeliveryReceiptResul
     );
   }
   const recipientIds = new Set(
-    receipts.map((row) => row.recipient_agent_principal_id),
+    receipts.map((row) =>
+      "recipient_agent_principal_id" in row
+        ? `agent:${row.recipient_agent_principal_id}`
+        : `human:${row.recipient_user_id}`
+    ),
   );
   if (recipientIds.size !== receipts.length) {
     throw new DeliveryReceiptReadError(

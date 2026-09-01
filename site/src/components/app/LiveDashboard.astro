@@ -850,6 +850,7 @@ import "../../styles/tokens.css";
     BROWSER_RECEIPT_REQUESTS_PER_TICK,
     browserAcceptedDeliveryIndicator,
     browserDeliveryIndicator,
+    browserHumanDeliveryIndicator,
     browserDeliveryReceiptCandidates,
     browserDeliveryReceipts,
     browserPostingDeliveryIndicator,
@@ -857,6 +858,7 @@ import "../../styles/tokens.css";
     parseBrowserSignalAttachments,
     prepareBrowserAttachments,
     postBrowserSignal,
+    reportBrowserSignalsSeen,
     uploadBrowserAttachment,
     revokeAgentToken,
     revokeWorkspaceInvitation,
@@ -913,6 +915,7 @@ import "../../styles/tokens.css";
     setSanitizedMessageMarkdown,
   } from "../../lib/message-markdown";
   import { SIGNAL_BODY_MAX } from "../../../../supabase/functions/_shared/signal-text";
+  import { HumanSeenReporter } from "../../lib/human-seen-reporter";
 
   interface Workspace extends CloseableWorkspace {}
 
@@ -1057,6 +1060,30 @@ import "../../styles/tokens.css";
     const attachmentObjectUrls = new Map<string, string>();
     const deliveryReceiptCache = new Map<string, BrowserDeliveryReceiptCacheEntry>();
     let deliveryReceiptRefreshOwner = "";
+    let humanSeenObserver: IntersectionObserver | null = null;
+
+    const humanSeenReporter = new HumanSeenReporter({
+      hasFocus: () => document.hasFocus(),
+      send: async (scope, signalIds) => {
+        const separator = scope.indexOf(":");
+        const userId = separator < 0 ? "" : scope.slice(0, separator);
+        const workspaceId = separator < 0 ? "" : scope.slice(separator + 1);
+        const activeSession = session;
+        if (!activeSession || activeSession.user.id !== userId || !workspaceId) return;
+        await reportBrowserSignalsSeen(
+          activeSession,
+          uuid(),
+          workspaceId,
+          signalIds,
+        );
+        if (workspaceId !== activeWorkspaceId) return;
+        for (const signalId of signalIds) {
+          const cached = deliveryReceiptCache.get(signalId);
+          if (cached) deliveryReceiptCache.set(signalId, { ...cached, checkedAt: 0 });
+        }
+        void refreshDeliveryReceipts(workspaceId, requestVersion);
+      },
+    });
 
     /* 25, not 50. The operator asked for 20-30 on first paint with older pages fetched on
      * scroll-up. The FETCH size stays one larger so `hasMore` is known without a second query. */
@@ -2949,22 +2976,12 @@ import "../../styles/tokens.css";
         : signal.to !== null
         ? { kind: "person", id: signal.to }
         : { kind: "everyone" };
-      /* The ledger tracks agent delivery, not person-to-person viewing. Its addressed=false
-       * result is authoritative for broadcasts, but a direct person target is visible on the
-       * signal itself and must not be relabelled as a broadcast. */
       const indicator: BrowserDeliveryIndicator = cached?.phase === "posting"
         ? browserPostingDeliveryIndicator()
         : cached?.phase === "accepted"
         ? browserAcceptedDeliveryIndicator(recipient)
         : signal.to !== null && signal.toAgent === null
-        ? {
-            state: "unavailable",
-            outcome: null,
-            glyph: "?",
-            label: "Receipt unavailable",
-            detail: "This message addresses a person. Agent delivery receipts do not apply.",
-            terminal: true,
-          }
+        ? browserHumanDeliveryIndicator(signal.to, cached?.result ?? null)
         : signal.toAgent === null
         ? browserDeliveryIndicator({ addressed: false, receipts: [] })
         : browserDeliveryIndicator(cached?.result ?? null);
@@ -3004,6 +3021,30 @@ import "../../styles/tokens.css";
      * stays under your eye. */
     const feedScroller = (): HTMLElement | null =>
       one<HTMLElement>(".dashboard__feed-view");
+
+    const observeHumanSeenRows = (): void => {
+      humanSeenReporter.resetVisible();
+      humanSeenObserver?.disconnect();
+      if (sampleMode || !session || !("IntersectionObserver" in window)) return;
+      if (humanSeenObserver === null) {
+        humanSeenObserver = new IntersectionObserver((entries) => {
+          humanSeenReporter.intersections(entries.map((entry) => {
+            const row = entry.target as HTMLElement;
+            return {
+              scope: row.dataset.humanSeenScope ?? "",
+              signalId: row.dataset.humanSeenSignalId ?? "",
+              isIntersecting: entry.isIntersecting && entry.intersectionRatio > 0,
+            };
+          }).filter((entry) => entry.scope !== "" && entry.signalId !== ""));
+        }, {
+          root: feedScroller(),
+          threshold: 0.01,
+        });
+      }
+      for (const row of all<HTMLElement>("[data-human-seen-signal-id]")) {
+        humanSeenObserver.observe(row);
+      }
+    };
 
     /* Within this many px of the bottom counts as "at the bottom". Not zero: sub-pixel layout and
      * a mid-scroll render both leave a small remainder, and demanding exact equality means the
@@ -3160,6 +3201,8 @@ import "../../styles/tokens.css";
       if (!list) return;
       list.replaceChildren();
       if (signals.length === 0) {
+        humanSeenReporter.resetVisible();
+        humanSeenObserver?.disconnect();
         const emptyTitle = one<HTMLElement>("[data-feed-empty-title]");
         if (emptyTitle) {
           emptyTitle.textContent = agents.length === 1
@@ -3199,6 +3242,14 @@ import "../../styles/tokens.css";
         const row = document.createElement("li");
         row.className = "dashboard__message";
         row.dataset.signalId = signal.id;
+        if (
+          !sampleMode && session && activeWorkspaceId &&
+          signal.toAgent === null &&
+          (signal.to === null || signal.to === session.user.id)
+        ) {
+          row.dataset.humanSeenScope = `${session.user.id}:${activeWorkspaceId}`;
+          row.dataset.humanSeenSignalId = signal.id;
+        }
         if ((feedWasEmpty || previousSignalIds.size > 0) && !previousSignalIds.has(signal.id)) {
           row.classList.add("dashboard__message--fresh");
         }
@@ -3355,6 +3406,7 @@ import "../../styles/tokens.css";
       previousSignalIds = new Set(signals.map((signal) => signal.id));
       feedWasEmpty = false;
       showChannelView("feed");
+      observeHumanSeenRows();
       /* Two cases, and the anchoring MUST live here rather than around the load-older click.
        * The click handler is `async` and returns at its first `await`, so measuring around
        * `button.click()` reads the height before a single row has been added — the anchor was a
@@ -3661,6 +3713,8 @@ import "../../styles/tokens.css";
       signals = [];
       deliveryReceiptCache.clear();
       deliveryReceiptRefreshOwner = "";
+      humanSeenReporter.resetVisible();
+      humanSeenObserver?.disconnect();
       for (const url of attachmentObjectUrls.values()) URL.revokeObjectURL(url);
       attachmentObjectUrls.clear();
       files = [];
@@ -3820,6 +3874,7 @@ import "../../styles/tokens.css";
     };
 
     document.addEventListener("visibilitychange", () => {
+      humanSeenReporter.visibilityChange(document.visibilityState === "visible");
       if (document.visibilityState !== "visible") {
         window.clearInterval(liveFeedTimer);
         liveFeedTimer = undefined;
@@ -3833,6 +3888,8 @@ import "../../styles/tokens.css";
       void refreshPendingAccess(activeWorkspaceId, requestVersion);
       syncPendingPoll();
     });
+
+    window.addEventListener("focus", () => humanSeenReporter.focus());
 
     const renderWorkspaceSettingsPanel = (workspace: Workspace): void => {
       const root = one<HTMLElement>("[data-workspace-details-content]");
@@ -8815,6 +8872,7 @@ import "../../styles/tokens.css";
     text-align: center;
   }
 
+  .dashboard__message-receipt[data-receipt-state="seen"],
   .dashboard__message-receipt[data-receipt-state="delivered"],
   .dashboard__message-receipt[data-receipt-state="working"],
   .dashboard__message-receipt[data-receipt-state="done"] {

@@ -14,6 +14,7 @@ import {
   readAgentDeliveryReceipts,
   type DeliveryAckOutcome,
   type DeliveryReceipt,
+  type HumanDeliveryReceipt,
 } from "../../src/cloud/delivery-receipts.js";
 import { SignalReadTimeoutError } from "../../src/cloud/signals.js";
 
@@ -39,6 +40,15 @@ function receipt(overrides: Partial<DeliveryReceipt> = {}): DeliveryReceipt {
 }
 
 function report(row: DeliveryReceipt): SignalReceiptReport {
+  return {
+    workspaceId: WORKSPACE,
+    signalId: SIGNAL,
+    addressed: true,
+    receipts: [row],
+  };
+}
+
+function humanReport(row: HumanDeliveryReceipt): SignalReceiptReport {
   return {
     workspaceId: WORKSPACE,
     signalId: SIGNAL,
@@ -156,6 +166,46 @@ test("a broadcast names the no-recipient fact and never invents a failed or pend
   );
   assert.match(rendered, /cswarm ask/);
   assert.doesNotMatch(rendered, /pending|failed|not yet delivered|working/i);
+});
+
+test("a human receipt states the browser proxy without claiming comprehension", () => {
+  const notSeen = renderSignalReceiptReport(humanReport({
+    recipient_user_id: AGENT,
+    seen_at: null,
+  }), NOW);
+  assert.equal(
+    notSeen,
+    "Not seen yet — the member's browser reports seen state when the message is viewed.",
+  );
+  assert.doesNotMatch(notSeen, /Receipt unavailable|read|understood/i);
+
+  const seen = renderSignalReceiptReport(humanReport({
+    recipient_user_id: AGENT,
+    seen_at: "2026-08-28T12:25:00.000Z",
+  }), NOW);
+  assert.match(seen, new RegExp(`Seen by ${AGENT} at 2026-08-28T12:25:00.000Z\\.`));
+  assert.match(seen, /browser proxy.*row was in view.*document had focus/i);
+  assert.doesNotMatch(seen, /read|understood|acknowledged/i);
+});
+
+test("human JSON distinguishes not_seen from seen", () => {
+  const unseen = signalReceiptJsonPayload(humanReport({
+    recipient_user_id: AGENT,
+    seen_at: null,
+  }), NOW);
+  const seen = signalReceiptJsonPayload(humanReport({
+    recipient_user_id: AGENT,
+    seen_at: "2026-08-28T12:25:00.000Z",
+  }), NOW);
+  assert.deepEqual((unseen.receipts as unknown[])[0], {
+    recipient_user_id: AGENT,
+    state: "not_seen",
+    seen_at: null,
+  });
+  assert.equal(
+    ((seen.receipts as Array<Record<string, unknown>>)[0]!).state,
+    "seen",
+  );
 });
 
 test("--json payload carries the machine state, outcome, recipient, and ledger fields", () => {
@@ -361,6 +411,32 @@ test("the receipt CLI uses the human wording by default", async () => {
   assert.match(result.stdout, /cswarm listen status/);
   assert.match(result.stdout, /cswarm receipt/);
   assert.doesNotMatch(result.stdout, /^\s*\{/);
+});
+
+test("the receipt CLI renders a member target as not seen instead of unavailable", async () => {
+  const result = await runCliAgainst(200, wireReport([{
+    recipient_user_id: AGENT,
+    seen_at: null,
+  }]), false);
+
+  assert.equal(result.code, 0, result.stderr);
+  assert.equal(result.stderr, "");
+  assert.match(result.stdout, /Not seen yet/);
+  assert.match(result.stdout, /member's browser reports seen state when the message is viewed/);
+  assert.doesNotMatch(result.stdout, /Receipt unavailable|read|understood/i);
+});
+
+test("the receipt CLI renders the focused-viewport timestamp as Seen", async () => {
+  const result = await runCliAgainst(200, wireReport([{
+    recipient_user_id: AGENT,
+    seen_at: "2026-08-28T12:25:00.000Z",
+  }]), false);
+
+  assert.equal(result.code, 0, result.stderr);
+  assert.equal(result.stderr, "");
+  assert.match(result.stdout, new RegExp(`Seen by ${AGENT}`));
+  assert.match(result.stdout, /row was in view while the document had focus/);
+  assert.doesNotMatch(result.stdout, /read|understood|acknowledged/i);
 });
 
 test("a missing receipt endpoint shows no fabricated state", async () => {

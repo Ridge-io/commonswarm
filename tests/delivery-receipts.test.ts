@@ -6,6 +6,8 @@ import {
   parseDeliveryReceiptResult,
   readAgentDeliveryReceipts,
   type DeliveryAckOutcome,
+  type DeliveryReceipt,
+  type DeliveryReceiptRow,
 } from "../src/cloud/delivery-receipts.js";
 import { cloudTarget } from "../src/cloud/config.js";
 
@@ -18,7 +20,7 @@ const DELIVERED = "2026-08-28T12:00:01.000Z";
 const LEASED = "2026-08-28T12:10:00.000Z";
 const ACKED = "2026-08-28T12:00:02.000Z";
 const RECEIPT_MIGRATION =
-  "supabase/migrations/20260829000001_member_signal_delivery_receipts.sql";
+  "supabase/migrations/20260901000020_signal_human_receipts.sql";
 
 function receipt(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -41,6 +43,11 @@ function response(body: unknown): typeof fetch {
       status: 200,
       headers: { "content-type": "application/json" },
     });
+}
+
+function agentReceipt(row: DeliveryReceiptRow): DeliveryReceipt {
+  assert.ok("recipient_agent_principal_id" in row, "expected an agent receipt row");
+  return row;
 }
 
 test("sender reads one minimal receipt per recipient through the agent read surface", async () => {
@@ -66,7 +73,7 @@ test("sender reads one minimal receipt per recipient through the agent read surf
   });
   assert.equal(result.addressed, true);
   assert.deepEqual(
-    result.receipts.map((row) => row.recipient_agent_principal_id),
+    result.receipts.map((row) => agentReceipt(row).recipient_agent_principal_id),
     [RECIPIENT, RECIPIENT_2],
   );
 });
@@ -90,7 +97,34 @@ test("broadcast is empty and distinguishable from an addressed pending delivery"
   );
   assert.deepEqual(broadcast, { addressed: false, receipts: [] });
   assert.equal(pending.addressed, true);
-  assert.equal(deliveryReceiptState(pending.receipts[0]!), "enqueued");
+  assert.equal(deliveryReceiptState(agentReceipt(pending.receipts[0]!)), "enqueued");
+});
+
+test("human receipt rows preserve not-seen and focused-viewport seen timestamps", () => {
+  const notSeen = parseDeliveryReceiptResult({
+    addressed: true,
+    receipts: [{ recipient_user_id: RECIPIENT, seen_at: null }],
+  });
+  assert.deepEqual(notSeen.receipts, [{
+    recipient_user_id: RECIPIENT,
+    seen_at: null,
+  }]);
+
+  const seen = parseDeliveryReceiptResult({
+    addressed: true,
+    receipts: [{ recipient_user_id: RECIPIENT, seen_at: ACKED }],
+  });
+  assert.deepEqual(seen.receipts, [{
+    recipient_user_id: RECIPIENT,
+    seen_at: ACKED,
+  }]);
+
+  const broadcastSeen = parseDeliveryReceiptResult({
+    addressed: false,
+    receipts: [{ recipient_user_id: RECIPIENT, seen_at: ACKED }],
+  });
+  assert.equal(broadcastSeen.addressed, false);
+  assert.equal(broadcastSeen.receipts.length, 1);
 });
 
 test("same-workspace different sender and another-workspace caller see no receipts", () => {
@@ -107,25 +141,25 @@ test("every ledger state stays distinct, including queued, observed, and replied
     "failed_terminal",
   ];
   assert.equal(
-    deliveryReceiptState(parseDeliveryReceiptResult({
+    deliveryReceiptState(agentReceipt(parseDeliveryReceiptResult({
       addressed: true,
       receipts: [receipt()],
-    }).receipts[0]!),
+    }).receipts[0]!)),
     "enqueued",
   );
   assert.equal(
-    deliveryReceiptState(parseDeliveryReceiptResult({
+    deliveryReceiptState(agentReceipt(parseDeliveryReceiptResult({
       addressed: true,
       receipts: [receipt({ delivered_at: DELIVERED })],
-    }).receipts[0]!),
+    }).receipts[0]!)),
     "delivered",
   );
   assert.equal(
     deliveryReceiptState(
-      parseDeliveryReceiptResult({
+      agentReceipt(parseDeliveryReceiptResult({
         addressed: true,
         receipts: [receipt({ delivered_at: DELIVERED, leased_until: LEASED })],
-      }).receipts[0]!,
+      }).receipts[0]!),
       Date.parse(DELIVERED),
     ),
     "leased",
@@ -139,7 +173,7 @@ test("every ledger state stays distinct, including queued, observed, and replied
         ack_outcome: outcome,
       })],
     });
-    assert.equal(deliveryReceiptState(parsed.receipts[0]!), outcome);
+    assert.equal(deliveryReceiptState(agentReceipt(parsed.receipts[0]!)), outcome);
   }
 });
 
@@ -195,10 +229,39 @@ test("migration exposes only the receipt fields and grants only read callers", a
     "attempt_count",
     "lease_expiry_count",
     "last_error_code",
+    "recipient_user_id",
+    "seen_at",
   ]) {
     assert.match(migration, new RegExp(`'${field}'`));
   }
   assert.doesNotMatch(migration, /'lease_id'|'leased_by'|'updated_at'|'last_lease_id'/);
+});
+
+test("human receipt schema and command pin first-seen, tenant FKs, and the batch cap", async () => {
+  const migration = await readFile(RECEIPT_MIGRATION, "utf8");
+  const command = await readFile("supabase/functions/command/human-receipts.ts", "utf8");
+  const edge = await readFile("supabase/functions/command/index.ts", "utf8");
+
+  assert.match(migration, /CREATE TABLE swarm\.signal_human_receipts/);
+  assert.match(migration, /PRIMARY KEY \(signal_id, user_id\)/);
+  assert.match(
+    migration,
+    /FOREIGN KEY \(signal_id, workspace_id\)\s+REFERENCES swarm\.signals \(id, workspace_id\)/,
+  );
+  assert.match(
+    migration,
+    /FOREIGN KEY \(workspace_id, user_id\)\s+REFERENCES swarm\.memberships \(workspace_id, user_id\)/,
+  );
+  assert.match(migration, /FORCE ROW LEVEL SECURITY/);
+  assert.match(migration, /BEFORE UPDATE OR DELETE/);
+  assert.match(migration, /FOR SELECT TO swarm_command/);
+  assert.doesNotMatch(migration, /GRANT (?:UPDATE|DELETE).*swarm_command/);
+  assert.match(command, /ON CONFLICT \(signal_id, user_id\) DO NOTHING/);
+  assert.match(command, /SIGNALS_SEEN_MAX_IDS = 50/);
+  assert.match(command, /signal\.to_user_id === null|signal\.to_user_id !== null/);
+  assert.match(edge, /signals_seen_requires_human_credential/);
+  assert.match(edge, /signal_ids\.length <= SIGNALS_SEEN_MAX_IDS/);
+  assert.doesNotMatch(migration, /auth\.uid\(\)/);
 });
 
 test("agent edge reaches the definer before installing human JWT claims", async () => {

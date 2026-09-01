@@ -10,6 +10,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { test } from "node:test";
 import postgres from "postgres";
 import { ackAgentDelivery } from "../../supabase/functions/command/durable-delivery.js";
+import { markHumanSignalsSeen } from "../../supabase/functions/command/human-receipts.js";
 
 interface LocalEnvironment {
   DB_URL: string;
@@ -17,7 +18,11 @@ interface LocalEnvironment {
 
 interface ReceiptResult {
   addressed: boolean;
-  receipts: Array<{ recipient_agent_principal_id: string }>;
+  receipts: Array<{
+    recipient_agent_principal_id?: string;
+    recipient_user_id?: string;
+    seen_at?: string | null;
+  }>;
 }
 
 const ROLLBACK = new Error("receipt fixture rollback");
@@ -261,6 +266,291 @@ test("delivery receipt authorization matrix holds on real Postgres", async () =>
         `;
         await tx.unsafe("RESET ROLE");
         assert.equal(nonMemberRow?.result, null);
+
+        throw ROLLBACK;
+      }),
+      (error: unknown) => error === ROLLBACK,
+    );
+  } finally {
+    await sql.end();
+  }
+});
+
+test("human seen upsert keeps first time and receipt reads keep the authorization matrix", async () => {
+  const sql = postgres(databaseUrl(), { max: 1 });
+  const userId = randomUUID();
+  const otherMemberId = randomUUID();
+  const revokedMemberId = randomUUID();
+  const nonMemberId = randomUUID();
+  const workspaceId = randomUUID();
+  const otherWorkspaceId = randomUUID();
+  const deviceId = randomUUID();
+  const sender = randomUUID();
+  const otherSender = randomUUID();
+  const agentRecipient = randomUUID();
+  const runId = randomUUID();
+  const otherRunId = randomUUID();
+  const token = randomBytes(32);
+  const otherToken = randomBytes(32);
+  const directSignal = randomUUID();
+  const broadcastSignal = randomUUID();
+  const otherHumanSignal = randomUUID();
+  const agentSignal = randomUUID();
+  const revokedSignal = randomUUID();
+  const foreignSignal = randomUUID();
+  const unknownSignal = randomUUID();
+
+  try {
+    await assert.rejects(
+      sql.begin(async (tx) => {
+        for (const id of [userId, otherMemberId, revokedMemberId, nonMemberId]) {
+          await tx`
+            INSERT INTO auth.users (
+              id, aud, role, email, encrypted_password, email_confirmed_at,
+              raw_app_meta_data, raw_user_meta_data, created_at, updated_at
+            ) VALUES (
+              ${id}::uuid, 'authenticated', 'authenticated',
+              ${`human-seen-${id}@example.test`}, '', statement_timestamp(),
+              '{}'::jsonb, '{}'::jsonb, statement_timestamp(), statement_timestamp()
+            )
+          `;
+        }
+        await tx`
+          INSERT INTO swarm.users (user_id, display_name)
+          VALUES
+            (${userId}::uuid, 'Seen recipient'),
+            (${otherMemberId}::uuid, 'Other member'),
+            (${revokedMemberId}::uuid, 'Revoked member'),
+            (${nonMemberId}::uuid, 'Non-member')
+        `;
+        await tx`
+          INSERT INTO swarm.devices (device_id, user_id, label)
+          VALUES (${deviceId}::uuid, ${userId}::uuid, 'human-seen-test')
+        `;
+        await tx`
+          INSERT INTO swarm.workspaces (workspace_id, name, created_by)
+          VALUES
+            (${workspaceId}::uuid, 'Human receipt workspace', ${userId}::uuid),
+            (${otherWorkspaceId}::uuid, 'Other receipt workspace', ${userId}::uuid)
+        `;
+        await tx`
+          INSERT INTO swarm.memberships (
+            workspace_id, user_id, role, revoked_at
+          ) VALUES
+            (${workspaceId}::uuid, ${userId}::uuid, 'owner', NULL),
+            (${workspaceId}::uuid, ${otherMemberId}::uuid, 'member', NULL),
+            (${workspaceId}::uuid, ${revokedMemberId}::uuid, 'member', statement_timestamp()),
+            (${otherWorkspaceId}::uuid, ${userId}::uuid, 'owner', NULL)
+        `;
+        await tx`
+          INSERT INTO swarm.agent_principals (
+            principal_id, workspace_id, owner_user_id, name
+          ) VALUES
+            (${sender}::uuid, ${workspaceId}::uuid, ${userId}::uuid, 'human-sender'),
+            (${otherSender}::uuid, ${workspaceId}::uuid, ${userId}::uuid, 'other-sender'),
+            (${agentRecipient}::uuid, ${workspaceId}::uuid, ${userId}::uuid, 'agent-recipient')
+        `;
+        await tx`
+          INSERT INTO swarm.agent_runs (run_id, principal_id, device_id)
+          VALUES
+            (${runId}::uuid, ${sender}::uuid, ${deviceId}::uuid),
+            (${otherRunId}::uuid, ${otherSender}::uuid, ${deviceId}::uuid)
+        `;
+        await tx`
+          INSERT INTO swarm.agent_tokens (
+            token_id, principal_id, run_id, scopes, token_hash,
+            expires_at, lineage_id
+          ) VALUES
+            (
+              ${randomUUID()}::uuid, ${sender}::uuid, ${runId}::uuid,
+              '["post_signal"]'::jsonb, ${token},
+              statement_timestamp() + interval '1 hour', ${randomUUID()}::uuid
+            ),
+            (
+              ${randomUUID()}::uuid, ${otherSender}::uuid, ${otherRunId}::uuid,
+              '["post_signal"]'::jsonb, ${otherToken},
+              statement_timestamp() + interval '1 hour', ${randomUUID()}::uuid
+            )
+        `;
+        await tx`
+          INSERT INTO swarm.signals (
+            id, workspace_id, from_principal, from_kind,
+            to_user_id, to_agent_principal_id, kind, body, until
+          ) VALUES
+            (
+              ${directSignal}::uuid, ${workspaceId}::uuid, ${sender}::uuid, 'agent',
+              ${userId}::uuid, NULL, 'ask', 'direct to recipient',
+              statement_timestamp() + interval '1 hour'
+            ),
+            (
+              ${broadcastSignal}::uuid, ${workspaceId}::uuid, ${sender}::uuid, 'agent',
+              NULL, NULL, 'note', 'broadcast to members',
+              statement_timestamp() + interval '1 hour'
+            ),
+            (
+              ${otherHumanSignal}::uuid, ${workspaceId}::uuid, ${sender}::uuid, 'agent',
+              ${otherMemberId}::uuid, NULL, 'ask', 'direct to another member',
+              statement_timestamp() + interval '1 hour'
+            ),
+            (
+              ${agentSignal}::uuid, ${workspaceId}::uuid, ${sender}::uuid, 'agent',
+              NULL, ${agentRecipient}::uuid, 'ask', 'direct to an agent',
+              statement_timestamp() + interval '1 hour'
+            ),
+            (
+              ${revokedSignal}::uuid, ${workspaceId}::uuid, ${sender}::uuid, 'agent',
+              ${revokedMemberId}::uuid, NULL, 'ask', 'direct to revoked member',
+              statement_timestamp() + interval '1 hour'
+            ),
+            (
+              ${foreignSignal}::uuid, ${otherWorkspaceId}::uuid, ${userId}::uuid, 'user',
+              ${userId}::uuid, NULL, 'note', 'foreign workspace row',
+              statement_timestamp() + interval '1 hour'
+            )
+        `;
+
+        await tx`
+          SELECT set_config(
+            'request.jwt.claims',
+            ${JSON.stringify({ sub: userId, role: "authenticated" })},
+            true
+          )
+        `;
+        await tx.unsafe("SET LOCAL ROLE authenticated");
+        const [beforeSeen] = await tx<{ result: ReceiptResult }[]>`
+          SELECT swarm_read.signal_delivery_receipts(
+            ${workspaceId}::uuid, ${directSignal}::uuid, NULL
+          ) AS result
+        `;
+        await tx.unsafe("RESET ROLE");
+        assert.deepEqual(beforeSeen?.result.receipts, [{
+          recipient_user_id: userId,
+          seen_at: null,
+        }]);
+
+        await tx.unsafe("SET LOCAL ROLE swarm_command");
+        const first = await markHumanSignalsSeen(tx, {
+          workspaceId,
+          userId,
+          signalIds: [directSignal, broadcastSignal, foreignSignal, unknownSignal],
+        });
+        await tx.unsafe("RESET ROLE");
+        assert.deepEqual(first, { status: "accepted", matched: 2 });
+        const firstRows = await tx<{
+          signal_id: string;
+          first_seen_at: Date;
+        }[]>`
+          SELECT signal_id, first_seen_at
+          FROM swarm.signal_human_receipts
+          WHERE workspace_id = ${workspaceId}::uuid
+            AND user_id = ${userId}::uuid
+          ORDER BY signal_id
+        `;
+        assert.equal(firstRows.length, 2);
+
+        await tx`SELECT pg_sleep(0.01)`;
+        await tx.unsafe("SET LOCAL ROLE swarm_command");
+        const repeated = await markHumanSignalsSeen(tx, {
+          workspaceId,
+          userId,
+          signalIds: [broadcastSignal, directSignal],
+        });
+        await tx.unsafe("RESET ROLE");
+        assert.deepEqual(repeated, { status: "accepted", matched: 2 });
+        const repeatedRows = await tx<{
+          signal_id: string;
+          first_seen_at: Date;
+        }[]>`
+          SELECT signal_id, first_seen_at
+          FROM swarm.signal_human_receipts
+          WHERE workspace_id = ${workspaceId}::uuid
+            AND user_id = ${userId}::uuid
+          ORDER BY signal_id
+        `;
+        assert.deepEqual(
+          repeatedRows.map((row) => [row.signal_id, row.first_seen_at.toISOString()]),
+          firstRows.map((row) => [row.signal_id, row.first_seen_at.toISOString()]),
+          "idempotent upsert must keep the first server timestamp",
+        );
+
+        await tx.unsafe("SET LOCAL ROLE swarm_command");
+        const notRecipient = await markHumanSignalsSeen(tx, {
+          workspaceId,
+          userId,
+          signalIds: [otherHumanSignal],
+        });
+        const agentTarget = await markHumanSignalsSeen(tx, {
+          workspaceId,
+          userId,
+          signalIds: [agentSignal],
+        });
+        const nonMember = await markHumanSignalsSeen(tx, {
+          workspaceId,
+          userId: nonMemberId,
+          signalIds: [broadcastSignal],
+        });
+        await tx.unsafe("RESET ROLE");
+        assert.deepEqual(notRecipient, { status: "forbidden", matched: 0 });
+        assert.deepEqual(agentTarget, { status: "forbidden", matched: 0 });
+        assert.deepEqual(nonMember, { status: "forbidden", matched: 0 });
+
+        await tx.unsafe("SET LOCAL ROLE swarm_command");
+        await assert.rejects(
+          tx.savepoint(async (sp) => {
+            await sp`
+              INSERT INTO swarm.signal_human_receipts (
+                workspace_id, signal_id, user_id
+              ) VALUES (
+                ${workspaceId}::uuid, ${revokedSignal}::uuid, ${revokedMemberId}::uuid
+              )
+            `;
+          }),
+          /row-level security policy/,
+        );
+        await tx.unsafe("RESET ROLE");
+
+        await tx`
+          SELECT set_config(
+            'request.jwt.claims',
+            ${JSON.stringify({ sub: userId, role: "authenticated" })},
+            true
+          )
+        `;
+        await tx.unsafe("SET LOCAL ROLE authenticated");
+        const [directRead] = await tx<{ result: ReceiptResult }[]>`
+          SELECT swarm_read.signal_delivery_receipts(
+            ${workspaceId}::uuid, ${directSignal}::uuid, NULL
+          ) AS result
+        `;
+        const [broadcastRead] = await tx<{ result: ReceiptResult }[]>`
+          SELECT swarm_read.signal_delivery_receipts(
+            ${workspaceId}::uuid, ${broadcastSignal}::uuid, NULL
+          ) AS result
+        `;
+        await tx.unsafe("RESET ROLE");
+        assert.equal(directRead?.result.addressed, true);
+        assert.equal(directRead?.result.receipts[0]?.recipient_user_id, userId);
+        assert.ok(directRead?.result.receipts[0]?.seen_at);
+        assert.deepEqual(broadcastRead?.result.addressed, false);
+        assert.equal(broadcastRead?.result.receipts[0]?.recipient_user_id, userId);
+        assert.ok(broadcastRead?.result.receipts[0]?.seen_at);
+
+        await tx`SELECT set_config('request.jwt.claims', '', true)`;
+        await tx.unsafe("SET LOCAL ROLE swarm_read");
+        const [agentAuthorRead] = await tx<{ result: ReceiptResult }[]>`
+          SELECT swarm_read.signal_delivery_receipts(
+            ${workspaceId}::uuid, ${directSignal}::uuid, ${token}
+          ) AS result
+        `;
+        const [agentCrossSenderRead] = await tx<{ result: unknown }[]>`
+          SELECT swarm_read.signal_delivery_receipts(
+            ${workspaceId}::uuid, ${directSignal}::uuid, ${otherToken}
+          ) AS result
+        `;
+        await tx.unsafe("RESET ROLE");
+        assert.equal(agentAuthorRead?.result.receipts[0]?.recipient_user_id, userId);
+        assert.ok(agentAuthorRead?.result.receipts[0]?.seen_at);
+        assert.equal(agentCrossSenderRead?.result, null);
 
         throw ROLLBACK;
       }),

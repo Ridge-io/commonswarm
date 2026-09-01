@@ -72,6 +72,12 @@ import {
   SIGNAL_ATTACHMENT_MAX,
   type SignalAttachmentRef,
 } from "./signal-attachments.ts";
+import {
+  markHumanSignalsSeen,
+  SIGNALS_SEEN_KIND,
+  SIGNALS_SEEN_MAX_IDS,
+  type SignalsSeenCommand,
+} from "./human-receipts.ts";
 // Supabase's edge graph cannot resolve the NodeNext `.js` specifiers in the
 // frozen TypeScript core. This checked-in bundle is regenerated directly from
 // src/protocol/index.ts by build:command-core; it is not a second implementation.
@@ -208,6 +214,7 @@ type ValidatedCommand =
   | Command
   | ConnectCommand
   | SignalCommand
+  | SignalsSeenCommand
   | DeliveryCommand
   | FileCommand;
 
@@ -784,6 +791,7 @@ const COMMAND_KINDS = [
   "declare_agent_model",
   "submit_feedback",
   "post_signal",
+  SIGNALS_SEEN_KIND,
   CLAIM_AGENT_INBOX_KIND,
   ACK_AGENT_DELIVERY_KIND,
   ...FILE_COMMAND_KINDS,
@@ -828,6 +836,7 @@ const WORKSPACE_COMMAND_KINDS = [
   "declare_agent_model",
   "submit_feedback",
   RENEW_AGENT_TOKEN_KIND,
+  SIGNALS_SEEN_KIND,
   CLAIM_AGENT_INBOX_KIND,
   ACK_AGENT_DELIVERY_KIND,
   ...FILE_COMMAND_KINDS,
@@ -1482,6 +1491,30 @@ function validateCommand(
         ok: false,
         status: 400,
         reason: "ack_agent_delivery fields are malformed",
+      };
+  }
+
+  if (cmd.kind === SIGNALS_SEEN_KIND) {
+    const valid = exactKeys(cmd, ["kind", "signal_ids"]) &&
+      Array.isArray(cmd.signal_ids) &&
+      cmd.signal_ids.length >= 1 &&
+      cmd.signal_ids.length <= SIGNALS_SEEN_MAX_IDS &&
+      cmd.signal_ids.every((signalId) =>
+        typeof signalId === "string" && UUID_RE.test(signalId)
+      );
+    return valid
+      ? {
+        ok: true,
+        command: {
+          kind: SIGNALS_SEEN_KIND,
+          signal_ids: [...new Set(cmd.signal_ids as string[])]
+            .map((signalId) => signalId.toLowerCase()),
+        },
+      }
+      : {
+        ok: false,
+        status: 400,
+        reason: `signals_seen accepts 1..${SIGNALS_SEEN_MAX_IDS} signal ids`,
       };
   }
 
@@ -6017,6 +6050,7 @@ async function handleTransaction(
 
     const isDeliveryCommand =
       kind === CLAIM_AGENT_INBOX_KIND || kind === ACK_AGENT_DELIVERY_KIND;
+    const isHumanSeenCommand = kind === SIGNALS_SEEN_KIND;
 
     if (Object.hasOwn(body, "from")) {
       await insertAudit(tx, {
@@ -6222,6 +6256,18 @@ async function handleTransaction(
       });
       return { status: 403, body: { error: "delivery_unavailable" } };
     }
+    if (isHumanSeenCommand && auth.credentialKind !== "user") {
+      await insertAudit(tx, {
+        auth,
+        commandKind: kind,
+        workspaceId: route.workspaceId,
+        streamId: route.streamId,
+        outcome: "authz",
+        reason: "signals_seen_requires_human_credential",
+        detail: ignoredIdentity,
+      });
+      return { status: 403, body: { error: "forbidden" } };
+    }
     /* ★R9.2 (file artifacts): every FILE_COMMAND_KINDS kind is agent-allowed by
      * class, exempted from the per-scope gate the way delivery commands are —
      * existing minted tokens cannot carry new scopes, and files are
@@ -6238,6 +6284,7 @@ async function handleTransaction(
       !isModelDeclare &&
       !isFeedback &&
       !isDeliveryCommand &&
+      !isHumanSeenCommand &&
       !isFileCommand &&
       (
         (CONNECT_COMMAND_KINDS as readonly string[]).includes(
@@ -6442,6 +6489,76 @@ async function handleTransaction(
           },
         };
       }
+    }
+
+    if (command.kind === SIGNALS_SEEN_KIND) {
+      const userId = auth.actor.user;
+      if (userId === null) {
+        return { status: 403, body: { error: "forbidden" } };
+      }
+      const seen = await markHumanSignalsSeen(tx, {
+        workspaceId: route.workspaceId,
+        userId,
+        signalIds: command.signal_ids,
+      });
+      if (seen.status === "forbidden") {
+        await insertAudit(tx, {
+          auth,
+          commandKind: kind,
+          workspaceId: route.workspaceId,
+          streamId: route.streamId,
+          outcome: "authz",
+          reason: "signal_not_eligible_for_human_receipt",
+          detail: ignoredIdentity,
+          hash,
+        });
+        return { status: 403, body: { error: "forbidden" } };
+      }
+
+      const response: StoredResponse = { ok: true, event_ids: [] };
+      const inserted = await tx<{ command_id: string }[]>`
+        INSERT INTO swarm.idempotency_keys (
+          principal_kind, principal_id, command_id,
+          workspace_id, stream_id, request_hash, response
+        ) VALUES (
+          ${auth.credentialKind},
+          ${canonicalPrincipal(auth.actor)},
+          ${commandId},
+          ${route.workspaceId}::uuid,
+          ${route.streamId}::uuid,
+          ${hash},
+          ${tx.json(response as unknown as postgres.JSONValue)}::jsonb
+        )
+        ON CONFLICT (principal_kind, principal_id, command_id) DO NOTHING
+        RETURNING command_id
+      `;
+      if (inserted.length === 0) {
+        throw new LedgerRace(
+          auth,
+          commandId,
+          kind,
+          route.workspaceId,
+          route.streamId,
+          hash,
+        );
+      }
+      await insertAudit(tx, {
+        auth,
+        commandKind: kind,
+        workspaceId: route.workspaceId,
+        streamId: route.streamId,
+        outcome: "accepted",
+        detail: ignoredIdentity,
+        hash,
+      });
+      return {
+        status: 200,
+        body: {
+          status: "accepted",
+          ...response,
+          min_client_version: minClientVersion,
+        },
+      };
     }
 
     if (command.kind === "post_signal") {
