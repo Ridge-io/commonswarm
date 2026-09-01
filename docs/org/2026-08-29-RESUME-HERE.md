@@ -637,3 +637,12 @@ overlaps it — asked. The 0.1.44 listener has logged no read retry since 22:51Z
   them). Durable delivery holds their mail server-side meanwhile. Also stopped by their owners:
   `inbox --notify` pollers (Strategist, LeadG, Quill). Free ports 15,236 of 64,512 at 23:19Z, arrival
   ~1.6/s (now mostly the Codex lanes' loopback test traffic and Claude sessions).
+- **Correction to the 18:20 correction (Gauge, 18:19; reconciled by the Lead):** ~~"widened first to
+  1024 at 20:43Z"~~ conflates two changes. Wren's own words: at 20:43Z it widened the pool **16k → 49k**,
+  i.e. `portrange.first` 49152 → **16384** (+32,768 ports) plus MSL 15000 → 7500 — which is exactly the
+  16384 both Gauge and the Lead read at 23:05–23:12Z, and is consistent with the outage ending dead at
+  20:43:03Z (new ports appeared; nothing drained). The widening to **1024** (pool 64,512) happened
+  between ~23:12Z and ~23:16Z — Gauge's band count shows only 98 sockets in 1024–16383, the positive
+  control that it is recent. So the 20:43Z release is explained by the FIRST widening, pending Wren's
+  confirmation of both timestamps (asked). The kernel still does not reap; the reboot is still the fix;
+  the runway is hours, so the reboot can be SCHEDULED rather than emergency-triggered.
