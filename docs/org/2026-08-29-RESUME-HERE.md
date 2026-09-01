@@ -698,3 +698,31 @@ watchdog, so a reboot may have happened. Then:
   full gate run costs ~1–3k ephemeral ports on this wedged host). Lane reports in
   `docs/evidence/2026-09-01-v044/`. L23 still running; L30/L31 launch on headroom; L32/L34/L35 specced.
   Release 0.1.45 after L23 + Grok/Gemini arms on the merged SHA — if the mini has not rebooted first.
+
+### 2026-09-01 18:50 — SESSION END (Tom is shutting the mini down to reboot it)
+
+**State on `main` (pushed to GitHub):** v0.1.44 released and live. Merged toward v0.1.45 but NOT released,
+NOT arm-reviewed as a set: L29 (copy claims, `c0707a7`) and L22 (`cswarm resume`, `fe6e3a7`) — the
+socket-heavy suites were not run on the merged tree (build + check:tests green). **Next session: run
+`npm test` and `npm run test:p1-cli` on `main`, then Grok + Gemini arms, then release 0.1.45 (client-only
+release: no migration, no edge change).**
+
+**L23 (connected ≠ attended) was interrupted:** its Codex process was killed at shutdown; branch
+`lane/l23-attended` has no commits beyond main and its worktree was clean — the lane had produced no
+code yet. Relaunch from `scratchpad/reboot-survival/L23-codex.md`. Also unlaunched, specs in
+`scratchpad/reboot-survival/`: L30 (provider version + honest canary cause), L31 (read-retry reasons +
+throughput lapse), L32 (keep-alive client), L34 (mark which surface authored a signal), L35 (live agent
+panel — the streaming first slice; Tom said launch after the reboot).
+
+**Identity dispute RESOLVED (Wren, 18:44):** not a leak and not two sessions — one principal with two
+brains. Wren's detached listener ran `--route split --defer-over 800`, so short asks were answered
+autonomously by its Claude worker with no context from the interactive session; the "disclaimer" was
+that worker truthfully saying it knew nothing of the thread. ~~"another session holds a copy of the
+token"~~ dead; ~~"revoke token 24127894"~~ no longer needed for this. **Product consequence (L34,
+re-scoped):** a reply authored by a listener worker must carry a visible marker distinct from the
+interactive CLI, in inbox output and the dashboard — today they are indistinguishable by design.
+
+**Host:** every cswarm listener on the mini is stopped (list above). After the reboot the Lead
+restarts its own (command in the successor checklist) and announces; the wedged TCP timers should be
+gone — check `~/.tcp-watchdog/status.json` shows TIME_WAIT falling. Marque owns the host incident.
+Tom asked for no further swarm chatter from the Lead at session end.
