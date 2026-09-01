@@ -23119,6 +23119,40 @@ async function listFilesAsHuman(target2, accessToken, workspaceId2, fetcher = fe
   return body;
 }
 
+// src/cloud/brain.ts
+var BRAIN_FILE_PREFIX = "brain--";
+var BRAIN_FILE_SUFFIX = ".md";
+var BRAIN_TOPIC_MAX_LENGTH = 255 - BRAIN_FILE_PREFIX.length - BRAIN_FILE_SUFFIX.length;
+var BRAIN_TOPIC_RE = /^[a-z0-9][a-z0-9._-]*$/;
+var BrainTopicError = class extends Error {
+  name = "BrainTopicError";
+};
+function canonicalBrainTopic(value) {
+  const topic = value.trim().toLowerCase();
+  if (topic.length < 1 || topic.length > BRAIN_TOPIC_MAX_LENGTH || !BRAIN_TOPIC_RE.test(topic)) {
+    throw new BrainTopicError(
+      `brain topics use ${BRAIN_TOPIC_MAX_LENGTH} or fewer lowercase letters, numbers, dots, dashes, or underscores; start with a letter or number`
+    );
+  }
+  return topic;
+}
+function brainFileName(value) {
+  return `${BRAIN_FILE_PREFIX}${canonicalBrainTopic(value)}${BRAIN_FILE_SUFFIX}`;
+}
+function brainTopicFromFileName(name) {
+  const lower = name.toLowerCase();
+  if (!lower.startsWith(BRAIN_FILE_PREFIX) || !lower.endsWith(BRAIN_FILE_SUFFIX)) {
+    return null;
+  }
+  const topic = lower.slice(BRAIN_FILE_PREFIX.length, -BRAIN_FILE_SUFFIX.length);
+  try {
+    return canonicalBrainTopic(topic);
+  } catch (error) {
+    if (error instanceof BrainTopicError) return null;
+    throw error;
+  }
+}
+
 // src/cloud/feedback.ts
 var FeedbackTransportError = class extends Error {
   name = "FeedbackTransportError";
@@ -39237,8 +39271,8 @@ var ACCEPTED_AGENT_CREDENTIAL_MESSAGES = [
   AGENT_CREDENTIAL_MESSAGE_D088
 ];
 function packageVersion() {
-  if ("0.1.42".length > 0) {
-    return "0.1.42";
+  if ("0.1.43".length > 0) {
+    return "0.1.43";
   }
   try {
     const value = JSON.parse(
@@ -39370,6 +39404,9 @@ Usage:
   cswarm file get <name|file-id> [--version <n>] [--out <local-path>] [--force] [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential2} [--json]
   cswarm file rm <name|file-id> [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential2} [--json]
   cswarm file restore <name|file-id> [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential2} [--json]
+  cswarm brain ls [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential2} [--json]
+  cswarm brain get <topic> [--version <n>] [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential2} [--json]
+  cswarm brain put <topic> [<markdown-path>] [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential2} [--json]  # without a path, reads Markdown from stdin
   cswarm feedback "<text>" --kind bug|idea|friction [--about <ref>] [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential2} [--json]
   cswarm listen start ${requiredAgentCredential} [--url <url> --anon-key <key>] --workspace-id <uuid> --provider grok|opencode|claude|codex [--cwd <absolute-path>] [--model <model>] [--effort <level>] [--permissions deny|allow] [--grok-executable <path>] [--opencode-executable <path>] [--claude-executable <path>] [--codex-executable <path>] [--turn-budget <duration>] [--route worker|main|split] [--defer-over <chars>] [--foreground] [--json]
   cswarm listen status [--url <url> --anon-key <key>] --workspace-id <uuid> --principal-id <uuid> [--json]
@@ -39415,7 +39452,8 @@ Credential selection for command/dogfood:
                                           signal command/read only         -- either form
                             receipt       reads only          -- either form
                             inbox --notify persists a per-agent cursor -- needs principal_id
-                            file put, file ls, file get, file rm, file restore
+                            file put, file ls, file get, file rm, file restore,
+                            brain ls, brain get, brain put
                                           read and command, nothing persisted -- either form
                             feedback      command only, nothing persisted     -- either form
                             command, dogfood
@@ -43113,17 +43151,7 @@ async function resolveFileSelector(context, selector) {
   }
   return match.file_id;
 }
-async function runFilePut(args) {
-  const localPath = args.positionals[2];
-  if (!localPath) throw new UsageError("cswarm file put needs a local path");
-  const context = await fileContext(args, ["name"], 3);
-  let bytes;
-  try {
-    bytes = (0, import_node_fs7.readFileSync)(localPath);
-  } catch {
-    throw new Error(`could not read ${localPath}; check the path and permissions`);
-  }
-  const name = args.optional("name") ?? (0, import_node_path20.basename)(localPath);
+async function uploadNamedFile(context, name, bytes) {
   if (bytes.byteLength > FILE_MAX_VERSION_BYTES) {
     throw new Error(
       `this file is ${formatFileSize(bytes.byteLength)}; the per-file limit is ${formatFileSize(FILE_MAX_VERSION_BYTES)}, so the upload was not started`
@@ -43156,13 +43184,26 @@ async function runFilePut(args) {
   await onceRetried(
     () => putObject(context.cloud, created.upload_path, bytes, contentType)
   );
-  const committed = await onceRetried(
+  return await onceRetried(
     () => fileVersionCommit({ ...send, commandId: commitCommandId }, {
       fileId: created.file_id,
       versionId: created.version_id,
       sha256: sha256Hex(bytes)
     })
   );
+}
+async function runFilePut(args) {
+  const localPath = args.positionals[2];
+  if (!localPath) throw new UsageError("cswarm file put needs a local path");
+  const context = await fileContext(args, ["name"], 3);
+  let bytes;
+  try {
+    bytes = (0, import_node_fs7.readFileSync)(localPath);
+  } catch {
+    throw new Error(`could not read ${localPath}; check the path and permissions`);
+  }
+  const name = args.optional("name") ?? (0, import_node_path20.basename)(localPath);
+  const committed = await uploadNamedFile(context, name, bytes);
   if (args.has("json")) {
     process.stdout.write(`${JSON.stringify(committed, null, 2)}
 `);
@@ -43287,6 +43328,157 @@ async function runFileRestore(args) {
     `Restored ${result.name}. It is listed and downloadable again; nothing else changed.
 `
   );
+}
+async function brainRows(context) {
+  const rows3 = await fileRows(context);
+  return rows3.filter((row) => row.tombstoned_at === null).flatMap((file) => {
+    const topic = brainTopicFromFileName(file.name);
+    return topic === null ? [] : [{ topic, file }];
+  }).sort((left, right) => left.topic.localeCompare(right.topic));
+}
+async function readBrainMarkdownFromStdin() {
+  if (process.stdin.isTTY) {
+    throw new UsageError(
+      "cswarm brain put needs a Markdown path or piped Markdown on stdin"
+    );
+  }
+  const chunks = [];
+  let size2 = 0;
+  for await (const chunk of process.stdin) {
+    const bytes2 = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    size2 += bytes2.byteLength;
+    if (size2 > FILE_MAX_VERSION_BYTES) {
+      throw new Error(
+        `brain topic input is larger than ${formatFileSize(FILE_MAX_VERSION_BYTES)}; nothing was uploaded`
+      );
+    }
+    chunks.push(bytes2);
+  }
+  const bytes = Buffer.concat(chunks);
+  if (bytes.byteLength === 0) {
+    throw new UsageError("cswarm brain put received empty Markdown; nothing was uploaded");
+  }
+  return bytes;
+}
+function decodeBrainMarkdown(bytes) {
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    throw new Error("the brain topic is not valid UTF-8 Markdown");
+  }
+}
+async function runBrainLs(args) {
+  const context = await fileContext(args, [], 2);
+  const topics = await brainRows(context);
+  if (args.has("json")) {
+    process.stdout.write(
+      `${JSON.stringify({
+        workspace_id: context.selected.selectedWorkspace,
+        topics: topics.map(({ topic, file }) => ({ topic, ...file }))
+      }, null, 2)}
+`
+    );
+    return;
+  }
+  if (topics.length === 0) {
+    process.stdout.write(
+      "No brain topics yet. Add one with: cswarm brain put <topic> <markdown-path>.\n"
+    );
+    return;
+  }
+  process.stdout.write(`Brain topics (${topics.length}):
+`);
+  for (const { topic, file } of topics) {
+    const versions = `${file.current_version} ${file.current_version === 1 ? "version" : "versions"}`;
+    const author = file.uploaded_by ? `${file.uploaded_by_kind ?? file.created_by_kind} ${file.uploaded_by.slice(0, 8)}` : file.created_by_kind;
+    process.stdout.write(
+      `- ${topic} \xB7 ${versions} \xB7 updated ${file.committed_at ?? file.created_at} \xB7 by ${author}
+`
+    );
+  }
+}
+async function runBrainGet(args) {
+  const requestedTopic = args.positionals[2];
+  if (!requestedTopic) throw new UsageError("cswarm brain get needs a topic");
+  const topic = canonicalBrainTopic(requestedTopic);
+  const context = await fileContext(args, ["version"], 3);
+  const row = (await brainRows(context)).find((candidate) => candidate.topic === topic);
+  if (!row) {
+    throw new Error(
+      `no brain topic named "${sanitizeDisplayLabel(topic, "that topic")}" exists; run cswarm brain ls to see the current topics`
+    );
+  }
+  const versionN = args.has("version") ? integer2(args, "version", { minimum: 1 }) : null;
+  const grant = await fileDownloadUrl({
+    target: context.cloud,
+    workspaceId: context.selected.selectedWorkspace,
+    credential: context.selected.bearer
+  }, { fileId: row.file.file_id, versionN });
+  const content = decodeBrainMarkdown(
+    await getObject(context.cloud, grant.download_path)
+  );
+  if (args.has("json")) {
+    process.stdout.write(`${JSON.stringify({
+      topic,
+      file_id: grant.file_id,
+      version_n: grant.version_n,
+      updated_at: row.file.committed_at,
+      updated_by_kind: row.file.uploaded_by_kind,
+      updated_by: row.file.uploaded_by,
+      content
+    }, null, 2)}
+`);
+    return;
+  }
+  process.stdout.write(content.endsWith("\n") ? content : `${content}
+`);
+}
+async function runBrainPut(args) {
+  const requestedTopic = args.positionals[2];
+  if (!requestedTopic) throw new UsageError("cswarm brain put needs a topic");
+  if (args.positionals.length > 4) {
+    throw new UsageError("cswarm brain put takes one topic and, optionally, one Markdown path");
+  }
+  const topic = canonicalBrainTopic(requestedTopic);
+  const localPath = args.positionals[3];
+  if (!localPath && args.has("agent-token-stdin")) {
+    throw new UsageError(
+      "cswarm brain put cannot read both the credential and Markdown from stdin; use --agent-token-file or pass a Markdown path"
+    );
+  }
+  const context = await fileContext(args, [], args.positionals.length);
+  let bytes;
+  if (localPath) {
+    try {
+      bytes = (0, import_node_fs7.readFileSync)(localPath);
+    } catch {
+      throw new Error(`could not read ${localPath}; check the path and permissions`);
+    }
+    if (bytes.byteLength === 0) {
+      throw new UsageError("cswarm brain put received an empty Markdown file; nothing was uploaded");
+    }
+  } else {
+    bytes = await readBrainMarkdownFromStdin();
+  }
+  decodeBrainMarkdown(bytes);
+  const committed = await uploadNamedFile(context, brainFileName(topic), bytes);
+  if (args.has("json")) {
+    process.stdout.write(`${JSON.stringify({ topic, ...committed }, null, 2)}
+`);
+    return;
+  }
+  process.stdout.write(
+    `Saved brain topic ${topic} as version ${committed.version_n}. It is now visible to everyone in this workspace.
+Read it with: cswarm brain get ${topic}
+`
+  );
+}
+async function runBrain(args) {
+  const action = args.positionals[1];
+  if (action === "ls") return await runBrainLs(args);
+  if (action === "get") return await runBrainGet(args);
+  if (action === "put") return await runBrainPut(args);
+  throw new UsageError("cswarm brain takes ls, get, or put");
 }
 async function runFeedback(args) {
   const body = args.positionals[1];
@@ -43605,6 +43797,10 @@ async function main() {
     await runFile(args);
     return;
   }
+  if (verb === "brain") {
+    await runBrain(args);
+    return;
+  }
   if (verb === "members") {
     await runMembers(args);
     return;
@@ -43697,7 +43893,7 @@ main().catch((error) => {
   if (error instanceof WorkspaceCliError) {
     const structured = error.structured();
     const verb = process.argv[2];
-    const json = process.argv.includes("--json") && (verb === "status" || verb === "workspaces" || verb === "use" || verb === "working-on" || verb === "note" || verb === "ask" || verb === "reply" || verb === "receipt" || verb === "feed" || verb === "inbox");
+    const json = process.argv.includes("--json") && (verb === "status" || verb === "workspaces" || verb === "use" || verb === "working-on" || verb === "note" || verb === "ask" || verb === "reply" || verb === "receipt" || verb === "feed" || verb === "inbox" || verb === "file" || verb === "brain");
     if (json) {
       process.stdout.write(`${JSON.stringify(structured, null, 2)}
 `);
