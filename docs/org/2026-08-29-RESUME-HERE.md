@@ -560,3 +560,10 @@ must name the resolved bridge executable and the bundled Claude Code version; th
 quote the bridge's error and give the remedy for the version-required shape (update the bridge),
 never assert sign-in as the cause without measuring it. Two of Codex's lanes (L22 resume, L23
 attended) and L29 (P3 copy) are running.
+- **Correction to the paragraph above (Gauge, 17:54):** ~~"every Claude listener canary fails"~~ is
+  too strong — only NEW ACP sessions after the floor bump fail deterministically with the 400; a
+  running 0.70.0 session kept working 8 h, and Gauge's own 14:37 failures had reason `ACP request
+  timed out: session/prompt` (a different cause) then passed on the same bridge. And ~~"the stderr
+  wrongly blames OAuth sign-in"~~ is the CLI's GENERIC canary copy for every reason, not a signature
+  of this cause; the event log never contains it. The tell is `permission_canary_failed` plus the
+  reason text. Both narrowings are now in brain `agent-restart` v4 and in the L30 spec.
