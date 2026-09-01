@@ -241,6 +241,11 @@ export interface HookSurfaceStage<T> {
   credentialFailureReported: boolean;
 }
 
+export interface HookSurfaceEvidence {
+  exists: boolean;
+  surfacedSignalIds: readonly string[];
+}
+
 /** Stage output without advancing the high-water; commit is called only after stdout. */
 export class FileHookSurfaceStore {
   private readonly path: string;
@@ -250,6 +255,19 @@ export class FileHookSurfaceStore {
       throw new Error("listener hook surface directory must be absolute");
     }
     this.path = join(instanceDirectory, HOOK_SURFACE_FILE);
+  }
+
+  /** Read attendance evidence without advancing the hook high-water. */
+  async evidence(): Promise<HookSurfaceEvidence> {
+    return await withFileLock(this.instanceDirectory, HOOK_SURFACE_LOCK, async () => {
+      const raw = await readSecureJsonFile(this.path, MAX_HOOK_SURFACE_BYTES);
+      if (raw === null) return { exists: false, surfacedSignalIds: [] };
+      const state = parseSurface(raw);
+      return {
+        exists: true,
+        surfacedSignalIds: state.surfacedSignalIds,
+      };
+    }, { timeoutMs: HOOK_LOCK_TIMEOUT_MS });
   }
 
   async stage<T extends { signalId: string }>(

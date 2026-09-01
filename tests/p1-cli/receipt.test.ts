@@ -216,7 +216,12 @@ test("each receipt outcome keeps its exact meaning and next step", () => {
   const expected: Record<DeliveryAckOutcome, RegExp[]> = {
     replied: [/outcome replied/, /cswarm inbox/],
     observed: [/outcome observed/, /saw the signal/, /cswarm ask/],
-    queued: [/Queued for agent/, /has not seen it yet/, /next prompt/, /cswarm receipt/],
+    queued: [
+      /Queued for agent/,
+      /waiting for the recipient's session hook \(4 in queue\)/,
+      /cswarm listen status/,
+      /cswarm receipt/,
+    ],
     expired: [/outcome expired/, /expired before/, /cswarm ask/],
     failed_terminal: [
       /outcome failed_terminal/,
@@ -230,6 +235,7 @@ test("each receipt outcome keeps its exact meaning and next step", () => {
       delivered_at: "2026-08-28T12:02:00.000Z",
       acked_at: "2026-08-28T12:25:00.000Z",
       ack_outcome: outcome,
+      ...(outcome === "queued" ? { pending_for_main_count: 4 } : {}),
       last_error_code: outcome === "failed_terminal"
         ? "provider_refused"
         : null,

@@ -389,7 +389,7 @@ test("an empty feed keeps the app shell at the dynamic viewport height", async (
     for (const [width, height] of [[1440, 900], [390, 844]]) {
       const measurement = await measureAt(chrome, server.origin, width, height, false, true);
       assert.deepEqual(measurement.viewport, { width, height });
-      for (const name of ["app", "root", "product", "frame"] as const) {
+      for (const name of ["app", "root", "product"] as const) {
         const rect = measurement.shell[name];
         assert.ok(
           Math.abs(rect.height - height) <= 0.1 &&
@@ -398,7 +398,10 @@ test("an empty feed keeps the app shell at the dynamic viewport height", async (
           `${width}x${height}: ${name} does not fill the empty app viewport: ${JSON.stringify(rect)}`,
         );
       }
-      for (const name of ["channel", "channelBody"] as const) {
+      /* The frame is product grid row 2, below the product header. Requiring its
+       * top to be viewport row 0 contradicts that layout. It must fill the
+       * remaining row to the viewport bottom, like its channel children. */
+      for (const name of ["frame", "channel", "channelBody"] as const) {
         const rect = measurement.shell[name];
         assert.ok(
           rect.height > 0 && Math.abs(rect.bottom - height) <= 0.1,

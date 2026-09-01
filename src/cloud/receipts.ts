@@ -176,9 +176,12 @@ export function renderSignalReceiptReport(
     }
 
     if (state === "queued") {
+      const queueCount = receipt.pending_for_main_count;
       return [
-        `Queued for agent ${receipt.recipient_agent_principal_id}'s interactive session ${relativeAge(receipt.acked_at!, nowMs)}. The agent has not seen it yet.`,
-        "It will appear at the agent's next prompt.",
+        `Queued for agent ${receipt.recipient_agent_principal_id}'s interactive session ${relativeAge(receipt.acked_at!, nowMs)}; waiting for the recipient's session hook${
+          typeof queueCount === "number" ? ` (${queueCount} in queue)` : ""
+        }.`,
+        `Ask the agent's operator to check its listener with: ${listenerStatusCommand(report, receipt)}`,
         `Check again with: ${receiptCheckCommand(report)}`,
       ].join("\n");
     }
@@ -246,6 +249,7 @@ export function signalReceiptJsonPayload(
           attempt_count: receipt.attempt_count,
           lease_expiry_count: receipt.lease_expiry_count,
           last_error_code: receipt.last_error_code,
+          pending_for_main_count: receipt.pending_for_main_count ?? null,
         }
     ),
   };

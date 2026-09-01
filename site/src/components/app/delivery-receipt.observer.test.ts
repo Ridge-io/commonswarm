@@ -121,6 +121,7 @@ test("queued, observed, replied, expired, and failed stay distinct", () => {
     deliveredAt: "2026-08-28T14:40:00.000Z",
     ackedAt: "2026-08-28T14:50:00.000Z",
     ackOutcome,
+    ...(ackOutcome === "queued" ? { pendingForMainCount: 4 } : {}),
     attemptCount: 1,
   })), NOW));
 
@@ -133,7 +134,11 @@ test("queued, observed, replied, expired, and failed stay distinct", () => {
     "Failed",
   ]);
   assert.equal(new Set(indicators.map(({ label, detail }) => `${label}:${detail}`)).size, 5);
-  assert.match(indicators[0]!.detail, /has not seen it yet.*next prompt/);
+  assert.match(
+    indicators[0]!.detail,
+    /waiting for the recipient's session hook \(4 in queue\)/,
+  );
+  assert.doesNotMatch(indicators[0]!.detail, /next prompt/);
   assert.equal(indicators[0]!.terminal, false);
   assert.match(indicators[2]!.detail, /saw this delivery without replying/);
   assert.doesNotMatch(indicators[2]!.detail, /acknowledged|read/i);

@@ -30,6 +30,8 @@ export interface DeliveryReceipt {
   attempt_count: number;
   lease_expiry_count: number;
   last_error_code: string | null;
+  /** Present on newer servers for queued interactive-session deliveries. */
+  pending_for_main_count?: number | null;
 }
 
 export interface HumanDeliveryReceipt {
@@ -237,6 +239,14 @@ export function parseDeliveryReceipt(value: unknown): DeliveryReceiptRow {
           "delivery receipt returned a malformed last_error_code",
         );
       })(),
+    pending_for_main_count: Object.hasOwn(row, "pending_for_main_count")
+      ? row.pending_for_main_count === null
+        ? null
+        : nonNegativeInteger(
+          row.pending_for_main_count,
+          "pending_for_main_count",
+        )
+      : null,
   };
 }
 
