@@ -277,3 +277,21 @@ test("m-2: sender relation comment agrees that revoked agent authors are filtere
   );
   assert.match(source, /Filter author\.revoked_at/);
 });
+
+test("the read function keeps browser CORS wired — preflight branch and response wrap", () => {
+  /* 2026-08-31: the dashboard became this function's first browser caller
+   * (renewal_grants). The function 405'd the preflight with no CORS headers,
+   * every browser fetch died as TypeError, and the whole channel view failed
+   * for every signed-in member. The unit-tested cors.ts module cannot catch
+   * an unwired serve path, so this pins the wiring itself. */
+  const source = readFileSync(
+    join(import.meta.dirname, "../supabase/functions/read/index.ts"),
+    "utf8",
+  );
+  assert.match(source, /from "\.\.\/command\/cors\.ts"/);
+  assert.match(
+    source,
+    /request\.method === "OPTIONS"[\s\S]{0,120}commandPreflight\(/,
+  );
+  assert.match(source, /withCommandCors\(request, response/);
+});

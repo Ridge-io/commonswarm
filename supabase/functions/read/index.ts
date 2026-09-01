@@ -1,3 +1,8 @@
+import {
+  commandAllowedOrigins,
+  commandPreflight,
+  withCommandCors,
+} from "../command/cors.ts";
 import { createClient } from "npm:@supabase/supabase-js@2.110.8";
 import postgres from "npm:postgres@3.4.9";
 import {
@@ -616,10 +621,23 @@ async function handle(
   });
 }
 
-Deno.serve((request) => {
+/* The dashboard became this function's first BROWSER caller (renewal_grants,
+ * 2026-08-31). Browser calls carry Authorization/apikey/JSON headers, so they
+ * are preflighted; without CORS every fetch died as a TypeError and the whole
+ * channel view failed for every signed-in member. Same policy as command. */
+const allowedReadOrigins = commandAllowedOrigins(
+  Deno.env.get("SWARM_COMMAND_ALLOWED_ORIGINS"),
+);
+const readEnvironment = Deno.env.get("SWARM_ENV");
+
+Deno.serve(async (request) => {
+  if (request.method === "OPTIONS") {
+    return commandPreflight(request, allowedReadOrigins, readEnvironment);
+  }
   const requestId = newRequestId();
   let phase: ReadHandlerPhase = "top_level";
-  return handle(request, requestId, (next) => {
+  const response = await handle(request, requestId, (next) => {
     phase = next;
   }).catch((error) => readFailureResponse(error, phase, requestId));
+  return withCommandCors(request, response, allowedReadOrigins, readEnvironment);
 });
