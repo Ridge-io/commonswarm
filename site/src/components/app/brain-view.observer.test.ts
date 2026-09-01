@@ -52,3 +52,9 @@ test("Brain edit submits Markdown and returns the confirmed new file version", a
   assert.match(snapshot.versionAfterSave, /3 versions/);
   assert.match(snapshot.versionAfterSave, /Dana/);
 });
+
+test("Brain binds the open pane to the file, not the slug — a workspace switch cannot leak content", async () => {
+  const snapshot = await snapshotPromise;
+  assert.equal(snapshot.paneClosedOnForeignFile, true, "the pane survived a same-slug foreign file");
+  assert.equal(snapshot.staleSaveRefused, true, "a stale-pane save reached the foreign file");
+});

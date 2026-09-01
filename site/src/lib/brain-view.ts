@@ -75,6 +75,11 @@ export function createBrainView(
 ): BrainView {
   let topics: BrainTopic[] = [];
   let activeTopic = "";
+  /* The open pane binds to the FILE, not the slug. Two workspaces can hold the
+   * same topic name; keying by slug alone kept workspace A's body across a
+   * workspace switch and let Save publish it into workspace B's file (found by
+   * the exact-review arm on a0b6734, reproduced in Chrome). */
+  let activeFileId = "";
   let activeVersion = 0;
   let activeMarkdown = "";
   let requestVersion = 0;
@@ -138,6 +143,7 @@ export function createBrainView(
     if (selectedVersion < 1 || selectedVersion > topic.currentVersion) return;
     const request = ++requestVersion;
     activeTopic = topic.topic;
+    activeFileId = topic.fileId;
     activeVersion = selectedVersion;
     targets.detail.hidden = false;
     targets.title.textContent = topic.topic;
@@ -186,7 +192,12 @@ export function createBrainView(
   targets.form.addEventListener("submit", async (event) => {
     event.preventDefault();
     const topic = topics.find((candidate) => candidate.topic === activeTopic);
-    if (!topic) return;
+    /* Second line of the workspace-binding defense: even if a stale pane
+     * survived, a save may only target the file the pane was opened on. */
+    if (!topic || topic.fileId !== activeFileId) {
+      setError("This topic changed underneath the editor. Reopen it, then save.");
+      return;
+    }
     const markdown = targets.textarea.value;
     if (markdown.trim().length === 0) {
       setError("A brain topic cannot be empty. Nothing was saved.");
@@ -226,11 +237,14 @@ export function createBrainView(
       requestVersion += 1;
       topics = [...nextTopics];
       renderList();
-      if (activeTopic && !topics.some((topic) => topic.topic === activeTopic)) {
+      const survivor = topics.find((topic) => topic.topic === activeTopic);
+      if (activeTopic && (!survivor || survivor.fileId !== activeFileId)) {
         activeTopic = "";
+        activeFileId = "";
         activeVersion = 0;
         activeMarkdown = "";
         targets.detail.hidden = true;
+        targets.form.hidden = true;
       }
     },
   };

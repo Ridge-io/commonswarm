@@ -121,7 +121,23 @@ export async function runBrainViewFixture(): Promise<BrainViewSnapshot> {
         one("[data-brain-form]").dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
         await new Promise((resolve) => setTimeout(resolve, 0));
         await new Promise((resolve) => setTimeout(resolve, 0));
+        const statusAfterSave = one("[data-brain-status]").textContent;
+        const metaAfterSave = one("[data-brain-meta]").textContent;
+        /* Workspace-switch counterexample from the a0b6734 review: same slug,
+           DIFFERENT fileId (workspace B). The pane must close, and a save with
+           stale state must refuse. */
+        const foreignTopics = topics.map((topic) => ({ ...topic, fileId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb" }));
+        const savesBeforeSwitch = saves.length;
+        one("[data-brain-edit]").click();
+        one("[data-brain-textarea]").value = "workspace A secret";
+        view.setTopics(foreignTopics);
+        const paneClosedOnForeignFile = one("[data-brain-detail]").hidden && one("[data-brain-form]").hidden;
+        one("[data-brain-form]").dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        const staleSaveRefused = saves.length === savesBeforeSwitch;
         const snapshot = {
+          paneClosedOnForeignFile,
+          staleSaveRefused,
           dangerousElementCount: one("[data-brain-markdown]").querySelectorAll("img, script, iframe").length,
           historyCount: document.querySelectorAll("[data-brain-history-list] a").length,
           listDetails: initialDetails,
@@ -129,9 +145,9 @@ export async function runBrainViewFixture(): Promise<BrainViewSnapshot> {
           renderedHtml: one("[data-brain-markdown]").innerHTML,
           saveCount: saves.length,
           savedMarkdown: saves[0] || "",
-          status: one("[data-brain-status]").textContent,
+          status: statusAfterSave,
           title: one("[data-brain-title]").textContent,
-          versionAfterSave: one("[data-brain-meta]").textContent,
+          versionAfterSave: metaAfterSave,
         };
         document.documentElement.dataset.fixture = encodeURIComponent(JSON.stringify(snapshot));
       })();
