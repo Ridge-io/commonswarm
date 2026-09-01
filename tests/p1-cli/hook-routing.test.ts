@@ -1418,15 +1418,87 @@ test("hook hard deadline exits 0 under four seconds against a blackholed address
   }
 });
 
-test("hook install defaults to user settings and preserves existing hooks", async () => {
-  const project = await mkdtemp(join(tmpdir(), "cswarm-hook-install-"));
-  const home = await mkdtemp(join(tmpdir(), "cswarm-hook-install-home-"));
-  const xdg = await mkdtemp(join(tmpdir(), "cswarm-hook-install-state-"));
+test("hook install default isolates two principals in project-local settings", async () => {
+  const projectA = await mkdtemp(join(tmpdir(), "cswarm-hook-project-a-"));
+  const projectB = await mkdtemp(join(tmpdir(), "cswarm-hook-project-b-"));
+  const home = await mkdtemp(join(tmpdir(), "cswarm-hook-project-home-"));
+  const xdg = await mkdtemp(join(tmpdir(), "cswarm-hook-project-state-"));
+  const principalB = "55555555-5555-4555-8555-555555555555";
   try {
     const root = join(xdg, "cswarm", "listeners");
-    await writeStatus(state(root).paths);
-    const env = { HOME: home, XDG_STATE_HOME: xdg };
+    const pathsA = await installPrincipalCredential(root, PRINCIPAL_ID, TOKEN);
+    const pathsB = await installPrincipalCredential(root, principalB, SECOND_TOKEN);
+    const tokenPathA = join(pathsA.instanceDirectory, "listener-credential.json");
+    const tokenPathB = join(pathsB.instanceDirectory, "listener-credential.json");
+    assert.notEqual(tokenPathA, tokenPathB);
+    assert.match(await readFile(tokenPathA, "utf8"), new RegExp(TOKEN));
+    assert.match(await readFile(tokenPathB, "utf8"), new RegExp(SECOND_TOKEN));
+    for (const project of [projectA, projectB]) {
+      const initialized = spawnSync("git", ["init", "--quiet"], {
+        cwd: project,
+        encoding: "utf8",
+      });
+      assert.equal(initialized.status, 0, initialized.stderr);
+      await writeFile(join(project, ".gitignore"), ".claude/settings.local.json\n");
+    }
+    const env = { HOME: home, CLAUDE_CONFIG_DIR: "", XDG_STATE_HOME: xdg };
+    const settingsPathA = join(projectA, ".claude", "settings.local.json");
+    const settingsPathB = join(projectB, ".claude", "settings.local.json");
     const userSettingsPath = join(home, ".claude", "settings.json");
+
+    const installA = runCli([
+      "hook", "install", "claude", "--principal-id", PRINCIPAL_ID, "--write",
+    ], { cwd: projectA, env });
+    const installB = runCli([
+      "hook", "install", "claude", "--principal-id", principalB, "--write",
+    ], { cwd: projectB, env });
+    assert.equal(installA.status, 0, installA.stderr);
+    assert.equal(installB.status, 0, installB.stderr);
+    assert.ok(installA.stdout.includes(settingsPathA));
+    assert.ok(installB.stdout.includes(settingsPathB));
+    assert.match(installA.stdout, /applies only to Claude Code sessions started in/);
+    assert.match(installB.stdout, /applies only to Claude Code sessions started in/);
+    assert.doesNotMatch(installA.stdout, /EVERY Claude Code session|shared host/);
+    assert.doesNotMatch(installB.stdout, /EVERY Claude Code session|shared host/);
+    await assert.rejects(readFile(userSettingsPath, "utf8"));
+
+    const settingsA = await readFile(settingsPathA, "utf8");
+    const settingsB = await readFile(settingsPathB, "utf8");
+    assert.match(settingsA, new RegExp(PRINCIPAL_ID));
+    assert.doesNotMatch(settingsA, new RegExp(principalB));
+    assert.match(settingsB, new RegExp(principalB));
+    assert.doesNotMatch(settingsB, new RegExp(PRINCIPAL_ID));
+
+    const removedA = runCli(["hook", "uninstall", "claude", "--write"], {
+      cwd: projectA,
+      env,
+    });
+    assert.equal(removedA.status, 0, removedA.stderr);
+    assert.ok(removedA.stdout.includes(settingsPathA));
+    assert.match(removedA.stdout, /applies only to Claude Code sessions started in/);
+    assert.deepEqual(JSON.parse(await readFile(settingsPathA, "utf8")), {});
+    assert.match(await readFile(settingsPathB, "utf8"), new RegExp(principalB));
+  } finally {
+    await rm(projectA, { recursive: true, force: true });
+    await rm(projectB, { recursive: true, force: true });
+    await rm(home, { recursive: true, force: true });
+    await rm(xdg, { recursive: true, force: true });
+  }
+});
+
+test("hook install --user honors CLAUDE_CONFIG_DIR and warns about shared hosts", async () => {
+  const project = await mkdtemp(join(tmpdir(), "cswarm-hook-user-project-"));
+  const home = await mkdtemp(join(tmpdir(), "cswarm-hook-user-home-"));
+  const config = await mkdtemp(join(tmpdir(), "cswarm-hook-user-config-"));
+  const xdg = await mkdtemp(join(tmpdir(), "cswarm-hook-user-state-"));
+  try {
+    const env = {
+      HOME: home,
+      CLAUDE_CONFIG_DIR: config,
+      XDG_STATE_HOME: xdg,
+    };
+    const customSettingsPath = join(config, "settings.json");
+    const homeSettingsPath = join(home, ".claude", "settings.json");
     const unrelatedPromptHook = {
       matcher: "always",
       hooks: [{ type: "command", command: "printf existing-hook" }],
@@ -1434,8 +1506,11 @@ test("hook install defaults to user settings and preserves existing hooks", asyn
     const unrelatedToolHook = [{
       hooks: [{ type: "command", command: "printf existing-tool-hook" }],
     }];
-    await mkdir(dirname(userSettingsPath), { recursive: true });
-    await writeFile(userSettingsPath, JSON.stringify({
+    await mkdir(dirname(homeSettingsPath), { recursive: true });
+    await writeFile(homeSettingsPath, JSON.stringify({ theme: "home-untouched" }), {
+      mode: 0o600,
+    });
+    await writeFile(customSettingsPath, JSON.stringify({
       theme: "dark",
       hooks: {
         UserPromptSubmit: [unrelatedPromptHook],
@@ -1443,21 +1518,25 @@ test("hook install defaults to user settings and preserves existing hooks", asyn
       },
     }), { mode: 0o600 });
 
-    const dry = runCli(["hook", "install", "claude"], { cwd: project, env });
-    assert.equal(dry.status, 0);
-    assert.deepEqual(JSON.parse(dry.stdout), claudeUserPromptHookSnippet(PRINCIPAL_ID));
-    await assert.rejects(readFile(join(project, ".claude", "settings.json"), "utf8"));
-
-    const written = runCli(["hook", "install", "claude", "--write"], {
+    const written = runCli([
+      "hook", "install", "claude", "--principal-id", PRINCIPAL_ID, "--write", "--user",
+    ], {
       cwd: project,
       env,
     });
-    assert.equal(written.status, 0);
-    assert.match(written.stdout, /Installed the Claude Code UserPromptSubmit hook/);
+    assert.equal(written.status, 0, written.stderr);
+    const lines = written.stdout.trimEnd().split("\n");
+    assert.match(
+      lines[0]!,
+      /^Warning: --user scope affects EVERY Claude Code session for this OS user and is wrong on a shared host\.$/,
+    );
+    assert.match(lines[1]!, /Installed the Claude Code UserPromptSubmit hook/);
     assert.match(written.stdout, new RegExp(`--principal-id ${PRINCIPAL_ID}`));
-    assert.ok(written.stdout.includes(userSettingsPath), "success must print the full path");
-    await assert.rejects(readFile(join(project, ".claude", "settings.json"), "utf8"));
-    const settings = JSON.parse(await readFile(userSettingsPath, "utf8")) as {
+    assert.ok(written.stdout.includes(customSettingsPath), "success must print the full path");
+    assert.deepEqual(JSON.parse(await readFile(homeSettingsPath, "utf8")), {
+      theme: "home-untouched",
+    });
+    const settings = JSON.parse(await readFile(customSettingsPath, "utf8")) as {
       theme: string;
       hooks: { UserPromptSubmit: unknown[]; PreToolUse: unknown[] };
     };
@@ -1466,32 +1545,134 @@ test("hook install defaults to user settings and preserves existing hooks", asyn
     assert.deepEqual(settings.hooks.UserPromptSubmit[0], unrelatedPromptHook);
     assert.match(JSON.stringify(settings.hooks.UserPromptSubmit), new RegExp(PRINCIPAL_ID));
 
-    const refused = runCli(["hook", "uninstall", "claude"], { cwd: project, env });
+    const refused = runCli(["hook", "uninstall", "claude"], {
+      cwd: project,
+      env,
+    });
     assert.equal(refused.status, 1);
     assert.match(refused.stderr, /requires --write/);
-    assert.match(await readFile(userSettingsPath, "utf8"), new RegExp(PRINCIPAL_ID));
+    assert.match(await readFile(customSettingsPath, "utf8"), new RegExp(PRINCIPAL_ID));
 
-    const removed = runCli(["hook", "uninstall", "claude", "--write"], {
+    const removed = runCli(["hook", "uninstall", "claude", "--write", "--user"], {
       cwd: project,
       env,
     });
     assert.equal(removed.status, 0);
-    assert.ok(removed.stdout.includes(userSettingsPath));
-    const afterRemove = JSON.parse(await readFile(userSettingsPath, "utf8")) as {
+    assert.match(removed.stdout.split("\n")[0]!, /EVERY Claude Code session.*shared host/);
+    assert.ok(removed.stdout.includes(customSettingsPath));
+    const afterRemove = JSON.parse(await readFile(customSettingsPath, "utf8")) as {
       theme: string;
       hooks: { UserPromptSubmit: unknown[]; PreToolUse: unknown[] };
     };
     assert.equal(afterRemove.theme, "dark");
     assert.deepEqual(afterRemove.hooks.PreToolUse, unrelatedToolHook);
     assert.deepEqual(afterRemove.hooks.UserPromptSubmit, [unrelatedPromptHook]);
+
+    const conflict = runCli([
+      "hook", "install", "claude", "--principal-id", PRINCIPAL_ID,
+      "--write", "--user", "--repo",
+    ], { cwd: project, env });
+    assert.equal(conflict.status, 1);
+    assert.match(conflict.stderr, /--user and --repo cannot be used together/);
+
+    const fallback = runCli([
+      "hook", "install", "claude", "--principal-id", PRINCIPAL_ID, "--write", "--user",
+    ], { cwd: project, env: { ...env, CLAUDE_CONFIG_DIR: "" } });
+    assert.equal(fallback.status, 0, fallback.stderr);
+    assert.ok(fallback.stdout.includes(homeSettingsPath));
+    const fallbackSettings = JSON.parse(await readFile(homeSettingsPath, "utf8")) as {
+      theme: string;
+      hooks: { UserPromptSubmit: unknown[] };
+    };
+    assert.equal(fallbackSettings.theme, "home-untouched");
+    assert.match(JSON.stringify(fallbackSettings.hooks), new RegExp(PRINCIPAL_ID));
   } finally {
     await rm(project, { recursive: true, force: true });
     await rm(home, { recursive: true, force: true });
+    await rm(config, { recursive: true, force: true });
     await rm(xdg, { recursive: true, force: true });
   }
 });
 
-test("hook install --repo refuses a non-ignored settings path and prints the exact ignore line", async () => {
+test("hook default refuses an unignored settings.local.json and writes after it is ignored", async () => {
+  const project = await mkdtemp(join(tmpdir(), "cswarm-hook-install-local-refuse-"));
+  const home = await mkdtemp(join(tmpdir(), "cswarm-hook-install-local-home-"));
+  try {
+    const initialized = spawnSync("git", ["init", "--quiet"], {
+      cwd: project,
+      encoding: "utf8",
+    });
+    assert.equal(initialized.status, 0, initialized.stderr);
+    const env = { HOME: home, CLAUDE_CONFIG_DIR: "" };
+    const settingsPath = join(project, ".claude", "settings.local.json");
+
+    const refused = runCli([
+      "hook", "install", "claude", "--principal-id", PRINCIPAL_ID, "--write",
+    ], { cwd: project, env });
+    assert.equal(refused.status, 1);
+    assert.match(refused.stderr, /Refusing to write/);
+    assert.ok(refused.stderr.includes(settingsPath));
+    assert.ok(refused.stderr.includes(join(project, ".gitignore")));
+    assert.match(refused.stderr, /\.claude\/settings\.local\.json/);
+    await assert.rejects(readFile(settingsPath, "utf8"));
+    await assert.rejects(readFile(join(home, ".claude", "settings.json"), "utf8"));
+
+    await writeFile(join(project, ".gitignore"), ".claude/settings.local.json\n");
+    const written = runCli([
+      "hook", "install", "claude", "--principal-id", PRINCIPAL_ID, "--write",
+    ], { cwd: project, env });
+    assert.equal(written.status, 0, written.stderr);
+    assert.ok(written.stdout.includes(settingsPath));
+    assert.deepEqual(
+      JSON.parse(await readFile(settingsPath, "utf8")),
+      claudeUserPromptHookSnippet(PRINCIPAL_ID),
+    );
+
+    await writeFile(join(project, ".gitignore"), "");
+    const uninstallRefused = runCli(["hook", "uninstall", "claude", "--write"], {
+      cwd: project,
+      env,
+    });
+    assert.equal(uninstallRefused.status, 1);
+    assert.ok(uninstallRefused.stderr.includes(settingsPath));
+    assert.match(await readFile(settingsPath, "utf8"), new RegExp(PRINCIPAL_ID));
+
+    await writeFile(join(project, ".gitignore"), ".claude/settings.local.json\n");
+    const removed = runCli(["hook", "uninstall", "claude", "--write"], {
+      cwd: project,
+      env,
+    });
+    assert.equal(removed.status, 0, removed.stderr);
+    assert.deepEqual(JSON.parse(await readFile(settingsPath, "utf8")), {});
+  } finally {
+    await rm(project, { recursive: true, force: true });
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("hook default falls back to cwd outside git", async () => {
+  const project = await mkdtemp(join(tmpdir(), "cswarm-hook-install-no-git-"));
+  const home = await mkdtemp(join(tmpdir(), "cswarm-hook-install-no-git-home-"));
+  try {
+    const settingsPath = join(project, ".claude", "settings.local.json");
+    const written = runCli([
+      "hook", "install", "claude", "--principal-id", PRINCIPAL_ID, "--write",
+    ], { cwd: project, env: { HOME: home, CLAUDE_CONFIG_DIR: "" } });
+    assert.equal(written.status, 0, written.stderr);
+    assert.ok(written.stdout.includes(settingsPath));
+    assert.match(written.stdout, /applies only to Claude Code sessions started in/);
+    assert.deepEqual(
+      JSON.parse(await readFile(settingsPath, "utf8")),
+      claudeUserPromptHookSnippet(PRINCIPAL_ID),
+    );
+    await assert.rejects(readFile(join(home, ".claude", "settings.json"), "utf8"));
+  } finally {
+    await rm(project, { recursive: true, force: true });
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("hook install --repo keeps the ignored repository settings path", async () => {
   const project = await mkdtemp(join(tmpdir(), "cswarm-hook-install-repo-"));
   const xdg = await mkdtemp(join(tmpdir(), "cswarm-hook-install-repo-state-"));
   try {
@@ -1525,6 +1706,13 @@ test("hook install --repo refuses a non-ignored settings path and prints the exa
       JSON.parse(await readFile(settingsPath, "utf8")),
       claudeUserPromptHookSnippet(PRINCIPAL_ID),
     );
+
+    const removed = runCli(["hook", "uninstall", "claude", "--write", "--repo"], {
+      cwd: project,
+      env,
+    });
+    assert.equal(removed.status, 0, removed.stderr);
+    assert.deepEqual(JSON.parse(await readFile(settingsPath, "utf8")), {});
   } finally {
     await rm(project, { recursive: true, force: true });
     await rm(xdg, { recursive: true, force: true });
@@ -1611,8 +1799,9 @@ test("listen route flags parse before credential work and enforce split bounds",
     help.stdout,
     /hook check\s+reads only the selected listener's owned 0600 credential state/,
   );
-  assert.match(help.stdout, /--write changes\s+the user-level ~\/\.claude\/settings\.json/);
-  assert.match(help.stdout, /--repo selects the repository settings/);
+  assert.match(help.stdout, /--write changes\s+<project>\/\.claude\/settings\.local\.json/);
+  assert.match(help.stdout, /--user opts in to\s+\$\{CLAUDE_CONFIG_DIR:-~\/\.claude\}\/settings\.json/);
+  assert.match(help.stdout, /--repo keeps the\s+repository-wide \.claude\/settings\.json/);
   assert.match(help.stdout, /listen status \[--agent-token-file <path> \| --agent-token-stdin\]/);
   assert.match(help.stdout, /listen stop \[--agent-token-file <path> \| --agent-token-stdin\]/);
 });
