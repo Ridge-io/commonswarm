@@ -375,3 +375,31 @@ entity panel for listener-run agents only; TUI streaming is impossible for non-l
 **Operator actions outstanding**: mint credentials for Nock and Gauge (dashboard → Add an
 agent); Finisher's 9 stranded route-split messages need `hook install claude --principal-id
 78249a33-… --write` in their session (three other agents have the same silent backlog).
+
+## Addendum 2026-09-01 (evening): fc88624 — the compat fix; release gated on two arms
+
+- **RELEASE BLOCKER FOUND AND FIXED before production**: 619ff1f's broadcast roster put agent
+  tracking rows in the `receipts` array; the 0.1.42/0.1.43 parser (hash-verified npm blob)
+  throws on it — every installed CLI would hard-fail on broadcast receipts, cached dashboards
+  would blank the indicator. Found by a Claude advisory review the twin session ran; Grok's exact
+  PASS on 619ff1f missed it. Fixed in `fc88624` (migration `20260902000002`, forward replace;
+  agent rows live only under broadcast_roster.agents.principals). Verified by four adversarial
+  refuters incl. old-parser-vs-new-wire with a discriminating control and a real-Postgres run
+  with a mutation of the seen-first ORDER BY. NOT applied to production yet.
+- Also in fc88624: cap pin (limit!==50) removed; >50-seen "Not-seen: none" falsehood fixed; cap
+  test asserts the seen member survives; dead agentById plumbing removed; tint depends on
+  signalIsDirectToViewer alone; AGENTS.md D-036 corrected (arms = Codex, Grok, Gemini in that
+  order, two families; Kimi retired).
+- **APPLY ORDER for v0.1.44** (from the migration header): db push 000001+000002 (verify via
+  schema_migrations) → deploy `read` edge (old edge drops broadcast_roster; new CLI would throw)
+  → release/publish client → site deploy → install → restart listener → probe receipt on
+  broadcast a945274b. Clients ≤0.1.41 are already broken on attested broadcasts by today's live
+  function and must upgrade regardless.
+- Arms on fc88624 in flight: Codex exact + Grok inversion (Gemini/agy dead: 12 timeouts/4h).
+- Twin session (cmux "Lead") is live on PromptEden work, frozen on cloud-swarm; its swarm-CLI
+  identity lane got a Codex FAIL (opt-in owner check; ancestry fallback PID; PID-equality
+  ownership) — fixer lane L24 running in the swarm repo, uncommitted.
+- Specs ready to launch after release: L22 (`cswarm resume` + notify orphan detection),
+  L23 (connected ≠ attended: status warns on main-queue backlog, route main/split refuse
+  without a hook surface, `listen canary`). Brain topics added: agent-restart (v2),
+  listener-attended.
