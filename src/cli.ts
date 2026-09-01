@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 
 import { randomUUID } from "node:crypto";
+import { spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { open, unlink } from "node:fs/promises";
+import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join } from "node:path";
 import { createInterface } from "node:readline/promises";
 import type { Command } from "./protocol/index.js";
@@ -188,8 +190,10 @@ import {
 } from "./cloud/attachments.js";
 import {
   arrivalNotification,
+  createArrivalRetryNoticePolicy,
   fileArrivalCursorStore,
   formatArrivalNotification,
+  formatArrivalRetryNotice,
   runArrivalWatch,
 } from "./cloud/arrival-watch.js";
 import {
@@ -252,7 +256,7 @@ const KNOWN_FLAGS = new Set([
   "epoch", "evidence", "follow", "force", "force-file-store", "foreground", "grok-executable", "head-sha",
   "help", "include-stale", "include-tombstoned", "invitation-id", "invitation-token-stdin", "json", "kind", "limit",
   "link-stdin", "local", "model", "name", "ndjson", "no-browser", "notify", "opencode-executable", "out",
-  "permissions", "principal-id", "provider", "reveal-anon-key", "route", "run-id", "since", "site", "slug",
+  "permissions", "principal-id", "provider", "repo", "reveal-anon-key", "route", "run-id", "since", "site", "slug",
   "renewal-horizon-days", "standing", "task-id", "to", "token-id", "ttl-ms", "turn-budget", "uid", "until", "url", "version", "wait", "workspace-id", "write",
 ]);
 
@@ -275,6 +279,7 @@ const BOOLEAN_FLAGS = new Set([
   "notify",
   "no-browser",
   "reveal-anon-key",
+  "repo",
   "standing",
   "write",
 ]);
@@ -483,11 +488,11 @@ Usage:
   cswarm brain put <topic> [<markdown-path>] [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential} [--json]  # without a path, reads Markdown from stdin
   cswarm feedback "<text>" --kind bug|idea|friction [--about <ref>] [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential} [--json]
   cswarm listen start ${requiredAgentCredential} [--url <url> --anon-key <key>] --workspace-id <uuid> --provider grok|opencode|claude|codex [--cwd <absolute-path>] [--model <model>] [--effort <level>] [--permissions deny|allow] [--grok-executable <path>] [--opencode-executable <path>] [--claude-executable <path>] [--codex-executable <path>] [--turn-budget <duration>] [--route worker|main|split] [--defer-over <chars>] [--foreground] [--json]
-  cswarm listen status [--url <url> --anon-key <key>] --workspace-id <uuid> --principal-id <uuid> [--json]
-  cswarm listen stop [--url <url> --anon-key <key>] --workspace-id <uuid> --principal-id <uuid> [--json]
+  cswarm listen status ${agentCredential} [--url <url> --anon-key <key>] --workspace-id <uuid> [--principal-id <uuid>] [--json]
+  cswarm listen stop ${agentCredential} [--url <url> --anon-key <key>] --workspace-id <uuid> [--principal-id <uuid>] [--json]
   cswarm hook check [--principal-id <uuid> ...] [--cooldown <seconds>]
-  cswarm hook install claude [--principal-id <uuid>] [--write]
-  cswarm hook uninstall claude --write
+  cswarm hook install claude [--principal-id <uuid>] [--write [--repo]]
+  cswarm hook uninstall claude --write [--repo]
   cswarm new "<workspace name>" [--url <url> --anon-key <key>] [--json]
   cswarm new --name "<workspace name>" [--url <url> --anon-key <key>] [--json]
   cswarm workspaces [--url <url> --anon-key <key>] [--json]
@@ -533,6 +538,12 @@ Credential selection for command/dogfood:
                             command, dogfood
                                           task protocol commands              -- either form
                             listen start  persists durable state, rotates -- needs expires_at
+                            listen status
+                                          selects the listener profile -- complete JSON or
+                                          an explicit --principal-id without a credential
+                            listen stop
+                                          selects the listener profile -- complete JSON or
+                                          an explicit --principal-id without a credential
                             hook check    reads only the selected listener's owned 0600 credential state;
                                           never accepts or prints a credential
                             hook install/uninstall
@@ -568,8 +579,10 @@ split queues messages whose body is longer than --defer-over <chars>; the bound 
 --principal-id <uuid> to surface that agent's queued messages. A bare check works only
 when the state directory holds one principal. hook check has its own 3s ceiling, exits 0
 on every outcome, and skips network checks made within --cooldown seconds (default 30).
-hook install claude prints principal-scoped UserPromptSubmit JSON by default and changes
-the project's .claude/settings.json only with --write; uninstall also requires --write.
+hook install claude prints principal-scoped UserPromptSubmit JSON by default. --write changes
+the user-level ~/.claude/settings.json. --repo selects the repository settings instead and is
+refused until .claude/settings.json is ignored. Uninstall also requires --write and uses the
+same scope selection.
 
 Invite, legacy token accept, principal create/revoke, human token mint/revoke, link, new, and workspace close require a
 stored human login. Agent self-surrender of a token uses --agent-token-file or --agent-token-stdin and never takes the secret on argv. Invite-link accept signs in when needed, then accepts and
@@ -3600,6 +3613,7 @@ async function runInboxNotifyCommand(args: Arguments): Promise<void> {
   process.on("SIGINT", stop);
   process.on("SIGTERM", stop);
   try {
+    const retryNotices = createArrivalRetryNoticePolicy();
     const cursorStore = fileArrivalCursorStore({
       target: cloud,
       workspaceId: selected.selectedWorkspace,
@@ -3645,9 +3659,16 @@ async function runInboxNotifyCommand(args: Arguments): Promise<void> {
         );
       },
       onRetry: (_error, delayMs) => {
-        process.stderr.write(
-          `cswarm: arrival read failed; still watching and retrying in ${delayMs}ms.\n`,
-        );
+        const notice = retryNotices.failure(Date.now(), delayMs);
+        if (notice !== null) {
+          process.stderr.write(`cswarm: ${formatArrivalRetryNotice(notice)}\n`);
+        }
+      },
+      onRecovery: () => {
+        const notice = retryNotices.recovery(Date.now());
+        if (notice !== null) {
+          process.stderr.write(`cswarm: ${formatArrivalRetryNotice(notice)}\n`);
+        }
       },
     });
     if (result.reason === "error") {
@@ -4995,7 +5016,7 @@ async function runListenStart(args: Arguments): Promise<void> {
       "The short credential rotates while this process remains alive and secure local state is available. Run cswarm whoami with this credential to see whether its grant is timeboxed or standing.\n" +
       routingNote +
       hostNote +
-      `Use listen status/stop with --workspace-id ${workspaceId} --principal-id ${principalId} and the same Cloud target.\n`,
+      `Use listen status/stop with the same agent credential, --workspace-id ${workspaceId}, and the same Cloud target. --principal-id ${principalId} remains available when no credential is supplied.\n`,
   );
 }
 
@@ -5078,6 +5099,7 @@ async function runListenStatusOrStop(
 ): Promise<void> {
   args.assertShape([
     ...TARGET_FLAGS,
+    ...CREDENTIAL_FLAGS,
     "workspace-id",
     "principal-id",
     "state-dir",
@@ -5085,7 +5107,27 @@ async function runListenStatusOrStop(
   ], 2);
   const cloud = await target(args);
   const workspaceId = listenerUuid(args.optional("workspace-id"), "workspace-id");
-  const principalId = listenerUuid(args.optional("principal-id"), "principal-id");
+  let principalId: string;
+  if (hasAgentCredential(args)) {
+    const agent = await agentCredential(args);
+    if (agent.principalId === null) {
+      throw new Error(
+        "listen status/stop needs the complete JSON agent credential so it can select the same listener profile as listen start",
+      );
+    }
+    principalId = listenerUuid(agent.principalId, "principal-id");
+    const explicitPrincipalId = args.optional("principal-id");
+    if (
+      explicitPrincipalId !== undefined &&
+      listenerUuid(explicitPrincipalId, "principal-id") !== principalId
+    ) {
+      throw new Error(
+        "--principal-id does not match the principal in the supplied agent credential",
+      );
+    }
+  } else {
+    principalId = listenerUuid(args.optional("principal-id"), "principal-id");
+  }
   const stateDirectory = listenerStateDirectory(args);
   const paths = listenerPaths({
     profileId: cloud.profileId,
@@ -5098,9 +5140,17 @@ async function runListenStatusOrStop(
     : await effectiveListenerStatus(paths);
   if (status === null) {
     if (args.has("json")) {
-      printJson({ status: "not_found", workspace_id: workspaceId, principal_id: principalId });
+      printJson({
+        status: "not_found",
+        workspace_id: workspaceId,
+        principal_id: principalId,
+        profile_id: cloud.profileId,
+        checked_directory: paths.instanceDirectory,
+      });
     } else {
-      process.stdout.write("No listener has been started for that agent.\n");
+      process.stdout.write(
+        `No listener found under ${paths.instanceDirectory} for profile ${cloud.profileId}.\n`,
+      );
     }
     return;
   }
@@ -5168,11 +5218,63 @@ export function claudeUserPromptHookSnippet(principalId: string): Record<string,
   };
 }
 
-function projectClaudeSettingsPath(): string {
-  return join(process.cwd(), ".claude", "settings.json");
+const CLAUDE_REPO_SETTINGS_IGNORE_LINE = ".claude/settings.json";
+
+function userClaudeSettingsPath(): string {
+  return join(homedir(), ".claude", "settings.json");
 }
 
-function readProjectSettings(path: string): Record<string, unknown> {
+function gitRepositoryRoot(cwd: string): string | null {
+  const result = spawnSync(
+    "git",
+    ["-C", cwd, "rev-parse", "--show-toplevel"],
+    { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] },
+  );
+  if (result.error) {
+    throw new Error("hook --repo cannot verify repository safety because git is unavailable");
+  }
+  if (result.status !== 0) return null;
+  const root = result.stdout.trim();
+  if (!isAbsolute(root)) {
+    throw new Error("hook --repo could not resolve an absolute repository root");
+  }
+  return root;
+}
+
+function repositoryClaudeSettingsPath(): string {
+  const root = gitRepositoryRoot(process.cwd());
+  const base = root ?? process.cwd();
+  const path = join(base, ".claude", "settings.json");
+  if (root === null) return path;
+
+  const tracked = spawnSync(
+    "git",
+    ["-C", root, "ls-files", "--error-unmatch", "--", CLAUDE_REPO_SETTINGS_IGNORE_LINE],
+    { encoding: "utf8", stdio: ["ignore", "ignore", "ignore"] },
+  );
+  const ignored = spawnSync(
+    "git",
+    ["-C", root, "check-ignore", "--quiet", "--", CLAUDE_REPO_SETTINGS_IGNORE_LINE],
+    { encoding: "utf8", stdio: ["ignore", "ignore", "ignore"] },
+  );
+  if (
+    tracked.error || ignored.error ||
+    (tracked.status !== 0 && tracked.status !== 1) ||
+    (ignored.status !== 0 && ignored.status !== 1)
+  ) {
+    throw new Error("hook --repo could not verify whether Claude settings are ignored");
+  }
+  if (tracked.status === 0 || ignored.status !== 0) {
+    throw new Error(
+      `Refusing to write ${path}: repository Claude settings could be staged and shared with every checkout. ` +
+      (tracked.status === 0 ? "It is already tracked; remove it from Git tracking first. " : "") +
+      `Add this exact line to ${join(root, ".gitignore")}: ${CLAUDE_REPO_SETTINGS_IGNORE_LINE}`,
+    );
+  }
+  return path;
+}
+
+function readClaudeSettings(path: string): Record<string, unknown> {
   let raw: string;
   try {
     raw = readFileSync(path, "utf8");
@@ -5182,7 +5284,7 @@ function readProjectSettings(path: string): Record<string, unknown> {
   }
   const value = JSON.parse(raw) as unknown;
   if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error("local .claude/settings.json must contain a JSON object");
+    throw new Error(`Claude settings must contain a JSON object: ${path}`);
   }
   return value as Record<string, unknown>;
 }
@@ -5330,12 +5432,20 @@ async function runHook(args: Arguments): Promise<void> {
   if (command !== "install" && command !== "uninstall") {
     throw new UsageError("hook requires check, install, or uninstall");
   }
-  args.assertShape(command === "install" ? ["write", "principal-id"] : ["write"], 3);
+  args.assertShape(
+    command === "install"
+      ? ["write", "repo", "principal-id"]
+      : ["write", "repo"],
+    3,
+  );
   if (args.positionals[2] !== "claude") {
     throw new Error("hook install/uninstall currently supports claude");
   }
   if (command === "uninstall" && !args.has("write")) {
     throw new Error("hook uninstall claude requires --write");
+  }
+  if (args.has("repo") && !args.has("write")) {
+    throw new Error("hook --repo requires --write");
   }
   const principalId = command === "install" ? await hookInstallPrincipalId(args) : null;
   const snippet = principalId === null ? null : claudeUserPromptHookSnippet(principalId);
@@ -5343,8 +5453,10 @@ async function runHook(args: Arguments): Promise<void> {
     process.stdout.write(`${JSON.stringify(snippet, null, 2)}\n`);
     return;
   }
-  const path = projectClaudeSettingsPath();
-  const settings = readProjectSettings(path);
+  const path = args.has("repo")
+    ? repositoryClaudeSettingsPath()
+    : userClaudeSettingsPath();
+  const settings = readClaudeSettings(path);
   const updated = command === "install"
     ? installClaudeHook(settings, principalId!)
     : uninstallClaudeHook(settings);
@@ -5396,21 +5508,30 @@ async function fileContext(
   return { cloud, selected };
 }
 
+/* READS retry too. Writes have had onceRetried since file artifacts shipped;
+ * reads did not, so every brain ls/get was a single-shot call on a transport
+ * measured flapping ~17% (2 of 12, 2026-09-01) — which is what agents
+ * experienced as "brain get timed out" while adopting the knowledgebase. A
+ * read is idempotent, so the retry is unconditionally safe here. */
 async function fileRows(context: FileCliContext): Promise<FileListRow[]> {
   const { cloud, selected } = context;
   if (selected.kind === "agent") {
-    return await listFilesAsAgent(
-      cloud,
-      selected.bearer,
-      selected.selectedWorkspace,
+    return await onceRetried(() =>
+      listFilesAsAgent(
+        cloud,
+        selected.bearer,
+        selected.selectedWorkspace,
+      )
     );
   }
   /* The read edge function accepts agent credentials only; humans read the
    * membership-gated swarm_read view over REST, the same split members uses. */
-  return await listFilesAsHuman(
-    cloud,
-    selected.human!.accessToken,
-    selected.selectedWorkspace,
+  return await onceRetried(() =>
+    listFilesAsHuman(
+      cloud,
+      selected.human!.accessToken,
+      selected.selectedWorkspace,
+    )
   );
 }
 
@@ -5580,7 +5701,7 @@ async function runFileGet(args: Arguments): Promise<void> {
   };
   const grant = await fileDownloadUrl(send, { fileId, versionN });
   const destination = args.optional("out") ?? basename(grant.name);
-  const bytes = await getObject(context.cloud, grant.download_path);
+  const bytes = await onceRetried(() => getObject(context.cloud, grant.download_path));
   // Atomic: `wx` under the hood, so a file created since any earlier look is
   // refused by the filesystem, never truncated (review finding 1).
   writeDestination(destination, bytes, args.has("force"), writeFileSync);
@@ -5747,7 +5868,7 @@ async function runBrainGet(args: Arguments): Promise<void> {
     credential: context.selected.bearer,
   }, { fileId: row.file.file_id, versionN });
   const content = decodeBrainMarkdown(
-    await getObject(context.cloud, grant.download_path),
+    await onceRetried(() => getObject(context.cloud, grant.download_path)),
   );
   if (args.has("json")) {
     process.stdout.write(`${JSON.stringify({

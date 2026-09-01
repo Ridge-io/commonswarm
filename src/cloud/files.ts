@@ -354,9 +354,9 @@ export async function getObject(
 ): Promise<Uint8Array> {
   let response: Response;
   try {
-    response = await fetcher(absoluteStorageUrl(target, downloadPath));
+    response = await fetchWithDeadline(fetcher, absoluteStorageUrl(target, downloadPath));
   } catch {
-    throw new FileTransportError("the download failed before a response");
+    throw new FileTransportError("the download failed before a response", true);
   }
   if (!response.ok) {
     throw new FileTransportError(
@@ -404,6 +404,23 @@ export function sha256Hex(bytes: Uint8Array): string {
   return createHash("sha256").update(bytes).digest("hex");
 }
 
+/* Reads had NO deadline: a stalled connection waited on the OS default, and the
+ * 2026-09-01 retry addition would have doubled that. Every read now carries the
+ * same 30s bound the command path uses, so a flap fails fast and retries once. */
+async function fetchWithDeadline(
+  fetcher: typeof fetch,
+  input: string,
+  init: RequestInit = {},
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    return await fetcher(input, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** Agent-credential list via the read function (resource: "files"). */
 export async function listFilesAsAgent(
   target: CloudTarget,
@@ -413,7 +430,7 @@ export async function listFilesAsAgent(
 ): Promise<FileListRow[]> {
   let response: Response;
   try {
-    response = await fetcher(readEndpoint(target), {
+    response = await fetchWithDeadline(fetcher, readEndpoint(target), {
       method: "POST",
       headers: {
         authorization: `Bearer ${credential}`,
@@ -423,7 +440,7 @@ export async function listFilesAsAgent(
       body: JSON.stringify({ resource: "files", workspace_id: workspaceId }),
     });
   } catch {
-    throw new FileTransportError("file list could not reach the cloud service");
+    throw new FileTransportError("file list could not reach the cloud service", true);
   }
   if (!response.ok) {
     throw new FileCommandRefused(
@@ -469,7 +486,7 @@ export async function listFilesAsHuman(
       },
     });
   } catch {
-    throw new FileTransportError("file list could not reach the cloud service");
+    throw new FileTransportError("file list could not reach the cloud service", true);
   }
   if (!response.ok) {
     throw new FileCommandRefused(
