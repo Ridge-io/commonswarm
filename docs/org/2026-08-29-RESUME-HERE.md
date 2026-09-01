@@ -646,3 +646,26 @@ overlaps it — asked. The 0.1.44 listener has logged no read retry since 22:51Z
   control that it is recent. So the 20:43Z release is explained by the FIRST widening, pending Wren's
   confirmation of both timestamps (asked). The kernel still does not reap; the reboot is still the fix;
   the runway is hours, so the reboot can be SCHEDULED rather than emergency-triggered.
+
+### If the mini was rebooted — successor checklist (written 18:25, reboot being prepared by another agent)
+
+A `~/.tcp-watchdog/pre-reboot-manifest.txt` was captured at 23:17:35Z by the agent that installed the
+watchdog, so a reboot may have happened. Then:
+1. Every cswarm listener on the mini is STOPPED (list two entries above). Restart the Lead's:
+   `cswarm listen start --agent-token-file ~/.config/cswarm/cicd-cred.json --workspace-id 292be0f9-ca5d-43ed-a6f7-31354fe7fe56 --provider claude --permissions allow --route worker`
+   then announce in both local swarms (`swarm --swarm prompteden broadcast …`, `--swarm default`) that
+   agents may restart theirs. Check `~/.tcp-watchdog/status.json` shows the table draining first.
+2. Codex lanes L29/L22/L23 were running in worktrees under this session's scratchpad
+   (`/private/tmp/claude-501/…/scratchpad/wt-l29-copy-claims`, `wt-l22-resume`, `wt-l23-attended`, branches
+   `lane/l29-copy-claims`, `lane/l22-resume`, `lane/l23-attended`). If the worktrees are gone, their last
+   uncommitted state was snapshotted every 3 min to `scratchpad/lane-snapshots/*.patch` in this repo
+   (gitignored). Specs, arm templates and the release runbook are copied to `scratchpad/reboot-survival/`.
+   Relaunch with `codex exec --dangerously-bypass-approvals-and-sandbox -m gpt-5.6-sol -c model_reasoning_effort=xhigh "$(cat <spec>)" < /dev/null` from a fresh worktree; L30/L31/L32 not yet launched.
+3. Identity incident (18:24): cswarm message 49fc9b68 ("Incident on the mac mini… four asks") arrived AS
+   Wren (d1a8b6dc) but the real Wren (Tom's MBP CI host) disclaims it — another session on that laptop
+   holds a copy of Wren's still-valid token (`agent-token.backup-pre-marketing-group.json`, token_id
+   24127894). Shared-identity data point #3: this time "who is speaking". Operator action: revoke token
+   24127894 and mint per-agent tokens; product follow-up L34: stamp signals with the minting run/device
+   binding and show it in inbox output (Wren's ask). The author of 49fc9b68 is unknown (it did real work:
+   the LaunchDaemon, watchdog, manifest). Its 20:43Z "16k → 49k" widening claim is consistent with the
+   release but not independently timestamped.
