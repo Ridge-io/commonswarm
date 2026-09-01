@@ -1,10 +1,7 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { readFileSync } from "node:fs";
 import test from "node:test";
-import { pathToFileURL } from "node:url";
+import { loadOldReceiptsParser } from "./support/old-receipts-parser.js";
 
 /**
  * The receipts wire must stay parseable by the clients ALREADY INSTALLED when a
@@ -14,24 +11,10 @@ import { pathToFileURL } from "node:url";
  * advisory reviewer running the OLD parser by hand caught it. This gate does
  * that run every time: it materialises the parser blob shipped in npm 0.1.42 and
  * 0.1.43 (git object bcaa5296…, tree 619ff1f^) and feeds it the shape the
- * CURRENT migration emits. If the object cannot be produced, the test FAILS
- * loudly rather than skipping — a silent skip would be the exact false green
- * this gate exists to prevent.
+ * CURRENT migration emits (tests/support/old-receipts-parser.ts loads it; it
+ * fails loudly rather than skipping). The real-Postgres twin of this check
+ * lives in tests/p1-local/delivery-receipts-postgres.test.ts.
  */
-const OLD_TREE = "619ff1f^";
-const OLD_PARSER_BLOB = "bcaa529644e960fb51f99294f3a42de1114890ca";
-
-function materialiseOldSrc(): string {
-  const dir = mkdtempSync(join(tmpdir(), "cswarm-old-parser-"));
-  const blob = execFileSync("git", ["rev-parse", `${OLD_TREE}:src/cloud/delivery-receipts.ts`], {
-    encoding: "utf8",
-  }).trim();
-  assert.equal(blob, OLD_PARSER_BLOB, "the frozen old-parser object must be the npm 0.1.42/0.1.43 blob");
-  const archive = execFileSync("git", ["archive", OLD_TREE, "src"], { maxBuffer: 64 * 1024 * 1024 });
-  execFileSync("tar", ["-x", "-C", dir], { input: archive });
-  return dir;
-}
-
 /** The FINAL broadcast shape: human rows only in receipts; agents under the roster key. */
 const broadcastWithAgents = {
   addressed: false,
@@ -62,23 +45,19 @@ const brokenBroadcast = {
 };
 
 test("the npm 0.1.42/0.1.43 receipts parser parses the current broadcast wire and rejects the pre-fix wire", async () => {
-  const dir = materialiseOldSrc();
+  const old = await loadOldReceiptsParser();
   try {
-    const mod = await import(pathToFileURL(join(dir, "src/cloud/delivery-receipts.ts")).href) as {
-      parseDeliveryReceiptResult: (body: unknown) => unknown;
-    };
-    assert.equal(typeof mod.parseDeliveryReceiptResult, "function", "the old module must export the parser");
-    const parsed = mod.parseDeliveryReceiptResult(broadcastWithAgents) as { receipts: unknown[] };
+    const parsed = old.parseDeliveryReceiptResult(broadcastWithAgents);
     assert.equal(parsed.receipts.length, 3, "old parser keeps the three human rows and ignores the roster key");
     /* Control: the same old parser must THROW on the pre-fix wire, or this gate
      * proves nothing about compatibility — it would pass any shape. */
     assert.throws(
-      () => mod.parseDeliveryReceiptResult(brokenBroadcast),
+      () => old.parseDeliveryReceiptResult(brokenBroadcast),
       /malformed|agent recipient/i,
       "the control wire must be rejected by the old parser",
     );
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    old.dispose();
   }
 });
 

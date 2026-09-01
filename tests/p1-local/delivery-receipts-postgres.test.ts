@@ -11,6 +11,7 @@ import { test } from "node:test";
 import postgres from "postgres";
 import { ackAgentDelivery } from "../../supabase/functions/command/durable-delivery.js";
 import { markHumanSignalsSeen } from "../../supabase/functions/command/human-receipts.js";
+import { loadOldReceiptsParser } from "../support/old-receipts-parser.js";
 
 interface LocalEnvironment {
   DB_URL: string;
@@ -240,6 +241,37 @@ test("delivery receipt authorization matrix holds on real Postgres", async () =>
           ) AS result
         `;
         await tx.unsafe("RESET ROLE");
+
+        /* The wire the installed 0.1.42/0.1.43 clients see, from REAL Postgres —
+         * not a hand-built fixture. The old parser must accept both branches and
+         * must still reject the pre-fold shape (control), or the compat claim
+         * rests on our own parser agreeing with our own SQL. */
+        const oldParser = await loadOldReceiptsParser();
+        try {
+          assert.equal(
+            oldParser.parseDeliveryReceiptResult(agentRow!.result).receipts.length,
+            agentRow!.result.receipts.length,
+            "old parser reads the directed wire from real Postgres",
+          );
+          assert.equal(
+            oldParser.parseDeliveryReceiptResult(broadcastRow!.result).receipts.length,
+            broadcastRow!.result.receipts.length,
+            "old parser reads the broadcast wire from real Postgres (member rows only)",
+          );
+          assert.throws(
+            () => oldParser.parseDeliveryReceiptResult({
+              ...broadcastRow!.result,
+              receipts: [
+                ...broadcastRow!.result.receipts,
+                ...(broadcastRow!.result.broadcast_roster?.agents.principals ?? []),
+              ],
+            }),
+            /malformed|agent recipient/i,
+            "control: the pre-fold shape (agent tracking rows in receipts) must throw",
+          );
+        } finally {
+          oldParser.dispose();
+        }
 
         assert.deepEqual(agentRow?.result.addressed, true);
         assert.deepEqual(agentRow?.result.receipts.length, 1);
