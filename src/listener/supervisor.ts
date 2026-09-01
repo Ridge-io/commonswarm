@@ -79,6 +79,8 @@ export interface ListenerSupervisorOptions {
   principalId: string;
   /** Host adapter id recorded in status metadata only. Default: grok. */
   provider?: ListenerProviderId;
+  /** Build version this supervisor can report while its control socket is live. */
+  cswarmVersion?: string;
   permissionMode?: ListenerPermissionMode;
   routeMode?: ListenerRouteMode;
   deferOverChars?: number | null;
@@ -208,6 +210,7 @@ export async function runListenerSupervisor(
     version: 1,
     instanceId: proposedInstanceId,
     provider: options.provider ?? "grok",
+    ...(options.cswarmVersion ? { cswarmVersion: options.cswarmVersion } : {}),
     ...(options.permissionMode ? { permissionMode: options.permissionMode } : {}),
     profileId: options.profileId,
     workspaceId: options.workspaceId.toLowerCase(),

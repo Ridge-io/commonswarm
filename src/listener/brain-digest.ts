@@ -2,6 +2,7 @@ import { isAbsolute, join } from "node:path";
 import type { BrainTopicSnapshot } from "../cloud/brain.js";
 import {
   readSecureJsonFile,
+  readSecureJsonFileIfPresent,
   withFileLock,
   writeSecureJsonFile,
 } from "../cloud/storage.js";
@@ -91,6 +92,15 @@ function newestFirst(
   );
 }
 
+function changedTopics(
+  previous: BrainDigestState | null,
+  topics: readonly BrainTopicSnapshot[],
+): BrainTopicSnapshot[] {
+  return previous === null
+    ? newestFirst(topics).slice(0, BRAIN_DIGEST_TOPIC_LIMIT)
+    : topics.filter((topic) => previous.topicVersions[topic.topic] !== topic.version);
+}
+
 /** One compact changed-only line; topic bodies never enter this formatter. */
 export function renderBrainDigest(
   topicCount: number,
@@ -117,6 +127,20 @@ export class FileBrainDigestStore {
     this.location = join(instanceDirectory, BRAIN_DIGEST_FILE);
   }
 
+  /** Read the shared high-water without advancing it. */
+  async preview(topics: readonly BrainTopicSnapshot[]): Promise<string | null> {
+    const raw = await readSecureJsonFileIfPresent(
+      this.location,
+      MAX_BRAIN_DIGEST_STATE_BYTES,
+    );
+    const previous = raw === null ? null : parseState(raw);
+    if (previous !== null && previous.principalId !== this.principalId) {
+      throw new Error("stored brain digest state belongs to another principal");
+    }
+    currentState(this.principalId, topics);
+    return renderBrainDigest(topics.length, changedTopics(previous, topics));
+  }
+
   async consume(topics: readonly BrainTopicSnapshot[]): Promise<string | null> {
     return await withFileLock(this.instanceDirectory, BRAIN_DIGEST_LOCK, async () => {
       const raw = await readSecureJsonFile(
@@ -128,11 +152,7 @@ export class FileBrainDigestStore {
         throw new Error("stored brain digest state belongs to another principal");
       }
       const next = currentState(this.principalId, topics);
-      const changed = previous === null
-        ? newestFirst(topics).slice(0, BRAIN_DIGEST_TOPIC_LIMIT)
-        : topics.filter((topic) =>
-          previous.topicVersions[topic.topic] !== topic.version
-        );
+      const changed = changedTopics(previous, topics);
       const serialized = JSON.stringify(next);
       if (Buffer.byteLength(serialized, "utf8") > MAX_BRAIN_DIGEST_STATE_BYTES) {
         throw new Error("brain digest state is larger than this store accepts");

@@ -18,6 +18,7 @@ import {
 import {
   deleteSecureJsonFile,
   readSecureJsonFile,
+  readSecureJsonFileIfPresent,
   withFileLock,
   writeSecureJsonFile,
 } from "../cloud/storage.js";
@@ -250,6 +251,20 @@ export class FileHookSurfaceStore {
       throw new Error("listener hook surface directory must be absolute");
     }
     this.path = join(instanceDirectory, HOOK_SURFACE_FILE);
+  }
+
+  /** Preview unseen hook rows without taking a write lock or advancing state. */
+  async previewUnseen<T extends { signalId: string }>(items: readonly T[]): Promise<T[]> {
+    const raw = await readSecureJsonFileIfPresent(this.path, MAX_HOOK_SURFACE_BYTES);
+    const seen = new Set(raw === null ? [] : parseSurface(raw).surfacedSignalIds);
+    const unseen: T[] = [];
+    for (const item of items) {
+      const signalId = item.signalId.toLowerCase();
+      if (!UUID_RE.test(signalId) || seen.has(signalId)) continue;
+      seen.add(signalId);
+      unseen.push(item);
+    }
+    return unseen;
   }
 
   async stage<T extends { signalId: string }>(
