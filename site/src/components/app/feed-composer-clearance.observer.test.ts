@@ -25,9 +25,10 @@ type Clearance = {
 };
 
 type FeedMeasurement = {
-  before: Clearance;
   dynamic: Clearance;
   negative: Clearance;
+  overcorrected: Clearance;
+  viewportHeight: number;
   viewportWidth: number;
 };
 
@@ -110,18 +111,28 @@ const frameScript = (tall: boolean): string => `<script>
     await doc.fonts.ready;
     await settle();
     const dynamic = await measure();
-    list.style.setProperty("padding-block-end", "var(--s-10)", "important");
-    const before = await measure();
+    list.style.setProperty(
+      "padding-block-end",
+      (composer.getBoundingClientRect().height + 12) + "px",
+      "important",
+    );
+    const overcorrected = await measure();
     list.style.setProperty("padding-block-end", "0px", "important");
     const negative = await measure();
     document.documentElement.dataset.feedMeasurement = btoa(JSON.stringify({
-      before,
       dynamic,
       negative,
+      overcorrected,
+      viewportHeight: view.innerHeight,
       viewportWidth: view.innerWidth,
     }));
   };
-  const startMeasurement = () => void runMeasurement().catch((error) => reportFeedError(error?.stack ?? error));
+  let started = false;
+  const startMeasurement = () => {
+    if (started) return;
+    started = true;
+    void runMeasurement().catch((error) => reportFeedError(error?.stack ?? error));
+  };
   frame.addEventListener("load", startMeasurement, { once: true });
   if (
     frame.contentDocument?.readyState === "complete" &&
@@ -134,16 +145,18 @@ const startDistServer = async (): Promise<{ close(): Promise<void>; origin: stri
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
     if (url.pathname === "/__measure") {
       const width = Number.parseInt(url.searchParams.get("width") ?? "", 10);
+      const height = Number.parseInt(url.searchParams.get("height") ?? "", 10);
       const tall = url.searchParams.get("tall") === "1";
       if (
         !Number.isSafeInteger(width) || width <= 0 ||
+        !Number.isSafeInteger(height) || height <= 0 ||
         !["0", "1"].includes(url.searchParams.get("tall") ?? "")
       ) {
         response.writeHead(400).end("Invalid measurement");
         return;
       }
       response.writeHead(200, { "content-type": contentTypes[".html"] });
-      response.end(`<!doctype html><html><body style="margin:0"><iframe title="Feed measurement viewport" src="/app" style="border:0;width:${width}px;height:1000px"></iframe>${frameScript(tall)}</body></html>`);
+      response.end(`<!doctype html><html><body style="margin:0"><iframe title="Feed measurement viewport" src="/app" style="border:0;width:${width}px;height:${height}px"></iframe>${frameScript(tall)}</body></html>`);
       return;
     }
 
@@ -185,6 +198,7 @@ const measureAt = async (
   chrome: string,
   origin: string,
   width: number,
+  height: number,
   tall: boolean,
 ): Promise<FeedMeasurement> => {
   const { stdout, stderr } = await run(chrome, [
@@ -197,7 +211,7 @@ const measureAt = async (
     "--window-size=1600,1200",
     "--virtual-time-budget=8000",
     "--dump-dom",
-    `${origin}/__measure?width=${width}&tall=${tall ? 1 : 0}`,
+    `${origin}/__measure?width=${width}&height=${height}&tall=${tall ? 1 : 0}`,
   ], {
     maxBuffer: 10 * 1024 * 1024,
     timeout: 20_000,
@@ -214,49 +228,62 @@ const measureAt = async (
   return JSON.parse(Buffer.from(encoded, "base64").toString("utf8")) as FeedMeasurement;
 };
 
-test("the newest feed row clears the measured composer at rest and when it grows", async () => {
+test("the newest feed row keeps a bounded 12px gap at rest, on growth, and above a mobile keyboard", async () => {
   const chrome = await findChrome();
   const server = await startDistServer();
   try {
-    for (const width of [1440, 390]) {
+    for (const { width, height, expectsGrowth } of [
+      { width: 1440, height: 1000, expectsGrowth: true },
+      { width: 390, height: 1000, expectsGrowth: true },
+      { width: 390, height: 430, expectsGrowth: false },
+    ]) {
       const measurements = {
-        rest: await measureAt(chrome, server.origin, width, false),
-        tall: await measureAt(chrome, server.origin, width, true),
+        rest: await measureAt(chrome, server.origin, width, height, false),
+        tall: await measureAt(chrome, server.origin, width, height, true),
       };
       for (const [state, measurement] of Object.entries(measurements)) {
         const geometry = measurement.dynamic;
         assert.equal(measurement.viewportWidth, width, `${width}px iframe width drifted`);
+        assert.equal(measurement.viewportHeight, height, `${width}x${height} iframe height drifted`);
         assert.ok(
           geometry.clearsAtWholePixel,
-          `${width}px ${state}: last row does not clear composer: ${JSON.stringify(geometry)}`,
+          `${width}x${height} ${state}: last row does not clear composer: ${JSON.stringify(geometry)}`,
+        );
+        assert.ok(
+          geometry.clearance >= 10.5 && geometry.clearance <= 12.5,
+          `${width}x${height} ${state}: gap is not the 12px transcript rhythm: ${JSON.stringify(geometry)}`,
+        );
+        assert.ok(
+          Math.abs(geometry.paddingBottom - 12) <= 0.1,
+          `${width}x${height} ${state}: transcript padding drifted: ${JSON.stringify(geometry)}`,
         );
         assert.ok(
           geometry.scrollTop + geometry.viewportHeight >= geometry.scrollHeight - 1,
-          `${width}px ${state}: auto-scroll did not reach the transcript end`,
+          `${width}x${height} ${state}: auto-scroll did not reach the transcript end`,
         );
         assert.equal(
           measurement.negative.clearsAtWholePixel,
           false,
-          `${width}px ${state}: zero-padding negative control did not fail: ${JSON.stringify(measurement.negative)}`,
+          `${width}x${height} ${state}: zero-padding negative control did not fail: ${JSON.stringify(measurement.negative)}`,
         );
         assert.ok(
-          Math.abs(measurement.before.paddingBottom - 40) <= 0.1,
-          `${width}px ${state}: fixed-padding before control drifted: ${JSON.stringify(measurement.before)}`,
+          measurement.overcorrected.clearance >= measurement.overcorrected.composerHeight + 10,
+          `${width}x${height} ${state}: double-reservation control did not recreate the large gap: ${JSON.stringify(measurement.overcorrected)}`,
         );
       }
-      assert.ok(
-        measurements.tall.dynamic.composerHeight > measurements.rest.dynamic.composerHeight + 40,
-        `${width}px: multiline input did not make the composer materially taller`,
-      );
-      const composerGrowth = measurements.tall.dynamic.composerHeight -
-        measurements.rest.dynamic.composerHeight;
+      if (expectsGrowth) {
+        assert.ok(
+          measurements.tall.dynamic.composerHeight > measurements.rest.dynamic.composerHeight + 40,
+          `${width}x${height}: multiline input did not make the composer materially taller`,
+        );
+      }
       const paddingGrowth = measurements.tall.dynamic.paddingBottom -
         measurements.rest.dynamic.paddingBottom;
       assert.ok(
-        Math.abs(composerGrowth - paddingGrowth) <= 1,
-        `${width}px: transcript padding did not track composer growth: ${JSON.stringify(measurements)}`,
+        Math.abs(paddingGrowth) <= 0.1,
+        `${width}x${height}: grid growth changed the transcript rhythm: ${JSON.stringify(measurements)}`,
       );
-      console.log(`feed-composer-clearance ${width}px ${JSON.stringify(measurements)}`);
+      console.log(`feed-composer-clearance ${width}x${height} ${JSON.stringify(measurements)}`);
     }
   } finally {
     await server.close();

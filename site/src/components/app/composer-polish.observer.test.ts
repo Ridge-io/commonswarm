@@ -60,6 +60,7 @@ type PolishMeasurement = {
     send: Rect;
     shell: Rect;
   };
+  runs: number;
   variant: "current" | "reverted";
   viewport: { height: number; width: number };
 };
@@ -80,7 +81,9 @@ const measurementPage = (url: URL): string | null => {
     const reportError = (value) => {
       document.documentElement.dataset.composerPolishError = btoa(unescape(encodeURIComponent(String(value))));
     };
+    let measurementRuns = 0;
     const runMeasurement = async () => {
+      measurementRuns += 1;
       const doc = frame.contentDocument;
       const view = frame.contentWindow;
       const waitFor = async (predicate, label) => {
@@ -108,9 +111,24 @@ const measurementPage = (url: URL): string | null => {
       const send = doc.querySelector("[data-composer-send]");
       const status = doc.querySelector("[data-composer-status]");
       const feedback = doc.querySelector("[data-composer-feedback]");
-      if (!form || !audience || !select || !mentions || !shell || !input || !send || !status || !feedback) {
+      const focusSink = doc.querySelector("[data-channel-name]");
+      if (!form || !audience || !select || !mentions || !shell || !input || !send || !status || !feedback || !focusSink) {
         throw new Error("Composer fixture is incomplete");
       }
+
+      /* The dashboard queues its initial desktop autofocus in requestAnimationFrame. A single
+       * blur plus timeout can lose to that callback and read the accent border as the blurred
+       * border. Reclaim focus until the requested state survives three separate turns. */
+      const settleFocus = async (target, predicate, label) => {
+        let stableTurns = 0;
+        for (let attempt = 0; attempt < 160; attempt += 1) {
+          target.focus();
+          await new Promise((resolve) => view.setTimeout(resolve, 25));
+          stableTurns = predicate() ? stableTurns + 1 : 0;
+          if (stableTurns >= 3) return;
+        }
+        throw new Error("Timed out waiting for stable " + label);
+      };
 
       if (${JSON.stringify(variant)} === "reverted") {
         shell.insertBefore(mentions, input);
@@ -165,11 +183,12 @@ const measurementPage = (url: URL): string | null => {
         input.style.transform = "translateY(4px)";
       }
       input.blur();
-      await settle();
-      const focusSink = doc.querySelector("[data-channel-name]");
-      focusSink?.setAttribute("tabindex", "-1");
-      focusSink?.focus();
-      await settle();
+      focusSink.setAttribute("tabindex", "-1");
+      await settleFocus(
+        focusSink,
+        () => doc.activeElement === focusSink && !shell.matches(":focus-within"),
+        "blurred composer",
+      );
       const shellBox = shell.getBoundingClientRect();
       const inputBox = input.getBoundingClientRect();
       const audienceBox = audience.getBoundingClientRect();
@@ -230,8 +249,11 @@ const measurementPage = (url: URL): string | null => {
       killTransitions.textContent = "* { transition: none !important; }";
       doc.head.append(killTransitions);
       const shellBorderBlurred = view.getComputedStyle(shell).borderTopColor;
-      input.focus();
-      await settle();
+      await settleFocus(
+        input,
+        () => doc.activeElement === input && shell.matches(":focus-within"),
+        "focused composer",
+      );
       const focusedInputStyle = view.getComputedStyle(input);
       const focusedShellStyle = view.getComputedStyle(shell);
       const focus = {
@@ -245,7 +267,11 @@ const measurementPage = (url: URL): string | null => {
       };
       input.blur();
       killTransitions.remove();
-      await settle();
+      await settleFocus(
+        focusSink,
+        () => doc.activeElement === focusSink && !shell.matches(":focus-within"),
+        "composer blur after focus check",
+      );
 
       setAudience("agent:sample-river");
       setInput("First line\\nSecond line");
@@ -286,14 +312,28 @@ const measurementPage = (url: URL): string | null => {
         statusText: status.textContent ?? "",
         statusVisible: !feedback.hidden && view.getComputedStyle(status).display !== "none",
       };
-      document.documentElement.dataset.composerPolishMeasurement = btoa(unescape(encodeURIComponent(JSON.stringify({ focus, rest, success, twoLine,
+      document.documentElement.dataset.composerPolishMeasurement = btoa(unescape(encodeURIComponent(JSON.stringify({ focus, rest, runs: measurementRuns, success, twoLine,
         variant: ${JSON.stringify(variant)},
         viewport: { height: view.innerHeight, width: view.innerWidth },
       }))));
     };
-    const start = () => void runMeasurement().catch((error) => reportError(error?.stack ?? error));
-    frame.addEventListener("load", start, { once: true });
-    if (frame.contentDocument?.readyState === "complete" && frame.contentWindow?.location.pathname === "/app") start();
+    /* The iframe can already be complete when this script runs and still deliver its queued
+     * load event. Without this guard both paths mutate and measure the same composer at once,
+     * which produced the observed 52px inset and already-focused-border flakes. */
+    let started = false;
+    const start = () => {
+      if (started) return;
+      started = true;
+      void runMeasurement().catch((error) => reportError(error?.stack ?? error));
+    };
+    /* Call the start gate twice on purpose. This is the positive control for the race: removing
+     * the gate now deterministically launches two writers against the same measurement DOM. */
+    const triggerStart = () => {
+      start();
+      start();
+    };
+    frame.addEventListener("load", triggerStart, { once: true });
+    if (frame.contentDocument?.readyState === "complete" && frame.contentWindow?.location.pathname === "/app") triggerStart();
   </script></body></html>`;
 };
 
@@ -335,6 +375,9 @@ const measure = async (
 
 const geometryFailures = (measurement: PolishMeasurement): string[] => {
   const failures: string[] = [];
+  if (measurement.runs !== 1) {
+    failures.push(`measurement ran ${measurement.runs} times against one frame`);
+  }
   const focus = measurement.focus;
   if (focus.textareaOutlineStyle !== "none" && focus.textareaOutlineWidth !== "0px") {
     failures.push(

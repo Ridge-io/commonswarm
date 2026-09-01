@@ -27,6 +27,9 @@ type ComposerMeasurement = {
   shiftEnter: { insertedNewline: boolean; prevented: boolean; submitted: boolean };
   metaEnter: { recipient: string; submitted: boolean };
   ctrlEnter: { recipient: string; submitted: boolean };
+  metaMention: { chipText: string; selectedValue: string; submitted: boolean };
+  ctrlMention: { chipText: string; selectedValue: string; submitted: boolean };
+  zeroCandidate: { pickerHidden: boolean; submitted: boolean };
 };
 
 const contentTypes: Record<string, string> = {
@@ -108,6 +111,54 @@ const frameScript = `<script>
         submitted: row?.querySelector(".dashboard__message-markdown")?.textContent === body,
       };
     };
+    const confirmMentionWith = async (modifier, query) => {
+      select.value = "everyone";
+      select.dispatchEvent(new view.Event("change", { bubbles: true }));
+      input.value = "@" + query;
+      input.setSelectionRange(input.value.length, input.value.length);
+      input.dispatchEvent(new view.InputEvent("input", { bubbles: true, inputType: "insertText" }));
+      await waitFor(() => !doc.querySelector("[data-mention-picker]")?.hidden, "mention picker");
+      const before = list.children.length;
+      const event = new view.KeyboardEvent("keydown", {
+        bubbles: true,
+        cancelable: true,
+        key: "Enter",
+        [modifier]: true,
+      });
+      input.dispatchEvent(event);
+      await new Promise((resolve) => view.setTimeout(resolve, 0));
+      return {
+        chipText: chips()[0]?.textContent ?? "",
+        selectedValue: select.value,
+        submitted: list.children.length !== before,
+      };
+    };
+    const sendWithStaleEmptyPicker = async () => {
+      select.value = "everyone";
+      select.dispatchEvent(new view.Event("change", { bubbles: true }));
+      input.value = "@orb";
+      input.setSelectionRange(input.value.length, input.value.length);
+      input.dispatchEvent(new view.InputEvent("input", { bubbles: true, inputType: "insertText" }));
+      await waitFor(() => !doc.querySelector("[data-mention-picker]")?.hidden, "mention picker");
+      /* Keep the rendered picker open while changing the query without an input event. This
+         models the stale frame the keydown branch must handle: open UI, zero live candidates. */
+      input.value = "@no-such-recipient";
+      input.setSelectionRange(input.value.length, input.value.length);
+      const before = list.children.length;
+      const event = new view.KeyboardEvent("keydown", {
+        bubbles: true,
+        cancelable: true,
+        key: "Enter",
+        metaKey: true,
+      });
+      input.dispatchEvent(event);
+      await waitFor(() => list.children.length === before + 1, "zero-candidate submit");
+      return {
+        pickerHidden: doc.querySelector("[data-mention-picker]")?.hidden === true,
+        submitted: list.lastElementChild?.querySelector(".dashboard__message-markdown")?.textContent ===
+          "@no-such-recipient",
+      };
+    };
 
     const broadcast = {
       option: select.selectedOptions[0]?.textContent ?? "",
@@ -171,6 +222,9 @@ const frameScript = `<script>
     };
     const metaEnter = await sendWith("metaKey", "sent with command enter");
     const ctrlEnter = await sendWith("ctrlKey", "sent with control enter");
+    const metaMention = await confirmMentionWith("metaKey", "orb");
+    const ctrlMention = await confirmMentionWith("ctrlKey", "lum");
+    const zeroCandidate = await sendWithStaleEmptyPicker();
 
     document.documentElement.dataset.composerMeasurement = btoa(unescape(encodeURIComponent(JSON.stringify({
       broadcast,
@@ -181,6 +235,9 @@ const frameScript = `<script>
       shiftEnter,
       metaEnter,
       ctrlEnter,
+      metaMention,
+      ctrlMention,
+      zeroCandidate,
     }))));
   };
   const start = () => void runMeasurement().catch((error) => reportError(error?.stack ?? error));
@@ -300,6 +357,17 @@ test("rendered composer uses one visible recipient and preserves multiline keybo
     });
     assert.deepEqual(measured.metaEnter, { recipient: "→ River", submitted: true });
     assert.deepEqual(measured.ctrlEnter, { recipient: "→ River", submitted: true });
+    assert.deepEqual(measured.metaMention, {
+      chipText: "@Orbit×",
+      selectedValue: "agent:sample-orbit",
+      submitted: false,
+    });
+    assert.deepEqual(measured.ctrlMention, {
+      chipText: "@Lumen×",
+      selectedValue: "agent:sample-lumen",
+      submitted: false,
+    });
+    assert.deepEqual(measured.zeroCandidate, { pickerHidden: true, submitted: true });
   } finally {
     await server.close();
   }

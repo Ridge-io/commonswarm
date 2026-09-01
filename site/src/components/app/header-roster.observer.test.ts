@@ -13,6 +13,10 @@ import { test } from "node:test";
  * not grow with agent count.
  */
 const dashboard = await readFile(new URL("./LiveDashboard.astro", import.meta.url), "utf8");
+const connect = await readFile(
+  new URL("../connect/AgentConnect.astro", import.meta.url),
+  "utf8",
+);
 
 test("the rail carries no agent roster: no list, no rail Add door, no collapse sync", () => {
   assert.doesNotMatch(
@@ -114,6 +118,44 @@ test("management lives in a dialog whose first primary action is Add an agent", 
   assert.match(dashboard, /rosterFilter/);
   assert.match(dashboard, /dataset\.removeAgent/);
   assert.match(dashboard, /data-agent-error/);
+});
+
+test("Get prompt is own-agent only and reuses the existing prompt copy path", () => {
+  const roster = dashboard.slice(
+    dashboard.indexOf("const renderDialogRoster ="),
+    dashboard.indexOf("const openRosterDialog ="),
+  );
+  assert.match(
+    roster,
+    /const mayGetPrompt = Boolean\(\s*me && agent\.ownerUserId === me\.userId && !sampleMode/,
+    "another member's agent must never receive a Get prompt action",
+  );
+  assert.match(roster, /promptButton\.textContent = "Get prompt"/);
+  assert.match(roster, /promptButton\.dataset\.getAgentPrompt = agent\.principalId/);
+  assert.match(
+    roster,
+    /requestPromptFor\(agent\.principalId\)/,
+    "the row must pass that exact principal into AgentConnect",
+  );
+
+  const request = connect.slice(
+    connect.indexOf("requestPromptFor(principalId"),
+    connect.indexOf("finishPrompt(reason"),
+  );
+  const mint = connect.slice(
+    connect.indexOf("async #mintGuarded()"),
+    connect.indexOf("#watchForFirstUse"),
+  );
+  const copy = connect.slice(
+    connect.indexOf("async #copy()"),
+    connect.indexOf("\n  }\n\n  if (!customElements"),
+  );
+  assert.match(request, /#requestedPrincipalId = principalId/);
+  assert.match(connect, /this\.#agents\.find\(\(agent\) => agent\.principalId === principalId\)/);
+  assert.match(connect, /select\.value = identity\.principalId/);
+  assert.match(mint, /mintAgentCredential\([\s\S]*identity/);
+  assert.match(mint, /this\.#prompt = dashboardAgentPrompt\(\{[\s\S]*credential/);
+  assert.match(copy, /navigator\.clipboard\.writeText\(this\.#prompt\)/);
 });
 
 test("the dialog is modal with Escape, backdrop, close, and focus handling", () => {

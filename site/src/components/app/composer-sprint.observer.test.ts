@@ -380,8 +380,10 @@ const assertComposerSprint = (value: ComposerArtifact): void => {
     "autosize-max: CSS must cap growth at 40dvh");
   assert.match(textareaCss, /overflow-y: auto;/,
     "autosize-scroll: overflow must scroll inside the textarea");
-  assert.match(dashboard, /new ResizeObserver\(syncComposerClearance\)/,
-    "autosize-clearance: composer growth must reach transcript clearance");
+  assert.doesNotMatch(dashboard, /syncComposerClearance|--composer-height/,
+    "autosize-clearance: the separate composer grid row must not be reserved a second time");
+  assert.match(dashboard, /\.dashboard__feed\s*\{[^}]*padding: 0 0 var\(--s-3\);/,
+    "autosize-clearance: the transcript keeps only its normal 12px bottom rhythm");
 
   /* 390x430 is inside both mobile conditions. visualViewport writes 430px to the product shell,
    * the frame consumes that exact height, and the channel grid keeps the composer in its auto row

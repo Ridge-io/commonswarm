@@ -932,6 +932,7 @@ import "../../styles/tokens.css";
   interface SecretHoldingAgentConnect extends HTMLElement {
     clearPrompt(notify?: boolean): void;
     finishPrompt(reason: "done" | "back" | "consumed", notify?: boolean): void;
+    requestPromptFor(principalId: string): void;
   }
 
   interface CreateIntent {
@@ -1125,7 +1126,6 @@ import "../../styles/tokens.css";
       }
       const composer = one<HTMLFormElement>("[data-composer]");
       if (composer) composer.hidden = name !== "feed" && name !== "feed-empty";
-      if (composer && !composer.hidden) queueMicrotask(syncComposerClearance);
       if (composer?.hidden) {
         closeMentionPicker();
       }
@@ -1956,7 +1956,6 @@ import "../../styles/tokens.css";
     const resizeComposerInput = (input: HTMLTextAreaElement): void => {
       input.style.blockSize = "auto";
       input.style.blockSize = `${input.scrollHeight}px`;
-      syncComposerClearance();
     };
 
     const setComposerStatus = (
@@ -2019,7 +2018,6 @@ import "../../styles/tokens.css";
         chip.append(copy, remove);
         container.append(chip);
       }
-      syncComposerClearance();
     };
 
     const stageComposerFiles = (files: readonly File[]): void => {
@@ -2630,6 +2628,29 @@ import "../../styles/tokens.css";
           }
         }
         row.append(avatar, copy);
+        /* A prompt carries a fresh credential for this identity, so it is narrower than
+           the management gate: only the person who owns the agent gets this action.
+           AgentConnect owns minting, dashboardAgentPrompt, one-time display, and copy. */
+        const mayGetPrompt = Boolean(
+          me && agent.ownerUserId === me.userId && !sampleMode,
+        );
+        if (mayGetPrompt) {
+          const promptButton = document.createElement("button");
+          promptButton.type = "button";
+          promptButton.className = "dashboard__text-button";
+          promptButton.textContent = "Get prompt";
+          promptButton.dataset.getAgentPrompt = agent.principalId;
+          promptButton.setAttribute("aria-label", `Get prompt for ${agent.name}`);
+          promptButton.addEventListener("click", () => {
+            closeRosterDialog();
+            openConnect();
+            window.requestAnimationFrame(() => {
+              one<SecretHoldingAgentConnect>("agent-connect")
+                ?.requestPromptFor(agent.principalId);
+            });
+          });
+          row.append(promptButton);
+        }
         /* Model is editable under the SAME gate as removal (owner/admin any
            agent, member their own) — the human mirror of the agent's own
            declare. The value is free text and lands in the DOM only as
@@ -2969,26 +2990,6 @@ import "../../styles/tokens.css";
       details.append(summary, detail);
       body.append(details);
     };
-
-    /* The transcript scrolls to its own end, so that end must include the whole composer.
-     * Its textarea, mention chips, and picker can change the form's height after first paint;
-     * ResizeObserver keeps the scroll clearance tied to the rendered box instead of a rest-state
-     * estimate. The hidden form initially measures zero and reports again when a feed view opens. */
-    const composerForClearance = one<HTMLFormElement>("[data-composer]");
-    const composerClearanceOwner = composerForClearance
-      ?.closest<HTMLElement>(".dashboard__channel-body");
-    const syncComposerClearance = (): void => {
-      if (!composerForClearance || !composerClearanceOwner) return;
-      composerClearanceOwner.style.setProperty(
-        "--composer-height",
-        `${composerForClearance.getBoundingClientRect().height}px`,
-      );
-    };
-    if (composerForClearance && composerClearanceOwner) {
-      const composerClearanceObserver = new ResizeObserver(syncComposerClearance);
-      composerClearanceObserver.observe(composerForClearance);
-      syncComposerClearance();
-    }
 
     /* ── transcript scroll behaviour ─────────────────────────────────────────────────────────
      * Three things a chat transcript must do, none of which it did:
@@ -5077,12 +5078,9 @@ import "../../styles/tokens.css";
       (event) => {
         const input = event.currentTarget as HTMLTextAreaElement;
         const picker = one<HTMLElement>("[data-mention-picker]");
-        if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && !event.isComposing) {
-          event.preventDefault();
-          closeMentionPicker();
-          one<HTMLFormElement>("[data-composer]")?.requestSubmit();
-          return;
-        }
+        const confirmKey = event.key === "Enter" &&
+          !event.isComposing &&
+          (!event.shiftKey || event.metaKey || event.ctrlKey);
         if (event.key === "Backspace" && input.value === "" && composerMention) {
           composerMention = null;
           composerAudience = { kind: "everyone" };
@@ -5108,19 +5106,19 @@ import "../../styles/tokens.css";
             renderMentionPicker();
             return;
           }
-          if (
-            event.key === "Enter" &&
-            !event.shiftKey &&
-            !event.isComposing &&
-            candidates.length > 0
-          ) {
-            event.preventDefault();
-            const mention = candidates[mentionPickerIndex];
-            if (mention) selectMention(mention);
-            return;
+          if (confirmKey) {
+            if (candidates.length > 0) {
+              event.preventDefault();
+              const mention = candidates[mentionPickerIndex];
+              if (mention) selectMention(mention);
+              return;
+            }
+            /* A stale open picker with no matches is not a modal trap. Close it and let
+               this same key continue to the normal composer submit below. */
+            closeMentionPicker();
           }
         }
-        if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
+        if (confirmKey) {
           event.preventDefault();
           closeMentionPicker();
           one<HTMLFormElement>("[data-composer]")?.requestSubmit();
@@ -5514,7 +5512,7 @@ import "../../styles/tokens.css";
     --dashboard-rail: 18.5rem;
     position: relative;
     display: block;
-    min-block-size: 100svh;
+    min-block-size: var(--dashboard-viewport-height, 100dvh);
     color: var(--text);
     background: var(--bg);
     isolation: isolate;
@@ -5551,7 +5549,14 @@ import "../../styles/tokens.css";
   }
 
   .dashboard__root {
-    min-block-size: 100svh;
+    min-block-size: var(--dashboard-viewport-height, 100dvh);
+  }
+
+  .dashboard[data-state="channel"],
+  .dashboard[data-state="channel"] .dashboard__root {
+    block-size: var(--dashboard-viewport-height, 100dvh);
+    min-block-size: 0;
+    overflow: hidden;
   }
 
   .dashboard__loading {
@@ -5914,8 +5919,12 @@ import "../../styles/tokens.css";
      * exist. Measured in the browser before and after. */
     block-size: 100%;
     min-block-size: 0;
+    /* The hidden sample notice is not a grid item. Pin the frame to row 2 so it still takes
+       the minmax viewport row instead of auto-placing into the content-sized first row. */
+    grid-row: 2;
     display: grid;
     grid-template-columns: var(--dashboard-rail) minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
     overflow: hidden;
     border: 0;
     border-radius: 0;
@@ -7421,8 +7430,6 @@ import "../../styles/tokens.css";
   }
 
   .dashboard__channel-body {
-    --composer-height: 0px;
-
     min-block-size: 0;
     display: grid;
     grid-template-rows: minmax(0, 1fr) auto;
@@ -7823,7 +7830,9 @@ import "../../styles/tokens.css";
   }
 
   .dashboard__feed {
-    padding: 0 0 calc(var(--composer-height) + var(--s-3));
+    /* The composer already owns a separate auto-sized grid row. Reserving its height here
+       counted it twice and left a 135-275px hole. Keep only the normal 12px transcript rhythm. */
+    padding: 0 0 var(--s-3);
     margin: 0;
     list-style: none;
   }

@@ -241,6 +241,7 @@ const {
     #pollTimer: number | undefined;
     #loadQueued = false;
     #loadVersion = 0;
+    #requestedPrincipalId = "";
     #retargetPending = false;
     /* Attributes present in the markup fire attributeChangedCallback during upgrade, BEFORE
        connectedCallback — so without this the element would load twice on every page. */
@@ -318,6 +319,22 @@ const {
 
     clearPrompt(notify = true) {
       this.finishPrompt("done", notify);
+    }
+
+    /** Re-onboard one existing identity through the same mint and prompt path as Add an agent. */
+    requestPromptFor(principalId: string) {
+      /* The roster remains reachable in the channel header while a prompt is visible. Never
+         replace one live secret with another; the reader must copy or close the first one. */
+      if (!principalId || this.#busy || this.#prompt !== null) return;
+      this.#requestedPrincipalId = principalId;
+      if (
+        this.dataset.state === "ready" &&
+        this.#workspaceId === (this.getAttribute("workspace-id")?.trim() ?? "")
+      ) {
+        this.#mintRequestedPrompt();
+        return;
+      }
+      this.#queueLoad();
     }
 
     finishPrompt(reason: "done" | "back" | "consumed", notify = true) {
@@ -420,6 +437,22 @@ const {
 
       this.#fillIdentities();
       this.#state("ready");
+      this.#mintRequestedPrompt();
+    }
+
+    #mintRequestedPrompt() {
+      const principalId = this.#requestedPrincipalId;
+      if (!principalId || this.dataset.state !== "ready") return;
+      const select = this.#q<HTMLSelectElement>('[data-field="identity"]');
+      const identity = this.#agents.find((agent) => agent.principalId === principalId);
+      this.#requestedPrincipalId = "";
+      if (!select || !identity) {
+        this.#formError("That AI assistant is no longer available. Reload the roster and try again.");
+        return;
+      }
+      select.value = identity.principalId;
+      this.#syncNameField();
+      void this.#mint();
     }
 
     #fillIdentities() {

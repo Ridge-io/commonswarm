@@ -135,7 +135,7 @@ test("broadcast uses addressed=false and can never look pending or failed", () =
 
   const renderer = dashboard.slice(
     dashboard.indexOf("const appendDeliveryReceipt ="),
-    dashboard.indexOf("const composerForClearance ="),
+    dashboard.indexOf("const feedScroller ="),
   );
   assert.match(
     renderer,
@@ -166,7 +166,7 @@ test("agent-to-agent and viewer-authored directed rows use the same receipt path
 
   const renderer = dashboard.slice(
     dashboard.indexOf("const appendDeliveryReceipt ="),
-    dashboard.indexOf("const composerForClearance ="),
+    dashboard.indexOf("const feedScroller ="),
   );
   assert.doesNotMatch(renderer, /signal\.fromKind|signal\.from !== viewerId/);
   assert.equal(
@@ -256,7 +256,7 @@ test("missing or unusable receipt data renders unavailable, never a fabricated t
 test("a direct person target is not relabelled as a broadcast", () => {
   const renderer = dashboard.slice(
     dashboard.indexOf("const appendDeliveryReceipt ="),
-    dashboard.indexOf("const composerForClearance ="),
+    dashboard.indexOf("const feedScroller ="),
   );
   assert.match(renderer, /signal\.to !== null && signal\.toAgent === null/);
   assert.match(renderer, /This message addresses a person\. Agent delivery receipts do not apply\./);
@@ -273,7 +273,7 @@ test("a direct person target is not relabelled as a broadcast", () => {
 test("rendered receipt has an accessible name and does not rely on colour", () => {
   const renderer = dashboard.slice(
     dashboard.indexOf("const appendDeliveryReceipt ="),
-    dashboard.indexOf("const composerForClearance ="),
+    dashboard.indexOf("const feedScroller ="),
   );
   assert.match(renderer, /details\.dataset\.receiptState = indicator\.state/);
   assert.match(renderer, /summary\.setAttribute\(\s*"aria-label"/);

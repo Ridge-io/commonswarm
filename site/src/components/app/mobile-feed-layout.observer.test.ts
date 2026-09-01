@@ -32,6 +32,14 @@ type LayoutMeasurement = {
   transcriptToHeaderRatio: number;
   transcriptVisibleHeight: number;
   viewport: { height: number; width: number };
+  shell: {
+    app: Rect;
+    channel: Rect;
+    channelBody: Rect;
+    frame: Rect;
+    product: Rect;
+    root: Rect;
+  };
 };
 
 const contentTypes: Record<string, string> = {
@@ -102,7 +110,7 @@ const revertedStyles = `<style>
   }
 </style>`;
 
-const frameScript = (reverted: boolean): string => `<script>
+const frameScript = (reverted: boolean, empty: boolean): string => `<script>
   const frame = document.querySelector("iframe");
   const reportError = (value) => {
     document.documentElement.dataset.layoutError = btoa(String(value));
@@ -118,7 +126,7 @@ const frameScript = (reverted: boolean): string => `<script>
       panel.hidden = panel.dataset.panel !== "channel";
     });
     doc.querySelectorAll("[data-channel-view]").forEach((section) => {
-      section.hidden = section.dataset.channelView !== "feed";
+      section.hidden = section.dataset.channelView !== ${JSON.stringify(empty ? "feed-empty" : "feed")};
     });
     doc.querySelector(".dashboard__channel").classList.add("dashboard__channel--roster");
     const roster = doc.querySelector("[data-header-roster]");
@@ -137,7 +145,7 @@ const frameScript = (reverted: boolean): string => `<script>
     doc.querySelector("[data-composer-audience-count]").textContent =
       "8 agents · 3 people in workspace";
     const list = doc.querySelector("[data-feed-list]");
-    list.replaceChildren(...Array.from({ length: 40 }, (_, index) => {
+    list.replaceChildren(...Array.from({ length: ${empty ? 0 : 40} }, (_, index) => {
       const row = doc.createElement("li");
       row.className = "dashboard__message";
       const avatar = doc.createElement("span");
@@ -187,6 +195,14 @@ const frameScript = (reverted: boolean): string => `<script>
       transcriptToHeaderRatio: transcriptVisibleHeight / combinedHeaderHeight,
       transcriptVisibleHeight,
       viewport: { height: view.innerHeight, width: view.innerWidth },
+      shell: {
+        app: rect("live-dashboard"),
+        channel: rect(".dashboard__channel"),
+        channelBody: rect(".dashboard__channel-body"),
+        frame: rect(".dashboard__frame"),
+        product: rect(".dashboard__product"),
+        root: rect(".dashboard__root"),
+      },
     }));
   };
   const start = () => void runMeasurement().catch((error) => reportError(error?.stack ?? error));
@@ -201,13 +217,14 @@ const startDistServer = async (): Promise<{ close(): Promise<void>; origin: stri
       const width = Number.parseInt(url.searchParams.get("width") ?? "", 10);
       const height = Number.parseInt(url.searchParams.get("height") ?? "", 10);
       const reverted = url.searchParams.get("reverted") === "1";
+      const empty = url.searchParams.get("empty") === "1";
       if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height)) {
         response.writeHead(400).end("Invalid measurement");
         return;
       }
       response.writeHead(200, { "content-type": contentTypes[".html"] });
       response.end(
-        `<!doctype html><html><body style="margin:0"><iframe title="Layout measurement viewport" src="/app" style="border:0;width:${width}px;height:${height}px"></iframe>${frameScript(reverted)}</body></html>`,
+        `<!doctype html><html><body style="margin:0"><iframe title="Layout measurement viewport" src="/app" style="border:0;width:${width}px;height:${height}px"></iframe>${frameScript(reverted, empty)}</body></html>`,
       );
       return;
     }
@@ -252,6 +269,7 @@ const measureAt = async (
   width: number,
   height: number,
   reverted: boolean,
+  empty = false,
 ): Promise<LayoutMeasurement> => {
   const { stdout, stderr } = await run(chrome, [
     "--headless=new",
@@ -263,7 +281,7 @@ const measureAt = async (
     "--window-size=1600,1200",
     "--virtual-time-budget=8000",
     "--dump-dom",
-    `${origin}/__measure?width=${width}&height=${height}&reverted=${reverted ? 1 : 0}`,
+    `${origin}/__measure?width=${width}&height=${height}&reverted=${reverted ? 1 : 0}&empty=${empty ? 1 : 0}`,
   ], {
     maxBuffer: 10 * 1024 * 1024,
     timeout: 20_000,
@@ -358,6 +376,37 @@ test("the live feed header stays compact and the narrow composer stays in view",
         );
       }
       console.log(`mobile-feed-layout ${width}px ${JSON.stringify({ current, reverted })}`);
+    }
+  } finally {
+    await server.close();
+  }
+});
+
+test("an empty feed keeps the app shell at the dynamic viewport height", async () => {
+  const chrome = await findChrome();
+  const server = await startDistServer();
+  try {
+    for (const [width, height] of [[1440, 900], [390, 844]]) {
+      const measurement = await measureAt(chrome, server.origin, width, height, false, true);
+      assert.deepEqual(measurement.viewport, { width, height });
+      for (const name of ["app", "root", "product", "frame"] as const) {
+        const rect = measurement.shell[name];
+        assert.ok(
+          Math.abs(rect.height - height) <= 0.1 &&
+            Math.abs(rect.top) <= 0.1 &&
+            Math.abs(rect.bottom - height) <= 0.1,
+          `${width}x${height}: ${name} does not fill the empty app viewport: ${JSON.stringify(rect)}`,
+        );
+      }
+      for (const name of ["channel", "channelBody"] as const) {
+        const rect = measurement.shell[name];
+        assert.ok(
+          rect.height > 0 && Math.abs(rect.bottom - height) <= 0.1,
+          `${width}x${height}: ${name} does not flex to the viewport bottom: ${JSON.stringify(rect)}`,
+        );
+      }
+      assert.equal(measurement.composer.bottom, height);
+      console.log(`empty-app-shell ${width}x${height} ${JSON.stringify(measurement.shell)}`);
     }
   } finally {
     await server.close();
