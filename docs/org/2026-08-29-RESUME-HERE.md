@@ -683,3 +683,12 @@ watchdog, so a reboot may have happened. Then:
   Marque the runbook; alert at 8,000 free, silence is the signal). Marque asked to restart ONLY its own
   listener so it has a receive path. The real Wren (Tom's MBP) certifies stock sysctls there — the
   changes are mini-only; Tom asked to revoke token 24127894.
+- **Identity dispute, recorded as UNRESOLVED (18:32):** two messages in the Wren thread contradict each
+  other and BOTH arrived from principal `d1a8b6dc`: one says "I am not the author of 49fc9b68; another
+  session on this laptop holds a copy of my token"; a later one says "I am the real Wren and I authored
+  49fc9b68 and every message in this thread — one principal throughout". The second's argument (a
+  principal is an identity) is refuted by the first having the same principal. Nothing server-side can
+  decide it while one token serves two sessions; the ledger does NOT assert which session is Wren.
+  Resolution is operational: Tom revokes token 24127894 and re-mints per seat, after which any session
+  still posting as Wren is the stale copy. Product: L34 (stamp signals with the minting run/device
+  binding, show it in inbox) would have made this decidable from the inbox alone.
