@@ -579,3 +579,10 @@ scratchpad): typed reason code per retry event, durable episode accounting, a 60
 warning in `listen status`, and a recovered event. Not established: what the server returned in
 that window (the read edge's analytics logs were not pulled), and whether Gauge's episode
 overlaps it — asked. The 0.1.44 listener has logged no read retry since 22:51Z (15 min).
+- **Correction (Gauge, 17:58):** the read-retry episode ended at **20:43:01Z on BOTH listeners** —
+  two hours before 0.1.44 was installed (22:43Z) or the bridge changed (22:51Z). ~~"The 0.1.44
+  listener has logged no read retry since 22:51Z"~~ is true and is evidence of nothing: the system had
+  healed at 20:43Z for the old binary too (Gauge: 1033 claims, 0 retries in the 21:00Z hour on 0.1.43).
+  Nothing is credited for the recovery. Gauge's throughput finding (claims/hour at ~¼ of cadence while
+  the median claim gap looked healthy) and the crawl-then-accelerate precursor are folded into L31.
+  Discriminator still open: server incident vs this host — see the server-log query result below.
