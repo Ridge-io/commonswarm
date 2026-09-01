@@ -22,6 +22,67 @@ const ARRIVAL_SNIPPET_MAX = 180;
 
 /** A remote-friendly cadence for a long-lived, human-visible arrival monitor. */
 export const ARRIVAL_WATCH_POLL_MS = 25_000;
+/** Continuous read failure time before a human-visible monitor warning. */
+export const ARRIVAL_RETRY_NOTICE_THRESHOLD_MS = 60_000;
+
+export type ArrivalRetryNotice =
+  | {
+    code: "arrival_read_persisting";
+    continuousFailureMs: number;
+    nextRetryMs: number;
+  }
+  | {
+    code: "arrival_read_recovered";
+    continuousFailureMs: number;
+  };
+
+export interface ArrivalRetryNoticePolicy {
+  failure(nowMs: number, nextRetryMs: number): ArrivalRetryNotice | null;
+  recovery(nowMs: number): ArrivalRetryNotice | null;
+}
+
+/** Collapse one retry episode to at most one failure line and one recovery line. */
+export function createArrivalRetryNoticePolicy(
+  thresholdMs = ARRIVAL_RETRY_NOTICE_THRESHOLD_MS,
+): ArrivalRetryNoticePolicy {
+  let firstFailureAt: number | null = null;
+  let failureEmitted = false;
+  return {
+    failure(nowMs, nextRetryMs) {
+      if (firstFailureAt === null) firstFailureAt = nowMs;
+      const continuousFailureMs = Math.max(0, nowMs - firstFailureAt);
+      if (failureEmitted || continuousFailureMs < thresholdMs) return null;
+      failureEmitted = true;
+      return {
+        code: "arrival_read_persisting",
+        continuousFailureMs,
+        nextRetryMs,
+      };
+    },
+    recovery(nowMs) {
+      if (firstFailureAt === null) return null;
+      const continuousFailureMs = Math.max(0, nowMs - firstFailureAt);
+      const notice: ArrivalRetryNotice | null = failureEmitted
+        ? { code: "arrival_read_recovered", continuousFailureMs }
+        : null;
+      firstFailureAt = null;
+      failureEmitted = false;
+      return notice;
+    },
+  };
+}
+
+/** Stable, one-line operator copy for a retry episode transition. */
+export function formatArrivalRetryNotice(notice: ArrivalRetryNotice): string {
+  const seconds = Math.max(1, Math.floor(notice.continuousFailureMs / 1_000));
+  if (notice.code === "arrival_read_persisting") {
+    return `[arrival_read_persisting] Arrival reads have failed continuously for ${seconds}s. ` +
+      "Durable delivery is unaffected; only this monitor view is delayed. " +
+      `Next check: automatic retry in ${notice.nextRetryMs}ms.`;
+  }
+  return `[arrival_read_recovered] Arrival reads recovered after ${seconds}s. ` +
+    "This monitor is current again; durable delivery was unaffected.";
+}
 
 interface StoredArrivalCursor {
   version: 1;
@@ -237,6 +298,7 @@ export async function runArrivalWatch(options: {
   readPage(request: ArrivalWatchPageRequest): Promise<AgentSignalPage>;
   emit(signal: SignalRecord): Promise<void>;
   onRetry?: (error: Error, delayMs: number) => void;
+  onRecovery?: () => void;
   sleep?: (ms: number) => Promise<void>;
   signal?: AbortSignal;
   pollMs?: number;
@@ -286,6 +348,7 @@ export async function runArrivalWatch(options: {
           "arrival read returned a message directed to another workspace or agent",
         );
       }
+      if (attempt > 0) options.onRecovery?.();
       attempt = 0;
 
       if (baseline) {

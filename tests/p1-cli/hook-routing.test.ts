@@ -37,13 +37,27 @@ const SIGNAL_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const SECOND_SIGNAL_ID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const TOKEN = `swm_agt_${"A".repeat(43)}`;
 const SECOND_TOKEN = `swm_agt_${"B".repeat(43)}`;
+const TOKEN_ID = "33333333-3333-4333-8333-333333333333";
+const RUN_ID = "44444444-4444-4444-8444-444444444444";
 const MULTI_PRINCIPAL_GUIDANCE =
   "This host runs multiple agents. The CommonSwarm hook needs --principal-id. " +
   "Reinstall it for this agent: cswarm hook install claude --principal-id <uuid> --write";
 
+function agentCredentialArtifact(principalId = PRINCIPAL_ID): string {
+  return JSON.stringify({
+    message: "Agent credential minted. It is bound to this run, so the agent's work is attributable to it.",
+    status: "accepted",
+    principal_id: principalId,
+    token_id: TOKEN_ID,
+    run_id: RUN_ID,
+    agent_token: TOKEN,
+    expires_at: "2030-01-01T00:00:00.000Z",
+  });
+}
+
 function runCli(
   args: string[],
-  options: { cwd?: string; env?: NodeJS.ProcessEnv } = {},
+  options: { cwd?: string; env?: NodeJS.ProcessEnv; input?: string } = {},
 ) {
   return spawnSync(process.execPath, ["--import", tsxImport, cliPath, ...args], {
     cwd: options.cwd ?? repoRoot,
@@ -53,7 +67,7 @@ function runCli(
       NODE_OPTIONS: "--max-old-space-size=4096",
       ...options.env,
     },
-    input: "",
+    input: options.input ?? "",
     timeout: 6_000,
   });
 }
@@ -868,6 +882,88 @@ test("listen status filters surfaced queue entries before reporting stranded ask
   }
 });
 
+test("listen status resolves the same profile and principal from file or stdin credentials", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cswarm-status-credential-profile-"));
+  const secrets = await mkdtemp(join(tmpdir(), "cswarm-status-credential-secret-"));
+  const credentialPath = join(secrets, "agent.json");
+  try {
+    await writeStatus(state(root).paths, PRINCIPAL_ID, { state: "stopped" });
+    await writeFile(credentialPath, agentCredentialArtifact(), { mode: 0o600 });
+    await chmod(credentialPath, 0o600);
+    const common = [
+      "listen",
+      "status",
+      "--url",
+      "https://cloud.example.test",
+      "--anon-key",
+      "anon",
+      "--workspace-id",
+      WORKSPACE_ID,
+      "--state-dir",
+      root,
+    ];
+
+    const fromFile = runCli([
+      ...common,
+      "--agent-token-file",
+      credentialPath,
+    ]);
+    assert.equal(fromFile.status, 0, fromFile.stderr);
+    assert.match(fromFile.stdout, new RegExp(`Listener stopped for agent ${PRINCIPAL_ID}`));
+
+    const fromStdin = runCli([...common, "--agent-token-stdin"], {
+      input: agentCredentialArtifact(),
+    });
+    assert.equal(fromStdin.status, 0, fromStdin.stderr);
+    assert.match(fromStdin.stdout, new RegExp(`Listener stopped for agent ${PRINCIPAL_ID}`));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(secrets, { recursive: true, force: true });
+  }
+});
+
+test("listen status and stop name the exact directory and profile when no listener is found", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cswarm-status-empty-profile-"));
+  const secrets = await mkdtemp(join(tmpdir(), "cswarm-status-empty-secret-"));
+  const credentialPath = join(secrets, "agent.json");
+  try {
+    await writeFile(credentialPath, agentCredentialArtifact(), { mode: 0o600 });
+    await chmod(credentialPath, 0o600);
+    const target = cloudTarget("https://cloud.example.test", "anon");
+    const expected = listenerPaths({
+      profileId: target.profileId,
+      workspaceId: WORKSPACE_ID,
+      principalId: PRINCIPAL_ID,
+      stateDirectory: root,
+    });
+    for (const command of ["status", "stop"] as const) {
+      const result = runCli([
+        "listen",
+        command,
+        "--agent-token-file",
+        credentialPath,
+        "--url",
+        target.url,
+        "--anon-key",
+        "anon",
+        "--workspace-id",
+        WORKSPACE_ID,
+        "--state-dir",
+        root,
+      ]);
+      assert.equal(result.status, 0, result.stderr);
+      assert.ok(
+        result.stdout.includes(
+          `No listener found under ${expected.instanceDirectory} for profile ${target.profileId}.`,
+        ),
+      );
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(secrets, { recursive: true, force: true });
+  }
+});
+
 test("hook counts only unsurfaced entries in a mixed dead listener queue", async () => {
   const root = await mkdtemp(join(tmpdir(), "cswarm-hook-dead-mixed-"));
   try {
@@ -1198,25 +1294,35 @@ test("hook hard deadline exits 0 under four seconds against a blackholed address
   }
 });
 
-test("hook install prints valid JSON and changes project settings only with --write", async () => {
+test("hook install defaults to user settings and preserves existing hooks", async () => {
   const project = await mkdtemp(join(tmpdir(), "cswarm-hook-install-"));
+  const home = await mkdtemp(join(tmpdir(), "cswarm-hook-install-home-"));
   const xdg = await mkdtemp(join(tmpdir(), "cswarm-hook-install-state-"));
   try {
     const root = join(xdg, "cswarm", "listeners");
     await writeStatus(state(root).paths);
-    const env = { XDG_STATE_HOME: xdg };
+    const env = { HOME: home, XDG_STATE_HOME: xdg };
+    const userSettingsPath = join(home, ".claude", "settings.json");
+    const unrelatedPromptHook = {
+      matcher: "always",
+      hooks: [{ type: "command", command: "printf existing-hook" }],
+    };
+    const unrelatedToolHook = [{
+      hooks: [{ type: "command", command: "printf existing-tool-hook" }],
+    }];
+    await mkdir(dirname(userSettingsPath), { recursive: true });
+    await writeFile(userSettingsPath, JSON.stringify({
+      theme: "dark",
+      hooks: {
+        UserPromptSubmit: [unrelatedPromptHook],
+        PreToolUse: unrelatedToolHook,
+      },
+    }), { mode: 0o600 });
+
     const dry = runCli(["hook", "install", "claude"], { cwd: project, env });
     assert.equal(dry.status, 0);
     assert.deepEqual(JSON.parse(dry.stdout), claudeUserPromptHookSnippet(PRINCIPAL_ID));
     await assert.rejects(readFile(join(project, ".claude", "settings.json"), "utf8"));
-    await mkdir(join(project, ".claude"), { recursive: true });
-    await writeFile(join(project, ".claude", "settings.json"), JSON.stringify({
-      hooks: {
-        UserPromptSubmit: [{
-          hooks: [{ type: "command", command: "cswarm hook check" }],
-        }],
-      },
-    }), { mode: 0o600 });
 
     const written = runCli(["hook", "install", "claude", "--write"], {
       cwd: project,
@@ -1225,27 +1331,75 @@ test("hook install prints valid JSON and changes project settings only with --wr
     assert.equal(written.status, 0);
     assert.match(written.stdout, /Installed the Claude Code UserPromptSubmit hook/);
     assert.match(written.stdout, new RegExp(`--principal-id ${PRINCIPAL_ID}`));
-    const settings = JSON.parse(
-      await readFile(join(project, ".claude", "settings.json"), "utf8"),
-    );
-    assert.deepEqual(settings, claudeUserPromptHookSnippet(PRINCIPAL_ID));
+    assert.ok(written.stdout.includes(userSettingsPath), "success must print the full path");
+    await assert.rejects(readFile(join(project, ".claude", "settings.json"), "utf8"));
+    const settings = JSON.parse(await readFile(userSettingsPath, "utf8")) as {
+      theme: string;
+      hooks: { UserPromptSubmit: unknown[]; PreToolUse: unknown[] };
+    };
+    assert.equal(settings.theme, "dark");
+    assert.deepEqual(settings.hooks.PreToolUse, unrelatedToolHook);
+    assert.deepEqual(settings.hooks.UserPromptSubmit[0], unrelatedPromptHook);
+    assert.match(JSON.stringify(settings.hooks.UserPromptSubmit), new RegExp(PRINCIPAL_ID));
 
     const refused = runCli(["hook", "uninstall", "claude"], { cwd: project, env });
     assert.equal(refused.status, 1);
     assert.match(refused.stderr, /requires --write/);
-    assert.deepEqual(
-      JSON.parse(await readFile(join(project, ".claude", "settings.json"), "utf8")),
-      claudeUserPromptHookSnippet(PRINCIPAL_ID),
-    );
+    assert.match(await readFile(userSettingsPath, "utf8"), new RegExp(PRINCIPAL_ID));
 
     const removed = runCli(["hook", "uninstall", "claude", "--write"], {
       cwd: project,
       env,
     });
     assert.equal(removed.status, 0);
+    assert.ok(removed.stdout.includes(userSettingsPath));
+    const afterRemove = JSON.parse(await readFile(userSettingsPath, "utf8")) as {
+      theme: string;
+      hooks: { UserPromptSubmit: unknown[]; PreToolUse: unknown[] };
+    };
+    assert.equal(afterRemove.theme, "dark");
+    assert.deepEqual(afterRemove.hooks.PreToolUse, unrelatedToolHook);
+    assert.deepEqual(afterRemove.hooks.UserPromptSubmit, [unrelatedPromptHook]);
+  } finally {
+    await rm(project, { recursive: true, force: true });
+    await rm(home, { recursive: true, force: true });
+    await rm(xdg, { recursive: true, force: true });
+  }
+});
+
+test("hook install --repo refuses a non-ignored settings path and prints the exact ignore line", async () => {
+  const project = await mkdtemp(join(tmpdir(), "cswarm-hook-install-repo-"));
+  const xdg = await mkdtemp(join(tmpdir(), "cswarm-hook-install-repo-state-"));
+  try {
+    const initialized = spawnSync("git", ["init", "--quiet"], {
+      cwd: project,
+      encoding: "utf8",
+    });
+    assert.equal(initialized.status, 0, initialized.stderr);
+    const root = join(xdg, "cswarm", "listeners");
+    await writeStatus(state(root).paths);
+    const env = { XDG_STATE_HOME: xdg };
+    const settingsPath = join(project, ".claude", "settings.json");
+
+    const refused = runCli([
+      "hook", "install", "claude", "--write", "--repo",
+    ], { cwd: project, env });
+    assert.equal(refused.status, 1);
+    assert.match(refused.stderr, /Refusing to write/);
+    assert.ok(refused.stderr.includes(settingsPath));
+    assert.ok(refused.stderr.includes(join(project, ".gitignore")));
+    assert.match(refused.stderr, /\.claude\/settings\.json/);
+    await assert.rejects(readFile(settingsPath, "utf8"));
+
+    await writeFile(join(project, ".gitignore"), ".claude/settings.json\n");
+    const written = runCli([
+      "hook", "install", "claude", "--write", "--repo",
+    ], { cwd: project, env });
+    assert.equal(written.status, 0, written.stderr);
+    assert.ok(written.stdout.includes(settingsPath), "success must print the full repo path");
     assert.deepEqual(
-      JSON.parse(await readFile(join(project, ".claude", "settings.json"), "utf8")),
-      {},
+      JSON.parse(await readFile(settingsPath, "utf8")),
+      claudeUserPromptHookSnippet(PRINCIPAL_ID),
     );
   } finally {
     await rm(project, { recursive: true, force: true });
@@ -1333,7 +1487,10 @@ test("listen route flags parse before credential work and enforce split bounds",
     help.stdout,
     /hook check\s+reads only the selected listener's owned 0600 credential state/,
   );
-  assert.match(help.stdout, /hook install\/uninstall\s+edits only local Claude Code settings/);
+  assert.match(help.stdout, /--write changes\s+the user-level ~\/\.claude\/settings\.json/);
+  assert.match(help.stdout, /--repo selects the repository settings/);
+  assert.match(help.stdout, /listen status \[--agent-token-file <path> \| --agent-token-stdin\]/);
+  assert.match(help.stdout, /listen stop \[--agent-token-file <path> \| --agent-token-stdin\]/);
 });
 
 test("hook output labels asks, notes, and legacy messages with the right reply action", () => {

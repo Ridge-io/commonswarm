@@ -8,8 +8,11 @@ import { test } from "node:test";
 import type { SignalRecord } from "../../src/cloud/command-client.js";
 import {
   arrivalNotification,
+  ARRIVAL_RETRY_NOTICE_THRESHOLD_MS,
   ARRIVAL_WATCH_POLL_MS,
+  createArrivalRetryNoticePolicy,
   formatArrivalNotification,
+  formatArrivalRetryNotice,
   runArrivalWatch,
   type ArrivalCursorStore,
 } from "../../src/cloud/arrival-watch.js";
@@ -100,7 +103,7 @@ test("one directed message renders one bounded line with sender and exact reply 
       `cswarm reply ${signal.id} "<answer>" --workspace-id ${WORKSPACE}`,
     ),
   );
-
+});
 
 /* A monitor line becomes a chat notification, so anything in it is read by a
  * human on a phone. The anon key is a JWT: repeating it per message made the
@@ -116,7 +119,7 @@ test("an arrival notification never carries the anon key or the url", () => {
   const rendered = JSON.stringify(notification);
   assert.equal(rendered.includes(TARGET.anonKey), false);
   assert.equal(rendered.includes(TARGET.url), false);
-});});
+});
 
 test("a multiline body still produces exactly one notification line", () => {
   const signal = row(
@@ -233,6 +236,44 @@ test("a transient failure and a 5xx keep the watcher armed without a busy loop",
   assert.deepEqual(sleeps, [250, 500]);
   assert.ok(sleeps[0]! > 0, "retry must not spin hot");
   assert.equal(ARRIVAL_WATCH_POLL_MS, 25_000);
+});
+
+test("retry notices stay silent for 60s, emit once, then emit one recovery", () => {
+  const policy = createArrivalRetryNoticePolicy();
+  const notices: string[] = [];
+  const measuredBackoffMs = [439, 612, 834, 1_078, 1_390, 1_792, 2_294, 2_952];
+  let nowMs = 0;
+  for (const delayMs of measuredBackoffMs) {
+    const notice = policy.failure(nowMs, delayMs);
+    if (notice !== null) notices.push(formatArrivalRetryNotice(notice));
+    nowMs += delayMs;
+  }
+  assert.equal(notices.length, 0, "Gauge's escalating retries must stay silent");
+  assert.equal(
+    policy.failure(ARRIVAL_RETRY_NOTICE_THRESHOLD_MS - 1, 2_952),
+    null,
+  );
+
+  const persistent = policy.failure(ARRIVAL_RETRY_NOTICE_THRESHOLD_MS, 2_952);
+  assert.ok(persistent !== null);
+  notices.push(formatArrivalRetryNotice(persistent));
+  assert.equal(policy.failure(ARRIVAL_RETRY_NOTICE_THRESHOLD_MS + 2_952, 2_952), null);
+
+  const recovered = policy.recovery(ARRIVAL_RETRY_NOTICE_THRESHOLD_MS + 5_000);
+  assert.ok(recovered !== null);
+  notices.push(formatArrivalRetryNotice(recovered));
+  assert.equal(policy.recovery(ARRIVAL_RETRY_NOTICE_THRESHOLD_MS + 6_000), null);
+
+  assert.equal(notices.length, 2);
+  assert.match(notices[0]!, /^\[arrival_read_persisting\]/);
+  assert.match(notices[0]!, /Durable delivery is unaffected/);
+  assert.match(notices[0]!, /Next check: automatic retry in 2952ms/);
+  assert.match(notices[1]!, /^\[arrival_read_recovered\]/);
+  assert.match(notices[1]!, /durable delivery was unaffected/);
+
+  const shortEpisode = createArrivalRetryNoticePolicy();
+  assert.equal(shortEpisode.failure(0, 439), null);
+  assert.equal(shortEpisode.recovery(10_000), null);
 });
 
 test("emitting a notification does not acknowledge, dequeue, or mutate delivery receipts", async () => {
