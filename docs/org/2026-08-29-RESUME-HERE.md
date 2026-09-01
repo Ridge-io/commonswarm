@@ -707,9 +707,12 @@ socket-heavy suites were not run on the merged tree (build + check:tests green).
 `npm test` and `npm run test:p1-cli` on `main`, then Grok + Gemini arms, then release 0.1.45 (client-only
 release: no migration, no edge change).**
 
-**L23 (connected ≠ attended) was interrupted:** its Codex process was killed at shutdown; branch
-`lane/l23-attended` has no commits beyond main and its worktree was clean — the lane had produced no
-code yet. Relaunch from `scratchpad/reboot-survival/L23-codex.md`. Also unlaunched, specs in
+**L23 (connected ≠ attended) was interrupted:** ~~"no commits beyond main — the lane had produced no
+code yet"~~ wrong, corrected minutes later: branch `lane/l23-attended` carries `b44712c`
+"fix(listener): distinguish connection from attendance" (committed by the lane, its own gates green
+per its log, its own Grok review was mid-run when the process was killed). NOT merged, NOT
+arm-reviewed by the Lead. Next session: read its diff, run the gates, then arms, then merge — or
+relaunch from `scratchpad/reboot-survival/L23-codex.md` if the diff is incomplete. Also unlaunched, specs in
 `scratchpad/reboot-survival/`: L30 (provider version + honest canary cause), L31 (read-retry reasons +
 throughput lapse), L32 (keep-alive client), L34 (mark which surface authored a signal), L35 (live agent
 panel — the streaming first slice; Tom said launch after the reboot).
