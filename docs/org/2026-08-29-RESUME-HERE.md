@@ -403,3 +403,18 @@ agent); Finisher's 9 stranded route-split messages need `hook install claude --p
   L23 (connected ≠ attended: status warns on main-queue backlog, route main/split refuse
   without a hook surface, `listen canary`). Brain topics added: agent-restart (v2),
   listener-attended.
+
+### fc88624 review result (2026-09-01, evening): Codex exact = FAIL — three P1s, one P2
+1. Migration sequence unsafe: Supabase CLI applies one file per transaction, so 000001's breaking
+   shape is live before 000002 fixes it (and stays if 000002 fails). Fix: fold the final shape
+   into 000001, delete 000002 (neither applied to prod; local DBs must db:reset).
+2. Read deadline stops at headers: fetchWithDeadline clears the timer when fetch() resolves; body
+   reads run unbounded (measured), and each retry gets a fresh 30s. Fix: one absolute budget across
+   headers+body+retry.
+3. Hook install default to ~/.claude/settings.json REOPENS the shared-host mail leak (user scope
+   = every session of the OS user; B's hook ran in A's session, measured). Fix: session-local
+   `.claude/settings.local.json` default, refuse if not ignored; --user only with a loud warning.
+4. (P2) CLAUDE_CONFIG_DIR ignored by the installer.
+Codex confirmed: old parser parses the final wire; edge adds broadcast_roster only on broadcasts;
+authorization unchanged; hook digest ordering/cooldown correct. Fix workflow running in isolated
+worktrees (wf_3e1f1a59-216); Grok inversion on fc88624 still in flight. NOTHING RELEASED.
