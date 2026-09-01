@@ -5,7 +5,7 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { open, unlink } from "node:fs/promises";
 import { homedir } from "node:os";
-import { basename, dirname, isAbsolute, join } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
 import type { Command } from "./protocol/index.js";
 import {
@@ -262,7 +262,7 @@ const KNOWN_FLAGS = new Set([
   "help", "include-stale", "include-tombstoned", "invitation-id", "invitation-token-stdin", "json", "kind", "limit",
   "link-stdin", "local", "model", "name", "ndjson", "no-browser", "notify", "opencode-executable", "out",
   "permissions", "principal-id", "provider", "repo", "reveal-anon-key", "route", "run-id", "since", "site", "slug",
-  "renewal-horizon-days", "standing", "task-id", "to", "token-id", "ttl-ms", "turn-budget", "uid", "until", "url", "version", "wait", "workspace-id", "write",
+  "renewal-horizon-days", "standing", "task-id", "to", "token-id", "ttl-ms", "turn-budget", "uid", "until", "url", "user", "version", "wait", "workspace-id", "write",
 ]);
 
 const BOOLEAN_FLAGS = new Set([
@@ -286,6 +286,7 @@ const BOOLEAN_FLAGS = new Set([
   "reveal-anon-key",
   "repo",
   "standing",
+  "user",
   "write",
 ]);
 
@@ -496,8 +497,8 @@ Usage:
   cswarm listen status ${agentCredential} [--url <url> --anon-key <key>] --workspace-id <uuid> [--principal-id <uuid>] [--json]
   cswarm listen stop ${agentCredential} [--url <url> --anon-key <key>] --workspace-id <uuid> [--principal-id <uuid>] [--json]
   cswarm hook check [--principal-id <uuid> ...] [--cooldown <seconds>]
-  cswarm hook install claude [--principal-id <uuid>] [--write [--repo]]
-  cswarm hook uninstall claude --write [--repo]
+  cswarm hook install claude [--principal-id <uuid>] [--write] [--user | --repo]
+  cswarm hook uninstall claude --write [--user | --repo]
   cswarm new "<workspace name>" [--url <url> --anon-key <key>] [--json]
   cswarm new --name "<workspace name>" [--url <url> --anon-key <key>] [--json]
   cswarm workspaces [--url <url> --anon-key <key>] [--json]
@@ -585,9 +586,11 @@ split queues messages whose body is longer than --defer-over <chars>; the bound 
 when the state directory holds one principal. hook check has its own 3s ceiling, exits 0
 on every outcome, and skips network checks made within --cooldown seconds (default 30).
 hook install claude prints principal-scoped UserPromptSubmit JSON by default. --write changes
-the user-level ~/.claude/settings.json. --repo selects the repository settings instead and is
-refused until .claude/settings.json is ignored. Uninstall also requires --write and uses the
-same scope selection.
+<project>/.claude/settings.local.json, which applies only to Claude Code sessions started in
+that project. Inside a git repository, the local file must be ignored. --user opts in to
+\${CLAUDE_CONFIG_DIR:-~/.claude}/settings.json and warns about shared hosts. --repo keeps the
+repository-wide .claude/settings.json scope and also requires an ignored file. Uninstall also
+requires --write and uses the same scope selection.
 
 Invite, legacy token accept, principal create/revoke, human token mint/revoke, link, new, and workspace close require a
 stored human login. Agent self-surrender of a token uses --agent-token-file or --agent-token-stdin and never takes the secret on argv. Invite-link accept signs in when needed, then accepts and
@@ -5249,10 +5252,27 @@ export function claudeUserPromptHookSnippet(principalId: string): Record<string,
   };
 }
 
+const CLAUDE_PROJECT_SETTINGS_IGNORE_LINE = ".claude/settings.local.json";
 const CLAUDE_REPO_SETTINGS_IGNORE_LINE = ".claude/settings.json";
+const CLAUDE_USER_SCOPE_WARNING =
+  "Warning: --user scope affects EVERY Claude Code session for this OS user and is wrong on a shared host.";
 
-function userClaudeSettingsPath(): string {
-  return join(homedir(), ".claude", "settings.json");
+type ClaudeSettingsTarget = {
+  path: string;
+  scope: "local" | "repo" | "user";
+  projectRoot: string | null;
+};
+
+function userClaudeSettingsTarget(): ClaudeSettingsTarget {
+  const configured = process.env.CLAUDE_CONFIG_DIR;
+  const directory = configured && configured.length > 0
+    ? resolve(configured)
+    : join(homedir(), ".claude");
+  return {
+    path: join(directory, "settings.json"),
+    scope: "user",
+    projectRoot: null,
+  };
 }
 
 function gitRepositoryRoot(cwd: string): string | null {
@@ -5262,30 +5282,33 @@ function gitRepositoryRoot(cwd: string): string | null {
     { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] },
   );
   if (result.error) {
-    throw new Error("hook --repo cannot verify repository safety because git is unavailable");
+    throw new Error("hook cannot verify repository safety because git is unavailable");
   }
   if (result.status !== 0) return null;
   const root = result.stdout.trim();
   if (!isAbsolute(root)) {
-    throw new Error("hook --repo could not resolve an absolute repository root");
+    throw new Error("hook could not resolve an absolute repository root");
   }
   return root;
 }
 
-function repositoryClaudeSettingsPath(): string {
+function projectClaudeSettingsTarget(
+  scope: "local" | "repo",
+  ignoreLine: string,
+): ClaudeSettingsTarget {
   const root = gitRepositoryRoot(process.cwd());
   const base = root ?? process.cwd();
-  const path = join(base, ".claude", "settings.json");
-  if (root === null) return path;
+  const path = join(base, ignoreLine);
+  if (root === null) return { path, scope, projectRoot: base };
 
   const tracked = spawnSync(
     "git",
-    ["-C", root, "ls-files", "--error-unmatch", "--", CLAUDE_REPO_SETTINGS_IGNORE_LINE],
+    ["-C", root, "ls-files", "--error-unmatch", "--", ignoreLine],
     { encoding: "utf8", stdio: ["ignore", "ignore", "ignore"] },
   );
   const ignored = spawnSync(
     "git",
-    ["-C", root, "check-ignore", "--quiet", "--", CLAUDE_REPO_SETTINGS_IGNORE_LINE],
+    ["-C", root, "check-ignore", "--quiet", "--", ignoreLine],
     { encoding: "utf8", stdio: ["ignore", "ignore", "ignore"] },
   );
   if (
@@ -5293,16 +5316,24 @@ function repositoryClaudeSettingsPath(): string {
     (tracked.status !== 0 && tracked.status !== 1) ||
     (ignored.status !== 0 && ignored.status !== 1)
   ) {
-    throw new Error("hook --repo could not verify whether Claude settings are ignored");
+    throw new Error("hook could not verify whether Claude settings are ignored");
   }
   if (tracked.status === 0 || ignored.status !== 0) {
     throw new Error(
       `Refusing to write ${path}: repository Claude settings could be staged and shared with every checkout. ` +
       (tracked.status === 0 ? "It is already tracked; remove it from Git tracking first. " : "") +
-      `Add this exact line to ${join(root, ".gitignore")}: ${CLAUDE_REPO_SETTINGS_IGNORE_LINE}`,
+      `Add this exact line to ${join(root, ".gitignore")}: ${ignoreLine}`,
     );
   }
-  return path;
+  return { path, scope, projectRoot: root };
+}
+
+function claudeSettingsTarget(args: Arguments): ClaudeSettingsTarget {
+  if (args.has("user")) return userClaudeSettingsTarget();
+  if (args.has("repo")) {
+    return projectClaudeSettingsTarget("repo", CLAUDE_REPO_SETTINGS_IGNORE_LINE);
+  }
+  return projectClaudeSettingsTarget("local", CLAUDE_PROJECT_SETTINGS_IGNORE_LINE);
 }
 
 function readClaudeSettings(path: string): Record<string, unknown> {
@@ -5465,8 +5496,8 @@ async function runHook(args: Arguments): Promise<void> {
   }
   args.assertShape(
     command === "install"
-      ? ["write", "repo", "principal-id"]
-      : ["write", "repo"],
+      ? ["write", "user", "repo", "principal-id"]
+      : ["write", "user", "repo"],
     3,
   );
   if (args.positionals[2] !== "claude") {
@@ -5475,8 +5506,14 @@ async function runHook(args: Arguments): Promise<void> {
   if (command === "uninstall" && !args.has("write")) {
     throw new Error("hook uninstall claude requires --write");
   }
+  if (args.has("user") && args.has("repo")) {
+    throw new Error("hook --user and --repo cannot be used together");
+  }
   if (args.has("repo") && !args.has("write")) {
     throw new Error("hook --repo requires --write");
+  }
+  if (args.has("user") && !args.has("write")) {
+    throw new Error("hook --user requires --write");
   }
   const principalId = command === "install" ? await hookInstallPrincipalId(args) : null;
   const snippet = principalId === null ? null : claudeUserPromptHookSnippet(principalId);
@@ -5484,22 +5521,27 @@ async function runHook(args: Arguments): Promise<void> {
     process.stdout.write(`${JSON.stringify(snippet, null, 2)}\n`);
     return;
   }
-  const path = args.has("repo")
-    ? repositoryClaudeSettingsPath()
-    : userClaudeSettingsPath();
+  const target = claudeSettingsTarget(args);
+  const path = target.path;
   const settings = readClaudeSettings(path);
   const updated = command === "install"
     ? installClaudeHook(settings, principalId!)
     : uninstallClaudeHook(settings);
+  if (target.scope === "user") {
+    process.stdout.write(`${CLAUDE_USER_SCOPE_WARNING}\n`);
+  }
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, `${JSON.stringify(updated, null, 2)}\n`, {
     encoding: "utf8",
     mode: 0o600,
   });
+  const scopeMessage = target.scope === "local"
+    ? ` This scope applies only to Claude Code sessions started in ${target.projectRoot}.`
+    : "";
   process.stdout.write(
     command === "install"
-      ? `Installed the Claude Code UserPromptSubmit hook in ${path}. It runs: ${scopedClaudeHookCommand(principalId!)}\n`
-      : `Removed the CommonSwarm UserPromptSubmit hook from ${path}. Other settings were kept.\n`,
+      ? `Installed the Claude Code UserPromptSubmit hook in ${path}. It runs: ${scopedClaudeHookCommand(principalId!)}.${scopeMessage}\n`
+      : `Removed the CommonSwarm UserPromptSubmit hook from ${path}. Other settings were kept.${scopeMessage}\n`,
   );
 }
 
