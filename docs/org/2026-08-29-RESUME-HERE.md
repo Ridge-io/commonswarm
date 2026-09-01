@@ -333,3 +333,45 @@ sounded reasonable, and by agents dogfooding the product — Wren, Joist, LeadG,
 - **The operator's 'get it all done and released' list is COMPLETE**: grants, attachments, a2a
   receipts, grok canary, hook scope, pooler root cause, CORS outage, dashboard follow-ups,
   per-agent credential paths, human receipts, brain. v0.1.39→v0.1.43 in one arc.
+
+## Addendum 2026-09-01 (afternoon): unreleased work on main, gated on a second review family
+
+**LIVE**: v0.1.43 is the installed/latest release. Everything below is COMMITTED TO MAIN and
+NOT RELEASED — pushed ≠ landed ≠ applied.
+
+| sha | what | review state |
+|---|---|---|
+| `619ff1f` | broadcast recipient roster (migration `20260902000001` NOT applied to prod) + Direct-to-you filter person-only | Grok exact PASS; inversion arm NEVER RAN — Gemini service down 7+ attempts over 2h, Kimi headless has no key |
+| `b4c72f3` | file/brain reads retry + 30s deadline | Grok range review → FAIL (human list escaped the deadline) |
+| `dc9df04` | hook install → user settings; notify 60s episode machine; listen status credential flags | Grok range review: holds |
+| `d1a410b` `2483e8c` | docs: brain cited by name in AGENTS.md; four stale doc claims corrected | n/a |
+| `ea3cac4` | brain digest in hook + worker prompt; end-of-task nudge | Grok range review → FAIL (digest ran on cooldown ticks and BEFORE stdout) |
+| `185e975` | fixes both FAILs; cooldown control now counts every read as a zero DELTA | Grok rerun in flight |
+
+**Next concrete action**: when the Grok rerun on `185e975` PASSes and ANY different-family
+inversion arm returns substance on the range `619ff1f..185e975`, release v0.1.44 in this
+order: `supabase db push` (verify via `schema_migrations` query, not push output) → deploy
+`read` → version bump → GitHub release with BOTH assets → npm → site → install → restart
+listener → live probe `cswarm receipt` on the brain-announcement broadcast `a945274b` (expect
+"Seen by X of Y"). If Gemini stays down, ask the operator to open the Kimi tab.
+
+**Lessons this arc added** (both from the exact arm catching my own work):
+- A retry without a deadline doubles the worst case — and I shipped exactly that in the one
+  path I did not check after writing that sentence in the commit message.
+- An optional extra must never run in front of the surface's actual job: the brain digest sat
+  before stdout and could spend the hook ceiling. The control that should have caught it
+  EXEMPTED the reads it needed to count and asserted absolute counts; it now asserts a zero
+  delta on every read.
+- Two defects composing (my missing fix + Gauge's broken failure detector) produced a
+  convincing non-event; now a section in brain topic `false-success-signals`.
+
+**Brain state**: constitution `brain-how-to` v2; owned topics: releases, shared-host (Quill),
+observability (MrSentry), strategy + competitors (Strategist), promote-production (LeadG),
+promote-verification (Finisher), false-success-signals (Gauge), cross-family-review (Marque),
+knowledgebase-design, vercel-runtime-logs, brand-extraction-budget. Streaming investigation
+report in session scratchpad `streaming-investigation.md` — first slice = live status in the
+entity panel for listener-run agents only; TUI streaming is impossible for non-listener agents.
+
+**Operator actions outstanding**: mint credentials for Nock and Gauge (dashboard → Add an
+agent); Finisher's 9 stranded route-split messages need `hook install claude --principal-id
+78249a33-… --write` in their session (three other agents have the same silent backlog).
