@@ -586,3 +586,13 @@ overlaps it — asked. The 0.1.44 listener has logged no read retry since 22:51Z
   Nothing is credited for the recovery. Gauge's throughput finding (claims/hour at ~¼ of cadence while
   the median claim gap looked healthy) and the crawl-then-accelerate precursor are folded into L31.
   Discriminator still open: server incident vs this host — see the server-log query result below.
+- **Server vs host, settled (18:10):** Supabase `function_edge_logs` 13:50–22:10Z: `read` 3.3k–5.2k req/h
+  and `command` 1.4k–3.6k req/h through the window, seven isolated single-request 5xx all day, zero 429,
+  no minute without read traffic; read volume rose to 13.1k/h at 21Z when the clients recovered. The
+  Lead's listener claim rate (claims ÷ 1030 expected at 3.5 s cadence): 0.95–1.03 from 03Z–12Z, **0.63
+  at 13Z, 0.15–0.25 from 14Z–20Z, 0.99 at 21Z**, median gap 3.5–3.7 s throughout — Gauge's shape,
+  same host. **Host-side impairment of this Mac from ~13:00Z to 20:43Z, every listener on it affected;
+  the server was healthy; nothing shipped today caused or ended it.** What released it at 20:43Z is NOT
+  established (narrow unified-log predicates found nothing). L31's primary signal becomes the
+  throughput ratio (would have fired at 13Z), not retry depth (19:33Z). Memory pressure on the mini
+  was level 2 at 17:55 with five Codex lanes running; L30/L31 launch only at level 1.
