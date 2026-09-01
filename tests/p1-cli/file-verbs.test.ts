@@ -117,7 +117,7 @@ test("writeDestination is atomic: wx without --force, EEXIST becomes the refusal
   );
 });
 
-test("onceRetried retries exactly the unknown-outcome class, once", async () => {
+test("onceRetried retries exactly the incomplete-request class, once", async () => {
   let attempts = 0;
   const succeedsSecond = async () => {
     attempts += 1;
@@ -153,10 +153,12 @@ test("onceRetried retries exactly the unknown-outcome class, once", async () => 
 test("every file read deadline stays armed through a stalled response body", async () => {
   const readers: Array<{
     name: string;
+    message: string;
     start: (fetcher: typeof fetch, options: ReadDeadlineOptions) => Promise<unknown>;
   }> = [
     {
       name: "agent list",
+      message: "the file list did not complete",
       start: (fetcher, options) =>
         listFilesAsAgent(
           TARGET,
@@ -168,6 +170,7 @@ test("every file read deadline stays armed through a stalled response body", asy
     },
     {
       name: "human list",
+      message: "the file list did not complete",
       start: (fetcher, options) =>
         listFilesAsHuman(
           TARGET,
@@ -179,6 +182,7 @@ test("every file read deadline stays armed through a stalled response body", asy
     },
     {
       name: "download",
+      message: "the download did not complete",
       start: (fetcher, options) =>
         getObject(TARGET, "/storage/v1/object/download", fetcher, options),
     },
@@ -226,8 +230,13 @@ test("every file read deadline stays armed through a stalled response body", asy
           setTimeout(() => reject(new Error("body-stall control hung")), 100)
         ),
       ]),
-      (error: unknown) =>
-        error instanceof FileTransportError && error.noResponse === true,
+      (error: unknown) => {
+        assert.ok(error instanceof FileTransportError);
+        assert.equal(error.noResponse, true);
+        assert.equal(error.message, reader.message);
+        assert.doesNotMatch(error.message, /before a response|could not reach/);
+        return true;
+      },
       `${reader.name}: the deadline must return the typed retryable error`,
     );
     assert.equal(deadline.delayMs, 25);

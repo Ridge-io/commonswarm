@@ -11,9 +11,12 @@ What the commit does (read from the diff, `src/cli.ts` +94/−53 lines, `tests/p
 - `cswarm hook install|uninstall claude --write` now targets `<project>/.claude/settings.local.json`
   (git worktree root of cwd; cwd outside git). Inside a repo the file must be reported ignored by
   `git check-ignore`, otherwise the command refuses and prints the exact `.gitignore` line.
-- `--user` opts in to `${CLAUDE_CONFIG_DIR:-~/.claude}/settings.json` and prints
-  "Warning: --user scope affects EVERY Claude Code session for this OS user and is wrong on a
-  shared host." `--repo` keeps the repository-wide `.claude/settings.json` (ignore-checked).
+- `--user` opts in to `${CLAUDE_CONFIG_DIR:-~/.claude}/settings.json`. The historical output at
+  `21c667f` was ~~"Warning: --user scope affects EVERY Claude Code session for this OS user and
+  is wrong on a shared host."~~ **Dead as a product claim:** with `CLAUDE_CONFIG_DIR` set, only
+  sessions that read that configured directory are affected. L29 replaces it with a warning
+  that names the resolved directory. `--repo` keeps the repository-wide `.claude/settings.json`
+  (ignore-checked).
   `--user` and `--repo` are mutually exclusive; `--user` requires `--write`.
 - Success output names the full path and, for the default scope, says it applies only to Claude
   Code sessions started in that project.
