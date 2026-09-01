@@ -500,7 +500,11 @@ export async function listFilesAsHuman(
   url.searchParams.set("order", "name.asc");
   let response: Response;
   try {
-    response = await fetcher(url, {
+    /* The HUMAN list escaped the 2026-09-01 deadline fix and kept its retry —
+     * exactly the doubled worst case that commit said it was preventing, in
+     * the one path it did not check (found by the exact-review arm, which
+     * measured it still hanging at 400ms against a 150ms deadline). */
+    response = await fetchWithDeadline(fetcher, url.toString(), {
       headers: {
         authorization: `Bearer ${accessToken}`,
         apikey: target.anonKey,

@@ -158,13 +158,17 @@ async function installPrincipalCredential(
 function emptyInboxFetch(calls: { count: number }): typeof fetch {
   return (async (_input, init) => {
     const body = JSON.parse(String(init?.body)) as { resource?: string };
+    /* ~~files reads were exempt from the count~~ Dead 2026-09-01: that exemption
+     * is why the brain digest slipped past the cooldown control — the test said
+     * "skips the network" while the digest measurably listed files on a cooldown
+     * tick (inbox 1, files 2). EVERY read counts here now. */
+    calls.count += 1;
     if (body.resource === "files") {
       return new Response(JSON.stringify({ files: [] }), {
         status: 200,
         headers: { "content-type": "application/json" },
       });
     }
-    calls.count += 1;
     return new Response(JSON.stringify({
       signals: [],
       capabilities: { sender_owner_relation: 1, cursor_after: 1 },
@@ -212,17 +216,25 @@ test("hook check cooldown reserves a state-file timestamp and skips the network"
         deadlineMs: clock + 3_000,
       });
     };
+    /* A live invocation may read twice: the inbox, plus the optional brain
+     * digest. What the cooldown must guarantee is a DELTA of zero — asserting
+     * absolute counts is what let the digest's extra read hide here. */
     assert.equal(await invoke(), "");
-    assert.equal(calls.count, 1);
+    const afterFirst = calls.count;
+    assert.ok(afterFirst >= 1, "a live invocation reads the inbox");
     await new FilePendingMainQueue(paths.instanceDirectory).enqueue(
       pending(SIGNAL_ID, "local pending ask"),
     );
     clock += 29_999;
     assert.match(await invoke(), /"local pending ask"/);
-    assert.equal(calls.count, 1, "the cooldown path must make zero fetch calls");
+    assert.equal(
+      calls.count,
+      afterFirst,
+      "the cooldown path must make zero fetch calls — inbox OR brain digest",
+    );
     clock += 1;
     assert.equal(await invoke(), "");
-    assert.equal(calls.count, 2);
+    assert.ok(calls.count > afterFirst, "the post-cooldown invocation reads again");
     const cooldown = JSON.parse(await readFile(join(root, "hook-check.json"), "utf8"));
     assert.equal(cooldown.lastCheckAt, clock);
   } finally {

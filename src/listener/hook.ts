@@ -780,6 +780,7 @@ export async function checkListenerHooks(
     }
     const contexts = discovery.contexts;
     if (contexts.length === 0) return "";
+    let digestCandidate: ContextCheck | null = null;
     const networkAllowed = contexts.some((context) => context.listenerLive !== false)
       ? await reserveCheck(
         stateDirectory,
@@ -829,7 +830,6 @@ export async function checkListenerHooks(
       reportCredentialFailure: boolean;
     }> = [];
     const blocks: string[] = [];
-    const brainBlocks: string[] = [];
     const emittedCredentialWarnings = new Set<string>();
     for (const check of checks) {
       const store = new FileHookSurfaceStore(check.context.instanceDirectory);
@@ -856,13 +856,13 @@ export async function checkListenerHooks(
           blocks.push(warning);
         }
       }
-      // A hook invocation has one file-list budget. Installed hooks select one
-      // principal; an unusual explicit multi-context check keeps signal
-      // delivery but skips the optional digest rather than multiplying reads.
-      const brainDigest = checks.length === 1
-        ? await brainDigestForCheck(check, options, now)
-        : null;
-      if (brainDigest !== null) brainBlocks.push(brainDigest);
+      /* The digest is DEFERRED, not computed here. Two defects the exact-review
+       * arm measured on ea3cac4: it listed files even on a cooldown tick that
+       * had skipped the network (inbox 1, files 2), and it ran BEFORE the write
+       * — so a stalled brain list could spend the hook's 3s ceiling and kill
+       * the process before pending asks reached stdout. Messages are the hook's
+       * job; the digest is the optional extra and must never precede them. */
+      if (checks.length === 1 && networkAllowed) digestCandidate = check;
       commits.push({
         check,
         store,
@@ -877,9 +877,21 @@ export async function checkListenerHooks(
         reportCredentialFailure,
       });
     }
-    blocks.push(...brainBlocks);
     const output = blocks.join("\n\n");
     if (output.length > 0) await (options.write ?? (() => undefined))(output);
+
+    /* Signals are on stdout before the optional digest is even attempted. */
+    let surfaced = output;
+    if (digestCandidate !== null) {
+      const brainDigest = await brainDigestForCheck(digestCandidate, options, now);
+      if (brainDigest !== null) {
+        const digestBlock = surfaced.length > 0 ? `\n\n${brainDigest}` : brainDigest;
+        await (options.write ?? (() => undefined))(digestBlock);
+        /* The return value is the contract for "what this hook surfaced", so it
+         * carries the digest even though the digest was written second. */
+        surfaced += digestBlock;
+      }
+    }
 
     for (const commit of commits) {
       await commit.store.commit({
@@ -917,7 +929,7 @@ export async function checkListenerHooks(
         }
       }
     }
-    return output;
+    return surfaced;
   } catch {
     return "";
   }
