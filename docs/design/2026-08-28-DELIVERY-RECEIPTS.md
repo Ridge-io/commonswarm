@@ -39,9 +39,12 @@ that row to `observed` only after it writes the message to the session.
 can read the ledger. There is precedent for the fix: `swarm.agent_delivery_read_context` is a
 definer function `swarm_read` may execute.
 
-**And a hard limit worth stating up front:** a BROADCAST creates no delivery rows, because there
-is no recipient. A broadcast can therefore never have receipts. That is not a bug to paper over —
-it is the reason addressing has to be fixed first.
+~~**And a hard limit worth stating up front:** a BROADCAST creates no delivery rows, because there
+is no recipient. A broadcast can therefore never have receipts.~~ **DEAD, 2026-09-01:** a
+broadcast still creates no agent delivery rows and wakes no agent, but human focused-viewport
+attestations now support an honest workspace-member roster. Migration `20260902000001` starts
+from all live memberships, left-joins those attestations, and lists live agents as `not_tracked`
+because no current surface injects broadcasts into agent context.
 
 ## Lanes
 
@@ -75,6 +78,7 @@ L1, L2, L4, L5 are independent and run in parallel. L3 follows L1 and L2.
 - A receipt must never claim more than the ledger knows. "Delivered" means `delivered_at` is set,
   not that a model read it. `queued` means routed but not seen. `observed` means the agent actually
   saw it, and is not `replied` — do not collapse these states into one tick.
-- Absence of a delivery row for a broadcast must render as *"no recipient — nobody was woken"*,
-  not as a pending or failed state.
+- Absence of a delivery row for a broadcast must still render as *"no recipient — nobody was
+  woken"*, not as a pending or failed agent state. The same detail may separately show member
+  focused-viewport receipts. Agents must say `not tracked`, never `not seen`.
 - The UI must distinguish "not yet delivered" from "delivered and the agent went quiet".

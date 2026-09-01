@@ -13,8 +13,10 @@ import {
   DeliveryReceiptReadError,
   readAgentDeliveryReceipts,
   type DeliveryAckOutcome,
+  type BroadcastRecipientRoster,
   type DeliveryReceipt,
   type HumanDeliveryReceipt,
+  type UntrackedBroadcastAgentReceipt,
 } from "../../src/cloud/delivery-receipts.js";
 import { SignalReadTimeoutError } from "../../src/cloud/signals.js";
 
@@ -57,6 +59,47 @@ function humanReport(row: HumanDeliveryReceipt): SignalReceiptReport {
   };
 }
 
+function broadcastRoster(): BroadcastRecipientRoster {
+  return {
+    members: { total: 3, seen: 1, returned: 3, limit: 50, truncated: false },
+    agents: {
+      total: 1,
+      returned: 1,
+      limit: 50,
+      truncated: false,
+      tracking_state: "not_tracked",
+    },
+  };
+}
+
+function broadcastReport(): SignalReceiptReport {
+  const agent: UntrackedBroadcastAgentReceipt = {
+    recipient_agent_principal_id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+    display_name: "Quill",
+    tracking_state: "not_tracked",
+    observed_at: null,
+  };
+  return {
+    workspaceId: WORKSPACE,
+    signalId: SIGNAL,
+    addressed: false,
+    receipts: [{
+      recipient_user_id: AGENT,
+      display_name: "Ari",
+      seen_at: "2026-08-28T12:25:00.000Z",
+    }, {
+      recipient_user_id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+      display_name: "Bo",
+      seen_at: null,
+    }, {
+      recipient_user_id: "ffffffff-ffff-4fff-8fff-ffffffffffff",
+      display_name: "Cy",
+      seen_at: null,
+    }, agent],
+    broadcast_roster: broadcastRoster(),
+  };
+}
+
 function wireRow(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     recipient_agent_principal_id: AGENT,
@@ -79,6 +122,26 @@ function wireReport(
   return {
     addressed,
     receipts,
+    ...(addressed
+      ? {}
+      : {
+        broadcast_roster: {
+          members: {
+            total: receipts.filter((row) => "recipient_user_id" in row).length,
+            seen: receipts.filter((row) => row.seen_at !== null && "recipient_user_id" in row).length,
+            returned: receipts.filter((row) => "recipient_user_id" in row).length,
+            limit: 50,
+            truncated: false,
+          },
+          agents: {
+            total: receipts.filter((row) => row.tracking_state === "not_tracked").length,
+            returned: receipts.filter((row) => row.tracking_state === "not_tracked").length,
+            limit: 50,
+            truncated: false,
+            tracking_state: "not_tracked",
+          },
+        },
+      }),
   };
 }
 
@@ -153,17 +216,17 @@ test("each receipt outcome keeps its exact meaning and next step", () => {
 });
 
 test("a broadcast names the no-recipient fact and never invents a failed or pending state", () => {
-  const rendered = renderSignalReceiptReport({
-    workspaceId: WORKSPACE,
-    signalId: SIGNAL,
-    addressed: false,
-    receipts: [],
-  }, NOW);
+  const rendered = renderSignalReceiptReport(broadcastReport(), NOW);
 
   assert.match(
     rendered,
     /This was a broadcast; no agent was addressed and none was woken\./,
   );
+  assert.match(rendered, /Seen by 1 of 3 workspace members/);
+  assert.match(rendered, /Seen members:\n- Ari — 5m ago/);
+  assert.match(rendered, /Not-seen members:\n- Bo\n- Cy/);
+  assert.match(rendered, /Agents — not tracked:\n- Quill/);
+  assert.match(rendered, /Broadcasts do not wake agents.*does not track whether an agent saw them/);
   assert.match(rendered, /cswarm ask/);
   assert.doesNotMatch(rendered, /pending|failed|not yet delivered|working/i);
 });
@@ -206,6 +269,20 @@ test("human JSON distinguishes not_seen from seen", () => {
     ((seen.receipts as Array<Record<string, unknown>>)[0]!).state,
     "seen",
   );
+});
+
+test("broadcast JSON carries roster counts and never calls an untracked agent not seen", () => {
+  const payload = signalReceiptJsonPayload(broadcastReport(), NOW);
+  const rows = payload.receipts as Array<Record<string, unknown>>;
+  assert.deepEqual(payload.broadcast_roster, broadcastRoster());
+  assert.deepEqual(rows.map((row) => row.state), [
+    "seen",
+    "not_seen",
+    "not_seen",
+    "not_tracked",
+  ]);
+  assert.equal(rows[3]?.observed_at, null);
+  assert.notEqual(rows[3]?.state, "not_seen");
 });
 
 test("--json payload carries the machine state, outcome, recipient, and ledger fields", () => {
@@ -437,6 +514,34 @@ test("the receipt CLI renders the focused-viewport timestamp as Seen", async () 
   assert.match(result.stdout, new RegExp(`Seen by ${AGENT}`));
   assert.match(result.stdout, /row was in view while the document had focus/);
   assert.doesNotMatch(result.stdout, /read|understood|acknowledged/i);
+});
+
+test("the receipt CLI renders the full broadcast member and untracked-agent roster", async () => {
+  const report = broadcastReport();
+  const wireRows = report.receipts.map((row) => {
+    if ("recipient_user_id" in row) return row;
+    if ("tracking_state" in row) return row;
+    return { ...row };
+  }) as Array<Record<string, unknown>>;
+  const result = await runCliAgainst(200, {
+    addressed: false,
+    receipts: wireRows,
+    broadcast_roster: {
+      members: report.broadcast_roster!.members,
+      agents: {
+        ...report.broadcast_roster!.agents,
+        tracking_state: "not_tracked",
+      },
+    },
+  }, false);
+
+  assert.equal(result.code, 0, result.stderr);
+  assert.equal(result.stderr, "");
+  assert.match(result.stdout, /Seen by 1 of 3 workspace members/);
+  assert.match(result.stdout, /Seen members:\n- Ari/);
+  assert.match(result.stdout, /Not-seen members:\n- Bo\n- Cy/);
+  assert.match(result.stdout, /Agents — not tracked:\n- Quill/);
+  assert.match(result.stdout, /no agent was addressed and none was woken/);
 });
 
 test("a missing receipt endpoint shows no fabricated state", async () => {

@@ -34,16 +34,50 @@ export interface DeliveryReceipt {
 
 export interface HumanDeliveryReceipt {
   recipient_user_id: string;
+  /** Present on broadcast roster rows; directed rows keep their existing wire shape. */
+  display_name?: string;
   /** Null means the member's browser has not attested focused viewport display. */
   seen_at: string | null;
 }
 
-export type DeliveryReceiptRow = DeliveryReceipt | HumanDeliveryReceipt;
+export interface UntrackedBroadcastAgentReceipt {
+  recipient_agent_principal_id: string;
+  display_name: string;
+  tracking_state: "not_tracked";
+  observed_at: null;
+}
+
+export interface BroadcastRosterSection {
+  total: number;
+  returned: number;
+  limit: number;
+  truncated: boolean;
+}
+
+export interface BroadcastMemberRosterSection extends BroadcastRosterSection {
+  seen: number;
+}
+
+export interface BroadcastAgentRosterSection extends BroadcastRosterSection {
+  tracking_state: "not_tracked";
+}
+
+export interface BroadcastRecipientRoster {
+  members: BroadcastMemberRosterSection;
+  agents: BroadcastAgentRosterSection;
+}
+
+export type DeliveryReceiptRow =
+  | DeliveryReceipt
+  | HumanDeliveryReceipt
+  | UntrackedBroadcastAgentReceipt;
 
 export interface DeliveryReceiptResult {
   /** Null means this credential did not author a matching signal. */
   addressed: boolean | null;
   receipts: DeliveryReceiptRow[];
+  /** Present only for broadcasts; each section is independently capped at 50. */
+  broadcast_roster?: BroadcastRecipientRoster;
 }
 
 export interface AgentDeliveryReceiptResult extends DeliveryReceiptResult {
@@ -111,6 +145,16 @@ function nonNegativeInteger(value: unknown, field: string): number {
   return value;
 }
 
+function displayName(value: unknown, field: string): string {
+  if (typeof value !== "string" || value.length === 0 || value.length > 512) {
+    throw new DeliveryReceiptReadError(
+      "protocol",
+      `delivery receipt returned a malformed ${field}`,
+    );
+  }
+  return value;
+}
+
 /** Parse the narrow agent-or-human receipt wire without inventing either kind. */
 export function parseDeliveryReceipt(value: unknown): DeliveryReceiptRow {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -123,7 +167,27 @@ export function parseDeliveryReceipt(value: unknown): DeliveryReceiptRow {
   if (Object.hasOwn(row, "recipient_user_id")) {
     return {
       recipient_user_id: uuid(row.recipient_user_id, "recipient_user_id"),
+      ...(Object.hasOwn(row, "display_name")
+        ? { display_name: displayName(row.display_name, "display_name") }
+        : {}),
       seen_at: nullableTimestamp(row.seen_at, "seen_at"),
+    };
+  }
+  if (row.tracking_state === "not_tracked") {
+    if (row.observed_at !== null) {
+      throw new DeliveryReceiptReadError(
+        "protocol",
+        "delivery receipt returned a tracked observation for an untracked agent",
+      );
+    }
+    return {
+      recipient_agent_principal_id: uuid(
+        row.recipient_agent_principal_id,
+        "recipient_agent_principal_id",
+      ),
+      display_name: displayName(row.display_name, "display_name"),
+      tracking_state: "not_tracked",
+      observed_at: null,
     };
   }
   const ackedAt = nullableTimestamp(row.acked_at, "acked_at");
@@ -173,6 +237,57 @@ export function parseDeliveryReceipt(value: unknown): DeliveryReceiptRow {
   };
 }
 
+function rosterSection(
+  value: unknown,
+  field: string,
+): BroadcastRosterSection {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new DeliveryReceiptReadError(
+      "protocol",
+      `delivery receipt returned a malformed ${field}`,
+    );
+  }
+  const row = value as Record<string, unknown>;
+  const total = nonNegativeInteger(row.total, `${field}.total`);
+  const returned = nonNegativeInteger(row.returned, `${field}.returned`);
+  const limit = nonNegativeInteger(row.limit, `${field}.limit`);
+  if (
+    typeof row.truncated !== "boolean" || limit !== 50 || returned > limit ||
+    returned > total || row.truncated !== (returned < total)
+  ) {
+    throw new DeliveryReceiptReadError(
+      "protocol",
+      `delivery receipt returned a malformed ${field}`,
+    );
+  }
+  return { total, returned, limit, truncated: row.truncated };
+}
+
+function parseBroadcastRoster(value: unknown): BroadcastRecipientRoster {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new DeliveryReceiptReadError(
+      "protocol",
+      "delivery receipt returned a malformed broadcast_roster",
+    );
+  }
+  const row = value as Record<string, unknown>;
+  const members = rosterSection(row.members, "broadcast_roster.members");
+  const agents = rosterSection(row.agents, "broadcast_roster.agents");
+  const memberRow = row.members as Record<string, unknown>;
+  const agentRow = row.agents as Record<string, unknown>;
+  const seen = nonNegativeInteger(memberRow.seen, "broadcast_roster.members.seen");
+  if (seen > members.total || agentRow.tracking_state !== "not_tracked") {
+    throw new DeliveryReceiptReadError(
+      "protocol",
+      "delivery receipt returned a malformed broadcast_roster",
+    );
+  }
+  return {
+    members: { ...members, seen },
+    agents: { ...agents, tracking_state: "not_tracked" },
+  };
+}
+
 /** Parse author visibility separately from the receipt row set. */
 export function parseDeliveryReceiptResult(value: unknown): DeliveryReceiptResult {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -192,13 +307,38 @@ export function parseDeliveryReceiptResult(value: unknown): DeliveryReceiptResul
     );
   }
   const receipts = body.receipts.map(parseDeliveryReceipt);
-  if (
-    body.addressed === false &&
-    receipts.some((row) => "recipient_agent_principal_id" in row)
-  ) {
+  const broadcastRoster = Object.hasOwn(body, "broadcast_roster")
+    ? parseBroadcastRoster(body.broadcast_roster)
+    : undefined;
+  const isUntrackedAgent = (
+    row: DeliveryReceiptRow,
+  ): row is UntrackedBroadcastAgentReceipt =>
+    "tracking_state" in row && row.tracking_state === "not_tracked";
+  const humanRows = receipts.filter(
+    (row): row is HumanDeliveryReceipt => "recipient_user_id" in row,
+  );
+  const untrackedAgentRows = receipts.filter(isUntrackedAgent);
+  if (body.addressed === false) {
+    if (
+      broadcastRoster === undefined ||
+      receipts.some((row) =>
+        "recipient_agent_principal_id" in row && !isUntrackedAgent(row)
+      ) ||
+      humanRows.some((row) => row.display_name === undefined) ||
+      humanRows.length !== broadcastRoster.members.returned ||
+      untrackedAgentRows.length !== broadcastRoster.agents.returned ||
+      humanRows.filter((row) => row.seen_at !== null).length >
+        broadcastRoster.members.seen
+    ) {
+      throw new DeliveryReceiptReadError(
+        "protocol",
+        "delivery receipt read returned a malformed broadcast roster",
+      );
+    }
+  } else if (broadcastRoster !== undefined || untrackedAgentRows.length > 0) {
     throw new DeliveryReceiptReadError(
       "protocol",
-      "delivery receipt read returned an agent recipient for a broadcast",
+      "delivery receipt read returned a broadcast roster for an addressed signal",
     );
   }
   if (body.addressed === true && receipts.length === 0) {
@@ -220,7 +360,11 @@ export function parseDeliveryReceiptResult(value: unknown): DeliveryReceiptResul
       "delivery receipt read returned duplicate recipients",
     );
   }
-  return { addressed: body.addressed, receipts };
+  return {
+    addressed: body.addressed,
+    receipts,
+    ...(broadcastRoster === undefined ? {} : { broadcast_roster: broadcastRoster }),
+  };
 }
 
 /** Derive the display state without collapsing observed into replied. */
@@ -330,7 +474,13 @@ export async function readAgentDeliveryReceipts(
         "delivery receipt read did not establish that this caller authored the signal",
       );
     }
-    return { addressed: result.addressed, receipts: result.receipts };
+    return {
+      addressed: result.addressed,
+      receipts: result.receipts,
+      ...(result.broadcast_roster === undefined
+        ? {}
+        : { broadcast_roster: result.broadcast_roster }),
+    };
   } finally {
     clearTimeout(timer);
     signal.removeEventListener("abort", onAbort);

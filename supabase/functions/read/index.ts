@@ -443,9 +443,20 @@ async function handle(
       ) {
         throw new Error("delivery receipt function returned malformed JSON");
       }
+      const broadcastRoster = result.broadcast_roster;
+      if (
+        result.addressed === false &&
+        (!broadcastRoster || typeof broadcastRoster !== "object" ||
+          Array.isArray(broadcastRoster))
+      ) {
+        throw new Error("delivery receipt function returned malformed JSON");
+      }
       return json(200, {
         addressed: result.addressed,
         receipts: result.receipts,
+        ...(result.addressed === false
+          ? { broadcast_roster: broadcastRoster }
+          : {}),
       });
     }
     await tx`

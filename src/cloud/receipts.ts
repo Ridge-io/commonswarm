@@ -4,6 +4,7 @@ import {
   type DeliveryReceipt,
   type DeliveryReceiptRow,
   type HumanDeliveryReceipt,
+  type UntrackedBroadcastAgentReceipt,
 } from "./delivery-receipts.js";
 import { relativeAge, relativeExpiry } from "./workspaces.js";
 
@@ -23,6 +24,18 @@ function humanReceipt(
   receipt: DeliveryReceiptRow,
 ): receipt is HumanDeliveryReceipt {
   return "recipient_user_id" in receipt;
+}
+
+function untrackedAgentReceipt(
+  receipt: DeliveryReceiptRow,
+): receipt is UntrackedBroadcastAgentReceipt {
+  return "tracking_state" in receipt && receipt.tracking_state === "not_tracked";
+}
+
+function agentDeliveryReceipt(
+  receipt: DeliveryReceiptRow,
+): receipt is DeliveryReceipt {
+  return !humanReceipt(receipt) && !untrackedAgentReceipt(receipt);
 }
 
 function signalReceiptCliState(
@@ -61,9 +74,8 @@ export function renderSignalReceiptReport(
   nowMs: number = Date.now(),
 ): string {
   const humanReceipts = report.receipts.filter(humanReceipt);
-  const agentReceipts = report.receipts.filter(
-    (receipt): receipt is DeliveryReceipt => !humanReceipt(receipt),
-  );
+  const agentReceipts = report.receipts.filter(agentDeliveryReceipt);
+  const untrackedAgents = report.receipts.filter(untrackedAgentReceipt);
   const humanSections = humanReceipts.map((receipt) =>
     receipt.seen_at === null
       ? `Not seen yet — the member's browser reports seen state when the message is viewed.`
@@ -73,11 +85,48 @@ export function renderSignalReceiptReport(
       ].join("\n")
   );
   if (!report.addressed) {
+    const seenMembers = humanReceipts.filter((receipt) => receipt.seen_at !== null);
+    const notSeenMembers = humanReceipts.filter((receipt) => receipt.seen_at === null);
+    const memberTotal = report.broadcast_roster?.members.total ?? humanReceipts.length;
+    const seenTotal = report.broadcast_roster?.members.seen ?? seenMembers.length;
+    const memberLabel = (receipt: HumanDeliveryReceipt): string =>
+      receipt.display_name ?? receipt.recipient_user_id;
+    const rosterSections = [
+      `Seen by ${seenTotal} of ${memberTotal} workspace members.`,
+      seenMembers.length === 0
+        ? "Seen members: none."
+        : [
+          "Seen members:",
+          ...seenMembers.map((receipt) =>
+            `- ${memberLabel(receipt)} — ${relativeAge(receipt.seen_at!, nowMs)}.`
+          ),
+          "Seen is a browser proxy: the message row was in view while the document had focus.",
+        ].join("\n"),
+      notSeenMembers.length === 0
+        ? "Not-seen members: none."
+        : [
+          "Not-seen members:",
+          ...notSeenMembers.map((receipt) => `- ${memberLabel(receipt)}`),
+        ].join("\n"),
+      untrackedAgents.length === 0
+        ? "Agents: none in this workspace."
+        : [
+          "Agents — not tracked:",
+          ...untrackedAgents.map((receipt) => `- ${receipt.display_name}`),
+          "Broadcasts do not wake agents, and CommonSwarm does not track whether an agent saw them.",
+        ].join("\n"),
+      report.broadcast_roster?.members.truncated
+        ? `Member roster cut: showing ${report.broadcast_roster.members.returned} of ${report.broadcast_roster.members.total} members (limit ${report.broadcast_roster.members.limit}).`
+        : null,
+      report.broadcast_roster?.agents.truncated
+        ? `Agent roster cut: showing ${report.broadcast_roster.agents.returned} of ${report.broadcast_roster.agents.total} agents (limit ${report.broadcast_roster.agents.limit}).`
+        : null,
+    ].filter((section): section is string => section !== null);
     return [
       "This was a broadcast; no agent was addressed and none was woken.",
-      ...humanSections,
+      ...rosterSections,
       `To wake an agent, send a new ask with: cswarm ask "<text>" --to <agent> --workspace-id ${report.workspaceId}`,
-    ].join("\n");
+    ].join("\n\n");
   }
 
   const sections = agentReceipts.map((receipt) => {
@@ -149,12 +198,25 @@ export function signalReceiptJsonPayload(
     workspace_id: report.workspaceId,
     signal_id: report.signalId,
     broadcast: !report.addressed,
+    ...(report.broadcast_roster === undefined
+      ? {}
+      : { broadcast_roster: report.broadcast_roster }),
     receipts: report.receipts.map((receipt) =>
       humanReceipt(receipt)
         ? {
           recipient_user_id: receipt.recipient_user_id,
+          ...(receipt.display_name === undefined
+            ? {}
+            : { display_name: receipt.display_name }),
           state: receipt.seen_at === null ? "not_seen" : "seen",
           seen_at: receipt.seen_at,
+        }
+        : untrackedAgentReceipt(receipt)
+        ? {
+          recipient_agent_principal_id: receipt.recipient_agent_principal_id,
+          display_name: receipt.display_name,
+          state: "not_tracked",
+          observed_at: null,
         }
         : {
           recipient_agent_principal_id: receipt.recipient_agent_principal_id,

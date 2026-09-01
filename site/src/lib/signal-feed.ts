@@ -9,17 +9,14 @@ type AgentOwner = { ownerUserId: string };
 export const signalIsBroadcast = (signal: AddressedSignal): boolean =>
   signal.to === null && signal.toAgent === null;
 
-/** A direct row belongs to the viewer when it targets them or an agent they operate. */
+/* ~~"targets them or an agent they operate"~~ Dead 2026-09-01, by operator report:
+ * in a solo-owner workspace the operator operates nearly every agent, so the
+ * operated-agent clause made "Direct to you" degenerate into ALL directed
+ * traffic. Direct to you means to YOU the person, nothing else. */
 export const signalIsDirectToViewer = (
   signal: AddressedSignal,
   viewerId: string,
-  agentById: ReadonlyMap<string, AgentOwner>,
-): boolean => {
-  if (!viewerId) return false;
-  if (signal.to === viewerId) return true;
-  if (signal.toAgent === null) return false;
-  return agentById.get(signal.toAgent)?.ownerUserId === viewerId;
-};
+): boolean => viewerId !== "" && signal.to === viewerId;
 
 /** Derive truthful loaded-page counts without implying a server-wide total. */
 export const signalCounts = (signals: readonly AddressedSignal[]) => {
@@ -36,7 +33,7 @@ export const filterSignals = <T extends AddressedSignal>(
 ): T[] => signals.filter((signal) => {
   if (filter === "broadcast") return signalIsBroadcast(signal);
   if (filter === "direct-to-you") {
-    return signalIsDirectToViewer(signal, viewerId, agentById);
+    return signalIsDirectToViewer(signal, viewerId);
   }
   return true;
 });

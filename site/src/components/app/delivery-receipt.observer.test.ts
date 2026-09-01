@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import {
   BROWSER_RECEIPT_REQUESTS_PER_TICK,
+  browserBroadcastRosterView,
   browserDeliveryIndicator,
   browserDeliveryReceiptCandidates,
   browserHumanDeliveryIndicator,
@@ -12,6 +13,7 @@ import {
   type BrowserDeliveryReceiptResult,
   type BrowserHumanDeliveryReceipt,
   type BrowserReceiptRow,
+  type BrowserUntrackedAgentReceipt,
   type Signal,
 } from "../../lib/commonswarm.js";
 
@@ -44,6 +46,16 @@ const humanReceipt = (
 ): BrowserHumanDeliveryReceipt => ({
   recipientUserId: "person",
   seenAt: null,
+  ...changes,
+});
+
+const untrackedAgent = (
+  changes: Partial<BrowserUntrackedAgentReceipt> = {},
+): BrowserUntrackedAgentReceipt => ({
+  recipientAgentPrincipalId: "agent-untracked",
+  displayName: "Quill",
+  trackingState: "not_tracked",
+  observedAt: null,
   ...changes,
 });
 
@@ -150,11 +162,59 @@ test("broadcast uses addressed=false and can never look pending or failed", () =
   );
   assert.match(
     renderer,
-    /signal\.toAgent === null\s+\? browserDeliveryIndicator\(\{ addressed: false, receipts: \[\] \}\)/,
+    /signal\.toAgent === null\s+\? browserDeliveryIndicator\(\s+cached\?\.result \?\? \{ addressed: false, receipts: \[\] \}/,
   );
 });
 
-test("agent and human directed rows use the same bounded receipt path", () => {
+test("broadcast summary and detail model split seen, not-seen, and untracked agents", () => {
+  const result: BrowserDeliveryReceiptResult = {
+    addressed: false,
+    receipts: [
+      humanReceipt({
+        recipientUserId: "member-seen",
+        displayName: "Ari",
+        seenAt: "2026-08-28T14:55:00.000Z",
+      }),
+      humanReceipt({ recipientUserId: "member-unseen", displayName: "Bo" }),
+      untrackedAgent(),
+    ],
+    broadcastRoster: {
+      members: { total: 2, seen: 1, returned: 2, limit: 50, truncated: false },
+      agents: {
+        total: 1,
+        returned: 1,
+        limit: 50,
+        truncated: false,
+        trackingState: "not_tracked",
+      },
+    },
+  };
+  const indicator = browserDeliveryIndicator(result, NOW);
+  const roster = browserBroadcastRosterView(result);
+
+  assert.equal(indicator.label, "Seen by 1 of 2");
+  assert.match(indicator.detail, /nobody was addressed or woken/);
+  assert.match(indicator.detail, /do not wake or track agents/);
+  assert.deepEqual(roster.seenMembers.map((row) => row.displayName), ["Ari"]);
+  assert.deepEqual(roster.notSeenMembers.map((row) => row.displayName), ["Bo"]);
+  assert.deepEqual(roster.agents.map((row) => row.trackingState), ["not_tracked"]);
+
+  const renderer = dashboard.slice(
+    dashboard.indexOf("const appendDeliveryReceipt ="),
+    dashboard.indexOf("const feedScroller ="),
+  );
+  assert.match(renderer, /"Seen members"/);
+  assert.match(renderer, /"Not-seen members"/);
+  assert.match(renderer, /"Agents · Not tracked"/);
+  assert.match(renderer, /broadcasts do not wake or track agents/);
+  assert.equal(
+    dashboard.match(/details\.className = "dashboard__message-receipt"/g)?.length,
+    1,
+    "broadcast detail must stay inside the one receipt indicator component",
+  );
+});
+
+test("agent, member, and broadcast rows use the same bounded receipt path", () => {
   const rows = [
     signal("agent-to-agent", "2026-08-28T14:59:00.000Z"),
     signal("viewer-to-agent", "2026-08-28T14:58:00.000Z", {
@@ -176,6 +236,7 @@ test("agent and human directed rows use the same bounded receipt path", () => {
   assert.deepEqual(selected.map((row) => row.id), [
     "agent-to-agent",
     "viewer-to-agent",
+    "broadcast",
     "person-directed",
   ]);
 

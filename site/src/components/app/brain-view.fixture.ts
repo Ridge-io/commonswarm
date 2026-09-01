@@ -13,6 +13,8 @@ const componentDir = dirname(fileURLToPath(import.meta.url));
 const siteRoot = join(componentDir, "..", "..", "..");
 
 export interface BrainViewSnapshot {
+  paneClosedOnForeignFile: boolean;
+  staleSaveRefused: boolean;
   dangerousElementCount: number;
   historyCount: number;
   listDetails: string[];

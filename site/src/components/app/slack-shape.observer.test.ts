@@ -275,13 +275,18 @@ test("loaded-signal filters and counts classify person, agent, and broadcast tar
     filterSignals(signals, "broadcast", "viewer", agentById).map((signal) => signal.id),
     ["broadcast"],
   );
+  /* ~~["person-direct", "agent-direct"]~~ Dead 2026-09-01, operator report: in a
+   * solo-owner workspace the operated-agent clause made this filter show ALL
+   * directed traffic. Direct to you = to the person, and a message to an agent
+   * the viewer OPERATES must be excluded — that exclusion IS the fix. */
   assert.deepEqual(
     filterSignals(signals, "direct-to-you", "viewer", agentById).map((signal) => signal.id),
-    ["person-direct", "agent-direct"],
+    ["person-direct"],
   );
   assert.deepEqual(signalCounts(signals), { broadcastCount: 1, directCount: 3 });
-  assert.equal(signalIsDirectToViewer(signals[2]!, "viewer", agentById), true);
-  assert.equal(signalIsDirectToViewer(signals[3]!, "viewer", agentById), false);
+  assert.equal(signalIsDirectToViewer(signals[1]!, "viewer"), true);
+  assert.equal(signalIsDirectToViewer(signals[2]!, "viewer"), false);
+  assert.equal(signalIsDirectToViewer(signals[3]!, "viewer"), false);
 
   const sampleStart = dashboard.indexOf("const renderSample =");
   const sampleEnd = dashboard.indexOf("const boot =", sampleStart);

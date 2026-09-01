@@ -20,7 +20,23 @@ const DELIVERED = "2026-08-28T12:00:01.000Z";
 const LEASED = "2026-08-28T12:10:00.000Z";
 const ACKED = "2026-08-28T12:00:02.000Z";
 const RECEIPT_MIGRATION =
+  "supabase/migrations/20260902000001_broadcast_recipient_roster.sql";
+const HUMAN_RECEIPT_MIGRATION =
   "supabase/migrations/20260901000020_signal_human_receipts.sql";
+
+function broadcastRoster(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    members: { total: 0, seen: 0, returned: 0, limit: 50, truncated: false },
+    agents: {
+      total: 0,
+      returned: 0,
+      limit: 50,
+      truncated: false,
+      tracking_state: "not_tracked",
+    },
+    ...overrides,
+  };
+}
 
 function receipt(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -46,7 +62,10 @@ function response(body: unknown): typeof fetch {
 }
 
 function agentReceipt(row: DeliveryReceiptRow): DeliveryReceipt {
-  assert.ok("recipient_agent_principal_id" in row, "expected an agent receipt row");
+  assert.ok(
+    "recipient_agent_principal_id" in row && !("tracking_state" in row),
+    "expected an agent delivery receipt row",
+  );
   return row;
 }
 
@@ -78,7 +97,7 @@ test("sender reads one minimal receipt per recipient through the agent read surf
   );
 });
 
-test("broadcast is empty and distinguishable from an addressed pending delivery", async () => {
+test("broadcast roster is distinguishable from an addressed pending delivery", async () => {
   const target = cloudTarget("https://example.test", "anon");
   const token = `swm_agt_${"a".repeat(43)}`;
   const broadcast = await readAgentDeliveryReceipts(
@@ -86,7 +105,11 @@ test("broadcast is empty and distinguishable from an addressed pending delivery"
     token,
     WORKSPACE,
     SIGNAL,
-    response({ addressed: false, receipts: [] }),
+    response({
+      addressed: false,
+      receipts: [],
+      broadcast_roster: broadcastRoster(),
+    }),
   );
   const pending = await readAgentDeliveryReceipts(
     target,
@@ -95,7 +118,20 @@ test("broadcast is empty and distinguishable from an addressed pending delivery"
     SIGNAL,
     response({ addressed: true, receipts: [receipt()] }),
   );
-  assert.deepEqual(broadcast, { addressed: false, receipts: [] });
+  assert.deepEqual(broadcast, {
+    addressed: false,
+    receipts: [],
+    broadcast_roster: {
+      members: { total: 0, seen: 0, returned: 0, limit: 50, truncated: false },
+      agents: {
+        total: 0,
+        returned: 0,
+        limit: 50,
+        truncated: false,
+        tracking_state: "not_tracked",
+      },
+    },
+  });
   assert.equal(pending.addressed, true);
   assert.equal(deliveryReceiptState(agentReceipt(pending.receipts[0]!)), "enqueued");
 });
@@ -121,10 +157,39 @@ test("human receipt rows preserve not-seen and focused-viewport seen timestamps"
 
   const broadcastSeen = parseDeliveryReceiptResult({
     addressed: false,
-    receipts: [{ recipient_user_id: RECIPIENT, seen_at: ACKED }],
+    receipts: [{
+      recipient_user_id: RECIPIENT,
+      display_name: "Seen member",
+      seen_at: ACKED,
+    }, {
+      recipient_user_id: RECIPIENT_2,
+      display_name: "Not-seen member",
+      seen_at: null,
+    }, {
+      recipient_agent_principal_id: SIGNAL,
+      display_name: "Agent row",
+      tracking_state: "not_tracked",
+      observed_at: null,
+    }],
+    broadcast_roster: broadcastRoster({
+      members: { total: 2, seen: 1, returned: 2, limit: 50, truncated: false },
+      agents: {
+        total: 1,
+        returned: 1,
+        limit: 50,
+        truncated: false,
+        tracking_state: "not_tracked",
+      },
+    }),
   });
   assert.equal(broadcastSeen.addressed, false);
-  assert.equal(broadcastSeen.receipts.length, 1);
+  assert.equal(broadcastSeen.receipts.length, 3);
+  assert.equal(broadcastSeen.broadcast_roster?.members.seen, 1);
+  assert.ok(
+    broadcastSeen.receipts.some((row) =>
+      "tracking_state" in row && row.tracking_state === "not_tracked"
+    ),
+  );
 });
 
 test("same-workspace different sender and another-workspace caller see no receipts", () => {
@@ -238,7 +303,7 @@ test("migration exposes only the receipt fields and grants only read callers", a
 });
 
 test("human receipt schema and command pin first-seen, tenant FKs, and the batch cap", async () => {
-  const migration = await readFile(RECEIPT_MIGRATION, "utf8");
+  const migration = await readFile(HUMAN_RECEIPT_MIGRATION, "utf8");
   const command = await readFile("supabase/functions/command/human-receipts.ts", "utf8");
   const edge = await readFile("supabase/functions/command/index.ts", "utf8");
 
@@ -261,6 +326,22 @@ test("human receipt schema and command pin first-seen, tenant FKs, and the batch
   assert.match(command, /signal\.to_user_id === null|signal\.to_user_id !== null/);
   assert.match(edge, /signals_seen_requires_human_credential/);
   assert.match(edge, /signal_ids\.length <= SIGNALS_SEEN_MAX_IDS/);
+  assert.doesNotMatch(migration, /auth\.uid\(\)/);
+});
+
+test("broadcast roster starts from live memberships and labels agents untracked", async () => {
+  const migration = await readFile(RECEIPT_MIGRATION, "utf8");
+  assert.match(
+    migration,
+    /FROM swarm\.memberships AS membership[\s\S]*LEFT JOIN swarm\.signal_human_receipts AS human/,
+    "mutation control: dropping the membership roster join must remove this witness",
+  );
+  assert.match(migration, /membership\.revoked_at IS NULL/);
+  assert.match(migration, /LIMIT v_roster_limit/);
+  assert.match(migration, /v_roster_limit constant integer := 50/);
+  assert.match(migration, /'tracking_state', 'not_tracked'/);
+  assert.match(migration, /'observed_at', NULL/);
+  assert.match(migration, /'broadcast_roster'/);
   assert.doesNotMatch(migration, /auth\.uid\(\)/);
 });
 

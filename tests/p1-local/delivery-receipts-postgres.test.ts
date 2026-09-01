@@ -21,8 +21,27 @@ interface ReceiptResult {
   receipts: Array<{
     recipient_agent_principal_id?: string;
     recipient_user_id?: string;
+    display_name?: string;
     seen_at?: string | null;
+    tracking_state?: "not_tracked";
+    observed_at?: null;
   }>;
+  broadcast_roster?: {
+    members: {
+      total: number;
+      seen: number;
+      returned: number;
+      limit: number;
+      truncated: boolean;
+    };
+    agents: {
+      total: number;
+      returned: number;
+      limit: number;
+      truncated: boolean;
+      tracking_state: "not_tracked";
+    };
+  };
 }
 
 const ROLLBACK = new Error("receipt fixture rollback");
@@ -210,9 +229,26 @@ test("delivery receipt authorization matrix holds on real Postgres", async () =>
           agentRow?.result.receipts[0]?.recipient_agent_principal_id,
           recipient,
         );
-        assert.deepEqual(broadcastRow?.result, {
-          addressed: false,
-          receipts: [],
+        assert.equal(broadcastRow?.result.addressed, false);
+        assert.equal(
+          broadcastRow?.result.receipts.filter((row) => row.recipient_user_id).length,
+          1,
+        );
+        assert.equal(
+          broadcastRow?.result.receipts.filter((row) =>
+            row.tracking_state === "not_tracked"
+          ).length,
+          3,
+        );
+        assert.deepEqual(broadcastRow?.result.broadcast_roster, {
+          members: { total: 1, seen: 0, returned: 1, limit: 50, truncated: false },
+          agents: {
+            total: 3,
+            returned: 3,
+            limit: 50,
+            truncated: false,
+            tracking_state: "not_tracked",
+          },
         });
         assert.equal(crossSenderRow?.result, null);
 
@@ -280,6 +316,7 @@ test("human seen upsert keeps first time and receipt reads keep the authorizatio
   const sql = postgres(databaseUrl(), { max: 1 });
   const userId = randomUUID();
   const otherMemberId = randomUUID();
+  const thirdMemberId = randomUUID();
   const revokedMemberId = randomUUID();
   const nonMemberId = randomUUID();
   const workspaceId = randomUUID();
@@ -303,7 +340,13 @@ test("human seen upsert keeps first time and receipt reads keep the authorizatio
   try {
     await assert.rejects(
       sql.begin(async (tx) => {
-        for (const id of [userId, otherMemberId, revokedMemberId, nonMemberId]) {
+        for (const id of [
+          userId,
+          otherMemberId,
+          thirdMemberId,
+          revokedMemberId,
+          nonMemberId,
+        ]) {
           await tx`
             INSERT INTO auth.users (
               id, aud, role, email, encrypted_password, email_confirmed_at,
@@ -320,6 +363,7 @@ test("human seen upsert keeps first time and receipt reads keep the authorizatio
           VALUES
             (${userId}::uuid, 'Seen recipient'),
             (${otherMemberId}::uuid, 'Other member'),
+            (${thirdMemberId}::uuid, 'Third member'),
             (${revokedMemberId}::uuid, 'Revoked member'),
             (${nonMemberId}::uuid, 'Non-member')
         `;
@@ -339,6 +383,7 @@ test("human seen upsert keeps first time and receipt reads keep the authorizatio
           ) VALUES
             (${workspaceId}::uuid, ${userId}::uuid, 'owner', NULL),
             (${workspaceId}::uuid, ${otherMemberId}::uuid, 'member', NULL),
+            (${workspaceId}::uuid, ${thirdMemberId}::uuid, 'member', NULL),
             (${workspaceId}::uuid, ${revokedMemberId}::uuid, 'member', statement_timestamp()),
             (${otherWorkspaceId}::uuid, ${userId}::uuid, 'owner', NULL)
         `;
@@ -532,8 +577,98 @@ test("human seen upsert keeps first time and receipt reads keep the authorizatio
         assert.equal(directRead?.result.receipts[0]?.recipient_user_id, userId);
         assert.ok(directRead?.result.receipts[0]?.seen_at);
         assert.deepEqual(broadcastRead?.result.addressed, false);
-        assert.equal(broadcastRead?.result.receipts[0]?.recipient_user_id, userId);
-        assert.ok(broadcastRead?.result.receipts[0]?.seen_at);
+        const broadcastMembers = broadcastRead!.result.receipts.filter((row) =>
+          row.recipient_user_id !== undefined
+        );
+        const broadcastAgents = broadcastRead!.result.receipts.filter((row) =>
+          row.tracking_state === "not_tracked"
+        );
+        assert.deepEqual(
+          broadcastMembers.map((row) => ({
+            id: row.recipient_user_id,
+            name: row.display_name,
+            seen: row.seen_at === null ? null : "seen",
+          })),
+          [{ id: userId,
+            name: "Seen recipient",
+            seen: "seen",
+          }, { id: otherMemberId, name: "Other member", seen: null }, {
+            id: thirdMemberId,
+            name: "Third member",
+            seen: null,
+          }],
+          "broadcast must start from all three live memberships, not one attestation",
+        );
+        assert.equal(broadcastAgents.length, 3);
+        assert.ok(broadcastAgents.every((row) => row.observed_at === null));
+        assert.deepEqual(broadcastRead?.result.broadcast_roster, {
+          members: { total: 3, seen: 1, returned: 3, limit: 50, truncated: false },
+          agents: {
+            total: 3,
+            returned: 3,
+            limit: 50,
+            truncated: false,
+            tracking_state: "not_tracked",
+          },
+        });
+
+        const capMemberIds = Array.from({ length: 49 }, () => randomUUID());
+        await tx`
+          INSERT INTO auth.users (
+            id, aud, role, email, encrypted_password, email_confirmed_at,
+            raw_app_meta_data, raw_user_meta_data, created_at, updated_at
+          )
+          SELECT
+            cap.id,
+            'authenticated',
+            'authenticated',
+            cap.id::text || '@cap.example.test',
+            '',
+            statement_timestamp(),
+            '{}'::jsonb,
+            '{}'::jsonb,
+            statement_timestamp(),
+            statement_timestamp()
+          FROM unnest(${capMemberIds}::uuid[]) WITH ORDINALITY AS cap(id, ordinal)
+        `;
+        await tx`
+          INSERT INTO swarm.users (user_id, display_name)
+          SELECT
+            cap.id,
+            'Cap member ' || lpad(cap.ordinal::text, 2, '0')
+          FROM unnest(${capMemberIds}::uuid[]) WITH ORDINALITY AS cap(id, ordinal)
+        `;
+        await tx`
+          INSERT INTO swarm.memberships (workspace_id, user_id, role)
+          SELECT ${workspaceId}::uuid, cap.id, 'member'
+          FROM unnest(${capMemberIds}::uuid[]) AS cap(id)
+        `;
+
+        await tx`
+          SELECT set_config(
+            'request.jwt.claims',
+            ${JSON.stringify({ sub: userId, role: "authenticated" })},
+            true
+          )
+        `;
+        await tx.unsafe("SET LOCAL ROLE authenticated");
+        const [cappedBroadcastRead] = await tx<{ result: ReceiptResult }[]>`
+          SELECT swarm_read.signal_delivery_receipts(
+            ${workspaceId}::uuid, ${broadcastSignal}::uuid, NULL
+          ) AS result
+        `;
+        await tx.unsafe("RESET ROLE");
+        const cappedMembers = cappedBroadcastRead!.result.receipts.filter((row) =>
+          row.recipient_user_id !== undefined
+        );
+        assert.equal(cappedMembers.length, 50);
+        assert.deepEqual(cappedBroadcastRead?.result.broadcast_roster?.members, {
+          total: 52,
+          seen: 1,
+          returned: 50,
+          limit: 50,
+          truncated: true,
+        });
 
         await tx`SELECT set_config('request.jwt.claims', '', true)`;
         await tx.unsafe("SET LOCAL ROLE swarm_read");
@@ -547,10 +682,23 @@ test("human seen upsert keeps first time and receipt reads keep the authorizatio
             ${workspaceId}::uuid, ${directSignal}::uuid, ${otherToken}
           ) AS result
         `;
+        const [agentBroadcastAuthorRead] = await tx<{ result: ReceiptResult }[]>`
+          SELECT swarm_read.signal_delivery_receipts(
+            ${workspaceId}::uuid, ${broadcastSignal}::uuid, ${token}
+          ) AS result
+        `;
+        const [agentBroadcastCrossSenderRead] = await tx<{ result: unknown }[]>`
+          SELECT swarm_read.signal_delivery_receipts(
+            ${workspaceId}::uuid, ${broadcastSignal}::uuid, ${otherToken}
+          ) AS result
+        `;
         await tx.unsafe("RESET ROLE");
         assert.equal(agentAuthorRead?.result.receipts[0]?.recipient_user_id, userId);
         assert.ok(agentAuthorRead?.result.receipts[0]?.seen_at);
         assert.equal(agentCrossSenderRead?.result, null);
+        assert.equal(agentBroadcastAuthorRead?.result.addressed, false);
+        assert.equal(agentBroadcastAuthorRead?.result.broadcast_roster?.members.total, 52);
+        assert.equal(agentBroadcastCrossSenderRead?.result, null);
 
         throw ROLLBACK;
       }),

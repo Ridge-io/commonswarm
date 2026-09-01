@@ -71,12 +71,14 @@ test("agent feed attribution says operated by and retires owned by in that rende
   );
 });
 
-test("direct-to-viewer rows ship a distinct tint for people and their operated agents", () => {
+/* ~~"...and their operated agents"~~ Dead 2026-09-01, operator report: the
+ * operated-agent clause degenerated to tinting every directed row in a
+ * solo-owner workspace. The tint follows the same person-only rule as the
+ * Direct-to-you filter. */
+test("direct-to-viewer rows ship a distinct tint for the person only", () => {
   assert.ok(builtAssets.includes("dashboard__message--direct-to-viewer"));
-  assert.match(
-    renderFeed,
-    /signal\.to === session\?\.user\.id[\s\S]*targetAgent\?\.ownerUserId === session\?\.user\.id/,
-  );
+  assert.match(renderFeed, /signalIsDirectToViewer\(signal, viewerId\)/);
+  assert.doesNotMatch(renderFeed, /targetAgent\?\.ownerUserId === session\?\.user\.id/);
   assert.match(
     builtAssets,
     /\.dashboard__message--direct-to-viewer\{[^}]*background:/,

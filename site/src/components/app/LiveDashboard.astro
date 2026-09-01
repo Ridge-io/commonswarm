@@ -899,6 +899,7 @@ import "../../styles/tokens.css";
     pendingMemberInvites,
     BROWSER_RECEIPT_REQUESTS_PER_TICK,
     browserAcceptedDeliveryIndicator,
+    browserBroadcastRosterView,
     browserDeliveryIndicator,
     browserHumanDeliveryIndicator,
     browserDeliveryReceiptCandidates,
@@ -925,6 +926,7 @@ import "../../styles/tokens.css";
     type PendingMemberInvite,
     type BrowserDeliveryIndicator,
     type BrowserDeliveryReceiptCacheEntry,
+    type BrowserDeliveryReceiptResult,
     type BrowserSignalRecipient,
     type BrowserAttachmentUploadIntent,
     type WorkspaceFile,
@@ -3143,7 +3145,9 @@ import "../../styles/tokens.css";
         : signal.to !== null && signal.toAgent === null
         ? browserHumanDeliveryIndicator(signal.to, cached?.result ?? null)
         : signal.toAgent === null
-        ? browserDeliveryIndicator({ addressed: false, receipts: [] })
+        ? browserDeliveryIndicator(
+          cached?.result ?? { addressed: false, receipts: [] },
+        )
         : browserDeliveryIndicator(cached?.result ?? null);
       const details = document.createElement("details");
       details.className = "dashboard__message-receipt";
@@ -3165,6 +3169,71 @@ import "../../styles/tokens.css";
       const detail = document.createElement("p");
       detail.textContent = indicator.detail;
       details.append(summary, detail);
+      const appendRosterSection = (
+        title: string,
+        rows: readonly string[],
+      ): void => {
+        const section = document.createElement("section");
+        section.className = "dashboard__message-receipt-section";
+        const heading = document.createElement("h4");
+        heading.textContent = title;
+        const list = document.createElement("ul");
+        for (const text of rows) {
+          const item = document.createElement("li");
+          item.textContent = text;
+          list.append(item);
+        }
+        if (rows.length === 0) {
+          const item = document.createElement("li");
+          item.textContent = "None";
+          list.append(item);
+        }
+        section.append(heading, list);
+        details.append(section);
+      };
+      const broadcastResult: BrowserDeliveryReceiptResult | null =
+        signal.to === null && signal.toAgent === null && cached?.result?.addressed === false
+          ? cached.result
+          : null;
+      if (broadcastResult?.broadcastRoster) {
+        const roster = browserBroadcastRosterView(broadcastResult);
+        appendRosterSection(
+          "Seen members",
+          roster.seenMembers.map((receipt) => {
+            const seen = formatTime(receipt.seenAt!);
+            return `${receipt.displayName ?? people.get(receipt.recipientUserId) ?? receipt.recipientUserId} · ${seen.relative}`;
+          }),
+        );
+        appendRosterSection(
+          "Not-seen members",
+          roster.notSeenMembers.map((receipt) =>
+            receipt.displayName ?? people.get(receipt.recipientUserId) ?? receipt.recipientUserId
+          ),
+        );
+        appendRosterSection(
+          "Agents · Not tracked",
+          roster.agents.map((receipt) =>
+            `${receipt.displayName} · broadcasts do not wake or track agents`
+          ),
+        );
+        if (
+          broadcastResult.broadcastRoster.members.truncated ||
+          broadcastResult.broadcastRoster.agents.truncated
+        ) {
+          const cut = document.createElement("p");
+          cut.className = "dashboard__message-receipt-cut";
+          const parts = [
+            broadcastResult.broadcastRoster.members.truncated
+              ? `Showing ${broadcastResult.broadcastRoster.members.returned} of ${broadcastResult.broadcastRoster.members.total} members.`
+              : null,
+            broadcastResult.broadcastRoster.agents.truncated
+              ? `Showing ${broadcastResult.broadcastRoster.agents.returned} of ${broadcastResult.broadcastRoster.agents.total} agents.`
+              : null,
+          ].filter((part): part is string => part !== null);
+          cut.textContent = parts.join(" ");
+          details.append(cut);
+        }
+      }
       body.append(details);
     };
 
@@ -3417,13 +3486,7 @@ import "../../styles/tokens.css";
         const targetAgent = signal.toAgent === null
           ? undefined
           : agentById.get(signal.toAgent);
-        if (
-          (session && (
-            signal.to === session?.user.id ||
-            targetAgent?.ownerUserId === session?.user.id
-          )) ||
-          signalIsDirectToViewer(signal, viewerId, agentById)
-        ) {
+        if (signalIsDirectToViewer(signal, viewerId) || signal.to === session?.user.id) {
           row.classList.add("dashboard__message--direct-to-viewer");
         }
         const authorName = authorAgent?.name ??
@@ -9205,6 +9268,32 @@ import "../../styles/tokens.css";
     background: var(--elev-3);
     border-radius: var(--radius);
     line-height: var(--lh-sm);
+  }
+
+  .dashboard__message-receipt-section {
+    max-inline-size: 34rem;
+    margin-block-start: var(--s-2);
+    padding: var(--s-2) var(--s-3);
+    color: var(--text-muted);
+    background: var(--elev-3);
+    border-radius: var(--radius);
+  }
+
+  .dashboard__message-receipt-section h4 {
+    margin: 0 0 var(--s-1);
+    color: var(--text);
+    font-size: var(--t-xs);
+  }
+
+  .dashboard__message-receipt-section ul {
+    display: grid;
+    gap: var(--s-1);
+    margin: 0;
+    padding-inline-start: 1rem;
+  }
+
+  .dashboard__message-receipt-cut {
+    font-style: italic;
   }
 
   .dashboard__message-receipt-glyph {

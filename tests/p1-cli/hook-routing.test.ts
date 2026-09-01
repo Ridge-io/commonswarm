@@ -209,6 +209,56 @@ test("hook check cooldown reserves a state-file timestamp and skips the network"
   }
 });
 
+test("hook check does not inject a broadcast into agent context", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cswarm-hook-broadcast-"));
+  try {
+    const paths = await installCredential(root);
+    await writeStatus(paths);
+    let fetchCalls = 0;
+    const fetcher: typeof fetch = async () => {
+      fetchCalls += 1;
+      return new Response(JSON.stringify({
+        signals: [{
+          id: SIGNAL_ID,
+          workspace_id: WORKSPACE_ID,
+          from: "33333333-3333-4333-8333-333333333333",
+          from_kind: "agent",
+          to: null,
+          to_agent: null,
+          in_reply_to: null,
+          about: null,
+          kind: "note",
+          body: "broadcast must stay out of agent context",
+          until: "2026-08-27T00:00:00.000Z",
+          created_at: "2026-08-26T00:00:02.000Z",
+          sender_owner_relation: "same_owner",
+        }],
+        capabilities: { sender_owner_relation: 1, cursor_after: 1 },
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    };
+    const controller = new AbortController();
+    const output = await checkListenerHooks({
+      stateDirectory: root,
+      principalIds: [PRINCIPAL_ID],
+      cooldownSeconds: 0,
+      fetcher,
+      isListenerLive: testListenerIsLive,
+      signal: controller.signal,
+      deadlineMs: Date.now() + 3_000,
+    });
+
+    assert.equal(fetchCalls, 1, "the inbox read path was reached");
+    assert.equal(output, "", "broadcasts are not written to hook stdout/model context");
+    assert.equal(
+      await new FilePendingMainQueue(paths.instanceDirectory).count(),
+      0,
+      "broadcasts do not enter the listener's interactive queue",
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("hook print-before-mark ordering: a post-print failure re-surfaces once, then stops", async () => {
   const root = await mkdtemp(join(tmpdir(), "cswarm-hook-print-order-"));
   try {

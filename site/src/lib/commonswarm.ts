@@ -1270,16 +1270,42 @@ export interface BrowserDeliveryReceipt {
 
 export interface BrowserHumanDeliveryReceipt {
   recipientUserId: string;
+  /** Present on broadcast roster rows; directed rows keep their old shape. */
+  displayName?: string;
   /** Null is the authoritative "not seen yet" state for a directed member. */
   seenAt: string | null;
 }
 
-export type BrowserReceiptRow = BrowserDeliveryReceipt | BrowserHumanDeliveryReceipt;
+export interface BrowserUntrackedAgentReceipt {
+  recipientAgentPrincipalId: string;
+  displayName: string;
+  trackingState: "not_tracked";
+  observedAt: null;
+}
+
+export interface BrowserRosterSection {
+  total: number;
+  returned: number;
+  limit: number;
+  truncated: boolean;
+}
+
+export interface BrowserBroadcastRecipientRoster {
+  members: BrowserRosterSection & { seen: number };
+  agents: BrowserRosterSection & { trackingState: "not_tracked" };
+}
+
+export type BrowserReceiptRow =
+  | BrowserDeliveryReceipt
+  | BrowserHumanDeliveryReceipt
+  | BrowserUntrackedAgentReceipt;
 
 export interface BrowserDeliveryReceiptResult {
   /** Null means the caller cannot inspect a matching signal or the endpoint could not answer. */
   addressed: boolean | null;
   receipts: BrowserReceiptRow[];
+  /** Present only after the server returns a broadcast recipient roster. */
+  broadcastRoster?: BrowserBroadcastRecipientRoster;
 }
 
 export interface BrowserDeliveryReceiptCacheEntry {
@@ -1340,6 +1366,34 @@ const isBrowserHumanDeliveryReceipt = (
   receipt: BrowserReceiptRow,
 ): receipt is BrowserHumanDeliveryReceipt => "recipientUserId" in receipt;
 
+const isBrowserUntrackedAgentReceipt = (
+  receipt: BrowserReceiptRow,
+): receipt is BrowserUntrackedAgentReceipt =>
+  "trackingState" in receipt && receipt.trackingState === "not_tracked";
+
+const isBrowserAgentDeliveryReceipt = (
+  receipt: BrowserReceiptRow,
+): receipt is BrowserDeliveryReceipt =>
+  !isBrowserHumanDeliveryReceipt(receipt) && !isBrowserUntrackedAgentReceipt(receipt);
+
+export interface BrowserBroadcastRosterView {
+  seenMembers: BrowserHumanDeliveryReceipt[];
+  notSeenMembers: BrowserHumanDeliveryReceipt[];
+  agents: BrowserUntrackedAgentReceipt[];
+}
+
+/** Splits one broadcast result into the three honest detail sections. */
+export function browserBroadcastRosterView(
+  result: BrowserDeliveryReceiptResult,
+): BrowserBroadcastRosterView {
+  const members = result.receipts.filter(isBrowserHumanDeliveryReceipt);
+  return {
+    seenMembers: members.filter((receipt) => receipt.seenAt !== null),
+    notSeenMembers: members.filter((receipt) => receipt.seenAt === null),
+    agents: result.receipts.filter(isBrowserUntrackedAgentReceipt),
+  };
+}
+
 /** Turns ledger facts into compact copy without claiming that a model read a message. */
 export function browserDeliveryIndicator(
   result: BrowserDeliveryReceiptResult | null,
@@ -1358,6 +1412,26 @@ export function browserDeliveryIndicator(
   /* `addressed` is the authority. An empty receipt array must never turn a broadcast into
    * a pending or failed delivery. */
   if (result.addressed === false) {
+    const roster = result.broadcastRoster;
+    if (roster !== undefined) {
+      const cut = [
+        roster.members.truncated
+          ? ` Showing ${roster.members.returned} of ${roster.members.total} members.`
+          : "",
+        roster.agents.truncated
+          ? ` Showing ${roster.agents.returned} of ${roster.agents.total} agents.`
+          : "",
+      ].join("");
+      return {
+        state: roster.members.seen > 0 ? "seen" : "no-recipient",
+        outcome: null,
+        glyph: roster.members.seen > 0 ? "✓✓" : "○",
+        label: `Seen by ${roster.members.seen} of ${roster.members.total}`,
+        detail:
+          `Broadcast — nobody was addressed or woken. Member seen state is a focused-viewport browser report. Broadcasts do not wake or track agents.${cut}`,
+        terminal: roster.members.seen >= roster.members.total,
+      };
+    }
     return {
       state: "no-recipient",
       outcome: null,
@@ -1380,8 +1454,7 @@ export function browserDeliveryIndicator(
 
   const humanReceipts = result.receipts.filter(isBrowserHumanDeliveryReceipt);
   const agentReceipts = result.receipts.filter(
-    (receipt): receipt is BrowserDeliveryReceipt =>
-      !isBrowserHumanDeliveryReceipt(receipt),
+    isBrowserAgentDeliveryReceipt,
   );
   if (humanReceipts.length === 1 && agentReceipts.length === 0) {
     const human = humanReceipts[0]!;
@@ -1660,7 +1733,6 @@ export function browserDeliveryReceiptCandidates(
   limit = BROWSER_RECEIPT_REQUESTS_PER_TICK,
 ): Signal[] {
   return signals
-    .filter((signal) => signal.toAgent !== null || signal.to !== null)
     .filter((signal) => {
       const cached = cache.get(signal.id);
       if (cached?.phase === "posting") return false;
@@ -1867,9 +1939,7 @@ export async function browserDeliveryReceipts(
     throw new Error("Delivery receipts returned malformed data.");
   }
   const outcomes = new Set(["replied", "observed", "queued", "expired", "failed_terminal"]);
-  return {
-    addressed: result.addressed,
-    receipts: result.receipts.map((value) => {
+  const receipts: BrowserReceiptRow[] = result.receipts.map((value) => {
       if (!value || typeof value !== "object" || Array.isArray(value)) {
         throw new Error("Delivery receipts returned a malformed row.");
       }
@@ -1877,8 +1947,11 @@ export async function browserDeliveryReceipts(
       if (Object.hasOwn(row, "recipient_user_id")) {
         const recipientUserId = row.recipient_user_id;
         const seenAt = row.seen_at;
+        const displayName = row.display_name;
         if (
           typeof recipientUserId !== "string" || recipientUserId.length === 0 ||
+          !(displayName === undefined ||
+            (typeof displayName === "string" && displayName.length > 0)) ||
           !(seenAt === null ||
             (typeof seenAt === "string" && Number.isFinite(Date.parse(seenAt))))
         ) {
@@ -1886,7 +1959,24 @@ export async function browserDeliveryReceipts(
         }
         return {
           recipientUserId,
+          ...(displayName === undefined ? {} : { displayName }),
           seenAt: seenAt as string | null,
+        };
+      }
+      if (row.tracking_state === "not_tracked") {
+        if (
+          typeof row.recipient_agent_principal_id !== "string" ||
+          row.recipient_agent_principal_id.length === 0 ||
+          typeof row.display_name !== "string" || row.display_name.length === 0 ||
+          row.observed_at !== null
+        ) {
+          throw new Error("Delivery receipts returned a malformed untracked agent row.");
+        }
+        return {
+          recipientAgentPrincipalId: row.recipient_agent_principal_id,
+          displayName: row.display_name,
+          trackingState: "not_tracked",
+          observedAt: null,
         };
       }
       const outcome = row.ack_outcome;
@@ -1906,7 +1996,69 @@ export async function browserDeliveryReceipts(
           ? null
           : String(row.last_error_code ?? ""),
       };
-    }),
+    });
+  let broadcastRoster: BrowserBroadcastRecipientRoster | undefined;
+  if (result.addressed === false) {
+    const rawRoster = result.broadcast_roster;
+    if (!rawRoster || typeof rawRoster !== "object" || Array.isArray(rawRoster)) {
+      throw new Error("Delivery receipts returned a malformed broadcast roster.");
+    }
+    const roster = rawRoster as Record<string, unknown>;
+    const section = (value: unknown): BrowserRosterSection & Record<string, unknown> => {
+      if (!value || typeof value !== "object" || Array.isArray(value)) {
+        throw new Error("Delivery receipts returned a malformed broadcast roster.");
+      }
+      const row = value as Record<string, unknown>;
+      if (
+        !Number.isSafeInteger(row.total) || Number(row.total) < 0 ||
+        !Number.isSafeInteger(row.returned) || Number(row.returned) < 0 ||
+        !Number.isSafeInteger(row.limit) || row.limit !== 50 ||
+        Number(row.returned) > Number(row.limit) ||
+        Number(row.returned) > Number(row.total) ||
+        typeof row.truncated !== "boolean" ||
+        row.truncated !== (Number(row.returned) < Number(row.total))
+      ) {
+        throw new Error("Delivery receipts returned a malformed broadcast roster.");
+      }
+      return {
+        ...row,
+        total: Number(row.total),
+        returned: Number(row.returned),
+        limit: Number(row.limit),
+        truncated: row.truncated,
+      };
+    };
+    const members = section(roster.members);
+    const agents = section(roster.agents);
+    if (
+      !Number.isSafeInteger(members.seen) || Number(members.seen) < 0 ||
+      Number(members.seen) > members.total ||
+      agents.tracking_state !== "not_tracked"
+    ) {
+      throw new Error("Delivery receipts returned a malformed broadcast roster.");
+    }
+    const view = browserBroadcastRosterView({ addressed: false, receipts });
+    if (
+      view.seenMembers.length > Number(members.seen) ||
+      view.seenMembers.length + view.notSeenMembers.length !== members.returned ||
+      view.agents.length !== agents.returned
+    ) {
+      throw new Error("Delivery receipts returned a malformed broadcast roster.");
+    }
+    broadcastRoster = {
+      members: { ...members, seen: Number(members.seen) },
+      agents: { ...agents, trackingState: "not_tracked" },
+    };
+  } else if (
+    Object.hasOwn(result, "broadcast_roster") ||
+    receipts.some(isBrowserUntrackedAgentReceipt)
+  ) {
+    throw new Error("Delivery receipts returned a broadcast roster for a direct message.");
+  }
+  return {
+    addressed: result.addressed,
+    receipts,
+    ...(broadcastRoster === undefined ? {} : { broadcastRoster }),
   };
 }
 
