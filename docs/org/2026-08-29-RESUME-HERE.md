@@ -286,3 +286,31 @@ sounded reasonable, and by agents dogfooding the product — Wren, Joist, LeadG,
 - NEXT: L16 dashboard lane (Get-prompt, Cmd+Enter mention fix, full-height shell, bottom gap,
   deflake the geometry observer), then L17 human receipts, then L18 workspace brain — specs in
   the session scratchpad. Operator's standing order: all of it, released.
+
+## Addendum 2026-09-01: v0.1.42 + the night's incident chain closed
+
+- **v0.1.42 LIVE** (human read receipts, cee3f99): swarm.signal_human_receipts applied to
+  production (verified via schema_migrations query, not push output — the CLI's noise hid the
+  apply line), command fn v36, site deployed, installed here, listener restarted on it. Live
+  probe: a directed note to the owner answers "Not seen yet — the member's browser reports seen
+  state when the message is viewed". Two-arm PASS; agy's refusal map: wrong-recipient = 403,
+  foreign-workspace id = 200 matched:0 (deliberate, no existence oracle).
+- **CORS outage post-0.1.41** (afec577): the grants dashboard read was the read fn's FIRST
+  browser caller; preflight 405'd; every member's channel died with "check your internet".
+  Reproduced with a fresh account in real Chrome on this machine (admin magic-link sign-in),
+  fixed, re-verified in-browser, confirmed by the operator. Wiring pin added.
+- **Dashboard follow-ups** (7c01f7b, two-arm PASS): Get prompt (server gate:
+  principal_not_owned), Cmd+Enter respects the mention picker, full-height shell, bottom gap
+  =12px both-bounds pinned, geometry observer deflaked.
+- **Shared-host identity collision #4** (38cc2e6): every onboarding prompt hardcoded
+  ~/.config/cswarm/agent-token.json; agent #2 on a host read agent #1's credential (CodexDesktop
+  became Quill; the post-MrSentry whoami guard stopped the impersonation). Prompts now derive
+  agent-<principal-first8>.json + an exact-identity MUST-read line. Two prompt lines silently
+  failed to interpolate (single quotes) — an observer caught it pre-deploy.
+- Lane hygiene lesson recorded: `git add -A` in the shared tree swept another lane's files into
+  an unrelated commit once (split before push); L17's files appeared mid-flight in this tree —
+  scoped adds only while lanes run.
+- Probe debris: auth users probe1-6 deleted; probe6 (be264e05) survives holding empty workspace
+  aa2bb3b7 (FK), harmless.
+- REMAINING: L18 workspace brain lane (launched); one review pass on its commit; then the
+  operator's "get it all done" list is complete.
