@@ -102,8 +102,7 @@ function assertOwnedByCurrentUser(uid: number): void {
   }
 }
 
-async function secureDirectory(path: string): Promise<void> {
-  let created = false;
+async function existingSecureDirectory(path: string): Promise<boolean> {
   try {
     const info = await lstat(path);
     if (!info.isDirectory() || info.isSymbolicLink()) {
@@ -116,20 +115,23 @@ async function secureDirectory(path: string): Promise<void> {
       );
     }
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-    await mkdir(path, { recursive: true, mode: 0o700 });
-    await chmod(path, 0o700);
-    created = true;
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
   }
-  if (created) {
-    const info = await lstat(path);
-    if (!info.isDirectory() || info.isSymbolicLink()) {
-      throw new Error(`credential directory is not a real directory: ${path}`);
-    }
-    assertOwnedByCurrentUser(info.uid);
-    if (mode(info.mode) !== 0o700) {
-      throw new Error(`credential directory could not be secured to mode 0700: ${path}`);
-    }
+  return true;
+}
+
+async function secureDirectory(path: string): Promise<void> {
+  if (await existingSecureDirectory(path)) return;
+  await mkdir(path, { recursive: true, mode: 0o700 });
+  await chmod(path, 0o700);
+  const info = await lstat(path);
+  if (!info.isDirectory() || info.isSymbolicLink()) {
+    throw new Error(`credential directory is not a real directory: ${path}`);
+  }
+  assertOwnedByCurrentUser(info.uid);
+  if (mode(info.mode) !== 0o700) {
+    throw new Error(`credential directory could not be secured to mode 0700: ${path}`);
   }
 }
 
@@ -377,6 +379,25 @@ export async function readSecureJsonFile(
   maxBytes: number,
 ): Promise<string | null> {
   await secureDirectory(dirname(path));
+  try {
+    await secureCredentialFile(path);
+    const raw = await readFile(path, "utf8");
+    if (Buffer.byteLength(raw, "utf8") > maxBytes) {
+      throw new Error("stored record is larger than this store accepts");
+    }
+    return raw;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+}
+
+/** Read an owned 0600 JSON file without creating its missing parent directory. */
+export async function readSecureJsonFileIfPresent(
+  path: string,
+  maxBytes: number,
+): Promise<string | null> {
+  if (!await existingSecureDirectory(dirname(path))) return null;
   try {
     await secureCredentialFile(path);
     const raw = await readFile(path, "utf8");

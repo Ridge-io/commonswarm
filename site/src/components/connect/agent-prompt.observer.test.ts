@@ -56,9 +56,9 @@ test("dashboard agent prompt is one complete, secret-safe handoff", () => {
   assert.match(prompt, /Anon key: public-anon-observer/);
   /* The anon key is a public identifier, not the credential: it appears once in the
      deployment details and once per self-contained command (whoami, working-on, listen,
-     notify, follow, reply), so a fresh agent can copy any single command
+     notify, resume, follow, reply), so a fresh agent can copy any single command
      block and have it work. */
-  assert.equal(prompt.split("public-anon-observer").length - 1, 7);
+  assert.equal(prompt.split("public-anon-observer").length - 1, 8);
   assert.doesNotMatch(prompt, /<the anon key above>/);
   assert.match(prompt, /DO NOT ECHO THIS CREDENTIAL BACK/);
   assert.match(prompt, /host's file-writing channel/);
@@ -366,6 +366,10 @@ test("dashboard agent prompt arms visible arrival and keeps all three receive la
   assert.match(layers, /does\s+not wake this model or mark a message observed/);
   assert.match(layers, /durable local cursor[\s\S]*arrived while it was down[\s\S]*without replaying/);
   assert.match(layers, /read-only for delivery state/);
+  assert.match(
+    layers,
+    /After an agent-session restart[\s\S]*cswarm resume --agent-token-file/,
+  );
 });
 
 test("dashboard agent prompt requires cswarm 0.1.6+ before receive commands", () => {

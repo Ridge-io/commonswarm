@@ -198,7 +198,10 @@ import {
   fileArrivalCursorStore,
   formatArrivalNotification,
   formatArrivalRetryNotice,
+  EXIT_NOTIFY_ORPHANED,
+  NotifyStdoutClosedError,
   runArrivalWatch,
+  writeArrivalMonitorLine,
 } from "./cloud/arrival-watch.js";
 import {
   renderSignalReceiptReport,
@@ -249,6 +252,11 @@ import {
   type ListenerStatus,
   type ListenerRouteMode,
 } from "./listener/index.js";
+import {
+  inspectResume,
+  renderResume,
+  resumeJson,
+} from "./resume.js";
 
 /**
  * Every flag this build accepts, for ERROR WORDING ONLY — never for acceptance. See the throw in
@@ -474,6 +482,7 @@ Usage:
   cswarm target clear [--json]
   cswarm status [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--json]
   cswarm whoami ${requiredAgentCredential} [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--json]
+  cswarm resume --agent-token-file <path> [--url <url> --anon-key <key>] --workspace-id <uuid> [--json]
   cswarm members [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential} [--json]
   cswarm working-on "<what>" [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential} [--about <ref>] [--until <dur>] [--json]
   cswarm note "<text>" [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential} [--to <member|agent>] [--about <ref>] [--attach <path> ...] [--until <dur>] [--json]  # text: 1..8000 characters
@@ -532,6 +541,7 @@ Credential selection for command/dogfood:
                           One that persists or references the credential needs the complete
                           JSON artifact, because it needs a field a bare secret does not carry:
                             whoami        reads server-proven identity -- complete or bare form
+                            resume        reads reconnect state -- complete or bare file form
                             members       reads only          -- either form
                             working-on, note, ask, reply, feed, inbox
                                           signal command/read only         -- either form
@@ -3463,6 +3473,111 @@ async function runWhoami(args: Arguments): Promise<void> {
   );
 }
 
+/** Read the complete reconnect state without renewing, acknowledging, or advancing it. */
+async function runResume(args: Arguments): Promise<void> {
+  args.assertShape([
+    ...TARGET_FLAGS,
+    "workspace-id",
+    "agent-token-file",
+    "state-dir",
+    "json",
+  ], 1);
+  const suppliedCredentialPath = args.optional("agent-token-file");
+  if (suppliedCredentialPath === undefined) {
+    throw new UsageError("cswarm resume needs --agent-token-file <path>");
+  }
+  if (/[\u0000-\u001f\u007f-\u009f]/.test(suppliedCredentialPath)) {
+    throw new Error("--agent-token-file must not contain control characters");
+  }
+  const credentialFile = resolve(suppliedCredentialPath);
+  const cloud = await target(args);
+  const workspaceId = listenerUuid(
+    args.optional("workspace-id") ?? process.env.SWARM_CLOUD_WORKSPACE_ID,
+    "workspace-id",
+  );
+  /* Deliberately bypass commandWorkspaceAndCredential: that helper opens the
+   * renewal store and can rotate a credential. Resume is a read-only view. */
+  const agent = await agentCredential(args);
+  const report = await inspectResume({
+    target: cloud,
+    workspaceId,
+    credentialFile,
+    credentialPathAliases: [...new Set([suppliedCredentialPath, credentialFile])],
+    installedVersion: CLI_BUILD_VERSION,
+    ...(listenerStateDirectory(args)
+      ? { stateDirectory: listenerStateDirectory(args) }
+      : {}),
+  }, {
+    readIdentity: async () => {
+      const directory = await readAgentSignalDirectory(
+        cloud,
+        agent.token,
+        workspaceId,
+      );
+      const identity = directory.identity;
+      if (identity === undefined || identity.workspace_id !== workspaceId) {
+        throw new Error(
+          "the read service authenticated this credential but did not return its identity for this workspace; resume stopped without changing state",
+        );
+      }
+      const principal = directory.agents.find((candidate) =>
+        candidate.principal_id === identity.principal_id &&
+        candidate.owner_user_id === identity.owner_user_id
+      );
+      if (principal === undefined) {
+        throw new Error(
+          "the read service authenticated this credential but returned no matching live principal; resume stopped without changing state",
+        );
+      }
+      if (
+        agent.principalId !== null &&
+        agent.principalId !== identity.principal_id
+      ) {
+        process.stderr.write(
+          `WARNING: the credential authenticated as ${sanitizeDisplayLabel(principal.name, "Unnamed agent")} (${identity.principal_id}), but its JSON metadata names ${agent.principalId}. Resume used the authenticated identity.\n`,
+        );
+      }
+      return {
+        displayName: sanitizeDisplayLabel(principal.name, "Unnamed agent"),
+        principalId: identity.principal_id,
+      };
+    },
+    readBrainTopics: async () => brainTopicSnapshots(await listBrainRowsAsAgent(
+      cloud,
+      agent.token,
+      workspaceId,
+    )),
+    readInboxCount: async (principalId, instanceDirectory) => {
+      const page = await readAgentSignalPage(
+        cloud,
+        { kind: "agent", token: agent.token },
+        {
+          workspaceId,
+          inbox: true,
+          ascending: false,
+          limit: 100,
+          includeStale: false,
+        },
+        fetch,
+        { tolerateMalformedRows: true, maxMalformedRows: 3 },
+      );
+      const candidates = page.signals.filter((signal) =>
+        (signal.kind === "ask" || signal.kind === "note") &&
+        signal.workspace_id === workspaceId &&
+        signal.to_agent === principalId
+      ).map((signal) => ({ signalId: signal.id }));
+      const unseen = await new FileHookSurfaceStore(instanceDirectory)
+        .previewUnseen(candidates);
+      return {
+        count: unseen.length,
+        exact: page.rawCount < 100 && page.malformedRows === 0,
+      };
+    },
+  });
+  if (args.has("json")) printJson(resumeJson(report));
+  else process.stdout.write(`${renderResume(report)}\n`);
+}
+
 async function runSignalRead(
   args: Arguments,
   inbox: boolean,
@@ -3585,16 +3700,6 @@ async function runSignalRead(
   })}\n`);
 }
 
-/** Write one complete monitor line and wait until Node flushes it to stdout. */
-async function writeMonitorLine(line: string): Promise<void> {
-  await new Promise<void>((resolve, reject) => {
-    process.stdout.write(`${line}\n`, (error) => {
-      if (error) reject(error);
-      else resolve();
-    });
-  });
-}
-
 /**
  * Human-visible arrival surface for a host Monitor. It reads signal pages and
  * advances only a local cursor; delivery claim/ack state belongs to the
@@ -3661,7 +3766,7 @@ async function runInboxNotifyCommand(args: Arguments): Promise<void> {
           selected.selectedWorkspace,
           cloud,
         );
-        await writeMonitorLine(
+        await writeArrivalMonitorLine(
           args.has("json")
             ? JSON.stringify(notification)
             : formatArrivalNotification(notification),
@@ -4726,6 +4831,7 @@ async function runConfiguredListener(options: {
       workspaceId: options.workspaceId,
       principalId: options.principalId,
       provider: options.provider,
+      cswarmVersion: CLI_BUILD_VERSION,
       permissionMode: options.permissionMode,
       routeMode,
       deferOverChars,
@@ -6347,6 +6453,10 @@ async function main(): Promise<void> {
     await runWhoami(args);
     return;
   }
+  if (verb === "resume") {
+    await runResume(args);
+    return;
+  }
   if (verb === "feedback") {
     await runFeedback(args);
     return;
@@ -6459,6 +6569,7 @@ function markRestartable(error: Error): Error {
 }
 
 function exitCodeFor(error: unknown): number {
+  if (error instanceof NotifyStdoutClosedError) return EXIT_NOTIFY_ORPHANED;
   return error instanceof Error ? restartableExit.get(error) ?? 1 : 1;
 }
 

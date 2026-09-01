@@ -24,6 +24,20 @@ const ARRIVAL_SNIPPET_MAX = 180;
 export const ARRIVAL_WATCH_POLL_MS = 25_000;
 /** Continuous read failure time before a human-visible monitor warning. */
 export const ARRIVAL_RETRY_NOTICE_THRESHOLD_MS = 60_000;
+/** sysexits EX_IOERR: stdout's pipe reader is gone, so the monitor must stop. */
+export const EXIT_NOTIFY_ORPHANED = 74;
+
+/** Stable typed failure for a notify monitor whose stdout reader has closed. */
+export class NotifyStdoutClosedError extends Error {
+  readonly name = "NotifyStdoutClosedError";
+  readonly code = "notify_stdout_closed";
+
+  constructor() {
+    super(
+      "[notify_stdout_closed] inbox --notify lost its stdout reader and stopped before advancing its cursor. Start one fresh watcher under a live Monitor.",
+    );
+  }
+}
 
 export type ArrivalRetryNotice =
   | {
@@ -272,6 +286,43 @@ export function formatArrivalNotification(
     ? ""
     : ` — ${notification.attachment_count} attachment${notification.attachment_count === 1 ? "" : "s"}`;
   return `CommonSwarm from ${notification.sender_kind} ${notification.sender}: ${notification.snippet}${attachmentCopy} — reply: ${notification.reply_command}`;
+}
+
+function notifyWriteError(error: Error): Error {
+  return (error as NodeJS.ErrnoException).code === "EPIPE"
+    ? new NotifyStdoutClosedError()
+    : error;
+}
+
+/** Write and flush one monitor line; a dead pipe becomes a typed terminal stop. */
+export async function writeArrivalMonitorLine(
+  line: string,
+  stream: NodeJS.WriteStream = process.stdout,
+): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    let settled = false;
+    const finish = (error?: Error | null) => {
+      if (settled) return;
+      settled = true;
+      if (error) {
+        /* Node can call the write callback with EPIPE and emit the same stream
+         * error on the next tick. Keep this one-shot listener through that
+         * emission so the typed stop does not become an unhandled exception. */
+        setImmediate(() => stream.off("error", onError));
+        reject(notifyWriteError(error));
+      } else {
+        stream.off("error", onError);
+        resolve();
+      }
+    };
+    const onError = (error: Error) => finish(error);
+    stream.once("error", onError);
+    try {
+      stream.write(`${line}\n`, (error) => finish(error));
+    } catch (error) {
+      finish(error instanceof Error ? error : new Error(String(error)));
+    }
+  });
 }
 
 function cursorOf(signal: SignalRecord): SignalCursor {

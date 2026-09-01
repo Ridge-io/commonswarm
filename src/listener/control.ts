@@ -10,6 +10,7 @@ import { isAbsolute, join } from "node:path";
 import {
   ensureSecureStateDirectory,
   readSecureJsonFile,
+  readSecureJsonFileIfPresent,
   writeSecureJsonFile,
 } from "../cloud/storage.js";
 import {
@@ -60,6 +61,8 @@ export interface ListenerStatus {
   /** Set only when the running provider is newer than the last measured version. */
   providerVersion?: string | null;
   providerLastMeasuredVersion?: string | null;
+  /** The cswarm binary version reported by the running supervisor. */
+  cswarmVersion?: string | null;
   /**
    * Final lines of the last failed worker's stderr, sanitized and bounded by
    * the supervisor. LOCAL diagnosis only (D-090 family) — this file is the
@@ -149,6 +152,7 @@ const STATUS_ALLOWED_KEYS = new Set([
   "lastErrorDetail",
   "providerVersion",
   "providerLastMeasuredVersion",
+  "cswarmVersion",
   "lastWorkerStderrTail",
   "logPath",
   "deliveryMode",
@@ -260,6 +264,8 @@ function parseStatus(raw: string): ListenerStatus {
       row.providerLastMeasuredVersion === null ||
       (typeof row.providerLastMeasuredVersion === "string" &&
         SEMVER_RE.test(row.providerLastMeasuredVersion))) ||
+    !(row.cswarmVersion === undefined || row.cswarmVersion === null ||
+      (typeof row.cswarmVersion === "string" && SEMVER_RE.test(row.cswarmVersion))) ||
     ((row.providerVersion === null || row.providerVersion === undefined) !==
       (row.providerLastMeasuredVersion === null ||
         row.providerLastMeasuredVersion === undefined)) ||
@@ -325,6 +331,9 @@ function parseStatus(raw: string): ListenerStatus {
     providerVersion: (row.providerVersion ?? null) as string | null,
     providerLastMeasuredVersion:
       (row.providerLastMeasuredVersion ?? null) as string | null,
+    ...(row.cswarmVersion === undefined
+      ? {}
+      : { cswarmVersion: row.cswarmVersion as string | null }),
     routeMode,
     deferOverChars,
     pendingForMainCount: (row.pendingForMainCount ?? 0) as number,
@@ -355,6 +364,14 @@ export async function readListenerStatus(
   paths: ListenerPaths,
 ): Promise<ListenerStatus | null> {
   const raw = await readSecureJsonFile(paths.statusPath, MAX_STATUS_BYTES);
+  return raw === null ? null : parseStatus(raw);
+}
+
+/** Read listener status without creating a missing instance directory. */
+export async function readListenerStatusIfPresent(
+  paths: ListenerPaths,
+): Promise<ListenerStatus | null> {
+  const raw = await readSecureJsonFileIfPresent(paths.statusPath, MAX_STATUS_BYTES);
   return raw === null ? null : parseStatus(raw);
 }
 

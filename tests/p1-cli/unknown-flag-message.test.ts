@@ -197,7 +197,18 @@ test("every advertised stdin credential site also advertises the file form", () 
   const stdinSites = commandNames("--agent-token-stdin");
   const fileSites = commandNames("--agent-token-file");
   assert.ok(stdinSites.length >= 18, `usage enumeration found only ${stdinSites.length} sites`);
-  assert.deepEqual(fileSites, stdinSites);
+  assert.deepEqual(
+    stdinSites.filter((site) => !fileSites.includes(site)),
+    [],
+    "a stdin credential site omitted the safer file channel",
+  );
+  /* `resume` must retain the path because it finds surviving watchers by that
+   * argv path as well as by the authenticated principal. It is the deliberate
+   * file-only site; this does not weaken the one-way property named above. */
+  assert.deepEqual(
+    fileSites.filter((site) => !stdinSites.includes(site)),
+    ["resume"],
+  );
 
   const source = execFileSync("node", [
     "-e",
