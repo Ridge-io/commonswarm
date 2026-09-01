@@ -382,7 +382,7 @@ agent); Finisher's 9 stranded route-split messages need `hook install claude --p
   tracking rows in the `receipts` array; the 0.1.42/0.1.43 parser (hash-verified npm blob)
   throws on it — every installed CLI would hard-fail on broadcast receipts, cached dashboards
   would blank the indicator. Found by a Claude advisory review the twin session ran; Grok's exact
-  PASS on 619ff1f missed it. Fixed in `fc88624` (migration `20260902000002`, forward replace;
+  PASS on 619ff1f missed it. Fixed in `fc88624` (migration `20260902000002`, forward replace; **Superseded (21334f7): 000002 was folded into 20260902000001 and deleted — the Supabase CLI applies one file per transaction, so a two-file compat sequence was itself the defect.**
   agent rows live only under broadcast_roster.agents.principals). Verified by four adversarial
   refuters incl. old-parser-vs-new-wire with a discriminating control and a real-Postgres run
   with a mutation of the seen-first ORDER BY. NOT applied to production yet.
@@ -418,3 +418,49 @@ agent); Finisher's 9 stranded route-split messages need `hook install claude --p
 Codex confirmed: old parser parses the final wire; edge adds broadcast_roster only on broadcasts;
 authorization unchanged; hook digest ordering/cooldown correct. Fix workflow running in isolated
 worktrees (wf_3e1f1a59-216); Grok inversion on fc88624 still in flight. NOTHING RELEASED.
+
+## 2026-09-01 late afternoon — fold landed, session limit hit, swarm-CLI fleet lockout
+
+**Refs.** `21334f7` on `main` = fc88624 + the fold. `20260902000002` is DELETED; `20260902000001` is
+the only roster migration and carries the final compat shape. **NOT applied to production.**
+Branches in flight (Codex lanes, worktrees under this session's scratchpad): `lane/l25-read-deadline`
+(body-read deadline + one overall retry budget), `lane/l26-hook-scope` (session-local hook install
++ `--user` warning + `CLAUDE_CONFIG_DIR`). Neither is on `main` yet.
+
+**Codex FAIL on fc88624 — status per finding.** P1 migration sequence: FIXED at `21334f7`. P1 body
+deadline / fresh retry budget: L25 lane. P1 user-scope hook install: L26 lane. P2 CLAUDE_CONFIG_DIR:
+L26 lane. **Grok PASS on fc88624** — its residual "no in-repo gate loads the 0.1.43 blob" is now
+closed by `tests/receipt-wire-compat.test.ts` (named in the `test` script; RED on the pre-fix
+shape, GREEN on the folded one — checked both ways). Still NOT established from Grok's list: G1 on
+live Postgres; the abort-ignoring file-list settlement.
+
+**Session limit.** This Claude session hit its usage limit ~16:35 (two of three fixers in
+wf_3e1f1a59-216 died with "session limit"). Operator instruction: run the work through Codex
+(`codex exec` lanes) from here. Lanes L25/L26/L27 are Codex. The two-arm rule is unchanged:
+a Codex-authored lane takes Grok + Gemini.
+
+**Incident — swarm CLI fleet lockout, 16:21–16:29.** The L24 identity-fix subagent ran
+`npm run build` in `/Users/yulanbot/Developer/Ridge.io/swarm`. `~/.local/bin/swarm` on every
+agent's PATH resolves to that repo's `dist/`, so the UNCOMMITTED, UNREVIEWED fix went live for
+~20 agents at once. Its guard refuses any row whose `process_start_time` is NULL — which is every
+row written before the column existed: 8 of 9 cmux rows (CSwarmDevLead, Gauge, Marque, MrSentry,
+Nock, Quill, Strategist, Lead) were refused on every command, and `--reclaim` refuses NULL-start
+rows too, so nothing could recover. Restored 16:29 by rebuilding `dist/` from HEAD `009d954` in a
+throwaway worktree and rsyncing it in; both swarms were told not to follow the hook's
+"npm run build" hint. L27 (Codex) is extending the L24 fix: legacy rows adopt forward on same-PID
+ownership; reclaim of a legacy row falls back to the pre-L24 dead-PID + no-live-surface rule. Rule
+for that repo, going into its AGENTS.md via L27: **dist/ is the fleet's live binary; a rebuild is a
+deploy.** Brain topic `swarm-cli-dist` (relayed by Quill) carries it. The old
+~~"Fixed in fc88624 (migration 20260902000002…)"~~ line above is marked dead.
+
+**Next concrete action.** When `L25-report.md` and `L26-report.md` exist in the scratchpad:
+`git merge --no-ff lane/l25-read-deadline` then `lane/l26-hook-scope` onto `main`; run
+build / npm test / test:p1-cli / check:tests / check:edge / site build+test; copy the lane reports
+into `docs/evidence/2026-09-01-v044/`; then the refuter set (body-stall control, two-principal
+install in temp HOME, single-migration real-Postgres apply + old-parser read) and both arms (Grok,
+Gemini — Codex authored) on the merge SHA; then release v0.1.44 in the apply order: db push →
+verify via schema_migrations → deploy `read` edge → publish client → site → install → restart
+listener → `cswarm receipt` on broadcast a945274b.
+
+**Deferred, deliberately.** L22 (`cswarm resume` + notify orphan detection) and L23
+(connected≠attended) wait for v0.1.44. Renaming the Supabase project stays an operator action.
