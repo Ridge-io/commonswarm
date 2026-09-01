@@ -607,3 +607,14 @@ overlaps it — asked. The 0.1.44 listener has logged no read retry since 22:51Z
   EADDRNOTAVAIL becomes a named, non-backoff reason; a retry loop amplifies it. Operator note: the mini
   is meant to take no CI, yet the runner service runs and long-polls; stopping it (`~/actions-runner/
   svc.sh stop`) is a cheap port-pressure reduction — an operator call, not taken by the Lead.
+- **Correction (Gauge, 18:09; confirmed by the Lead 18:13):** ~~"~3,000 connections per second being
+  churned"~~ was wrong arithmetic — it divided the TIME_WAIT count by 2×MSL, which assumes entries
+  expire. They do not: TIME_WAIT 40193 → 40227 in 20 s (monotonic), FIN_WAIT_1 frozen at 2161 across
+  a minute, LAST_ACK ~4,997. **The socket table is not being reaped**; arrival is ~2 connections/s.
+  ~21k parked sockets are to our own API (one connection per listener poll, never reused), ~10.7k
+  loopback. 47,884 sockets against the 49,152-port ephemeral range at 18:13 → ~1,268 ports of
+  headroom, ~10–15 min to a repeat of the 19:35Z outage. mbufs 20189/20821 in use. **Cause of the
+  reap failure NOT established** (kernel/network-stack state; 20:43Z looked like a flush, not a drain).
+  Operator pushed (phone): interface cycle or reboot. `lsof` cannot attribute parked sockets — it
+  names owners of OPEN sockets only and would have blamed innocents. Product follow-up (L32): the
+  claim loop should reuse connections (keep-alive agent); a reap failure would then bite ~10× later.
