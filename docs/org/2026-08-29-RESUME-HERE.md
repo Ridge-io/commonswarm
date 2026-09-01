@@ -628,3 +628,12 @@ overlaps it — asked. The 0.1.44 listener has logged no read retry since 22:51Z
   at 2161 for 40+ min); reboot is the only fix, Tom is deferring. Fleet told: keep listeners stopped
   until announced. Wren's four asks answered on cswarm (hygiene split, L32 keep-alive, L33 local hook
   daemon, sentinel from the laptop, auto-stop listeners only).
+- **Listeners stopped on the mini, 23:13–23:16Z, to be restarted after the reboot (or when the Lead
+  announces):** by their owners on request — CSwarmDevLead/8d10fe67 (Lead), Gauge, Quill, LeadG,
+  Strategist (MrSentry's was already down since 08-28); by the Lead with SIGTERM/SIGKILL because their
+  agents were unattended — principals `023fd46b` (agent-token file `~/.config/cswarm/agent-023fd46b.json`),
+  `2a8606f2` CodexDesktop (codex), `78249a33` Finisher (claude), and four 20-day-old grok orphans
+  `589ba470` ×2, `69710161`, `fd8e5a4f` (probably the August cloud-swarm seats; consider NOT restarting
+  them). Durable delivery holds their mail server-side meanwhile. Also stopped by their owners:
+  `inbox --notify` pollers (Strategist, LeadG, Quill). Free ports 15,236 of 64,512 at 23:19Z, arrival
+  ~1.6/s (now mostly the Codex lanes' loopback test traffic and Claude sessions).
