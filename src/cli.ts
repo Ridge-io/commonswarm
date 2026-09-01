@@ -5539,30 +5539,35 @@ async function fileContext(
   return { cloud, selected };
 }
 
-/* READS retry too. Writes have had onceRetried since file artifacts shipped;
- * reads did not, so every brain ls/get was a single-shot call on a transport
- * measured flapping ~17% (2 of 12, 2026-09-01) — which is what agents
- * experienced as "brain get timed out" while adopting the knowledgebase. A
- * read is idempotent, so the retry is unconditionally safe here. */
+/* Reads are idempotent, but both attempts share one 30s budget. The retry gets
+ * only the time left after the first attempt, and is skipped near expiry. */
 async function fileRows(context: FileCliContext): Promise<FileListRow[]> {
   const { cloud, selected } = context;
   if (selected.kind === "agent") {
-    return await onceRetried(() =>
-      listFilesAsAgent(
-        cloud,
-        selected.bearer,
-        selected.selectedWorkspace,
-      )
+    return await onceRetried(
+      (attempt) =>
+        listFilesAsAgent(
+          cloud,
+          selected.bearer,
+          selected.selectedWorkspace,
+          fetch,
+          attempt,
+        ),
+      {},
     );
   }
   /* The read edge function accepts agent credentials only; humans read the
    * membership-gated swarm_read view over REST, the same split members uses. */
-  return await onceRetried(() =>
-    listFilesAsHuman(
-      cloud,
-      selected.human!.accessToken,
-      selected.selectedWorkspace,
-    )
+  return await onceRetried(
+    (attempt) =>
+      listFilesAsHuman(
+        cloud,
+        selected.human!.accessToken,
+        selected.selectedWorkspace,
+        fetch,
+        attempt,
+      ),
+    {},
   );
 }
 
@@ -5732,7 +5737,10 @@ async function runFileGet(args: Arguments): Promise<void> {
   };
   const grant = await fileDownloadUrl(send, { fileId, versionN });
   const destination = args.optional("out") ?? basename(grant.name);
-  const bytes = await onceRetried(() => getObject(context.cloud, grant.download_path));
+  const bytes = await onceRetried(
+    (attempt) => getObject(context.cloud, grant.download_path, fetch, attempt),
+    {},
+  );
   // Atomic: `wx` under the hood, so a file created since any earlier look is
   // refused by the filesystem, never truncated (review finding 1).
   writeDestination(destination, bytes, args.has("force"), writeFileSync);
@@ -5895,7 +5903,10 @@ async function runBrainGet(args: Arguments): Promise<void> {
     credential: context.selected.bearer,
   }, { fileId: row.file.file_id, versionN });
   const content = decodeBrainMarkdown(
-    await onceRetried(() => getObject(context.cloud, grant.download_path)),
+    await onceRetried(
+      (attempt) => getObject(context.cloud, grant.download_path, fetch, attempt),
+      {},
+    ),
   );
   if (args.has("json")) {
     process.stdout.write(`${JSON.stringify({

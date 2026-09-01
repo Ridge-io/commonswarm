@@ -164,6 +164,24 @@ export interface FileListRow {
 }
 
 const REQUEST_TIMEOUT_MS = 30_000;
+const READ_RETRY_FLOOR_MS = 2_000;
+
+type DeadlineTimer = ReturnType<typeof setTimeout>;
+
+export interface ReadDeadlineOptions {
+  signal?: AbortSignal;
+  deadlineMs?: number;
+  now?: () => number;
+  schedule?: (callback: () => void, delayMs: number) => DeadlineTimer;
+  cancel?: (timer: DeadlineTimer) => void;
+}
+
+export interface RetryBudgetOptions {
+  deadlineMs?: number;
+  timeoutMs?: number;
+  retryFloorMs?: number;
+  now?: () => number;
+}
 
 interface SendOptions {
   target: CloudTarget;
@@ -330,18 +348,42 @@ export async function putObject(
 }
 
 /**
- * One same-id retry for steps whose outcome is UNKNOWN (no response arrived).
- * Safe only because the caller reuses the SAME command/file/version ids on the
- * second attempt, and the server's command-id replay returns the first
- * attempt's result if it actually landed (review finding 2a). A received
- * refusal is a known outcome and is never retried here.
+ * One retry for steps whose outcome is UNKNOWN (no response arrived). Writes
+ * omit `budget` and keep their existing same-id replay behavior. Reads pass a
+ * budget so both attempts share one absolute deadline and a nearly-expired
+ * operation does not start another attempt.
  */
-export async function onceRetried<T>(step: () => Promise<T>): Promise<T> {
+export function onceRetried<T>(step: () => Promise<T>): Promise<T>;
+export function onceRetried<T>(
+  step: (attempt: ReadDeadlineOptions) => Promise<T>,
+  budget: RetryBudgetOptions,
+): Promise<T>;
+export async function onceRetried<T>(
+  step: (() => Promise<T>) | ((attempt: ReadDeadlineOptions) => Promise<T>),
+  budget?: RetryBudgetOptions,
+): Promise<T> {
+  const now = budget?.now ?? Date.now;
+  const deadlineMs = budget === undefined
+    ? undefined
+    : Math.min(
+      budget.deadlineMs ?? Number.POSITIVE_INFINITY,
+      now() + (budget.timeoutMs ?? REQUEST_TIMEOUT_MS),
+    );
+  const attempt = deadlineMs === undefined ? {} : { deadlineMs, now };
+  const run = budget === undefined
+    ? step as () => Promise<T>
+    : () => (step as (options: ReadDeadlineOptions) => Promise<T>)(attempt);
   try {
-    return await step();
+    return await run();
   } catch (error) {
     if (error instanceof FileTransportError && error.noResponse) {
-      return await step();
+      if (
+        deadlineMs !== undefined &&
+        deadlineMs - now() < (budget?.retryFloorMs ?? READ_RETRY_FLOOR_MS)
+      ) {
+        throw error;
+      }
+      return await run();
     }
     throw error;
   }
@@ -351,19 +393,27 @@ export async function getObject(
   target: CloudTarget,
   downloadPath: string,
   fetcher: typeof fetch = fetch,
+  options: ReadDeadlineOptions = {},
 ): Promise<Uint8Array> {
   let response: Response;
+  let body: ArrayBuffer | null;
   try {
-    response = await fetchWithDeadline(fetcher, absoluteStorageUrl(target, downloadPath));
+    ({ response, body } = await fetchWithDeadline(
+      fetcher,
+      absoluteStorageUrl(target, downloadPath),
+      {},
+      async (received) => received.ok ? await received.arrayBuffer() : null,
+      options,
+    ));
   } catch {
     throw new FileTransportError("the download failed before a response", true);
   }
-  if (!response.ok) {
+  if (!response.ok || body === null) {
     throw new FileTransportError(
       `the download was refused (HTTP ${response.status}); the signed URL lasts five minutes — request a fresh one with cswarm file get`,
     );
   }
-  return new Uint8Array(await response.arrayBuffer());
+  return new Uint8Array(body);
 }
 
 export class LocalFileExists extends Error {
@@ -404,32 +454,55 @@ export function sha256Hex(bytes: Uint8Array): string {
   return createHash("sha256").update(bytes).digest("hex");
 }
 
-/* Reads had NO deadline: a stalled connection waited on the OS default, and the
- * 2026-09-01 retry addition would have doubled that. Every read now carries the
- * same 30s bound the command path uses, so a flap fails fast and retries once. */
-async function fetchWithDeadline(
+/* The deadline remains armed until the caller's body consumer finishes. Racing
+ * the shared abort signal also bounds a fetcher or body stream that ignores the
+ * signal itself; the public helpers normalize that failure to FileTransportError. */
+async function fetchWithDeadline<T>(
   fetcher: typeof fetch,
   input: string,
-  init: RequestInit = {},
-  options: {
-    signal?: AbortSignal;
-    deadlineMs?: number;
-    now?: () => number;
-  } = {},
-): Promise<Response> {
+  init: RequestInit,
+  consume: (response: Response) => Promise<T>,
+  options: ReadDeadlineOptions = {},
+): Promise<{ response: Response; body: T }> {
   const now = options.now ?? Date.now;
   const remainingMs = options.deadlineMs === undefined
     ? REQUEST_TIMEOUT_MS
     : Math.max(0, Math.min(REQUEST_TIMEOUT_MS, options.deadlineMs - now()));
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), remainingMs);
+  const schedule: NonNullable<ReadDeadlineOptions["schedule"]> =
+    options.schedule ?? ((callback, delayMs) => setTimeout(callback, delayMs));
+  const cancel: NonNullable<ReadDeadlineOptions["cancel"]> =
+    options.cancel ?? ((timer) => clearTimeout(timer));
   const signal = options.signal === undefined
     ? controller.signal
     : AbortSignal.any([options.signal, controller.signal]);
+  let rejectAbort: ((reason: unknown) => void) | undefined;
+  const aborted = new Promise<never>((_resolve, reject) => {
+    rejectAbort = reject;
+  });
+  const onAbort = () => {
+    rejectAbort?.(
+      signal.reason instanceof Error
+        ? signal.reason
+        : new DOMException("The read was aborted", "AbortError"),
+    );
+  };
+  if (signal.aborted) onAbort();
+  else signal.addEventListener("abort", onAbort, { once: true });
+  const timer = schedule(
+    () => controller.abort(new DOMException("The read timed out", "AbortError")),
+    remainingMs,
+  );
   try {
-    return await fetcher(input, { ...init, signal });
+    const response = await Promise.race([
+      fetcher(input, { ...init, signal }),
+      aborted,
+    ]);
+    const body = await Promise.race([consume(response), aborted]);
+    return { response, body };
   } finally {
-    clearTimeout(timer);
+    cancel(timer);
+    signal.removeEventListener("abort", onAbort);
   }
 }
 
@@ -439,15 +512,12 @@ export async function listFilesAsAgent(
   credential: string,
   workspaceId: string,
   fetcher: typeof fetch = fetch,
-  options: {
-    signal?: AbortSignal;
-    deadlineMs?: number;
-    now?: () => number;
-  } = {},
+  options: ReadDeadlineOptions = {},
 ): Promise<FileListRow[]> {
   let response: Response;
+  let rawBody: string | null;
   try {
-    response = await fetchWithDeadline(
+    ({ response, body: rawBody } = await fetchWithDeadline(
       fetcher,
       readEndpoint(target),
       {
@@ -459,8 +529,9 @@ export async function listFilesAsAgent(
         },
         body: JSON.stringify({ resource: "files", workspace_id: workspaceId }),
       },
+      async (received) => received.ok ? await received.text() : null,
       options,
-    );
+    ));
   } catch {
     throw new FileTransportError("file list could not reach the cloud service", true);
   }
@@ -471,9 +542,12 @@ export async function listFilesAsAgent(
       `file list failed (HTTP ${response.status})`,
     );
   }
-  const body = await response.json().catch(() => null) as
-    | { files?: unknown }
-    | null;
+  let body: { files?: unknown } | null = null;
+  try {
+    body = rawBody === null ? null : JSON.parse(rawBody) as { files?: unknown };
+  } catch {
+    body = null;
+  }
   if (!body || !Array.isArray(body.files)) {
     throw new FileTransportError("file list returned a malformed response");
   }
@@ -490,6 +564,7 @@ export async function listFilesAsHuman(
   accessToken: string,
   workspaceId: string,
   fetcher: typeof fetch = fetch,
+  options: ReadDeadlineOptions = {},
 ): Promise<FileListRow[]> {
   const url = new URL("/rest/v1/files", target.url);
   url.searchParams.set("workspace_id", `eq.${workspaceId}`);
@@ -499,18 +574,23 @@ export async function listFilesAsHuman(
   );
   url.searchParams.set("order", "name.asc");
   let response: Response;
+  let rawBody: string | null;
   try {
-    /* The HUMAN list escaped the 2026-09-01 deadline fix and kept its retry —
-     * exactly the doubled worst case that commit said it was preventing, in
-     * the one path it did not check (found by the exact-review arm, which
-     * measured it still hanging at 400ms against a 150ms deadline). */
-    response = await fetchWithDeadline(fetcher, url.toString(), {
-      headers: {
-        authorization: `Bearer ${accessToken}`,
-        apikey: target.anonKey,
-        "accept-profile": "swarm_read",
+    /* Human and agent lists use the same body-covering deadline. This path was
+     * the missed sibling in the first read-deadline fix. */
+    ({ response, body: rawBody } = await fetchWithDeadline(
+      fetcher,
+      url.toString(),
+      {
+        headers: {
+          authorization: `Bearer ${accessToken}`,
+          apikey: target.anonKey,
+          "accept-profile": "swarm_read",
+        },
       },
-    });
+      async (received) => received.ok ? await received.text() : null,
+      options,
+    ));
   } catch {
     throw new FileTransportError("file list could not reach the cloud service", true);
   }
@@ -521,7 +601,12 @@ export async function listFilesAsHuman(
       `file list failed (HTTP ${response.status})`,
     );
   }
-  const body = await response.json().catch(() => null);
+  let body: unknown = null;
+  try {
+    body = rawBody === null ? null : JSON.parse(rawBody);
+  } catch {
+    body = null;
+  }
   if (!Array.isArray(body)) {
     throw new FileTransportError("file list returned a malformed response");
   }

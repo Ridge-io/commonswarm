@@ -14,9 +14,12 @@ import {
   FileCommandRefused,
   FileTransportError,
   fileVersionCreate,
+  getObject,
   listFilesAsAgent,
+  listFilesAsHuman,
   LocalFileExists,
   onceRetried,
+  type ReadDeadlineOptions,
   writeDestination,
 } from "../../src/cloud/files.js";
 import { cloudTarget } from "../../src/cloud/config.js";
@@ -28,6 +31,36 @@ function fakeFetcher(
 ): typeof fetch {
   return (async (input: string | URL | Request, init?: RequestInit) =>
     handler(input, init)) as typeof fetch;
+}
+
+function manualDeadline() {
+  const handle = {} as ReturnType<typeof setTimeout>;
+  let active = false;
+  let callback: (() => void) | undefined;
+  let delayMs: number | undefined;
+  let cancelCalls = 0;
+  return {
+    schedule(next: () => void, delay: number): ReturnType<typeof setTimeout> {
+      active = true;
+      callback = next;
+      delayMs = delay;
+      return handle;
+    },
+    cancel(timer: ReturnType<typeof setTimeout>): void {
+      assert.equal(timer, handle);
+      active = false;
+      cancelCalls += 1;
+    },
+    expire(): void {
+      if (active) callback?.();
+    },
+    get delayMs(): number | undefined {
+      return delayMs;
+    },
+    get cancelCalls(): number {
+      return cancelCalls;
+    },
+  };
 }
 
 /* ------------------------------------------------------------------ pure -- */
@@ -115,6 +148,136 @@ test("onceRetried retries exactly the unknown-outcome class, once", async () => 
     FileTransportError,
   );
   assert.equal(hard, 2);
+});
+
+test("every file read deadline stays armed through a stalled response body", async () => {
+  const readers: Array<{
+    name: string;
+    start: (fetcher: typeof fetch, options: ReadDeadlineOptions) => Promise<unknown>;
+  }> = [
+    {
+      name: "agent list",
+      start: (fetcher, options) =>
+        listFilesAsAgent(
+          TARGET,
+          "swm_agt_x",
+          "3ab184b3-fbb4-5ee9-afad-3842a604439a",
+          fetcher,
+          options,
+        ),
+    },
+    {
+      name: "human list",
+      start: (fetcher, options) =>
+        listFilesAsHuman(
+          TARGET,
+          "human-access-token",
+          "3ab184b3-fbb4-5ee9-afad-3842a604439a",
+          fetcher,
+          options,
+        ),
+    },
+    {
+      name: "download",
+      start: (fetcher, options) =>
+        getObject(TARGET, "/storage/v1/object/download", fetcher, options),
+    },
+  ];
+
+  for (const reader of readers) {
+    const deadline = manualDeadline();
+    let stalledResponse: Response | undefined;
+    const stalled = fakeFetcher(() => {
+      stalledResponse = new Response(
+        new ReadableStream<Uint8Array>({
+          pull() {
+            return new Promise<void>(() => {});
+          },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+      return stalledResponse;
+    });
+    const read = reader.start(stalled, {
+      deadlineMs: 25,
+      now: () => 0,
+      schedule: deadline.schedule,
+      cancel: deadline.cancel,
+    });
+    for (let turn = 0; turn < 5 && stalledResponse?.bodyUsed !== true; turn += 1) {
+      await Promise.resolve();
+    }
+    assert.equal(
+      stalledResponse?.bodyUsed,
+      true,
+      `${reader.name}: the control must reach body consumption`,
+    );
+    const cancelsAtHeaders = deadline.cancelCalls;
+    deadline.expire();
+    assert.equal(
+      cancelsAtHeaders,
+      0,
+      `${reader.name}: headers must not clear the deadline`,
+    );
+    await assert.rejects(
+      Promise.race([
+        read,
+        new Promise<never>((_resolve, reject) =>
+          setTimeout(() => reject(new Error("body-stall control hung")), 100)
+        ),
+      ]),
+      (error: unknown) =>
+        error instanceof FileTransportError && error.noResponse === true,
+      `${reader.name}: the deadline must return the typed retryable error`,
+    );
+    assert.equal(deadline.delayMs, 25);
+    assert.equal(deadline.cancelCalls, 1);
+  }
+});
+
+test("one read retry gets only the remaining overall budget", async () => {
+  let nowMs = 1_000;
+  let attempts = 0;
+  const remainingAtAttempt: number[] = [];
+  const value = await onceRetried(
+    async (attempt) => {
+      attempts += 1;
+      assert.notEqual(attempt.deadlineMs, undefined);
+      remainingAtAttempt.push(attempt.deadlineMs! - nowMs);
+      if (attempts === 1) {
+        nowMs = 1_850;
+        throw new FileTransportError("first attempt had no response", true);
+      }
+      return "ok";
+    },
+    {
+      timeoutMs: 1_000,
+      retryFloorMs: 100,
+      now: () => nowMs,
+    },
+  );
+  assert.equal(value, "ok");
+  assert.deepEqual(remainingAtAttempt, [1_000, 150]);
+
+  nowMs = 5_000;
+  attempts = 0;
+  const belowFloor = new FileTransportError("budget nearly spent", true);
+  await assert.rejects(
+    onceRetried(
+      async () => {
+        attempts += 1;
+        nowMs = 5_901;
+        throw belowFloor;
+      },
+      {
+        timeoutMs: 1_000,
+        retryFloorMs: 100,
+        now: () => nowMs,
+      },
+    ),
+    (error: unknown) => error === belowFloor,
+  );
+  assert.equal(attempts, 1, "a retry below the floor must not start");
 });
 
 test("absoluteStorageUrl composes only server-relative paths", () => {
