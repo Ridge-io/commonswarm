@@ -7,10 +7,14 @@
  * the proposed `brain/<topic>.md`, without a schema or storage change.
  */
 
+import type { FileListRow } from "./files.js";
+
 export const BRAIN_FILE_PREFIX = "brain--";
 export const BRAIN_FILE_SUFFIX = ".md";
 export const BRAIN_TOPIC_MAX_LENGTH =
   255 - BRAIN_FILE_PREFIX.length - BRAIN_FILE_SUFFIX.length;
+export const BRAIN_END_OF_TASK_NUDGE =
+  "Durable finding? cswarm brain put <topic> — see brain get brain-how-to";
 
 const BRAIN_TOPIC_RE = /^[a-z0-9][a-z0-9._-]*$/;
 
@@ -52,4 +56,46 @@ export function brainTopicFromFileName(name: string): string | null {
     if (error instanceof BrainTopicError) return null;
     throw error;
   }
+}
+
+export interface BrainTopicRow {
+  topic: string;
+  file: FileListRow;
+}
+
+export interface BrainTopicSnapshot {
+  topic: string;
+  version: number;
+  updatedAt: string;
+}
+
+/** Keep every brain-list consumer on one reserved-name filter and ordering. */
+export function brainRowsFromFiles(rows: readonly FileListRow[]): BrainTopicRow[] {
+  return rows
+    .filter((row) => row.tombstoned_at === null)
+    .flatMap((file) => {
+      const topic = brainTopicFromFileName(file.name);
+      return topic === null ? [] : [{ topic, file }];
+    })
+    .sort((left, right) => left.topic.localeCompare(right.topic));
+}
+
+/** Names and versions only; no brain body is downloaded for a digest. */
+export function brainTopicSnapshots(
+  rows: readonly BrainTopicRow[],
+): BrainTopicSnapshot[] {
+  return rows.map(({ topic, file }) => ({
+    topic,
+    version: file.current_version,
+    updatedAt: file.committed_at ?? file.created_at,
+  }));
+}
+
+/** Print one fixed checkpoint only for a completed replied delivery. */
+export function brainEndOfTaskNudge(
+  outcomes: readonly unknown[],
+): string | null {
+  return outcomes.some((outcome) => outcome === "replied")
+    ? BRAIN_END_OF_TASK_NUDGE
+    : null;
 }

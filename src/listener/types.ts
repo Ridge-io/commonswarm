@@ -144,11 +144,15 @@ export interface ListenerSenderProvenance {
   senderName: string | null;
   operatorId: string | null;
   operatorName: string | null;
+  /** Local changed-only context; never persisted in an effect or server payload. */
+  brainDigest?: string;
 }
 
 export interface ListenerSenderProvenanceContext {
   signal?: AbortSignal;
   deadlineMs: number;
+  /** True only for a worker prompt, never for main-route queue labeling. */
+  includeBrainDigest?: boolean;
 }
 
 export interface ListenerPromptResult {

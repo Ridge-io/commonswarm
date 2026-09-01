@@ -8,6 +8,7 @@ import {
   type SignalReceiptReport,
 } from "../../src/cloud/receipts.js";
 import { cloudTarget } from "../../src/cloud/config.js";
+import { BRAIN_END_OF_TASK_NUDGE } from "../../src/cloud/brain.js";
 import {
   deliveryReceiptState,
   DeliveryReceiptReadError,
@@ -488,6 +489,27 @@ test("the receipt CLI uses the human wording by default", async () => {
   assert.match(result.stdout, /cswarm listen status/);
   assert.match(result.stdout, /cswarm receipt/);
   assert.doesNotMatch(result.stdout, /^\s*\{/);
+});
+
+test("the receipt CLI prints one fixed brain nudge only for replied outcome", async () => {
+  for (const outcome of [
+    "replied",
+    "observed",
+    "queued",
+    "expired",
+    "failed_terminal",
+  ] as const) {
+    const result = await runCliAgainst(200, wireReport([wireRow({
+      delivered_at: "2026-08-28T12:02:00.000Z",
+      acked_at: "2026-08-28T12:25:00.000Z",
+      ack_outcome: outcome,
+      last_error_code: outcome === "failed_terminal" ? "provider_refused" : null,
+    })]), false);
+    assert.equal(result.code, 0, result.stderr);
+    assert.equal(result.stderr, "");
+    const count = result.stdout.split(BRAIN_END_OF_TASK_NUDGE).length - 1;
+    assert.equal(count, outcome === "replied" ? 1 : 0, outcome);
+  }
 });
 
 test("the receipt CLI renders a member target as not seen instead of unavailable", async () => {

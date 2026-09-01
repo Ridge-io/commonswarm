@@ -215,6 +215,7 @@ export function dashboardAgentPrompt(input: DashboardPromptInput): string {
     "and read relevant topics with `cswarm brain get <topic>`, using the same credential and",
     "connection flags. When you establish something durable, write it as Markdown and run:",
     `   cswarm brain put <topic> <markdown-path> --agent-token-file ${tokenPath} ...`,
+    "before every status update ask: did I derive anything the next agent would re-derive?",
     "",
     /* WHAT REACHES ANOTHER AGENT'S MODEL, said plainly, because the old line implied both verbs
      * did. A listener turns an ASK into a model turn; a NOTE is recorded and wakes no one.

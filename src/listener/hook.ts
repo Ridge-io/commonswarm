@@ -2,6 +2,8 @@ import type { Dirent } from "node:fs";
 import { readdir } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import type { SignalRecord } from "../cloud/command-client.js";
+import { listBrainRowsAsAgent } from "../cloud/brain-agent.js";
+import { brainTopicSnapshots } from "../cloud/brain.js";
 import { cloudTarget, type CloudTarget } from "../cloud/config.js";
 import {
   DeliveryCommandClient,
@@ -20,6 +22,7 @@ import {
   writeSecureJsonFile,
 } from "../cloud/storage.js";
 import { defaultListenerStateDirectory } from "./file-store.js";
+import { FileBrainDigestStore } from "./brain-digest.js";
 import {
   FilePendingMainQueue,
   type PendingMainEntry,
@@ -686,6 +689,39 @@ interface ContextCheck {
   credentialHealthy: boolean;
 }
 
+async function brainDigestForCheck(
+  check: ContextCheck,
+  options: HookCheckOptions & { signal: AbortSignal; deadlineMs: number },
+  now: () => number,
+): Promise<string | null> {
+  const stored = check.context.credential;
+  if (
+    stored === null || check.context.listenerLive === false || options.signal.aborted ||
+    check.credentialFailure === "401"
+  ) {
+    return null;
+  }
+  try {
+    const topics = await listBrainRowsAsAgent(
+      cloudTarget(stored.targetUrl, stored.anonKey),
+      stored.credential,
+      stored.workspaceId,
+      {
+        ...(options.fetcher ? { fetcher: options.fetcher } : {}),
+        signal: options.signal,
+        deadlineMs: options.deadlineMs,
+        now,
+      },
+    );
+    return await new FileBrainDigestStore(
+      check.context.instanceDirectory,
+      stored.principalId,
+    ).consume(brainTopicSnapshots(topics));
+  } catch {
+    return null;
+  }
+}
+
 async function recordQueuedObservations(
   check: ContextCheck,
   signalIds: readonly string[],
@@ -793,6 +829,7 @@ export async function checkListenerHooks(
       reportCredentialFailure: boolean;
     }> = [];
     const blocks: string[] = [];
+    const brainBlocks: string[] = [];
     const emittedCredentialWarnings = new Set<string>();
     for (const check of checks) {
       const store = new FileHookSurfaceStore(check.context.instanceDirectory);
@@ -819,6 +856,13 @@ export async function checkListenerHooks(
           blocks.push(warning);
         }
       }
+      // A hook invocation has one file-list budget. Installed hooks select one
+      // principal; an unusual explicit multi-context check keeps signal
+      // delivery but skips the optional digest rather than multiplying reads.
+      const brainDigest = checks.length === 1
+        ? await brainDigestForCheck(check, options, now)
+        : null;
+      if (brainDigest !== null) brainBlocks.push(brainDigest);
       commits.push({
         check,
         store,
@@ -833,6 +877,7 @@ export async function checkListenerHooks(
         reportCredentialFailure,
       });
     }
+    blocks.push(...brainBlocks);
     const output = blocks.join("\n\n");
     if (output.length > 0) await (options.write ?? (() => undefined))(output);
 

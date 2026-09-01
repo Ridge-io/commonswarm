@@ -411,11 +411,23 @@ async function fetchWithDeadline(
   fetcher: typeof fetch,
   input: string,
   init: RequestInit = {},
+  options: {
+    signal?: AbortSignal;
+    deadlineMs?: number;
+    now?: () => number;
+  } = {},
 ): Promise<Response> {
+  const now = options.now ?? Date.now;
+  const remainingMs = options.deadlineMs === undefined
+    ? REQUEST_TIMEOUT_MS
+    : Math.max(0, Math.min(REQUEST_TIMEOUT_MS, options.deadlineMs - now()));
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), remainingMs);
+  const signal = options.signal === undefined
+    ? controller.signal
+    : AbortSignal.any([options.signal, controller.signal]);
   try {
-    return await fetcher(input, { ...init, signal: controller.signal });
+    return await fetcher(input, { ...init, signal });
   } finally {
     clearTimeout(timer);
   }
@@ -427,18 +439,28 @@ export async function listFilesAsAgent(
   credential: string,
   workspaceId: string,
   fetcher: typeof fetch = fetch,
+  options: {
+    signal?: AbortSignal;
+    deadlineMs?: number;
+    now?: () => number;
+  } = {},
 ): Promise<FileListRow[]> {
   let response: Response;
   try {
-    response = await fetchWithDeadline(fetcher, readEndpoint(target), {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${credential}`,
-        apikey: target.anonKey,
-        "content-type": "application/json",
+    response = await fetchWithDeadline(
+      fetcher,
+      readEndpoint(target),
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${credential}`,
+          apikey: target.anonKey,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ resource: "files", workspace_id: workspaceId }),
       },
-      body: JSON.stringify({ resource: "files", workspace_id: workspaceId }),
-    });
+      options,
+    );
   } catch {
     throw new FileTransportError("file list could not reach the cloud service", true);
   }

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, stat } from "node:fs/promises";
+import { mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -22,6 +22,7 @@ import {
 } from "../src/cloud/renewal.js";
 import { isFollowCredentialFailure } from "../src/cloud/signals.js";
 import {
+  FileBrainDigestStore,
   FileListenerEffectStore,
   ListenerEngine,
   ListenerRenewalUnavailableError,
@@ -246,6 +247,49 @@ test("every sender relation reaches the operator worker with relation-specific p
   assert.match(observed[2]!.prompt, /could not establish whether/);
   assert.doesNotMatch(observed[1]!.prompt, /isolated|tool-denied|context-free/);
   assert.doesNotMatch(observed[1]!.prompt, /swm_agt_/);
+});
+
+test("durable worker prompts share the changed-only brain digest state", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cswarm-worker-brain-digest-"));
+  try {
+    const digestStore = new FileBrainDigestStore(root, PRINCIPAL_ID);
+    const effectStore = new MemoryStore();
+    const prompts: string[] = [];
+    let version = 1;
+    const engine = new ListenerEngine({
+      store: effectStore,
+      now: () => Date.parse("2026-09-01T12:00:00.000Z"),
+      resolveSenderProvenance: async () => {
+        const brainDigest = await digestStore.consume([{
+          topic: "strategy",
+          version,
+          updatedAt: `2026-09-01T1${version}:00:00.000Z`,
+        }]);
+        return {
+          senderName: "Avery",
+          operatorId: null,
+          operatorName: null,
+          ...(brainDigest === null ? {} : { brainDigest }),
+        };
+      },
+      model: model(async (_signal, _mode, promptText) => {
+        prompts.push(promptText);
+        return { message: "done", stopReason: "end_turn" };
+      }),
+      poster: poster(async () => ({ signalId: REPLY_ID })),
+    });
+    const until = "2026-09-02T00:00:00.000Z";
+    await engine.process(signal("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1", { until }));
+    await engine.process(signal("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2", { until }));
+    version = 2;
+    await engine.process(signal("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa3", { until }));
+
+    assert.match(prompts[0]!, /\[CommonSwarm brain\] 1 topic;.*strategy v1/);
+    assert.doesNotMatch(prompts[1]!, /\[CommonSwarm brain\]/);
+    assert.match(prompts[2]!, /\[CommonSwarm brain\] 1 topic;.*strategy v2/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("resolved sender and operator provenance reaches the model prompt", async () => {
@@ -1200,4 +1244,3 @@ test("a persistently-unrenewable ask defers across transient failures, then goes
   assert.equal(persisted?.state, "failed");
   assert.equal(persisted?.failureCode, "renewal_unavailable");
 });
-

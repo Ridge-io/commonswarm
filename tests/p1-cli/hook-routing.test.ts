@@ -156,7 +156,14 @@ async function installPrincipalCredential(
 }
 
 function emptyInboxFetch(calls: { count: number }): typeof fetch {
-  return (async () => {
+  return (async (_input, init) => {
+    const body = JSON.parse(String(init?.body)) as { resource?: string };
+    if (body.resource === "files") {
+      return new Response(JSON.stringify({ files: [] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
     calls.count += 1;
     return new Response(JSON.stringify({
       signals: [],
@@ -223,13 +230,118 @@ test("hook check cooldown reserves a state-file timestamp and skips the network"
   }
 });
 
+test("hook brain digest is appended once, stays silent, then reports a version bump", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cswarm-hook-brain-digest-"));
+  try {
+    const paths = await installCredential(root);
+    await writeStatus(paths);
+    await new FilePendingMainQueue(paths.instanceDirectory).enqueue(
+      pending(SIGNAL_ID, "message before digest"),
+    );
+    let version = 1;
+    let brainListCalls = 0;
+    const fetcher: typeof fetch = async (_input, init) => {
+      const body = JSON.parse(String(init?.body)) as { resource?: string };
+      if (body.resource === "files") {
+        brainListCalls += 1;
+        return new Response(JSON.stringify({ files: [{
+          file_id: "55555555-5555-4555-8555-555555555555",
+          name: "brain--strategy.md",
+          current_version: version,
+          size_bytes: 12,
+          content_type: "text/markdown",
+          sha256: null,
+          created_by_kind: "agent",
+          created_by: PRINCIPAL_ID,
+          uploaded_by_kind: "agent",
+          uploaded_by: PRINCIPAL_ID,
+          created_at: "2026-09-01T10:00:00.000Z",
+          committed_at: `2026-09-01T1${version}:00:00.000Z`,
+          tombstoned_at: null,
+        }] }), { status: 200 });
+      }
+      return new Response(JSON.stringify({
+        signals: [],
+        capabilities: { sender_owner_relation: 1, cursor_after: 1 },
+      }), { status: 200 });
+    };
+    const invoke = async () => {
+      const controller = new AbortController();
+      return await checkListenerHooks({
+        stateDirectory: root,
+        cooldownSeconds: 0,
+        fetcher,
+        isListenerLive: testListenerIsLive,
+        signal: controller.signal,
+        deadlineMs: Date.now() + 3_000,
+      });
+    };
+
+    const first = await invoke();
+    assert.match(first, /message before digest/);
+    assert.match(first, /\[CommonSwarm brain\] 1 topic;.*strategy v1/);
+    assert.ok(first.indexOf("[CommonSwarm brain]") > first.indexOf("message before digest"));
+    assert.equal(await invoke(), "");
+    version = 2;
+    assert.match(await invoke(), /\[CommonSwarm brain\] 1 topic;.*strategy v2/);
+    assert.equal(await invoke(), "");
+    assert.equal(brainListCalls, 4, "each hook invocation made one brain-list read");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a failed brain-list read leaves hook output byte-identical", async () => {
+  const run = async (prefix: string, failBrain: boolean) => {
+    const root = await mkdtemp(join(tmpdir(), prefix));
+    try {
+      const paths = await installCredential(root);
+      await writeStatus(paths);
+      await new FilePendingMainQueue(paths.instanceDirectory).enqueue(
+        pending(SIGNAL_ID, "same hook message"),
+      );
+      const fetcher: typeof fetch = async (_input, init) => {
+        const body = JSON.parse(String(init?.body)) as { resource?: string };
+        if (body.resource === "files") {
+          if (failBrain) throw new Error("injected brain-list failure");
+          return new Response(JSON.stringify({ files: [] }), { status: 200 });
+        }
+        return new Response(JSON.stringify({
+          signals: [],
+          capabilities: { sender_owner_relation: 1, cursor_after: 1 },
+        }), { status: 200 });
+      };
+      const controller = new AbortController();
+      return await checkListenerHooks({
+        stateDirectory: root,
+        cooldownSeconds: 0,
+        fetcher,
+        isListenerLive: testListenerIsLive,
+        signal: controller.signal,
+        deadlineMs: Date.now() + 3_000,
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  };
+
+  assert.equal(
+    await run("cswarm-hook-no-brain-", false),
+    await run("cswarm-hook-failed-brain-", true),
+  );
+});
+
 test("hook check does not inject a broadcast into agent context", async () => {
   const root = await mkdtemp(join(tmpdir(), "cswarm-hook-broadcast-"));
   try {
     const paths = await installCredential(root);
     await writeStatus(paths);
     let fetchCalls = 0;
-    const fetcher: typeof fetch = async () => {
+    const fetcher: typeof fetch = async (_input, init) => {
+      const body = JSON.parse(String(init?.body)) as { resource?: string };
+      if (body.resource === "files") {
+        return new Response(JSON.stringify({ files: [] }), { status: 200 });
+      }
       fetchCalls += 1;
       return new Response(JSON.stringify({
         signals: [{

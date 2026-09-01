@@ -62,10 +62,14 @@ import {
   type FileVersionCommitResult,
 } from "./cloud/files.js";
 import {
+  brainEndOfTaskNudge,
   brainFileName,
-  brainTopicFromFileName,
+  brainRowsFromFiles,
+  brainTopicSnapshots,
   canonicalBrainTopic,
+  type BrainTopicRow,
 } from "./cloud/brain.js";
+import { listBrainRowsAsAgent } from "./cloud/brain-agent.js";
 import { FeedbackRefusedError, submitFeedback } from "./cloud/feedback.js";
 import {
   discoverCloudTarget,
@@ -211,6 +215,7 @@ import type { ProviderVersionNotice } from "./host/version.js";
 import {
   ClaudeListenerModel,
   CodexListenerModel,
+  FileBrainDigestStore,
   FileHookSurfaceStore,
   FileListenerEffectStore,
   FilePendingMainQueue,
@@ -3731,7 +3736,14 @@ async function runReceipt(args: Arguments): Promise<void> {
     printJson(signalReceiptJsonPayload(report));
     return;
   }
-  process.stdout.write(`${renderSignalReceiptReport(report)}\n`);
+  const nudge = brainEndOfTaskNudge(
+    report.receipts.map((receipt) =>
+      "ack_outcome" in receipt ? receipt.ack_outcome : null
+    ),
+  );
+  process.stdout.write(
+    `${renderSignalReceiptReport(report)}${nudge === null ? "" : `\n${nudge}`}\n`,
+  );
 }
 
 /**
@@ -4550,7 +4562,26 @@ async function runConfiguredListener(options: {
       options.workspaceId,
       context,
     );
-    return listenerSenderProvenance(signal, senderDirectory);
+    const provenance = listenerSenderProvenance(signal, senderDirectory);
+    if (context.includeBrainDigest !== true) return provenance;
+    try {
+      const topics = await listBrainRowsAsAgent(
+        options.cloud,
+        credential,
+        options.workspaceId,
+        {
+          ...(context.signal ? { signal: context.signal } : {}),
+          deadlineMs: context.deadlineMs,
+        },
+      );
+      const brainDigest = await new FileBrainDigestStore(
+        paths.instanceDirectory,
+        options.principalId,
+      ).consume(brainTopicSnapshots(topics));
+      return brainDigest === null ? provenance : { ...provenance, brainDigest };
+    } catch {
+      return provenance;
+    }
   };
   const effectStore = new FileListenerEffectStore({
     profileId: options.cloud.profileId,
@@ -5769,20 +5800,16 @@ async function runFileRestore(args: Arguments): Promise<void> {
   );
 }
 
-type BrainListRow = {
-  topic: string;
-  file: FileListRow;
-};
-
-async function brainRows(context: FileCliContext): Promise<BrainListRow[]> {
+async function brainRows(context: FileCliContext): Promise<BrainTopicRow[]> {
+  if (context.selected.kind === "agent") {
+    return await listBrainRowsAsAgent(
+      context.cloud,
+      context.selected.bearer,
+      context.selected.selectedWorkspace,
+    );
+  }
   const rows = await fileRows(context);
-  return rows
-    .filter((row) => row.tombstoned_at === null)
-    .flatMap((file) => {
-      const topic = brainTopicFromFileName(file.name);
-      return topic === null ? [] : [{ topic, file }];
-    })
-    .sort((left, right) => left.topic.localeCompare(right.topic));
+  return brainRowsFromFiles(rows);
 }
 
 async function readBrainMarkdownFromStdin(): Promise<Uint8Array> {

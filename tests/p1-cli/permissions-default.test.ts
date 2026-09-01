@@ -115,6 +115,17 @@ test("every provider the CLI accepts is offered a detached adapter in the onboar
   }
 });
 
+test("the onboarding brain section carries the end-of-task checkpoint verbatim", () => {
+  const prompt = readFileSync(
+    new URL("../../site/src/components/connect/agent-prompt.ts", import.meta.url),
+    "utf8",
+  ).replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  assert.match(
+    prompt,
+    /before every status update ask: did I derive anything the next agent would re-derive\?/,
+  );
+});
+
 test("D-088: the CLI accepts both credential-message spellings, so the site can change one later", () => {
   /* The artifact `message` is validated byte-for-byte, which makes it a PROTOCOL CONSTANT, not copy.
    * Measured against the shipped v0.1.15 binary: the current spelling passes the message check and
