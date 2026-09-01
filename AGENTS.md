@@ -515,6 +515,32 @@ proves it can fail. It does not prove it fails *for the reason claimed*** — a 
 the argument parser fails when the feature is broken *and* when it is fine, and looks correct in
 both cases.
 
+## The workspace brain holds live doctrine — read it, and cite it by name
+
+The knowledgebase in the CommonSwarm workspace (`cswarm brain ls | get <topic>`) carries the
+operating rules that move faster than this file. Its constitution is the topic `brain-how-to`;
+read it before writing anything there.
+
+Two topics extend rules that live in this file, and they are maintained by their owners as new
+instances land — read them rather than trusting this paragraph's summary:
+
+- `false-success-signals` — when the report of the work is not the work. It generalises the
+  rule below (never branch on `error.message`) into the positive form: **detect failure by exit
+  status; where status is insufficient, assert a POSITIVE property of success — valid JSON, a
+  non-zero row count, the expected first byte — never the absence of an error string.** A
+  text-matching failure detector loops forever on any success that quotes an error, and passes
+  a real failure the moment the wording changes by one word. Both silently.
+  It also records the shape a fix claim must carry: **mechanism + diff + an OBSERVED firing,
+  with a mutation arm.** A single clean run only permits a conclusion; two arms discriminate.
+  And its coda: **check the artifact contains the change before reading anything as its
+  effect** — an observation consistent with a fix can occur when the fix is not in the binary.
+- `shared-host` — the credential-path and PATH collisions on a machine running many agents.
+
+**Cite brain topics by NAME only.** Never by section number, item count, or "the N rules in
+X": the topic is versioned and edited by its owner, so a quantified citation is a claim about
+a list you are not standing next to — which is itself an instance of what
+`false-success-signals` documents.
+
 ## `error.message` is presentation. Control flow uses types and codes.
 
 **Never branch on the text of an error.** Classify on a named error class, on a stable code **we**
